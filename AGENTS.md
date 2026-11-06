@@ -1,17 +1,29 @@
-tla-ts interprets and model checks TLA+ specs in TypeScript, without the JVM. `packages/tla-ts` is the library. `packages/tla-ts/tests/unit` holds its unit tests.
+Prove It interprets and model checks TLA+ specs in TypeScript, without the JVM. It is derived from [tla-ts](https://github.com/aidenybai/tla-ts). `packages/prove-it` is the library. `packages/prove-it/tests/unit` holds its unit tests.
 
 When implementing anything in this project, clone `tlaplus/tlaplus` locally and search TLC's source to understand the relevant TLA+ semantics. Do not rely on memory or assumptions.
 
-## tla-ts rules
+## Prove It rules
 
 - Match TLC's semantics. When behavior is unclear, run the spec through TLC and compare.
 - Keep the public API small. Justify every new export.
 - Throw named errors from `src/errors.ts` and let them propagate. Do not wrap them in helpers such as `fail()`.
 - Do not add timeouts unless asked.
+- Keep the library free of runtime dependencies.
+
+## Toolchain
+
+The repository is a Bun 1.4.4 workspace. Use Bun for everything:
+
+- `bun install` installs; commit `bun.lock`.
+- `bun run build` bundles `dist/` with `bun build` and emits type declarations with `tsc`.
+- `bun run test` builds `dist/` and then runs `bun test`, since some tests run `dist/cli.js` and the workers. Import test APIs from `bun:test`.
+- `bun run typecheck` runs `bun check`.
+- `bun run lint` runs `bun lint` from a pinned Bun canary, because stable Bun 1.4.4 has no `bun lint` yet. `bun run format` runs `bun fmt`. Both read their settings from `bunfig.toml`.
+- The conformance and benchmark scripts run through `scripts/run.ts`, which bundles them with Bun and runs them under Node, whose V8 is much faster than JavaScriptCore on the SMT prover. Node 22 must be on the PATH.
 
 ## Verifying changes
 
-Run `pnpm check`, `pnpm typecheck`, and `pnpm test` before you finish.
+Run `bun run typecheck`, `bun run lint`, `bun run format:check`, and `bun run test` before you finish.
 
 ## Branch names
 
@@ -29,17 +41,6 @@ Examples: `feat(parser): parse LET and IN`, `fix(evaluator): compare records by 
 
 Keep each commit and PR to one concern. Never merge with failing CI, and merge only when asked.
 
-Follow the writing rules below for PR descriptions.
-
-## Writing
-
-Follow these steps for documentation, technical prose, and PR descriptions.
-
-1. Fetch and read [the current writing rules](https://aidenybai.com/blog/write.md).
-2. Read the code, docs, and history behind the subject. If they don't answer a question, ask instead of guessing.
-3. Pick the content type from the rules. Outline the headings, then draft each section.
-4. Check the text against every rule. After you revise, check the revised text again.
-
 ## Style guide
 
 - Keep code clean, elegant, and simple. YAGNI.
@@ -50,7 +51,6 @@ Follow these steps for documentation, technical prose, and PR descriptions.
 - Avoid `any`. Avoid `as` unless necessary.
 - Never use star imports or alias imports, such as `import { resolve as pathResolve }`.
 - Omit file extensions in relative imports: `./core`, not `./core.js`.
-- Use pnpm for project scripts. They bundle with Bun and run with Node, through `scripts/run.ts`.
 - Use TypeScript interfaces over types. Keep them at module scope.
 - Rely on type inference. Add annotations only for exports.
 - Do not extract single-use helpers or variables. Inline them at the call site unless the helper is reused, hides a complex boundary, or has a name that clarifies the caller.
@@ -69,3 +69,4 @@ Follow these steps for documentation, technical prose, and PR descriptions.
 - Make tests deterministic.
 - Prefer specs ported from `tlaplus/Examples` and TLC's own tests over synthetic fixtures.
 - Never weaken a test to make it pass. Fix the cause.
+- `bun test` runs in Bun, not Node. A test that needs Node, such as one that passes Node's flags, spawns `node` by name rather than `process.execPath`.

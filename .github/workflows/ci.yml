@@ -22,23 +22,23 @@ jobs:
       matrix:
         include:
           - task: build
-            command: pnpm run build
-          - task: check
-            command: pnpm run check
+            command: bun run build
           - task: typecheck
-            command: pnpm run typecheck
+            command: bun run typecheck
+          - task: lint
+            command: bun run lint && bun run format:check
           - task: test
-            command: pnpm run test
+            command: bun run test
 
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
       - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+      # scripts/run.ts runs the conformance and benchmark scripts under Node, and some tests spawn
+      # node.
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: "pnpm"
-      - run: pnpm install --frozen-lockfile
+      - run: bun install --frozen-lockfile
       - run: ${{ matrix.command }}
-      - if: matrix.task == 'build'
-        run: pnpm run publint

@@ -6,19 +6,23 @@ dist
 coverage
 *.tsbuildinfo
 
-# copied into the package by prepack
-packages/tla-ts/README.md
-packages/tla-ts/LICENSE
-packages/tla-ts/tests/conformance/.corpora
-packages/tla-ts/tests/conformance/.library
-packages/tla-ts/tests/conformance/.results.json
-packages/tla-ts/tests/conformance/.sany-results.json
-packages/tla-ts/tests/conformance/.smt-results.json
-packages/tla-ts/tests/conformance/.tlapm.json
-packages/tla-ts/tests/conformance/.tlapm-results.json
-packages/tla-ts/tests/conformance/.proofs
-packages/tla-ts/tests/conformance/.smt-encode-results.json
-packages/tla-ts/tests/conformance/.isabelle-encode-results.json
-packages/tla-ts/tests/conformance/.prove-results.json
-packages/tla-ts/tests/conformance/.prove-benchmark.json
-packages/tla-ts/.scripts
+# Copied into the package by prepack
+packages/prove-it/README.md
+packages/prove-it/LICENSE
+
+# Bundled by scripts/run.ts
+packages/prove-it/.scripts
+
+# Fetched or written by the conformance and benchmark scripts
+packages/prove-it/tests/conformance/.corpora
+packages/prove-it/tests/conformance/.library
+packages/prove-it/tests/conformance/.results.json
+packages/prove-it/tests/conformance/.sany-results.json
+packages/prove-it/tests/conformance/.smt-results.json
+packages/prove-it/tests/conformance/.tlapm.json
+packages/prove-it/tests/conformance/.tlapm-results.json
+packages/prove-it/tests/conformance/.proofs
+packages/prove-it/tests/conformance/.smt-encode-results.json
+packages/prove-it/tests/conformance/.isabelle-encode-results.json
+packages/prove-it/tests/conformance/.prove-results.json
+packages/prove-it/tests/conformance/.prove-benchmark.json

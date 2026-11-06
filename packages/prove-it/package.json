@@ -1,0 +1,69 @@
+{
+  "name": "prove-it",
+  "version": "0.0.0",
+  "description": "A TLA+ interpreter, model checker and proof checker in TypeScript",
+  "keywords": [
+    "formal verification",
+    "model checker",
+    "tla",
+    "tla+",
+    "tlaplus",
+    "tlaps",
+    "tlc"
+  ],
+  "license": "MIT",
+  "bin": {
+    "prove-it": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "src",
+    "package.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/types/index.d.ts",
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "types": "./dist/types/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "bun scripts/build.ts && tsc -p tsconfig.build.json",
+    "prepack": "cp ../../README.md ../../LICENSE .",
+    "prepublishOnly": "bun run build",
+    "test": "bun run build && bun test --parallel",
+    "typecheck": "bun check",
+    "bench": "bun run build && bun scripts/run.ts benchmark",
+    "bench:corpus": "bun run build && bun scripts/run.ts benchmark-corpus",
+    "bench:prove": "bun run build && bun scripts/run.ts prove-benchmark",
+    "conformance": "bun scripts/run.ts conformance",
+    "conformance:fetch": "bun scripts/run.ts fetch-corpora",
+    "conformance:fingerprint": "bun scripts/run.ts fingerprint-conformance",
+    "conformance:isabelle": "bun scripts/run.ts isabelle-conformance",
+    "conformance:isabelle-encode": "bun scripts/run.ts isabelle-encode-conformance",
+    "conformance:sany": "bun scripts/run.ts proof-conformance",
+    "conformance:ptl": "bun scripts/run.ts ptl-conformance",
+    "conformance:smt": "bun scripts/run.ts smt-conformance",
+    "conformance:record": "bun scripts/run.ts record-tlc",
+    "conformance:record-sany": "bun scripts/run.ts record-sany",
+    "conformance:record-statechart": "bun scripts/run.ts record-statechart",
+    "conformance:record-proofs": "bun scripts/run.ts record-proofs",
+    "conformance:record-tlapm": "bun scripts/run.ts record-tlapm",
+    "conformance:smt-encode": "bun scripts/run.ts smt-encode-conformance",
+    "conformance:prove": "bun run build && bun scripts/run.ts prove-conformance",
+    "conformance:tlapm": "bun scripts/run.ts tlapm-conformance",
+    "conformance:zenon": "bun scripts/run.ts zenon-conformance"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "bun-types": "1.4.4",
+    "typescript": "7.0.2"
+  }
+}

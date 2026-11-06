@@ -1,0 +1,192 @@
+[install]
+exact = true
+saveTextLockfile = true
+
+# `bun fmt`: Prettier's output.
+[fmt]
+# Only this file: a .prettierrc or .oxfmtrc.json in a directory above this one is not read.
+config = false
+printWidth = 100
+# One order for imports whatever order they were added in.
+sortImports = true
+sortPackageJson = true
+ignorePatterns = [
+  # Prettier realigns a whole Markdown table to change one cell.
+  "**/*.md",
+  # Inputs and recordings from TLC, SANY, tlapm and the provers, which the tests compare
+  # byte for byte. The conformance recordings keep one line per module, which keeps them small.
+  "packages/prove-it/tests/fixtures/",
+  "packages/prove-it/tests/conformance/",
+]
+
+# `bun lint`: every rule the repository runs is named here, as an error, so a Bun upgrade that
+# changes its defaults changes nothing here unnoticed. Stable Bun 1.4.4 has no `bun lint` yet, so
+# the root `lint` script runs it from a pinned canary, 1.4.4-canary.20261022.1.
+[lint]
+# Ignore any ESLint or oxlint config in a directory above this one.
+flavor = "eslint"
+maxWarnings = 0
+reportUnusedDisableDirectives = "error"
+ignorePatterns = [
+  "**/node_modules/",
+  "**/dist/",
+  "**/.scripts/",
+  "packages/prove-it/tests/conformance/.corpora/",
+]
+
+[lint.rules]
+# --- Code that is wrong: ESLint's recommended rules. ---
+"constructor-super" = "error"
+"for-direction" = "error"
+"getter-return" = "error"
+"no-async-promise-executor" = "error"
+"no-case-declarations" = "error"
+"no-class-assign" = "error"
+"no-compare-neg-zero" = "error"
+"no-cond-assign" = "error"
+"no-const-assign" = "error"
+"no-constant-binary-expression" = "error"
+"no-constant-condition" = "error"
+"no-control-regex" = "error"
+"no-debugger" = "error"
+"no-delete-var" = "error"
+"no-dupe-else-if" = "error"
+"no-dupe-keys" = "error"
+"no-duplicate-case" = "error"
+"no-empty" = "error"
+"no-empty-character-class" = "error"
+"no-empty-pattern" = "error"
+"no-empty-static-block" = "error"
+"no-ex-assign" = "error"
+"no-extra-boolean-cast" = "error"
+"no-fallthrough" = "error"
+"no-func-assign" = "error"
+"no-global-assign" = "error"
+"no-import-assign" = "error"
+"no-invalid-regexp" = "error"
+"no-irregular-whitespace" = "error"
+"no-loss-of-precision" = "error"
+"no-misleading-character-class" = "error"
+"no-new-native-nonconstructor" = "error"
+"no-nonoctal-decimal-escape" = "error"
+"no-obj-calls" = "error"
+"no-octal" = "error"
+"no-prototype-builtins" = "error"
+"no-regex-spaces" = "error"
+"no-self-assign" = "error"
+"no-setter-return" = "error"
+"no-shadow-restricted-names" = "error"
+"no-sparse-arrays" = "error"
+"no-this-before-super" = "error"
+"no-unassigned-vars" = "error"
+"no-unexpected-multiline" = "error"
+"no-unreachable" = "error"
+"no-unsafe-finally" = "error"
+"no-unsafe-negation" = "error"
+"no-unsafe-optional-chaining" = "error"
+"no-unused-labels" = "error"
+# Off: it counts only reads through `this`, so it flags the fields that union-find code reads on
+# another node (src/prover/smt/solver/auf-solver.ts).
+"no-unused-private-class-members" = "off"
+"no-useless-assignment" = "error"
+"no-useless-backreference" = "error"
+"no-useless-catch" = "error"
+"no-useless-escape" = "error"
+"no-var" = "error"
+"no-with" = "error"
+"prefer-const" = "error"
+"prefer-rest-params" = "error"
+"prefer-spread" = "error"
+"preserve-caught-error" = "error"
+"require-yield" = "error"
+"use-isnan" = "error"
+"valid-typeof" = "error"
+
+# --- More of ESLint that catches bugs. ---
+# Off: the ported code maps over switches that TypeScript checks are exhaustive, and runs
+# Array.from({ length }) as a counted loop for its side effects; neither returns on every path.
+"array-callback-return" = "off"
+"default-case-last" = "error"
+# `== null` is the idiom for "null or undefined".
+"eqeqeq" = ["error", "always", { null = "ignore" }]
+"no-constructor-return" = "error"
+"no-eval" = "error"
+"no-implied-eval" = "error"
+"no-inner-declarations" = "error"
+"no-labels" = "error"
+"no-lone-blocks" = "error"
+"no-new-wrappers" = "error"
+"no-proto" = "error"
+"no-script-url" = "error"
+"no-self-compare" = "error"
+"no-sequences" = "error"
+"no-template-curly-in-string" = "error"
+"no-useless-concat" = "error"
+"no-useless-rename" = "error"
+"radix" = "error"
+"no-console" = "off"
+
+# --- TypeScript, without types: typescript-eslint's recommended rules. ---
+"@typescript-eslint/ban-ts-comment" = "error"
+"@typescript-eslint/no-array-constructor" = "error"
+"@typescript-eslint/no-duplicate-enum-values" = "error"
+# An interface that only extends (a Pick of another) names a type, which a type alias would too.
+"@typescript-eslint/no-empty-object-type" = ["error", { allowInterfaces = "with-single-extends" }]
+"@typescript-eslint/no-explicit-any" = "error"
+"@typescript-eslint/no-extra-non-null-assertion" = "error"
+"@typescript-eslint/no-misused-new" = "error"
+"@typescript-eslint/no-namespace" = "error"
+"@typescript-eslint/no-non-null-asserted-optional-chain" = "error"
+"@typescript-eslint/no-this-alias" = "error"
+"@typescript-eslint/no-unnecessary-type-constraint" = "error"
+"@typescript-eslint/no-unsafe-declaration-merging" = "error"
+"@typescript-eslint/no-unsafe-function-type" = "error"
+"@typescript-eslint/no-unused-expressions" = "error"
+"@typescript-eslint/no-unused-vars" = [
+  "error",
+  { argsIgnorePattern = "^_", varsIgnorePattern = "^_" },
+]
+"@typescript-eslint/no-wrapper-object-types" = "error"
+"@typescript-eslint/prefer-as-const" = "error"
+"@typescript-eslint/prefer-namespace-keyword" = "error"
+"@typescript-eslint/triple-slash-reference" = "error"
+"@typescript-eslint/adjacent-overload-signatures" = "error"
+"@typescript-eslint/no-dupe-class-members" = "error"
+"@typescript-eslint/no-redeclare" = "error"
+"@typescript-eslint/no-useless-constructor" = "error"
+"@typescript-eslint/no-useless-empty-export" = "error"
+"@typescript-eslint/prefer-literal-enum-member" = "error"
+"@typescript-eslint/no-require-imports" = "error"
+
+# --- Other plugins: correctness only. ---
+"unicorn/new-for-builtins" = "error"
+"unicorn/no-instanceof-array" = "error"
+"unicorn/no-thenable" = "error"
+"unicorn/prefer-node-protocol" = "error"
+"oxc/bad-array-method-on-arguments" = "error"
+"oxc/bad-char-at-comparison" = "error"
+"oxc/bad-comparison-sequence" = "error"
+"oxc/bad-min-max-func" = "error"
+"oxc/bad-object-literal-comparison" = "error"
+"oxc/bad-replace-all-arg" = "error"
+"oxc/const-comparisons" = "error"
+"oxc/double-comparisons" = "error"
+"oxc/erasing-op" = "error"
+"oxc/misrefactored-assign-op" = "error"
+"oxc/missing-throw" = "error"
+"oxc/no-const-enum" = "error"
+"oxc/number-arg-out-of-range" = "error"
+"oxc/uninvoked-array-callback" = "error"
+"promise/no-new-statics" = "error"
+"import/no-self-import" = "error"
+
+# --- bun:test. ---
+"bun:test/no-focused-tests" = "error"
+"bun:test/no-disabled-tests" = "error"
+"bun:test/no-export" = "error"
+"bun:test/no-identical-title" = "error"
+"bun:test/no-duplicate-hooks" = "error"
+"bun:test/no-done-callback" = "error"
+"bun:test/valid-describe-callback" = "error"
+"bun:test/valid-expect" = "error"
+"bun:test/valid-expect-in-promise" = "error"
