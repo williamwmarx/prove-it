@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import type { ModelOutcome } from "./check-model";
+import { compareOutcome } from "./compare-outcome";
 import { CONFORMANCE_DIRECTORY, type CorpusModel, EXPECTED_PATH, findModels } from "./corpora";
 import type { ExpectedResult } from "./record-tlc";
 
@@ -28,34 +29,6 @@ const getArgument = (name: string) => {
 const maximumTlcMilliseconds = Number(getArgument("--max-tlc-ms") ?? 20000);
 const filter = getArgument("--filter");
 const isUpdate = process.argv.includes("--update");
-
-const EXIT_STATUSES: Record<string, string> = {
-  "postcondition-violation": "assumption-violation",
-};
-
-const getExitStatus = (status: string) => EXIT_STATUSES[status] ?? status;
-
-export const compareOutcome = (
-  expected: ExpectedResult,
-  actual: ModelOutcome,
-): string | undefined => {
-  if (expected.status === "error")
-    return actual.status === "error" ? undefined : `expected an error, got ${actual.status}`;
-  if (getExitStatus(actual.status) !== expected.status) {
-    return `expected ${expected.status}, got ${actual.status}${actual.error ? ` (${actual.error})` : ""}`;
-  }
-  const fields = [
-    "violation",
-    "generatedStates",
-    "distinctStates",
-    "depth",
-    "traceLength",
-  ] as const;
-  const differences = fields
-    .filter((field) => expected[field] !== undefined && expected[field] !== actual[field])
-    .map((field) => `${field}: expected ${expected[field]}, got ${actual[field]}`);
-  return differences.length > 0 ? differences.join("; ") : undefined;
-};
 
 const runModel = (specPath: string, configPath: string) =>
   new Promise<ModelOutcome | undefined>((resolve) => {

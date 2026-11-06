@@ -26,3 +26,4 @@ packages/prove-it/tests/conformance/.smt-encode-results.json
 packages/prove-it/tests/conformance/.isabelle-encode-results.json
 packages/prove-it/tests/conformance/.prove-results.json
 packages/prove-it/tests/conformance/.prove-benchmark.json
+packages/prove-it/tests/conformance/.engine-coverage.json
