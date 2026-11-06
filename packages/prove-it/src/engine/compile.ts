@@ -48,6 +48,7 @@ import {
   KIND_BOOL,
   KIND_FUNCTION,
   KIND_INT,
+  KIND_MODEL,
   KIND_SET,
   KIND_STRING,
   KIND_TUPLE,
@@ -71,11 +72,17 @@ export let NXT: Int32Array = new Int32Array(0);
 export let LOC: Int32Array = new Int32Array(256);
 let slotCount = 0;
 
+// The same registers as an object, for generated code, along with how many variables of the state
+// being built have a value.
+export const registers = { cur: CUR, next: NXT, locals: LOC, assigned: 0 };
+
 export const setCurrent = (state: Int32Array) => {
   CUR = state;
+  registers.cur = state;
 };
 export const setNext = (state: Int32Array) => {
   NXT = state;
+  registers.next = state;
 };
 
 const allocateSlot = () => {
@@ -84,6 +91,7 @@ const allocateSlot = () => {
     const next = new Int32Array(LOC.length * 2);
     next.set(LOC);
     LOC = next;
+    registers.locals = next;
   }
   return slot;
 };
@@ -152,7 +160,39 @@ export interface Compiled {
   // For a set: whether TLC's value is a normalized set, whose elements TLC enumerates in its order.
   // The engine enumerates any other set the way the reference interpreter does.
   isNormalized: boolean;
+  // Writes the expression as JavaScript, for generated code. Without it, generated code calls
+  // evaluate.
+  emit?: (gen: CodeGen) => string;
+  // Whether the value is always TRUE or FALSE, whose ids are 1 and 0.
+  isBoolean?: boolean;
 }
+
+// What generated code needs from the compiler: a name in scope for each value it refers to.
+export interface CodeGen {
+  ref: (value: unknown) => string;
+}
+
+export const codeOf = (compiled: Compiled, gen: CodeGen): string =>
+  compiled.emit ? `(${compiled.emit(gen)})` : `${gen.ref(compiled.evaluate)}()`;
+
+export const checkBoolean = (value: number) =>
+  value === TRUE || value === FALSE ? value : bail("expected a boolean");
+
+export const booleanCodeOf = (compiled: Compiled, gen: CodeGen): string =>
+  compiled.isBoolean ? codeOf(compiled, gen) : `${gen.ref(checkBoolean)}(${codeOf(compiled, gen)})`;
+
+const equalsId = (left: number, right: number) =>
+  left === right ? TRUE : equals(left, right) ? TRUE : FALSE;
+const differsId = (left: number, right: number) =>
+  left === right ? FALSE : equals(left, right) ? FALSE : TRUE;
+const readNext = (index: number) => {
+  const value = NXT[index];
+  return value === -1 ? bail("primed variable not assigned") : value;
+};
+const readCurrent = (index: number) => {
+  const value = CUR[index];
+  return value === -1 ? bail("variable not assigned") : value;
+};
 
 const leaf = (evaluate: Evaluate, footprint: Footprint, isNormalized = true): Compiled => ({
   evaluate,
@@ -162,7 +202,12 @@ const leaf = (evaluate: Evaluate, footprint: Footprint, isNormalized = true): Co
 });
 
 const constant = (id: number): Compiled =>
-  ({ ...leaf(() => id, EMPTY_FOOTPRINT), isConstant: true }) as Compiled;
+  ({
+    ...leaf(() => id, EMPTY_FOOTPRINT),
+    isConstant: true,
+    emit: () => String(id),
+    isBoolean: id === TRUE || id === FALSE,
+  }) as Compiled;
 
 const MAXIMUM_MEMO_WIDTH = 6;
 
@@ -179,6 +224,7 @@ const cached = (compiled: Compiled): Compiled => {
       ...compiled,
       isCostly: false,
       isConstant: true,
+      emit: undefined,
       evaluate: () => (value !== -1 ? value : (value = inner())),
     } as Compiled;
   }
@@ -188,6 +234,7 @@ const cached = (compiled: Compiled): Compiled => {
     return {
       ...compiled,
       isCostly: false,
+      emit: undefined,
       evaluate: () => (value !== -1 ? value : (value = inner())),
     };
   }
@@ -216,6 +263,7 @@ const cached = (compiled: Compiled): Compiled => {
     return {
       ...compiled,
       isCostly: false,
+      emit: undefined,
       evaluate: () => {
         if (!table.isEnabled) return inner();
         const key = read();
@@ -242,6 +290,7 @@ const cached = (compiled: Compiled): Compiled => {
     return {
       ...compiled,
       isCostly: false,
+      emit: undefined,
       evaluate: () => {
         if (!table.isEnabled) return inner();
         fill();
@@ -258,6 +307,7 @@ const cached = (compiled: Compiled): Compiled => {
   return {
     ...compiled,
     isCostly: false,
+    emit: undefined,
     evaluate: () => {
       if (!table.isEnabled) return inner();
       fill();
@@ -367,6 +417,30 @@ const IMPURE_BUILTINS = new Set([
   "Any",
 ]);
 
+// The builtins the engine runs in the reference interpreter when it has no implementation of its
+// own: those whose result depends only on their arguments.
+const PURE_BUILTINS = new Set([
+  "SubSeq",
+  "SelectSeq",
+  "IsFiniteSet",
+  "Permutations",
+  "SortSeq",
+  "ToString",
+  "EmptyBag",
+  "IsABag",
+  "BagCardinality",
+  "BagIn",
+  "CopiesIn",
+  "\\oplus",
+  "\\ominus",
+  "BagUnion",
+  "\\sqsubseteq",
+  "BagOfAll",
+  "SubBag",
+  "BagToSet",
+  "SetToBag",
+]);
+
 const unsupported = (what: string): never => bail(`unsupported: ${what}`);
 
 export const createCompiler = (environment: Environment): Compiler => {
@@ -390,6 +464,7 @@ export const createCompiler = (environment: Environment): Compiler => {
 
   const compileBoolean = (expression: Expression, context: Context) => {
     const compiled = compile(expression, context);
+    if (compiled.isBoolean) return compiled;
     const evaluate = compiled.evaluate;
     return {
       ...compiled,
@@ -398,33 +473,34 @@ export const createCompiler = (environment: Environment): Compiler => {
         if (value !== TRUE && value !== FALSE) bail("expected a boolean");
         return value;
       },
+      emit: (gen: CodeGen) => booleanCodeOf(compiled, gen),
+      isBoolean: true,
     };
   };
 
   const readVariable = (index: number, context: Context): Compiled => {
     if (context.isPrimed) {
-      return leaf(
-        () => {
-          const value = NXT[index];
-          return value === -1 ? bail("primed variable not assigned") : value;
-        },
-        { vars: [], primes: [index], slots: [] },
-      );
+      return {
+        ...leaf(() => readNext(index), { vars: [], primes: [index], slots: [] }),
+        emit: (gen) => `${gen.ref(readNext)}(${index})`,
+      };
     }
-    return leaf(
-      () => {
-        const value = CUR[index];
-        return value === -1 ? bail("variable not assigned") : value;
-      },
-      { vars: [index], primes: [], slots: [] },
-    );
+    const isInit = context.isInit;
+    return {
+      ...leaf(() => readCurrent(index), { vars: [index], primes: [], slots: [] }),
+      emit: (gen) =>
+        isInit ? `${gen.ref(readCurrent)}(${index})` : `${gen.ref(registers)}.cur[${index}]`,
+    };
   };
 
   const compileBinding = (binding: Binding, context: Context): Compiled => {
     switch (binding.kind) {
       case "slot": {
         const slot = binding.slot;
-        return leaf(() => LOC[slot], { vars: [], primes: [], slots: [slot] });
+        return {
+          ...leaf(() => LOC[slot], { vars: [], primes: [], slots: [slot] }),
+          emit: (gen) => `${gen.ref(registers)}.locals[${slot}]`,
+        };
       }
       case "argument": {
         const isPrimed = context.isPrimed || binding.context.isPrimed;
@@ -551,6 +627,9 @@ export const createCompiler = (environment: Environment): Compiler => {
           ),
           isCostly: consequent.isCostly || alternative.isCostly,
           isNormalized: consequent.isNormalized && alternative.isNormalized,
+          emit: (gen) =>
+            `${codeOf(condition, gen)} ? ${codeOf(consequent, gen)} : ${codeOf(alternative, gen)}`,
+          isBoolean: consequent.isBoolean === true && alternative.isBoolean === true,
         };
       }
       case "Case": {
@@ -637,7 +716,10 @@ export const createCompiler = (environment: Environment): Compiler => {
         const record = compile(expression.record, context);
         const key = str(expression.field);
         const evaluate = record.evaluate;
-        return leaf(() => apply(evaluate(), key), record.footprint);
+        return {
+          ...leaf(() => apply(evaluate(), key), record.footprint),
+          emit: (gen) => `${gen.ref(apply)}(${codeOf(record, gen)}, ${key})`,
+        };
       }
       case "Except":
         return compileExcept(expression, context);
@@ -699,6 +781,9 @@ export const createCompiler = (environment: Environment): Compiler => {
       footprint,
       isCostly: operands.some((operand) => operand.isCostly),
       isNormalized: true,
+      emit: (gen: CodeGen) =>
+        operands.map((operand) => codeOf(operand, gen)).join(isAnd ? " && " : " || "),
+      isBoolean: true,
     };
   };
 
@@ -1282,7 +1367,10 @@ export const createCompiler = (environment: Environment): Compiler => {
     const footprint = mergeFootprints(fn.footprint, ...args.map((argument) => argument.footprint));
     if (args.length === 1) {
       const argumentEvaluate = args[0].evaluate;
-      return leaf(() => apply(fnEvaluate(), argumentEvaluate()), footprint);
+      return {
+        ...leaf(() => apply(fnEvaluate(), argumentEvaluate()), footprint),
+        emit: (gen) => `${gen.ref(apply)}(${codeOf(fn, gen)}, ${codeOf(args[0], gen)})`,
+      };
     }
     const evaluators = args.map((argument) => argument.evaluate);
     return leaf(() => {
@@ -1495,6 +1583,10 @@ export const createCompiler = (environment: Environment): Compiler => {
     return setOf(functions);
   };
 
+  // TLC fails to test a value other than a model value for membership in a set of another kind.
+  const notIn = (element: number, set: string) =>
+    kindOf(element) === KIND_MODEL ? false : bail(`a mistyped membership in ${set}`);
+
   // A membership test for a compiled set, which builds the set only when it must.
   const memberTest = (set: Compiled): ((element: number) => boolean) => {
     const lazy = set as LazySet;
@@ -1502,11 +1594,12 @@ export const createCompiler = (environment: Environment): Compiler => {
     if (lazy.infinite) {
       switch (lazy.infinite) {
         case "Nat":
-          return (element) => kindOf(element) === KIND_INT && intOf(element) >= 0;
+          return (element) =>
+            kindOf(element) === KIND_INT ? intOf(element) >= 0 : notIn(element, "Nat");
         case "Int":
-          return (element) => kindOf(element) === KIND_INT;
+          return (element) => kindOf(element) === KIND_INT || notIn(element, "Int");
         default:
-          return (element) => kindOf(element) === KIND_STRING;
+          return (element) => kindOf(element) === KIND_STRING || notIn(element, "STRING");
       }
     }
     const evaluate = set.evaluate;
@@ -1525,10 +1618,15 @@ export const createCompiler = (environment: Environment): Compiler => {
     expression: Expression & { kind: "Apply" },
     context: Context,
   ): Compiled => {
-    if (builtin.isStateLevel || IMPURE_BUILTINS.has(name)) return unsupported(name);
+    if (builtin.isStateLevel || IMPURE_BUILTINS.has(name)) {
+      if (name === "TLCEval" && expression.args.length === 1)
+        return compile(expression.args[0], context);
+      return unsupported(name);
+    }
     const args = expression.args;
     const native = compileNativeBuiltin(name, args, context);
     if (native) return native;
+    if (!PURE_BUILTINS.has(name)) return unsupported(name);
     return compileBridgedBuiltin(name, builtin, args, context);
   };
 
@@ -1537,6 +1635,7 @@ export const createCompiler = (environment: Environment): Compiler => {
     right: Compiled,
     operation: (left: number, right: number) => number,
     isCostly = false,
+    isBoolean = false,
   ): Compiled => {
     const leftEvaluate = left.evaluate;
     const rightEvaluate = right.evaluate;
@@ -1545,6 +1644,8 @@ export const createCompiler = (environment: Environment): Compiler => {
       footprint: mergeFootprints(left.footprint, right.footprint),
       isCostly,
       isNormalized: true,
+      emit: (gen) => `${gen.ref(operation)}(${codeOf(left, gen)}, ${codeOf(right, gen)})`,
+      isBoolean,
     };
   };
 
@@ -1559,6 +1660,7 @@ export const createCompiler = (environment: Environment): Compiler => {
       footprint: operand.footprint,
       isCostly,
       isNormalized: true,
+      emit: (gen) => `${gen.ref(operation)}(${codeOf(operand, gen)})`,
     };
   };
 
@@ -1574,11 +1676,17 @@ export const createCompiler = (environment: Environment): Compiler => {
     const operand = (index: number) => compile(args[index], context);
     switch (name) {
       case "=":
-        return binary(operand(0), operand(1), (left, right) => bool(equals(left, right)));
+        return binary(operand(0), operand(1), equalsId, false, true);
       case "#":
-        return binary(operand(0), operand(1), (left, right) => bool(!equals(left, right)));
-      case "~":
-        return unary(compileBoolean(args[0], context), (value) => (value === TRUE ? FALSE : TRUE));
+        return binary(operand(0), operand(1), differsId, false, true);
+      case "~": {
+        const negated = compileBoolean(args[0], context);
+        return {
+          ...unary(negated, (value) => (value === TRUE ? FALSE : TRUE)),
+          emit: (gen) => `1 - ${codeOf(negated, gen)}`,
+          isBoolean: true,
+        };
+      }
       case "/\\":
       case "\\/":
         return compileJunction(
@@ -1613,6 +1721,9 @@ export const createCompiler = (environment: Environment): Compiler => {
           footprint: mergeFootprints(element.footprint, set.footprint),
           isCostly: (set as LazySet).member !== undefined,
           isNormalized: true,
+          emit: (gen) =>
+            `${gen.ref(member)}(${codeOf(element, gen)}) ? ${isIn ? 1 : 0} : ${isIn ? 0 : 1}`,
+          isBoolean: true,
         };
       }
       case "\\subseteq": {
@@ -1721,20 +1832,36 @@ export const createCompiler = (environment: Environment): Compiler => {
           return int(Math.pow(expectInt(left), exponent));
         });
       case "<":
-        return binary(operand(0), operand(1), (left, right) =>
-          bool(expectInt(left) < expectInt(right)),
+        return binary(
+          operand(0),
+          operand(1),
+          (left, right) => bool(expectInt(left) < expectInt(right)),
+          false,
+          true,
         );
       case ">":
-        return binary(operand(0), operand(1), (left, right) =>
-          bool(expectInt(left) > expectInt(right)),
+        return binary(
+          operand(0),
+          operand(1),
+          (left, right) => bool(expectInt(left) > expectInt(right)),
+          false,
+          true,
         );
       case "<=":
-        return binary(operand(0), operand(1), (left, right) =>
-          bool(expectInt(left) <= expectInt(right)),
+        return binary(
+          operand(0),
+          operand(1),
+          (left, right) => bool(expectInt(left) <= expectInt(right)),
+          false,
+          true,
         );
       case ">=":
-        return binary(operand(0), operand(1), (left, right) =>
-          bool(expectInt(left) >= expectInt(right)),
+        return binary(
+          operand(0),
+          operand(1),
+          (left, right) => bool(expectInt(left) >= expectInt(right)),
+          false,
+          true,
         );
       case "..":
         return binary(

@@ -4,7 +4,15 @@
 // every other conjunct as a guard.
 
 import { type Expression, isLocallyResolved } from "../ast";
-import { type CompileContext, type Compiled, type Compiler, CUR, LOC, NXT } from "./compile";
+import {
+  type CompileContext,
+  type Compiled,
+  type Compiler,
+  CUR,
+  LOC,
+  NXT,
+  registers,
+} from "./compile";
 import { bail, elementAt, equals, FALSE, KIND_SET, kindOf, sizeOf, TRUE } from "./store";
 
 type Continue = () => void;
@@ -17,11 +25,8 @@ interface ActionOptions {
   isAssignedShortcut: boolean;
 }
 
-// How many variables of the state being built have a value.
-const assigned = { count: 0 };
-
 export const resetAssigned = () => {
-  assigned.count = 0;
+  registers.assigned = 0;
   undoTop.value = 0;
 };
 
@@ -38,8 +43,15 @@ export const compileAction = (
   options: ActionOptions,
 ): Step => {
   const variableCount = compiler.variableCount;
-  const environment = compiler.environment;
   const isInit = options.isInit;
+  const {
+    getAssignableIndex,
+    getUnchangedIndices,
+    isGuard,
+    isPossiblyAssignable,
+    hasBranches,
+    hasAssignments,
+  } = createActionAnalysis(compiler, isInit);
 
   const compileGuard = (guard: Expression, guardContext: CompileContext): Compiled => {
     const compiled = compiler.compile(guard, guardContext);
@@ -57,54 +69,6 @@ export const compileAction = (
 
   // The variable an expression such as x' (or x in the initial predicate) assigns, following
   // operator arguments and zero-arity definitions.
-  const getAssignable = (
-    expression: Expression,
-    assignableContext: CompileContext,
-    isPrimed: boolean,
-    depth = 0,
-  ): number | undefined => {
-    if (depth > 50) return undefined;
-    if (expression.kind === "Prime" && isPrimed) {
-      return getAssignable(expression.expression, assignableContext, false, depth + 1);
-    }
-    if (expression.kind !== "Identifier") return undefined;
-    if (isLocallyResolved(expression)) {
-      const resolved = compiler.resolveAction(expression, assignableContext);
-      if (!resolved) return undefined;
-      return getAssignable(resolved.body, resolved.context, isPrimed, depth + 1);
-    }
-    const index = environment.variableIndex.get(expression.name);
-    if (index !== undefined) return isPrimed ? undefined : index;
-    const resolved = compiler.resolveAction(expression, assignableContext);
-    if (!resolved) return undefined;
-    return getAssignable(resolved.body, resolved.context, isPrimed, depth + 1);
-  };
-
-  const getAssignableIndex = (expression: Expression, assignableContext: CompileContext) =>
-    getAssignable(expression, assignableContext, !isInit);
-
-  const getUnchangedIndices = (
-    expression: Expression,
-    unchangedContext: CompileContext,
-    depth = 0,
-  ): number[] | undefined => {
-    if (depth > 50) return undefined;
-    if (expression.kind === "Tuple") {
-      const indices = expression.elements.map((element) =>
-        getUnchangedIndices(element, unchangedContext, depth + 1),
-      );
-      return indices.every((item) => item !== undefined) ? indices.flat() : undefined;
-    }
-    if (expression.kind !== "Identifier") return undefined;
-    if (!isLocallyResolved(expression)) {
-      const index = environment.variableIndex.get(expression.name);
-      if (index !== undefined) return [index];
-    }
-    const resolved = compiler.resolveAction(expression, unchangedContext);
-    if (!resolved) return undefined;
-    return getUnchangedIndices(resolved.body, resolved.context, depth + 1);
-  };
-
   type Conjunct =
     | { kind: "guard"; evaluate: () => number }
     | { kind: "assign"; index: number; evaluate: () => number }
@@ -133,45 +97,6 @@ export const compileAction = (
   };
 
   // Whether an expression is a guard, which TLC evaluates rather than walks.
-  const isGuard = (operand: Expression, operandContext: CompileContext): boolean => {
-    switch (operand.kind) {
-      case "Label":
-      case "And":
-      case "Or":
-      case "Exists":
-      case "Forall":
-      case "If":
-      case "Case":
-      case "Let":
-      case "Unchanged":
-      case "BoxAction":
-      case "AngleAction":
-      case "FunctionApplication":
-        return false;
-      case "Identifier":
-        return compiler.resolveAction(operand, operandContext) === undefined;
-      case "Apply": {
-        if (operand.operator === "=>") return false;
-        if (
-          operand.operator === "=" ||
-          operand.operator === "\\in" ||
-          operand.operator === "\\subseteq"
-        ) {
-          if (getAssignableIndex(operand.args[0], operandContext) !== undefined) return false;
-          if (isPossiblyAssignable(operand.args[0])) return false;
-        }
-        return compiler.resolveAction(operand, operandContext) === undefined;
-      }
-      default:
-        return true;
-    }
-  };
-
-  const isPossiblyAssignable = (expression: Expression) =>
-    expression.kind === "Let" ||
-    (expression.kind === "Identifier" && (isInit || isLocallyResolved(expression))) ||
-    (!isInit && expression.kind === "Prime");
-
   const compileConjunction = (operands: Expression[], conjunctionContext: CompileContext): Step => {
     const conjuncts = operands.map((operand) => toConjunct(operand, conjunctionContext));
     const guards: (Compiled | undefined)[] = [];
@@ -201,7 +126,7 @@ export const compileAction = (
             const current = state[variable];
             if (current === -1) {
               state[variable] = value;
-              assigned.count++;
+              registers.assigned++;
               undoStack[undoTop.value++] = variable;
               return true;
             }
@@ -216,7 +141,7 @@ export const compileAction = (
               const current = NXT[variable];
               if (current === -1) {
                 NXT[variable] = CUR[variable];
-                assigned.count++;
+                registers.assigned++;
                 undoStack[undoTop.value++] = variable;
               } else if (current !== CUR[variable] && !equals(current, CUR[variable])) {
                 return false;
@@ -236,7 +161,7 @@ export const compileAction = (
       const mark = undoTop.value;
       let index = start;
       for (; index < count; index++) {
-        if (index > 0 && isShortcut && assigned.count === variableCount) {
+        if (index > 0 && isShortcut && registers.assigned === variableCount) {
           let holds = true;
           for (let rest = index; rest < count; rest++) {
             const value = getGuard(rest).evaluate();
@@ -262,7 +187,7 @@ export const compileAction = (
       const state = target(isInit);
       for (let position = undoTop.value - 1; position >= mark; position--)
         state[undoStack[position]] = -1;
-      assigned.count -= undoTop.value - mark;
+      registers.assigned -= undoTop.value - mark;
       undoTop.value = mark;
     };
     return (onComplete) => runFrom(0, onComplete);
@@ -289,7 +214,7 @@ export const compileAction = (
       const id = setEvaluate();
       if (kindOf(id) !== KIND_SET) bail("x' \\in S with S not a set");
       const size = sizeOf(id);
-      assigned.count++;
+      registers.assigned++;
       try {
         for (let position = 0; position < size; position++) {
           state[index] = elementAt(id, position);
@@ -297,7 +222,7 @@ export const compileAction = (
         }
       } finally {
         state[index] = -1;
-        assigned.count--;
+        registers.assigned--;
       }
     };
   };
@@ -525,7 +450,7 @@ export const compileAction = (
           onComplete();
           return;
         }
-        if (index > 0 && isInit && assigned.count === variableCount) {
+        if (index > 0 && isInit && registers.assigned === variableCount) {
           const guard = getForallGuard();
           for (let rest = index; rest < ordered.length; rest++) {
             for (let level = 0; level < slots.length; level++)
@@ -548,6 +473,100 @@ export const compileAction = (
       return compiler.compile(step.body, inner).evaluate;
     }
   };
+
+  return compileStep(expression, context);
+};
+
+// What the action compilers need to know about an expression: which variable it assigns, which it
+// leaves unchanged, and whether TLC evaluates or walks it.
+export const createActionAnalysis = (compiler: Compiler, isInit: boolean) => {
+  const environment = compiler.environment;
+  const getAssignable = (
+    expression: Expression,
+    assignableContext: CompileContext,
+    isPrimed: boolean,
+    depth = 0,
+  ): number | undefined => {
+    if (depth > 50) return undefined;
+    if (expression.kind === "Prime" && isPrimed) {
+      return getAssignable(expression.expression, assignableContext, false, depth + 1);
+    }
+    if (expression.kind !== "Identifier") return undefined;
+    if (isLocallyResolved(expression)) {
+      const resolved = compiler.resolveAction(expression, assignableContext);
+      if (!resolved) return undefined;
+      return getAssignable(resolved.body, resolved.context, isPrimed, depth + 1);
+    }
+    const index = environment.variableIndex.get(expression.name);
+    if (index !== undefined) return isPrimed ? undefined : index;
+    const resolved = compiler.resolveAction(expression, assignableContext);
+    if (!resolved) return undefined;
+    return getAssignable(resolved.body, resolved.context, isPrimed, depth + 1);
+  };
+
+  const getAssignableIndex = (expression: Expression, assignableContext: CompileContext) =>
+    getAssignable(expression, assignableContext, !isInit);
+
+  const getUnchangedIndices = (
+    expression: Expression,
+    unchangedContext: CompileContext,
+    depth = 0,
+  ): number[] | undefined => {
+    if (depth > 50) return undefined;
+    if (expression.kind === "Tuple") {
+      const indices = expression.elements.map((element) =>
+        getUnchangedIndices(element, unchangedContext, depth + 1),
+      );
+      return indices.every((item) => item !== undefined) ? indices.flat() : undefined;
+    }
+    if (expression.kind !== "Identifier") return undefined;
+    if (!isLocallyResolved(expression)) {
+      const index = environment.variableIndex.get(expression.name);
+      if (index !== undefined) return [index];
+    }
+    const resolved = compiler.resolveAction(expression, unchangedContext);
+    if (!resolved) return undefined;
+    return getUnchangedIndices(resolved.body, resolved.context, depth + 1);
+  };
+
+  const isGuard = (operand: Expression, operandContext: CompileContext): boolean => {
+    switch (operand.kind) {
+      case "Label":
+      case "And":
+      case "Or":
+      case "Exists":
+      case "Forall":
+      case "If":
+      case "Case":
+      case "Let":
+      case "Unchanged":
+      case "BoxAction":
+      case "AngleAction":
+      case "FunctionApplication":
+        return false;
+      case "Identifier":
+        return compiler.resolveAction(operand, operandContext) === undefined;
+      case "Apply": {
+        if (operand.operator === "=>") return false;
+        if (
+          operand.operator === "=" ||
+          operand.operator === "\\in" ||
+          operand.operator === "\\subseteq"
+        ) {
+          if (getAssignableIndex(operand.args[0], operandContext) !== undefined) return false;
+          if (isPossiblyAssignable(operand.args[0])) return false;
+        }
+        return compiler.resolveAction(operand, operandContext) === undefined;
+      }
+      default:
+        return true;
+    }
+  };
+
+  const isPossiblyAssignable = (expression: Expression) =>
+    expression.kind === "Let" ||
+    (expression.kind === "Identifier" && (isInit || isLocallyResolved(expression))) ||
+    (!isInit && expression.kind === "Prime");
 
   // Whether an expression has a disjunction or an existential, for each of which TLC generates a
   // successor when it walks the expression.
@@ -578,7 +597,14 @@ export const compileAction = (
     return children.some((child) => hasAssignments(child, bodyContext, depth + 1));
   };
 
-  return compileStep(expression, context);
+  return {
+    getAssignableIndex,
+    getUnchangedIndices,
+    isGuard,
+    isPossiblyAssignable,
+    hasBranches,
+    hasAssignments,
+  };
 };
 
 const collectChildren = (expression: Expression, children: Expression[]) => {

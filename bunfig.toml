@@ -11,6 +11,8 @@ printWidth = 100
 sortImports = true
 sortPackageJson = true
 ignorePatterns = [
+  # Agents' worktrees, each formatted in its own checkout.
+  ".claude/",
   # Prettier realigns a whole Markdown table to change one cell.
   "**/*.md",
   # Inputs and recordings from TLC, SANY, tlapm and the provers, which the tests compare
@@ -28,6 +30,8 @@ flavor = "eslint"
 maxWarnings = 0
 reportUnusedDisableDirectives = "error"
 ignorePatterns = [
+  # Agents' worktrees, each linted in its own checkout.
+  ".claude/",
   "**/node_modules/",
   "**/dist/",
   "**/.scripts/",

@@ -8,8 +8,10 @@ import type { CheckProgress } from "../check";
 import type { ModelConfig } from "../config";
 import { type Environment, getDefinition } from "../evaluate";
 import { compileAction, resetAssigned, type Step } from "./action";
+import { generateAction } from "./codegen";
 import { type Compiled, createCompiler, ROOT_CONTEXT, setCurrent, setNext } from "./compile";
 import { getStateFingerprints, resetFingerprints } from "./fingerprint";
+import { getCodegenSetting, reportEngine } from "./settings";
 import { bail, Bailout, FALSE, getValueCount, resetStore, TRUE } from "./store";
 
 export interface EngineSpec {
@@ -78,19 +80,23 @@ export const runEngine = (input: EngineInput): EngineResult => {
     named("action constraint", name),
   );
 
-  const initStep: Step = compileAction(
-    compiler,
-    input.spec.init,
-    { ...ROOT_CONTEXT, isInit: true },
-    {
-      isInit: true,
-      isAssignedShortcut: true,
-    },
-  );
-  const nextStep: Step = compileAction(compiler, input.spec.next, ROOT_CONTEXT, {
-    isInit: false,
-    isAssignedShortcut: input.isWarningEnabled,
-  });
+  const buildAction = (
+    expression: Expression,
+    isInit: boolean,
+    isAssignedShortcut: boolean,
+  ): Step => {
+    const context = isInit ? { ...ROOT_CONTEXT, isInit: true } : ROOT_CONTEXT;
+    const options = { isInit, isAssignedShortcut };
+    const generated =
+      getCodegenSetting() === "0"
+        ? undefined
+        : generateAction(compiler, expression, context, options);
+    if (generated) return generated;
+    reportEngine(`${isInit ? "init" : "next"} runs as closures`);
+    return compileAction(compiler, expression, context, options);
+  };
+  const initStep = buildAction(input.spec.init, true, true);
+  const nextStep = buildAction(input.spec.next, false, input.isWarningEnabled);
 
   // The states found so far, `width` ids each, in the order the search found them.
   let states = new Int32Array(Math.max(1, width) * 1024);
