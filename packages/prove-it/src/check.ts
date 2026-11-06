@@ -1,5 +1,7 @@
 import type { Expression } from "./ast";
 import { type ModelConfig, parseConfig } from "./config";
+import { isBailout, runEngine } from "./engine/search";
+import { getEngineSetting, reportEngine } from "./engine/settings";
 import { createEnvironment } from "./environment";
 import {
   createStackOverflowError,
@@ -1286,6 +1288,88 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     return undefined;
   };
 
+  // Prove It's engine checks the specs it handles many times faster, and hands any other spec, or
+  // any run that ends other than in success, to the interpreter below.
+  const engineReport = { isReported: false };
+  const tryEngine = (): CheckResult | undefined => {
+    const reason = getEngineIneligibility();
+    if (reason !== undefined) {
+      reportEngine(`skipped: ${reason}`);
+      return undefined;
+    }
+    const init = spec.init;
+    const next = spec.next;
+    if (init === undefined || next === undefined) return undefined;
+    const startedAt = performance.now();
+    try {
+      const result = runEngine({
+        config,
+        environment,
+        spec: { init, next },
+        isWarningEnabled: runtime.isWarningEnabled,
+        tlcOrder: search.getTlcOrder(),
+        startedAt,
+        onProgress: (progress) => {
+          engineReport.isReported = true;
+          options.onProgress?.(progress);
+        },
+        onInitialStates: (generated, distinct) => {
+          engineReport.isReported = true;
+          options.onProgress?.({ kind: "initial-states-started" });
+          options.onProgress?.({
+            kind: "initial-states-computed",
+            initialStates: { generated, distinct },
+          });
+        },
+      });
+      reportEngine(
+        `checked ${result.distinctStates} states in ${(performance.now() - startedAt).toFixed(0)} ms with ${result.valueCount} values`,
+      );
+      runtime.generatedStates = result.generatedStates;
+      runtime.distinctStates = result.distinctStates;
+      runtime.initialStates = result.initialStates.generated;
+      runtime.queueSize = 0;
+      statistics.depth = result.depth;
+      statistics.initialStates = result.initialStates;
+      return {
+        ...createResult("success"),
+        outDegrees: result.outDegrees,
+        fingerprintDistance: getFingerprintDistance(
+          result.distinctStates,
+          result.generatedStates,
+          result.getFingerprints,
+        ),
+      };
+    } catch (error) {
+      reportEngine(
+        `handed over after ${(performance.now() - startedAt).toFixed(0)} ms: ${isBailout(error) ? error.message : String(error instanceof Error ? (error.stack ?? error.message) : error)}`,
+      );
+      return undefined;
+    }
+  };
+  const getEngineIneligibility = () => {
+    if (getEngineSetting() === "0") return "disabled";
+    if (liveness) return "liveness";
+    if (stateWriter) return "-dump";
+    if (options.isContinued) return "-continue";
+    if (search.isSymmetric) return "symmetry";
+    if (search.isFingerprintedLikeTlc) return "wide strings";
+    if (config.view !== undefined) return "view";
+    if (config.postconditions.length > 0 || config.possible.length > 0) return "postconditions";
+    if (config.periodic !== undefined) return "periodic";
+    if (is174) return "TLC 1.7.4";
+    if (spec.scope !== undefined) return "a scoped specification";
+    const properties = search.properties;
+    if (
+      properties.invariants.length > 0 ||
+      properties.actionProperties.length > 0 ||
+      properties.initialPredicates.length > 0
+    ) {
+      return "properties";
+    }
+    return undefined;
+  };
+
   const outcome: { result: CheckResult | undefined } = { result: undefined };
   if (liveness) {
     options.onProgress?.({ kind: "liveness-prepared", branches: liveness.branches });
@@ -1294,14 +1378,18 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   // constructor.
   const assumptionViolation = findViolatedAssumption();
   if (assumptionViolation) return createResult("assumption-violation", assumptionViolation);
-  options.onProgress?.({ kind: "initial-states-started" });
+  const engineOutcome = tryEngine();
+  if (engineOutcome) return engineOutcome;
+  if (!engineReport.isReported) options.onProgress?.({ kind: "initial-states-started" });
   if (spec.init !== undefined) {
     try {
       forEachInitialState(
         spec.init,
         environment,
         (state) => {
-          reportInitialStatesProgress(runtime.initialStates, options.onProgress);
+          if (!engineReport.isReported) {
+            reportInitialStatesProgress(runtime.initialStates, options.onProgress);
+          }
           try {
             outcome.result = visitInitialState(state);
           } catch (error) {
@@ -1344,10 +1432,12 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     generated: runtime.initialStates,
     distinct: runtime.distinctStates,
   };
-  options.onProgress?.({
-    kind: "initial-states-computed",
-    initialStates: statistics.initialStates,
-  });
+  if (!engineReport.isReported) {
+    options.onProgress?.({
+      kind: "initial-states-computed",
+      initialStates: statistics.initialStates,
+    });
+  }
 
   const next = spec.next;
   if (next === undefined) {

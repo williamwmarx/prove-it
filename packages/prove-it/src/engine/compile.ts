@@ -1,0 +1,1989 @@
+// Compiles TLA+ expressions into closures over interned ids. Each compiled expression knows its
+// footprint: the state variables, primed variables, and bound names it reads. An expression worth
+// caching is wrapped in a memo table keyed by the ids in its footprint, and one that reads nothing is
+// evaluated once.
+//
+// Operators are expanded where they are applied, with their parameters bound to the argument
+// expressions, as TLA+ defines them. A recursive operator or function is compiled once and called by
+// value instead.
+
+import {
+  type Bound,
+  type Definition,
+  type Expression,
+  type FunctionDefinition,
+  isLocallyResolved,
+  type OperatorDefinition,
+  type OperatorParam,
+} from "../ast";
+import type { Builtin, BuiltinArgument, Environment, OperatorValue } from "../evaluate";
+import { getDefinition } from "../evaluate";
+import type { Value } from "../values";
+import { fromValue, toValue } from "./convert";
+import { MemoTable } from "./memo";
+import {
+  apply,
+  bail,
+  bool,
+  compare,
+  difference,
+  domainOf,
+  elementAt,
+  EMPTY_SET,
+  EMPTY_TUPLE,
+  equals,
+  except,
+  FALSE,
+  findKey,
+  functionOf,
+  functionOfSorted,
+  getKey,
+  getRangeValue,
+  int,
+  intersection,
+  intOf,
+  isFunctionKind,
+  isMember,
+  isSubset,
+  KIND_BOOL,
+  KIND_FUNCTION,
+  KIND_INT,
+  KIND_SET,
+  KIND_STRING,
+  KIND_TUPLE,
+  kindOf,
+  setOf,
+  setOfSorted,
+  sizeOf,
+  str,
+  TRUE,
+  tupleOf,
+  union,
+} from "./store";
+
+// --- registers the compiled code reads ---
+
+// The current state, or the initial state being built. -1 marks a variable not yet assigned.
+export let CUR: Int32Array = new Int32Array(0);
+// The next state being built. -1 marks a variable not yet assigned.
+export let NXT: Int32Array = new Int32Array(0);
+// Bound names, each at a slot fixed when it is compiled.
+export let LOC: Int32Array = new Int32Array(256);
+let slotCount = 0;
+
+export const setCurrent = (state: Int32Array) => {
+  CUR = state;
+};
+export const setNext = (state: Int32Array) => {
+  NXT = state;
+};
+
+const allocateSlot = () => {
+  const slot = slotCount++;
+  if (slot >= LOC.length) {
+    const next = new Int32Array(LOC.length * 2);
+    next.set(LOC);
+    LOC = next;
+  }
+  return slot;
+};
+
+// --- footprints ---
+
+export interface Footprint {
+  vars: number[];
+  primes: number[];
+  slots: number[];
+}
+
+const EMPTY_FOOTPRINT: Footprint = { vars: [], primes: [], slots: [] };
+
+const mergeSorted = (left: number[], right: number[]) => {
+  if (left.length === 0) return right;
+  if (right.length === 0 || left === right) return left;
+  const merged: number[] = [];
+  let leftIndex = 0;
+  let rightIndex = 0;
+  while (leftIndex < left.length || rightIndex < right.length) {
+    const leftValue = leftIndex < left.length ? left[leftIndex] : Infinity;
+    const rightValue = rightIndex < right.length ? right[rightIndex] : Infinity;
+    if (leftValue === rightValue) {
+      merged.push(leftValue);
+      leftIndex++;
+      rightIndex++;
+    } else if (leftValue < rightValue) {
+      merged.push(leftValue);
+      leftIndex++;
+    } else {
+      merged.push(rightValue);
+      rightIndex++;
+    }
+  }
+  return merged;
+};
+
+const mergeFootprints = (...footprints: Footprint[]): Footprint =>
+  footprints.reduce(
+    (merged, footprint) => ({
+      vars: mergeSorted(merged.vars, footprint.vars),
+      primes: mergeSorted(merged.primes, footprint.primes),
+      slots: mergeSorted(merged.slots, footprint.slots),
+    }),
+    EMPTY_FOOTPRINT,
+  );
+
+const withoutSlots = (footprint: Footprint, slots: number[]): Footprint => ({
+  ...footprint,
+  slots: footprint.slots.filter((slot) => !slots.includes(slot)),
+});
+
+const footprintWidth = (footprint: Footprint) =>
+  footprint.vars.length + footprint.primes.length + footprint.slots.length;
+
+// --- compiled expressions ---
+
+export type Evaluate = () => number;
+
+export interface Compiled {
+  evaluate: Evaluate;
+  footprint: Footprint;
+  // Whether evaluating it costs more than looking it up, so that caching it pays.
+  isCostly: boolean;
+  // For a set: whether TLC's value is a normalized set, whose elements TLC enumerates in its order.
+  // The engine enumerates any other set the way the reference interpreter does.
+  isNormalized: boolean;
+}
+
+const leaf = (evaluate: Evaluate, footprint: Footprint, isNormalized = true): Compiled => ({
+  evaluate,
+  footprint,
+  isCostly: false,
+  isNormalized,
+});
+
+const constant = (id: number): Compiled =>
+  ({ ...leaf(() => id, EMPTY_FOOTPRINT), isConstant: true }) as Compiled;
+
+const MAXIMUM_MEMO_WIDTH = 6;
+
+const memoTables: MemoTable[] = [];
+
+// Caches a costly expression by the ids it reads, and evaluates one that reads nothing only once.
+const cached = (compiled: Compiled): Compiled => {
+  const footprint = compiled.footprint;
+  const inner = compiled.evaluate;
+  const width = footprintWidth(footprint);
+  if (width === 0 && !(compiled as { isConstant?: boolean }).isConstant) {
+    let value = -1;
+    return {
+      ...compiled,
+      isCostly: false,
+      isConstant: true,
+      evaluate: () => (value !== -1 ? value : (value = inner())),
+    } as Compiled;
+  }
+  if (!compiled.isCostly) return compiled;
+  if (width === 0) {
+    let value = -1;
+    return {
+      ...compiled,
+      isCostly: false,
+      evaluate: () => (value !== -1 ? value : (value = inner())),
+    };
+  }
+  if (width > MAXIMUM_MEMO_WIDTH) return compiled;
+  const table = new MemoTable(width);
+  memoTables.push(table);
+  const vars = footprint.vars;
+  const primes = footprint.primes;
+  const slots = footprint.slots;
+  if (width === 1) {
+    const read: () => number =
+      vars.length === 1
+        ? (
+            (variable) => () =>
+              CUR[variable]
+          )(vars[0])
+        : primes.length === 1
+          ? (
+              (variable) => () =>
+                NXT[variable]
+            )(primes[0])
+          : (
+              (slot) => () =>
+                LOC[slot]
+            )(slots[0]);
+    return {
+      ...compiled,
+      isCostly: false,
+      evaluate: () => {
+        if (!table.isEnabled) return inner();
+        const key = read();
+        const known = table.get1(key);
+        if (known !== -1) return known;
+        const value = inner();
+        table.set1(key, value);
+        return value;
+      },
+    };
+  }
+  const scratch = new Int32Array(width);
+  const fill = () => {
+    let index = 0;
+    for (let position = 0; position < vars.length; position++)
+      scratch[index++] = CUR[vars[position]];
+    for (let position = 0; position < primes.length; position++) {
+      scratch[index++] = NXT[primes[position]];
+    }
+    for (let position = 0; position < slots.length; position++)
+      scratch[index++] = LOC[slots[position]];
+  };
+  if (width === 2) {
+    return {
+      ...compiled,
+      isCostly: false,
+      evaluate: () => {
+        if (!table.isEnabled) return inner();
+        fill();
+        const first = scratch[0];
+        const second = scratch[1];
+        const known = table.get2(first, second);
+        if (known !== -1) return known;
+        const value = inner();
+        table.set2(first, second, value);
+        return value;
+      },
+    };
+  }
+  return {
+    ...compiled,
+    isCostly: false,
+    evaluate: () => {
+      if (!table.isEnabled) return inner();
+      fill();
+      const known = table.getN(scratch);
+      if (known !== -1) return known;
+      const value = inner();
+      // The inner evaluation may have overwritten the scratch through a nested lookup of this table.
+      fill();
+      table.setN(scratch, value);
+      return value;
+    },
+  };
+};
+
+export const getMemoStatistics = () =>
+  memoTables.map((table) => ({
+    width: table.width,
+    size: table.size,
+    lookups: table.lookups,
+    hits: table.hits,
+    isEnabled: table.isEnabled,
+  }));
+
+// --- scopes ---
+
+interface Context {
+  scope: Scope | undefined;
+  isPrimed: boolean;
+  // Whether the expression is part of the initial predicate, where unprimed variables are assigned.
+  isInit: boolean;
+}
+
+type Binding =
+  | { kind: "slot"; slot: number }
+  // An operator's argument, which TLA+ substitutes for the parameter.
+  | {
+      kind: "argument";
+      expression: Expression;
+      context: Context;
+      compiled: (Compiled | undefined)[];
+    }
+  | { kind: "operator"; operator: OperatorBinding }
+  | { kind: "value"; compiled: Compiled };
+
+interface OperatorBinding {
+  name: string;
+  params: OperatorParam[];
+  body: Expression;
+  context: Context;
+}
+
+interface Scope {
+  name: string;
+  binding: Binding;
+  parent: Scope | undefined;
+}
+
+const lookup = (scope: Scope | undefined, name: string): Binding | undefined => {
+  for (let current = scope; current; current = current.parent) {
+    if (current.name === name) return current.binding;
+  }
+  return undefined;
+};
+
+const bind = (scope: Scope | undefined, name: string, binding: Binding): Scope => ({
+  name,
+  binding,
+  parent: scope,
+});
+
+// --- the compiler ---
+
+export interface Compiler {
+  compile: (expression: Expression, context: Context) => Compiled;
+  compileOperatorBody: (
+    definition: OperatorDefinition,
+    args: Expression[],
+    context: Context,
+  ) => {
+    body: Expression;
+    context: Context;
+  };
+  resolveAction: (expression: Expression, context: Context) => ActionTarget | undefined;
+  bindLet: (expression: Expression & { kind: "Let" }, context: Context) => Context;
+  bindValue: (context: Context, name: string) => { context: Context; slot: number };
+  environment: Environment;
+  variableCount: number;
+}
+
+// What an expression that may be an action names: a user-defined operator expanded with its
+// arguments, or a binding of an argument that is itself an action.
+export type ActionTarget = { body: Expression; context: Context; name: string | undefined };
+
+export const ROOT_CONTEXT: Context = { scope: undefined, isPrimed: false, isInit: false };
+
+// Operators whose results depend on more than their arguments, or that print, so the engine can't
+// cache or reorder them.
+const IMPURE_BUILTINS = new Set([
+  "Print",
+  "PrintT",
+  "Assert",
+  "JavaTime",
+  "TLCGet",
+  "TLCSet",
+  "RandomElement",
+  "TLCEval",
+  "Any",
+]);
+
+const unsupported = (what: string): never => bail(`unsupported: ${what}`);
+
+export const createCompiler = (environment: Environment): Compiler => {
+  const variableCount = environment.variables.length;
+  const definitionCache = new Map<Definition, Compiled[]>();
+  const recursiveOperators = new Map<Definition, RecursiveOperator>();
+  const expanding = new Set<Definition>();
+  let depth = 0;
+
+  const compile = (expression: Expression, context: Context): Compiled => {
+    if (++depth > 2000) unsupported("expansion too deep");
+    try {
+      const compiled = compileNode(expression, context);
+      return compiled.isCostly || footprintWidth(compiled.footprint) === 0
+        ? cached(compiled)
+        : compiled;
+    } finally {
+      depth--;
+    }
+  };
+
+  const compileBoolean = (expression: Expression, context: Context) => {
+    const compiled = compile(expression, context);
+    const evaluate = compiled.evaluate;
+    return {
+      ...compiled,
+      evaluate: () => {
+        const value = evaluate();
+        if (value !== TRUE && value !== FALSE) bail("expected a boolean");
+        return value;
+      },
+    };
+  };
+
+  const readVariable = (index: number, context: Context): Compiled => {
+    if (context.isPrimed) {
+      return leaf(
+        () => {
+          const value = NXT[index];
+          return value === -1 ? bail("primed variable not assigned") : value;
+        },
+        { vars: [], primes: [index], slots: [] },
+      );
+    }
+    return leaf(
+      () => {
+        const value = CUR[index];
+        return value === -1 ? bail("variable not assigned") : value;
+      },
+      { vars: [index], primes: [], slots: [] },
+    );
+  };
+
+  const compileBinding = (binding: Binding, context: Context): Compiled => {
+    switch (binding.kind) {
+      case "slot": {
+        const slot = binding.slot;
+        return leaf(() => LOC[slot], { vars: [], primes: [], slots: [slot] });
+      }
+      case "argument": {
+        const isPrimed = context.isPrimed || binding.context.isPrimed;
+        const index = isPrimed ? 1 : 0;
+        const known = binding.compiled[index];
+        if (known) return known;
+        const compiled = compile(binding.expression, { ...binding.context, isPrimed });
+        binding.compiled[index] = compiled;
+        return compiled;
+      }
+      case "value":
+        return binding.compiled;
+      default:
+        return unsupported("an operator used as a value");
+    }
+  };
+
+  const compileDefinitionReference = (definition: Definition, context: Context): Compiled => {
+    if (definition.kind === "Function") return compileFunctionDefinition(definition, context);
+    if (definition.params.length > 0) return unsupported("an operator used as a value");
+    const index = context.isPrimed ? 1 : 0;
+    const known = definitionCache.get(definition)?.[index];
+    if (known) return known;
+    if (expanding.has(definition)) return unsupported("a recursive zero-arity definition");
+    expanding.add(definition);
+    try {
+      const compiled = cached(
+        markCostly(
+          compile(definition.body, {
+            scope: undefined,
+            isPrimed: context.isPrimed,
+            isInit: context.isInit,
+          }),
+        ),
+      );
+      const entries = definitionCache.get(definition) ?? [];
+      entries[index] = compiled;
+      definitionCache.set(definition, entries);
+      return compiled;
+    } finally {
+      expanding.delete(definition);
+    }
+  };
+
+  const markCostly = (compiled: Compiled): Compiled =>
+    compiled.isCostly ? compiled : { ...compiled, isCostly: true };
+
+  const compileIdentifier = (expression: Expression & { kind: "Identifier" }, context: Context) => {
+    const name = expression.name;
+    if (isLocallyResolved(expression)) {
+      const binding = lookup(context.scope, name);
+      if (binding) return compileBinding(binding, context);
+    }
+    const variable = environment.variableIndex.get(name);
+    if (variable !== undefined) return readVariable(variable, context);
+    const constantValue = environment.constants.get(name);
+    if (constantValue !== undefined) return constant(fromValue(constantValue));
+    const definition = getDefinition(name, environment);
+    if (definition) return compileDefinitionReference(definition, context);
+    const builtin = environment.builtins.get(name);
+    if (builtin && builtin.arity === 0) return compileNullaryBuiltin(name, builtin);
+    const binding = lookup(context.scope, name);
+    if (binding) return compileBinding(binding, context);
+    return unsupported(`the name ${name}`);
+  };
+
+  const compileNullaryBuiltin = (name: string, builtin: Builtin): Compiled => {
+    if (builtin.isStateLevel || IMPURE_BUILTINS.has(name)) return unsupported(name);
+    switch (name) {
+      case "TRUE":
+        return constant(TRUE);
+      case "FALSE":
+        return constant(FALSE);
+      case "BOOLEAN":
+        return constant(setOf([FALSE, TRUE]));
+      case "Nat":
+      case "Int":
+      case "STRING":
+        return infiniteSet(name);
+      default: {
+        const value = builtin.evaluate([]);
+        return constant(fromValue(value));
+      }
+    }
+  };
+
+  // Nat, Int and STRING, which the engine only tests for membership.
+  const infiniteSet = (name: string): Compiled =>
+    ({
+      ...leaf(() => bail(`enumerated ${name}`), EMPTY_FOOTPRINT, false),
+      infinite: name,
+    }) as Compiled;
+
+  const compileNode = (expression: Expression, context: Context): Compiled => {
+    switch (expression.kind) {
+      case "Number":
+        return constant(int(expression.value));
+      case "String":
+        return constant(str(expression.value));
+      case "Identifier":
+        return compileIdentifier(expression, context);
+      case "Apply":
+        return compileApply(expression, context);
+      case "And":
+      case "Or":
+        return compileJunction(expression, context);
+      case "Prime":
+        if (context.isPrimed) return unsupported("a doubly primed expression");
+        return compile(expression.expression, { ...context, isPrimed: true });
+      case "If": {
+        const condition = compileBoolean(expression.condition, context);
+        const consequent = compile(expression.consequent, context);
+        const alternative = compile(expression.alternative, context);
+        const conditionEvaluate = condition.evaluate;
+        const consequentEvaluate = consequent.evaluate;
+        const alternativeEvaluate = alternative.evaluate;
+        return {
+          evaluate: () =>
+            conditionEvaluate() === TRUE ? consequentEvaluate() : alternativeEvaluate(),
+          footprint: mergeFootprints(
+            condition.footprint,
+            consequent.footprint,
+            alternative.footprint,
+          ),
+          isCostly: consequent.isCostly || alternative.isCostly,
+          isNormalized: consequent.isNormalized && alternative.isNormalized,
+        };
+      }
+      case "Case": {
+        const arms = expression.arms.map((arm) => ({
+          condition: compileBoolean(arm.condition, context),
+          body: compile(arm.body, context),
+        }));
+        const other = expression.other ? compile(expression.other, context) : undefined;
+        const conditions = arms.map((arm) => arm.condition.evaluate);
+        const bodies = arms.map((arm) => arm.body.evaluate);
+        const otherEvaluate = other?.evaluate;
+        return {
+          evaluate: () => {
+            for (let index = 0; index < conditions.length; index++) {
+              if (conditions[index]() === TRUE) return bodies[index]();
+            }
+            return otherEvaluate ? otherEvaluate() : bail("no CASE arm holds");
+          },
+          footprint: mergeFootprints(
+            ...arms.map((arm) => arm.condition.footprint),
+            ...arms.map((arm) => arm.body.footprint),
+            ...(other ? [other.footprint] : []),
+          ),
+          isCostly: true,
+          isNormalized: arms.every((arm) => arm.body.isNormalized) && (other?.isNormalized ?? true),
+        };
+      }
+      case "Let":
+        return compile(expression.body, bindLetDefinitions(expression, context));
+      case "Forall":
+      case "Exists":
+        return compileQuantifier(expression, context);
+      case "Choose":
+        return compileChoose(expression, context);
+      case "SetEnumeration": {
+        const elements = expression.elements.map((element) => compile(element, context));
+        const evaluators = elements.map((element) => element.evaluate);
+        const footprint = mergeFootprints(...elements.map((element) => element.footprint));
+        if (evaluators.length === 0) return constant(EMPTY_SET);
+        return {
+          evaluate: () => setOf(evaluators.map((evaluate) => evaluate())),
+          footprint,
+          isCostly: true,
+          isNormalized: true,
+        };
+      }
+      case "Tuple": {
+        const elements = expression.elements.map((element) => compile(element, context));
+        const evaluators = elements.map((element) => element.evaluate);
+        if (evaluators.length === 0) return constant(EMPTY_TUPLE);
+        const scratch: number[] = new Array(evaluators.length);
+        return {
+          evaluate: () => {
+            for (let index = 0; index < evaluators.length; index++)
+              scratch[index] = evaluators[index]();
+            return tupleOf(scratch, scratch.length);
+          },
+          footprint: mergeFootprints(...elements.map((element) => element.footprint)),
+          isCostly: true,
+          isNormalized: true,
+        };
+      }
+      case "Record": {
+        const fields = expression.fields
+          .map((field) => ({ key: str(field.name), value: compile(field.value, context) }))
+          .sort((left, right) => compare(left.key, right.key));
+        const keys = fields.map((field) => field.key);
+        const evaluators = fields.map((field) => field.value.evaluate);
+        const values: number[] = new Array(keys.length);
+        return {
+          evaluate: () => {
+            for (let index = 0; index < evaluators.length; index++)
+              values[index] = evaluators[index]();
+            return functionOfSorted(keys, values, keys.length);
+          },
+          footprint: mergeFootprints(...fields.map((field) => field.value.footprint)),
+          isCostly: true,
+          isNormalized: true,
+        };
+      }
+      case "FunctionApplication":
+        return compileFunctionApplication(expression, context);
+      case "FieldAccess": {
+        const record = compile(expression.record, context);
+        const key = str(expression.field);
+        const evaluate = record.evaluate;
+        return leaf(() => apply(evaluate(), key), record.footprint);
+      }
+      case "Except":
+        return compileExcept(expression, context);
+      case "ExceptAt": {
+        const binding = lookup(context.scope, "@");
+        if (!binding) return unsupported("@ outside EXCEPT");
+        return compileBinding(binding, context);
+      }
+      case "FunctionConstruction":
+        return compileFunctionConstruction(expression.bounds, expression.body, context);
+      case "SetFilter":
+        return compileSetFilter(expression, context);
+      case "SetMap":
+        return compileSetMap(expression, context);
+      case "FunctionSet":
+      case "RecordSet":
+      case "Product":
+        return compileLazySet(
+          expression as Expression & { kind: "FunctionSet" | "RecordSet" | "Product" },
+          context,
+        );
+      case "Unchanged": {
+        const now = compile(expression.expression, { ...context, isPrimed: false });
+        const next = compile(expression.expression, { ...context, isPrimed: true });
+        const nowEvaluate = now.evaluate;
+        const nextEvaluate = next.evaluate;
+        return leaf(
+          () => bool(equals(nextEvaluate(), nowEvaluate())),
+          mergeFootprints(now.footprint, next.footprint),
+        );
+      }
+      case "Label":
+        return compile(expression.body, context);
+      default:
+        return unsupported(`expression ${expression.kind}`);
+    }
+  };
+
+  const compileJunction = (expression: Expression & { kind: "And" | "Or" }, context: Context) => {
+    const operands = expression.operands.map((operand) => compileBoolean(operand, context));
+    const evaluators = operands.map((operand) => operand.evaluate);
+    const footprint = mergeFootprints(...operands.map((operand) => operand.footprint));
+    const isAnd = expression.kind === "And";
+    const stop = isAnd ? FALSE : TRUE;
+    const evaluate =
+      evaluators.length === 2
+        ? ((first, second) => () => (first() === stop ? stop : second()))(
+            evaluators[0],
+            evaluators[1],
+          )
+        : () => {
+            for (let index = 0; index < evaluators.length; index++) {
+              if (evaluators[index]() === stop) return stop;
+            }
+            return isAnd ? TRUE : FALSE;
+          };
+    return {
+      evaluate,
+      footprint,
+      isCostly: operands.some((operand) => operand.isCostly),
+      isNormalized: true,
+    };
+  };
+
+  // --- LET ---
+
+  const bindLetDefinitions = (
+    expression: Expression & { kind: "Let" },
+    context: Context,
+  ): Context => {
+    if (expression.instances && expression.instances.length > 0) unsupported("INSTANCE in LET");
+    let scope = context.scope;
+    for (const definition of expression.definitions) {
+      const definitionContext = { ...context, scope };
+      if (definition.kind === "Function") {
+        if (definition.isRecursive || definition.isSelfReferential) {
+          unsupported("a recursive function in LET");
+        }
+        const compiled = cached(
+          markCostly(
+            compileFunctionConstruction(definition.bounds, definition.body, definitionContext),
+          ),
+        );
+        scope = bind(scope, definition.name, { kind: "value", compiled });
+      } else if (definition.params.length === 0) {
+        if (definition.isRecursive) unsupported("a recursive LET definition");
+        scope = bind(scope, definition.name, {
+          kind: "argument",
+          expression: definition.body,
+          context: definitionContext,
+          compiled: [],
+        });
+      } else {
+        if (definition.isRecursive) unsupported("a recursive LET operator");
+        scope = bind(scope, definition.name, {
+          kind: "operator",
+          operator: {
+            name: definition.name,
+            params: definition.params,
+            body: definition.body,
+            context: definitionContext,
+          },
+        });
+      }
+    }
+    return { ...context, scope };
+  };
+
+  // --- operator application ---
+
+  // Binds the parameters of an operator to its arguments.
+  const bindArguments = (
+    params: OperatorParam[],
+    args: Expression[],
+    callerContext: Context,
+    calleeContext: Context,
+  ): Context => {
+    if (params.length !== args.length)
+      return unsupported("an operator applied to the wrong number of arguments");
+    let scope = calleeContext.scope;
+    params.forEach((param, index) => {
+      const argument = args[index];
+      if (param.arity > 0) {
+        scope = bind(scope, param.name, {
+          kind: "operator",
+          operator: resolveOperatorArgument(argument, callerContext),
+        });
+      } else {
+        scope = bind(scope, param.name, {
+          kind: "argument",
+          expression: argument,
+          context: callerContext,
+          compiled: [],
+        });
+      }
+    });
+    return { ...calleeContext, scope };
+  };
+
+  const resolveOperatorArgument = (argument: Expression, context: Context): OperatorBinding => {
+    if (argument.kind === "Lambda") {
+      return {
+        name: "LAMBDA",
+        params: argument.params.map((name) => ({ name, arity: 0 })),
+        body: argument.body,
+        context,
+      };
+    }
+    const name =
+      argument.kind === "Identifier" || argument.kind === "OperatorReference"
+        ? argument.kind === "Identifier"
+          ? argument.name
+          : argument.operator
+        : undefined;
+    if (name === undefined) return unsupported("an operator argument");
+    const local = lookup(context.scope, name);
+    if (local?.kind === "operator") return local.operator;
+    const definition = getDefinition(name, environment);
+    if (definition?.kind === "Operator" && !definition.isRecursive) {
+      return {
+        name,
+        params: definition.params,
+        body: definition.body,
+        context: { ...context, scope: undefined },
+      };
+    }
+    const builtin = environment.builtins.get(name);
+    if (builtin) {
+      const params = Array.from({ length: builtin.arity }, (_, index) => ({
+        name: `$${index}`,
+        arity: 0,
+      }));
+      return {
+        name,
+        params,
+        body: {
+          kind: "Apply",
+          operator: name,
+          args: params.map((param) => ({
+            kind: "Identifier",
+            name: param.name,
+            location: argument.location,
+            resolution: { kind: "Local" },
+          })),
+          location: argument.location,
+        } as Expression,
+        context: { ...context, scope: undefined },
+      };
+    }
+    return unsupported(`the operator argument ${name}`);
+  };
+
+  const compileApply = (expression: Expression & { kind: "Apply" }, context: Context): Compiled => {
+    const name = expression.operator;
+    if (isLocallyResolved(expression)) {
+      const binding = lookup(context.scope, name);
+      if (binding?.kind === "operator")
+        return compileOperatorCall(binding.operator, expression.args, context);
+      if (binding) return unsupported("applying a local value");
+    }
+    const target = environment.substitutions.get(name) ?? name;
+    const definition = environment.definitions.get(target);
+    if (definition?.kind === "Operator") {
+      if (definition.isRecursive || expanding.has(definition)) {
+        return compileRecursiveCall(definition, expression.args, context);
+      }
+      expanding.add(definition);
+      try {
+        const callee = bindArguments(definition.params, expression.args, context, {
+          scope: undefined,
+          isPrimed: context.isPrimed,
+          isInit: context.isInit,
+        });
+        return cached(compile(definition.body, callee));
+      } finally {
+        expanding.delete(definition);
+      }
+    }
+    if (definition) return unsupported("applying a function definition as an operator");
+    const builtin = environment.builtins.get(target);
+    if (builtin) return compileBuiltin(target, builtin, expression, context);
+    const binding = lookup(context.scope, name);
+    if (binding?.kind === "operator")
+      return compileOperatorCall(binding.operator, expression.args, context);
+    return unsupported(`the operator ${name}`);
+  };
+
+  const compileOperatorCall = (operator: OperatorBinding, args: Expression[], context: Context) => {
+    const callee = bindArguments(operator.params, args, context, {
+      ...operator.context,
+      isPrimed: context.isPrimed || operator.context.isPrimed,
+    });
+    return cached(compile(operator.body, callee));
+  };
+
+  // --- recursion ---
+
+  interface RecursiveOperator {
+    slots: number[];
+    body: Compiled | undefined;
+    table: MemoTable | undefined;
+    keySlots: number[];
+    keyVars: number[];
+    keyPrimes: number[];
+  }
+
+  const compileRecursiveCall = (
+    definition: OperatorDefinition,
+    args: Expression[],
+    context: Context,
+  ): Compiled => {
+    if (definition.params.some((param) => param.arity > 0))
+      return unsupported("a recursive higher-order operator");
+    const key = definition;
+    let recursive = recursiveOperators.get(key);
+    if (!recursive) {
+      const slots = definition.params.map(() => allocateSlot());
+      const created: RecursiveOperator = {
+        slots,
+        body: undefined,
+        table: undefined,
+        keySlots: [],
+        keyVars: [],
+        keyPrimes: [],
+      };
+      recursive = created;
+      recursiveOperators.set(key, created);
+      let scope: Scope | undefined;
+      definition.params.forEach((param, index) => {
+        scope = bind(scope, param.name, { kind: "slot", slot: slots[index] });
+      });
+      expanding.add(definition);
+      try {
+        created.body = compile(definition.body, {
+          scope,
+          isPrimed: context.isPrimed,
+          isInit: context.isInit,
+        });
+      } finally {
+        expanding.delete(definition);
+      }
+      const footprint = created.body.footprint;
+      created.keySlots = mergeSorted(
+        slots.slice().sort((left, right) => left - right),
+        footprint.slots,
+      );
+      created.keyVars = footprint.vars;
+      created.keyPrimes = footprint.primes;
+      const width = created.keySlots.length + created.keyVars.length + created.keyPrimes.length;
+      if (width <= MAXIMUM_MEMO_WIDTH) {
+        created.table = new MemoTable(width);
+        memoTables.push(created.table);
+      }
+    }
+    const operator = recursive;
+    const compiledArgs = args.map((argument) => compile(argument, context));
+    const argEvaluators = compiledArgs.map((argument) => argument.evaluate);
+    const slots = operator.slots;
+    const values: number[] = new Array(slots.length);
+    let scratch: Int32Array | undefined;
+    const evaluate = () => {
+      for (let index = 0; index < argEvaluators.length; index++)
+        values[index] = argEvaluators[index]();
+      const saved = slots.map((slot) => LOC[slot]);
+      for (let index = 0; index < slots.length; index++) LOC[slots[index]] = values[index];
+      try {
+        const table = operator.table;
+        if (!table || !table.isEnabled) return operator.body!.evaluate();
+        scratch ??= new Int32Array(table.width);
+        const fill = () => {
+          let position = 0;
+          for (const variable of operator.keyVars) scratch![position++] = CUR[variable];
+          for (const variable of operator.keyPrimes) scratch![position++] = NXT[variable];
+          for (const slot of operator.keySlots) scratch![position++] = LOC[slot];
+        };
+        fill();
+        const known = table.getN(scratch);
+        if (known !== -1) return known;
+        const value = operator.body!.evaluate();
+        fill();
+        table.setN(scratch, value);
+        return value;
+      } finally {
+        for (let index = 0; index < slots.length; index++) LOC[slots[index]] = saved[index];
+      }
+    };
+    // The body's footprint isn't known while it compiles, so a call inside the body reads every
+    // variable as far as callers can tell, which keeps them from caching it.
+    const bodyFootprint = operator.body?.footprint;
+    const footprint = bodyFootprint
+      ? mergeFootprints(
+          ...compiledArgs.map((argument) => argument.footprint),
+          withoutSlots(bodyFootprint, slots),
+        )
+      : {
+          vars: Array.from({ length: variableCount }, (_, index) => index),
+          primes: Array.from({ length: variableCount }, (_, index) => index),
+          slots: [],
+        };
+    return { evaluate, footprint, isCostly: false, isNormalized: true };
+  };
+
+  const recursiveFunctions = new Map<FunctionDefinition, { compiled: Compiled }>();
+
+  const compileFunctionDefinition = (
+    definition: FunctionDefinition,
+    context: Context,
+  ): Compiled => {
+    if (!definition.isRecursive && !definition.isSelfReferential) {
+      const index = context.isPrimed ? 1 : 0;
+      const known = definitionCache.get(definition)?.[index];
+      if (known) return known;
+      const compiled = cached(
+        markCostly(
+          compileFunctionConstruction(definition.bounds, definition.body, {
+            scope: undefined,
+            isPrimed: context.isPrimed,
+            isInit: context.isInit,
+          }),
+        ),
+      );
+      const entries = definitionCache.get(definition) ?? [];
+      entries[index] = compiled;
+      definitionCache.set(definition, entries);
+      return compiled;
+    }
+    return unsupported("a recursive function definition");
+  };
+  void recursiveFunctions;
+
+  // --- quantifiers and bindings ---
+
+  // Binds the names of a bound to fresh slots.
+  const bindBound = (bound: Bound, context: Context) => {
+    const pattern = bound.pattern;
+    if (pattern.kind === "Name") {
+      const slot = allocateSlot();
+      return {
+        context: { ...context, scope: bind(context.scope, pattern.name, { kind: "slot", slot }) },
+        slots: [slot],
+        tuple: undefined,
+      };
+    }
+    let scope = context.scope;
+    const slots = pattern.names.map((name) => {
+      const slot = allocateSlot();
+      scope = bind(scope, name, { kind: "slot", slot });
+      return slot;
+    });
+    return { context: { ...context, scope }, slots, tuple: slots };
+  };
+
+  const assignBound = (slots: number[], tuple: number[] | undefined, element: number) => {
+    if (!tuple) {
+      LOC[slots[0]] = element;
+      return;
+    }
+    if (kindOf(element) !== KIND_TUPLE || sizeOf(element) !== tuple.length)
+      bail("a tuple pattern that doesn't match");
+    for (let index = 0; index < tuple.length; index++)
+      LOC[tuple[index]] = getRangeValue(element, index);
+  };
+
+  const compileQuantifier = (
+    expression: Expression & { kind: "Forall" | "Exists" },
+    context: Context,
+  ): Compiled => {
+    const isForall = expression.kind === "Forall";
+    let inner = context;
+    const levels: { set: Compiled; slots: number[]; tuple: number[] | undefined }[] = [];
+    const bound: number[] = [];
+    for (const item of expression.bounds) {
+      const set = compile(item.set, inner);
+      const binding = bindBound(item, inner);
+      inner = binding.context;
+      levels.push({ set, slots: binding.slots, tuple: binding.tuple });
+      bound.push(...binding.slots);
+    }
+    const body = compileBoolean(expression.body, inner);
+    const bodyEvaluate = body.evaluate;
+    const stop = isForall ? FALSE : TRUE;
+    const visit = (level: number): number => {
+      if (level === levels.length) return bodyEvaluate();
+      const current = levels[level];
+      const set = current.set.evaluate();
+      if (kindOf(set) !== KIND_SET) return bail("quantified over a non-set");
+      const size = sizeOf(set);
+      for (let index = 0; index < size; index++) {
+        assignBound(current.slots, current.tuple, elementAt(set, index));
+        if (visit(level + 1) === stop) return stop;
+      }
+      return isForall ? TRUE : FALSE;
+    };
+    const single = levels.length === 1 && !levels[0].tuple ? levels[0] : undefined;
+    const evaluate = single
+      ? ((setEvaluate, slot) => () => {
+          const set = setEvaluate();
+          if (kindOf(set) !== KIND_SET) return bail("quantified over a non-set");
+          const size = sizeOf(set);
+          for (let index = 0; index < size; index++) {
+            LOC[slot] = elementAt(set, index);
+            if (bodyEvaluate() === stop) return stop;
+          }
+          return isForall ? TRUE : FALSE;
+        })(single.set.evaluate, single.slots[0])
+      : () => visit(0);
+    return {
+      evaluate,
+      footprint: mergeFootprints(
+        ...levels.map((level) => level.set.footprint),
+        withoutSlots(body.footprint, bound),
+      ),
+      isCostly: true,
+      isNormalized: true,
+    };
+  };
+
+  const compileChoose = (
+    expression: Expression & { kind: "Choose" },
+    context: Context,
+  ): Compiled => {
+    if (!expression.set) return unsupported("unbounded CHOOSE");
+    const set = compile(expression.set, context);
+    const binding = bindBound({ pattern: expression.pattern, set: expression.set }, context);
+    const body = compileBoolean(expression.body, binding.context);
+    const setEvaluate = set.evaluate;
+    const bodyEvaluate = body.evaluate;
+    return {
+      evaluate: () => {
+        const id = setEvaluate();
+        if (kindOf(id) !== KIND_SET) return bail("CHOOSE from a non-set");
+        const size = sizeOf(id);
+        for (let index = 0; index < size; index++) {
+          const element = elementAt(id, index);
+          assignBound(binding.slots, binding.tuple, element);
+          if (bodyEvaluate() === TRUE) return element;
+        }
+        return bail("CHOOSE found no element");
+      },
+      footprint: mergeFootprints(set.footprint, withoutSlots(body.footprint, binding.slots)),
+      isCostly: true,
+      isNormalized: true,
+    };
+  };
+
+  const compileSetFilter = (
+    expression: Expression & { kind: "SetFilter" },
+    context: Context,
+  ): Compiled => {
+    const set = compile(expression.bound.set, context);
+    if ((set as LazySet).infinite) return unsupported("filtering an infinite set");
+    const binding = bindBound(expression.bound, context);
+    const predicate = compileBoolean(expression.predicate, binding.context);
+    const setEvaluate = set.evaluate;
+    const predicateEvaluate = predicate.evaluate;
+    return {
+      evaluate: () => {
+        const id = setEvaluate();
+        if (kindOf(id) !== KIND_SET) return bail("filtered a non-set");
+        const size = sizeOf(id);
+        const kept: number[] = [];
+        for (let index = 0; index < size; index++) {
+          const element = elementAt(id, index);
+          assignBound(binding.slots, binding.tuple, element);
+          if (predicateEvaluate() === TRUE) kept.push(element);
+        }
+        return kept.length === size ? id : setOfSorted(kept, kept.length);
+      },
+      footprint: mergeFootprints(set.footprint, withoutSlots(predicate.footprint, binding.slots)),
+      isCostly: true,
+      isNormalized: set.isNormalized,
+    };
+  };
+
+  const compileSetMap = (
+    expression: Expression & { kind: "SetMap" },
+    context: Context,
+  ): Compiled => {
+    let inner = context;
+    const levels: { set: Compiled; slots: number[]; tuple: number[] | undefined }[] = [];
+    const bound: number[] = [];
+    for (const item of expression.bounds) {
+      const set = compile(item.set, inner);
+      const binding = bindBound(item, inner);
+      inner = binding.context;
+      levels.push({ set, slots: binding.slots, tuple: binding.tuple });
+      bound.push(...binding.slots);
+    }
+    const body = compile(expression.expression, inner);
+    const bodyEvaluate = body.evaluate;
+    return {
+      evaluate: () => {
+        const images: number[] = [];
+        const visit = (level: number) => {
+          if (level === levels.length) {
+            images.push(bodyEvaluate());
+            return;
+          }
+          const current = levels[level];
+          const set = current.set.evaluate();
+          if (kindOf(set) !== KIND_SET) bail("mapped a non-set");
+          const size = sizeOf(set);
+          for (let index = 0; index < size; index++) {
+            assignBound(current.slots, current.tuple, elementAt(set, index));
+            visit(level + 1);
+          }
+        };
+        visit(0);
+        return setOf(images);
+      },
+      footprint: mergeFootprints(
+        ...levels.map((level) => level.set.footprint),
+        withoutSlots(body.footprint, bound),
+      ),
+      isCostly: true,
+      isNormalized: true,
+    };
+  };
+
+  const compileFunctionConstruction = (
+    bounds: Bound[],
+    bodyExpression: Expression,
+    context: Context,
+  ): Compiled => {
+    let inner = context;
+    const levels: { set: Compiled; slots: number[]; tuple: number[] | undefined }[] = [];
+    const bound: number[] = [];
+    for (const item of bounds) {
+      const set = compile(item.set, inner);
+      const binding = bindBound(item, inner);
+      inner = binding.context;
+      levels.push({ set, slots: binding.slots, tuple: binding.tuple });
+      bound.push(...binding.slots);
+    }
+    const body = compile(bodyExpression, inner);
+    const bodyEvaluate = body.evaluate;
+    const single = levels.length === 1 && !levels[0].tuple ? levels[0] : undefined;
+    const evaluate = single
+      ? ((setEvaluate, slot) => () => {
+          const set = setEvaluate();
+          if (kindOf(set) !== KIND_SET) return bail("a function over a non-set");
+          const size = sizeOf(set);
+          const keys: number[] = new Array(size);
+          const values: number[] = new Array(size);
+          for (let index = 0; index < size; index++) {
+            const key = elementAt(set, index);
+            keys[index] = key;
+            LOC[slot] = key;
+            values[index] = bodyEvaluate();
+          }
+          return functionOfSorted(keys, values, size);
+        })(single.set.evaluate, single.slots[0])
+      : () => {
+          // A function of several arguments takes tuples, in TLC's order of the product.
+          const sets = levels.map((level) => {
+            const set = level.set.evaluate();
+            if (kindOf(set) !== KIND_SET) bail("a function over a non-set");
+            return set;
+          });
+          if (levels.some((level) => level.tuple)) bail("a tuple pattern in a function");
+          const keys: number[] = [];
+          const values: number[] = [];
+          const current: number[] = new Array(levels.length);
+          const visit = (level: number) => {
+            if (level === levels.length) {
+              keys.push(tupleOf(current, current.length));
+              values.push(bodyEvaluate());
+              return;
+            }
+            const set = sets[level];
+            const size = sizeOf(set);
+            for (let index = 0; index < size; index++) {
+              const element = elementAt(set, index);
+              current[level] = element;
+              LOC[levels[level].slots[0]] = element;
+              visit(level + 1);
+            }
+          };
+          visit(0);
+          return functionOf(keys, values);
+        };
+    return {
+      evaluate,
+      footprint: mergeFootprints(
+        ...levels.map((level) => level.set.footprint),
+        withoutSlots(body.footprint, bound),
+      ),
+      isCostly: true,
+      isNormalized: true,
+    };
+  };
+
+  // --- functions ---
+
+  const compileFunctionApplication = (
+    expression: Expression & { kind: "FunctionApplication" },
+    context: Context,
+  ): Compiled => {
+    const fn = compile(expression.function, context);
+    const args = expression.args.map((argument) => compile(argument, context));
+    const fnEvaluate = fn.evaluate;
+    const footprint = mergeFootprints(fn.footprint, ...args.map((argument) => argument.footprint));
+    if (args.length === 1) {
+      const argumentEvaluate = args[0].evaluate;
+      return leaf(() => apply(fnEvaluate(), argumentEvaluate()), footprint);
+    }
+    const evaluators = args.map((argument) => argument.evaluate);
+    return leaf(() => {
+      const values = evaluators.map((evaluate) => evaluate());
+      return apply(fnEvaluate(), tupleOf(values, values.length));
+    }, footprint);
+  };
+
+  const compileExcept = (
+    expression: Expression & { kind: "Except" },
+    context: Context,
+  ): Compiled => {
+    const fn = compile(expression.function, context);
+    const updates = expression.updates.map((update) => {
+      const path = update.path.map((step) => {
+        if (step.kind === "Field") return { key: constant(str(step.name)) };
+        const args = step.args.map((argument) => compile(argument, context));
+        if (args.length === 1) return { key: args[0] };
+        const evaluators = args.map((argument) => argument.evaluate);
+        return {
+          key: {
+            evaluate: () => {
+              const values = evaluators.map((evaluate) => evaluate());
+              return tupleOf(values, values.length);
+            },
+            footprint: mergeFootprints(...args.map((argument) => argument.footprint)),
+            isCostly: false,
+            isNormalized: true,
+          } as Compiled,
+        };
+      });
+      const atSlot = allocateSlot();
+      const valueContext = {
+        ...context,
+        scope: bind(context.scope, "@", { kind: "slot", slot: atSlot }),
+      };
+      const value = compile(update.value, valueContext);
+      return { path, atSlot, value, usesAt: value.footprint.slots.includes(atSlot) };
+    });
+    const fnEvaluate = fn.evaluate;
+    const evaluate = () => {
+      let result = fnEvaluate();
+      for (const update of updates) {
+        const keys = update.path.map((step) => step.key.evaluate());
+        const rewrite = (current: number, depthIndex: number): number => {
+          const key = keys[depthIndex];
+          if (!isFunctionKind(kindOf(current))) return bail("EXCEPT on a non-function");
+          const position = findKey(current, key);
+          if (position === -1) return bail("EXCEPT outside the domain");
+          const old = getRangeValue(current, position);
+          if (depthIndex === keys.length - 1) {
+            LOC[update.atSlot] = old;
+            return except(current, key, update.value.evaluate());
+          }
+          return except(current, key, rewrite(old, depthIndex + 1));
+        };
+        result = rewrite(result, 0);
+      }
+      return result;
+    };
+    return {
+      evaluate,
+      footprint: mergeFootprints(
+        fn.footprint,
+        ...updates.flatMap((update) => [
+          ...update.path.map((step) => step.key.footprint),
+          withoutSlots(update.value.footprint, [update.atSlot]),
+        ]),
+      ),
+      isCostly: true,
+      isNormalized: true,
+    };
+  };
+
+  // --- sets the engine tests for membership without building ---
+
+  interface LazySet extends Compiled {
+    infinite?: string;
+    // Membership, when the engine can test it without building the set.
+    member?: (element: number) => boolean;
+  }
+
+  const compileLazySet = (
+    expression: Expression & { kind: "FunctionSet" | "RecordSet" | "Product" },
+    context: Context,
+  ): LazySet => {
+    if (expression.kind === "FunctionSet") {
+      const domain = compile(expression.domain, context) as LazySet;
+      const range = compile(expression.range, context) as LazySet;
+      const domainEvaluate = domain.evaluate;
+      const rangeMember = memberTest(range);
+      const footprint = mergeFootprints(domain.footprint, range.footprint);
+      return {
+        evaluate: () => {
+          const domainSet = domainEvaluate();
+          const rangeSet = range.evaluate();
+          return enumerateFunctionSet(domainSet, rangeSet);
+        },
+        footprint,
+        isCostly: true,
+        // TLC enumerates [S -> T] in its own order, which the engine leaves to the reference.
+        isNormalized: false,
+        member: (element) => {
+          const kind = kindOf(element);
+          if (kind !== KIND_FUNCTION && kind !== KIND_TUPLE) return false;
+          const domainSet = domainEvaluate();
+          if (!equalsDomain(element, domainSet)) return false;
+          const size = sizeOf(element);
+          for (let index = 0; index < size; index++) {
+            if (!rangeMember(getRangeValue(element, index))) return false;
+          }
+          return true;
+        },
+      };
+    }
+    if (expression.kind === "RecordSet") {
+      const fields = expression.fields
+        .map((field) => ({ key: str(field.name), set: compile(field.value, context) as LazySet }))
+        .sort((left, right) => compare(left.key, right.key));
+      const keys = fields.map((field) => field.key);
+      const members = fields.map((field) => memberTest(field.set));
+      const footprint = mergeFootprints(...fields.map((field) => field.set.footprint));
+      return {
+        evaluate: () => {
+          const sets = fields.map((field) => field.set.evaluate());
+          let partial: number[][] = [[]];
+          for (const set of sets) {
+            if (kindOf(set) !== KIND_SET) bail("a record set of a non-set");
+            const next: number[][] = [];
+            for (const prefix of partial) {
+              for (let index = 0; index < sizeOf(set); index++)
+                next.push([...prefix, elementAt(set, index)]);
+            }
+            partial = next;
+          }
+          return setOf(partial.map((values) => functionOfSorted(keys, values, keys.length)));
+        },
+        footprint,
+        isCostly: true,
+        isNormalized: false,
+        member: (element) => {
+          if (kindOf(element) !== KIND_FUNCTION || sizeOf(element) !== keys.length) return false;
+          for (let index = 0; index < keys.length; index++) {
+            if (getKey(element, index) !== keys[index]) return false;
+            if (!members[index](getRangeValue(element, index))) return false;
+          }
+          return true;
+        },
+      };
+    }
+    const factors = expression.factors.map((factor) => compile(factor, context) as LazySet);
+    const members = factors.map(memberTest);
+    return {
+      evaluate: () => {
+        let partial: number[][] = [[]];
+        for (const factor of factors) {
+          const set = factor.evaluate();
+          if (kindOf(set) !== KIND_SET) bail("a product of a non-set");
+          const next: number[][] = [];
+          for (const prefix of partial) {
+            for (let index = 0; index < sizeOf(set); index++)
+              next.push([...prefix, elementAt(set, index)]);
+          }
+          partial = next;
+        }
+        return setOf(partial.map((values) => tupleOf(values, values.length)));
+      },
+      footprint: mergeFootprints(...factors.map((factor) => factor.footprint)),
+      isCostly: true,
+      isNormalized: false,
+      member: (element) => {
+        if (kindOf(element) !== KIND_TUPLE || sizeOf(element) !== factors.length) return false;
+        for (let index = 0; index < factors.length; index++) {
+          if (!members[index](getRangeValue(element, index))) return false;
+        }
+        return true;
+      },
+    };
+  };
+
+  const equalsDomain = (fn: number, domain: number) => {
+    if (kindOf(domain) !== KIND_SET) return bail("a function set over a non-set domain");
+    const size = sizeOf(fn);
+    if (size !== sizeOf(domain)) return false;
+    for (let index = 0; index < size; index++)
+      if (getKey(fn, index) !== elementAt(domain, index)) return false;
+    return true;
+  };
+
+  const enumerateFunctionSet = (domain: number, range: number) => {
+    if (kindOf(domain) !== KIND_SET || kindOf(range) !== KIND_SET)
+      return bail("a function set of non-sets");
+    const domainSize = sizeOf(domain);
+    const rangeSize = sizeOf(range);
+    if (Math.pow(rangeSize, domainSize) > 1e6) return bail("a function set too large to build");
+    const keys = Array.from({ length: domainSize }, (_, index) => elementAt(domain, index));
+    const functions: number[] = [];
+    const values: number[] = new Array(domainSize);
+    const visit = (index: number) => {
+      if (index === domainSize) {
+        functions.push(functionOfSorted(keys, values, domainSize));
+        return;
+      }
+      for (let position = 0; position < rangeSize; position++) {
+        values[index] = elementAt(range, position);
+        visit(index + 1);
+      }
+    };
+    visit(0);
+    return setOf(functions);
+  };
+
+  // A membership test for a compiled set, which builds the set only when it must.
+  const memberTest = (set: Compiled): ((element: number) => boolean) => {
+    const lazy = set as LazySet;
+    if (lazy.member) return lazy.member;
+    if (lazy.infinite) {
+      switch (lazy.infinite) {
+        case "Nat":
+          return (element) => kindOf(element) === KIND_INT && intOf(element) >= 0;
+        case "Int":
+          return (element) => kindOf(element) === KIND_INT;
+        default:
+          return (element) => kindOf(element) === KIND_STRING;
+      }
+    }
+    const evaluate = set.evaluate;
+    return (element) => {
+      const id = evaluate();
+      if (kindOf(id) !== KIND_SET) return bail("membership in a non-set");
+      return isMember(element, id);
+    };
+  };
+
+  // --- builtins ---
+
+  const compileBuiltin = (
+    name: string,
+    builtin: Builtin,
+    expression: Expression & { kind: "Apply" },
+    context: Context,
+  ): Compiled => {
+    if (builtin.isStateLevel || IMPURE_BUILTINS.has(name)) return unsupported(name);
+    const args = expression.args;
+    const native = compileNativeBuiltin(name, args, context);
+    if (native) return native;
+    return compileBridgedBuiltin(name, builtin, args, context);
+  };
+
+  const binary = (
+    left: Compiled,
+    right: Compiled,
+    operation: (left: number, right: number) => number,
+    isCostly = false,
+  ): Compiled => {
+    const leftEvaluate = left.evaluate;
+    const rightEvaluate = right.evaluate;
+    return {
+      evaluate: () => operation(leftEvaluate(), rightEvaluate()),
+      footprint: mergeFootprints(left.footprint, right.footprint),
+      isCostly,
+      isNormalized: true,
+    };
+  };
+
+  const unary = (
+    operand: Compiled,
+    operation: (value: number) => number,
+    isCostly = false,
+  ): Compiled => {
+    const evaluate = operand.evaluate;
+    return {
+      evaluate: () => operation(evaluate()),
+      footprint: operand.footprint,
+      isCostly,
+      isNormalized: true,
+    };
+  };
+
+  const expectInt = (id: number) =>
+    kindOf(id) === KIND_INT ? intOf(id) : bail("expected an integer");
+  const expectSet = (id: number) => (kindOf(id) === KIND_SET ? id : bail("expected a set"));
+
+  const compileNativeBuiltin = (
+    name: string,
+    args: Expression[],
+    context: Context,
+  ): Compiled | undefined => {
+    const operand = (index: number) => compile(args[index], context);
+    switch (name) {
+      case "=":
+        return binary(operand(0), operand(1), (left, right) => bool(equals(left, right)));
+      case "#":
+        return binary(operand(0), operand(1), (left, right) => bool(!equals(left, right)));
+      case "~":
+        return unary(compileBoolean(args[0], context), (value) => (value === TRUE ? FALSE : TRUE));
+      case "/\\":
+      case "\\/":
+        return compileJunction(
+          { kind: name === "/\\" ? "And" : "Or", operands: args, location: args[0].location },
+          context,
+        );
+      case "=>": {
+        const left = compileBoolean(args[0], context);
+        const right = compileBoolean(args[1], context);
+        const leftEvaluate = left.evaluate;
+        const rightEvaluate = right.evaluate;
+        return leaf(
+          () => (leftEvaluate() === FALSE ? TRUE : rightEvaluate()),
+          mergeFootprints(left.footprint, right.footprint),
+        );
+      }
+      case "<=>":
+        return binary(
+          compileBoolean(args[0], context),
+          compileBoolean(args[1], context),
+          (left, right) => bool(left === right),
+        );
+      case "\\in":
+      case "\\notin": {
+        const element = operand(0);
+        const set = operand(1);
+        const member = memberTest(set);
+        const elementEvaluate = element.evaluate;
+        const isIn = name === "\\in";
+        return {
+          evaluate: () => bool(member(elementEvaluate()) === isIn),
+          footprint: mergeFootprints(element.footprint, set.footprint),
+          isCostly: (set as LazySet).member !== undefined,
+          isNormalized: true,
+        };
+      }
+      case "\\subseteq": {
+        const left = operand(0);
+        const right = operand(1);
+        const member = memberTest(right);
+        const leftEvaluate = left.evaluate;
+        const isLazy =
+          (right as LazySet).member !== undefined || (right as LazySet).infinite !== undefined;
+        return {
+          evaluate: isLazy
+            ? () => {
+                const set = expectSet(leftEvaluate());
+                const size = sizeOf(set);
+                for (let index = 0; index < size; index++)
+                  if (!member(elementAt(set, index))) return FALSE;
+                return TRUE;
+              }
+            : (
+                (rightEvaluate) => () =>
+                  bool(isSubset(expectSet(leftEvaluate()), expectSet(rightEvaluate())))
+              )(right.evaluate),
+          footprint: mergeFootprints(left.footprint, right.footprint),
+          isCostly: true,
+          isNormalized: true,
+        };
+      }
+      case "\\cup":
+      case "\\cap":
+      case "\\": {
+        const left = operand(0);
+        const right = operand(1);
+        if ((left as LazySet).infinite || (right as LazySet).infinite) return undefined;
+        const operation = name === "\\cup" ? union : name === "\\cap" ? intersection : difference;
+        const compiled = binary(
+          left,
+          right,
+          (leftId, rightId) => operation(expectSet(leftId), expectSet(rightId)),
+          true,
+        );
+        return { ...compiled, isNormalized: left.isNormalized && right.isNormalized };
+      }
+      case "SUBSET": {
+        const base = operand(0);
+        return {
+          ...unary(base, (set) => powerSet(expectSet(set)), true),
+          isNormalized: false,
+          member: (
+            (evaluate) => (element: number) =>
+              kindOf(element) === KIND_SET && isSubset(element, expectSet(evaluate()))
+          )(base.evaluate),
+        } as LazySet;
+      }
+      case "UNION":
+        return {
+          ...unary(
+            operand(0),
+            (set) => {
+              let result = EMPTY_SET;
+              const outer = expectSet(set);
+              for (let index = 0; index < sizeOf(outer); index++)
+                result = union(result, expectSet(elementAt(outer, index)));
+              return result;
+            },
+            true,
+          ),
+          isNormalized: false,
+        };
+      case "DOMAIN":
+        return unary(
+          operand(0),
+          (fn) => (isFunctionKind(kindOf(fn)) ? domainOf(fn) : bail("DOMAIN of a non-function")),
+          true,
+        );
+      case "+":
+        return binary(operand(0), operand(1), (left, right) =>
+          int(expectInt(left) + expectInt(right)),
+        );
+      case "-":
+        return binary(operand(0), operand(1), (left, right) =>
+          int(expectInt(left) - expectInt(right)),
+        );
+      case "*":
+        return binary(operand(0), operand(1), (left, right) =>
+          int(expectInt(left) * expectInt(right)),
+        );
+      case "-.":
+        return unary(operand(0), (value) => int(-expectInt(value)));
+      case "\\div":
+        return binary(operand(0), operand(1), (left, right) => {
+          const divisor = expectInt(right);
+          if (divisor === 0) return bail("division by zero");
+          return int(Math.floor(expectInt(left) / divisor));
+        });
+      case "%":
+        return binary(operand(0), operand(1), (left, right) => {
+          const divisor = expectInt(right);
+          if (divisor <= 0) return bail("modulus by a non-positive number");
+          const remainder = expectInt(left) % divisor;
+          return int(remainder < 0 ? remainder + divisor : remainder);
+        });
+      case "^":
+        return binary(operand(0), operand(1), (left, right) => {
+          const exponent = expectInt(right);
+          if (exponent < 0) return bail("negative exponent");
+          return int(Math.pow(expectInt(left), exponent));
+        });
+      case "<":
+        return binary(operand(0), operand(1), (left, right) =>
+          bool(expectInt(left) < expectInt(right)),
+        );
+      case ">":
+        return binary(operand(0), operand(1), (left, right) =>
+          bool(expectInt(left) > expectInt(right)),
+        );
+      case "<=":
+        return binary(operand(0), operand(1), (left, right) =>
+          bool(expectInt(left) <= expectInt(right)),
+        );
+      case ">=":
+        return binary(operand(0), operand(1), (left, right) =>
+          bool(expectInt(left) >= expectInt(right)),
+        );
+      case "..":
+        return binary(
+          operand(0),
+          operand(1),
+          (left, right) => interval(expectInt(left), expectInt(right)),
+          true,
+        );
+      case "Len":
+        return unary(operand(0), (sequence) => int(sizeOf(expectSequence(sequence))));
+      case "Head":
+        return unary(operand(0), (sequence) => {
+          const tuple = expectSequence(sequence);
+          return sizeOf(tuple) === 0 ? bail("Head of an empty sequence") : getRangeValue(tuple, 0);
+        });
+      case "Tail":
+        return unary(operand(0), (sequence) => {
+          const tuple = expectSequence(sequence);
+          const size = sizeOf(tuple);
+          if (size === 0) return bail("Tail of an empty sequence");
+          const elements: number[] = new Array(size - 1);
+          for (let index = 1; index < size; index++)
+            elements[index - 1] = getRangeValue(tuple, index);
+          return tupleOf(elements, size - 1);
+        });
+      case "Append":
+        return binary(operand(0), operand(1), (sequence, element) => {
+          const tuple = expectSequence(sequence);
+          const size = sizeOf(tuple);
+          const elements: number[] = new Array(size + 1);
+          for (let index = 0; index < size; index++) elements[index] = getRangeValue(tuple, index);
+          elements[size] = element;
+          return tupleOf(elements, size + 1);
+        });
+      case "\\o":
+        return binary(operand(0), operand(1), (left, right) => {
+          if (kindOf(left) === KIND_STRING || kindOf(right) === KIND_STRING)
+            return bail("string concatenation");
+          const first = expectSequence(left);
+          const second = expectSequence(right);
+          const elements: number[] = [];
+          for (let index = 0; index < sizeOf(first); index++)
+            elements.push(getRangeValue(first, index));
+          for (let index = 0; index < sizeOf(second); index++)
+            elements.push(getRangeValue(second, index));
+          return tupleOf(elements, elements.length);
+        });
+      case "Seq": {
+        const base = operand(0);
+        const member = memberTest(base);
+        return {
+          ...leaf(() => bail("enumerated Seq(S)"), base.footprint, false),
+          infinite: "Seq",
+          member: (element: number) => {
+            if (kindOf(element) !== KIND_TUPLE) return false;
+            for (let index = 0; index < sizeOf(element); index++)
+              if (!member(getRangeValue(element, index))) return false;
+            return true;
+          },
+        } as LazySet;
+      }
+      case "Cardinality":
+        return unary(operand(0), (set) => int(sizeOf(expectSet(set))));
+      case "IsFiniteSet":
+        return undefined;
+      case ":>":
+        return binary(operand(0), operand(1), (key, value) => functionOfSorted([key], [value], 1));
+      case "@@":
+        return binary(
+          operand(0),
+          operand(1),
+          (left, right) => {
+            if (!isFunctionKind(kindOf(left)) || !isFunctionKind(kindOf(right)))
+              return bail("@@ of non-functions");
+            const keys: number[] = [];
+            const values: number[] = [];
+            for (let index = 0; index < sizeOf(left); index++) {
+              keys.push(getKey(left, index));
+              values.push(getRangeValue(left, index));
+            }
+            for (let index = 0; index < sizeOf(right); index++) {
+              const key = getKey(right, index);
+              if (findKey(left, key) !== -1) continue;
+              keys.push(key);
+              values.push(getRangeValue(right, index));
+            }
+            return functionOf(keys, values);
+          },
+          true,
+        );
+      default:
+        return undefined;
+    }
+  };
+
+  const expectSequence = (id: number) =>
+    kindOf(id) === KIND_TUPLE ? id : bail("expected a sequence");
+
+  const interval = (low: number, high: number) => {
+    if (high < low) return EMPTY_SET;
+    if (high - low > 1e7) return bail("an interval too large to build");
+    const elements: number[] = new Array(high - low + 1);
+    for (let value = low; value <= high; value++) elements[value - low] = int(value);
+    return setOfSorted(elements, elements.length);
+  };
+
+  const powerSet = (set: number) => {
+    const size = sizeOf(set);
+    if (size > 20) return bail("a power set too large to build");
+    const subsets: number[] = [];
+    for (let mask = 0; mask < 1 << size; mask++) {
+      const elements: number[] = [];
+      for (let index = 0; index < size; index++)
+        if (mask & (1 << index)) elements.push(elementAt(set, index));
+      subsets.push(setOfSorted(elements, elements.length));
+    }
+    return setOf(subsets);
+  };
+
+  // An operator the engine doesn't implement runs in the reference interpreter, on values converted
+  // there and back, and is cached like any other computation.
+  const compileBridgedBuiltin = (
+    name: string,
+    builtin: Builtin,
+    args: Expression[],
+    context: Context,
+  ): Compiled => {
+    const compiledArgs: (Compiled | OperatorBinding)[] = args.map((argument, index) => {
+      void index;
+      if (argument.kind === "Lambda") return resolveOperatorArgument(argument, context);
+      return compile(argument, context);
+    });
+    const valueArgs = compiledArgs.filter(
+      (argument): argument is Compiled => "evaluate" in argument,
+    );
+    if (valueArgs.length !== compiledArgs.length)
+      return unsupported(`higher-order builtin ${name}`);
+    const evaluators = valueArgs.map((argument) => argument.evaluate);
+    return {
+      evaluate: () => {
+        const values: BuiltinArgument[] = evaluators.map((evaluate) => toValue(evaluate()));
+        const result: Value = builtin.evaluate(values);
+        return fromValue(result);
+      },
+      footprint: mergeFootprints(...valueArgs.map((argument) => argument.footprint)),
+      isCostly: true,
+      isNormalized: false,
+    };
+  };
+  void (null as unknown as OperatorValue);
+
+  // --- actions ---
+
+  // Resolves an expression that applies or names an operator to its body with the arguments bound,
+  // for the action compiler, which walks into operators to find assignments.
+  const resolveAction = (expression: Expression, context: Context): ActionTarget | undefined => {
+    if (expression.kind === "Identifier") {
+      if (isLocallyResolved(expression)) {
+        const binding = lookup(context.scope, expression.name);
+        if (binding?.kind === "argument") {
+          return {
+            body: binding.expression,
+            context: { ...binding.context, isPrimed: binding.context.isPrimed || context.isPrimed },
+            name: undefined,
+          };
+        }
+        if (binding) return undefined;
+      }
+      if (
+        environment.variableIndex.has(expression.name) ||
+        environment.constants.has(expression.name)
+      )
+        return undefined;
+      const definition = getDefinition(expression.name, environment);
+      if (definition?.kind === "Operator" && definition.params.length === 0) {
+        return {
+          body: definition.body,
+          context: { scope: undefined, isPrimed: context.isPrimed, isInit: context.isInit },
+          name: definition.name,
+        };
+      }
+      return undefined;
+    }
+    if (expression.kind !== "Apply") return undefined;
+    const name = expression.operator;
+    if (isLocallyResolved(expression)) {
+      const binding = lookup(context.scope, name);
+      if (binding?.kind === "operator") {
+        const operator = binding.operator;
+        return {
+          body: operator.body,
+          context: bindArguments(operator.params, expression.args, context, {
+            ...operator.context,
+            isPrimed: context.isPrimed || operator.context.isPrimed,
+          }),
+          name: operator.name,
+        };
+      }
+      if (binding) return undefined;
+    }
+    const target = environment.substitutions.get(name) ?? name;
+    const definition = environment.definitions.get(target);
+    if (definition?.kind === "Operator") {
+      if (definition.isRecursive) return undefined;
+      return {
+        body: definition.body,
+        context: bindArguments(definition.params, expression.args, context, {
+          scope: undefined,
+          isPrimed: context.isPrimed,
+          isInit: context.isInit,
+        }),
+        name: definition.name,
+      };
+    }
+    return undefined;
+  };
+
+  const bindValueSlot = (context: Context, name: string) => {
+    const slot = allocateSlot();
+    return {
+      context: { ...context, scope: bind(context.scope, name, { kind: "slot", slot }) },
+      slot,
+    };
+  };
+
+  return {
+    compile,
+    compileOperatorBody: (definition, args, context) => ({
+      body: definition.body,
+      context: bindArguments(definition.params, args, context, {
+        scope: undefined,
+        isPrimed: context.isPrimed,
+        isInit: context.isInit,
+      }),
+    }),
+    resolveAction,
+    bindLet: bindLetDefinitions,
+    bindValue: bindValueSlot,
+    environment,
+    variableCount,
+  };
+};
+
+export const memberTestFor = (compiled: Compiled): ((element: number) => boolean) | undefined =>
+  (compiled as { member?: (element: number) => boolean }).member;
+
+export const getInfiniteName = (compiled: Compiled): string | undefined =>
+  (compiled as { infinite?: string }).infinite;
+
+export type { Context as CompileContext, Scope as CompileScope };
+export const isSetId = (id: number) => kindOf(id) === KIND_SET;
+export const isBoolId = (id: number) => kindOf(id) === KIND_BOOL;

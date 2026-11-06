@@ -556,6 +556,7 @@ const hasWideString = (config: ModelConfig, environment: Environment) =>
 interface Search {
   properties: Properties;
   spec: Specification;
+  isFingerprintedLikeTlc: boolean;
   getFingerprintState: (state: Value[]) => Value[];
   getStoredFingerprints: (states: Value[][], fingerprintStates: Value[][]) => BigInt64Array;
   getTlcOrder: () => number[];
@@ -805,6 +806,7 @@ export const createSearch = (
   return {
     properties,
     spec,
+    isFingerprintedLikeTlc,
     isSymmetric: symmetryGroup !== undefined,
     isConstrained: constraints.length > 0 || actionConstraints.length > 0,
     getTlcOrder,
