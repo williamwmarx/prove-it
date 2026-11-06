@@ -1,5 +1,7 @@
-// Bundles each entry into dist on its own, without shared chunks. The library finds its workers as
-// new URL("./parallel-worker.js", import.meta.url), so all four entries sit side by side in dist.
+// Bundles the entries into dist, splitting the code they share and the code they import dynamically
+// into chunks, so the CLI loads the prover, the XML exporter and tlapm only for the commands that
+// run them. The library finds its workers as new URL("./parallel-worker.js", import.meta.url), so the
+// entries and the chunks sit side by side in dist.
 // Usage: bun scripts/build.ts
 
 import { rmSync } from "node:fs";
@@ -27,7 +29,8 @@ const result = await Bun.build({
     "src/prover/prove-worker.ts",
   ].map((entry) => join(PACKAGE_DIRECTORY, entry)),
   outdir: OUT_DIRECTORY,
-  naming: "[name].[ext]",
+  naming: { entry: "[name].[ext]", chunk: "[name]-[hash].[ext]" },
+  splitting: true,
   target: "node",
   format: "esm",
   banner: LICENSE_BANNER,
