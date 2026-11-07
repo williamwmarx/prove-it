@@ -1,17 +1,37 @@
-// Times Java TLC (one worker and all cores), the original tla-ts under Node, and Prove It under Bun
-// and Node on the models in bench-suite.json, and writes the medians as JSON. Every run is a fresh
-// process, so wall time includes startup; CPU time is the user and system time of the process and
-// its children, which a loaded machine stretches less than wall time. The checkers take turns in
-// each round, so a burst of load spreads over all of them.
+// Times TLA+ model checkers on the models in bench-suite.json and writes the medians as JSON (and,
+// with --markdown, a table): Java TLC on one worker and on every core, tla-ts under Node, tla-rs, and
+// Prove It as its compiled binary and under Bun and Node. Every run is a fresh process, so wall time
+// includes startup; CPU time is the user and system time of the process and its children, which a
+// loaded machine stretches less than wall time. The checkers take turns in each round, so a burst
+// of load spreads over all of them.
+//
+// Each checker's verdict and distinct states, and its depth and generated states where it counts
+// them as TLC does, must match TLC's on one worker; a checker that disagrees, fails or times out on a model
+// is reported as such, takes no further runs there and is left out of the speedups. TLC's recording
+// in expected.json stands in where TLC fails. Only Prove It failing or disagreeing, or a model with
+// nothing to check against, makes the run fail.
+//
 // Usage: bun scripts/bench-suite.ts [--runs 3] [--filter text] [--checkers tlc,tlc-auto,...]
-//        [--out path]
-// TLA2TOOLS_JAR names tla2tools.jar and TLA_TS_CLI names tla-ts's dist/cli.js; a checker whose
-// file is missing is left out.
+//        [--timeout seconds] [--out path] [--markdown path]
+// TLA2TOOLS_JAR names tla2tools.jar, TLA_TS_CLI tla-ts's dist/cli.js and TLA_RS_BIN tla-rs's tla
+// binary; the Prove It binary is dist/prove-it (bun run build:binary). A checker whose file is
+// missing is left out.
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { availableParallelism, cpus, loadavg, release, tmpdir, totalmem } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { EXPECTED_PATH, getOption, LIBRARY_PATH, linkLibraryModules } from "./corpora";
 
@@ -24,37 +44,66 @@ interface SuiteModel {
   isUsingLibrary?: boolean;
 }
 
+interface Outcome {
+  // "success", "deadlock", "invariant <name>", "temporal <name>", "action property <name>", or
+  // "error" and "timeout", which carry no counts.
+  verdict: string;
+  // Why a checker failed, when it says.
+  message?: string;
+  generatedStates?: number;
+  distinctStates?: number;
+  depth?: number;
+}
+
 interface Checker {
   name: string;
   getCommand: (model: SuiteModel, metadataDirectory: string) => string[];
+  // The directory the checker runs in, when it isn't the model's.
+  getDirectory?: (model: SuiteModel) => string;
+  parse: (stdout: string, stderr: string) => Outcome;
+  // tla-rs counts transitions where TLC counts generated states, which differ by the initial states.
+  isCountingGenerated: boolean;
+  // TLC on several workers can report a depth past the search's, as its workers don't keep to levels.
+  isDepthExact: boolean;
 }
 
-interface Measurement {
+interface Measurement extends Outcome {
   wallMilliseconds: number;
   cpuMilliseconds: number;
   maxRssMegabytes: number;
-  exitCode: number;
-  generatedStates: number | undefined;
-  distinctStates: number | undefined;
+  exitCode: number | null;
 }
 
 interface ExpectedResult {
   id: string;
+  status?: string;
   generatedStates?: number;
   distinctStates?: number;
+  depth?: number;
   tlcMilliseconds: number;
 }
 
+type Verdict = "agrees" | "disagrees" | "fails" | "times out";
+
 const PACKAGE_DIRECTORY = join(import.meta.dirname, "..");
 const CLI_PATH = join(PACKAGE_DIRECTORY, "dist/cli.js");
+const BINARY_PATH = join(PACKAGE_DIRECTORY, "dist/prove-it");
 const MODELS: SuiteModel[] = JSON.parse(
   readFileSync(join(import.meta.dirname, "bench-suite.json"), "utf8"),
 );
 const runs = Number(getOption("--runs") ?? 3);
 const filter = getOption("--filter");
+const timeoutSeconds = Number(getOption("--timeout") ?? 600);
 const outPath = getOption("--out") ?? join(PACKAGE_DIRECTORY, ".bench-suite.json");
+const markdownPath = getOption("--markdown");
 const jarPath = process.env.TLA2TOOLS_JAR ?? "";
 const tlaTsPath = process.env.TLA_TS_CLI ?? "";
+const tlaRsPath = process.env.TLA_RS_BIN ?? "";
+
+if (!Number.isInteger(runs) || runs < 1 || !(timeoutSeconds > 0)) {
+  console.error("--runs takes a whole number from 1, and --timeout a number of seconds above 0");
+  process.exit(1);
+}
 
 if (!existsSync(CLI_PATH)) {
   console.error("Build the package first with bun run build");
@@ -70,6 +119,84 @@ const getCliArguments = (model: SuiteModel) =>
     ? [LIBRARY_OPTION, "tlc2.TLC", "-config", model.config, model.spec]
     : [model.spec, "-config", model.config];
 
+// The lines that say why a checker failed, or its last ones.
+const getFailureLines = (output: string) => {
+  const lines = output
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line !== "" && !line.startsWith("Picked up"));
+  const errors = lines.filter((line) => /error|exception|unsupported|not supported/i.test(line));
+  return (errors.length > 0 ? errors : lines.slice(-3)).slice(0, 3).join(" | ").slice(0, 300);
+};
+
+const readNumber = (text: string | undefined) =>
+  text === undefined ? undefined : Number(text.replaceAll(",", ""));
+
+// TLC's messages, which tla-ts and Prove It print as TLC does.
+const parseTlcOutput = (stdout: string, stderr: string): Outcome => {
+  const output = `${stdout}${stderr}`;
+  const statistics = [
+    ...output.matchAll(/([\d,]+) states? generated, ([\d,]+) distinct states? found/g),
+  ].at(-1);
+  const counts = {
+    generatedStates: readNumber(statistics?.[1]),
+    distinctStates: readNumber(statistics?.[2]),
+    depth: readNumber(/The depth of the complete state graph search is (\d+)/.exec(output)?.[1]),
+  };
+  const violation =
+    /Error: Invariant (\S+) is violated/.exec(output) ??
+    /Error: Action property (\S+) is violated/.exec(output) ??
+    /Error: Temporal properties were violated/.exec(output) ??
+    /Error: Deadlock reached/.exec(output);
+  if (output.includes("No error has been found")) return { verdict: "success", ...counts };
+  if (violation === null) return { verdict: "error", message: getFailureLines(output) };
+  const kind = violation[0].includes("Invariant")
+    ? "invariant"
+    : violation[0].includes("Action")
+      ? "action property"
+      : violation[0].includes("Temporal")
+        ? "temporal"
+        : "deadlock";
+  return { verdict: violation[1] ? `${kind} ${violation[1]}` : kind, ...counts };
+};
+
+// tla-rs's --json report, which it prints to stdout after a summary of the spec; its progress goes
+// to stderr.
+const parseTlaRsOutput = (stdout: string, stderr: string): Outcome => {
+  const parse = (text: string): Record<string, unknown> | undefined => {
+    try {
+      return JSON.parse(text);
+    } catch {
+      return undefined;
+    }
+  };
+  const start = stdout.search(/^\{/m);
+  const report = start === -1 ? undefined : parse(stdout.slice(start));
+  if (report === undefined)
+    return { verdict: "error", message: getFailureLines(`${stdout}${stderr}`) };
+  const statistics = (report.stats ?? {}) as Record<string, number | undefined>;
+  const counts = {
+    generatedStates: statistics.transitions,
+    distinctStates: statistics.states_explored,
+    depth: statistics.max_depth,
+  };
+  switch (report.status) {
+    case "ok":
+    case "success":
+    case "passed":
+    case "no_violation":
+      return { verdict: "success", ...counts };
+    case "invariant_violation":
+      return { verdict: `invariant ${report.invariant_name}`, ...counts };
+    case "deadlock":
+      return { verdict: "deadlock", ...counts };
+    case "liveness_violation":
+      return { verdict: "temporal", ...counts };
+    default:
+      return { verdict: "error", message: `${report.status}: ${report.error ?? ""}`.slice(0, 300) };
+  }
+};
+
 const getTlcCommand = (workers: string) => (model: SuiteModel, metadataDirectory: string) => [
   "java",
   ...(model.isUsingLibrary ? [LIBRARY_OPTION] : []),
@@ -81,7 +208,6 @@ const getTlcCommand = (workers: string) => (model: SuiteModel, metadataDirectory
   "-workers",
   workers,
   "-nowarning",
-  "-noGenerateSpecTE",
   "-metadir",
   metadataDirectory,
   "-config",
@@ -103,24 +229,100 @@ const getBunCommand = (model: SuiteModel) => [
   ...getCliArguments(model),
 ];
 
+// tla-rs reads modules only from the spec's directory, so a model that uses the library runs in a
+// directory of links to its own files and the library's.
+const TLA_RS_DIRECTORY = mkdtempSync(join(tmpdir(), "prove-it-bench-tla-rs-"));
+const linkFiles = (source: string, target: string) =>
+  readdirSync(source)
+    .filter((name) => statSync(join(source, name)).isFile() && !existsSync(join(target, name)))
+    .forEach((name) => symlinkSync(join(source, name), join(target, name)));
+const getTlaRsDirectory = (model: SuiteModel) => {
+  if (!model.isUsingLibrary) return model.directory;
+  const directory = join(TLA_RS_DIRECTORY, model.id.replaceAll(/[^A-Za-z0-9_.-]/g, "_"));
+  if (!existsSync(directory)) {
+    mkdirSync(directory);
+    linkFiles(model.directory, directory);
+    linkFiles(LIBRARY_PATH, directory);
+  }
+  return directory;
+};
+const getTlaRsCommand = (model: SuiteModel) => [
+  tlaRsPath,
+  model.spec,
+  "--config",
+  model.config,
+  "--json",
+  "--max-states",
+  "2000000000",
+  "--max-depth",
+  "100000000",
+];
+
+const TLC_STYLE = { parse: parseTlcOutput, isCountingGenerated: true, isDepthExact: true };
 const ALL_CHECKERS: (Checker & { isAvailable: boolean })[] = [
-  { name: "tlc", getCommand: getTlcCommand("1"), isAvailable: existsSync(jarPath) },
-  { name: "tlc-auto", getCommand: getTlcCommand("auto"), isAvailable: existsSync(jarPath) },
-  { name: "tla-ts", getCommand: getNodeCommand(tlaTsPath), isAvailable: existsSync(tlaTsPath) },
+  { name: "tlc", getCommand: getTlcCommand("1"), ...TLC_STYLE, isAvailable: existsSync(jarPath) },
   {
-    name: "prove-it-bun",
-    getCommand: getBunCommand,
+    name: "tlc-auto",
+    getCommand: getTlcCommand("auto"),
+    ...TLC_STYLE,
+    isDepthExact: false,
+    isAvailable: existsSync(jarPath),
+  },
+  {
+    name: "tla-ts",
+    getCommand: getNodeCommand(tlaTsPath),
+    ...TLC_STYLE,
+    isAvailable: existsSync(tlaTsPath),
+  },
+  {
+    name: "tla-rs",
+    getCommand: getTlaRsCommand,
+    getDirectory: getTlaRsDirectory,
+    parse: parseTlaRsOutput,
+    isCountingGenerated: false,
+    isDepthExact: true,
+    isAvailable: existsSync(tlaRsPath),
+  },
+  {
+    name: "prove-it",
+    getCommand: (model) => [BINARY_PATH, ...getCliArguments(model)],
+    ...TLC_STYLE,
+    isAvailable: existsSync(BINARY_PATH),
+  },
+  { name: "prove-it-bun", getCommand: getBunCommand, ...TLC_STYLE, isAvailable: true },
+  {
+    name: "prove-it-node",
+    getCommand: getNodeCommand(CLI_PATH),
+    ...TLC_STYLE,
     isAvailable: true,
   },
-  { name: "prove-it-node", getCommand: getNodeCommand(CLI_PATH), isAvailable: true },
 ];
 const requested = getOption("--checkers")?.split(",");
-ALL_CHECKERS.filter((checker) => !checker.isAvailable).forEach((checker) =>
-  console.warn(`Leaving out ${checker.name}: set TLA2TOOLS_JAR and TLA_TS_CLI to run it`),
+const unknown = requested?.filter((name) => !ALL_CHECKERS.some((checker) => checker.name === name));
+if (unknown !== undefined && unknown.length > 0) {
+  console.error(`Unknown checkers: ${unknown.join(", ")}`);
+  process.exit(1);
+}
+// A checker asked for by name must run; with no --checkers, the ones missing are left out.
+const missing = ALL_CHECKERS.filter(
+  (checker) =>
+    !checker.isAvailable && (requested === undefined || requested.includes(checker.name)),
 );
+missing.forEach((checker) =>
+  console.warn(
+    `Leaving out ${checker.name}: set TLA2TOOLS_JAR, TLA_TS_CLI and TLA_RS_BIN, and build dist/prove-it`,
+  ),
+);
+if (requested !== undefined && missing.length > 0) process.exit(1);
 const checkers = ALL_CHECKERS.filter(
   (checker) => checker.isAvailable && (requested === undefined || requested.includes(checker.name)),
 );
+// The speedups are over this Prove It, and the counts are checked against TLC on one worker, or
+// against TLC's recording in expected.json when TLC isn't run.
+const baseline = ["prove-it", "prove-it-bun", "prove-it-node"].find((name) =>
+  checkers.some((checker) => checker.name === name),
+);
+const isProveIt = (name: string) => name.startsWith("prove-it");
 
 // The engine is on unless this says otherwise, so the runs don't inherit a setting from the shell.
 const environment = Object.fromEntries(
@@ -137,31 +339,52 @@ const run = (command: string[], cwd: string, engineSetting?: string) => {
         : { ...environment, PROVE_IT_ENGINE: engineSetting },
     stdout: "pipe",
     stderr: "pipe",
+    timeout: timeoutSeconds * 1000,
+    killSignal: "SIGKILL",
   });
-  return { result, output: `${result.stdout.toString()}${result.stderr.toString()}` };
+  return {
+    result,
+    stdout: result.stdout.toString(),
+    stderr: result.stderr.toString(),
+    output: `${result.stdout.toString()}${result.stderr.toString()}`,
+  };
 };
 
 const measure = (checker: Checker, model: SuiteModel): Measurement => {
   const metadataDirectory = mkdtempSync(join(tmpdir(), "prove-it-bench-"));
   const startedAt = performance.now();
-  const execution = run(checker.getCommand(model, metadataDirectory), model.directory);
+  const execution = run(
+    checker.getCommand(model, metadataDirectory),
+    checker.getDirectory?.(model) ?? model.directory,
+  );
   const wallMilliseconds = performance.now() - startedAt;
   rmSync(metadataDirectory, { recursive: true, force: true });
-  const statistics = [
-    ...execution.output.matchAll(/(\d+) states generated, (\d+) distinct states found/g),
-  ].at(-1);
+  const isTimedOut = execution.result.exitedDueToTimeout === true;
+  const parsed: Outcome = isTimedOut
+    ? { verdict: "timeout", message: `timed out after ${timeoutSeconds} s` }
+    : checker.parse(execution.stdout, execution.stderr);
+  // A process the kernel stopped, such as for running out of memory, reports no error of its own.
+  const outcome =
+    parsed.verdict === "error" && execution.result.signalCode
+      ? {
+          ...parsed,
+          message: `stopped by ${execution.result.signalCode} at ${Math.round(execution.result.resourceUsage.maxRSS / 1024 / 1024)} MB resident`,
+        }
+      : parsed;
   return {
+    ...outcome,
     wallMilliseconds,
     cpuMilliseconds: Number(execution.result.resourceUsage.cpuTime.total) / 1000,
     maxRssMegabytes: execution.result.resourceUsage.maxRSS / 1024 / 1024,
     exitCode: execution.result.exitCode,
-    generatedStates: statistics ? Number(statistics[1]) : undefined,
-    distinctStates: statistics ? Number(statistics[2]) : undefined,
   };
 };
 
-const getMedian = (values: number[]) =>
-  [...values].sort((left, right) => left - right)[Math.floor(values.length / 2)];
+const getMedian = (values: number[]) => {
+  const sorted = [...values].sort((left, right) => left - right);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 1 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+};
 
 const getVersion = (command: string[]) => {
   const result = spawnSync(command[0], command.slice(1), { encoding: "utf8" });
@@ -175,6 +398,11 @@ const getCommit = (path: string) =>
   spawnSync("git", ["-C", path, "rev-parse", "--short", "HEAD"], {
     encoding: "utf8",
   }).stdout.trim();
+
+const getPackageVersion = (cliPath: string) => {
+  const manifest = join(dirname(cliPath), "..", "package.json");
+  return existsSync(manifest) ? JSON.parse(readFileSync(manifest, "utf8")).version : undefined;
+};
 
 const expectedById = new Map(
   (JSON.parse(readFileSync(EXPECTED_PATH, "utf8")) as ExpectedResult[]).map((result) => [
@@ -191,12 +419,17 @@ const machine = {
   kernel: release(),
   bun: Bun.version,
   node: getVersion(["node", "--version"]),
-  java: getVersion(["java", "-version"]),
+  java: jarPath ? getVersion(["java", "-version"]) : undefined,
+  // A jar built without its git history names its commit through TLC_COMMIT.
   tlc:
     jarPath &&
-    /TLC2 Version [^\n]*/.exec(run(["java", "-cp", jarPath, "tlc2.TLC"], tmpdir()).output)?.[0],
-  tlaTs: tlaTsPath && getCommit(join(tlaTsPath, "..")),
+    /TLC2 Version [^\n]*/
+      .exec(run(["java", "-cp", jarPath, "tlc2.TLC"], tmpdir()).output)?.[0]
+      .replace(/\$\{git\.shortRevision\}/, process.env.TLC_COMMIT?.slice(0, 7) ?? "?"),
+  tlaTs: tlaTsPath ? getPackageVersion(tlaTsPath) : undefined,
+  tlaRs: tlaRsPath ? getVersion([tlaRsPath, "--version"]) : undefined,
   proveIt: getCommit(PACKAGE_DIRECTORY),
+  timeoutSeconds,
   loadAverageAtStart: loadavg(),
 };
 console.log(machine);
@@ -207,142 +440,276 @@ const models = MODELS.filter((model) => filter === undefined || model.id.include
   (model) => ({ ...model, directory: join(PACKAGE_DIRECTORY, model.directory) }),
 );
 
+const describeOutcome = (outcome: Outcome | undefined, isCountingGenerated = true) =>
+  outcome === undefined
+    ? "?"
+    : `${outcome.verdict} ${isCountingGenerated ? (outcome.generatedStates ?? "?") : "-"}/${outcome.distinctStates ?? "?"} depth ${outcome.depth ?? "?"}`;
+
+const isMatching = (outcome: Outcome, reference: Outcome | undefined, checker: Checker) =>
+  reference !== undefined &&
+  outcome.verdict === reference.verdict &&
+  outcome.distinctStates === reference.distinctStates &&
+  (!checker.isDepthExact ||
+    outcome.depth === undefined ||
+    reference.depth === undefined ||
+    outcome.depth === reference.depth) &&
+  (!checker.isCountingGenerated || outcome.generatedStates === reference.generatedStates);
+
 const results = models.map((model, index) => {
-  // One round runs every checker once, so a burst of load lands on all of them.
-  const rounds = Array.from({ length: runs }, () =>
-    checkers.map((checker) => measure(checker, model)),
+  const expected = expectedById.get(model.id);
+  const recorded: Outcome | undefined =
+    expected?.distinctStates === undefined
+      ? undefined
+      : {
+          verdict: expected.status === "success" ? "success" : (expected.status ?? "?"),
+          generatedStates: expected.generatedStates,
+          distinctStates: expected.distinctStates,
+          depth: expected.depth,
+        };
+  // One round runs every checker still in the race once, so a burst of load lands on all of them.
+  const measurementsByChecker = new Map<string, Measurement[]>(
+    checkers.map((checker) => [checker.name, []]),
   );
+  const stopped = new Set<string>();
+  let reference = recorded;
+  for (let round = 0; round < runs; round++) {
+    checkers
+      .filter((checker) => !stopped.has(checker.name))
+      .forEach((checker) => {
+        const measurement = measure(checker, model);
+        measurementsByChecker.get(checker.name)?.push(measurement);
+        if (checker.name === "tlc" && round === 0 && measurement.verdict !== "error") {
+          reference = measurement.verdict === "timeout" ? reference : measurement;
+        }
+        if (
+          measurement.verdict === "error" ||
+          measurement.verdict === "timeout" ||
+          (checker.name !== "tlc" && !isMatching(measurement, reference, checker))
+        ) {
+          stopped.add(checker.name);
+        }
+      });
+  }
   const engineLine = /^\[engine\] .*$/m.exec(
     run(getBunCommand(model), model.directory, "debug").output,
   )?.[0];
-  const expected = expectedById.get(model.id);
   const measurements = Object.fromEntries(
-    checkers.map((checker, checkerIndex) => {
-      const all = rounds.map((round) => round[checkerIndex]);
+    checkers.map((checker) => {
+      const all = measurementsByChecker.get(checker.name) ?? [];
+      const failure = all.find(
+        (measurement) => measurement.verdict === "error" || measurement.verdict === "timeout",
+      );
+      const verdict: Verdict =
+        failure?.verdict === "timeout"
+          ? "times out"
+          : failure !== undefined
+            ? "fails"
+            : all.every((measurement) => isMatching(measurement, reference, checker))
+              ? "agrees"
+              : "disagrees";
+      const walls = all.map((measurement) => measurement.wallMilliseconds);
       return [
         checker.name,
         {
-          wallMilliseconds: Math.round(
-            getMedian(all.map((measurement) => measurement.wallMilliseconds)),
+          verdict,
+          outcome: describeOutcome(
+            all.find((measurement) => measurement.verdict !== "timeout") ?? all[0],
           ),
+          message: failure?.message,
+          wallMilliseconds: Math.round(getMedian(walls)),
+          minimumWallMilliseconds: Math.round(Math.min(...walls)),
+          maximumWallMilliseconds: Math.round(Math.max(...walls)),
           cpuMilliseconds: Math.round(
             getMedian(all.map((measurement) => measurement.cpuMilliseconds)),
           ),
           maxRssMegabytes: Math.round(
             getMedian(all.map((measurement) => measurement.maxRssMegabytes)),
           ),
-          generatedStates: all[0].generatedStates,
-          distinctStates: all[0].distinctStates,
           runs: all,
         },
       ];
     }),
   );
-  // Every run of every checker, and TLC's recording, must count the same states.
-  const counts = [
-    ...(expected?.distinctStates === undefined
-      ? []
-      : [`expected ${expected.generatedStates}/${expected.distinctStates}`]),
-    ...checkers.flatMap((checker, checkerIndex) =>
-      rounds.map(
-        (round) =>
-          `${checker.name} ${round[checkerIndex].generatedStates}/${round[checkerIndex].distinctStates}`,
-      ),
-    ),
+  // TLC failing leaves its recording in expected.json to check Prove It against.
+  const problems = [
+    ...(reference === undefined ? ["no run or recording of TLC to check against"] : []),
+    ...checkers
+      .filter(
+        (checker) => isProveIt(checker.name) && measurements[checker.name].verdict !== "agrees",
+      )
+      .map((checker) => `${checker.name} ${measurements[checker.name].verdict}`),
   ];
-  const isAgreeing = new Set(counts.map((count) => count.split(" ")[1])).size === 1;
-  const failed = checkers.filter((_checker, checkerIndex) =>
-    rounds.some((round) => round[checkerIndex].exitCode !== 0),
-  );
   console.log(
-    `[${index + 1}/${models.length}] ${model.id}  ${checkers.map((checker) => `${checker.name} ${measurements[checker.name].wallMilliseconds}ms/${measurements[checker.name].cpuMilliseconds}ms cpu`).join(", ")}  ${engineLine ?? "[engine] no report"}`,
+    `[${index + 1}/${models.length}] ${model.id}  reference ${describeOutcome(reference)}\n  ${checkers
+      .map(
+        (checker) =>
+          `${checker.name} ${measurements[checker.name].wallMilliseconds}ms/${measurements[checker.name].cpuMilliseconds}ms cpu ${measurements[checker.name].verdict}${measurements[checker.name].verdict === "agrees" ? "" : ` (${measurements[checker.name].message ?? measurements[checker.name].outcome})`}`,
+      )
+      .join("\n  ")}\n  ${engineLine ?? "[engine] no report"}`,
   );
-  if (!isAgreeing)
-    console.error(`!!! STATE COUNTS DISAGREE on ${model.id}: ${[...new Set(counts)].join(", ")}`);
-  if (failed.length > 0)
-    console.error(
-      `!!! NONZERO EXIT on ${model.id}: ${failed.map((checker) => checker.name).join(", ")}`,
-    );
+  if (problems.length > 0) console.error(`!!! ${model.id}: ${problems.join(", ")}`);
   return {
     id: model.id,
     style: model.style,
     expectedTlcMilliseconds: expected?.tlcMilliseconds,
-    generatedStates: measurements[checkers[0].name]?.generatedStates,
-    distinctStates: measurements[checkers[0].name]?.distinctStates,
-    isAgreeing,
-    counts: [...new Set(counts)],
-    failed: failed.map((checker) => checker.name),
+    reference: reference && describeOutcome(reference),
+    distinctStates: reference?.distinctStates,
+    problems,
     engine: engineLine?.replace(/^\[engine\] /, ""),
     measurements,
   };
 });
 
+rmSync(TLA_RS_DIRECTORY, { recursive: true, force: true });
 writeFileSync(
   outPath,
-  `${JSON.stringify({ machine: { ...machine, loadAverageAtEnd: loadavg() }, runs, checkers: checkers.map((checker) => checker.name), results }, null, 2)}\n`,
+  `${JSON.stringify({ machine: { ...machine, loadAverageAtEnd: loadavg() }, runs, baseline, checkers: checkers.map((checker) => checker.name), results }, null, 2)}\n`,
 );
 
+type Result = (typeof results)[number];
 const formatSeconds = (milliseconds: number | undefined) =>
   milliseconds === undefined ? "-" : (milliseconds / 1000).toFixed(2);
 const getRatio = (
-  result: (typeof results)[number],
+  result: Result,
   numerator: string,
-  denominator: string,
   metric: "wallMilliseconds" | "cpuMilliseconds",
 ) => {
-  const top = result.measurements[numerator]?.[metric];
-  const bottom = result.measurements[denominator]?.[metric];
-  return top === undefined || bottom === undefined ? undefined : top / bottom;
+  const top = result.measurements[numerator];
+  const bottom = baseline === undefined ? undefined : result.measurements[baseline];
+  return top?.verdict !== "agrees" || bottom?.verdict !== "agrees"
+    ? undefined
+    : top[metric] / bottom[metric];
 };
 const formatRatio = (ratio: number | undefined) =>
   ratio === undefined ? "-" : `${ratio.toFixed(2)}x`;
-
-const getEngineLabel = (engine: string | undefined) =>
-  engine === undefined
-    ? "?"
-    : engine.startsWith("checked")
-      ? "ran"
-      : engine.replace(/ after \d+ ms/, "").split(":")[0];
-
-console.log(`\nMedian of ${runs} runs; wall seconds (CPU seconds); speedups of Prove It under Bun`);
-console.table(
-  results.map((result) => ({
-    model: result.id.length > 40 ? `…${result.id.slice(-39)}` : result.id,
-    distinct: result.distinctStates,
-    ...Object.fromEntries(
-      checkers.map((checker) => [
-        checker.name,
-        `${formatSeconds(result.measurements[checker.name].wallMilliseconds)} (${formatSeconds(result.measurements[checker.name].cpuMilliseconds)})`,
-      ]),
-    ),
-    "vs tlc": formatRatio(getRatio(result, "tlc", "prove-it-bun", "wallMilliseconds")),
-    "vs tlc cpu": formatRatio(getRatio(result, "tlc", "prove-it-bun", "cpuMilliseconds")),
-    "vs tla-ts": formatRatio(getRatio(result, "tla-ts", "prove-it-bun", "wallMilliseconds")),
-    engine: getEngineLabel(result.engine),
-    counts: result.isAgreeing ? "agree" : "DISAGREE",
-  })),
-);
-
 const getGeometricMean = (ratios: (number | undefined)[]) => {
   const defined = ratios.filter((ratio) => ratio !== undefined);
   return defined.length === 0
     ? undefined
     : Math.exp(defined.reduce((sum, ratio) => sum + Math.log(ratio), 0) / defined.length);
 };
-console.log("Geometric mean speedup of Prove It under Bun (wall, CPU):");
-checkers
-  .filter((checker) => checker.name !== "prove-it-bun")
-  .forEach((checker) =>
-    console.log(
-      `  over ${checker.name.padEnd(13)} ${formatRatio(getGeometricMean(results.map((result) => getRatio(result, checker.name, "prove-it-bun", "wallMilliseconds"))))}, ${formatRatio(getGeometricMean(results.map((result) => getRatio(result, checker.name, "prove-it-bun", "cpuMilliseconds"))))}`,
+const getEngineLabel = (engine: string | undefined) =>
+  engine === undefined
+    ? "?"
+    : engine.startsWith("checked")
+      ? "ran"
+      : engine.replace(/ after \d+ ms/, "").split(":")[0];
+const formatCell = (result: Result, name: string) => {
+  const measurement = result.measurements[name];
+  return measurement.verdict === "agrees"
+    ? `${formatSeconds(measurement.wallMilliseconds)} (${formatSeconds(measurement.cpuMilliseconds)})`
+    : measurement.verdict;
+};
+const competitors = checkers.filter((checker) => checker.name !== baseline);
+
+console.log(
+  `\nMedian of ${runs} runs; wall seconds (CPU seconds); speedups over ${baseline ?? "nothing"}`,
+);
+console.table(
+  results.map((result) => ({
+    model: result.id.length > 40 ? `…${result.id.slice(-39)}` : result.id,
+    distinct: result.distinctStates,
+    ...Object.fromEntries(
+      checkers.map((checker) => [checker.name, formatCell(result, checker.name)]),
     ),
-  );
+    engine: getEngineLabel(result.engine),
+  })),
+);
+const summary = competitors.map((checker) => ({
+  name: checker.name,
+  wall: getGeometricMean(
+    results.map((result) => getRatio(result, checker.name, "wallMilliseconds")),
+  ),
+  cpu: getGeometricMean(results.map((result) => getRatio(result, checker.name, "cpuMilliseconds"))),
+  agreeing: results.filter((result) => result.measurements[checker.name].verdict === "agrees")
+    .length,
+}));
+console.log(`Geometric mean speedup of ${baseline} (wall, CPU) on the models both finish:`);
+summary.forEach((row) =>
+  console.log(
+    `  over ${row.name.padEnd(13)} ${formatRatio(row.wall)}, ${formatRatio(row.cpu)} (${row.agreeing}/${results.length} models)`,
+  ),
+);
 console.log(
   `Load average at start ${machine.loadAverageAtStart.map((load) => load.toFixed(2)).join(" ")}, at end ${loadavg()
     .map((load) => load.toFixed(2))
     .join(" ")}`,
 );
 console.log(`Wrote ${outPath}`);
-const isFailing = results.some((result) => !result.isAgreeing || result.failed.length > 0);
-if (isFailing) console.error("!!! Some checkers disagree on state counts or exited with an error");
-process.exit(isFailing ? 1 : 0);
+
+if (markdownPath !== undefined) {
+  const row = (cells: (string | number | undefined)[]) =>
+    `| ${cells.map((cell) => String(cell ?? "-").replaceAll("|", "\\|")).join(" | ")} |`;
+  const spread = (result: Result, name: string) => {
+    const measurement = result.measurements[name];
+    return measurement.verdict === "agrees" && measurement.runs.length > 1
+      ? ` ${formatSeconds(measurement.minimumWallMilliseconds)}–${formatSeconds(measurement.maximumWallMilliseconds)}`
+      : "";
+  };
+  const lines = [
+    "## Checker benchmark",
+    "",
+    `Median wall seconds of ${runs} interleaved runs (CPU seconds; min–max wall), startup included, on ${machine.cores} cores (${machine.cpu}, ${machine.memoryGigabytes} GB). Speedups are over \`${baseline}\` at ${machine.proveIt}, on the models where both agree with TLC on one worker. A checker that fails, times out (${timeoutSeconds} s) or disagrees with TLC on a model says so instead of a time and takes no more runs there.`,
+    "",
+    row(["Checker", "Version", `${baseline} is faster (wall)`, "(CPU)", "Models agreeing"]),
+    row(["---", "---", "---:", "---:", "---:"]),
+    row([
+      baseline,
+      machine.proveIt,
+      "",
+      "",
+      `${results.filter((result) => baseline !== undefined && result.measurements[baseline].verdict === "agrees").length}/${results.length}`,
+    ]),
+    ...summary.map((entry) =>
+      row([
+        entry.name,
+        entry.name.startsWith("tlc")
+          ? machine.tlc
+          : entry.name === "tla-ts"
+            ? machine.tlaTs
+            : entry.name === "tla-rs"
+              ? machine.tlaRs
+              : machine.proveIt,
+        formatRatio(entry.wall),
+        formatRatio(entry.cpu),
+        `${entry.agreeing}/${results.length}`,
+      ]),
+    ),
+    "",
+    row(["Model", "Distinct states", ...checkers.map((checker) => checker.name), "Engine"]),
+    row(["---", "---:", ...checkers.map(() => "---:"), "---"]),
+    ...results.map((result) =>
+      row([
+        result.id,
+        result.distinctStates?.toLocaleString("en-US"),
+        ...checkers.map(
+          (checker) => `${formatCell(result, checker.name)}${spread(result, checker.name)}`,
+        ),
+        getEngineLabel(result.engine),
+      ]),
+    ),
+    "",
+    ...results.flatMap((result) =>
+      checkers
+        .filter((checker) => result.measurements[checker.name].verdict !== "agrees")
+        .map(
+          (checker) =>
+            `- ${result.id}, ${checker.name} ${result.measurements[checker.name].verdict}: ${result.measurements[checker.name].message ?? `${result.measurements[checker.name].outcome}, where TLC gives ${result.reference}`}`,
+        ),
+    ),
+    "",
+    `Machine: ${machine.kernel}, Bun ${machine.bun}, Node ${machine.node}, ${machine.java ?? "no Java"}; load average ${machine.loadAverageAtStart.map((load) => load.toFixed(2)).join(" ")} at start, ${loadavg()
+      .map((load) => load.toFixed(2))
+      .join(" ")} at end.`,
+    "",
+  ];
+  appendFileSync(markdownPath, lines.join("\n"));
+}
+
+const failing = results.filter((result) => result.problems.length > 0);
+if (failing.length > 0) {
+  console.error(
+    `!!! Prove It failed or disagreed, or nothing checked it, on ${failing.map((result) => result.id).join(", ")}`,
+  );
+}
+process.exit(failing.length > 0 ? 1 : 0);
