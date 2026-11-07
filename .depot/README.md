@@ -10,9 +10,12 @@ Every CI workflow runs on Depot CI. GitHub Actions runs none.
   `main` changes the version in `packages/prove-it/package.json`, then tags the
   commit `v<version>`. A version npm already has publishes nothing, so running
   it by hand retries a failed release.
+- `workflows/benchmark.yml` times Prove It against other TLA+ model checkers,
+  by hand or weekly, never on a pull request ("Benchmark" below).
 
 Tools come from `scripts/ci/bootstrap.sh`, pinned by URL and sha256, not from
-setup actions. Only `actions/checkout` is used, pinned to a full SHA.
+setup actions. Only `actions/checkout` and `actions/upload-artifact` are used,
+pinned to full SHAs.
 
 ## Releasing
 
@@ -60,3 +63,48 @@ op read --no-newline "op://…" | depot ci secrets set ONEPASSWORD_PROVE_IT_RELE
 npm's trusted publishing and provenance work only from CI providers npm
 supports (GitHub Actions, GitLab CI/CD, CircleCI). Depot CI isn't one, so
 releases use a token instead.
+
+## Benchmark
+
+`workflows/benchmark.yml` runs `packages/prove-it/scripts/bench-suite.ts` on
+one `depot-ubuntu-24.04-4` machine (4 CPUs, 16 GB): the three specs in
+`packages/prove-it/benchmarks/` and fifteen models from the pinned corpora, 1
+thousand to 724 thousand distinct states, listed in `bench-suite.json`. The
+checkers:
+
+| Checker | What runs | Pinned by |
+| --- | --- | --- |
+| `tlc`, `tlc-auto` | TLC 1.8.0 on Temurin JDK 21, one worker and one per core | `TLC_COMMIT` in the workflow; Ant and the JDK in `bootstrap.sh` |
+| `tla-ts` | tla-ts 0.0.8 under Node | `scripts/ci/tla-ts/package-lock.json` |
+| `tla-rs` | tla-rs 0.24.11 (crate `tla-checker`), built with Rust 1.99.1 | the workflow's `cargo install --locked`; Rust in `bootstrap.sh` |
+| `prove-it` | Prove It's compiled binary, from the commit the run checks out | |
+| `prove-it-node` | `dist/cli.js` under Node, as an npm user runs it | |
+
+TLC 1.8.0 is a pre-release whose jar is rebuilt nightly, so it can't be pinned
+by checksum. The workflow builds it with Ant from the `tlaplus/tlaplus` commit
+in `TLC_COMMIT` instead. TLC 1.7.4, the last fixed release, starts slower and
+can't read the `ALIAS` in TokenRing's config.
+
+Each round runs every checker once on a model before the next round, and every
+run is a fresh process, so wall time includes startup. The table gives the
+median wall time with the CPU time and the fastest and slowest run. A checker's
+verdict, distinct states, depth (except TLC on every core, whose workers can
+report a deeper level than its search reached) and generated states (except
+tla-rs, which counts transitions) must match TLC's on one worker; one that disagrees, fails or
+times out says so in its cell, takes no more runs on that model and is left out
+of the speedups. The run fails only when TLC or Prove It fails or Prove It
+disagrees.
+
+Run it by hand from the Depot dashboard or with
+`depot ci dispatch --repo williamwmarx/prove-it --workflow benchmark.yml --ref main`
+(inputs: `runs`, `filter`, `checkers`, `timeout`). The run's summary has the
+table, and its artifact the JSON with every run. A full run takes about half
+an hour.
+
+To bump a checker, change its pin (`TLC_COMMIT`, the lockfile, the crate
+version, or a URL and sha256 in `bootstrap.sh`) and run the benchmark once by
+hand. Other
+TLA+ tools were left out: Apalache and Quint check symbolically or a different
+language, PlusPy and Spectacle explore behaviors without a command-line model
+checker that reports TLC's counts, and the remaining Rust, Go and C checkers on
+GitHub have a handful of stars.

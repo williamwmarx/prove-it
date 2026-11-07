@@ -1,0 +1,110 @@
+# Times Prove It against Java TLC, tla-ts and tla-rs on the models in
+# packages/prove-it/scripts/bench-suite.json, every checker pinned: TLC built from TLC_COMMIT, tla-ts
+# by scripts/ci/tla-ts/package-lock.json, tla-rs by the cargo install below, and the toolchains by
+# scripts/ci/bootstrap.sh. It runs by hand and weekly,
+# never on a pull request, on one machine size so runs compare. It holds no credential. The table
+# is the run's summary, and the JSON with every run of every checker is its artifact.
+name: Benchmark
+"on":
+  workflow_dispatch:
+    inputs:
+      runs:
+        description: Interleaved runs of each checker on each model
+        default: "5"
+      filter:
+        description: Only the models whose id contains this text
+        default: ""
+      checkers:
+        description: Comma-separated, from tlc, tlc-auto, tla-ts, tla-rs, prove-it, prove-it-bun, prove-it-node
+        default: tlc,tlc-auto,tla-ts,tla-rs,prove-it,prove-it-node
+      timeout:
+        description: Seconds before one run of a checker is stopped
+        default: "300"
+  schedule:
+    - cron: "37 6 * * 1"
+permissions:
+  contents: read
+concurrency:
+  group: benchmark
+  cancel-in-progress: false
+env:
+  # TLC 1.8.0 is a pre-release whose jar is rebuilt nightly, so it's built here from a commit of
+  # tlaplus/tlaplus, which its jar's X-Git-Revision names.
+  TLC_COMMIT: d8fb231de4e4b5d02c1b2ed1ac759c086f694021
+  NPM_TOKEN: ""
+  NODE_AUTH_TOKEN: ""
+  OP_SERVICE_ACCOUNT_TOKEN: ""
+  ONEPASSWORD_PROVE_IT_RELEASE_TOKEN: ""
+jobs:
+  benchmark:
+    name: Benchmark
+    # Four cores: one for each single-worker checker with room for its compiler and collector
+    # threads, and four workers for TLC on every core.
+    runs-on: depot-ubuntu-24.04-4
+    timeout-minutes: 180
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install the checkers
+        run: |
+          set -euo pipefail
+          PATH="$(scripts/ci/bootstrap.sh bun node java ant rust):$PATH"
+          bun install --frozen-lockfile --ignore-scripts
+          (cd scripts/ci/tla-ts && npm ci --ignore-scripts --no-audit --no-fund)
+          # --locked builds tla-rs with the dependency versions and checksums its crate locks.
+          cargo install tla-checker --version 0.24.11 --locked --root "$RUNNER_TEMP/tla-rs"
+          # TLC's build reads its git history only to stamp the jar, so one commit is enough.
+          tlaplus="$RUNNER_TEMP/tlaplus"
+          git init -q "$tlaplus"
+          git -C "$tlaplus" remote add origin https://github.com/tlaplus/tlaplus.git
+          git -C "$tlaplus" sparse-checkout set tlatools/org.lamport.tlatools
+          git -C "$tlaplus" fetch -q --depth 1 --filter=blob:none origin "$TLC_COMMIT"
+          git -C "$tlaplus" checkout -q FETCH_HEAD
+          # dist also packs a few test helpers from test-class, which a run of TLC never loads.
+          mkdir -p "$tlaplus/tlatools/org.lamport.tlatools/test-class"
+          ant -f "$tlaplus/tlatools/org.lamport.tlatools/customBuild.xml" compile dist
+      - name: Build Prove It
+        run: |
+          set -euo pipefail
+          PATH="$(scripts/ci/bootstrap.sh bun node):$PATH"
+          bun run build
+          (cd packages/prove-it && bun scripts/build-binary.ts)
+      - name: Fetch the corpus models and library modules
+        run: |
+          set -euo pipefail
+          PATH="$(scripts/ci/bootstrap.sh bun):$PATH"
+          cd packages/prove-it
+          bun scripts/fetch-corpora.ts --only examples,tlc,ccf,summerset,tlapm,community
+      - name: Run the benchmark
+        env:
+          RUNS: ${{ inputs.runs || '5' }}
+          FILTER: ${{ inputs.filter || '' }}
+          CHECKERS: ${{ inputs.checkers || 'tlc,tlc-auto,tla-ts,tla-rs,prove-it,prove-it-node' }}
+          TIMEOUT: ${{ inputs.timeout || '300' }}
+        run: |
+          set -euo pipefail
+          PATH="$(scripts/ci/bootstrap.sh bun node java):$PATH"
+          export TLA2TOOLS_JAR="$RUNNER_TEMP/tlaplus/tlatools/org.lamport.tlatools/dist/tla2tools.jar"
+          export TLA_TS_CLI="$PWD/scripts/ci/tla-ts/node_modules/tla-ts/dist/cli.js"
+          export TLA_RS_BIN="$RUNNER_TEMP/tla-rs/bin/tla"
+          mkdir -p "$RUNNER_TEMP/benchmark"
+          cd packages/prove-it
+          status=0
+          bun scripts/bench-suite.ts --runs "$RUNS" --checkers "$CHECKERS" --timeout "$TIMEOUT" \
+            ${FILTER:+--filter "$FILTER"} \
+            --out "$RUNNER_TEMP/benchmark/results.json" \
+            --markdown "$RUNNER_TEMP/benchmark/results.md" || status=$?
+          if [[ -f "$RUNNER_TEMP/benchmark/results.md" ]]; then
+            cat "$RUNNER_TEMP/benchmark/results.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit "$status"
+      - name: Keep the results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: benchmark-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/benchmark/
+          if-no-files-found: warn
+          retention-days: 90

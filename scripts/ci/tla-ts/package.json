@@ -1,0 +1,8 @@
+{
+  "name": "tla-ts-benchmark",
+  "private": true,
+  "description": "tla-ts, pinned with its lockfile, for the checker benchmark (.depot/workflows/benchmark.yml)",
+  "dependencies": {
+    "tla-ts": "0.0.8"
+  }
+}
