@@ -156,12 +156,15 @@ export const runEngine = (input: EngineInput): EngineResult => {
     return hash ^ (hash >>> 15);
   };
 
+  // Each state's hash, which the table grows by and compares before the state itself.
+  let stateHashes = new Int32Array(parents.length);
+  let lastHash = 0;
+
   const growTable = () => {
     const next = new Int32Array(table.length * 2).fill(-1);
     const mask = next.length - 1;
-    const keys = getKeys();
     for (let state = 0; state < stateCount; state++) {
-      let slot = hashState(keys, state * keyWidth) & mask;
+      let slot = stateHashes[state] & mask;
       while (next[slot] !== -1) slot = (slot + 1) & mask;
       next[slot] = state;
     }
@@ -188,12 +191,15 @@ export const runEngine = (input: EngineInput): EngineResult => {
   const representative = new Int32Array(width);
 
   // The slot of a key in the table: either the slot that holds it, or the empty one to put it in.
+  // It keeps the key's hash for addState, which follows it for a new key.
   const findSlot = (key: Int32Array) => {
     const hash = hashState(key, 0);
+    lastHash = hash;
     const keys = getKeys();
     for (let slot = hash & tableMask; ; slot = (slot + 1) & tableMask) {
       const stored = table[slot];
       if (stored === -1) return slot;
+      if (stateHashes[stored] !== hash) continue;
       const offset = stored * keyWidth;
       let isEqual = true;
       for (let index = 0; index < keyWidth; index++) {
@@ -217,6 +223,12 @@ export const runEngine = (input: EngineInput): EngineResult => {
       next.set(parents);
       parents = next;
     }
+    if (stateCount >= stateHashes.length) {
+      const next = new Int32Array(parents.length);
+      next.set(stateHashes);
+      stateHashes = next;
+    }
+    stateHashes[stateCount] = lastHash;
     if (hasSeparateKeys && (stateCount + 1) * keyWidth > separateKeys.length) {
       const nextKeys = new Int32Array(separateKeys.length * 2);
       nextKeys.set(separateKeys);
@@ -437,8 +449,10 @@ export const runEngine = (input: EngineInput): EngineResult => {
     while (capacity < count * 2) capacity *= 2;
     table = new Int32Array(capacity).fill(-1);
     tableMask = capacity - 1;
+    stateHashes = new Int32Array(Math.max(1, count));
     for (let index = 0; index < count; index++) {
-      let slot = hashState(states, index * width) & tableMask;
+      stateHashes[index] = hashState(states, index * width);
+      let slot = stateHashes[index] & tableMask;
       while (table[slot] !== -1) slot = (slot + 1) & tableMask;
       table[slot] = index;
     }

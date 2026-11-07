@@ -183,6 +183,7 @@ export const resetStore = () => {
     heap = new Int32Array(1 << 16);
   }
   textKinds.length = 0;
+  modelTypes = [];
   count = 0;
   heapTop = 0;
   table.fill(-1);
@@ -258,9 +259,15 @@ export const isModelId = (id: number) => kinds[id] === KIND_MODEL;
 
 // A model value named like A_x is typed: TLC compares it only with model values of its type or
 // untyped ones, and fails on anything else. Returns the type's character code, or 0 if untyped.
+let modelTypes: number[] = [];
 const getModelType = (id: number) => {
-  const name = texts[payloads[id]];
-  return name.length > 2 && name[1] === "_" ? name.charCodeAt(0) : 0;
+  const index = payloads[id];
+  const known = modelTypes[index];
+  if (known !== undefined) return known;
+  const name = texts[index];
+  const type = name.length > 2 && name[1] === "_" ? name.charCodeAt(0) : 0;
+  modelTypes[index] = type;
+  return type;
 };
 
 const checkModelTypes = (left: number, right: number) => {
