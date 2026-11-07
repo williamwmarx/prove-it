@@ -2,7 +2,7 @@ import type { Expression } from "./ast";
 import { type ModelConfig, parseConfig } from "./config";
 import { toEngineProperties } from "./engine/context";
 import { toValue as toEngineValue } from "./engine/convert";
-import { type EngineCheckpoint, isBailout, runEngine } from "./engine/search";
+import { type EngineCheckpoint, type EngineGraph, isBailout, runEngine } from "./engine/search";
 import { getEngineSetting, getEngineThreads, reportEngine } from "./engine/settings";
 import { createEnvironment } from "./environment";
 import {
@@ -1308,6 +1308,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   // States the engine found, which the interpreter took over without their actions, so a trace
   // through them finds its actions again as it does for a reduced state space.
   const transferred = { count: 0 };
+  // In a replay of the engine's complete search, how many states the replay has reached.
+  const replayed = { discovered: 0 };
   const resumeFromEngine = (checkpoint: EngineCheckpoint) => {
     const width = checkpoint.width;
     for (let index = 0; index < checkpoint.count; index++) {
@@ -1319,10 +1321,16 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       state.forEach(markFingerprinted);
       markSeen(getStateHash(fingerprintState), states.length);
       const parent = checkpoint.parents[index];
+      if (parent === -1 && checkpoint.graph) liveness?.addInitialState(states.length, state);
       countDistinctState(parent === -1 ? 1 : depths[parent] + 1);
       addState(state, fingerprintState, parent, undefined);
     }
     transferred.count = checkpoint.count;
+    if (checkpoint.graph) {
+      replayed.discovered = parents.filter((parent) => parent === -1).length;
+      statistics.depth = replayed.discovered > 0 ? 1 : 0;
+      runtime.diameter = statistics.depth;
+    }
     // The interpreter expands the engine's state again, so it rebuilds that state its own way,
     // replaying the path to it, since TLC prints a function by how it was built.
     if (checkpoint.expanding < states.length) {
@@ -1345,7 +1353,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     }
     runtime.generatedStates = checkpoint.generated;
     runtime.initialStates = checkpoint.initialGenerated;
-    runtime.distinctStates = states.length;
+    runtime.distinctStates = checkpoint.graph ? replayed.discovered : states.length;
     checkpoint.outDegrees.forEach((count, degree) => {
       outDegrees[degree] = count;
     });
@@ -1374,6 +1382,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         tlcOrder: search.getTlcOrder(),
         startedAt,
         properties: toEngineProperties(search.properties)!,
+        isRecordingGraph: liveness !== undefined,
         symmetry: search.symmetryGroup?.map((images) =>
           [...images].map(([name, image]): [string, string] => [name, image.name]),
         ),
@@ -1397,6 +1406,14 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
           });
         },
       });
+      if (result.checkpoint) {
+        // The interpreter checks the temporal properties on the graph the engine found.
+        engineReport.checkpoint = result.checkpoint;
+        reportEngine(
+          `found ${result.distinctStates} states in ${(performance.now() - startedAt).toFixed(0)} ms; the interpreter checks the temporal properties`,
+        );
+        return undefined;
+      }
       reportEngine(
         `checked ${result.distinctStates} states on ${result.threads} thread${result.threads === 1 ? "" : "s"} in ${(performance.now() - startedAt).toFixed(0)} ms with ${result.valueCount} values`,
       );
@@ -1416,7 +1433,9 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         ),
       };
     } catch (error) {
-      if (isBailout(error) && error.checkpoint) {
+      // A search that stopped part way has no graph for the temporal properties, so the
+      // interpreter starts over then.
+      if (isBailout(error) && error.checkpoint && !liveness) {
         engineReport.checkpoint = error.checkpoint as EngineCheckpoint;
       }
       reportEngine(
@@ -1427,7 +1446,9 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   };
   const getEngineIneligibility = () => {
     if (getEngineSetting() === "0") return "disabled";
-    if (liveness) return "liveness";
+    if (liveness && (search.isSymmetric || config.view !== undefined)) {
+      return "liveness under symmetry or a view";
+    }
     if (stateWriter) return "-dump";
     if (options.isContinued) return "-continue";
     if (search.isSymmetric && config.view !== undefined) return "symmetry with a view";
@@ -1606,56 +1627,76 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       { isNextState: true, ...replay.result },
     );
   };
+  // A state of a search the engine completed: its successors are the steps the engine recorded.
+  const replayExpansion = (index: number, liveSuccessors: LiveSuccessor[], graph: EngineGraph) => {
+    for (let edge = graph.edgeOffsets[index]; edge < graph.edgeOffsets[index + 1]; edge++) {
+      const target = graph.edges[edge];
+      liveSuccessors.push({ index: target, state: states[target] });
+    }
+    runtime.generatedStates += graph.successorCounts[index];
+    expansion.newStates = graph.newCounts[index];
+    // The states the replay has reached, as the search would have found them by now.
+    if (graph.newCounts[index] > 0) {
+      replayed.discovered += graph.newCounts[index];
+      countDistinctState(depths[replayed.discovered - 1]);
+      runtime.distinctStates = replayed.discovered;
+      runtime.queueSize += graph.newCounts[index];
+    }
+    return graph.successorCounts[index];
+  };
   const expandState = (index: number, liveSuccessors: LiveSuccessor[]) => {
     const state = states[index];
     const source = stateWriter && getGraphState(state, depths[index]);
-    const successorCount = forEachActionSuccessor(state, (successor, action) => {
-      try {
-        outcome.result = visitSuccessor(index, successor, liveSuccessors, source, action);
-      } catch (error) {
-        if (isStackOverflow(error)) {
-          outcome.result = reportNextStateOverflow(index);
-          return true;
-        }
-        // TLC 1.7.4 reports the wrapped error without the trace, except for a failed property,
-        // which it reports with the trace before it rethrows. The error stops its worker before it
-        // adds the state to the behavior graph.
-        const replay = is174
-          ? captureOutput(() => replayNext(index))
-          : replayFailedNext(index, liveSuccessors);
-        if (is174 && error instanceof TlaEvaluationError && !isHeadedError(error)) {
-          outcome.result = createFailureResult(
-            new TlaEvaluationError(`${getWrappedException(error)}${error.message}`, error),
-            appendTraceOutput({ trace: [] }, replay.lines),
-            { isNextState: true, ...replay.result },
-          );
-          return true;
-        }
-        // A successor TLC can't fingerprint fails again as TLC prints it in the trace, which TLC
-        // reports as an exception it didn't expect.
-        const isTraceFailed = getFingerprintState(successor.state).some(
-          (value) => getFingerprintError(value) !== undefined,
-        );
-        const traceFailure =
-          isTraceFailed && error instanceof TlaEvaluationError
-            ? getFailureMessage(
-                isEvalException(error)
-                  ? new TlaEvaluationError(`${UNEXPECTED_EVAL_EXCEPTION}${error.message}`)
-                  : error,
-                true,
-              )
-            : undefined;
-        outcome.result = createFailureResult(
-          error,
-          appendTraceOutput(
-            traceFailure ? getStateTrace(index) : getFailedTrace(index, successor),
-            replay.lines,
-          ),
-          { isNextState: true, ...replay.result, traceFailure },
-        );
-      }
-      return outcome.result !== undefined;
-    });
+    const replayed = engineReport.checkpoint?.graph;
+    const successorCount = replayed
+      ? replayExpansion(index, liveSuccessors, replayed)
+      : forEachActionSuccessor(state, (successor, action) => {
+          try {
+            outcome.result = visitSuccessor(index, successor, liveSuccessors, source, action);
+          } catch (error) {
+            if (isStackOverflow(error)) {
+              outcome.result = reportNextStateOverflow(index);
+              return true;
+            }
+            // TLC 1.7.4 reports the wrapped error without the trace, except for a failed property,
+            // which it reports with the trace before it rethrows. The error stops its worker before it
+            // adds the state to the behavior graph.
+            const replay = is174
+              ? captureOutput(() => replayNext(index))
+              : replayFailedNext(index, liveSuccessors);
+            if (is174 && error instanceof TlaEvaluationError && !isHeadedError(error)) {
+              outcome.result = createFailureResult(
+                new TlaEvaluationError(`${getWrappedException(error)}${error.message}`, error),
+                appendTraceOutput({ trace: [] }, replay.lines),
+                { isNextState: true, ...replay.result },
+              );
+              return true;
+            }
+            // A successor TLC can't fingerprint fails again as TLC prints it in the trace, which TLC
+            // reports as an exception it didn't expect.
+            const isTraceFailed = getFingerprintState(successor.state).some(
+              (value) => getFingerprintError(value) !== undefined,
+            );
+            const traceFailure =
+              isTraceFailed && error instanceof TlaEvaluationError
+                ? getFailureMessage(
+                    isEvalException(error)
+                      ? new TlaEvaluationError(`${UNEXPECTED_EVAL_EXCEPTION}${error.message}`)
+                      : error,
+                    true,
+                  )
+                : undefined;
+            outcome.result = createFailureResult(
+              error,
+              appendTraceOutput(
+                traceFailure ? getStateTrace(index) : getFailedTrace(index, successor),
+                replay.lines,
+              ),
+              { isNextState: true, ...replay.result, traceFailure },
+            );
+          }
+          return outcome.result !== undefined;
+        });
     current.isExpanding = false;
     const result = outcome.result;
     // TLC 1.7.4's worker stops at a violation.
@@ -1817,7 +1858,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   for (let index = resumeAt; index < states.length && !runtime.isStopped; index++) {
     current.index = index;
     current.candidate = undefined;
-    runtime.queueSize = states.length - index - 1;
+    runtime.queueSize =
+      (engineReport.checkpoint?.graph ? replayed.discovered : states.length) - index - 1;
     current.isExpanding = true;
     const liveSuccessors: LiveSuccessor[] = [];
     try {

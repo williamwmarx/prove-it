@@ -46,6 +46,8 @@ export interface EngineInput {
   properties: EngineProperties;
   // The symmetry group, as the model values each permutation moves.
   symmetry: NamedPermutation[] | undefined;
+  // Whether to record the state graph, for temporal properties the interpreter checks.
+  isRecordingGraph: boolean;
   // How many threads may search, and what a worker needs to build the spec.
   workers: number;
   source: string;
@@ -53,9 +55,21 @@ export interface EngineInput {
   version: TlcVersion | undefined;
 }
 
+// The steps of a complete search, for the interpreter to check temporal properties on: for each
+// state, how many successors it generated, how many of them were new, and the states, in the
+// model, its steps went to in the order generated, between edgeOffsets[i] and edgeOffsets[i + 1].
+export interface EngineGraph {
+  successorCounts: Int32Array;
+  newCounts: Int32Array;
+  edgeOffsets: Int32Array;
+  edges: Int32Array;
+}
+
 // The search up to the state the engine was expanding when it stopped: the states found before
-// that expansion, as ids, with their parents and the counts so far.
+// that expansion, as ids, with their parents and the counts so far. With a graph, the search is
+// complete, and the interpreter replays it rather than expanding states.
 export interface EngineCheckpoint {
+  graph?: EngineGraph;
   expanding: number;
   count: number;
   generated: number;
@@ -75,6 +89,8 @@ export interface EngineResult {
   getFingerprints: () => BigInt64Array;
   valueCount: number;
   threads: number;
+  // A complete search the interpreter is to replay, when it checks temporal properties.
+  checkpoint: EngineCheckpoint | undefined;
 }
 
 const OUT_DEGREE_BUCKETS = 32;
@@ -256,6 +272,42 @@ export const runEngine = (input: EngineInput): EngineResult => {
     });
   };
 
+  const graph = input.isRecordingGraph
+    ? {
+        successorCounts: new Int32Array(1024),
+        newCounts: new Int32Array(1024),
+        edgeOffsets: new Int32Array(1025),
+        edges: new Int32Array(4096),
+        edgeCount: 0,
+      }
+    : undefined;
+  const recordEdge = (target: number) => {
+    const recording = graph!;
+    if (recording.edgeCount === recording.edges.length) {
+      const nextEdges = new Int32Array(recording.edges.length * 2);
+      nextEdges.set(recording.edges);
+      recording.edges = nextEdges;
+    }
+    recording.edges[recording.edgeCount++] = target;
+  };
+  const recordExpansion = (index: number) => {
+    const recording = graph!;
+    if (index >= recording.successorCounts.length) {
+      const capacity = recording.successorCounts.length * 2;
+      const grow = (array: Int32Array, length: number) => {
+        const nextArray = new Int32Array(length);
+        nextArray.set(array);
+        return nextArray;
+      };
+      recording.successorCounts = grow(recording.successorCounts, capacity);
+      recording.newCounts = grow(recording.newCounts, capacity);
+      recording.edgeOffsets = grow(recording.edgeOffsets, capacity + 1);
+    }
+    recording.successorCounts[index] = successors;
+    recording.newCounts[index] = newStates;
+    recording.edgeOffsets[index + 1] = recording.edgeCount;
+  };
+
   const visitSuccessor = () => {
     successors++;
     generated++;
@@ -273,6 +325,7 @@ export const runEngine = (input: EngineInput): EngineResult => {
       setCurrent(current);
       if (!holds) bail("an invariant violated");
     }
+    if (graph && isInModel) recordEdge(isNew ? stateCount : table[slot]);
     if (!holdsAll(actionProperties)) bail("an action property violated");
     if (!isNew) return;
     addState(successor, key!, slot, expanding);
@@ -290,6 +343,7 @@ export const runEngine = (input: EngineInput): EngineResult => {
   // --- workers ---
   const canShare =
     input.workers > 1 &&
+    !input.isRecordingGraph &&
     !view &&
     !canonicalize &&
     typeof SharedArrayBuffer === "function" &&
@@ -422,6 +476,7 @@ export const runEngine = (input: EngineInput): EngineResult => {
       setNext(next);
       context.nextStep(onSuccessor);
       if (successors === 0 && config.checkDeadlock) bail("deadlock");
+      if (graph) recordExpansion(expanding);
       outDegrees[Math.min(newStates, OUT_DEGREE_BUCKETS - 1)]++;
       if ((expanding & 0xff) === 0) reportProgress();
     }
@@ -461,6 +516,22 @@ export const runEngine = (input: EngineInput): EngineResult => {
           ),
     valueCount: getValueCount(),
     threads: parallel.threads,
+    checkpoint: graph && {
+      expanding: 0,
+      count: stateCount,
+      generated: initialGenerated,
+      initialGenerated,
+      outDegrees: new Array<number>(OUT_DEGREE_BUCKETS).fill(0),
+      states: states.slice(0, stateCount * width),
+      parents: parents.slice(0, stateCount),
+      width,
+      graph: {
+        successorCounts: graph.successorCounts,
+        newCounts: graph.newCounts,
+        edgeOffsets: graph.edgeOffsets,
+        edges: graph.edges.slice(0, graph.edgeCount),
+      },
+    },
   };
 };
 
