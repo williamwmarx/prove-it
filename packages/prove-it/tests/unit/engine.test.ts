@@ -177,6 +177,92 @@ describe("the engine", () => {
     expect(violated.lines).toEqual([expect.stringMatching(/an invariant violated$/)]);
   });
 
+  it("settles mutually recursive operators together, whichever compiles first", async () => {
+    // Q compiles first and R inside it, while Q's footprint is still growing: R reads x' through
+    // Q, so W2, too wide for a memo table, can't be kept while the state is current.
+    const { result, lines } = await checkInEngine(
+      [
+        "EXTENDS Naturals",
+        "VARIABLES a, b, c, d, e, f, g, h, x",
+        "RECURSIVE Q(_), R(_)",
+        "Q(n) == IF n = 0 THEN x' ELSE R(n - 1)",
+        "R(n) == Q(n) + b + c + d + e + f + g + h",
+        "W2 == R(1)",
+        "Init == /\\ a = 0 /\\ x = 0",
+        "        /\\ b = 0 /\\ c = 0 /\\ d = 0 /\\ e = 0 /\\ f = 0 /\\ g = 0 /\\ h = 0",
+        "Next == /\\ a < 3",
+        "        /\\ \\E v \\in {1, 3} :",
+        "             /\\ x' = v",
+        "             /\\ Q(2) >= 0",
+        "             /\\ a' = a + W2",
+        "             /\\ UNCHANGED <<b, c, d, e, f, g, h>>",
+      ].join("\n"),
+      "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+    );
+    expect([result.generatedStates, result.distinctStates]).toEqual([7, 7]);
+    expect(lines).toEqual([expect.stringMatching(/^\[engine\] checked 7 states/)]);
+    // The same for a memo table: R's key reads a, which only Q reads.
+    const narrow = await checkInEngine(
+      [
+        "EXTENDS Naturals",
+        "VARIABLES a, b",
+        "RECURSIVE Q(_), R(_)",
+        "Q(n) == IF n = 0 THEN a ELSE R(n - 1)",
+        "R(n) == IF n = 0 THEN b ELSE Q(n - 1)",
+        "Init == a = 0 /\\ b = 0",
+        "Next == a < 3 /\\ a' = Q(2) + 1 /\\ b' = b",
+      ].join("\n"),
+      "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+    );
+    expect([narrow.result.generatedStates, narrow.result.distinctStates]).toEqual([4, 4]);
+    expect(narrow.lines).toEqual([expect.stringMatching(/^\[engine\] checked 4 states/)]);
+  });
+
+  it("checks a predicate on a mutually recursive operator on every step that changes what it reads", async () => {
+    // A compiles first, and B inside it: Inv2 reads a through A, though only A names it.
+    const body = [
+      "EXTENDS Naturals",
+      "VARIABLES a, b, c, d, e, f, g, h, i",
+      "Init == a = 0 /\\ b = 0 /\\ c = 0 /\\ d = 0 /\\ e = 0 /\\ f = 0 /\\ g = 0 /\\ h = 0 /\\ i = 0",
+      "Next == \\/ a' = (a + 1) % 6 /\\ UNCHANGED <<b, c, d, e, f, g, h, i>>",
+      "        \\/ i' = 1 - i /\\ UNCHANGED <<a, b, c, d, e, f, g, h>>",
+      "RECURSIVE A(_), B(_)",
+      "A(n) == IF n = 0 THEN a ELSE B(n - 1)",
+      "B(n) == IF n = 0 THEN b + c + d + e + f + g + h ELSE A(n - 1)",
+      "Inv1 == A(2) >= 0",
+      "Inv2 == B(1) < 3",
+    ].join("\n");
+    const violated = await checkInEngine(body, "INIT Init\nNEXT Next\nINVARIANT Inv1 Inv2");
+    expect(violated.result.status).not.toBe("success");
+    expect(violated.lines).toEqual([expect.stringMatching(/an invariant violated$/)]);
+    const constrained = await checkInEngine(
+      body,
+      "INIT Init\nNEXT Next\nINVARIANT Inv1\nCONSTRAINT Inv2",
+    );
+    expect([constrained.result.generatedStates, constrained.result.distinctStates]).toEqual([
+      13, 6,
+    ]);
+    expect(constrained.lines).toEqual([expect.stringMatching(/^\[engine\] checked 6 states/)]);
+    // A definition compiled while R's footprint still grows reads what R comes to read.
+    const definition = await checkInEngine(
+      [
+        "EXTENDS Naturals",
+        "VARIABLES a, b",
+        "Init == a = 0 /\\ b = 0",
+        "Next == \\/ a' = (a + 1) % 6 /\\ UNCHANGED b",
+        "        \\/ b' = 1 - b /\\ UNCHANGED a",
+        "RECURSIVE R(_)",
+        "Dd == R(0)",
+        "R(n) == IF n = 0 THEN a ELSE Dd + 0",
+        "Inv1 == R(1) >= 0",
+        "Inv2 == Dd < 3",
+      ].join("\n"),
+      "INIT Init\nNEXT Next\nINVARIANT Inv1 Inv2",
+    );
+    expect(definition.result.status).not.toBe("success");
+    expect(definition.lines).toEqual([expect.stringMatching(/an invariant violated$/)]);
+  });
+
   it("reads Nat as the set the model substitutes for it", async () => {
     const { result, lines } = await checkInEngine(
       "EXTENDS Integers\nVARIABLE x\nInit == x = 0\nNext == UNCHANGED x\nInv == -1 \\in Nat",

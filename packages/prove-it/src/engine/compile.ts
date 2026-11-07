@@ -761,6 +761,63 @@ export const createCompiler = (environment: Environment): Compiler => {
   const expanding = new Set<Definition>();
   let depth = 0;
 
+  // --- fixed points ---
+
+  // A recursive operator's or function's body compiles again until what it reads settles, and
+  // meanwhile a call of it reads what it assumes so far. What else is cached as it compiles against
+  // that assumption, such as another recursive operator the body calls, or a definition, holds only
+  // while the assumption does: it's dropped when the assumption grows, to compile again.
+  interface FixedPoint {
+    isSettled: boolean;
+    // Drop what was cached against the assumption so far.
+    dependents: (() => void)[];
+  }
+  // The unsettled fixed points the compiles under way have read, through a call or a cached
+  // compile, innermost first.
+  let reads: Set<FixedPoint> | undefined;
+  // What cached compiles read of fixed points that hadn't settled when they compiled.
+  const provisional = new WeakMap<object, FixedPoint[]>();
+
+  const noteRead = (fixedPoint: FixedPoint) => {
+    if (reads && !fixedPoint.isSettled) reads.add(fixedPoint);
+  };
+  const noteCachedRead = (entry: object) => {
+    const fixedPoints = provisional.get(entry);
+    if (fixedPoints) for (const fixedPoint of fixedPoints) noteRead(fixedPoint);
+  };
+  // Compiles with `run`, adding what it reads of unsettled fixed points to `into` and to what the
+  // compile around it reads.
+  const tracking = <T>(into: Set<FixedPoint>, run: () => T): T => {
+    const outer = reads;
+    reads = into;
+    try {
+      return run();
+    } finally {
+      reads = outer;
+      if (outer) for (const fixedPoint of into) outer.add(fixedPoint);
+    }
+  };
+  // Caches `entry`, which compiled reading `read`, until a fixed point it read and that hasn't
+  // settled grows, when `drop` takes it out of its cache.
+  const rememberReads = (entry: object, read: Set<FixedPoint>, drop: () => void) => {
+    const unsettled = [...read].filter((fixedPoint) => !fixedPoint.isSettled);
+    if (unsettled.length === 0) return;
+    provisional.set(entry, unsettled);
+    for (const fixedPoint of unsettled) fixedPoint.dependents.push(drop);
+  };
+  const dropDependents = (fixedPoint: FixedPoint) => {
+    const dependents = fixedPoint.dependents;
+    fixedPoint.dependents = [];
+    for (const drop of dependents) drop();
+  };
+  // Compiles a definition for a cache entry that `drop` takes out of its cache.
+  const compileForCache = (run: () => Compiled, drop: (compiled: Compiled) => void) => {
+    const read = new Set<FixedPoint>();
+    const compiled = tracking(read, run);
+    rememberReads(compiled, read, () => drop(compiled));
+    return compiled;
+  };
+
   const compile = (expression: Expression, context: Context): Compiled => {
     if (++depth > 2000) unsupported("expansion too deep");
     try {
@@ -837,18 +894,25 @@ export const createCompiler = (environment: Environment): Compiler => {
     if (definition.params.length > 0) return unsupported("an operator used as a value");
     const index = context.isPrimed ? 1 : 0;
     const known = definitionCache.get(definition)?.[index];
-    if (known) return known;
+    if (known) {
+      noteCachedRead(known);
+      return known;
+    }
     if (expanding.has(definition)) return unsupported("a recursive zero-arity definition");
     expanding.add(definition);
     try {
-      const compiled = cached(
-        markCostly(
-          compile(definition.body, {
-            scope: undefined,
-            isPrimed: context.isPrimed,
-            isInit: context.isInit,
-          }),
-        ),
+      const compiled = compileForCache(
+        () =>
+          cached(
+            markCostly(
+              compile(definition.body, {
+                scope: undefined,
+                isPrimed: context.isPrimed,
+                isInit: context.isInit,
+              }),
+            ),
+          ),
+        (dropped) => dropDefinition(definition, index, dropped),
       );
       const entries = definitionCache.get(definition) ?? [];
       entries[index] = compiled;
@@ -857,6 +921,11 @@ export const createCompiler = (environment: Environment): Compiler => {
     } finally {
       expanding.delete(definition);
     }
+  };
+
+  const dropDefinition = (definition: Definition, index: number, compiled: Compiled) => {
+    const entries = definitionCache.get(definition);
+    if (entries?.[index] === compiled) delete entries[index];
   };
 
   const markCostly = (compiled: Compiled): Compiled =>
@@ -1394,6 +1463,7 @@ export const createCompiler = (environment: Environment): Compiler => {
     // What a call inside the body reads besides its arguments, as the body compiles: nothing at
     // first, then what the last compile of the body read, until the body reads no more.
     assumed: Footprint;
+    fixedPoint: FixedPoint;
   }
 
   // A call of a RECURSIVE operator: a global one, or one a LET defines, whose body sees the LET's
@@ -1408,7 +1478,10 @@ export const createCompiler = (environment: Environment): Compiler => {
       return unsupported("a recursive higher-order operator");
     const key: object = local ?? definition;
     let recursive = recursiveOperators.get(key);
-    if (!recursive) {
+    if (recursive) {
+      noteRead(recursive.fixedPoint);
+      noteCachedRead(recursive);
+    } else {
       const slots = definition.params.map(() => allocateSlot());
       const created: RecursiveOperator = {
         slots,
@@ -1422,6 +1495,7 @@ export const createCompiler = (environment: Environment): Compiler => {
         slotStart: 0,
         slotEnd: 0,
         assumed: EMPTY_FOOTPRINT,
+        fixedPoint: { isSettled: false, dependents: [] },
       };
       recursive = created;
       recursiveOperators.set(key, created);
@@ -1430,15 +1504,20 @@ export const createCompiler = (environment: Environment): Compiler => {
         scope = bind(scope, param.name, { kind: "slot", slot: slots[index] });
       });
       if (!local) expanding.add(definition as OperatorDefinition);
+      const read = new Set<FixedPoint>();
       try {
         const bodyContext = {
           scope,
           isPrimed: context.isPrimed || (local?.context.isPrimed ?? false),
           isInit: context.isInit,
         };
-        created.slotStart = slotCount;
-        created.body = compile(definition.body, bodyContext);
-        created.slotEnd = slotCount;
+        const compileBody = () => {
+          created.slotStart = slotCount;
+          const body = tracking(read, () => compile(definition.body, bodyContext));
+          created.slotEnd = slotCount;
+          return body;
+        };
+        created.body = compileBody();
         // Each compile can only take away what the last one claimed, and add to what the body
         // reads, so this settles.
         const getRead = (body: Compiled) => withoutSlots(body.footprint, slots);
@@ -1451,13 +1530,24 @@ export const createCompiler = (environment: Environment): Compiler => {
           created.isEnumerated &&= created.body.isEnumerated === true;
           created.assumed = mergeFootprints(created.assumed, getRead(created.body));
           created.body = undefined;
-          created.slotStart = slotCount;
-          created.body = compile(definition.body, bodyContext);
-          created.slotEnd = slotCount;
+          dropDependents(created.fixedPoint);
+          created.body = compileBody();
         }
+      } catch (error) {
+        // Nothing keeps what compiled against an operator whose body didn't.
+        recursiveOperators.delete(key);
+        dropDependents(created.fixedPoint);
+        throw error;
       } finally {
         if (!local) expanding.delete(definition as OperatorDefinition);
       }
+      created.fixedPoint.isSettled = true;
+      created.fixedPoint.dependents = [];
+      // An operator whose body called another one that hadn't settled, as mutually recursive
+      // operators do, compiles again when that one's assumption grows.
+      rememberReads(created, read, () => {
+        if (recursiveOperators.get(key) === created) recursiveOperators.delete(key);
+      });
       const footprint = created.body.footprint;
       created.keySlots = mergeSorted(
         slots.slice().sort((left, right) => left - right),
@@ -1529,15 +1619,22 @@ export const createCompiler = (environment: Environment): Compiler => {
     if (!definition.isRecursive && !definition.isSelfReferential) {
       const index = context.isPrimed ? 1 : 0;
       const known = definitionCache.get(definition)?.[index];
-      if (known) return known;
-      const compiled = cached(
-        markCostly(
-          compileFunctionConstruction(definition.bounds, definition.body, {
-            scope: undefined,
-            isPrimed: context.isPrimed,
-            isInit: context.isInit,
-          }),
-        ),
+      if (known) {
+        noteCachedRead(known);
+        return known;
+      }
+      const compiled = compileForCache(
+        () =>
+          cached(
+            markCostly(
+              compileFunctionConstruction(definition.bounds, definition.body, {
+                scope: undefined,
+                isPrimed: context.isPrimed,
+                isInit: context.isInit,
+              }),
+            ),
+          ),
+        (dropped) => dropDefinition(definition, index, dropped),
       );
       const entries = definitionCache.get(definition) ?? [];
       entries[index] = compiled;
@@ -1586,6 +1683,7 @@ export const createCompiler = (environment: Environment): Compiler => {
     slotEnd: number;
     // What a call inside the body reads besides its argument, as for a RECURSIVE operator.
     assumed: Footprint;
+    fixedPoint: FixedPoint;
   }
 
   const recursiveFunctions = new Map<
@@ -1603,16 +1701,21 @@ export const createCompiler = (environment: Environment): Compiler => {
       recursiveFunctions.get(definition) ?? new Map<Scope | undefined, RecursiveFunction[]>();
     recursiveFunctions.set(definition, byScope);
     const known = byScope.get(baseScope)?.[index];
-    if (known) return known;
+    if (known) {
+      noteRead(known.fixedPoint);
+      noteCachedRead(known);
+      return known;
+    }
     const bound = definition.bounds[0];
     if (definition.bounds.length !== 1 || bound.pattern.kind !== "Name") {
       return unsupported("a recursive function of several arguments");
     }
     const outer = { scope: baseScope, isPrimed: context.isPrimed, isInit: context.isInit };
     const slot = allocateSlot();
+    const read = new Set<FixedPoint>();
     const record: RecursiveFunction = {
       slot,
-      domain: compile(bound.set, outer),
+      domain: tracking(read, () => compile(bound.set, outer)),
       body: undefined,
       table: undefined,
       keyVars: [],
@@ -1621,6 +1724,7 @@ export const createCompiler = (environment: Environment): Compiler => {
       slotStart: 0,
       slotEnd: 0,
       assumed: EMPTY_FOOTPRINT,
+      fixedPoint: { isSettled: false, dependents: [] },
       footprint: () =>
         mergeFootprints(
           record.domain.footprint,
@@ -1636,17 +1740,30 @@ export const createCompiler = (environment: Environment): Compiler => {
     };
     const compileBody = () => {
       record.slotStart = slotCount;
-      const body = compile(definition.body, bodyContext);
+      const body = tracking(read, () => compile(definition.body, bodyContext));
       record.slotEnd = slotCount;
       return body;
     };
     // A call inside the body reads what the last compile of the body read, until it reads no more.
-    let body = compileBody();
-    while (!isWithinFootprint(withoutSlots(body.footprint, [slot]), record.assumed)) {
-      record.assumed = mergeFootprints(record.assumed, withoutSlots(body.footprint, [slot]));
+    let body: Compiled;
+    try {
       body = compileBody();
+      while (!isWithinFootprint(withoutSlots(body.footprint, [slot]), record.assumed)) {
+        record.assumed = mergeFootprints(record.assumed, withoutSlots(body.footprint, [slot]));
+        dropDependents(record.fixedPoint);
+        body = compileBody();
+      }
+    } catch (error) {
+      if (entries[index] === record) delete entries[index];
+      dropDependents(record.fixedPoint);
+      throw error;
     }
     record.body = body;
+    record.fixedPoint.isSettled = true;
+    record.fixedPoint.dependents = [];
+    rememberReads(record, read, () => {
+      if (entries[index] === record) delete entries[index];
+    });
     const footprint = record.body.footprint;
     record.keySlots = mergeSorted([slot], footprint.slots);
     record.keyVars = footprint.vars;
