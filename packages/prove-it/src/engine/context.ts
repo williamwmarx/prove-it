@@ -68,6 +68,10 @@ export interface EngineContext {
   nextStep: Step;
   invariants: (() => boolean)[];
   constraints: (() => boolean)[];
+  // The variables each invariant and constraint reads, for holdsAllChanged, or undefined for one
+  // that reads names bound outside it, primed variables, or every variable.
+  invariantVars: (Int32Array | undefined)[];
+  constraintVars: (Int32Array | undefined)[];
   actionConstraints: (() => boolean)[];
   // Each holds of a step unless the action and the subscript's UNCHANGED are both false.
   actionProperties: (() => boolean)[];
@@ -81,6 +85,14 @@ const identifier = (name: string): Expression => ({
   name,
   location: { line: 0, column: 0 },
 });
+
+// The variables a state predicate reads, which decide its value: it reads only its footprint.
+const getPredicateVars = (compiled: Compiled, width: number) => {
+  const footprint = compiled.footprint;
+  if (footprint.primes.length > 0 || footprint.slots.length > 0) return undefined;
+  if (footprint.vars.length === width) return undefined;
+  return Int32Array.from(footprint.vars);
+};
 
 const compilePredicate = (compiled: Compiled) => {
   const evaluate = compiled.evaluate;
@@ -129,10 +141,12 @@ export const createEngineContext = (
   properties: EngineProperties,
 ): EngineContext => {
   const compiler = createEngineCompiler(environment);
-  const named = (kind: string, name: string) => {
+  const width = environment.variables.length;
+  const compileNamed = (kind: string, name: string) => {
     if (!getDefinition(name, environment)) return bail(`the ${kind} ${name} isn't defined`);
-    return compilePredicate(compiler.compile(identifier(name), ROOT_CONTEXT));
+    return compiler.compile(identifier(name), ROOT_CONTEXT);
   };
+  const named = (kind: string, name: string) => compilePredicate(compileNamed(kind, name));
   const specContext = compiler.contextFromScope(spec.scope);
   if (!specContext) return bail("a specification scope the engine can't translate");
   const buildAction = (expression: Expression, isInit: boolean, isAssignedShortcut: boolean) => {
@@ -143,28 +157,35 @@ export const createEngineContext = (
   };
   const predicate = (expression: Expression) =>
     compilePredicate(compiler.compile(expression, ROOT_CONTEXT));
+  const invariants = [
+    ...config.invariants.map((name) => compileNamed("invariant", name)),
+    ...properties.invariants.map((expression) => compiler.compile(expression, ROOT_CONTEXT)),
+  ];
+  const actionProperties = properties.actionProperties.map((property) => {
+    const action = predicate(property.action);
+    const isUnchanged = predicate({
+      kind: "Unchanged",
+      expression: property.subscript,
+      location: property.subscript.location,
+    });
+    return () => action() || isUnchanged();
+  });
+  const initialPredicates = properties.initialPredicates.map(predicate);
+  const view =
+    config.view === undefined
+      ? undefined
+      : compiler.compile(identifier(config.view), ROOT_CONTEXT).evaluate;
+  const constraints = config.constraints.map((name) => compileNamed("constraint", name));
   return {
     compiler,
-    width: environment.variables.length,
-    invariants: [
-      ...config.invariants.map((name) => named("invariant", name)),
-      ...properties.invariants.map(predicate),
-    ],
-    actionProperties: properties.actionProperties.map((property) => {
-      const action = predicate(property.action);
-      const isUnchanged = predicate({
-        kind: "Unchanged",
-        expression: property.subscript,
-        location: property.subscript.location,
-      });
-      return () => action() || isUnchanged();
-    }),
-    initialPredicates: properties.initialPredicates.map(predicate),
-    view:
-      config.view === undefined
-        ? undefined
-        : compiler.compile(identifier(config.view), ROOT_CONTEXT).evaluate,
-    constraints: config.constraints.map((name) => named("constraint", name)),
+    width,
+    invariants: invariants.map(compilePredicate),
+    invariantVars: invariants.map((compiled) => getPredicateVars(compiled, width)),
+    actionProperties,
+    initialPredicates,
+    view,
+    constraints: constraints.map(compilePredicate),
+    constraintVars: constraints.map((compiled) => getPredicateVars(compiled, width)),
     actionConstraints: config.actionConstraints.map((name) => named("action constraint", name)),
     initStep: buildAction(spec.init, true, true),
     nextStep: buildAction(spec.next, false, isWarningEnabled),
@@ -173,5 +194,31 @@ export const createEngineContext = (
 
 export const holdsAll = (predicates: (() => boolean)[]) => {
   for (let index = 0; index < predicates.length; index++) if (!predicates[index]()) return false;
+  return true;
+};
+
+// Whether every predicate holds of the successor in the current register, given that each held of
+// its parent: one that reads only variables the step left unchanged has the parent's value.
+export const holdsAllChanged = (
+  predicates: (() => boolean)[],
+  vars: (Int32Array | undefined)[],
+  successor: Int32Array,
+  parent: Int32Array,
+) => {
+  for (let index = 0; index < predicates.length; index++) {
+    const read = vars[index];
+    if (read) {
+      let isChanged = false;
+      for (let position = 0; position < read.length; position++) {
+        const variable = read[position];
+        if (successor[variable] !== parent[variable]) {
+          isChanged = true;
+          break;
+        }
+      }
+      if (!isChanged) continue;
+    }
+    if (!predicates[index]()) return false;
+  }
   return true;
 };

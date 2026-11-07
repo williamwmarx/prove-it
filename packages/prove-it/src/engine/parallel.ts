@@ -13,7 +13,7 @@
 import type { ModelConfig } from "../config";
 import { resetAssigned } from "./action";
 import { nextEpoch, setCurrent, setNext } from "./compile";
-import { type EngineContext, holdsAll } from "./context";
+import { type EngineContext, holdsAll, holdsAllChanged } from "./context";
 import { reportEngine } from "./settings";
 import { Bailout, type SharedStore } from "./store";
 
@@ -274,13 +274,19 @@ export const expandLevel = (context: EngineContext, views: SearchViews) => {
     ordinal++;
     const successorEpoch = nextEpoch();
     setCurrent(next, successorEpoch);
-    const isStateInModel = holdsAll(context.constraints);
+    // The state being expanded is in the model, so each constraint and invariant held of it.
+    const isStateInModel = holdsAllChanged(
+      context.constraints,
+      context.constraintVars,
+      next,
+      current,
+    );
     setCurrent(current, expansionEpoch);
     const isInModel = isStateInModel && holdsAll(context.actionConstraints);
     const stored = isInModel ? insertState(views, next, parent, ordinal, block) : -1;
     if (isInModel && stored === -1) return;
     setCurrent(next, successorEpoch);
-    const holds = holdsAll(context.invariants);
+    const holds = holdsAllChanged(context.invariants, context.invariantVars, next, current);
     setCurrent(current, expansionEpoch);
     if (!holds) throw new Bailout("an invariant violated");
   };

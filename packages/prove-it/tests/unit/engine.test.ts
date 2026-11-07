@@ -151,6 +151,32 @@ describe("the engine", () => {
     expect(lines).toEqual([expect.stringMatching(/^\[engine\] checked 16 states/)]);
   });
 
+  it("checks a constraint or invariant again only on steps that change what it reads", async () => {
+    const body = [
+      "EXTENDS Naturals",
+      "VARIABLES x, y",
+      "Init == x = 0 /\\ y = 0",
+      "Next == \\/ x' = x + 1 /\\ UNCHANGED y",
+      "        \\/ y' = y + 1 /\\ UNCHANGED x",
+      "BoundX == x <= 3",
+      "BoundY == y <= 2",
+      "Sum == x + y <= 6",
+      "SmallX == x < 3",
+    ].join("\n");
+    const bounded = await checkInEngine(
+      body,
+      "INIT Init\nNEXT Next\nCONSTRAINT BoundX BoundY\nINVARIANT Sum\nCHECK_DEADLOCK FALSE",
+    );
+    expect([bounded.result.generatedStates, bounded.result.distinctStates]).toEqual([25, 12]);
+    expect(bounded.lines).toEqual([expect.stringMatching(/^\[engine\] checked 12 states/)]);
+    const violated = await checkInEngine(
+      body,
+      "INIT Init\nNEXT Next\nCONSTRAINT BoundY\nINVARIANT SmallX\nCHECK_DEADLOCK FALSE",
+    );
+    expect(violated.result.status).not.toBe("success");
+    expect(violated.lines).toEqual([expect.stringMatching(/an invariant violated$/)]);
+  });
+
   it("reads Nat as the set the model substitutes for it", async () => {
     const { result, lines } = await checkInEngine(
       "EXTENDS Integers\nVARIABLE x\nInit == x = 0\nNext == UNCHANGED x\nInv == -1 \\in Nat",

@@ -13,7 +13,13 @@ import type { TlcVersion } from "../tlc/version";
 import type { Value } from "../values";
 import { resetAssigned } from "./action";
 import { EPOCH, nextEpoch, setCurrent, setNext } from "./compile";
-import { createEngineContext, type EngineProperties, type EngineSpec, holdsAll } from "./context";
+import {
+  createEngineContext,
+  type EngineProperties,
+  type EngineSpec,
+  holdsAll,
+  holdsAllChanged,
+} from "./context";
 import { getStateFingerprints, resetFingerprints } from "./fingerprint";
 import { createLiveOracle, type LiveOracle } from "./live";
 import {
@@ -125,8 +131,10 @@ export const runEngine = (input: EngineInput): EngineResult => {
   );
   const width = context.width;
   const constraints = context.constraints;
+  const constraintVars = context.constraintVars;
   const actionConstraints = context.actionConstraints;
   const invariants = context.invariants;
+  const invariantVars = context.invariantVars;
   const actionProperties = context.actionProperties;
   const view = context.view;
   const canonicalize = input.symmetry
@@ -142,8 +150,10 @@ export const runEngine = (input: EngineInput): EngineResult => {
   let separateKeys = new Int32Array(hasSeparateKeys ? keyWidth * 1024 : 0);
   let stateCount = 0;
   let parents = new Int32Array(16384);
-  let table = new Int32Array(1 << 12).fill(-1);
-  let tableMask = table.length - 1;
+  // An open-addressing table of [hash, state index] pairs, so that a probe compares hashes without
+  // a second random read.
+  let table = new Int32Array(2 << 12).fill(-1);
+  let tableMask = (1 << 12) - 1;
   const getKeys = () => (hasSeparateKeys ? separateKeys : states);
   const separateKey = new Int32Array(1);
 
@@ -156,17 +166,20 @@ export const runEngine = (input: EngineInput): EngineResult => {
     return hash ^ (hash >>> 15);
   };
 
-  // Each state's hash, which the table grows by and compares before the state itself.
-  let stateHashes = new Int32Array(parents.length);
+  // The hash of the key findSlot looked up last.
   let lastHash = 0;
 
   const growTable = () => {
     const next = new Int32Array(table.length * 2).fill(-1);
-    const mask = next.length - 1;
-    for (let state = 0; state < stateCount; state++) {
-      let slot = stateHashes[state] & mask;
-      while (next[slot] !== -1) slot = (slot + 1) & mask;
-      next[slot] = state;
+    const mask = table.length - 1;
+    for (let slot = 0; slot <= tableMask; slot++) {
+      const stored = table[2 * slot + 1];
+      if (stored === -1) continue;
+      const hash = table[2 * slot];
+      let nextSlot = hash & mask;
+      while (next[2 * nextSlot + 1] !== -1) nextSlot = (nextSlot + 1) & mask;
+      next[2 * nextSlot] = hash;
+      next[2 * nextSlot + 1] = stored;
     }
     table = next;
     tableMask = mask;
@@ -198,9 +211,9 @@ export const runEngine = (input: EngineInput): EngineResult => {
     lastHash = hash;
     const keys = getKeys();
     for (let slot = hash & tableMask; ; slot = (slot + 1) & tableMask) {
-      const stored = table[slot];
+      const stored = table[2 * slot + 1];
       if (stored === -1) return slot;
-      if (stateHashes[stored] !== hash) continue;
+      if (table[2 * slot] !== hash) continue;
       const offset = stored * keyWidth;
       let isEqual = true;
       for (let index = 0; index < keyWidth; index++) {
@@ -224,12 +237,6 @@ export const runEngine = (input: EngineInput): EngineResult => {
       next.set(parents);
       parents = next;
     }
-    if (stateCount >= stateHashes.length) {
-      const next = new Int32Array(parents.length);
-      next.set(stateHashes);
-      stateHashes = next;
-    }
-    stateHashes[stateCount] = lastHash;
     if (hasSeparateKeys && (stateCount + 1) * keyWidth > separateKeys.length) {
       const nextKeys = new Int32Array(separateKeys.length * 2);
       nextKeys.set(separateKeys);
@@ -238,9 +245,10 @@ export const runEngine = (input: EngineInput): EngineResult => {
     states.set(source, stateCount * width);
     if (hasSeparateKeys) separateKeys.set(key, stateCount * keyWidth);
     parents[stateCount] = parent;
-    table[slot] = stateCount;
+    table[2 * slot] = lastHash;
+    table[2 * slot + 1] = stateCount;
     stateCount++;
-    if (stateCount * 2 > table.length) growTable();
+    if (stateCount * 2 > tableMask + 1) growTable();
   };
 
   let generated = 0;
@@ -266,7 +274,7 @@ export const runEngine = (input: EngineInput): EngineResult => {
     const isInModel = holdsAll(constraints);
     const key = isInModel ? getKey(state) : undefined;
     const slot = key ? findSlot(key) : -1;
-    const isSeen = isInModel && table[slot] !== -1;
+    const isSeen = isInModel && table[2 * slot + 1] !== -1;
     if (!isSeen) {
       if (!holdsAll(invariants)) bail("an invariant violated in an initial state");
       if (!holdsAll(context.initialPredicates)) bail("a property violated in an initial state");
@@ -345,19 +353,20 @@ export const runEngine = (input: EngineInput): EngineResult => {
     const successor = next;
     const successorEpoch = nextEpoch();
     setCurrent(successor, successorEpoch);
-    const isStateInModel = holdsAll(constraints);
+    // The state being expanded is in the model, so each constraint and invariant held of it.
+    const isStateInModel = holdsAllChanged(constraints, constraintVars, successor, current);
     const key = isStateInModel ? getKey(successor) : undefined;
     setCurrent(current, expansionEpoch);
     const isInModel = isStateInModel && holdsAll(actionConstraints);
     const slot = isInModel ? findSlot(key!) : -1;
-    const isNew = isInModel && table[slot] === -1;
+    const isNew = isInModel && table[2 * slot + 1] === -1;
     if (!isInModel || isNew) {
       setCurrent(successor, successorEpoch);
-      const holds = holdsAll(invariants);
+      const holds = holdsAllChanged(invariants, invariantVars, successor, current);
       setCurrent(current, expansionEpoch);
       if (!holds) bail("an invariant violated");
     }
-    if (graph && isInModel) recordEdge(isNew ? stateCount : table[slot]);
+    if (graph && isInModel) recordEdge(isNew ? stateCount : table[2 * slot + 1]);
     if (!holdsAll(actionProperties)) bail("an action property violated");
     if (!isNew) return;
     addState(successor, key!, slot, expanding);
@@ -452,14 +461,14 @@ export const runEngine = (input: EngineInput): EngineResult => {
     parents = reloadedParents;
     let capacity = 1 << 12;
     while (capacity < count * 2) capacity *= 2;
-    table = new Int32Array(capacity).fill(-1);
+    table = new Int32Array(2 * capacity).fill(-1);
     tableMask = capacity - 1;
-    stateHashes = new Int32Array(Math.max(1, count));
     for (let index = 0; index < count; index++) {
-      stateHashes[index] = hashState(states, index * width);
-      let slot = stateHashes[index] & tableMask;
-      while (table[slot] !== -1) slot = (slot + 1) & tableMask;
-      table[slot] = index;
+      const hash = hashState(states, index * width);
+      let slot = hash & tableMask;
+      while (table[2 * slot + 1] !== -1) slot = (slot + 1) & tableMask;
+      table[2 * slot] = hash;
+      table[2 * slot + 1] = index;
     }
   };
 
