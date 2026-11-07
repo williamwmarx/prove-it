@@ -1441,6 +1441,10 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         // The interpreter checks the temporal properties on the graph the engine found.
         engineReport.checkpoint = result.checkpoint;
         environment.liveOracle = result.createLiveOracle((state) => engineIds.get(state));
+        // The liveness checker orders each state's successors by TLC's fingerprints of them.
+        result.getFingerprints().forEach((fingerprint, index) => {
+          tlcFingerprints[index] = Number(BigInt.asIntN(32, fingerprint));
+        });
         reportEngine(
           `found ${result.distinctStates} states in ${(performance.now() - startedAt).toFixed(0)} ms; the interpreter checks the temporal properties`,
         );
