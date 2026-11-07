@@ -4,8 +4,12 @@ Prove It interprets and model checks TLA+ specs in TypeScript, without the JVM. 
 
 Prove It is derived from [tla-ts](https://github.com/aidenybai/tla-ts) by Aiden Bai, under the MIT license.
 
+```shell
+bun add @atemp/prove-it
+```
+
 ```ts
-import { check } from "prove-it";
+import { check } from "@atemp/prove-it";
 
 const result = await check({
   source: `---- MODULE Counter ----

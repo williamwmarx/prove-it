@@ -6,9 +6,9 @@
   ],
   "type": "module",
   "scripts": {
-    "build": "bun run --filter prove-it build",
-    "test": "bun run --filter prove-it test",
-    "typecheck": "bun run --filter prove-it typecheck",
+    "build": "bun run --filter @atemp/prove-it build",
+    "test": "bun run --filter @atemp/prove-it test",
+    "typecheck": "bun run --filter @atemp/prove-it typecheck",
     "lint": "bunx bun@1.4.4-canary.20261022.1 lint --no-script",
     "lint:fix": "bunx bun@1.4.4-canary.20261022.1 lint --no-script --fix",
     "format": "bun fmt --no-script",

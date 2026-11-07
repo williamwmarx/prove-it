@@ -1,0 +1,51 @@
+name: Release
+
+# Publishes packages/prove-it to npm when a tag like v0.1.0 is pushed. npm takes the GitHub
+# Actions identity through trusted publishing, set on the package's npm settings page; before
+# the package exists that can't be set, so the first release reads a token from the NPM_TOKEN
+# secret instead.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+  # Trusted publishing and the provenance statement both need the workflow's OIDC token.
+  id-token: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: npm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+      # Trusted publishing needs npm 11.5.1 or later, which Node 24 ships.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: bun install --frozen-lockfile
+      - name: Check the tag matches the package version
+        run: |
+          version=$(node -p 'require("./packages/prove-it/package.json").version')
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "Tag $GITHUB_REF_NAME doesn't match package version $version" >&2
+            exit 1
+          fi
+      - run: bun run typecheck
+      - run: bun run lint && bun run format:check
+      - run: bun run test
+      - name: Publish
+        working-directory: packages/prove-it
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

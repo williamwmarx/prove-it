@@ -19,10 +19,10 @@ export const getFingerprintSetting = () => getEnvironment()?.PROVE_IT_FINGERPRIN
 
 export const getEnvironmentFlag = (name: string) => getEnvironment()?.[name] === "1";
 
-// How many threads the engine searches with: the caller's -workers when it asks for several, else
-// PROVE_IT_WORKERS, else one. The engine keeps TLC's order whatever the number.
-export const getEngineThreads = (requested: number | undefined) => {
-  if (requested !== undefined && requested > 1) return requested;
+// How many threads the engine searches with: PROVE_IT_WORKERS, else one. TLC's -workers doesn't
+// change it, since a model tuned for TLC's workers is usually faster on one engine thread; the
+// engine keeps TLC's order whatever the number.
+export const getEngineThreads = () => {
   const configured = Number(getEnvironment()?.PROVE_IT_WORKERS);
   return Number.isInteger(configured) && configured > 0 ? configured : 1;
 };

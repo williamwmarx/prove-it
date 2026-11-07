@@ -1444,7 +1444,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         symmetry: search.symmetryGroup?.map((images) =>
           [...images].map(([name, image]): [string, string] => [name, image.name]),
         ),
-        workers: getEngineThreads(options.workers),
+        workers: getEngineThreads(),
         source: options.source,
         modules: [...loadedModules],
         version: options.version,

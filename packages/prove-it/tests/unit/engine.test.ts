@@ -7,12 +7,27 @@ import { afterEach, describe, expect, it, spyOn } from "bun:test";
 import { check, formatValue } from "../../src";
 import { nextEpoch } from "../../src/engine/compile";
 import { EpochCache } from "../../src/engine/memo";
+import { getEngineThreads } from "../../src/engine/settings";
 
 const setting = process.env.PROVE_IT_ENGINE;
+const threads = process.env.PROVE_IT_WORKERS;
 
 afterEach(() => {
   if (setting === undefined) delete process.env.PROVE_IT_ENGINE;
   else process.env.PROVE_IT_ENGINE = setting;
+  if (threads === undefined) delete process.env.PROVE_IT_WORKERS;
+  else process.env.PROVE_IT_WORKERS = threads;
+});
+
+describe("the engine's threads", () => {
+  it("searches on one thread unless PROVE_IT_WORKERS asks for more", () => {
+    delete process.env.PROVE_IT_WORKERS;
+    expect(getEngineThreads()).toBe(1);
+    process.env.PROVE_IT_WORKERS = "3";
+    expect(getEngineThreads()).toBe(3);
+    process.env.PROVE_IT_WORKERS = "0";
+    expect(getEngineThreads()).toBe(1);
+  });
 });
 
 const checkInEngine = async (body: string, config: string) => {

@@ -1,6 +1,6 @@
 {
-  "name": "prove-it",
-  "version": "0.0.0",
+  "name": "@atemp/prove-it",
+  "version": "0.1.0",
   "description": "A TLA+ interpreter, model checker and proof checker in TypeScript",
   "keywords": [
     "formal verification",
@@ -11,7 +11,16 @@
     "tlaps",
     "tlc"
   ],
+  "homepage": "https://github.com/williamwmarx/prove-it#readme",
+  "bugs": {
+    "url": "https://github.com/williamwmarx/prove-it/issues"
+  },
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/williamwmarx/prove-it.git",
+    "directory": "packages/prove-it"
+  },
   "bin": {
     "prove-it": "./dist/cli.js"
   },
@@ -34,6 +43,10 @@
       "types": "./dist/types/index.d.ts",
       "default": "./dist/index.js"
     }
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
   },
   "scripts": {
     "build": "bun scripts/build.ts && tsc -p tsconfig.build.json",
