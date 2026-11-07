@@ -101,6 +101,7 @@ export interface EngineResult {
   createLiveOracle: (getIds: (state: Value[]) => Int32Array | undefined) => LiveOracle;
 }
 
+const MAXIMUM_GRAPH_STATES = 4_000_000;
 const OUT_DEGREE_BUCKETS = 32;
 const PROGRESS_INTERVAL = 60_000;
 // Workers start once the search has run this long, and take over a level of at least this many
@@ -481,6 +482,10 @@ export const runEngine = (input: EngineInput): EngineResult => {
       }
       checkpointCount = stateCount;
       checkpointGenerated = generated;
+      // The interpreter checks temporal properties on the graph as it grows, so it may find a
+      // violation early in a state space the engine would search without end. Past this many
+      // states, the engine hands its graph over and the interpreter goes on.
+      if (graph && stateCount > MAXIMUM_GRAPH_STATES) bail("a state graph too large to keep");
       const offset = expanding * width;
       for (let variable = 0; variable < width; variable++)
         current[variable] = states[offset + variable];
