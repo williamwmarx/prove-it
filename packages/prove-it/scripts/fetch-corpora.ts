@@ -6,6 +6,16 @@ import { CORPORA_DIRECTORY, getCorpora, getOption } from "./corpora";
 
 // Usage: bun scripts/fetch-corpora.ts [--only examples,tlc,...]
 const only = getOption("--only")?.split(",");
+const known = new Set(getCorpora().map((corpus) => corpus.name));
+const unknown = (only ?? []).filter((name) => !known.has(name));
+if (
+  process.argv.includes("--only") &&
+  (only === undefined || only.length === 0 || unknown.length > 0)
+) {
+  throw new Error(
+    `--only takes corpus names from: ${[...known].join(", ")}${unknown.length > 0 ? `; not ${unknown.join(", ")}` : ""}`,
+  );
+}
 
 const git = (directory: string, args: string[]) =>
   execFileSync("git", args, { cwd: directory, stdio: "inherit" });

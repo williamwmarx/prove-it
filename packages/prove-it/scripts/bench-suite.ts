@@ -83,7 +83,7 @@ interface ExpectedResult {
   tlcMilliseconds: number;
 }
 
-type Verdict = "agrees" | "disagrees" | "fails" | "times out";
+type Verdict = "agrees" | "disagrees" | "unchecked" | "fails" | "times out";
 
 const PACKAGE_DIRECTORY = join(import.meta.dirname, "..");
 const CLI_PATH = join(PACKAGE_DIRECTORY, "dist/cli.js");
@@ -352,11 +352,25 @@ const run = (command: string[], cwd: string, engineSetting?: string) => {
 
 const measure = (checker: Checker, model: SuiteModel): Measurement => {
   const metadataDirectory = mkdtempSync(join(tmpdir(), "prove-it-bench-"));
+  // Built before the clock starts, so the first run doesn't pay for a working directory.
+  const command = checker.getCommand(model, metadataDirectory);
+  const directory = checker.getDirectory?.(model) ?? model.directory;
   const startedAt = performance.now();
-  const execution = run(
-    checker.getCommand(model, metadataDirectory),
-    checker.getDirectory?.(model) ?? model.directory,
-  );
+  let execution: ReturnType<typeof run>;
+  try {
+    execution = run(command, directory);
+  } catch (error) {
+    // A checker that can't start fails its cell rather than the whole benchmark.
+    rmSync(metadataDirectory, { recursive: true, force: true });
+    return {
+      verdict: "error",
+      message: `could not start: ${error instanceof Error ? error.message : String(error)}`,
+      wallMilliseconds: 0,
+      cpuMilliseconds: 0,
+      maxRssMegabytes: 0,
+      exitCode: null,
+    };
+  }
   const wallMilliseconds = performance.now() - startedAt;
   rmSync(metadataDirectory, { recursive: true, force: true });
   const isTimedOut = execution.result.exitedDueToTimeout === true;
@@ -364,19 +378,28 @@ const measure = (checker: Checker, model: SuiteModel): Measurement => {
     ? { verdict: "timeout", message: `timed out after ${timeoutSeconds} s` }
     : checker.parse(execution.stdout, execution.stderr);
   // A process the kernel stopped, such as for running out of memory, reports no error of its own.
-  const outcome =
-    parsed.verdict === "error" && execution.result.signalCode
+  const exitCode = execution.result.exitCode;
+  // Success only counts from a process that also exited cleanly; a violation exits non-zero on purpose.
+  const checked: Outcome =
+    parsed.verdict === "success" && exitCode !== 0
       ? {
-          ...parsed,
-          message: `stopped by ${execution.result.signalCode} at ${Math.round(execution.result.resourceUsage.maxRSS / 1024 / 1024)} MB resident`,
+          verdict: "error",
+          message: `reported success, then exited with ${exitCode ?? execution.result.signalCode}`,
         }
       : parsed;
+  const outcome =
+    checked.verdict === "error" && execution.result.signalCode
+      ? {
+          ...checked,
+          message: `stopped by ${execution.result.signalCode} at ${Math.round(execution.result.resourceUsage.maxRSS / 1024 / 1024)} MB resident`,
+        }
+      : checked;
   return {
     ...outcome,
     wallMilliseconds,
     cpuMilliseconds: Number(execution.result.resourceUsage.cpuTime.total) / 1000,
     maxRssMegabytes: execution.result.resourceUsage.maxRSS / 1024 / 1024,
-    exitCode: execution.result.exitCode,
+    exitCode,
   };
 };
 
@@ -445,9 +468,29 @@ const describeOutcome = (outcome: Outcome | undefined, isCountingGenerated = tru
     ? "?"
     : `${outcome.verdict} ${isCountingGenerated ? (outcome.generatedStates ?? "?") : "-"}/${outcome.distinctStates ?? "?"} depth ${outcome.depth ?? "?"}`;
 
+const VERDICT_KINDS = [
+  "success",
+  "deadlock",
+  "temporal",
+  "invariant",
+  "action property",
+  "assumption",
+];
+
+// "invariant TypeOK" is the kind "invariant" and the name "TypeOK"; a recording gives the kind alone.
+const splitVerdict = (verdict: string) => {
+  const kind = VERDICT_KINDS.find((each) => verdict === each || verdict.startsWith(`${each} `));
+  return { kind: kind ?? verdict, name: kind === undefined ? "" : verdict.slice(kind.length + 1) };
+};
+
+const isSameVerdict = (left: string, right: string) => {
+  const [first, second] = [splitVerdict(left), splitVerdict(right)];
+  return first.kind === second.kind && (!first.name || !second.name || first.name === second.name);
+};
+
 const isMatching = (outcome: Outcome, reference: Outcome | undefined, checker: Checker) =>
   reference !== undefined &&
-  outcome.verdict === reference.verdict &&
+  isSameVerdict(outcome.verdict, reference.verdict) &&
   outcome.distinctStates === reference.distinctStates &&
   (!checker.isDepthExact ||
     outcome.depth === undefined ||
@@ -455,13 +498,25 @@ const isMatching = (outcome: Outcome, reference: Outcome | undefined, checker: C
     outcome.depth === reference.depth) &&
   (!checker.isCountingGenerated || outcome.generatedStates === reference.generatedStates);
 
+// expected.json's statuses, in the words the parsers use.
+const RECORDED_VERDICTS: Record<string, string> = {
+  success: "success",
+  deadlock: "deadlock",
+  "invariant-violation": "invariant",
+  "liveness-violation": "temporal",
+  "property-violation": "action property",
+  "assumption-violation": "assumption",
+};
+
+const isTlcRequested = checkers.some((checker) => checker.name === "tlc");
+
 const results = models.map((model, index) => {
   const expected = expectedById.get(model.id);
   const recorded: Outcome | undefined =
     expected?.distinctStates === undefined
       ? undefined
       : {
-          verdict: expected.status === "success" ? "success" : (expected.status ?? "?"),
+          verdict: RECORDED_VERDICTS[expected.status ?? ""] ?? expected.status ?? "?",
           generatedStates: expected.generatedStates,
           distinctStates: expected.distinctStates,
           depth: expected.depth,
@@ -484,7 +539,9 @@ const results = models.map((model, index) => {
         if (
           measurement.verdict === "error" ||
           measurement.verdict === "timeout" ||
-          (checker.name !== "tlc" && !isMatching(measurement, reference, checker))
+          (checker.name !== "tlc" &&
+            reference !== undefined &&
+            !isMatching(measurement, reference, checker))
         ) {
           stopped.add(checker.name);
         }
@@ -504,17 +561,25 @@ const results = models.map((model, index) => {
           ? "times out"
           : failure !== undefined
             ? "fails"
-            : all.every((measurement) => isMatching(measurement, reference, checker))
-              ? "agrees"
-              : "disagrees";
+            : reference === undefined
+              ? "unchecked"
+              : all.every((measurement) => isMatching(measurement, reference, checker))
+                ? "agrees"
+                : "disagrees";
+      // The run that disagrees, which stopped the checker, explains the cell.
+      const shown =
+        all.find(
+          (measurement) =>
+            measurement.verdict !== "timeout" && !isMatching(measurement, reference, checker),
+        ) ??
+        all.find((measurement) => measurement.verdict !== "timeout") ??
+        all[0];
       const walls = all.map((measurement) => measurement.wallMilliseconds);
       return [
         checker.name,
         {
           verdict,
-          outcome: describeOutcome(
-            all.find((measurement) => measurement.verdict !== "timeout") ?? all[0],
-          ),
+          outcome: describeOutcome(shown, checker.isCountingGenerated),
           message: failure?.message,
           wallMilliseconds: Math.round(getMedian(walls)),
           minimumWallMilliseconds: Math.round(Math.min(...walls)),
@@ -532,10 +597,16 @@ const results = models.map((model, index) => {
   );
   // TLC failing leaves its recording in expected.json to check Prove It against.
   const problems = [
-    ...(reference === undefined ? ["no run or recording of TLC to check against"] : []),
+    // Without TLC asked for, a model with no recording is only unchecked.
+    ...(reference === undefined && isTlcRequested
+      ? ["no run or recording of TLC to check against"]
+      : []),
     ...checkers
       .filter(
-        (checker) => isProveIt(checker.name) && measurements[checker.name].verdict !== "agrees",
+        (checker) =>
+          isProveIt(checker.name) &&
+          measurements[checker.name].verdict !== "agrees" &&
+          measurements[checker.name].verdict !== "unchecked",
       )
       .map((checker) => `${checker.name} ${measurements[checker.name].verdict}`),
   ];
@@ -576,9 +647,13 @@ const getRatio = (
 ) => {
   const top = result.measurements[numerator];
   const bottom = baseline === undefined ? undefined : result.measurements[baseline];
-  return top?.verdict !== "agrees" || bottom?.verdict !== "agrees"
-    ? undefined
-    : top[metric] / bottom[metric];
+  // Two times compare when both checkers agree with TLC, or when no TLC result checks either.
+  const isComparable =
+    top !== undefined &&
+    bottom !== undefined &&
+    (top.verdict === "agrees" || top.verdict === "unchecked") &&
+    top.verdict === bottom.verdict;
+  return isComparable ? top[metric] / bottom[metric] : undefined;
 };
 const formatRatio = (ratio: number | undefined) =>
   ratio === undefined ? "-" : `${ratio.toFixed(2)}x`;
@@ -596,9 +671,12 @@ const getEngineLabel = (engine: string | undefined) =>
       : engine.replace(/ after \d+ ms/, "").split(":")[0];
 const formatCell = (result: Result, name: string) => {
   const measurement = result.measurements[name];
+  const time = `${formatSeconds(measurement.wallMilliseconds)} (${formatSeconds(measurement.cpuMilliseconds)})`;
   return measurement.verdict === "agrees"
-    ? `${formatSeconds(measurement.wallMilliseconds)} (${formatSeconds(measurement.cpuMilliseconds)})`
-    : measurement.verdict;
+    ? time
+    : measurement.verdict === "unchecked"
+      ? `${time} unchecked`
+      : measurement.verdict;
 };
 const competitors = checkers.filter((checker) => checker.name !== baseline);
 
@@ -694,7 +772,7 @@ if (markdownPath !== undefined) {
         .filter((checker) => result.measurements[checker.name].verdict !== "agrees")
         .map(
           (checker) =>
-            `- ${result.id}, ${checker.name} ${result.measurements[checker.name].verdict}: ${result.measurements[checker.name].message ?? `${result.measurements[checker.name].outcome}, where TLC gives ${result.reference}`}`,
+            `- ${result.id}, ${checker.name} ${result.measurements[checker.name].verdict}: ${result.measurements[checker.name].message ?? (result.reference === undefined ? `${result.measurements[checker.name].outcome}, with no TLC result to check against` : `${result.measurements[checker.name].outcome}, where TLC gives ${result.reference}`)}`,
         ),
     ),
     "",
