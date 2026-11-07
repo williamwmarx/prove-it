@@ -145,6 +145,11 @@ export interface Footprint {
 
 const EMPTY_FOOTPRINT: Footprint = { vars: [], primes: [], slots: [] };
 
+const isWithinFootprint = (inner: Footprint, outer: Footprint) =>
+  inner.vars.every((variable) => outer.vars.includes(variable)) &&
+  inner.primes.every((variable) => outer.primes.includes(variable)) &&
+  inner.slots.every((slot) => outer.slots.includes(slot));
+
 const mergeSorted = (left: number[], right: number[]) => {
   if (left.length === 0) return right;
   if (right.length === 0 || left === right) return left;
@@ -1170,6 +1175,9 @@ export const createCompiler = (environment: Environment): Compiler => {
     // The slots the body binds.
     slotStart: number;
     slotEnd: number;
+    // What a call inside the body reads besides its arguments, as the body compiles: nothing at
+    // first, then what the last compile of the body read, until the body reads no more.
+    assumed: Footprint;
   }
 
   // A call of a RECURSIVE operator: a global one, or one a LET defines, whose body sees the LET's
@@ -1197,6 +1205,7 @@ export const createCompiler = (environment: Environment): Compiler => {
         isEnumerated: true,
         slotStart: 0,
         slotEnd: 0,
+        assumed: EMPTY_FOOTPRINT,
       };
       recursive = created;
       recursiveOperators.set(key, created);
@@ -1214,13 +1223,17 @@ export const createCompiler = (environment: Environment): Compiler => {
         created.slotStart = slotCount;
         created.body = compile(definition.body, bodyContext);
         created.slotEnd = slotCount;
-        // Each compile can only take away what the last one claimed, so this settles.
+        // Each compile can only take away what the last one claimed, and add to what the body
+        // reads, so this settles.
+        const getRead = (body: Compiled) => withoutSlots(body.footprint, slots);
         while (
           (created.isNormalized && !created.body.isNormalized) ||
-          (created.isEnumerated && created.body.isEnumerated !== true)
+          (created.isEnumerated && created.body.isEnumerated !== true) ||
+          !isWithinFootprint(getRead(created.body), created.assumed)
         ) {
           created.isNormalized &&= created.body.isNormalized;
           created.isEnumerated &&= created.body.isEnumerated === true;
+          created.assumed = mergeFootprints(created.assumed, getRead(created.body));
           created.body = undefined;
           created.slotStart = slotCount;
           created.body = compile(definition.body, bodyContext);
@@ -1278,22 +1291,12 @@ export const createCompiler = (environment: Environment): Compiler => {
         for (let index = 0; index < slots.length; index++) LOC[slots[index]] = saved[index];
       }
     };
-    // The body's footprint isn't known while it compiles, so a call inside the body reads every
-    // variable, and every name bound around a LET's definition, as far as callers can tell.
+    // While the body compiles, a call inside it reads what the operator assumes it does.
     const bodyFootprint = operator.body?.footprint;
-    const footprint = bodyFootprint
-      ? mergeFootprints(
-          ...compiledArgs.map((argument) => argument.footprint),
-          withoutSlots(bodyFootprint, slots),
-        )
-      : {
-          vars: Array.from({ length: variableCount }, (_, index) => index),
-          primes: Array.from({ length: variableCount }, (_, index) => index),
-          slots: mergeSorted(
-            [...getBoundSlots(local?.context.scope, new Set(), new Set())].sort((a, b) => a - b),
-            mergeFootprints(...compiledArgs.map((argument) => argument.footprint)).slots,
-          ),
-        };
+    const footprint = mergeFootprints(
+      ...compiledArgs.map((argument) => argument.footprint),
+      bodyFootprint ? withoutSlots(bodyFootprint, slots) : operator.assumed,
+    );
     return {
       evaluate,
       footprint,
@@ -1365,6 +1368,8 @@ export const createCompiler = (environment: Environment): Compiler => {
     // The slots the body binds.
     slotStart: number;
     slotEnd: number;
+    // What a call inside the body reads besides its argument, as for a RECURSIVE operator.
+    assumed: Footprint;
   }
 
   const recursiveFunctions = new Map<
@@ -1399,26 +1404,33 @@ export const createCompiler = (environment: Environment): Compiler => {
       keySlots: [],
       slotStart: 0,
       slotEnd: 0,
-      // While the body compiles, a call inside it reads every variable and every name bound around
-      // the definition, as far as callers can tell.
+      assumed: EMPTY_FOOTPRINT,
       footprint: () =>
-        record.body
-          ? mergeFootprints(record.domain.footprint, withoutSlots(record.body.footprint, [slot]))
-          : {
-              vars: Array.from({ length: variableCount }, (_, variable) => variable),
-              primes: Array.from({ length: variableCount }, (_, variable) => variable),
-              slots: [...getBoundSlots(baseScope, new Set(), new Set())].sort((a, b) => a - b),
-            },
+        mergeFootprints(
+          record.domain.footprint,
+          record.body ? withoutSlots(record.body.footprint, [slot]) : record.assumed,
+        ),
     };
     const entries = byScope.get(baseScope) ?? [];
     entries[index] = record;
     byScope.set(baseScope, entries);
-    record.slotStart = slotCount;
-    record.body = compile(definition.body, {
+    const bodyContext = {
       ...outer,
       scope: bind(baseScope, bound.pattern.name, { kind: "slot", slot }),
-    });
-    record.slotEnd = slotCount;
+    };
+    const compileBody = () => {
+      record.slotStart = slotCount;
+      const body = compile(definition.body, bodyContext);
+      record.slotEnd = slotCount;
+      return body;
+    };
+    // A call inside the body reads what the last compile of the body read, until it reads no more.
+    let body = compileBody();
+    while (!isWithinFootprint(withoutSlots(body.footprint, [slot]), record.assumed)) {
+      record.assumed = mergeFootprints(record.assumed, withoutSlots(body.footprint, [slot]));
+      body = compileBody();
+    }
+    record.body = body;
     const footprint = record.body.footprint;
     record.keySlots = mergeSorted([slot], footprint.slots);
     record.keyVars = footprint.vars;
