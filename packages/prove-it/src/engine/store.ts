@@ -485,8 +485,13 @@ export const setElements = (set: number) => {
 export const isMember = (element: number, set: number): boolean => {
   const size = sizes[set];
   if (findInBlock(payloads[set], size, element) !== -1) return true;
-  // TLC compares the element with those of the set, which fails for values it can't compare.
-  if (size > 0) checkComparable(element, heap[payloads[set]]);
+  // TLC compares the element with those of the set, which fails for values it can't compare. A set
+  // holds one kind of value after any untyped model values, which come first, so its first and its
+  // last element are the kinds to check.
+  if (size > 0) {
+    checkComparable(element, heap[payloads[set]]);
+    if (size > 1) checkComparable(element, heap[payloads[set] + size - 1]);
+  }
   return false;
 };
 
