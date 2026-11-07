@@ -23,6 +23,9 @@ export const KIND_TUPLE = 6;
 // The checker then hands the whole check to the reference interpreter, which reproduces TLC's
 // behavior, messages included.
 export class Bailout extends Error {
+  // Where the search stood when the engine stopped, so the interpreter can go on from there.
+  checkpoint: unknown;
+
   constructor(reason: string) {
     super(reason);
     this.name = "Bailout";

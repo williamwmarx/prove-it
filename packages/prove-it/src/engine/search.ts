@@ -31,6 +31,19 @@ export interface EngineInput {
   startedAt: number;
 }
 
+// The search up to the state the engine was expanding when it stopped: the states found before
+// that expansion, as ids, with their parents and the counts so far.
+export interface EngineCheckpoint {
+  expanding: number;
+  count: number;
+  generated: number;
+  initialGenerated: number;
+  outDegrees: number[];
+  states: Int32Array;
+  parents: Int32Array;
+  width: number;
+}
+
 export interface EngineResult {
   generatedStates: number;
   distinctStates: number;
@@ -232,32 +245,55 @@ export const runEngine = (input: EngineInput): EngineResult => {
     visitSuccessor();
   };
 
-  for (expanding = 0; expanding < stateCount; expanding++) {
-    if (expanding === levelEnd) {
-      level++;
-      levelEnd = stateCount;
+  // The counts before the state being expanded, which a bailout hands to the interpreter: it
+  // expands that state again from there, finding what the engine stopped at.
+  let checkpointCount = 0;
+  let checkpointGenerated = 0;
+  try {
+    for (expanding = 0; expanding < stateCount; expanding++) {
+      checkpointCount = stateCount;
+      checkpointGenerated = generated;
+      if (expanding === levelEnd) {
+        level++;
+        levelEnd = stateCount;
+      }
+      current.set(states.subarray(expanding * width, (expanding + 1) * width));
+      next.fill(-1);
+      resetAssigned();
+      newStates = 0;
+      successors = 0;
+      setCurrent(current);
+      nextStep(onSuccessor);
+      if (successors === 0 && config.checkDeadlock) bail("deadlock");
+      outDegrees[Math.min(newStates, OUT_DEGREE_BUCKETS - 1)]++;
+      if ((expanding & 0xff) === 0 && input.onProgress && performance.now() >= progressAt) {
+        progressAt = performance.now() + PROGRESS_INTERVAL;
+        input.onProgress({
+          kind: "progress",
+          statistics: {
+            generatedStates: generated,
+            distinctStates: stateCount,
+            queuedStates: stateCount - expanding - 1,
+            depth: Math.max(depth, 1),
+          },
+        });
+      }
     }
-    current.set(states.subarray(expanding * width, (expanding + 1) * width));
-    next.fill(-1);
-    resetAssigned();
-    newStates = 0;
-    successors = 0;
-    setCurrent(current);
-    nextStep(onSuccessor);
-    if (successors === 0 && config.checkDeadlock) bail("deadlock");
-    outDegrees[Math.min(newStates, OUT_DEGREE_BUCKETS - 1)]++;
-    if ((expanding & 0xff) === 0 && input.onProgress && performance.now() >= progressAt) {
-      progressAt = performance.now() + PROGRESS_INTERVAL;
-      input.onProgress({
-        kind: "progress",
-        statistics: {
-          generatedStates: generated,
-          distinctStates: stateCount,
-          queuedStates: stateCount - expanding - 1,
-          depth: Math.max(depth, 1),
-        },
-      });
+  } catch (error) {
+    if (error instanceof Bailout) {
+      const checkpoint: EngineCheckpoint = {
+        expanding,
+        count: checkpointCount,
+        generated: checkpointGenerated,
+        initialGenerated,
+        outDegrees: outDegrees.slice(),
+        states: states.slice(0, checkpointCount * width),
+        parents: parents.slice(0, checkpointCount),
+        width,
+      };
+      error.checkpoint = checkpoint;
     }
+    throw error;
   }
 
   return {

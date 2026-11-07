@@ -1,6 +1,7 @@
 import type { Expression } from "./ast";
 import { type ModelConfig, parseConfig } from "./config";
-import { isBailout, runEngine } from "./engine/search";
+import { toValue as toEngineValue } from "./engine/convert";
+import { type EngineCheckpoint, isBailout, runEngine } from "./engine/search";
 import { getEngineSetting, reportEngine } from "./engine/settings";
 import { createEnvironment } from "./environment";
 import {
@@ -903,8 +904,9 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     for (let position = index; position !== -1; position = parents[position]) {
       path.unshift(position);
     }
+    const isRecovered = isReducing || path.some((position) => position < transferred.count);
     const steps =
-      isReducing && path.length > 1
+      isRecovered && path.length > 1
         ? getPathStates(path, INITIAL_RECOVERY_FAILURE)
         : path.map((position) => ({ state: states[position], action: actions[position] }));
     if (!lastSuccessor) return toTrace(steps, path);
@@ -1290,7 +1292,60 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
 
   // Prove It's engine checks the specs it handles many times faster, and hands any other spec, or
   // any run that ends other than in success, to the interpreter below.
-  const engineReport = { isReported: false };
+  const engineReport = {
+    isReported: false,
+    checkpoint: undefined as EngineCheckpoint | undefined,
+  };
+  // States the engine found, which the interpreter took over without their actions, so a trace
+  // through them finds its actions again as it does for a reduced state space.
+  const transferred = { count: 0 };
+  const resumeFromEngine = (checkpoint: EngineCheckpoint) => {
+    const width = checkpoint.width;
+    for (let index = 0; index < checkpoint.count; index++) {
+      const state: Value[] = new Array(width);
+      for (let variable = 0; variable < width; variable++) {
+        state[variable] = toEngineValue(checkpoint.states[index * width + variable]);
+      }
+      const fingerprintState = getFingerprintState(state);
+      state.forEach(markFingerprinted);
+      markSeen(getStateHash(fingerprintState), states.length);
+      const parent = checkpoint.parents[index];
+      countDistinctState(parent === -1 ? 1 : depths[parent] + 1);
+      addState(state, fingerprintState, parent, undefined);
+    }
+    transferred.count = checkpoint.count;
+    // The interpreter expands the engine's state again, so it rebuilds that state its own way,
+    // replaying the path to it, since TLC prints a function by how it was built.
+    if (checkpoint.expanding < states.length) {
+      const path: number[] = [];
+      for (let position = checkpoint.expanding; position !== -1; position = parents[position]) {
+        path.unshift(position);
+      }
+      const replayed = captureOutput(() => {
+        let state = getSpecInitialStates().find((initial) => hasFingerprint(initial, path[0]));
+        for (let position = 1; state && position < path.length; position++) {
+          state = findSuccessorWithFingerprint(state, path[position])?.state;
+        }
+        return state;
+      }).result;
+      if (replayed) {
+        canonicalizeState(replayed);
+        replayed.forEach(markFingerprinted);
+        states[checkpoint.expanding] = replayed;
+      }
+    }
+    runtime.generatedStates = checkpoint.generated;
+    runtime.initialStates = checkpoint.initialGenerated;
+    runtime.distinctStates = states.length;
+    checkpoint.outDegrees.forEach((count, degree) => {
+      outDegrees[degree] = count;
+    });
+    statistics.initialStates = {
+      generated: checkpoint.initialGenerated,
+      distinct: parents.filter((parent) => parent === -1).length,
+    };
+    return checkpoint.expanding;
+  };
   const tryEngine = (): CheckResult | undefined => {
     const reason = getEngineIneligibility();
     if (reason !== undefined) {
@@ -1341,6 +1396,9 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         ),
       };
     } catch (error) {
+      if (isBailout(error) && error.checkpoint) {
+        engineReport.checkpoint = error.checkpoint as EngineCheckpoint;
+      }
       reportEngine(
         `handed over after ${(performance.now() - startedAt).toFixed(0)} ms: ${isBailout(error) ? error.message : String(error instanceof Error ? (error.stack ?? error.message) : error)}`,
       );
@@ -1381,7 +1439,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   const engineOutcome = tryEngine();
   if (engineOutcome) return engineOutcome;
   if (!engineReport.isReported) options.onProgress?.({ kind: "initial-states-started" });
-  if (spec.init !== undefined) {
+  const resumeAt = engineReport.checkpoint ? resumeFromEngine(engineReport.checkpoint) : 0;
+  if (spec.init !== undefined && !engineReport.checkpoint) {
     try {
       forEachInitialState(
         spec.init,
@@ -1428,11 +1487,13 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     }
   }
   if (outcome.result) return outcome.result;
-  statistics.initialStates = {
-    generated: runtime.initialStates,
-    distinct: runtime.distinctStates,
-  };
-  if (!engineReport.isReported) {
+  if (!engineReport.checkpoint) {
+    statistics.initialStates = {
+      generated: runtime.initialStates,
+      distinct: runtime.distinctStates,
+    };
+  }
+  if (!engineReport.isReported && statistics.initialStates) {
     options.onProgress?.({
       kind: "initial-states-computed",
       initialStates: statistics.initialStates,
@@ -1741,7 +1802,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     periodic.time += performance.now() - now;
     return lasso;
   };
-  for (let index = 0; index < states.length && !runtime.isStopped; index++) {
+  for (let index = resumeAt; index < states.length && !runtime.isStopped; index++) {
     current.index = index;
     current.candidate = undefined;
     runtime.queueSize = states.length - index - 1;
