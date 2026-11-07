@@ -1107,25 +1107,29 @@ const internShared = (
       return stored - 1;
     }
   }
-  const counters = views.counters;
-  const id = Atomics.add(counters, COUNT, 1);
-  growShared(views.buffers.kinds, id + 1);
-  growShared(views.buffers.payloads, (id + 1) * 4);
-  growShared(views.buffers.sizes, (id + 1) * 4);
-  growShared(views.buffers.hashes, (id + 1) * 4);
-  let valuePayload = payload;
-  if (length > 0) {
-    valuePayload = Atomics.add(counters, HEAP_TOP, length);
-    growShared(views.buffers.heap, (valuePayload + length) * 4);
-    for (let index = 0; index < length; index++) heap[valuePayload + index] = words[index];
+  // A thread the full store stops lets go of the segment, which the others may still take.
+  try {
+    const counters = views.counters;
+    const id = Atomics.add(counters, COUNT, 1);
+    growShared(views.buffers.kinds, id + 1);
+    growShared(views.buffers.payloads, (id + 1) * 4);
+    growShared(views.buffers.sizes, (id + 1) * 4);
+    growShared(views.buffers.hashes, (id + 1) * 4);
+    let valuePayload = payload;
+    if (length > 0) {
+      valuePayload = Atomics.add(counters, HEAP_TOP, length);
+      growShared(views.buffers.heap, (valuePayload + length) * 4);
+      for (let index = 0; index < length; index++) heap[valuePayload + index] = words[index];
+    }
+    kinds[id] = kind;
+    payloads[id] = valuePayload;
+    sizes[id] = size;
+    hashes[id] = hash;
+    insertInSegment(views, segment, id, hash);
+    return id;
+  } finally {
+    Atomics.store(views.locks, segment, 0);
   }
-  kinds[id] = kind;
-  payloads[id] = valuePayload;
-  sizes[id] = size;
-  hashes[id] = hash;
-  insertInSegment(views, segment, id, hash);
-  Atomics.store(views.locks, segment, 0);
-  return id;
 };
 
 const attachViews = (buffers: SharedStore): SharedViews => {

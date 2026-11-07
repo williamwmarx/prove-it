@@ -96,7 +96,12 @@ export const attachSearch = (buffers: SharedSearch): SearchViews => ({
   arena: new Int32Array(buffers.arena),
 });
 
-export const createSharedSearch = (config: ModelConfig, width: number): SearchViews => {
+// The arena holds every segment's table, the ones outgrown too, up to `arenaBytes`.
+export const createSharedSearch = (
+  config: ModelConfig,
+  width: number,
+  arenaBytes = MAXIMUM_BYTES,
+): SearchViews => {
   const buffers: SharedSearch = {
     width,
     checkDeadlock: config.checkDeadlock,
@@ -107,7 +112,7 @@ export const createSharedSearch = (config: ModelConfig, width: number): SearchVi
     order: new SharedArrayBuffer(MAXIMUM_BYTES / 2),
     directory: new SharedArrayBuffer(SEGMENTS * 3 * 4),
     locks: new SharedArrayBuffer(SEGMENTS * LOCK_STRIDE * 4),
-    arena: new SharedArrayBuffer(MAXIMUM_BYTES),
+    arena: new SharedArrayBuffer(arenaBytes),
   };
   const views = attachSearch(buffers);
   for (let segment = 0; segment < SEGMENTS; segment++) {
@@ -235,19 +240,17 @@ export const insertState = (
     Atomics.store(locks, lockIndex, 0);
     return -1;
   }
-  let stored: number;
+  // A thread that stops here lets go of the segment, which the others may still take.
   try {
-    stored = takeSlot(views, block);
-  } catch (error) {
+    const stored = takeSlot(views, block);
+    views.storage.set(source, stored * width);
+    views.keys[stored * 2] = parent;
+    views.keys[stored * 2 + 1] = ordinal;
+    insertEntry(views, segment, hash, stored);
+    return stored;
+  } finally {
     Atomics.store(locks, lockIndex, 0);
-    throw error;
   }
-  views.storage.set(source, stored * width);
-  views.keys[stored * 2] = parent;
-  views.keys[stored * 2 + 1] = ordinal;
-  insertEntry(views, segment, hash, stored);
-  Atomics.store(locks, lockIndex, 0);
-  return stored;
 };
 
 // Expands the states of the current level that this thread claims, until none are left or a
