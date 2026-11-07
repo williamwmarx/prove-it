@@ -263,6 +263,28 @@ describe("the engine", () => {
     expect(definition.lines).toEqual([expect.stringMatching(/an invariant violated$/)]);
   });
 
+  it("forgets the sets it tested membership in once a check is done", async () => {
+    // The second check builds its sets afresh, and one of them gets the id of the first's S.
+    const spec = (low: number, high: number) =>
+      [
+        "EXTENDS Naturals",
+        "VARIABLE x",
+        `S == {x + i : i \\in ${low}..${high}}`,
+        "Init == x = 0",
+        "Next == x' = (x + 1) % 2",
+        "Inv == 5 \\in S",
+      ].join("\n");
+    const config = "INIT Init\nNEXT Next\nINVARIANT Inv";
+    const first = await checkInEngine(spec(0, 20), config);
+    expect(first.result.status).toBe("success");
+    expect(first.lines).toEqual([expect.stringMatching(/^\[engine\] checked 2 states/)]);
+    const second = await checkInEngine(spec(10, 30), config);
+    expect(second.result.status).not.toBe("success");
+    expect(second.lines).toEqual([
+      expect.stringMatching(/an invariant violated in an initial state$/),
+    ]);
+  });
+
   it("reads Nat as the set the model substitutes for it", async () => {
     const { result, lines } = await checkInEngine(
       "EXTENDS Integers\nVARIABLE x\nInit == x = 0\nNext == UNCHANGED x\nInv == -1 \\in Nat",

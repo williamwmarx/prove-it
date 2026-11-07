@@ -212,6 +212,8 @@ export const resetStore = () => {
   textRanks.length = 0;
   stringIds.clear();
   modelIds.clear();
+  // Ids start again, so an id may name another set.
+  memberIndexes.clear();
   internScalar(KIND_BOOL, 0);
   internScalar(KIND_BOOL, 1);
   EMPTY_SET = internBlock(KIND_SET, [], 0, 0);
@@ -1190,6 +1192,7 @@ export const attachSharedStore = (buffers: SharedStore) => {
   generation++;
   shared = attachViews(buffers);
   shared.isTextFrozen = true;
+  memberIndexes.clear();
   texts.length = 0;
   textRanks.length = 0;
   stringIds.clear();
