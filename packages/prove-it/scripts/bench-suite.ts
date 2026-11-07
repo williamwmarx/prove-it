@@ -107,6 +107,8 @@ const tlaTsPath = process.env.TLA_TS_CLI ?? "";
 const tlaRsPath = process.env.TLA_RS_BIN ?? "";
 // Another build of Prove It's binary, such as main's, to time a change against.
 const baseBinaryPath = process.env.PROVE_IT_BASE_BINARY ?? "";
+// And that build's ahead-of-time binary.
+const baseAotBinaryPath = process.env.PROVE_IT_BASE_AOT_BINARY ?? "";
 
 if (
   !Number.isInteger(runs) ||
@@ -313,6 +315,12 @@ const ALL_CHECKERS: (Checker & { isAvailable: boolean })[] = [
     ...TLC_STYLE,
     isAvailable: baseBinaryPath !== "" && existsSync(baseBinaryPath),
   },
+  {
+    name: "prove-it-base-aot",
+    getCommand: (model) => [baseAotBinaryPath, ...getCliArguments(model)],
+    ...TLC_STYLE,
+    isAvailable: baseAotBinaryPath !== "" && existsSync(baseAotBinaryPath),
+  },
   { name: "prove-it-bun", getCommand: getBunCommand, ...TLC_STYLE, isAvailable: true },
   {
     name: "prove-it-node",
@@ -334,7 +342,7 @@ const missing = ALL_CHECKERS.filter(
 );
 missing.forEach((checker) =>
   console.warn(
-    `Leaving out ${checker.name}: set TLA2TOOLS_JAR, TLA_TS_CLI, TLA_RS_BIN and PROVE_IT_BASE_BINARY, and build dist/prove-it`,
+    `Leaving out ${checker.name}: set TLA2TOOLS_JAR, TLA_TS_CLI, TLA_RS_BIN, PROVE_IT_BASE_BINARY and PROVE_IT_BASE_AOT_BINARY, and build dist/prove-it and dist/prove-it-aot`,
   ),
 );
 if (requested !== undefined && missing.length > 0) process.exit(1);
@@ -442,10 +450,14 @@ const getVersion = (command: string[]) => {
     ?.trim();
 };
 
-const getCommit = (path: string) =>
-  spawnSync("git", ["-C", path, "rev-parse", "--short", "HEAD"], {
-    encoding: "utf8",
-  }).stdout.trim();
+// The commit a checkout is at, and +local when its files differ from it, as they do in a run of
+// local changes that depot ci run applies as a patch.
+const getCommit = (path: string) => {
+  const git = (args: string[]) =>
+    spawnSync("git", ["-C", path, ...args], { encoding: "utf8" }).stdout.trim();
+  const commit = git(["rev-parse", "--short", "HEAD"]);
+  return git(["status", "--porcelain", "--untracked-files=no"]) === "" ? commit : `${commit}+local`;
+};
 
 const getPackageVersion = (cliPath: string) => {
   const manifest = join(dirname(cliPath), "..", "package.json");
@@ -774,7 +786,7 @@ if (markdownPath !== undefined) {
             ? machine.tlaTs
             : entry.name === "tla-rs"
               ? machine.tlaRs
-              : entry.name === "prove-it-base"
+              : entry.name.startsWith("prove-it-base")
                 ? machine.proveItBase
                 : machine.proveIt,
         formatRatio(entry.wall),

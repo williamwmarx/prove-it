@@ -147,16 +147,38 @@ export const reserveSlots = () => {
   growLocals(length);
 };
 
+// What a recursive call keeps while its body runs, such as the slots it binds and the key of its
+// memo table, pushed above what the calls that made it keep and popped when it returns.
+const INITIAL_STACK = 1024;
+let STACK = new Int32Array(INITIAL_STACK);
+let stackTop = 0;
+
+// The offset of room for length words on the stack, which the caller pops by restoring stackTop.
+const pushStack = (length: number) => {
+  const at = stackTop;
+  stackTop += length;
+  if (stackTop > STACK.length) {
+    let capacity = STACK.length * 2;
+    while (stackTop > capacity) capacity *= 2;
+    const grown = new Int32Array(capacity);
+    grown.set(STACK);
+    STACK = grown;
+  }
+  return at;
+};
+
 // A recursive definition's body binds its names at slots fixed when it compiles, so a call inside
 // the body would overwrite the names of the call that made it. Evaluating the body keeps the slots
 // it binds, from start to end, as they were.
 const evaluateKeepingSlots = (evaluate: Evaluate, start: number, end: number) => {
   if (end <= start) return evaluate();
-  const saved = LOC.slice(start, end);
+  const at = pushStack(end - start);
+  STACK.set(LOC.subarray(start, end), at);
   try {
     return evaluate();
   } finally {
-    LOC.set(saved, start);
+    LOC.set(STACK.subarray(at, at + end - start), start);
+    stackTop = at;
   }
 };
 
@@ -518,7 +540,16 @@ const createProbe = (
   }
 };
 
+// The memo tables of the current run, for its statistics.
 const memoTables: MemoTable[] = [];
+
+// Lets go of what the last run compiled and kept, so a process that checks many specs doesn't keep
+// every run's tables and its deepest recursion's stack.
+export const resetCompileState = () => {
+  memoTables.length = 0;
+  if (STACK.length > INITIAL_STACK) STACK = new Int32Array(INITIAL_STACK);
+  stackTop = 0;
+};
 
 // PROVE_IT_EPOCH_CHECK=1 evaluates an expression again on each hit of its epoch cache, to check it.
 const isEpochChecked = getEnvironmentFlag("PROVE_IT_EPOCH_CHECK");
@@ -1593,35 +1624,34 @@ export const createCompiler = (environment: Environment): Compiler => {
     const argEvaluators = compiledArgs.map((argument) => argument.evaluate);
     const slots = operator.slots;
     const argumentScratch = createScratch(slots.length);
-    let scratch: Int32Array | undefined;
     const evaluate = () => {
       const values = argumentScratch.take();
       for (let index = 0; index < argEvaluators.length; index++)
         values[index] = argEvaluators[index]();
       argumentScratch.release(values);
-      const saved = slots.map((slot) => LOC[slot]);
-      for (let index = 0; index < slots.length; index++) LOC[slots[index]] = values[index];
+      const at = pushStack(slots.length);
+      for (let index = 0; index < slots.length; index++) {
+        STACK[at + index] = LOC[slots[index]];
+        LOC[slots[index]] = values[index];
+      }
       try {
         const table = operator.table;
         const body = operator.body!;
         if (!table || !table.isEnabled)
           return evaluateKeepingSlots(body.evaluate, operator.slotStart, operator.slotEnd);
-        scratch ??= new Int32Array(table.width);
-        const fill = () => {
-          let position = 0;
-          for (const variable of operator.keyVars) scratch![position++] = CUR[variable];
-          for (const variable of operator.keyPrimes) scratch![position++] = NXT[variable];
-          for (const slot of operator.keySlots) scratch![position++] = LOC[slot];
-        };
-        fill();
-        const known = table.getN(scratch);
+        const keyAt = pushStack(table.width);
+        let position = keyAt;
+        for (const variable of operator.keyVars) STACK[position++] = CUR[variable];
+        for (const variable of operator.keyPrimes) STACK[position++] = NXT[variable];
+        for (const slot of operator.keySlots) STACK[position++] = LOC[slot];
+        const known = table.getN(STACK, keyAt);
         if (known !== -1) return known;
         const value = evaluateKeepingSlots(body.evaluate, operator.slotStart, operator.slotEnd);
-        fill();
-        table.setN(scratch, value);
+        table.setN(STACK, keyAt, value);
         return value;
       } finally {
-        for (let index = 0; index < slots.length; index++) LOC[slots[index]] = saved[index];
+        for (let index = 0; index < slots.length; index++) LOC[slots[index]] = STACK[at + index];
+        stackTop = at;
       }
     };
     // While the body compiles, a call inside it reads what the operator assumes it does.
@@ -1810,23 +1840,25 @@ export const createCompiler = (environment: Environment): Compiler => {
     const slot = record.slot;
     const saved = LOC[slot];
     LOC[slot] = argument;
+    const at = stackTop;
     try {
       const table = record.table;
       const body = record.body!;
       if (!table || !table.isEnabled)
         return evaluateKeepingSlots(body.evaluate, record.slotStart, record.slotEnd);
-      const scratch = new Int32Array(table.width);
-      let position = 0;
-      for (const variable of record.keyVars) scratch[position++] = CUR[variable];
-      for (const variable of record.keyPrimes) scratch[position++] = NXT[variable];
-      for (const keySlot of record.keySlots) scratch[position++] = LOC[keySlot];
-      const known = table.getN(scratch);
+      const keyAt = pushStack(table.width);
+      let position = keyAt;
+      for (const variable of record.keyVars) STACK[position++] = CUR[variable];
+      for (const variable of record.keyPrimes) STACK[position++] = NXT[variable];
+      for (const keySlot of record.keySlots) STACK[position++] = LOC[keySlot];
+      const known = table.getN(STACK, keyAt);
       if (known !== -1) return known;
       const value = evaluateKeepingSlots(body.evaluate, record.slotStart, record.slotEnd);
-      table.setN(scratch, value);
+      table.setN(STACK, keyAt, value);
       return value;
     } finally {
       LOC[slot] = saved;
+      stackTop = at;
     }
   };
 
@@ -2217,26 +2249,33 @@ export const createCompiler = (environment: Environment): Compiler => {
       : undefined;
     // Several updates write one new function: each key's position is the same in every
     // intermediate function, and @ reads the value an earlier update gave the key, if any.
-    const evaluateMany = (flatUpdates: NonNullable<typeof flat>) => () => {
-      const base = fnEvaluate();
-      if (!isFunctionKind(kindOf(base))) return bail("EXCEPT on a non-function");
+    const evaluateMany = (flatUpdates: NonNullable<typeof flat>) => {
       const count = flatUpdates.length;
-      const positions: number[] = new Array(count);
-      const values: number[] = new Array(count);
-      for (let index = 0; index < count; index++) {
-        const update = flatUpdates[index];
-        const position = findKey(base, update.key());
-        if (position === -1) return bail("EXCEPT outside the domain");
-        if (update.atSlot !== -1) {
-          let old = getRangeValue(base, position);
-          for (let earlier = 0; earlier < index; earlier++)
-            if (positions[earlier] === position) old = values[earlier];
-          LOC[update.atSlot] = old;
+      const positionScratch = createScratch(count);
+      const valueScratch = createScratch(count);
+      return () => {
+        const base = fnEvaluate();
+        if (!isFunctionKind(kindOf(base))) return bail("EXCEPT on a non-function");
+        const positions = positionScratch.take();
+        const values = valueScratch.take();
+        for (let index = 0; index < count; index++) {
+          const update = flatUpdates[index];
+          const position = findKey(base, update.key());
+          if (position === -1) return bail("EXCEPT outside the domain");
+          if (update.atSlot !== -1) {
+            let old = getRangeValue(base, position);
+            for (let earlier = 0; earlier < index; earlier++)
+              if (positions[earlier] === position) old = values[earlier];
+            LOC[update.atSlot] = old;
+          }
+          positions[index] = position;
+          values[index] = update.value();
         }
-        positions[index] = position;
-        values[index] = update.value();
-      }
-      return exceptAt(base, positions, values, count);
+        const result = exceptAt(base, positions, values, count);
+        positionScratch.release(positions);
+        valueScratch.release(values);
+        return result;
+      };
     };
     const evaluateFlat = (flatUpdates: NonNullable<typeof flat>) => () => {
       let result = fnEvaluate();
@@ -2253,30 +2292,42 @@ export const createCompiler = (environment: Environment): Compiler => {
       }
       return result;
     };
+    // Each update walks its path down, keeping each key and the function it indexes, then writes
+    // the new values back up.
+    const evaluateNested = () => {
+      const depth = Math.max(...updates.map((update) => update.path.length));
+      const scratch = createScratch(2 * depth);
+      return () => {
+        let result = fnEvaluate();
+        // The keys of the path at [0, depth) and the functions they index at [depth, 2 * depth).
+        const path = scratch.take();
+        for (const update of updates) {
+          const steps = update.path;
+          const last = steps.length - 1;
+          for (let index = 0; index <= last; index++) path[index] = steps[index].key.evaluate();
+          let current = result;
+          for (let index = 0; index <= last; index++) {
+            if (!isFunctionKind(kindOf(current))) return bail("EXCEPT on a non-function");
+            const position = findKey(current, path[index]);
+            if (position === -1) return bail("EXCEPT outside the domain");
+            path[depth + index] = current;
+            current = getRangeValue(current, position);
+          }
+          LOC[update.atSlot] = current;
+          let value = update.value.evaluate();
+          for (let index = last; index >= 0; index--)
+            value = except(path[depth + index], path[index], value);
+          result = value;
+        }
+        scratch.release(path);
+        return result;
+      };
+    };
     const evaluate = flat
       ? flat.length > 1
         ? evaluateMany(flat)
         : evaluateFlat(flat)
-      : () => {
-          let result = fnEvaluate();
-          for (const update of updates) {
-            const keys = update.path.map((step) => step.key.evaluate());
-            const rewrite = (current: number, depthIndex: number): number => {
-              const key = keys[depthIndex];
-              if (!isFunctionKind(kindOf(current))) return bail("EXCEPT on a non-function");
-              const position = findKey(current, key);
-              if (position === -1) return bail("EXCEPT outside the domain");
-              const old = getRangeValue(current, position);
-              if (depthIndex === keys.length - 1) {
-                LOC[update.atSlot] = old;
-                return except(current, key, update.value.evaluate());
-              }
-              return except(current, key, rewrite(old, depthIndex + 1));
-            };
-            result = rewrite(result, 0);
-          }
-          return result;
-        };
+      : evaluateNested();
     return {
       evaluate,
       footprint: mergeFootprints(

@@ -7,6 +7,12 @@ const EMPTY = -1;
 const PROBATION = 1 << 13;
 const MINIMUM_HIT_RATE = 0.2;
 const MAXIMUM_ENTRIES = 1 << 22;
+// A table of width 1 indexes its values by its key while it has at least one entry for every
+// DIRECT_SPARSITY ids its array spans past the first DIRECT_MINIMUM.
+const DIRECT_SPARSITY = 16;
+const DIRECT_MINIMUM = 1 << 16;
+// And never past this many ids, about what a hash table holding MAXIMUM_ENTRIES takes.
+const DIRECT_MAXIMUM = 1 << 23;
 
 const OFFSET_BASIS = 0x811c9dc5;
 const fold = (hash: number, key: number) => Math.imul(hash ^ key, 0x01000193);
@@ -20,9 +26,14 @@ export class MemoTable {
   lookups = 0;
   hits = 0;
   isEnabled = true;
+  // A table of width 1 is keyed by one id, so while its keys are dense enough its values are an
+  // array indexed by the id, read without hashing or probing. One whose keys turn out too sparse
+  // becomes a hash table like the others.
+  private isDirect: boolean;
 
   constructor(width: number) {
     this.width = width;
+    this.isDirect = width === 1;
     const capacity = 64;
     this.keys = new Int32Array(capacity * width);
     this.values = new Int32Array(capacity).fill(EMPTY);
@@ -48,6 +59,24 @@ export class MemoTable {
         this.keys[slot * width + index] = oldKeys[entry * width + index];
       }
       this.values[slot] = oldValues[entry];
+    }
+  }
+
+  // Grows a direct table's array to hold the id, or makes the table a hash table when its keys are
+  // too sparse for the array that would take.
+  private reserveDirect(id: number) {
+    const direct = this.values;
+    const capacity = Math.max(2 * direct.length, id + 1);
+    if (capacity <= DIRECT_MAXIMUM && capacity <= DIRECT_SPARSITY * this.size + DIRECT_MINIMUM) {
+      this.values = new Int32Array(capacity).fill(EMPTY);
+      this.values.set(direct);
+      return;
+    }
+    this.isDirect = false;
+    this.size = 0;
+    this.values = new Int32Array(this.keys.length).fill(EMPTY);
+    for (let key = 0; key < direct.length; key++) {
+      if (direct[key] !== EMPTY) this.set1(key, direct[key]);
     }
   }
 
@@ -81,9 +110,14 @@ export class MemoTable {
   // in an array to fill. All hash the keys in order, as getN does.
   get1(a: number) {
     if (!this.open()) return EMPTY;
+    const values = this.values;
+    if (this.isDirect) {
+      const value = a >>> 0 < values.length ? values[a] : EMPTY;
+      if (value !== EMPTY) this.hits++;
+      return value;
+    }
     const hash = fold(OFFSET_BASIS, a);
     const mask = this.mask;
-    const values = this.values;
     const keys = this.keys;
     for (let slot = (hash ^ (hash >>> 15)) & mask; ; slot = (slot + 1) & mask) {
       const value = values[slot];
@@ -96,6 +130,15 @@ export class MemoTable {
   }
 
   set1(a: number, value: number) {
+    if (this.isDirect) {
+      if (!this.isEnabled || this.size >= MAXIMUM_ENTRIES || a < 0) return;
+      if (a >= this.values.length) this.reserveDirect(a);
+      if (this.isDirect) {
+        if (this.values[a] === EMPTY) this.size++;
+        this.values[a] = value;
+        return;
+      }
+    }
     const slot = this.claim(fold(OFFSET_BASIS, a));
     if (slot === -1) return;
     this.keys[slot] = a;
@@ -259,21 +302,22 @@ export class MemoTable {
     this.values[slot] = value;
   }
 
-  // Keys of any width, read from the scratch array.
-  getN(scratch: Int32Array) {
-    if (!this.open()) return EMPTY;
+  // Keys of any width, read from an array at an offset.
+  getN(keys: Int32Array, offset: number) {
     const width = this.width;
+    if (width === 1) return this.get1(keys[offset]);
+    if (!this.open()) return EMPTY;
     let hash = OFFSET_BASIS;
-    for (let index = 0; index < width; index++) hash = fold(hash, scratch[index]);
+    for (let index = 0; index < width; index++) hash = fold(hash, keys[offset + index]);
     const mask = this.mask;
     const values = this.values;
-    const keys = this.keys;
+    const stored = this.keys;
     for (let slot = (hash ^ (hash >>> 15)) & mask; ; slot = (slot + 1) & mask) {
       const value = values[slot];
       if (value === EMPTY) return EMPTY;
       let isEqual = true;
       for (let index = 0; index < width; index++) {
-        if (keys[slot * width + index] !== scratch[index]) {
+        if (stored[slot * width + index] !== keys[offset + index]) {
           isEqual = false;
           break;
         }
@@ -285,13 +329,16 @@ export class MemoTable {
     }
   }
 
-  setN(scratch: Int32Array, value: number) {
+  setN(keys: Int32Array, offset: number, value: number) {
     const width = this.width;
+    if (width === 1) return this.set1(keys[offset], value);
     let hash = OFFSET_BASIS;
-    for (let index = 0; index < width; index++) hash = fold(hash, scratch[index]);
+    for (let index = 0; index < width; index++) hash = fold(hash, keys[offset + index]);
     const slot = this.claim(hash);
     if (slot === -1) return;
-    for (let index = 0; index < width; index++) this.keys[slot * width + index] = scratch[index];
+    for (let index = 0; index < width; index++) {
+      this.keys[slot * width + index] = keys[offset + index];
+    }
     this.values[slot] = value;
   }
 }

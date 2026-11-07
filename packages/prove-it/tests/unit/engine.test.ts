@@ -5,8 +5,8 @@
 import { afterEach, describe, expect, it, spyOn } from "bun:test";
 
 import { check, formatValue } from "../../src";
-import { nextEpoch } from "../../src/engine/compile";
-import { EpochCache } from "../../src/engine/memo";
+import { getMemoStatistics, nextEpoch } from "../../src/engine/compile";
+import { EpochCache, MemoTable } from "../../src/engine/memo";
 import { getEngineThreads } from "../../src/engine/settings";
 
 const setting = process.env.PROVE_IT_ENGINE;
@@ -17,6 +17,31 @@ afterEach(() => {
   else process.env.PROVE_IT_ENGINE = setting;
   if (threads === undefined) delete process.env.PROVE_IT_WORKERS;
   else process.env.PROVE_IT_WORKERS = threads;
+});
+
+describe("the engine between checks", () => {
+  it("keeps only the current check's memo tables", async () => {
+    const options = {
+      source: [
+        "---- MODULE M ----",
+        "EXTENDS Naturals, FiniteSets",
+        "VARIABLE x",
+        "RECURSIVE Sum(_)",
+        "Sum(n) == IF n = 0 THEN 0 ELSE n + Sum(n - 1)",
+        "Init == x = 0",
+        "Next == x' = (x + 1) % 20",
+        "Inv == Sum(x) >= 0 /\\ Cardinality({y \\in 0..x : y % 2 = 0}) >= 0",
+        "====",
+      ].join("\n"),
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      onPrint: () => {},
+    };
+    await check(options);
+    const tables = getMemoStatistics().length;
+    expect(tables).toBeGreaterThan(0);
+    await check(options);
+    expect(getMemoStatistics().length).toBe(tables);
+  });
 });
 
 describe("the engine's threads", () => {
@@ -302,6 +327,50 @@ describe("the engine", () => {
     ]);
   });
 
+  it("checks each conjunct of an invariant on the steps that change what it reads", async () => {
+    // Each step changes one of x and y, so the conjunct on y fails on a step that leaves x as it was.
+    const body = [
+      "EXTENDS Naturals",
+      "VARIABLES x, y",
+      "Init == x = 0 /\\ y = 0",
+      "Next == \\/ x < 2 /\\ x' = x + 1 /\\ UNCHANGED y",
+      "        \\/ y < 3 /\\ y' = y + 1 /\\ UNCHANGED x",
+      "Bounded == y \\in 0..2",
+      "TypeOK == x \\in 0..2 /\\ Bounded",
+    ].join("\n");
+    const violated = await checkInEngine(body, "INIT Init\nNEXT Next\nINVARIANT TypeOK");
+    expect(violated.result.status).toBe("invariant-violation");
+    expect(violated.lines).toEqual([expect.stringMatching(/an invariant violated$/)]);
+    const constrained = await checkInEngine(
+      body,
+      "INIT Init\nNEXT Next\nCONSTRAINT TypeOK\nCHECK_DEADLOCK FALSE",
+    );
+    expect([constrained.result.generatedStates, constrained.result.distinctStates]).toEqual([
+      16, 9,
+    ]);
+    expect(constrained.lines).toEqual([expect.stringMatching(/^\[engine\] checked 9 states/)]);
+  });
+
+  it("checks in each initial state the invariants the initial predicate doesn't assert", async () => {
+    // The initial predicate is an inductive invariant, as with SPECIFICATION ISpec.
+    const body = [
+      "EXTENDS Naturals",
+      "VARIABLE x",
+      "TypeOK == x \\in 0..4",
+      "Inv == TypeOK /\\ x # 1",
+      "Small == x < 3",
+      "Next == x' = x",
+    ].join("\n");
+    const implied = await checkInEngine(body, "INIT Inv\nNEXT Next\nINVARIANT TypeOK Inv");
+    expect([implied.result.status, implied.result.distinctStates]).toEqual(["success", 4]);
+    expect(implied.lines).toEqual([expect.stringMatching(/^\[engine\] checked 4 states/)]);
+    const violated = await checkInEngine(body, "INIT Inv\nNEXT Next\nINVARIANT Inv Small");
+    expect(violated.result.status).toBe("invariant-violation");
+    expect(violated.lines).toEqual([
+      expect.stringMatching(/an invariant violated in an initial state$/),
+    ]);
+  });
+
   it("compiles a recursive operator apart for its primed calls", async () => {
     // S(1) compiles unprimed first; (S(1))' reads x'.
     const { result, lines } = await checkInEngine(
@@ -408,6 +477,21 @@ describe("the engine", () => {
     cache.set(2 ** 32 + 5, entry, 7, 0, 0, 0, 111);
     expect(cache.get(2 ** 32 + 5, entry, 7, 0, 0, 0)).toBe(111);
     expect(cache.get(5, entry, 7, 0, 0, 0)).toBe(-1);
+  });
+
+  it("keeps every entry of a memo table of one key, its keys dense or sparse", () => {
+    // Ids 0 to 1999 fit the table's array; ids a million apart make it a hash table.
+    for (const stride of [1, 1_000_000]) {
+      const table = new MemoTable(1);
+      for (let key = 0; key < 1999; key++) table.set1(key * stride, key + 7);
+      table.setN(Int32Array.of(1999 * stride), 0, 99);
+      for (let key = 0; key < 2000; key++) {
+        expect(table.getN(Int32Array.of(key * stride), 0)).toBe(key === 1999 ? 99 : key + 7);
+      }
+      expect(table.get1(2000 * stride)).toBe(-1);
+      expect(table.get1(-1)).toBe(-1);
+      expect(table.size).toBe(2000);
+    }
   });
 
   it("compiles what an initial state's shortcut evaluates while generated code runs", async () => {
