@@ -8,8 +8,8 @@ name: Compare
   workflow_dispatch:
     inputs:
       base:
-        description: The commit, branch or tag to time against
-        default: origin/main
+        description: The commit, branch or tag of this repository to time against
+        default: main
       runs:
         description: Interleaved runs of each build on each model
         default: "7"
@@ -36,12 +36,16 @@ jobs:
           persist-credentials: false
       - name: Build both
         env:
-          BASE: ${{ inputs.base || 'origin/main' }}
+          BASE: ${{ inputs.base || 'main' }}
+          REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
           PATH="$(scripts/ci/bootstrap.sh bun node):$PATH"
           base="$RUNNER_TEMP/base"
-          git worktree add --detach "$base" "$BASE"
+          # Fetched from GitHub rather than read from the checkout, whose origin/main can name the
+          # commit under test.
+          git fetch -q "https://github.com/$REPOSITORY" "$BASE"
+          git worktree add --detach "$base" FETCH_HEAD
           canary="$(scripts/ci/bootstrap.sh bun-canary)"
           for root in "$PWD" "$base"; do
             (cd "$root" && bun install --frozen-lockfile --ignore-scripts && bun run build \
