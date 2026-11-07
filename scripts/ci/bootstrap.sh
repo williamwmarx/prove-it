@@ -5,7 +5,9 @@
 #   PATH="$(scripts/ci/bootstrap.sh bun node):$PATH"
 #
 # Tools: bun, node (with npm), gitleaks, op (the 1Password CLI), and for the checker benchmark java
-# (Temurin JDK), ant (which builds TLC) and rust (rustc and cargo).
+# (Temurin JDK), ant (which builds TLC) and rust (rustc and cargo). bun-canary is a Bun canary with
+# the ahead-of-time compiler that build-binary.ts --aot needs; its bin directory holds a bun, so put
+# it on PATH only for that build.
 # Linux x64 only, which is what depot-ubuntu-24.04 runs. The bun, node, gitleaks and op pins match
 # Argos's scripts/verification/toolchains.json.
 set -eu
@@ -24,6 +26,7 @@ die() {
 pin() {
   case $1 in
     bun) echo "bun 1.4.4 https://registry.npmjs.org/@oven/bun-linux-x64/-/bun-linux-x64-1.4.4.tgz 93ca5a2abe45f3bcac6dd55baff8bb06c4ac824b70f89650b54e5c8b80dbef18 package/bin" ;;
+    bun-canary) echo "bun-canary 1.4.4-canary.20261107.1 https://registry.npmjs.org/@oven/bun-linux-x64/-/bun-linux-x64-1.4.4-canary.20261107.1.tgz 16bcf535822d4dadc6c536fa594ff461b3e6df09923ceb63587905d206de8d94 package/bin" ;;
     node) echo "node 24.16.0 https://nodejs.org/dist/v24.16.0/node-v24.16.0-linux-x64.tar.gz 2faf6a387e9b62b888e21c54f01249fb27537ffecf1842f29f4c919d0a59a0ff node-v24.16.0-linux-x64/bin" ;;
     gitleaks) echo "gitleaks 8.30.1 https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb ." ;;
     op) echo "op 2.41.0 https://cache.agilebits.com/dist/1P/op2/pkg/v2.41.0/op_linux_amd64_v2.41.0.zip 498bbaa154f0d90749325a14e04488fcd84930a426ae92ebf421d2a7d793a80a ." ;;

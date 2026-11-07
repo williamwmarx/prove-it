@@ -15,8 +15,8 @@ name: Benchmark
         description: Only the models whose id contains this text
         default: ""
       checkers:
-        description: Comma-separated, from tlc, tlc-auto, tla-ts, tla-rs, prove-it, prove-it-bun, prove-it-node
-        default: tlc,tlc-auto,tla-ts,tla-rs,prove-it,prove-it-node
+        description: Comma-separated, from tlc, tlc-auto, tla-ts, tla-rs, prove-it, prove-it-aot, prove-it-bun, prove-it-node
+        default: tlc,tlc-auto,tla-ts,tla-rs,prove-it,prove-it-aot,prove-it-node
       timeout:
         description: Seconds before one run of a checker is stopped
         default: "300"
@@ -76,6 +76,9 @@ jobs:
           PATH="$(scripts/ci/bootstrap.sh bun node):$PATH"
           bun run build
           (cd packages/prove-it && bun scripts/build-binary.ts)
+          # The ahead-of-time binary needs the compiler in Bun's canary.
+          canary="$(scripts/ci/bootstrap.sh bun-canary)"
+          (cd packages/prove-it && "$canary/bun" scripts/build-binary.ts --aot)
       - name: Fetch the corpus models and library modules
         run: |
           set -euo pipefail
@@ -86,7 +89,7 @@ jobs:
         env:
           RUNS: ${{ inputs.runs || '5' }}
           FILTER: ${{ inputs.filter || '' }}
-          CHECKERS: ${{ inputs.checkers || 'tlc,tlc-auto,tla-ts,tla-rs,prove-it,prove-it-node' }}
+          CHECKERS: ${{ inputs.checkers || 'tlc,tlc-auto,tla-ts,tla-rs,prove-it,prove-it-aot,prove-it-node' }}
           TIMEOUT: ${{ inputs.timeout || '300' }}
         run: |
           set -euo pipefail

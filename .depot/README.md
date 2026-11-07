@@ -78,6 +78,7 @@ checkers:
 | `tla-ts` | tla-ts 0.0.8 under Node | `scripts/ci/tla-ts/package-lock.json` |
 | `tla-rs` | tla-rs 0.24.11 (crate `tla-checker`), built with Rust 1.99.1 | the workflow's `cargo install --locked`; Rust in `bootstrap.sh` |
 | `prove-it` | Prove It's compiled binary, from the commit the run checks out | |
+| `prove-it-aot` | Prove It compiled to machine code by Bun's ahead-of-time compiler (`build-binary.ts --aot`), which runs actions as closures since it interprets code made with `new Function` | the Bun canary in `bootstrap.sh` (`bun-canary`) |
 | `prove-it-node` | `dist/cli.js` under Node, as an npm user runs it | |
 | `prove-it-bun` | `dist/cli.js` under Bun, off by default | |
 

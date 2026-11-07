@@ -8,10 +8,17 @@ export const reportEngine = (message: string) => {
   if (getEngineSetting() === "debug") console.error(`[engine] ${message}`);
 };
 
-// PROVE_IT_CODEGEN=0 runs actions as closures instead of generated code, =dump prints the code,
-// =share writes the code a large action gets, with each branch point's continuation shared, and
-// =hoist puts every step in a function of its own.
-export const getCodegenSetting = () => getEnvironment()?.PROVE_IT_CODEGEN;
+// The binary Bun compiles to machine code ahead of time (build-binary.ts --aot) defines
+// PROVE_IT_AOT. It runs code made with new Function in an interpreter, so it runs actions as
+// closures unless PROVE_IT_CODEGEN says otherwise.
+declare const PROVE_IT_AOT: boolean | undefined;
+const isAheadOfTime = typeof PROVE_IT_AOT === "boolean" && PROVE_IT_AOT;
+
+// PROVE_IT_CODEGEN=0 runs actions as closures instead of generated code, =1 generates code even in
+// the ahead-of-time binary, =dump prints the code, =share writes the code a large action gets,
+// with each branch point's continuation shared, and =hoist puts every step in a function of its own.
+export const getCodegenSetting = () =>
+  getEnvironment()?.PROVE_IT_CODEGEN ?? (isAheadOfTime ? "0" : undefined);
 
 // PROVE_IT_FINGERPRINT=reference fingerprints each state from scratch instead of from its parent's,
 // and =check does both and throws where they differ.
