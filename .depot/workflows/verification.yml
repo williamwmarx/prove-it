@@ -1,0 +1,99 @@
+# Every pull request from this repository and every push to main. Holds no credential: the env
+# below blanks every one a step could publish with. Gate is the one check a ruleset should
+# require. Depot CI doesn't run pull requests from forks yet.
+name: Verification
+"on":
+  pull_request: null
+  push:
+    branches:
+      - main
+  workflow_dispatch: null
+permissions:
+  contents: read
+concurrency:
+  group:
+    verification-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('{0}-{1}',
+    github.event_name, github.sha) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+env:
+  NPM_TOKEN: ""
+  NODE_AUTH_TOKEN: ""
+  OP_SERVICE_ACCOUNT_TOKEN: ""
+  ONEPASSWORD_PROVE_IT_RELEASE_TOKEN: ""
+jobs:
+  checks:
+    name: ${{ matrix.task }}
+    runs-on: depot-ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - task: Build
+            command: bun run build
+          - task: Typecheck
+            command: bun run typecheck
+          - task: Lint
+            command: bun run lint && bun run format:check
+          - task: Test
+            command: bun run test
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      # Some tests and the conformance scripts run node, so it's on PATH too.
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          PATH="$(scripts/ci/bootstrap.sh bun node):$PATH"
+          bun install --frozen-lockfile --ignore-scripts
+      - name: Run ${{ matrix.task }}
+        env:
+          COMMAND: ${{ matrix.command }}
+        run: |
+          set -euo pipefail
+          PATH="$(scripts/ci/bootstrap.sh bun node):$PATH"
+          bash -c "$COMMAND"
+          test -z "$(git status --porcelain)"
+  # fetch-depth 0 so a secret a later commit deleted is still found. The repository is public, so
+  # any finding is a leaked credential to revoke, not to allowlist.
+  secret-history:
+    name: Secret History
+    runs-on: depot-ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Scan git history for credentials
+        run: |
+          set -euo pipefail
+          PATH="$(scripts/ci/bootstrap.sh gitleaks):$PATH"
+          gitleaks git --no-banner --redact --log-opts=HEAD .
+  gate:
+    name: Gate
+    if: always()
+    needs:
+      - checks
+      - secret-history
+    runs-on: depot-ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require every result
+        env:
+          CHECKS: ${{ needs.checks.result }}
+          SECRET_HISTORY: ${{ needs.secret-history.result }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## Verification"
+            echo
+            echo "| Job | Result |"
+            echo "| --- | --- |"
+            echo "| checks | $CHECKS |"
+            echo "| secret-history | $SECRET_HISTORY |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          [[ "$CHECKS" == success && "$SECRET_HISTORY" == success ]]

@@ -45,8 +45,7 @@
     }
   },
   "publishConfig": {
-    "access": "public",
-    "provenance": true
+    "access": "public"
   },
   "scripts": {
     "build": "bun scripts/build.ts && tsc -p tsconfig.build.json",

@@ -1,0 +1,117 @@
+# Publishes packages/prove-it to npm when a commit on main changes its version, then tags the
+# commit v<version>. Run it by hand to retry a release that failed.
+#
+# The npm token is NPM_TOKEN in the 1Password Environment prove-it-release, whose ID is below.
+# ONEPASSWORD_PROVE_IT_RELEASE_TOKEN, a Depot CI secret scoped to this repository, main and this
+# file, is the token of a service account that can read that Environment and nothing else. Only
+# the publish step holds it, and it runs no package code: it publishes the tarball packed before.
+name: Release
+"on":
+  push:
+    branches:
+      - main
+    paths:
+      - packages/prove-it/package.json
+  workflow_dispatch: null
+permissions:
+  contents: read
+concurrency:
+  group: release
+  cancel-in-progress: false
+env:
+  PACKAGE: "@atemp/prove-it"
+  ONEPASSWORD_ENVIRONMENT_ID: ""
+jobs:
+  release:
+    name: Publish to npm
+    if: github.ref == 'refs/heads/main'
+    runs-on: depot-ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      # To push the v<version> tag.
+      contents: write
+    steps:
+      - name: Check out exactly the pushed main commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Plan (publish only a version npm doesn't have)
+        id: plan
+        run: |
+          set -euo pipefail
+          PATH="$(scripts/ci/bootstrap.sh node):$PATH"
+          version=$(node -p 'require("./packages/prove-it/package.json").version')
+          name=$(node -p 'require("./packages/prove-it/package.json").name')
+          [[ "$name" == "$PACKAGE" ]] || { echo "package.json names $name, not $PACKAGE" >&2; exit 1; }
+          if published=$(npm view "$PACKAGE@$version" version 2>/dev/null) && [[ "$published" == "$version" ]]; then
+            echo "$PACKAGE@$version is already on npm" | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Install dependencies (no install scripts)
+        if: steps.plan.outputs.publish == 'true'
+        run: |
+          set -euo pipefail
+          PATH="$(scripts/ci/bootstrap.sh bun node):$PATH"
+          bun install --frozen-lockfile --ignore-scripts
+      - name: Typecheck, lint, test and build
+        if: steps.plan.outputs.publish == 'true'
+        run: |
+          set -euo pipefail
+          PATH="$(scripts/ci/bootstrap.sh bun node):$PATH"
+          bun run typecheck
+          bun run lint
+          bun run format:check
+          bun run test
+          test -z "$(git status --porcelain)"
+      - name: Pack
+        id: pack
+        if: steps.plan.outputs.publish == 'true'
+        run: |
+          set -euo pipefail
+          PATH="$(scripts/ci/bootstrap.sh bun node):$PATH"
+          cd packages/prove-it
+          tarball=$(npm pack --silent --pack-destination "$RUNNER_TEMP")
+          echo "tarball=$RUNNER_TEMP/$tarball" >> "$GITHUB_OUTPUT"
+          echo "Packed $tarball, sha256 $(sha256sum "$RUNNER_TEMP/$tarball" | cut -d' ' -f1)" | tee -a "$GITHUB_STEP_SUMMARY"
+      # op run puts NPM_TOKEN in npm's environment alone; the npmrc names the variable, not the
+      # value, and npm expands it.
+      - name: Publish the packed tarball
+        if: steps.plan.outputs.publish == 'true'
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.ONEPASSWORD_PROVE_IT_RELEASE_TOKEN }}
+          TARBALL: ${{ steps.pack.outputs.tarball }}
+        run: |
+          set -euo pipefail
+          [[ -n "$ONEPASSWORD_ENVIRONMENT_ID" ]] || { echo "set ONEPASSWORD_ENVIRONMENT_ID in this workflow" >&2; exit 1; }
+          [[ -n "$OP_SERVICE_ACCOUNT_TOKEN" ]] || { echo "the Depot secret ONEPASSWORD_PROVE_IT_RELEASE_TOKEN is missing" >&2; exit 1; }
+          PATH="$(scripts/ci/bootstrap.sh node op):$PATH"
+          npmrc="$RUNNER_TEMP/npmrc"
+          printf '//registry.npmjs.org/:_authToken=${NPM_TOKEN}\n' > "$npmrc"
+          NPM_CONFIG_USERCONFIG="$npmrc" op run --environment "$ONEPASSWORD_ENVIRONMENT_ID" -- \
+            npm publish "$TARBALL" --access public --ignore-scripts
+          rm -f "$npmrc"
+          echo "Published $PACKAGE@${{ steps.plan.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
+      - name: Tag the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          tag="v$VERSION"
+          if existing=$(git rev-parse -q --verify "refs/tags/$tag^{commit}"); then
+            [[ "$existing" == "$GITHUB_SHA" ]] && exit 0
+            # An earlier commit already released this version; npm has it, so there's nothing to tag.
+            echo "$tag already tags $existing" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          npm_version=$(PATH="$(scripts/ci/bootstrap.sh node):$PATH" npm view "$PACKAGE@$VERSION" version 2>/dev/null || true)
+          [[ "$npm_version" == "$VERSION" ]] || exit 0
+          AUTH="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          echo "::add-mask::$AUTH"
+          git tag "$tag" "$GITHUB_SHA"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $AUTH" push origin "refs/tags/$tag"
