@@ -5,6 +5,8 @@
 import { afterEach, describe, expect, it, spyOn } from "bun:test";
 
 import { check } from "../../src";
+import { nextEpoch } from "../../src/engine/compile";
+import { EpochCache } from "../../src/engine/memo";
 
 const setting = process.env.PROVE_IT_ENGINE;
 
@@ -320,6 +322,22 @@ describe("the engine", () => {
       invariantFirst.result.depth,
     ]).toEqual([13, 10, 7]);
     expect(invariantFirst.lines).toEqual([expect.stringMatching(/^\[engine\] checked 10 states/)]);
+  });
+
+  it("never issues an epoch again, so a cached value can't outlive its state", () => {
+    // A search holds the epoch of the state it expands while its successors take new ones.
+    let previous = nextEpoch();
+    for (let count = 0; count < 0x40000000; count++) {
+      const epoch = nextEpoch();
+      if (epoch <= previous) throw new Error(`epoch ${epoch} after ${previous}`);
+      previous = epoch;
+    }
+    // Nor does a cache take an epoch past 2^32 for another.
+    const cache = new EpochCache();
+    const entry = EpochCache.entry(7, 0, 0, 0);
+    cache.set(2 ** 32 + 5, entry, 7, 0, 0, 0, 111);
+    expect(cache.get(2 ** 32 + 5, entry, 7, 0, 0, 0)).toBe(111);
+    expect(cache.get(5, entry, 7, 0, 0, 0)).toBe(-1);
   });
 
   it("reads Nat as the set the model substitutes for it", async () => {

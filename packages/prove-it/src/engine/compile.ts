@@ -101,18 +101,13 @@ export const registers = { cur: CUR, next: NXT, locals: LOC, assigned: 0 };
 
 // Which current state the current register holds, for the caches of expressions that read many
 // variables: a state keeps its epoch while it is current and unchanged. 0 marks one that may change,
-// such as the initial state being built, which nothing caches.
+// such as the initial state being built, which nothing caches. No number is issued twice: a search
+// holds the epoch of the state it expands while each successor takes a new one, so an entry written
+// under a reissued epoch would answer for another state. The count stays exact up to 2^53.
 export let EPOCH = 0;
 let epochCount = 0;
-const epochCaches: EpochCache[] = [];
 
-export const nextEpoch = () => {
-  if (++epochCount > 0x3fffffff) {
-    epochCount = 1;
-    for (const cache of epochCaches) cache.epochs.fill(0);
-  }
-  return epochCount;
-};
+export const nextEpoch = () => ++epochCount;
 
 export const setCurrent = (state: Int32Array, epoch = nextEpoch()) => {
   CUR = state;
@@ -541,7 +536,6 @@ const cachedInEpoch = (compiled: Compiled): Compiled => {
   const slots = footprint.slots;
   if (footprint.primes.length > 0 || slots.length > EPOCH_KEYS) return compiled;
   const cache = new EpochCache();
-  epochCaches.push(cache);
   const inner = compiled.evaluate;
   const key = (index: number) => (index < slots.length ? LOC[slots[index]] : 0);
   return {

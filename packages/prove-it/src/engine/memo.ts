@@ -305,7 +305,8 @@ const EPOCH_MINIMUM_HIT_RATE = 0.1;
 export const EPOCH_KEYS = 4;
 
 export class EpochCache {
-  epochs = new Int32Array(EPOCH_ENTRIES);
+  // Epochs count past 2^31, so they don't fit an Int32Array.
+  epochs = new Float64Array(EPOCH_ENTRIES);
   keys = new Int32Array(EPOCH_ENTRIES * EPOCH_KEYS);
   values = new Int32Array(EPOCH_ENTRIES);
   lookups = 0;
