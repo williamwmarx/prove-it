@@ -362,9 +362,10 @@ interface HashtableEntry {
   value: SymbolNode;
 }
 
+// The buckets keep Java's order of the entries, and the map finds an entry by its key.
 interface JavaHashtable {
   buckets: HashtableEntry[][];
-  count: number;
+  entries: Map<string, HashtableEntry>;
   threshold: number;
 }
 
@@ -380,7 +381,7 @@ const getJavaHash = (text: string) => {
 // A java.util.Hashtable with its default capacity of 11 and load factor of 0.75.
 const createJavaHashtable = (): JavaHashtable => ({
   buckets: Array.from({ length: 11 }, () => []),
-  count: 0,
+  entries: new Map(),
   threshold: 8,
 });
 
@@ -398,28 +399,29 @@ const rehash = (table: JavaHashtable) => {
   table.threshold = Math.floor(capacity * 0.75);
 };
 
-const getHashtableValue = (table: JavaHashtable, key: string, hashKey = key) =>
-  table.buckets[getBucketIndex(getJavaHash(hashKey), table.buckets.length)].find(
-    (entry) => entry.key === key,
-  )?.value;
+const getHashtableValue = (table: JavaHashtable, key: string) => table.entries.get(key)?.value;
 
+// A key always comes with the same hashKey, the name of its symbol.
 const putHashtableValue = (table: JavaHashtable, key: string, value: SymbolNode, hashKey = key) => {
-  const hash = getJavaHash(hashKey);
-  const existing = table.buckets[getBucketIndex(hash, table.buckets.length)].find(
-    (entry) => entry.key === key,
-  );
+  const existing = table.entries.get(key);
   if (existing) {
     existing.value = value;
     return;
   }
-  if (table.count >= table.threshold) rehash(table);
-  table.buckets[getBucketIndex(hash, table.buckets.length)].unshift({ hash, key, value });
-  table.count++;
+  if (table.entries.size >= table.threshold) rehash(table);
+  const entry = { hash: getJavaHash(hashKey), key, value };
+  table.buckets[getBucketIndex(entry.hash, table.buckets.length)].unshift(entry);
+  table.entries.set(key, entry);
 };
 
 // The values in the order of Hashtable.elements(), from the last bucket to the first.
-export const getHashtableValues = (table: JavaHashtable) =>
-  table.buckets.toReversed().flatMap((bucket) => bucket.map((entry) => entry.value));
+export const getHashtableValues = (table: JavaHashtable) => {
+  const values: SymbolNode[] = [];
+  for (let index = table.buckets.length - 1; index >= 0; index--) {
+    table.buckets[index].forEach((entry) => values.push(entry.value));
+  }
+  return values;
+};
 
 const MODULE_KEY_PREFIX = "\u0000module ";
 
@@ -440,7 +442,7 @@ export const getContextSymbol = (context: Context, name: string) =>
   getHashtableValue(context.table, name);
 
 export const getContextModule = (context: Context, name: string) =>
-  getHashtableValue(context.table, MODULE_KEY_PREFIX + name, name);
+  getHashtableValue(context.table, MODULE_KEY_PREFIX + name);
 
 // ModuleNode.getOpDefs: the definitions in the order they joined the context, without builtins
 // and module instances.

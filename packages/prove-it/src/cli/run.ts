@@ -2,9 +2,7 @@ import { delimiter } from "node:path";
 
 import { getTlcVersion } from "../tlc/version";
 import { getToolsJar, type JavaProperties, reportErrors } from "./shared";
-import { runTlapm } from "./tlapm";
 import { checkSpecs } from "./tlc";
-import { exportXml, exportXml174 } from "./xml-exporter";
 
 // Tools that run TLC with Java, such as pstack's statechart skill, can run tla-ts in place of java,
 // as in `tla-ts -DTLA-Library=lib -cp tla2tools.jar tlc2.TLC Spec`. Other JVM options are ignored.
@@ -41,16 +39,20 @@ const getJavaLaunch = (args: string[]) => {
 };
 
 const run = async (args: string[]) => {
-  if (args[0] === "tlapm") return reportErrors(() => runTlapm(args.slice(1)));
+  if (args[0] === "tlapm") {
+    const tlapm = await import("./tlapm");
+    return reportErrors(() => tlapm.runTlapm(args.slice(1)));
+  }
   const launch = getJavaLaunch(args);
   if (launch === undefined) return checkSpecs(args, { libraries: [] });
   launch.java.tlcVersion ??= await getTlcVersion(getToolsJar(launch.java));
   if (launch.mainClass === "tlc2.TLC") return checkSpecs(launch.args, launch.java);
   if (launch.mainClass === "tla2sany.xml.XMLExporter") {
+    const exporter = await import("./xml-exporter");
     return reportErrors(() =>
       launch.java.tlcVersion === "1.7.4"
-        ? exportXml174(launch.args, getToolsJar(launch.java))
-        : exportXml(launch.args),
+        ? exporter.exportXml174(launch.args, getToolsJar(launch.java))
+        : exporter.exportXml(launch.args),
     );
   }
   console.error(

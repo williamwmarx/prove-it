@@ -41,6 +41,8 @@ bun run format:check
 bun run test          # builds first, since some tests run dist/cli.js
 ```
 
+`bun run build:binary` in `packages/prove-it` compiles the CLI into a standalone executable, `dist/prove-it`, with its code compiled to Bun bytecode, which starts faster than `dist/cli.js`.
+
 The conformance and benchmark scripts bundle with Bun and run under Node, whose V8 is much faster than JavaScriptCore on the SMT prover. Run them from `packages/prove-it`:
 
 ```shell

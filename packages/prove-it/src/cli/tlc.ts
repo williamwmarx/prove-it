@@ -41,6 +41,7 @@ import { check } from "../parallel";
 import { parseModule } from "../parser";
 import { SANY_174_STANDARD_MODULES, SANY_STANDARD_MODULES } from "../sany/modules";
 import { getSanyReport, type SanyModuleOrigin } from "../sany/report";
+import { readSanySnapshot } from "../sany/snapshot";
 import type { StateDump } from "../state-graph";
 import { getTlcFingerprint } from "../tlc/fingerprint";
 import {
@@ -802,6 +803,7 @@ const checkSpec = async (
       version,
       // TLC's trace exploration spec records the trace with the post condition of _TLCTrace.
       rootExtendees: isRecorded ? ["_TLCTrace"] : undefined,
+      precomputed: version === "master" ? readSanySnapshot() : undefined,
       onPrint: (text) => process.stdout.write(text),
       onPrintError: (text) => process.stderr.write(text),
     },
