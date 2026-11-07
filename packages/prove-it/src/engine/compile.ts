@@ -420,7 +420,12 @@ type Binding =
       compiled: (Compiled | undefined)[];
     }
   | { kind: "operator"; operator: OperatorBinding }
-  | { kind: "value"; compiled: Compiled }
+  // A value, or a function a LET defines, which TLC keeps lazy, with the scope it is defined in.
+  | {
+      kind: "value";
+      compiled: Compiled;
+      lazy?: { definition: FunctionDefinition; scope: Scope | undefined };
+    }
   // A recursive function defined in a LET, whose body sees the LET's scope, itself included.
   | { kind: "recursive"; definition: FunctionDefinition; scope: Scope | undefined };
 
@@ -465,6 +470,22 @@ export interface Compiler {
     context: Context;
   };
   resolveAction: (expression: Expression, context: Context) => ActionTarget | undefined;
+  // For f[e] where TLC keeps f lazy, a LET's function or a function constructor: the body of f
+  // walked at e, which an action walks, and whether e is in f's domain.
+  resolveLazyApplication: (
+    expression: Expression,
+    context: Context,
+  ) =>
+    | {
+        body: Expression;
+        context: Context;
+        isInDomain: () => boolean;
+        // The function's own body, in its own scope, and whether it applies itself.
+        functionBody: Expression;
+        functionContext: Context;
+        isRecursive: boolean;
+      }
+    | undefined;
   bindLet: (expression: Expression & { kind: "Let" }, context: Context) => Context;
   compileOrdered: (
     expression: Expression,
@@ -938,7 +959,11 @@ export const createCompiler = (environment: Environment): Compiler => {
             compileFunctionConstruction(definition.bounds, definition.body, definitionContext),
           ),
         );
-        scope = bind(scope, definition.name, { kind: "value", compiled });
+        scope = bind(scope, definition.name, {
+          kind: "value",
+          compiled,
+          lazy: { definition, scope: definitionContext.scope },
+        });
       } else if (definition.params.length === 0) {
         if (definition.isRecursive) unsupported("a recursive LET definition");
         scope = bind(scope, definition.name, {
@@ -1204,7 +1229,7 @@ export const createCompiler = (environment: Environment): Compiler => {
       }
     };
     // The body's footprint isn't known while it compiles, so a call inside the body reads every
-    // variable as far as callers can tell, which keeps them from caching it.
+    // variable, and every name bound around a LET's definition, as far as callers can tell.
     const bodyFootprint = operator.body?.footprint;
     const footprint = bodyFootprint
       ? mergeFootprints(
@@ -1214,7 +1239,10 @@ export const createCompiler = (environment: Environment): Compiler => {
       : {
           vars: Array.from({ length: variableCount }, (_, index) => index),
           primes: Array.from({ length: variableCount }, (_, index) => index),
-          slots: [],
+          slots: mergeSorted(
+            [...getBoundSlots(local?.context.scope, new Set(), new Set())].sort((a, b) => a - b),
+            mergeFootprints(...compiledArgs.map((argument) => argument.footprint)).slots,
+          ),
         };
     return {
       evaluate,
@@ -1316,14 +1344,15 @@ export const createCompiler = (environment: Environment): Compiler => {
       keyVars: [],
       keyPrimes: [],
       keySlots: [],
-      // While the body compiles, a call inside it reads every variable as far as callers can tell.
+      // While the body compiles, a call inside it reads every variable and every name bound around
+      // the definition, as far as callers can tell.
       footprint: () =>
         record.body
           ? mergeFootprints(record.domain.footprint, withoutSlots(record.body.footprint, [slot]))
           : {
               vars: Array.from({ length: variableCount }, (_, variable) => variable),
               primes: Array.from({ length: variableCount }, (_, variable) => variable),
-              slots: [],
+              slots: [...getBoundSlots(baseScope, new Set(), new Set())].sort((a, b) => a - b),
             },
     };
     const entries = byScope.get(baseScope) ?? [];
@@ -2527,6 +2556,76 @@ export const createCompiler = (environment: Environment): Compiler => {
 
   // Resolves an expression that applies or names an operator to its body with the arguments bound,
   // for the action compiler, which walks into operators to find assignments.
+  // Tool.getNextStates walks the body of a function it keeps lazy where an action applies it, with
+  // the argument bound as Tool.getFcnContext binds it, so each disjunct or witness of the body that
+  // holds gives a successor.
+  let lazyArgumentCount = 0;
+  const resolveLazyApplication = (expression: Expression, context: Context) => {
+    if (expression.kind !== "FunctionApplication") return undefined;
+    const fn = expression.function;
+    let bounds: Bound[];
+    let body: Expression;
+    let base: Context;
+    let isRecursive = false;
+    if (fn.kind === "FunctionConstruction") {
+      bounds = fn.bounds;
+      body = fn.body;
+      base = context;
+    } else if (fn.kind === "Identifier" && isLocallyResolved(fn)) {
+      const binding = lookup(context.scope, fn.name);
+      if (binding?.kind === "recursive") {
+        bounds = binding.definition.bounds;
+        body = binding.definition.body;
+        base = { ...context, scope: binding.scope };
+        isRecursive = true;
+      } else if (binding?.kind === "value" && binding.lazy) {
+        bounds = binding.lazy.definition.bounds;
+        body = binding.lazy.definition.body;
+        base = { ...context, scope: binding.lazy.scope };
+      } else {
+        return undefined;
+      }
+    } else {
+      return undefined;
+    }
+    const bound = bounds[0];
+    if (bounds.length !== 1 || bound.pattern.kind !== "Name" || expression.args.length !== 1)
+      return unsupported("walking a lazy function of several arguments");
+    const argument = compile(expression.args[0], context);
+    const member = memberTest(compile(bound.set, base));
+    const argumentEvaluate = argument.evaluate;
+    const name = `$argument${lazyArgumentCount++}`;
+    const scope = bind(base.scope, name, {
+      kind: "argument",
+      expression: expression.args[0],
+      context,
+      compiled: [],
+    });
+    const location = expression.location;
+    return {
+      body: {
+        kind: "Exists",
+        bounds: [
+          {
+            pattern: bound.pattern,
+            set: {
+              kind: "SetEnumeration",
+              elements: [{ kind: "Identifier", name, location, resolution: { kind: "Local" } }],
+              location,
+            },
+          },
+        ],
+        body,
+        location,
+      } as Expression,
+      context: { ...base, scope },
+      isInDomain: () => member(argumentEvaluate()),
+      functionBody: body,
+      functionContext: base,
+      isRecursive,
+    };
+  };
+
   const resolveAction = (expression: Expression, context: Context): ActionTarget | undefined => {
     if (expression.kind === "Identifier") {
       if (isLocallyResolved(expression)) {
@@ -2707,6 +2806,7 @@ export const createCompiler = (environment: Environment): Compiler => {
       }),
     }),
     resolveAction,
+    resolveLazyApplication,
     compileOrdered,
     bindLet: bindLetDefinitions,
     bindValue: bindValueSlot,

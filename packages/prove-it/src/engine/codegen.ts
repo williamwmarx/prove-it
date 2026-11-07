@@ -392,6 +392,10 @@ ${T}[${variable}] = -1; ${R}.assigned--; }`;
         if (resolved) return step(resolved.body, resolved.context, known, rest);
         return emit(`if (${guardCode(operand, operandContext)}) {\n${rest(known)}\n}`);
       }
+      case "FunctionApplication":
+        if (compiler.resolveLazyApplication(operand, operandContext))
+          return opaque(operand, operandContext, known, rest);
+        return emit(`if (${guardCode(operand, operandContext)}) {\n${rest(known)}\n}`);
       default:
         return emit(`if (${guardCode(operand, operandContext)}) {\n${rest(known)}\n}`);
     }

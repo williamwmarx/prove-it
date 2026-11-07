@@ -399,6 +399,23 @@ export const compileAction = (
         );
       case "Label":
         return compileStep(step.body, stepContext);
+      case "FunctionApplication": {
+        const lazy = compiler.resolveLazyApplication(step, stepContext);
+        // Walking a body with no disjunction, existential or assignment comes to evaluating it.
+        if (
+          !lazy ||
+          (!hasBranches(lazy.functionBody, lazy.functionContext) &&
+            !hasAssignments(lazy.functionBody, lazy.functionContext))
+        )
+          return guardStep(step, stepContext);
+        if (lazy.isRecursive) return bail("walking a recursive function in an action");
+        const isInDomain = lazy.isInDomain;
+        const walk = compileStep(lazy.body, lazy.context);
+        return (onComplete) => {
+          if (!isInDomain()) bail("applied a function outside its domain");
+          walk(onComplete);
+        };
+      }
       case "Identifier": {
         const resolved = compiler.resolveAction(step, stepContext);
         if (!resolved) return guardStep(step, stepContext);
@@ -629,6 +646,10 @@ export const createActionAnalysis = (compiler: Compiler, isInit: boolean) => {
       const resolved = compiler.resolveAction(body, bodyContext);
       if (resolved && hasBranches(resolved.body, resolved.context, depth + 1)) return true;
     }
+    if (body.kind === "FunctionApplication") {
+      const lazy = compiler.resolveLazyApplication(body, bodyContext);
+      if (lazy && hasBranches(lazy.functionBody, lazy.functionContext, depth + 1)) return true;
+    }
     const children: Expression[] = [];
     collectChildren(body, children);
     return children.some((child) => hasBranches(child, bodyContext, depth + 1));
@@ -643,6 +664,10 @@ export const createActionAnalysis = (compiler: Compiler, isInit: boolean) => {
     if (body.kind === "Apply" || body.kind === "Identifier") {
       const resolved = compiler.resolveAction(body, bodyContext);
       if (resolved && hasAssignments(resolved.body, resolved.context, depth + 1)) return true;
+    }
+    if (body.kind === "FunctionApplication") {
+      const lazy = compiler.resolveLazyApplication(body, bodyContext);
+      if (lazy && hasAssignments(lazy.functionBody, lazy.functionContext, depth + 1)) return true;
     }
     const children: Expression[] = [];
     collectChildren(body, children);

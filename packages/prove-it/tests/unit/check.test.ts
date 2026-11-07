@@ -4749,6 +4749,15 @@ describe("initial predicate and next-state relation match TLC", () => {
     expect(results.map((result) => result.generatedStates)).toEqual(expected);
   });
 
+  it("walks the body of a LET's function that an action applies, as TLC does", async () => {
+    // Where both disjuncts of the function's body hold, TLC generates the successor twice.
+    const result = await checkSource(
+      "EXTENDS Integers\nVARIABLES m, x\nInit == m \\in [{1, 2} -> -1..2] /\\ x = -5\nSafe(b) == LET f[c \\in 0..2] == c = 0 \\/ \\A i \\in {1, 2} : m[i] >= c IN f[b]\nNext == \\E b \\in 0..2 : Safe(b) /\\ x' = b /\\ UNCHANGED m",
+      "INIT Init\nNEXT Next",
+    );
+    expect([result.generatedStates, result.distinctStates]).toEqual([93, 37]);
+  });
+
   it("evaluates a LET definition's UNION again at each reference in an action", async () => {
     const result = await checkSource(
       "EXTENDS Naturals, FiniteSets\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == LET u == UNION {UNION {0..2, {1}}, {7}} IN Cardinality(u) > 0 /\\ y' \\in u /\\ UNCHANGED x",
