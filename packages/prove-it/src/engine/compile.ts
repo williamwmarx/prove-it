@@ -104,6 +104,19 @@ const allocateSlot = () => {
   return slot;
 };
 
+// A recursive definition's body binds its names at slots fixed when it compiles, so a call inside
+// the body would overwrite the names of the call that made it. Evaluating the body keeps the slots
+// it binds, from start to end, as they were.
+const evaluateKeepingSlots = (evaluate: Evaluate, start: number, end: number) => {
+  if (end <= start) return evaluate();
+  const saved = LOC.slice(start, end);
+  try {
+    return evaluate();
+  } finally {
+    LOC.set(saved, start);
+  }
+};
+
 // --- footprints ---
 
 export interface Footprint {
@@ -1130,6 +1143,9 @@ export const createCompiler = (environment: Environment): Compiler => {
     // the body takes it to be until the body says otherwise, when the body compiles again.
     isNormalized: boolean;
     isEnumerated: boolean;
+    // The slots the body binds.
+    slotStart: number;
+    slotEnd: number;
   }
 
   // A call of a RECURSIVE operator: a global one, or one a LET defines, whose body sees the LET's
@@ -1155,6 +1171,8 @@ export const createCompiler = (environment: Environment): Compiler => {
         keyPrimes: [],
         isNormalized: true,
         isEnumerated: true,
+        slotStart: 0,
+        slotEnd: 0,
       };
       recursive = created;
       recursiveOperators.set(key, created);
@@ -1169,7 +1187,9 @@ export const createCompiler = (environment: Environment): Compiler => {
           isPrimed: context.isPrimed || (local?.context.isPrimed ?? false),
           isInit: context.isInit,
         };
+        created.slotStart = slotCount;
         created.body = compile(definition.body, bodyContext);
+        created.slotEnd = slotCount;
         // Each compile can only take away what the last one claimed, so this settles.
         while (
           (created.isNormalized && !created.body.isNormalized) ||
@@ -1178,7 +1198,9 @@ export const createCompiler = (environment: Environment): Compiler => {
           created.isNormalized &&= created.body.isNormalized;
           created.isEnumerated &&= created.body.isEnumerated === true;
           created.body = undefined;
+          created.slotStart = slotCount;
           created.body = compile(definition.body, bodyContext);
+          created.slotEnd = slotCount;
         }
       } finally {
         if (!local) expanding.delete(definition as OperatorDefinition);
@@ -1209,7 +1231,9 @@ export const createCompiler = (environment: Environment): Compiler => {
       for (let index = 0; index < slots.length; index++) LOC[slots[index]] = values[index];
       try {
         const table = operator.table;
-        if (!table || !table.isEnabled) return operator.body!.evaluate();
+        const body = operator.body!;
+        if (!table || !table.isEnabled)
+          return evaluateKeepingSlots(body.evaluate, operator.slotStart, operator.slotEnd);
         scratch ??= new Int32Array(table.width);
         const fill = () => {
           let position = 0;
@@ -1220,7 +1244,7 @@ export const createCompiler = (environment: Environment): Compiler => {
         fill();
         const known = table.getN(scratch);
         if (known !== -1) return known;
-        const value = operator.body!.evaluate();
+        const value = evaluateKeepingSlots(body.evaluate, operator.slotStart, operator.slotEnd);
         fill();
         table.setN(scratch, value);
         return value;
@@ -1312,6 +1336,9 @@ export const createCompiler = (environment: Environment): Compiler => {
     keyPrimes: number[];
     keySlots: number[];
     footprint: () => Footprint;
+    // The slots the body binds.
+    slotStart: number;
+    slotEnd: number;
   }
 
   const recursiveFunctions = new Map<
@@ -1344,6 +1371,8 @@ export const createCompiler = (environment: Environment): Compiler => {
       keyVars: [],
       keyPrimes: [],
       keySlots: [],
+      slotStart: 0,
+      slotEnd: 0,
       // While the body compiles, a call inside it reads every variable and every name bound around
       // the definition, as far as callers can tell.
       footprint: () =>
@@ -1358,10 +1387,12 @@ export const createCompiler = (environment: Environment): Compiler => {
     const entries = byScope.get(baseScope) ?? [];
     entries[index] = record;
     byScope.set(baseScope, entries);
+    record.slotStart = slotCount;
     record.body = compile(definition.body, {
       ...outer,
       scope: bind(baseScope, bound.pattern.name, { kind: "slot", slot }),
     });
+    record.slotEnd = slotCount;
     const footprint = record.body.footprint;
     record.keySlots = mergeSorted([slot], footprint.slots);
     record.keyVars = footprint.vars;
@@ -1383,7 +1414,9 @@ export const createCompiler = (environment: Environment): Compiler => {
     LOC[slot] = argument;
     try {
       const table = record.table;
-      if (!table || !table.isEnabled) return record.body!.evaluate();
+      const body = record.body!;
+      if (!table || !table.isEnabled)
+        return evaluateKeepingSlots(body.evaluate, record.slotStart, record.slotEnd);
       const scratch = new Int32Array(table.width);
       let position = 0;
       for (const variable of record.keyVars) scratch[position++] = CUR[variable];
@@ -1391,7 +1424,7 @@ export const createCompiler = (environment: Environment): Compiler => {
       for (const keySlot of record.keySlots) scratch[position++] = LOC[keySlot];
       const known = table.getN(scratch);
       if (known !== -1) return known;
-      const value = record.body!.evaluate();
+      const value = evaluateKeepingSlots(body.evaluate, record.slotStart, record.slotEnd);
       table.setN(scratch, value);
       return value;
     } finally {

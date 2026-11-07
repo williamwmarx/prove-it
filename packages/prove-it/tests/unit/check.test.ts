@@ -4749,6 +4749,14 @@ describe("initial predicate and next-state relation match TLC", () => {
     expect(results.map((result) => result.generatedStates)).toEqual(expected);
   });
 
+  it("keeps the names a recursive function binds apart in each call", async () => {
+    const result = await checkSource(
+      "EXTENDS Sequences\nVARIABLE v\nPerms(S) == LET p[s \\in SUBSET S] == IF s = {} THEN {<<>>} ELSE LET q == [x \\in s |-> {Append(t, x) : t \\in p[s \\ {x}]}] IN UNION {q[x] : x \\in s} IN p[S]\nInit == v = <<>>\nNext == \\E t \\in Perms({1, 2, 3}) : v' = t",
+      "INIT Init\nNEXT Next",
+    );
+    expect(result.distinctStates).toBe(7);
+  });
+
   it("walks the body of a LET's function that an action applies, as TLC does", async () => {
     // Where both disjuncts of the function's body hold, TLC generates the successor twice.
     const result = await checkSource(
