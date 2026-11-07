@@ -5,6 +5,7 @@ import {
   readSync,
   realpathSync,
   writeFileSync,
+  writeSync,
 } from "node:fs";
 import { arch, availableParallelism, release, tmpdir, type } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
@@ -78,6 +79,20 @@ import {
   toLibraryPath,
 } from "./shared";
 
+// Writes to stdout or stderr at once. The first write through process.stdout sets up a stream,
+// which costs Bun several milliseconds of a run; a pipe that is full or non-blocking takes the
+// rest of the text when it can.
+const writeOutput = (fd: number, text: string) => {
+  const bytes = Buffer.from(text);
+  let offset = 0;
+  while (offset < bytes.length) {
+    try {
+      offset += writeSync(fd, bytes, offset);
+    } catch (error) {
+      if ((error as { code?: string }).code !== "EAGAIN") throw error;
+    }
+  }
+};
 const EXIT_CODES: Record<CheckStatus, number> = {
   success: EXIT_STATUS.success,
   "assumption-violation": EXIT_STATUS.assumptionViolation,
@@ -804,8 +819,8 @@ const checkSpec = async (
       // TLC's trace exploration spec records the trace with the post condition of _TLCTrace.
       rootExtendees: isRecorded ? ["_TLCTrace"] : undefined,
       precomputed: version === "master" ? readSanySnapshot() : undefined,
-      onPrint: (text) => process.stdout.write(text),
-      onPrintError: (text) => process.stderr.write(text),
+      onPrint: (text) => writeOutput(1, text),
+      onPrintError: (text) => writeOutput(2, text),
     },
   );
   if (sany.isFailed) {
