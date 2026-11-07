@@ -27,3 +27,5 @@ packages/prove-it/tests/conformance/.isabelle-encode-results.json
 packages/prove-it/tests/conformance/.prove-results.json
 packages/prove-it/tests/conformance/.prove-benchmark.json
 .claude/worktrees/
+packages/prove-it/tests/conformance/.engine-coverage.json
+packages/prove-it/.bench-suite.json

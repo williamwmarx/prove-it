@@ -43,6 +43,7 @@
     "typecheck": "bun check",
     "bench": "bun run build && bun scripts/run.ts benchmark",
     "bench:corpus": "bun run build && bun scripts/run.ts benchmark-corpus",
+    "bench:suite": "bun run build && bun scripts/bench-suite.ts",
     "bench:prove": "bun run build && bun scripts/run.ts prove-benchmark",
     "conformance": "bun scripts/run.ts conformance",
     "conformance:fetch": "bun scripts/run.ts fetch-corpora",

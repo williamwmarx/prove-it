@@ -1,0 +1,132 @@
+[
+  {
+    "id": "benchmarks/commit",
+    "directory": "benchmarks/commit",
+    "spec": "Commit.tla",
+    "config": "Commit.cfg",
+    "style": "transaction commit, function of records"
+  },
+  {
+    "id": "benchmarks/philosophers",
+    "directory": "benchmarks/philosophers",
+    "spec": "Philosophers.tla",
+    "config": "Philosophers.cfg",
+    "style": "dining philosophers, functions"
+  },
+  {
+    "id": "benchmarks/queue",
+    "directory": "benchmarks/queue",
+    "spec": "Queue.tla",
+    "config": "Queue.cfg",
+    "style": "bounded queue, sequences"
+  },
+  {
+    "id": "examples/specifications/btree/MCbtree.cfg",
+    "directory": "tests/conformance/.corpora/examples/specifications/btree",
+    "spec": "MCbtree.tla",
+    "config": "MCbtree.cfg",
+    "style": "B-tree, records and sequences",
+    "isUsingLibrary": true
+  },
+  {
+    "id": "examples/specifications/TeachingConcurrency/SimpleRegular.cfg",
+    "directory": "tests/conformance/.corpora/examples/specifications/TeachingConcurrency",
+    "spec": "SimpleRegular.tla",
+    "config": "SimpleRegular.cfg",
+    "style": "Lamport teaching spec, functions over sets of values",
+    "isUsingLibrary": true
+  },
+  {
+    "id": "tlc/tlatools/org.lamport.tlatools/test-model/pcal/SyncCons.cfg",
+    "directory": "tests/conformance/.corpora/tlc/tlatools/org.lamport.tlatools/test-model/pcal",
+    "spec": "SyncCons.tla",
+    "config": "SyncCons.cfg",
+    "style": "PlusCal synchronous consensus with crashes"
+  },
+  {
+    "id": "examples/specifications/transaction_commit/2PCwithBTM.cfg",
+    "directory": "tests/conformance/.corpora/examples/specifications/transaction_commit",
+    "spec": "2PCwithBTM.tla",
+    "config": "2PCwithBTM.cfg",
+    "style": "PlusCal two-phase commit"
+  },
+  {
+    "id": "examples/specifications/byihive/VoucherRedeem.cfg",
+    "directory": "tests/conformance/.corpora/examples/specifications/byihive",
+    "spec": "VoucherRedeem.tla",
+    "config": "VoucherRedeem.cfg",
+    "style": "voucher protocol, records"
+  },
+  {
+    "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test19.cfg",
+    "directory": "tests/conformance/.corpora/tlc/tlatools/org.lamport.tlatools/test-model/suite",
+    "spec": "test19.tla",
+    "config": "test19.cfg",
+    "style": "TLC test suite, many small states"
+  },
+  {
+    "id": "examples/specifications/Bakery-Boulangerie/MCBakery.cfg",
+    "directory": "tests/conformance/.corpora/examples/specifications/Bakery-Boulangerie",
+    "spec": "MCBakery.tla",
+    "config": "MCBakery.cfg",
+    "style": "PlusCal bakery mutex, functions of naturals",
+    "isUsingLibrary": true
+  },
+  {
+    "id": "examples/specifications/lamport_mutex/MCLamportMutex.cfg",
+    "directory": "tests/conformance/.corpora/examples/specifications/lamport_mutex",
+    "spec": "MCLamportMutex.tla",
+    "config": "MCLamportMutex.cfg",
+    "style": "message passing over sequences"
+  },
+  {
+    "id": "ccf/tla/consistency/MCSingleNode.cfg",
+    "directory": "tests/conformance/.corpora/ccf/tla/consistency",
+    "spec": "MCSingleNode.tla",
+    "config": "MCSingleNode.cfg",
+    "style": "CCF consistency, records and sequences",
+    "isUsingLibrary": true
+  },
+  {
+    "id": "examples/specifications/Disruptor/MCDisruptor_MPMC.cfg",
+    "directory": "tests/conformance/.corpora/examples/specifications/Disruptor",
+    "spec": "MCDisruptor_MPMC.tla",
+    "config": "MCDisruptor_MPMC.cfg",
+    "style": "ring buffer, Int-typed functions"
+  },
+  {
+    "id": "summerset/tla+/paxos/Paxos_MC.cfg",
+    "directory": "tests/conformance/.corpora/summerset/tla+/paxos",
+    "spec": "Paxos_MC.tla",
+    "config": "Paxos_MC.cfg",
+    "style": "Paxos with symmetry"
+  },
+  {
+    "id": "examples/specifications/ReadersWriters/MC.cfg",
+    "directory": "tests/conformance/.corpora/examples/specifications/ReadersWriters",
+    "spec": "MC.tla",
+    "config": "MC.cfg",
+    "style": "readers-writers with liveness"
+  },
+  {
+    "id": "examples/specifications/ewd426/TokenRing.cfg",
+    "directory": "tests/conformance/.corpora/examples/specifications/ewd426",
+    "spec": "TokenRing.tla",
+    "config": "TokenRing.cfg",
+    "style": "Dijkstra token ring with liveness"
+  },
+  {
+    "id": "examples/specifications/acp/ACP_SB_TLC.cfg",
+    "directory": "tests/conformance/.corpora/examples/specifications/acp",
+    "spec": "ACP_SB_TLC.tla",
+    "config": "ACP_SB_TLC.cfg",
+    "style": "atomic commitment, sets and functions"
+  },
+  {
+    "id": "examples/specifications/Chameneos/Chameneos.cfg",
+    "directory": "tests/conformance/.corpora/examples/specifications/Chameneos",
+    "spec": "Chameneos.tla",
+    "config": "Chameneos.cfg",
+    "style": "Chameneos rendezvous, records"
+  }
+]
