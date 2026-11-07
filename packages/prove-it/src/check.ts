@@ -1,5 +1,6 @@
 import type { Expression } from "./ast";
 import { type ModelConfig, parseConfig } from "./config";
+import { toEngineProperties } from "./engine/context";
 import { toValue as toEngineValue } from "./engine/convert";
 import { type EngineCheckpoint, isBailout, runEngine } from "./engine/search";
 import { getEngineSetting, getEngineThreads, reportEngine } from "./engine/settings";
@@ -1301,6 +1302,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   // any run that ends other than in success, to the interpreter below.
   const engineReport = {
     isReported: false,
+    isComputedReported: false,
     checkpoint: undefined as EngineCheckpoint | undefined,
   };
   // States the engine found, which the interpreter took over without their actions, so a trace
@@ -1371,6 +1373,10 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         isWarningEnabled: runtime.isWarningEnabled,
         tlcOrder: search.getTlcOrder(),
         startedAt,
+        properties: toEngineProperties(search.properties)!,
+        symmetry: search.symmetryGroup?.map((images) =>
+          [...images].map(([name, image]): [string, string] => [name, image.name]),
+        ),
         workers: getEngineThreads(options.workers),
         source: options.source,
         modules: [...loadedModules],
@@ -1379,9 +1385,12 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
           engineReport.isReported = true;
           options.onProgress?.(progress);
         },
-        onInitialStates: (generated, distinct) => {
+        onInitialStatesStarted: () => {
           engineReport.isReported = true;
           options.onProgress?.({ kind: "initial-states-started" });
+        },
+        onInitialStates: (generated, distinct) => {
+          engineReport.isComputedReported = true;
           options.onProgress?.({
             kind: "initial-states-computed",
             initialStates: { generated, distinct },
@@ -1421,21 +1430,13 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     if (liveness) return "liveness";
     if (stateWriter) return "-dump";
     if (options.isContinued) return "-continue";
-    if (search.isSymmetric) return "symmetry";
+    if (search.isSymmetric && config.view !== undefined) return "symmetry with a view";
     if (search.isFingerprintedLikeTlc) return "wide strings";
-    if (config.view !== undefined) return "view";
     if (config.postconditions.length > 0 || config.possible.length > 0) return "postconditions";
     if (config.periodic !== undefined) return "periodic";
     if (is174) return "TLC 1.7.4";
     if (spec.scope !== undefined) return "a scoped specification";
-    const properties = search.properties;
-    if (
-      properties.invariants.length > 0 ||
-      properties.actionProperties.length > 0 ||
-      properties.initialPredicates.length > 0
-    ) {
-      return "properties";
-    }
+    if (!toEngineProperties(search.properties)) return "properties in an instance";
     return undefined;
   };
 
@@ -1504,7 +1505,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       distinct: runtime.distinctStates,
     };
   }
-  if (!engineReport.isReported && statistics.initialStates) {
+  if (!engineReport.isComputedReported && statistics.initialStates) {
     options.onProgress?.({
       kind: "initial-states-computed",
       initialStates: statistics.initialStates,

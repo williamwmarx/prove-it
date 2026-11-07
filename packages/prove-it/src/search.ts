@@ -557,6 +557,7 @@ interface Search {
   properties: Properties;
   spec: Specification;
   isFingerprintedLikeTlc: boolean;
+  symmetryGroup: ReturnType<typeof getSymmetryGroup>;
   getFingerprintState: (state: Value[]) => Value[];
   getStoredFingerprints: (states: Value[][], fingerprintStates: Value[][]) => BigInt64Array;
   getTlcOrder: () => number[];
@@ -807,6 +808,7 @@ export const createSearch = (
     properties,
     spec,
     isFingerprintedLikeTlc,
+    symmetryGroup,
     isSymmetric: symmetryGroup !== undefined,
     isConstrained: constraints.length > 0 || actionConstraints.length > 0,
     getTlcOrder,

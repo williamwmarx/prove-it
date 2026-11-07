@@ -15,6 +15,44 @@ export interface EngineSpec {
   next: Expression;
 }
 
+// The temporal properties the engine checks as TLC does in its search: those that assert a state
+// predicate always ([]P), an action always ([][A]_v), or a state predicate of the initial states.
+export interface EngineProperties {
+  invariants: Expression[];
+  actionProperties: { action: Expression; subscript: Expression }[];
+  initialPredicates: Expression[];
+}
+
+interface ScopedExpression {
+  expression: Expression;
+  scope: unknown;
+}
+
+// The properties of the reference search the engine checks, or undefined when one needs the scope
+// of an instance, which the engine doesn't model.
+export const toEngineProperties = (properties: {
+  invariants: ScopedExpression[];
+  actionProperties:
+    | (ScopedExpression & { action: Expression; subscript: Expression })[]
+    | { action: Expression; subscript: Expression; scope: unknown }[];
+  initialPredicates: ScopedExpression[];
+}): EngineProperties | undefined => {
+  const all = [
+    ...properties.invariants,
+    ...properties.actionProperties,
+    ...properties.initialPredicates,
+  ];
+  if (all.some((property) => property.scope !== undefined)) return undefined;
+  return {
+    invariants: properties.invariants.map((property) => property.expression),
+    actionProperties: properties.actionProperties.map((property) => ({
+      action: property.action,
+      subscript: property.subscript,
+    })),
+    initialPredicates: properties.initialPredicates.map((property) => property.expression),
+  };
+};
+
 export interface EngineContext {
   width: number;
   initStep: Step;
@@ -22,6 +60,11 @@ export interface EngineContext {
   invariants: (() => boolean)[];
   constraints: (() => boolean)[];
   actionConstraints: (() => boolean)[];
+  // Each holds of a step unless the action and the subscript's UNCHANGED are both false.
+  actionProperties: (() => boolean)[];
+  initialPredicates: (() => boolean)[];
+  // The value a VIEW maps the current state to, which the search tells states apart by.
+  view: (() => number) | undefined;
 }
 
 const identifier = (name: string): Expression => ({
@@ -45,6 +88,7 @@ export const createEngineContext = (
   config: ModelConfig,
   spec: EngineSpec,
   isWarningEnabled: boolean,
+  properties: EngineProperties,
 ): EngineContext => {
   const compiler = createCompiler(environment);
   const named = (kind: string, name: string) => {
@@ -62,9 +106,28 @@ export const createEngineContext = (
     reportEngine(`${isInit ? "init" : "next"} runs as closures`);
     return compileAction(compiler, expression, context, options);
   };
+  const predicate = (expression: Expression) =>
+    compilePredicate(compiler.compile(expression, ROOT_CONTEXT));
   return {
     width: environment.variables.length,
-    invariants: config.invariants.map((name) => named("invariant", name)),
+    invariants: [
+      ...config.invariants.map((name) => named("invariant", name)),
+      ...properties.invariants.map(predicate),
+    ],
+    actionProperties: properties.actionProperties.map((property) => {
+      const action = predicate(property.action);
+      const isUnchanged = predicate({
+        kind: "Unchanged",
+        expression: property.subscript,
+        location: property.subscript.location,
+      });
+      return () => action() || isUnchanged();
+    }),
+    initialPredicates: properties.initialPredicates.map(predicate),
+    view:
+      config.view === undefined
+        ? undefined
+        : compiler.compile(identifier(config.view), ROOT_CONTEXT).evaluate,
     constraints: config.constraints.map((name) => named("constraint", name)),
     actionConstraints: config.actionConstraints.map((name) => named("action constraint", name)),
     initStep: buildAction(spec.init, true, true),

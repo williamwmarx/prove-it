@@ -12,7 +12,7 @@ import type { Environment } from "../evaluate";
 import type { TlcVersion } from "../tlc/version";
 import { resetAssigned } from "./action";
 import { setCurrent, setNext } from "./compile";
-import { createEngineContext, type EngineSpec, holdsAll } from "./context";
+import { createEngineContext, type EngineProperties, type EngineSpec, holdsAll } from "./context";
 import { getStateFingerprints, resetFingerprints } from "./fingerprint";
 import {
   createSharedSearch,
@@ -26,6 +26,7 @@ import {
 } from "./parallel";
 import { getEnvironmentFlag } from "./settings";
 import { bail, Bailout, freezeTexts, getValueCount, resetStore, shareStore } from "./store";
+import { createCanonicalizer, type NamedPermutation } from "./symmetry";
 import { type EngineWorkers, spawnEngineWorkers } from "./workers";
 
 export type { EngineSpec } from "./context";
@@ -37,9 +38,14 @@ export interface EngineInput {
   isWarningEnabled: boolean;
   tlcOrder: number[];
   onProgress: ((progress: CheckProgress) => void) | undefined;
-  // Called once the initial states are computed, so the caller reports them.
+  // Called as the engine starts computing the initial states and once it has, so the caller
+  // reports them.
+  onInitialStatesStarted: () => void;
   onInitialStates: (generated: number, distinct: number) => void;
   startedAt: number;
+  properties: EngineProperties;
+  // The symmetry group, as the model values each permutation moves.
+  symmetry: NamedPermutation[] | undefined;
   // How many threads may search, and what a worker needs to build the spec.
   workers: number;
   source: string;
@@ -85,22 +91,40 @@ export const runEngine = (input: EngineInput): EngineResult => {
   if (getEnvironmentFlag("PROVE_IT_SHARED")) shareStore();
   resetFingerprints();
   resetAssigned();
-  const context = createEngineContext(environment, config, input.spec, input.isWarningEnabled);
+  const context = createEngineContext(
+    environment,
+    config,
+    input.spec,
+    input.isWarningEnabled,
+    input.properties,
+  );
   const width = context.width;
   const constraints = context.constraints;
   const actionConstraints = context.actionConstraints;
   const invariants = context.invariants;
+  const actionProperties = context.actionProperties;
+  const view = context.view;
+  const canonicalize = input.symmetry
+    ? createCanonicalizer(input.symmetry, input.tlcOrder)
+    : undefined;
 
-  // The states found so far, `width` ids each, in TLC's order.
+  // The states found so far, `width` ids each, in TLC's order. The search tells states apart by
+  // their key: the state itself, or what TLC fingerprints in its place, kept in separateKeys: with
+  // a VIEW the id of the view's value, and under symmetry the state's representative.
+  const hasSeparateKeys = view !== undefined || canonicalize !== undefined;
+  const keyWidth = view ? 1 : width;
   let states = new Int32Array(Math.max(1, width) * 1024);
+  let separateKeys = new Int32Array(hasSeparateKeys ? keyWidth * 1024 : 0);
   let stateCount = 0;
   let parents = new Int32Array(1024);
   let table = new Int32Array(1 << 12).fill(-1);
   let tableMask = table.length - 1;
+  const getKeys = () => (hasSeparateKeys ? separateKeys : states);
+  const separateKey = new Int32Array(keyWidth);
 
   const hashState = (source: Int32Array, offset: number) => {
     let hash = 0x811c9dc5;
-    for (let index = 0; index < width; index++)
+    for (let index = 0; index < keyWidth; index++)
       hash = Math.imul(hash ^ source[offset + index], 0x01000193);
     hash ^= hash >>> 13;
     hash = Math.imul(hash, 0x5bd1e995);
@@ -110,8 +134,9 @@ export const runEngine = (input: EngineInput): EngineResult => {
   const growTable = () => {
     const next = new Int32Array(table.length * 2).fill(-1);
     const mask = next.length - 1;
+    const keys = getKeys();
     for (let state = 0; state < stateCount; state++) {
-      let slot = hashState(states, state * width) & mask;
+      let slot = hashState(keys, state * keyWidth) & mask;
       while (next[slot] !== -1) slot = (slot + 1) & mask;
       next[slot] = state;
     }
@@ -119,16 +144,29 @@ export const runEngine = (input: EngineInput): EngineResult => {
     tableMask = mask;
   };
 
-  // The slot of a state in the table: either the slot that holds it, or the empty one to put it in.
-  const findSlot = (source: Int32Array) => {
-    const hash = hashState(source, 0);
+  // The key of a complete state, which is in the current register.
+  const getKey = (state: Int32Array) => {
+    if (view) {
+      separateKey[0] = view();
+      return separateKey;
+    }
+    if (!canonicalize) return state;
+    separateKey.set(state);
+    canonicalize(separateKey);
+    return separateKey;
+  };
+
+  // The slot of a key in the table: either the slot that holds it, or the empty one to put it in.
+  const findSlot = (key: Int32Array) => {
+    const hash = hashState(key, 0);
+    const keys = getKeys();
     for (let slot = hash & tableMask; ; slot = (slot + 1) & tableMask) {
       const stored = table[slot];
       if (stored === -1) return slot;
-      const offset = stored * width;
+      const offset = stored * keyWidth;
       let isEqual = true;
-      for (let index = 0; index < width; index++) {
-        if (states[offset + index] !== source[index]) {
+      for (let index = 0; index < keyWidth; index++) {
+        if (keys[offset + index] !== key[index]) {
           isEqual = false;
           break;
         }
@@ -137,7 +175,7 @@ export const runEngine = (input: EngineInput): EngineResult => {
     }
   };
 
-  const addState = (source: Int32Array, slot: number, parent: number) => {
+  const addState = (source: Int32Array, key: Int32Array, slot: number, parent: number) => {
     if ((stateCount + 1) * width > states.length) {
       const next = new Int32Array(states.length * 2);
       next.set(states);
@@ -148,7 +186,13 @@ export const runEngine = (input: EngineInput): EngineResult => {
       next.set(parents);
       parents = next;
     }
+    if (hasSeparateKeys && (stateCount + 1) * keyWidth > separateKeys.length) {
+      const nextKeys = new Int32Array(separateKeys.length * 2);
+      nextKeys.set(separateKeys);
+      separateKeys = nextKeys;
+    }
     states.set(source, stateCount * width);
+    if (hasSeparateKeys) separateKeys.set(key, stateCount * keyWidth);
     parents[stateCount] = parent;
     table[slot] = stateCount;
     stateCount++;
@@ -164,21 +208,28 @@ export const runEngine = (input: EngineInput): EngineResult => {
   const next = new Int32Array(width).fill(-1);
   setCurrent(current);
   setNext(next);
+  input.onInitialStatesStarted();
   context.initStep(() => {
     for (let index = 0; index < width; index++)
       if (current[index] === -1) bail("an initial state that isn't complete");
     if (initialGenerated > 1 && (initialGenerated & (initialGenerated - 1)) === 0) {
       input.onProgress?.({ kind: "initial-states-progress", count: initialGenerated });
     }
+    const state = current;
     generated++;
     initialGenerated++;
     const isInModel = holdsAll(constraints);
-    const slot = isInModel ? findSlot(current) : -1;
-    if (isInModel && table[slot] !== -1) return;
-    if (!holdsAll(invariants)) bail("an invariant violated in an initial state");
-    if (!isInModel) return;
-    addState(current, slot, -1);
-    depth = 1;
+    const key = isInModel ? getKey(state) : undefined;
+    const slot = key ? findSlot(key) : -1;
+    const isSeen = isInModel && table[slot] !== -1;
+    if (!isSeen) {
+      if (!holdsAll(invariants)) bail("an invariant violated in an initial state");
+      if (!holdsAll(context.initialPredicates)) bail("a property violated in an initial state");
+      if (isInModel) {
+        addState(state, key!, slot, -1);
+        depth = 1;
+      }
+    }
   });
   const initialStates = { generated: initialGenerated, distinct: stateCount };
   input.onInitialStates(initialGenerated, stateCount);
@@ -208,20 +259,23 @@ export const runEngine = (input: EngineInput): EngineResult => {
   const visitSuccessor = () => {
     successors++;
     generated++;
-    setCurrent(next);
+    const successor = next;
+    setCurrent(successor);
     const isStateInModel = holdsAll(constraints);
+    const key = isStateInModel ? getKey(successor) : undefined;
     setCurrent(current);
     const isInModel = isStateInModel && holdsAll(actionConstraints);
-    const slot = isInModel ? findSlot(next) : -1;
+    const slot = isInModel ? findSlot(key!) : -1;
     const isNew = isInModel && table[slot] === -1;
     if (!isInModel || isNew) {
-      setCurrent(next);
+      setCurrent(successor);
       const holds = holdsAll(invariants);
       setCurrent(current);
       if (!holds) bail("an invariant violated");
     }
+    if (!holdsAll(actionProperties)) bail("an action property violated");
     if (!isNew) return;
-    addState(next, slot, expanding);
+    addState(successor, key!, slot, expanding);
     newStates++;
     depth = level + 1;
   };
@@ -236,6 +290,8 @@ export const runEngine = (input: EngineInput): EngineResult => {
   // --- workers ---
   const canShare =
     input.workers > 1 &&
+    !view &&
+    !canonicalize &&
     typeof SharedArrayBuffer === "function" &&
     typeof Atomics.wait === "function" &&
     !getEnvironmentFlag("PROVE_IT_SERIAL");
@@ -394,7 +450,15 @@ export const runEngine = (input: EngineInput): EngineResult => {
     depth: generated === 0 ? 0 : Math.max(depth, 1),
     outDegrees,
     initialStates,
-    getFingerprints: () => getStateFingerprints(states, stateCount, width, input.tlcOrder),
+    getFingerprints: () =>
+      view
+        ? getStateFingerprints(separateKeys, stateCount, 1, [0])
+        : getStateFingerprints(
+            hasSeparateKeys ? separateKeys : states,
+            stateCount,
+            width,
+            input.tlcOrder,
+          ),
     valueCount: getValueCount(),
     threads: parallel.threads,
   };

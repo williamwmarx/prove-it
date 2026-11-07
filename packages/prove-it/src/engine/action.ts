@@ -382,7 +382,9 @@ export const compileAction = (
             return compileMembership(index, args[1], stepContext, step);
           }
           if (isPossiblyAssignable(args[0]))
-            return bail("an assignment the engine can't resolve statically");
+            return bail(
+              `an assignment the engine can't resolve statically at line ${step.location.line}`,
+            );
         }
         if (!isLocallyResolved(step) && step.operator === "=>") {
           const condition = compiler.compile(args[0], stepContext).evaluate;
@@ -472,8 +474,16 @@ export const compileAction = (
           return;
         }
         const binding = ordered[index];
-        for (let level = 0; level < slots.length; level++) LOC[slots[level]] = binding[level];
-        body(() => visit(index + 1));
+        const bind = () => {
+          for (let level = 0; level < slots.length; level++) LOC[slots[level]] = binding[level];
+        };
+        bind();
+        // The rest of the conjunction rebinds the names for the next binding, so this binding's
+        // walk gets them back once the rest returns.
+        body(() => {
+          visit(index + 1);
+          bind();
+        });
       };
       visit(0);
     };
@@ -571,10 +581,9 @@ export const createActionAnalysis = (compiler: Compiler, isInit: boolean) => {
     }
   };
 
-  const isPossiblyAssignable = (expression: Expression) =>
-    expression.kind === "Let" ||
-    (expression.kind === "Identifier" && (isInit || isLocallyResolved(expression))) ||
-    (!isInit && expression.kind === "Prime");
+  // The engine follows names to what they're bound to as it compiles, so only a target under a LET
+  // may assign a variable it can't find. TLC finds such a target as it runs.
+  const isPossiblyAssignable = (expression: Expression) => expression.kind === "Let";
 
   // Whether an expression has a disjunction or an existential, for each of which TLC generates a
   // successor when it walks the expression.

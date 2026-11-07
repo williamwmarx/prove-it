@@ -4,7 +4,7 @@
 
 import type { Expression } from "./ast";
 import type { ModelConfig } from "./config";
-import { createEngineContext } from "./engine/context";
+import { createEngineContext, type EngineProperties, toEngineProperties } from "./engine/context";
 import { attachSearch, type GoMessage, serveLevels } from "./engine/parallel";
 import { attachSharedStore } from "./engine/store";
 import { createEnvironment } from "./environment";
@@ -33,6 +33,7 @@ interface Prepared {
   init: Expression;
   next: Expression;
   isWarningEnabled: boolean;
+  properties: EngineProperties;
 }
 
 const prepare = (start: EngineStartMessage): Prepared | undefined => {
@@ -55,13 +56,15 @@ const prepare = (start: EngineStartMessage): Prepared | undefined => {
   );
   const init = search?.spec.init;
   const next = search?.spec.next;
-  if (init === undefined || next === undefined) return undefined;
+  const properties = search && toEngineProperties(search.properties);
+  if (init === undefined || next === undefined || !properties) return undefined;
   return {
     environment,
     config: start.config,
     init,
     next,
     isWarningEnabled: start.isWarningEnabled,
+    properties,
   };
 };
 
@@ -77,6 +80,7 @@ const serve = () => {
     prepared.config,
     { init: prepared.init, next: prepared.next },
     prepared.isWarningEnabled,
+    prepared.properties,
   );
   serveLevels(context, attachSearch(go.search));
 };
