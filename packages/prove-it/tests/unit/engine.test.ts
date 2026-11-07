@@ -94,6 +94,33 @@ describe("the engine", () => {
     expect(lines).toEqual([expect.stringMatching(/^\[engine\] checked 37 states/)]);
   });
 
+  it("finds the same states with each branch point's continuation shared", async () => {
+    const body = [
+      "EXTENDS Naturals",
+      "VARIABLES x, y, z",
+      "Init == x = 0 /\\ y = 0 /\\ z = 0",
+      "Next == /\\ \\/ x' = (x + 1) % 3 \\/ x' = x",
+      "        /\\ IF x = 1 THEN y' = (y + 1) % 4 ELSE y' \\in {y, 0}",
+      "        /\\ CASE y = 2 -> z' = (z + 2) % 5 [] y = 3 -> UNCHANGED z [] OTHER -> z' \\in {z, 1}",
+      "        /\\ x' + y' + z' < 8",
+    ].join("\n");
+    const codegen = process.env.PROVE_IT_CODEGEN;
+    try {
+      const config = "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE";
+      const inline = await checkInEngine(body, config);
+      process.env.PROVE_IT_CODEGEN = "share";
+      const shared = await checkInEngine(body, config);
+      expect([shared.result.generatedStates, shared.result.distinctStates]).toEqual([
+        inline.result.generatedStates,
+        inline.result.distinctStates,
+      ]);
+      expect(shared.lines).toEqual([expect.stringMatching(/^\[engine\] checked/)]);
+    } finally {
+      if (codegen === undefined) delete process.env.PROVE_IT_CODEGEN;
+      else process.env.PROVE_IT_CODEGEN = codegen;
+    }
+  });
+
   it("reads Nat as the set the model substitutes for it", async () => {
     const { result, lines } = await checkInEngine(
       "EXTENDS Integers\nVARIABLE x\nInit == x = 0\nNext == UNCHANGED x\nInv == -1 \\in Nat",

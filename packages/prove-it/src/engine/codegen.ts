@@ -54,7 +54,9 @@ export const generateAction = (
   context: CompileContext,
   options: GenerateOptions,
 ): Step | undefined =>
-  generateActionCode(compiler, expression, context, options, false) ??
+  (getCodegenSetting() === "share"
+    ? undefined
+    : generateActionCode(compiler, expression, context, options, false)) ??
   generateActionCode(compiler, expression, context, options, true);
 
 // With isSharing, each branch point writes what follows it once, as a function its branches call,

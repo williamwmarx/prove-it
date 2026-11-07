@@ -8,7 +8,8 @@ export const reportEngine = (message: string) => {
   if (getEngineSetting() === "debug") console.error(`[engine] ${message}`);
 };
 
-// PROVE_IT_CODEGEN=0 runs actions as closures instead of generated code.
+// PROVE_IT_CODEGEN=0 runs actions as closures instead of generated code, =dump prints the code,
+// and =share writes the code a large action gets, with each branch point's continuation shared.
 export const getCodegenSetting = () => getEnvironment()?.PROVE_IT_CODEGEN;
 
 export const getEnvironmentFlag = (name: string) => getEnvironment()?.[name] === "1";
