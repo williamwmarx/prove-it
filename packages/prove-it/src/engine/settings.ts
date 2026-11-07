@@ -13,6 +13,10 @@ export const reportEngine = (message: string) => {
 // =hoist puts every step in a function of its own.
 export const getCodegenSetting = () => getEnvironment()?.PROVE_IT_CODEGEN;
 
+// PROVE_IT_FINGERPRINT=reference fingerprints each state from scratch instead of from its parent's,
+// and =check does both and throws where they differ.
+export const getFingerprintSetting = () => getEnvironment()?.PROVE_IT_FINGERPRINT;
+
 export const getEnvironmentFlag = (name: string) => getEnvironment()?.[name] === "1";
 
 // How many threads the engine searches with: the caller's -workers when it asks for several, else

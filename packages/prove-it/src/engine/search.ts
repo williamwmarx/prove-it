@@ -558,6 +558,7 @@ export const runEngine = (input: EngineInput): EngineResult => {
             stateCount,
             width,
             input.tlcOrder,
+            parents,
           ),
     valueCount: getValueCount(),
     threads: parallel.threads,
