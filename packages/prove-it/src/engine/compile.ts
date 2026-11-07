@@ -88,8 +88,12 @@ export let CUR: Int32Array = new Int32Array(0);
 // The next state being built. -1 marks a variable not yet assigned.
 export let NXT: Int32Array = new Int32Array(0);
 // Bound names, each at a slot fixed when it is compiled.
-export let LOC: Int32Array = new Int32Array(256);
+export let LOC: Int32Array = new Int32Array(4096);
 let slotCount = 0;
+
+// How many generated actions are running. Generated code reads the registers' arrays once on
+// entry, so the slots may not move to a larger array while one runs.
+export const generatedDepth = { value: 0 };
 
 // The same registers as an object, for generated code, along with how many variables of the state
 // being built have a value.
@@ -123,6 +127,7 @@ export const setNext = (state: Int32Array) => {
 const allocateSlot = () => {
   const slot = slotCount++;
   if (slot >= LOC.length) {
+    if (generatedDepth.value > 0) throw new Error("bound names grew while generated code ran");
     const next = new Int32Array(LOC.length * 2);
     next.set(LOC);
     LOC = next;
@@ -159,6 +164,56 @@ const createScratch = (length: number) => {
     release: (array: number[]) => {
       if (array === own) isTaken = false;
     },
+  };
+};
+
+// Records, tuples and sets built by code written for the node: generated code passes the elements
+// to a builder, and evaluate calls each element's evaluate from a call site of its own, which
+// JavaScriptCore can inline, where a loop over the elements calls every node's elements from one.
+// Either evaluates every element before it writes them to the node's buffer, so an element whose
+// evaluation reaches the same node again through recursion can't overwrite another. Hosts that
+// refuse code generation from strings get undefined.
+type Builder = (...elements: number[]) => number;
+type AggregateFactory = (
+  store: unknown,
+  extra: unknown,
+  buffer: ArrayLike<number>,
+  evaluators: Evaluate[],
+) => [Builder, Evaluate];
+const createAggregate = (
+  call: string,
+  store: unknown,
+  extra: unknown,
+  buffer: ArrayLike<number>,
+  elements: Compiled[],
+): Pick<Compiled, "evaluate" | "emit"> | undefined => {
+  const params = elements.map((_, index) => `v${index}`);
+  const writes = params.map((param, index) => `buffer[${index}] = ${param};`).join(" ");
+  const evaluations = params.map((param, index) => `const ${param} = e${index}();`).join(" ");
+  let factory: AggregateFactory;
+  try {
+    factory = new Function(
+      "store",
+      "extra",
+      "buffer",
+      "evaluators",
+      `"use strict"; const [${params.map((_, index) => `e${index}`).join(", ")}] = evaluators;
+return [(${params.join(", ")}) => { ${writes} return ${call}; }, () => { ${evaluations} ${writes} return ${call}; }];`,
+    ) as AggregateFactory;
+  } catch (error) {
+    if (error instanceof EvalError) return undefined;
+    throw error;
+  }
+  const [builder, evaluate] = factory(
+    store,
+    extra,
+    buffer,
+    elements.map((element) => element.evaluate),
+  );
+  return {
+    evaluate,
+    emit: (gen) =>
+      `${gen.ref(builder)}(${elements.map((element) => codeOf(element, gen)).join(", ")})`,
   };
 };
 
@@ -268,9 +323,13 @@ const combineReferences = (
     : undefined;
 };
 
-// What generated code needs from the compiler: a name in scope for each value it refers to.
+// What generated code needs from the compiler: a name in scope for each value it refers to, and the
+// names of the registers' arrays, which generated code reads once on entry.
 export interface CodeGen {
   ref: (value: unknown) => string;
+  cur: string;
+  next: string;
+  locals: string;
 }
 
 export const codeOf = (compiled: Compiled, gen: CodeGen): string =>
@@ -312,32 +371,140 @@ const constant = (id: number): Compiled =>
 
 const MAXIMUM_MEMO_WIDTH = 6;
 
-const lookup1 = (table: MemoTable, key: number, inner: Evaluate) => {
+// Evaluates through a memo table of width 1 to 6, the keys read before the inner evaluation and the
+// value stored after it, so a bailout stores nothing. Generated code passes the keys straight from
+// the registers; one helper per width keeps the code of each probe out of the generated functions,
+// which JavaScriptCore compiles more slowly the larger they get.
+const lookup1 = (table: MemoTable, a: number, inner: Evaluate) => {
   if (!table.isEnabled) return inner();
-  const known = table.get1(key);
+  const known = table.get1(a);
   if (known !== -1) return known;
   const value = inner();
-  table.set1(key, value);
+  table.set1(a, value);
   return value;
 };
 
-const lookup2 = (table: MemoTable, first: number, second: number, inner: Evaluate) => {
+const lookup2 = (table: MemoTable, a: number, b: number, inner: Evaluate) => {
   if (!table.isEnabled) return inner();
-  const known = table.get2(first, second);
+  const known = table.get2(a, b);
   if (known !== -1) return known;
   const value = inner();
-  table.set2(first, second, value);
+  table.set2(a, b, value);
   return value;
 };
+
+const lookup3 = (table: MemoTable, a: number, b: number, c: number, inner: Evaluate) => {
+  if (!table.isEnabled) return inner();
+  const known = table.get3(a, b, c);
+  if (known !== -1) return known;
+  const value = inner();
+  table.set3(a, b, c, value);
+  return value;
+};
+
+const lookup4 = (table: MemoTable, a: number, b: number, c: number, d: number, inner: Evaluate) => {
+  if (!table.isEnabled) return inner();
+  const known = table.get4(a, b, c, d);
+  if (known !== -1) return known;
+  const value = inner();
+  table.set4(a, b, c, d, value);
+  return value;
+};
+
+const lookup5 = (
+  table: MemoTable,
+  a: number,
+  b: number,
+  c: number,
+  d: number,
+  e: number,
+  inner: Evaluate,
+) => {
+  if (!table.isEnabled) return inner();
+  const known = table.get5(a, b, c, d, e);
+  if (known !== -1) return known;
+  const value = inner();
+  table.set5(a, b, c, d, e, value);
+  return value;
+};
+
+const lookup6 = (
+  table: MemoTable,
+  a: number,
+  b: number,
+  c: number,
+  d: number,
+  e: number,
+  f: number,
+  inner: Evaluate,
+) => {
+  if (!table.isEnabled) return inner();
+  const known = table.get6(a, b, c, d, e, f);
+  if (known !== -1) return known;
+  const value = inner();
+  table.set6(a, b, c, d, e, f, value);
+  return value;
+};
+
+const lookups = [undefined, lookup1, lookup2, lookup3, lookup4, lookup5, lookup6];
 
 // The code that reads each id of a footprint, in the order the memo tables key them.
-const keyCodes = (footprint: Footprint, gen: CodeGen) => {
-  const name = gen.ref(registers);
-  return [
-    ...footprint.vars.map((variable) => `${name}.cur[${variable}]`),
-    ...footprint.primes.map((variable) => `${name}.next[${variable}]`),
-    ...footprint.slots.map((slot) => `${name}.locals[${slot}]`),
-  ];
+const keyCodes = (footprint: Footprint, gen: CodeGen) => [
+  ...footprint.vars.map((variable) => `${gen.cur}[${variable}]`),
+  ...footprint.primes.map((variable) => `${gen.next}[${variable}]`),
+  ...footprint.slots.map((slot) => `${gen.locals}[${slot}]`),
+];
+
+// A memo table's key: a variable of the current or next state, or a bound name.
+const CURRENT_KEY = 0;
+const NEXT_KEY = 1;
+const SLOT_KEY = 2;
+const readKey = (kind: number, index: number) =>
+  kind === CURRENT_KEY ? CUR[index] : kind === NEXT_KEY ? NXT[index] : LOC[index];
+
+// The closure that probes a table, for a caller other than generated code.
+const createProbe = (
+  table: MemoTable,
+  inner: Evaluate,
+  kinds: number[],
+  indices: number[],
+): Evaluate => {
+  const [ka, kb, kc, kd, ke, kf] = kinds;
+  const [ia, ib, ic, id, ie, iF] = indices;
+  switch (kinds.length) {
+    case 1:
+      return () => lookup1(table, readKey(ka, ia), inner);
+    case 2:
+      return () => lookup2(table, readKey(ka, ia), readKey(kb, ib), inner);
+    case 3:
+      return () => lookup3(table, readKey(ka, ia), readKey(kb, ib), readKey(kc, ic), inner);
+    case 4:
+      return () =>
+        lookup4(table, readKey(ka, ia), readKey(kb, ib), readKey(kc, ic), readKey(kd, id), inner);
+    case 5:
+      return () =>
+        lookup5(
+          table,
+          readKey(ka, ia),
+          readKey(kb, ib),
+          readKey(kc, ic),
+          readKey(kd, id),
+          readKey(ke, ie),
+          inner,
+        );
+    default:
+      return () =>
+        lookup6(
+          table,
+          readKey(ka, ia),
+          readKey(kb, ib),
+          readKey(kc, ic),
+          readKey(kd, id),
+          readKey(ke, ie),
+          readKey(kf, iF),
+          inner,
+        );
+  }
 };
 
 const memoTables: MemoTable[] = [];
@@ -417,88 +584,18 @@ const cached = (compiled: Compiled): Compiled => {
   if (width > MAXIMUM_MEMO_WIDTH) return cachedInEpoch(compiled);
   const table = new MemoTable(width);
   memoTables.push(table);
-  const vars = footprint.vars;
-  const primes = footprint.primes;
-  const slots = footprint.slots;
-  if (width === 1) {
-    const read: () => number =
-      vars.length === 1
-        ? (
-            (variable) => () =>
-              CUR[variable]
-          )(vars[0])
-        : primes.length === 1
-          ? (
-              (variable) => () =>
-                NXT[variable]
-            )(primes[0])
-          : (
-              (slot) => () =>
-                LOC[slot]
-            )(slots[0]);
-    return {
-      ...compiled,
-      isCostly: false,
-      emit: (gen: CodeGen) =>
-        `${gen.ref(lookup1)}(${gen.ref(table)}, ${keyCodes(footprint, gen)[0]}, ${gen.ref(inner)})`,
-      evaluate: () => {
-        if (!table.isEnabled) return inner();
-        const key = read();
-        const known = table.get1(key);
-        if (known !== -1) return known;
-        const value = inner();
-        table.set1(key, value);
-        return value;
-      },
-    };
-  }
-  const scratch = new Int32Array(width);
-  const fill = () => {
-    let index = 0;
-    for (let position = 0; position < vars.length; position++)
-      scratch[index++] = CUR[vars[position]];
-    for (let position = 0; position < primes.length; position++) {
-      scratch[index++] = NXT[primes[position]];
-    }
-    for (let position = 0; position < slots.length; position++)
-      scratch[index++] = LOC[slots[position]];
-  };
-  if (width === 2) {
-    return {
-      ...compiled,
-      isCostly: false,
-      emit: (gen: CodeGen) => {
-        const [first, second] = keyCodes(footprint, gen);
-        return `${gen.ref(lookup2)}(${gen.ref(table)}, ${first}, ${second}, ${gen.ref(inner)})`;
-      },
-      evaluate: () => {
-        if (!table.isEnabled) return inner();
-        fill();
-        const first = scratch[0];
-        const second = scratch[1];
-        const known = table.get2(first, second);
-        if (known !== -1) return known;
-        const value = inner();
-        table.set2(first, second, value);
-        return value;
-      },
-    };
-  }
+  const kinds = [
+    ...footprint.vars.map(() => CURRENT_KEY),
+    ...footprint.primes.map(() => NEXT_KEY),
+    ...footprint.slots.map(() => SLOT_KEY),
+  ];
+  const indices = [...footprint.vars, ...footprint.primes, ...footprint.slots];
   return {
     ...compiled,
     isCostly: false,
-    emit: undefined,
-    evaluate: () => {
-      if (!table.isEnabled) return inner();
-      fill();
-      const known = table.getN(scratch);
-      if (known !== -1) return known;
-      const value = inner();
-      // The inner evaluation may have overwritten the scratch through a nested lookup of this table.
-      fill();
-      table.setN(scratch, value);
-      return value;
-    },
+    emit: (gen: CodeGen) =>
+      `${gen.ref(lookups[width])}(${gen.ref(table)}, ${keyCodes(footprint, gen).join(", ")}, ${gen.ref(inner)})`,
+    evaluate: createProbe(table, inner, kinds, indices),
   };
 };
 
@@ -702,8 +799,7 @@ export const createCompiler = (environment: Environment): Compiler => {
     const isInit = context.isInit;
     return {
       ...leaf(() => readCurrent(index), { vars: [index], primes: [], slots: [] }),
-      emit: (gen) =>
-        isInit ? `${gen.ref(readCurrent)}(${index})` : `${gen.ref(registers)}.cur[${index}]`,
+      emit: (gen) => (isInit ? `${gen.ref(readCurrent)}(${index})` : `${gen.cur}[${index}]`),
     };
   };
 
@@ -713,7 +809,7 @@ export const createCompiler = (environment: Environment): Compiler => {
         const slot = binding.slot;
         return {
           ...leaf(() => LOC[slot], { vars: [], primes: [], slots: [slot] }),
-          emit: (gen) => `${gen.ref(registers)}.locals[${slot}]`,
+          emit: (gen) => `${gen.locals}[${slot}]`,
         };
       }
       case "argument": {
@@ -903,8 +999,22 @@ export const createCompiler = (environment: Environment): Compiler => {
         const footprint = mergeFootprints(...elements.map((element) => element.footprint));
         if (evaluators.length === 0)
           return { ...constant(EMPTY_SET), isEnumerated: true, areElementsEnumerated: true };
+        const scratch = createScratch(evaluators.length);
         return {
-          evaluate: () => setOf(evaluators.map((evaluate) => evaluate())),
+          evaluate: () => {
+            const values = scratch.take();
+            for (let index = 0; index < evaluators.length; index++)
+              values[index] = evaluators[index]();
+            scratch.release(values);
+            return setOf(values);
+          },
+          ...createAggregate(
+            "store(buffer)",
+            setOf,
+            undefined,
+            new Array<number>(elements.length).fill(0),
+            elements,
+          ),
           footprint,
           isCostly: true,
           isNormalized: true,
@@ -925,6 +1035,13 @@ export const createCompiler = (environment: Environment): Compiler => {
             scratch.release(elements);
             return tupleOf(elements, elements.length);
           },
+          ...createAggregate(
+            "store(buffer, extra)",
+            tupleOf,
+            elements.length,
+            new Int32Array(elements.length),
+            elements,
+          ),
           footprint: mergeFootprints(...elements.map((element) => element.footprint)),
           isCostly: true,
           isNormalized: true,
@@ -946,6 +1063,13 @@ export const createCompiler = (environment: Environment): Compiler => {
             scratch.release(values);
             return recordOf(shape, values);
           },
+          ...createAggregate(
+            "store(extra, buffer)",
+            recordOf,
+            shape,
+            new Int32Array(keys.length),
+            fields.map((field) => field.value),
+          ),
           footprint: mergeFootprints(...fields.map((field) => field.value.footprint)),
           isCostly: true,
           isNormalized: true,

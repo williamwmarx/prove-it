@@ -8,6 +8,9 @@ const PROBATION = 1 << 13;
 const MINIMUM_HIT_RATE = 0.2;
 const MAXIMUM_ENTRIES = 1 << 22;
 
+const OFFSET_BASIS = 0x811c9dc5;
+const fold = (hash: number, key: number) => Math.imul(hash ^ key, 0x01000193);
+
 export class MemoTable {
   readonly width: number;
   keys: Int32Array;
@@ -36,10 +39,8 @@ export class MemoTable {
     this.mask = capacity - 1;
     for (let entry = 0; entry < oldValues.length; entry++) {
       if (oldValues[entry] === EMPTY) continue;
-      let hash = 0x811c9dc5;
-      for (let index = 0; index < width; index++) {
-        hash = Math.imul(hash ^ oldKeys[entry * width + index], 0x01000193);
-      }
+      let hash = OFFSET_BASIS;
+      for (let index = 0; index < width; index++) hash = fold(hash, oldKeys[entry * width + index]);
       hash ^= hash >>> 15;
       let slot = hash & this.mask;
       while (this.values[slot] !== EMPTY) slot = (slot + 1) & this.mask;
@@ -59,72 +60,211 @@ export class MemoTable {
     }
   }
 
-  get1(first: number) {
+  // Counts a lookup, and says whether the table is on.
+  private open() {
     if (++this.lookups === PROBATION) this.review();
-    if (!this.isEnabled) return EMPTY;
-    const hash = Math.imul(0x811c9dc5 ^ first, 0x01000193);
+    return this.isEnabled;
+  }
+
+  // The empty slot a new entry with this hash goes in, or -1 when the table takes no more entries.
+  private claim(hash: number) {
+    if (!this.isEnabled || this.size >= MAXIMUM_ENTRIES) return -1;
+    if ((this.size + 1) * 2 > this.values.length) this.grow();
+    const mask = this.mask;
+    let slot = (hash ^ (hash >>> 15)) & mask;
+    while (this.values[slot] !== EMPTY) slot = (slot + 1) & mask;
+    this.size++;
+    return slot;
+  }
+
+  // Each width up to 6 has its own lookup and store, which take the keys as arguments rather than
+  // in an array to fill. All hash the keys in order, as getN does.
+  get1(a: number) {
+    if (!this.open()) return EMPTY;
+    const hash = fold(OFFSET_BASIS, a);
     const mask = this.mask;
     const values = this.values;
     const keys = this.keys;
     for (let slot = (hash ^ (hash >>> 15)) & mask; ; slot = (slot + 1) & mask) {
       const value = values[slot];
       if (value === EMPTY) return EMPTY;
-      if (keys[slot] === first) {
+      if (keys[slot] === a) {
         this.hits++;
         return value;
       }
     }
   }
 
-  set1(first: number, value: number) {
-    if (!this.isEnabled || this.size >= MAXIMUM_ENTRIES) return;
-    if ((this.size + 1) * 2 > this.values.length) this.grow();
-    const hash = Math.imul(0x811c9dc5 ^ first, 0x01000193);
-    const mask = this.mask;
-    let slot = (hash ^ (hash >>> 15)) & mask;
-    while (this.values[slot] !== EMPTY) slot = (slot + 1) & mask;
-    this.keys[slot] = first;
+  set1(a: number, value: number) {
+    const slot = this.claim(fold(OFFSET_BASIS, a));
+    if (slot === -1) return;
+    this.keys[slot] = a;
     this.values[slot] = value;
-    this.size++;
   }
 
-  get2(first: number, second: number) {
-    if (++this.lookups === PROBATION) this.review();
-    if (!this.isEnabled) return EMPTY;
-    const hash = Math.imul(Math.imul(0x811c9dc5 ^ first, 0x01000193) ^ second, 0x01000193);
+  get2(a: number, b: number) {
+    if (!this.open()) return EMPTY;
+    const hash = fold(fold(OFFSET_BASIS, a), b);
     const mask = this.mask;
     const values = this.values;
     const keys = this.keys;
     for (let slot = (hash ^ (hash >>> 15)) & mask; ; slot = (slot + 1) & mask) {
       const value = values[slot];
       if (value === EMPTY) return EMPTY;
-      if (keys[slot * 2] === first && keys[slot * 2 + 1] === second) {
+      const at = slot * 2;
+      if (keys[at] === a && keys[at + 1] === b) {
         this.hits++;
         return value;
       }
     }
   }
 
-  set2(first: number, second: number, value: number) {
-    if (!this.isEnabled || this.size >= MAXIMUM_ENTRIES) return;
-    if ((this.size + 1) * 2 > this.values.length) this.grow();
-    const hash = Math.imul(Math.imul(0x811c9dc5 ^ first, 0x01000193) ^ second, 0x01000193);
-    const mask = this.mask;
-    let slot = (hash ^ (hash >>> 15)) & mask;
-    while (this.values[slot] !== EMPTY) slot = (slot + 1) & mask;
-    this.keys[slot * 2] = first;
-    this.keys[slot * 2 + 1] = second;
+  set2(a: number, b: number, value: number) {
+    const slot = this.claim(fold(fold(OFFSET_BASIS, a), b));
+    if (slot === -1) return;
+    const keys = this.keys;
+    keys[slot * 2] = a;
+    keys[slot * 2 + 1] = b;
     this.values[slot] = value;
-    this.size++;
+  }
+
+  get3(a: number, b: number, c: number) {
+    if (!this.open()) return EMPTY;
+    const hash = fold(fold(fold(OFFSET_BASIS, a), b), c);
+    const mask = this.mask;
+    const values = this.values;
+    const keys = this.keys;
+    for (let slot = (hash ^ (hash >>> 15)) & mask; ; slot = (slot + 1) & mask) {
+      const value = values[slot];
+      if (value === EMPTY) return EMPTY;
+      const at = slot * 3;
+      if (keys[at] === a && keys[at + 1] === b && keys[at + 2] === c) {
+        this.hits++;
+        return value;
+      }
+    }
+  }
+
+  set3(a: number, b: number, c: number, value: number) {
+    const slot = this.claim(fold(fold(fold(OFFSET_BASIS, a), b), c));
+    if (slot === -1) return;
+    const keys = this.keys;
+    const at = slot * 3;
+    keys[at] = a;
+    keys[at + 1] = b;
+    keys[at + 2] = c;
+    this.values[slot] = value;
+  }
+
+  get4(a: number, b: number, c: number, d: number) {
+    if (!this.open()) return EMPTY;
+    const hash = fold(fold(fold(fold(OFFSET_BASIS, a), b), c), d);
+    const mask = this.mask;
+    const values = this.values;
+    const keys = this.keys;
+    for (let slot = (hash ^ (hash >>> 15)) & mask; ; slot = (slot + 1) & mask) {
+      const value = values[slot];
+      if (value === EMPTY) return EMPTY;
+      const at = slot * 4;
+      if (keys[at] === a && keys[at + 1] === b && keys[at + 2] === c && keys[at + 3] === d) {
+        this.hits++;
+        return value;
+      }
+    }
+  }
+
+  set4(a: number, b: number, c: number, d: number, value: number) {
+    const slot = this.claim(fold(fold(fold(fold(OFFSET_BASIS, a), b), c), d));
+    if (slot === -1) return;
+    const keys = this.keys;
+    const at = slot * 4;
+    keys[at] = a;
+    keys[at + 1] = b;
+    keys[at + 2] = c;
+    keys[at + 3] = d;
+    this.values[slot] = value;
+  }
+
+  get5(a: number, b: number, c: number, d: number, e: number) {
+    if (!this.open()) return EMPTY;
+    const hash = fold(fold(fold(fold(fold(OFFSET_BASIS, a), b), c), d), e);
+    const mask = this.mask;
+    const values = this.values;
+    const keys = this.keys;
+    for (let slot = (hash ^ (hash >>> 15)) & mask; ; slot = (slot + 1) & mask) {
+      const value = values[slot];
+      if (value === EMPTY) return EMPTY;
+      const at = slot * 5;
+      if (
+        keys[at] === a &&
+        keys[at + 1] === b &&
+        keys[at + 2] === c &&
+        keys[at + 3] === d &&
+        keys[at + 4] === e
+      ) {
+        this.hits++;
+        return value;
+      }
+    }
+  }
+
+  set5(a: number, b: number, c: number, d: number, e: number, value: number) {
+    const slot = this.claim(fold(fold(fold(fold(fold(OFFSET_BASIS, a), b), c), d), e));
+    if (slot === -1) return;
+    const keys = this.keys;
+    const at = slot * 5;
+    keys[at] = a;
+    keys[at + 1] = b;
+    keys[at + 2] = c;
+    keys[at + 3] = d;
+    keys[at + 4] = e;
+    this.values[slot] = value;
+  }
+
+  get6(a: number, b: number, c: number, d: number, e: number, f: number) {
+    if (!this.open()) return EMPTY;
+    const hash = fold(fold(fold(fold(fold(fold(OFFSET_BASIS, a), b), c), d), e), f);
+    const mask = this.mask;
+    const values = this.values;
+    const keys = this.keys;
+    for (let slot = (hash ^ (hash >>> 15)) & mask; ; slot = (slot + 1) & mask) {
+      const value = values[slot];
+      if (value === EMPTY) return EMPTY;
+      const at = slot * 6;
+      if (
+        keys[at] === a &&
+        keys[at + 1] === b &&
+        keys[at + 2] === c &&
+        keys[at + 3] === d &&
+        keys[at + 4] === e &&
+        keys[at + 5] === f
+      ) {
+        this.hits++;
+        return value;
+      }
+    }
+  }
+
+  set6(a: number, b: number, c: number, d: number, e: number, f: number, value: number) {
+    const slot = this.claim(fold(fold(fold(fold(fold(fold(OFFSET_BASIS, a), b), c), d), e), f));
+    if (slot === -1) return;
+    const keys = this.keys;
+    const at = slot * 6;
+    keys[at] = a;
+    keys[at + 1] = b;
+    keys[at + 2] = c;
+    keys[at + 3] = d;
+    keys[at + 4] = e;
+    keys[at + 5] = f;
+    this.values[slot] = value;
   }
 
   // Keys of any width, read from the scratch array.
   getN(scratch: Int32Array) {
-    if (++this.lookups === PROBATION) this.review();
-    if (!this.isEnabled) return EMPTY;
+    if (!this.open()) return EMPTY;
     const width = this.width;
-    let hash = 0x811c9dc5;
-    for (let index = 0; index < width; index++) hash = Math.imul(hash ^ scratch[index], 0x01000193);
+    let hash = OFFSET_BASIS;
+    for (let index = 0; index < width; index++) hash = fold(hash, scratch[index]);
     const mask = this.mask;
     const values = this.values;
     const keys = this.keys;
@@ -146,17 +286,13 @@ export class MemoTable {
   }
 
   setN(scratch: Int32Array, value: number) {
-    if (!this.isEnabled || this.size >= MAXIMUM_ENTRIES) return;
-    if ((this.size + 1) * 2 > this.values.length) this.grow();
     const width = this.width;
-    let hash = 0x811c9dc5;
-    for (let index = 0; index < width; index++) hash = Math.imul(hash ^ scratch[index], 0x01000193);
-    const mask = this.mask;
-    let slot = (hash ^ (hash >>> 15)) & mask;
-    while (this.values[slot] !== EMPTY) slot = (slot + 1) & mask;
+    let hash = OFFSET_BASIS;
+    for (let index = 0; index < width; index++) hash = fold(hash, scratch[index]);
+    const slot = this.claim(hash);
+    if (slot === -1) return;
     for (let index = 0; index < width; index++) this.keys[slot * width + index] = scratch[index];
     this.values[slot] = value;
-    this.size++;
   }
 }
 

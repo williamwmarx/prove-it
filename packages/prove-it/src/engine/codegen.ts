@@ -15,6 +15,7 @@ import {
   codeOf,
   type CompileContext,
   type Compiler,
+  generatedDepth,
   isOrderedEnumeration,
   registers,
 } from "./compile";
@@ -76,6 +77,9 @@ const generateActionCode = (
   const analysis = createActionAnalysis(compiler, isInit);
   const values: unknown[] = [];
   const names = new Map<unknown, string>();
+  // The registers' arrays are locals C, N and L, read on entry: the search swaps the current state
+  // only around what it calls between successors and restores it before returning, ENABLED sets
+  // the next state before it runs an action, and the bound names move only while compiling.
   const gen: CodeGen = {
     ref: (value) => {
       const known = names.get(value);
@@ -85,9 +89,12 @@ const generateActionCode = (
       names.set(value, name);
       return name;
     },
+    cur: "C",
+    next: "N",
+    locals: "L",
   };
   const R = gen.ref(registers);
-  const T = isInit ? `${R}.cur` : `${R}.next`;
+  const T = isInit ? "C" : "N";
   const element = gen.ref(elementAt);
   const setSize = gen.ref(expectSetSize);
   const ordered = gen.ref(orderedSize);
@@ -236,7 +243,7 @@ if (${flag} === 1) { ${T}[${variable}] = -1; ${R}.assigned--; } }`,
   ): string =>
     position === indices.length
       ? rest(known)
-      : assign(indices[position], `${R}.cur[${indices[position]}]`, known, (after) =>
+      : assign(indices[position], `C[${indices[position]}]`, known, (after) =>
           unchanged(indices, position + 1, after, rest),
         );
 
@@ -286,7 +293,7 @@ if (${flag} === 1) { ${T}[${variable}] = -1; ${R}.assigned--; } }`,
     const loops = (position: number): string => {
       if (position < 0) return step(body, inner, known, rest);
       const level = levels[position];
-      return `for (let ${counters[position]} = 0; ${counters[position]} < ${sizes[position]}; ${counters[position]}++) { ${R}.locals[${level.slot}] = ${element}(${sets[position]}, ${counters[position]});\n${loops(position - 1)}\n}`;
+      return `for (let ${counters[position]} = 0; ${counters[position]} < ${sizes[position]}; ${counters[position]}++) { L[${level.slot}] = ${element}(${sets[position]}, ${counters[position]});\n${loops(position - 1)}\n}`;
     };
     return emit(`{ ${header}\n${loops(levels.length - 1)}\n}`);
   };
@@ -317,7 +324,7 @@ ${T}[${variable}] = -1; ${R}.assigned--; }`;
   };
 
   // JavaScriptCore doesn't optimize a function past a size, so the code of a large step goes in a
-  // function of its own, which reads only the registers, the values it refers to, and K.
+  // function of its own, which takes K and the registers' arrays and reads the values it refers to.
   const hoisted: string[] = [];
   const hoistedCodeLength = getCodegenSetting() === "hoist" ? 0 : HOISTED_CODE_LENGTH;
   const step = (
@@ -329,8 +336,8 @@ ${T}[${variable}] = -1; ${R}.assigned--; }`;
     const code = walkStep(operand, operandContext, known, rest);
     if (isSharing || code.length < hoistedCodeLength) return code;
     const name = fresh("h");
-    hoisted.push(`function ${name}(K) {\n${code}\n}`);
-    return `${name}(K);`;
+    hoisted.push(`function ${name}(K, C, N, L) {\n${code}\n}`);
+    return `${name}(K, C, N, L);`;
   };
 
   const walkStep = (
@@ -502,12 +509,20 @@ ${T}[${variable}] = -1; ${R}.assigned--; }`;
   if (body.length + hoisted.reduce((total, code) => total + code.length, 0) > MAXIMUM_CODE_LENGTH)
     return undefined;
   try {
-    if (getCodegenSetting() === "dump") console.error(body);
+    if (getCodegenSetting() === "dump") console.error([...hoisted, body].join("\n"));
     const factory = new Function(
       ...names.values(),
-      `"use strict";\n${hoisted.join("\n")}\nreturn function generatedAction(K) {\n${body}\n};`,
+      `"use strict";\n${hoisted.join("\n")}\nreturn function generatedAction(K) {\nconst C = ${R}.cur, N = ${R}.next, L = ${R}.locals;\n${body}\n};`,
     );
-    return factory(...values) as Step;
+    const action = factory(...values) as Step;
+    return (onComplete) => {
+      generatedDepth.value++;
+      try {
+        action(onComplete);
+      } finally {
+        generatedDepth.value--;
+      }
+    };
   } catch (error) {
     // A host that disallows code generation from strings, such as one with a strict content
     // security policy, runs the closures.
