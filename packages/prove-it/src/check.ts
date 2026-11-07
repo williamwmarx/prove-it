@@ -1324,6 +1324,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   // States the engine found, which the interpreter took over without their actions, so a trace
   // through them finds its actions again as it does for a reduced state space.
   const transferred = { count: 0 };
+  // The ids of each state the engine handed over, for its answers to the liveness checker.
+  const engineIds = new WeakMap<Value[], Int32Array>();
   // In a replay of the engine's complete search, how many states the replay has reached.
   const replayed = { discovered: 0 };
   const resumeFromEngine = (checkpoint: EngineCheckpoint) => {
@@ -1335,6 +1337,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       }
       const keys = checkpoint.keys;
       const keyWidth = checkpoint.keyWidth ?? width;
+      engineIds.set(state, checkpoint.states.subarray(index * width, (index + 1) * width));
       const fingerprintState = keys
         ? Array.from({ length: keyWidth }, (_, position) =>
             toEngineValue(keys[index * keyWidth + position]),
@@ -1431,6 +1434,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       if (result.checkpoint) {
         // The interpreter checks the temporal properties on the graph the engine found.
         engineReport.checkpoint = result.checkpoint;
+        environment.liveOracle = result.createLiveOracle((state) => engineIds.get(state));
         reportEngine(
           `found ${result.distinctStates} states in ${(performance.now() - startedAt).toFixed(0)} ms; the interpreter checks the temporal properties`,
         );

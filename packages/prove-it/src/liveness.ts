@@ -585,6 +585,11 @@ export const evaluateLive = (
     case "Enabled": {
       const cached = stateCache.get(expression);
       if (cached !== undefined) return cached;
+      const answered = environment.liveOracle?.(expression, state, undefined);
+      if (answered !== undefined) {
+        stateCache.set(expression, answered);
+        return answered;
+      }
       const context = { environment, scope: expression.scope, state, next: undefined };
       const result =
         expression.kind === "State"
@@ -595,6 +600,8 @@ export const evaluateLive = (
     }
     case "Action": {
       if (expression.enabled && stateCache.get(expression.enabled) === false) return false;
+      const answered = environment.liveOracle?.(expression, state, next);
+      if (answered !== undefined) return answered;
       const context = { environment, scope: expression.scope, state, next };
       if (
         expression.unchanged &&

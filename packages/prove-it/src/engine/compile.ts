@@ -16,7 +16,13 @@ import {
   type OperatorDefinition,
   type OperatorParam,
 } from "../ast";
-import type { Builtin, BuiltinArgument, Environment, OperatorValue } from "../evaluate";
+import type {
+  Builtin,
+  BuiltinArgument,
+  Environment,
+  EvaluationScope,
+  OperatorValue,
+} from "../evaluate";
 import { getDefinition, getQuantifierElements } from "../evaluate";
 import { getStreamedElements, type Value } from "../values";
 import { fromValue, toValue } from "./convert";
@@ -456,6 +462,9 @@ export interface Compiler {
     mode: "quantifier" | "streamed",
   ) => Compiled;
   bindValue: (context: Context, name: string) => { context: Context; slot: number };
+  // The context the reference interpreter's scope stands for, or undefined for one that binds an
+  // operator.
+  contextFromScope: (scope: EvaluationScope | undefined) => Context | undefined;
   environment: Environment;
   variableCount: number;
 }
@@ -2346,6 +2355,34 @@ export const createCompiler = (environment: Environment): Compiler => {
     } as Compiled);
   };
 
+  const contextFromScope = (scope: EvaluationScope | undefined): Context | undefined => {
+    if (!scope) return ROOT_CONTEXT;
+    const parent = contextFromScope(scope.parent);
+    if (!parent) return undefined;
+    const binding = scope.binding;
+    if (binding.kind === "Value") {
+      const id = fromValue(binding.value);
+      return {
+        ...parent,
+        scope: bind(parent.scope, scope.name, { kind: "value", compiled: constant(id) }),
+      };
+    }
+    if (binding.kind === "Thunk") {
+      const thunkContext = contextFromScope(binding.scope);
+      if (!thunkContext) return undefined;
+      return {
+        ...parent,
+        scope: bind(parent.scope, scope.name, {
+          kind: "argument",
+          expression: binding.expression,
+          context: thunkContext,
+          compiled: [],
+        }),
+      };
+    }
+    return undefined;
+  };
+
   const bindValueSlot = (context: Context, name: string) => {
     const slot = allocateSlot();
     return {
@@ -2368,6 +2405,7 @@ export const createCompiler = (environment: Environment): Compiler => {
     compileOrdered,
     bindLet: bindLetDefinitions,
     bindValue: bindValueSlot,
+    contextFromScope,
     environment,
     variableCount,
   };

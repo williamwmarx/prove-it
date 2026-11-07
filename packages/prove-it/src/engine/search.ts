@@ -10,10 +10,12 @@ import type { CheckProgress } from "../check";
 import type { ModelConfig } from "../config";
 import type { Environment } from "../evaluate";
 import type { TlcVersion } from "../tlc/version";
+import type { Value } from "../values";
 import { resetAssigned } from "./action";
 import { setCurrent, setNext } from "./compile";
 import { createEngineContext, type EngineProperties, type EngineSpec, holdsAll } from "./context";
 import { getStateFingerprints, resetFingerprints } from "./fingerprint";
+import { createLiveOracle, type LiveOracle } from "./live";
 import {
   createSharedSearch,
   createStorageBlock,
@@ -95,6 +97,8 @@ export interface EngineResult {
   threads: number;
   // A complete search the interpreter is to replay, when it checks temporal properties.
   checkpoint: EngineCheckpoint | undefined;
+  // Answers the interpreter's liveness checker for the states, given each state's ids.
+  createLiveOracle: (getIds: (state: Value[]) => Int32Array | undefined) => LiveOracle;
 }
 
 const OUT_DEGREE_BUCKETS = 32;
@@ -530,6 +534,7 @@ export const runEngine = (input: EngineInput): EngineResult => {
           ),
     valueCount: getValueCount(),
     threads: parallel.threads,
+    createLiveOracle: (getIds) => createLiveOracle(context.compiler, getIds),
     checkpoint: graph && {
       expanding: 0,
       count: stateCount,

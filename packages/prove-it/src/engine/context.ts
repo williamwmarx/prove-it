@@ -6,7 +6,7 @@ import type { ModelConfig } from "../config";
 import { type Environment, getDefinition } from "../evaluate";
 import { compileAction, type Step } from "./action";
 import { generateAction } from "./codegen";
-import { type Compiled, createCompiler, ROOT_CONTEXT } from "./compile";
+import { type Compiled, type Compiler, createCompiler, ROOT_CONTEXT } from "./compile";
 import { getCodegenSetting, reportEngine } from "./settings";
 import { bail, FALSE, TRUE } from "./store";
 
@@ -54,6 +54,7 @@ export const toEngineProperties = (properties: {
 };
 
 export interface EngineContext {
+  compiler: Compiler;
   width: number;
   initStep: Step;
   nextStep: Step;
@@ -109,6 +110,7 @@ export const createEngineContext = (
   const predicate = (expression: Expression) =>
     compilePredicate(compiler.compile(expression, ROOT_CONTEXT));
   return {
+    compiler,
     width: environment.variables.length,
     invariants: [
       ...config.invariants.map((name) => named("invariant", name)),

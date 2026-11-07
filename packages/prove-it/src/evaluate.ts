@@ -26,6 +26,7 @@ import { contextualApplications } from "./instances";
 import { prettyPrint } from "./pretty-print";
 import type { CheckerRuntime } from "./runtime";
 import { isEnabled } from "./successors";
+import type { LiveExpression } from "./tableau";
 import { MESSAGE_CODE } from "./tlc/messages";
 import type { TlcVersion } from "./tlc/version";
 import {
@@ -128,6 +129,9 @@ export interface Scope {
   parent: Scope | undefined;
 }
 
+// Scope by a name that doesn't clash with the engine's own scopes.
+export type EvaluationScope = Scope;
+
 export interface Environment {
   runtime: CheckerRuntime;
   definitions: Map<string, Definition>;
@@ -154,6 +158,13 @@ export interface Environment {
   // The expressions being evaluated, outermost first, when the environment replays an error to
   // find where it occurred, as TLC's CallStackTool does.
   callStack?: CallStack;
+  // Answers the liveness checker's predicates for the states of a search Prove It's engine found,
+  // or undefined for one it leaves to the interpreter.
+  liveOracle?: (
+    expression: LiveExpression,
+    state: Value[],
+    next: Value[] | undefined,
+  ) => boolean | undefined;
 }
 
 export interface CallStack {
