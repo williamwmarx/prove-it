@@ -2239,26 +2239,33 @@ export const createCompiler = (environment: Environment): Compiler => {
       : undefined;
     // Several updates write one new function: each key's position is the same in every
     // intermediate function, and @ reads the value an earlier update gave the key, if any.
-    const evaluateMany = (flatUpdates: NonNullable<typeof flat>) => () => {
-      const base = fnEvaluate();
-      if (!isFunctionKind(kindOf(base))) return bail("EXCEPT on a non-function");
+    const evaluateMany = (flatUpdates: NonNullable<typeof flat>) => {
       const count = flatUpdates.length;
-      const positions: number[] = new Array(count);
-      const values: number[] = new Array(count);
-      for (let index = 0; index < count; index++) {
-        const update = flatUpdates[index];
-        const position = findKey(base, update.key());
-        if (position === -1) return bail("EXCEPT outside the domain");
-        if (update.atSlot !== -1) {
-          let old = getRangeValue(base, position);
-          for (let earlier = 0; earlier < index; earlier++)
-            if (positions[earlier] === position) old = values[earlier];
-          LOC[update.atSlot] = old;
+      const positionScratch = createScratch(count);
+      const valueScratch = createScratch(count);
+      return () => {
+        const base = fnEvaluate();
+        if (!isFunctionKind(kindOf(base))) return bail("EXCEPT on a non-function");
+        const positions = positionScratch.take();
+        const values = valueScratch.take();
+        for (let index = 0; index < count; index++) {
+          const update = flatUpdates[index];
+          const position = findKey(base, update.key());
+          if (position === -1) return bail("EXCEPT outside the domain");
+          if (update.atSlot !== -1) {
+            let old = getRangeValue(base, position);
+            for (let earlier = 0; earlier < index; earlier++)
+              if (positions[earlier] === position) old = values[earlier];
+            LOC[update.atSlot] = old;
+          }
+          positions[index] = position;
+          values[index] = update.value();
         }
-        positions[index] = position;
-        values[index] = update.value();
-      }
-      return exceptAt(base, positions, values, count);
+        const result = exceptAt(base, positions, values, count);
+        positionScratch.release(positions);
+        valueScratch.release(values);
+        return result;
+      };
     };
     const evaluateFlat = (flatUpdates: NonNullable<typeof flat>) => () => {
       let result = fnEvaluate();
@@ -2275,30 +2282,42 @@ export const createCompiler = (environment: Environment): Compiler => {
       }
       return result;
     };
+    // Each update walks its path down, keeping each key and the function it indexes, then writes
+    // the new values back up.
+    const evaluateNested = () => {
+      const depth = Math.max(...updates.map((update) => update.path.length));
+      const scratch = createScratch(2 * depth);
+      return () => {
+        let result = fnEvaluate();
+        // The keys of the path at [0, depth) and the functions they index at [depth, 2 * depth).
+        const path = scratch.take();
+        for (const update of updates) {
+          const steps = update.path;
+          const last = steps.length - 1;
+          for (let index = 0; index <= last; index++) path[index] = steps[index].key.evaluate();
+          let current = result;
+          for (let index = 0; index <= last; index++) {
+            if (!isFunctionKind(kindOf(current))) return bail("EXCEPT on a non-function");
+            const position = findKey(current, path[index]);
+            if (position === -1) return bail("EXCEPT outside the domain");
+            path[depth + index] = current;
+            current = getRangeValue(current, position);
+          }
+          LOC[update.atSlot] = current;
+          let value = update.value.evaluate();
+          for (let index = last; index >= 0; index--)
+            value = except(path[depth + index], path[index], value);
+          result = value;
+        }
+        scratch.release(path);
+        return result;
+      };
+    };
     const evaluate = flat
       ? flat.length > 1
         ? evaluateMany(flat)
         : evaluateFlat(flat)
-      : () => {
-          let result = fnEvaluate();
-          for (const update of updates) {
-            const keys = update.path.map((step) => step.key.evaluate());
-            const rewrite = (current: number, depthIndex: number): number => {
-              const key = keys[depthIndex];
-              if (!isFunctionKind(kindOf(current))) return bail("EXCEPT on a non-function");
-              const position = findKey(current, key);
-              if (position === -1) return bail("EXCEPT outside the domain");
-              const old = getRangeValue(current, position);
-              if (depthIndex === keys.length - 1) {
-                LOC[update.atSlot] = old;
-                return except(current, key, update.value.evaluate());
-              }
-              return except(current, key, rewrite(old, depthIndex + 1));
-            };
-            result = rewrite(result, 0);
-          }
-          return result;
-        };
+      : evaluateNested();
     return {
       evaluate,
       footprint: mergeFootprints(
