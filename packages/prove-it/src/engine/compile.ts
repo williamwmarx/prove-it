@@ -637,11 +637,17 @@ type Binding =
       compiled: (Compiled | undefined)[];
     }
   | { kind: "operator"; operator: OperatorBinding }
-  // A value, or a function a LET defines, which TLC keeps lazy, with the scope it is defined in.
+  // A value, or a function a LET defines, which TLC keeps lazy, with the context it is defined in
+  // and, once a prime reaches it, the function compiled again to read the next state.
   | {
       kind: "value";
       compiled: Compiled;
-      lazy?: { definition: FunctionDefinition; scope: Scope | undefined };
+      lazy?: {
+        definition: FunctionDefinition;
+        scope: Scope | undefined;
+        context: Context;
+        primed?: Compiled;
+      };
     }
   // A recursive function defined in a LET, whose body sees the LET's scope, itself included.
   | { kind: "recursive"; definition: FunctionDefinition; scope: Scope | undefined };
@@ -889,8 +895,17 @@ export const createCompiler = (environment: Environment): Compiler => {
         binding.compiled[index] = compiled;
         return compiled;
       }
-      case "value":
-        return binding.compiled;
+      case "value": {
+        const lazy = binding.lazy;
+        if (!lazy || !context.isPrimed || lazy.context.isPrimed) return binding.compiled;
+        const { bounds, body } = lazy.definition;
+        lazy.primed ??= cached(
+          markCostly(
+            compileFunctionConstruction(bounds, body, { ...lazy.context, isPrimed: true }),
+          ),
+        );
+        return lazy.primed;
+      }
       case "recursive":
         return materializeRecursive(
           getRecursiveFunction(binding.definition, context, binding.scope),
@@ -1300,7 +1315,7 @@ export const createCompiler = (environment: Environment): Compiler => {
         scope = bind(scope, definition.name, {
           kind: "value",
           compiled,
-          lazy: { definition, scope: definitionContext.scope },
+          lazy: { definition, scope: definitionContext.scope, context: definitionContext },
         });
       } else if (definition.params.length === 0) {
         if (definition.isRecursive) unsupported("a recursive LET definition");

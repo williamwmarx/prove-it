@@ -324,6 +324,35 @@ describe("the engine", () => {
     expect(invariantFirst.lines).toEqual([expect.stringMatching(/^\[engine\] checked 10 states/)]);
   });
 
+  it("reads the next state in a function a LET defines when it is primed", async () => {
+    // (f[1])' is x', so y' = x' and the states cycle through (0, 0), (1, 1) and (2, 2).
+    const primed = await checkInEngine(
+      [
+        "EXTENDS Naturals",
+        "VARIABLES x, y",
+        "Init == x = 0 /\\ y = 0",
+        "Next == x' = (x + 1) % 3 /\\ y' = LET f[i \\in {1}] == x IN (f[1])'",
+      ].join("\n"),
+      "INIT Init\nNEXT Next",
+    );
+    expect([primed.result.generatedStates, primed.result.distinctStates]).toEqual([4, 3]);
+    expect(primed.lines).toEqual([expect.stringMatching(/^\[engine\] checked 3 states/)]);
+    // UNCHANGED f[1] compares x' with x, and the unprimed f[1] is compiled first.
+    const unchanged = await checkInEngine(
+      [
+        "EXTENDS Naturals",
+        "VARIABLES x, y",
+        "Init == x = 0 /\\ y = 0",
+        "Next == LET f[i \\in {1, 2}] == x + i IN",
+        "          /\\ f[1] < 3 /\\ y' = (y + 1) % 2",
+        "          /\\ x' \\in {x, x + 1} /\\ UNCHANGED f[1]",
+      ].join("\n"),
+      "INIT Init\nNEXT Next",
+    );
+    expect([unchanged.result.generatedStates, unchanged.result.distinctStates]).toEqual([3, 2]);
+    expect(unchanged.lines).toEqual([expect.stringMatching(/^\[engine\] checked 2 states/)]);
+  });
+
   it("never issues an epoch again, so a cached value can't outlive its state", () => {
     // A search holds the epoch of the state it expands while its successors take new ones.
     let previous = nextEpoch();
