@@ -104,6 +104,7 @@ jobs:
           [[ -n "$OP_SERVICE_ACCOUNT_TOKEN" ]] || { echo "the Depot secret ONEPASSWORD_PROVE_IT_RELEASE_TOKEN is missing" >&2; exit 1; }
           PATH="$(scripts/ci/bootstrap.sh node op):$PATH"
           npmrc="$RUNNER_TEMP/npmrc"
+          # shellcheck disable=SC2016 # npm expands ${NPM_TOKEN} itself, so the shell must not.
           printf '//registry.npmjs.org/:_authToken=${NPM_TOKEN}\n' > "$npmrc"
           NPM_CONFIG_USERCONFIG="$npmrc" op run --environment "$ONEPASSWORD_ENVIRONMENT_ID" -- \
             npm publish "$TARBALL" --access public --ignore-scripts

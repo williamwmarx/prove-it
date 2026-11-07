@@ -64,7 +64,12 @@ jobs:
           git -C "$tlaplus" checkout -q FETCH_HEAD
           # dist also packs a few test helpers from test-class, which a run of TLC never loads.
           mkdir -p "$tlaplus/tlatools/org.lamport.tlatools/test-class"
-          ant -f "$tlaplus/tlatools/org.lamport.tlatools/customBuild.xml" compile dist
+          # Ant runs the JDK in JAVA_HOME and loads ANT_HOME's jars, not what PATH finds, so both
+          # point at the pinned copies; --noconfig skips /etc/ant.conf.
+          JAVA_HOME="$(cd "$(dirname "$(command -v java)")/.." && pwd)"
+          export JAVA_HOME
+          unset ANT_HOME
+          ant --noconfig -f "$tlaplus/tlatools/org.lamport.tlatools/customBuild.xml" compile dist
       - name: Build Prove It
         run: |
           set -euo pipefail

@@ -54,7 +54,7 @@ for tool in "$@"; do
     rm -f "$archive"
     # Rust's standalone archive holds an installer rather than a tree to use in place.
     if [ "$name" = rust ]; then
-      "$directory"/rust-*/install.sh --prefix="$directory/toolchain" --disable-ldconfig \
+      "$directory/rust-$version-x86_64-unknown-linux-gnu/install.sh" --prefix="$directory/toolchain" --disable-ldconfig \
         --components=rustc,cargo,rust-std-x86_64-unknown-linux-gnu >/dev/null
       rm -rf "$directory"/rust-*
     fi

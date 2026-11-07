@@ -79,6 +79,7 @@ checkers:
 | `tla-rs` | tla-rs 0.24.11 (crate `tla-checker`), built with Rust 1.99.1 | the workflow's `cargo install --locked`; Rust in `bootstrap.sh` |
 | `prove-it` | Prove It's compiled binary, from the commit the run checks out | |
 | `prove-it-node` | `dist/cli.js` under Node, as an npm user runs it | |
+| `prove-it-bun` | `dist/cli.js` under Bun, off by default | |
 
 TLC 1.8.0 is a pre-release whose jar is rebuilt nightly, so it can't be pinned
 by checksum. The workflow builds it with Ant from the `tlaplus/tlaplus` commit
@@ -92,12 +93,14 @@ verdict, distinct states, depth (except TLC on every core, whose workers can
 report a deeper level than its search reached) and generated states (except
 tla-rs, which counts transitions) must match TLC's on one worker; one that disagrees, fails or
 times out says so in its cell, takes no more runs on that model and is left out
-of the speedups. The run fails only when TLC or Prove It fails or Prove It
-disagrees.
+of the speedups. The run fails only when Prove It fails or disagrees, or when
+TLC fails on a model with no recorded TLC result (`expected.json`) to check
+against.
 
 Run it by hand from the Depot dashboard or with
 `depot ci dispatch --repo williamwmarx/prove-it --workflow benchmark.yml --ref main`
-(inputs: `runs`, `filter`, `checkers`, `timeout`). The run's summary has the
+and its inputs as repeated `--input key=value`: `runs`, `filter`, `checkers`
+and `timeout`. The run's summary has the
 table, and its artifact the JSON with every run. A full run takes about half
 an hour.
 
