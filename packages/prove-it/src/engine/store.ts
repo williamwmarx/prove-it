@@ -448,27 +448,69 @@ const equalsFunctions = (left: number, right: number) => {
 
 // --- sets ---
 
-// The set of the given elements, in any order and with duplicates.
-export const setOf = (elements: number[]) => {
-  const length = elements.length;
+// The set of elements[start..start + length), in any order and with duplicates.
+export const setOf = (elements: ArrayLike<number>, length = elements.length, start = 0) => {
   if (length === 0) return EMPTY_SET;
-  if (length === 1) return internBlock(KIND_SET, elements, 1, 1);
   let isSorted = true;
-  for (let index = 1; index < length; index++) {
+  for (let index = start + 1; index < start + length; index++) {
     if (compare(elements[index - 1], elements[index]) >= 0) {
       isSorted = false;
       break;
     }
   }
-  if (isSorted) return internBlock(KIND_SET, elements, length, length);
-  const sorted = elements.slice().sort(compare);
+  if (isSorted) return internBlock(KIND_SET, fromStart(elements, start, length), length, length);
   const words = takeMergeScratch(length);
-  words[0] = sorted[0];
+  for (let index = 0; index < length; index++) words[index] = elements[start + index];
+  sortWords(words, length);
   let unique = 1;
   for (let index = 1; index < length; index++) {
-    if (sorted[index] !== words[unique - 1]) words[unique++] = sorted[index];
+    if (words[index] !== words[unique - 1]) words[unique++] = words[index];
   }
   return internBlock(KIND_SET, words, unique, unique);
+};
+
+// Runs this short sort by insertion, in place; longer ones are merged from such runs.
+const INSERTION_LENGTH = 16;
+
+let sortScratch = new Int32Array(64);
+
+// Sorts words[0..length) in TLC's order.
+const sortWords = (words: Int32Array, length: number) => {
+  for (let start = 0; start < length; start += INSERTION_LENGTH) {
+    const end = Math.min(start + INSERTION_LENGTH, length);
+    for (let index = start + 1; index < end; index++) {
+      const word = words[index];
+      let position = index;
+      while (position > start && compare(words[position - 1], word) > 0) {
+        words[position] = words[position - 1];
+        position--;
+      }
+      words[position] = word;
+    }
+  }
+  if (length <= INSERTION_LENGTH) return;
+  if (sortScratch.length < length) sortScratch = new Int32Array(2 * length);
+  let source: Int32Array = words;
+  let target: Int32Array = sortScratch;
+  for (let width = INSERTION_LENGTH; width < length; width *= 2) {
+    for (let low = 0; low < length; low += 2 * width) {
+      const middle = Math.min(low + width, length);
+      const high = Math.min(low + 2 * width, length);
+      let left = low;
+      let right = middle;
+      let out = low;
+      while (left < middle && right < high) {
+        target[out++] =
+          compare(source[left], source[right]) <= 0 ? source[left++] : source[right++];
+      }
+      while (left < middle) target[out++] = source[left++];
+      while (right < high) target[out++] = source[right++];
+    }
+    const merged = target;
+    target = source;
+    source = merged;
+  }
+  if (source !== words) for (let index = 0; index < length; index++) words[index] = source[index];
 };
 
 // The set of elements[start..start + length), already in TLC's order without duplicates.
@@ -775,6 +817,22 @@ export const functionOf = (keys: number[], values: number[]) => {
     }
   }
   if (isSorted) return functionOfSorted(keys, values, size);
+  if (size <= INSERTION_LENGTH) {
+    // The pairs, sorted by key as they are inserted: the keys, then the values.
+    const words = takeMergeScratch(2 * size);
+    for (let index = 0; index < size; index++) {
+      const key = keys[index];
+      let position = index;
+      while (position > 0 && compare(words[position - 1], key) > 0) {
+        words[position] = words[position - 1];
+        words[size + position] = words[size + position - 1];
+        position--;
+      }
+      words[position] = key;
+      words[size + position] = values[index];
+    }
+    return functionOfSorted(words, words.subarray(size, 2 * size), size);
+  }
   const order = keys
     .map((_, index) => index)
     .sort((left, right) => compare(keys[left], keys[right]));

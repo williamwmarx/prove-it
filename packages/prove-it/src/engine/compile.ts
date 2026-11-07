@@ -2070,25 +2070,32 @@ export const createCompiler = (environment: Environment): Compiler => {
     }
     const body = compile(expression.expression, inner);
     const bodyEvaluate = body.evaluate;
+    // Pushes the images on the stack, above whatever evaluating them pushes and pops.
+    const visit = (level: number) => {
+      if (level === levels.length) {
+        const image = bodyEvaluate();
+        const position = pushStack(1);
+        STACK[position] = image;
+        return;
+      }
+      const current = levels[level];
+      const set = current.set.evaluate();
+      if (kindOf(set) !== KIND_SET) bail("mapped a non-set");
+      const size = sizeOf(set);
+      for (let index = 0; index < size; index++) {
+        assignBound(current.slots, current.tuple, elementAt(set, index));
+        visit(level + 1);
+      }
+    };
     return {
       evaluate: () => {
-        const images: number[] = [];
-        const visit = (level: number) => {
-          if (level === levels.length) {
-            images.push(bodyEvaluate());
-            return;
-          }
-          const current = levels[level];
-          const set = current.set.evaluate();
-          if (kindOf(set) !== KIND_SET) bail("mapped a non-set");
-          const size = sizeOf(set);
-          for (let index = 0; index < size; index++) {
-            assignBound(current.slots, current.tuple, elementAt(set, index));
-            visit(level + 1);
-          }
-        };
-        visit(0);
-        return setOf(images);
+        const at = stackTop;
+        try {
+          visit(0);
+          return setOf(STACK, stackTop - at, at);
+        } finally {
+          stackTop = at;
+        }
       },
       footprint: mergeFootprints(
         ...levels.map((level) => level.set.footprint),

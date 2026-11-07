@@ -30,6 +30,8 @@ export const createCanonicalizer = (group: NamedPermutation[], order: number[]) 
   );
   // Each permutation's image of each id permuted so far, or -1.
   const images = permutations.map(() => new Int32Array(0));
+  let stack = new Int32Array(256);
+  let top = 0;
 
   const permute = (id: number, index: number): number => {
     const kind = kindOf(id);
@@ -40,22 +42,23 @@ export const createCanonicalizer = (group: NamedPermutation[], order: number[]) 
     const size = sizeOf(id);
     let isMoved = false;
     let result = id;
-    if (kind === KIND_SET) {
-      const elements: number[] = new Array(size);
-      for (let position = 0; position < size; position++) {
-        const element = elementAt(id, position);
-        elements[position] = permute(element, index);
-        if (elements[position] !== element) isMoved = true;
+    if (kind === KIND_SET || kind === KIND_TUPLE) {
+      // The images go on the stack, above those of the values being permuted around this one.
+      const at = top;
+      top += size;
+      if (top > stack.length) {
+        const grown = new Int32Array(2 * top);
+        grown.set(stack);
+        stack = grown;
       }
-      if (isMoved) result = setOf(elements);
-    } else if (kind === KIND_TUPLE) {
-      const elements: number[] = new Array(size);
       for (let position = 0; position < size; position++) {
-        const element = getRangeValue(id, position);
-        elements[position] = permute(element, index);
-        if (elements[position] !== element) isMoved = true;
+        const element = kind === KIND_SET ? elementAt(id, position) : getRangeValue(id, position);
+        const image = permute(element, index);
+        stack[at + position] = image;
+        if (image !== element) isMoved = true;
       }
-      if (isMoved) result = tupleOf(elements, size);
+      if (isMoved) result = kind === KIND_SET ? setOf(stack, size, at) : tupleOf(stack, size, at);
+      top = at;
     } else {
       const keys: number[] = new Array(size);
       const values: number[] = new Array(size);
@@ -81,6 +84,8 @@ export const createCanonicalizer = (group: NamedPermutation[], order: number[]) 
   const permuted = new Int32Array(order.length);
   // Replaces the state with its representative.
   return (state: Int32Array) => {
+    // A permutation that bailed out left its images on the stack.
+    top = 0;
     smallest.set(state);
     for (let index = 0; index < permutations.length; index++) {
       let comparison = 0;

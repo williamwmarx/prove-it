@@ -4,15 +4,21 @@
 import { afterAll, beforeEach, describe, expect, it } from "bun:test";
 
 import {
+  appendTuple,
+  concatTuples,
   createRecordShape,
   except,
   exceptAt,
+  functionOf,
   functionOfSorted,
   getValueCount,
   int,
   recordOf,
   resetStore,
+  setOf,
+  setOfSorted,
   shareStore,
+  sliceTuple,
   str,
   tupleOf,
 } from "../../src/engine/store";
@@ -73,5 +79,33 @@ describe.each(["local", "shared"])("the engine's %s store", (mode) => {
       expect(tupleOf([record, int(0)], 2)).toBe(tuples[index]);
     });
     expect(getValueCount()).toBe(count);
+  });
+
+  it("sorts a set's elements and drops duplicates, short or long", () => {
+    for (const length of [3, 16, 17, 100]) {
+      const sorted = ints(Array.from({ length }, (_, index) => index));
+      // Each element twice, in an order far from sorted.
+      const shuffled = [...sorted, ...sorted].map((_, index) => sorted[(index * 37) % length]);
+      expect(setOf(shuffled)).toBe(setOfSorted(sorted, length));
+      // The elements from an offset, as the engine gathers them on its stack.
+      expect(setOf([int(-1), ...shuffled], shuffled.length, 1)).toBe(setOfSorted(sorted, length));
+    }
+  });
+
+  it("sorts a function's keys with their values", () => {
+    const keys = [str("c"), str("a"), str("b")];
+    expect(functionOf(keys, ints([3, 1, 2]))).toBe(
+      functionOfSorted([str("a"), str("b"), str("c")], ints([1, 2, 3]), 3),
+    );
+    expect(functionOf(ints([3, 1, 2]), ints([7, 5, 6]))).toBe(tupleOf(ints([5, 6, 7]), 3));
+  });
+
+  it("builds a sequence's tail, append and concatenation as the tuple of their elements", () => {
+    const tuple = tupleOf(ints([1, 2, 3]), 3);
+    expect(sliceTuple(tuple, 1, 3)).toBe(tupleOf(ints([2, 3]), 2));
+    expect(sliceTuple(tuple, 1, 1)).toBe(tupleOf([], 0));
+    expect(appendTuple(tuple, int(4))).toBe(tupleOf(ints([1, 2, 3, 4]), 4));
+    expect(concatTuples(tuple, tuple)).toBe(tupleOf(ints([1, 2, 3, 1, 2, 3]), 6));
+    expect(concatTuples(tupleOf([], 0), tuple)).toBe(tuple);
   });
 });
