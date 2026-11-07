@@ -470,6 +470,8 @@ const machine = {
   tlaTs: tlaTsPath ? getPackageVersion(tlaTsPath) : undefined,
   tlaRs: tlaRsPath ? getVersion([tlaRsPath, "--version"]) : undefined,
   proveIt: getCommit(PACKAGE_DIRECTORY),
+  // The commit of the checkout PROVE_IT_BASE_BINARY was built in.
+  proveItBase: baseBinaryPath ? getCommit(dirname(baseBinaryPath)) : undefined,
   timeoutSeconds,
   loadAverageAtStart: loadavg(),
 };
@@ -765,7 +767,9 @@ if (markdownPath !== undefined) {
             ? machine.tlaTs
             : entry.name === "tla-rs"
               ? machine.tlaRs
-              : machine.proveIt,
+              : entry.name === "prove-it-base"
+                ? machine.proveItBase
+                : machine.proveIt,
         formatRatio(entry.wall),
         formatRatio(entry.cpu),
         `${entry.agreeing}/${results.length}`,
