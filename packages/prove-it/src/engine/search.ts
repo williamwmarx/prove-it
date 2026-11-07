@@ -225,6 +225,13 @@ export const runEngine = (input: EngineInput): EngineResult => {
     depth = level + 1;
   };
 
+  const onSuccessor = () => {
+    for (let index = 0; index < width; index++) {
+      if (next[index] === -1) bail("a successor that isn't complete");
+    }
+    visitSuccessor();
+  };
+
   for (expanding = 0; expanding < stateCount; expanding++) {
     if (expanding === levelEnd) {
       level++;
@@ -236,11 +243,7 @@ export const runEngine = (input: EngineInput): EngineResult => {
     newStates = 0;
     successors = 0;
     setCurrent(current);
-    nextStep(() => {
-      for (let index = 0; index < width; index++)
-        if (next[index] === -1) bail("a successor that isn't complete");
-      visitSuccessor();
-    });
+    nextStep(onSuccessor);
     if (successors === 0 && config.checkDeadlock) bail("deadlock");
     outDegrees[Math.min(newStates, OUT_DEGREE_BUCKETS - 1)]++;
     if ((expanding & 0xff) === 0 && input.onProgress && performance.now() >= progressAt) {

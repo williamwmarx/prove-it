@@ -17,8 +17,8 @@ import {
   type OperatorParam,
 } from "../ast";
 import type { Builtin, BuiltinArgument, Environment, OperatorValue } from "../evaluate";
-import { getDefinition } from "../evaluate";
-import type { Value } from "../values";
+import { getDefinition, getQuantifierElements } from "../evaluate";
+import { getStreamedElements, type Value } from "../values";
 import { fromValue, toValue } from "./convert";
 import { MemoTable } from "./memo";
 import {
@@ -57,6 +57,7 @@ import {
   setOfSorted,
   sizeOf,
   str,
+  textOf,
   TRUE,
   tupleOf,
   union,
@@ -165,7 +166,32 @@ export interface Compiled {
   emit?: (gen: CodeGen) => string;
   // Whether the value is always TRUE or FALSE, whose ids are 1 and 0.
   isBoolean?: boolean;
+  // For a set TLC keeps lazy: the reference interpreter's value for it, which says the order TLC
+  // enumerates it in.
+  reference?: () => Value;
 }
+
+// A set's reference value, or undefined for a set TLC keeps lazy that the engine has no reference
+// for, such as a UNION that streams duplicates.
+const referenceOf = (compiled: Compiled): (() => Value) | undefined =>
+  compiled.reference ??
+  (compiled.isNormalized
+    ? (
+        (evaluate) => () =>
+          toValue(evaluate())
+      )(compiled.evaluate)
+    : undefined);
+
+// A reference built from components, when every component has one.
+const combineReferences = (
+  components: Compiled[],
+  build: (references: (() => Value)[]) => () => Value,
+): (() => Value) | undefined => {
+  const references = components.map(referenceOf);
+  return references.every((reference) => reference !== undefined)
+    ? build(references as (() => Value)[])
+    : undefined;
+};
 
 // What generated code needs from the compiler: a name in scope for each value it refers to.
 export interface CodeGen {
@@ -210,6 +236,34 @@ const constant = (id: number): Compiled =>
   }) as Compiled;
 
 const MAXIMUM_MEMO_WIDTH = 6;
+
+const lookup1 = (table: MemoTable, key: number, inner: Evaluate) => {
+  if (!table.isEnabled) return inner();
+  const known = table.get1(key);
+  if (known !== -1) return known;
+  const value = inner();
+  table.set1(key, value);
+  return value;
+};
+
+const lookup2 = (table: MemoTable, first: number, second: number, inner: Evaluate) => {
+  if (!table.isEnabled) return inner();
+  const known = table.get2(first, second);
+  if (known !== -1) return known;
+  const value = inner();
+  table.set2(first, second, value);
+  return value;
+};
+
+// The code that reads each id of a footprint, in the order the memo tables key them.
+const keyCodes = (footprint: Footprint, gen: CodeGen) => {
+  const name = gen.ref(registers);
+  return [
+    ...footprint.vars.map((variable) => `${name}.cur[${variable}]`),
+    ...footprint.primes.map((variable) => `${name}.next[${variable}]`),
+    ...footprint.slots.map((slot) => `${name}.locals[${slot}]`),
+  ];
+};
 
 const memoTables: MemoTable[] = [];
 
@@ -263,7 +317,8 @@ const cached = (compiled: Compiled): Compiled => {
     return {
       ...compiled,
       isCostly: false,
-      emit: undefined,
+      emit: (gen: CodeGen) =>
+        `${gen.ref(lookup1)}(${gen.ref(table)}, ${keyCodes(footprint, gen)[0]}, ${gen.ref(inner)})`,
       evaluate: () => {
         if (!table.isEnabled) return inner();
         const key = read();
@@ -290,7 +345,10 @@ const cached = (compiled: Compiled): Compiled => {
     return {
       ...compiled,
       isCostly: false,
-      emit: undefined,
+      emit: (gen: CodeGen) => {
+        const [first, second] = keyCodes(footprint, gen);
+        return `${gen.ref(lookup2)}(${gen.ref(table)}, ${first}, ${second}, ${gen.ref(inner)})`;
+      },
       evaluate: () => {
         if (!table.isEnabled) return inner();
         fill();
@@ -392,6 +450,11 @@ export interface Compiler {
   };
   resolveAction: (expression: Expression, context: Context) => ActionTarget | undefined;
   bindLet: (expression: Expression & { kind: "Let" }, context: Context) => Context;
+  compileOrdered: (
+    expression: Expression,
+    context: Context,
+    mode: "quantifier" | "streamed",
+  ) => Compiled;
   bindValue: (context: Context, name: string) => { context: Context; slot: number };
   environment: Environment;
   variableCount: number;
@@ -592,6 +655,7 @@ export const createCompiler = (environment: Environment): Compiler => {
     ({
       ...leaf(() => bail(`enumerated ${name}`), EMPTY_FOOTPRINT, false),
       infinite: name,
+      reference: () => environment.builtins.get(name)!.evaluate([]),
     }) as Compiled;
 
   const compileNode = (expression: Expression, context: Context): Compiled => {
@@ -1473,6 +1537,15 @@ export const createCompiler = (environment: Environment): Compiler => {
         isCostly: true,
         // TLC enumerates [S -> T] in its own order, which the engine leaves to the reference.
         isNormalized: false,
+        reference: combineReferences(
+          [domain, range],
+          ([domainReference, rangeReference]) =>
+            () => ({
+              kind: "FunctionSet",
+              domain: domainReference(),
+              range: rangeReference(),
+            }),
+        ),
         member: (element) => {
           const kind = kindOf(element);
           if (kind !== KIND_FUNCTION && kind !== KIND_TUPLE) return false;
@@ -1511,6 +1584,14 @@ export const createCompiler = (environment: Environment): Compiler => {
         footprint,
         isCostly: true,
         isNormalized: false,
+        reference: combineReferences(
+          fields.map((field) => field.set),
+          (references) => () => ({
+            kind: "RecordSet",
+            names: fields.map((field) => textOf(field.key)),
+            sets: references.map((reference) => reference()),
+          }),
+        ),
         member: (element) => {
           if (kindOf(element) !== KIND_FUNCTION || sizeOf(element) !== keys.length) return false;
           for (let index = 0; index < keys.length; index++) {
@@ -1541,6 +1622,10 @@ export const createCompiler = (environment: Environment): Compiler => {
       footprint: mergeFootprints(...factors.map((factor) => factor.footprint)),
       isCostly: true,
       isNormalized: false,
+      reference: combineReferences(factors, (references) => () => ({
+        kind: "ProductSet",
+        factors: references.map((reference) => reference()),
+      })),
       member: (element) => {
         if (kindOf(element) !== KIND_TUPLE || sizeOf(element) !== factors.length) return false;
         for (let index = 0; index < factors.length; index++) {
@@ -1771,6 +1856,10 @@ export const createCompiler = (environment: Environment): Compiler => {
         return {
           ...unary(base, (set) => powerSet(expectSet(set)), true),
           isNormalized: false,
+          reference: combineReferences([base], ([baseReference]) => () => ({
+            kind: "Subset",
+            base: baseReference(),
+          })),
           member: (
             (evaluate) => (element: number) =>
               kindOf(element) === KIND_SET && isSubset(element, expectSet(evaluate()))
@@ -2079,6 +2168,42 @@ export const createCompiler = (environment: Environment): Compiler => {
     return undefined;
   };
 
+  // The elements of a set in the order TLC enumerates them where an action quantifies over the set
+  // (quantifier) or assigns a variable from it (streamed): the set itself when TLC normalizes it,
+  // else a tuple of its elements in the reference interpreter's order, cached like any other value.
+  const compileOrdered = (
+    expression: Expression,
+    context: Context,
+    mode: "quantifier" | "streamed",
+  ): Compiled => {
+    const set = compile(expression, context);
+    if (set.isNormalized) return set;
+    const reference = set.reference;
+    if (!reference) return unsupported("enumerating a set TLC keeps lazy");
+    const version = environment.runtime.version;
+    return cached({
+      evaluate: () => {
+        const value = reference();
+        const elements =
+          mode === "streamed"
+            ? getStreamedElements(value)
+            : getQuantifierElements(value, expression, version);
+        const ids: number[] = [];
+        if (Array.isArray(elements)) {
+          for (const element of elements) ids.push(fromValue(element));
+        } else {
+          for (let element = elements.low; element <= elements.high; element++)
+            ids.push(int(element));
+        }
+        return tupleOf(ids, ids.length);
+      },
+      footprint: set.footprint,
+      isCostly: true,
+      isNormalized: true,
+      isOrdered: true,
+    } as Compiled);
+  };
+
   const bindValueSlot = (context: Context, name: string) => {
     const slot = allocateSlot();
     return {
@@ -2098,12 +2223,17 @@ export const createCompiler = (environment: Environment): Compiler => {
       }),
     }),
     resolveAction,
+    compileOrdered,
     bindLet: bindLetDefinitions,
     bindValue: bindValueSlot,
     environment,
     variableCount,
   };
 };
+
+// Whether a compiled enumeration yields a tuple of elements in order rather than a set.
+export const isOrderedEnumeration = (compiled: Compiled) =>
+  (compiled as { isOrdered?: boolean }).isOrdered === true;
 
 export const memberTestFor = (compiled: Compiled): ((element: number) => boolean) | undefined =>
   (compiled as { member?: (element: number) => boolean }).member;

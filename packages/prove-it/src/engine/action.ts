@@ -13,7 +13,17 @@ import {
   NXT,
   registers,
 } from "./compile";
-import { bail, elementAt, equals, FALSE, KIND_SET, kindOf, sizeOf, TRUE } from "./store";
+import {
+  bail,
+  elementAt,
+  equals,
+  FALSE,
+  KIND_SET,
+  KIND_TUPLE,
+  kindOf,
+  sizeOf,
+  TRUE,
+} from "./store";
 
 type Continue = () => void;
 export type Step = (onComplete: Continue) => void;
@@ -199,8 +209,7 @@ export const compileAction = (
     membershipContext: CompileContext,
     guard: Expression,
   ): Step => {
-    const set = compiler.compile(setExpression, membershipContext);
-    if (!set.isNormalized) return bail("an assignment from a set TLC enumerates in its own order");
+    const set = compiler.compileOrdered(setExpression, membershipContext, "streamed");
     const setEvaluate = set.evaluate;
     const guardEvaluate = compiler.compile(guard, membershipContext).evaluate;
     return (onComplete) => {
@@ -212,7 +221,7 @@ export const compileAction = (
         return;
       }
       const id = setEvaluate();
-      if (kindOf(id) !== KIND_SET) bail("x' \\in S with S not a set");
+      if (kindOf(id) !== KIND_SET && kindOf(id) !== KIND_TUPLE) bail("x' \\in S with S not a set");
       const size = sizeOf(id);
       registers.assigned++;
       try {
@@ -242,9 +251,7 @@ export const compileAction = (
         const levels: { set: Compiled; slot: number }[] = [];
         for (const bound of step.bounds) {
           if (bound.pattern.kind !== "Name") return bail("a tuple pattern in an action's \\E");
-          const set = compiler.compile(bound.set, inner);
-          if (!set.isNormalized)
-            return bail("an action quantified over a set TLC enumerates in its own order");
+          const set = compiler.compileOrdered(bound.set, inner, "quantifier");
           const binding = compiler.bindValue(inner, bound.pattern.name);
           inner = binding.context;
           levels.push({ set, slot: binding.slot });
@@ -255,7 +262,8 @@ export const compileAction = (
           const slot = levels[0].slot;
           return (onComplete) => {
             const id = setEvaluate();
-            if (kindOf(id) !== KIND_SET) bail("an action quantified over a non-set");
+            if (kindOf(id) !== KIND_SET && kindOf(id) !== KIND_TUPLE)
+              bail("an action quantified over a non-set");
             const size = sizeOf(id);
             for (let position = 0; position < size; position++) {
               LOC[slot] = elementAt(id, position);
@@ -267,7 +275,8 @@ export const compileAction = (
         return (onComplete) => {
           const sets = levels.map((level) => {
             const id = level.set.evaluate();
-            if (kindOf(id) !== KIND_SET) bail("an action quantified over a non-set");
+            if (kindOf(id) !== KIND_SET && kindOf(id) !== KIND_TUPLE)
+              bail("an action quantified over a non-set");
             return id;
           });
           if (sets.some((id) => sizeOf(id) === 0)) return;
@@ -414,9 +423,7 @@ export const compileAction = (
     const levels: { set: Compiled; slot: number }[] = [];
     for (const bound of step.bounds) {
       if (bound.pattern.kind !== "Name") return bail("a tuple pattern in an action's \\A");
-      const set = compiler.compile(bound.set, inner);
-      if (!set.isNormalized)
-        return bail("an action quantified over a set TLC enumerates in its own order");
+      const set = compiler.compileOrdered(bound.set, inner, "quantifier");
       const binding = compiler.bindValue(inner, bound.pattern.name);
       inner = binding.context;
       levels.push({ set, slot: binding.slot });
@@ -426,7 +433,8 @@ export const compileAction = (
     return (onComplete) => {
       const sets = levels.map((level) => {
         const id = level.set.evaluate();
-        if (kindOf(id) !== KIND_SET) bail("an action quantified over a non-set");
+        if (kindOf(id) !== KIND_SET && kindOf(id) !== KIND_TUPLE)
+          bail("an action quantified over a non-set");
         return id;
       });
       const bindings: number[][] = [];

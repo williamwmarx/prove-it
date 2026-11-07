@@ -15,6 +15,7 @@ import {
   codeOf,
   type CompileContext,
   type Compiler,
+  isOrderedEnumeration,
   registers,
 } from "./compile";
 import { getCodegenSetting } from "./settings";
@@ -40,6 +41,7 @@ class TooLarge extends Error {}
 
 const expectSetSize = (id: number) =>
   kindOf(id) === KIND_SET ? sizeOf(id) : bail("an action quantified over a non-set");
+const orderedSize = (id: number) => sizeOf(id);
 
 const notBoolean = () => bail("a conjunct that isn't a boolean");
 
@@ -68,6 +70,7 @@ export const generateAction = (
   const T = isInit ? `${R}.cur` : `${R}.next`;
   const element = gen.ref(elementAt);
   const setSize = gen.ref(expectSetSize);
+  const ordered = gen.ref(orderedSize);
   const equal = gen.ref(equals);
   const nonBoolean = gen.ref(notBoolean);
   let counter = 0;
@@ -209,14 +212,17 @@ if (${flag} === 1) { ${T}[${variable}] = -1; ${R}.assigned--; } }`,
     operand: Expression,
   ): string => {
     let inner = operandContext;
-    const levels: { set: string; slot: number }[] = [];
+    const levels: { set: string; slot: number; isOrdered: boolean }[] = [];
     for (const bound of bounds) {
       if (bound.pattern.kind !== "Name") return opaque(operand, operandContext, known, rest);
-      const set = compiler.compile(bound.set, inner);
-      if (!set.isNormalized) return opaque(operand, operandContext, known, rest);
+      const set = compiler.compileOrdered(bound.set, inner, "quantifier");
       const binding = compiler.bindValue(inner, bound.pattern.name);
       inner = binding.context;
-      levels.push({ set: codeOf(set, gen), slot: binding.slot });
+      levels.push({
+        set: codeOf(set, gen),
+        slot: binding.slot,
+        isOrdered: isOrderedEnumeration(set),
+      });
     }
     const sets = levels.map(() => fresh("s"));
     const sizes = levels.map(() => fresh("n"));
@@ -224,7 +230,7 @@ if (${flag} === 1) { ${T}[${variable}] = -1; ${R}.assigned--; } }`,
     const header = levels
       .map(
         (level, position) =>
-          `const ${sets[position]} = ${level.set}; const ${sizes[position]} = ${setSize}(${sets[position]});`,
+          `const ${sets[position]} = ${level.set}; const ${sizes[position]} = ${level.isOrdered ? ordered : setSize}(${sets[position]});`,
       )
       .join(" ");
     // TLC's ContextEnumerator varies the first bound fastest: the last bound is the outer loop.
@@ -246,14 +252,13 @@ if (${flag} === 1) { ${T}[${variable}] = -1; ${R}.assigned--; } }`,
     if (known[variable] === ASSIGNED) {
       return emit(`if (${guardCode(operand, operandContext)}) {\n${rest(known)}\n}`);
     }
-    const set = compiler.compile(operand.args[1], operandContext);
-    if (!set.isNormalized) return opaque(operand, operandContext, known, rest);
+    const set = compiler.compileOrdered(operand.args[1], operandContext, "streamed");
     const setName = fresh("s");
     const sizeName = fresh("n");
     const counter = fresh("j");
     const after = known.slice();
     after[variable] = ASSIGNED;
-    const loop = `{ const ${setName} = ${codeOf(set, gen)}; const ${sizeName} = ${setSize}(${setName}); ${R}.assigned++;
+    const loop = `{ const ${setName} = ${codeOf(set, gen)}; const ${sizeName} = ${isOrderedEnumeration(set) ? ordered : setSize}(${setName}); ${R}.assigned++;
 for (let ${counter} = 0; ${counter} < ${sizeName}; ${counter}++) { ${T}[${variable}] = ${element}(${setName}, ${counter});\n${rest(after)}\n}
 ${T}[${variable}] = -1; ${R}.assigned--; }`;
     if (known[variable] === UNASSIGNED) return emit(loop);

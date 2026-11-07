@@ -597,6 +597,18 @@ export const findKey = (fn: number, key: number) => {
     return position >= 0 && position < size ? position : -1;
   }
   const offset = payloads[fn];
+  // A domain of consecutive integers, such as 0..n, finds its key by subtraction.
+  if (size > 0 && kinds[key] === KIND_INT) {
+    const first = heap[offset];
+    const last = heap[offset + size - 1];
+    if (kinds[first] === KIND_INT && kinds[last] === KIND_INT) {
+      const low = payloads[first];
+      if (payloads[last] - low === size - 1) {
+        const position = payloads[key] - low;
+        return position >= 0 && position < size ? position : -1;
+      }
+    }
+  }
   if (size <= INDEXED_SIZE) {
     for (let index = 0; index < size; index++) if (heap[offset + index] === key) return index;
     return -1;
