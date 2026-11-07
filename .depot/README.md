@@ -35,7 +35,7 @@ One credential: the npm token that publishes.
 | --- | --- | --- |
 | 1Password Environment `prove-it-release` | `NPM_TOKEN` | npm granular access token, read and write; on all packages until the first publish, then `@atemp/prove-it` only |
 | 1Password service account `prove-it-release` | | Read access to that Environment alone |
-| Depot CI secret | `ONEPASSWORD_PROVE_IT_RELEASE_TOKEN` | That service account's token, scoped to this repository, `main` and `release.yml` |
+| Depot CI secret | `ONEPASSWORD_PROVE_IT_RELEASE_TOKEN` | That service account's token, scoped to this repository, `main`, `release.yml` and the `npm` environment |
 
 The Environment's ID is `ONEPASSWORD_ENVIRONMENT_ID` in `release.yml`.
 
@@ -54,7 +54,7 @@ To rotate the service account token, rotate it in 1Password under Developer,
 Service accounts, then set it again:
 
 ```bash
-op read --no-newline "op://…" | depot ci secrets set ONEPASSWORD_PROVE_IT_RELEASE_TOKEN --from-stdin --repo williamwmarx/prove-it --branch main --workflow release.yml
+op read --no-newline "op://…" | depot ci secrets set ONEPASSWORD_PROVE_IT_RELEASE_TOKEN --from-stdin --repo williamwmarx/prove-it --branch main --workflow release.yml --env npm
 ```
 
 npm's trusted publishing and provenance work only from CI providers npm

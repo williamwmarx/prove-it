@@ -29,6 +29,8 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: depot-ubuntu-24.04
     timeout-minutes: 30
+    # The Depot secret is scoped to the npm environment, as well as to main and this file.
+    environment: npm
     permissions:
       # To push the v<version> tag.
       contents: write
