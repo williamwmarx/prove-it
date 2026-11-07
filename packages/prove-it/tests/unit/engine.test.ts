@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, spyOn } from "bun:test";
 
 import { check, formatValue } from "../../src";
 import { nextEpoch } from "../../src/engine/compile";
-import { EpochCache } from "../../src/engine/memo";
+import { EpochCache, MemoTable } from "../../src/engine/memo";
 import { getEngineThreads } from "../../src/engine/settings";
 
 const setting = process.env.PROVE_IT_ENGINE;
@@ -452,6 +452,21 @@ describe("the engine", () => {
     cache.set(2 ** 32 + 5, entry, 7, 0, 0, 0, 111);
     expect(cache.get(2 ** 32 + 5, entry, 7, 0, 0, 0)).toBe(111);
     expect(cache.get(5, entry, 7, 0, 0, 0)).toBe(-1);
+  });
+
+  it("keeps every entry of a memo table of one key, its keys dense or sparse", () => {
+    // Ids 0 to 1999 fit the table's array; ids a million apart make it a hash table.
+    for (const stride of [1, 1_000_000]) {
+      const table = new MemoTable(1);
+      for (let key = 0; key < 1999; key++) table.set1(key * stride, key + 7);
+      table.setN(Int32Array.of(1999 * stride), 99);
+      for (let key = 0; key < 2000; key++) {
+        expect(table.getN(Int32Array.of(key * stride))).toBe(key === 1999 ? 99 : key + 7);
+      }
+      expect(table.get1(2000 * stride)).toBe(-1);
+      expect(table.get1(-1)).toBe(-1);
+      expect(table.size).toBe(2000);
+    }
   });
 
   it("compiles what an initial state's shortcut evaluates while generated code runs", async () => {
