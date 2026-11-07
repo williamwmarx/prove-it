@@ -319,6 +319,7 @@ ${T}[${variable}] = -1; ${R}.assigned--; }`;
   // JavaScriptCore doesn't optimize a function past a size, so the code of a large step goes in a
   // function of its own, which reads only the registers, the values it refers to, and K.
   const hoisted: string[] = [];
+  const hoistedCodeLength = getCodegenSetting() === "hoist" ? 0 : HOISTED_CODE_LENGTH;
   const step = (
     operand: Expression,
     operandContext: CompileContext,
@@ -326,7 +327,7 @@ ${T}[${variable}] = -1; ${R}.assigned--; }`;
     rest: Continuation,
   ): string => {
     const code = walkStep(operand, operandContext, known, rest);
-    if (isSharing || code.length < HOISTED_CODE_LENGTH) return code;
+    if (isSharing || code.length < hoistedCodeLength) return code;
     const name = fresh("h");
     hoisted.push(`function ${name}(K) {\n${code}\n}`);
     return `${name}(K);`;

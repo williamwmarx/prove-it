@@ -9,7 +9,8 @@ export const reportEngine = (message: string) => {
 };
 
 // PROVE_IT_CODEGEN=0 runs actions as closures instead of generated code, =dump prints the code,
-// and =share writes the code a large action gets, with each branch point's continuation shared.
+// =share writes the code a large action gets, with each branch point's continuation shared, and
+// =hoist puts every step in a function of its own.
 export const getCodegenSetting = () => getEnvironment()?.PROVE_IT_CODEGEN;
 
 export const getEnvironmentFlag = (name: string) => getEnvironment()?.[name] === "1";

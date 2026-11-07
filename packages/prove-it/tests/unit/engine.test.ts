@@ -94,7 +94,7 @@ describe("the engine", () => {
     expect(lines).toEqual([expect.stringMatching(/^\[engine\] checked 37 states/)]);
   });
 
-  it("finds the same states with each branch point's continuation shared", async () => {
+  it("finds the same states with continuations shared or steps in functions of their own", async () => {
     const body = [
       "EXTENDS Naturals",
       "VARIABLES x, y, z",
@@ -108,13 +108,15 @@ describe("the engine", () => {
     try {
       const config = "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE";
       const inline = await checkInEngine(body, config);
-      process.env.PROVE_IT_CODEGEN = "share";
-      const shared = await checkInEngine(body, config);
-      expect([shared.result.generatedStates, shared.result.distinctStates]).toEqual([
-        inline.result.generatedStates,
-        inline.result.distinctStates,
-      ]);
-      expect(shared.lines).toEqual([expect.stringMatching(/^\[engine\] checked/)]);
+      for (const setting of ["share", "hoist"]) {
+        process.env.PROVE_IT_CODEGEN = setting;
+        const other = await checkInEngine(body, config);
+        expect([other.result.generatedStates, other.result.distinctStates]).toEqual([
+          inline.result.generatedStates,
+          inline.result.distinctStates,
+        ]);
+        expect(other.lines).toEqual([expect.stringMatching(/^\[engine\] checked/)]);
+      }
     } finally {
       if (codegen === undefined) delete process.env.PROVE_IT_CODEGEN;
       else process.env.PROVE_IT_CODEGEN = codegen;
