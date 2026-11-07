@@ -282,6 +282,8 @@ export const expandLevel = (context: EngineContext, views: SearchViews) => {
       current,
     );
     setCurrent(current, expansionEpoch);
+    // Every step, to a new state or not, as the search on one thread checks it.
+    if (!holdsAll(context.actionProperties)) throw new Bailout("an action property violated");
     const isInModel = isStateInModel && holdsAll(context.actionConstraints);
     const stored = isInModel ? insertState(views, next, parent, ordinal, block) : -1;
     if (isInModel && stored === -1) return;

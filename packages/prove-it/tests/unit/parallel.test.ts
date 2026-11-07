@@ -74,6 +74,28 @@ describe("check with workers matches TLC", () => {
     expect(result.violation?.trace).toHaveLength(3);
   });
 
+  it("reports an action property violated in a level the workers expand", async () => {
+    const tlaTs = await loadPackage();
+    const result = await tlaTs.check({
+      source: [
+        "---- MODULE M ----",
+        "EXTENDS Naturals",
+        "VARIABLES x, y",
+        "Init == x \\in 1..4000 /\\ y = 0",
+        // Slow enough for the workers to join before the last levels.
+        "Next == y < 9 /\\ (\\A i \\in 1..300 : i + x + y > 0) /\\ y' = y + 1 /\\ x' = x",
+        "Spec == Init /\\ [][Next]_<<x, y>>",
+        "Prop == [][~(y' = 8 /\\ x = 17)]_<<x, y>>",
+        "====",
+      ].join("\n"),
+      config: "SPECIFICATION Spec\nPROPERTY Prop\nCHECK_DEADLOCK FALSE",
+      workers: 4,
+    });
+    expect(result.status).not.toBe("success");
+    expect(result.violation?.name).toBe("Prop");
+    expect([result.generatedStates, result.distinctStates]).toEqual([32017, 32017]);
+  });
+
   it("prints what assumptions print once when it checks on the calling thread", async () => {
     const tlaTs = await loadPackage();
     const printed: string[] = [];
