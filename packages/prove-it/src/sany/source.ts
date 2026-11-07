@@ -24,10 +24,12 @@ const OPENERS = new Map([
 
 const getPositionKey = (line: number, column: number) => `${line}:${column}`;
 
-export const createSourceFile = (name: string, source: string): SourceFile => {
-  const tokens = tokenize(source)
-    .filter((token) => token.kind !== "End")
-    .map(readAtAsIdentifier);
+export const createSourceFile = (
+  name: string,
+  source: string,
+  sourceTokens = tokenize(source),
+): SourceFile => {
+  const tokens = sourceTokens.filter((token) => token.kind !== "End").map(readAtAsIdentifier);
   const lineOffsets = [0, 0];
   for (let index = 0; index < source.length; index++) {
     if (source[index] === "\n") lineOffsets.push(index + 1);
@@ -180,8 +182,10 @@ export const isBoxToken = (file: SourceFile, index: number) => {
 
 // HACK: the tla-ts parser has no []ASSUME or []PROVE, so it parses the source with each such []
 // blanked out, which keeps every other token where it was. SANY's parser takes them only in an
-// ASSUME/PROVE, which unboxing hides.
+// ASSUME/PROVE, which unboxing hides. Such a [] comes right before its keyword, so a source that
+// never spells one has nothing to blank out.
 export const getUnboxedSource = (source: string) => {
+  if (!/(?:\[\]|□)(?:ASSUME|PROVE)/.test(source)) return source;
   const file = createSourceFile("", source);
   const unboxed = file.tokens.reduce((text, token, index) => {
     if (!isBoxToken(file, index)) return text;

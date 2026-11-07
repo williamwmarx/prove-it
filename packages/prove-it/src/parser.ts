@@ -2107,4 +2107,4 @@ export const parseModuleTokens = (source: string, tokens: Token[]) => parse(sour
 
 export const parseTlapmModule = (source: string) => parse(source, "tlapm");
 
-export const parseSanyModule = (source: string) => parse(source, "sany");
+export const parseSanyModule = (source: string, tokens?: Token[]) => parse(source, "sany", tokens);

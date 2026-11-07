@@ -25,6 +25,7 @@ import {
   TlaUnsupportedError,
 } from "../errors";
 import { TEMPORAL_LEVEL } from "../levels";
+import { tokenize } from "../lexer";
 import { parseSanyModule } from "../parser";
 import { SANY_OPERATOR_SYNONYMS } from "../tlc/jar-data";
 import type { TlcVersion } from "../tlc/version";
@@ -46,7 +47,6 @@ import {
   formatSanyLocation,
   getContextModule,
   getContextSymbol,
-  getDeclarations,
   getHashtableValues,
   getSymbolArity,
   type InstanceNode,
@@ -243,8 +243,11 @@ const isSameOrigin = (symbol: SymbolNode, other: SymbolNode) => {
 };
 
 const isParameterFree = (module: ModuleNode) =>
-  getDeclarations(module, CONSTANT_DECL_KIND).length === 0 &&
-  getDeclarations(module, VARIABLE_DECL_KIND).length === 0;
+  !getHashtableValues(module.context.table).some(
+    (symbol) =>
+      symbol.kind === "OpDecl" &&
+      (symbol.declKind === CONSTANT_DECL_KIND || symbol.declKind === VARIABLE_DECL_KIND),
+  );
 
 const getLetInstances = (expression: Expression): Instance[] => [
   ...(expression.kind === "Let" ? (expression.instances ?? []) : []),
@@ -501,9 +504,12 @@ export const generateSanySpecification = (
     if (lexicalError !== undefined) throw getParseFailure(lexicalError);
     // HACK: the parser's errors are not SANY's, so a module that fails to parse gets the report
     // of SANY's parser, and the parser's own report where SANY's parser would accept the module,
-    // such as for an error SANY finds after parsing.
+    // such as for an error SANY finds after parsing. The tokens serve the parser and the source
+    // file alike, unless unboxing changed the text the parser reads.
     try {
-      return parseSanyModule(getUnboxedSource(text));
+      const tokens = tokenize(text);
+      const unboxed = getUnboxedSource(text);
+      return { tokens, module: parseSanyModule(unboxed, unboxed === text ? tokens : undefined) };
     } catch (error) {
       if (!(error instanceof TlaSyntaxError)) throw error;
       throw getParseFailure(getSanyParseError(text) ?? `***Parse Error***\n${error.message}`);
@@ -517,14 +523,15 @@ export const generateSanySpecification = (
       throw new TlaMissingModuleError(name, importer, options.version !== "1.7.4");
     }
     options.onParse?.(name);
-    const module = parseSource(name, text);
+    const parsed = parseSource(name, text);
+    const module = parsed.module;
     if (module.name !== name) {
       throw new TlaSanyFatalError(
         `File name '${name}' does not match the name '${module.name}' of the top level module it contains.`,
         undefined,
       );
     }
-    const entry = { file: createSourceFile(module.name, text), module };
+    const entry = { file: createSourceFile(module.name, text, parsed.tokens), module };
     sources.set(name, entry);
     return entry;
   };
@@ -589,11 +596,16 @@ export const generateSanySpecification = (
       resolutions.add(`${next.importer} ${next.name}`);
     }
   };
-  const rootName = options.rootFileName ?? parseSource("", rootSource).name;
+  const rootName = options.rootFileName ?? parseSource("", rootSource).module.name;
   // ParameterizedSpecObj.findOrCreateParsedUnit adds the post conditions' modules to the root
-  // module's own extendees, before those of its inner modules.
+  // module's own extendees, before those of its inner modules. Loading the specification asks for
+  // the dependencies of each module many times, so they are collected once.
+  const moduleDependencies = new Map<Module, ReturnType<typeof getDependencies>>();
   const getModuleDependencies = (name: string, module: Module) => {
+    const cached = moduleDependencies.get(module);
+    if (cached) return cached;
     const dependencies = getDependencies(module);
+    moduleDependencies.set(module, dependencies);
     if (name !== rootName || options.rootExtendees === undefined) return dependencies;
     dependencies.extendees.splice(module.extends.length, 0, ...options.rootExtendees);
     options.rootExtendees.forEach((extendee) => {
