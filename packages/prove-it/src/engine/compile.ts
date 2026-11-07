@@ -24,7 +24,13 @@ import type {
   OperatorValue,
 } from "../evaluate";
 import { getDefinition, getQuantifierElements } from "../evaluate";
-import { getStreamedElements, type Value } from "../values";
+import {
+  createSortedSet,
+  getStreamedElements,
+  isReducibleSet,
+  toFiniteSet,
+  type Value,
+} from "../values";
 import { fromValue, toValue } from "./convert";
 import { MemoTable } from "./memo";
 import {
@@ -775,6 +781,10 @@ export const createCompiler = (environment: Environment): Compiler => {
           ),
           isCostly: consequent.isCostly || alternative.isCostly,
           isNormalized: consequent.isNormalized && alternative.isNormalized,
+          reference: combineReferences([consequent, alternative], ([then, otherwise]) => {
+            const evaluateCondition = condition.evaluate;
+            return () => (evaluateCondition() === TRUE ? then() : otherwise());
+          }),
           isEnumerated: consequent.isEnumerated === true && alternative.isEnumerated === true,
           areElementsEnumerated:
             consequent.areElementsEnumerated === true && alternative.areElementsEnumerated === true,
@@ -1632,6 +1642,33 @@ export const createCompiler = (environment: Environment): Compiler => {
       isNormalized: set.isNormalized,
       isEnumerated: set.isEnumerated,
       areElementsEnumerated: set.areElementsEnumerated,
+      // TLC filters a set it can't enumerate, such as SUBSET S, lazily, in the order of the set.
+      reference: set.isNormalized
+        ? undefined
+        : combineReferences([set], ([base]) => {
+            const test = (element: Value) => {
+              const saved = binding.slots.map((slot) => LOC[slot]);
+              try {
+                assignBound(binding.slots, binding.tuple, fromValue(element));
+                const value = predicateEvaluate();
+                return value === TRUE
+                  ? true
+                  : value === FALSE
+                    ? false
+                    : bail("a filter that isn't a boolean");
+              } finally {
+                binding.slots.forEach((slot, index) => {
+                  LOC[slot] = saved[index];
+                });
+              }
+            };
+            return (): Value => {
+              const value = base();
+              if (isReducibleSet(value))
+                return createSortedSet(toFiniteSet(value).elements.filter(test));
+              return { kind: "FilteredSet", base: value, test };
+            };
+          }),
     };
   };
 
@@ -2271,10 +2308,37 @@ export const createCompiler = (environment: Environment): Compiler => {
           (leftId, rightId) => operation(expectSet(leftId), expectSet(rightId)),
           true,
         );
+        // TLC tests each element of a set enumeration for membership in the other set, so the
+        // difference or intersection with one keeps its order whatever the other set is.
+        const isNormalized =
+          name === "\\"
+            ? left.isNormalized
+            : name === "\\cap"
+              ? left.isNormalized || right.isNormalized
+              : left.isNormalized && right.isNormalized;
         return {
           ...compiled,
-          isNormalized: left.isNormalized && right.isNormalized,
+          isNormalized,
           ...(lazyMember && { member: lazyMember }),
+          // TLC combines a set it keeps lazy with another lazily, as the reference does.
+          reference: isNormalized
+            ? undefined
+            : (() => {
+                const leftReference = referenceOf(left);
+                // TLC enumerates the left set of a difference or an intersection and only tests
+                // the right one for membership, which any value of it answers alike.
+                const rightReference =
+                  referenceOf(right) ??
+                  (name !== "\\cup" && !(right as LazySet).infinite
+                    ? (
+                        (evaluate) => () =>
+                          toValue(evaluate())
+                      )(right.evaluate)
+                    : undefined);
+                if (!leftReference || !rightReference) return undefined;
+                const builtin = environment.builtins.get(name)!;
+                return () => builtin.evaluate([leftReference(), rightReference()]);
+              })(),
         };
       }
       case "SUBSET": {
@@ -2767,6 +2831,22 @@ export const createCompiler = (environment: Environment): Compiler => {
   // The elements of a set in the order TLC enumerates them where an action quantifies over the set
   // (quantifier) or assigns a variable from it (streamed): the set itself when TLC normalizes it,
   // else a tuple of its elements in the reference interpreter's order, cached like any other value.
+  // What a set the engine can't enumerate in TLC's order is, for the reason it hands over.
+  const describeSet = (expression: Expression, context: Context): string => {
+    if (expression.kind === "Identifier") {
+      const binding = isLocallyResolved(expression)
+        ? lookup(context.scope, expression.name)
+        : undefined;
+      if (binding?.kind === "argument") return describeSet(binding.expression, binding.context);
+      const definition = binding ? undefined : getDefinition(expression.name, environment);
+      if (definition?.kind === "Operator" && definition.params.length === 0)
+        return `${expression.name}: ${describeSet(definition.body, ROOT_CONTEXT)}`;
+      return expression.name;
+    }
+    if (expression.kind === "Apply") return expression.operator;
+    return expression.kind;
+  };
+
   const compileOrdered = (
     expression: Expression,
     context: Context,
@@ -2775,7 +2855,11 @@ export const createCompiler = (environment: Environment): Compiler => {
     const set = compile(expression, context);
     if (set.isNormalized) return set;
     const reference = set.reference;
-    if (!reference) return unsupported("enumerating a set TLC keeps lazy");
+    if (!reference) {
+      return unsupported(
+        `enumerating a set TLC keeps lazy (${describeSet(expression, context)} at line ${expression.location.line})`,
+      );
+    }
     const version = environment.runtime.version;
     return cached({
       evaluate: () => {
