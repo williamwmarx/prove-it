@@ -1,0 +1,81 @@
+# Times this commit's Prove It against another commit's (main by default) on one machine: both
+# binaries take turns on each model of packages/prove-it/scripts/bench-suite.json, and each must
+# agree with TLC's recorded result where there is one. Run it by hand, or with depot ci run on a
+# branch, to see what a change does to speed. It holds no credential.
+name: Compare
+"on":
+  workflow_dispatch:
+    inputs:
+      base:
+        description: The commit, branch or tag to time against
+        default: origin/main
+      runs:
+        description: Interleaved runs of each build on each model
+        default: "7"
+      filter:
+        description: Only the models whose id contains this text
+        default: ""
+permissions:
+  contents: read
+env:
+  NPM_TOKEN: ""
+  NODE_AUTH_TOKEN: ""
+  OP_SERVICE_ACCOUNT_TOKEN: ""
+  ONEPASSWORD_PROVE_IT_RELEASE_TOKEN: ""
+jobs:
+  compare:
+    name: Compare
+    runs-on: depot-ubuntu-24.04-4
+    timeout-minutes: 120
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Build both
+        env:
+          BASE: ${{ inputs.base || 'origin/main' }}
+        run: |
+          set -euo pipefail
+          PATH="$(scripts/ci/bootstrap.sh bun node):$PATH"
+          base="$RUNNER_TEMP/base"
+          git worktree add --detach "$base" "$BASE"
+          for root in "$PWD" "$base"; do
+            (cd "$root" && bun install --frozen-lockfile --ignore-scripts && bun run build \
+              && cd packages/prove-it && bun scripts/build-binary.ts)
+          done
+          echo "Base: $(git -C "$base" rev-parse --short HEAD), this: $(git rev-parse --short HEAD) plus any local changes" >> "$GITHUB_STEP_SUMMARY"
+      - name: Fetch the corpus models and library modules
+        run: |
+          set -euo pipefail
+          PATH="$(scripts/ci/bootstrap.sh bun):$PATH"
+          cd packages/prove-it
+          bun scripts/fetch-corpora.ts --only examples,tlc,ccf,summerset,tlapm,community
+      - name: Compare
+        env:
+          RUNS: ${{ inputs.runs || '7' }}
+          FILTER: ${{ inputs.filter || '' }}
+        run: |
+          set -euo pipefail
+          PATH="$(scripts/ci/bootstrap.sh bun node):$PATH"
+          export PROVE_IT_BASE_BINARY="$RUNNER_TEMP/base/packages/prove-it/dist/prove-it"
+          mkdir -p "$RUNNER_TEMP/compare"
+          cd packages/prove-it
+          status=0
+          bun scripts/bench-suite.ts --runs "$RUNS" --checkers prove-it,prove-it-base --timeout 600 \
+            ${FILTER:+--filter "$FILTER"} \
+            --out "$RUNNER_TEMP/compare/results.json" \
+            --markdown "$RUNNER_TEMP/compare/results.md" || status=$?
+          if [[ -f "$RUNNER_TEMP/compare/results.md" ]]; then
+            cat "$RUNNER_TEMP/compare/results.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit "$status"
+      - name: Keep the results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: compare-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/compare/
+          if-no-files-found: warn
+          retention-days: 30

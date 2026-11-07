@@ -14,7 +14,8 @@
 // Usage: bun scripts/bench-suite.ts [--runs 3] [--filter text] [--checkers tlc,tlc-auto,...]
 //        [--timeout seconds] [--out path] [--markdown path]
 // TLA2TOOLS_JAR names tla2tools.jar, TLA_TS_CLI tla-ts's dist/cli.js and TLA_RS_BIN tla-rs's tla
-// binary; the Prove It binary is dist/prove-it (bun run build:binary). A checker whose file is
+// binary, and PROVE_IT_BASE_BINARY another build's dist/prove-it (prove-it-base); the Prove It binary
+// is dist/prove-it (bun run build:binary). A checker whose file is
 // missing is left out.
 
 import { spawnSync } from "node:child_process";
@@ -101,6 +102,8 @@ const markdownPath = getOption("--markdown");
 const jarPath = process.env.TLA2TOOLS_JAR ?? "";
 const tlaTsPath = process.env.TLA_TS_CLI ?? "";
 const tlaRsPath = process.env.TLA_RS_BIN ?? "";
+// Another build of Prove It's binary, such as main's, to time a change against.
+const baseBinaryPath = process.env.PROVE_IT_BASE_BINARY ?? "";
 
 if (
   !Number.isInteger(runs) ||
@@ -295,6 +298,12 @@ const ALL_CHECKERS: (Checker & { isAvailable: boolean })[] = [
     ...TLC_STYLE,
     isAvailable: existsSync(BINARY_PATH),
   },
+  {
+    name: "prove-it-base",
+    getCommand: (model) => [baseBinaryPath, ...getCliArguments(model)],
+    ...TLC_STYLE,
+    isAvailable: baseBinaryPath !== "" && existsSync(baseBinaryPath),
+  },
   { name: "prove-it-bun", getCommand: getBunCommand, ...TLC_STYLE, isAvailable: true },
   {
     name: "prove-it-node",
@@ -316,7 +325,7 @@ const missing = ALL_CHECKERS.filter(
 );
 missing.forEach((checker) =>
   console.warn(
-    `Leaving out ${checker.name}: set TLA2TOOLS_JAR, TLA_TS_CLI and TLA_RS_BIN, and build dist/prove-it`,
+    `Leaving out ${checker.name}: set TLA2TOOLS_JAR, TLA_TS_CLI, TLA_RS_BIN and PROVE_IT_BASE_BINARY, and build dist/prove-it`,
   ),
 );
 if (requested !== undefined && missing.length > 0) process.exit(1);
