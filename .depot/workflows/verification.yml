@@ -18,6 +18,8 @@ concurrency:
 env:
   NPM_TOKEN: ""
   NODE_AUTH_TOKEN: ""
+  OP_SERVICE_ACCOUNT_TOKEN: ""
+  ONEPASSWORD_PROVE_IT_RELEASE_TOKEN: ""
 jobs:
   checks:
     name: ${{ matrix.task }}
