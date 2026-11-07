@@ -93,14 +93,20 @@ const MODELS: SuiteModel[] = JSON.parse(
 );
 const runs = Number(getOption("--runs") ?? 3);
 const filter = getOption("--filter");
-const timeoutSeconds = Number(getOption("--timeout") ?? 600);
+// No deadline unless --timeout asks for one.
+const timeoutOption = getOption("--timeout");
+const timeoutSeconds = timeoutOption === undefined ? undefined : Number(timeoutOption);
 const outPath = getOption("--out") ?? join(PACKAGE_DIRECTORY, ".bench-suite.json");
 const markdownPath = getOption("--markdown");
 const jarPath = process.env.TLA2TOOLS_JAR ?? "";
 const tlaTsPath = process.env.TLA_TS_CLI ?? "";
 const tlaRsPath = process.env.TLA_RS_BIN ?? "";
 
-if (!Number.isInteger(runs) || runs < 1 || !(timeoutSeconds > 0)) {
+if (
+  !Number.isInteger(runs) ||
+  runs < 1 ||
+  (timeoutSeconds !== undefined && !(timeoutSeconds > 0))
+) {
   console.error("--runs takes a whole number from 1, and --timeout a number of seconds above 0");
   process.exit(1);
 }
@@ -339,8 +345,9 @@ const run = (command: string[], cwd: string, engineSetting?: string) => {
         : { ...environment, PROVE_IT_ENGINE: engineSetting },
     stdout: "pipe",
     stderr: "pipe",
-    timeout: timeoutSeconds * 1000,
-    killSignal: "SIGKILL",
+    ...(timeoutSeconds === undefined
+      ? {}
+      : { timeout: timeoutSeconds * 1000, killSignal: "SIGKILL" }),
   });
   return {
     result,
@@ -727,7 +734,7 @@ if (markdownPath !== undefined) {
   const lines = [
     "## Checker benchmark",
     "",
-    `Median wall seconds of ${runs} interleaved runs (CPU seconds; min–max wall), startup included, on ${machine.cores} cores (${machine.cpu}, ${machine.memoryGigabytes} GB). Speedups are over \`${baseline}\` at ${machine.proveIt}, on the models where both agree with TLC on one worker. A checker that fails, times out (${timeoutSeconds} s) or disagrees with TLC on a model says so instead of a time and takes no more runs there.`,
+    `Median wall seconds of ${runs} interleaved runs (CPU seconds; min–max wall), startup included, on ${machine.cores} cores (${machine.cpu}, ${machine.memoryGigabytes} GB). Speedups are over \`${baseline}\` at ${machine.proveIt}, on the models where both agree with TLC on one worker. A checker that fails${timeoutSeconds === undefined ? "" : `, times out (${timeoutSeconds} s)`} or disagrees with TLC on a model says so instead of a time and takes no more runs there.`,
     "",
     row(["Checker", "Version", `${baseline} is faster (wall)`, "(CPU)", "Models agreeing"]),
     row(["---", "---", "---:", "---:", "---:"]),
