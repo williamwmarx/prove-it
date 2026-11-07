@@ -4,7 +4,7 @@
 
 import { afterEach, describe, expect, it, spyOn } from "bun:test";
 
-import { check } from "../../src";
+import { check, formatValue } from "../../src";
 import { nextEpoch } from "../../src/engine/compile";
 import { EpochCache } from "../../src/engine/memo";
 
@@ -351,6 +351,32 @@ describe("the engine", () => {
     );
     expect([unchanged.result.generatedStates, unchanged.result.distinctStates]).toEqual([3, 2]);
     expect(unchanged.lines).toEqual([expect.stringMatching(/^\[engine\] checked 2 states/)]);
+  });
+
+  it("prints the records of a trace it recovers through its states as TLC sorts them", async () => {
+    // Done names status before Next names row, so TLC sorts status first when it fingerprints the
+    // states it recovers for the trace, though the constructor writes row first.
+    const { result, lines } = await checkInEngine(
+      [
+        "EXTENDS Naturals",
+        "VARIABLES ev, x, y",
+        'Done == {i \\in DOMAIN ev : ev[i].status = "done"}',
+        'Init == ev = 0 /\\ x = "" /\\ y = 0',
+        "Next == \\/ y = 0 /\\ ev' = [row |-> 0, status |-> 0] /\\ y' = 1 /\\ x' = x",
+        "        \\/ y = 1 /\\ \\E k \\in DOMAIN ev : x' = k /\\ y' = 2 /\\ ev' = ev",
+        "        \\/ y = 2 /\\ x' = \"end\" /\\ y' = 3 /\\ ev' = ev",
+        "Inv == y < 3",
+      ].join("\n"),
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+    );
+    expect(result.status).toBe("invariant-violation");
+    expect(lines).toEqual([expect.stringMatching(/an invariant violated$/)]);
+    expect((result.violation?.trace ?? []).map((step) => formatValue(step.state.ev))).toEqual([
+      "0",
+      "[status |-> 0, row |-> 0]",
+      "[status |-> 0, row |-> 0]",
+      "[status |-> 0, row |-> 0]",
+    ]);
   });
 
   it("never issues an epoch again, so a cached value can't outlive its state", () => {

@@ -909,6 +909,13 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     isSameState(getFingerprintState(state), fingerprintStates[index]);
   const findSuccessorWithFingerprint = (state: Value[], index: number) =>
     findTraceSuccessor(state, (successor) => hasFingerprint(successor.state, index));
+  // Without a VIEW or SYMMETRY, TLC fingerprints the state itself to recover it, which sorts each
+  // record and set it holds, as the search does with each state it stores.
+  const settleRecoveredState = (state: Value[]) => {
+    if (isReducing) return;
+    for (const value of state) getValueHash(value);
+    state.forEach(markFingerprinted);
+  };
   const getPathStates = (path: number[], nextFailure: string) => {
     const initial = captureOutput(() =>
       isReducing || isImpure(environment)
@@ -916,6 +923,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         : states[path[0]],
     ).result;
     if (!initial) throw new TlaEvaluationError(INITIAL_RECOVERY_FAILURE);
+    settleRecoveredState(initial);
     const steps: Successor[] = [{ state: initial, action: undefined }];
     for (let position = 1; position < path.length; position++) {
       const previous = steps[position - 1].state;
@@ -925,6 +933,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       }
       const successor = findSuccessorWithFingerprint(previous, path[position]);
       if (!successor) throw new TlaEvaluationError(nextFailure);
+      settleRecoveredState(successor.state);
       steps.push(successor);
     }
     return steps;
