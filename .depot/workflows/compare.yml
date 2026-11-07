@@ -63,7 +63,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/compare"
           cd packages/prove-it
           status=0
-          bun scripts/bench-suite.ts --runs "$RUNS" --checkers prove-it,prove-it-base --timeout 600 \
+          bun scripts/bench-suite.ts --runs "$RUNS" --checkers prove-it,prove-it-base \
             ${FILTER:+--filter "$FILTER"} \
             --out "$RUNNER_TEMP/compare/results.json" \
             --markdown "$RUNNER_TEMP/compare/results.md" || status=$?
