@@ -429,6 +429,8 @@ interface OperatorBinding {
   params: OperatorParam[];
   body: Expression;
   context: Context;
+  // A RECURSIVE operator defined in a LET, whose context binds it.
+  isRecursive?: boolean;
 }
 
 interface Scope {
@@ -527,7 +529,7 @@ const unsupported = (what: string): never => bail(`unsupported: ${what}`);
 export const createCompiler = (environment: Environment): Compiler => {
   const variableCount = environment.variables.length;
   const definitionCache = new Map<Definition, Compiled[]>();
-  const recursiveOperators = new Map<Definition, RecursiveOperator>();
+  const recursiveOperators = new Map<object, RecursiveOperator>();
   const expanding = new Set<Definition>();
   let depth = 0;
 
@@ -946,16 +948,17 @@ export const createCompiler = (environment: Environment): Compiler => {
           compiled: [],
         });
       } else {
-        if (definition.isRecursive) unsupported("a recursive LET operator");
-        scope = bind(scope, definition.name, {
-          kind: "operator",
-          operator: {
-            name: definition.name,
-            params: definition.params,
-            body: definition.body,
-            context: definitionContext,
-          },
-        });
+        const operator: OperatorBinding = {
+          name: definition.name,
+          params: definition.params,
+          body: definition.body,
+          context: definitionContext,
+        };
+        scope = bind(scope, definition.name, { kind: "operator", operator });
+        if (definition.isRecursive) {
+          operator.isRecursive = true;
+          operator.context = { ...definitionContext, scope };
+        }
       }
     }
     return { ...context, scope };
@@ -1081,6 +1084,7 @@ export const createCompiler = (environment: Environment): Compiler => {
   };
 
   const compileOperatorCall = (operator: OperatorBinding, args: Expression[], context: Context) => {
+    if (operator.isRecursive) return compileRecursiveCall(operator, args, context, operator);
     const callee = bindArguments(operator.params, args, context, {
       ...operator.context,
       isPrimed: context.isPrimed || operator.context.isPrimed,
@@ -1103,14 +1107,17 @@ export const createCompiler = (environment: Environment): Compiler => {
     isEnumerated: boolean;
   }
 
+  // A call of a RECURSIVE operator: a global one, or one a LET defines, whose body sees the LET's
+  // scope.
   const compileRecursiveCall = (
-    definition: OperatorDefinition,
+    definition: { params: OperatorParam[]; body: Expression },
     args: Expression[],
     context: Context,
+    local?: OperatorBinding,
   ): Compiled => {
     if (definition.params.some((param) => param.arity > 0))
       return unsupported("a recursive higher-order operator");
-    const key = definition;
+    const key: object = local ?? definition;
     let recursive = recursiveOperators.get(key);
     if (!recursive) {
       const slots = definition.params.map(() => allocateSlot());
@@ -1126,13 +1133,17 @@ export const createCompiler = (environment: Environment): Compiler => {
       };
       recursive = created;
       recursiveOperators.set(key, created);
-      let scope: Scope | undefined;
+      let scope = local?.context.scope;
       definition.params.forEach((param, index) => {
         scope = bind(scope, param.name, { kind: "slot", slot: slots[index] });
       });
-      expanding.add(definition);
+      if (!local) expanding.add(definition as OperatorDefinition);
       try {
-        const bodyContext = { scope, isPrimed: context.isPrimed, isInit: context.isInit };
+        const bodyContext = {
+          scope,
+          isPrimed: context.isPrimed || (local?.context.isPrimed ?? false),
+          isInit: context.isInit,
+        };
         created.body = compile(definition.body, bodyContext);
         // Each compile can only take away what the last one claimed, so this settles.
         while (
@@ -1145,7 +1156,7 @@ export const createCompiler = (environment: Environment): Compiler => {
           created.body = compile(definition.body, bodyContext);
         }
       } finally {
-        expanding.delete(definition);
+        if (!local) expanding.delete(definition as OperatorDefinition);
       }
       const footprint = created.body.footprint;
       created.keySlots = mergeSorted(
@@ -2550,6 +2561,7 @@ export const createCompiler = (environment: Environment): Compiler => {
       const binding = lookup(context.scope, name);
       if (binding?.kind === "operator") {
         const operator = binding.operator;
+        if (operator.isRecursive) return undefined;
         return {
           body: operator.body,
           context: bindArguments(operator.params, expression.args, context, {
