@@ -15,8 +15,8 @@
 //        [--timeout seconds] [--out path] [--markdown path]
 // TLA2TOOLS_JAR names tla2tools.jar, TLA_TS_CLI tla-ts's dist/cli.js and TLA_RS_BIN tla-rs's tla
 // binary, and PROVE_IT_BASE_BINARY another build's dist/prove-it (prove-it-base); the Prove It binary
-// is dist/prove-it (bun run build:binary). A checker whose file is
-// missing is left out.
+// is dist/prove-it (bun run build:binary), and the one Bun compiled ahead of time dist/prove-it-aot
+// (build-binary.ts --aot, prove-it-aot). A checker whose file is missing is left out.
 
 import { spawnSync } from "node:child_process";
 import {
@@ -91,6 +91,7 @@ type Verdict = "agrees" | "disagrees" | "unchecked" | "fails" | "times out";
 const PACKAGE_DIRECTORY = join(import.meta.dirname, "..");
 const CLI_PATH = join(PACKAGE_DIRECTORY, "dist/cli.js");
 const BINARY_PATH = join(PACKAGE_DIRECTORY, "dist/prove-it");
+const AOT_BINARY_PATH = join(PACKAGE_DIRECTORY, "dist/prove-it-aot");
 const MODELS: SuiteModel[] = JSON.parse(
   readFileSync(join(import.meta.dirname, "bench-suite.json"), "utf8"),
 );
@@ -299,6 +300,12 @@ const ALL_CHECKERS: (Checker & { isAvailable: boolean })[] = [
     getCommand: (model) => [BINARY_PATH, ...getCliArguments(model)],
     ...TLC_STYLE,
     isAvailable: existsSync(BINARY_PATH),
+  },
+  {
+    name: "prove-it-aot",
+    getCommand: (model) => [AOT_BINARY_PATH, ...getCliArguments(model)],
+    ...TLC_STYLE,
+    isAvailable: existsSync(AOT_BINARY_PATH),
   },
   {
     name: "prove-it-base",
