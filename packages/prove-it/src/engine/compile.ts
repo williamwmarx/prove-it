@@ -467,6 +467,8 @@ export interface Compiler {
   // The context the reference interpreter's scope stands for, or undefined for one that binds an
   // operator.
   contextFromScope: (scope: EvaluationScope | undefined) => Context | undefined;
+  // How the compiler tests ENABLED A, which it needs the action compiler for.
+  setEnabledCompiler: (compile: (action: Expression, context: Context) => () => boolean) => void;
   environment: Environment;
   variableCount: number;
 }
@@ -829,11 +831,41 @@ export const createCompiler = (environment: Environment): Compiler => {
           mergeFootprints(now.footprint, next.footprint),
         );
       }
+      case "Enabled":
+        return compileEnabled(expression.expression, context);
       case "Label":
         return compile(expression.body, context);
       default:
         return unsupported(`expression ${expression.kind}`);
     }
+  };
+
+  // ENABLED A runs A from the current state until its first successor. It reads every variable and
+  // may read any name bound around it.
+  let compileEnabledTest: ((action: Expression, context: Context) => () => boolean) | undefined;
+  const allVariables = Array.from({ length: variableCount }, (_, index) => index);
+  const getBoundSlots = (scope: Scope | undefined, slots: Set<number>, seen: Set<Scope>) => {
+    for (let current = scope; current && !seen.has(current); current = current.parent) {
+      seen.add(current);
+      const binding = current.binding;
+      if (binding.kind === "slot") slots.add(binding.slot);
+      else if (binding.kind === "argument") getBoundSlots(binding.context.scope, slots, seen);
+      else if (binding.kind === "operator")
+        getBoundSlots(binding.operator.context.scope, slots, seen);
+      else if (binding.kind === "recursive") getBoundSlots(binding.scope, slots, seen);
+    }
+    return slots;
+  };
+  const compileEnabled = (action: Expression, context: Context): Compiled => {
+    if (!compileEnabledTest || context.isPrimed || context.isInit)
+      return unsupported("expression Enabled");
+    const test = compileEnabledTest(action, context);
+    const slots = [...getBoundSlots(context.scope, new Set(), new Set())].sort((a, b) => a - b);
+    return {
+      ...leaf(() => (test() ? TRUE : FALSE), { vars: allVariables, primes: [], slots }),
+      isCostly: true,
+      isBoolean: true,
+    } as Compiled;
   };
 
   const compileJunction = (expression: Expression & { kind: "And" | "Or" }, context: Context) => {
@@ -2003,7 +2035,32 @@ export const createCompiler = (environment: Environment): Compiler => {
       case "\\": {
         const left = operand(0);
         const right = operand(1);
-        if ((left as LazySet).infinite || (right as LazySet).infinite) return undefined;
+        // A set the engine tests for membership without building it, such as Nat \ {0} or a union
+        // of record sets with a field in Nat, combines the operands' tests.
+        const isLazy = (set: Compiled) =>
+          (set as LazySet).infinite !== undefined || (set as LazySet).member !== undefined;
+        const lazyMember = (() => {
+          if (!isLazy(left) && !isLazy(right)) return undefined;
+          const leftMember = memberTest(left);
+          const rightMember = memberTest(right);
+          if (name === "\\cup")
+            return (element: number) => leftMember(element) || rightMember(element);
+          if (name === "\\cap")
+            return (element: number) => leftMember(element) && rightMember(element);
+          return (element: number) => leftMember(element) && !rightMember(element);
+        })();
+        if ((left as LazySet).infinite || (right as LazySet).infinite) {
+          if (name === "\\" ? (right as LazySet).infinite : name !== "\\cup") return undefined;
+          return {
+            ...leaf(
+              () => bail("an enumerated infinite set"),
+              mergeFootprints(left.footprint, right.footprint),
+              false,
+            ),
+            infinite: "Combined",
+            member: lazyMember,
+          } as LazySet;
+        }
         const operation = name === "\\cup" ? union : name === "\\cap" ? intersection : difference;
         const compiled = binary(
           left,
@@ -2011,7 +2068,11 @@ export const createCompiler = (environment: Environment): Compiler => {
           (leftId, rightId) => operation(expectSet(leftId), expectSet(rightId)),
           true,
         );
-        return { ...compiled, isNormalized: left.isNormalized && right.isNormalized };
+        return {
+          ...compiled,
+          isNormalized: left.isNormalized && right.isNormalized,
+          ...(lazyMember && { member: lazyMember }),
+        };
       }
       case "SUBSET": {
         const base = operand(0);
@@ -2022,10 +2083,12 @@ export const createCompiler = (environment: Environment): Compiler => {
             kind: "Subset",
             base: baseReference(),
           })),
-          member: (
-            (evaluate) => (element: number) =>
-              kindOf(element) === KIND_SET && isSubset(element, expectSet(evaluate()))
-          )(base.evaluate),
+          member: ((baseMember) => (element: number) => {
+            if (kindOf(element) !== KIND_SET) return false;
+            for (let index = 0; index < sizeOf(element); index++)
+              if (!baseMember(elementAt(element, index))) return false;
+            return true;
+          })(memberTest(base)),
         } as LazySet;
       }
       case "UNION":
@@ -2457,32 +2520,66 @@ export const createCompiler = (environment: Environment): Compiler => {
     } as Compiled);
   };
 
+  // A closure or thunk in the reference may close over the scope that binds it, so a binding whose
+  // scope is its own node gets the translated context once that exists.
+  const translatedScopes = new WeakMap<EvaluationScope, Context | null>();
   const contextFromScope = (scope: EvaluationScope | undefined): Context | undefined => {
     if (!scope) return ROOT_CONTEXT;
+    const known = translatedScopes.get(scope);
+    if (known !== undefined) return known ?? undefined;
+    translatedScopes.set(scope, null);
+    const context = translateScope(scope);
+    translatedScopes.set(scope, context ?? null);
+    return context;
+  };
+  const translateScope = (scope: EvaluationScope): Context | undefined => {
     const parent = contextFromScope(scope.parent);
     if (!parent) return undefined;
     const binding = scope.binding;
+    const closeOver = (inner: EvaluationScope | undefined, patch: (context: Context) => void) => {
+      if (inner === scope) return true;
+      const context = contextFromScope(inner);
+      if (!context) return false;
+      patch(context);
+      return true;
+    };
+    let translated: Binding;
+    let patchSelf: ((context: Context) => void) | undefined;
     if (binding.kind === "Value") {
-      const id = fromValue(binding.value);
-      return {
-        ...parent,
-        scope: bind(parent.scope, scope.name, { kind: "value", compiled: constant(id) }),
+      translated = { kind: "value", compiled: constant(fromValue(binding.value)) };
+    } else if (binding.kind === "Thunk") {
+      const argument = {
+        kind: "argument" as const,
+        expression: binding.expression,
+        context: ROOT_CONTEXT,
+        compiled: [],
       };
-    }
-    if (binding.kind === "Thunk") {
-      const thunkContext = contextFromScope(binding.scope);
-      if (!thunkContext) return undefined;
-      return {
-        ...parent,
-        scope: bind(parent.scope, scope.name, {
-          kind: "argument",
-          expression: binding.expression,
-          context: thunkContext,
-          compiled: [],
-        }),
+      const patch = (context: Context) => {
+        argument.context = context;
       };
+      if (!closeOver(binding.scope, patch)) return undefined;
+      if (binding.scope === scope) patchSelf = patch;
+      translated = argument;
+    } else if (binding.operator.kind === "Closure") {
+      const closure = binding.operator;
+      const operator: OperatorBinding = {
+        name: closure.name,
+        params: closure.params,
+        body: closure.body,
+        context: ROOT_CONTEXT,
+      };
+      const patch = (context: Context) => {
+        operator.context = context;
+      };
+      if (!closeOver(closure.scope, patch)) return undefined;
+      if (closure.scope === scope) patchSelf = patch;
+      translated = { kind: "operator", operator };
+    } else {
+      return undefined;
     }
-    return undefined;
+    const context = { ...parent, scope: bind(parent.scope, scope.name, translated) };
+    patchSelf?.(context);
+    return context;
   };
 
   const bindValueSlot = (context: Context, name: string) => {
@@ -2508,6 +2605,9 @@ export const createCompiler = (environment: Environment): Compiler => {
     bindLet: bindLetDefinitions,
     bindValue: bindValueSlot,
     contextFromScope,
+    setEnabledCompiler: (compileTest) => {
+      compileEnabledTest = compileTest;
+    },
     environment,
     variableCount,
   };

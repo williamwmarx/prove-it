@@ -8,6 +8,7 @@ import { createEngineContext, type EngineProperties, toEngineProperties } from "
 import { attachSearch, type GoMessage, serveLevels } from "./engine/parallel";
 import { attachSharedStore } from "./engine/store";
 import { createEnvironment } from "./environment";
+import type { EvaluationScope } from "./evaluate";
 import { createSearch } from "./search";
 import { createTlcOrder } from "./tlc/order";
 import type { TlcVersion } from "./tlc/version";
@@ -32,6 +33,7 @@ interface Prepared {
   config: ModelConfig;
   init: Expression;
   next: Expression;
+  scope: EvaluationScope | undefined;
   isWarningEnabled: boolean;
   properties: EngineProperties;
 }
@@ -63,6 +65,7 @@ const prepare = (start: EngineStartMessage): Prepared | undefined => {
     config: start.config,
     init,
     next,
+    scope: search.spec.scope,
     isWarningEnabled: start.isWarningEnabled,
     properties,
   };
@@ -78,7 +81,7 @@ const serve = () => {
   const context = createEngineContext(
     prepared.environment,
     prepared.config,
-    { init: prepared.init, next: prepared.next },
+    { init: prepared.init, next: prepared.next, scope: prepared.scope },
     prepared.isWarningEnabled,
     prepared.properties,
   );

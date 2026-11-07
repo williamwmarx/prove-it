@@ -3,16 +3,24 @@
 
 import type { Expression } from "../ast";
 import type { ModelConfig } from "../config";
-import { type Environment, getDefinition } from "../evaluate";
-import { compileAction, type Step } from "./action";
+import { type Environment, type EvaluationScope, getDefinition } from "../evaluate";
+import { compileAction, createEnabledTest, type Step } from "./action";
 import { generateAction } from "./codegen";
-import { type Compiled, type Compiler, createCompiler, ROOT_CONTEXT } from "./compile";
+import {
+  type CompileContext,
+  type Compiled,
+  type Compiler,
+  createCompiler,
+  ROOT_CONTEXT,
+} from "./compile";
 import { getCodegenSetting, reportEngine } from "./settings";
 import { bail, FALSE, TRUE } from "./store";
 
 export interface EngineSpec {
   init: Expression;
   next: Expression;
+  // The bindings of the instance the specification comes from, when it names one.
+  scope?: EvaluationScope;
 }
 
 // The temporal properties the engine checks as TLC does in its search: those that assert a state
@@ -84,6 +92,35 @@ const compilePredicate = (compiled: Compiled) => {
   };
 };
 
+const buildStep = (
+  compiler: Compiler,
+  expression: Expression,
+  context: CompileContext,
+  isInit: boolean,
+  isAssignedShortcut: boolean,
+): { step: Step; isGenerated: boolean } => {
+  const options = { isInit, isAssignedShortcut };
+  const generated =
+    getCodegenSetting() === "0"
+      ? undefined
+      : generateAction(compiler, expression, context, options);
+  if (generated) return { step: generated, isGenerated: true };
+  return { step: compileAction(compiler, expression, context, options), isGenerated: false };
+};
+
+// A compiler that tests ENABLED A by running A, as TLC does: without its shortcut once every
+// variable is assigned.
+export const createEngineCompiler = (environment: Environment): Compiler => {
+  const compiler = createCompiler(environment);
+  compiler.setEnabledCompiler((action, context) =>
+    createEnabledTest(
+      buildStep(compiler, action, context, false, false).step,
+      compiler.variableCount,
+    ),
+  );
+  return compiler;
+};
+
 export const createEngineContext = (
   environment: Environment,
   config: ModelConfig,
@@ -91,21 +128,18 @@ export const createEngineContext = (
   isWarningEnabled: boolean,
   properties: EngineProperties,
 ): EngineContext => {
-  const compiler = createCompiler(environment);
+  const compiler = createEngineCompiler(environment);
   const named = (kind: string, name: string) => {
     if (!getDefinition(name, environment)) return bail(`the ${kind} ${name} isn't defined`);
     return compilePredicate(compiler.compile(identifier(name), ROOT_CONTEXT));
   };
+  const specContext = compiler.contextFromScope(spec.scope);
+  if (!specContext) return bail("a specification scope the engine can't translate");
   const buildAction = (expression: Expression, isInit: boolean, isAssignedShortcut: boolean) => {
-    const context = isInit ? { ...ROOT_CONTEXT, isInit: true } : ROOT_CONTEXT;
-    const options = { isInit, isAssignedShortcut };
-    const generated =
-      getCodegenSetting() === "0"
-        ? undefined
-        : generateAction(compiler, expression, context, options);
-    if (generated) return generated;
-    reportEngine(`${isInit ? "init" : "next"} runs as closures`);
-    return compileAction(compiler, expression, context, options);
+    const context = isInit ? { ...specContext, isInit: true } : specContext;
+    const step = buildStep(compiler, expression, context, isInit, isAssignedShortcut);
+    if (!step.isGenerated) reportEngine(`${isInit ? "init" : "next"} runs as closures`);
+    return step.step;
   };
   const predicate = (expression: Expression) =>
     compilePredicate(compiler.compile(expression, ROOT_CONTEXT));

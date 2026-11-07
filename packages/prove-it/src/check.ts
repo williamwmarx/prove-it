@@ -1402,7 +1402,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       const result = runEngine({
         config,
         environment,
-        spec: { init, next },
+        spec: { init, next, scope: spec.scope },
         isWarningEnabled: runtime.isWarningEnabled,
         tlcOrder: search.getTlcOrder(),
         startedAt,
@@ -1483,7 +1483,6 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     if (config.possible.length > 0) return "_POSSIBLE predicates";
     if (config.periodic !== undefined) return "periodic";
     if (is174) return "TLC 1.7.4";
-    if (spec.scope !== undefined) return "a scoped specification";
     if (!toEngineProperties(search.properties)) return "properties in an instance";
     return undefined;
   };

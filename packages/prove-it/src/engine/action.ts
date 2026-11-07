@@ -12,6 +12,7 @@ import {
   LOC,
   NXT,
   registers,
+  setNext,
 } from "./compile";
 import {
   bail,
@@ -38,6 +39,40 @@ interface ActionOptions {
 export const resetAssigned = () => {
   registers.assigned = 0;
   undoTop.value = 0;
+};
+
+const FOUND = Symbol("found");
+
+// Whether a step has a successor from the current state, which ENABLED asks. It runs the step from
+// a next state of its own until the first successor, and puts back the next state and assignments
+// of any step it runs inside.
+export const createEnabledTest = (step: Step, width: number) => {
+  const buffers: Int32Array[] = [];
+  let depth = 0;
+  return (): boolean => {
+    const outerNext = NXT;
+    const outerAssigned = registers.assigned;
+    const outerTop = undoTop.value;
+    const next = (buffers[depth] ??= new Int32Array(width));
+    next.fill(-1);
+    depth++;
+    setNext(next);
+    registers.assigned = 0;
+    try {
+      step(() => {
+        throw FOUND;
+      });
+      return false;
+    } catch (error) {
+      if (error === FOUND) return true;
+      throw error;
+    } finally {
+      depth--;
+      setNext(outerNext);
+      registers.assigned = outerAssigned;
+      undoTop.value = outerTop;
+    }
+  };
 };
 
 const target = (isInit: boolean) => (isInit ? CUR : NXT);

@@ -112,7 +112,10 @@ const runModel = (model: CorpusModel, setting: string, expected: ExpectedResult)
               ? "mismatch"
               : "match",
         detail: detail ?? outcome?.error,
-        engineLine: /^\[engine\] (.*)$/m.exec(errorOutput)?.[1],
+        // Notes on how the engine runs, such as closures standing in for generated code, aren't outcomes.
+        engineLine: [...errorOutput.matchAll(/^\[engine\] (.*)$/gm)]
+          .map((match) => match[1])
+          .find((line) => !line.endsWith(" runs as closures")),
         stderr: errorOutput.slice(0, 4000),
         wallMilliseconds: Math.round(performance.now() - startedAt),
       });

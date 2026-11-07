@@ -7,16 +7,9 @@ import type { Expression } from "../ast";
 import type { EvaluationScope } from "../evaluate";
 import type { LiveExpression } from "../tableau";
 import type { Value } from "../values";
-import { compileAction, type Step } from "./action";
+import { compileAction, createEnabledTest } from "./action";
 import { generateAction } from "./codegen";
-import {
-  type CompileContext,
-  type Compiled,
-  type Compiler,
-  registers,
-  setCurrent,
-  setNext,
-} from "./compile";
+import { type CompileContext, type Compiled, type Compiler, setCurrent, setNext } from "./compile";
 import { Bailout, FALSE, TRUE } from "./store";
 
 export type LiveOracle = (
@@ -26,7 +19,6 @@ export type LiveOracle = (
 ) => boolean | undefined;
 
 const UNKNOWN = Symbol("unknown");
-const FOUND = Symbol("found");
 
 export const createLiveOracle = (
   compiler: Compiler,
@@ -36,7 +28,10 @@ export const createLiveOracle = (
   const next = new Int32Array(width);
   const contexts = new Map<EvaluationScope | undefined, CompileContext | typeof UNKNOWN>();
   const values = new Map<Expression, Map<EvaluationScope | undefined, Compiled | typeof UNKNOWN>>();
-  const steps = new Map<Expression, Map<EvaluationScope | undefined, Step | typeof UNKNOWN>>();
+  const enabledTests = new Map<
+    Expression,
+    Map<EvaluationScope | undefined, (() => boolean) | typeof UNKNOWN>
+  >();
 
   const getContext = (scope: EvaluationScope | undefined) => {
     let context = contexts.get(scope);
@@ -77,22 +72,6 @@ export const createLiveOracle = (
     return value === TRUE ? true : value === FALSE ? false : undefined;
   };
 
-  const isEnabled = (step: Step) => {
-    next.fill(-1);
-    registers.assigned = 0;
-    try {
-      step(() => {
-        throw FOUND;
-      });
-      return false;
-    } catch (error) {
-      if (error === FOUND) return true;
-      throw error;
-    } finally {
-      registers.assigned = 0;
-    }
-  };
-
   return (expression, state, successor) => {
     if (
       expression.kind !== "State" &&
@@ -113,14 +92,14 @@ export const createLiveOracle = (
         return compiled === UNKNOWN ? undefined : holds(compiled);
       }
       if (expression.kind === "Enabled") {
-        const step = getCompiled(steps, expression.step, expression.scope, (context) => {
+        const test = getCompiled(enabledTests, expression.step, expression.scope, (context) => {
           const options = { isInit: false, isAssignedShortcut: false };
-          return (
+          const step =
             generateAction(compiler, expression.step, context, options) ??
-            compileAction(compiler, expression.step, context, options)
-          );
+            compileAction(compiler, expression.step, context, options);
+          return createEnabledTest(step, width);
         });
-        return step === UNKNOWN ? undefined : isEnabled(step);
+        return test === UNKNOWN ? undefined : test();
       }
       const nextIds = successor && getIds(successor);
       if (!nextIds) return undefined;
