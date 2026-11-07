@@ -167,6 +167,11 @@ export interface Compiled {
   // For a set: whether TLC's value is a normalized set, whose elements TLC enumerates in its order.
   // The engine enumerates any other set the way the reference interpreter does.
   isNormalized: boolean;
+  // For a set: whether TLC's value is a set enumeration, as {a, b} and {e : x \in S} are, and for a
+  // set of sets, whether each element's is. TLC's UNION of a set enumeration of set enumerations is
+  // a normalized set enumeration, and any other UNION is lazy.
+  isEnumerated?: boolean;
+  areElementsEnumerated?: boolean;
   // Writes the expression as JavaScript, for generated code. Without it, generated code calls
   // evaluate.
   emit?: (gen: CodeGen) => string;
@@ -707,6 +712,9 @@ export const createCompiler = (environment: Environment): Compiler => {
           ),
           isCostly: consequent.isCostly || alternative.isCostly,
           isNormalized: consequent.isNormalized && alternative.isNormalized,
+          isEnumerated: consequent.isEnumerated === true && alternative.isEnumerated === true,
+          areElementsEnumerated:
+            consequent.areElementsEnumerated === true && alternative.areElementsEnumerated === true,
           emit: (gen) =>
             `${codeOf(condition, gen)} ? ${codeOf(consequent, gen)} : ${codeOf(alternative, gen)}`,
           isBoolean: consequent.isBoolean === true && alternative.isBoolean === true,
@@ -735,6 +743,11 @@ export const createCompiler = (environment: Environment): Compiler => {
           ),
           isCostly: true,
           isNormalized: arms.every((arm) => arm.body.isNormalized) && (other?.isNormalized ?? true),
+          isEnumerated:
+            arms.every((arm) => arm.body.isEnumerated === true) && (other?.isEnumerated ?? true),
+          areElementsEnumerated:
+            arms.every((arm) => arm.body.areElementsEnumerated === true) &&
+            (other?.areElementsEnumerated ?? true),
         };
       }
       case "Let":
@@ -748,12 +761,15 @@ export const createCompiler = (environment: Environment): Compiler => {
         const elements = expression.elements.map((element) => compile(element, context));
         const evaluators = elements.map((element) => element.evaluate);
         const footprint = mergeFootprints(...elements.map((element) => element.footprint));
-        if (evaluators.length === 0) return constant(EMPTY_SET);
+        if (evaluators.length === 0)
+          return { ...constant(EMPTY_SET), isEnumerated: true, areElementsEnumerated: true };
         return {
           evaluate: () => setOf(evaluators.map((evaluate) => evaluate())),
           footprint,
           isCostly: true,
           isNormalized: true,
+          isEnumerated: true,
+          areElementsEnumerated: elements.every((element) => element.isEnumerated === true),
         };
       }
       case "Tuple": {
@@ -1080,6 +1096,10 @@ export const createCompiler = (environment: Environment): Compiler => {
     keySlots: number[];
     keyVars: number[];
     keyPrimes: number[];
+    // Whether the operator's value, when a set, is normalized and a set enumeration. A call inside
+    // the body takes it to be until the body says otherwise, when the body compiles again.
+    isNormalized: boolean;
+    isEnumerated: boolean;
   }
 
   const compileRecursiveCall = (
@@ -1100,6 +1120,8 @@ export const createCompiler = (environment: Environment): Compiler => {
         keySlots: [],
         keyVars: [],
         keyPrimes: [],
+        isNormalized: true,
+        isEnumerated: true,
       };
       recursive = created;
       recursiveOperators.set(key, created);
@@ -1109,11 +1131,18 @@ export const createCompiler = (environment: Environment): Compiler => {
       });
       expanding.add(definition);
       try {
-        created.body = compile(definition.body, {
-          scope,
-          isPrimed: context.isPrimed,
-          isInit: context.isInit,
-        });
+        const bodyContext = { scope, isPrimed: context.isPrimed, isInit: context.isInit };
+        created.body = compile(definition.body, bodyContext);
+        // Each compile can only take away what the last one claimed, so this settles.
+        while (
+          (created.isNormalized && !created.body.isNormalized) ||
+          (created.isEnumerated && created.body.isEnumerated !== true)
+        ) {
+          created.isNormalized &&= created.body.isNormalized;
+          created.isEnumerated &&= created.body.isEnumerated === true;
+          created.body = undefined;
+          created.body = compile(definition.body, bodyContext);
+        }
       } finally {
         expanding.delete(definition);
       }
@@ -1175,7 +1204,13 @@ export const createCompiler = (environment: Environment): Compiler => {
           primes: Array.from({ length: variableCount }, (_, index) => index),
           slots: [],
         };
-    return { evaluate, footprint, isCostly: false, isNormalized: true };
+    return {
+      evaluate,
+      footprint,
+      isCostly: false,
+      isNormalized: operator.isNormalized,
+      isEnumerated: operator.isEnumerated,
+    };
   };
 
   const compileFunctionDefinition = (
@@ -1481,6 +1516,8 @@ export const createCompiler = (environment: Environment): Compiler => {
       footprint: mergeFootprints(set.footprint, withoutSlots(predicate.footprint, binding.slots)),
       isCostly: true,
       isNormalized: set.isNormalized,
+      isEnumerated: set.isEnumerated,
+      areElementsEnumerated: set.areElementsEnumerated,
     };
   };
 
@@ -1526,6 +1563,8 @@ export const createCompiler = (environment: Environment): Compiler => {
       ),
       isCostly: true,
       isNormalized: true,
+      isEnumerated: true,
+      areElementsEnumerated: body.isEnumerated === true,
     };
   };
 
@@ -2091,21 +2130,25 @@ export const createCompiler = (environment: Environment): Compiler => {
           })(memberTest(base)),
         } as LazySet;
       }
-      case "UNION":
+      case "UNION": {
+        const outer = operand(0);
+        const isEnumerated = outer.isEnumerated === true && outer.areElementsEnumerated === true;
         return {
           ...unary(
-            operand(0),
+            outer,
             (set) => {
               let result = EMPTY_SET;
-              const outer = expectSet(set);
-              for (let index = 0; index < sizeOf(outer); index++)
-                result = union(result, expectSet(elementAt(outer, index)));
+              const sets = expectSet(set);
+              for (let index = 0; index < sizeOf(sets); index++)
+                result = union(result, expectSet(elementAt(sets, index)));
               return result;
             },
             true,
           ),
-          isNormalized: false,
+          isNormalized: isEnumerated,
+          isEnumerated,
         };
+      }
       case "DOMAIN":
         return unary(
           operand(0),
