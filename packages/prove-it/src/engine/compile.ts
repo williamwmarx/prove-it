@@ -37,6 +37,7 @@ import {
   apply,
   applyField,
   bail,
+  Bailout,
   bool,
   compare,
   createRecordShape,
@@ -953,13 +954,25 @@ export const createCompiler = (environment: Environment): Compiler => {
     }
     return slots;
   };
+  // Whether A has a successor depends only on what A reads of the current state and the names
+  // bound around it: the values it gives primed variables come from those. The footprint of A as a
+  // predicate says what that is; if the engine can't compile it so, ENABLED reads everything.
+  const getEnabledFootprint = (action: Expression, context: Context): Footprint => {
+    try {
+      const footprint = compile(action, { ...context, isPrimed: false }).footprint;
+      return { vars: footprint.vars, primes: [], slots: footprint.slots };
+    } catch (error) {
+      if (!(error instanceof Bailout)) throw error;
+      const slots = [...getBoundSlots(context.scope, new Set(), new Set())].sort((a, b) => a - b);
+      return { vars: allVariables, primes: [], slots };
+    }
+  };
   const compileEnabled = (action: Expression, context: Context): Compiled => {
     if (!compileEnabledTest || context.isPrimed || context.isInit)
       return unsupported("expression Enabled");
     const test = compileEnabledTest(action, context);
-    const slots = [...getBoundSlots(context.scope, new Set(), new Set())].sort((a, b) => a - b);
     return {
-      ...leaf(() => (test() ? TRUE : FALSE), { vars: allVariables, primes: [], slots }),
+      ...leaf(() => (test() ? TRUE : FALSE), getEnabledFootprint(action, context)),
       isCostly: true,
       isBoolean: true,
     } as Compiled;

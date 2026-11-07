@@ -7,8 +7,6 @@ import type { Expression } from "../ast";
 import type { EvaluationScope } from "../evaluate";
 import type { LiveExpression } from "../tableau";
 import type { Value } from "../values";
-import { compileAction, createEnabledTest } from "./action";
-import { generateAction } from "./codegen";
 import { type CompileContext, type Compiled, type Compiler, setCurrent, setNext } from "./compile";
 import { Bailout, FALSE, TRUE } from "./store";
 
@@ -28,10 +26,6 @@ export const createLiveOracle = (
   const next = new Int32Array(width);
   const contexts = new Map<EvaluationScope | undefined, CompileContext | typeof UNKNOWN>();
   const values = new Map<Expression, Map<EvaluationScope | undefined, Compiled | typeof UNKNOWN>>();
-  const enabledTests = new Map<
-    Expression,
-    Map<EvaluationScope | undefined, (() => boolean) | typeof UNKNOWN>
-  >();
 
   const getContext = (scope: EvaluationScope | undefined) => {
     let context = contexts.get(scope);
@@ -72,7 +66,6 @@ export const createLiveOracle = (
   const answers = {
     values: new Map<LiveExpression, Compiled | typeof UNKNOWN>(),
     unchanged: new Map<LiveExpression, Compiled | typeof UNKNOWN>(),
-    enabledTests: new Map<LiveExpression, (() => boolean) | typeof UNKNOWN>(),
   };
   const getAnswer = <Result>(
     cache: Map<LiveExpression, Result | typeof UNKNOWN>,
@@ -136,16 +129,18 @@ export const createLiveOracle = (
         return compiled === UNKNOWN ? undefined : holds(compiled);
       }
       if (expression.kind === "Enabled") {
-        const test = getAnswer(answers.enabledTests, expression, () =>
-          getCompiled(enabledTests, expression.step, expression.scope, (context) => {
-            const options = { isInit: false, isAssignedShortcut: false };
-            const step =
-              generateAction(compiler, expression.step, context, options) ??
-              compileAction(compiler, expression.step, context, options);
-            return createEnabledTest(step, width);
-          }),
-        );
-        return test === UNKNOWN ? undefined : test();
+        // ENABLED compiles as an expression, cached by what the action reads.
+        const enabled = getAnswer(answers.values, expression, () => {
+          const node: Expression = {
+            kind: "Enabled",
+            expression: expression.step,
+            location: expression.step.location,
+          };
+          return getCompiled(values, node, expression.scope, (context) =>
+            compiler.compile(node, context),
+          );
+        });
+        return enabled === UNKNOWN ? undefined : holds(enabled);
       }
       const nextIds = successor && getNextIds(successor);
       if (!nextIds) return undefined;
