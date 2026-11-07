@@ -1098,8 +1098,8 @@ export const createLivenessChecker = (
   const startChecks = (tracing: Environment | undefined) => {
     evaluation.environment = tracing ?? environment;
     evaluation.isMemoized = isShared && tracing === undefined;
-    shared.states.clear();
-    shared.actions.clear();
+    if (shared.states.size > 0) shared.states.clear();
+    if (shared.actions.size > 0) shared.actions.clear();
   };
   const endChecks = () => {
     evaluation.environment = environment;
