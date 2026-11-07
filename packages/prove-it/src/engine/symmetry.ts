@@ -1,7 +1,7 @@
 // TLC's symmetry reduction on the engine's states: each state is replaced by its smallest image
 // under the symmetry group, compared variable by variable in TLC's variable order, as
-// TLCStateMut#fingerPrint picks it. Permuting an interned value is cached per permutation, so a
-// value is permuted once however many states hold it.
+// TLCStateMut#fingerPrint picks it. Permuting an interned value is cached per permutation, in an
+// array indexed by its id, so a value is permuted once however many states hold it.
 
 import {
   compare,
@@ -9,6 +9,7 @@ import {
   functionOf,
   getKey,
   getRangeValue,
+  getValueCount,
   KIND_FUNCTION,
   KIND_MODEL,
   KIND_SET,
@@ -27,15 +28,15 @@ export const createCanonicalizer = (group: NamedPermutation[], order: number[]) 
   const permutations = group.map(
     (pairs) => new Map(pairs.map(([name, image]): [number, number] => [model(name), model(image)])),
   );
-  const caches = permutations.map(() => new Map<number, number>());
+  // Each permutation's image of each id permuted so far, or -1.
+  const images = permutations.map(() => new Int32Array(0));
 
   const permute = (id: number, index: number): number => {
     const kind = kindOf(id);
     if (kind === KIND_MODEL) return permutations[index].get(id) ?? id;
     if (kind !== KIND_SET && kind !== KIND_FUNCTION && kind !== KIND_TUPLE) return id;
-    const cache = caches[index];
-    const known = cache.get(id);
-    if (known !== undefined) return known;
+    const known = id < images[index].length ? images[index][id] : -1;
+    if (known !== -1) return known;
     const size = sizeOf(id);
     let isMoved = false;
     let result = id;
@@ -67,7 +68,12 @@ export const createCanonicalizer = (group: NamedPermutation[], order: number[]) 
       }
       if (isMoved) result = functionOf(keys, values);
     }
-    cache.set(id, result);
+    if (id >= images[index].length) {
+      const grown = new Int32Array(Math.max(1024, getValueCount() * 2)).fill(-1);
+      grown.set(images[index]);
+      images[index] = grown;
+    }
+    images[index][id] = result;
     return result;
   };
 
