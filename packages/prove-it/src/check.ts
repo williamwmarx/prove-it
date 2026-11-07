@@ -1,9 +1,15 @@
 import type { Expression } from "./ast";
 import { type ModelConfig, parseConfig } from "./config";
+import { getMemoStatistics } from "./engine/compile";
 import { toEngineProperties } from "./engine/context";
 import { toValue as toEngineValue } from "./engine/convert";
 import { type EngineCheckpoint, type EngineGraph, isBailout, runEngine } from "./engine/search";
-import { getEngineSetting, getEngineThreads, reportEngine } from "./engine/settings";
+import {
+  getEngineSetting,
+  getEngineThreads,
+  getEnvironmentFlag,
+  reportEngine,
+} from "./engine/settings";
 import { createEnvironment } from "./environment";
 import {
   createStackOverflowError,
@@ -1443,6 +1449,13 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       reportEngine(
         `checked ${result.distinctStates} states on ${result.threads} thread${result.threads === 1 ? "" : "s"} in ${(performance.now() - startedAt).toFixed(0)} ms with ${result.valueCount} values`,
       );
+      if (getEnvironmentFlag("PROVE_IT_MEMO")) {
+        for (const table of getMemoStatistics()) {
+          reportEngine(
+            `memo width ${table.width}: ${table.hits}/${table.lookups} hits, ${table.size} entries${table.isEnabled ? "" : ", off"}`,
+          );
+        }
+      }
       runtime.generatedStates = result.generatedStates;
       runtime.distinctStates = result.distinctStates;
       runtime.initialStates = result.initialStates.generated;

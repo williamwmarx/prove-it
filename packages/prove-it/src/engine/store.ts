@@ -746,6 +746,28 @@ export const except = (fn: number, key: number, value: number) => {
   return internBlock(kind, words, length, size);
 };
 
+// [fn EXCEPT ![k1] = v1, ..., ![kn] = vn], given the position of each key in fn, interned once.
+export const exceptAt = (fn: number, positions: number[], values: number[], count: number) => {
+  const kind = kinds[fn];
+  const size = sizes[fn];
+  const offset = payloads[fn];
+  const valueStart = kind === KIND_TUPLE ? 0 : size;
+  let isChanged = false;
+  for (let index = 0; index < count; index++) {
+    if (heap[offset + valueStart + positions[index]] !== values[index]) {
+      isChanged = true;
+      break;
+    }
+  }
+  if (!isChanged) return fn;
+  const length = valueStart + size;
+  const words = exceptScratch;
+  words.length = length;
+  for (let index = 0; index < length; index++) words[index] = heap[offset + index];
+  for (let index = 0; index < count; index++) words[valueStart + positions[index]] = values[index];
+  return internBlock(kind, words, length, size);
+};
+
 export const domainOf = (fn: number) => {
   const size = sizes[fn];
   const keys: number[] = new Array(size);

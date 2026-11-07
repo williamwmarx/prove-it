@@ -39,6 +39,7 @@ import {
   EMPTY_TUPLE,
   equals,
   except,
+  exceptAt,
   FALSE,
   findKey,
   functionOf,
@@ -1708,26 +1709,76 @@ export const createCompiler = (environment: Environment): Compiler => {
       return { path, atSlot, value, usesAt: value.footprint.slots.includes(atSlot) };
     });
     const fnEvaluate = fn.evaluate;
-    const evaluate = () => {
+    // Each update names one key, as [f EXCEPT ![k] = v] and [r EXCEPT !.a = v] do.
+    const flat = updates.every((update) => update.path.length === 1)
+      ? updates.map((update) => ({
+          key: update.path[0].key.evaluate,
+          value: update.value.evaluate,
+          atSlot: update.usesAt ? update.atSlot : -1,
+        }))
+      : undefined;
+    // Several updates write one new function: each key's position is the same in every
+    // intermediate function, and @ reads the value an earlier update gave the key, if any.
+    const evaluateMany = (flatUpdates: NonNullable<typeof flat>) => () => {
+      const base = fnEvaluate();
+      if (!isFunctionKind(kindOf(base))) return bail("EXCEPT on a non-function");
+      const count = flatUpdates.length;
+      const positions: number[] = new Array(count);
+      const values: number[] = new Array(count);
+      for (let index = 0; index < count; index++) {
+        const update = flatUpdates[index];
+        const position = findKey(base, update.key());
+        if (position === -1) return bail("EXCEPT outside the domain");
+        if (update.atSlot !== -1) {
+          let old = getRangeValue(base, position);
+          for (let earlier = 0; earlier < index; earlier++)
+            if (positions[earlier] === position) old = values[earlier];
+          LOC[update.atSlot] = old;
+        }
+        positions[index] = position;
+        values[index] = update.value();
+      }
+      return exceptAt(base, positions, values, count);
+    };
+    const evaluateFlat = (flatUpdates: NonNullable<typeof flat>) => () => {
       let result = fnEvaluate();
-      for (const update of updates) {
-        const keys = update.path.map((step) => step.key.evaluate());
-        const rewrite = (current: number, depthIndex: number): number => {
-          const key = keys[depthIndex];
-          if (!isFunctionKind(kindOf(current))) return bail("EXCEPT on a non-function");
-          const position = findKey(current, key);
+      for (let index = 0; index < flatUpdates.length; index++) {
+        const update = flatUpdates[index];
+        const key = update.key();
+        if (update.atSlot !== -1) {
+          if (!isFunctionKind(kindOf(result))) return bail("EXCEPT on a non-function");
+          const position = findKey(result, key);
           if (position === -1) return bail("EXCEPT outside the domain");
-          const old = getRangeValue(current, position);
-          if (depthIndex === keys.length - 1) {
-            LOC[update.atSlot] = old;
-            return except(current, key, update.value.evaluate());
-          }
-          return except(current, key, rewrite(old, depthIndex + 1));
-        };
-        result = rewrite(result, 0);
+          LOC[update.atSlot] = getRangeValue(result, position);
+        }
+        result = except(result, key, update.value());
       }
       return result;
     };
+    const evaluate = flat
+      ? flat.length > 1
+        ? evaluateMany(flat)
+        : evaluateFlat(flat)
+      : () => {
+          let result = fnEvaluate();
+          for (const update of updates) {
+            const keys = update.path.map((step) => step.key.evaluate());
+            const rewrite = (current: number, depthIndex: number): number => {
+              const key = keys[depthIndex];
+              if (!isFunctionKind(kindOf(current))) return bail("EXCEPT on a non-function");
+              const position = findKey(current, key);
+              if (position === -1) return bail("EXCEPT outside the domain");
+              const old = getRangeValue(current, position);
+              if (depthIndex === keys.length - 1) {
+                LOC[update.atSlot] = old;
+                return except(current, key, update.value.evaluate());
+              }
+              return except(current, key, rewrite(old, depthIndex + 1));
+            };
+            result = rewrite(result, 0);
+          }
+          return result;
+        };
     return {
       evaluate,
       footprint: mergeFootprints(
