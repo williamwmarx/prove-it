@@ -117,6 +117,24 @@ const evaluateKeepingSlots = (evaluate: Evaluate, start: number, end: number) =>
   }
 };
 
+// An array a compiled node fills on each evaluation. Evaluating an element may evaluate the same
+// node again through recursion, so the node takes a fresh array while its own is in use. The array
+// is free again once released; a bailout leaves it taken, which only costs fresh arrays after.
+const createScratch = (length: number) => {
+  const own: number[] = new Array(length);
+  let isTaken = false;
+  return {
+    take: (): number[] => {
+      if (isTaken) return new Array(length);
+      isTaken = true;
+      return own;
+    },
+    release: (array: number[]) => {
+      if (array === own) isTaken = false;
+    },
+  };
+};
+
 // --- footprints ---
 
 export interface Footprint {
@@ -681,8 +699,10 @@ export const createCompiler = (environment: Environment): Compiler => {
     if (constantValue !== undefined) return constant(fromValue(constantValue));
     const definition = getDefinition(name, environment);
     if (definition) return compileDefinitionReference(definition, context);
-    const builtin = environment.builtins.get(name);
-    if (builtin && builtin.arity === 0) return compileNullaryBuiltin(name, builtin);
+    // The model may substitute a builtin for the name, as Nat <- Int does.
+    const target = environment.substitutions.get(name) ?? name;
+    const builtin = environment.builtins.get(target);
+    if (builtin && builtin.arity === 0) return compileNullaryBuiltin(target, builtin);
     const binding = lookup(context.scope, name);
     if (binding) return compileBinding(binding, context);
     return unsupported(`the name ${name}`);
@@ -813,12 +833,14 @@ export const createCompiler = (environment: Environment): Compiler => {
         const elements = expression.elements.map((element) => compile(element, context));
         const evaluators = elements.map((element) => element.evaluate);
         if (evaluators.length === 0) return constant(EMPTY_TUPLE);
-        const scratch: number[] = new Array(evaluators.length);
+        const scratch = createScratch(evaluators.length);
         return {
           evaluate: () => {
+            const elements = scratch.take();
             for (let index = 0; index < evaluators.length; index++)
-              scratch[index] = evaluators[index]();
-            return tupleOf(scratch, scratch.length);
+              elements[index] = evaluators[index]();
+            scratch.release(elements);
+            return tupleOf(elements, elements.length);
           },
           footprint: mergeFootprints(...elements.map((element) => element.footprint)),
           isCostly: true,
@@ -831,11 +853,13 @@ export const createCompiler = (environment: Environment): Compiler => {
           .sort((left, right) => compare(left.key, right.key));
         const keys = fields.map((field) => field.key);
         const evaluators = fields.map((field) => field.value.evaluate);
-        const values: number[] = new Array(keys.length);
+        const scratch = createScratch(keys.length);
         return {
           evaluate: () => {
+            const values = scratch.take();
             for (let index = 0; index < evaluators.length; index++)
               values[index] = evaluators[index]();
+            scratch.release(values);
             return functionOfSorted(keys, values, keys.length);
           },
           footprint: mergeFootprints(...fields.map((field) => field.value.footprint)),
@@ -1060,7 +1084,7 @@ export const createCompiler = (environment: Environment): Compiler => {
         context: { ...context, scope: undefined },
       };
     }
-    const builtin = environment.builtins.get(name);
+    const builtin = environment.builtins.get(environment.substitutions.get(name) ?? name);
     if (builtin) {
       const params = Array.from({ length: builtin.arity }, (_, index) => ({
         name: `$${index}`,
@@ -1222,11 +1246,13 @@ export const createCompiler = (environment: Environment): Compiler => {
     const compiledArgs = args.map((argument) => compile(argument, context));
     const argEvaluators = compiledArgs.map((argument) => argument.evaluate);
     const slots = operator.slots;
-    const values: number[] = new Array(slots.length);
+    const argumentScratch = createScratch(slots.length);
     let scratch: Int32Array | undefined;
     const evaluate = () => {
+      const values = argumentScratch.take();
       for (let index = 0; index < argEvaluators.length; index++)
         values[index] = argEvaluators[index]();
+      argumentScratch.release(values);
       const saved = slots.map((slot) => LOC[slot]);
       for (let index = 0; index < slots.length; index++) LOC[slots[index]] = values[index];
       try {
@@ -2512,7 +2538,9 @@ export const createCompiler = (environment: Environment): Compiler => {
     if (local) return local.kind === "operator";
     const definition = getDefinition(argument.name, environment);
     if (definition) return definition.kind === "Operator" && definition.params.length > 0;
-    const builtin = environment.builtins.get(argument.name);
+    const builtin = environment.builtins.get(
+      environment.substitutions.get(argument.name) ?? argument.name,
+    );
     return builtin !== undefined && builtin.arity > 0;
   };
 
