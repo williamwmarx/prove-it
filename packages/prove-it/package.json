@@ -20,7 +20,8 @@
     "src",
     "package.json",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md"
   ],
   "type": "module",
   "sideEffects": false,
@@ -37,7 +38,7 @@
   "scripts": {
     "build": "bun scripts/build.ts && tsc -p tsconfig.build.json",
     "build:binary": "bun scripts/build-binary.ts",
-    "prepack": "cp ../../README.md ../../LICENSE .",
+    "prepack": "cp ../../README.md ../../LICENSE ../../THIRD_PARTY_NOTICES.md .",
     "prepublishOnly": "bun run build",
     "test": "bun run build && bun test --parallel",
     "typecheck": "bun check",

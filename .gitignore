@@ -9,6 +9,7 @@ coverage
 # Copied into the package by prepack
 packages/prove-it/README.md
 packages/prove-it/LICENSE
+packages/prove-it/THIRD_PARTY_NOTICES.md
 
 # Bundled by scripts/run.ts
 packages/prove-it/.scripts
