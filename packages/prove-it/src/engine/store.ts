@@ -382,21 +382,70 @@ const compareFunctions = (left: number, right: number) => {
   return 0;
 };
 
-// TLC's equality. Values of kinds TLC can't compare, other than model values, make the engine bail
-// out, as TLC fails there.
-export const equals = (left: number, right: number) => {
+// TLC's equality. Equal values have equal ids, so two distinct ids are unequal, but TLC compares
+// composite values element by element up to the first difference, which fails where those elements
+// are values TLC can't compare. The engine bails out wherever TLC would fail.
+export const equals = (left: number, right: number): boolean => {
   if (left === right) return true;
   const leftKind = kinds[left];
   const rightKind = kinds[right];
   if (leftKind === rightKind) {
-    if (leftKind === KIND_MODEL) checkModelTypes(left, right);
-    return false;
+    switch (leftKind) {
+      case KIND_MODEL:
+        checkModelTypes(left, right);
+        return false;
+      case KIND_SET:
+        return equalsSets(left, right);
+      case KIND_FUNCTION:
+      case KIND_TUPLE:
+        return equalsFunctions(left, right);
+      default:
+        return false;
+    }
   }
   if (leftKind === KIND_MODEL) return getModelType(left) === 0 ? false : bail("typed model value");
   if (rightKind === KIND_MODEL)
     return getModelType(right) === 0 ? false : bail("typed model value");
-  if (isFunctionKind(leftKind) && isFunctionKind(rightKind)) return false;
+  if (isFunctionKind(leftKind) && isFunctionKind(rightKind)) return equalsFunctions(left, right);
   return bail("equality of values TLC can't compare");
+};
+
+// SetEnumValue.equals: sets of one size compare their elements in order up to the first that
+// differ, whose comparison decides, or fails.
+const equalsSets = (left: number, right: number) => {
+  const size = sizes[left];
+  if (size !== sizes[right]) return false;
+  const leftOffset = payloads[left];
+  const rightOffset = payloads[right];
+  for (let index = 0; index < size; index++) {
+    const leftElement = heap[leftOffset + index];
+    const rightElement = heap[rightOffset + index];
+    if (leftElement !== rightElement) return equals(leftElement, rightElement);
+  }
+  return false;
+};
+
+// The equals of TLC's functions, records and tuples: functions of one size compare their domains in
+// order and then their ranges, up to the first elements that differ. A record compared with a
+// function that isn't one fails in TLC, or not, by which side is the record, so the engine bails.
+const equalsFunctions = (left: number, right: number) => {
+  const size = sizes[left];
+  const rightSize = sizes[right];
+  if (size > 0 && rightSize > 0 && isRecordId(left) !== isRecordId(right)) {
+    return bail("record compared with a function");
+  }
+  if (size !== rightSize) return false;
+  for (let index = 0; index < size; index++) {
+    const leftKey = getKey(left, index);
+    const rightKey = getKey(right, index);
+    if (leftKey !== rightKey) return equals(leftKey, rightKey);
+  }
+  for (let index = 0; index < size; index++) {
+    const leftValue = getRangeValue(left, index);
+    const rightValue = getRangeValue(right, index);
+    if (leftValue !== rightValue) return equals(leftValue, rightValue);
+  }
+  return false;
 };
 
 // --- sets ---

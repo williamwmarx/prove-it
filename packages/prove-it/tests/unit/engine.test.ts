@@ -427,6 +427,56 @@ describe("the engine", () => {
     expect(crowded.lines).toEqual([expect.stringMatching(/^\[engine\] checked 3 states/)]);
   });
 
+  it("hands over an equality that TLC fails on, as TLC compares elements up to the first that differ", async () => {
+    // TLC fails to compare a record with a function that isn't one, or the elements of two sets of
+    // one size, where they first differ, by kinds it can't compare.
+    const failing = [
+      ["[a |-> x] = (1 :> 2)", "record compared with a function"],
+      ['{x + 1} = {"a"}', "equality of values TLC can't compare"],
+      ['<<x, 1>> = <<x, "a">>', "equality of values TLC can't compare"],
+      ['[a |-> 1, b |-> x] = [a |-> 1, b |-> "s"]', "equality of values TLC can't compare"],
+      ['(2 :> 1 @@ 3 :> x) = (2 :> "a" @@ 3 :> 2)', "equality of values TLC can't compare"],
+      ["({1} :> x) = (1 :> 1)", "equality of values TLC can't compare"],
+      ["{[a |-> x]} = {<<1>>}", "record compared with a function"],
+    ];
+    for (const [comparison, reason] of failing) {
+      const { result, lines } = await checkInEngine(
+        `EXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 3 /\\ ~(${comparison}) /\\ x' = x + 1`,
+        "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      );
+      expect(result.status).toBe("error");
+      expect(lines).toEqual([expect.stringMatching(new RegExp(`handed over .*: ${reason}$`))]);
+    }
+    // An earlier difference decides before the elements TLC can't compare, and sets or functions of
+    // other sizes differ without comparing their elements.
+    const differing = [
+      '[a |-> 1, b |-> x] = [a |-> 2, b |-> "s"]',
+      '<<x, 1>> = <<x + 1, "a">>',
+      '(0 :> x @@ 5 :> 1) = (0 :> x @@ 7 :> "a")',
+      '(0 :> x @@ 5 :> "a") = <<1, 2>>',
+      '{x} = {"a", "b"}',
+      '[a |-> x] = [b |-> "s"]',
+      "<<>> = [a |-> x]",
+    ];
+    for (const comparison of differing) {
+      const { result, lines } = await checkInEngine(
+        `EXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 3 /\\ ~(${comparison}) /\\ x' = x + 1`,
+        "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      );
+      expect([result.status, result.distinctStates]).toEqual(["success", 4]);
+      expect(lines).toEqual([expect.stringMatching(/^\[engine\] checked 4 states/)]);
+    }
+    // A primed variable assigned twice compares its values in the same way.
+    const { result, lines } = await checkInEngine(
+      'VARIABLE x\nInit == x = {<<"b">>}\nNext == x\' = {<<1>>} /\\ UNCHANGED x',
+      "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+    );
+    expect(result.status).toBe("error");
+    expect(lines).toEqual([
+      expect.stringMatching(/handed over .*: equality of values TLC can't compare$/),
+    ]);
+  });
+
   it("reads Nat as the set the model substitutes for it", async () => {
     const { result, lines } = await checkInEngine(
       "EXTENDS Integers\nVARIABLE x\nInit == x = 0\nNext == UNCHANGED x\nInv == -1 \\in Nat",
