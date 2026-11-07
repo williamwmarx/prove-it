@@ -496,10 +496,26 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     fingerprintDistance: getFingerprintDistance(
       runtime.distinctStates,
       runtime.generatedStates,
-      () =>
-        search
-          ? search.getStoredFingerprints(states, fingerprintStates)
-          : BigInt64Array.from(states, runtime.getFingerprint),
+      () => {
+        if (!search) return BigInt64Array.from(states, runtime.getFingerprint);
+        // The engine's graph has TLC's fingerprints of its states, which come first; the
+        // interpreter fingerprints any it found after them.
+        const known = engineReport.fingerprints;
+        if (!known || known.length > states.length)
+          return search.getStoredFingerprints(states, fingerprintStates);
+        const fingerprints = new BigInt64Array(states.length);
+        fingerprints.set(known);
+        if (known.length < states.length) {
+          fingerprints.set(
+            search.getStoredFingerprints(
+              states.slice(known.length),
+              fingerprintStates.slice(known.length),
+            ),
+            known.length,
+          );
+        }
+        return fingerprints;
+      },
     ),
   });
 
@@ -1326,6 +1342,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     isReported: false,
     isComputedReported: false,
     checkpoint: undefined as EngineCheckpoint | undefined,
+    // TLC's fingerprints of the states of a graph the engine handed over.
+    fingerprints: undefined as BigInt64Array | undefined,
   };
   // States the engine found, which the interpreter took over without their actions, so a trace
   // through them finds its actions again as it does for a reduced state space.
@@ -1442,7 +1460,9 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         engineReport.checkpoint = result.checkpoint;
         environment.liveOracle = result.createLiveOracle((state) => engineIds.get(state));
         // The liveness checker orders each state's successors by TLC's fingerprints of them.
-        result.getFingerprints().forEach((fingerprint, index) => {
+        const fingerprints = result.getFingerprints();
+        engineReport.fingerprints = fingerprints;
+        fingerprints.forEach((fingerprint, index) => {
           tlcFingerprints[index] = Number(BigInt.asIntN(32, fingerprint));
         });
         reportEngine(
