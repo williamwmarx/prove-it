@@ -1333,7 +1333,13 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       for (let variable = 0; variable < width; variable++) {
         state[variable] = toEngineValue(checkpoint.states[index * width + variable]);
       }
-      const fingerprintState = getFingerprintState(state);
+      const keys = checkpoint.keys;
+      const keyWidth = checkpoint.keyWidth ?? width;
+      const fingerprintState = keys
+        ? Array.from({ length: keyWidth }, (_, position) =>
+            toEngineValue(keys[index * keyWidth + position]),
+          )
+        : getFingerprintState(state);
       state.forEach(markFingerprinted);
       markSeen(getStateHash(fingerprintState), states.length);
       const parent = checkpoint.parents[index];
@@ -1469,7 +1475,6 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     }
     if (stateWriter) return "-dump";
     if (options.isContinued) return "-continue";
-    if (search.isSymmetric && config.view !== undefined) return "symmetry with a view";
     if (search.isFingerprintedLikeTlc) return "wide strings";
     if (config.possible.length > 0) return "_POSSIBLE predicates";
     if (config.periodic !== undefined) return "periodic";

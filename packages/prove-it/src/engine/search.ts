@@ -70,6 +70,10 @@ export interface EngineGraph {
 // complete, and the interpreter replays it rather than expanding states.
 export interface EngineCheckpoint {
   graph?: EngineGraph;
+  // What TLC fingerprints in place of each state, when that isn't the state: its representative
+  // under symmetry, or its view, `keyWidth` ids each.
+  keys?: Int32Array;
+  keyWidth?: number;
   expanding: number;
   count: number;
   generated: number;
@@ -136,7 +140,7 @@ export const runEngine = (input: EngineInput): EngineResult => {
   let table = new Int32Array(1 << 12).fill(-1);
   let tableMask = table.length - 1;
   const getKeys = () => (hasSeparateKeys ? separateKeys : states);
-  const separateKey = new Int32Array(keyWidth);
+  const separateKey = new Int32Array(1);
 
   const hashState = (source: Int32Array, offset: number) => {
     let hash = 0x811c9dc5;
@@ -161,16 +165,22 @@ export const runEngine = (input: EngineInput): EngineResult => {
   };
 
   // The key of a complete state, which is in the current register.
+  // TLC fingerprints the view of the representative when it has both.
   const getKey = (state: Int32Array) => {
-    if (view) {
+    if (!canonicalize) {
+      if (!view) return state;
       separateKey[0] = view();
       return separateKey;
     }
-    if (!canonicalize) return state;
-    separateKey.set(state);
-    canonicalize(separateKey);
+    representative.set(state);
+    canonicalize(representative);
+    if (!view) return representative;
+    setCurrent(representative);
+    separateKey[0] = view();
+    setCurrent(state);
     return separateKey;
   };
+  const representative = new Int32Array(width);
 
   // The slot of a key in the table: either the slot that holds it, or the empty one to put it in.
   const findSlot = (key: Int32Array) => {
@@ -491,6 +501,10 @@ export const runEngine = (input: EngineInput): EngineResult => {
         states: states.slice(0, checkpointCount * width),
         parents: parents.slice(0, checkpointCount),
         width,
+        ...(hasSeparateKeys && {
+          keys: separateKeys.slice(0, checkpointCount * keyWidth),
+          keyWidth,
+        }),
       };
       error.checkpoint = checkpoint;
     }
