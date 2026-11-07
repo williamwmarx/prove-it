@@ -459,9 +459,9 @@ describe("the engine", () => {
     for (const stride of [1, 1_000_000]) {
       const table = new MemoTable(1);
       for (let key = 0; key < 1999; key++) table.set1(key * stride, key + 7);
-      table.setN(Int32Array.of(1999 * stride), 99);
+      table.setN(Int32Array.of(1999 * stride), 0, 99);
       for (let key = 0; key < 2000; key++) {
-        expect(table.getN(Int32Array.of(key * stride))).toBe(key === 1999 ? 99 : key + 7);
+        expect(table.getN(Int32Array.of(key * stride), 0)).toBe(key === 1999 ? 99 : key + 7);
       }
       expect(table.get1(2000 * stride)).toBe(-1);
       expect(table.get1(-1)).toBe(-1);
