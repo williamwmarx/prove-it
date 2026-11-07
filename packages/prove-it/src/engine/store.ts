@@ -147,7 +147,18 @@ const internScalar = (kind: number, payload: number) => {
 const internBlock = (kind: number, words: ArrayLike<number>, length: number, size: number) => {
   let hash = Math.imul(kind + 7, 0x9e3779b1) ^ size;
   for (let index = 0; index < length; index++) hash = Math.imul(hash ^ words[index], 0x01000193);
-  hash = mix(hash);
+  return internHashed(kind, words, length, size, hash);
+};
+
+// Interns a block whose hash over its words, before mixing, is already known.
+const internHashed = (
+  kind: number,
+  words: ArrayLike<number>,
+  length: number,
+  size: number,
+  unmixed: number,
+) => {
+  const hash = mix(unmixed);
   if (shared) return internShared(kind, 0, words, length, size, hash);
   for (let slot = hash & tableMask; ; slot = (slot + 1) & tableMask) {
     const id = table[slot];
@@ -585,6 +596,35 @@ const pairScratch: number[] = [];
 
 // The function with the given domain in TLC's order and the range in the same order. A domain of
 // 1..n makes a tuple.
+// The fixed fields of a record constructor: its keys, sorted, and the hash of the block up to them,
+// so building a record hashes only its values.
+export interface RecordShape {
+  keys: number[];
+  prefix: number;
+}
+
+export const createRecordShape = (keys: number[]): RecordShape => {
+  let hash = Math.imul(KIND_FUNCTION + 7, 0x9e3779b1) ^ keys.length;
+  for (const key of keys) hash = Math.imul(hash ^ key, 0x01000193);
+  return { keys, prefix: hash };
+};
+
+// The record of a shape with these values, which are as many as its keys.
+export const recordOf = (shape: RecordShape, values: ArrayLike<number>) => {
+  const keys = shape.keys;
+  const size = keys.length;
+  let hash = shape.prefix;
+  const words = pairScratch;
+  words.length = 2 * size;
+  for (let index = 0; index < size; index++) {
+    words[index] = keys[index];
+    const value = values[index];
+    words[size + index] = value;
+    hash = Math.imul(hash ^ value, 0x01000193);
+  }
+  return internHashed(KIND_FUNCTION, words, 2 * size, size, hash);
+};
+
 export const functionOfSorted = (
   domain: ArrayLike<number>,
   range: ArrayLike<number>,

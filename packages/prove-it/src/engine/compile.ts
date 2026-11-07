@@ -39,6 +39,7 @@ import {
   bail,
   bool,
   compare,
+  createRecordShape,
   difference,
   domainOf,
   elementAt,
@@ -67,6 +68,7 @@ import {
   KIND_STRING,
   KIND_TUPLE,
   kindOf,
+  recordOf,
   setOf,
   setOfSorted,
   sizeOf,
@@ -870,13 +872,14 @@ export const createCompiler = (environment: Environment): Compiler => {
         const keys = fields.map((field) => field.key);
         const evaluators = fields.map((field) => field.value.evaluate);
         const scratch = createScratch(keys.length);
+        const shape = createRecordShape(keys);
         return {
           evaluate: () => {
             const values = scratch.take();
             for (let index = 0; index < evaluators.length; index++)
               values[index] = evaluators[index]();
             scratch.release(values);
-            return functionOfSorted(keys, values, keys.length);
+            return recordOf(shape, values);
           },
           footprint: mergeFootprints(...fields.map((field) => field.value.footprint)),
           isCostly: true,
