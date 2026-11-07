@@ -1,0 +1,2 @@
+# The 1Password Environment ID in .depot/workflows/release.yml: an identifier, not a secret.
+a11be6a894ffa282e562cb90b501c84b6d106e5b:.depot/workflows/release.yml:generic-api-key:23

@@ -46,6 +46,8 @@ for tool in "$@"; do
       *) tar -xzf "$archive" -C "$directory" ;;
     esac
     rm "$archive"
+    # Bun's npm package ships bun alone; its installer adds bunx, which runs bun as "bun x".
+    if [ "$name" = bun ]; then ln -s bun "$directory/$bin/bunx"; fi
     touch "$directory/.verified"
   fi
   paths=${paths:+$paths:}$(CDPATH='' cd -- "$directory/$bin" && pwd -P)
