@@ -159,6 +159,7 @@ export interface SanySpecification {
   root: ModuleNode;
   modules: ModuleNode[];
   messages: SanyMessage[];
+  builtins: OpDefNode[];
 }
 
 interface SanyGenerationOptions {
@@ -178,6 +179,24 @@ interface SanyGenerationOptions {
   // The modules TLC adds to the root module's EXTENDS for its post conditions, which SANY loads
   // after the ones the root module itself extends.
   rootExtendees?: string[];
+  // SANY's analysis of TLC master's standard modules, made ahead of time, which stands in for
+  // analyzing a module whose text and dependencies are those of a standard module.
+  precomputed?: PrecomputedModules;
+}
+
+export interface ModuleDependencies {
+  extendees: string[];
+  instancees: string[];
+  importers: Map<string, string>;
+}
+
+export interface PrecomputedModules {
+  sources: Map<string, string>;
+  dependencies: Map<string, ModuleDependencies>;
+  // The highest UID of the modules' nodes, which the nodes SANY creates come after.
+  maxId: number;
+  // The modules' level-checked nodes, which refer to the builtins of the specification.
+  getModules: (builtins: OpDefNode[]) => Map<string, ModuleNode>;
 }
 
 interface SymbolTable {
@@ -293,7 +312,7 @@ interface LabelScope {
 // The modules a file extends and instantiates, as SANY's ParseUnit collects them, and the module of
 // the file that names each one. SANY looks at a module's own EXTENDS and INSTANCEs before those of
 // its inner modules.
-const getDependencies = (module: Module) => {
+export const getDependencies = (module: Module): ModuleDependencies => {
   const extendees: string[] = [];
   const instancees: string[] = [];
   const importers = new Map<string, string>();
@@ -495,6 +514,10 @@ export const generateSanySpecification = (
   const builtinsByName = new Map(builtins.map((builtin) => [builtin.name, builtin]));
   const externalModules = new Map<string, ModuleNode>();
   const sources = new Map<string, { file: SourceFile; module: Module }>();
+  // The modules whose text is that of a precomputed standard module, which SANY reads without
+  // parsing them unless it has to analyze them itself.
+  const precomputedNames = new Set<string>();
+  const isLoaded = (name: string) => sources.has(name) || precomputedNames.has(name);
 
   const parseSource = (name: string, text: string) => {
     const file = (name === options.rootFileName && options.rootFilePath) || `${name}.tla`;
@@ -516,13 +539,7 @@ export const generateSanySpecification = (
     }
   };
 
-  const getSource = (name: string, text: string | undefined, importer?: string) => {
-    const cached = sources.get(name);
-    if (cached) return cached;
-    if (text === undefined) {
-      throw new TlaMissingModuleError(name, importer, options.version !== "1.7.4");
-    }
-    options.onParse?.(name);
+  const parseFile = (name: string, text: string) => {
     const parsed = parseSource(name, text);
     const module = parsed.module;
     if (module.name !== name) {
@@ -535,6 +552,22 @@ export const generateSanySpecification = (
     sources.set(name, entry);
     return entry;
   };
+
+  const loadSource = (name: string, text: string | undefined, importer?: string) => {
+    if (isLoaded(name)) return;
+    if (text === undefined) {
+      throw new TlaMissingModuleError(name, importer, options.version !== "1.7.4");
+    }
+    options.onParse?.(name);
+    if (name !== rootName && options.precomputed?.sources.get(name) === text) {
+      precomputedNames.add(name);
+      return;
+    }
+    parseFile(name, text);
+  };
+
+  const getSource = (name: string) =>
+    sources.get(name) ?? parseFile(name, options.precomputed?.sources.get(name) ?? "");
 
   const order: string[] = [];
   const visiting = new Set<string>();
@@ -551,7 +584,8 @@ export const generateSanySpecification = (
     if (visiting.has(name)) return;
     visiting.add(name);
     path.push(name);
-    const dependencies = getModuleDependencies(name, getSource(name, text, importer).module);
+    loadSource(name, text, importer);
+    const dependencies = getModuleDependencies(name);
     [...dependencies.extendees, ...dependencies.instancees].forEach((dependency) =>
       calculateDependencies(dependency, loadModule(dependency), name),
     );
@@ -567,10 +601,9 @@ export const generateSanySpecification = (
     kind: "extendees" | "instancees",
     visited: Set<string>,
   ): UnresolvedName | undefined => {
-    const entry = sources.get(name);
-    if (!entry || visited.has(name)) return undefined;
+    if (!isLoaded(name) || visited.has(name)) return undefined;
     visited.add(name);
-    const dependencies = getModuleDependencies(name, entry.module);
+    const dependencies = getModuleDependencies(name);
     const unresolved = dependencies[kind].find((dependency) => !isResolved(name, dependency));
     if (unresolved !== undefined) {
       const namingModule = dependencies.importers.get(unresolved) ?? name;
@@ -585,13 +618,13 @@ export const generateSanySpecification = (
     return undefined;
   };
   const loadSpecification = (rootName: string) => {
-    getSource(rootName, rootSource);
+    loadSource(rootName, rootSource);
     const findNext = () =>
       findUnresolved(rootName, "extendees", new Set()) ??
       findUnresolved(rootName, "instancees", new Set());
     for (let next = findNext(); next !== undefined; next = findNext()) {
-      if (!sources.has(next.name)) {
-        getSource(next.name, loadModule(next.name), next.namingModule);
+      if (!isLoaded(next.name)) {
+        loadSource(next.name, loadModule(next.name), next.namingModule);
       }
       resolutions.add(`${next.importer} ${next.name}`);
     }
@@ -600,12 +633,15 @@ export const generateSanySpecification = (
   // ParameterizedSpecObj.findOrCreateParsedUnit adds the post conditions' modules to the root
   // module's own extendees, before those of its inner modules. Loading the specification asks for
   // the dependencies of each module many times, so they are collected once.
-  const moduleDependencies = new Map<Module, ReturnType<typeof getDependencies>>();
-  const getModuleDependencies = (name: string, module: Module) => {
-    const cached = moduleDependencies.get(module);
+  const moduleDependencies = new Map<string, ModuleDependencies>();
+  const getModuleDependencies = (name: string) => {
+    const cached = precomputedNames.has(name)
+      ? options.precomputed?.dependencies.get(name)
+      : moduleDependencies.get(name);
     if (cached) return cached;
+    const module = getSource(name).module;
     const dependencies = getDependencies(module);
-    moduleDependencies.set(module, dependencies);
+    moduleDependencies.set(name, dependencies);
     if (name !== rootName || options.rootExtendees === undefined) return dependencies;
     dependencies.extendees.splice(module.extends.length, 0, ...options.rootExtendees);
     options.rootExtendees.forEach((extendee) => {
@@ -3103,11 +3139,27 @@ export const generateSanySpecification = (
     return currentModule;
   };
 
+  // A precomputed module stands in for one whose dependencies are precomputed modules too, and its
+  // nodes keep their UIDs, after which SANY numbers the nodes it creates.
+  const isPrecomputed = (name: string): boolean =>
+    precomputedNames.has(name) &&
+    [...getModuleDependencies(name).extendees, ...getModuleDependencies(name).instancees].every(
+      isPrecomputed,
+    );
+  const precomputed = order.some(isPrecomputed) ? options.precomputed : undefined;
+  const precomputedModules = precomputed?.getModules(builtins);
+  if (precomputed) counter.value = Math.max(counter.value, precomputed.maxId);
   const modules = order.map((name) => {
     options.onAnalyze?.(name);
     // Each module's Generator creates its nullODN, nullOAN, nullOpArg and nullLabelNode.
     nullApplication.id = Array.from({ length: 4 }, getId)[1];
-    const entry = getSource(name, undefined);
+    const precomputedModule = isPrecomputed(name) ? precomputedModules?.get(name) : undefined;
+    if (precomputedModule) {
+      externalModules.set(name, precomputedModule);
+      options.onModule?.(precomputedModule, messages);
+      return precomputedModule;
+    }
+    const entry = getSource(name);
     const context = createContext();
     // A module's context starts as a copy of SANY's global context of builtins, whose list of
     // symbols runs from the last builtin to the first.
@@ -3119,5 +3171,5 @@ export const generateSanySpecification = (
     options.onModule?.(module, messages);
     return module;
   });
-  return { root: modules[modules.length - 1], modules, messages };
+  return { root: modules[modules.length - 1], modules, messages, builtins };
 };

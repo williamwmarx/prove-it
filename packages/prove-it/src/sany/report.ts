@@ -8,7 +8,11 @@ import { createPcalParams } from "../pcal/ast";
 import { createPcalSession } from "../pcal/parse";
 import { validatePcalModule } from "../pcal/validate";
 import type { TlcVersion } from "../tlc/version";
-import { generateSanySpecification, type SanySpecification } from "./generator";
+import {
+  generateSanySpecification,
+  type PrecomputedModules,
+  type SanySpecification,
+} from "./generator";
 import { checkModuleLevels } from "./levels";
 import { getSany174LexicalError } from "./lexer";
 import { lintSanyModule } from "./linter";
@@ -39,6 +43,8 @@ export interface SanyReportOptions {
   version?: TlcVersion;
   // The modules TLC adds to the root module's EXTENDS for its post conditions.
   rootExtendees?: string[];
+  // SANY's analysis of TLC master's standard modules, made ahead of time.
+  precomputed?: PrecomputedModules;
   // Prints what SANY prints as it goes, before the report holds all of it.
   onPrint?: (text: string) => void;
   // Prints what TLC 1.7.4's SANY prints to its error stream as it goes.
@@ -269,6 +275,7 @@ export const getSanyReport = (
         rootFilePath: options.isXmlExport ? `${name.replace(/\.tla$/, "")}.tla` : undefined,
         version: options.version,
         rootExtendees: options.rootExtendees,
+        precomputed: options.precomputed,
         onParse: (moduleName) => {
           if (describeFile) {
             log(`Parsing file ${describeFile(moduleName, origins.get(moduleName) ?? "file")}`);

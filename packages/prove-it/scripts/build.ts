@@ -4,8 +4,10 @@
 // entries and the chunks sit side by side in dist.
 // Usage: bun scripts/build.ts
 
-import { rmSync } from "node:fs";
+import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+
+import { createSanySnapshot } from "../src/sany/snapshot";
 
 const PACKAGE_DIRECTORY = join(import.meta.dirname, "..");
 const OUT_DIRECTORY = join(PACKAGE_DIRECTORY, "dist");
@@ -39,3 +41,6 @@ const result = await Bun.build({
 
 result.logs.forEach((log) => console.error(log));
 if (!result.success) process.exit(1);
+
+// The CLI reads SANY's analysis of the standard modules from beside its bundle.
+writeFileSync(join(OUT_DIRECTORY, "sany-snapshot.json"), JSON.stringify(createSanySnapshot()));

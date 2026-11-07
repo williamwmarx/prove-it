@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { getSanyModuleName, getSanyReport, type SanyReportOptions } from "../../src/sany/report";
+import { createSanySnapshot, getPrecomputedModules } from "../../src/sany/snapshot";
 
 const directories: string[] = [];
 
@@ -1324,5 +1325,64 @@ EXTENDS Absent
         "",
       ]),
     );
+  });
+});
+
+describe("getSanyReport with the precomputed standard modules", () => {
+  // The CLI reads the snapshot from the JSON file the build writes.
+  const precomputed = getPrecomputedModules(JSON.parse(JSON.stringify(createSanySnapshot())));
+  const options: SanyReportOptions = {
+    describeFile: (name) => `${name}.tla`,
+    rootExtendees: ["_TLCTrace"],
+  };
+  const expectSameReport = (modules: Record<string, string>) => {
+    const report = getReport(modules, options);
+    expect(getReport(modules, { ...options, precomputed })).toEqual(report);
+    return report;
+  };
+
+  it("reports a specification that uses the standard modules as SANY does", () => {
+    const report = expectSameReport({
+      Queue: `---- MODULE Queue ----
+EXTENDS Naturals, Sequences, FiniteSets, TLC
+VARIABLE queue
+Init == queue = <<>>
+Next == /\\ Len(queue) < 3 /\\ queue' = Append(queue, Cardinality({1, 2}))
+Spec == Init /\\ [][Next]_queue
+====
+`,
+    });
+    expect(report.isFailed).toBe(false);
+  });
+
+  it("reports errors in applications of the standard modules' operators", () => {
+    const report = expectSameReport({
+      Wrong: `---- MODULE Wrong ----
+EXTENDS Sequences, TLC
+VARIABLE x
+Arity == Len(x, x)
+Level == Print(x', TRUE)
+Init == x = <<>>
+Inv == [](x = <<>>)
+Bad == ENABLED Inv
+====
+`,
+    });
+    expect(report.isFailed).toBe(true);
+  });
+
+  // The replacement lacks operators that TLC and Sequences use, which SANY reports.
+  it("analyzes the modules that depend on a standard module the specification replaces", () => {
+    const report = expectSameReport({
+      Replaced: `---- MODULE Replaced ----
+EXTENDS Naturals, TLC
+====
+`,
+      Naturals: `---- MODULE Naturals ----
+Nat == {0, 1, 2}
+====
+`,
+    });
+    expect(report.isFailed).toBe(true);
   });
 });
