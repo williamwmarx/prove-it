@@ -757,7 +757,8 @@ const unsupported = (what: string): never => bail(`unsupported: ${what}`);
 export const createCompiler = (environment: Environment): Compiler => {
   const variableCount = environment.variables.length;
   const definitionCache = new Map<Definition, Compiled[]>();
-  const recursiveOperators = new Map<object, RecursiveOperator>();
+  // A RECURSIVE operator's body, for its unprimed and its primed calls.
+  const recursiveOperators = new Map<object, RecursiveOperator[]>();
   const expanding = new Set<Definition>();
   let depth = 0;
 
@@ -1477,7 +1478,12 @@ export const createCompiler = (environment: Environment): Compiler => {
     if (definition.params.some((param) => param.arity > 0))
       return unsupported("a recursive higher-order operator");
     const key: object = local ?? definition;
-    let recursive = recursiveOperators.get(key);
+    // A primed call reads the primed variables where the body names variables.
+    const isPrimed = context.isPrimed || (local?.context.isPrimed ?? false);
+    const index = isPrimed ? 1 : 0;
+    const entries = recursiveOperators.get(key) ?? [];
+    recursiveOperators.set(key, entries);
+    let recursive = entries[index];
     if (recursive) {
       noteRead(recursive.fixedPoint);
       noteCachedRead(recursive);
@@ -1498,7 +1504,7 @@ export const createCompiler = (environment: Environment): Compiler => {
         fixedPoint: { isSettled: false, dependents: [] },
       };
       recursive = created;
-      recursiveOperators.set(key, created);
+      entries[index] = created;
       let scope = local?.context.scope;
       definition.params.forEach((param, index) => {
         scope = bind(scope, param.name, { kind: "slot", slot: slots[index] });
@@ -1506,11 +1512,7 @@ export const createCompiler = (environment: Environment): Compiler => {
       if (!local) expanding.add(definition as OperatorDefinition);
       const read = new Set<FixedPoint>();
       try {
-        const bodyContext = {
-          scope,
-          isPrimed: context.isPrimed || (local?.context.isPrimed ?? false),
-          isInit: context.isInit,
-        };
+        const bodyContext = { scope, isPrimed, isInit: context.isInit };
         const compileBody = () => {
           created.slotStart = slotCount;
           const body = tracking(read, () => compile(definition.body, bodyContext));
@@ -1535,7 +1537,7 @@ export const createCompiler = (environment: Environment): Compiler => {
         }
       } catch (error) {
         // Nothing keeps what compiled against an operator whose body didn't.
-        recursiveOperators.delete(key);
+        if (entries[index] === created) delete entries[index];
         dropDependents(created.fixedPoint);
         throw error;
       } finally {
@@ -1546,7 +1548,7 @@ export const createCompiler = (environment: Environment): Compiler => {
       // An operator whose body called another one that hadn't settled, as mutually recursive
       // operators do, compiles again when that one's assumption grows.
       rememberReads(created, read, () => {
-        if (recursiveOperators.get(key) === created) recursiveOperators.delete(key);
+        if (entries[index] === created) delete entries[index];
       });
       const footprint = created.body.footprint;
       created.keySlots = mergeSorted(

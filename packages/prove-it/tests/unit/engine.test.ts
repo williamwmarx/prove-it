@@ -285,6 +285,43 @@ describe("the engine", () => {
     ]);
   });
 
+  it("compiles a recursive operator apart for its primed calls", async () => {
+    // S(1) compiles unprimed first; (S(1))' reads x'.
+    const { result, lines } = await checkInEngine(
+      [
+        "EXTENDS Naturals",
+        "VARIABLES x, y",
+        "RECURSIVE S(_)",
+        "S(n) == IF n = 0 THEN x ELSE S(n - 1)",
+        "Init == x = 0 /\\ y = 0",
+        "Next == x < 5 /\\ S(1) >= 0 /\\ x' = x + 1 /\\ (S(1))' # 2 /\\ y' = y",
+      ].join("\n"),
+      "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+    );
+    expect([result.generatedStates, result.distinctStates]).toEqual([2, 2]);
+    expect(lines).toEqual([expect.stringMatching(/^\[engine\] checked 2 states/)]);
+    // The invariant compiles Rec(1) unprimed before Next does (Rec(1))'.
+    const invariantFirst = await checkInEngine(
+      [
+        "EXTENDS Naturals",
+        "VARIABLES x, y",
+        "RECURSIVE Rec(_)",
+        "Rec(n) == IF n = 0 THEN x ELSE Rec(n - 1)",
+        "Init == x = 0 /\\ y = 0",
+        "Next == \\/ x < 3 /\\ x' = x + 1 /\\ y' = (Rec(1))'",
+        "        \\/ y > 0 /\\ y' = y - 1 /\\ x' = x",
+        "Inv == Rec(1) >= 0",
+      ].join("\n"),
+      "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
+    );
+    expect([
+      invariantFirst.result.generatedStates,
+      invariantFirst.result.distinctStates,
+      invariantFirst.result.depth,
+    ]).toEqual([13, 10, 7]);
+    expect(invariantFirst.lines).toEqual([expect.stringMatching(/^\[engine\] checked 10 states/)]);
+  });
+
   it("reads Nat as the set the model substitutes for it", async () => {
     const { result, lines } = await checkInEngine(
       "EXTENDS Integers\nVARIABLE x\nInit == x = 0\nNext == UNCHANGED x\nInv == -1 \\in Nat",
