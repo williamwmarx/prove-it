@@ -39,6 +39,7 @@ interface ActionOptions {
 export const resetAssigned = () => {
   registers.assigned = 0;
   undoTop.value = 0;
+  frameTop.value = 0;
 };
 
 const FOUND = Symbol("found");
@@ -53,6 +54,7 @@ export const createEnabledTest = (step: Step, width: number) => {
     const outerNext = NXT;
     const outerAssigned = registers.assigned;
     const outerTop = undoTop.value;
+    const outerFrameTop = frameTop.value;
     const next = (buffers[depth] ??= new Int32Array(width));
     next.fill(-1);
     depth++;
@@ -71,6 +73,7 @@ export const createEnabledTest = (step: Step, width: number) => {
       setNext(outerNext);
       registers.assigned = outerAssigned;
       undoTop.value = outerTop;
+      frameTop.value = outerFrameTop;
     }
   };
 };
@@ -80,6 +83,25 @@ const target = (isInit: boolean) => (isInit ? CUR : NXT);
 // The variables assigned so far, in order, so each conjunction unassigns its own on the way out.
 const undoStack = new Int32Array(1 << 16);
 const undoTop = { value: 0 };
+
+// What each running walk of a universal action keeps while its body runs, above what the walks
+// around it keep: the binding it is at, then each level's set, stride and saved slot.
+let frames = new Int32Array(1024);
+const frameTop = { value: 0 };
+
+// The offset of room for length words, which the walk pops by restoring frameTop.
+const pushFrame = (length: number) => {
+  const at = frameTop.value;
+  frameTop.value += length;
+  if (frameTop.value > frames.length) {
+    let capacity = frames.length * 2;
+    while (frameTop.value > capacity) capacity *= 2;
+    const grown = new Int32Array(capacity);
+    grown.set(frames);
+    frames = grown;
+  }
+  return at;
+};
 
 export const compileAction = (
   compiler: Compiler,
@@ -202,6 +224,10 @@ export const compileAction = (
     const branches = conjuncts.map((conjunct) =>
       conjunct.kind === "branch" ? conjunct.step : undefined,
     );
+    // What follows the running conjunction, which each branch goes on to through the conjuncts
+    // after it. A conjunction run inside another's continuation puts the other's back on return.
+    let pending: Continue = () => {};
+    const continuations = conjuncts.map((_, index) => () => runFrom(index + 1, pending));
     const runFrom = (start: number, onComplete: Continue): void => {
       const mark = undoTop.value;
       let index = start;
@@ -224,8 +250,7 @@ export const compileAction = (
           if (!step()) break;
           continue;
         }
-        const next = index + 1;
-        branches[index]!(() => runFrom(next, onComplete));
+        branches[index]!(continuations[index]);
         break;
       }
       if (index === count) onComplete();
@@ -235,7 +260,17 @@ export const compileAction = (
       registers.assigned -= undoTop.value - mark;
       undoTop.value = mark;
     };
-    return (onComplete) => runFrom(0, onComplete);
+    if (branches.every((branch) => branch === undefined))
+      return (onComplete) => runFrom(0, onComplete);
+    return (onComplete) => {
+      const outer = pending;
+      pending = onComplete;
+      try {
+        runFrom(0, onComplete);
+      } finally {
+        pending = outer;
+      }
+    };
   };
 
   const compileMembership = (
@@ -306,28 +341,32 @@ export const compileAction = (
             }
           };
         }
+        const setEvaluators = levels.map((level) => level.set.evaluate);
+        const slots = Int32Array.from(levels, (level) => level.slot);
+        const levelCount = levels.length;
         // TLC's ContextEnumerator varies the first bound fastest: the last bound is the outer loop.
+        // The frame holds each level's set, then its position.
         return (onComplete) => {
-          const sets = levels.map((level) => {
-            const id = level.set.evaluate();
+          const at = pushFrame(2 * levelCount);
+          let isEmpty = false;
+          for (let level = 0; level < levelCount; level++) {
+            const id = setEvaluators[level]();
             if (kindOf(id) !== KIND_SET && kindOf(id) !== KIND_TUPLE)
               bail("an action quantified over a non-set");
-            return id;
-          });
-          if (sets.some((id) => sizeOf(id) === 0)) return;
-          const visit = (level: number) => {
-            if (level < 0) {
-              body(onComplete);
-              return;
+            if (sizeOf(id) === 0) isEmpty = true;
+            frames[at + level] = id;
+            frames[at + levelCount + level] = 0;
+          }
+          for (let level = isEmpty ? levelCount : 0; level < levelCount;) {
+            for (let bound = 0; bound < levelCount; bound++)
+              LOC[slots[bound]] = elementAt(frames[at + bound], frames[at + levelCount + bound]);
+            body(onComplete);
+            for (level = 0; level < levelCount; level++) {
+              if (++frames[at + levelCount + level] < sizeOf(frames[at + level])) break;
+              frames[at + levelCount + level] = 0;
             }
-            const id = sets[level];
-            const slot = levels[level].slot;
-            for (let position = 0; position < sizeOf(id); position++) {
-              LOC[slot] = elementAt(id, position);
-              visit(level - 1);
-            }
-          };
-          visit(levels.length - 1);
+          }
+          frameTop.value = at;
         };
       }
       case "Forall": {
@@ -483,65 +522,88 @@ export const compileAction = (
       levels.push({ set, slot: binding.slot });
     }
     const body = compileStep(step.body, inner);
-    const slots = levels.map((level) => level.slot);
+    const slots = Int32Array.from(levels, (level) => level.slot);
+    const setEvaluators = levels.map((level) => level.set.evaluate);
     // The body as a guard, compiled the first time an initial state needs it and then kept: each
     // compile binds new slots.
     let forallGuard: (() => number) | undefined;
     const levelCount = levels.length;
-    return (onComplete) => {
-      // The bindings are numbered with the first name varying fastest, so binding b binds level l
-      // to the element at (b / strides[l]) % size of its set.
-      const sets = new Int32Array(levelCount);
-      const strides = new Int32Array(levelCount);
-      const saved = new Int32Array(levelCount);
-      let count = 1;
+    // The running walk: the offset of its frame, its number of bindings, and what follows it. A
+    // walk of this action inside another's continuation puts the other's back once it returns.
+    let frame = 0;
+    let count = 0;
+    let complete: Continue = () => {};
+    // The bindings are numbered with the first name varying fastest, so binding b binds level l
+    // to the element at (b / stride of l) % size of its set.
+    const bind = (index: number) => {
+      const binding = index === 0 ? 0 : count - index;
       for (let level = 0; level < levelCount; level++) {
-        const id = levels[level].set.evaluate();
+        const set = frames[frame + 1 + level];
+        const stride = frames[frame + 1 + levelCount + level];
+        LOC[slots[level]] = elementAt(set, Math.floor(binding / stride) % sizeOf(set));
+      }
+    };
+    const restore = () => {
+      for (let level = 0; level < levelCount; level++)
+        LOC[slots[level]] = frames[frame + 1 + 2 * levelCount + level];
+    };
+    // The walk visits the first binding, then the others in reverse.
+    const visit = (index: number) => {
+      if (index === count) {
+        restore();
+        complete();
+        return;
+      }
+      if (index > 0 && isInit && registers.assigned === variableCount) {
+        const guard = getForallGuard();
+        for (let rest = index; rest < count; rest++) {
+          bind(rest);
+          const value = guard();
+          if (value === FALSE) return;
+          if (value !== TRUE) bail("a conjunct that isn't a boolean");
+        }
+        restore();
+        complete();
+        return;
+      }
+      frames[frame] = index;
+      bind(index);
+      body(advance);
+    };
+    // The rest of the conjunction rebinds the names for the next binding, so this binding's walk
+    // gets them back once the rest returns. A body that branches goes on more than once.
+    const advance = () => {
+      const index = frames[frame];
+      visit(index + 1);
+      frames[frame] = index;
+      bind(index);
+    };
+    return (onComplete) => {
+      const at = pushFrame(1 + 3 * levelCount);
+      let bindings = 1;
+      for (let level = 0; level < levelCount; level++) {
+        const id = setEvaluators[level]();
         if (kindOf(id) !== KIND_SET && kindOf(id) !== KIND_TUPLE)
           bail("an action quantified over a non-set");
-        sets[level] = id;
-        strides[level] = count;
-        count *= sizeOf(id);
-        saved[level] = LOC[slots[level]];
+        frames[at + 1 + level] = id;
+        frames[at + 1 + levelCount + level] = bindings;
+        frames[at + 1 + 2 * levelCount + level] = LOC[slots[level]];
+        bindings *= sizeOf(id);
       }
-      // The walk visits the first binding, then the others in reverse.
-      const bind = (index: number) => {
-        const binding = index === 0 ? 0 : count - index;
-        for (let level = 0; level < levelCount; level++) {
-          const set = sets[level];
-          LOC[slots[level]] = elementAt(set, Math.floor(binding / strides[level]) % sizeOf(set));
-        }
-      };
-      const restore = () => {
-        for (let level = 0; level < levelCount; level++) LOC[slots[level]] = saved[level];
-      };
-      const visit = (index: number) => {
-        if (index === count) {
-          restore();
-          onComplete();
-          return;
-        }
-        if (index > 0 && isInit && registers.assigned === variableCount) {
-          const guard = getForallGuard();
-          for (let rest = index; rest < count; rest++) {
-            bind(rest);
-            const value = guard();
-            if (value === FALSE) return;
-            if (value !== TRUE) bail("a conjunct that isn't a boolean");
-          }
-          restore();
-          onComplete();
-          return;
-        }
-        bind(index);
-        // The rest of the conjunction rebinds the names for the next binding, so this binding's
-        // walk gets them back once the rest returns.
-        body(() => {
-          visit(index + 1);
-          bind(index);
-        });
-      };
-      visit(0);
+      const outerFrame = frame;
+      const outerCount = count;
+      const outerComplete = complete;
+      frame = at;
+      count = bindings;
+      complete = onComplete;
+      try {
+        visit(0);
+      } finally {
+        frame = outerFrame;
+        count = outerCount;
+        complete = outerComplete;
+        frameTop.value = at;
+      }
     };
     function getForallGuard() {
       forallGuard ??= compiler.compile(step.body, inner).evaluate;
