@@ -298,7 +298,11 @@ const formatRatio = (ratio: number | undefined) =>
   ratio === undefined ? "-" : `${ratio.toFixed(2)}x`;
 
 const getEngineLabel = (engine: string | undefined) =>
-  engine === undefined ? "?" : engine.startsWith("checked") ? "ran" : engine.split(":")[0];
+  engine === undefined
+    ? "?"
+    : engine.startsWith("checked")
+      ? "ran"
+      : engine.replace(/ after \d+ ms/, "").split(":")[0];
 
 console.log(`\nMedian of ${runs} runs; wall seconds (CPU seconds); speedups of Prove It under Bun`);
 console.table(

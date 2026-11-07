@@ -25,7 +25,8 @@
     "directory": "tests/conformance/.corpora/examples/specifications/btree",
     "spec": "MCbtree.tla",
     "config": "MCbtree.cfg",
-    "style": "B-tree, records and sequences"
+    "style": "B-tree, records and sequences",
+    "isUsingLibrary": true
   },
   {
     "id": "examples/specifications/TeachingConcurrency/SimpleRegular.cfg",
