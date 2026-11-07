@@ -302,6 +302,50 @@ describe("the engine", () => {
     ]);
   });
 
+  it("checks each conjunct of an invariant on the steps that change what it reads", async () => {
+    // Each step changes one of x and y, so the conjunct on y fails on a step that leaves x as it was.
+    const body = [
+      "EXTENDS Naturals",
+      "VARIABLES x, y",
+      "Init == x = 0 /\\ y = 0",
+      "Next == \\/ x < 2 /\\ x' = x + 1 /\\ UNCHANGED y",
+      "        \\/ y < 3 /\\ y' = y + 1 /\\ UNCHANGED x",
+      "Bounded == y \\in 0..2",
+      "TypeOK == x \\in 0..2 /\\ Bounded",
+    ].join("\n");
+    const violated = await checkInEngine(body, "INIT Init\nNEXT Next\nINVARIANT TypeOK");
+    expect(violated.result.status).toBe("invariant-violation");
+    expect(violated.lines).toEqual([expect.stringMatching(/an invariant violated$/)]);
+    const constrained = await checkInEngine(
+      body,
+      "INIT Init\nNEXT Next\nCONSTRAINT TypeOK\nCHECK_DEADLOCK FALSE",
+    );
+    expect([constrained.result.generatedStates, constrained.result.distinctStates]).toEqual([
+      16, 9,
+    ]);
+    expect(constrained.lines).toEqual([expect.stringMatching(/^\[engine\] checked 9 states/)]);
+  });
+
+  it("checks in each initial state the invariants the initial predicate doesn't assert", async () => {
+    // The initial predicate is an inductive invariant, as with SPECIFICATION ISpec.
+    const body = [
+      "EXTENDS Naturals",
+      "VARIABLE x",
+      "TypeOK == x \\in 0..4",
+      "Inv == TypeOK /\\ x # 1",
+      "Small == x < 3",
+      "Next == x' = x",
+    ].join("\n");
+    const implied = await checkInEngine(body, "INIT Inv\nNEXT Next\nINVARIANT TypeOK Inv");
+    expect([implied.result.status, implied.result.distinctStates]).toEqual(["success", 4]);
+    expect(implied.lines).toEqual([expect.stringMatching(/^\[engine\] checked 4 states/)]);
+    const violated = await checkInEngine(body, "INIT Inv\nNEXT Next\nINVARIANT Inv Small");
+    expect(violated.result.status).toBe("invariant-violation");
+    expect(violated.lines).toEqual([
+      expect.stringMatching(/an invariant violated in an initial state$/),
+    ]);
+  });
+
   it("compiles a recursive operator apart for its primed calls", async () => {
     // S(1) compiles unprimed first; (S(1))' reads x'.
     const { result, lines } = await checkInEngine(

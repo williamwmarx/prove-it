@@ -98,22 +98,27 @@ const getPredicateVars = (compiled: Compiled, width: number) => {
 };
 
 // The expressions an expression asserts as conjuncts, through zero-arity definitions, resolved as
-// the compiler resolves a name that nothing binds locally.
+// the compiler resolves a name that nothing binds locally. A definition that reaches itself stays a
+// conjunct, for the compiler to refuse.
 const getConjuncts = (
   expression: Expression,
   environment: Environment,
   conjuncts = new Set<Expression>(),
-  seen = new Set<Definition>(),
+  expanded = new Set<Definition>(),
+  expanding = new Set<Definition>(),
 ) => {
   if (expression.kind === "And") {
-    for (const operand of expression.operands) getConjuncts(operand, environment, conjuncts, seen);
+    for (const operand of expression.operands)
+      getConjuncts(operand, environment, conjuncts, expanded, expanding);
     return conjuncts;
   }
   const definition = getAssertedDefinition(expression, environment);
-  if (!definition) conjuncts.add(expression);
-  else if (!seen.has(definition)) {
-    seen.add(definition);
-    getConjuncts(definition.body, environment, conjuncts, seen);
+  if (!definition || expanding.has(definition)) conjuncts.add(expression);
+  else if (!expanded.has(definition)) {
+    expanded.add(definition);
+    expanding.add(definition);
+    getConjuncts(definition.body, environment, conjuncts, expanded, expanding);
+    expanding.delete(definition);
   }
   return conjuncts;
 };
@@ -189,16 +194,21 @@ export const createEngineContext = (
   };
   const predicate = (expression: Expression) =>
     compilePredicate(compiler.compile(expression, ROOT_CONTEXT));
-  const invariantExpressions = [
-    ...config.invariants.map((name) => {
-      if (!getDefinition(name, environment)) return bail(`the invariant ${name} isn't defined`);
-      return identifier(name);
-    }),
-    ...properties.invariants,
+  // Each invariant and constraint is checked conjunct by conjunct, so a successor skips each
+  // conjunct that reads only variables its step left unchanged.
+  const getAllConjuncts = (kind: string, names: string[], expressions: Expression[] = []) => [
+    ...new Set(
+      [
+        ...names.map((name) => {
+          if (!getDefinition(name, environment)) return bail(`the ${kind} ${name} isn't defined`);
+          return identifier(name);
+        }),
+        ...expressions,
+      ].flatMap((expression) => [...getConjuncts(expression, environment)]),
+    ),
   ];
-  const invariants = invariantExpressions.map((expression) =>
-    compiler.compile(expression, ROOT_CONTEXT),
-  );
+  const invariantConjuncts = getAllConjuncts("invariant", config.invariants, properties.invariants);
+  const invariants = invariantConjuncts.map((conjunct) => compiler.compile(conjunct, ROOT_CONTEXT));
   // An initial predicate in an instance's scope resolves its names there, so it implies nothing.
   const initConjuncts =
     spec.scope === undefined ? getConjuncts(spec.init, environment) : new Set<Expression>();
@@ -216,17 +226,15 @@ export const createEngineContext = (
     config.view === undefined
       ? undefined
       : compiler.compile(identifier(config.view), ROOT_CONTEXT).evaluate;
-  const constraints = config.constraints.map((name) => compileNamed("constraint", name));
+  const constraints = getAllConjuncts("constraint", config.constraints).map((conjunct) =>
+    compiler.compile(conjunct, ROOT_CONTEXT),
+  );
   return {
     compiler,
     width,
     invariants: invariants.map(compilePredicate),
     initialInvariants: invariants
-      .filter((_, index) =>
-        [...getConjuncts(invariantExpressions[index], environment)].some(
-          (conjunct) => !initConjuncts.has(conjunct),
-        ),
-      )
+      .filter((_, index) => !initConjuncts.has(invariantConjuncts[index]))
       .map(compilePredicate),
     invariantVars: invariants.map((compiled) => getPredicateVars(compiled, width)),
     actionProperties,
