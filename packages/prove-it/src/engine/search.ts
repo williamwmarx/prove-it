@@ -12,7 +12,7 @@ import type { Environment } from "../evaluate";
 import type { TlcVersion } from "../tlc/version";
 import type { Value } from "../values";
 import { resetAssigned } from "./action";
-import { setCurrent, setNext } from "./compile";
+import { EPOCH, nextEpoch, setCurrent, setNext } from "./compile";
 import { createEngineContext, type EngineProperties, type EngineSpec, holdsAll } from "./context";
 import { getStateFingerprints, resetFingerprints } from "./fingerprint";
 import { createLiveOracle, type LiveOracle } from "./live";
@@ -183,9 +183,10 @@ export const runEngine = (input: EngineInput): EngineResult => {
     representative.set(state);
     canonicalize(representative);
     if (!view) return representative;
+    const epoch = EPOCH;
     setCurrent(representative);
     separateKey[0] = view();
-    setCurrent(state);
+    setCurrent(state, epoch);
     return separateKey;
   };
   const representative = new Int32Array(width);
@@ -249,7 +250,8 @@ export const runEngine = (input: EngineInput): EngineResult => {
   // --- initial states ---
   const current = new Int32Array(width).fill(-1);
   const next = new Int32Array(width).fill(-1);
-  setCurrent(current);
+  // The initial predicate assigns the current state in place, so nothing caches by its epoch.
+  setCurrent(current, 0);
   setNext(next);
   input.onInitialStatesStarted();
   context.initStep(() => {
@@ -335,21 +337,24 @@ export const runEngine = (input: EngineInput): EngineResult => {
     recording.edgeOffsets[index + 1] = recording.edgeCount;
   };
 
+  // The epoch of the state being expanded, which its successors put back once checked.
+  let expansionEpoch = 0;
   const visitSuccessor = () => {
     successors++;
     generated++;
     const successor = next;
-    setCurrent(successor);
+    const successorEpoch = nextEpoch();
+    setCurrent(successor, successorEpoch);
     const isStateInModel = holdsAll(constraints);
     const key = isStateInModel ? getKey(successor) : undefined;
-    setCurrent(current);
+    setCurrent(current, expansionEpoch);
     const isInModel = isStateInModel && holdsAll(actionConstraints);
     const slot = isInModel ? findSlot(key!) : -1;
     const isNew = isInModel && table[slot] === -1;
     if (!isInModel || isNew) {
-      setCurrent(successor);
+      setCurrent(successor, successorEpoch);
       const holds = holdsAll(invariants);
-      setCurrent(current);
+      setCurrent(current, expansionEpoch);
       if (!holds) bail("an invariant violated");
     }
     if (graph && isInModel) recordEdge(isNew ? stateCount : table[slot]);
@@ -507,7 +512,8 @@ export const runEngine = (input: EngineInput): EngineResult => {
       resetAssigned();
       newStates = 0;
       successors = 0;
-      setCurrent(current);
+      expansionEpoch = nextEpoch();
+      setCurrent(current, expansionEpoch);
       setNext(next);
       context.nextStep(onSuccessor);
       if (successors === 0 && config.checkDeadlock) bail("deadlock");

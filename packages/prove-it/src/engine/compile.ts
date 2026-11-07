@@ -32,7 +32,8 @@ import {
   type Value,
 } from "../values";
 import { fromValue, toValue } from "./convert";
-import { MemoTable } from "./memo";
+import { EPOCH_KEYS, EpochCache, MemoTable } from "./memo";
+import { getEnvironmentFlag } from "./settings";
 import {
   apply,
   applyField,
@@ -94,9 +95,25 @@ let slotCount = 0;
 // being built have a value.
 export const registers = { cur: CUR, next: NXT, locals: LOC, assigned: 0 };
 
-export const setCurrent = (state: Int32Array) => {
+// Which current state the current register holds, for the caches of expressions that read many
+// variables: a state keeps its epoch while it is current and unchanged. 0 marks one that may change,
+// such as the initial state being built, which nothing caches.
+export let EPOCH = 0;
+let epochCount = 0;
+const epochCaches: EpochCache[] = [];
+
+export const nextEpoch = () => {
+  if (++epochCount > 0x3fffffff) {
+    epochCount = 1;
+    for (const cache of epochCaches) cache.epochs.fill(0);
+  }
+  return epochCount;
+};
+
+export const setCurrent = (state: Int32Array, epoch = nextEpoch()) => {
   CUR = state;
   registers.cur = state;
+  EPOCH = epoch;
 };
 export const setNext = (state: Int32Array) => {
   NXT = state;
@@ -325,6 +342,53 @@ const keyCodes = (footprint: Footprint, gen: CodeGen) => {
 
 const memoTables: MemoTable[] = [];
 
+// PROVE_IT_EPOCH_CHECK=1 evaluates an expression again on each hit of its epoch cache, to check it.
+const isEpochChecked = getEnvironmentFlag("PROVE_IT_EPOCH_CHECK");
+
+const epochLookup = (
+  cache: EpochCache,
+  inner: Evaluate,
+  first: number,
+  second: number,
+  third: number,
+  fourth: number,
+) => {
+  if (EPOCH === 0 || !cache.isEnabled) return inner();
+  const epoch = EPOCH;
+  const entry = EpochCache.entry(first, second, third, fourth);
+  const known = cache.get(epoch, entry, first, second, third, fourth);
+  if (known !== -1) {
+    if (isEpochChecked && inner() !== known) throw new Error("an epoch cache hit a stale value");
+    return known;
+  }
+  const value = inner();
+  cache.set(epoch, entry, first, second, third, fourth, value);
+  return value;
+};
+
+// While one state is expanded, an expression that reads no primed variable has one value for each
+// value of the bound names it reads, however many variables it reads: records like Self(r) built
+// from a dozen variables, which a step reads once per field it updates.
+const cachedInEpoch = (compiled: Compiled): Compiled => {
+  const footprint = compiled.footprint;
+  const slots = footprint.slots;
+  if (footprint.primes.length > 0 || slots.length > EPOCH_KEYS) return compiled;
+  const cache = new EpochCache();
+  epochCaches.push(cache);
+  const inner = compiled.evaluate;
+  const key = (index: number) => (index < slots.length ? LOC[slots[index]] : 0);
+  return {
+    ...compiled,
+    isCostly: false,
+    emit: (gen: CodeGen) => {
+      const keys = keyCodes(footprint, gen).slice(footprint.vars.length);
+      while (keys.length < EPOCH_KEYS) keys.push("0");
+      return `${gen.ref(epochLookup)}(${gen.ref(cache)}, ${gen.ref(inner)}, ${keys.join(", ")})`;
+    },
+    evaluate: () => epochLookup(cache, inner, key(0), key(1), key(2), key(3)),
+  };
+};
+
 // Caches a costly expression by the ids it reads, and evaluates one that reads nothing only once.
 const cached = (compiled: Compiled): Compiled => {
   const footprint = compiled.footprint;
@@ -350,7 +414,7 @@ const cached = (compiled: Compiled): Compiled => {
       evaluate: () => (value !== -1 ? value : (value = inner())),
     };
   }
-  if (width > MAXIMUM_MEMO_WIDTH) return compiled;
+  if (width > MAXIMUM_MEMO_WIDTH) return cachedInEpoch(compiled);
   const table = new MemoTable(width);
   memoTables.push(table);
   const vars = footprint.vars;

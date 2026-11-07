@@ -12,7 +12,7 @@
 
 import type { ModelConfig } from "../config";
 import { resetAssigned } from "./action";
-import { setCurrent, setNext } from "./compile";
+import { nextEpoch, setCurrent, setNext } from "./compile";
 import { type EngineContext, holdsAll } from "./context";
 import { reportEngine } from "./settings";
 import { Bailout, type SharedStore } from "./store";
@@ -265,21 +265,23 @@ export const expandLevel = (context: EngineContext, views: SearchViews) => {
   let parent = 0;
   let ordinal = 0;
   const block = createStorageBlock();
+  let expansionEpoch = 0;
   const onSuccessor = () => {
     for (let index = 0; index < width; index++) {
       if (next[index] === -1) throw new Bailout("a successor that isn't complete");
     }
     generated++;
     ordinal++;
-    setCurrent(next);
+    const successorEpoch = nextEpoch();
+    setCurrent(next, successorEpoch);
     const isStateInModel = holdsAll(context.constraints);
-    setCurrent(current);
+    setCurrent(current, expansionEpoch);
     const isInModel = isStateInModel && holdsAll(context.actionConstraints);
     const stored = isInModel ? insertState(views, next, parent, ordinal, block) : -1;
     if (isInModel && stored === -1) return;
-    setCurrent(next);
+    setCurrent(next, successorEpoch);
     const holds = holdsAll(context.invariants);
-    setCurrent(current);
+    setCurrent(current, expansionEpoch);
     if (!holds) throw new Bailout("an invariant violated");
   };
   setNext(next);
@@ -298,7 +300,8 @@ export const expandLevel = (context: EngineContext, views: SearchViews) => {
         resetAssigned();
         parent = index;
         ordinal = 0;
-        setCurrent(current);
+        expansionEpoch = nextEpoch();
+        setCurrent(current, expansionEpoch);
         context.nextStep(onSuccessor);
         if (ordinal === 0 && checkDeadlock) throw new Bailout("deadlock");
       }

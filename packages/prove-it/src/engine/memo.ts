@@ -159,3 +159,66 @@ export class MemoTable {
     this.size++;
   }
 }
+
+// A cache of an expression that reads too many state variables for a memo table, but no primed
+// ones, while one state is current. Its value is then a function of the bound names it reads, up
+// to four, which key its entries; an entry from an earlier current state doesn't match. Entries
+// are direct-mapped: a collision overwrites.
+const EPOCH_ENTRIES = 64;
+const EPOCH_MINIMUM_HIT_RATE = 0.1;
+export const EPOCH_KEYS = 4;
+
+export class EpochCache {
+  epochs = new Int32Array(EPOCH_ENTRIES);
+  keys = new Int32Array(EPOCH_ENTRIES * EPOCH_KEYS);
+  values = new Int32Array(EPOCH_ENTRIES);
+  lookups = 0;
+  hits = 0;
+  isEnabled = true;
+
+  // The entry for the keys, where the keys past the bound names read are 0.
+  static entry(first: number, second: number, third: number, fourth: number) {
+    let hash = Math.imul(0x811c9dc5 ^ first, 0x01000193);
+    hash = Math.imul(hash ^ second, 0x01000193);
+    hash = Math.imul(hash ^ third, 0x01000193);
+    hash = Math.imul(hash ^ fourth, 0x01000193);
+    return (hash ^ (hash >>> 15)) & (EPOCH_ENTRIES - 1);
+  }
+
+  get(epoch: number, entry: number, first: number, second: number, third: number, fourth: number) {
+    // A cache whose expression is evaluated about once per state only costs.
+    if (++this.lookups === PROBATION && this.hits < this.lookups * EPOCH_MINIMUM_HIT_RATE)
+      this.isEnabled = false;
+    const keys = this.keys;
+    const at = entry * EPOCH_KEYS;
+    if (
+      this.epochs[entry] !== epoch ||
+      keys[at] !== first ||
+      keys[at + 1] !== second ||
+      keys[at + 2] !== third ||
+      keys[at + 3] !== fourth
+    )
+      return EMPTY;
+    this.hits++;
+    return this.values[entry];
+  }
+
+  set(
+    epoch: number,
+    entry: number,
+    first: number,
+    second: number,
+    third: number,
+    fourth: number,
+    value: number,
+  ) {
+    const keys = this.keys;
+    const at = entry * EPOCH_KEYS;
+    this.epochs[entry] = epoch;
+    keys[at] = first;
+    keys[at + 1] = second;
+    keys[at + 2] = third;
+    keys[at + 3] = fourth;
+    this.values[entry] = value;
+  }
+}

@@ -123,6 +123,34 @@ describe("the engine", () => {
     }
   });
 
+  it("builds a record of many variables again for each state it expands", async () => {
+    // Self(r) reads seven variables, too many for a memo table, so the engine keeps it only while
+    // one state is current: a value kept from another state would find other successors.
+    const { result, lines } = await checkInEngine(
+      [
+        "EXTENDS Naturals",
+        "VARIABLES a, b, c, d, e, f, g",
+        "P == {1, 2}",
+        "Init == /\\ a = [p \\in P |-> 0] /\\ b = [p \\in P |-> 0] /\\ c = [p \\in P |-> 0]",
+        "        /\\ d = [p \\in P |-> 0] /\\ e = [p \\in P |-> 0] /\\ f = [p \\in P |-> 0]",
+        "        /\\ g = [p \\in P |-> 0]",
+        "Self(r) == [a |-> a[r], b |-> b[r], c |-> c[r], d |-> d[r], e |-> e[r], f |-> f[r], g |-> g[r]]",
+        "Step(r, s) == /\\ s.a < 3",
+        "              /\\ a' = [a EXCEPT ![r] = s.a + 1]",
+        "              /\\ b' = [b EXCEPT ![r] = (s.b + s.a) % 2]",
+        "              /\\ c' = [c EXCEPT ![r] = s.b]",
+        "              /\\ d' = [d EXCEPT ![r] = s.c]",
+        "              /\\ e' = [e EXCEPT ![r] = s.d]",
+        "              /\\ f' = [f EXCEPT ![r] = s.e]",
+        "              /\\ g' = [g EXCEPT ![r] = (s.f + s.g + r) % 3]",
+        "Next == \\E r \\in P : Step(r, Self(r))",
+      ].join("\n"),
+      "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+    );
+    expect([result.generatedStates, result.distinctStates]).toEqual([25, 16]);
+    expect(lines).toEqual([expect.stringMatching(/^\[engine\] checked 16 states/)]);
+  });
+
   it("reads Nat as the set the model substitutes for it", async () => {
     const { result, lines } = await checkInEngine(
       "EXTENDS Integers\nVARIABLE x\nInit == x = 0\nNext == UNCHANGED x\nInv == -1 \\in Nat",
