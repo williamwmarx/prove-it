@@ -346,6 +346,9 @@ export const getRankedStringCount = () => stringOrder.size;
 
 export const getStringRank = (text: string) => stringOrder.ranks[rankString(text)];
 
+// The rank of a text TLC has interned, without interning one it hasn't.
+export const findStringRank = (text: string): number | undefined => stringOrder.ranks[text];
+
 const compareStrings = (left: string, right: string) => {
   if (left === right) return 0;
   const ranks = stringOrder.ranks;

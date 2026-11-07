@@ -2,7 +2,7 @@ import type { Expression } from "./ast";
 import { type ModelConfig, parseConfig } from "./config";
 import { toValue as toEngineValue } from "./engine/convert";
 import { type EngineCheckpoint, isBailout, runEngine } from "./engine/search";
-import { getEngineSetting, reportEngine } from "./engine/settings";
+import { getEngineSetting, getEngineThreads, reportEngine } from "./engine/settings";
 import { createEnvironment } from "./environment";
 import {
   createStackOverflowError,
@@ -414,12 +414,19 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       capturedOutput.lines = outer;
     }
   };
-  const order = createTlcOrder(options.source, options.loadModule);
+  // The modules the spec loads, which the engine's workers build the spec from.
+  const loadedModules = new Map<string, string | undefined>();
+  const loadModule = (name: string) => {
+    const source = options.loadModule?.(name);
+    loadedModules.set(name, source);
+    return source;
+  };
+  const order = createTlcOrder(options.source, loadModule);
   setStringOrder(order.getStringOrder(config));
   setValueVersion(options.version);
   const specification = createEnvironment(config, {
     source: options.source,
-    loadModule: options.loadModule,
+    loadModule,
     order,
     loadClass: options.loadClass,
     print,
@@ -1364,6 +1371,10 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         isWarningEnabled: runtime.isWarningEnabled,
         tlcOrder: search.getTlcOrder(),
         startedAt,
+        workers: getEngineThreads(options.workers),
+        source: options.source,
+        modules: [...loadedModules],
+        version: options.version,
         onProgress: (progress) => {
           engineReport.isReported = true;
           options.onProgress?.(progress);
@@ -1378,7 +1389,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         },
       });
       reportEngine(
-        `checked ${result.distinctStates} states in ${(performance.now() - startedAt).toFixed(0)} ms with ${result.valueCount} values`,
+        `checked ${result.distinctStates} states on ${result.threads} thread${result.threads === 1 ? "" : "s"} in ${(performance.now() - startedAt).toFixed(0)} ms with ${result.valueCount} values`,
       );
       runtime.generatedStates = result.generatedStates;
       runtime.distinctStates = result.distinctStates;

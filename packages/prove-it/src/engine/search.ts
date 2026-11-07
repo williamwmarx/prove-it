@@ -1,23 +1,34 @@
 // The engine's breadth-first search. It explores states in TLC's order, counts them as TLC does,
 // and reports a complete search. Anything else it meets (a violation, an error, a feature it
-// doesn't implement) ends the run with a Bailout, and the reference interpreter checks the spec
-// instead.
+// doesn't implement) ends the run with a Bailout carrying a checkpoint, from which the reference
+// interpreter goes on.
+//
+// A search that runs long enough hands its levels to worker threads (parallel.ts), which keep TLC's
+// order, and takes them back to finish alone if a worker stops.
 
-import type { Expression } from "../ast";
 import type { CheckProgress } from "../check";
 import type { ModelConfig } from "../config";
-import { type Environment, getDefinition } from "../evaluate";
-import { compileAction, resetAssigned, type Step } from "./action";
-import { generateAction } from "./codegen";
-import { type Compiled, createCompiler, ROOT_CONTEXT, setCurrent, setNext } from "./compile";
+import type { Environment } from "../evaluate";
+import type { TlcVersion } from "../tlc/version";
+import { resetAssigned } from "./action";
+import { setCurrent, setNext } from "./compile";
+import { createEngineContext, type EngineSpec, holdsAll } from "./context";
 import { getStateFingerprints, resetFingerprints } from "./fingerprint";
-import { getCodegenSetting, reportEngine } from "./settings";
-import { bail, Bailout, FALSE, getValueCount, resetStore, TRUE } from "./store";
+import {
+  createSharedSearch,
+  createStorageBlock,
+  getReadyCount,
+  type GoMessage,
+  runLevel,
+  type SearchViews,
+  seedState,
+  stopWorkers,
+} from "./parallel";
+import { getEnvironmentFlag } from "./settings";
+import { bail, Bailout, freezeTexts, getValueCount, resetStore, shareStore } from "./store";
+import { type EngineWorkers, spawnEngineWorkers } from "./workers";
 
-export interface EngineSpec {
-  init: Expression;
-  next: Expression;
-}
+export type { EngineSpec } from "./context";
 
 export interface EngineInput {
   config: ModelConfig;
@@ -29,6 +40,11 @@ export interface EngineInput {
   // Called once the initial states are computed, so the caller reports them.
   onInitialStates: (generated: number, distinct: number) => void;
   startedAt: number;
+  // How many threads may search, and what a worker needs to build the spec.
+  workers: number;
+  source: string;
+  modules: [string, string | undefined][];
+  version: TlcVersion | undefined;
 }
 
 // The search up to the state the engine was expanding when it stopped: the states found before
@@ -52,66 +68,30 @@ export interface EngineResult {
   initialStates: { generated: number; distinct: number };
   getFingerprints: () => BigInt64Array;
   valueCount: number;
+  threads: number;
 }
 
 const OUT_DEGREE_BUCKETS = 32;
 const PROGRESS_INTERVAL = 60_000;
-
-const identifier = (name: string): Expression => ({
-  kind: "Identifier",
-  name,
-  location: { line: 0, column: 0 },
-});
-
-const compilePredicate = (compiled: Compiled) => {
-  const evaluate = compiled.evaluate;
-  return () => {
-    const value = evaluate();
-    if (value === TRUE) return true;
-    if (value === FALSE) return false;
-    return bail("a predicate that isn't a boolean");
-  };
-};
+// Workers start once the search has run this long, and take over a level of at least this many
+// states, since a worker takes a while to build the spec and a small level isn't worth sharing.
+const WORKER_SPAWN_MS = 150;
+const MINIMUM_SHARED_LEVEL = 2048;
 
 export const runEngine = (input: EngineInput): EngineResult => {
   const environment = input.environment;
   const config = input.config;
   resetStore();
+  if (getEnvironmentFlag("PROVE_IT_SHARED")) shareStore();
   resetFingerprints();
   resetAssigned();
-  const compiler = createCompiler(environment);
-  const width = environment.variables.length;
+  const context = createEngineContext(environment, config, input.spec, input.isWarningEnabled);
+  const width = context.width;
+  const constraints = context.constraints;
+  const actionConstraints = context.actionConstraints;
+  const invariants = context.invariants;
 
-  const named = (kind: string, name: string) => {
-    const definition = getDefinition(name, environment);
-    if (!definition) return bail(`the ${kind} ${name} isn't defined`);
-    return compilePredicate(compiler.compile(identifier(name), ROOT_CONTEXT));
-  };
-  const invariants = config.invariants.map((name) => named("invariant", name));
-  const constraints = config.constraints.map((name) => named("constraint", name));
-  const actionConstraints = config.actionConstraints.map((name) =>
-    named("action constraint", name),
-  );
-
-  const buildAction = (
-    expression: Expression,
-    isInit: boolean,
-    isAssignedShortcut: boolean,
-  ): Step => {
-    const context = isInit ? { ...ROOT_CONTEXT, isInit: true } : ROOT_CONTEXT;
-    const options = { isInit, isAssignedShortcut };
-    const generated =
-      getCodegenSetting() === "0"
-        ? undefined
-        : generateAction(compiler, expression, context, options);
-    if (generated) return generated;
-    reportEngine(`${isInit ? "init" : "next"} runs as closures`);
-    return compileAction(compiler, expression, context, options);
-  };
-  const initStep = buildAction(input.spec.init, true, true);
-  const nextStep = buildAction(input.spec.next, false, input.isWarningEnabled);
-
-  // The states found so far, `width` ids each, in the order the search found them.
+  // The states found so far, `width` ids each, in TLC's order.
   let states = new Int32Array(Math.max(1, width) * 1024);
   let stateCount = 0;
   let parents = new Int32Array(1024);
@@ -175,11 +155,6 @@ export const runEngine = (input: EngineInput): EngineResult => {
     if (stateCount * 2 > table.length) growTable();
   };
 
-  const holdsAll = (predicates: (() => boolean)[]) => {
-    for (let index = 0; index < predicates.length; index++) if (!predicates[index]()) return false;
-    return true;
-  };
-
   let generated = 0;
   let initialGenerated = 0;
   let depth = 0;
@@ -189,7 +164,7 @@ export const runEngine = (input: EngineInput): EngineResult => {
   const next = new Int32Array(width).fill(-1);
   setCurrent(current);
   setNext(next);
-  initStep(() => {
+  context.initStep(() => {
     for (let index = 0; index < width; index++)
       if (current[index] === -1) bail("an initial state that isn't complete");
     if (initialGenerated > 1 && (initialGenerated & (initialGenerated - 1)) === 0) {
@@ -216,6 +191,19 @@ export const runEngine = (input: EngineInput): EngineResult => {
   let successors = 0;
   let expanding = 0;
   let progressAt = performance.now() + 3000;
+  const reportProgress = () => {
+    if (!input.onProgress || performance.now() < progressAt) return;
+    progressAt = performance.now() + PROGRESS_INTERVAL;
+    input.onProgress({
+      kind: "progress",
+      statistics: {
+        generatedStates: generated,
+        distinctStates: stateCount,
+        queuedStates: stateCount - expanding - 1,
+        depth: Math.max(depth, 1),
+      },
+    });
+  };
 
   const visitSuccessor = () => {
     successors++;
@@ -245,39 +233,141 @@ export const runEngine = (input: EngineInput): EngineResult => {
     visitSuccessor();
   };
 
+  // --- workers ---
+  const canShare =
+    input.workers > 1 &&
+    typeof SharedArrayBuffer === "function" &&
+    typeof Atomics.wait === "function" &&
+    !getEnvironmentFlag("PROVE_IT_SERIAL");
+  // How many states the search had found when the workers joined.
+  let seeded = 0;
+  const parallel: { workers?: EngineWorkers; isSpawned: boolean; threads: number } = {
+    isSpawned: false,
+    threads: 1,
+  };
+
+  // Searches the levels from [levelStart, levelEnd) on with the workers. Returns whether it
+  // finished the search; otherwise a worker stopped, and the states and counts are as they were at
+  // the start of the level it stopped in, for this thread to go on alone.
+  const searchInParallel = (workers: EngineWorkers | undefined): boolean => {
+    const store = shareStore();
+    freezeTexts();
+    const views: SearchViews = createSharedSearch(config, width);
+    seeded = stateCount;
+    const block = createStorageBlock();
+    for (let index = 0; index < stateCount; index++) {
+      seedState(views, states.subarray(index * width, (index + 1) * width), index, block);
+    }
+    const go: GoMessage = { type: "go", store, search: views.buffers };
+    workers?.post(go);
+    const keys = views.keys;
+    try {
+      for (;;) {
+        const start = expanding;
+        const end = levelEnd;
+        const outcome = runLevel(context, views, start, end);
+        parallel.threads = Math.max(parallel.threads, getReadyCount(views) + 1);
+        if (outcome.isAborted) return false;
+        const added = outcome.added;
+        const childCounts = new Array<number>(end - start).fill(0);
+        for (let position = 0; position < added.length; position++) {
+          const stored = added[position];
+          childCounts[keys[stored * 2] - start]++;
+          views.order[end + position] = stored;
+        }
+        for (const count of childCounts) outDegrees[Math.min(count, OUT_DEGREE_BUCKETS - 1)]++;
+        generated += outcome.generated;
+        expanding = end;
+        stateCount = end + added.length;
+        levelEnd = stateCount;
+        if (added.length > 0) {
+          level++;
+          depth = level;
+        }
+        reportProgress();
+        if (added.length === 0) return true;
+      }
+    } finally {
+      stopWorkers(views);
+      reloadFrom(views);
+    }
+  };
+
+  // Takes the states back from the shared storage in TLC's order, with their parents, for the
+  // fingerprints of a finished search or for this thread to go on alone.
+  const reloadFrom = (views: SearchViews) => {
+    const count = stateCount;
+    const storage = views.storage;
+    const keys = views.keys;
+    const reloaded = new Int32Array(Math.max(1, count * width));
+    const reloadedParents = new Int32Array(Math.max(1, count));
+    for (let index = 0; index < count; index++) {
+      const stored = views.order[index];
+      reloaded.set(storage.subarray(stored * width, (stored + 1) * width), index * width);
+      reloadedParents[index] = index < seeded ? parents[index] : keys[stored * 2];
+    }
+    states = reloaded;
+    parents = reloadedParents;
+    let capacity = 1 << 12;
+    while (capacity < count * 2) capacity *= 2;
+    table = new Int32Array(capacity).fill(-1);
+    tableMask = capacity - 1;
+    for (let index = 0; index < count; index++) {
+      let slot = hashState(states, index * width) & tableMask;
+      while (table[slot] !== -1) slot = (slot + 1) & tableMask;
+      table[slot] = index;
+    }
+  };
+
   // The counts before the state being expanded, which a bailout hands to the interpreter: it
   // expands that state again from there, finding what the engine stopped at.
   let checkpointCount = 0;
   let checkpointGenerated = 0;
+  const startedAt = performance.now();
   try {
     for (expanding = 0; expanding < stateCount; expanding++) {
-      checkpointCount = stateCount;
-      checkpointGenerated = generated;
       if (expanding === levelEnd) {
         level++;
         levelEnd = stateCount;
+        if (canShare) {
+          const elapsed = performance.now() - startedAt;
+          if (!parallel.isSpawned && elapsed >= WORKER_SPAWN_MS) {
+            parallel.isSpawned = true;
+            parallel.workers = spawnEngineWorkers(input.workers - 1, {
+              source: input.source,
+              config,
+              modules: input.modules,
+              isWarningEnabled: input.isWarningEnabled,
+              version: input.version,
+            });
+          }
+          const workers = parallel.workers;
+          if (
+            workers &&
+            workers.getStartedCount() > 0 &&
+            levelEnd - expanding >= MINIMUM_SHARED_LEVEL &&
+            searchInParallel(workers)
+          ) {
+            break;
+          }
+          // A level a worker stopped in runs here from its start, with the states and counts as
+          // they were then.
+          if (expanding >= stateCount) break;
+        }
       }
+      checkpointCount = stateCount;
+      checkpointGenerated = generated;
       current.set(states.subarray(expanding * width, (expanding + 1) * width));
       next.fill(-1);
       resetAssigned();
       newStates = 0;
       successors = 0;
       setCurrent(current);
-      nextStep(onSuccessor);
+      setNext(next);
+      context.nextStep(onSuccessor);
       if (successors === 0 && config.checkDeadlock) bail("deadlock");
       outDegrees[Math.min(newStates, OUT_DEGREE_BUCKETS - 1)]++;
-      if ((expanding & 0xff) === 0 && input.onProgress && performance.now() >= progressAt) {
-        progressAt = performance.now() + PROGRESS_INTERVAL;
-        input.onProgress({
-          kind: "progress",
-          statistics: {
-            generatedStates: generated,
-            distinctStates: stateCount,
-            queuedStates: stateCount - expanding - 1,
-            depth: Math.max(depth, 1),
-          },
-        });
-      }
+      if ((expanding & 0xff) === 0) reportProgress();
     }
   } catch (error) {
     if (error instanceof Bailout) {
@@ -294,6 +384,8 @@ export const runEngine = (input: EngineInput): EngineResult => {
       error.checkpoint = checkpoint;
     }
     throw error;
+  } finally {
+    parallel.workers?.terminate();
   }
 
   return {
@@ -304,6 +396,7 @@ export const runEngine = (input: EngineInput): EngineResult => {
     initialStates,
     getFingerprints: () => getStateFingerprints(states, stateCount, width, input.tlcOrder),
     valueCount: getValueCount(),
+    threads: parallel.threads,
   };
 };
 

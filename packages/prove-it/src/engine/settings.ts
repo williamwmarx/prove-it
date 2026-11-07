@@ -10,3 +10,13 @@ export const reportEngine = (message: string) => {
 
 // PROVE_IT_CODEGEN=0 runs actions as closures instead of generated code.
 export const getCodegenSetting = () => getEnvironment()?.PROVE_IT_CODEGEN;
+
+export const getEnvironmentFlag = (name: string) => getEnvironment()?.[name] === "1";
+
+// How many threads the engine searches with: the caller's -workers when it asks for several, else
+// PROVE_IT_WORKERS, else one. The engine keeps TLC's order whatever the number.
+export const getEngineThreads = (requested: number | undefined) => {
+  if (requested !== undefined && requested > 1) return requested;
+  const configured = Number(getEnvironment()?.PROVE_IT_WORKERS);
+  return Number.isInteger(configured) && configured > 0 ? configured : 1;
+};

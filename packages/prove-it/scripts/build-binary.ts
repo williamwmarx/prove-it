@@ -14,9 +14,12 @@ mkdirSync(dirname(SNAPSHOT_PATH), { recursive: true });
 writeFileSync(SNAPSHOT_PATH, JSON.stringify(createSanySnapshot()));
 
 const result = await Bun.build({
-  entrypoints: ["src/cli.ts", "src/parallel-worker.ts", "src/prover/prove-worker.ts"].map((entry) =>
-    join(PACKAGE_DIRECTORY, entry),
-  ),
+  entrypoints: [
+    "src/cli.ts",
+    "src/parallel-worker.ts",
+    "src/engine-worker.ts",
+    "src/prover/prove-worker.ts",
+  ].map((entry) => join(PACKAGE_DIRECTORY, entry)),
   compile: {
     outfile: join(PACKAGE_DIRECTORY, "dist/prove-it"),
     // The CLI reads the snapshot from beside itself, where the executable embeds it.

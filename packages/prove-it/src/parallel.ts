@@ -7,6 +7,7 @@ import {
   type InitialStates,
 } from "./check";
 import { type ModelConfig, parseConfig } from "./config";
+import { getEngineSetting } from "./engine/settings";
 import { createEnvironment } from "./environment";
 import { TlaEvaluationError } from "./errors";
 import { isImpure } from "./evaluate";
@@ -106,7 +107,10 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
   const workerCount = options.workers ?? 1;
   // TLC's workers write the -dump state graph, and print the violations -continue goes on past, in
   // whichever order they find them, so one worker does what a single TLC worker does.
+  // Prove It's engine runs its own threads, keeping TLC's order, so it takes every spec it can
+  // and hands the rest to the sequential search.
   const isSequential =
+    getEngineSetting() !== "0" ||
     workerCount < 2 ||
     typeof SharedArrayBuffer !== "function" ||
     options.dump !== undefined ||

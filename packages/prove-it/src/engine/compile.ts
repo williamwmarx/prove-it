@@ -471,7 +471,6 @@ export const ROOT_CONTEXT: Context = { scope: undefined, isPrimed: false, isInit
 const IMPURE_BUILTINS = new Set([
   "Print",
   "PrintT",
-  "Assert",
   "JavaTime",
   "TLCGet",
   "TLCSet",
@@ -1129,8 +1128,6 @@ export const createCompiler = (environment: Environment): Compiler => {
     return { evaluate, footprint, isCostly: false, isNormalized: true };
   };
 
-  const recursiveFunctions = new Map<FunctionDefinition, { compiled: Compiled }>();
-
   const compileFunctionDefinition = (
     definition: FunctionDefinition,
     context: Context,
@@ -1153,9 +1150,126 @@ export const createCompiler = (environment: Environment): Compiler => {
       definitionCache.set(definition, entries);
       return compiled;
     }
-    return unsupported("a recursive function definition");
+    const recursive = getRecursiveFunction(definition, context);
+    return {
+      evaluate: () => {
+        const domain = recursive.domain.evaluate();
+        if (kindOf(domain) !== KIND_SET) return bail("a function over a non-set");
+        const size = sizeOf(domain);
+        const keys: number[] = new Array(size);
+        const values: number[] = new Array(size);
+        for (let index = 0; index < size; index++) {
+          keys[index] = elementAt(domain, index);
+          values[index] = callRecursiveFunction(recursive, keys[index]);
+        }
+        return functionOfSorted(keys, values, size);
+      },
+      footprint: recursive.footprint(),
+      isCostly: true,
+      isNormalized: true,
+    };
   };
-  void recursiveFunctions;
+
+  // A function defined in terms of itself, such as f[n \in Nat] == IF n = 0 THEN 1 ELSE n * f[n-1].
+  // Applying it evaluates its body with the argument bound, cached by the argument and whatever else
+  // the body reads.
+  interface RecursiveFunction {
+    slot: number;
+    domain: Compiled;
+    body: Compiled | undefined;
+    table: MemoTable | undefined;
+    keyVars: number[];
+    keyPrimes: number[];
+    keySlots: number[];
+    footprint: () => Footprint;
+  }
+
+  const recursiveFunctions = new Map<FunctionDefinition, RecursiveFunction[]>();
+
+  const getRecursiveFunction = (definition: FunctionDefinition, context: Context) => {
+    const index = context.isPrimed ? 1 : 0;
+    const known = recursiveFunctions.get(definition)?.[index];
+    if (known) return known;
+    const bound = definition.bounds[0];
+    if (definition.bounds.length !== 1 || bound.pattern.kind !== "Name") {
+      return unsupported("a recursive function of several arguments");
+    }
+    const outer = { scope: undefined, isPrimed: context.isPrimed, isInit: context.isInit };
+    const slot = allocateSlot();
+    const record: RecursiveFunction = {
+      slot,
+      domain: compile(bound.set, outer),
+      body: undefined,
+      table: undefined,
+      keyVars: [],
+      keyPrimes: [],
+      keySlots: [],
+      // While the body compiles, a call inside it reads every variable as far as callers can tell.
+      footprint: () =>
+        record.body
+          ? mergeFootprints(record.domain.footprint, withoutSlots(record.body.footprint, [slot]))
+          : {
+              vars: Array.from({ length: variableCount }, (_, variable) => variable),
+              primes: Array.from({ length: variableCount }, (_, variable) => variable),
+              slots: [],
+            },
+    };
+    const entries = recursiveFunctions.get(definition) ?? [];
+    entries[index] = record;
+    recursiveFunctions.set(definition, entries);
+    record.body = compile(definition.body, {
+      ...outer,
+      scope: bind(undefined, bound.pattern.name, { kind: "slot", slot }),
+    });
+    const footprint = record.body.footprint;
+    record.keySlots = mergeSorted([slot], footprint.slots);
+    record.keyVars = footprint.vars;
+    record.keyPrimes = footprint.primes;
+    const width = record.keySlots.length + record.keyVars.length + record.keyPrimes.length;
+    if (width <= MAXIMUM_MEMO_WIDTH) {
+      record.table = new MemoTable(width);
+      memoTables.push(record.table);
+    }
+    return record;
+  };
+
+  const callRecursiveFunction = (record: RecursiveFunction, argument: number) => {
+    const domain = record.domain.evaluate();
+    if (kindOf(domain) !== KIND_SET || !isMember(argument, domain)) {
+      return bail("applied a recursive function outside its domain");
+    }
+    const slot = record.slot;
+    const saved = LOC[slot];
+    LOC[slot] = argument;
+    try {
+      const table = record.table;
+      if (!table || !table.isEnabled) return record.body!.evaluate();
+      const scratch = new Int32Array(table.width);
+      let position = 0;
+      for (const variable of record.keyVars) scratch[position++] = CUR[variable];
+      for (const variable of record.keyPrimes) scratch[position++] = NXT[variable];
+      for (const keySlot of record.keySlots) scratch[position++] = LOC[keySlot];
+      const known = table.getN(scratch);
+      if (known !== -1) return known;
+      const value = record.body!.evaluate();
+      table.setN(scratch, value);
+      return value;
+    } finally {
+      LOC[slot] = saved;
+    }
+  };
+
+  // The recursive function an application applies, when it names one directly.
+  const getAppliedRecursiveFunction = (fn: Expression, context: Context) => {
+    if (fn.kind !== "Identifier" || lookup(context.scope, fn.name)) return undefined;
+    if (environment.variableIndex.has(fn.name) || environment.constants.has(fn.name)) {
+      return undefined;
+    }
+    const definition = getDefinition(fn.name, environment);
+    if (definition?.kind !== "Function") return undefined;
+    if (!definition.isRecursive && !definition.isSelfReferential) return undefined;
+    return getRecursiveFunction(definition, context);
+  };
 
   // --- quantifiers and bindings ---
 
@@ -1425,6 +1539,17 @@ export const createCompiler = (environment: Environment): Compiler => {
     expression: Expression & { kind: "FunctionApplication" },
     context: Context,
   ): Compiled => {
+    const recursive = getAppliedRecursiveFunction(expression.function, context);
+    if (recursive && expression.args.length === 1) {
+      const argument = compile(expression.args[0], context);
+      const argumentEvaluate = argument.evaluate;
+      return {
+        evaluate: () => callRecursiveFunction(recursive, argumentEvaluate()),
+        footprint: mergeFootprints(argument.footprint, recursive.footprint()),
+        isCostly: false,
+        isNormalized: true,
+      };
+    }
     const fn = compile(expression.function, context);
     const args = expression.args.map((argument) => compile(argument, context));
     const fnEvaluate = fn.evaluate;
@@ -1987,8 +2112,12 @@ export const createCompiler = (environment: Environment): Compiler => {
         });
       case "\\o":
         return binary(operand(0), operand(1), (left, right) => {
-          if (kindOf(left) === KIND_STRING || kindOf(right) === KIND_STRING)
-            return bail("string concatenation");
+          if (kindOf(left) === KIND_STRING && kindOf(right) === KIND_STRING) {
+            return str(textOf(left) + textOf(right));
+          }
+          if (kindOf(left) === KIND_STRING || kindOf(right) === KIND_STRING) {
+            return bail("concatenation of a string and a sequence");
+          }
           const first = expectSequence(left);
           const second = expectSequence(right);
           const elements: number[] = [];
@@ -2011,6 +2140,19 @@ export const createCompiler = (environment: Environment): Compiler => {
             return true;
           },
         } as LazySet;
+      }
+      case "Assert": {
+        // Assert(P, message) is TRUE when P holds. When it doesn't, TLC fails with the message,
+        // which the interpreter reports.
+        const condition = compileBoolean(args[0], context);
+        const conditionEvaluate = condition.evaluate;
+        return {
+          ...leaf(
+            () => (conditionEvaluate() === TRUE ? TRUE : bail("an assertion failed")),
+            condition.footprint,
+          ),
+          isBoolean: true,
+        };
       }
       case "Cardinality":
         return unary(operand(0), (set) => int(sizeOf(expectSet(set))));

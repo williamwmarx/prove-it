@@ -6,7 +6,8 @@
 // Composite values keep their elements in TLC's order, so enumerating a set visits elements in the
 // order TLC does and the engine generates successors in TLC's order.
 
-import { getRankedStringCount, getStringRank } from "../values";
+import { findStringRank, getStringRank } from "../values";
+import { getEnvironmentFlag } from "./settings";
 
 export const KIND_BOOL = 0;
 export const KIND_INT = 1;
@@ -38,16 +39,16 @@ export const bail = (reason: string): never => {
 
 const INITIAL_CAPACITY = 1 << 12;
 
-let kinds = new Uint8Array(INITIAL_CAPACITY);
+let kinds: Uint8Array = new Uint8Array(INITIAL_CAPACITY);
 // For an integer its value, for a string or model value the index of its text, and for a composite
 // value the offset of its block in the heap.
-let payloads = new Int32Array(INITIAL_CAPACITY);
+let payloads: Int32Array = new Int32Array(INITIAL_CAPACITY);
 // For a composite value its size: the number of elements, pairs, or components.
-let sizes = new Int32Array(INITIAL_CAPACITY);
-let hashes = new Int32Array(INITIAL_CAPACITY);
+let sizes: Int32Array = new Int32Array(INITIAL_CAPACITY);
+let hashes: Int32Array = new Int32Array(INITIAL_CAPACITY);
 let count = 0;
 
-export let heap = new Int32Array(1 << 16);
+export let heap: Int32Array = new Int32Array(1 << 16);
 let heapTop = 0;
 
 let table = new Int32Array(INITIAL_CAPACITY * 2).fill(-1);
@@ -57,6 +58,8 @@ const texts: string[] = [];
 // TLC orders strings by when it interned them. The rank of a string the spec doesn't mention is -1,
 // and TLC orders those after the others, by their text.
 const textRanks: number[] = [];
+// Whether each text is a string's or a model value's.
+const textKinds: number[] = [];
 const stringIds = new Map<string, number>();
 const modelIds = new Map<string, number>();
 
@@ -130,6 +133,7 @@ const allocate = (kind: number, payload: number, size: number, hash: number, slo
 // Interns a scalar: a boolean, an integer, a string, or a model value, by its payload.
 const internScalar = (kind: number, payload: number) => {
   const hash = mix(Math.imul(kind + 1, 0x9e3779b1) ^ payload);
+  if (shared) return internShared(kind, payload, EMPTY_WORDS, 0, 0, hash);
   for (let slot = hash & tableMask; ; slot = (slot + 1) & tableMask) {
     const id = table[slot];
     if (id === -1) return allocate(kind, payload, 0, hash, slot);
@@ -144,6 +148,7 @@ const internBlock = (kind: number, words: ArrayLike<number>, length: number, siz
   let hash = Math.imul(kind + 7, 0x9e3779b1) ^ size;
   for (let index = 0; index < length; index++) hash = Math.imul(hash ^ words[index], 0x01000193);
   hash = mix(hash);
+  if (shared) return internShared(kind, 0, words, length, size, hash);
   for (let slot = hash & tableMask; ; slot = (slot + 1) & tableMask) {
     const id = table[slot];
     if (id === -1) {
@@ -168,6 +173,15 @@ const internBlock = (kind: number, words: ArrayLike<number>, length: number, siz
 
 export const resetStore = () => {
   generation++;
+  if (shared) {
+    shared = undefined;
+    kinds = new Uint8Array(INITIAL_CAPACITY);
+    payloads = new Int32Array(INITIAL_CAPACITY);
+    sizes = new Int32Array(INITIAL_CAPACITY);
+    hashes = new Int32Array(INITIAL_CAPACITY);
+    heap = new Int32Array(1 << 16);
+  }
+  textKinds.length = 0;
   count = 0;
   heapTop = 0;
   table.fill(-1);
@@ -184,9 +198,7 @@ export const resetStore = () => {
   }
 };
 
-resetStore();
-
-export const getValueCount = () => count;
+export const getValueCount = () => (shared ? Atomics.load(shared.counters, COUNT) : count);
 
 export const kindOf = (id: number) => kinds[id];
 export const sizeOf = (id: number) => sizes[id];
@@ -205,10 +217,14 @@ export const int = (value: number) => {
   return internScalar(KIND_INT, value);
 };
 
-const internText = (text: string) => {
+const internText = (text: string, kind: number) => {
+  // Workers share ids, so they share the texts behind them: once workers run, a new text would get
+  // a different index in each.
+  if (shared?.isTextFrozen) bail("a string built while workers run");
   const index = texts.length;
   texts.push(text);
   textRanks.push(-1);
+  textKinds.push(kind);
   return index;
 };
 
@@ -216,20 +232,14 @@ export const str = (text: string) => {
   const known = stringIds.get(text);
   if (known !== undefined) return known;
   // A string the spec mentions has a rank already. One it builds keeps whatever rank it has now.
-  const index = internText(text);
+  const index = internText(text, KIND_STRING);
   textRanks[index] = peekRank(text);
   const id = internScalar(KIND_STRING, index);
   stringIds.set(text, id);
   return id;
 };
 
-const peekRank = (text: string) => {
-  const before = getRankedStringCount();
-  const rank = getStringRank(text);
-  // getStringRank ranks a text it hasn't seen, which TLC wouldn't do for a string it builds. The
-  // order then still puts it after every string the spec mentions, as TLC does.
-  return getRankedStringCount() > before ? -1 : rank;
-};
+const peekRank = (text: string) => findStringRank(text) ?? -1;
 
 export const model = (name: string) => {
   const known = modelIds.get(name);
@@ -237,7 +247,7 @@ export const model = (name: string) => {
   // Typed model values, such as A_a, change how TLC compares values. The engine leaves them to the
   // reference interpreter.
   if (name.length > 2 && name[1] === "_") return bail("typed model value");
-  const index = internText(name);
+  const index = internText(name, KIND_MODEL);
   textRanks[index] = getStringRank(name);
   const id = internScalar(KIND_MODEL, index);
   modelIds.set(name, id);
@@ -671,3 +681,256 @@ export const tupleElements = (tuple: number) => {
   const offset = payloads[tuple];
   return Array.from(heap.subarray(offset, offset + sizes[tuple]));
 };
+
+// --- shared mode ---
+//
+// With workers, the store lives in SharedArrayBuffers that grow in place, so every thread sees the
+// same ids. The intern table is split into segments, each with its own lock and its own region of
+// a shared arena, so threads rarely contend and a segment grows without stopping the others. A
+// value is written before its id is published under the lock, so any thread that learns an id can
+// read the value.
+
+const SEGMENT_BITS = 10;
+const SEGMENTS = 1 << SEGMENT_BITS;
+const INITIAL_SEGMENT_SLOTS = 64;
+const COUNT = 0;
+const HEAP_TOP = 1;
+const ARENA_TOP = 2;
+const EMPTY_WORDS: number[] = [];
+
+export interface SharedStore {
+  kinds: SharedArrayBuffer;
+  payloads: SharedArrayBuffer;
+  sizes: SharedArrayBuffer;
+  hashes: SharedArrayBuffer;
+  heap: SharedArrayBuffer;
+  counters: SharedArrayBuffer;
+  directory: SharedArrayBuffer;
+  locks: SharedArrayBuffer;
+  arena: SharedArrayBuffer;
+  texts: string[];
+  textRanks: number[];
+  textKinds: number[];
+  smallInts: Int32Array;
+  emptySet: number;
+  emptyTuple: number;
+}
+
+interface SharedViews {
+  buffers: SharedStore;
+  counters: Int32Array;
+  directory: Int32Array;
+  locks: Int32Array;
+  arena: Int32Array;
+  isTextFrozen: boolean;
+}
+
+let shared: SharedViews | undefined;
+
+const MAXIMUM_SHARED_BYTES = 1 << 30;
+
+// Append-only arrays get their whole capacity up front: the system commits a page only once it is
+// written, and a view of fixed length runs faster than one that tracks a growing buffer.
+const createGrowable = (bytes: number) =>
+  getEnvironmentFlag("PROVE_IT_GROWABLE")
+    ? new SharedArrayBuffer(bytes, { maxByteLength: MAXIMUM_SHARED_BYTES })
+    : new SharedArrayBuffer(Math.max(bytes, MAXIMUM_SHARED_BYTES));
+
+const growShared = (buffer: SharedArrayBuffer, bytes: number) => {
+  if (!buffer.growable) {
+    if (buffer.byteLength < bytes) bail("the shared store is full");
+    return;
+  }
+  while (buffer.byteLength < bytes) {
+    const target = Math.min(MAXIMUM_SHARED_BYTES, Math.max(bytes, buffer.byteLength * 2));
+    if (target < bytes) bail("the shared store is full");
+    try {
+      buffer.grow(target);
+    } catch {
+      // Another thread grew it first, perhaps past what this one asked for.
+    }
+  }
+};
+
+const lockSegment = (locks: Int32Array, segment: number) => {
+  while (Atomics.compareExchange(locks, segment, 0, 1) !== 0) {
+    // Spin: a segment is held only while one value is looked up or added.
+  }
+};
+
+const isEntry = (
+  id: number,
+  kind: number,
+  payload: number,
+  words: ArrayLike<number>,
+  length: number,
+  size: number,
+  hash: number,
+) => {
+  if (hashes[id] !== hash || kinds[id] !== kind || sizes[id] !== size) return false;
+  if (length === 0) return size !== 0 || payloads[id] === payload;
+  const offset = payloads[id];
+  for (let index = 0; index < length; index++)
+    if (heap[offset + index] !== words[index]) return false;
+  return true;
+};
+
+// Puts an id in its segment's table, the segment locked, growing the segment when half full.
+const insertInSegment = (views: SharedViews, segment: number, id: number, hash: number) => {
+  const directory = views.directory;
+  const offset = directory[segment * 3];
+  const mask = directory[segment * 3 + 1];
+  let slot = hash & mask;
+  while (views.arena[offset + slot] !== 0) slot = (slot + 1) & mask;
+  views.arena[offset + slot] = id + 1;
+  const used = ++directory[segment * 3 + 2];
+  if (used * 2 <= mask + 1) return;
+  const capacity = (mask + 1) * 2;
+  const nextOffset = Atomics.add(views.counters, ARENA_TOP, capacity);
+  growShared(views.buffers.arena, (nextOffset + capacity) * 4);
+  const arena = views.arena;
+  const nextMask = capacity - 1;
+  for (let index = 0; index <= mask; index++) {
+    const stored = arena[offset + index];
+    if (stored === 0) continue;
+    let target = hashes[stored - 1] & nextMask;
+    while (arena[nextOffset + target] !== 0) target = (target + 1) & nextMask;
+    arena[nextOffset + target] = stored;
+  }
+  directory[segment * 3] = nextOffset;
+  directory[segment * 3 + 1] = nextMask;
+};
+
+const internShared = (
+  kind: number,
+  payload: number,
+  words: ArrayLike<number>,
+  length: number,
+  size: number,
+  hash: number,
+) => {
+  const views = shared!;
+  const segment = hash >>> (32 - SEGMENT_BITS);
+  lockSegment(views.locks, segment);
+  const directory = views.directory;
+  const offset = directory[segment * 3];
+  const mask = directory[segment * 3 + 1];
+  const arena = views.arena;
+  for (let slot = hash & mask; ; slot = (slot + 1) & mask) {
+    const stored = arena[offset + slot];
+    if (stored === 0) break;
+    if (isEntry(stored - 1, kind, payload, words, length, size, hash)) {
+      Atomics.store(views.locks, segment, 0);
+      return stored - 1;
+    }
+  }
+  const counters = views.counters;
+  const id = Atomics.add(counters, COUNT, 1);
+  growShared(views.buffers.kinds, id + 1);
+  growShared(views.buffers.payloads, (id + 1) * 4);
+  growShared(views.buffers.sizes, (id + 1) * 4);
+  growShared(views.buffers.hashes, (id + 1) * 4);
+  let valuePayload = payload;
+  if (length > 0) {
+    valuePayload = Atomics.add(counters, HEAP_TOP, length);
+    growShared(views.buffers.heap, (valuePayload + length) * 4);
+    for (let index = 0; index < length; index++) heap[valuePayload + index] = words[index];
+  }
+  kinds[id] = kind;
+  payloads[id] = valuePayload;
+  sizes[id] = size;
+  hashes[id] = hash;
+  insertInSegment(views, segment, id, hash);
+  Atomics.store(views.locks, segment, 0);
+  return id;
+};
+
+const attachViews = (buffers: SharedStore): SharedViews => {
+  kinds = new Uint8Array(buffers.kinds);
+  payloads = new Int32Array(buffers.payloads);
+  sizes = new Int32Array(buffers.sizes);
+  hashes = new Int32Array(buffers.hashes);
+  heap = new Int32Array(buffers.heap);
+  return {
+    buffers,
+    counters: new Int32Array(buffers.counters),
+    directory: new Int32Array(buffers.directory),
+    locks: new Int32Array(buffers.locks),
+    arena: new Int32Array(buffers.arena),
+    isTextFrozen: false,
+  };
+};
+
+// Moves the store into shared memory, keeping every id, so workers can join a search under way.
+export const shareStore = (): SharedStore => {
+  if (shared) return shared.buffers;
+  const buffers: SharedStore = {
+    kinds: createGrowable(Math.max(count, 1024)),
+    payloads: createGrowable(Math.max(count, 1024) * 4),
+    sizes: createGrowable(Math.max(count, 1024) * 4),
+    hashes: createGrowable(Math.max(count, 1024) * 4),
+    heap: createGrowable(Math.max(heapTop, 1024) * 4),
+    counters: new SharedArrayBuffer(16),
+    directory: new SharedArrayBuffer(SEGMENTS * 3 * 4),
+    locks: new SharedArrayBuffer(SEGMENTS * 4),
+    arena: createGrowable(SEGMENTS * INITIAL_SEGMENT_SLOTS * 4),
+    texts,
+    textRanks,
+    textKinds,
+    smallInts,
+    emptySet: EMPTY_SET,
+    emptyTuple: EMPTY_TUPLE,
+  };
+  new Uint8Array(buffers.kinds).set(kinds.subarray(0, count));
+  new Int32Array(buffers.payloads).set(payloads.subarray(0, count));
+  new Int32Array(buffers.sizes).set(sizes.subarray(0, count));
+  new Int32Array(buffers.hashes).set(hashes.subarray(0, count));
+  new Int32Array(buffers.heap).set(heap.subarray(0, heapTop));
+  const counters = new Int32Array(buffers.counters);
+  counters[COUNT] = count;
+  counters[HEAP_TOP] = heapTop;
+  counters[ARENA_TOP] = SEGMENTS * INITIAL_SEGMENT_SLOTS;
+  const directory = new Int32Array(buffers.directory);
+  for (let segment = 0; segment < SEGMENTS; segment++) {
+    directory[segment * 3] = segment * INITIAL_SEGMENT_SLOTS;
+    directory[segment * 3 + 1] = INITIAL_SEGMENT_SLOTS - 1;
+  }
+  const previousCount = count;
+  const views = attachViews(buffers);
+  for (let id = 0; id < previousCount; id++) {
+    insertInSegment(views, hashes[id] >>> (32 - SEGMENT_BITS), id, hashes[id]);
+  }
+  shared = views;
+  return buffers;
+};
+
+// Attaches a worker to the store a coordinator shared.
+export const attachSharedStore = (buffers: SharedStore) => {
+  generation++;
+  shared = attachViews(buffers);
+  shared.isTextFrozen = true;
+  texts.length = 0;
+  textRanks.length = 0;
+  stringIds.clear();
+  modelIds.clear();
+  buffers.texts.forEach((text, index) => {
+    texts.push(text);
+    textRanks.push(buffers.textRanks[index]);
+  });
+  smallInts.set(buffers.smallInts);
+  EMPTY_SET = buffers.emptySet;
+  EMPTY_TUPLE = buffers.emptyTuple;
+  // The ids of the texts, found again through the shared table.
+  buffers.textKinds.forEach((kind, index) => {
+    const id = internScalar(kind, index);
+    (kind === KIND_STRING ? stringIds : modelIds).set(texts[index], id);
+  });
+};
+
+// Stops new texts, once workers have the coordinator's list.
+export const freezeTexts = () => {
+  if (shared) shared.isTextFrozen = true;
+};
+
+// The store starts with the values every check has, once every declaration above exists.
+resetStore();
