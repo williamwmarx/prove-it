@@ -487,57 +487,58 @@ export const compileAction = (
     // The body as a guard, compiled the first time an initial state needs it and then kept: each
     // compile binds new slots.
     let forallGuard: (() => number) | undefined;
+    const levelCount = levels.length;
     return (onComplete) => {
-      const sets = levels.map((level) => {
-        const id = level.set.evaluate();
+      // The bindings are numbered with the first name varying fastest, so binding b binds level l
+      // to the element at (b / strides[l]) % size of its set.
+      const sets = new Int32Array(levelCount);
+      const strides = new Int32Array(levelCount);
+      const saved = new Int32Array(levelCount);
+      let count = 1;
+      for (let level = 0; level < levelCount; level++) {
+        const id = levels[level].set.evaluate();
         if (kindOf(id) !== KIND_SET && kindOf(id) !== KIND_TUPLE)
           bail("an action quantified over a non-set");
-        return id;
-      });
-      const bindings: number[][] = [];
-      const current: number[] = new Array(levels.length);
-      const collect = (level: number) => {
-        if (level < 0) {
-          bindings.push(current.slice());
-          return;
-        }
-        for (let position = 0; position < sizeOf(sets[level]); position++) {
-          current[level] = elementAt(sets[level], position);
-          collect(level - 1);
+        sets[level] = id;
+        strides[level] = count;
+        count *= sizeOf(id);
+        saved[level] = LOC[slots[level]];
+      }
+      // The walk visits the first binding, then the others in reverse.
+      const bind = (index: number) => {
+        const binding = index === 0 ? 0 : count - index;
+        for (let level = 0; level < levelCount; level++) {
+          const set = sets[level];
+          LOC[slots[level]] = elementAt(set, Math.floor(binding / strides[level]) % sizeOf(set));
         }
       };
-      collect(levels.length - 1);
-      const ordered = [...bindings.slice(0, 1), ...bindings.slice(1).reverse()];
-      const saved = slots.map((slot) => LOC[slot]);
+      const restore = () => {
+        for (let level = 0; level < levelCount; level++) LOC[slots[level]] = saved[level];
+      };
       const visit = (index: number) => {
-        if (index === ordered.length) {
-          for (let level = 0; level < slots.length; level++) LOC[slots[level]] = saved[level];
+        if (index === count) {
+          restore();
           onComplete();
           return;
         }
         if (index > 0 && isInit && registers.assigned === variableCount) {
           const guard = getForallGuard();
-          for (let rest = index; rest < ordered.length; rest++) {
-            for (let level = 0; level < slots.length; level++)
-              LOC[slots[level]] = ordered[rest][level];
+          for (let rest = index; rest < count; rest++) {
+            bind(rest);
             const value = guard();
             if (value === FALSE) return;
             if (value !== TRUE) bail("a conjunct that isn't a boolean");
           }
-          for (let level = 0; level < slots.length; level++) LOC[slots[level]] = saved[level];
+          restore();
           onComplete();
           return;
         }
-        const binding = ordered[index];
-        const bind = () => {
-          for (let level = 0; level < slots.length; level++) LOC[slots[level]] = binding[level];
-        };
-        bind();
+        bind(index);
         // The rest of the conjunction rebinds the names for the next binding, so this binding's
         // walk gets them back once the rest returns.
         body(() => {
           visit(index + 1);
-          bind();
+          bind(index);
         });
       };
       visit(0);
