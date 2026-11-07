@@ -43,6 +43,8 @@ interface SuiteModel {
   config: string;
   style: string;
   isUsingLibrary?: boolean;
+  // TLC's result on a model outside the conformance corpora, which expected.json doesn't hold.
+  expected?: ExpectedResult;
 }
 
 interface Outcome {
@@ -81,7 +83,7 @@ interface ExpectedResult {
   generatedStates?: number;
   distinctStates?: number;
   depth?: number;
-  tlcMilliseconds: number;
+  tlcMilliseconds?: number;
 }
 
 type Verdict = "agrees" | "disagrees" | "unchecked" | "fails" | "times out";
@@ -527,7 +529,7 @@ const RECORDED_VERDICTS: Record<string, string> = {
 const isTlcRequested = checkers.some((checker) => checker.name === "tlc");
 
 const results = models.map((model, index) => {
-  const expected = expectedById.get(model.id);
+  const expected = expectedById.get(model.id) ?? model.expected;
   const recorded: Outcome | undefined =
     expected?.distinctStates === undefined
       ? undefined

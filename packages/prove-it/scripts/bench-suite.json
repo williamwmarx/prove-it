@@ -4,21 +4,42 @@
     "directory": "benchmarks/commit",
     "spec": "Commit.tla",
     "config": "Commit.cfg",
-    "style": "transaction commit, function of records"
+    "style": "transaction commit, function of records",
+    "expected": {
+      "id": "benchmarks/commit",
+      "status": "success",
+      "generatedStates": 2304538,
+      "distinctStates": 282251,
+      "depth": 23
+    }
   },
   {
     "id": "benchmarks/philosophers",
     "directory": "benchmarks/philosophers",
     "spec": "Philosophers.tla",
     "config": "Philosophers.cfg",
-    "style": "dining philosophers, functions"
+    "style": "dining philosophers, functions",
+    "expected": {
+      "id": "benchmarks/philosophers",
+      "status": "success",
+      "generatedStates": 524551,
+      "distinctStates": 128889,
+      "depth": 51
+    }
   },
   {
     "id": "benchmarks/queue",
     "directory": "benchmarks/queue",
     "spec": "Queue.tla",
     "config": "Queue.cfg",
-    "style": "bounded queue, sequences"
+    "style": "bounded queue, sequences",
+    "expected": {
+      "id": "benchmarks/queue",
+      "status": "success",
+      "generatedStates": 87361,
+      "distinctStates": 44044,
+      "depth": 15
+    }
   },
   {
     "id": "examples/specifications/btree/MCbtree.cfg",
