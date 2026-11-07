@@ -119,16 +119,32 @@ export const setNext = (state: Int32Array) => {
   registers.next = state;
 };
 
+const growLocals = (length: number) => {
+  const next = new Int32Array(length);
+  next.set(LOC);
+  LOC = next;
+  registers.locals = next;
+};
+
 const allocateSlot = () => {
   const slot = slotCount++;
   if (slot >= LOC.length) {
     if (generatedDepth.value > 0) throw new Error("bound names grew while generated code ran");
-    const next = new Int32Array(LOC.length * 2);
-    next.set(LOC);
-    LOC = next;
-    registers.locals = next;
+    growLocals(LOC.length * 2);
   }
   return slot;
+};
+
+// The slots compiles may take while generated code runs, which compiles what it first evaluates,
+// such as the rest of a conjunction once every variable is assigned.
+const SLOT_HEADROOM = 4096;
+
+// Gives the bound names room to grow before generated code runs, which reads their array once.
+export const reserveSlots = () => {
+  if (slotCount + SLOT_HEADROOM <= LOC.length) return;
+  let length = LOC.length * 2;
+  while (slotCount + SLOT_HEADROOM > length) length *= 2;
+  growLocals(length);
 };
 
 // A recursive definition's body binds its names at slots fixed when it compiles, so a call inside

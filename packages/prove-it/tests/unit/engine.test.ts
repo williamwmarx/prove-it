@@ -340,6 +340,38 @@ describe("the engine", () => {
     expect(cache.get(5, entry, 7, 0, 0, 0)).toBe(-1);
   });
 
+  it("compiles what an initial state's shortcut evaluates while generated code runs", async () => {
+    // Each initial state the \\A reaches with every variable assigned evaluates its body.
+    const many = await checkInEngine(
+      [
+        "EXTENDS Naturals",
+        "VARIABLES x, y",
+        "Init == /\\ y \\in 0..5000",
+        "        /\\ \\A w \\in {1, 2} : /\\ x = 0",
+        "                             /\\ \\E k \\in {1, 2} : k = w",
+        "Next == x < 1 /\\ x' = x + 1 /\\ y' = y",
+      ].join("\n"),
+      "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+    );
+    expect([many.result.generatedStates, many.result.distinctStates]).toEqual([10002, 10002]);
+    expect(many.lines).toEqual([expect.stringMatching(/^\[engine\] checked 10002 states/)]);
+    // The invariant binds nearly as many names as the engine has room for before Init runs.
+    const pad = Array.from({ length: 4040 }, (_, k) => `(\\A i${k} \\in {1} : i${k} = 1)`);
+    const nest = Array.from({ length: 40 }, (_, j) => `\\A k${j} \\in {1} : `).join("");
+    const crowded = await checkInEngine(
+      [
+        "EXTENDS Naturals",
+        "VARIABLES x, y",
+        `Pad == ${pad.join(" /\\ ")}`,
+        `Init == \\A w \\in {1} : x = 0 /\\ y = w /\\ ${nest}k0 = 1`,
+        "Next == x < 2 /\\ x' = x + 1 /\\ y' = y",
+      ].join("\n"),
+      "INIT Init\nNEXT Next\nINVARIANT Pad\nCHECK_DEADLOCK FALSE",
+    );
+    expect([crowded.result.generatedStates, crowded.result.distinctStates]).toEqual([3, 3]);
+    expect(crowded.lines).toEqual([expect.stringMatching(/^\[engine\] checked 3 states/)]);
+  });
+
   it("reads Nat as the set the model substitutes for it", async () => {
     const { result, lines } = await checkInEngine(
       "EXTENDS Integers\nVARIABLE x\nInit == x = 0\nNext == UNCHANGED x\nInv == -1 \\in Nat",

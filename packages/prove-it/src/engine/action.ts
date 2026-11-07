@@ -484,6 +484,9 @@ export const compileAction = (
     }
     const body = compileStep(step.body, inner);
     const slots = levels.map((level) => level.slot);
+    // The body as a guard, compiled the first time an initial state needs it and then kept: each
+    // compile binds new slots.
+    let forallGuard: (() => number) | undefined;
     return (onComplete) => {
       const sets = levels.map((level) => {
         const id = level.set.evaluate();
@@ -540,7 +543,8 @@ export const compileAction = (
       visit(0);
     };
     function getForallGuard() {
-      return compiler.compile(step.body, inner).evaluate;
+      forallGuard ??= compiler.compile(step.body, inner).evaluate;
+      return forallGuard;
     }
   };
 

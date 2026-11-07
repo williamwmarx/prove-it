@@ -18,6 +18,7 @@ import {
   generatedDepth,
   isOrderedEnumeration,
   registers,
+  reserveSlots,
 } from "./compile";
 import { getCodegenSetting } from "./settings";
 import { bail, elementAt, equals, KIND_SET, kindOf, sizeOf } from "./store";
@@ -516,6 +517,7 @@ ${T}[${variable}] = -1; ${R}.assigned--; }`;
     );
     const action = factory(...values) as Step;
     return (onComplete) => {
+      if (generatedDepth.value === 0) reserveSlots();
       generatedDepth.value++;
       try {
         action(onComplete);
