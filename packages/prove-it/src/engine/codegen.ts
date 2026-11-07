@@ -36,6 +36,9 @@ type Continuation = (known: Known) => string;
 // Generated code past this size goes back to the closures: the walk writes out every path, so an
 // action with many disjunctions followed by more conjuncts grows quickly.
 const MAXIMUM_CODE_LENGTH = 1_000_000;
+// Code past this size, which JavaScriptCore's optimizing compilers would pass over in a function,
+// goes in a function of its own.
+const HOISTED_CODE_LENGTH = 8_000;
 // The text the generator writes along the way, inner code counted again in each block around it,
 // past which it stops early rather than build code it would throw away.
 const MAXIMUM_WRITTEN_LENGTH = 50_000_000;
@@ -313,7 +316,23 @@ ${T}[${variable}] = -1; ${R}.assigned--; }`;
     );
   };
 
+  // JavaScriptCore doesn't optimize a function past a size, so the code of a large step goes in a
+  // function of its own, which reads only the registers, the values it refers to, and K.
+  const hoisted: string[] = [];
   const step = (
+    operand: Expression,
+    operandContext: CompileContext,
+    known: Known,
+    rest: Continuation,
+  ): string => {
+    const code = walkStep(operand, operandContext, known, rest);
+    if (isSharing || code.length < HOISTED_CODE_LENGTH) return code;
+    const name = fresh("h");
+    hoisted.push(`function ${name}(K) {\n${code}\n}`);
+    return `${name}(K);`;
+  };
+
+  const walkStep = (
     operand: Expression,
     operandContext: CompileContext,
     known: Known,
@@ -479,12 +498,13 @@ ${T}[${variable}] = -1; ${R}.assigned--; }`;
     if (error instanceof TooLarge) return undefined;
     throw error;
   }
-  if (body.length > MAXIMUM_CODE_LENGTH) return undefined;
+  if (body.length + hoisted.reduce((total, code) => total + code.length, 0) > MAXIMUM_CODE_LENGTH)
+    return undefined;
   try {
     if (getCodegenSetting() === "dump") console.error(body);
     const factory = new Function(
       ...names.values(),
-      `"use strict";\nreturn function generatedAction(K) {\n${body}\n};`,
+      `"use strict";\n${hoisted.join("\n")}\nreturn function generatedAction(K) {\n${body}\n};`,
     );
     return factory(...values) as Step;
   } catch (error) {
