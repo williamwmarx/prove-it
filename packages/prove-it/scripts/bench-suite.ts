@@ -14,7 +14,8 @@
 // Usage: bun scripts/bench-suite.ts [--runs 3] [--filter text] [--checkers tlc,tlc-auto,...]
 //        [--timeout seconds] [--out path] [--markdown path]
 // TLA2TOOLS_JAR names tla2tools.jar, TLA_TS_CLI tla-ts's dist/cli.js and TLA_RS_BIN tla-rs's tla
-// binary; the Prove It binary is dist/prove-it (bun run build:binary). A checker whose file is
+// binary, and PROVE_IT_BASE_BINARY another build's dist/prove-it (prove-it-base); the Prove It binary
+// is dist/prove-it (bun run build:binary). A checker whose file is
 // missing is left out.
 
 import { spawnSync } from "node:child_process";
@@ -42,6 +43,8 @@ interface SuiteModel {
   config: string;
   style: string;
   isUsingLibrary?: boolean;
+  // TLC's result on a model outside the conformance corpora, which expected.json doesn't hold.
+  expected?: ExpectedResult;
 }
 
 interface Outcome {
@@ -80,7 +83,7 @@ interface ExpectedResult {
   generatedStates?: number;
   distinctStates?: number;
   depth?: number;
-  tlcMilliseconds: number;
+  tlcMilliseconds?: number;
 }
 
 type Verdict = "agrees" | "disagrees" | "unchecked" | "fails" | "times out";
@@ -101,6 +104,8 @@ const markdownPath = getOption("--markdown");
 const jarPath = process.env.TLA2TOOLS_JAR ?? "";
 const tlaTsPath = process.env.TLA_TS_CLI ?? "";
 const tlaRsPath = process.env.TLA_RS_BIN ?? "";
+// Another build of Prove It's binary, such as main's, to time a change against.
+const baseBinaryPath = process.env.PROVE_IT_BASE_BINARY ?? "";
 
 if (
   !Number.isInteger(runs) ||
@@ -295,6 +300,12 @@ const ALL_CHECKERS: (Checker & { isAvailable: boolean })[] = [
     ...TLC_STYLE,
     isAvailable: existsSync(BINARY_PATH),
   },
+  {
+    name: "prove-it-base",
+    getCommand: (model) => [baseBinaryPath, ...getCliArguments(model)],
+    ...TLC_STYLE,
+    isAvailable: baseBinaryPath !== "" && existsSync(baseBinaryPath),
+  },
   { name: "prove-it-bun", getCommand: getBunCommand, ...TLC_STYLE, isAvailable: true },
   {
     name: "prove-it-node",
@@ -316,7 +327,7 @@ const missing = ALL_CHECKERS.filter(
 );
 missing.forEach((checker) =>
   console.warn(
-    `Leaving out ${checker.name}: set TLA2TOOLS_JAR, TLA_TS_CLI and TLA_RS_BIN, and build dist/prove-it`,
+    `Leaving out ${checker.name}: set TLA2TOOLS_JAR, TLA_TS_CLI, TLA_RS_BIN and PROVE_IT_BASE_BINARY, and build dist/prove-it`,
   ),
 );
 if (requested !== undefined && missing.length > 0) process.exit(1);
@@ -459,6 +470,8 @@ const machine = {
   tlaTs: tlaTsPath ? getPackageVersion(tlaTsPath) : undefined,
   tlaRs: tlaRsPath ? getVersion([tlaRsPath, "--version"]) : undefined,
   proveIt: getCommit(PACKAGE_DIRECTORY),
+  // The commit of the checkout PROVE_IT_BASE_BINARY was built in.
+  proveItBase: baseBinaryPath ? getCommit(dirname(baseBinaryPath)) : undefined,
   timeoutSeconds,
   loadAverageAtStart: loadavg(),
 };
@@ -518,7 +531,7 @@ const RECORDED_VERDICTS: Record<string, string> = {
 const isTlcRequested = checkers.some((checker) => checker.name === "tlc");
 
 const results = models.map((model, index) => {
-  const expected = expectedById.get(model.id);
+  const expected = expectedById.get(model.id) ?? model.expected;
   const recorded: Outcome | undefined =
     expected?.distinctStates === undefined
       ? undefined
@@ -754,7 +767,9 @@ if (markdownPath !== undefined) {
             ? machine.tlaTs
             : entry.name === "tla-rs"
               ? machine.tlaRs
-              : machine.proveIt,
+              : entry.name === "prove-it-base"
+                ? machine.proveItBase
+                : machine.proveIt,
         formatRatio(entry.wall),
         formatRatio(entry.cpu),
         `${entry.agreeing}/${results.length}`,
