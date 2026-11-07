@@ -576,6 +576,23 @@ describe("the engine", () => {
     ]);
   });
 
+  it("hands over a membership TLC can't decide, past the untyped model values a set starts with", async () => {
+    // TLC compares "a" with the integers and fails; the model value it sorts first compares with
+    // anything.
+    for (const size of [5, 20]) {
+      const body = `EXTENDS Naturals\nCONSTANT M\nVARIABLE x\nInit == x = 0\nNext == x < 3 /\\ x' = x + 1\nInv == ~("a" \\in ({M} \\cup (1..${size})))`;
+      const config = "CONSTANT M = M\nINIT Init\nNEXT Next\nINVARIANT Inv";
+      const { result, lines } = await checkInEngine(body, config);
+      expect(lines).toEqual([
+        expect.stringMatching(/handed over .*: (membership of a value|values) TLC can't compare$/),
+      ]);
+      process.env.PROVE_IT_ENGINE = "0";
+      const reference = await check({ source: `---- MODULE M ----\n${body}\n====`, config });
+      expect(result.status).toBe("error");
+      expect(result.failure?.message).toBe(reference.failure?.message);
+    }
+  });
+
   it("reads Nat as the set the model substitutes for it", async () => {
     const { result, lines } = await checkInEngine(
       "EXTENDS Integers\nVARIABLE x\nInit == x = 0\nNext == UNCHANGED x\nInv == -1 \\in Nat",
