@@ -450,10 +450,14 @@ const getVersion = (command: string[]) => {
     ?.trim();
 };
 
-const getCommit = (path: string) =>
-  spawnSync("git", ["-C", path, "rev-parse", "--short", "HEAD"], {
-    encoding: "utf8",
-  }).stdout.trim();
+// The commit a checkout is at, and +local when its files differ from it, as they do in a run of
+// local changes that depot ci run applies as a patch.
+const getCommit = (path: string) => {
+  const git = (args: string[]) =>
+    spawnSync("git", ["-C", path, ...args], { encoding: "utf8" }).stdout.trim();
+  const commit = git(["rev-parse", "--short", "HEAD"]);
+  return git(["status", "--porcelain", "--untracked-files=no"]) === "" ? commit : `${commit}+local`;
+};
 
 const getPackageVersion = (cliPath: string) => {
   const manifest = join(dirname(cliPath), "..", "package.json");

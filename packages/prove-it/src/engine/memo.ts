@@ -11,6 +11,8 @@ const MAXIMUM_ENTRIES = 1 << 22;
 // DIRECT_SPARSITY ids its array spans past the first DIRECT_MINIMUM.
 const DIRECT_SPARSITY = 16;
 const DIRECT_MINIMUM = 1 << 16;
+// And never past this many ids, about what a hash table holding MAXIMUM_ENTRIES takes.
+const DIRECT_MAXIMUM = 1 << 23;
 
 const OFFSET_BASIS = 0x811c9dc5;
 const fold = (hash: number, key: number) => Math.imul(hash ^ key, 0x01000193);
@@ -65,7 +67,7 @@ export class MemoTable {
   private reserveDirect(id: number) {
     const direct = this.values;
     const capacity = Math.max(2 * direct.length, id + 1);
-    if (capacity <= DIRECT_SPARSITY * this.size + DIRECT_MINIMUM) {
+    if (capacity <= DIRECT_MAXIMUM && capacity <= DIRECT_SPARSITY * this.size + DIRECT_MINIMUM) {
       this.values = new Int32Array(capacity).fill(EMPTY);
       this.values.set(direct);
       return;

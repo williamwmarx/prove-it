@@ -149,7 +149,8 @@ export const reserveSlots = () => {
 
 // What a recursive call keeps while its body runs, such as the slots it binds and the key of its
 // memo table, pushed above what the calls that made it keep and popped when it returns.
-let STACK = new Int32Array(1024);
+const INITIAL_STACK = 1024;
+let STACK = new Int32Array(INITIAL_STACK);
 let stackTop = 0;
 
 // The offset of room for length words on the stack, which the caller pops by restoring stackTop.
@@ -539,7 +540,16 @@ const createProbe = (
   }
 };
 
+// The memo tables of the current run, for its statistics.
 const memoTables: MemoTable[] = [];
+
+// Lets go of what the last run compiled and kept, so a process that checks many specs doesn't keep
+// every run's tables and its deepest recursion's stack.
+export const resetCompileState = () => {
+  memoTables.length = 0;
+  if (STACK.length > INITIAL_STACK) STACK = new Int32Array(INITIAL_STACK);
+  stackTop = 0;
+};
 
 // PROVE_IT_EPOCH_CHECK=1 evaluates an expression again on each hit of its epoch cache, to check it.
 const isEpochChecked = getEnvironmentFlag("PROVE_IT_EPOCH_CHECK");

@@ -12,7 +12,7 @@ import type { Environment } from "../evaluate";
 import type { TlcVersion } from "../tlc/version";
 import type { Value } from "../values";
 import { resetAssigned } from "./action";
-import { EPOCH, nextEpoch, setCurrent, setNext } from "./compile";
+import { EPOCH, nextEpoch, resetCompileState, setCurrent, setNext } from "./compile";
 import {
   createEngineContext,
   type EngineProperties,
@@ -119,6 +119,7 @@ export const runEngine = (input: EngineInput): EngineResult => {
   const environment = input.environment;
   const config = input.config;
   resetStore();
+  resetCompileState();
   if (getEnvironmentFlag("PROVE_IT_SHARED")) shareStore();
   resetFingerprints();
   resetAssigned();

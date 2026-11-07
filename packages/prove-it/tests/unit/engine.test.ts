@@ -5,7 +5,7 @@
 import { afterEach, describe, expect, it, spyOn } from "bun:test";
 
 import { check, formatValue } from "../../src";
-import { nextEpoch } from "../../src/engine/compile";
+import { getMemoStatistics, nextEpoch } from "../../src/engine/compile";
 import { EpochCache, MemoTable } from "../../src/engine/memo";
 import { getEngineThreads } from "../../src/engine/settings";
 
@@ -17,6 +17,31 @@ afterEach(() => {
   else process.env.PROVE_IT_ENGINE = setting;
   if (threads === undefined) delete process.env.PROVE_IT_WORKERS;
   else process.env.PROVE_IT_WORKERS = threads;
+});
+
+describe("the engine between checks", () => {
+  it("keeps only the current check's memo tables", async () => {
+    const options = {
+      source: [
+        "---- MODULE M ----",
+        "EXTENDS Naturals, FiniteSets",
+        "VARIABLE x",
+        "RECURSIVE Sum(_)",
+        "Sum(n) == IF n = 0 THEN 0 ELSE n + Sum(n - 1)",
+        "Init == x = 0",
+        "Next == x' = (x + 1) % 20",
+        "Inv == Sum(x) >= 0 /\\ Cardinality({y \\in 0..x : y % 2 = 0}) >= 0",
+        "====",
+      ].join("\n"),
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      onPrint: () => {},
+    };
+    await check(options);
+    const tables = getMemoStatistics().length;
+    expect(tables).toBeGreaterThan(0);
+    await check(options);
+    expect(getMemoStatistics().length).toBe(tables);
+  });
 });
 
 describe("the engine's threads", () => {

@@ -1,8 +1,8 @@
 # Times this commit's Prove It against another commit's (main by default) on one machine: both
 # builds' binaries, the JIT one and the one Bun compiles ahead of time, take turns on each model of
 # packages/prove-it/scripts/bench-suite.json, and each must agree with TLC's recorded result where
-# there is one. Run it by hand, or with depot ci run on a
-# branch, to see what a change does to speed. It holds no credential.
+# there is one. Run it by hand, or with depot ci run on a branch, to see what a change does to
+# speed. It holds no credential.
 name: Compare
 "on":
   workflow_dispatch:
