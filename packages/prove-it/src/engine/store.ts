@@ -212,8 +212,6 @@ export const resetStore = () => {
   textRanks.length = 0;
   stringIds.clear();
   modelIds.clear();
-  // Ids start again, so an id may name another set.
-  memberIndexes.clear();
   internScalar(KIND_BOOL, 0);
   internScalar(KIND_BOOL, 1);
   EMPTY_SET = internBlock(KIND_SET, [], 0, 0);
@@ -484,25 +482,11 @@ export const setElements = (set: number) => {
   return Array.from(heap.subarray(offset, offset + sizes[set]));
 };
 
-// Sets with more elements than this get a hash index for membership.
-const INDEXED_SIZE = 16;
-const memberIndexes = new Map<number, Set<number>>();
-
 export const isMember = (element: number, set: number): boolean => {
   const size = sizes[set];
-  const offset = payloads[set];
-  if (size <= INDEXED_SIZE) {
-    for (let index = 0; index < size; index++) if (heap[offset + index] === element) return true;
-  } else {
-    let index = memberIndexes.get(set);
-    if (index === undefined) {
-      index = new Set(heap.subarray(offset, offset + size));
-      memberIndexes.set(set, index);
-    }
-    if (index.has(element)) return true;
-  }
+  if (findInBlock(payloads[set], size, element) !== -1) return true;
   // TLC compares the element with those of the set, which fails for values it can't compare.
-  if (size > 0) checkComparable(element, heap[offset]);
+  if (size > 0) checkComparable(element, heap[payloads[set]]);
   return false;
 };
 
@@ -778,8 +762,16 @@ export const findKey = (fn: number, key: number) => {
     const position = payloads[key] - 1;
     return position >= 0 && position < size ? position : -1;
   }
-  const offset = payloads[fn];
-  // A domain of consecutive integers, such as 0..n, finds its key by subtraction.
+  return findInBlock(payloads[fn], size, key);
+};
+
+// Blocks this small are searched in order. A larger one is sorted in TLC's order, as a set's
+// elements and a function's domain are, and is searched by halving.
+const LINEAR_SIZE = 16;
+
+// The position of a value in the sorted block of values at offset, or -1.
+const findInBlock = (offset: number, size: number, key: number) => {
+  // A block of consecutive integers, such as 0..n, finds its key by subtraction.
   if (size > 0 && kinds[key] === KIND_INT) {
     const first = heap[offset];
     const last = heap[offset + size - 1];
@@ -791,7 +783,7 @@ export const findKey = (fn: number, key: number) => {
       }
     }
   }
-  if (size <= INDEXED_SIZE) {
+  if (size <= LINEAR_SIZE) {
     for (let index = 0; index < size; index++) if (heap[offset + index] === key) return index;
     return -1;
   }
@@ -1245,7 +1237,6 @@ export const attachSharedStore = (buffers: SharedStore) => {
   generation++;
   shared = attachViews(buffers);
   shared.isTextFrozen = true;
-  memberIndexes.clear();
   texts.length = 0;
   textRanks.length = 0;
   stringIds.clear();
