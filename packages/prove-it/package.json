@@ -36,6 +36,7 @@
   },
   "scripts": {
     "build": "bun scripts/build.ts && tsc -p tsconfig.build.json",
+    "build:binary": "bun scripts/build-binary.ts",
     "prepack": "cp ../../README.md ../../LICENSE .",
     "prepublishOnly": "bun run build",
     "test": "bun run build && bun test --parallel",
