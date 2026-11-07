@@ -29,6 +29,7 @@ import { fromValue, toValue } from "./convert";
 import { MemoTable } from "./memo";
 import {
   apply,
+  applyField,
   bail,
   bool,
   compare,
@@ -878,9 +879,10 @@ export const createCompiler = (environment: Environment): Compiler => {
         const record = compile(expression.record, context);
         const key = str(expression.field);
         const evaluate = record.evaluate;
+        const hint = { position: 0 };
         return {
-          ...leaf(() => apply(evaluate(), key), record.footprint),
-          emit: (gen) => `${gen.ref(apply)}(${codeOf(record, gen)}, ${key})`,
+          ...leaf(() => applyField(evaluate(), key, hint), record.footprint),
+          emit: (gen) => `${gen.ref(applyField)}(${codeOf(record, gen)}, ${key}, ${gen.ref(hint)})`,
         };
       }
       case "Except":

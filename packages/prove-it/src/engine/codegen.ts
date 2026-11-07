@@ -36,6 +36,9 @@ type Continuation = (known: Known) => string;
 // Generated code past this size goes back to the closures: the walk writes out every path, so an
 // action with many disjunctions followed by more conjuncts grows quickly.
 const MAXIMUM_CODE_LENGTH = 1_000_000;
+// The text the generator writes along the way, inner code counted again in each block around it,
+// past which it stops early rather than build code it would throw away.
+const MAXIMUM_WRITTEN_LENGTH = 50_000_000;
 
 class TooLarge extends Error {}
 
@@ -50,6 +53,18 @@ export const generateAction = (
   expression: Expression,
   context: CompileContext,
   options: GenerateOptions,
+): Step | undefined =>
+  generateActionCode(compiler, expression, context, options, false) ??
+  generateActionCode(compiler, expression, context, options, true);
+
+// With isSharing, each branch point writes what follows it once, as a function its branches call,
+// rather than once per branch: slower than inline code, but linear in the size of the action.
+const generateActionCode = (
+  compiler: Compiler,
+  expression: Expression,
+  context: CompileContext,
+  options: GenerateOptions,
+  isSharing: boolean,
 ): Step | undefined => {
   const isInit = options.isInit;
   const variableCount = compiler.variableCount;
@@ -78,8 +93,30 @@ export const generateAction = (
   let length = 0;
   const emit = (code: string) => {
     length += code.length;
-    if (length > MAXIMUM_CODE_LENGTH) throw new TooLarge();
+    if (length > MAXIMUM_WRITTEN_LENGTH) throw new TooLarge();
     return code;
+  };
+
+  // The branches of a disjunction, IF or CASE, each walked to the continuation. Sharing, they call
+  // one function for it, which knows of a variable only what every branch that calls it knows.
+  const branches = (
+    walks: ((rest: Continuation) => string)[],
+    rest: Continuation,
+    join: (codes: string[]) => string,
+  ) => {
+    if (!isSharing || walks.length < 2) return join(walks.map((walk) => walk(rest)));
+    const name = fresh("k");
+    const knowns: Known[] = [];
+    const call: Continuation = (after) => {
+      knowns.push(after);
+      return `${name}();`;
+    };
+    const codes = walks.map((walk) => walk(call));
+    if (knowns.length === 0) return join(codes);
+    const merged = knowns[0].map((state, variable) =>
+      knowns.every((other) => other[variable] === state) ? state : UNKNOWN,
+    );
+    return emit(`{ const ${name} = () => {\n${rest(merged)}\n};\n${join(codes)}\n}`);
   };
 
   const guardCode = (guard: Expression, guardContext: CompileContext) =>
@@ -132,13 +169,20 @@ if (${flag} === 1) { ${T}[${variable}] = -1; ${R}.assigned--; } }`,
         return restAsGuards(operands.slice(index), operandContext, known, rest);
       }
       if (known.every((state) => state !== UNASSIGNED)) {
-        return emit(
-          `if (${R}.assigned === ${variableCount}) {\n${restAsGuards(
-            operands.slice(index),
-            operandContext,
-            known.map(() => ASSIGNED),
-            rest,
-          )}\n} else {\n${walkConjunct(operands, operandContext, index, known, rest)}\n}`,
+        return branches(
+          [
+            (branchRest) =>
+              restAsGuards(
+                operands.slice(index),
+                operandContext,
+                known.map(() => ASSIGNED),
+                branchRest,
+              ),
+            (branchRest) => walkConjunct(operands, operandContext, index, known, branchRest),
+          ],
+          rest,
+          ([guards, walked]) =>
+            emit(`if (${R}.assigned === ${variableCount}) {\n${guards}\n} else {\n${walked}\n}`),
         );
       }
     }
@@ -277,9 +321,14 @@ ${T}[${variable}] = -1; ${R}.assigned--; }`;
       case "And":
         return conjunction(operand.operands, operandContext, 0, known, rest);
       case "Or":
-        return operand.operands
-          .map((branch) => emit(`{\n${step(branch, operandContext, known, rest)}\n}`))
-          .join("\n");
+        return branches(
+          operand.operands.map(
+            (branch) => (branchRest) =>
+              emit(`{\n${step(branch, operandContext, known, branchRest)}\n}`),
+          ),
+          rest,
+          (codes) => codes.join("\n"),
+        );
       case "Exists":
         return quantified(operand.bounds, operand.body, operandContext, known, rest, operand);
       case "Forall":
@@ -292,19 +341,34 @@ ${T}[${variable}] = -1; ${R}.assigned--; }`;
         return opaque(operand, operandContext, known, rest);
       case "If": {
         const condition = guardCode(operand.condition, operandContext);
-        return emit(
-          `if (${condition}) {\n${step(operand.consequent, operandContext, known, rest)}\n} else {\n${step(operand.alternative, operandContext, known, rest)}\n}`,
+        return branches(
+          [operand.consequent, operand.alternative].map(
+            (branch) => (branchRest) => step(branch, operandContext, known, branchRest),
+          ),
+          rest,
+          ([consequent, alternative]) =>
+            emit(`if (${condition}) {\n${consequent}\n} else {\n${alternative}\n}`),
         );
       }
       case "Case": {
-        const arms = operand.arms.map(
-          (arm) =>
-            `if (${guardCode(arm.condition, operandContext)}) {\n${step(arm.body, operandContext, known, rest)}\n}`,
+        const conditions = operand.arms.map((arm) => guardCode(arm.condition, operandContext));
+        const bodies = [
+          ...operand.arms.map((arm) => arm.body),
+          ...(operand.other ? [operand.other] : []),
+        ];
+        return branches(
+          bodies.map((body) => (branchRest) => step(body, operandContext, known, branchRest)),
+          rest,
+          (codes) => {
+            const arms = conditions.map(
+              (condition, index) => `if (${condition}) {\n${codes[index]}\n}`,
+            );
+            const other = operand.other
+              ? `{\n${codes[conditions.length]}\n}`
+              : `${gen.ref(bail)}("no CASE arm holds");`;
+            return emit(`${arms.join(" else ")} else ${other}`);
+          },
         );
-        const other = operand.other
-          ? `{\n${step(operand.other, operandContext, known, rest)}\n}`
-          : `${gen.ref(bail)}("no CASE arm holds");`;
-        return emit(`${arms.join(" else ")} else ${other}`);
       }
       case "Let":
         return step(operand.body, compiler.bindLet(operand, operandContext), known, rest);
@@ -413,6 +477,7 @@ ${T}[${variable}] = -1; ${R}.assigned--; }`;
     if (error instanceof TooLarge) return undefined;
     throw error;
   }
+  if (body.length > MAXIMUM_CODE_LENGTH) return undefined;
   try {
     if (getCodegenSetting() === "dump") console.error(body);
     const factory = new Function(

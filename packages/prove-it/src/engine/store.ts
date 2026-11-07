@@ -768,6 +768,23 @@ export const exceptAt = (fn: number, positions: number[], values: number[], coun
   return internBlock(kind, words, length, size);
 };
 
+// r.field for a record, given where the field was in the last record read: records of one type
+// keep their fields at the same position, so the hint usually saves the search.
+export const applyField = (fn: number, key: number, hint: { position: number }) => {
+  if (kinds[fn] === KIND_FUNCTION) {
+    const size = sizes[fn];
+    const offset = payloads[fn];
+    const position = hint.position;
+    if (position < size && heap[offset + position] === key) return heap[offset + size + position];
+    const found = findKey(fn, key);
+    if (found !== -1) {
+      hint.position = found;
+      return heap[offset + size + found];
+    }
+  }
+  return apply(fn, key);
+};
+
 export const domainOf = (fn: number) => {
   const size = sizes[fn];
   const keys: number[] = new Array(size);
