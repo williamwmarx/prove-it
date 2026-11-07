@@ -147,16 +147,37 @@ export const reserveSlots = () => {
   growLocals(length);
 };
 
+// What a recursive call keeps while its body runs, such as the slots it binds and the key of its
+// memo table, pushed above what the calls that made it keep and popped when it returns.
+let STACK = new Int32Array(1024);
+let stackTop = 0;
+
+// The offset of room for length words on the stack, which the caller pops by restoring stackTop.
+const pushStack = (length: number) => {
+  const at = stackTop;
+  stackTop += length;
+  if (stackTop > STACK.length) {
+    let capacity = STACK.length * 2;
+    while (stackTop > capacity) capacity *= 2;
+    const grown = new Int32Array(capacity);
+    grown.set(STACK);
+    STACK = grown;
+  }
+  return at;
+};
+
 // A recursive definition's body binds its names at slots fixed when it compiles, so a call inside
 // the body would overwrite the names of the call that made it. Evaluating the body keeps the slots
 // it binds, from start to end, as they were.
 const evaluateKeepingSlots = (evaluate: Evaluate, start: number, end: number) => {
   if (end <= start) return evaluate();
-  const saved = LOC.slice(start, end);
+  const at = pushStack(end - start);
+  STACK.set(LOC.subarray(start, end), at);
   try {
     return evaluate();
   } finally {
-    LOC.set(saved, start);
+    LOC.set(STACK.subarray(at, at + end - start), start);
+    stackTop = at;
   }
 };
 
@@ -1593,35 +1614,34 @@ export const createCompiler = (environment: Environment): Compiler => {
     const argEvaluators = compiledArgs.map((argument) => argument.evaluate);
     const slots = operator.slots;
     const argumentScratch = createScratch(slots.length);
-    let scratch: Int32Array | undefined;
     const evaluate = () => {
       const values = argumentScratch.take();
       for (let index = 0; index < argEvaluators.length; index++)
         values[index] = argEvaluators[index]();
       argumentScratch.release(values);
-      const saved = slots.map((slot) => LOC[slot]);
-      for (let index = 0; index < slots.length; index++) LOC[slots[index]] = values[index];
+      const at = pushStack(slots.length);
+      for (let index = 0; index < slots.length; index++) {
+        STACK[at + index] = LOC[slots[index]];
+        LOC[slots[index]] = values[index];
+      }
       try {
         const table = operator.table;
         const body = operator.body!;
         if (!table || !table.isEnabled)
           return evaluateKeepingSlots(body.evaluate, operator.slotStart, operator.slotEnd);
-        scratch ??= new Int32Array(table.width);
-        const fill = () => {
-          let position = 0;
-          for (const variable of operator.keyVars) scratch![position++] = CUR[variable];
-          for (const variable of operator.keyPrimes) scratch![position++] = NXT[variable];
-          for (const slot of operator.keySlots) scratch![position++] = LOC[slot];
-        };
-        fill();
-        const known = table.getN(scratch);
+        const keyAt = pushStack(table.width);
+        let position = keyAt;
+        for (const variable of operator.keyVars) STACK[position++] = CUR[variable];
+        for (const variable of operator.keyPrimes) STACK[position++] = NXT[variable];
+        for (const slot of operator.keySlots) STACK[position++] = LOC[slot];
+        const known = table.getN(STACK, keyAt);
         if (known !== -1) return known;
         const value = evaluateKeepingSlots(body.evaluate, operator.slotStart, operator.slotEnd);
-        fill();
-        table.setN(scratch, value);
+        table.setN(STACK, keyAt, value);
         return value;
       } finally {
-        for (let index = 0; index < slots.length; index++) LOC[slots[index]] = saved[index];
+        for (let index = 0; index < slots.length; index++) LOC[slots[index]] = STACK[at + index];
+        stackTop = at;
       }
     };
     // While the body compiles, a call inside it reads what the operator assumes it does.
@@ -1810,23 +1830,25 @@ export const createCompiler = (environment: Environment): Compiler => {
     const slot = record.slot;
     const saved = LOC[slot];
     LOC[slot] = argument;
+    const at = stackTop;
     try {
       const table = record.table;
       const body = record.body!;
       if (!table || !table.isEnabled)
         return evaluateKeepingSlots(body.evaluate, record.slotStart, record.slotEnd);
-      const scratch = new Int32Array(table.width);
-      let position = 0;
-      for (const variable of record.keyVars) scratch[position++] = CUR[variable];
-      for (const variable of record.keyPrimes) scratch[position++] = NXT[variable];
-      for (const keySlot of record.keySlots) scratch[position++] = LOC[keySlot];
-      const known = table.getN(scratch);
+      const keyAt = pushStack(table.width);
+      let position = keyAt;
+      for (const variable of record.keyVars) STACK[position++] = CUR[variable];
+      for (const variable of record.keyPrimes) STACK[position++] = NXT[variable];
+      for (const keySlot of record.keySlots) STACK[position++] = LOC[keySlot];
+      const known = table.getN(STACK, keyAt);
       if (known !== -1) return known;
       const value = evaluateKeepingSlots(body.evaluate, record.slotStart, record.slotEnd);
-      table.setN(scratch, value);
+      table.setN(STACK, keyAt, value);
       return value;
     } finally {
       LOC[slot] = saved;
+      stackTop = at;
     }
   };
 

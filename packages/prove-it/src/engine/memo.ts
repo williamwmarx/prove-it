@@ -259,21 +259,21 @@ export class MemoTable {
     this.values[slot] = value;
   }
 
-  // Keys of any width, read from the scratch array.
-  getN(scratch: Int32Array) {
+  // Keys of any width, read from an array at an offset.
+  getN(keys: Int32Array, offset: number) {
     if (!this.open()) return EMPTY;
     const width = this.width;
     let hash = OFFSET_BASIS;
-    for (let index = 0; index < width; index++) hash = fold(hash, scratch[index]);
+    for (let index = 0; index < width; index++) hash = fold(hash, keys[offset + index]);
     const mask = this.mask;
     const values = this.values;
-    const keys = this.keys;
+    const stored = this.keys;
     for (let slot = (hash ^ (hash >>> 15)) & mask; ; slot = (slot + 1) & mask) {
       const value = values[slot];
       if (value === EMPTY) return EMPTY;
       let isEqual = true;
       for (let index = 0; index < width; index++) {
-        if (keys[slot * width + index] !== scratch[index]) {
+        if (stored[slot * width + index] !== keys[offset + index]) {
           isEqual = false;
           break;
         }
@@ -285,13 +285,15 @@ export class MemoTable {
     }
   }
 
-  setN(scratch: Int32Array, value: number) {
+  setN(keys: Int32Array, offset: number, value: number) {
     const width = this.width;
     let hash = OFFSET_BASIS;
-    for (let index = 0; index < width; index++) hash = fold(hash, scratch[index]);
+    for (let index = 0; index < width; index++) hash = fold(hash, keys[offset + index]);
     const slot = this.claim(hash);
     if (slot === -1) return;
-    for (let index = 0; index < width; index++) this.keys[slot * width + index] = scratch[index];
+    for (let index = 0; index < width; index++) {
+      this.keys[slot * width + index] = keys[offset + index];
+    }
     this.values[slot] = value;
   }
 }
