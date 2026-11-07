@@ -51,8 +51,10 @@ let count = 0;
 export let heap: Int32Array = new Int32Array(1 << 16);
 let heapTop = 0;
 
-let table = new Int32Array(INITIAL_CAPACITY * 2).fill(-1);
-let tableMask = table.length - 1;
+// The intern table: a hash and an id per slot, side by side, so a probe reads one cache line before
+// it knows whether a slot can match. An id of -1 marks an empty slot.
+let table = new Int32Array(INITIAL_CAPACITY * 4).fill(-1);
+let tableMask = (table.length >> 1) - 1;
 
 const texts: string[] = [];
 // TLC orders strings by when it interned them. The rank of a string the spec doesn't mention is -1,
@@ -99,11 +101,13 @@ const growValues = () => {
 
 const growTable = () => {
   const next = new Int32Array(table.length * 2).fill(-1);
-  const mask = next.length - 1;
+  const mask = (next.length >> 1) - 1;
   for (let id = 0; id < count; id++) {
-    let slot = hashes[id] & mask;
-    while (next[slot] !== -1) slot = (slot + 1) & mask;
-    next[slot] = id;
+    const hash = hashes[id];
+    let slot = hash & mask;
+    while (next[2 * slot + 1] !== -1) slot = (slot + 1) & mask;
+    next[2 * slot] = hash;
+    next[2 * slot + 1] = id;
   }
   table = next;
   tableMask = mask;
@@ -125,8 +129,9 @@ const allocate = (kind: number, payload: number, size: number, hash: number, slo
   payloads[id] = payload;
   sizes[id] = size;
   hashes[id] = hash;
-  table[slot] = id;
-  if (count * 2 > table.length) growTable();
+  table[2 * slot] = hash;
+  table[2 * slot + 1] = id;
+  if (count * 4 > table.length) growTable();
   return id;
 };
 
@@ -135,9 +140,14 @@ const internScalar = (kind: number, payload: number) => {
   const hash = mix(Math.imul(kind + 1, 0x9e3779b1) ^ payload);
   if (shared) return internShared(kind, payload, EMPTY_WORDS, 0, 0, hash);
   for (let slot = hash & tableMask; ; slot = (slot + 1) & tableMask) {
-    const id = table[slot];
+    const id = table[2 * slot + 1];
     if (id === -1) return allocate(kind, payload, 0, hash, slot);
-    if (hashes[id] === hash && kinds[id] === kind && payloads[id] === payload && sizes[id] === 0) {
+    if (
+      table[2 * slot] === hash &&
+      kinds[id] === kind &&
+      payloads[id] === payload &&
+      sizes[id] === 0
+    ) {
       return id;
     }
   }
@@ -161,7 +171,7 @@ const internHashed = (
   const hash = mix(unmixed);
   if (shared) return internShared(kind, 0, words, length, size, hash);
   for (let slot = hash & tableMask; ; slot = (slot + 1) & tableMask) {
-    const id = table[slot];
+    const id = table[2 * slot + 1];
     if (id === -1) {
       ensureHeap(length);
       const offset = heapTop;
@@ -169,7 +179,7 @@ const internHashed = (
       heapTop += length;
       return allocate(kind, offset, size, hash, slot);
     }
-    if (hashes[id] !== hash || kinds[id] !== kind || sizes[id] !== size) continue;
+    if (table[2 * slot] !== hash || kinds[id] !== kind || sizes[id] !== size) continue;
     const offset = payloads[id];
     let isEqual = true;
     for (let index = 0; index < length; index++) {
@@ -403,11 +413,13 @@ export const setOf = (elements: number[]) => {
   }
   if (isSorted) return internBlock(KIND_SET, elements, length, length);
   const sorted = elements.slice().sort(compare);
+  const words = takeMergeScratch(length);
+  words[0] = sorted[0];
   let unique = 1;
   for (let index = 1; index < length; index++) {
-    if (sorted[index] !== sorted[unique - 1]) sorted[unique++] = sorted[index];
+    if (sorted[index] !== words[unique - 1]) words[unique++] = sorted[index];
   }
-  return internBlock(KIND_SET, sorted, unique, unique);
+  return internBlock(KIND_SET, words, unique, unique);
 };
 
 // The set of elements already in TLC's order without duplicates.
@@ -458,7 +470,12 @@ const checkComparable = (left: number, right: number) => {
   bail("membership of a value TLC can't compare");
 };
 
-const mergeScratch: number[] = [];
+let mergeScratch = new Int32Array(64);
+
+const takeMergeScratch = (length: number) => {
+  if (mergeScratch.length < length) mergeScratch = new Int32Array(2 * length);
+  return mergeScratch;
+};
 
 export const union = (left: number, right: number) => {
   const leftSize = sizes[left];
@@ -467,32 +484,32 @@ export const union = (left: number, right: number) => {
   if (rightSize === 0 || left === right) return left;
   const leftOffset = payloads[left];
   const rightOffset = payloads[right];
-  const merged = mergeScratch;
-  merged.length = 0;
+  const merged = takeMergeScratch(leftSize + rightSize);
+  let length = 0;
   let leftIndex = 0;
   let rightIndex = 0;
   while (leftIndex < leftSize && rightIndex < rightSize) {
     const leftElement = heap[leftOffset + leftIndex];
     const rightElement = heap[rightOffset + rightIndex];
     if (leftElement === rightElement) {
-      merged.push(leftElement);
+      merged[length++] = leftElement;
       leftIndex++;
       rightIndex++;
       continue;
     }
     if (compare(leftElement, rightElement) < 0) {
-      merged.push(leftElement);
+      merged[length++] = leftElement;
       leftIndex++;
     } else {
-      merged.push(rightElement);
+      merged[length++] = rightElement;
       rightIndex++;
     }
   }
-  while (leftIndex < leftSize) merged.push(heap[leftOffset + leftIndex++]);
-  while (rightIndex < rightSize) merged.push(heap[rightOffset + rightIndex++]);
-  if (merged.length === leftSize) return left;
-  if (merged.length === rightSize) return right;
-  return internBlock(KIND_SET, merged, merged.length, merged.length);
+  while (leftIndex < leftSize) merged[length++] = heap[leftOffset + leftIndex++];
+  while (rightIndex < rightSize) merged[length++] = heap[rightOffset + rightIndex++];
+  if (length === leftSize) return left;
+  if (length === rightSize) return right;
+  return internBlock(KIND_SET, merged, length, length);
 };
 
 export const intersection = (left: number, right: number) => {
@@ -502,15 +519,15 @@ export const intersection = (left: number, right: number) => {
   if (rightSize === 0) return right;
   const leftOffset = payloads[left];
   const rightOffset = payloads[right];
-  const merged = mergeScratch;
-  merged.length = 0;
+  const merged = takeMergeScratch(leftSize);
+  let length = 0;
   let leftIndex = 0;
   let rightIndex = 0;
   while (leftIndex < leftSize && rightIndex < rightSize) {
     const leftElement = heap[leftOffset + leftIndex];
     const rightElement = heap[rightOffset + rightIndex];
     if (leftElement === rightElement) {
-      merged.push(leftElement);
+      merged[length++] = leftElement;
       leftIndex++;
       rightIndex++;
     } else if (compare(leftElement, rightElement) < 0) {
@@ -519,8 +536,8 @@ export const intersection = (left: number, right: number) => {
       rightIndex++;
     }
   }
-  if (merged.length === leftSize) return left;
-  return internBlock(KIND_SET, merged, merged.length, merged.length);
+  if (length === leftSize) return left;
+  return internBlock(KIND_SET, merged, length, length);
 };
 
 export const difference = (left: number, right: number) => {
@@ -530,8 +547,8 @@ export const difference = (left: number, right: number) => {
   if (left === right) return EMPTY_SET;
   const leftOffset = payloads[left];
   const rightOffset = payloads[right];
-  const merged = mergeScratch;
-  merged.length = 0;
+  const merged = takeMergeScratch(leftSize);
+  let length = 0;
   let leftIndex = 0;
   let rightIndex = 0;
   while (leftIndex < leftSize && rightIndex < rightSize) {
@@ -541,15 +558,15 @@ export const difference = (left: number, right: number) => {
       leftIndex++;
       rightIndex++;
     } else if (compare(leftElement, rightElement) < 0) {
-      merged.push(leftElement);
+      merged[length++] = leftElement;
       leftIndex++;
     } else {
       rightIndex++;
     }
   }
-  while (leftIndex < leftSize) merged.push(heap[leftOffset + leftIndex++]);
-  if (merged.length === leftSize) return left;
-  return internBlock(KIND_SET, merged, merged.length, merged.length);
+  while (leftIndex < leftSize) merged[length++] = heap[leftOffset + leftIndex++];
+  if (length === leftSize) return left;
+  return internBlock(KIND_SET, merged, length, length);
 };
 
 export const isSubset = (left: number, right: number) => {
@@ -571,20 +588,20 @@ export const isSubset = (left: number, right: number) => {
 export const withElement = (set: number, element: number) => {
   const size = sizes[set];
   const offset = payloads[set];
-  const merged = mergeScratch;
-  merged.length = 0;
+  const merged = takeMergeScratch(size + 1);
+  let length = 0;
   let isInserted = false;
   for (let index = 0; index < size; index++) {
     const current = heap[offset + index];
     if (current === element) return set;
     if (!isInserted && compare(element, current) < 0) {
-      merged.push(element);
+      merged[length++] = element;
       isInserted = true;
     }
-    merged.push(current);
+    merged[length++] = current;
   }
-  if (!isInserted) merged.push(element);
-  return internBlock(KIND_SET, merged, merged.length, merged.length);
+  if (!isInserted) merged[length++] = element;
+  return internBlock(KIND_SET, merged, length, length);
 };
 
 // --- functions, records, and tuples ---
@@ -592,39 +609,66 @@ export const withElement = (set: number, element: number) => {
 export const tupleOf = (elements: ArrayLike<number>, length: number) =>
   length === 0 ? EMPTY_TUPLE : internBlock(KIND_TUPLE, elements, length, length);
 
-const pairScratch: number[] = [];
+let pairScratch = new Int32Array(64);
 
-// The function with the given domain in TLC's order and the range in the same order. A domain of
-// 1..n makes a tuple.
+const takePairScratch = (length: number) => {
+  if (pairScratch.length < length) pairScratch = new Int32Array(2 * length);
+  return pairScratch;
+};
+
 // The fixed fields of a record constructor: its keys, sorted, and the hash of the block up to them,
 // so building a record hashes only its values.
 export interface RecordShape {
-  keys: number[];
+  keys: Int32Array;
   prefix: number;
 }
 
 export const createRecordShape = (keys: number[]): RecordShape => {
   let hash = Math.imul(KIND_FUNCTION + 7, 0x9e3779b1) ^ keys.length;
   for (const key of keys) hash = Math.imul(hash ^ key, 0x01000193);
-  return { keys, prefix: hash };
+  return { keys: Int32Array.from(keys), prefix: hash };
 };
 
 // The record of a shape with these values, which are as many as its keys.
 export const recordOf = (shape: RecordShape, values: ArrayLike<number>) => {
   const keys = shape.keys;
   const size = keys.length;
-  let hash = shape.prefix;
-  const words = pairScratch;
-  words.length = 2 * size;
+  const length = 2 * size;
+  let unmixed = shape.prefix;
   for (let index = 0; index < size; index++) {
-    words[index] = keys[index];
-    const value = values[index];
-    words[size + index] = value;
-    hash = Math.imul(hash ^ value, 0x01000193);
+    unmixed = Math.imul(unmixed ^ values[index], 0x01000193);
   }
-  return internHashed(KIND_FUNCTION, words, 2 * size, size, hash);
+  if (shared) {
+    const words = takePairScratch(length);
+    words.set(keys);
+    for (let index = 0; index < size; index++) words[size + index] = values[index];
+    return internHashed(KIND_FUNCTION, words, length, size, unmixed);
+  }
+  // Looked up against the shape's keys and the values where they are, and copied only when new.
+  const hash = mix(unmixed);
+  for (let slot = hash & tableMask; ; slot = (slot + 1) & tableMask) {
+    const id = table[2 * slot + 1];
+    if (id === -1) {
+      ensureHeap(length);
+      const start = heapTop;
+      heap.set(keys, start);
+      for (let index = 0; index < size; index++) heap[start + size + index] = values[index];
+      heapTop += length;
+      return allocate(KIND_FUNCTION, start, size, hash, slot);
+    }
+    if (table[2 * slot] !== hash || kinds[id] !== KIND_FUNCTION || sizes[id] !== size) continue;
+    const other = payloads[id];
+    let index = 0;
+    while (index < size && heap[other + size + index] === values[index]) index++;
+    if (index < size) continue;
+    index = 0;
+    while (index < size && heap[other + index] === keys[index]) index++;
+    if (index === size) return id;
+  }
 };
 
+// The function with the given domain in TLC's order and the range in the same order. A domain of
+// 1..n makes a tuple.
 export const functionOfSorted = (
   domain: ArrayLike<number>,
   range: ArrayLike<number>,
@@ -640,8 +684,7 @@ export const functionOfSorted = (
     }
   }
   if (isTuple) return internBlock(KIND_TUPLE, range, size, size);
-  const words = pairScratch;
-  words.length = 2 * size;
+  const words = takePairScratch(2 * size);
   for (let index = 0; index < size; index++) {
     words[index] = domain[index];
     words[size + index] = range[index];
@@ -771,7 +814,74 @@ export const apply = (fn: number, key: number) => {
     : heap[payloads[fn] + sizes[fn] + position];
 };
 
-const exceptScratch: number[] = [];
+let exceptScratch = new Int32Array(64);
+
+// The words an EXCEPT changes in a block: their indexes, ascending, and their new values.
+let patchIndexes = new Int32Array(16);
+let patchValues = new Int32Array(16);
+
+// Interns fn's block with the words at patchIndexes[0..count) replaced. The result usually exists
+// already, so it is looked up in place, hashed as internBlock would hash the changed block, and
+// copied only when it is new.
+const internPatched = (fn: number, count: number) => {
+  const kind = kinds[fn];
+  const size = sizes[fn];
+  const offset = payloads[fn];
+  const length = kind === KIND_TUPLE ? size : 2 * size;
+  const indexes = patchIndexes;
+  const values = patchValues;
+  if (shared) {
+    if (exceptScratch.length < length) exceptScratch = new Int32Array(2 * length);
+    const words = exceptScratch;
+    for (let index = 0; index < length; index++) words[index] = heap[offset + index];
+    for (let patch = 0; patch < count; patch++) words[indexes[patch]] = values[patch];
+    return internBlock(kind, words, length, size);
+  }
+  let unmixed = Math.imul(kind + 7, 0x9e3779b1) ^ size;
+  let from = 0;
+  for (let patch = 0; patch < count; patch++) {
+    const to = indexes[patch];
+    for (let index = from; index < to; index++) {
+      unmixed = Math.imul(unmixed ^ heap[offset + index], 0x01000193);
+    }
+    unmixed = Math.imul(unmixed ^ values[patch], 0x01000193);
+    from = to + 1;
+  }
+  for (let index = from; index < length; index++) {
+    unmixed = Math.imul(unmixed ^ heap[offset + index], 0x01000193);
+  }
+  const hash = mix(unmixed);
+  for (let slot = hash & tableMask; ; slot = (slot + 1) & tableMask) {
+    const id = table[2 * slot + 1];
+    if (id === -1) {
+      ensureHeap(length);
+      const start = heapTop;
+      heap.copyWithin(start, offset, offset + length);
+      for (let patch = 0; patch < count; patch++) heap[start + indexes[patch]] = values[patch];
+      heapTop += length;
+      return allocate(kind, start, size, hash, slot);
+    }
+    if (table[2 * slot] !== hash || kinds[id] !== kind || sizes[id] !== size) continue;
+    if (isPatched(payloads[id], offset, length, count)) return id;
+  }
+};
+
+// Whether the block at other is the block at offset with the patches applied.
+const isPatched = (other: number, offset: number, length: number, count: number) => {
+  let from = 0;
+  for (let patch = 0; patch < count; patch++) {
+    const to = patchIndexes[patch];
+    if (heap[other + to] !== patchValues[patch]) return false;
+    for (let index = from; index < to; index++) {
+      if (heap[other + index] !== heap[offset + index]) return false;
+    }
+    from = to + 1;
+  }
+  for (let index = from; index < length; index++) {
+    if (heap[other + index] !== heap[offset + index]) return false;
+  }
+  return true;
+};
 
 // [fn EXCEPT ![key] = value].
 export const except = (fn: number, key: number, value: number) => {
@@ -781,38 +891,47 @@ export const except = (fn: number, key: number, value: number) => {
   // TLC leaves a function alone when EXCEPT names a key outside its domain, but a tuple fails to
   // fingerprint later, so the engine leaves both to the reference interpreter.
   if (position === -1) return bail("EXCEPT outside the domain");
-  const size = sizes[fn];
-  const offset = payloads[fn];
-  const length = kind === KIND_TUPLE ? size : 2 * size;
-  const valueOffset = kind === KIND_TUPLE ? position : size + position;
-  if (heap[offset + valueOffset] === value) return fn;
-  const words = exceptScratch;
-  words.length = length;
-  for (let index = 0; index < length; index++) words[index] = heap[offset + index];
-  words[valueOffset] = value;
-  return internBlock(kind, words, length, size);
+  const index = kind === KIND_TUPLE ? position : sizes[fn] + position;
+  if (heap[payloads[fn] + index] === value) return fn;
+  patchIndexes[0] = index;
+  patchValues[0] = value;
+  return internPatched(fn, 1);
 };
 
 // [fn EXCEPT ![k1] = v1, ..., ![kn] = vn], given the position of each key in fn, interned once.
 export const exceptAt = (fn: number, positions: number[], values: number[], count: number) => {
-  const kind = kinds[fn];
-  const size = sizes[fn];
   const offset = payloads[fn];
-  const valueStart = kind === KIND_TUPLE ? 0 : size;
+  const valueStart = kinds[fn] === KIND_TUPLE ? 0 : sizes[fn];
+  if (patchIndexes.length < count) {
+    patchIndexes = new Int32Array(2 * count);
+    patchValues = new Int32Array(2 * count);
+  }
+  // The updates, sorted by position, a later update of a key replacing an earlier one.
+  let patches = 0;
+  for (let update = 0; update < count; update++) {
+    const index = valueStart + positions[update];
+    let patch = patches;
+    while (patch > 0 && patchIndexes[patch - 1] > index) patch--;
+    if (patch > 0 && patchIndexes[patch - 1] === index) {
+      patchValues[patch - 1] = values[update];
+      continue;
+    }
+    for (let later = patches; later > patch; later--) {
+      patchIndexes[later] = patchIndexes[later - 1];
+      patchValues[later] = patchValues[later - 1];
+    }
+    patchIndexes[patch] = index;
+    patchValues[patch] = values[update];
+    patches++;
+  }
   let isChanged = false;
-  for (let index = 0; index < count; index++) {
-    if (heap[offset + valueStart + positions[index]] !== values[index]) {
+  for (let patch = 0; patch < patches; patch++) {
+    if (heap[offset + patchIndexes[patch]] !== patchValues[patch]) {
       isChanged = true;
       break;
     }
   }
-  if (!isChanged) return fn;
-  const length = valueStart + size;
-  const words = exceptScratch;
-  words.length = length;
-  for (let index = 0; index < length; index++) words[index] = heap[offset + index];
-  for (let index = 0; index < count; index++) words[valueStart + positions[index]] = values[index];
-  return internBlock(kind, words, length, size);
+  return isChanged ? internPatched(fn, patches) : fn;
 };
 
 // r.field for a record, given where the field was in the last record read: records of one type
