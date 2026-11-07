@@ -67,6 +67,48 @@ export const createLiveOracle = (
     return result;
   };
 
+  // The compiled forms of each predicate the checker asks about, found once through the caches
+  // above, since it asks about the same predicates on every state.
+  const answers = {
+    values: new Map<LiveExpression, Compiled | typeof UNKNOWN>(),
+    unchanged: new Map<LiveExpression, Compiled | typeof UNKNOWN>(),
+    enabledTests: new Map<LiveExpression, (() => boolean) | typeof UNKNOWN>(),
+  };
+  const getAnswer = <Result>(
+    cache: Map<LiveExpression, Result | typeof UNKNOWN>,
+    expression: LiveExpression,
+    build: () => Result | typeof UNKNOWN,
+  ) => {
+    const known = cache.get(expression);
+    if (known !== undefined) return known;
+    const built = build();
+    cache.set(expression, built);
+    return built;
+  };
+
+  // The checker asks about a state many times in a row, so the last lookup of each side of a step
+  // is kept.
+  const lookups = {
+    state: undefined as Value[] | undefined,
+    ids: undefined as Int32Array | undefined,
+    next: undefined as Value[] | undefined,
+    nextIds: undefined as Int32Array | undefined,
+  };
+  const getStateIds = (state: Value[]) => {
+    if (state !== lookups.state) {
+      lookups.state = state;
+      lookups.ids = getIds(state);
+    }
+    return lookups.ids;
+  };
+  const getNextIds = (state: Value[]) => {
+    if (state !== lookups.next) {
+      lookups.next = state;
+      lookups.nextIds = getIds(state);
+    }
+    return lookups.nextIds;
+  };
+
   const holds = (compiled: Compiled) => {
     const value = compiled.evaluate();
     return value === TRUE ? true : value === FALSE ? false : undefined;
@@ -80,41 +122,50 @@ export const createLiveOracle = (
     ) {
       return undefined;
     }
-    const ids = getIds(state);
+    const ids = getStateIds(state);
     if (!ids) return undefined;
     try {
       setCurrent(ids);
       setNext(next);
       if (expression.kind === "State") {
-        const compiled = getCompiled(values, expression.expression, expression.scope, (context) =>
-          compiler.compile(expression.expression, context),
+        const compiled = getAnswer(answers.values, expression, () =>
+          getCompiled(values, expression.expression, expression.scope, (context) =>
+            compiler.compile(expression.expression, context),
+          ),
         );
         return compiled === UNKNOWN ? undefined : holds(compiled);
       }
       if (expression.kind === "Enabled") {
-        const test = getCompiled(enabledTests, expression.step, expression.scope, (context) => {
-          const options = { isInit: false, isAssignedShortcut: false };
-          const step =
-            generateAction(compiler, expression.step, context, options) ??
-            compileAction(compiler, expression.step, context, options);
-          return createEnabledTest(step, width);
-        });
+        const test = getAnswer(answers.enabledTests, expression, () =>
+          getCompiled(enabledTests, expression.step, expression.scope, (context) => {
+            const options = { isInit: false, isAssignedShortcut: false };
+            const step =
+              generateAction(compiler, expression.step, context, options) ??
+              compileAction(compiler, expression.step, context, options);
+            return createEnabledTest(step, width);
+          }),
+        );
         return test === UNKNOWN ? undefined : test();
       }
-      const nextIds = successor && getIds(successor);
+      const nextIds = successor && getNextIds(successor);
       if (!nextIds) return undefined;
       setNext(nextIds);
-      if (expression.unchanged) {
-        const unchanged = getCompiled(values, expression.unchanged, expression.scope, (context) =>
-          compiler.compile(expression.unchanged!, context),
+      const unchangedExpression = expression.unchanged;
+      if (unchangedExpression) {
+        const unchanged = getAnswer(answers.unchanged, expression, () =>
+          getCompiled(values, unchangedExpression, expression.scope, (context) =>
+            compiler.compile(unchangedExpression, context),
+          ),
         );
         if (unchanged === UNKNOWN) return undefined;
         const isUnchanged = holds(unchanged);
         if (isUnchanged === undefined) return undefined;
         if (isUnchanged) return false;
       }
-      const action = getCompiled(values, expression.expression, expression.scope, (context) =>
-        compiler.compile(expression.expression, context),
+      const action = getAnswer(answers.values, expression, () =>
+        getCompiled(values, expression.expression, expression.scope, (context) =>
+          compiler.compile(expression.expression, context),
+        ),
       );
       return action === UNKNOWN ? undefined : holds(action);
     } catch (error) {
