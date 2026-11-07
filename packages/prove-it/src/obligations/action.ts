@@ -226,6 +226,8 @@ const expandPropositional = (expression: Expr): Expr => {
 };
 
 // OCaml's Hashtbl.hash of a string: caml_hash's MurmurHash3 over the bytes.
+// Ported from OCaml's runtime/hash.c, so under OCaml's LGPL-2.1 with its linking exception, not
+// MIT (THIRD_PARTY_NOTICES.md).
 const getHash = (text: string) => {
   const rotate = (value: number, amount: number) => (value << amount) | (value >>> (32 - amount));
   const mix = (hash: number, data: number) => {

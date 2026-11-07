@@ -1,3 +1,4 @@
+// Ported from OCaml: LGPL-2.1 with OCaml's linking exception, not MIT (THIRD_PARTY_NOTICES.md).
 // OCaml's Marshal format, ported from runtime/intern.c and runtime/extern.c, for the values in
 // tlapm's fingerprints file. It writes no sharing, which OCaml reads the same.
 

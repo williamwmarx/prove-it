@@ -1,3 +1,4 @@
+// Ported from OCaml: LGPL-2.1 with OCaml's linking exception, not MIT (THIRD_PARTY_NOTICES.md).
 // The parts of OCaml's standard library whose exact behavior steers Zenon's search.
 //
 // Hashtbl.hash on the values Zenon hashes: strings, and the (int, string list) pairs that Expr

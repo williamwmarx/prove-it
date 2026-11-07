@@ -1,3 +1,4 @@
+// Ported from OCaml: LGPL-2.1 with OCaml's linking exception, not MIT (THIRD_PARTY_NOTICES.md).
 // A port of OCaml's Format module, which tlapm uses to lay out obligations. Only the parts tlapm
 // reaches are ported: boxes, breaks, forced newlines and text.
 

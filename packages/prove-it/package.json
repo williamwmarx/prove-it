@@ -15,7 +15,7 @@
   "bugs": {
     "url": "https://github.com/williamwmarx/prove-it/issues"
   },
-  "license": "MIT",
+  "license": "MIT AND LGPL-2.1-only WITH OCaml-LGPL-linking-exception",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/williamwmarx/prove-it.git",
