@@ -414,7 +414,9 @@ type Binding =
       compiled: (Compiled | undefined)[];
     }
   | { kind: "operator"; operator: OperatorBinding }
-  | { kind: "value"; compiled: Compiled };
+  | { kind: "value"; compiled: Compiled }
+  // A recursive function defined in a LET, whose body sees the LET's scope, itself included.
+  | { kind: "recursive"; definition: FunctionDefinition; scope: Scope | undefined };
 
 interface OperatorBinding {
   name: string;
@@ -584,6 +586,10 @@ export const createCompiler = (environment: Environment): Compiler => {
       }
       case "value":
         return binding.compiled;
+      case "recursive":
+        return materializeRecursive(
+          getRecursiveFunction(binding.definition, context, binding.scope),
+        );
       default:
         return unsupported("an operator used as a value");
     }
@@ -871,7 +877,10 @@ export const createCompiler = (environment: Environment): Compiler => {
       const definitionContext = { ...context, scope };
       if (definition.kind === "Function") {
         if (definition.isRecursive || definition.isSelfReferential) {
-          unsupported("a recursive function in LET");
+          const binding: Binding = { kind: "recursive", definition, scope: undefined };
+          scope = bind(scope, definition.name, binding);
+          binding.scope = scope;
+          continue;
         }
         const compiled = cached(
           markCostly(
@@ -1159,7 +1168,11 @@ export const createCompiler = (environment: Environment): Compiler => {
       definitionCache.set(definition, entries);
       return compiled;
     }
-    const recursive = getRecursiveFunction(definition, context);
+    return materializeRecursive(getRecursiveFunction(definition, context, undefined));
+  };
+
+  // A recursive function as a value: its body applied to each element of its domain.
+  const materializeRecursive = (recursive: RecursiveFunction): Compiled => {
     return {
       evaluate: () => {
         const domain = recursive.domain.evaluate();
@@ -1185,6 +1198,7 @@ export const createCompiler = (environment: Environment): Compiler => {
   interface RecursiveFunction {
     slot: number;
     domain: Compiled;
+    isInDomain?: (element: number) => boolean;
     body: Compiled | undefined;
     table: MemoTable | undefined;
     keyVars: number[];
@@ -1193,17 +1207,27 @@ export const createCompiler = (environment: Environment): Compiler => {
     footprint: () => Footprint;
   }
 
-  const recursiveFunctions = new Map<FunctionDefinition, RecursiveFunction[]>();
+  const recursiveFunctions = new Map<
+    FunctionDefinition,
+    Map<Scope | undefined, RecursiveFunction[]>
+  >();
 
-  const getRecursiveFunction = (definition: FunctionDefinition, context: Context) => {
+  const getRecursiveFunction = (
+    definition: FunctionDefinition,
+    context: Context,
+    baseScope: Scope | undefined,
+  ) => {
     const index = context.isPrimed ? 1 : 0;
-    const known = recursiveFunctions.get(definition)?.[index];
+    const byScope =
+      recursiveFunctions.get(definition) ?? new Map<Scope | undefined, RecursiveFunction[]>();
+    recursiveFunctions.set(definition, byScope);
+    const known = byScope.get(baseScope)?.[index];
     if (known) return known;
     const bound = definition.bounds[0];
     if (definition.bounds.length !== 1 || bound.pattern.kind !== "Name") {
       return unsupported("a recursive function of several arguments");
     }
-    const outer = { scope: undefined, isPrimed: context.isPrimed, isInit: context.isInit };
+    const outer = { scope: baseScope, isPrimed: context.isPrimed, isInit: context.isInit };
     const slot = allocateSlot();
     const record: RecursiveFunction = {
       slot,
@@ -1223,12 +1247,12 @@ export const createCompiler = (environment: Environment): Compiler => {
               slots: [],
             },
     };
-    const entries = recursiveFunctions.get(definition) ?? [];
+    const entries = byScope.get(baseScope) ?? [];
     entries[index] = record;
-    recursiveFunctions.set(definition, entries);
+    byScope.set(baseScope, entries);
     record.body = compile(definition.body, {
       ...outer,
-      scope: bind(undefined, bound.pattern.name, { kind: "slot", slot }),
+      scope: bind(baseScope, bound.pattern.name, { kind: "slot", slot }),
     });
     const footprint = record.body.footprint;
     record.keySlots = mergeSorted([slot], footprint.slots);
@@ -1243,10 +1267,9 @@ export const createCompiler = (environment: Environment): Compiler => {
   };
 
   const callRecursiveFunction = (record: RecursiveFunction, argument: number) => {
-    const domain = record.domain.evaluate();
-    if (kindOf(domain) !== KIND_SET || !isMember(argument, domain)) {
+    record.isInDomain ??= memberTest(record.domain);
+    if (!record.isInDomain(argument))
       return bail("applied a recursive function outside its domain");
-    }
     const slot = record.slot;
     const saved = LOC[slot];
     LOC[slot] = argument;
@@ -1270,14 +1293,19 @@ export const createCompiler = (environment: Environment): Compiler => {
 
   // The recursive function an application applies, when it names one directly.
   const getAppliedRecursiveFunction = (fn: Expression, context: Context) => {
-    if (fn.kind !== "Identifier" || lookup(context.scope, fn.name)) return undefined;
+    if (fn.kind !== "Identifier") return undefined;
+    const local = lookup(context.scope, fn.name);
+    if (local?.kind === "recursive") {
+      return getRecursiveFunction(local.definition, context, local.scope);
+    }
+    if (local) return undefined;
     if (environment.variableIndex.has(fn.name) || environment.constants.has(fn.name)) {
       return undefined;
     }
     const definition = getDefinition(fn.name, environment);
     if (definition?.kind !== "Function") return undefined;
     if (!definition.isRecursive && !definition.isSelfReferential) return undefined;
-    return getRecursiveFunction(definition, context);
+    return getRecursiveFunction(definition, context, undefined);
   };
 
   // --- quantifiers and bindings ---
@@ -2163,6 +2191,29 @@ export const createCompiler = (environment: Environment): Compiler => {
           isBoolean: true,
         };
       }
+      case "SelectSeq": {
+        if (!isOperatorArgument(args[1], context)) return undefined;
+        const sequence = operand(0);
+        const test = compileApplier(args[1], context);
+        const sequenceEvaluate = sequence.evaluate;
+        const element = [0];
+        return {
+          evaluate: () => {
+            const tuple = expectSequence(sequenceEvaluate());
+            const kept: number[] = [];
+            for (let index = 0; index < sizeOf(tuple); index++) {
+              element[0] = getRangeValue(tuple, index);
+              const holds = test.apply(element);
+              if (holds === TRUE) kept.push(element[0]);
+              else if (holds !== FALSE) bail("a SelectSeq test that isn't a boolean");
+            }
+            return kept.length === sizeOf(tuple) ? tuple : tupleOf(kept, kept.length);
+          },
+          footprint: mergeFootprints(sequence.footprint, test.footprint),
+          isCostly: true,
+          isNormalized: true,
+        };
+      }
       case "Cardinality":
         return unary(operand(0), (set) => int(sizeOf(expectSet(set))));
       case "IsFiniteSet":
@@ -2223,35 +2274,86 @@ export const createCompiler = (environment: Environment): Compiler => {
 
   // An operator the engine doesn't implement runs in the reference interpreter, on values converted
   // there and back, and is cached like any other computation.
+  // Whether an argument names or writes an operator, such as Test in SelectSeq(s, Test).
+  const isOperatorArgument = (argument: Expression, context: Context) => {
+    if (argument.kind === "Lambda" || argument.kind === "OperatorReference") return true;
+    if (argument.kind !== "Identifier") return false;
+    const local = lookup(context.scope, argument.name);
+    if (local) return local.kind === "operator";
+    const definition = getDefinition(argument.name, environment);
+    if (definition) return definition.kind === "Operator" && definition.params.length > 0;
+    const builtin = environment.builtins.get(argument.name);
+    return builtin !== undefined && builtin.arity > 0;
+  };
+
+  // An operator argument compiled once, with its parameters bound to slots, to apply to ids.
+  const compileApplier = (argument: Expression, context: Context) => {
+    const operator = resolveOperatorArgument(argument, context);
+    if (operator.params.some((param) => param.arity > 0)) {
+      return unsupported("an operator argument that takes an operator");
+    }
+    const slots = operator.params.map(() => allocateSlot());
+    let scope = operator.context.scope;
+    operator.params.forEach((param, index) => {
+      scope = bind(scope, param.name, { kind: "slot", slot: slots[index] });
+    });
+    const body = compile(operator.body, {
+      ...operator.context,
+      scope,
+      isPrimed: context.isPrimed || operator.context.isPrimed,
+    });
+    const evaluate = body.evaluate;
+    return {
+      arity: slots.length,
+      apply: (args: ArrayLike<number>) => {
+        const saved = slots.map((slot) => LOC[slot]);
+        for (let index = 0; index < slots.length; index++) LOC[slots[index]] = args[index];
+        try {
+          return evaluate();
+        } finally {
+          for (let index = 0; index < slots.length; index++) LOC[slots[index]] = saved[index];
+        }
+      },
+      footprint: withoutSlots(body.footprint, slots),
+    };
+  };
+
   const compileBridgedBuiltin = (
     name: string,
     builtin: Builtin,
     args: Expression[],
     context: Context,
   ): Compiled => {
-    const compiledArgs: (Compiled | OperatorBinding)[] = args.map((argument, index) => {
-      void index;
-      if (argument.kind === "Lambda") return resolveOperatorArgument(argument, context);
-      return compile(argument, context);
-    });
-    const valueArgs = compiledArgs.filter(
-      (argument): argument is Compiled => "evaluate" in argument,
+    const compiledArgs = args.map((argument) =>
+      isOperatorArgument(argument, context)
+        ? { applier: compileApplier(argument, context) }
+        : { value: compile(argument, context) },
     );
-    if (valueArgs.length !== compiledArgs.length)
-      return unsupported(`higher-order builtin ${name}`);
-    const evaluators = valueArgs.map((argument) => argument.evaluate);
+    const footprint = mergeFootprints(
+      ...compiledArgs.map((argument) =>
+        argument.value ? argument.value.footprint : argument.applier!.footprint,
+      ),
+    );
+    // The reference implementation calls an operator argument with values, which the engine
+    // converts to ids, applies, and converts back.
+    const toArgument = (argument: (typeof compiledArgs)[number]): BuiltinArgument => {
+      if (argument.value) return toValue(argument.value.evaluate());
+      const applier = argument.applier!;
+      const operator: OperatorValue = {
+        kind: "Operator",
+        name,
+        arity: applier.arity,
+        call: (values) => toValue(applier.apply(values.map(fromValue))),
+      };
+      return operator;
+    };
     return {
-      evaluate: () => {
-        const values: BuiltinArgument[] = evaluators.map((evaluate) => toValue(evaluate()));
-        const result: Value = builtin.evaluate(values);
-        return fromValue(result);
-      },
-      footprint: mergeFootprints(...valueArgs.map((argument) => argument.footprint)),
+      evaluate: () => fromValue(builtin.evaluate(compiledArgs.map(toArgument))),
+      footprint,
       isCostly: true,
       isNormalized: false,
     };
   };
-  void (null as unknown as OperatorValue);
 
   // --- actions ---
 
