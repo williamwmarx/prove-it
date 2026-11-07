@@ -182,8 +182,23 @@ const FCN_RCD_VALUE = 9;
 const MODEL_VALUE = 21;
 
 // Extends the running fingerprint by a value, F and length known.
+// The table that shifts by each value's length, found once per value.
+let valueShifts: (ShiftTable | undefined)[] = [];
+
 const extendKnown = (id: number) => {
-  shiftBy(valueLength[id]);
+  let table = valueShifts[id];
+  if (table === undefined) {
+    table = lengthTables.get(valueLength[id]);
+    if (table === undefined && lengthTables.size < MAXIMUM_LENGTH_TABLES) {
+      shiftBy(valueLength[id]);
+      high ^= valueHigh[id];
+      low ^= valueLow[id];
+      return;
+    }
+    if (table !== undefined) valueShifts[id] = table;
+  }
+  if (table) applyShiftTable(table);
+  else shiftByPowers(valueLength[id]);
   high ^= valueHigh[id];
   low ^= valueLow[id];
 };
@@ -265,6 +280,7 @@ const computeValue = (id: number) => {
 };
 
 export const resetFingerprints = () => {
+  valueShifts = [];
   computed = new Uint8Array(0);
   valueHigh = new Int32Array(0);
   valueLow = new Int32Array(0);

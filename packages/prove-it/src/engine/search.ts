@@ -137,10 +137,10 @@ export const runEngine = (input: EngineInput): EngineResult => {
   // a VIEW the id of the view's value, and under symmetry the state's representative.
   const hasSeparateKeys = view !== undefined || canonicalize !== undefined;
   const keyWidth = view ? 1 : width;
-  let states = new Int32Array(Math.max(1, width) * 1024);
+  let states = new Int32Array(Math.max(1, width) * 16384);
   let separateKeys = new Int32Array(hasSeparateKeys ? keyWidth * 1024 : 0);
   let stateCount = 0;
-  let parents = new Int32Array(1024);
+  let parents = new Int32Array(16384);
   let table = new Int32Array(1 << 12).fill(-1);
   let tableMask = table.length - 1;
   const getKeys = () => (hasSeparateKeys ? separateKeys : states);
@@ -207,12 +207,12 @@ export const runEngine = (input: EngineInput): EngineResult => {
 
   const addState = (source: Int32Array, key: Int32Array, slot: number, parent: number) => {
     if ((stateCount + 1) * width > states.length) {
-      const next = new Int32Array(states.length * 2);
+      const next = new Int32Array(states.length * 4);
       next.set(states);
       states = next;
     }
     if (stateCount >= parents.length) {
-      const next = new Int32Array(parents.length * 2);
+      const next = new Int32Array(parents.length * 4);
       next.set(parents);
       parents = next;
     }
@@ -481,7 +481,9 @@ export const runEngine = (input: EngineInput): EngineResult => {
       }
       checkpointCount = stateCount;
       checkpointGenerated = generated;
-      current.set(states.subarray(expanding * width, (expanding + 1) * width));
+      const offset = expanding * width;
+      for (let variable = 0; variable < width; variable++)
+        current[variable] = states[offset + variable];
       next.fill(-1);
       resetAssigned();
       newStates = 0;
