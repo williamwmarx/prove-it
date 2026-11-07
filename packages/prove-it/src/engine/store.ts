@@ -173,6 +173,7 @@ const internBlock = (kind: number, words: ArrayLike<number>, length: number, siz
 
 export const resetStore = () => {
   generation++;
+  resetDomains();
   if (shared) {
     shared = undefined;
     kinds = new Uint8Array(INITIAL_CAPACITY);
@@ -665,8 +666,56 @@ export const findKey = (fn: number, key: number) => {
   return -1;
 };
 
+// Whether each function's domain is a run of consecutive integers, such as 0..n, found once per
+// function: 0 not yet known, 1 a run starting at domainLows[id], 2 anything else.
+let domainKinds = new Uint8Array(0);
+let domainLows = new Int32Array(0);
+
+const classifyDomain = (fn: number) => {
+  if (fn >= domainKinds.length) {
+    const capacity = Math.max(1024, (fn + 1) * 2);
+    const nextKinds = new Uint8Array(capacity);
+    nextKinds.set(domainKinds);
+    domainKinds = nextKinds;
+    const nextLows = new Int32Array(capacity);
+    nextLows.set(domainLows);
+    domainLows = nextLows;
+  }
+  const size = sizes[fn];
+  const offset = payloads[fn];
+  const first = heap[offset];
+  const last = heap[offset + size - 1];
+  const isRun =
+    size > 0 &&
+    kinds[first] === KIND_INT &&
+    kinds[last] === KIND_INT &&
+    payloads[last] - payloads[first] === size - 1;
+  domainKinds[fn] = isRun ? 1 : 2;
+  if (isRun) domainLows[fn] = payloads[first];
+  return domainKinds[fn];
+};
+
+export const resetDomains = () => {
+  domainKinds = new Uint8Array(0);
+  domainLows = new Int32Array(0);
+};
+
 export const apply = (fn: number, key: number) => {
   const kind = kinds[fn];
+  if (kind === KIND_FUNCTION && kinds[key] === KIND_INT) {
+    const domainKind =
+      fn < domainKinds.length && domainKinds[fn] !== 0 ? domainKinds[fn] : classifyDomain(fn);
+    if (domainKind === 1) {
+      const position = payloads[key] - domainLows[fn];
+      const size = sizes[fn];
+      if (position >= 0 && position < size) return heap[payloads[fn] + size + position];
+      return bail("applied a function outside its domain");
+    }
+  } else if (kind === KIND_TUPLE && kinds[key] === KIND_INT) {
+    const position = payloads[key] - 1;
+    if (position >= 0 && position < sizes[fn]) return heap[payloads[fn] + position];
+    return bail("applied a function outside its domain");
+  }
   if (kind !== KIND_FUNCTION && kind !== KIND_TUPLE) return bail("applied a non-function");
   const position = findKey(fn, key);
   if (position === -1) return bail("applied a function outside its domain");
