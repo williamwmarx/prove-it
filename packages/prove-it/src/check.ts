@@ -1298,6 +1298,22 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     return undefined;
   };
 
+  // TLC checks the postconditions once its search finishes.
+  const checkPostconditions = (): CheckResult | undefined => {
+    try {
+      const postcondition = search.findPostconditionViolation();
+      if (!postcondition) return undefined;
+      return createResult("postcondition-violation", {
+        name: postcondition.name,
+        message: postcondition.message,
+        counts: postcondition.counts,
+        trace: [],
+        postcondition,
+      });
+    } catch (error) {
+      return createFailureResult(error, { trace: [] });
+    }
+  };
   // Prove It's engine checks the specs it handles many times faster, and hands any other spec, or
   // any run that ends other than in success, to the interpreter below.
   const engineReport = {
@@ -1423,6 +1439,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       runtime.queueSize = 0;
       statistics.depth = result.depth;
       statistics.initialStates = result.initialStates;
+      const postconditionResult = checkPostconditions();
+      if (postconditionResult) return postconditionResult;
       return {
         ...createResult("success"),
         outDegrees: result.outDegrees,
@@ -1453,7 +1471,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     if (options.isContinued) return "-continue";
     if (search.isSymmetric && config.view !== undefined) return "symmetry with a view";
     if (search.isFingerprintedLikeTlc) return "wide strings";
-    if (config.postconditions.length > 0 || config.possible.length > 0) return "postconditions";
+    if (config.possible.length > 0) return "_POSSIBLE predicates";
     if (config.periodic !== undefined) return "periodic";
     if (is174) return "TLC 1.7.4";
     if (spec.scope !== undefined) return "a scoped specification";
@@ -1899,19 +1917,5 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
 
   // TLC finishes the check of the temporal properties before it checks the postconditions.
   if (liveness) options.onProgress?.({ kind: "liveness-finished" });
-  try {
-    const postcondition = search.findPostconditionViolation();
-    if (postcondition) {
-      return createResult("postcondition-violation", {
-        name: postcondition.name,
-        message: postcondition.message,
-        counts: postcondition.counts,
-        trace: [],
-        postcondition,
-      });
-    }
-  } catch (error) {
-    return createFailureResult(error, { trace: [] });
-  }
-  return createSuccess();
+  return checkPostconditions() ?? createSuccess();
 };

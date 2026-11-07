@@ -246,7 +246,6 @@ export const model = (name: string) => {
   if (known !== undefined) return known;
   // Typed model values, such as A_a, change how TLC compares values. The engine leaves them to the
   // reference interpreter.
-  if (name.length > 2 && name[1] === "_") return bail("typed model value");
   const index = internText(name, KIND_MODEL);
   textRanks[index] = getStringRank(name);
   const id = internScalar(KIND_MODEL, index);
@@ -255,6 +254,21 @@ export const model = (name: string) => {
 };
 
 export const isModelId = (id: number) => kinds[id] === KIND_MODEL;
+
+// A model value named like A_x is typed: TLC compares it only with model values of its type or
+// untyped ones, and fails on anything else. Returns the type's character code, or 0 if untyped.
+const getModelType = (id: number) => {
+  const name = texts[payloads[id]];
+  return name.length > 2 && name[1] === "_" ? name.charCodeAt(0) : 0;
+};
+
+const checkModelTypes = (left: number, right: number) => {
+  const leftType = getModelType(left);
+  const rightType = getModelType(right);
+  if (leftType !== 0 && rightType !== 0 && leftType !== rightType) {
+    bail("differently typed model values");
+  }
+};
 
 // TLC's Value#compareTo. Two values TLC can't compare make the engine bail out.
 export const compare = (left: number, right: number): number => {
@@ -270,6 +284,7 @@ export const compare = (left: number, right: number): number => {
       case KIND_BOOL:
         return left < right ? -1 : 1;
       case KIND_MODEL:
+        checkModelTypes(left, right);
         return textRanks[payloads[left]] - textRanks[payloads[right]];
       case KIND_SET:
         return compareSets(left, right);
@@ -277,8 +292,8 @@ export const compare = (left: number, right: number): number => {
         return compareFunctions(left, right);
     }
   }
-  if (leftKind === KIND_MODEL) return -1;
-  if (rightKind === KIND_MODEL) return 1;
+  if (leftKind === KIND_MODEL) return getModelType(left) === 0 ? -1 : bail("typed model value");
+  if (rightKind === KIND_MODEL) return getModelType(right) === 0 ? 1 : bail("typed model value");
   if (isFunctionKind(leftKind) && isFunctionKind(rightKind)) return compareFunctions(left, right);
   return bail("values TLC can't compare");
 };
@@ -342,8 +357,13 @@ export const equals = (left: number, right: number) => {
   if (left === right) return true;
   const leftKind = kinds[left];
   const rightKind = kinds[right];
-  if (leftKind === rightKind) return false;
-  if (leftKind === KIND_MODEL || rightKind === KIND_MODEL) return false;
+  if (leftKind === rightKind) {
+    if (leftKind === KIND_MODEL) checkModelTypes(left, right);
+    return false;
+  }
+  if (leftKind === KIND_MODEL) return getModelType(left) === 0 ? false : bail("typed model value");
+  if (rightKind === KIND_MODEL)
+    return getModelType(right) === 0 ? false : bail("typed model value");
   if (isFunctionKind(leftKind) && isFunctionKind(rightKind)) return false;
   return bail("equality of values TLC can't compare");
 };
@@ -407,7 +427,14 @@ export const isMember = (element: number, set: number): boolean => {
 const checkComparable = (left: number, right: number) => {
   const leftKind = kinds[left];
   const rightKind = kinds[right];
-  if (leftKind === rightKind || leftKind === KIND_MODEL || rightKind === KIND_MODEL) return;
+  if (leftKind === rightKind) {
+    if (leftKind === KIND_MODEL) checkModelTypes(left, right);
+    return;
+  }
+  if (leftKind === KIND_MODEL || rightKind === KIND_MODEL) {
+    if (getModelType(leftKind === KIND_MODEL ? left : right) !== 0) bail("typed model value");
+    return;
+  }
   if (isFunctionKind(leftKind) && isFunctionKind(rightKind)) return;
   bail("membership of a value TLC can't compare");
 };
