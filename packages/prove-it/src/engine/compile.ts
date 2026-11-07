@@ -35,12 +35,14 @@ import { fromValue, toValue } from "./convert";
 import { EPOCH_KEYS, EpochCache, MemoTable } from "./memo";
 import { getEnvironmentFlag } from "./settings";
 import {
+  appendTuple,
   apply,
   applyField,
   bail,
   Bailout,
   bool,
   compare,
+  concatTuples,
   createRecordShape,
   difference,
   domainOf,
@@ -54,6 +56,7 @@ import {
   findKey,
   functionOf,
   functionOfSorted,
+  functionOverSet,
   getKey,
   getModelType,
   getRangeValue,
@@ -75,6 +78,7 @@ import {
   setOf,
   setOfSorted,
   sizeOf,
+  sliceTuple,
   str,
   textOf,
   TRUE,
@@ -179,6 +183,20 @@ const evaluateKeepingSlots = (evaluate: Evaluate, start: number, end: number) =>
     return evaluate();
   } finally {
     LOC.set(STACK.subarray(at, at + end - start), start);
+    stackTop = at;
+  }
+};
+
+// The tuple of what the evaluators give, gathered on the stack.
+const evaluateTuple = (evaluators: Evaluate[]) => {
+  const at = pushStack(evaluators.length);
+  try {
+    for (let index = 0; index < evaluators.length; index++) {
+      const value = evaluators[index]();
+      STACK[at + index] = value;
+    }
+    return tupleOf(STACK, evaluators.length, at);
+  } finally {
     stackTop = at;
   }
 };
@@ -1684,13 +1702,16 @@ export const createCompiler = (environment: Environment): Compiler => {
         const domain = recursive.domain.evaluate();
         if (kindOf(domain) !== KIND_SET) return bail("a function over a non-set");
         const size = sizeOf(domain);
-        const keys: number[] = new Array(size);
-        const values: number[] = new Array(size);
-        for (let index = 0; index < size; index++) {
-          keys[index] = elementAt(domain, index);
-          values[index] = callRecursiveFunction(recursive, keys[index]);
+        const at = pushStack(size);
+        try {
+          for (let index = 0; index < size; index++) {
+            const value = callRecursiveFunction(recursive, elementAt(domain, index));
+            STACK[at + index] = value;
+          }
+          return functionOverSet(domain, STACK, at);
+        } finally {
+          stackTop = at;
         }
-        return functionOfSorted(keys, values, size);
       },
       footprint: recursive.footprint(),
       isCostly: true,
@@ -1985,13 +2006,18 @@ export const createCompiler = (environment: Environment): Compiler => {
         const id = setEvaluate();
         if (kindOf(id) !== KIND_SET) return bail("filtered a non-set");
         const size = sizeOf(id);
-        const kept: number[] = [];
-        for (let index = 0; index < size; index++) {
-          const element = elementAt(id, index);
-          assignBound(binding.slots, binding.tuple, element);
-          if (predicateEvaluate() === TRUE) kept.push(element);
+        const at = pushStack(size);
+        try {
+          let kept = 0;
+          for (let index = 0; index < size; index++) {
+            const element = elementAt(id, index);
+            assignBound(binding.slots, binding.tuple, element);
+            if (predicateEvaluate() === TRUE) STACK[at + kept++] = element;
+          }
+          return kept === size ? id : setOfSorted(STACK, kept, at);
+        } finally {
+          stackTop = at;
         }
-        return kept.length === size ? id : setOfSorted(kept, kept.length);
       },
       footprint: mergeFootprints(set.footprint, withoutSlots(predicate.footprint, binding.slots)),
       isCostly: true,
@@ -2098,15 +2124,17 @@ export const createCompiler = (environment: Environment): Compiler => {
           const set = setEvaluate();
           if (kindOf(set) !== KIND_SET) return bail("a function over a non-set");
           const size = sizeOf(set);
-          const keys: number[] = new Array(size);
-          const values: number[] = new Array(size);
-          for (let index = 0; index < size; index++) {
-            const key = elementAt(set, index);
-            keys[index] = key;
-            LOC[slot] = key;
-            values[index] = bodyEvaluate();
+          const at = pushStack(size);
+          try {
+            for (let index = 0; index < size; index++) {
+              LOC[slot] = elementAt(set, index);
+              const value = bodyEvaluate();
+              STACK[at + index] = value;
+            }
+            return functionOverSet(set, STACK, at);
+          } finally {
+            stackTop = at;
           }
-          return functionOfSorted(keys, values, size);
         })(single.set.evaluate, single.slots[0])
       : () => {
           // A function of several arguments takes tuples, in TLC's order of the product.
@@ -2178,8 +2206,8 @@ export const createCompiler = (environment: Environment): Compiler => {
     }
     const evaluators = args.map((argument) => argument.evaluate);
     return leaf(() => {
-      const values = evaluators.map((evaluate) => evaluate());
-      return apply(fnEvaluate(), tupleOf(values, values.length));
+      const key = evaluateTuple(evaluators);
+      return apply(fnEvaluate(), key);
     }, footprint);
   };
 
@@ -2196,10 +2224,7 @@ export const createCompiler = (environment: Environment): Compiler => {
         const evaluators = args.map((argument) => argument.evaluate);
         return {
           key: {
-            evaluate: () => {
-              const values = evaluators.map((evaluate) => evaluate());
-              return tupleOf(values, values.length);
-            },
+            evaluate: () => evaluateTuple(evaluators),
             footprint: mergeFootprints(...args.map((argument) => argument.footprint)),
             isCostly: false,
             isNormalized: true,
@@ -2958,20 +2983,12 @@ export const createCompiler = (environment: Environment): Compiler => {
           const tuple = expectSequence(sequence);
           const size = sizeOf(tuple);
           if (size === 0) return bail("Tail of an empty sequence");
-          const elements: number[] = new Array(size - 1);
-          for (let index = 1; index < size; index++)
-            elements[index - 1] = getRangeValue(tuple, index);
-          return tupleOf(elements, size - 1);
+          return sliceTuple(tuple, 1, size);
         });
       case "Append":
-        return binary(operand(0), operand(1), (sequence, element) => {
-          const tuple = expectSequence(sequence);
-          const size = sizeOf(tuple);
-          const elements: number[] = new Array(size + 1);
-          for (let index = 0; index < size; index++) elements[index] = getRangeValue(tuple, index);
-          elements[size] = element;
-          return tupleOf(elements, size + 1);
-        });
+        return binary(operand(0), operand(1), (sequence, element) =>
+          appendTuple(expectSequence(sequence), element),
+        );
       case "\\o":
         return binary(operand(0), operand(1), (left, right) => {
           if (kindOf(left) === KIND_STRING && kindOf(right) === KIND_STRING) {
@@ -2980,14 +2997,7 @@ export const createCompiler = (environment: Environment): Compiler => {
           if (kindOf(left) === KIND_STRING || kindOf(right) === KIND_STRING) {
             return bail("concatenation of a string and a sequence");
           }
-          const first = expectSequence(left);
-          const second = expectSequence(right);
-          const elements: number[] = [];
-          for (let index = 0; index < sizeOf(first); index++)
-            elements.push(getRangeValue(first, index));
-          for (let index = 0; index < sizeOf(second); index++)
-            elements.push(getRangeValue(second, index));
-          return tupleOf(elements, elements.length);
+          return concatTuples(expectSequence(left), expectSequence(right));
         });
       case "Seq": {
         const base = operand(0);
@@ -3028,14 +3038,21 @@ export const createCompiler = (environment: Environment): Compiler => {
         return {
           evaluate: () => {
             const tuple = expectSequence(sequenceEvaluate());
-            const kept: number[] = [];
-            for (let index = 0; index < sizeOf(tuple); index++) {
-              element[0] = getRangeValue(tuple, index);
-              const holds = test.apply(element);
-              if (holds === TRUE) kept.push(element[0]);
-              else if (holds !== FALSE) bail("a SelectSeq test that isn't a boolean");
+            const size = sizeOf(tuple);
+            const at = pushStack(size);
+            try {
+              let kept = 0;
+              for (let index = 0; index < size; index++) {
+                const value = getRangeValue(tuple, index);
+                element[0] = value;
+                const holds = test.apply(element);
+                if (holds === TRUE) STACK[at + kept++] = value;
+                else if (holds !== FALSE) bail("a SelectSeq test that isn't a boolean");
+              }
+              return kept === size ? tuple : tupleOf(STACK, kept, at);
+            } finally {
+              stackTop = at;
             }
-            return kept.length === sizeOf(tuple) ? tuple : tupleOf(kept, kept.length);
           },
           footprint: mergeFootprints(sequence.footprint, test.footprint),
           isCostly: true,
