@@ -276,7 +276,7 @@ export const runEngine = (input: EngineInput): EngineResult => {
     const slot = key ? findSlot(key) : -1;
     const isSeen = isInModel && table[2 * slot + 1] !== -1;
     if (!isSeen) {
-      if (!holdsAll(invariants)) bail("an invariant violated in an initial state");
+      if (!holdsAll(context.initialInvariants)) bail("an invariant violated in an initial state");
       if (!holdsAll(context.initialPredicates)) bail("a property violated in an initial state");
       if (isInModel) {
         addState(state, key!, slot, -1);

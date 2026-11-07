@@ -1,7 +1,7 @@
 // What a thread needs to explore a spec: the compiled initial predicate and next-state relation,
 // and the compiled invariants and constraints. The coordinator and each worker build their own.
 
-import type { Expression } from "../ast";
+import { type Definition, type Expression, isLocallyResolved } from "../ast";
 import type { ModelConfig } from "../config";
 import { type Environment, type EvaluationScope, getDefinition } from "../evaluate";
 import { compileAction, createEnabledTest, type Step } from "./action";
@@ -67,6 +67,9 @@ export interface EngineContext {
   initStep: Step;
   nextStep: Step;
   invariants: (() => boolean)[];
+  // The invariants an initial state may violate: the others are conjuncts of the initial predicate,
+  // so hold of every state it gives.
+  initialInvariants: (() => boolean)[];
   constraints: (() => boolean)[];
   // The variables each invariant and constraint reads, for holdsAllChanged, or undefined for one
   // that reads names bound outside it, primed variables, or every variable.
@@ -92,6 +95,35 @@ const getPredicateVars = (compiled: Compiled, width: number) => {
   if (footprint.primes.length > 0 || footprint.slots.length > 0) return undefined;
   if (footprint.vars.length === width) return undefined;
   return Int32Array.from(footprint.vars);
+};
+
+// The expressions an expression asserts as conjuncts, through zero-arity definitions, resolved as
+// the compiler resolves a name that nothing binds locally.
+const getConjuncts = (
+  expression: Expression,
+  environment: Environment,
+  conjuncts = new Set<Expression>(),
+  seen = new Set<Definition>(),
+) => {
+  if (expression.kind === "And") {
+    for (const operand of expression.operands) getConjuncts(operand, environment, conjuncts, seen);
+    return conjuncts;
+  }
+  const definition = getAssertedDefinition(expression, environment);
+  if (!definition) conjuncts.add(expression);
+  else if (!seen.has(definition)) {
+    seen.add(definition);
+    getConjuncts(definition.body, environment, conjuncts, seen);
+  }
+  return conjuncts;
+};
+
+const getAssertedDefinition = (expression: Expression, environment: Environment) => {
+  if (expression.kind !== "Identifier" || isLocallyResolved(expression)) return undefined;
+  const name = expression.name;
+  if (environment.variableIndex.has(name) || environment.constants.has(name)) return undefined;
+  const definition = getDefinition(name, environment);
+  return definition?.kind === "Operator" && definition.params.length === 0 ? definition : undefined;
 };
 
 const compilePredicate = (compiled: Compiled) => {
@@ -157,10 +189,19 @@ export const createEngineContext = (
   };
   const predicate = (expression: Expression) =>
     compilePredicate(compiler.compile(expression, ROOT_CONTEXT));
-  const invariants = [
-    ...config.invariants.map((name) => compileNamed("invariant", name)),
-    ...properties.invariants.map((expression) => compiler.compile(expression, ROOT_CONTEXT)),
+  const invariantExpressions = [
+    ...config.invariants.map((name) => {
+      if (!getDefinition(name, environment)) return bail(`the invariant ${name} isn't defined`);
+      return identifier(name);
+    }),
+    ...properties.invariants,
   ];
+  const invariants = invariantExpressions.map((expression) =>
+    compiler.compile(expression, ROOT_CONTEXT),
+  );
+  // An initial predicate in an instance's scope resolves its names there, so it implies nothing.
+  const initConjuncts =
+    spec.scope === undefined ? getConjuncts(spec.init, environment) : new Set<Expression>();
   const actionProperties = properties.actionProperties.map((property) => {
     const action = predicate(property.action);
     const isUnchanged = predicate({
@@ -180,6 +221,13 @@ export const createEngineContext = (
     compiler,
     width,
     invariants: invariants.map(compilePredicate),
+    initialInvariants: invariants
+      .filter((_, index) =>
+        [...getConjuncts(invariantExpressions[index], environment)].some(
+          (conjunct) => !initConjuncts.has(conjunct),
+        ),
+      )
+      .map(compilePredicate),
     invariantVars: invariants.map((compiled) => getPredicateVars(compiled, width)),
     actionProperties,
     initialPredicates,
