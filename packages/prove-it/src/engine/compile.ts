@@ -2773,6 +2773,13 @@ export const createCompiler = (environment: Environment): Compiler => {
       case "UNION": {
         const outer = operand(0);
         const isEnumerated = outer.isEnumerated === true && outer.areElementsEnumerated === true;
+        // TLC tests membership in UNION {S}, S not enumerated, as membership in S, so the engine
+        // doesn't build S, which may be a set it can't, such as [D -> Int \cup {NULL}].
+        const only =
+          args[0].kind === "SetEnumeration" && args[0].elements.length === 1
+            ? (compile(args[0].elements[0], context) as LazySet)
+            : undefined;
+        const onlyMember = only && (only.member || only.infinite) ? memberTest(only) : undefined;
         return {
           ...unary(
             outer,
@@ -2787,7 +2794,8 @@ export const createCompiler = (environment: Environment): Compiler => {
           ),
           isNormalized: isEnumerated,
           isEnumerated,
-        };
+          ...(onlyMember && { member: onlyMember }),
+        } as LazySet;
       }
       case "DOMAIN":
         return unary(

@@ -626,4 +626,25 @@ describe("the engine", () => {
     expect(result.status).toBe("success");
     expect(lines).toEqual([expect.stringMatching(/^\[engine\] checked 1 states/)]);
   });
+
+  it("tests membership in the union of one set it can't build", async () => {
+    // As in the Disruptor's RingBuffer, whose slots hold integers or NULL.
+    const spec = (value: string) =>
+      [
+        "EXTENDS Integers",
+        "CONSTANTS NULL, Other",
+        "VARIABLE slots",
+        "Init == slots = [i \\in 0..1 |-> NULL]",
+        `Next == \\E i \\in 0..1 : slots[i] = NULL /\\ slots' = [slots EXCEPT ![i] = ${value}]`,
+        "TypeOk == slots \\in UNION { [0..1 -> Int \\union {NULL}] }",
+      ].join("\n");
+    const config =
+      "CONSTANTS NULL = NULL\nOther = Other\nINIT Init\nNEXT Next\nINVARIANT TypeOk\nCHECK_DEADLOCK FALSE";
+    const typed = await checkInEngine(spec("-3"), config);
+    expect([typed.result.status, typed.result.distinctStates]).toEqual(["success", 4]);
+    expect(typed.lines).toEqual([expect.stringMatching(/^\[engine\] checked 4 states/)]);
+    const mistyped = await checkInEngine(spec("Other"), config);
+    expect(mistyped.result.status).toBe("invariant-violation");
+    expect(mistyped.lines).toEqual([expect.stringMatching(/an invariant violated$/)]);
+  });
 });
