@@ -650,13 +650,21 @@ const printCommandLineError = (printer: MessagePrinter, message: string) => {
   return 1;
 };
 
+// The heap limit the banner reports. Bun's getHeapStatistics walks the whole heap, which took 5 to
+// 14 ms of a run's startup, and reports ten times the process's resident memory as the limit, which
+// this reads without the walk.
+const getHeapLimit = () =>
+  process.versions.bun === undefined
+    ? getHeapStatistics().heap_size_limit
+    : 10 * process.memoryUsage.rss();
+
 // TLC.printStartupBanner, with what runs tla-ts in place of the JVM. tla-ts keeps its fingerprints
 // and its queue of states in memory.
 const printStartupBanner = (printer: MessagePrinter, seed: string, workers: number) =>
   printer.print(
     MESSAGE_CODE.modelChecking,
     MESSAGE_LEVEL.none,
-    `Running breadth-first search Model-Checking with fp 0 and seed ${BigInt(seed)} with ${workers} worker${workers === 1 ? "" : "s"} on ${availableParallelism()} cores with ${Math.floor(getHeapStatistics().heap_size_limit / 1024 / 1024)}MB heap and 0MB offheap memory [pid: ${process.pid}] (${type()} ${release()} ${arch()}, Node.js ${process.versions.node} ${process.arch.endsWith("64") ? 64 : 32}bit, MemFPSet, MemStateQueue).`,
+    `Running breadth-first search Model-Checking with fp 0 and seed ${BigInt(seed)} with ${workers} worker${workers === 1 ? "" : "s"} on ${availableParallelism()} cores with ${Math.floor(getHeapLimit() / 1024 / 1024)}MB heap and 0MB offheap memory [pid: ${process.pid}] (${type()} ${release()} ${arch()}, Node.js ${process.versions.node} ${process.arch.endsWith("64") ? 64 : 32}bit, MemFPSet, MemStateQueue).`,
   );
 
 // TLC loads Integers for the binary trace that its trace exploration spec records. -generateSpecTE
