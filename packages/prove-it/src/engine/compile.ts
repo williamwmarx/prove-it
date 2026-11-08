@@ -1243,6 +1243,27 @@ export const createCompiler = (environment: Environment): Compiler => {
           mergeFootprints(now.footprint, next.footprint),
         );
       }
+      // TLC evaluates <<A>>_e and [A]_e as A, then, unless A decides, e in each state.
+      case "AngleAction":
+      case "BoxAction": {
+        if (context.isPrimed) return unsupported("a primed action");
+        const action = compileBoolean(expression.action, context);
+        const now = compile(expression.subscript, context);
+        const next = compile(expression.subscript, { ...context, isPrimed: true });
+        const actionEvaluate = action.evaluate;
+        const nowEvaluate = now.evaluate;
+        const nextEvaluate = next.evaluate;
+        const isAngle = expression.kind === "AngleAction";
+        return leaf(
+          () => {
+            if ((actionEvaluate() === TRUE) !== isAngle) return isAngle ? FALSE : TRUE;
+            const value = nowEvaluate();
+            const isUnchanged = equals(value, nextEvaluate());
+            return isUnchanged !== isAngle ? TRUE : FALSE;
+          },
+          mergeFootprints(action.footprint, now.footprint, next.footprint),
+        );
+      }
       case "Enabled":
         return compileEnabled(expression.expression, context);
       case "Label":

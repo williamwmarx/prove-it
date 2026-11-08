@@ -843,6 +843,7 @@ describe("the engine's answers to ENABLED", () => {
       expect(lines).toContainEqual(expect.stringMatching(/^\[engine\] found \d+ states/));
       return {
         result,
+        lines,
         isFromSteps: lines.some((line) =>
           line.endsWith("answers ENABLED from the steps its search took"),
         ),
@@ -926,6 +927,21 @@ describe("the engine's answers to ENABLED", () => {
       "SPECIFICATION Spec\nPROPERTY P",
     );
     expect(result.failure?.message).toContain("The right side of \\IN is not enumerable.");
+  });
+
+  it("evaluates <<A>>_v and [A]_v of the temporal properties itself", async () => {
+    for (const [property, status] of [
+      ["[]<><<Next>>_vars", "success"],
+      ["[]<><<CreateToken>>_vars", "success"],
+      ["<>[][PassToken(1)]_vars", "liveness-violation"],
+      ["<>[][CreateToken \\/ PassToken(1)]_c", "liveness-violation"],
+      ["[]<><<PassToken(1) /\\ c[0] = M>>_vars", "liveness-violation"],
+      ["<>[][Next]_vars", "success"],
+    ]) {
+      const { result, lines } = await checkBoth(tokenRing(property), TOKEN_RING_CONFIG);
+      expect([property, result.status]).toEqual([property, status]);
+      expect(lines.filter((line) => line.includes("leaves a temporal predicate"))).toEqual([]);
+    }
   });
 
   it("runs the action for ENABLED once the search evaluated a conjunct TLC's ENABLED walks", async () => {

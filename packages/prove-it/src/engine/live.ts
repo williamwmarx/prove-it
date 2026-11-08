@@ -46,7 +46,7 @@ const UNKNOWN = Symbol("unknown");
 
 // The engine's evaluation fails as TLC's might not, such as when it enumerates a set through the
 // interpreter, so the interpreter answers then and fails, if it does, as TLC does.
-const isUnanswered = (error: unknown) =>
+const isUnanswered = (error: unknown): error is Bailout | TlaEvaluationError =>
   error instanceof Bailout || error instanceof TlaEvaluationError;
 
 export const createLiveOracle = (
@@ -92,6 +92,7 @@ export const createLiveOracle = (
         result = build(context);
       } catch (error) {
         if (!isUnanswered(error)) throw error;
+        reportEngine(`leaves a temporal predicate to the interpreter: ${error.message}`);
       }
     }
     byScope.set(scope, result);
