@@ -689,4 +689,18 @@ describe("the engine", () => {
     expect(mistyped.result.status).toBe("invariant-violation");
     expect(mistyped.lines).toEqual([expect.stringMatching(/an invariant violated$/)]);
   });
+
+  it("compiles each level of nested UNION {S} once", async () => {
+    // Compiling the one element twice per level, for the set and for membership, took 2^24 compiles.
+    const nested = Array.from({ length: 24 }).reduce<string>(
+      (set) => `UNION {${set}}`,
+      "[{1} -> Int]",
+    );
+    const { result, lines } = await checkInEngine(
+      `EXTENDS Integers\nVARIABLE x\nInit == x = 0\nNext == UNCHANGED x\nInv == [i \\in {1} |-> 5] \\in ${nested}`,
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+    );
+    expect(result.status).toBe("success");
+    expect(lines).toEqual([expect.stringMatching(/^\[engine\] checked 1 states/)]);
+  });
 });

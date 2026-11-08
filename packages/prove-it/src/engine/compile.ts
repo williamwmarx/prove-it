@@ -1120,35 +1120,10 @@ export const createCompiler = (environment: Environment): Compiler => {
         return compileQuantifier(expression, context);
       case "Choose":
         return compileChoose(expression, context);
-      case "SetEnumeration": {
-        const elements = expression.elements.map((element) => compile(element, context));
-        const evaluators = elements.map((element) => element.evaluate);
-        const footprint = mergeFootprints(...elements.map((element) => element.footprint));
-        if (evaluators.length === 0)
-          return { ...constant(EMPTY_SET), isEnumerated: true, areElementsEnumerated: true };
-        const scratch = createScratch(evaluators.length);
-        return {
-          evaluate: () => {
-            const values = scratch.take();
-            for (let index = 0; index < evaluators.length; index++)
-              values[index] = evaluators[index]();
-            scratch.release(values);
-            return setOf(values);
-          },
-          ...createAggregate(
-            "store(buffer)",
-            setOf,
-            undefined,
-            new Array<number>(elements.length).fill(0),
-            elements,
-          ),
-          footprint,
-          isCostly: true,
-          isNormalized: true,
-          isEnumerated: true,
-          areElementsEnumerated: elements.every((element) => element.isEnumerated === true),
-        };
-      }
+      case "SetEnumeration":
+        return compileSetEnumeration(
+          expression.elements.map((element) => compile(element, context)),
+        );
       case "Tuple": {
         const elements = expression.elements.map((element) => compile(element, context));
         const evaluators = elements.map((element) => element.evaluate);
@@ -2345,6 +2320,35 @@ export const createCompiler = (environment: Environment): Compiler => {
 
   // --- sets the engine tests for membership without building ---
 
+  // {e1, ..., en} of elements already compiled.
+  const compileSetEnumeration = (elements: Compiled[]): Compiled => {
+    const evaluators = elements.map((element) => element.evaluate);
+    const footprint = mergeFootprints(...elements.map((element) => element.footprint));
+    if (evaluators.length === 0)
+      return { ...constant(EMPTY_SET), isEnumerated: true, areElementsEnumerated: true };
+    const scratch = createScratch(evaluators.length);
+    return {
+      evaluate: () => {
+        const values = scratch.take();
+        for (let index = 0; index < evaluators.length; index++) values[index] = evaluators[index]();
+        scratch.release(values);
+        return setOf(values);
+      },
+      ...createAggregate(
+        "store(buffer)",
+        setOf,
+        undefined,
+        new Array<number>(elements.length).fill(0),
+        elements,
+      ),
+      footprint,
+      isCostly: true,
+      isNormalized: true,
+      isEnumerated: true,
+      areElementsEnumerated: elements.every((element) => element.isEnumerated === true),
+    };
+  };
+
   interface LazySet extends Compiled {
     infinite?: string;
     // Membership, when the engine can test it without building the set.
@@ -2811,14 +2815,17 @@ export const createCompiler = (environment: Environment): Compiler => {
         } as LazySet;
       }
       case "UNION": {
-        const outer = operand(0);
+        // The one element of UNION {S}, compiled once for the set around it and for membership.
+        const single =
+          args[0].kind === "SetEnumeration" && args[0].elements.length === 1
+            ? compile(args[0].elements[0], context)
+            : undefined;
+        // A set enumeration is costly, so compile would have cached it.
+        const outer = single ? cached(compileSetEnumeration([single])) : operand(0);
         const isEnumerated = outer.isEnumerated === true && outer.areElementsEnumerated === true;
         // TLC tests membership in UNION {S} as membership in S, so where the engine can't build S,
         // such as [D -> Int \cup {NULL}], it tests membership in S without building it.
-        const only: LazySet | undefined =
-          !isEnumerated && args[0].kind === "SetEnumeration" && args[0].elements.length === 1
-            ? compile(args[0].elements[0], context)
-            : undefined;
+        const only: LazySet | undefined = isEnumerated ? undefined : single;
         const onlyMember = only && (only.member || only.infinite) ? memberTest(only) : undefined;
         return {
           ...unary(
