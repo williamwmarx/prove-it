@@ -62,6 +62,8 @@ export interface EngineInput {
   // reports them.
   onInitialStatesStarted: () => void;
   onInitialStates: (generated: number, distinct: number) => void;
+  // Prints a line the spec prints.
+  onPrint: (text: string) => void;
   startedAt: number;
   properties: EngineProperties;
   // The symmetry group, as the model values each permutation moves.
@@ -148,6 +150,7 @@ export const runEngine = (input: EngineInput): EngineResult => {
     input.spec,
     input.isWarningEnabled,
     input.properties,
+    !input.isRecordingGraph,
   );
   const width = context.width;
   const constraints = context.constraints;
@@ -280,6 +283,14 @@ export const runEngine = (input: EngineInput): EngineResult => {
     tlc.distinct = count;
     if (tlc.isDistinctRead) LOC[DISTINCT_SLOT] = int(count);
   };
+  // What the spec prints while the engine computes the initial states or expands a state goes out
+  // once that's done: if the engine hands over, the interpreter does it again.
+  const flushOutput = () => {
+    const lines = tlc.output;
+    if (lines.length === 0) return;
+    tlc.output = [];
+    for (const line of lines) input.onPrint(line);
+  };
 
   // --- initial states ---
   const current = new Int32Array(width).fill(-1);
@@ -316,6 +327,7 @@ export const runEngine = (input: EngineInput): EngineResult => {
     }
     LOC[LEVEL_SLOT] = int(0);
   });
+  flushOutput();
   const initialStates = { generated: initialGenerated, distinct: stateCount };
   input.onInitialStates(initialGenerated, stateCount);
 
@@ -613,6 +625,7 @@ export const runEngine = (input: EngineInput): EngineResult => {
       if (successors === 0 && config.checkDeadlock) bail("deadlock");
       if (graph) recordExpansion(expanding);
       outDegrees[Math.min(newStates, OUT_DEGREE_BUCKETS - 1)]++;
+      flushOutput();
       if ((expanding & 0xff) === 0) reportProgress();
     }
   } catch (error) {

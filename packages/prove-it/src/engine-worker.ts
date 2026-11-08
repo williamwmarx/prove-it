@@ -79,7 +79,7 @@ const serve = () => {
   const go = state.go;
   if (!prepared || !go) return;
   attachSharedStore(go.store);
-  // A worker keeps none of what TLCGet reads.
+  // A worker keeps none of what TLCGet reads, and its successors print out of TLC's order.
   tlc.isShared = true;
   const context = createEngineContext(
     prepared.environment,
@@ -87,6 +87,7 @@ const serve = () => {
     { init: prepared.init, next: prepared.next, scope: prepared.scope },
     prepared.isWarningEnabled,
     prepared.properties,
+    false,
   );
   serveLevels(context, attachSearch(go.search));
 };

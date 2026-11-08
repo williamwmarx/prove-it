@@ -1491,6 +1491,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
           engineReport.isReported = true;
           options.onProgress?.({ kind: "initial-states-started" });
         },
+        onPrint: print,
         onInitialStates: (generated, distinct) => {
           engineReport.isComputedReported = true;
           options.onProgress?.({
