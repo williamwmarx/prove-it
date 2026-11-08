@@ -14,6 +14,16 @@ dependencies = [
 name = "replay"
 version = "0.1.0"
 dependencies = [
+ "tla-engine",
+ "tla-ir",
+ "tla-values",
+]
+
+[[package]]
+name = "tla-engine"
+version = "0.1.0"
+dependencies = [
+ "tla-ir",
  "tla-values",
 ]
 

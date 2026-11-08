@@ -4,7 +4,7 @@ A design for a Rust model checker that is faster than today's Prove It and print
 TLC prints, staged so that every step ships on its own, is measurably faster, and is proven
 identical to TLC and to the TypeScript checker before it is switched on.
 
-Status: proposal, with M1 and M3 built (their outcomes are in section 11). Every number marked *measured*
+Status: proposal, with M1 to M4 built (their outcomes are in section 11). Every number marked *measured*
 comes from the prototypes under `native/prototypes/` (section 10) on a local 4-core cloud machine
 (Rust 1.97.0, Bun 1.4.4, Node 22.23.4). Those timings vary by about 10% between runs. Depot
 numbers come from the benchmark of `main` at f284739 (run cb7zd2w63s), as summarised on the
@@ -1662,6 +1662,116 @@ this design change, the code wins, and this records how:
 - memo-off results are identical;
 - epoch check clean;
 - the micro-benchmark of 3.1 at ≤ 800 ns per evaluation for fused nodes.
+
+#### M4 as built
+
+Branch `native-m4-expressions`, measured on the 4-core cloud machine, not on Depot yet. Where the
+code made this design change, the code wins, and this records how:
+
+- **Where it lives.** `crates/tla-engine`, which depends on `tla-ir` and `tla-values` only and has
+  no `unsafe`: `compile/` ports `compile.ts` (`mod.rs` the scopes, names, definitions, LET,
+  operator application and the fixed points of recursive operators and functions; `nodes.rs` the
+  expression kinds; `builtins.rs`; `sets.rs` the membership tests and lazy sets; `fused.rs` and
+  `predicate.rs` the fused nodes), `memo.rs` ports `memo.ts`, and `machine.rs` holds the registers
+  and the caches a compiled program fills. `prove-it-napi` doesn't use it yet: `check()` still
+  declines, and the TypeScript engine is still the default.
+- **Closures and registers (3.1).** A compiled expression is `Arc<dyn Fn(&mut Machine<'_>) ->
+  Outcome<Id> + Send + Sync>`: an `Arc`, since compiled nodes are shared as the TypeScript objects
+  are (a definition's cache, an argument's binding). `Machine` is 3.1's `Regs`: it owns the store,
+  the current and next states (`u32::MAX` where TypeScript has -1), the bound names, the stack,
+  the epoch, and the memo tables, epoch caches, values computed once and rounds of `onceARound`,
+  each found by the number its closure was compiled with. A recursive operator's or function's
+  settled body lives in the `Program` compiling leaves, and its calls find it by number, so no
+  closure refers to itself.
+- **Stopping (3.4).** At run time a closure stops with `tla-values`' `Bail`, whose reasons are the
+  TypeScript store's and `compile.ts`'s, word for word. Compiling stops with `CompileError::Bail`,
+  where the TypeScript engine refuses the same thing for the same reason, or `CompileError::Decline`,
+  where it compiles what this crate doesn't yet: ENABLED (the walker's, M5), Print and PrintT where
+  they may print (printing a value is the interpreter's, 2.8), the builtins it bridges to the
+  interpreter (`PURE_BUILTINS`, and nullary builtins other than TRUE, FALSE, BOOLEAN, Nat, Int and
+  STRING), a constant or startup value the IR can't hold, a variable past the state's (ENABLED's
+  rewrite), and SelectSeq with a builtin or a test of other than one argument. `Stop::Found` waits
+  for ENABLED.
+- **Lazy sets (3.3).** Nothing enumerates in TLC's lazy order yet, so there are no `reference`s;
+  membership, parts and `onceARound` are ported, and `isNormalized`, `isEnumerated` and
+  `areElementsEnumerated` are kept for M5's `compileOrdered`.
+- **Scopes.** `contextFromScope` isn't ported: every root M4 compiles is in the root context. The
+  scopes of the specification, TLC's actions and liveness atoms are M5's.
+- **Fused nodes (3.1).** Each evaluates what the nodes it replaces evaluate, in their order, with
+  their short circuits and checks, and is covered by a fixture a deliberate break of it fails:
+  - `x = c` (VarEqConst), `f[i]` (ApplyVar) and `f[i] = c`, `i # j`, `r.f` (FieldOfVar),
+    `[x EXCEPT ![k] = v]` (ExceptVarAt), and Cardinality of a filter (CardinalityFilter);
+  - MemberConst is `i \in S` of a bound name and any set the engine builds, not only a constant
+    one: a set enumeration of constants is cached as a value computed once, not a constant;
+  - ForallInterval and ExistsInterval cover every level of a quantifier whose names are each bound
+    over `a..b`, with the bounds checked as `..` checks them; such a name is known to hold integers;
+  - AndAll and OrAny became predicates: `=`, `#`, `~`, `/\`, `\/` and `=>` over operands read in
+    place form one tree, which a parent takes into its own, built into closures chosen by shape:
+    `i # j => P` of two integer names compares ids, `~(A /\ B)` is one closure, and `f[i] = c`
+    applies a tuple to an integer and compares in place. A quantifier calls its body's closure in
+    its own loop. A closure per node, and then a tree walked by a `match`, measured 3.6 and 3.7 µs
+    on the micro-benchmark; the chosen closures 1.4 µs.
+- **Memo (3.2).** The tables, their hashing, probation and direct tables are `memo.ts`'s. Keys of
+  width two or less aren't packed into a `u64` yet (M7). `Options { is_memo_off,
+  is_epoch_checked }` are `PROVE_IT_MEMO=off`, which turns off the memo tables, epoch caches and
+  values computed once, and `PROVE_IT_EPOCH_CHECK=1`, which evaluates again on each epoch cache hit
+  and panics if the value differs, which the binding's `catch_unwind` turns into an
+  `EngineInvariantError` (3.4). `replay` reads both from the environment; M5's `check()` is to take
+  them from the TypeScript side.
+- **Deep nesting.** Evaluation recurses with the expression and with TLA+ recursion, so it runs
+  where the store's does, on `tla_values::on_nesting_stack`, which `tla-engine` re-exports rather
+  than keep a copy; `replay` runs on it. A recursive operator or function nested 20,000 calls deep
+  stops with "recursion too deep", where the TypeScript engine overflows its stack, which the
+  differential counts as the same stop.
+- **Constants.** The IR's values are interned as `fromValue` interns a value, keys before values,
+  but when the compiler meets them, which need not be the order the TypeScript compiler interns
+  them in. Ids may differ, values don't; M5's id-exact replay may need the TypeScript order.
+- **The differential.** `replay expressions <ir> <log> [states]` compiles a model's invariants,
+  properties checked as invariants, constraints, action constraints, action properties (the action,
+  and `UNCHANGED` of the subscript), initial predicates and VIEW, and evaluates each on the first
+  states of a state log: a state predicate with the state current and no next state, an action one
+  from the state's parent to it, with TLCGet's level and distinct count as the search would set
+  them. It writes a line per root, then per state and root: the value's FP64, or why it stopped.
+  `scripts/native-expressions.ts` builds the environment as `engine-worker.ts` does, computes the
+  startup values `check()` computes, writes the same lines with `compile.ts`, and compares the two
+  streams as they come; both stop reading the log after the states they evaluate. `--record` writes
+  the fixtures of `tests/conformance/expressions`, which `cargo test` (replay's tests) checks with
+  the caches on, off and checked, so CI covers the differential without the corpora.
+
+#### M4 acceptance, as run
+
+On the 4-core cloud machine, with `main` at 589407b merged, against the 733 models with TLC under
+20 s:
+- **Expression differential: met.** On the 566 models an engine-coverage sweep found the
+  TypeScript engine searching, every root and the first 1,000 states of each: 566 of 566 agree,
+  790 of the 849 roots compared, 318,119 evaluations equal by fingerprint or by reason to stop.
+  The other 59 roots: 43 decline (ENABLED 19, SubSeq 14, IsFiniteSet 9, ToString 1) and 16 the
+  TypeScript engine refuses too, for the same reason. An earlier run over every model of the
+  733, models the engine never reached skipped, agreed on all of them.
+- **Memo off: met, with one model too slow to finish.** With `PROVE_IT_MEMO=off`, 565 of the 566
+  agree. Huang's recursive Sum and FoldFunction re-evaluate everything without their memo tables:
+  its first three states take 21 s and give exactly the lines the caches give, and the run was
+  stopped there.
+- **Epoch check: met.** With `PROVE_IT_EPOCH_CHECK=1` on both sides, 566 of 566 agree and no hit
+  was stale. The Mutex fixture reaches the epoch caches, and a deliberate break of their epoch
+  test fails replay's tests under the check.
+- **Micro-benchmark: not met here.** `cargo bench -p tla-engine --bench invariant`, median of
+  nine runs: 1.40 to 1.45 µs per evaluation, memo off, against 5.0 µs for `compile.ts` on the
+  same invariant and states (its memo table turned off by probation). The prototype's 0.6 to
+  0.8 µs read `pc` as a flat array of ids. Here `pc` is a tuple in the store, and `perf` puts
+  50% of the time in `pc[i] = "cs"` (loads of the variable, the tuple's meta and words, the key's
+  integer and the element's kind, each waiting on the last), 20% in the interval loop (interning
+  each integer and one dynamic call per pair), 15% in `~(A /\ B)` and 10% in `i # j =>`, mostly
+  dispatch; memo and epoch work take nothing, as the bench turns the tables off and nothing here
+  reaches an epoch cache. Checking the tuple once per state and caching which positions equal
+  the constant took the tuple and element loads out of each read but left the time where it was,
+  so it was left out. M7 could keep an interval-bound name's integer beside its id, so a read
+  needs no meta, and fuse the quantifier with its body, so a pair costs no dynamic call.
+- **Default path unchanged.** The branch changes no TypeScript outside `scripts/`. The
+  engine-coverage sweep reaches the same outcome on and off on every model; against a sweep of
+  `main` before 589407b, 5 models changed bucket, all to "not reached", all from 589407b's SANY
+  precedence errors (now TLC's expected error). `dist/prove-it` built from the branch and from
+  `main` are byte-identical.
 
 ### M5. Walker, search, checkpoints, single thread
 

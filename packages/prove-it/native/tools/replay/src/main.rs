@@ -8,8 +8,13 @@
 //!   key it was fingerprinted by, and checks TLC's fingerprint of it, from the state's parent as the
 //!   engine computes it and from scratch.
 //!
-//! Both read a file a line at a time, so a trace larger than memory replays.
+//! - `replay expressions <ir> <state log> [states]` compiles the model's expressions with
+//!   tla-engine and evaluates them on the first states of a log, writing each value's TLC
+//!   fingerprint or why it stopped, for `scripts/native-expressions.ts` to compare.
+//!
+//! All read a file a line at a time, so a trace larger than memory replays.
 
+mod expressions;
 mod json;
 
 use std::fs::File;
@@ -22,7 +27,7 @@ use tla_values::trace::{Answer, Argument, Failure, perform};
 use tla_values::transfer::{EncodedStates, decode_states};
 use tla_values::{Id, Store, on_nesting_stack};
 
-fn read_lines(
+pub(crate) fn read_lines(
     path: &str,
     mut visit: impl FnMut(usize, &str) -> Result<(), String>,
 ) -> Result<usize, String> {
@@ -142,7 +147,10 @@ fn get_numbers(value: Option<&Json>, what: &str) -> Result<Vec<i64>, String> {
         .collect()
 }
 
-fn get_encoded(words: Option<&Json>, strings: Option<&Json>) -> Result<EncodedStates, String> {
+pub(crate) fn get_encoded(
+    words: Option<&Json>,
+    strings: Option<&Json>,
+) -> Result<EncodedStates, String> {
     Ok(EncodedStates {
         words: get_numbers(words, "words")?
             .into_iter()
@@ -239,11 +247,25 @@ fn replay_log(path: &str) -> Result<String, String> {
 
 fn main() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
+    if arguments.first().map(String::as_str) == Some("expressions") {
+        return match on_nesting_stack(|| expressions::replay(&arguments[1..])) {
+            Ok(summary) => {
+                eprintln!("{summary}");
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("{error}");
+                ExitCode::FAILURE
+            }
+        };
+    }
     let replay = match arguments.first().map(String::as_str) {
         Some("store") => replay_trace,
         Some("fingerprints") => replay_log,
         _ => {
-            eprintln!("usage: replay store <trace>... | replay fingerprints <state log>...");
+            eprintln!(
+                "usage: replay store <trace>... | replay fingerprints <state log>... | replay expressions <ir> <state log> [states]"
+            );
             return ExitCode::from(2);
         }
     };

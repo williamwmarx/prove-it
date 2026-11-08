@@ -9,3 +9,5 @@ publish.workspace = true
 
 [dependencies]
 tla-values = { path = "../../crates/tla-values" }
+tla-engine = { path = "../../crates/tla-engine" }
+tla-ir = { path = "../../crates/tla-ir" }
