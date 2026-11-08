@@ -9,6 +9,7 @@ pub mod footprint;
 pub mod machine;
 pub mod memo;
 pub mod search;
+pub mod symmetry;
 
 pub use compile::{CompileError, Compiled, Compiler, Options, Root};
 pub use machine::{Continue, Eval, Machine, Program, Step, UNASSIGNED};

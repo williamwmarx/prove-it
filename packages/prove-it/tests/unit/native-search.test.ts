@@ -209,6 +209,34 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     );
   });
 
+  it("reduces by symmetry, with and without a VIEW, and hands over representatives", async () => {
+    const body = [
+      "EXTENDS Naturals, FiniteSets, TLC",
+      "CONSTANT Procs",
+      "VARIABLES pc, owner",
+      'Init == pc = [p \\in Procs |-> "idle"] /\\ owner = {}',
+      "Next == \\E p \\in Procs :",
+      '  \\/ pc[p] = "idle" /\\ pc\' = [pc EXCEPT ![p] = "busy"] /\\ owner\' = owner \\cup {p}',
+      '  \\/ pc[p] = "busy" /\\ pc\' = [pc EXCEPT ![p] = "idle"] /\\ owner\' = owner \\ {p}',
+      "Sym == Permutations(Procs)",
+      "View == <<pc, Cardinality(owner)>>",
+      "Inv == Cardinality(owner) < 3",
+    ];
+    const withSets = body;
+    const config = "CONSTANT Procs = {p1, p2, p3}\nINIT Init\nNEXT Next\nSYMMETRY Sym";
+    await compareStateLogs(withSets, config, false);
+    expect(await compareWithInterpreter(withSets, config)).toContainEqual(
+      expect.stringMatching(COMPLETE),
+    );
+    await compareStateLogs(withSets, `${config}\nVIEW View`, false);
+    expect(
+      await compareWithInterpreter(withSets, `${config}\nVIEW View`, { PROVE_IT_STOP_AT: "2" }),
+    ).toContainEqual(expect.stringMatching(stopped("stopped where PROVE_IT_STOP_AT asked")));
+    expect(await compareWithInterpreter(withSets, `${config}\nINVARIANT Inv`)).toContainEqual(
+      expect.stringMatching(stopped("an invariant violated")),
+    );
+  });
+
   it("answers ENABLED by running the action", async () => {
     const body = [
       "EXTENDS Naturals",

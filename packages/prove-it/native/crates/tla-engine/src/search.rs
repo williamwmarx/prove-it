@@ -17,6 +17,7 @@ use tla_values::{Bail, Id, Store};
 use crate::compile::{CompileError, Compiler, DISTINCT_SLOT, LEVEL_SLOT, NEXT_LEVEL_SLOT, Options};
 use crate::context::{EngineContext, holds_all, holds_all_changed};
 use crate::machine::{Machine, UNASSIGNED};
+use crate::symmetry::Canonicalizer;
 
 pub const OUT_DEGREE_BUCKETS: usize = 32;
 const PROGRESS_INTERVAL: Duration = Duration::from_secs(60);
@@ -225,6 +226,7 @@ struct Search<'r> {
     level_id: Id,
     next_level_id: Id,
     fingerprints: Fingerprints,
+    canonicalizer: Option<Canonicalizer>,
 }
 
 impl Search<'_> {
@@ -238,21 +240,30 @@ impl Search<'_> {
     }
 
     // The key of the state that is current, and its fingerprint.
+    // TLC fingerprints the view of the representative when it has both.
     fn compute_key(&mut self, machine: &mut Machine<'_>, context: &EngineContext) -> Outcome<u64> {
         self.key.clear();
-        match &context.view {
-            Some(view) => {
-                let value = view(machine)?;
-                self.key.push(value);
-                Ok(self.fingerprints.get_state(&machine.store, &self.key, &[0]))
-            }
-            None => {
-                self.key.extend_from_slice(machine.current());
-                Ok(self
-                    .fingerprints
-                    .get_state(&machine.store, &self.key, &self.states.order))
-            }
+        self.key.extend_from_slice(machine.current());
+        if let Some(canonicalizer) = &mut self.canonicalizer {
+            canonicalizer.canonicalize(&mut machine.store, &mut self.key)?;
         }
+        if let Some(view) = &context.view {
+            let value = if self.canonicalizer.is_some() {
+                let epoch = machine.epoch();
+                let state = machine.current().to_vec();
+                machine.set_current(&self.key, 0);
+                let value = view(machine);
+                machine.set_current(&state, epoch);
+                value?
+            } else {
+                view(machine)?
+            };
+            self.key.clear();
+            self.key.push(value);
+        }
+        Ok(self
+            .fingerprints
+            .get_state(&machine.store, &self.key, &self.states.order))
     }
 
     fn visit_initial(&mut self, machine: &mut Machine<'_>, context: &EngineContext) -> Outcome<()> {
@@ -406,11 +417,6 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             "temporal properties, whose graph the native engine doesn't record yet".into(),
         );
     }
-    if model.symmetry.is_some() {
-        return SearchOutcome::Declined(
-            "symmetry, which the native engine doesn't reduce by yet".into(),
-        );
-    }
     let ranked: Vec<Vec<u16>> = ir.texts[..ir.ranked_count as usize]
         .iter()
         .map(|text| text.encode_utf16().collect())
@@ -425,6 +431,20 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     let is_distinct_read = compiler.is_distinct_read;
     let program = compiler.finish();
     let mut machine = Machine::new(&program, store);
+    let canonicalizer = model.symmetry.as_ref().map(|group| {
+        let units = |text: u32| ir.texts[text as usize].encode_utf16().collect::<Vec<u16>>();
+        let group: Vec<Vec<(Vec<u16>, Vec<u16>)>> = group
+            .iter()
+            .map(|pairs| {
+                pairs
+                    .iter()
+                    .map(|&(name, image)| (units(name), units(image)))
+                    .collect()
+            })
+            .collect();
+        let order = ir.tlc_order.iter().map(|&index| index as usize).collect();
+        Canonicalizer::new(&mut machine.store, &group, order)
+    });
     let width = context.width;
     let order: Vec<usize> = if context.view.is_some() {
         vec![0]
@@ -434,7 +454,11 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     let mut search = Search {
         states: States {
             width,
-            key_width: context.view.as_ref().map(|_| 1),
+            key_width: if context.view.is_some() {
+                Some(1)
+            } else {
+                model.symmetry.as_ref().map(|_| width)
+            },
             ids: Vec::new(),
             keys: Vec::new(),
             parents: Vec::new(),
@@ -460,6 +484,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         level_id: 0,
         next_level_id: 0,
         fingerprints: Fingerprints::new(),
+        canonicalizer,
     };
     let mut out_degrees = [0u64; OUT_DEGREE_BUCKETS];
     let mut checkpoint_count = 0usize;

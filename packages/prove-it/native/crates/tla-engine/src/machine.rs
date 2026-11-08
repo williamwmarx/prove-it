@@ -154,6 +154,11 @@ impl<'p> Machine<'p> {
         self.next.extend_from_slice(state);
     }
 
+    /// The epoch of the current state.
+    pub fn epoch(&self) -> u64 {
+        self.epoch
+    }
+
     /// The current state.
     pub fn current(&self) -> &[Id] {
         &self.cur
