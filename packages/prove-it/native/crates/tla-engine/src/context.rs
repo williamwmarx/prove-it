@@ -11,7 +11,7 @@ use tla_ir::{
 use tla_values::Bail;
 use tla_values::store::{FALSE, Outcome, TRUE};
 
-use crate::compile::{CompileError, Compiled, Compiler, Root};
+use crate::compile::{ActionOptions, CompileError, Compiled, Compiler, Root};
 use crate::machine::{Eval, Machine, Step};
 
 /// A predicate checked conjunct by conjunct, with the variables it reads when a successor that
@@ -221,11 +221,15 @@ fn named(kind: &str, ir: &Ir, name: &ConfigName) -> Result<Index, CompileError> 
 fn compile_conjunct(
     compiler: &mut Compiler<'_>,
     conjunct: Conjunct,
+    can_print: bool,
 ) -> Result<Compiled, CompileError> {
-    compiler.compile_root(match conjunct {
-        Conjunct::Named(index) => Root::Definition(index),
-        Conjunct::Node(node) => Root::Expression(node),
-    })
+    compiler.compile_root_printing(
+        match conjunct {
+            Conjunct::Named(index) => Root::Definition(index),
+            Conjunct::Node(node) => Root::Expression(node),
+        },
+        can_print,
+    )
 }
 
 // The variables a state predicate reads, which decide its value: it reads only its footprint.
@@ -245,12 +249,15 @@ impl EngineContext {
         let model = &ir.model;
         let width = ir.variables.len();
         // Each invariant and constraint is checked conjunct by conjunct, so a successor skips
-        // each conjunct that reads only variables its step left unchanged. An invariant with an
-        // effect, such as TLCGet, is checked whole each time, as TLC checks it.
+        // each conjunct that reads only variables its step left unchanged. An invariant that may
+        // print is checked whole each time, as TLC checks it, where the search may print.
+        let can_print = !model.is_recording_graph;
         let mut conjuncts = Conjuncts::new(ir);
+        let mut printed = HashSet::new();
         for invariant in &model.invariants {
             let root = Conjunct::Named(named("invariant", ir, &invariant.root)?);
-            if invariant.has_repeated_effect {
+            if invariant.has_repeated_effect && can_print {
+                printed.insert(root);
                 conjuncts.add(root);
             } else {
                 conjuncts.collect(root);
@@ -258,7 +265,8 @@ impl EngineContext {
         }
         for invariant in &model.property_invariants {
             let root = Conjunct::Node(invariant.root);
-            if invariant.has_repeated_effect {
+            if invariant.has_repeated_effect && can_print {
+                printed.insert(root);
                 conjuncts.add(root);
             } else {
                 conjuncts.collect(root);
@@ -267,7 +275,7 @@ impl EngineContext {
         let invariant_conjuncts = conjuncts.found;
         let invariants = invariant_conjuncts
             .iter()
-            .map(|&conjunct| compile_conjunct(compiler, conjunct))
+            .map(|&conjunct| compile_conjunct(compiler, conjunct, printed.contains(&conjunct)))
             .collect::<Result<Vec<Compiled>, CompileError>>()?;
         // An initial predicate in an instance's scope resolves its names there, so it implies
         // nothing.
@@ -315,7 +323,7 @@ impl EngineContext {
             .found
             .into_iter()
             .map(|conjunct| {
-                compile_conjunct(compiler, conjunct).map(|compiled| Predicate {
+                compile_conjunct(compiler, conjunct, false).map(|compiled| Predicate {
                     vars: predicate_vars(&compiled, width),
                     eval: compiled.eval,
                 })
@@ -331,13 +339,24 @@ impl EngineContext {
                     .map(|compiled| compiled.eval)
             })
             .collect::<Result<Vec<Eval>, CompileError>>()?;
-        let init =
-            compiler.compile_action(model.init, model.scope, true, true, "a specification")?;
+        let init = compiler.compile_action(
+            model.init,
+            model.scope,
+            ActionOptions {
+                is_init: true,
+                is_shortcut: true,
+                can_print,
+            },
+            "a specification",
+        )?;
         let next = compiler.compile_action(
             model.next,
             model.scope,
-            false,
-            model.is_warning_enabled,
+            ActionOptions {
+                is_init: false,
+                is_shortcut: model.is_warning_enabled,
+                can_print,
+            },
             "a specification",
         )?;
         let actions = match &model.actions {
@@ -348,8 +367,11 @@ impl EngineContext {
                     match compiler.compile_action(
                         action.expression,
                         action.scope,
-                        false,
-                        model.is_warning_enabled,
+                        ActionOptions {
+                            is_init: false,
+                            is_shortcut: model.is_warning_enabled,
+                            can_print: false,
+                        },
                         "an action",
                     ) {
                         Ok(step) => steps.push(step),

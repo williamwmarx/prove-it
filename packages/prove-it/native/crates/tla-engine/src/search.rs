@@ -17,7 +17,7 @@ use tla_values::{Bail, Id, Store};
 use crate::compile::{CompileError, Compiler, DISTINCT_SLOT, LEVEL_SLOT, NEXT_LEVEL_SLOT, Options};
 use crate::context::{EngineContext, holds_all, holds_all_changed};
 use crate::live::{LiveGraph, Table, answer_atoms};
-use crate::machine::{Machine, UNASSIGNED};
+use crate::machine::{Machine, Printed, UNASSIGNED};
 use crate::symmetry::Canonicalizer;
 
 pub const OUT_DEGREE_BUCKETS: usize = 32;
@@ -46,6 +46,9 @@ pub trait Reporter {
     fn initial_states_progress(&mut self, count: u64);
     fn initial_states(&mut self, generated: u64, distinct: u64);
     fn progress(&mut self, generated: u64, distinct: u64, queued: u64, depth: u64);
+    /// What Print or PrintT printed: the values, in `transfer.ts`'s encoding as one state of
+    /// `width` values, for the interpreter's printer.
+    fn print(&mut self, values: EncodedStates, width: usize);
 }
 
 /// The counts TLC reports of a search, so far or in all.
@@ -285,6 +288,21 @@ struct Search<'r> {
 }
 
 impl Search<'_> {
+    // What the spec printed while the engine computed the initial states or expanded a state goes
+    // out once that's done: if the engine hands over, the interpreter does it again.
+    fn flush(&mut self, machine: &mut Machine<'_>) {
+        for printed in std::mem::take(&mut machine.output) {
+            match printed {
+                Printed::Values(values) => {
+                    let mut encoder = StateEncoder::new();
+                    encoder.encode(&machine.store, &values);
+                    self.reporter.print(encoder.finish(), values.len());
+                }
+                Printed::InitialStates(count) => self.reporter.initial_states_progress(count),
+            }
+        }
+    }
+
     // TLCGet("distinct") counts the states found so far, and a new state before its checks.
     fn set_distinct(&self, machine: &mut Machine<'_>, count: usize) -> Outcome<()> {
         if self.is_distinct_read {
@@ -329,7 +347,12 @@ impl Search<'_> {
         machine.set_slot(LEVEL_SLOT, one);
         let count = self.initial_generated;
         if count > 1 && count.is_power_of_two() {
-            self.reporter.initial_states_progress(count);
+            // A count after what the initial predicate printed waits with it.
+            if machine.output.is_empty() {
+                self.reporter.initial_states_progress(count);
+            } else {
+                machine.output.push(Printed::InitialStates(count));
+            }
         }
         self.generated += 1;
         self.initial_generated += 1;
@@ -588,6 +611,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         (context.init)(&mut machine, &mut |machine: &mut Machine<'_>| {
             search.visit_initial(machine, &context)
         })?;
+        search.flush(&mut machine);
         initial_states = (search.initial_generated, search.states.count() as u64);
         search
             .reporter
@@ -661,6 +685,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 graph.edge_offsets.push(graph.edges.len() as u32);
             }
             out_degrees[(search.new_states as usize).min(OUT_DEGREE_BUCKETS - 1)] += 1;
+            search.flush(&mut machine);
             if expanding & 0xff == 0 && Instant::now() >= progress_at {
                 progress_at = Instant::now() + PROGRESS_INTERVAL;
                 let count = search.states.count() as u64;

@@ -6,7 +6,7 @@
 import { EngineInvariantError } from "../errors";
 import type { LiveExpression } from "../tableau";
 import { createStateDecoder, type EncodedStates } from "../transfer";
-import type { Value } from "../values";
+import { formatPrinted, type Value } from "../values";
 import { fromEnumeratedValue, fromValue } from "./convert";
 import { resetFingerprints } from "./fingerprint";
 import type { IrOutcome } from "./ir";
@@ -50,6 +50,7 @@ interface NativeAddon extends NativeStoreHooks {
     settings: Int32Array,
     stateLog: string,
     report: (kind: number, a: number, b: number, c: number, d: number) => void,
+    print: (width: number, words: Int32Array, strings: string[]) => void,
   ) => NativeOutcome;
 }
 
@@ -174,7 +175,7 @@ export const getNativeAddon = () => {
 
 type NativeCallbacks = Pick<
   EngineInput,
-  "onProgress" | "onInitialStatesStarted" | "onInitialStates"
+  "onProgress" | "onInitialStatesStarted" | "onInitialStates" | "onPrint"
 >;
 
 // Loads the addon on first use, and lowers the model only once it has. The TypeScript engine checks
@@ -208,6 +209,11 @@ export const checkNatively = (
           statistics: { generatedStates: a, distinctStates: b, queuedStates: c, depth: d },
         });
       }
+    },
+    // What Print or PrintT printed, written by the interpreter's printer.
+    (width, words, strings) => {
+      const values = createStateDecoder(width)({ words, strings, count: 1 })[0];
+      callbacks.onPrint(values.map(formatPrinted).join("  "));
     },
   );
 };

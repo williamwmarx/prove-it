@@ -21,6 +21,8 @@ mod predicate;
 mod sets;
 mod walker;
 
+pub use walker::ActionOptions;
+
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::fmt::Display;
@@ -575,7 +577,20 @@ impl<'a> Compiler<'a> {
 
     /// Compiles a root of the model, as `createEngineContext` compiles it, with no scope.
     pub fn compile_root(&mut self, root: Root) -> Result<Compiled, CompileError> {
-        let context = Context::ROOT;
+        self.compile_root_printing(root, false)
+    }
+
+    /// Compiles a root of the model where what it prints is printed, as an invariant that prints
+    /// is compiled whole.
+    pub fn compile_root_printing(
+        &mut self,
+        root: Root,
+        can_print: bool,
+    ) -> Result<Compiled, CompileError> {
+        let context = Context {
+            can_print,
+            ..Context::ROOT
+        };
         match root {
             Root::Definition(index) => {
                 let definition = self.ir.definitions[index as usize];

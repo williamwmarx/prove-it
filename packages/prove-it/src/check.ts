@@ -1714,6 +1714,7 @@ const searchStates = (
         computed.initialStates = { generated, distinct };
         if (!liveness) reportComputed();
       },
+      onPrint: print,
     };
     const startedAt = performance.now();
     const native = getEngineBackend() === "ts" ? undefined : checkNatively(lowerModel, callbacks);
@@ -1748,7 +1749,6 @@ const searchStates = (
               source: options.source,
               modules: [...loadedModules],
               version: options.version,
-              onPrint: print,
               ...callbacks,
             });
       if (result.checkpoint) {

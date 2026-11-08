@@ -40,6 +40,16 @@ pub(crate) struct WalkOptions {
     pub is_shortcut: bool,
 }
 
+/// How an action is walked: as the initial predicate, with TLC's shortcut once every variable is
+/// assigned, and whether what it prints is printed, which only a search that hands over no more
+/// than the state it was expanding allows.
+#[derive(Clone, Copy, Debug)]
+pub struct ActionOptions {
+    pub is_init: bool,
+    pub is_shortcut: bool,
+    pub can_print: bool,
+}
+
 /// What a compile that may only be needed as the walk runs left: its value, or why it failed,
 /// which stops the walk only if the walk needs it.
 type Deferred = Result<Eval, Bail>;
@@ -1430,14 +1440,18 @@ impl<'a> Compiler<'a> {
         &mut self,
         node: NodeId,
         scope: Option<Index>,
-        is_init: bool,
-        is_shortcut: bool,
+        options: ActionOptions,
         what: &str,
     ) -> Result<Step, CompileError> {
         let Some(context) = self.context_from_scope(scope)? else {
             return unsupported(format!("{what} scope the engine can't translate"));
         };
-        let context = Context { is_init, ..context };
+        let (is_init, is_shortcut) = (options.is_init, options.is_shortcut);
+        let context = Context {
+            is_init,
+            can_print: options.can_print,
+            ..context
+        };
         self.compile_step(
             node,
             &context,

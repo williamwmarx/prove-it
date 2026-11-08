@@ -1,7 +1,9 @@
-//! `check(ir, settings, stateLog, report)`: searches the model the engine IR describes, on a thread
-//! with a deep stack, and calls `report(kind, a, b, c, d)` on the calling thread for each thing the
-//! search reports as it runs: 0 the initial states started, 1 a count of initial states, 2 the
-//! initial states (generated, distinct), 3 progress (generated, distinct, queued, depth).
+//! `check(ir, settings, stateLog, report, print)`: searches the model the engine IR describes, on a
+//! thread with a deep stack, and calls `report(kind, a, b, c, d)` on the calling thread for each
+//! thing the search reports as it runs: 0 the initial states started, 1 a count of initial states,
+//! 2 the initial states (generated, distinct), 3 progress (generated, distinct, queued, depth); and
+//! `print(width, words, strings)` for what Print or PrintT printed, `width` values in
+//! `transfer.ts`'s encoding.
 //!
 //! `settings` is an Int32Array: whether the memo tables are off, whether epoch caches are checked,
 //! the state to stop before (-1 for none), whether fingerprints are verified, and whether the
@@ -238,7 +240,7 @@ unsafe fn create_graph(env: napi_env, graph: &GraphCheckpoint) -> Result<napi_va
 pub(super) unsafe extern "C" fn check_model(env: napi_env, info: napi_callback_info) -> napi_value {
     unsafe {
         guard(env, || {
-            let [ir, settings, state_log, report] = get_arguments::<4>(env, info)?;
+            let [ir, settings, state_log, report, print] = get_arguments::<5>(env, info)?;
             let bytes = super::get_bytes(env, ir)?;
             let words = get_int32s(env, settings, "the settings")?;
             let [
@@ -273,33 +275,47 @@ pub(super) unsafe extern "C" fn check_model(env: napi_env, info: napi_callback_i
                 if is_thrown {
                     return;
                 }
-                let numbers: (f64, [u64; 4]) = match event {
-                    Event::InitialStatesStarted => (0.0, [0; 4]),
-                    Event::InitialStatesProgress(count) => (1.0, [count, 0, 0, 0]),
-                    Event::InitialStates(generated, distinct) => (2.0, [generated, distinct, 0, 0]),
-                    Event::Progress(generated, distinct, queued, depth) => {
-                        (3.0, [generated, distinct, queued, depth])
-                    }
+                let numbers = |values: [u64; 5]| -> Result<Vec<napi_value>, Thrown> {
+                    values
+                        .iter()
+                        .map(|&value| create_number(env, value as f64))
+                        .collect()
                 };
-                let mut argv = [null_mut(); 5];
-                let created = (|| -> Result<(), Thrown> {
-                    argv[0] = create_number(env, numbers.0)?;
-                    for (index, &value) in numbers.1.iter().enumerate() {
-                        argv[index + 1] = create_number(env, value as f64)?;
+                let call = match event {
+                    Event::InitialStatesStarted => numbers([0; 5]).map(|argv| (report, argv)),
+                    Event::InitialStatesProgress(count) => {
+                        numbers([1, count, 0, 0, 0]).map(|argv| (report, argv))
                     }
-                    Ok(())
-                })();
+                    Event::InitialStates(generated, distinct) => {
+                        numbers([2, generated, distinct, 0, 0]).map(|argv| (report, argv))
+                    }
+                    Event::Progress(generated, distinct, queued, depth) => {
+                        numbers([3, generated, distinct, queued, depth]).map(|argv| (report, argv))
+                    }
+                    Event::Print(values, width) => (|| {
+                        Ok((
+                            print,
+                            vec![
+                                create_number(env, width as f64)?,
+                                create_int32s(env, &values.words)?,
+                                create_texts(env, &values.strings)?,
+                            ],
+                        ))
+                    })(),
+                };
                 let mut result = null_mut();
-                is_thrown = created.is_err()
-                    || status(napi_call_function(
+                is_thrown = match call {
+                    Ok((function, argv)) => status(napi_call_function(
                         env,
                         undefined,
-                        report,
+                        function,
                         argv.len(),
                         argv.as_ptr(),
                         &mut result,
                     ))
-                    .is_err();
+                    .is_err(),
+                    Err(_) => true,
+                };
             });
             if is_thrown {
                 return Ok(null_mut());

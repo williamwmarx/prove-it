@@ -34,6 +34,7 @@ interface Run {
   result: Awaited<ReturnType<typeof check>>;
   lines: string[];
   progress: string[];
+  printed: string[];
 }
 
 // Checks a model with the engine set as given, keeping the [engine] lines and what it reports.
@@ -45,18 +46,19 @@ const run = async (
   Object.assign(process.env, settings);
   const lines: string[] = [];
   const progress: string[] = [];
+  const printed: string[] = [];
   const spy = spyOn(console, "error").mockImplementation((message: unknown) => {
     if (typeof message === "string" && message.startsWith("[engine] ")) lines.push(message);
   });
   try {
     const result = await check({
       ...options,
-      onPrint: () => {},
+      onPrint: (text) => printed.push(text),
       onProgress: (report) => {
         if (report.kind !== "progress") progress.push(JSON.stringify(report));
       },
     });
-    return { result, lines, progress };
+    return { result, lines, progress, printed };
   } finally {
     spy.mockRestore();
   }
@@ -81,6 +83,7 @@ const compareWithInterpreter = async (
   const interpreter = await run(options, { PROVE_IT_ENGINE: "0" });
   expect(native.result).toEqual(interpreter.result);
   expect(native.progress).toEqual(interpreter.progress);
+  expect(native.printed).toEqual(interpreter.printed);
   return native.lines;
 };
 
@@ -382,6 +385,30 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
       PROVE_IT_FP_VERIFY: "1",
     });
     expect(verified.lines).toContain("[engine] native: fingerprint collisions: 0");
+  });
+
+  it("prints what Print and PrintT print once it completes the initial states or an expansion", async () => {
+    const body = [
+      "EXTENDS Naturals, TLC",
+      "VARIABLE x",
+      'Init == x \\in 1..5 /\\ PrintT(<<"init", x>>)',
+      "Next == x < 7 /\\ x' = Print(<<x, {x, x + 2}>>, x + 1)",
+      "Inv == PrintT(x) /\\ x < 10",
+    ];
+    const config = "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE";
+    expect(await compareWithInterpreter(body, config)).toContainEqual(
+      expect.stringMatching(COMPLETE),
+    );
+    // A stop drops what the expansion printed, which the interpreter prints again.
+    const failing = body.map((line) => line.replace("x < 10", "x < 6"));
+    expect(await compareWithInterpreter(failing, config)).toContainEqual(
+      expect.stringMatching(stopped("an invariant violated")),
+    );
+    // TLC prints a record by how it was built, which the engine forgets.
+    const record = body.map((line) => line.replace("<<x, {x, x + 2}>>", "[a |-> x, b |-> 1]"));
+    expect(await compareWithInterpreter(record, config)).toContainEqual(
+      expect.stringMatching(stopped("printing a value whose text depends on how TLC built it")),
+    );
   });
 
   it("leaves a model it can't search yet to the TypeScript engine", async () => {

@@ -6,6 +6,7 @@
 mod binding;
 
 pub use tla_engine::search::{Reporter, SearchOutcome, Settings};
+use tla_values::transfer::EncodedStates;
 
 /// The version of the contract between the loader and the addon: the exports, their arguments
 /// and the engine IR. The loader uses the TypeScript engine when it expects another.
@@ -34,6 +35,8 @@ pub enum Event {
     InitialStatesProgress(u64),
     InitialStates(u64, u64),
     Progress(u64, u64, u64, u64),
+    /// What Print or PrintT printed, as one state of `width` values.
+    Print(EncodedStates, usize),
 }
 
 struct Relay(std::sync::mpsc::Sender<Event>);
@@ -55,6 +58,10 @@ impl Reporter for Relay {
         let _ = self
             .0
             .send(Event::Progress(generated, distinct, queued, depth));
+    }
+
+    fn print(&mut self, values: EncodedStates, width: usize) {
+        let _ = self.0.send(Event::Print(values, width));
     }
 }
 

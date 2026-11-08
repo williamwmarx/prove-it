@@ -23,6 +23,14 @@ pub type Continue<'c> = dyn FnMut(&mut Machine<'_>) -> Outcome<()> + 'c;
 /// for each state it completes (`Step` in `action.ts`).
 pub type Step = Arc<dyn Fn(&mut Machine<'_>, &mut Continue<'_>) -> Outcome<()> + Send + Sync>;
 
+/// What the search hands the interpreter's printer, in order: what Print or PrintT printed, or a
+/// count of initial states, which waits with what was printed before it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Printed {
+    Values(Vec<Id>),
+    InitialStates(u64),
+}
+
 /// A variable that has no value yet, -1 in the TypeScript registers.
 pub const UNASSIGNED: Id = u32::MAX;
 
@@ -99,6 +107,8 @@ pub struct Machine<'p> {
     pub is_past_walk: bool,
     // The next states ENABLED runs its actions into, kept for the next test.
     pub(crate) spare_states: Vec<Vec<Id>>,
+    /// What was printed since the search last handed it on (`tlc.output`).
+    pub output: Vec<Printed>,
 }
 
 impl<'p> Machine<'p> {
@@ -129,6 +139,7 @@ impl<'p> Machine<'p> {
             undo: Vec::new(),
             is_past_walk: false,
             spare_states: Vec::new(),
+            output: Vec::new(),
         }
     }
 
