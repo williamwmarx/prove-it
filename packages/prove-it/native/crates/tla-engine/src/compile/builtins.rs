@@ -1,13 +1,13 @@
 //! The builtins, as `compileBuiltin` and `compileNativeBuiltin` compile them. The pure builtins
-//! the TypeScript engine runs in the interpreter (`PURE_BUILTINS`) decline here until M6 ports
-//! them.
+//! the TypeScript engine runs in the interpreter (`PURE_BUILTINS`) are `bridged.rs`'s, except
+//! ToString, which needs TLC's printer and declines.
 
 use std::sync::Arc;
 
 use tla_ir::{Builtin, Index, NodeKind};
 use tla_values::store::{
-    EMPTY_SET, FALSE, KIND_FUNCTION, KIND_INT, KIND_SET, KIND_STRING, KIND_TUPLE, Outcome, TRUE,
-    is_function_kind,
+    EMPTY_SET, EMPTY_TUPLE, FALSE, KIND_FUNCTION, KIND_INT, KIND_SET, KIND_STRING, KIND_TUPLE,
+    Outcome, TRUE, is_function_kind,
 };
 use tla_values::{Bail, Id, Store};
 
@@ -168,10 +168,12 @@ fn power_set(machine: &mut Machine<'_>, set: Id) -> Outcome<Id> {
 }
 
 /// An operator argument compiled once, with its parameters bound to slots, to apply to ids.
-struct Applier {
-    slots: Vec<u32>,
-    body: Eval,
-    footprint: Footprint,
+pub(crate) struct Applier {
+    pub(crate) slots: Vec<u32>,
+    pub(crate) body: Eval,
+    pub(crate) footprint: Footprint,
+    /// Whether its body is a number or string literal.
+    pub(crate) is_literal: bool,
 }
 
 impl Compiler<'_> {
@@ -188,6 +190,7 @@ impl Compiler<'_> {
             "Nat" => Self::infinite_set("Nat", "enumerated Nat"),
             "Int" => Self::infinite_set("Int", "enumerated Int"),
             "STRING" => Self::infinite_set("STRING", "enumerated STRING"),
+            "EmptyBag" => super::constant(EMPTY_TUPLE),
             name => {
                 return decline(format!(
                     "the builtin {name}, whose value the interpreter computes"
@@ -205,12 +208,18 @@ impl Compiler<'_> {
         }
     }
 
-    fn operand(&mut self, operand: &Operand) -> Compiling<Compiled> {
-        self.compile(operand.node, &operand.context)
+    pub(crate) fn operand(&mut self, operand: &Operand) -> Compiling<Compiled> {
+        match operand.slot {
+            Some(slot) => Ok(self.read_slot(slot)),
+            None => self.compile(operand.node, &operand.context),
+        }
     }
 
     fn boolean_operand(&mut self, operand: &Operand) -> Compiling<Compiled> {
-        self.compile_boolean(operand.node, &operand.context)
+        match operand.slot {
+            Some(slot) => Ok(Self::as_boolean(self.read_slot(slot))),
+            None => self.compile_boolean(operand.node, &operand.context),
+        }
     }
 
     pub(crate) fn compile_builtin(
@@ -238,6 +247,9 @@ impl Compiler<'_> {
         }
         if !PURE_BUILTINS.contains(&name) {
             return unsupported(name);
+        }
+        if let Some(bridged) = self.compile_bridged(name, operands, context)? {
+            return Ok(bridged);
         }
         decline(format!(
             "the builtin {name}, which the TypeScript engine runs in the interpreter"
@@ -326,7 +338,7 @@ impl Compiler<'_> {
     }
 
     // Whether an argument names or writes an operator, such as Test in SelectSeq(s, Test).
-    fn is_operator_argument(&self, operand: &Operand) -> bool {
+    pub(crate) fn is_operator_argument(&self, operand: &Operand) -> bool {
         if operand.is_param {
             return false;
         }
@@ -351,17 +363,15 @@ impl Compiler<'_> {
         }
     }
 
-    fn compile_applier(&mut self, operand: &Operand, context: &Context) -> Compiling<Applier> {
+    pub(crate) fn compile_applier(
+        &mut self,
+        operand: &Operand,
+        context: &Context,
+    ) -> Compiling<Applier> {
         let operator =
             self.resolve_operator_argument(operand.node, &operand.context.without_print())?;
         if operator.params.iter().any(|param| param.arity > 0) {
             return unsupported("an operator argument that takes an operator");
-        }
-        let OperatorBody::Node(body) = operator.body else {
-            return decline("a builtin passed to SelectSeq");
-        };
-        if operator.params.len() != 1 {
-            return decline("a SelectSeq test that doesn't take one argument");
         }
         let base = operator_context(&operator);
         let slots: Vec<u32> = operator
@@ -378,11 +388,33 @@ impl Compiler<'_> {
             is_primed: context.is_primed || base.is_primed,
             ..base
         };
-        let body = self.compile(body, &body_context)?;
+        let (body, is_literal) = match operator.body {
+            OperatorBody::Node(body) => (
+                self.compile(body, &body_context)?,
+                matches!(self.node(body).1, NodeKind::Number(_) | NodeKind::String(_)),
+            ),
+            OperatorBody::Builtin(index) => {
+                // The builtin applied to its parameters, as resolveOperatorArgument writes it.
+                let operands: Vec<Operand> = slots
+                    .iter()
+                    .map(|&slot| Operand {
+                        node: operand.node,
+                        context: body_context.clone(),
+                        is_param: true,
+                        slot: Some(slot),
+                    })
+                    .collect();
+                (
+                    self.compile_builtin(index, &operands, &body_context)?,
+                    false,
+                )
+            }
+        };
         Ok(Applier {
             footprint: body.footprint.without_slots(&slots),
             slots,
             body: body.eval,
+            is_literal,
         })
     }
 
@@ -822,11 +854,25 @@ impl Compiler<'_> {
             }
             "SelectSeq" => {
                 arity(2)?;
-                if !self.is_operator_argument(&operands[1]) {
-                    return Ok(None);
-                }
                 let sequence = self.operand(&operands[0])?;
+                if !self.is_operator_argument(&operands[1]) {
+                    // The interpreter fails on a test that isn't an operator.
+                    let test = self.operand(&operands[1])?;
+                    let footprint = sequence.footprint.merge(&test.footprint);
+                    let (sequence, test) = (sequence.eval, test.eval);
+                    return Ok(Some(leaf(
+                        eval(move |machine| {
+                            sequence(machine)?;
+                            test(machine)?;
+                            Err(Bail("a SelectSeq test that isn't an operator"))
+                        }),
+                        footprint,
+                    )));
+                }
                 let test = self.compile_applier(&operands[1], context)?;
+                if test.slots.len() != 1 {
+                    return unsupported("a SelectSeq test that doesn't take one argument");
+                }
                 let footprint = sequence.footprint.merge(&test.footprint);
                 let sequence = sequence.eval;
                 let (slot, body) = (test.slots[0], test.body);
@@ -889,7 +935,6 @@ impl Compiler<'_> {
                     ),
                 }
             }
-            "IsFiniteSet" => return Ok(None),
             ":>" => {
                 arity(2)?;
                 let key = self.operand(&operands[0])?;

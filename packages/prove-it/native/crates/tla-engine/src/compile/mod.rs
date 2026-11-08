@@ -14,6 +14,7 @@
 //! builtins it bridges to the interpreter and ENABLED, which needs the walker, this one declines
 //! ([`CompileError::Decline`]).
 
+mod bridged;
 mod builtins;
 mod fused;
 mod nodes;
@@ -424,6 +425,8 @@ pub(crate) struct Operand {
     node: NodeId,
     context: Context,
     is_param: bool,
+    /// For a builtin applied as an operator argument's body: the slot its parameter is bound to.
+    slot: Option<u32>,
 }
 
 // --- fixed points ---
@@ -1007,22 +1010,23 @@ impl<'a> Compiler<'a> {
         })
     }
 
+    pub(crate) fn read_slot(&self, slot: u32) -> Compiled {
+        Compiled {
+            shape: if self.int_slots.contains(&slot) {
+                Shape::IntSlot(slot)
+            } else {
+                Shape::Slot(slot)
+            },
+            ..leaf(
+                eval(move |machine| Ok(machine.locals[slot as usize])),
+                Footprint::slot(slot),
+            )
+        }
+    }
+
     fn compile_binding(&mut self, node: &Rc<Scope>, context: &Context) -> Compiling<Compiled> {
         match &node.binding {
-            Binding::Slot(slot) => {
-                let slot = *slot;
-                Ok(Compiled {
-                    shape: if self.int_slots.contains(&slot) {
-                        Shape::IntSlot(slot)
-                    } else {
-                        Shape::Slot(slot)
-                    },
-                    ..leaf(
-                        eval(move |machine| Ok(machine.locals[slot as usize])),
-                        Footprint::slot(slot),
-                    )
-                })
-            }
+            Binding::Slot(slot) => Ok(self.read_slot(*slot)),
             Binding::Argument(argument) => {
                 let is_primed = context.is_primed || argument.context.is_primed;
                 let index = usize::from(is_primed);
@@ -1383,6 +1387,7 @@ impl<'a> Compiler<'a> {
                         node,
                         context: context.clone(),
                         is_param: false,
+                        slot: None,
                     })
                     .collect();
                 return self.compile_builtin(index, &operands, context);
@@ -1426,6 +1431,7 @@ impl<'a> Compiler<'a> {
                             .without_print()
                             .primed(callee.is_primed || context.is_primed),
                         is_param: true,
+                        slot: None,
                     })
                     .collect();
                 self.wrap_compile(|compiler| compiler.compile_builtin(index, &operands, &callee))?
