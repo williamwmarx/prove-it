@@ -344,6 +344,12 @@ export const rankString = (text: string) => {
 
 export const getRankedStringCount = () => stringOrder.size;
 
+// The ranked texts, in the order of their ranks.
+export const getStringOrder = () =>
+  Object.entries(stringOrder.ranks)
+    .sort((left, right) => left[1] - right[1])
+    .map((entry) => entry[0]);
+
 export const getStringRank = (text: string) => stringOrder.ranks[rankString(text)];
 
 // The rank of a text TLC has interned, without interning one it hasn't.

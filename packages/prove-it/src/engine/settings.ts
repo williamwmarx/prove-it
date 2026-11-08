@@ -33,3 +33,45 @@ export const getEngineThreads = () => {
   const configured = Number(getEnvironment()?.PROVE_IT_WORKERS);
   return Number.isInteger(configured) && configured > 0 ? configured : 1;
 };
+
+// The file system and whether this is the main thread, on a host that has them. The debug logs
+// below are written only from the main thread, since a worker sees the same settings.
+const getMainThreadFileSystem = () => {
+  const getBuiltinModule = (
+    globalThis as { process?: { getBuiltinModule?: (name: string) => unknown } }
+  ).process?.getBuiltinModule;
+  const threads = getBuiltinModule?.("node:worker_threads") as
+    { isMainThread: boolean } | undefined;
+  return threads?.isMainThread
+    ? (getBuiltinModule?.("node:fs") as
+        | {
+            writeFileSync: (path: string, text: string) => void;
+            appendFileSync: (path: string, text: string) => void;
+          }
+        | undefined)
+    : undefined;
+};
+
+// Appends lines to the file the setting `name` names, from empty, keeping them until there are
+// many or the process exits: PROVE_IT_STORE_TRACE names the file the store writes its operations
+// to.
+export const openDebugLog = (name: string) => {
+  const path = getEnvironment()?.[name];
+  const fileSystem = path ? getMainThreadFileSystem() : undefined;
+  if (!path || !fileSystem) return undefined;
+  fileSystem.writeFileSync(path, "");
+  const lines: string[] = [];
+  const flush = () => {
+    if (lines.length === 0) return;
+    fileSystem.appendFileSync(path, `${lines.join("\n")}\n`);
+    lines.length = 0;
+  };
+  (globalThis as { process?: { on: (event: string, listener: () => void) => void } }).process?.on(
+    "exit",
+    flush,
+  );
+  return (line: string) => {
+    lines.push(line);
+    if (lines.length >= 8192) flush();
+  };
+};
