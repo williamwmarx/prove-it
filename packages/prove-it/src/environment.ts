@@ -182,12 +182,17 @@ const getDeclarations = (linked: LinkedModule): Declaration[] => [
 
 // Parses the module SANY reads from the file name.tla. A module SANY's parser rejects fails as it
 // does in TLC: SANY's message, then a fatal error that names the module.
-const parseModuleFile = (source: string, name: string, order: TlcOrder) => {
+const parseModuleFile = (
+  source: string,
+  name: string,
+  order: TlcOrder,
+  version: TlcVersion | undefined,
+) => {
   try {
     return order.parseModule(source);
   } catch (error) {
     if (!(error instanceof TlaSyntaxError)) throw error;
-    const parseError = getSanyParseError(source);
+    const parseError = getSanyParseError(source, version);
     if (parseError === undefined) throw error;
     throw createSanyError(
       [
@@ -304,7 +309,8 @@ export const createEnvironment = (
   config: ModelConfig,
   options: EnvironmentOptions,
 ): Specification => {
-  const order = options.order ?? createTlcOrder(options.source, options.loadModule);
+  const order =
+    options.order ?? createTlcOrder(options.source, options.loadModule, undefined, options.version);
   const root = order.parseModule(options.source);
   const definitions = new Map<string, Definition>();
   const parameterized = new Map<string, boolean>();
@@ -423,7 +429,7 @@ export const createEnvironment = (
       BUNDLED_MODULES.get(name) ??
       extractModule(options.source, name);
     if (source === undefined) throw createMissingModuleError(name, importer);
-    const module = parseModuleFile(source, name, order);
+    const module = parseModuleFile(source, name, order, options.version);
     if (module.name !== name) {
       throw createSanyError(
         [

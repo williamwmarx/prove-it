@@ -142,7 +142,7 @@ export const checkParsed = async (
     classes.set(name, bytes);
     return bytes;
   };
-  const order = createTlcOrder(options.source, loadModule, readings);
+  const order = createTlcOrder(options.source, loadModule, readings, options.version);
   setStringOrder(order.getStringOrder(config));
   setValueVersion(options.version);
   const startupStrings = getRankedStringCount();

@@ -42,7 +42,7 @@ interface Prepared {
 const prepare = (start: EngineStartMessage): Prepared | undefined => {
   const modules = new Map(start.modules);
   const loadModule = (name: string) => modules.get(name);
-  const order = createTlcOrder(start.source, loadModule);
+  const order = createTlcOrder(start.source, loadModule, undefined, start.version);
   setStringOrder(order.getStringOrder(start.config));
   setValueVersion(start.version);
   const environment = createEnvironment(start.config, {

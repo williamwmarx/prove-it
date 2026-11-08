@@ -445,7 +445,7 @@ const searchStates = (
     loadedModules.set(name, source);
     return source;
   };
-  const order = createTlcOrder(options.source, loadModule, readings);
+  const order = createTlcOrder(options.source, loadModule, readings, options.version);
   setStringOrder(order.getStringOrder(config));
   setValueVersion(options.version);
   const specification = createEnvironment(config, {

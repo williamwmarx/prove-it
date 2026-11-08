@@ -530,10 +530,12 @@ export const generateSanySpecification = (
     // The parser's errors are not SANY's, so a module that fails to parse gets the report of
     // SANY's parser, and the parser's own report where SANY's parser would accept the module, such
     // as for an error SANY finds after parsing.
-    const reading = readSanyText(readings, text);
+    const reading = readSanyText(readings, text, options.version);
     const module = reading.module;
     if (module instanceof TlaSyntaxError) {
-      throw getParseFailure(getSanyParseError(text) ?? `***Parse Error***\n${module.message}`);
+      throw getParseFailure(
+        getSanyParseError(text, options.version) ?? `***Parse Error***\n${module.message}`,
+      );
     }
     return { tokens: reading.tokens, module };
   };
@@ -1072,8 +1074,7 @@ export const generateSanySpecification = (
     ): OpArgNode | OpApplNode => {
       const location = getLocation(argument);
       if (argument.kind === "Lambda") {
-        if (argument.operator === undefined)
-          return createOpArg(generateLambda(argument), location);
+        if (argument.operator === undefined) return createOpArg(generateLambda(argument), location);
         return createOpArg(resolveName(getOperatorArgumentName(argument), location), location);
       }
       if (!isOperatorArgument(argument)) {

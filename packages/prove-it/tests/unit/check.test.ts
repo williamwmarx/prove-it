@@ -3276,6 +3276,17 @@ describe("name resolution matches SANY", () => {
     expect((await checkSource(source)).status).toBe("success");
   });
 
+  // TLC's SANY gives SUBSET the precedence 8, below \X, and TLC 1.7.4's gave it 10-13, as \X.
+  it("reads SUBSET before \\X by the precedence of SANY in each TLC", async () => {
+    const source =
+      "---- MODULE M ----\nVARIABLE x\nASSUME SUBSET {1} \\X {2} = {{}, {<<1, 2>>}}\nInit == x = 0\nNext == UNCHANGED x\n====";
+    const config = "INIT Init\nNEXT Next";
+    expect((await check({ source, config })).status).toBe("success");
+    await expect(check({ source, config, version: "1.7.4" })).rejects.toThrow(
+      "Precedence conflict",
+    );
+  });
+
   it("defines prefix, postfix, and <: operators", async () => {
     const result = await checkSource(
       "EXTENDS Naturals\nn ^+ == n + 1\n-. n == 10 - n\na <: b == a - b\nASSUME (2^+) = 3 /\\ -4 = 6 /\\ (5 <: 2) = 3",
@@ -4852,7 +4863,7 @@ describe("initial predicate and next-state relation match TLC", () => {
       );
       return [result.generatedStates, result.distinctStates];
     };
-    expect(await getCounts("SUBSET {1} \\cup SUBSET {2}")).toEqual([7, 3]);
+    expect(await getCounts("(SUBSET {1}) \\cup SUBSET {2}")).toEqual([7, 3]);
     expect(await getCounts("(1..3) \\cup SUBSET {}")).toEqual([8, 4]);
     expect(await getCounts("{1} \\cup {1, 2}")).toEqual([4, 2]);
   });

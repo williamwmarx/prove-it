@@ -16,6 +16,7 @@ import {
   TLC_STARTUP_STRINGS,
   USER_STANDARD_MODULES,
 } from "./jar-data";
+import type { TlcVersion } from "./version";
 
 type SymbolKind = "builtin" | "constant" | "variable" | "definition" | "theorem" | "module";
 
@@ -272,7 +273,11 @@ interface ModuleText {
 // A module's source is read into tokens once, and parsed from them once, for every order and for
 // the environment that evaluates it. SANY's parser reads a text it accepts as TLC's does, so the
 // order takes the tokens and module of a text SANY read.
-const readModuleText = (text: string | undefined, reading: SanyReading | undefined): ModuleText => {
+const readModuleText = (
+  text: string | undefined,
+  reading: SanyReading | undefined,
+  version: TlcVersion | undefined,
+): ModuleText => {
   const module = reading?.module instanceof TlaSyntaxError ? undefined : reading?.module;
   const tokens = (module && reading?.tokens) ?? (text === undefined ? [] : tokenize(text));
   const parsed = { module: reading?.isUnboxed ? undefined : module };
@@ -280,7 +285,8 @@ const readModuleText = (text: string | undefined, reading: SanyReading | undefin
     tokens,
     ranges: getRanges(tokens),
     getModule: () =>
-      (parsed.module ??= text === undefined ? parseModule("") : parseModuleTokens(text, tokens)),
+      (parsed.module ??=
+        text === undefined ? parseModule("") : parseModuleTokens(text, tokens, version)),
   };
 };
 
@@ -291,6 +297,7 @@ const createModuleSet = (
   source: string,
   loadModule: ModuleLoader,
   readings: ReadonlyMap<string, SanyReading> | undefined,
+  version: TlcVersion | undefined,
 ) => {
   const files = new Map<string, ParsedModule>();
   const nestedModules = new Map<string, ParsedModule>();
@@ -299,7 +306,11 @@ const createModuleSet = (
   const readText = (text: string | undefined) => {
     const known = text === undefined ? undefined : texts.get(text);
     if (known) return known;
-    const read = readModuleText(text, text === undefined ? undefined : readings?.get(text));
+    const read = readModuleText(
+      text,
+      text === undefined ? undefined : readings?.get(text),
+      version,
+    );
     if (text !== undefined) texts.set(text, read);
     return read;
   };
@@ -592,8 +603,9 @@ export const createTlcOrder = (
   source: string,
   loadModule: ModuleLoader,
   readings?: ReadonlyMap<string, SanyReading>,
+  version?: TlcVersion,
 ): TlcOrder => {
-  const modules = createModuleSet(source, loadModule, readings);
+  const modules = createModuleSet(source, loadModule, readings, version);
   const getParsed = modules.getParsed;
   let contexts: ReturnType<typeof createContexts> | undefined;
   const getContexts = () => (contexts ??= createContexts(getParsed));
