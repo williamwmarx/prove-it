@@ -116,9 +116,7 @@ if (isUpdate) {
 if (isChecked) {
   const passing = new Set<string>(JSON.parse(readFileSync(PASSING_PATH, "utf8")));
   const verdicts = new Map(results.map((result) => [result.id, result.verdict]));
-  const regressed = [...passing].filter(
-    (id) => verdicts.has(id) && verdicts.get(id) !== "match",
-  );
+  const regressed = [...passing].filter((id) => verdicts.has(id) && verdicts.get(id) !== "match");
   const gained = results.filter((result) => result.verdict === "match" && !passing.has(result.id));
   if (gained.length > 0) {
     console.log(`\n${gained.length} models match that passing.json doesn't list:`);
