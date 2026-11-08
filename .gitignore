@@ -34,3 +34,4 @@ packages/prove-it/.bench-suite.json
 # Rust build output and the addons it makes
 packages/prove-it/native/**/target/
 packages/prove-it/native/**/*.node
+packages/prove-it/native/**/*.node.mjs

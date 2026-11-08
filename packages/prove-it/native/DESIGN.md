@@ -1147,7 +1147,7 @@ All under `native/prototypes/`.
 ### 10.1 N-API crossing cost (`napi-cost/`)
 
 A dependency-free Rust `cdylib` that declares the `napi_*` functions itself, with a Bun and Node
-driver in `bench.mjs`:
+driver in `bench.ts`:
 
 | Call | Bun 1.4.4 | Node 22.23.4 |
 |---|---|---|
