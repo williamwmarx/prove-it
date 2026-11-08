@@ -496,7 +496,8 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
         [
           "Init == x = 0 /\\ y = 0",
           "Next == \\E i \\in IF Print(<<x, y>>, TRUE) THEN {1, 2} ELSE {} :",
-          "  \\A j \\in {3, 4} : x' = (x + i) % 3 /\\ y' = 0 /\\ Print(<<i, j, x'>>, TRUE)",
+          "  \\A j \\in IF Print(i, TRUE) THEN {3, 4} ELSE {} :",
+          "    x' = (x + i) % 3 /\\ y' = 0 /\\ Print(<<i, j, x'>>, TRUE)",
         ],
         "INIT Init\nNEXT Next",
         false,
