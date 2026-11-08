@@ -1,14 +1,22 @@
-import { afterAll, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { parseModule } from "../../src";
+import { check, parseModule } from "../../src";
+import { checkParsed } from "../../src/parallel";
 import { getSanyReport, type SanyReportOptions } from "../../src/sany/report";
+import { createTlcOrder } from "../../src/tlc/order";
 
 const directories: string[] = [];
+const setting = process.env.PROVE_IT_ENGINE;
 
 afterAll(() => directories.forEach((directory) => rmSync(directory, { recursive: true })));
+
+afterEach(() => {
+  if (setting === undefined) delete process.env.PROVE_IT_ENGINE;
+  else process.env.PROVE_IT_ENGINE = setting;
+});
 
 // Writes each module to its own file, then reports on the first one, as TLC runs SANY.
 const getReport = (modules: Record<string, string>, options?: SanyReportOptions) => {
@@ -40,6 +48,17 @@ Inv == x < 5
 ====
 `;
 
+// SANY's parser reads []ASSUME as ASSUME once it takes out the box, which TLC's order can't.
+const BOXED = `---- MODULE Boxed ----
+VARIABLE x
+THEOREM T == TRUE
+<1>1 []ASSUME TRUE []PROVE TRUE
+<1> QED
+Init == x = 0
+Next == x' = x
+====
+`;
+
 describe("SANY's readings", () => {
   it("hold the module SANY's parser read from each text", () => {
     const sany = getReport({ Counter: COUNTER, Leaf: LEAF });
@@ -53,5 +72,41 @@ describe("SANY's readings", () => {
     const sany = getReport({ Counter: COUNTER, Leaf: LEAF }, { isXmlExport: true });
     expect(sany.report.readings.get(COUNTER)?.module).toEqual(parseModule(COUNTER));
     expect(sany.report.readings.get(LEAF)?.module).toEqual(parseModule(LEAF));
+  });
+
+  it("give TLC's order the module SANY read", () => {
+    const sany = getReport({ Counter: COUNTER, Leaf: LEAF });
+    const order = createTlcOrder(COUNTER, sany.loadModule, sany.report.readings);
+    expect(sany.report.readings.get(COUNTER)?.module).toBe(order.parseModule(COUNTER));
+  });
+
+  it("leave TLC's order to parse a text SANY read without its boxes", () => {
+    const sany = getReport({ Boxed: BOXED });
+    expect(sany.report.isFailed).toBe(false);
+    const order = createTlcOrder(BOXED, sany.loadModule, sany.report.readings);
+    expect(() => order.parseModule(BOXED)).toThrow('Unexpected "ASSUME" at line 4, column 8');
+  });
+
+  it("check a spec as its source does", async () => {
+    const sany = getReport({ Counter: COUNTER, Leaf: LEAF });
+    const getResult = async (isRead: boolean) => {
+      const lines: string[] = [];
+      const options = {
+        source: COUNTER,
+        config: "CONSTANT N = 3\nINIT Init\nNEXT Next\nINVARIANT Inv",
+        loadModule: sany.loadModule,
+        onPrint: (text: string) => lines.push(text),
+        isSanyReported: true,
+      };
+      const result = isRead
+        ? await checkParsed(options, sany.report.readings)
+        : await check(options);
+      return { result, lines };
+    };
+    const expected = await getResult(false);
+    expect(expected.result.status).toBe("invariant-violation");
+    expect(await getResult(true)).toEqual(expected);
+    process.env.PROVE_IT_ENGINE = "0";
+    expect(await getResult(true)).toEqual(expected);
   });
 });

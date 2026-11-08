@@ -44,6 +44,7 @@ import {
   type LivenessChecker,
   type LiveSuccessor,
 } from "./liveness-checker";
+import type { SanyReading } from "./sany/source";
 import {
   createIdentifier,
   createSearch,
@@ -382,12 +383,16 @@ const getReplayExitCode = (error: TlaEvaluationError): number => {
   return error instanceof TlaModuleError ? error.exitCode : EXIT_STATUS.specEvaluationFailure;
 };
 
-// TLC finishes the -dump file whether or not the search finds a violation.
-export const checkSequentially = (options: CheckOptions): CheckResult => {
+// TLC finishes the -dump file whether or not the search finds a violation. The readings are those
+// of a spec SANY accepted.
+export const checkSequentially = (
+  options: CheckOptions,
+  readings?: ReadonlyMap<string, SanyReading>,
+): CheckResult => {
   const stateWriter =
     options.dump && createStateWriter(options.dump, options.writeFile, options.version);
   try {
-    return searchStates(options, stateWriter);
+    return searchStates(options, stateWriter, readings);
   } catch (error) {
     throw isStackOverflow(error) ? createStackOverflowError() : error;
   } finally {
@@ -402,7 +407,11 @@ const PROGRESS_INTERVAL = 60_000;
 const LIVENESS_GROWTH = 0.1;
 const LIVENESS_RATIO = 0.2;
 
-const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefined): CheckResult => {
+const searchStates = (
+  options: CheckOptions,
+  stateWriter: StateWriter | undefined,
+  readings: ReadonlyMap<string, SanyReading> | undefined,
+): CheckResult => {
   const config =
     typeof options.config === "string"
       ? parseConfig(options.config, options.version)
@@ -432,7 +441,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     loadedModules.set(name, source);
     return source;
   };
-  const order = createTlcOrder(options.source, loadModule);
+  const order = createTlcOrder(options.source, loadModule, readings);
   setStringOrder(order.getStringOrder(config));
   setValueVersion(options.version);
   const specification = createEnvironment(config, {

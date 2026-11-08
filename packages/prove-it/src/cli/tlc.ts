@@ -38,7 +38,7 @@ import {
 } from "../errors";
 import { describeRange } from "../evaluate";
 import { EXIT_STATUS, setExitCode } from "../exit-codes";
-import { check } from "../parallel";
+import { checkParsed } from "../parallel";
 import { SANY_174_STANDARD_MODULES, SANY_STANDARD_MODULES } from "../sany/modules";
 import { getSanyReport, type SanyModuleOrigin } from "../sany/report";
 import { readSanySnapshot } from "../sany/snapshot";
@@ -839,32 +839,35 @@ const checkSpec = async (
   // SANY rejected a spec whose module isn't named for its file, so check reads the spec's module.
   try {
     const source = readFileSync(specPath, "utf8");
-    const result = await check({
-      workers,
-      livenessCheck: ["final", "seqfinal", "off"].includes(livenessCheck) ? "final" : "default",
-      seed: BigInt(seed),
-      dump: dumpValues && getStateDump(dumpValues),
-      isTool: printer.isTool,
-      isContinued: args.has("-continue"),
-      isTraceRecorded: isRecorded,
-      isSanyReported: true,
-      isWarningEnabled: !args.has("-nowarning"),
-      version,
-      onProgress: (progress) => printCheckProgress(printer, progress, timing, directory),
-      source,
-      config,
-      onPause: () => readSync(0, Buffer.alloc(1)),
-      loadModule,
-      loadClass: (name) => {
-        const classPath = getClassPath(directory, name);
-        return existsSync(classPath) ? readFileSync(classPath) : undefined;
+    const result = await checkParsed(
+      {
+        workers,
+        livenessCheck: ["final", "seqfinal", "off"].includes(livenessCheck) ? "final" : "default",
+        seed: BigInt(seed),
+        dump: dumpValues && getStateDump(dumpValues),
+        isTool: printer.isTool,
+        isContinued: args.has("-continue"),
+        isTraceRecorded: isRecorded,
+        isSanyReported: true,
+        isWarningEnabled: !args.has("-nowarning"),
+        version,
+        onProgress: (progress) => printCheckProgress(printer, progress, timing, directory),
+        source,
+        config,
+        onPause: () => readSync(0, Buffer.alloc(1)),
+        loadModule,
+        loadClass: (name) => {
+          const classPath = getClassPath(directory, name);
+          return existsSync(classPath) ? readFileSync(classPath) : undefined;
+        },
+        readFile: (path) => (existsSync(path) ? readFileSync(path, "utf8") : undefined),
+        writeFile: (path, content) => {
+          mkdirSync(dirname(resolve(path)), { recursive: true });
+          writeFileSync(path, content);
+        },
       },
-      readFile: (path) => (existsSync(path) ? readFileSync(path, "utf8") : undefined),
-      writeFile: (path, content) => {
-        mkdirSync(dirname(resolve(path)), { recursive: true });
-        writeFileSync(path, content);
-      },
-    });
+      sany.readings,
+    );
     printResult(result, printer, timing);
     printFinished();
     return result.failure?.exitCode ?? EXIT_CODES[result.status];
