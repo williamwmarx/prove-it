@@ -45,7 +45,6 @@ export const withLivenessExitCode = (
       enabledAtoms: checker.enabledAtoms,
       addInitialState: (index, state, tracing) =>
         withErrorExitCode(() => checker.addInitialState(index, state, tracing)),
-      checkInitialState: (state) => withErrorExitCode(() => checker.checkInitialState(state)),
       addState: (index, state, successors, tracing) =>
         withErrorExitCode(() => checker.addState(index, state, successors, tracing)),
       findViolation: () => withErrorExitCode(() => checker.findViolation()),

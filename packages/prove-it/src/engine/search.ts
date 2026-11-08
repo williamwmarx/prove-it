@@ -64,9 +64,6 @@ export interface EngineInput {
   // reports them.
   onInitialStatesStarted: () => void;
   onInitialStates: (generated: number, distinct: number) => void;
-  // Whether the interpreter's liveness checker takes an initial state, which TLC adds to it as it
-  // computes the initial states.
-  isLiveInitialState: ((state: Int32Array) => boolean) | undefined;
   // Prints a line the spec prints.
   onPrint: (text: string) => void;
   startedAt: number;
@@ -336,9 +333,6 @@ export const runEngine = (input: EngineInput): EngineResult => {
     const isSeen = isInModel && table[2 * slot + 1] !== -1;
     if (!isSeen) {
       if (isInModel) setDistinct(stateCount + 1);
-      if (isInModel && input.isLiveInitialState?.(state) === false) {
-        bail("an initial state the liveness checker fails on");
-      }
       if (!holdsAll(context.initialInvariants)) bail("an invariant violated in an initial state");
       if (!holdsAll(context.initialPredicates)) bail("a property violated in an initial state");
       if (isInModel) {

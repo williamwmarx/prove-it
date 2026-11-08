@@ -41,8 +41,6 @@ export interface LivenessChecker {
   // With a tracing environment, the checks record their call stack as TLC's replay of a failed
   // check does.
   addInitialState: (index: number, state: Value[], tracing?: Environment) => void;
-  // Evaluates what addInitialState does on a state without adding it.
-  checkInitialState: (state: Value[]) => void;
   addState: (
     index: number,
     state: Value[],
@@ -1147,19 +1145,6 @@ export const createLivenessChecker = (
             behavior.initial.push(
               getNodeId(behavior, index, node) ?? recordNode(behavior, index, node),
             );
-          }
-        }
-      } finally {
-        endChecks();
-      }
-    },
-    checkInitialState: (state) => {
-      startChecks(undefined);
-      try {
-        for (const behavior of behaviors) {
-          const tableau = behavior.solution.tableau;
-          for (let node = 0; node < (tableau?.initialCount ?? 0); node++) {
-            isConsistent(behavior, tableau!, node, undefined, -1, state);
           }
         }
       } finally {
