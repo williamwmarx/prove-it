@@ -72,6 +72,33 @@ describe("PROVE_IT_STORE_TRACE", () => {
     });
   });
 
+  it("records the strings something else ranks, so comparing them replays", () => {
+    const path = join(directory, "ranks.jsonl");
+    writeFileSync(path, "");
+    const result = spawnSync(
+      "bun",
+      [
+        "-e",
+        [
+          'const values = await import("./src/values.ts");',
+          'const store = await import("./src/engine/store.ts");',
+          "values.setStringOrder([]); store.resetStore();",
+          'values.rankString("z"); values.rankString("a");',
+          'store.compare(store.str("z"), store.str("a"));',
+        ].join(" "),
+      ],
+      {
+        cwd: join(import.meta.dirname, "../.."),
+        encoding: "utf8",
+        env: { ...process.env, PROVE_IT_STORE_TRACE: path },
+      },
+    );
+    expect(result.status).toBe(0);
+    const trace = readFileSync(path, "utf8");
+    expect(trace).toContain('["rankStrings",[["z","a"]],null]');
+    expect(replayStoreTrace(trace)).toBeUndefined();
+  });
+
   it("records why an operation stopped", () => {
     const path = join(directory, "overflow.jsonl");
     writeFileSync(path, "");

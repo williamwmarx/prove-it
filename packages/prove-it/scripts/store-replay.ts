@@ -41,7 +41,7 @@ import {
   union,
   withElement,
 } from "../src/engine/store";
-import { setStringOrder } from "../src/values";
+import { rankString, setStringOrder } from "../src/values";
 
 interface Mismatch {
   line: number;
@@ -56,6 +56,10 @@ const OPERATIONS: Record<string, (args: unknown[]) => unknown> = {
   resetStore: (args) => {
     setStringOrder(Array.isArray(args[0]) ? args[0].map(String) : []);
     return resetStore();
+  },
+  rankStrings: (args) => {
+    for (const text of Array.isArray(args[0]) ? args[0] : []) rankString(String(text));
+    return null;
   },
   int: (args) => int(Number(args[0])),
   str: (args) => str(String(args[0])),

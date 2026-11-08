@@ -6,7 +6,7 @@
 // Composite values keep their elements in TLC's order, so enumerating a set visits elements in the
 // order TLC does and the engine generates successors in TLC's order.
 
-import { findStringRank, getStringOrder, getStringRank } from "../values";
+import { findStringRank, getRankedStringCount, getStringOrder, getStringRank } from "../values";
 import { getEnvironmentFlag, openDebugLog } from "./settings";
 
 export const KIND_BOOL = 0;
@@ -1421,12 +1421,20 @@ export const freezeTexts = () => {
 // PROVE_IT_STORE_TRACE=path writes each operation of the store to the file, one JSON line each:
 // its name, its arguments, as ids, numbers and texts, and its result, or {"bail": reason}. An
 // operation another calls isn't written. A reset's argument is TLC's order of strings then, which
-// ranks the strings the store makes. Another store given the same operations must return the
+// ranks the strings the store makes; a string something else ranks later, such as ToString, is
+// written as ["rankStrings", [texts], null] before the next operation, in the order it was ranked. Another store given the same operations must return the
 // same ids and stop for the same reasons, since TLC's order and the engine's ids follow from them.
 // Without the setting, the operations are the functions above.
 const writeTrace = openDebugLog("PROVE_IT_STORE_TRACE");
 if (writeTrace) {
-  const tracing = { depth: 0 };
+  // The number of strings ranked when the trace last wrote them or an operation ranked them.
+  const tracing = { depth: 0, ranked: 0 };
+  const writeRankedStrings = () => {
+    const count = getRankedStringCount();
+    if (count <= tracing.ranked) return;
+    writeTrace(JSON.stringify(["rankStrings", [getStringOrder().slice(tracing.ranked)], null]));
+    tracing.ranked = count;
+  };
   const getWords = (words: ArrayLike<number>, start: number, length: number) =>
     Array.from({ length }, (_, index) => words[start + index]);
   const trace =
@@ -1438,6 +1446,7 @@ if (writeTrace) {
     ) =>
     (...args: Args): Result => {
       if (tracing.depth > 0) return operation(...args);
+      if (name !== "resetStore") writeRankedStrings();
       // Some operations sort or reuse their arrays, so the arguments are copied first.
       const recorded = getArguments(...args);
       tracing.depth++;
@@ -1452,6 +1461,8 @@ if (writeTrace) {
         throw error;
       } finally {
         tracing.depth--;
+        // The strings the operation ranked, a replay ranks again by running it.
+        tracing.ranked = getRankedStringCount();
       }
     };
   resetStore = trace("resetStore", resetStore, () => [getStringOrder()]);
