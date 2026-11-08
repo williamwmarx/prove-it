@@ -619,7 +619,9 @@ export const createLivenessChecker = (
   const getSuccessorSet = (index: number, state: Value[], successors: LiveSuccessor[]) => {
     const entries = successorSet.entries;
     entries.length = 0;
-    entries.push(...successors, { index, state });
+    // A loop, not a spread: a spread passes every successor as an argument to push.
+    for (const successor of successors) entries.push(successor);
+    entries.push({ index, state });
     const table = { size: SUCCESSOR_CAPACITY * capacity.multiplier, count: 0 };
     getScratch(successorSet.slots, table.size).fill(0, 0, table.size);
     const insertSuccessor = (slots: Int32Array, size: number, position: number) => {
