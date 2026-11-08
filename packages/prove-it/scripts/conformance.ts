@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import type { ModelOutcome } from "./check-model";
@@ -17,7 +17,6 @@ interface ConformanceResult {
   detail: string | undefined;
 }
 
-const CONCURRENCY = 4;
 const PASSING_PATH = join(CONFORMANCE_DIRECTORY, "passing.json");
 const RESULTS_PATH = join(CONFORMANCE_DIRECTORY, ".results.json");
 
@@ -29,6 +28,9 @@ const getArgument = (name: string) => {
 const maximumTlcMilliseconds = Number(getArgument("--max-tlc-ms") ?? 20000);
 const filter = getArgument("--filter");
 const isUpdate = process.argv.includes("--update");
+const concurrency = Number(getArgument("--concurrency") ?? 4);
+// With --check, every model passing.json lists must still match TLC, or the run fails.
+const isChecked = process.argv.includes("--check");
 
 const runModel = (specPath: string, configPath: string) =>
   new Promise<ModelOutcome | undefined>((resolve) => {
@@ -90,7 +92,7 @@ const work = async (queue: CorpusModel[]) => {
 };
 
 const smallModels = models.filter((model) => !isLarge(model));
-await Promise.all(Array.from({ length: CONCURRENCY }, () => work(smallModels)));
+await Promise.all(Array.from({ length: concurrency }, () => work(smallModels)));
 await work(models.filter(isLarge));
 results.sort((left, right) => (left.id < right.id ? -1 : 1));
 writeFileSync(RESULTS_PATH, `${JSON.stringify(results, null, 2)}\n`);
@@ -109,4 +111,36 @@ if (isUpdate) {
   const passing = results.filter((result) => result.verdict === "match").map((result) => result.id);
   writeFileSync(PASSING_PATH, `${JSON.stringify(passing, null, 2)}\n`);
   console.log(`Wrote ${passing.length} passing models to ${PASSING_PATH}`);
+}
+
+if (isChecked) {
+  if (!existsSync(PASSING_PATH)) {
+    console.error(
+      `\n--check compares with ${PASSING_PATH}, which doesn't exist. Record it with --update.`,
+    );
+    process.exit(1);
+  }
+  const passing = new Set<string>(JSON.parse(readFileSync(PASSING_PATH, "utf8")));
+  const verdicts = new Map(results.map((result) => [result.id, result.verdict]));
+  // A listed model the run's options leave out is skipped; one the run didn't find, such as when
+  // the corpora weren't fetched, fails the run.
+  const isSelected = (id: string) => {
+    const expected = expectedById.get(id);
+    return (
+      expected !== undefined &&
+      (expected.status !== "error" || (expected.tlcMilliseconds ?? 0) <= maximumTlcMilliseconds) &&
+      (filter === undefined || id.includes(filter))
+    );
+  };
+  const regressed = [...passing].filter((id) => isSelected(id) && verdicts.get(id) !== "match");
+  const gained = results.filter((result) => result.verdict === "match" && !passing.has(result.id));
+  if (gained.length > 0) {
+    console.log(`\n${gained.length} models match that passing.json doesn't list:`);
+    for (const result of gained) console.log(`  ${result.id}`);
+  }
+  if (regressed.length > 0) {
+    console.log(`\n${regressed.length} models listed in passing.json no longer match:`);
+    for (const id of regressed) console.log(`  ${id}: ${verdicts.get(id) ?? "not found"}`);
+    process.exitCode = 1;
+  }
 }
