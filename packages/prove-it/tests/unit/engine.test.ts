@@ -868,6 +868,29 @@ const tokenRing = (property: string) =>
 const TOKEN_RING_CONFIG =
   "CONSTANTS N = 3\nM = 3\nCHECK_DEADLOCK FALSE\nSPECIFICATION Spec\nPROPERTY Property";
 
+describe("the engine's initial states", () => {
+  // TLC's InitialLivenessEvaluationError: TLC adds each initial state to the liveness checker as it
+  // computes them, and fails there before it reports them.
+  it("hands over an initial state the liveness checker fails on before reporting them", async () => {
+    const options = {
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == (x = 0 /\\ x' = 1) \\/ UNCHANGED x\nSpec == Init /\\ [][Next]_x\nInv == x = 0\nProp == <>~ENABLED (x' > x)\n====",
+      config: "SPECIFICATION Spec\nINVARIANT Inv\nPROPERTY Prop",
+    };
+    const run = async () => {
+      const progress: string[] = [];
+      const result = await check({ ...options, onProgress: (event) => progress.push(event.kind) });
+      return { result, progress };
+    };
+    delete process.env.PROVE_IT_ENGINE;
+    const actual = await run();
+    process.env.PROVE_IT_ENGINE = "0";
+    const reference = await run();
+    expect(actual).toEqual(reference);
+    expect(reference.progress).not.toContain("initial-states-computed");
+  });
+});
+
 describe("the engine's answers to ENABLED", () => {
   // Checks a model with the engine, with PROVE_IT_LIVE_CHECK=1, which also runs each action whose
   // ENABLED it answers from the steps of its search and takes each step through Next as well as

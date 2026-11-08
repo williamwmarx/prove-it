@@ -1531,6 +1531,18 @@ const searchStates = (
           options.onProgress?.({ kind: "initial-states-started" });
         },
         onPrint: print,
+        isLiveInitialState:
+          liveness &&
+          ((state) =>
+            captureOutput(() => {
+              try {
+                liveness.checkInitialState(Array.from(state, toEngineValue));
+                return true;
+              } catch (error) {
+                if (error instanceof TlaEvaluationError) return false;
+                throw error;
+              }
+            }).result),
         onInitialStates: (generated, distinct) => {
           engineReport.isComputedReported = true;
           options.onProgress?.({
