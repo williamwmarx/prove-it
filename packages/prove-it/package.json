@@ -62,6 +62,7 @@
     "conformance:differential": "bun run build && bun scripts/run.ts differential",
     "conformance:fetch": "bun scripts/run.ts fetch-corpora",
     "conformance:fingerprint": "bun scripts/run.ts fingerprint-conformance",
+    "conformance:fp64": "bun scripts/run.ts native-replay --fingerprints",
     "conformance:isabelle": "bun scripts/run.ts isabelle-conformance",
     "conformance:isabelle-encode": "bun scripts/run.ts isabelle-encode-conformance",
     "conformance:sany": "bun scripts/run.ts proof-conformance",

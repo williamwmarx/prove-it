@@ -7,5 +7,12 @@ name = "prove-it-napi"
 version = "0.1.0"
 
 [[package]]
+name = "replay"
+version = "0.1.0"
+dependencies = [
+ "tla-values",
+]
+
+[[package]]
 name = "tla-values"
 version = "0.1.0"
