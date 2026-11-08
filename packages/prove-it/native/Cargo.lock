@@ -6,6 +6,7 @@ version = 4
 name = "prove-it-napi"
 version = "0.1.0"
 dependencies = [
+ "tla-ir",
  "tla-values",
 ]
 
@@ -15,6 +16,10 @@ version = "0.1.0"
 dependencies = [
  "tla-values",
 ]
+
+[[package]]
+name = "tla-ir"
+version = "0.1.0"
 
 [[package]]
 name = "tla-values"

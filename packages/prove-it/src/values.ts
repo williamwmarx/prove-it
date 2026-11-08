@@ -317,14 +317,14 @@ const checkModelValueTypes = (left: Value, right: Value, isEquality: boolean) =>
 
 // TLC orders strings and model value names by when it first interned the text, so every
 // check sets the order of its spec's strings before it builds any value.
-const stringOrder: { ranks: Record<string, number>; size: number } = {
+const stringOrder: { ranks: Record<string, number>; texts: string[] } = {
   ranks: Object.create(null),
-  size: 0,
+  texts: [],
 };
 
 export const setStringOrder = (texts: Iterable<string>) => {
   stringOrder.ranks = Object.create(null);
-  stringOrder.size = 0;
+  stringOrder.texts = [];
   modelValues.clear();
   for (const text of texts) rankString(text);
 };
@@ -338,17 +338,17 @@ export const setValueVersion = (version: TlcVersion | undefined) => {
 };
 
 export const rankString = (text: string) => {
-  if (stringOrder.ranks[text] === undefined) stringOrder.ranks[text] = stringOrder.size++;
+  if (stringOrder.ranks[text] === undefined) {
+    stringOrder.ranks[text] = stringOrder.texts.length;
+    stringOrder.texts.push(text);
+  }
   return text;
 };
 
-export const getRankedStringCount = () => stringOrder.size;
+export const getRankedStringCount = () => stringOrder.texts.length;
 
 // The ranked texts, in the order of their ranks.
-export const getStringOrder = () =>
-  Object.entries(stringOrder.ranks)
-    .sort((left, right) => left[1] - right[1])
-    .map((entry) => entry[0]);
+export const getStringOrder = (): readonly string[] => stringOrder.texts;
 
 export const getStringRank = (text: string) => stringOrder.ranks[rankString(text)];
 

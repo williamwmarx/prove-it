@@ -3348,46 +3348,6 @@
     ]
   },
   {
-    "id": "tlc/tlatools/org.lamport.tlatools/test-model/InitialLivenessEvaluationError.cfg",
-    "mode": "default",
-    "pair": "tlc/ts",
-    "reason": "The engine prints \"Finished computing initial states\" before the error in the initial state, which TLC and the interpreter don't. An engine bug.",
-    "diff": [
-      "+Finished computing initial states: 1 distinct state generated at _."
-    ]
-  },
-  {
-    "id": "tlc/tlatools/org.lamport.tlatools/test-model/InitialLivenessEvaluationError.cfg",
-    "mode": "default",
-    "pair": "ts/interpreter",
-    "reason": "The engine prints \"Finished computing initial states\" before the error in the initial state, which TLC and the interpreter don't. An engine bug.",
-    "diff": [
-      "-Finished computing initial states: 1 distinct state generated at _."
-    ]
-  },
-  {
-    "id": "tlc/tlatools/org.lamport.tlatools/test-model/InitialLivenessEvaluationError.cfg",
-    "mode": "tool",
-    "pair": "tlc/ts",
-    "reason": "The engine prints \"Finished computing initial states\" before the error in the initial state, which TLC and the interpreter don't. An engine bug.",
-    "diff": [
-      "+@!@!@STARTMSG 2190:0 @!@!@",
-      "+Finished computing initial states: 1 distinct state generated at _.",
-      "+@!@!@ENDMSG 2190 @!@!@"
-    ]
-  },
-  {
-    "id": "tlc/tlatools/org.lamport.tlatools/test-model/InitialLivenessEvaluationError.cfg",
-    "mode": "tool",
-    "pair": "ts/interpreter",
-    "reason": "The engine prints \"Finished computing initial states\" before the error in the initial state, which TLC and the interpreter don't. An engine bug.",
-    "diff": [
-      "-@!@!@STARTMSG 2190:0 @!@!@",
-      "-Finished computing initial states: 1 distinct state generated at _.",
-      "-@!@!@ENDMSG 2190 @!@!@"
-    ]
-  },
-  {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/NormalizationAssume.cfg",
     "mode": "default",
     "pair": "tlc/ts",
@@ -3704,21 +3664,21 @@
       "-Finished in _ at (_)",
       "+",
       "+--- stderr",
-      "+file:///home/runner/work/prove-it/prove-it/packages/prove-it/dist/index-18v97dsn.js:4086",
+      "+file:///home/runner/work/prove-it/prove-it/packages/prove-it/dist/index-7za7pdkp.js:4086",
       "+  beginLine: file.tokens[span.start].line,",
       "+                                     ^",
       "+",
       "+TypeError: Cannot read properties of undefined (reading 'line')",
-      "+    at getSpanLocation (file:///home/runner/work/prove-it/prove-it/packages/prove-it/dist/index-18v97dsn.js:4086:38)",
-      "+    at getTokenLocation (file:///home/runner/work/prove-it/prove-it/packages/prove-it/dist/index-18v97dsn.js:4091:41)",
-      "+    at file:///home/runner/work/prove-it/prove-it/packages/prove-it/dist/index-18v97dsn.js:4792:90",
+      "+    at getSpanLocation (file:///home/runner/work/prove-it/prove-it/packages/prove-it/dist/index-7za7pdkp.js:4086:38)",
+      "+    at getTokenLocation (file:///home/runner/work/prove-it/prove-it/packages/prove-it/dist/index-7za7pdkp.js:4091:41)",
+      "+    at file:///home/runner/work/prove-it/prove-it/packages/prove-it/dist/index-7za7pdkp.js:4792:90",
       "+    at Array.map (<anonymous>)",
-      "+    at file:///home/runner/work/prove-it/prove-it/packages/prove-it/dist/index-18v97dsn.js:4792:42",
-      "+    at withContext (file:///home/runner/work/prove-it/prove-it/packages/prove-it/dist/index-18v97dsn.js:4580:22)",
-      "+    at generateLambda (file:///home/runner/work/prove-it/prove-it/packages/prove-it/dist/index-18v97dsn.js:4791:14)",
-      "+    at generateArgument (file:///home/runner/work/prove-it/prove-it/packages/prove-it/dist/index-18v97dsn.js:4844:24)",
-      "+    at Object.generateArgument (file:///home/runner/work/prove-it/prove-it/packages/prove-it/dist/index-18v97dsn.js:4697:66)",
-      "+    at file:///home/runner/work/prove-it/prove-it/packages/prove-it/dist/index-18v97dsn.js:3709:97",
+      "+    at file:///home/runner/work/prove-it/prove-it/packages/prove-it/dist/index-7za7pdkp.js:4792:42",
+      "+    at withContext (file:///home/runner/work/prove-it/prove-it/packages/prove-it/dist/index-7za7pdkp.js:4580:22)",
+      "+    at generateLambda (file:///home/runner/work/prove-it/prove-it/packages/prove-it/dist/index-7za7pdkp.js:4791:14)",
+      "+    at generateArgument (file:///home/runner/work/prove-it/prove-it/packages/prove-it/dist/index-7za7pdkp.js:4844:24)",
+      "+    at Object.generateArgument (file:///home/runner/work/prove-it/prove-it/packages/prove-it/dist/index-7za7pdkp.js:4697:66)",
+      "+    at file:///home/runner/work/prove-it/prove-it/packages/prove-it/dist/index-7za7pdkp.js:3709:97",
       "+",
       "+Node.js v24.16.0"
     ]
@@ -3766,21 +3726,21 @@
       "-@!@!@ENDMSG 2186 @!@!@",
       "+",
       "+--- stderr",
-      "+file:///home/runner/work/prove-it/prove-it/packages/prove-it/dist/index-18v97dsn.js:4086",
+      "+file:///home/runner/work/prove-it/prove-it/packages/prove-it/dist/index-7za7pdkp.js:4086",
       "+  beginLine: file.tokens[span.start].line,",
       "+                                     ^",
       "+",
       "+TypeError: Cannot read properties of undefined (reading 'line')",
-      "+    at getSpanLocation (file:///home/runner/work/prove-it/prove-it/packages/prove-it/dist/index-18v97dsn.js:4086:38)",
-      "+    at getTokenLocation (file:///home/runner/work/prove-it/prove-it/packages/prove-it/dist/index-18v97dsn.js:4091:41)",
-      "+    at file:///home/runner/work/prove-it/prove-it/packages/prove-it/dist/index-18v97dsn.js:4792:90",
+      "+    at getSpanLocation (file:///home/runner/work/prove-it/prove-it/packages/prove-it/dist/index-7za7pdkp.js:4086:38)",
+      "+    at getTokenLocation (file:///home/runner/work/prove-it/prove-it/packages/prove-it/dist/index-7za7pdkp.js:4091:41)",
+      "+    at file:///home/runner/work/prove-it/prove-it/packages/prove-it/dist/index-7za7pdkp.js:4792:90",
       "+    at Array.map (<anonymous>)",
-      "+    at file:///home/runner/work/prove-it/prove-it/packages/prove-it/dist/index-18v97dsn.js:4792:42",
-      "+    at withContext (file:///home/runner/work/prove-it/prove-it/packages/prove-it/dist/index-18v97dsn.js:4580:22)",
-      "+    at generateLambda (file:///home/runner/work/prove-it/prove-it/packages/prove-it/dist/index-18v97dsn.js:4791:14)",
-      "+    at generateArgument (file:///home/runner/work/prove-it/prove-it/packages/prove-it/dist/index-18v97dsn.js:4844:24)",
-      "+    at Object.generateArgument (file:///home/runner/work/prove-it/prove-it/packages/prove-it/dist/index-18v97dsn.js:4697:66)",
-      "+    at file:///home/runner/work/prove-it/prove-it/packages/prove-it/dist/index-18v97dsn.js:3709:97",
+      "+    at file:///home/runner/work/prove-it/prove-it/packages/prove-it/dist/index-7za7pdkp.js:4792:42",
+      "+    at withContext (file:///home/runner/work/prove-it/prove-it/packages/prove-it/dist/index-7za7pdkp.js:4580:22)",
+      "+    at generateLambda (file:///home/runner/work/prove-it/prove-it/packages/prove-it/dist/index-7za7pdkp.js:4791:14)",
+      "+    at generateArgument (file:///home/runner/work/prove-it/prove-it/packages/prove-it/dist/index-7za7pdkp.js:4844:24)",
+      "+    at Object.generateArgument (file:///home/runner/work/prove-it/prove-it/packages/prove-it/dist/index-7za7pdkp.js:4697:66)",
+      "+    at file:///home/runner/work/prove-it/prove-it/packages/prove-it/dist/index-7za7pdkp.js:3709:97",
       "+",
       "+Node.js v24.16.0"
     ]

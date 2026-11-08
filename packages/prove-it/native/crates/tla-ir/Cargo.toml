@@ -1,0 +1,8 @@
+[package]
+name = "tla-ir"
+description = "The engine IR of Prove It: what the native engine reads of a model, decoded and encoded"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true

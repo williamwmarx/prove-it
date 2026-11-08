@@ -49,7 +49,9 @@ export interface LivenessChecker {
   ) => number[] | undefined;
   findViolation: () => Lasso | undefined;
   getViolatedProperties: (path: Value[][], cycleStart: number) => string[];
-  // The ENABLED predicates the checks ask about.
+  // The state predicates, action predicates and ENABLED predicates the checks ask about.
+  atoms: LiveExpression[];
+  // The ENABLED predicates among them.
   enabledAtoms: LiveEnabled[];
 }
 
@@ -1130,6 +1132,7 @@ export const createLivenessChecker = (
 
   return {
     branches: behaviors.length,
+    atoms: [...atomIds.keys()],
     enabledAtoms: [...atomIds.keys()].filter((atom) => atom.kind === "Enabled"),
     addInitialState: (index, state, tracing) => {
       startChecks(tracing);

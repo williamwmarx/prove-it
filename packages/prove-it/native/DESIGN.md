@@ -4,7 +4,7 @@ A design for a Rust model checker that is faster than today's Prove It and print
 TLC prints, staged so that every step ships on its own, is measurably faster, and is proven
 identical to TLC and to the TypeScript checker before it is switched on.
 
-Status: proposal, with M1 built (its outcome is in section 11). Every number marked *measured*
+Status: proposal, with M1 and M3 built (their outcomes are in section 11). Every number marked *measured*
 comes from the prototypes under `native/prototypes/` (section 10) on a local 4-core cloud machine
 (Rust 1.97.0, Bun 1.4.4, Node 22.23.4). Those timings vary by about 10% between runs. Depot
 numbers come from the benchmark of `main` at f284739 (run cb7zd2w63s), as summarised on the
@@ -1553,6 +1553,82 @@ On the 4-core cloud machine, against the 733 models with TLC under 20 s:
 - IR build time ≤ 1 ms median on 2PCwithBTM and ≤ 3 ms on btree on Depot `-4`;
 - the string table equals `createTlcOrder`'s order, checked against `getStringRank` for every
   text.
+
+#### M3 as built
+
+Branch `native-m3-ir`, measured on the 4-core cloud machine, not on Depot yet. Where the code made
+this design change, the code wins, and this records how:
+
+- **Where it lives.** `src/engine/ir.ts` lowers; the decoder and encoder are a crate of their own,
+  `crates/tla-ir` (no dependencies), not part of `tla-engine`, since stage 4's front end encodes
+  what the engine decodes. `prove-it-napi` depends on it: `check` decodes the IR and declines with
+  "the native engine compiles nothing yet", or with "the engine IR doesn't decode: …". The ABI
+  version stays 1; the IR carries `IR_VERSION` (1) in its header, and the decoder refuses another.
+- **When it is built.** Only when `PROVE_IT_ENGINE_BACKEND` asks for the native engine and the
+  addon has loaded, or when `PROVE_IT_IR_DUMP` names a file to write it to. It runs in `tryEngine`
+  after the eligibility checks, from the inputs `runEngine` takes, so the default path is the code
+  that ran before. `PROVE_IT_ENGINE=debug` reports `[engine] native: ir: <n> bytes in <ms> ms` or
+  `native: ir: declined: <reason>`, after the file is written.
+- **Layout** (`ir.ts`'s header comment is the reference). Little-endian 32-bit words, then the
+  texts as one UTF-8 string, padded to a word. Each text's end is a count of UTF-16 code units, so
+  JavaScript encodes every text in one `TextEncoder` call; a text with a lone surrogate, which UTF-8
+  can't hold, declines the IR. Text `i` below the ranked count is the string of rank `i`; the texts
+  TLC doesn't rank, such as names and the TLC version, follow. Sections: texts, variables in the
+  engine's order and TLC's order of them, the builtins named (name, arity, state-level, level-
+  constant and lazy flags), the constants named, the instance scopes read (a value, a thunk, a
+  closure, or opaque where `contextFromScope` would give up), the values, the model, the
+  definitions, the nodes.
+- **Values** are `transfer.ts`'s encoding as `createStateEncoder` writes it, one value per
+  `encode`, with the encoder's string table mapped to text indices. A constant transfer can't
+  encode, such as a lazy set, keeps no value, and the compiler is to refuse it where it is read.
+  Startup values are kept only where `getStartupEffectValue` reads them: for a definition with a
+  repeated effect, marking one that isn't a string, number or boolean, which the compiler refuses.
+- **Resolution.** Every `Identifier`, `Apply` and `OperatorReference` keeps its name, whether
+  SANY resolved it locally (which the compiler looks up first, by name, in its scope), and what it
+  names otherwise, in the compiler's own order: for an identifier a variable, a constant, a
+  definition, then a builtin of any arity through the substitutions; for an operator a definition,
+  then a builtin. An instance's variable that ENABLED's rewrite names (`x@ENABLED`) may have a slot
+  past the state's, as in the TypeScript environment, so the decoder doesn't bound variable slots.
+- **Nodes and definitions.** Nodes are written in prefix order with their line and column. An
+  `Expression` object met again is written as a reference to its first offset, which keeps the
+  identities the TS engine relies on (conjuncts deduplicated by object, liveness atoms); 234 of the
+  650 IRs have one. Definitions are records among the nodes, indexed in the order the model first
+  reaches them (Init, Next, TLC's actions, invariants, constraints, action constraints, properties,
+  VIEW, atoms, then breadth-first through the definitions and scopes). Each keeps its recursive,
+  local, self-referential, repeated-effect and substituted flags. LET definitions are records
+  inline in their LET.
+- **The model** holds, besides 1.3's list, whether each invariant may print (`hasRepeatedEffect`),
+  and for liveness the actions only when the search labels its steps (as `runEngine` gets them) and
+  every atom the tableau asks about, which `LivenessChecker.atoms` now exposes, each ENABLED atom
+  with the positions of TLC's actions it splits into, "all", or unknown.
+- **Golden files** are the IR of 30 corpus models in `tests/conformance/ir/`: the suite's 15 corpus
+  models and 15 more reaching an instance's scope, labelled actions, a VIEW, action constraints,
+  properties checked as invariants, action properties, initial predicates, invariants that print,
+  recursion, LAMBDA, function definitions and startup values. `cargo test` round-trips every one
+  and checks what a few of them hold, so CI covers them without the corpora.
+  `bun scripts/run.ts engine-ir [--update]` lowers every corpus model (it stops each at the IR),
+  round-trips all of them with `ir-round-trip`, compares the golden models, and checks each string
+  table against `createTlcOrder` and `getStringRank`.
+- `values.ts` keeps the ranked texts in rank order, so `getStringOrder` no longer sorts them.
+
+#### M3 acceptance, as run
+
+- **IR for every model: met.** 650 of the 823 models have an IR. The other 173 name their reason:
+  111 never reach the engine (62 errors before it, 33 specs with no Init or Next, 14 assumption
+  violations, and 2 crashes, on models TLC itself errors on only after 300 s), and 62 are declined
+  by `getEngineIneligibility`: liveness under symmetry or a VIEW (34), `_POSSIBLE`
+  (18), wide strings (7), properties in an
+  instance (2) and periodic (1).
+- **Round trip: met.** 650 of 650 decode and encode again byte for byte.
+- **Golden files: met.** The 30 match on a second run.
+- **Build time: not met for 2PCwithBTM here.** On the bytecode binary, median of 15 cold runs:
+  2PCwithBTM 1.63 ms (target 1 ms), btree 2.91 ms (target 3 ms). Lowering the same model again in
+  the process takes 0.3 ms, and with the JIT off (`BUN_JSC_useJIT=0`) the first lowering takes
+  1.1–1.3 ms, so most of the cold cost is JavaScriptCore compiling the walk as it warms up, not the
+  walk. Splitting the node writer so less of it is compiled, and dropping the node-identity map,
+  changed nothing measurable. Depot remains to measure; the IR costs nothing unless asked for.
+- **String table: met.** On all 650, the table starts with `createTlcOrder`'s order and
+  `getStringRank` ranks every ranked text by its position.
 
 ### M4. The expression compiler
 

@@ -3,6 +3,7 @@ import { type ModelConfig, parseConfig } from "./config";
 import { getMemoStatistics } from "./engine/compile";
 import { toEngineProperties } from "./engine/context";
 import { toValue as toEngineValue } from "./engine/convert";
+import { type IrOutcome, lowerToIr } from "./engine/ir";
 import { checkNatively } from "./engine/native";
 import { type EngineCheckpoint, type EngineGraph, isBailout, runEngine } from "./engine/search";
 import {
@@ -10,7 +11,9 @@ import {
   getEngineSetting,
   getEngineThreads,
   getEnvironmentFlag,
+  isIrDumped,
   reportEngine,
+  writeDebugBytes,
 } from "./engine/settings";
 import { createEnvironment } from "./environment";
 import {
@@ -846,13 +849,33 @@ const searchStates = (
     Object.assign(current, { index, isExpanding: true, candidate: undefined });
     const getKey = isHeld ? (values: Value[]) => values : getFingerprintState;
     const key = getKey(state);
-    const action = actions.find((item) =>
-      getSuccessors(item.expression, previous, environment, item.scope).some((successor) =>
-        isSameState(getKey(successor.state), key),
+    const action = withRebuiltLevel(previous, depths[index], () =>
+      actions.find((item) =>
+        getSuccessors(item.expression, previous, environment, item.scope).some((successor) =>
+          isSameState(getKey(successor.state), key),
+        ),
       ),
     );
     Object.assign(current, expanding);
     return action;
+  };
+  // While the interpreter rebuilds the steps through states the engine handed over, TLCGet("level")
+  // reads what it read as the search expanded each: the state's depth, one more for a successor,
+  // and 0 in the initial predicate.
+  const rebuilding = { isActive: false, state: undefined as Value[] | undefined, depth: 0 };
+  const withRebuiltLevel = <Result>(
+    state: Value[] | undefined,
+    depth: number,
+    evaluate: () => Result,
+  ): Result => {
+    if (transferred.count === 0) return evaluate();
+    const saved = { ...rebuilding };
+    Object.assign(rebuilding, { isActive: true, state, depth });
+    try {
+      return evaluate();
+    } finally {
+      Object.assign(rebuilding, saved);
+    }
   };
   // Before TLC prints a trace, it rebuilds from the initial predicate the states it does not keep,
   // all but the last `known` ones. As it prints each later step, it finds the action that takes
@@ -935,7 +958,9 @@ const searchStates = (
   const getPathStates = (path: number[], nextFailure: string) => {
     const initial = captureOutput(() =>
       isReducing || isImpure(environment)
-        ? getSpecInitialStates().find((state) => hasFingerprint(state, path[0]))
+        ? withRebuiltLevel(undefined, 0, getSpecInitialStates).find((state) =>
+            hasFingerprint(state, path[0]),
+          )
         : states[path[0]],
     ).result;
     if (!initial) throw new TlaEvaluationError(INITIAL_RECOVERY_FAILURE);
@@ -947,7 +972,9 @@ const searchStates = (
         steps.push({ state: previous, action: "Stuttering" });
         continue;
       }
-      const successor = findSuccessorWithFingerprint(previous, path[position]);
+      const successor = withRebuiltLevel(previous, depths[path[position - 1]], () =>
+        findSuccessorWithFingerprint(previous, path[position]),
+      );
       if (!successor) throw new TlaEvaluationError(nextFailure);
       settleRecoveredState(successor.state);
       steps.push(successor);
@@ -1118,11 +1145,19 @@ const searchStates = (
     const mask = seenStates.slots.length - 1;
     for (let slot = getSlot(hash); ; slot = (slot + 2) & mask) {
       const entry = seenStates.slots[slot + 1];
-      if (entry === 0) return -1;
+      if (entry === 0) return pending.findState ? findPendingState(hash, state) : -1;
       if (seenStates.slots[slot] === hash && isSameState(fingerprintStates[entry - 1], state)) {
         return entry - 1;
       }
     }
+  };
+  // The engine finds a state among those the interpreter hasn't taken over, unless it can't tell;
+  // then the interpreter takes them over and looks again.
+  const findPendingState = (hash: number, state: Value[]): number => {
+    const found = pending.findState?.(state);
+    if (found !== undefined) return found;
+    takePendingStates();
+    return findStateIndex(hash, state);
   };
   const insertSeen = (hash: number, entry: number) => {
     const mask = seenStates.slots.length - 1;
@@ -1192,6 +1227,10 @@ const searchStates = (
     if (is174) {
       const explored = source !== -1 ? source : current.isExpanding ? current.index : -1;
       return explored === -1 ? 0 : depths[explored];
+    }
+    if (rebuilding.isActive) {
+      if (!rebuilding.state) return 0;
+      return state === rebuilding.state ? rebuilding.depth : rebuilding.depth + 1;
     }
     if (source !== -1) return state === states[source] ? depths[source] : depths[source] + 1;
     if (state === current.candidate) return current.candidateLevel;
@@ -1369,39 +1408,138 @@ const searchStates = (
     // The last count of initial states the engine reported, which the interpreter, computing them
     // again, reports only past.
     initialProgress: 0,
+    // With temporal properties, the counts of initial states the engine hasn't reported yet: TLC
+    // reports them as it adds the initial states to the liveness checker, which may fail first.
+    heldProgress: [] as number[],
     checkpoint: undefined as EngineCheckpoint | undefined,
     // TLC's fingerprints of the states of a graph the engine handed over.
     fingerprints: undefined as BigInt64Array | undefined,
+  };
+  // Reports the counts held back below the number of initial states generated so far.
+  const releaseInitialProgress = (generated: number) => {
+    const held = engineReport.heldProgress;
+    const released = held.findIndex((count) => count >= generated);
+    for (const count of held.splice(0, released === -1 ? held.length : released)) {
+      engineReport.initialProgress = count;
+      options.onProgress?.({ kind: "initial-states-progress", count });
+    }
   };
   // States the engine found, which the interpreter took over without their actions, so a trace
   // through them finds its actions again as it does for a reduced state space.
   const transferred = { count: 0 };
   // The index of each state the engine handed over, for its answers to the liveness checker.
   const engineIndices = new WeakMap<Value[], number>();
-  // In a replay of the engine's complete search, how many states the replay has reached.
+  // In a replay of the engine's search, how many states the replay has reached.
   const replayed = { discovered: 0 };
-  const resumeFromEngine = (checkpoint: EngineCheckpoint) => {
+  // Whether the interpreter replays the steps the engine took from the state at the index.
+  const isReplaying = (index: number) => index < (engineReport.checkpoint?.graph?.expanded ?? 0);
+  // The engine's states the interpreter has yet to take over, in place of which it keeps UNTAKEN,
+  // and the engine's answer, for these, of whether a state is among them.
+  const pending = {
+    checkpoint: undefined as EngineCheckpoint | undefined,
+    findState: undefined as ((key: Value[]) => number | undefined) | undefined,
+  };
+  const UNTAKEN: Value[] = [];
+  const toEngineState = (checkpoint: EngineCheckpoint, index: number) => {
     const width = checkpoint.width;
-    for (let index = 0; index < checkpoint.count; index++) {
-      const state: Value[] = new Array(width);
-      for (let variable = 0; variable < width; variable++) {
-        state[variable] = toEngineValue(checkpoint.states[index * width + variable]);
-      }
-      const keys = checkpoint.keys;
-      const keyWidth = checkpoint.keyWidth ?? width;
-      engineIndices.set(state, index);
-      const fingerprintState = keys
-        ? Array.from({ length: keyWidth }, (_, position) =>
-            toEngineValue(keys[index * keyWidth + position]),
-          )
-        : getFingerprintState(state);
-      state.forEach(markFingerprinted);
-      markSeen(getStateHash(fingerprintState), states.length);
-      const parent = checkpoint.parents[index];
-      if (parent === -1 && checkpoint.graph) liveness?.addInitialState(states.length, state);
-      countDistinctState(parent === -1 ? 1 : depths[parent] + 1);
-      addState(state, fingerprintState, parent, undefined);
+    const state: Value[] = new Array(width);
+    for (let variable = 0; variable < width; variable++) {
+      state[variable] = toEngineValue(checkpoint.states[index * width + variable]);
     }
+    return state;
+  };
+  const toEngineKey = (checkpoint: EngineCheckpoint, index: number, state: Value[]) => {
+    const keys = checkpoint.keys;
+    const keyWidth = checkpoint.keyWidth ?? checkpoint.width;
+    return keys
+      ? Array.from({ length: keyWidth }, (_, position) =>
+          toEngineValue(keys[index * keyWidth + position]),
+        )
+      : getFingerprintState(state);
+  };
+  const takeState = (checkpoint: EngineCheckpoint, index: number) => {
+    const state = toEngineState(checkpoint, index);
+    engineIndices.set(state, index);
+    const fingerprintState = toEngineKey(checkpoint, index, state);
+    state.forEach(markFingerprinted);
+    return { state, fingerprintState, hash: getStateHash(fingerprintState) };
+  };
+  // TLC reports an error in an initial state once it has replayed the initial predicate with its call
+  // stack.
+  const reportInitialFailure = (error: unknown, state: Value[]) => {
+    const replay = captureOutput(replayInit);
+    return createFailureResult(
+      error,
+      { trace: [], traceOutput: replay.lines },
+      { initialState: state, ...replay.result, isInitial: true },
+    );
+  };
+  // TLC adds each initial state to the liveness checker as it finds it, with the counts so far and
+  // TLCGet("level") at 1, before it stores the state.
+  const addEngineInitialState = (
+    checkpoint: EngineCheckpoint,
+    index: number,
+    taken: { state: Value[]; fingerprintState: Value[] },
+  ) => {
+    runtime.generatedStates = checkpoint.initialCounts?.[index] ?? index + 1;
+    releaseInitialProgress(runtime.generatedStates);
+    runtime.initialStates = runtime.generatedStates;
+    countDistinctState(1);
+    runtime.queueSize = index + 1;
+    current.candidate = taken.state;
+    current.candidateLevel = 1;
+    unstoredState.fingerprint = taken.fingerprintState;
+    try {
+      liveness?.addInitialState(index, taken.state);
+      return undefined;
+    } catch (error) {
+      return reportInitialFailure(error, taken.state);
+    }
+  };
+  // Takes over the rest of the engine's states, once the interpreter goes past the one it expands
+  // again.
+  const takePendingStates = () => {
+    const checkpoint = pending.checkpoint;
+    if (!checkpoint) return;
+    pending.checkpoint = undefined;
+    pending.findState = undefined;
+    for (let index = 0; index < checkpoint.count; index++) {
+      if (states[index] !== UNTAKEN) continue;
+      const taken = takeState(checkpoint, index);
+      markSeen(taken.hash, index);
+      states[index] = taken.state;
+      fingerprintStates[index] = taken.fingerprintState;
+    }
+  };
+  const resumeFromEngine = (checkpoint: EngineCheckpoint) => {
+    // Without a graph, the interpreter takes over only the states up to the one it expands again,
+    // which is all it reads of them when it finds what the engine stopped at, and asks the engine
+    // whether a successor is among the others.
+    const findState = checkpoint.graph ? undefined : checkpoint.findState;
+    const onPath = new Set<number>();
+    for (
+      let position = findState ? checkpoint.expanding : -1;
+      position !== -1;
+      position = checkpoint.parents[position]
+    ) {
+      onPath.add(position);
+    }
+    for (let index = 0; index < checkpoint.count; index++) {
+      const parent = checkpoint.parents[index];
+      const taken = !findState || onPath.has(index) ? takeState(checkpoint, index) : undefined;
+      if (taken && parent === -1 && checkpoint.graph) {
+        outcome.result = addEngineInitialState(checkpoint, index, taken);
+        if (outcome.result) return 0;
+      }
+      if (taken) markSeen(taken.hash, index);
+      countDistinctState(parent === -1 ? 1 : depths[parent] + 1);
+      addState(taken?.state ?? UNTAKEN, taken?.fingerprintState ?? UNTAKEN, parent, undefined);
+    }
+    if (findState) {
+      pending.checkpoint = checkpoint;
+      pending.findState = findState;
+    }
+    releaseInitialProgress(Infinity);
     transferred.count = checkpoint.count;
     if (checkpoint.graph) {
       replayed.discovered = parents.filter((parent) => parent === -1).length;
@@ -1416,9 +1554,14 @@ const searchStates = (
         path.unshift(position);
       }
       const replayed = captureOutput(() => {
-        let state = getSpecInitialStates().find((initial) => hasFingerprint(initial, path[0]));
+        let state = withRebuiltLevel(undefined, 0, getSpecInitialStates).find((initial) =>
+          hasFingerprint(initial, path[0]),
+        );
         for (let position = 1; state && position < path.length; position++) {
-          state = findSuccessorWithFingerprint(state, path[position])?.state;
+          const previous = state;
+          state = withRebuiltLevel(previous, depths[path[position - 1]], () =>
+            findSuccessorWithFingerprint(previous, path[position]),
+          )?.state;
         }
         return state;
       }).result;
@@ -1439,7 +1582,7 @@ const searchStates = (
       generated: checkpoint.initialGenerated,
       distinct: parents.filter((parent) => parent === -1).length,
     };
-    return checkpoint.expanding;
+    return checkpoint.graph ? 0 : checkpoint.expanding;
   };
   const tryEngine = (): CheckResult | undefined => {
     const reason = getEngineIneligibility();
@@ -1450,13 +1593,6 @@ const searchStates = (
     const init = spec.init;
     const next = spec.next;
     if (init === undefined || next === undefined) return undefined;
-    if (getEngineBackend() !== "ts") {
-      const nativeStartedAt = performance.now();
-      const native = checkNatively();
-      reportEngine(
-        `native: ${native.status}: ${native.reason} (${(performance.now() - nativeStartedAt).toFixed(2)} ms)`,
-      );
-    }
     // The engine answers ENABLED <<A>>_v of a state from the steps its search took when A is made of
     // TLC's actions of the next-state relation. A constraint drops steps, and TLC's ENABLED shows
     // the effects of running A, such as printing, so then the engine runs A.
@@ -1476,41 +1612,107 @@ const searchStates = (
           enabledActions.set(atom, positions.length === actions.length ? "all" : positions);
       }
     }
+    const takeGraph = (checkpoint: EngineCheckpoint) => {
+      engineReport.checkpoint = checkpoint;
+      environment.liveOracle = checkpoint.createLiveOracle?.(
+        (state) => engineIndices.get(state),
+        (expression) => enabledActions.get(expression),
+      );
+    };
+    // TLC adds each initial state to the liveness checker before it reports the initial states, so
+    // with temporal properties the engine reports them only once it reports its progress, and
+    // otherwise the interpreter does, once it has added them.
+    const computed = {
+      initialStates: undefined as { generated: number; distinct: number } | undefined,
+    };
+    const reportComputed = () => {
+      const initialStates = computed.initialStates;
+      if (!initialStates || engineReport.isComputedReported) return;
+      engineReport.isComputedReported = true;
+      options.onProgress?.({ kind: "initial-states-computed", initialStates });
+    };
     // A search labels each step with the action that took it only when ENABLED asks about some.
     const isLabelled = [...enabledActions.values()].some((positions) => positions !== "all");
+    const engineSpec = {
+      init,
+      next,
+      scope: spec.scope,
+      ...(isLabelled && {
+        actions: getSpecNextActions().map((action) => ({
+          expression: action.expression,
+          scope: action.scope,
+        })),
+      }),
+    };
+    const engineProperties = toEngineProperties(search.properties)!;
+    const tlcOrder = search.getTlcOrder();
+    const symmetry = search.symmetryGroup?.map((images) =>
+      [...images].map(([name, image]): [string, string] => [name, image.name]),
+    );
+    // The engine IR, lowered once if the native engine or PROVE_IT_IR_DUMP asks for it, and written
+    // to the file PROVE_IT_IR_DUMP names before the line that reports it.
+    const lowered: { outcome?: IrOutcome } = {};
+    const lowerModel = () => {
+      if (lowered.outcome) return lowered.outcome;
+      const loweredAt = performance.now();
+      const outcome = lowerToIr({
+        config,
+        environment,
+        spec: engineSpec,
+        isWarningEnabled: runtime.isWarningEnabled,
+        tlcOrder,
+        properties: engineProperties,
+        symmetry,
+        isRecordingGraph: liveness !== undefined,
+        version: options.version,
+        atoms: (liveness?.atoms ?? []).map((atom) => ({
+          atom,
+          actions: atom.kind === "Enabled" ? enabledActions.get(atom) : undefined,
+        })),
+      });
+      const milliseconds = performance.now() - loweredAt;
+      if ("ir" in outcome) writeDebugBytes("PROVE_IT_IR_DUMP", outcome.ir);
+      reportEngine(
+        `native: ir: ${"ir" in outcome ? `${outcome.ir.length} bytes` : `declined: ${outcome.reason}`} in ${milliseconds.toFixed(2)} ms`,
+      );
+      lowered.outcome = outcome;
+      return outcome;
+    };
+    if (isIrDumped()) lowerModel();
+    if (getEngineBackend() !== "ts") {
+      const nativeStartedAt = performance.now();
+      const native = checkNatively(lowerModel);
+      reportEngine(
+        `native: ${native.status}: ${native.reason} (${(performance.now() - nativeStartedAt).toFixed(2)} ms)`,
+      );
+    }
     const startedAt = performance.now();
     try {
       const result = runEngine({
         config,
         environment,
-        spec: {
-          init,
-          next,
-          scope: spec.scope,
-          ...(isLabelled && {
-            actions: getSpecNextActions().map((action) => ({
-              expression: action.expression,
-              scope: action.scope,
-            })),
-          }),
-        },
+        spec: engineSpec,
         isWarningEnabled: runtime.isWarningEnabled,
-        tlcOrder: search.getTlcOrder(),
+        tlcOrder,
         startedAt,
-        properties: toEngineProperties(search.properties)!,
+        properties: engineProperties,
         isRecordingGraph: liveness !== undefined,
-        symmetry: search.symmetryGroup?.map((images) =>
-          [...images].map(([name, image]): [string, string] => [name, image.name]),
-        ),
+        symmetry,
         workers: getEngineThreads(),
         source: options.source,
         modules: [...loadedModules],
         version: options.version,
         onProgress: (progress) => {
           engineReport.isReported = true;
+          if (progress.kind === "initial-states-progress" && liveness) {
+            engineReport.heldProgress.push(progress.count);
+            return;
+          }
           if (progress.kind === "initial-states-progress") {
             engineReport.initialProgress = progress.count;
           }
+          releaseInitialProgress(Infinity);
+          reportComputed();
           options.onProgress?.(progress);
         },
         onInitialStatesStarted: () => {
@@ -1519,20 +1721,13 @@ const searchStates = (
         },
         onPrint: print,
         onInitialStates: (generated, distinct) => {
-          engineReport.isComputedReported = true;
-          options.onProgress?.({
-            kind: "initial-states-computed",
-            initialStates: { generated, distinct },
-          });
+          computed.initialStates = { generated, distinct };
+          if (!liveness) reportComputed();
         },
       });
       if (result.checkpoint) {
         // The interpreter checks the temporal properties on the graph the engine found.
-        engineReport.checkpoint = result.checkpoint;
-        environment.liveOracle = result.createLiveOracle(
-          (state) => engineIndices.get(state),
-          (expression) => enabledActions.get(expression),
-        );
+        takeGraph(result.checkpoint);
         // The liveness checker orders each state's successors by TLC's fingerprints of them.
         const fingerprints = result.getFingerprints();
         engineReport.fingerprints = fingerprints;
@@ -1574,10 +1769,12 @@ const searchStates = (
     } catch (error) {
       // A build without the engine's workers fails, rather than leave the search to one thread.
       if (error instanceof MissingBuildFileError) throw error;
-      // A search that stopped part way has no graph for the temporal properties, so the
-      // interpreter starts over then.
-      if (isBailout(error) && error.checkpoint && !liveness) {
-        engineReport.checkpoint = error.checkpoint as EngineCheckpoint;
+      // A search that stopped part way hands over the graph it found, when it recorded one for the
+      // temporal properties, and the interpreter goes on from the state it stopped at.
+      if (isBailout(error) && error.checkpoint) {
+        const checkpoint = error.checkpoint as EngineCheckpoint;
+        if (!liveness) engineReport.checkpoint = checkpoint;
+        else if (checkpoint.graph) takeGraph(checkpoint);
       }
       reportEngine(
         `handed over after ${(performance.now() - startedAt).toFixed(0)} ms: ${isBailout(error) ? error.message : String(error instanceof Error ? (error.stack ?? error.message) : error)}`,
@@ -1611,8 +1808,9 @@ const searchStates = (
   const engineOutcome = tryEngine();
   if (engineOutcome) return engineOutcome;
   if (!engineReport.isReported) options.onProgress?.({ kind: "initial-states-started" });
-  const resumeAt = engineReport.checkpoint ? resumeFromEngine(engineReport.checkpoint) : 0;
-  if (spec.init !== undefined && !engineReport.checkpoint) {
+  const checkpoint = engineReport.checkpoint;
+  const resumeAt = checkpoint ? resumeFromEngine(checkpoint) : 0;
+  if (spec.init !== undefined && !checkpoint) {
     try {
       forEachInitialState(
         spec.init,
@@ -1624,12 +1822,7 @@ const searchStates = (
           try {
             outcome.result = visitInitialState(state);
           } catch (error) {
-            const replay = captureOutput(replayInit);
-            outcome.result = createFailureResult(
-              error,
-              { trace: [], traceOutput: replay.lines },
-              { initialState: state, ...replay.result, isInitial: true },
-            );
+            outcome.result = reportInitialFailure(error, state);
           }
           return outcome.result !== undefined;
         },
@@ -1659,7 +1852,7 @@ const searchStates = (
     }
   }
   if (outcome.result) return outcome.result;
-  if (!engineReport.checkpoint) {
+  if (!checkpoint) {
     statistics.initialStates = {
       generated: runtime.initialStates,
       distinct: runtime.distinctStates,
@@ -1788,7 +1981,7 @@ const searchStates = (
   const expandState = (index: number, liveSuccessors: LiveSuccessor[]) => {
     const state = states[index];
     const source = stateWriter && getGraphState(state, depths[index]);
-    const replayed = engineReport.checkpoint?.graph;
+    const replayed = isReplaying(index) ? engineReport.checkpoint?.graph : undefined;
     const successorCount = replayed
       ? replayExpansion(index, liveSuccessors, replayed)
       : forEachActionSuccessor(state, (successor, action) => {
@@ -1997,10 +2190,10 @@ const searchStates = (
     return lasso;
   };
   for (let index = resumeAt; index < states.length && !runtime.isStopped; index++) {
+    if (index > resumeAt) takePendingStates();
     current.index = index;
     current.candidate = undefined;
-    runtime.queueSize =
-      (engineReport.checkpoint?.graph ? replayed.discovered : states.length) - index - 1;
+    runtime.queueSize = (isReplaying(index) ? replayed.discovered : states.length) - index - 1;
     current.isExpanding = true;
     const liveSuccessors: LiveSuccessor[] = [];
     try {
@@ -2024,6 +2217,7 @@ const searchStates = (
     }
   }
 
+  takePendingStates();
   current.index = -1;
   current.candidate = undefined;
   if (liveness) {

@@ -1,7 +1,8 @@
 // The native engine: the N-API addon that native/crates/prove-it-napi builds. The npm package finds
-// it in the optional package for its platform, and the executables embed it. It declines every
-// model for now, so the TypeScript engine checks them all.
+// it in the optional package for its platform, and the executables embed it. It reads the model
+// as the engine IR and declines every model for now, so the TypeScript engine checks them all.
 
+import type { IrOutcome } from "./ir";
 import { getEngineAddon } from "./settings";
 
 // The addon's test hooks into its store, which native-store.ts calls (binding/store.rs).
@@ -112,10 +113,13 @@ export const getNativeAddon = () => {
   return loaded.addon;
 };
 
-// The TypeScript engine checks what the addon declines, and everything when it can't be loaded.
-export const checkNatively = (): NativeOutcome => {
+// Loads the addon on first use, and lowers the model only once it has. The TypeScript engine checks
+// what it declines, and everything when it can't be loaded.
+export const checkNatively = (lower: () => IrOutcome): NativeOutcome => {
   const addon = getNativeAddon();
-  return typeof addon === "string"
-    ? { status: "unavailable", reason: addon }
-    : addon.check(new Uint8Array(0));
+  if (typeof addon === "string") return { status: "unavailable", reason: addon };
+  const lowered = lower();
+  return "ir" in lowered
+    ? addon.check(lowered.ir)
+    : { status: "declined", reason: `the engine IR: ${lowered.reason}` };
 };

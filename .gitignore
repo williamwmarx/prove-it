@@ -18,6 +18,8 @@ packages/prove-it/.scripts
 packages/prove-it/tests/conformance/.corpora
 packages/prove-it/tests/conformance/.library
 packages/prove-it/tests/conformance/.results.json
+packages/prove-it/tests/conformance/.ir
+packages/prove-it/tests/conformance/.ir-results.json
 packages/prove-it/tests/conformance/.sany-results.json
 packages/prove-it/tests/conformance/.smt-results.json
 packages/prove-it/tests/conformance/.tlapm.json
