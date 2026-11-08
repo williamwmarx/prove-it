@@ -2132,3 +2132,63 @@ On the 4-core cloud machine, with `main` at 6448120 merged, against the 733 mode
   would hide), memo lookups at 16% with their `memcmp` (packing keys of width two or less into a
   `u64`), and set membership at 13% (`is_member` and `find_in_block` for `TypeOK`), with the walker
   around them: those are the next three things to fix.
+
+#### M7 as built (liveness and memory)
+
+Branch `native-m7-liveness`, the second part of M7: the native engine's answers to the liveness
+checker and the memory of a large hand-over. Measured on the 4-core cloud machine, not on Depot
+yet. Where the code made this design change, the code wins, and this records how:
+
+- **What the liveness checker asks (5.1).** M5's note that the interpreter's liveness checker
+  "crosses into the addon not at all" held for the questions the tables covered, but the atoms
+  `LivenessChecker.atoms` listed were only the state and ENABLED predicates (`collectAtoms`, which
+  serves the checker's per-state cache), so every action predicate of a fairness condition or a
+  step property fell to the interpreter on every step: 216,043 evaluations on ReadersWriters and
+  248,832 on TokenRing, which made both slower in Rust than in TypeScript. TokenRing's were not
+  steps missing from the graph. The checker now lists every predicate `evaluateLive` asks the oracle
+  about, the action ones and those under a Next too, and the native oracle reports, once each, why
+  it leaves a question to the interpreter (`leaves a temporal predicate to the interpreter: …`):
+  not among the atoms, a step the search didn't take or didn't expand, or the engine's own reason.
+- **Only the steps the checker asks about.** The tables stay whole and come back with the graph in
+  the one `check()` call, rather than one crossing per predicate on demand: keeping the search's
+  machine alive for later calls would need its thread to outlive `check()`, and the measured cost
+  of the tables was in steps the checker never asks about. An action atom of a fairness condition
+  carries the position of its fairness's ENABLED atom (IR version 2, ABI version 3), and the checker
+  asks about no step from a state where that ENABLED is false (`evaluateLive` returns false first),
+  so the engine writes 2 there and evaluates nothing; on ReadersWriters that is two thirds of its
+  action steps. Each state keeps one epoch for all the answers, so what the steps from it evaluate
+  of it is cached across them, and no state is copied per step.
+- **The hand-over (5.2).** M5 wrote each state of a checkpoint in full, in `transfer.ts`'s
+  encoding, and a search whose states share large values wrote gigabytes: the VSR state-transfer
+  models, 1.3 million states of nested message sets, peaked at 11.4 and 12.6 GB resident while the
+  search itself took under 1 GB. A checkpoint is now what 5.2 proposed, `SharedStates`: the table
+  of the distinct values the states hold, each after its parts and referring to them by position,
+  and each state as the positions of its values. Interning the table in order interns what is new
+  in the order decoding the states one by one did (an interval's keys past the integers a reset
+  store holds are written before its values for that), so the TypeScript store's ids are the same.
+  `native.ts` reads a value's parts into scratch arrays and interns them with `setOfSorted` and
+  `functionOfSorted`, since the native store keeps them in TLC's order. Print and the state log
+  keep the per-state encoding.
+- **The store itself.** On the large engine models the Rust search already peaks below the
+  TypeScript engine (btree 123 against 164 MB, MCBakery 140 against 173, MCLamportMutex 213 against
+  278), and on the VSR models its search stays under 1 GB where the TypeScript engine's reaches
+  1.2 GB, so nothing per state was cut from the store: the 12 GB was the hand-over.
+
+#### M7 acceptance, as run (liveness and memory)
+
+On the 4-core cloud machine, with `main` at a0f66ec, cut short to ship: the full sweeps and the
+differential are left to Depot.
+- **Liveness: met on the models measured.** The interpreter answers none of the liveness checker's
+  questions on ReadersWriters and TokenRing (counted at the oracle: 216,043 and 248,832 before), and
+  the unit test of the native search asserts that no question is left to it. Medians of 9
+  interleaved runs of `dist/prove-it`, wall/CPU ms: ReadersWriters, TypeScript 454/1,415 on `main`
+  and 443/1,399 here, Rust 688/1,515 → 337/667; TokenRing, TypeScript 703/2,174 and 693/2,238,
+  Rust 819/1,424 → 466/808. Not run: a count over the corpus's other `PROPERTY` models.
+- **Memory: met for the hand-over.** Peak resident with the Rust backend: VR_STATE_TRANSFER 11.4 GB
+  → 1.9 GB (62 s → 34.5 s), VR_APP_STATE 12.6 GB → 2.0 GB (66.7 s → 29.8 s); the TypeScript engine
+  peaks at 1.2 GB on each (26.7 and 24.9 s). btree, MCBakery and MCLamportMutex are unchanged,
+  below the TypeScript engine (above).
+- **Checks: met.** `cargo fmt --check`, `clippy -D warnings` and `cargo test` (57 tests) clean;
+  `bun test tests/unit` 3,005 pass, 0 fail, and with `BACKEND=rust` 3,094 pass, 7 skip, 0 fail;
+  `engine-ir` round-trips all 641 IRs. Not run here: `engine-coverage --compare-backends
+  --state-logs`, `conformance --backend rust`, the differential and the 18-model suite medians.

@@ -144,6 +144,30 @@ const collectAtoms = (expression: LiveExpression, atoms: Map<LiveExpression, num
   }
 };
 
+// The predicates evaluateLive asks environment.liveOracle about: the state predicates and ENABLED
+// predicates, through a Next too, and the action predicates.
+const collectQuestions = (expression: LiveExpression, questions: Set<LiveExpression>) => {
+  switch (expression.kind) {
+    case "State":
+    case "Enabled":
+    case "Action":
+      questions.add(expression);
+      return;
+    case "Not":
+    case "Next":
+    case "Always":
+    case "Eventually":
+      collectQuestions(expression.body, questions);
+      return;
+    case "And":
+    case "Or":
+      for (const operand of expression.operands) collectQuestions(operand, questions);
+      return;
+    default:
+      return;
+  }
+};
+
 // TLC's OrderOfSolution#hasEmptyPEMAndBoxFreePromises, negated.
 const isCycleConstrained = (solution: Solution) =>
   solution.promises.some((promise) => containsAlways(promise.body)) ||
@@ -330,6 +354,12 @@ export const createLivenessChecker = (
     }
     for (const node of solution.tableau?.nodes ?? []) {
       for (const predicate of node.statePredicates) collectAtoms(predicate, atomIds);
+    }
+  }
+  const questions = new Set(atomIds.keys());
+  for (const solution of solutions) {
+    for (const predicate of [...solution.stateChecks, ...solution.actionChecks]) {
+      collectQuestions(predicate, questions);
     }
   }
   const capacity = { multiplier: 1 };
@@ -1132,7 +1162,7 @@ export const createLivenessChecker = (
 
   return {
     branches: behaviors.length,
-    atoms: [...atomIds.keys()],
+    atoms: [...questions],
     enabledAtoms: [...atomIds.keys()].filter((atom) => atom.kind === "Enabled"),
     addInitialState: (index, state, tracing) => {
       startChecks(tracing);

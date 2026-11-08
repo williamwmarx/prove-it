@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use tla_ir::Ir;
 use tla_values::fingerprint::{Fingerprints, Parent};
 use tla_values::store::Outcome;
-use tla_values::transfer::{EncodedStates, StateEncoder};
+use tla_values::transfer::{EncodedStates, SharedEncoder, SharedStates, StateEncoder};
 use tla_values::{Bail, Id, Store};
 
 use crate::compile::{CompileError, Compiler, DISTINCT_SLOT, LEVEL_SLOT, NEXT_LEVEL_SLOT, Options};
@@ -70,11 +70,11 @@ pub struct Checkpoint {
     pub generated: u64,
     pub initial_generated: u64,
     pub out_degrees: [u64; OUT_DEGREE_BUCKETS],
-    pub states: EncodedStates,
+    pub states: SharedStates,
     pub parents: Vec<i32>,
     /// What TLC fingerprints in place of each state when that isn't the state, its view, with
     /// the width of each.
-    pub keys: Option<(EncodedStates, u32)>,
+    pub keys: Option<(SharedStates, u32)>,
     /// The steps of the states expanded, for the interpreter to replay and check temporal
     /// properties on, when the search records them.
     pub graph: Option<GraphCheckpoint>,
@@ -281,6 +281,14 @@ impl States {
 
     fn encode(&self, store: &Store, ids: &[Id], width: usize, count: usize) -> EncodedStates {
         let mut encoder = StateEncoder::new();
+        for index in 0..count {
+            encoder.encode(store, &ids[index * width..(index + 1) * width]);
+        }
+        encoder.finish()
+    }
+
+    fn share(&self, store: &Store, ids: &[Id], width: usize, count: usize) -> SharedStates {
+        let mut encoder = SharedEncoder::new(store);
         for index in 0..count {
             encoder.encode(store, &ids[index * width..(index + 1) * width]);
         }
@@ -799,7 +807,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             generated: search.initial_generated,
             initial_generated: search.initial_generated,
             out_degrees: [0; OUT_DEGREE_BUCKETS],
-            states: states.encode(&machine.store, &states.ids, width, count),
+            states: states.share(&machine.store, &states.ids, width, count),
             parents: states.parents[..count].to_vec(),
             keys: None,
             graph: Some(GraphCheckpoint {
@@ -894,11 +902,11 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     generated: checkpoint_generated,
                     initial_generated: search.initial_generated,
                     out_degrees,
-                    states: states.encode(store, &states.ids, width, count),
+                    states: states.share(store, &states.ids, width, count),
                     parents: states.parents[..count].to_vec(),
                     keys: states.key_width.map(|key_width| {
                         (
-                            states.encode(store, &states.keys, key_width, count),
+                            states.share(store, &states.keys, key_width, count),
                             key_width as u32,
                         )
                     }),

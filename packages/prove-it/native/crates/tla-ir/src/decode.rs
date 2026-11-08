@@ -566,9 +566,10 @@ impl Decoder<'_> {
             };
             let kind = match (kind, unchanged, actions) {
                 (code::ATOM_STATE, None, EnabledActions::Unknown) => AtomKind::State,
-                (code::ATOM_ACTION, unchanged, EnabledActions::Unknown) => {
-                    AtomKind::Action { unchanged }
-                }
+                (code::ATOM_ACTION, unchanged, EnabledActions::Unknown) => AtomKind::Action {
+                    unchanged,
+                    enabled: self.optional_below(count, "atom")?,
+                },
                 (code::ATOM_ENABLED, None, actions) => AtomKind::Enabled { actions },
                 (kind, ..) => return self.error(format!("an atom of kind {kind}")),
             };
@@ -989,6 +990,7 @@ impl Model {
             visit(&mut atom.expression)?;
             if let AtomKind::Action {
                 unchanged: Some(unchanged),
+                ..
             } = &mut atom.kind
             {
                 visit(unchanged)?;

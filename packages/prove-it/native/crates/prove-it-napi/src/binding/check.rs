@@ -13,11 +13,13 @@
 //! - `{ status: "complete", counts, outDegrees, fingerprints[, checkpoint] }`, with `counts` a
 //!   Float64Array of the generated, distinct and initial counts, the depth, the values and the
 //!   collisions, and with temporal properties the checkpoint of the whole search;
-//! - `{ status: "stopped", reason, counts, outDegrees, parents, words, strings[, keyWords,
-//!   keyStrings, keyWidth] }`, with `counts` the state being expanded, the states before it, the
-//!   generated and initial generated counts and the collisions, and the states and keys in
-//!   `transfer.ts`'s encoding, and with temporal properties `graph`; or, for a stop that hands over
-//!   no checkpoint, `{ status: "stopped", reason, counts }` with only the collisions;
+//! - `{ status: "stopped", reason, counts, outDegrees, parents, words, strings, states[,
+//!   keyWords, keyStrings, keyStates, keyWidth] }`, with `counts` the state being expanded, the
+//!   states before it, the generated and initial generated counts and the collisions, and the
+//!   states and keys as the table of their values in `transfer.ts`'s encoding, each value once
+//!   with its parts by position, and each state's values by position in it (`SharedStates`), and
+//!   with temporal properties `graph`; or, for a stop that hands over no checkpoint,
+//!   `{ status: "stopped", reason, counts }` with only the collisions;
 //! - `{ status: "invariant", reason }` where a self-check failed.
 //!
 //! A graph is `{ expanded, counts, edges, labels?, initialCounts, isEnabledExact, tables,
@@ -32,7 +34,7 @@ use std::ptr::null_mut;
 use crate::{Event, SearchOutcome, Settings, check_on_thread};
 use tla_engine::Options;
 use tla_engine::search::{Checkpoint, GraphCheckpoint};
-use tla_values::transfer::EncodedStates;
+use tla_values::transfer::{EncodedStates, SharedStates};
 
 use super::store::{
     NAPI_BIGINT64_ARRAY, NAPI_STRING, create_int32s, create_number, create_text, get_arguments,
@@ -114,6 +116,18 @@ fn to_numbers(values: &[u64]) -> Vec<f64> {
     values.iter().map(|&value| value as f64).collect()
 }
 
+unsafe fn set_shared(
+    env: napi_env,
+    object: napi_value,
+    [words, strings, states]: [&CStr; 3],
+    shared: &SharedStates,
+) -> Result<(), Thrown> {
+    unsafe {
+        set_encoded(env, object, words, strings, &shared.values)?;
+        set(env, object, states, create_int32s(env, &shared.states)?)
+    }
+}
+
 // Sets a checkpoint's properties, as above, on an object.
 unsafe fn set_checkpoint(
     env: napi_env,
@@ -147,9 +161,19 @@ unsafe fn set_checkpoint(
             c"parents",
             create_int32s(env, &checkpoint.parents)?,
         )?;
-        set_encoded(env, object, c"words", c"strings", &checkpoint.states)?;
+        set_shared(
+            env,
+            object,
+            [c"words", c"strings", c"states"],
+            &checkpoint.states,
+        )?;
         if let Some((keys, key_width)) = &checkpoint.keys {
-            set_encoded(env, object, c"keyWords", c"keyStrings", keys)?;
+            set_shared(
+                env,
+                object,
+                [c"keyWords", c"keyStrings", c"keyStates"],
+                keys,
+            )?;
             set(
                 env,
                 object,
