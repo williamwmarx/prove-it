@@ -1107,11 +1107,19 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     const mask = seenStates.slots.length - 1;
     for (let slot = getSlot(hash); ; slot = (slot + 2) & mask) {
       const entry = seenStates.slots[slot + 1];
-      if (entry === 0) return -1;
+      if (entry === 0) return pending.findState ? findPendingState(hash, state) : -1;
       if (seenStates.slots[slot] === hash && isSameState(fingerprintStates[entry - 1], state)) {
         return entry - 1;
       }
     }
+  };
+  // The engine finds a state among those the interpreter hasn't taken over, unless it can't tell;
+  // then the interpreter takes them over and looks again.
+  const findPendingState = (hash: number, state: Value[]): number => {
+    const found = pending.findState?.(state);
+    if (found !== undefined) return found;
+    takePendingStates();
+    return findStateIndex(hash, state);
   };
   const insertSeen = (hash: number, entry: number) => {
     const mask = seenStates.slots.length - 1;
@@ -1368,6 +1376,13 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   const replayed = { discovered: 0 };
   // Whether the interpreter replays the steps the engine took from the state at the index.
   const isReplaying = (index: number) => index < (engineReport.checkpoint?.graph?.expanded ?? 0);
+  // The engine's states the interpreter has yet to take over, in place of which it keeps UNTAKEN,
+  // and the engine's answer, for these, of whether a state is among them.
+  const pending = {
+    checkpoint: undefined as EngineCheckpoint | undefined,
+    findState: undefined as ((key: Value[]) => number | undefined) | undefined,
+  };
+  const UNTAKEN: Value[] = [];
   const toEngineState = (checkpoint: EngineCheckpoint, index: number) => {
     const width = checkpoint.width;
     const state: Value[] = new Array(width);
@@ -1393,7 +1408,33 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     markSeen(getStateHash(fingerprintState), index);
     return { state, fingerprintState };
   };
+  // Takes over the rest of the engine's states, once the interpreter goes past the one it expands
+  // again.
+  const takePendingStates = () => {
+    const checkpoint = pending.checkpoint;
+    if (!checkpoint) return;
+    pending.checkpoint = undefined;
+    pending.findState = undefined;
+    for (let index = 0; index < checkpoint.count; index++) {
+      if (states[index] !== UNTAKEN) continue;
+      const taken = takeState(checkpoint, index);
+      states[index] = taken.state;
+      fingerprintStates[index] = taken.fingerprintState;
+    }
+  };
   const resumeFromEngine = (checkpoint: EngineCheckpoint) => {
+    // Without a graph, the interpreter takes over only the states up to the one it expands again,
+    // which is all it reads of them when it finds what the engine stopped at, and asks the engine
+    // whether a successor is among the others.
+    const findState = checkpoint.graph ? undefined : checkpoint.findState;
+    const onPath = new Set<number>();
+    for (
+      let position = findState ? checkpoint.expanding : -1;
+      position !== -1;
+      position = checkpoint.parents[position]
+    ) {
+      onPath.add(position);
+    }
     // The initial states the interpreter found are the engine's first states.
     const initialCount = states.length;
     const isSameInitial = (index: number) =>
@@ -1412,9 +1453,13 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       if (parent === -1 && checkpoint.graph) {
         throw new EngineInvariantError("the engine found other initial states");
       }
-      const taken = takeState(checkpoint, index);
+      const taken = !findState || onPath.has(index) ? takeState(checkpoint, index) : undefined;
       countDistinctState(parent === -1 ? 1 : depths[parent] + 1);
-      addState(taken.state, taken.fingerprintState, parent, undefined);
+      addState(taken?.state ?? UNTAKEN, taken?.fingerprintState ?? UNTAKEN, parent, undefined);
+    }
+    if (findState) {
+      pending.checkpoint = checkpoint;
+      pending.findState = findState;
     }
     transferred.count = checkpoint.count;
     if (checkpoint.graph) {
@@ -2006,6 +2051,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     return lasso;
   };
   for (let index = resumeAt; index < states.length && !runtime.isStopped; index++) {
+    if (index > resumeAt) takePendingStates();
     current.index = index;
     current.candidate = undefined;
     runtime.queueSize = (isReplaying(index) ? replayed.discovered : states.length) - index - 1;
@@ -2032,6 +2078,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     }
   }
 
+  takePendingStates();
   current.index = -1;
   current.candidate = undefined;
   if (liveness) {

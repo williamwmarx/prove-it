@@ -1012,4 +1012,77 @@ describe("the engine's hand-over to the interpreter part way through a search", 
     expect(handedOver).toMatch(/: deadlock$/);
     expect(result.status).toBe("error");
   });
+
+  it("asks the engine whether a successor is among the states it found", async () => {
+    // From (2, 0), Flip goes to (2, 1), found from (1, 1) before, then Move breaks the invariant.
+    const { result, handedOver } = await checkBoth(
+      counter("x' = x + 1", ["Inv == x < 3"]),
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+    );
+    expect(handedOver).toMatch(/: an invariant violated$/);
+    expect(result.status).toBe("invariant-violation");
+    expect(result.violation?.trace).toHaveLength(4);
+  });
+
+  it("counts a new successor the engine found before it stopped as new", async () => {
+    const { result, handedOver } = await checkBoth(
+      [
+        "EXTENDS Naturals",
+        "VARIABLE x",
+        "Init == x = 0",
+        "Next == x' = x + 1 \\/ x' = x + 1 \\/ x' = x + 10",
+        "Inv == x < 10",
+      ],
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+    );
+    expect(handedOver).toMatch(/: an invariant violated$/);
+    expect([result.status, result.distinctStates]).toEqual(["invariant-violation", 3]);
+  });
+
+  it("finds a successor among the states it found by the view or the symmetry TLC fingerprints", async () => {
+    const symmetric = [
+      "EXTENDS Naturals, TLC",
+      "CONSTANTS A, B",
+      "VARIABLES x, owner",
+      "Init == x = 0 /\\ owner = A",
+      "Next == \\/ x' = x + 1 /\\ owner' = owner",
+      "        \\/ owner' \\in {A, B} /\\ x' = x",
+      "Inv == x < 3",
+      "View == x",
+      "Perms == Permutations({A, B})",
+    ];
+    const config = "CONSTANTS A = A\nB = B\nINIT Init\nNEXT Next\nINVARIANT Inv";
+    for (const reduction of ["VIEW View", "SYMMETRY Perms"]) {
+      const { result, handedOver } = await checkBoth(symmetric, `${config}\n${reduction}`);
+      expect(handedOver).toMatch(/: an invariant violated$/);
+      expect([reduction, result.status]).toEqual([reduction, "invariant-violation"]);
+    }
+  });
+
+  it("takes over the engine's states to find a successor holding a set it keeps lazy", async () => {
+    // SUBSET {1} is the set {{}, {1}}, which the interpreter holds unenumerated.
+    const { result, handedOver } = await checkBoth(
+      [
+        "EXTENDS Naturals",
+        "VARIABLES x, s",
+        "Init == x = 0 /\\ s = {}",
+        "Next == \\/ s' = SUBSET {1} /\\ x' = x",
+        "        \\/ s' = {{}, {1}} /\\ x' = x",
+        "        \\/ x' = x + 1 /\\ s' = s",
+        "Inv == x < 3",
+      ],
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+    );
+    expect(handedOver).toMatch(/: an invariant violated$/);
+    expect(result.status).toBe("invariant-violation");
+  });
+
+  it("takes over the engine's states once it goes past the one the engine stopped in", async () => {
+    const { result, handedOver } = await checkBoth(
+      counter("x' = (x + 1) % 4 /\\ 5 \\in 0..(x * 10000000 + 5)", ["Inv == x < 4"]),
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+    );
+    expect(handedOver).toMatch(/: an interval too large to build$/);
+    expect(result.status).toBe("success");
+  });
 });

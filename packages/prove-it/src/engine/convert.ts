@@ -114,4 +114,32 @@ export const fromValue = (value: Value): number => {
   return setOf(toFiniteSet(value).elements.map(fromValue));
 };
 
+// The id of a value the interpreter holds enumerated, or undefined for one it holds lazily, which
+// only the interpreter enumerates, or one the engine can't hold.
+export const fromEnumeratedValue = (value: Value): number | undefined => {
+  if (typeof value === "boolean") return bool(value);
+  if (typeof value === "number") return int(value);
+  if (typeof value === "string") return str(value);
+  if (value.kind === "ModelValue") return model(value.name);
+  if (value.kind === "Interval") return fromValue(value);
+  if (value.kind === "Function") {
+    const keys = fromEnumeratedValues(value.domain);
+    const values = keys && fromEnumeratedValues(value.range);
+    return keys && values && functionOf(keys, values);
+  }
+  if (value.kind !== "Set") return undefined;
+  const elements = fromEnumeratedValues(value.elements);
+  return elements && setOf(elements);
+};
+
+const fromEnumeratedValues = (values: Value[]) => {
+  const ids: number[] = [];
+  for (const value of values) {
+    const id = fromEnumeratedValue(value);
+    if (id === undefined) return undefined;
+    ids.push(id);
+  }
+  return ids;
+};
+
 export const fromTuple = (elements: number[]) => tupleOf(elements, elements.length);

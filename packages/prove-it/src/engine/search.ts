@@ -21,6 +21,7 @@ import {
   holdsAll,
   holdsAllChanged,
 } from "./context";
+import { fromEnumeratedValue } from "./convert";
 import { getStateFingerprints, resetFingerprints } from "./fingerprint";
 import { createLiveOracle, type EnabledActions, type LiveOracle } from "./live";
 import {
@@ -88,6 +89,9 @@ export interface EngineCheckpoint {
     getIndex: (state: Value[]) => number | undefined,
     getEnabledActions: EnabledActions,
   ) => LiveOracle;
+  // Without a graph, the index of the state whose key, what TLC fingerprints, has these values, -1
+  // for none, or undefined when the engine can't tell.
+  findState?: (key: Value[]) => number | undefined;
   // What TLC fingerprints in place of each state, when that isn't the state: its representative
   // under symmetry, or its view, `keyWidth` ids each.
   keys?: Int32Array;
@@ -505,6 +509,25 @@ export const runEngine = (input: EngineInput): EngineResult => {
     }
   };
 
+  // The index of the state, among the first `count`, whose key has these values, or -1, or
+  // undefined when the engine can't tell, for a value the interpreter holds lazily, or one the
+  // engine can't hold.
+  const findStateBefore = (key: Value[], count: number) => {
+    const ids = new Int32Array(keyWidth);
+    try {
+      for (let index = 0; index < keyWidth; index++) {
+        const id = fromEnumeratedValue(key[index]);
+        if (id === undefined) return undefined;
+        ids[index] = id;
+      }
+    } catch (error) {
+      if (error instanceof Bailout) return undefined;
+      throw error;
+    }
+    const stored = table[2 * findSlot(ids) + 1];
+    return stored < count ? stored : -1;
+  };
+
   // The first `count` states and the steps of the first `expanded` of them, for the interpreter to
   // replay, from the initial states on. It rebuilds the state at `expanding` its own way.
   const getGraphCheckpoint = (
@@ -643,6 +666,7 @@ export const runEngine = (input: EngineInput): EngineResult => {
               keys: separateKeys.slice(0, checkpointCount * keyWidth),
               keyWidth,
             }),
+            findState: (key) => findStateBefore(key, checkpointCount),
           };
       error.checkpoint = checkpoint;
     }
