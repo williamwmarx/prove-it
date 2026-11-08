@@ -3,6 +3,10 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { createBuiltins } from "../../src/sany/builtins";
+import { generateSanySpecification } from "../../src/sany/generator";
+import { checkModuleLevels } from "../../src/sany/levels";
+import { getSanyStandardModules } from "../../src/sany/modules";
 import { getSanyModuleName, getSanyReport, type SanyReportOptions } from "../../src/sany/report";
 import { createSanySnapshot, getPrecomputedModules } from "../../src/sany/snapshot";
 
@@ -1340,6 +1344,78 @@ describe("getSanyReport with the precomputed standard modules", () => {
     expect(getReport(modules, { ...options, precomputed })).toEqual(report);
     return report;
   };
+
+  it("decodes the nodes SANY makes for the standard modules", () => {
+    const standardModules = getSanyStandardModules("master");
+    const specification = generateSanySpecification(
+      "---- MODULE Snapshot ----\n====\n",
+      (name) => standardModules.get(name),
+      {
+        rootFileName: "Snapshot",
+        rootExtendees: ["_TLCTrace"],
+        onModule: (module, messages) => checkModuleLevels(module, { messages, isTlc174: false }),
+      },
+    );
+    const decoded = precomputed.getModules(specification.builtins);
+    const modules = specification.modules.slice(0, -1);
+    expect([...decoded.keys()]).toEqual(modules.map((module) => module.name));
+    // The graphs are cyclic and deep, so the walk pairs each object with the one it was matched
+    // to, and keeps the pairs it has yet to compare.
+    const isSameGraph = (left: unknown, right: unknown) => {
+      const pairs = new Map<unknown, unknown>();
+      const pending = [[left, right]];
+      for (let pair = pending.pop(); pair !== undefined; pair = pending.pop()) {
+        const [one, other] = pair;
+        if (
+          typeof one !== "object" ||
+          one === null ||
+          typeof other !== "object" ||
+          other === null
+        ) {
+          if (!Object.is(one, other)) return false;
+          continue;
+        }
+        if (pairs.has(one)) {
+          if (pairs.get(one) !== other) return false;
+          continue;
+        }
+        pairs.set(one, other);
+        // Keys and values one after another.
+        const getParts = (value: object) =>
+          value instanceof Map
+            ? [...value].flat()
+            : value instanceof Set
+              ? [...value]
+              : Object.entries(value).flat();
+        const oneParts = getParts(one);
+        const otherParts = getParts(other);
+        if (Object.getPrototypeOf(one) !== Object.getPrototypeOf(other)) return false;
+        if (oneParts.length !== otherParts.length) return false;
+        oneParts.forEach((part, index) => pending.push([part, otherParts[index]]));
+      }
+      return true;
+    };
+    expect(modules.every((module) => isSameGraph(decoded.get(module.name), module))).toBe(true);
+  });
+
+  // The decode makes the body of a definition once it is read, and a body written before that is
+  // the body.
+  it("keeps a body written to a definition before its body is read", () => {
+    const getDefinitions = () =>
+      (
+        getPrecomputedModules(JSON.parse(JSON.stringify(createSanySnapshot())))
+          .getModules(createBuiltins(() => 0))
+          .get("Naturals")?.definitions ?? []
+      ).flatMap((node) => (node.kind === "OpDef" ? [node] : []));
+    const read = getDefinitions();
+    const index = read.findIndex((definition) => definition.body !== undefined);
+    const written = getDefinitions()[index];
+    expect(index).toBeGreaterThanOrEqual(0);
+    const keys = Object.keys(written);
+    written.body = read[index].body;
+    expect(written.body).toBe(read[index].body);
+    expect(Object.keys(written)).toEqual(keys);
+  });
 
   it("reports a specification that uses the standard modules as SANY does", () => {
     const report = expectSameReport({
