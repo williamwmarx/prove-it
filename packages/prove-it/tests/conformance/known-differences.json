@@ -3247,7 +3247,7 @@
     "id": "spectacle/specs/with_state_graphs/semantic_error1.cfg",
     "mode": "default",
     "pair": "tlc/ts",
-    "reason": "TLC fails with a NullPointerException while it reports the error; Prove It reports the error itself.",
+    "reason": "TLC fails with a NullPointerException in its own code while it reports the error; Prove It reports the error itself. This is a bug in TLC, not in Prove It.",
     "diff": [
       "-The exception was a java.lang.NullPointerException",
       "-: Cannot read field \"state\" because \"currentStateInfo\" is null",
@@ -3263,7 +3263,7 @@
     "id": "spectacle/specs/with_state_graphs/semantic_error1.cfg",
     "mode": "tool",
     "pair": "tlc/ts",
-    "reason": "TLC fails with a NullPointerException while it reports the error; Prove It reports the error itself.",
+    "reason": "TLC fails with a NullPointerException in its own code while it reports the error; Prove It reports the error itself. This is a bug in TLC, not in Prove It.",
     "diff": [
       "-The exception was a java.lang.NullPointerException",
       "-: Cannot read field \"state\" because \"currentStateInfo\" is null",
@@ -3279,7 +3279,7 @@
     "id": "tla-rs/test_cases/should_pass/function_syntax/function_syntax.cfg",
     "mode": "default",
     "pair": "tlc/ts",
-    "reason": "TLC overflows the Java stack on the recursive definition, with its default stack size; Prove It evaluates it.",
+    "reason": "TLC overflows the Java stack on the recursive definition, with its default stack size; Prove It evaluates it. This depends on TLC's runtime, not on Prove It.",
     "diff": [
       "-exit 75",
       "+exit 0",
@@ -3310,7 +3310,7 @@
     "id": "tla-rs/test_cases/should_pass/function_syntax/function_syntax.cfg",
     "mode": "tool",
     "pair": "tlc/ts",
-    "reason": "TLC overflows the Java stack on the recursive definition, with its default stack size; Prove It evaluates it.",
+    "reason": "TLC overflows the Java stack on the recursive definition, with its default stack size; Prove It evaluates it. This depends on TLC's runtime, not on Prove It.",
     "diff": [
       "-exit 75",
       "+exit 0",
@@ -3654,7 +3654,7 @@
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/qlearning/Counter.cfg",
     "mode": "default",
     "pair": "tlc/ts",
-    "reason": "TLCGet(\"config\") holds where TLC is installed and the fingerprint setting, which TLC prints from its own runtime.",
+    "reason": "TLCGet(\"config\") holds where TLC is installed and the fingerprint setting, which TLC prints from its own runtime. This depends on TLC's runtime, not on Prove It.",
     "diff": [
       "-[ mode |-> \"bfs\",",
       "-  deadlock |-> TRUE,",
@@ -3669,7 +3669,7 @@
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/qlearning/Counter.cfg",
     "mode": "tool",
     "pair": "tlc/ts",
-    "reason": "TLCGet(\"config\") holds where TLC is installed and the fingerprint setting, which TLC prints from its own runtime.",
+    "reason": "TLCGet(\"config\") holds where TLC is installed and the fingerprint setting, which TLC prints from its own runtime. This depends on TLC's runtime, not on Prove It.",
     "diff": [
       "-[ mode |-> \"bfs\",",
       "-  deadlock |-> TRUE,",
