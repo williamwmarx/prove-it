@@ -5,7 +5,35 @@
 import type { IrOutcome } from "./ir";
 import { getEngineAddon } from "./settings";
 
-interface NativeAddon {
+// The addon's test hooks into its store, which native-store.ts calls (binding/store.rs).
+export interface NativeStoreHooks {
+  storePerform: (name: string, args: unknown[]) => number | boolean | null | string;
+  storeDecode: (
+    words: Int32Array,
+    strings: string[],
+    width: number,
+    count: number,
+    ids: Int32Array,
+  ) => string | null;
+  storeEncode: (states: Int32Array, width: number) => EncodedIds;
+  storeFingerprints: (
+    states: Int32Array,
+    width: number,
+    order: Int32Array,
+    parents: Int32Array | undefined,
+    isReference: boolean,
+    fingerprints: BigInt64Array,
+  ) => void;
+  storeResetFingerprints: () => void;
+}
+
+export interface EncodedIds {
+  words: Int32Array;
+  strings: string[];
+  count: number;
+}
+
+interface NativeAddon extends NativeStoreHooks {
   abiVersion: () => number;
   check: (ir: Uint8Array) => NativeOutcome;
 }
@@ -78,14 +106,20 @@ const loadAddon = (): NativeAddon | string => {
 
 const loaded: { addon?: NativeAddon | string } = {};
 
+// The addon, loaded on first use, or why it can't be loaded.
+export const getNativeAddon = () => {
+  loaded.addon ??=
+    typeof globalThis.process?.dlopen === "function" ? loadAddon() : "no process.dlopen";
+  return loaded.addon;
+};
+
 // Loads the addon on first use, and lowers the model only once it has. The TypeScript engine checks
 // what it declines, and everything when it can't be loaded.
 export const checkNatively = (lower: () => IrOutcome): NativeOutcome => {
-  loaded.addon ??=
-    typeof globalThis.process?.dlopen === "function" ? loadAddon() : "no process.dlopen";
-  if (typeof loaded.addon === "string") return { status: "unavailable", reason: loaded.addon };
+  const addon = getNativeAddon();
+  if (typeof addon === "string") return { status: "unavailable", reason: addon };
   const lowered = lower();
   return "ir" in lowered
-    ? loaded.addon.check(lowered.ir)
+    ? addon.check(lowered.ir)
     : { status: "declined", reason: `the engine IR: ${lowered.reason}` };
 };

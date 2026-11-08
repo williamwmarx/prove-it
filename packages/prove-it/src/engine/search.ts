@@ -657,6 +657,13 @@ export const runEngine = (input: EngineInput): EngineResult => {
           parents,
         );
 
+  // What a state log needs to fingerprint each state again.
+  const getLogKeys = () => ({
+    order: view ? [0] : input.tlcOrder,
+    keys: hasSeparateKeys ? separateKeys : undefined,
+    keyWidth,
+  });
+
   // The counts before the state being expanded, which a bailout hands to the interpreter: it
   // expands that state again from there, finding what the engine stopped at.
   let checkpointCount = 0;
@@ -765,6 +772,7 @@ export const runEngine = (input: EngineInput): EngineResult => {
         labels: undefined,
         stopped: error.message,
         expanding,
+        ...getLogKeys(),
       }));
     }
     throw error;
@@ -781,6 +789,7 @@ export const runEngine = (input: EngineInput): EngineResult => {
     labels: graph?.labels,
     stopped: undefined,
     expanding: stateCount,
+    ...getLogKeys(),
   }));
 
   return {

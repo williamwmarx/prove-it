@@ -1,6 +1,8 @@
 // The engine fingerprints most states from their parent's fingerprint, and an initial state from
 // the one before it. These tests check it against the interpreter's fingerprints of the same values,
-// and against the engine fingerprinting every state from scratch on whole searches.
+// and against the engine fingerprinting every state from scratch on whole searches. The native
+// store's fingerprints (native/crates/tla-values) run the same cases on its own values where the
+// addon is built, with PROVE_IT_ENGINE_ADDON naming it.
 
 import { afterEach, describe, expect, it, spyOn } from "bun:test";
 
@@ -11,6 +13,7 @@ import {
   getStateFingerprintsReference,
   resetFingerprints,
 } from "../../src/engine/fingerprint";
+import { nativeStore } from "../../src/engine/native-store";
 import { resetStore } from "../../src/engine/store";
 import { getTlcFingerprint } from "../../src/tlc/fingerprint";
 import {
@@ -36,12 +39,27 @@ afterEach(() => {
   }
 });
 
-describe("the fingerprints of the engine's states", () => {
+const localStore = {
+  fromValue,
+  getStateFingerprints,
+  getStateFingerprintsReference,
+  resetFingerprints,
+  resetStore,
+};
+
+const STORES: [string, typeof localStore][] = [
+  ["the TypeScript store", localStore],
+  ...(process.env.PROVE_IT_ENGINE_ADDON === undefined
+    ? []
+    : [["the native store", nativeStore] satisfies [string, typeof localStore]]),
+];
+
+describe.each(STORES)("the fingerprints of %s's states", (_, store) => {
   it("match TLC's whichever parent each state names", () => {
     // A search resets the store before it interns values, as this test does, and the fingerprints
     // of values along with it, whose ids they are by.
-    resetStore();
-    resetFingerprints();
+    store.resetStore();
+    store.resetFingerprints();
     // Several values share a length, so that many changes from a parent keep the lengths.
     const values: Value[] = [
       true,
@@ -68,7 +86,7 @@ describe("the fingerprints of the engine's states", () => {
       ]),
       createTuple([createSet([1, 2]), "a"]),
     ];
-    const ids = values.map(fromValue);
+    const ids = values.map(store.fromValue);
     let seed = 12345;
     const random = (bound: number) => {
       seed = (Math.imul(seed, 1103515245) + 12345) >>> 0;
@@ -91,14 +109,14 @@ describe("the fingerprints of the engine's states", () => {
     const expected = rows.map((row) =>
       BigInt.asIntN(64, getTlcFingerprint(order.map((position) => values[row[position]]))),
     );
-    expect([...getStateFingerprints(states, count, width, order, parents)]).toEqual(expected);
-    expect([...getStateFingerprintsReference(states, count, width, order)]).toEqual(expected);
-    expect([...getStateFingerprints(states, count, width, order)]).toEqual(expected);
+    expect([...store.getStateFingerprints(states, count, width, order, parents)]).toEqual(expected);
+    expect([...store.getStateFingerprintsReference(states, count, width, order)]).toEqual(expected);
+    expect([...store.getStateFingerprints(states, count, width, order)]).toEqual(expected);
   });
 
   it("match TLC's for initial states, each from the one before it", () => {
-    resetStore();
-    resetFingerprints();
+    store.resetStore();
+    store.resetFingerprints();
     // The first two values of each kind share a length, so most states keep the lengths of the one
     // before them, and the third doesn't.
     const kinds: Value[][] = [
@@ -107,7 +125,7 @@ describe("the fingerprints of the engine's states", () => {
       [createSet([1]), createSet([2]), createSet([1, 2])],
       [true, false, createModelValue("m1")],
     ];
-    const ids = kinds.map((values) => values.map(fromValue));
+    const ids = kinds.map((values) => values.map(store.fromValue));
     const rows: number[][] = [];
     // Odometer order, as TLC enumerates an initial predicate's states.
     for (let first = 0; first < 3; first++)
@@ -123,9 +141,13 @@ describe("the fingerprints of the engine's states", () => {
       BigInt.asIntN(64, getTlcFingerprint(order.map((kind) => kinds[kind][row[kind]]))),
     );
     const parents = new Int32Array(rows.length).fill(-1);
-    expect([...getStateFingerprints(states, rows.length, width, order, parents)]).toEqual(expected);
+    expect([...store.getStateFingerprints(states, rows.length, width, order, parents)]).toEqual(
+      expected,
+    );
   });
+});
 
+describe("the fingerprints of the engine's states", () => {
   it("report the same collision probability as the interpreter for many initial states", async () => {
     // Enough initial states that TLC reports the probability from the actual fingerprints, with
     // strings of two lengths among them.
