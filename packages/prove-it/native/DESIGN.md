@@ -1740,7 +1740,38 @@ code made this design change, the code wins, and this records how:
 
 #### M4 acceptance, as run
 
-Pending: the corpus runs under way on the branch fill this in.
+On the 4-core cloud machine, with `main` at 589407b merged, against the 733 models with TLC under
+20 s:
+- **Expression differential: met.** On the 566 models an engine-coverage sweep found the
+  TypeScript engine searching, every root and the first 1,000 states of each: 566 of 566 agree,
+  790 of the 849 roots compared, 318,119 evaluations equal by fingerprint or by reason to stop.
+  The other 59 roots: 43 decline (ENABLED 19, SubSeq 14, IsFiniteSet 9, ToString 1) and 16 the
+  TypeScript engine refuses too, for the same reason. An earlier run over every model of the
+  733, models the engine never reached skipped, agreed on all of them.
+- **Memo off: met, with one model too slow to finish.** With `PROVE_IT_MEMO=off`, 565 of the 566
+  agree. Huang's recursive Sum and FoldFunction re-evaluate everything without their memo tables:
+  its first three states take 21 s and give exactly the lines the caches give, and the run was
+  stopped there.
+- **Epoch check: met.** With `PROVE_IT_EPOCH_CHECK=1` on both sides, 566 of 566 agree and no hit
+  was stale. The Mutex fixture reaches the epoch caches, and a deliberate break of their epoch
+  test fails replay's tests under the check.
+- **Micro-benchmark: not met here.** `cargo bench -p tla-engine --bench invariant`, median of
+  nine runs: 1.40 to 1.45 µs per evaluation, memo off, against 5.0 µs for `compile.ts` on the
+  same invariant and states (its memo table turned off by probation). The prototype's 0.6 to
+  0.8 µs read `pc` as a flat array of ids. Here `pc` is a tuple in the store, and `perf` puts
+  50% of the time in `pc[i] = "cs"` (loads of the variable, the tuple's meta and words, the key's
+  integer and the element's kind, each waiting on the last), 20% in the interval loop (interning
+  each integer and one dynamic call per pair), 15% in `~(A /\ B)` and 10% in `i # j =>`, mostly
+  dispatch; memo and epoch work take nothing, as the bench turns the tables off and nothing here
+  reaches an epoch cache. Checking the tuple once per state and caching which positions equal
+  the constant took the tuple and element loads out of each read but left the time where it was,
+  so it was left out. M7 could keep an interval-bound name's integer beside its id, so a read
+  needs no meta, and fuse the quantifier with its body, so a pair costs no dynamic call.
+- **Default path unchanged.** The branch changes no TypeScript outside `scripts/`. The
+  engine-coverage sweep reaches the same outcome on and off on every model; against a sweep of
+  `main` before 589407b, 5 models changed bucket, all to "not reached", all from 589407b's SANY
+  precedence errors (now TLC's expected error). `dist/prove-it` built from the branch and from
+  `main` are byte-identical.
 
 ### M5. Walker, search, checkpoints, single thread
 
