@@ -201,7 +201,17 @@ fuzz_target!(|data: &[u8]| {
         Fingerprints::new().get_states_reference(&store, &states, 2, &order),
         scratch
     );
-    // A value read back is normalized, so reading it back again changes nothing.
+    // A value read back is normalized, so reading it back again changes nothing. The encoding
+    // writes a value as a tree, which a value that shares its parts, such as <<x, x>> nested 30
+    // deep, makes exponential, so only values whose trees TLC would fingerprint in under a
+    // megabyte are written.
+    let bytes: u64 = ids
+        .iter()
+        .map(|&id| fingerprints.get_value(&store, id).1)
+        .sum();
+    if bytes > 1 << 20 {
+        return;
+    }
     let mut encoder = StateEncoder::new();
     encoder.encode(&store, &ids);
     let encoded = encoder.finish();
