@@ -1883,7 +1883,8 @@ unless it says otherwise:
 - **`conformance --check --compare-backends`: met.** Every model `passing.json` lists that the run
   selects (770; two are TLC errors past 20 s, which it leaves out) matches TLC with the TypeScript
   engine and with the Rust one, the seven past 40 s of TLC included, and the two backends reach the
-  same outcome on every model.
+  same outcome on every model: 770 matches of 770 on each, as on `main` before (770 of 770, no
+  mismatch, unsupported or crash).
 - **Engine matrix: met, with an allowlist.** `off`, `ts` and `rust` reach the same outcome on all
   733. The Rust search completes 318, stops at a violation, deadlock or error on 79 (the
   interpreter then finishes), and declines 165, which the TypeScript engine then checks. Of the 393
@@ -1913,6 +1914,10 @@ unless it says otherwise:
 - **Ids.** Where both engines complete, the value counts of the `[engine]` lines agree on 258 of
   262 models; on the other four the Rust compiler interns one to 62 fewer values. No state log or
   hand-over shows an id, so the constants' order was left as M4 built it.
+- **After merging `main` at cfcfd42** (isMember failing where TLC's search of a set fails): the
+  unit tests pass on both backends, and a sweep of the 624 models with TLC under 2 s reaches the
+  same outcome with `off`, `ts` and `rust`, with identical state logs on all 285 the Rust search
+  completes, no collision, and every coverage regression allowlisted.
 - **Time** (`dist/prove-it`, median of 9 interleaved runs): Commit 631 ms on `main`, 628 ms on
   this branch, 871 ms with the Rust search; btree 1,279, 1,228 and 1,845 ms; MCDisruptor_MPMC 511,
   478 and 420 ms; Chameneos, which the Rust search declines, 238, 235 and 245 ms. M5 has no speed
