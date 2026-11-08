@@ -1740,11 +1740,13 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       { isNextState: true, ...replay.result },
     );
   };
-  // A state of a search the engine completed: its successors are the steps the engine recorded.
+  // A state of a search the engine completed: its successors are the steps the engine recorded,
+  // each state one successor for every step into it.
+  const engineSuccessors: LiveSuccessor[] = [];
   const replayExpansion = (index: number, liveSuccessors: LiveSuccessor[], graph: EngineGraph) => {
     for (let edge = graph.edgeOffsets[index]; edge < graph.edgeOffsets[index + 1]; edge++) {
       const target = graph.edges[edge];
-      liveSuccessors.push({ index: target, state: states[target] });
+      liveSuccessors.push((engineSuccessors[target] ??= { index: target, state: states[target] }));
     }
     runtime.generatedStates += graph.successorCounts[index];
     expansion.newStates = graph.newCounts[index];
