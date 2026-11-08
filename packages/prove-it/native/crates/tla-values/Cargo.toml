@@ -1,0 +1,12 @@
+[package]
+name = "tla-values"
+description = "Prove It's hash-consed store of TLA+ values, TLC's order and FP64 fingerprints"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bench]]
+name = "workload"
+harness = false

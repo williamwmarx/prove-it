@@ -10,6 +10,8 @@ use std::ptr::{null, null_mut};
 
 use crate::{ABI_VERSION, Outcome, check};
 
+mod store;
+
 type napi_env = *mut c_void;
 type napi_value = *mut c_void;
 type napi_callback_info = *mut c_void;
@@ -73,6 +75,8 @@ unsafe extern "C" {
 enum Thrown {
     Error(&'static CStr),
     TypeError(&'static CStr),
+    // A TypeError whose message says which argument is wrong.
+    WrongArgument(std::ffi::CString),
 }
 
 fn status(status: napi_status) -> Result<(), Thrown> {
@@ -94,6 +98,7 @@ unsafe fn guard(env: napi_env, body: impl FnOnce() -> Result<napi_value, Thrown>
         match thrown {
             Thrown::Error(message) => napi_throw_error(env, null(), message.as_ptr()),
             Thrown::TypeError(message) => napi_throw_type_error(env, null(), message.as_ptr()),
+            Thrown::WrongArgument(message) => napi_throw_type_error(env, null(), message.as_ptr()),
         };
     }
     null_mut()
@@ -125,7 +130,7 @@ unsafe extern "C" fn abi_version(env: napi_env, _info: napi_callback_info) -> na
     }
 }
 
-// check(ir: Uint8Array): { status: "declined", reason: string }. It reads the IR in place.
+// check(ir: Uint8Array): { status: "declined", reason: string }. It decodes the IR in place.
 unsafe extern "C" fn check_model(env: napi_env, info: napi_callback_info) -> napi_value {
     unsafe {
         guard(env, || {
@@ -169,7 +174,7 @@ unsafe extern "C" fn check_model(env: napi_env, info: napi_callback_info) -> nap
             let mut result = null_mut();
             status(napi_create_object(env, &mut result))?;
             set_property(env, result, c"status", create_string(env, "declined")?)?;
-            set_property(env, result, c"reason", create_string(env, reason)?)?;
+            set_property(env, result, c"reason", create_string(env, &reason)?)?;
             Ok(result)
         })
     }
@@ -206,6 +211,7 @@ pub unsafe extern "C" fn napi_register_module_v1(env: napi_env, exports: napi_va
         guard(env, || {
             export(env, exports, c"abiVersion", abi_version)?;
             export(env, exports, c"check", check_model)?;
+            store::export_hooks(env, exports)?;
             Ok(exports)
         })
     }

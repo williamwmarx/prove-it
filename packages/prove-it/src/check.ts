@@ -3,6 +3,7 @@ import { type ModelConfig, parseConfig } from "./config";
 import { getMemoStatistics } from "./engine/compile";
 import { toEngineProperties } from "./engine/context";
 import { toValue as toEngineValue } from "./engine/convert";
+import { type IrOutcome, lowerToIr } from "./engine/ir";
 import { checkNatively } from "./engine/native";
 import { type EngineCheckpoint, type EngineGraph, isBailout, runEngine } from "./engine/search";
 import {
@@ -10,7 +11,9 @@ import {
   getEngineSetting,
   getEngineThreads,
   getEnvironmentFlag,
+  isIrDumped,
   reportEngine,
+  writeDebugBytes,
 } from "./engine/settings";
 import { createEnvironment } from "./environment";
 import {
@@ -1603,13 +1606,6 @@ const searchStates = (
     const init = spec.init;
     const next = spec.next;
     if (init === undefined || next === undefined) return undefined;
-    if (getEngineBackend() !== "ts") {
-      const nativeStartedAt = performance.now();
-      const native = checkNatively();
-      reportEngine(
-        `native: ${native.status}: ${native.reason} (${(performance.now() - nativeStartedAt).toFixed(2)} ms)`,
-      );
-    }
     // The engine answers ENABLED <<A>>_v of a state from the steps its search took when A is made of
     // TLC's actions of the next-state relation. A constraint drops steps, and TLC's ENABLED shows
     // the effects of running A, such as printing, so then the engine runs A.
@@ -1650,30 +1646,71 @@ const searchStates = (
     };
     // A search labels each step with the action that took it only when ENABLED asks about some.
     const isLabelled = [...enabledActions.values()].some((positions) => positions !== "all");
+    const engineSpec = {
+      init,
+      next,
+      scope: spec.scope,
+      ...(isLabelled && {
+        actions: getSpecNextActions().map((action) => ({
+          expression: action.expression,
+          scope: action.scope,
+        })),
+      }),
+    };
+    const engineProperties = toEngineProperties(search.properties)!;
+    const tlcOrder = search.getTlcOrder();
+    const symmetry = search.symmetryGroup?.map((images) =>
+      [...images].map(([name, image]): [string, string] => [name, image.name]),
+    );
+    // The engine IR, lowered once if the native engine or PROVE_IT_IR_DUMP asks for it, and written
+    // to the file PROVE_IT_IR_DUMP names before the line that reports it.
+    const lowered: { outcome?: IrOutcome } = {};
+    const lowerModel = () => {
+      if (lowered.outcome) return lowered.outcome;
+      const loweredAt = performance.now();
+      const outcome = lowerToIr({
+        config,
+        environment,
+        spec: engineSpec,
+        isWarningEnabled: runtime.isWarningEnabled,
+        tlcOrder,
+        properties: engineProperties,
+        symmetry,
+        isRecordingGraph: liveness !== undefined,
+        version: options.version,
+        atoms: (liveness?.atoms ?? []).map((atom) => ({
+          atom,
+          actions: atom.kind === "Enabled" ? enabledActions.get(atom) : undefined,
+        })),
+      });
+      const milliseconds = performance.now() - loweredAt;
+      if ("ir" in outcome) writeDebugBytes("PROVE_IT_IR_DUMP", outcome.ir);
+      reportEngine(
+        `native: ir: ${"ir" in outcome ? `${outcome.ir.length} bytes` : `declined: ${outcome.reason}`} in ${milliseconds.toFixed(2)} ms`,
+      );
+      lowered.outcome = outcome;
+      return outcome;
+    };
+    if (isIrDumped()) lowerModel();
+    if (getEngineBackend() !== "ts") {
+      const nativeStartedAt = performance.now();
+      const native = checkNatively(lowerModel);
+      reportEngine(
+        `native: ${native.status}: ${native.reason} (${(performance.now() - nativeStartedAt).toFixed(2)} ms)`,
+      );
+    }
     const startedAt = performance.now();
     try {
       const result = runEngine({
         config,
         environment,
-        spec: {
-          init,
-          next,
-          scope: spec.scope,
-          ...(isLabelled && {
-            actions: getSpecNextActions().map((action) => ({
-              expression: action.expression,
-              scope: action.scope,
-            })),
-          }),
-        },
+        spec: engineSpec,
         isWarningEnabled: runtime.isWarningEnabled,
-        tlcOrder: search.getTlcOrder(),
+        tlcOrder,
         startedAt,
-        properties: toEngineProperties(search.properties)!,
+        properties: engineProperties,
         isRecordingGraph: liveness !== undefined,
-        symmetry: search.symmetryGroup?.map((images) =>
-          [...images].map(([name, image]): [string, string] => [name, image.name]),
-        ),
+        symmetry,
         workers: getEngineThreads(),
         source: options.source,
         modules: [...loadedModules],

@@ -31,6 +31,9 @@ export const getEngineBackend = () => getEnvironment()?.PROVE_IT_ENGINE_BACKEND 
 
 export const getEngineAddon = () => getEnvironment()?.PROVE_IT_ENGINE_ADDON;
 
+// PROVE_IT_IR_DUMP names the file the engine IR of the model is written to, with any backend.
+export const isIrDumped = () => Boolean(getEnvironment()?.PROVE_IT_IR_DUMP);
+
 export const getEnvironmentFlag = (name: string) => getEnvironment()?.[name] === "1";
 
 // The state PROVE_IT_STOP_AT names, before whose expansion the engine's search stops, or -1.
@@ -62,7 +65,7 @@ const getMainThreadFileSystem = () => {
   return threads?.isMainThread
     ? (getBuiltinModule?.("node:fs") as
         | {
-            writeFileSync: (path: string, text: string) => void;
+            writeFileSync: (path: string, data: string | Uint8Array) => void;
             appendFileSync: (path: string, text: string) => void;
           }
         | undefined)
@@ -85,6 +88,13 @@ export const writeDebugFile = (name: string, getLines: () => Iterable<string>) =
     batch.length = 0;
   }
   if (batch.length > 0) fileSystem.appendFileSync(path, `${batch.join("\n")}\n`);
+};
+
+// Writes bytes to the file the setting `name` names, if it names one: PROVE_IT_IR_DUMP names the
+// file the engine IR is written to.
+export const writeDebugBytes = (name: string, bytes: Uint8Array) => {
+  const path = getEnvironment()?.[name];
+  if (path) getMainThreadFileSystem()?.writeFileSync(path, bytes);
 };
 
 // Appends lines to the file the setting `name` names, from empty, keeping them until there are

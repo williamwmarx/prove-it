@@ -1,0 +1,24 @@
+# cargo fuzz's crate, a workspace of its own, since libFuzzer needs a nightly toolchain and
+# libfuzzer-sys, which nothing else builds: rustup run nightly cargo fuzz run store_operations.
+[package]
+name = "tla-values-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+tla-values = { path = "../crates/tla-values" }
+
+[[bin]]
+name = "store_operations"
+path = "fuzz_targets/store_operations.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+members = ["."]

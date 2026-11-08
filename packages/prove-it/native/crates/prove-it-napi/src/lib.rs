@@ -1,5 +1,6 @@
-//! Prove It's native engine, loaded by `src/engine/native.ts` as an N-API addon. It compiles
-//! nothing yet, so `check` declines every model and the TypeScript engine checks it.
+//! Prove It's native engine, loaded by `src/engine/native.ts` as an N-API addon. It decodes the
+//! engine IR and compiles nothing yet, so `check` declines every model and the TypeScript engine
+//! checks it.
 
 #[cfg(not(test))]
 mod binding;
@@ -12,12 +13,15 @@ pub const ABI_VERSION: i32 = 1;
 /// starts from scratch.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Outcome {
-    Declined(&'static str),
+    Declined(String),
 }
 
 /// Checks the model the engine IR describes.
-pub fn check(_ir: &[u8]) -> Outcome {
-    Outcome::Declined("the native engine compiles nothing yet")
+pub fn check(ir: &[u8]) -> Outcome {
+    match tla_ir::decode(ir) {
+        Err(error) => Outcome::Declined(format!("the engine IR doesn't decode: {error}")),
+        Ok(_) => Outcome::Declined("the native engine compiles nothing yet".into()),
+    }
 }
 
 #[cfg(test)]
@@ -25,14 +29,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn declines_every_model() {
-        assert_eq!(
-            check(&[]),
-            Outcome::Declined("the native engine compiles nothing yet")
-        );
+    fn declines_what_isnt_an_ir() {
         assert_eq!(
             check(&[1, 2, 3]),
-            Outcome::Declined("the native engine compiles nothing yet")
+            Outcome::Declined("the engine IR doesn't decode: at word 0: 3 bytes are no IR".into())
+        );
+    }
+
+    #[test]
+    fn declines_every_model() {
+        let commit = include_bytes!(
+            "../../../../tests/conformance/ir/examples/specifications/transaction_commit/TCommit.ir"
+        );
+        assert_eq!(
+            check(commit),
+            Outcome::Declined("the native engine compiles nothing yet".into())
         );
     }
 }

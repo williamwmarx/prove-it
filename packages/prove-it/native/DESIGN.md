@@ -4,7 +4,7 @@ A design for a Rust model checker that is faster than today's Prove It and print
 TLC prints, staged so that every step ships on its own, is measurably faster, and is proven
 identical to TLC and to the TypeScript checker before it is switched on.
 
-Status: proposal, with M1 built (its outcome is in section 11). Every number marked *measured*
+Status: proposal, with M1 and M3 built (their outcomes are in section 11). Every number marked *measured*
 comes from the prototypes under `native/prototypes/` (section 10) on a local 4-core cloud machine
 (Rust 1.97.0, Bun 1.4.4, Node 22.23.4). Those timings vary by about 10% between runs. Depot
 numbers come from the benchmark of `main` at f284739 (run cb7zd2w63s), as summarised on the
@@ -1450,6 +1450,107 @@ Against the 733 models with TLC under 20 s, on a 16-core Depot machine with main
 - `cargo miri test` and one CPU-hour of `cargo fuzz` clean;
 - workload benchmark within 10% of the prototype (≤ 175 ns per step on store operations).
 
+#### M2 as built
+
+Where the code made this design change, the code wins, and this records how:
+
+- **The crate (2.1, 7.2).** `crates/tla-values` holds `store.rs` (every function of `store.ts` but
+  shared mode), `fingerprint.rs` (FP64, F(v) and |v| per id, and the state fingerprint from the
+  parent, from the state before, or from scratch, as `fingerprint.ts` computes them),
+  `transfer.rs`, and `trace.rs`: the store's operations by the names a store trace gives them,
+  their arguments checked first, so the replay tool, the N-API hooks and the fuzzer share one table
+  and a wrong argument is an error, never a panic. It has no dependencies and no `unsafe`.
+- **Memory (2.1, 2.6).** The store keeps `Vec`s, not the `mmap` arena: one thread needs no address
+  that never moves, Miri can't run `mmap`, and the arena is stage 2's, with the shared table. `Meta`
+  is the 16 bytes of 2.1, but a typed model value's type lives with its text, as a UTF-16 unit,
+  since a type's character can be above 255. `Id` is a `u32` alias, not a newtype.
+- **Flags.** `IS_RECORD` is set at intern time for functions whose keys are all strings, the empty
+  one included, as `isRecordId` decides. `IS_INT_RUN` is set for every composite value, sets and
+  tuples as well as functions' domains, since `findInBlock` checks any block it is given.
+- **Texts and TLC's order.** Texts are UTF-16, as JavaScript's are, unpaired surrogates included:
+  unranked strings compare by code unit and fingerprint by each unit's low byte. The store keeps
+  TLC's order of strings itself: a reset takes it, `rank_strings` takes the strings ranked since
+  (a trace's `rankStrings` lines), and `model` ranks a new name, as `getStringRank` does.
+- **Interning while comparing.** `get_key` of a tuple interns the integer `index + 1`, as TS's
+  `getKey` does through `int`, so `compare`, `equals` and `domainOf` take `&mut self` and intern
+  the same integers past 4,096 in the same order. Fingerprints don't: they fingerprint a tuple's
+  key from its number, so fingerprinting a long tuple leaves the ids alone. `compare` skips keys
+  and values two functions share, which compare as 0 with no side effect, so the comparisons it
+  makes are the TS store's.
+- **`functionOf` past 16 keys** sorts with a stable merge sort where TS calls `Array.prototype.sort`.
+  On comparable keys the order is the same. On keys that fail to compare, which pair fails first,
+  and so the reason, could differ, as it already does between V8's sort and JavaScriptCore's. The
+  corpus never met it.
+- **Transfer encoding (5.2).** The writer writes what `createStateEncoder` writes for `toValue` of
+  the same ids, not each value once bottom-up as 5.2 suggests for checkpoints: a tuple as an
+  interval function of class "tuple", the empty one as a function, and a function of strings as a
+  record. M5's checkpoints can still choose a denser form. The reader, which the fingerprint replay
+  and the TypeScript facade need, interns as `fromValue` does, and refuses a length past the words
+  before interning anything.
+- **The state log (6.3).** To fingerprint each state without running the model, the header gains
+  `order` (the order the fingerprint reads the key's values), `strings` (TLC's order of strings
+  then, which ranks model values) and, under a VIEW or symmetry, `keyWidth`, with each state's key
+  after the state in the same encoding. `version` stays 1: readers that ignore the new fields are
+  unchanged.
+- **Replay (6.6).** `native/tools/replay` is the binary `replay`: `replay store <trace>` replays a
+  store trace, `replay fingerprints <log>` a state log. Both read a line at a time.
+  `scripts/native-replay.ts` runs every model an engine-coverage run found the TS engine completes,
+  on one thread, with both settings, replays both files and deletes them before the next model;
+  `conformance:fp64` is it with `--fingerprints`.
+- **The N-API hooks and the facade (6.5).** The addon exports `storePerform`, `storeDecode`,
+  `storeEncode`, `storeFingerprints` and `storeResetFingerprints`, over the process's one store
+  (see deep nesting below). `ABI_VERSION` stays 1: the loader calls what it called before. Since the style guide
+  forbids star and alias imports, `src/engine/native-store.ts` exports one object, `nativeStore`,
+  whose members have `store.ts`'s and `fingerprint.ts`'s names and signatures, and the tests choose
+  an implementation object. Its `fromValue` goes through the transfer encoding, so it takes the
+  values that encoding takes, not lazy sets. A bail comes back as its reason and is thrown as a
+  `Bailout`.
+- **The value oracle (6.8).** `native/oracle/ValueOracle.java` and `scripts/value-oracle.ts`. The
+  operations are building a value, `compare`, `equals`, membership and fingerprints; `toString`
+  and enumeration wait for the stages that need them. A batch interns its strings and model names
+  in a random order, then the strings a spec would build in the order of their text, since TLC
+  ranks those by when it builds them and the stores by their text. TLC's tokens start at 1 in a
+  fresh JVM, so a store's rank is TLC's token minus 1. Nothing is frozen into
+  `tests/conformance/value-oracle/` yet: no answer was the Rust store's alone.
+- **Fuzzing (6.7).** `native/fuzz` is a workspace of its own, so `libfuzzer-sys` and what it pulls
+  in stay out of the addon's `Cargo.lock`.
+- **Deep nesting.** `compare`, `equals` and the transfer encoding recurse with a value's nesting,
+  and a Rust stack overflow aborts the process, so their callers run them through
+  `on_nesting_stack`, a thread whose stack holds values nested 100,000 deep, past the 10,000 to
+  30,000 where the TypeScript store runs out of stack in Bun. The replay tool runs on it, and the
+  N-API hooks send their work to one thread that does, which owns the process's one store. M5's
+  search thread is the natural home for it in the engine.
+
+#### M2 acceptance, as run
+
+On the 4-core cloud machine, against the 733 models with TLC under 20 s:
+- **Store-op replay, id-exact: met.** All 293 models the TS engine completes (the sweep of `main`
+  at f7e85db) replay exactly: 245,169,421 operations, every id, comparison and reason, the largest
+  `MCTxnsMoveRange` with 63.8 million.
+- **Store and fingerprint tests: met.** Both run on the local, shared and native stores with
+  `PROVE_IT_ENGINE_ADDON` set, as the native job in `verification.yml` now does.
+- **`conformance:fp64`: met for the engine's states, partly for the oracle.** All 1,755,334 states
+  of those 293 models fingerprint as the TS engine logged them, from their parents and from
+  scratch. Against TLC, 202,143 fingerprints of generated values over five seeds all agree. TLC's
+  collision line is not compared here.
+- **Value oracle: not met, for a reason the TS store shares.** Over 500,000 operations (five seeds
+  of 100,000) the Rust store answers as the TS store does every time, ids and reasons included.
+  `compare`, `equals`, building and fingerprints never answer otherwise than TLC, and never miss a
+  failure. Membership misses 97: a value TLC fails to compare with the elements it binary-searches
+  (`ValueVec.search`) is reported as no member, since `isMember` checks only the kinds of the
+  set's first and last elements, a record against a set of tuples for one. The fix, to compare as
+  TLC's search does, changes the TS engine and its bail reasons, so it is a change of its own.
+  The interpreter's own fingerprint path also fails 17 times, where `createSet` compares a typed
+  model value with a record that TLC's normalisation never compares.
+- **Miri and fuzzing: met, with a nightly from rustup.** `cargo miri test -p tla-values` passes
+  its 19 tests, on fewer values than a normal run; the three whose numbers are of a fixed size or
+  depth (the million states, the 20,000-step workload, values nested 100,000 deep) are left out.
+  One CPU-hour of `cargo fuzz run store_operations` (140,323 runs, inputs up to 2 KB from the start)
+  found nothing. An earlier run found the fuzzer's own round trip running out of memory on a value
+  whose encoded tree was 2^30 words; the target now skips values past a megabyte.
+- **Workload benchmark: met here.** 174 ns per step, median of 15 runs interleaved with the
+  prototype's 172, with the same 37,986 values and checksum −1720536883 as `store.ts`.
+
 ### M3. The Engine IR
 
 **Work:**
@@ -1467,6 +1568,82 @@ Against the 733 models with TLC under 20 s, on a 16-core Depot machine with main
 - IR build time ≤ 1 ms median on 2PCwithBTM and ≤ 3 ms on btree on Depot `-4`;
 - the string table equals `createTlcOrder`'s order, checked against `getStringRank` for every
   text.
+
+#### M3 as built
+
+Branch `native-m3-ir`, measured on the 4-core cloud machine, not on Depot yet. Where the code made
+this design change, the code wins, and this records how:
+
+- **Where it lives.** `src/engine/ir.ts` lowers; the decoder and encoder are a crate of their own,
+  `crates/tla-ir` (no dependencies), not part of `tla-engine`, since stage 4's front end encodes
+  what the engine decodes. `prove-it-napi` depends on it: `check` decodes the IR and declines with
+  "the native engine compiles nothing yet", or with "the engine IR doesn't decode: …". The ABI
+  version stays 1; the IR carries `IR_VERSION` (1) in its header, and the decoder refuses another.
+- **When it is built.** Only when `PROVE_IT_ENGINE_BACKEND` asks for the native engine and the
+  addon has loaded, or when `PROVE_IT_IR_DUMP` names a file to write it to. It runs in `tryEngine`
+  after the eligibility checks, from the inputs `runEngine` takes, so the default path is the code
+  that ran before. `PROVE_IT_ENGINE=debug` reports `[engine] native: ir: <n> bytes in <ms> ms` or
+  `native: ir: declined: <reason>`, after the file is written.
+- **Layout** (`ir.ts`'s header comment is the reference). Little-endian 32-bit words, then the
+  texts as one UTF-8 string, padded to a word. Each text's end is a count of UTF-16 code units, so
+  JavaScript encodes every text in one `TextEncoder` call; a text with a lone surrogate, which UTF-8
+  can't hold, declines the IR. Text `i` below the ranked count is the string of rank `i`; the texts
+  TLC doesn't rank, such as names and the TLC version, follow. Sections: texts, variables in the
+  engine's order and TLC's order of them, the builtins named (name, arity, state-level, level-
+  constant and lazy flags), the constants named, the instance scopes read (a value, a thunk, a
+  closure, or opaque where `contextFromScope` would give up), the values, the model, the
+  definitions, the nodes.
+- **Values** are `transfer.ts`'s encoding as `createStateEncoder` writes it, one value per
+  `encode`, with the encoder's string table mapped to text indices. A constant transfer can't
+  encode, such as a lazy set, keeps no value, and the compiler is to refuse it where it is read.
+  Startup values are kept only where `getStartupEffectValue` reads them: for a definition with a
+  repeated effect, marking one that isn't a string, number or boolean, which the compiler refuses.
+- **Resolution.** Every `Identifier`, `Apply` and `OperatorReference` keeps its name, whether
+  SANY resolved it locally (which the compiler looks up first, by name, in its scope), and what it
+  names otherwise, in the compiler's own order: for an identifier a variable, a constant, a
+  definition, then a builtin of any arity through the substitutions; for an operator a definition,
+  then a builtin. An instance's variable that ENABLED's rewrite names (`x@ENABLED`) may have a slot
+  past the state's, as in the TypeScript environment, so the decoder doesn't bound variable slots.
+- **Nodes and definitions.** Nodes are written in prefix order with their line and column. An
+  `Expression` object met again is written as a reference to its first offset, which keeps the
+  identities the TS engine relies on (conjuncts deduplicated by object, liveness atoms); 234 of the
+  650 IRs have one. Definitions are records among the nodes, indexed in the order the model first
+  reaches them (Init, Next, TLC's actions, invariants, constraints, action constraints, properties,
+  VIEW, atoms, then breadth-first through the definitions and scopes). Each keeps its recursive,
+  local, self-referential, repeated-effect and substituted flags. LET definitions are records
+  inline in their LET.
+- **The model** holds, besides 1.3's list, whether each invariant may print (`hasRepeatedEffect`),
+  and for liveness the actions only when the search labels its steps (as `runEngine` gets them) and
+  every atom the tableau asks about, which `LivenessChecker.atoms` now exposes, each ENABLED atom
+  with the positions of TLC's actions it splits into, "all", or unknown.
+- **Golden files** are the IR of 30 corpus models in `tests/conformance/ir/`: the suite's 15 corpus
+  models and 15 more reaching an instance's scope, labelled actions, a VIEW, action constraints,
+  properties checked as invariants, action properties, initial predicates, invariants that print,
+  recursion, LAMBDA, function definitions and startup values. `cargo test` round-trips every one
+  and checks what a few of them hold, so CI covers them without the corpora.
+  `bun scripts/run.ts engine-ir [--update]` lowers every corpus model (it stops each at the IR),
+  round-trips all of them with `ir-round-trip`, compares the golden models, and checks each string
+  table against `createTlcOrder` and `getStringRank`.
+- `values.ts` keeps the ranked texts in rank order, so `getStringOrder` no longer sorts them.
+
+#### M3 acceptance, as run
+
+- **IR for every model: met.** 650 of the 823 models have an IR. The other 173 name their reason:
+  111 never reach the engine (62 errors before it, 33 specs with no Init or Next, 14 assumption
+  violations, and 2 crashes, on models TLC itself errors on only after 300 s), and 62 are declined
+  by `getEngineIneligibility`: liveness under symmetry or a VIEW (34), `_POSSIBLE`
+  (18), wide strings (7), properties in an
+  instance (2) and periodic (1).
+- **Round trip: met.** 650 of 650 decode and encode again byte for byte.
+- **Golden files: met.** The 30 match on a second run.
+- **Build time: not met for 2PCwithBTM here.** On the bytecode binary, median of 15 cold runs:
+  2PCwithBTM 1.63 ms (target 1 ms), btree 2.91 ms (target 3 ms). Lowering the same model again in
+  the process takes 0.3 ms, and with the JIT off (`BUN_JSC_useJIT=0`) the first lowering takes
+  1.1–1.3 ms, so most of the cold cost is JavaScriptCore compiling the walk as it warms up, not the
+  walk. Splitting the node writer so less of it is compiled, and dropping the node-identity map,
+  changed nothing measurable. Depot remains to measure; the IR costs nothing unless asked for.
+- **String table: met.** On all 650, the table starts with `createTlcOrder`'s order and
+  `getStringRank` ranks every ranked text by its position.
 
 ### M4. The expression compiler
 
