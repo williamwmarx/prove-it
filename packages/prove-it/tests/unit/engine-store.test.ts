@@ -122,6 +122,7 @@ describe.each(STORES)("the engine's %s store", (mode, store) => {
     expect(store.except(record, keys[1], store.int(4))).toBe(store.recordOf(shape, ints([1, 4])));
   });
 
+  // Some 80,000 calls, each of which crosses into the addon for the native store.
   it("finds values again after the table and the heap grow", () => {
     const keys = [store.str("k")];
     const shape = store.createRecordShape(keys);
@@ -137,7 +138,7 @@ describe.each(STORES)("the engine's %s store", (mode, store) => {
       expect(store.tupleOf([record, store.int(0)], 2)).toBe(tuples[index]);
     });
     expect(store.getValueCount()).toBe(count);
-  });
+  }, 60_000);
 
   it("sorts a set's elements and drops duplicates, short or long", () => {
     for (const length of [3, 16, 17, 100]) {

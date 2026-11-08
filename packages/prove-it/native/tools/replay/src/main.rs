@@ -20,7 +20,7 @@ use json::{Json, parse};
 use tla_values::fingerprint::Fingerprints;
 use tla_values::trace::{Answer, Argument, Failure, perform};
 use tla_values::transfer::{EncodedStates, decode_states};
-use tla_values::{Id, Store};
+use tla_values::{Id, Store, on_nesting_stack};
 
 fn read_lines(
     path: &str,
@@ -249,7 +249,7 @@ fn main() -> ExitCode {
     };
     let mut is_exact = true;
     for path in &arguments[1..] {
-        match replay(path) {
+        match on_nesting_stack(|| replay(path)) {
             Ok(summary) => println!("{summary}"),
             Err(error) => {
                 println!("{error}");

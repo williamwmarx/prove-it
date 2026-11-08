@@ -1,6 +1,6 @@
 //! Test hooks into the native store, for `src/engine/native-store.ts`, which gives the store's
-//! tests and the value oracle the TypeScript store's functions over this one. Each JavaScript
-//! thread has a store of its own, as each has its own TypeScript store. A call costs what an N-API
+//! tests and the value oracle the TypeScript store's functions over this one. The process has one
+//! store, which each call runs on a thread with a stack for deeply nested values. A call costs what an N-API
 //! call costs, which tests don't mind; the engine never crosses per value.
 //!
 //! - `storePerform(name, args)` runs an operation as a store trace names it, with ids as numbers,
@@ -13,14 +13,16 @@
 //!   fingerprints of the states into a BigInt64Array, and `storeResetFingerprints()` forgets
 //!   every value's.
 
-use std::cell::RefCell;
 use std::ffi::{CStr, CString, c_void};
+use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 use std::ptr::null_mut;
+use std::sync::mpsc::{Sender, channel};
+use std::sync::{Mutex, PoisonError};
 
 use tla_values::fingerprint::Fingerprints;
 use tla_values::trace::{Answer, Argument, Failure, perform};
 use tla_values::transfer::{DecodeError, EncodedStates, StateEncoder, decode_states};
-use tla_values::{Id, Store};
+use tla_values::{Id, Store, on_nesting_stack};
 
 use super::{
     Thrown, export, guard, napi_callback_info, napi_create_object, napi_env, napi_get_cb_info,
@@ -89,9 +91,43 @@ unsafe extern "C" {
     ) -> napi_status;
 }
 
-thread_local! {
-    static STORE: RefCell<Store> = RefCell::new(Store::new());
-    static FINGERPRINTS: RefCell<Fingerprints> = RefCell::new(Fingerprints::new());
+type Job = Box<dyn FnOnce(&mut Store, &mut Fingerprints) + Send>;
+
+// The thread that owns the store and runs every call's work on it, with a stack for deeply nested
+// values. A thread spawned per call would map that stack each time.
+static STORE_THREAD: Mutex<Option<Sender<Job>>> = Mutex::new(None);
+
+fn start_store_thread() -> Sender<Job> {
+    let (sender, jobs) = channel::<Job>();
+    std::thread::spawn(move || {
+        on_nesting_stack(move || {
+            let (mut store, mut fingerprints) = (Store::new(), Fingerprints::new());
+            for job in jobs {
+                job(&mut store, &mut fingerprints);
+            }
+        })
+    });
+    sender
+}
+
+// Runs work on the store and its fingerprints, and returns what it returns, or its panic.
+fn with_store<T: Send + 'static>(
+    work: impl FnOnce(&mut Store, &mut Fingerprints) -> T + Send + 'static,
+) -> T {
+    let (reply, answer) = channel();
+    let job: Job = Box::new(move |store, fingerprints| {
+        let _ = reply.send(catch_unwind(AssertUnwindSafe(|| work(store, fingerprints))));
+    });
+    STORE_THREAD
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .get_or_insert_with(start_store_thread)
+        .send(job)
+        .expect("the store's thread takes work");
+    answer
+        .recv()
+        .expect("the store's thread answers")
+        .unwrap_or_else(|panic| resume_unwind(panic))
 }
 
 fn wrong(message: String) -> Thrown {
@@ -301,7 +337,7 @@ unsafe extern "C" fn store_perform(env: napi_env, info: napi_callback_info) -> n
                 .into_iter()
                 .map(|element| get_argument(env, element))
                 .collect::<Result<Vec<_>, _>>()?;
-            match STORE.with_borrow_mut(|store| perform(store, &name, &arguments)) {
+            match with_store(move |store, _| perform(store, &name, &arguments)) {
                 Ok(Answer::Null) => create_null(env),
                 Ok(Answer::Bool(value)) => {
                     let mut result = null_mut();
@@ -332,7 +368,7 @@ unsafe extern "C" fn store_decode(env: napi_env, info: napi_callback_info) -> na
             if ids.len() < width * encoded.count as usize {
                 return Err(wrong("ids must hold every value of every state".into()));
             }
-            match STORE.with_borrow_mut(|store| decode_states(store, &encoded, width)) {
+            match with_store(move |store, _| decode_states(store, &encoded, width)) {
                 Ok(decoded) => {
                     for (slot, id) in ids.iter_mut().zip(decoded) {
                         *slot = id as i32;
@@ -369,7 +405,9 @@ unsafe extern "C" fn store_encode(env: napi_env, info: napi_callback_info) -> na
             let [states, width] = get_arguments::<2>(env, info)?;
             let words = get_int32s(env, states, "states")?;
             let width = get_index(env, width, "width")?;
-            let encoded = STORE.with_borrow(|store| {
+            let words = words.to_vec();
+            let encoded = with_store(move |store, _| {
+                let words = &words;
                 let states = get_states(store, words, width)?;
                 let mut encoder = StateEncoder::new();
                 for state in states.chunks_exact(width) {
@@ -421,7 +459,7 @@ unsafe extern "C" fn store_fingerprints(env: napi_env, info: napi_callback_info)
                 .ok_or_else(|| wrong("order must hold positions inside a state".into()))?;
             let parents = match type_of(env, parents)? {
                 NAPI_UNDEFINED | NAPI_NULL => None,
-                _ => Some(&*get_int32s(env, parents, "parents")?),
+                _ => Some(get_int32s(env, parents, "parents")?.to_vec()),
             };
             let mut is_reference_value = false;
             status(napi_get_value_bool(
@@ -431,7 +469,9 @@ unsafe extern "C" fn store_fingerprints(env: napi_env, info: napi_callback_info)
             ))?;
             let out = get_typed::<i64>(env, out, NAPI_BIGINT64_ARRAY)?
                 .ok_or_else(|| wrong("fingerprints must be a BigInt64Array".into()))?;
-            let fingerprints = STORE.with_borrow(|store| {
+            let words = words.to_vec();
+            let fingerprints = with_store(move |store, fingerprints| {
+                let (words, parents) = (&words, parents.as_deref());
                 let states = get_states(store, words, width)?;
                 let count = states.len() / width;
                 if parents.is_some_and(|parents| {
@@ -439,13 +479,11 @@ unsafe extern "C" fn store_fingerprints(env: napi_env, info: napi_callback_info)
                 }) {
                     return Err(wrong("parents must name a state or be -1".into()));
                 }
-                Ok(FINGERPRINTS.with_borrow_mut(|fingerprints| {
-                    if is_reference_value {
-                        fingerprints.get_states_reference(store, &states, width, &order)
-                    } else {
-                        fingerprints.get_states(store, &states, width, &order, parents)
-                    }
-                }))
+                Ok(if is_reference_value {
+                    fingerprints.get_states_reference(store, &states, width, &order)
+                } else {
+                    fingerprints.get_states(store, &states, width, &order, parents)
+                })
             })?;
             if out.len() < fingerprints.len() {
                 return Err(wrong("fingerprints must have room for every state".into()));
@@ -465,7 +503,7 @@ unsafe extern "C" fn store_reset_fingerprints(
 ) -> napi_value {
     unsafe {
         guard(env, || {
-            FINGERPRINTS.with_borrow_mut(Fingerprints::reset);
+            with_store(|_, fingerprints| fingerprints.reset());
             Ok(null_mut())
         })
     }
