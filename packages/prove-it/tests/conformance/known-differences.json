@@ -3276,54 +3276,6 @@
     ]
   },
   {
-    "id": "spectacle/specs/with_state_graphs/simple_strings.cfg",
-    "mode": "default",
-    "pair": "tlc/ts",
-    "reason": "The engine doesn't print TLC's \"Computed N initial states...\" lines for this Init, which the interpreter prints. An engine bug.",
-    "diff": [
-      "-Computed 2 initial states...",
-      "-Computed 4 initial states..."
-    ]
-  },
-  {
-    "id": "spectacle/specs/with_state_graphs/simple_strings.cfg",
-    "mode": "default",
-    "pair": "ts/interpreter",
-    "reason": "The engine doesn't print TLC's \"Computed N initial states...\" lines for this Init, which the interpreter prints. An engine bug.",
-    "diff": [
-      "+Computed 2 initial states...",
-      "+Computed 4 initial states..."
-    ]
-  },
-  {
-    "id": "spectacle/specs/with_state_graphs/simple_strings.cfg",
-    "mode": "tool",
-    "pair": "tlc/ts",
-    "reason": "The engine doesn't print TLC's \"Computed N initial states...\" lines for this Init, which the interpreter prints. An engine bug.",
-    "diff": [
-      "-@!@!@STARTMSG 2269:0 @!@!@",
-      "-Computed 2 initial states...",
-      "-@!@!@ENDMSG 2269 @!@!@",
-      "-@!@!@STARTMSG 2269:0 @!@!@",
-      "-Computed 4 initial states...",
-      "-@!@!@ENDMSG 2269 @!@!@"
-    ]
-  },
-  {
-    "id": "spectacle/specs/with_state_graphs/simple_strings.cfg",
-    "mode": "tool",
-    "pair": "ts/interpreter",
-    "reason": "The engine doesn't print TLC's \"Computed N initial states...\" lines for this Init, which the interpreter prints. An engine bug.",
-    "diff": [
-      "+@!@!@STARTMSG 2269:0 @!@!@",
-      "+Computed 2 initial states...",
-      "+@!@!@ENDMSG 2269 @!@!@",
-      "+@!@!@STARTMSG 2269:0 @!@!@",
-      "+Computed 4 initial states...",
-      "+@!@!@ENDMSG 2269 @!@!@"
-    ]
-  },
-  {
     "id": "tla-rs/test_cases/should_pass/function_syntax/function_syntax.cfg",
     "mode": "default",
     "pair": "tlc/ts",
@@ -3393,54 +3345,6 @@
       "+@!@!@STARTMSG 2268:0 @!@!@",
       "+The average outdegree of the complete state graph is 1 (minimum is 0, the maximum 1 and the 95th percentile is 1).",
       "+@!@!@ENDMSG 2268 @!@!@"
-    ]
-  },
-  {
-    "id": "tlc/tlatools/org.lamport.tlatools/test-model/AssignmentInit.cfg",
-    "mode": "default",
-    "pair": "tlc/ts",
-    "reason": "The engine doesn't print TLC's \"Computed N initial states...\" lines for this Init, which the interpreter prints. An engine bug.",
-    "diff": [
-      "-Computed 2 initial states...",
-      "-Computed 4 initial states..."
-    ]
-  },
-  {
-    "id": "tlc/tlatools/org.lamport.tlatools/test-model/AssignmentInit.cfg",
-    "mode": "default",
-    "pair": "ts/interpreter",
-    "reason": "The engine doesn't print TLC's \"Computed N initial states...\" lines for this Init, which the interpreter prints. An engine bug.",
-    "diff": [
-      "+Computed 2 initial states...",
-      "+Computed 4 initial states..."
-    ]
-  },
-  {
-    "id": "tlc/tlatools/org.lamport.tlatools/test-model/AssignmentInit.cfg",
-    "mode": "tool",
-    "pair": "tlc/ts",
-    "reason": "The engine doesn't print TLC's \"Computed N initial states...\" lines for this Init, which the interpreter prints. An engine bug.",
-    "diff": [
-      "-@!@!@STARTMSG 2269:0 @!@!@",
-      "-Computed 2 initial states...",
-      "-@!@!@ENDMSG 2269 @!@!@",
-      "-@!@!@STARTMSG 2269:0 @!@!@",
-      "-Computed 4 initial states...",
-      "-@!@!@ENDMSG 2269 @!@!@"
-    ]
-  },
-  {
-    "id": "tlc/tlatools/org.lamport.tlatools/test-model/AssignmentInit.cfg",
-    "mode": "tool",
-    "pair": "ts/interpreter",
-    "reason": "The engine doesn't print TLC's \"Computed N initial states...\" lines for this Init, which the interpreter prints. An engine bug.",
-    "diff": [
-      "+@!@!@STARTMSG 2269:0 @!@!@",
-      "+Computed 2 initial states...",
-      "+@!@!@ENDMSG 2269 @!@!@",
-      "+@!@!@STARTMSG 2269:0 @!@!@",
-      "+Computed 4 initial states...",
-      "+@!@!@ENDMSG 2269 @!@!@"
     ]
   },
   {
@@ -3800,27 +3704,23 @@
       "-Finished in _ at (_)",
       "+",
       "+--- stderr",
-      "+4081 |   const isParenthesized = isToken(file, start, \"(\") && getMatchingIndex(file, start) === end && (isToken(file, start - 1, \"(\") || isToken(file, start - 1, \",\"));",
-      "+4082 |   return isParenthesized ? getArgumentSpan(file, { start, end }) : span;",
-      "+4083 | };",
-      "+4084 | var getSpanLocation = (file, span) => ({",
-      "+4085 |   file: file.name,",
-      "+4086 |   beginLine: file.tokens[span.start].line,",
+      "+file:///home/runner/work/prove-it/prove-it/packages/prove-it/dist/index-18v97dsn.js:4086",
+      "+  beginLine: file.tokens[span.start].line,",
       "+                                     ^",
-      "+TypeError: undefined is not an object (evaluating 'file.tokens[span.start].line')",
-      "+      at getSpanLocation (/home/user/prove-it/packages/prove-it/dist/index-271pnegf.js:4086:31)",
-      "+      at <anonymous> (/home/user/prove-it/packages/prove-it/dist/index-271pnegf.js:4770:90)",
-      "+      at map (1:11)",
-      "+      at <anonymous> (/home/user/prove-it/packages/prove-it/dist/index-271pnegf.js:4770:42)",
-      "+      at withContext (/home/user/prove-it/packages/prove-it/dist/index-271pnegf.js:4558:22)",
-      "+      at generateArgument (/home/user/prove-it/packages/prove-it/dist/index-271pnegf.js:4822:24)",
-      "+      at <anonymous> (/home/user/prove-it/packages/prove-it/dist/index-271pnegf.js:3709:97)",
-      "+      at forEach (1:11)",
-      "+      at <anonymous> (/home/user/prove-it/packages/prove-it/dist/index-271pnegf.js:3709:25)",
-      "+      at generateSelectorExpression (/home/user/prove-it/packages/prove-it/dist/index-271pnegf.js:4737:20)",
-      "+      at async <anonymous> (/home/user/prove-it/packages/prove-it/dist/run-fsw4f90r.js:870:28)",
       "+",
-      "+Bun v1.4.4 (Linux x64)"
+      "+TypeError: Cannot read properties of undefined (reading 'line')",
+      "+    at getSpanLocation (file:///home/runner/work/prove-it/prove-it/packages/prove-it/dist/index-18v97dsn.js:4086:38)",
+      "+    at getTokenLocation (file:///home/runner/work/prove-it/prove-it/packages/prove-it/dist/index-18v97dsn.js:4091:41)",
+      "+    at file:///home/runner/work/prove-it/prove-it/packages/prove-it/dist/index-18v97dsn.js:4792:90",
+      "+    at Array.map (<anonymous>)",
+      "+    at file:///home/runner/work/prove-it/prove-it/packages/prove-it/dist/index-18v97dsn.js:4792:42",
+      "+    at withContext (file:///home/runner/work/prove-it/prove-it/packages/prove-it/dist/index-18v97dsn.js:4580:22)",
+      "+    at generateLambda (file:///home/runner/work/prove-it/prove-it/packages/prove-it/dist/index-18v97dsn.js:4791:14)",
+      "+    at generateArgument (file:///home/runner/work/prove-it/prove-it/packages/prove-it/dist/index-18v97dsn.js:4844:24)",
+      "+    at Object.generateArgument (file:///home/runner/work/prove-it/prove-it/packages/prove-it/dist/index-18v97dsn.js:4697:66)",
+      "+    at file:///home/runner/work/prove-it/prove-it/packages/prove-it/dist/index-18v97dsn.js:3709:97",
+      "+",
+      "+Node.js v24.16.0"
     ]
   },
   {
@@ -3866,27 +3766,23 @@
       "-@!@!@ENDMSG 2186 @!@!@",
       "+",
       "+--- stderr",
-      "+4081 |   const isParenthesized = isToken(file, start, \"(\") && getMatchingIndex(file, start) === end && (isToken(file, start - 1, \"(\") || isToken(file, start - 1, \",\"));",
-      "+4082 |   return isParenthesized ? getArgumentSpan(file, { start, end }) : span;",
-      "+4083 | };",
-      "+4084 | var getSpanLocation = (file, span) => ({",
-      "+4085 |   file: file.name,",
-      "+4086 |   beginLine: file.tokens[span.start].line,",
+      "+file:///home/runner/work/prove-it/prove-it/packages/prove-it/dist/index-18v97dsn.js:4086",
+      "+  beginLine: file.tokens[span.start].line,",
       "+                                     ^",
-      "+TypeError: undefined is not an object (evaluating 'file.tokens[span.start].line')",
-      "+      at getSpanLocation (/home/user/prove-it/packages/prove-it/dist/index-271pnegf.js:4086:31)",
-      "+      at <anonymous> (/home/user/prove-it/packages/prove-it/dist/index-271pnegf.js:4770:90)",
-      "+      at map (1:11)",
-      "+      at <anonymous> (/home/user/prove-it/packages/prove-it/dist/index-271pnegf.js:4770:42)",
-      "+      at withContext (/home/user/prove-it/packages/prove-it/dist/index-271pnegf.js:4558:22)",
-      "+      at generateArgument (/home/user/prove-it/packages/prove-it/dist/index-271pnegf.js:4822:24)",
-      "+      at <anonymous> (/home/user/prove-it/packages/prove-it/dist/index-271pnegf.js:3709:97)",
-      "+      at forEach (1:11)",
-      "+      at <anonymous> (/home/user/prove-it/packages/prove-it/dist/index-271pnegf.js:3709:25)",
-      "+      at generateSelectorExpression (/home/user/prove-it/packages/prove-it/dist/index-271pnegf.js:4737:20)",
-      "+      at async <anonymous> (/home/user/prove-it/packages/prove-it/dist/run-fsw4f90r.js:870:28)",
       "+",
-      "+Bun v1.4.4 (Linux x64)"
+      "+TypeError: Cannot read properties of undefined (reading 'line')",
+      "+    at getSpanLocation (file:///home/runner/work/prove-it/prove-it/packages/prove-it/dist/index-18v97dsn.js:4086:38)",
+      "+    at getTokenLocation (file:///home/runner/work/prove-it/prove-it/packages/prove-it/dist/index-18v97dsn.js:4091:41)",
+      "+    at file:///home/runner/work/prove-it/prove-it/packages/prove-it/dist/index-18v97dsn.js:4792:90",
+      "+    at Array.map (<anonymous>)",
+      "+    at file:///home/runner/work/prove-it/prove-it/packages/prove-it/dist/index-18v97dsn.js:4792:42",
+      "+    at withContext (file:///home/runner/work/prove-it/prove-it/packages/prove-it/dist/index-18v97dsn.js:4580:22)",
+      "+    at generateLambda (file:///home/runner/work/prove-it/prove-it/packages/prove-it/dist/index-18v97dsn.js:4791:14)",
+      "+    at generateArgument (file:///home/runner/work/prove-it/prove-it/packages/prove-it/dist/index-18v97dsn.js:4844:24)",
+      "+    at Object.generateArgument (file:///home/runner/work/prove-it/prove-it/packages/prove-it/dist/index-18v97dsn.js:4697:66)",
+      "+    at file:///home/runner/work/prove-it/prove-it/packages/prove-it/dist/index-18v97dsn.js:3709:97",
+      "+",
+      "+Node.js v24.16.0"
     ]
   }
 ]

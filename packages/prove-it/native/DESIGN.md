@@ -1322,26 +1322,31 @@ Where the code made this design change, the code wins, and this records how:
 
 #### M0 acceptance, as run
 
-On a 4-core machine, against the 733 models with TLC under 20 s:
-- **Differential.** The 1,466 runs (default and `-tool`) leave 62 listed differences, each with
-  its reason in `known-differences.json`: 56 between TLC and the TS engine, 6 between the TS
+Against the 733 models with TLC under 20 s, on a 16-core Depot machine with main merged (run
+`5ggqq5wkdr`, after review):
+- **Differential.** The 1,466 runs (default and `-tool`) leave 54 listed differences, each with
+  its reason in `known-differences.json`: 52 between TLC and the TS engine, 2 between the TS
   engine and the interpreter, and none between the engine and the engine stopped part way.
-  - 18 of the 56 are TLC at `TLC_COMMIT` rejecting precedence conflicts in SANY (on 7 models)
+  - 18 of the 52 are TLC at `TLC_COMMIT` rejecting precedence conflicts in SANY (on 7 models)
     that the TLC behind `expected.json` accepted, so those outcomes in `expected.json` are not
     TLC_COMMIT's.
-  - The 6 engine/interpreter differences are engine bugs in the initial-state messages.
+  - The 2 engine/interpreter differences are InitialLivenessEvaluationError's "Finished computing
+    initial states" line, which comes before the error with the engine on. The engine's missing
+    "Computed N initial states" lines (AssignmentInit, simple_strings) are fixed on main.
   - The rest are Prove It printing records' fields in another order in traces, error messages
     worded otherwise, a step named `Next` where TLC names its action, a POSTCONDITION reported
     false, and a crash in `getSpanLocation` on `test52`; and two that depend on TLC's runtime: a
     Java stack overflow and the install path in `TLCGet("config")`.
-- **Forced hand-over.** `differential.ts --stop-at` stopped the engine on 547 models in both modes,
-  the violating ones among them, with identical output each time.
+- **Forced hand-over.** `differential.ts --stop-at` stopped the engine part way in 986 runs, the
+  violating ones among them, each counted only when the engine said the stop took it, with output
+  identical to the run without the stop each time. In 144 runs the engine hands over before any
+  state a stop could take, so nothing was forced there.
 - **State logs.** `engine-coverage.ts --state-logs` compared the logs on 1 and 4 threads on the
   245 models the engine completes. They are identical on all 245, but the workers took levels on
   only 2 (`ccf/tla/consistency/MCSingleNode`, `TeachingConcurrency/SimpleRegular`); the rest are
   too small or use symmetry or a VIEW. `benchmarks/commit` is the test that does take them.
 - **Normaliser, unit tests, conformance.** The normaliser's test passes with mutated counts
-  surviving; `bun test tests/unit` passes (2,905 tests); `conformance --check` matches all 772
+  surviving; `bun test tests/unit` passes (2,939 tests); `conformance --check` matches all 772
   models of `passing.json`; the engine on and off reach the same outcome on every model.
 
 ### M1. Crate, binding, loader, packaging
