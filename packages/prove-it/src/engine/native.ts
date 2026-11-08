@@ -23,7 +23,17 @@ import type { IrOutcome } from "./ir";
 import type { LiveOracle } from "./live";
 import type { EngineCheckpoint, EngineInput, EngineResult } from "./search";
 import { getEngineAddon, getEnvironmentFlag, getStopAt, reportEngine } from "./settings";
-import { Bailout, FALSE, functionOf, int, model, resetStore, setOf, str, TRUE } from "./store";
+import {
+  Bailout,
+  FALSE,
+  functionOfSorted,
+  int,
+  model,
+  resetStore,
+  setOfSorted,
+  str,
+  TRUE,
+} from "./store";
 
 // The addon's test hooks into its store, which native-store.ts calls (binding/store.rs).
 export interface NativeStoreHooks {
@@ -236,14 +246,17 @@ export const checkNatively = (
 // positions of values before it, and each state as the positions of its values (SharedStates in
 // transfer.rs), so this interns each value with the id fromValue gives it, in the order decoding
 // each state's values would, but neither builds it nor reads it twice: a search can hand over
-// millions of states.
+// millions of states. The parts come from the native store, a set's elements and a function's
+// keys in TLC's order, so they are interned as they are, through scratch arrays.
 const decodeStates = (words: Int32Array, strings: string[], positions: Int32Array) => {
   // Each value takes a word at least.
   const values = new Int32Array(words.length);
+  const scratch = { keys: new Int32Array(64), values: new Int32Array(64) };
   let count = 0;
   let cursor = 0;
-  const readParts = (length: number) => {
-    const parts: number[] = new Array(length);
+  const readParts = (target: "keys" | "values", length: number) => {
+    if (scratch[target].length < length) scratch[target] = new Int32Array(2 * length);
+    const parts = scratch[target];
     for (let index = 0; index < length; index++) parts[index] = values[words[cursor++]];
     return parts;
   };
@@ -260,22 +273,24 @@ const decodeStates = (words: Int32Array, strings: string[], positions: Int32Arra
         return str(strings[words[cursor++]]);
       case MODEL_VALUE_TAG:
         return model(strings[words[cursor++]]);
-      case SET_TAG:
-        return setOf(readParts(words[cursor++]));
+      case SET_TAG: {
+        const length = words[cursor++];
+        return setOfSorted(readParts("keys", length), length);
+      }
       case INTERVAL_FUNCTION_TAG: {
         cursor++;
         const low = words[cursor++];
         const length = words[cursor++];
-        const keys: number[] = new Array(length);
-        for (let index = 0; index < length; index++) keys[index] = int(low + index);
-        return functionOf(keys, readParts(length));
+        if (scratch.keys.length < length) scratch.keys = new Int32Array(2 * length);
+        for (let index = 0; index < length; index++) scratch.keys[index] = int(low + index);
+        return functionOfSorted(scratch.keys, readParts("values", length), length);
       }
       default: {
         if (tag !== FUNCTION_TAG) throw new EngineInvariantError(`a transfer tag ${tag}`);
         cursor++;
         const length = words[cursor++];
-        const keys = readParts(length);
-        return functionOf(keys, readParts(length));
+        const keys = readParts("keys", length);
+        return functionOfSorted(keys, readParts("values", length), length);
       }
     }
   };
