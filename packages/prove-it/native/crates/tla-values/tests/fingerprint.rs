@@ -2,7 +2,7 @@
 //! src/tlc/fingerprint.ts (DESIGN.md 10.3), and the engine's ways of fingerprinting a state against
 //! each other.
 
-use tla_values::fingerprint::{Fingerprints, INITIAL, extend_byte, extend_int};
+use tla_values::fingerprint::{Fingerprints, INITIAL, Parent, extend_byte, extend_int};
 use tla_values::store::{Id, Store, TRUE};
 
 fn utf16(text: &str) -> Vec<u16> {
@@ -180,6 +180,24 @@ fn are_the_same_from_a_parent_from_the_state_before_and_from_scratch() {
         Fingerprints::new().get_states_reference(&store, &states, width, &order),
         scratch
     );
+    // As the search fingerprints a successor, from the parent being expanded, whether or not the
+    // values that changed keep their lengths, on fingerprints that start out knowing no value.
+    let mut from_parents = Fingerprints::new();
+    let mut parent = Parent::default();
+    for (state, row) in states.chunks_exact(width).enumerate() {
+        let Ok(index) = usize::try_from(parents[state]) else {
+            continue;
+        };
+        let parent_row = &states[index * width..][..width];
+        assert_eq!(
+            from_parents.set_parent(&store, parent_row, &order, &mut parent),
+            scratch[index]
+        );
+        assert_eq!(
+            from_parents.get_child(&store, &parent, parent_row, row, &order),
+            scratch[state]
+        );
+    }
     // A tuple's keys are fingerprinted, not interned.
     let count = store.value_count();
     let mut fresh = Fingerprints::new();

@@ -109,6 +109,18 @@ struct ValueFingerprint {
     is_computed: bool,
 }
 
+/// What fingerprinting a state's successors from it needs: its fingerprint, and, by position in
+/// the order its values are read, its fingerprint before that value and the length of the values
+/// after it, with the table that shifts by that length.
+#[derive(Default)]
+pub struct Parent {
+    fingerprint: u64,
+    // The position of each of the state's values in the order.
+    positions: Vec<usize>,
+    prefixes: Vec<u64>,
+    tails: Vec<(u64, i32)>,
+}
+
 /// F(v) and |v| of the store's values, computed as they are first asked for, and the tables that
 /// shift by their lengths.
 #[derive(Default)]
@@ -118,8 +130,13 @@ pub struct Fingerprints {
     // Shifts by 2^j zero bytes.
     powers: Vec<Box<ShiftTable>>,
     lengths: Vec<Box<ShiftTable>>,
+    // The number of each length's table, or UNKNOWN_TABLE: by length up to SHORT_LENGTHS, which a
+    // state's tails are found by once per state, and in a map past it.
+    short_numbers: Vec<i32>,
     length_numbers: HashMap<u64, i32>,
 }
+
+const SHORT_LENGTHS: usize = 1 << 12;
 
 impl Fingerprints {
     pub fn new() -> Fingerprints {
@@ -157,7 +174,13 @@ impl Fingerprints {
 
     // The number of the table that shifts by a length, or NO_TABLE past the cap.
     fn get_length_table(&mut self, length: u64) -> i32 {
-        if let Some(&number) = self.length_numbers.get(&length) {
+        let is_short = length < SHORT_LENGTHS as u64;
+        let known = if is_short {
+            self.short_numbers.get(length as usize).copied()
+        } else {
+            self.length_numbers.get(&length).copied()
+        };
+        if let Some(number) = known.filter(|&number| number != UNKNOWN_TABLE) {
             return number;
         }
         if self.lengths.len() >= MAXIMUM_LENGTH_TABLES {
@@ -179,7 +202,12 @@ impl Fingerprints {
         });
         self.lengths.push(table);
         let number = self.lengths.len() as i32;
-        self.length_numbers.insert(length, number);
+        if is_short {
+            self.short_numbers.resize(SHORT_LENGTHS, UNKNOWN_TABLE);
+            self.short_numbers[length as usize] = number;
+        } else {
+            self.length_numbers.insert(length, number);
+        }
         number
     }
 
@@ -215,10 +243,10 @@ impl Fingerprints {
 
     // Extends a fingerprint by a value whose F and length are known, with its table found once.
     fn extend_known(&mut self, fingerprint: u64, id: Id) -> u64 {
-        let entry = *self.get_entry(id);
+        let entry = self.values[id as usize];
         let number = if entry.table == UNKNOWN_TABLE {
             let number = self.get_length_table(entry.length);
-            self.get_entry(id).table = number;
+            self.values[id as usize].table = number;
             number
         } else {
             entry.table
@@ -253,11 +281,20 @@ impl Fingerprints {
 
     // Computes a value's F and length, its parts' first, without recursing: a value is computed
     // when it comes off the stack the second time, after the parts pushed above it.
+    #[inline(always)]
     fn compute(&mut self, store: &Store, id: Id) {
         // A value met before is known, as nearly every value of a generated state is.
-        if self.get_entry(id).is_computed {
-            return;
+        if !self
+            .values
+            .get(id as usize)
+            .is_some_and(|entry| entry.is_computed)
+        {
+            self.compute_new(store, id);
         }
+    }
+
+    #[inline(never)]
+    fn compute_new(&mut self, store: &Store, id: Id) {
         let mut pending = vec![(id, false)];
         while let Some((top, is_expanded)) = pending.pop() {
             if self.get_entry(top).is_computed {
@@ -423,6 +460,83 @@ impl Fingerprints {
             tail += self.values[id as usize].length;
         }
         Some(fingerprint)
+    }
+
+    /// Makes `state`, its values read in `order`, the parent [`Fingerprints::get_child`]
+    /// fingerprints successors from, and returns its fingerprint. `order` holds each of the
+    /// state's positions once.
+    pub fn set_parent(
+        &mut self,
+        store: &Store,
+        state: &[Id],
+        order: &[usize],
+        parent: &mut Parent,
+    ) -> u64 {
+        self.check_generation(store);
+        parent.positions.resize(state.len(), 0);
+        parent.prefixes.resize(order.len(), 0);
+        parent.tails.resize(order.len(), (u64::MAX, NO_TABLE));
+        let mut fingerprint = INITIAL;
+        for (position, &index) in order.iter().enumerate() {
+            parent.positions[index] = position;
+            parent.prefixes[position] = fingerprint;
+            self.compute(store, state[index]);
+            fingerprint = self.extend_known(fingerprint, state[index]);
+        }
+        let mut tail = 0;
+        for (position, &index) in order.iter().enumerate().rev() {
+            // A tail seldom changes from one parent to the next, so its table is looked up again
+            // only when it does.
+            if parent.tails[position].0 != tail {
+                parent.tails[position] = (tail, self.get_length_table(tail));
+            }
+            tail += self.values[state[index] as usize].length;
+        }
+        parent.fingerprint = fingerprint;
+        fingerprint
+    }
+
+    /// The fingerprint of a successor of the parent [`Fingerprints::set_parent`] last set, from
+    /// the parent's: for each value that changed, one shift by the length of the values after it
+    /// where every changed value keeps its length (as [`Fingerprints::get_states`] computes it),
+    /// and otherwise the parent's fingerprint before the first value that changed, extended by
+    /// the successor's values from there.
+    pub fn get_child(
+        &mut self,
+        store: &Store,
+        parent: &Parent,
+        parent_state: &[Id],
+        state: &[Id],
+        order: &[usize],
+    ) -> u64 {
+        self.check_generation(store);
+        let mut fingerprint = parent.fingerprint;
+        let mut first = order.len();
+        let mut is_same_length = true;
+        for (index, (&id, &parent_id)) in state.iter().zip(parent_state).enumerate() {
+            if id == parent_id {
+                continue;
+            }
+            let position = parent.positions[index];
+            first = first.min(position);
+            self.compute(store, id);
+            self.compute(store, parent_id);
+            let (value, parent_value) = (self.values[id as usize], self.values[parent_id as usize]);
+            is_same_length &= value.length == parent_value.length;
+            if is_same_length {
+                let (tail, table) = parent.tails[position];
+                let changed = value.fingerprint ^ parent_value.fingerprint;
+                fingerprint ^= self.shift_by_table(table, changed, tail);
+            }
+        }
+        if is_same_length {
+            return fingerprint;
+        }
+        order[first..]
+            .iter()
+            .fold(parent.prefixes[first], |fingerprint, &index| {
+                self.extend_known(fingerprint, state[index])
+            })
     }
 
     /// The fingerprints extended over every value of every state, which
