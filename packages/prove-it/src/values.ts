@@ -2636,7 +2636,7 @@ const formatLazySet = (value: LazySetValue, isStrict: boolean): string => {
 
 // FcnRcdValue#isName: TLC prints a function as a record when every key consists of letters,
 // decimal digits, and underscores, with at least one letter.
-const isFieldName = (name: string) =>
+export const isFieldName = (name: string) =>
   /^[\p{L}\p{Nd}_]*$/u.test(name) &&
   /\p{L}/u.test(name) &&
   (name.length < 4 || !/^[WS]F_/.test(name));
@@ -2722,6 +2722,9 @@ export const formatValue = (value: Value, isStrict = false, isNormalized = false
     }
   }
 };
+
+// The text of a value that Print and PrintT print.
+export const formatPrinted = (value: Value) => prettyPrint(formatValue(value, true, true));
 
 // TLC's TLCState.toString: a line per variable, as a conjunction when there are several.
 export const formatState = (state: Record<string, Value>) => {

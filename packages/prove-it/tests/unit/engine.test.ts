@@ -586,6 +586,44 @@ describe("the engine", () => {
     ]);
   });
 
+  it("reports how many initial states it computed past those the engine reported", async () => {
+    // The engine hands over at the third initial state, before it reports two, and the interpreter
+    // computes them all again.
+    const source = [
+      "---- MODULE M ----",
+      "EXTENDS Naturals, FiniteSets",
+      "VARIABLE x",
+      "Init == x \\in 1..20 /\\ (x = 3 => Cardinality(SUBSET (1..21)) > 0)",
+      "Next == UNCHANGED x",
+      "====",
+    ].join("\n");
+    const getReported = async (engine: string) => {
+      process.env.PROVE_IT_ENGINE = engine;
+      const counts: number[] = [];
+      const lines: string[] = [];
+      const spy = spyOn(console, "error").mockImplementation((message: unknown) => {
+        if (typeof message === "string" && message.startsWith("[engine] ")) lines.push(message);
+      });
+      try {
+        await check({
+          source,
+          config: "INIT Init\nNEXT Next",
+          onProgress: (progress) => {
+            if (progress.kind === "initial-states-progress") counts.push(progress.count);
+          },
+        });
+      } finally {
+        spy.mockRestore();
+      }
+      return { counts, lines };
+    };
+    const engine = await getReported("debug");
+    expect(engine.lines).toEqual([expect.stringMatching(/handed over .*: a power set too large/)]);
+    // What TLC 2026.11.06 reports.
+    expect(engine.counts).toEqual([2, 4, 8, 16]);
+    expect((await getReported("0")).counts).toEqual([2, 4, 8, 16]);
+  });
+
   it("hands over a membership TLC can't decide, past the untyped model values a set starts with", async () => {
     // TLC compares "a" with the integers and fails; the model value it sorts first compares with
     // anything.

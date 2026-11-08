@@ -1356,6 +1356,9 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   const engineReport = {
     isReported: false,
     isComputedReported: false,
+    // The last count of initial states the engine reported, which the interpreter, computing them
+    // again, reports only past.
+    initialProgress: 0,
     checkpoint: undefined as EngineCheckpoint | undefined,
     // TLC's fingerprints of the states of a graph the engine handed over.
     fingerprints: undefined as BigInt64Array | undefined,
@@ -1495,12 +1498,16 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         version: options.version,
         onProgress: (progress) => {
           engineReport.isReported = true;
+          if (progress.kind === "initial-states-progress") {
+            engineReport.initialProgress = progress.count;
+          }
           options.onProgress?.(progress);
         },
         onInitialStatesStarted: () => {
           engineReport.isReported = true;
           options.onProgress?.({ kind: "initial-states-started" });
         },
+        onPrint: print,
         onInitialStates: (generated, distinct) => {
           engineReport.isComputedReported = true;
           options.onProgress?.({
@@ -1601,7 +1608,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         spec.init,
         environment,
         (state) => {
-          if (!engineReport.isReported) {
+          if (runtime.initialStates > engineReport.initialProgress) {
             reportInitialStatesProgress(runtime.initialStates, options.onProgress);
           }
           try {
