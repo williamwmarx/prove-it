@@ -289,7 +289,10 @@ export const runEngine = (input: EngineInput): EngineResult => {
     const lines = tlc.output;
     if (lines.length === 0) return;
     tlc.output = [];
-    for (const line of lines) input.onPrint(line);
+    for (const line of lines) {
+      if (typeof line === "string") input.onPrint(line);
+      else input.onProgress?.({ kind: "initial-states-progress", count: line });
+    }
   };
 
   // --- initial states ---
@@ -307,7 +310,9 @@ export const runEngine = (input: EngineInput): EngineResult => {
       if (current[index] === -1) bail("an initial state that isn't complete");
     LOC[LEVEL_SLOT] = int(1);
     if (initialGenerated > 1 && (initialGenerated & (initialGenerated - 1)) === 0) {
-      input.onProgress?.({ kind: "initial-states-progress", count: initialGenerated });
+      // A count after what the initial predicate printed waits with it.
+      if (tlc.output.length > 0) tlc.output.push(initialGenerated);
+      else input.onProgress?.({ kind: "initial-states-progress", count: initialGenerated });
     }
     const state = current;
     generated++;

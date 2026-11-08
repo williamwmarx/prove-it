@@ -25,6 +25,10 @@ const run = async (body: string, config: string, engine: string) => {
       source: `---- MODULE M ----\n${body}\n====`,
       config,
       onPrint: (text) => printed.push(text),
+      onProgress: (progress) => {
+        if (progress.kind === "initial-states-progress")
+          printed.push(`Computed ${progress.count} initial states...`);
+      },
     });
     return { result, printed, lines };
   } finally {
@@ -257,6 +261,43 @@ describe("the engine's Print, PrintT and TLCGet", () => {
       const { lines } = await checkBoth(body, "INIT Init\nNEXT Next");
       expect([value, lines]).toEqual([value, [expect.stringMatching(CHECKED)]]);
     }
+  });
+
+  it("reports the initial states it computed after what the initial predicate printed", async () => {
+    const body = [
+      "EXTENDS Naturals, FiniteSets, TLC",
+      "VARIABLES x, y",
+      "Init == /\\ x \\in {0, 1, 2}",
+      '        /\\ PrintT(<<"x", x>>)',
+      "        /\\ y \\in {x, 5}",
+      '        /\\ PrintT(<<"y", x, y>>)',
+      "        /\\ CHECK",
+      "Next == UNCHANGED <<x, y>>",
+    ].join("\n");
+    // What TLC 2026.11.06 prints.
+    const expected = [
+      '<<"x", 0>>',
+      '<<"y", 0, 0>>',
+      '<<"y", 0, 5>>',
+      '<<"x", 1>>',
+      '<<"y", 1, 1>>',
+      "Computed 2 initial states...",
+      '<<"y", 1, 5>>',
+      '<<"x", 2>>',
+      '<<"y", 2, 2>>',
+      "Computed 4 initial states...",
+      '<<"y", 2, 5>>',
+    ];
+    const done = await checkBoth(body.replace("CHECK", "TRUE"), "INIT Init\nNEXT Next");
+    expect(done.lines).toEqual([expect.stringMatching(CHECKED)]);
+    expect(done.printed).toEqual(expected);
+    // The engine hands over at the last initial state, after it held back both counts.
+    const handed = await checkBoth(
+      body.replace("CHECK", "(x = 2 /\\ y = 5 => Cardinality(SUBSET (1..21)) > 0)"),
+      "INIT Init\nNEXT Next",
+    );
+    expect(handed.lines).toEqual([expect.stringMatching(/handed over .*: a power set too large/)]);
+    expect(handed.printed).toEqual(expected);
   });
 
   it("prints nothing of an expansion it hands over, which the interpreter does again", async () => {

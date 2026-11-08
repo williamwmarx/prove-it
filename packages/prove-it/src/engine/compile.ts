@@ -163,8 +163,9 @@ export const tlc = {
   isUsed: false,
   // Whether threads share the search, while which nothing may start to.
   isShared: false,
-  // The lines printed since the search last passed them on.
-  output: [] as string[],
+  // The lines printed since the search last passed them on, and between them each count of initial
+  // states the search reports once the initial predicate has printed.
+  output: [] as (string | number)[],
 };
 
 export const isPrinting = (compiled: Compiled) => compiled.footprint.slots.includes(PRINT_SLOT);
