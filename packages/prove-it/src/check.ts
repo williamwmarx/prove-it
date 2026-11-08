@@ -847,13 +847,33 @@ const searchStates = (
     Object.assign(current, { index, isExpanding: true, candidate: undefined });
     const getKey = isHeld ? (values: Value[]) => values : getFingerprintState;
     const key = getKey(state);
-    const action = actions.find((item) =>
-      getSuccessors(item.expression, previous, environment, item.scope).some((successor) =>
-        isSameState(getKey(successor.state), key),
+    const action = withRebuiltLevel(previous, depths[index], () =>
+      actions.find((item) =>
+        getSuccessors(item.expression, previous, environment, item.scope).some((successor) =>
+          isSameState(getKey(successor.state), key),
+        ),
       ),
     );
     Object.assign(current, expanding);
     return action;
+  };
+  // While the interpreter rebuilds the steps through states the engine handed over, TLCGet("level")
+  // reads what it read as the search expanded each: the state's depth, one more for a successor,
+  // and 0 in the initial predicate.
+  const rebuilding = { isActive: false, state: undefined as Value[] | undefined, depth: 0 };
+  const withRebuiltLevel = <Result>(
+    state: Value[] | undefined,
+    depth: number,
+    evaluate: () => Result,
+  ): Result => {
+    if (transferred.count === 0) return evaluate();
+    const saved = { ...rebuilding };
+    Object.assign(rebuilding, { isActive: true, state, depth });
+    try {
+      return evaluate();
+    } finally {
+      Object.assign(rebuilding, saved);
+    }
   };
   // Before TLC prints a trace, it rebuilds from the initial predicate the states it does not keep,
   // all but the last `known` ones. As it prints each later step, it finds the action that takes
@@ -936,7 +956,9 @@ const searchStates = (
   const getPathStates = (path: number[], nextFailure: string) => {
     const initial = captureOutput(() =>
       isReducing || isImpure(environment)
-        ? getSpecInitialStates().find((state) => hasFingerprint(state, path[0]))
+        ? withRebuiltLevel(undefined, 0, getSpecInitialStates).find((state) =>
+            hasFingerprint(state, path[0]),
+          )
         : states[path[0]],
     ).result;
     if (!initial) throw new TlaEvaluationError(INITIAL_RECOVERY_FAILURE);
@@ -948,7 +970,9 @@ const searchStates = (
         steps.push({ state: previous, action: "Stuttering" });
         continue;
       }
-      const successor = findSuccessorWithFingerprint(previous, path[position]);
+      const successor = withRebuiltLevel(previous, depths[path[position - 1]], () =>
+        findSuccessorWithFingerprint(previous, path[position]),
+      );
       if (!successor) throw new TlaEvaluationError(nextFailure);
       settleRecoveredState(successor.state);
       steps.push(successor);
@@ -1201,6 +1225,10 @@ const searchStates = (
     if (is174) {
       const explored = source !== -1 ? source : current.isExpanding ? current.index : -1;
       return explored === -1 ? 0 : depths[explored];
+    }
+    if (rebuilding.isActive) {
+      if (!rebuilding.state) return 0;
+      return state === rebuilding.state ? rebuilding.depth : rebuilding.depth + 1;
     }
     if (source !== -1) return state === states[source] ? depths[source] : depths[source] + 1;
     if (state === current.candidate) return current.candidateLevel;
@@ -1490,9 +1518,14 @@ const searchStates = (
         path.unshift(position);
       }
       const replayed = captureOutput(() => {
-        let state = getSpecInitialStates().find((initial) => hasFingerprint(initial, path[0]));
+        let state = withRebuiltLevel(undefined, 0, getSpecInitialStates).find((initial) =>
+          hasFingerprint(initial, path[0]),
+        );
         for (let position = 1; state && position < path.length; position++) {
-          state = findSuccessorWithFingerprint(state, path[position])?.state;
+          const previous = state;
+          state = withRebuiltLevel(previous, depths[path[position - 1]], () =>
+            findSuccessorWithFingerprint(previous, path[position]),
+          )?.state;
         }
         return state;
       }).result;

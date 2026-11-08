@@ -1104,6 +1104,30 @@ describe("the engine's hand-over to the interpreter part way through a search", 
     expect(result.status).toBe("error");
   });
 
+  it("rebuilds a trace through the engine's states at the levels TLCGet reads", async () => {
+    const levels = [
+      "EXTENDS Naturals, TLC",
+      "VARIABLES x, y",
+      'Init == x = 0 /\\ y = TLCGet("level")',
+      'Next == TLCGet("level") > 0 /\\ x < 3 /\\ x\' = x + 1 /\\ y\' = TLCGet("level")\'',
+      "Spec == Init /\\ [][Next]_<<x, y>>",
+      "Live == <>(x = 3)",
+      "Inv == x < 3",
+    ];
+    for (const [config, expected] of [
+      ["SPECIFICATION Spec\nPROPERTY Live", "deadlock"],
+      ["INIT Init\nNEXT Next\nINVARIANT Inv", "invariant-violation"],
+    ]) {
+      const { result, handedOver } = await checkBoth(levels, config);
+      expect(handedOver).toBeDefined();
+      expect([config, result.status, result.violation?.trace.length]).toEqual([
+        config,
+        expected,
+        4,
+      ]);
+    }
+  });
+
   it("asks the engine whether a successor is among the states it found", async () => {
     // From (2, 0), Flip goes to (2, 1), found from (1, 1) before, then Move breaks the invariant.
     const { result, handedOver } = await checkBoth(
