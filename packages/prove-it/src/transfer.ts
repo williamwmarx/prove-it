@@ -112,35 +112,47 @@ export const createStateEncoder = (): StateEncoder => {
   };
 };
 
+// Decodes the states one at a time, so a caller that keeps only what it makes of each state never
+// holds them all as values.
+export const forEachEncodedState = (
+  width: number,
+  encoded: EncodedStates,
+  visit: (state: Value[], index: number) => void,
+) => {
+  const words = encoded.words;
+  const cursor = { index: 0 };
+  const decodeElements = (length: number) => Array.from({ length }, () => decodeValue());
+  const decodeValue = (): Value => {
+    const tag = words[cursor.index++];
+    if (tag === FALSE_TAG) return false;
+    if (tag === TRUE_TAG) return true;
+    if (tag === INTEGER_TAG) return words[cursor.index++];
+    if (tag === STRING_TAG) return encoded.strings[words[cursor.index++]];
+    if (tag === MODEL_VALUE_TAG) return createModelValue(encoded.strings[words[cursor.index++]]);
+    if (tag === SET_TAG) return createSortedSet(decodeElements(words[cursor.index++]));
+    const functionClass = FUNCTION_CLASSES[words[cursor.index++]];
+    if (tag === INTERVAL_FUNCTION_TAG) {
+      const low = words[cursor.index++];
+      const length = words[cursor.index++];
+      const domain = getFunctionDomain({ kind: "Interval", low, high: low + length - 1 });
+      return setFunctionClass(createSortedFunction(domain, decodeElements(length)), functionClass);
+    }
+    const length = words[cursor.index++];
+    const domain = decodeElements(length);
+    return setFunctionClass(createSortedFunction(domain, decodeElements(length)), functionClass);
+  };
+  for (let index = 0; index < encoded.count; index++) {
+    visit(
+      Array.from({ length: width }, () => decodeValue()),
+      index,
+    );
+  }
+};
+
 export const createStateDecoder =
   (width: number) =>
   (encoded: EncodedStates): Value[][] => {
-    const words = encoded.words;
-    const cursor = { index: 0 };
-    const decodeElements = (length: number) => Array.from({ length }, () => decodeValue());
-    const decodeValue = (): Value => {
-      const tag = words[cursor.index++];
-      if (tag === FALSE_TAG) return false;
-      if (tag === TRUE_TAG) return true;
-      if (tag === INTEGER_TAG) return words[cursor.index++];
-      if (tag === STRING_TAG) return encoded.strings[words[cursor.index++]];
-      if (tag === MODEL_VALUE_TAG) return createModelValue(encoded.strings[words[cursor.index++]]);
-      if (tag === SET_TAG) return createSortedSet(decodeElements(words[cursor.index++]));
-      const functionClass = FUNCTION_CLASSES[words[cursor.index++]];
-      if (tag === INTERVAL_FUNCTION_TAG) {
-        const low = words[cursor.index++];
-        const length = words[cursor.index++];
-        const domain = getFunctionDomain({ kind: "Interval", low, high: low + length - 1 });
-        return setFunctionClass(
-          createSortedFunction(domain, decodeElements(length)),
-          functionClass,
-        );
-      }
-      const length = words[cursor.index++];
-      const domain = decodeElements(length);
-      return setFunctionClass(createSortedFunction(domain, decodeElements(length)), functionClass);
-    };
-    return Array.from({ length: encoded.count }, () =>
-      Array.from({ length: width }, () => decodeValue()),
-    );
+    const states: Value[][] = [];
+    forEachEncodedState(width, encoded, (state) => states.push(state));
+    return states;
   };
