@@ -1,0 +1,16 @@
+[package]
+name = "tla-engine"
+description = "Prove It's native engine: expressions compiled from the engine IR to closures over tla-values ids"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+tla-ir = { path = "../tla-ir" }
+tla-values = { path = "../tla-values" }
+
+[[bench]]
+name = "invariant"
+harness = false
