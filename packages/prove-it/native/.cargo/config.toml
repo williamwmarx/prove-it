@@ -1,0 +1,11 @@
+# The N-API functions are defined by the process that loads the addon, Node or Bun. Linux leaves a
+# shared library's undefined symbols to the loader; macOS has to be told to.
+[target.'cfg(target_os = "macos")']
+rustflags = ["-C", "link-arg=-undefined", "-C", "link-arg=dynamic_lookup"]
+
+# No AVX2 assumption on x64. arm64 keeps its default.
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "target-cpu=x86-64-v2"]
+
+[target.x86_64-unknown-linux-musl]
+rustflags = ["-C", "target-cpu=x86-64-v2"]

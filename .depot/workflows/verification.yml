@@ -56,6 +56,71 @@ jobs:
           PATH="$(scripts/ci/bootstrap.sh bun node):$PATH"
           bash -c "$COMMAND"
           test -z "$(git status --porcelain)"
+  # The native engine's Rust workspace, and its addon loaded by Bun, Node, and the npm packages.
+  native:
+    name: ${{ matrix.task }}
+    runs-on: depot-ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - task: Cargo Build
+            # The native tests load the addon in Bun from the sources and in Node from dist.
+            command: |
+              cd packages/prove-it
+              bun scripts/platform-packages.ts build
+              bun run build
+              PROVE_IT_ENGINE_ADDON="$PWD/native/npm/linux-x64-gnu/prove-it-engine.node" bun test tests/unit/native.test.ts
+          - task: Cargo Test
+            command: cd packages/prove-it/native && cargo test --locked
+          - task: Cargo Clippy
+            command: cd packages/prove-it/native && cargo clippy --locked --all-targets -- -D warnings
+          - task: Cargo Fmt
+            command: cd packages/prove-it/native && cargo fmt --check
+          # Packs the main package and the platform package as release.yml does, then installs them
+          # without scripts: the main package alone runs on the TypeScript engine, and with its
+          # platform package it loads the addon, which declines.
+          - task: Packages
+            command: |
+              cd packages/prove-it
+              bun scripts/platform-packages.ts build
+              bun run build
+              packs="$RUNNER_TEMP/packs"
+              mkdir -p "$packs"
+              main=$(npm pack --silent --pack-destination "$packs")
+              bun scripts/platform-packages.ts pack "$packs"
+              install="$RUNNER_TEMP/install"
+              mkdir -p "$install"
+              cp tests/fixtures/commit/Commit.* "$install"
+              cd "$install"
+              npm init -y > /dev/null
+              npm install --ignore-scripts --no-audit --no-fund "$packs/$main"
+              PROVE_IT_ENGINE=debug PROVE_IT_ENGINE_BACKEND=rust npx --no prove-it Commit.cfg 2> engine.log > /dev/null
+              grep -q '^\[engine\] native: unavailable: no @atemp/prove-it-linux-x64-gnu' engine.log
+              grep -q '^\[engine\] checked 251 states on 1 thread ' engine.log
+              npm install --ignore-scripts --no-audit --no-fund "$packs"/atemp-prove-it-linux-x64-gnu-*.tgz
+              PROVE_IT_ENGINE=debug PROVE_IT_ENGINE_BACKEND=rust npx --no prove-it Commit.cfg 2> engine.log > /dev/null
+              grep -q '^\[engine\] native: declined: ' engine.log
+              grep -q '^\[engine\] checked 251 states on 1 thread ' engine.log
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          PATH="$(scripts/ci/bootstrap.sh bun node rust):$PATH"
+          bun install --frozen-lockfile --ignore-scripts
+      - name: Run ${{ matrix.task }}
+        env:
+          COMMAND: ${{ matrix.command }}
+        run: |
+          set -euo pipefail
+          PATH="$(scripts/ci/bootstrap.sh bun node rust):$PATH"
+          bash -euo pipefail -c "$COMMAND"
+          test -z "$(git status --porcelain)"
   # fetch-depth 0 so a secret a later commit deleted is still found. The repository is public, so
   # any finding is a leaked credential to revoke, not to allowlist.
   secret-history:
@@ -78,6 +143,7 @@ jobs:
     if: always()
     needs:
       - checks
+      - native
       - secret-history
     runs-on: depot-ubuntu-24.04
     timeout-minutes: 5
@@ -85,6 +151,7 @@ jobs:
       - name: Require every result
         env:
           CHECKS: ${{ needs.checks.result }}
+          NATIVE: ${{ needs.native.result }}
           SECRET_HISTORY: ${{ needs.secret-history.result }}
         run: |
           set -euo pipefail
@@ -94,6 +161,7 @@ jobs:
             echo "| Job | Result |"
             echo "| --- | --- |"
             echo "| checks | $CHECKS |"
+            echo "| native | $NATIVE |"
             echo "| secret-history | $SECRET_HISTORY |"
           } >> "$GITHUB_STEP_SUMMARY"
-          [[ "$CHECKS" == success && "$SECRET_HISTORY" == success ]]
+          [[ "$CHECKS" == success && "$NATIVE" == success && "$SECRET_HISTORY" == success ]]

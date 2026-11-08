@@ -1,0 +1,11 @@
+[package]
+name = "prove-it-napi"
+description = "The N-API binding of Prove It's native engine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]

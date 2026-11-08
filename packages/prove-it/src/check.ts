@@ -3,8 +3,10 @@ import { type ModelConfig, parseConfig } from "./config";
 import { getMemoStatistics } from "./engine/compile";
 import { toEngineProperties } from "./engine/context";
 import { toValue as toEngineValue } from "./engine/convert";
+import { checkNatively } from "./engine/native";
 import { type EngineCheckpoint, type EngineGraph, isBailout, runEngine } from "./engine/search";
 import {
+  getEngineBackend,
   getEngineSetting,
   getEngineThreads,
   getEnvironmentFlag,
@@ -1435,6 +1437,13 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     const init = spec.init;
     const next = spec.next;
     if (init === undefined || next === undefined) return undefined;
+    if (getEngineBackend() !== "ts") {
+      const nativeStartedAt = performance.now();
+      const native = checkNatively();
+      reportEngine(
+        `native: ${native.status}: ${native.reason} (${(performance.now() - nativeStartedAt).toFixed(2)} ms)`,
+      );
+    }
     // The engine answers ENABLED <<A>>_v of a state from the steps its search took when A is made of
     // TLC's actions of the next-state relation. A constraint drops steps, and TLC's ENABLED shows
     // the effects of running A, such as printing, so then the engine runs A.

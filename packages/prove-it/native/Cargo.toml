@@ -1,0 +1,19 @@
+[workspace]
+members = ["crates/prove-it-napi"]
+# The prototypes are separate crates, kept as the design measured them.
+exclude = ["prototypes"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99.1"
+license = "MIT"
+publish = false
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = true
+# The binding catches a panic at the boundary and throws it in JavaScript.
+panic = "unwind"
