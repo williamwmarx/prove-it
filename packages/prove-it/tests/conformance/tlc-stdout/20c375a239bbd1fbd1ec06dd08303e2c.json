@@ -1,0 +1,8 @@
+{
+  "id": "tla-rs/test_cases/should_pass/symmetry_cfg.cfg",
+  "mode": "default",
+  "tlcCommit": "d8fb231de4e4b5d02c1b2ed1ac759c086f694021",
+  "exitCode": 255,
+  "stdout": "TLC2 Version 2026.11.08.065739 (rev: ${git.shortRevision})\nRunning breadth-first search Model-Checking with fp 0 and seed 4 with 1 worker on 4 cores with 683MB heap and 64MB offheap memory [pid: 2071] (Linux 6.18.44-fc-v310 amd64, Ubuntu 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).\nParsing file /home/user/prove-it/packages/prove-it/tests/conformance/.corpora/tla-rs/test_cases/should_pass/symmetry_cfg.tla\nParsing file /tmp/tlc-7117631733460518028/Naturals.tla (jar:file:/tmp/tlaplus/tlatools/org.lamport.tlatools/dist/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)\nSemantic processing of module Naturals\nSemantic processing of module symmetry_cfg\nLinting of module symmetry_cfg\nStarting... (2026-11-08 07:14:41)\nError: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: The symmetry function Proc must specify a set of permutations.\nFinished in 00s at (2026-11-08 07:14:41)\n",
+  "stderr": ""
+}

@@ -1,0 +1,8 @@
+{
+  "id": "examples/specifications/allocator/AllocatorImplementation.cfg",
+  "mode": "default",
+  "tlcCommit": "d8fb231de4e4b5d02c1b2ed1ac759c086f694021",
+  "exitCode": 150,
+  "stdout": "TLC2 Version 2026.11.08.065739 (rev: ${git.shortRevision})\nRunning breadth-first search Model-Checking with fp 0 and seed 4 with 1 worker on 4 cores with 683MB heap and 64MB offheap memory [pid: 4258] (Linux 6.18.44-fc-v310 amd64, Ubuntu 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).\nParsing file /home/user/prove-it/packages/prove-it/tests/conformance/.corpora/examples/specifications/allocator/AllocatorImplementation.tla\n***Parse Error***\n\n  Precedence conflict between ops UNION in block line 169, col 27 to line 169, col 31 of module AllocatorImplementation and \\union.\n\nResidual stack trace follows:\nExtendableExpr starting at line 169, column 33.\nExtendableExpr starting at line 168, column 25.\nExtendableExpr starting at line 168, column 11.\nExpression starting at line 168, column 11.\nJunction Item starting at line 168, column 8.\n\n\nFatal errors while parsing TLA+ spec in file AllocatorImplementation\n\nIn module AllocatorImplementation\n\nCould not parse module AllocatorImplementation from file AllocatorImplementation.tla\n*** Errors: 1\n\nIn module AllocatorImplementation\n\nCould not parse module AllocatorImplementation from file AllocatorImplementation.tla\n\n\n\nStarting... (2026-11-08 07:04:31)\nError: Parsing or semantic analysis failed.\nFinished in 00s at (2026-11-08 07:04:31)\n",
+  "stderr": ""
+}

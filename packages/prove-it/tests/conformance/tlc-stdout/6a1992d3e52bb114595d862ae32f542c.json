@@ -1,0 +1,8 @@
+{
+  "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/etest1.cfg",
+  "mode": "default",
+  "tlcCommit": "d8fb231de4e4b5d02c1b2ed1ac759c086f694021",
+  "exitCode": 150,
+  "stdout": "TLC2 Version 2026.11.08.065739 (rev: ${git.shortRevision})\nRunning breadth-first search Model-Checking with fp 0 and seed 4 with 1 worker on 4 cores with 683MB heap and 64MB offheap memory [pid: 18465] (Linux 6.18.44-fc-v310 amd64, Ubuntu 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).\nParsing file /home/user/prove-it/packages/prove-it/tests/conformance/.corpora/tlc/tlatools/org.lamport.tlatools/test-model/suite/etest1.tla\nParsing file /tmp/tlc-11817352609630023631/TLC.tla (jar:file:/tmp/tlaplus/tlatools/org.lamport.tlatools/dist/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)\nParsing file /tmp/tlc-11817352609630023631/Naturals.tla (jar:file:/tmp/tlaplus/tlatools/org.lamport.tlatools/dist/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)\nParsing file /tmp/tlc-11817352609630023631/Sequences.tla (jar:file:/tmp/tlaplus/tlatools/org.lamport.tlatools/dist/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)\nParsing file /tmp/tlc-11817352609630023631/FiniteSets.tla (jar:file:/tmp/tlaplus/tlatools/org.lamport.tlatools/dist/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)\nSemantic processing of module Naturals\nSemantic processing of module Sequences\nSemantic processing of module FiniteSets\nSemantic processing of module TLC\nSemantic processing of module etest1\nSemantic errors:\n\n*** Errors: 1\n\nline 18, col 12 to line 18, col 17 of module etest1\n\nThe operator Foo requires 1 arguments.\n\n\nStarting... (2026-11-08 07:10:38)\nError: Parsing or semantic analysis failed.\nFinished in 00s at (2026-11-08 07:10:38)\n",
+  "stderr": ""
+}

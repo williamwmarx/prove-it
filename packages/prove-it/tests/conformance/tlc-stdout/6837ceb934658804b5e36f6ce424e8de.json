@@ -1,0 +1,8 @@
+{
+  "id": "tlc/tlatools/org.lamport.tlatools/test-model/UnicodeFunctionFingerprint.cfg",
+  "mode": "default",
+  "tlcCommit": "d8fb231de4e4b5d02c1b2ed1ac759c086f694021",
+  "exitCode": 0,
+  "stdout": "TLC2 Version 2026.11.08.065739 (rev: ${git.shortRevision})\nRunning breadth-first search Model-Checking with fp 0 and seed 4 with 1 worker on 4 cores with 683MB heap and 64MB offheap memory [pid: 12792] (Linux 6.18.44-fc-v310 amd64, Ubuntu 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).\nParsing file /home/user/prove-it/packages/prove-it/tests/conformance/.corpora/tlc/tlatools/org.lamport.tlatools/test-model/UnicodeFunctionFingerprint.tla\nSemantic processing of module UnicodeFunctionFingerprint\nLinting of module UnicodeFunctionFingerprint\nStarting... (2026-11-08 07:07:46)\nComputing initial states...\nFinished computing initial states: 2 states generated, with 1 of them distinct at 2026-11-08 07:07:47.\nModel checking completed. No error has been found.\n  Estimates of the probability that TLC did not check all reachable states\n  because two distinct states had the same fingerprint:\n  calculated (optimistic):  val = 1.1E-19\n3 states generated, 1 distinct states found, 0 states left on queue.\nThe depth of the complete state graph search is 1.\nThe average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).\nFinished in 00s at (2026-11-08 07:07:47)\n",
+  "stderr": ""
+}
