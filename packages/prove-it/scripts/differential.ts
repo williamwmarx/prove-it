@@ -9,8 +9,10 @@
 // from those it found, and its output must not differ from the engine's. --backend picks the
 // engine's backend, and --compare-backends runs every one. --update rewrites
 // known-differences.json from the run, keeping the reasons it gives.
-// Usage: bun scripts/differential.ts [--max-tlc-ms 20000] [--filter text] [--concurrency 3]
-//        [--modes default,tool] [--stop-at] [--timeout-ms 600000] [--update] [--out path]
+// A run without a TLC recording fails the check, since nothing compared it with TLC. --timeout-ms
+// stops a checker that runs longer, and without it nothing does.
+// Usage: bun scripts/run.ts differential [--max-tlc-ms 20000] [--filter text] [--concurrency 3]
+//        [--modes default,tool] [--stop-at] [--timeout-ms ms] [--update] [--out path]
 //        [--backend ts | --compare-backends]
 
 import { spawn } from "node:child_process";
@@ -75,7 +77,8 @@ const CLI_PATH = join(import.meta.dirname, "../dist/cli.js");
 const maximumTlcMilliseconds = Number(getOption("--max-tlc-ms") ?? 20000);
 const filter = getOption("--filter");
 const concurrency = Number(getOption("--concurrency") ?? 3);
-const timeoutMilliseconds = Number(getOption("--timeout-ms") ?? 600000);
+const timeoutOption = getOption("--timeout-ms");
+const timeoutMilliseconds = timeoutOption === undefined ? undefined : Number(timeoutOption);
 const modes = (getOption("--modes")?.split(",") ?? OUTPUT_MODES).filter(
   (mode): mode is OutputMode => OUTPUT_MODES.some((known) => known === mode),
 );
@@ -268,6 +271,7 @@ if (missing.length > 0) {
   console.log(
     `\n${missing.length} runs have no TLC recording; record them with record-tlc.ts --stdout.`,
   );
+  process.exitCode = 1;
 }
 if (fixed.length > 0) {
   console.log(`\n${fixed.length} known differences are gone:`);
