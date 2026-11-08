@@ -910,6 +910,24 @@ describe("the engine's answers to ENABLED", () => {
     }
   });
 
+  it("leaves ENABLED to the interpreter where the engine fails, so the error reads as TLC's", async () => {
+    const { result } = await checkBoth(
+      [
+        "---- MODULE M ----",
+        "EXTENDS Naturals",
+        "VARIABLE x",
+        "Init == x = 0",
+        "Next == x' = 1 - x",
+        "A == x = 1 /\\ x' \\in Nat",
+        "Spec == Init /\\ [][Next]_x /\\ WF_x(A)",
+        "P == <>(x = 0)",
+        "====",
+      ].join("\n"),
+      "SPECIFICATION Spec\nPROPERTY P",
+    );
+    expect(result.failure?.message).toContain("The right side of \\IN is not enumerable.");
+  });
+
   it("runs the action for ENABLED once the search evaluated a conjunct TLC's ENABLED walks", async () => {
     // From x = 1, TLC's ENABLED takes the first branch's step, which leaves x unchanged, and fails
     // comparing x with "a" in the second, which the search never evaluated once the first held.

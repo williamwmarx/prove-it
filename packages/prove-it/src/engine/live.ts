@@ -4,7 +4,7 @@
 // It returns undefined for anything it can't answer, and the interpreter answers that.
 
 import type { Expression } from "../ast";
-import { EngineInvariantError } from "../errors";
+import { EngineInvariantError, TlaEvaluationError } from "../errors";
 import type { EvaluationScope } from "../evaluate";
 import type { LiveEnabled, LiveExpression } from "../tableau";
 import type { Value } from "../values";
@@ -43,6 +43,11 @@ interface EdgeQuestion {
 }
 
 const UNKNOWN = Symbol("unknown");
+
+// The engine's evaluation fails as TLC's might not, such as when it enumerates a set through the
+// interpreter, so the interpreter answers then and fails, if it does, as TLC does.
+const isUnanswered = (error: unknown) =>
+  error instanceof Bailout || error instanceof TlaEvaluationError;
 
 export const createLiveOracle = (
   compiler: Compiler,
@@ -86,7 +91,7 @@ export const createLiveOracle = (
       try {
         result = build(context);
       } catch (error) {
-        if (!(error instanceof Bailout)) throw error;
+        if (!isUnanswered(error)) throw error;
       }
     }
     byScope.set(scope, result);
@@ -239,7 +244,7 @@ export const createLiveOracle = (
       const action = answers.get(expression) ?? answer(expression);
       return action === UNKNOWN ? undefined : holds(action);
     } catch (error) {
-      if (error instanceof Bailout) return undefined;
+      if (isUnanswered(error)) return undefined;
       throw error;
     }
   };
@@ -251,7 +256,7 @@ export const createLiveOracle = (
       setCurrent(ids);
       return holdsOnEdges(question, index);
     } catch (error) {
-      if (error instanceof Bailout) return undefined;
+      if (isUnanswered(error)) return undefined;
       throw error;
     }
   };
