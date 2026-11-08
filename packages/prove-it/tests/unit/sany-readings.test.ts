@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { check, parseModule } from "../../src";
+import { parseConfig } from "../../src/config";
+import { createEnvironment } from "../../src/environment";
 import { checkParsed } from "../../src/parallel";
 import { getSanyReport, type SanyReportOptions } from "../../src/sany/report";
 import { createTlcOrder } from "../../src/tlc/order";
@@ -108,5 +110,24 @@ describe("SANY's readings", () => {
     expect(await getResult(true)).toEqual(expected);
     process.env.PROVE_IT_ENGINE = "0";
     expect(await getResult(true)).toEqual(expected);
+  });
+});
+
+describe("the environment of a spec SANY accepted", () => {
+  // SANY rejects the spec, so the environment's level check is all that would.
+  const source = "---- MODULE M ----\nVARIABLE x\nF == [](x')\n====\n";
+  const createSpecification = (isSanyAccepted: boolean) =>
+    createEnvironment(parseConfig(""), {
+      source,
+      loadModule: undefined,
+      print: () => {},
+      files: { readFile: undefined, writeFile: undefined },
+      isUnconfigured: true,
+      isSanyAccepted,
+    });
+
+  it("leaves out SANY's level checks", () => {
+    expect(() => createSpecification(false)).toThrow("[] followed by action not of form [A]_v");
+    expect(() => createSpecification(true)).not.toThrow();
   });
 });

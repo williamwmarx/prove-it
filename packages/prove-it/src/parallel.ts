@@ -159,6 +159,7 @@ export const checkParsed = async (
     isTool: options.isTool,
     isTraceRecorded: options.isTraceRecorded,
     isSanyReported: options.isSanyReported,
+    isSanyAccepted: readings !== undefined,
     isWarningEnabled: options.isWarningEnabled,
     version: options.version,
   });
