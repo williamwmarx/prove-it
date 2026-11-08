@@ -692,8 +692,15 @@ const isComparableWithMembers = (element: number, set: number) => {
   ) {
     return true;
   }
-  const structure = getStructure(element);
-  const setStructure = getStructure(set);
+  // A short run never optimizes this, so a known structure is read here rather than in a call.
+  const structure =
+    element < valueStructures.length && valueStructures[element] !== 0
+      ? valueStructures[element]
+      : getStructure(element);
+  const setStructure =
+    set < valueStructures.length && valueStructures[set] !== 0
+      ? valueStructures[set]
+      : getStructure(set);
   // A miss is often asked again of values of the same structures.
   if (structure === lastSafety.element && setStructure === lastSafety.set) return lastSafety.isSafe;
   const isSafeElement = getIsSafeElement(structure, structures[setStructure - 1]);
