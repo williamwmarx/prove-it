@@ -169,14 +169,13 @@ describe.if(ADDON !== undefined)("the native engine's bridged builtins", () => {
       await compareStateLogs(body, CONFIG, false);
     });
 
-    it.if(item.invalid.length > 0)(
-      `stops on ${item.name} where the interpreter fails`,
-      async () => {
+    if (item.invalid.length > 0) {
+      it(`stops on ${item.name} where the interpreter fails`, async () => {
         for (const application of item.invalid) {
           const lines = await compareWithInterpreter(toSpec([application]), CONFIG);
           expect(lines).toContainEqual(expect.stringMatching(/^\[engine\] native: stopped: /));
         }
-      },
-    );
+      });
+    }
   }
 });
