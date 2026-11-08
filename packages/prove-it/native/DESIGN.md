@@ -2132,3 +2132,44 @@ On the 4-core cloud machine, with `main` at 6448120 merged, against the 733 mode
   would hide), memo lookups at 16% with their `memcmp` (packing keys of width two or less into a
   `u64`), and set membership at 13% (`is_member` and `find_in_block` for `TypeOK`), with the walker
   around them: those are the next three things to fix.
+
+#### M7 as built (liveness and memory)
+
+Branch `native-m7-liveness`, the second part of M7: the native engine's answers to the liveness
+checker and the memory of a large hand-over. Measured on the 4-core cloud machine, not on Depot
+yet. Where the code made this design change, the code wins, and this records how:
+
+- **What the liveness checker asks (5.1).** M5's note that the interpreter's liveness checker
+  "crosses into the addon not at all" held for the questions the tables covered, but the atoms
+  `LivenessChecker.atoms` listed were only the state and ENABLED predicates (`collectAtoms`, which
+  serves the checker's per-state cache), so every action predicate of a fairness condition or a
+  step property fell to the interpreter on every step: 216,043 evaluations on ReadersWriters and
+  248,832 on TokenRing, which made both slower in Rust than in TypeScript. TokenRing's were not
+  steps missing from the graph. The checker now lists every predicate `evaluateLive` asks the oracle
+  about, the action ones and those under a Next too, and the native oracle reports, once each, why
+  it leaves a question to the interpreter (`leaves a temporal predicate to the interpreter: …`):
+  not among the atoms, a step the search didn't take or didn't expand, or the engine's own reason.
+- **Only the steps the checker asks about.** The tables stay whole and come back with the graph in
+  the one `check()` call, rather than one crossing per predicate on demand: keeping the search's
+  machine alive for later calls would need its thread to outlive `check()`, and the measured cost
+  of the tables was in steps the checker never asks about. An action atom of a fairness condition
+  carries the position of its fairness's ENABLED atom (IR version 2, ABI version 3), and the checker
+  asks about no step from a state where that ENABLED is false (`evaluateLive` returns false first),
+  so the engine writes 2 there and evaluates nothing; on ReadersWriters that is two thirds of its
+  action steps. Each state keeps one epoch for all the answers, so what the steps from it evaluate
+  of it is cached across them, and no state is copied per step.
+- **The hand-over (5.2).** M5 wrote each state of a checkpoint in full, in `transfer.ts`'s
+  encoding, and a search whose states share large values wrote gigabytes: the VSR state-transfer
+  models, 1.3 million states of nested message sets, peaked at 11.4 and 12.6 GB resident while the
+  search itself took under 1 GB. A checkpoint is now what 5.2 proposed, `SharedStates`: the table
+  of the distinct values the states hold, each after its parts and referring to them by position,
+  and each state as the positions of its values. Interning the table in order interns what is new
+  in the order decoding the states one by one did (an interval's keys past the integers a reset
+  store holds are written before its values for that), so the TypeScript store's ids are the same.
+  `native.ts` reads a value's parts into scratch arrays and interns them with `setOfSorted` and
+  `functionOfSorted`, since the native store keeps them in TLC's order. Print and the state log
+  keep the per-state encoding.
+- **The store itself.** On the large engine models the Rust search already peaks below the
+  TypeScript engine (btree 123 against 164 MB, MCBakery 140 against 173, MCLamportMutex 213 against
+  278), and on the VSR models its search stays under 1 GB where the TypeScript engine's reaches
+  1.2 GB, so nothing per state was cut from the store: the 12 GB was the hand-over.
