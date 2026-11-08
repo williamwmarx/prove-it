@@ -13,6 +13,7 @@ import {
 import { createEnvironment } from "./environment";
 import {
   createStackOverflowError,
+  EngineInvariantError,
   getErrorExitCode,
   isStackOverflow,
   MissingBuildFileError,
@@ -1363,29 +1364,57 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   const transferred = { count: 0 };
   // The index of each state the engine handed over, for its answers to the liveness checker.
   const engineIndices = new WeakMap<Value[], number>();
-  // In a replay of the engine's complete search, how many states the replay has reached.
+  // In a replay of the engine's search, how many states the replay has reached.
   const replayed = { discovered: 0 };
-  const resumeFromEngine = (checkpoint: EngineCheckpoint) => {
+  // Whether the interpreter replays the steps the engine took from the state at the index.
+  const isReplaying = (index: number) => index < (engineReport.checkpoint?.graph?.expanded ?? 0);
+  const toEngineState = (checkpoint: EngineCheckpoint, index: number) => {
     const width = checkpoint.width;
-    for (let index = 0; index < checkpoint.count; index++) {
-      const state: Value[] = new Array(width);
-      for (let variable = 0; variable < width; variable++) {
-        state[variable] = toEngineValue(checkpoint.states[index * width + variable]);
-      }
-      const keys = checkpoint.keys;
-      const keyWidth = checkpoint.keyWidth ?? width;
-      engineIndices.set(state, index);
-      const fingerprintState = keys
-        ? Array.from({ length: keyWidth }, (_, position) =>
-            toEngineValue(keys[index * keyWidth + position]),
-          )
-        : getFingerprintState(state);
-      state.forEach(markFingerprinted);
-      markSeen(getStateHash(fingerprintState), states.length);
+    const state: Value[] = new Array(width);
+    for (let variable = 0; variable < width; variable++) {
+      state[variable] = toEngineValue(checkpoint.states[index * width + variable]);
+    }
+    return state;
+  };
+  const toEngineKey = (checkpoint: EngineCheckpoint, index: number, state: Value[]) => {
+    const keys = checkpoint.keys;
+    const keyWidth = checkpoint.keyWidth ?? checkpoint.width;
+    return keys
+      ? Array.from({ length: keyWidth }, (_, position) =>
+          toEngineValue(keys[index * keyWidth + position]),
+        )
+      : getFingerprintState(state);
+  };
+  const takeState = (checkpoint: EngineCheckpoint, index: number) => {
+    const state = toEngineState(checkpoint, index);
+    engineIndices.set(state, index);
+    const fingerprintState = toEngineKey(checkpoint, index, state);
+    state.forEach(markFingerprinted);
+    markSeen(getStateHash(fingerprintState), index);
+    return { state, fingerprintState };
+  };
+  const resumeFromEngine = (checkpoint: EngineCheckpoint) => {
+    // The initial states the interpreter found are the engine's first states.
+    const initialCount = states.length;
+    const isSameInitial = (index: number) =>
+      checkpoint.parents[index] === -1 &&
+      isSameState(
+        fingerprintStates[index],
+        toEngineKey(checkpoint, index, toEngineState(checkpoint, index)),
+      );
+    for (let index = 0; index < initialCount; index++) {
+      if (!isSameInitial(index))
+        throw new EngineInvariantError("the engine found other initial states");
+      engineIndices.set(states[index], index);
+    }
+    for (let index = initialCount; index < checkpoint.count; index++) {
       const parent = checkpoint.parents[index];
-      if (parent === -1 && checkpoint.graph) liveness?.addInitialState(states.length, state);
+      if (parent === -1 && checkpoint.graph) {
+        throw new EngineInvariantError("the engine found other initial states");
+      }
+      const taken = takeState(checkpoint, index);
       countDistinctState(parent === -1 ? 1 : depths[parent] + 1);
-      addState(state, fingerprintState, parent, undefined);
+      addState(taken.state, taken.fingerprintState, parent, undefined);
     }
     transferred.count = checkpoint.count;
     if (checkpoint.graph) {
@@ -1423,7 +1452,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       generated: checkpoint.initialGenerated,
       distinct: parents.filter((parent) => parent === -1).length,
     };
-    return checkpoint.expanding;
+    return checkpoint.graph ? 0 : checkpoint.expanding;
   };
   const tryEngine = (): CheckResult | undefined => {
     const reason = getEngineIneligibility();
@@ -1453,6 +1482,13 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
           enabledActions.set(atom, positions.length === actions.length ? "all" : positions);
       }
     }
+    const takeGraph = (checkpoint: EngineCheckpoint) => {
+      engineReport.checkpoint = checkpoint;
+      environment.liveOracle = checkpoint.createLiveOracle?.(
+        (state) => engineIndices.get(state),
+        (expression) => enabledActions.get(expression),
+      );
+    };
     // A search labels each step with the action that took it only when ENABLED asks about some.
     const isLabelled = [...enabledActions.values()].some((positions) => positions !== "all");
     const startedAt = performance.now();
@@ -1501,11 +1537,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       });
       if (result.checkpoint) {
         // The interpreter checks the temporal properties on the graph the engine found.
-        engineReport.checkpoint = result.checkpoint;
-        environment.liveOracle = result.createLiveOracle(
-          (state) => engineIndices.get(state),
-          (expression) => enabledActions.get(expression),
-        );
+        takeGraph(result.checkpoint);
         // The liveness checker orders each state's successors by TLC's fingerprints of them.
         const fingerprints = result.getFingerprints();
         engineReport.fingerprints = fingerprints;
@@ -1547,10 +1579,12 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     } catch (error) {
       // A build without the engine's workers fails, rather than leave the search to one thread.
       if (error instanceof MissingBuildFileError) throw error;
-      // A search that stopped part way has no graph for the temporal properties, so the
-      // interpreter starts over then.
-      if (isBailout(error) && error.checkpoint && !liveness) {
-        engineReport.checkpoint = error.checkpoint as EngineCheckpoint;
+      // A search that stopped part way hands over the graph it found, when it recorded one for the
+      // temporal properties, and the interpreter goes on from the state it stopped at.
+      if (isBailout(error) && error.checkpoint) {
+        const checkpoint = error.checkpoint as EngineCheckpoint;
+        if (!liveness) engineReport.checkpoint = checkpoint;
+        else if (checkpoint.graph) takeGraph(checkpoint);
       }
       reportEngine(
         `handed over after ${(performance.now() - startedAt).toFixed(0)} ms: ${isBailout(error) ? error.message : String(error instanceof Error ? (error.stack ?? error.message) : error)}`,
@@ -1584,8 +1618,11 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   const engineOutcome = tryEngine();
   if (engineOutcome) return engineOutcome;
   if (!engineReport.isReported) options.onProgress?.({ kind: "initial-states-started" });
-  const resumeAt = engineReport.checkpoint ? resumeFromEngine(engineReport.checkpoint) : 0;
-  if (spec.init !== undefined && !engineReport.checkpoint) {
+  // With a graph, the interpreter finds the initial states itself, adding them to the liveness
+  // checker as it checks them, and replays the engine's search from there.
+  const checkpoint = engineReport.checkpoint;
+  const resumeAt = checkpoint && !checkpoint.graph ? resumeFromEngine(checkpoint) : 0;
+  if (spec.init !== undefined && !(checkpoint && !checkpoint.graph)) {
     try {
       forEachInitialState(
         spec.init,
@@ -1632,7 +1669,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     }
   }
   if (outcome.result) return outcome.result;
-  if (!engineReport.checkpoint) {
+  if (checkpoint?.graph) resumeFromEngine(checkpoint);
+  if (!checkpoint) {
     statistics.initialStates = {
       generated: runtime.initialStates,
       distinct: runtime.distinctStates,
@@ -1759,7 +1797,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   const expandState = (index: number, liveSuccessors: LiveSuccessor[]) => {
     const state = states[index];
     const source = stateWriter && getGraphState(state, depths[index]);
-    const replayed = engineReport.checkpoint?.graph;
+    const replayed = isReplaying(index) ? engineReport.checkpoint?.graph : undefined;
     const successorCount = replayed
       ? replayExpansion(index, liveSuccessors, replayed)
       : forEachActionSuccessor(state, (successor, action) => {
@@ -1970,8 +2008,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   for (let index = resumeAt; index < states.length && !runtime.isStopped; index++) {
     current.index = index;
     current.candidate = undefined;
-    runtime.queueSize =
-      (engineReport.checkpoint?.graph ? replayed.discovered : states.length) - index - 1;
+    runtime.queueSize = (isReplaying(index) ? replayed.discovered : states.length) - index - 1;
     current.isExpanding = true;
     const liveSuccessors: LiveSuccessor[] = [];
     try {

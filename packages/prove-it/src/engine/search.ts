@@ -64,11 +64,12 @@ export interface EngineInput {
   version: TlcVersion | undefined;
 }
 
-// The steps of a complete search, for the interpreter to check temporal properties on: for each
-// state, how many successors it generated, how many of them were new, and the states, in the
-// model, its steps went to in the order generated, between edgeOffsets[i] and edgeOffsets[i + 1].
+// The steps of a search, for the interpreter to check temporal properties on: for each of the first
+// `expanded` states, how many successors it generated, how many of them were new, and the states, in
+// the model, its steps went to in the order generated, between edgeOffsets[i] and edgeOffsets[i + 1].
 // A search of spec.actions labels each step with the position of the action that took it.
 export interface EngineGraph {
+  expanded: number;
   successorCounts: Int32Array;
   newCounts: Int32Array;
   edgeOffsets: Int32Array;
@@ -77,10 +78,16 @@ export interface EngineGraph {
 }
 
 // The search up to the state the engine was expanding when it stopped: the states found before
-// that expansion, as ids, with their parents and the counts so far. With a graph, the search is
-// complete, and the interpreter replays it rather than expanding states.
+// that expansion, as ids, with their parents and the counts so far. With a graph, the interpreter
+// replays the steps of the states the engine expanded rather than expanding them again, answering
+// its liveness checker from the engine's states, given the index of each state and the actions
+// ENABLED of an action asks about.
 export interface EngineCheckpoint {
   graph?: EngineGraph;
+  createLiveOracle?: (
+    getIndex: (state: Value[]) => number | undefined,
+    getEnabledActions: EnabledActions,
+  ) => LiveOracle;
   // What TLC fingerprints in place of each state, when that isn't the state: its representative
   // under symmetry, or its view, `keyWidth` ids each.
   keys?: Int32Array;
@@ -106,12 +113,6 @@ export interface EngineResult {
   threads: number;
   // A complete search the interpreter is to replay, when it checks temporal properties.
   checkpoint: EngineCheckpoint | undefined;
-  // Answers the interpreter's liveness checker for the states, given the index of each state and
-  // the actions ENABLED of an action asks about.
-  createLiveOracle: (
-    getIndex: (state: Value[]) => number | undefined,
-    getEnabledActions: EnabledActions,
-  ) => LiveOracle;
 }
 
 const MAXIMUM_GRAPH_STATES = 4_000_000;
@@ -504,6 +505,55 @@ export const runEngine = (input: EngineInput): EngineResult => {
     }
   };
 
+  // The first `count` states and the steps of the first `expanded` of them, for the interpreter to
+  // replay, from the initial states on. It rebuilds the state at `expanding` its own way.
+  const getGraphCheckpoint = (
+    expanded: number,
+    count: number,
+    expandingAt: number,
+  ): EngineCheckpoint => {
+    const recording = graph!;
+    const edgeCount = recording.edgeOffsets[expanded];
+    const stored = states.slice(0, count * width);
+    // TLC's ENABLED walks what the shortcut evaluated, so only a search that took no shortcut past
+    // a walk found the successors ENABLED finds.
+    const isEnabledExact = !shortcuts.isPastWalk;
+    const edges = recording.edges.slice(0, edgeCount);
+    const labels = recording.labels?.slice(0, edgeCount);
+    return {
+      expanding: expandingAt,
+      count,
+      generated: initialGenerated,
+      initialGenerated,
+      outDegrees: new Array<number>(OUT_DEGREE_BUCKETS).fill(0),
+      states: stored,
+      parents: parents.slice(0, count),
+      width,
+      graph: {
+        expanded,
+        successorCounts: recording.successorCounts,
+        newCounts: recording.newCounts,
+        edgeOffsets: recording.edgeOffsets,
+        edges,
+        labels,
+      },
+      createLiveOracle: (getIndex, getEnabledActions) =>
+        createLiveOracle(
+          context.compiler,
+          {
+            states: stored,
+            expanded,
+            edgeOffsets: recording.edgeOffsets,
+            edges,
+            labels,
+            isEnabledExact,
+          },
+          getIndex,
+          getEnabledActions,
+        ),
+    };
+  };
+
   // The counts before the state being expanded, which a bailout hands to the interpreter: it
   // expands that state again from there, finding what the engine stopped at.
   let checkpointCount = 0;
@@ -576,29 +626,30 @@ export const runEngine = (input: EngineInput): EngineResult => {
     }
   } catch (error) {
     if (error instanceof Bailout) {
-      const checkpoint: EngineCheckpoint = {
-        expanding,
-        count: checkpointCount,
-        generated: checkpointGenerated,
-        initialGenerated,
-        outDegrees: outDegrees.slice(),
-        states: states.slice(0, checkpointCount * width),
-        parents: parents.slice(0, checkpointCount),
-        width,
-        ...(hasSeparateKeys && {
-          keys: separateKeys.slice(0, checkpointCount * keyWidth),
-          keyWidth,
-        }),
-      };
+      // With a graph, the interpreter replays the steps of the states before the one the engine
+      // was expanding, counting them again.
+      const checkpoint: EngineCheckpoint = graph
+        ? getGraphCheckpoint(expanding, checkpointCount, expanding)
+        : {
+            expanding,
+            count: checkpointCount,
+            generated: checkpointGenerated,
+            initialGenerated,
+            outDegrees: outDegrees.slice(),
+            states: states.slice(0, checkpointCount * width),
+            parents: parents.slice(0, checkpointCount),
+            width,
+            ...(hasSeparateKeys && {
+              keys: separateKeys.slice(0, checkpointCount * keyWidth),
+              keyWidth,
+            }),
+          };
       error.checkpoint = checkpoint;
     }
     throw error;
   } finally {
     parallel.workers?.terminate();
   }
-  // TLC's ENABLED walks what the shortcut evaluated, so only a search that took no shortcut past a
-  // walk found the successors ENABLED finds.
-  const isPastWalk = shortcuts.isPastWalk;
 
   return {
     generatedStates: generated,
@@ -618,36 +669,7 @@ export const runEngine = (input: EngineInput): EngineResult => {
           ),
     valueCount: getValueCount(),
     threads: parallel.threads,
-    createLiveOracle: (getIndex, getEnabledActions) =>
-      createLiveOracle(
-        context.compiler,
-        {
-          states,
-          edgeOffsets: graph?.edgeOffsets,
-          edges: graph?.edges,
-          labels: graph?.labels,
-          isEnabledExact: !isPastWalk,
-        },
-        getIndex,
-        getEnabledActions,
-      ),
-    checkpoint: graph && {
-      expanding: 0,
-      count: stateCount,
-      generated: initialGenerated,
-      initialGenerated,
-      outDegrees: new Array<number>(OUT_DEGREE_BUCKETS).fill(0),
-      states: states.slice(0, stateCount * width),
-      parents: parents.slice(0, stateCount),
-      width,
-      graph: {
-        successorCounts: graph.successorCounts,
-        newCounts: graph.newCounts,
-        edgeOffsets: graph.edgeOffsets,
-        edges: graph.edges.slice(0, graph.edgeCount),
-        labels: graph.labels?.slice(0, graph.edgeCount),
-      },
-    },
+    checkpoint: graph && getGraphCheckpoint(stateCount, stateCount, 0),
   };
 };
 

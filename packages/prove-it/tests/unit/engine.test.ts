@@ -931,3 +931,85 @@ describe("the engine's answers to ENABLED", () => {
     expect(isFromSteps).toBe(false);
   });
 });
+
+describe("the engine's hand-over to the interpreter part way through a search", () => {
+  // Checks a model with the engine and without, and returns what the engine said it did.
+  const checkBoth = async (lines: string[], config: string) => {
+    const source = ["---- MODULE M ----", ...lines, "===="].join("\n");
+    process.env.PROVE_IT_ENGINE = "0";
+    const reference = await check({ source, config, onPrint: () => {} });
+    process.env.PROVE_IT_ENGINE = "debug";
+    const engineLines: string[] = [];
+    const spy = spyOn(console, "error").mockImplementation((message: unknown) => {
+      if (typeof message === "string" && message.startsWith("[engine] ")) {
+        engineLines.push(message);
+      }
+    });
+    try {
+      const result = await check({ source, config, onPrint: () => {} });
+      expect(result).toEqual(reference);
+      return { result, handedOver: engineLines.find((line) => line.includes("handed over")) };
+    } finally {
+      spy.mockRestore();
+    }
+  };
+  // A counter and a bit that flips below 3, so each level holds states the search hasn't expanded
+  // when it stops.
+  const counter = (move: string, extra: string[] = []) => [
+    "EXTENDS Naturals",
+    "VARIABLES x, y",
+    "vars == <<x, y>>",
+    "Init == x = 0 /\\ y = 0",
+    `Move == ${move} /\\ y' = y`,
+    "Flip == x < 3 /\\ y' = 1 - y /\\ x' = x",
+    "Next == Flip \\/ Move",
+    "Spec == Init /\\ [][Next]_vars /\\ WF_vars(Move)",
+    ...extra,
+  ];
+  const LIVE_CONFIG = "SPECIFICATION Spec\nPROPERTY Live";
+
+  it("checks the temporal properties on the graph found up to a deadlock", async () => {
+    const { result, handedOver } = await checkBoth(
+      counter("x < 3 /\\ x' = x + 1", ["Live == <>(x = 3)"]),
+      `${LIVE_CONFIG}\nCHECK_DEADLOCK TRUE`,
+    );
+    expect(handedOver).toMatch(/: deadlock$/);
+    expect(result.status).toBe("deadlock");
+  });
+
+  it("checks the temporal properties on the graph found up to an invariant violated", async () => {
+    const { result, handedOver } = await checkBoth(
+      counter("x' = (x + 1) % 4", ["Live == []<>(x = 0)", "Inv == x + y < 4"]),
+      `${LIVE_CONFIG}\nINVARIANT Inv`,
+    );
+    expect(handedOver).toMatch(/: an invariant violated$/);
+    expect(result.status).toBe("invariant-violation");
+  });
+
+  it("goes on from the graph found when the engine stops for what it doesn't build", async () => {
+    // The engine doesn't build an interval of more than 10^7 integers, which TLC tests membership
+    // in without building, so it stops once x = 1.
+    const move = "x' = (x + 1) % 4 /\\ 5 \\in 0..(x * 10000000 + 5)";
+    for (const [live, status] of [
+      ["[]<>(x = 0)", "success"],
+      ["<>[](y = 0)", "liveness-violation"],
+      ["[](x = 0 => <>(x = 2 /\\ ENABLED Move))", "success"],
+    ]) {
+      const { result, handedOver } = await checkBoth(
+        counter(move, [`Live == ${live}`]),
+        LIVE_CONFIG,
+      );
+      expect(handedOver).toMatch(/: an interval too large to build$/);
+      expect([live, result.status]).toEqual([live, status]);
+    }
+  });
+
+  it("reports an error the liveness checker meets in an initial state as without the engine", async () => {
+    const { result, handedOver } = await checkBoth(
+      counter("x < 3 /\\ x' = x + 1", ["Live == <>~ENABLED (x' > x)"]),
+      LIVE_CONFIG,
+    );
+    expect(handedOver).toMatch(/: deadlock$/);
+    expect(result.status).toBe("error");
+  });
+});
