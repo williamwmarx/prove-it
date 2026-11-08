@@ -5,13 +5,14 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use tla_ir::{Bound, NodeId, NodeKind, PathStep, Pattern, Update};
 use tla_values::store::{
-    EMPTY_SET, EMPTY_TUPLE, FALSE, KIND_SET, KIND_TUPLE, Outcome, TRUE, is_function_kind,
+    EMPTY_SET, EMPTY_TUPLE, KIND_SET, KIND_TUPLE, Outcome, TRUE, is_function_kind,
 };
 use tla_values::{Bail, Id};
 
+use super::predicate::{Predicate, Test};
 use super::{
     Binding, Compiled, Compiler, Compiling, Context, Filter, Shape, bind, bool_id,
-    call_recursive_function, constant, decline, eval, leaf, lookup, unsupported,
+    call_recursive_function, constant, decline, eval, leaf, lookup, predicate_node, unsupported,
 };
 use crate::footprint::Footprint;
 use crate::machine::{Eval, Machine};
@@ -459,42 +460,18 @@ impl Compiler<'_> {
         Ok(Self::junction(&operands, is_and))
     }
 
-    // AndAll and OrAny: the operands in one loop, each checked to be a boolean as compileBoolean
-    // checks it, without a closure around each to check it.
+    // AndAll and OrAny: the operands in one predicate, each checked to be a boolean as
+    // compileBoolean checks it.
     pub(crate) fn junction(operands: &[Compiled], is_and: bool) -> Compiled {
-        let stop = bool_id(!is_and);
-        let checked: Vec<(Eval, bool)> = operands
-            .iter()
-            .map(|operand| (operand.eval.clone(), !operand.is_boolean))
-            .collect();
-        let evaluate = match &checked[..] {
-            [(first, false), (second, false)] => {
-                let (first, second) = (first.clone(), second.clone());
-                eval(move |machine| {
-                    if first(machine)? == stop {
-                        return Ok(stop);
-                    }
-                    second(machine)
-                })
-            }
-            _ => eval(move |machine| {
-                for (operand, is_checked) in &checked {
-                    let value = operand(machine)?;
-                    if *is_checked && value != TRUE && value != FALSE {
-                        return Err(Bail("expected a boolean"));
-                    }
-                    if value == stop {
-                        return Ok(stop);
-                    }
-                }
-                Ok(bool_id(is_and))
-            }),
-        };
+        let predicates = operands.iter().map(Predicate::of).collect();
         Compiled {
             is_costly: operands.iter().any(|operand| operand.is_costly),
-            is_boolean: true,
-            ..leaf(
-                evaluate,
+            ..predicate_node(
+                if is_and {
+                    Predicate::And(predicates)
+                } else {
+                    Predicate::Or(predicates)
+                },
                 Footprint::merge_all(operands.iter().map(|operand| &operand.footprint)),
             )
         }
@@ -543,6 +520,9 @@ impl Compiler<'_> {
         for item in bounds {
             let set = self.compile(item.set, &inner)?;
             let binder = self.bind_bound(&item.pattern, &inner);
+            if !binder.tuple && set.interval.is_some() {
+                self.int_slots.insert(binder.slots[0]);
+            }
             inner = binder.context;
             bound.extend(&binder.slots);
             levels.push(Level {
@@ -565,9 +545,7 @@ impl Compiler<'_> {
         let body = self.compile(body, &inner)?;
         let footprint = Footprint::merge_all(levels.iter().map(|level| &level.set.footprint))
             .merge(&body.footprint.without_slots(&bound));
-        let stop = bool_id(!is_forall);
-        let is_checked = !body.is_boolean;
-        let body_eval = body.eval.clone();
+        let predicate = Predicate::of(&body);
         // ForallInterval and ExistsInterval: a name over a..b at each level counts through the
         // interval without building it.
         let evaluate = if levels
@@ -579,8 +557,7 @@ impl Compiler<'_> {
                     .iter()
                     .map(|level| (level.slots[0], level.set.interval.clone().unwrap()))
                     .collect(),
-                body_eval,
-                is_checked,
+                predicate,
                 is_forall,
             )
         } else {
@@ -590,7 +567,8 @@ impl Compiler<'_> {
                     .map(|level| (level.set.eval, level.slots, level.tuple))
                     .collect(),
             );
-            eval(move |machine| quantify(machine, &levels, 0, &body_eval, is_checked, stop))
+            let body = predicate.build();
+            eval(move |machine| quantify(machine, &levels, 0, &body, is_forall).map(bool_id))
         };
         Ok(Compiled {
             is_costly: true,
@@ -643,7 +621,7 @@ impl Compiler<'_> {
             return unsupported("filtering an infinite set");
         }
         let binder = self.bind_bound(&bound.pattern, context);
-        let predicate = self.compile_boolean(predicate, &binder.context)?;
+        let predicate = self.compile(predicate, &binder.context)?;
         let footprint = set
             .footprint
             .merge(&predicate.footprint.without_slots(&binder.slots));
@@ -651,7 +629,7 @@ impl Compiler<'_> {
             set: set.eval.clone(),
             slots: binder.slots,
             tuple: binder.tuple,
-            predicate: predicate.eval,
+            predicate: Predicate::of(&predicate).build(),
         });
         let parts = Arc::clone(&filter);
         Ok(Compiled {
@@ -670,8 +648,8 @@ impl Compiler<'_> {
                         let kept = assign_bound(machine, &parts.slots, parts.tuple, element)
                             .and_then(|()| (parts.predicate)(machine));
                         match kept {
-                            Ok(TRUE) => machine.stack.push(element),
-                            Ok(_) => {}
+                            Ok(true) => machine.stack.push(element),
+                            Ok(false) => {}
                             Err(bail) => {
                                 machine.stack.truncate(at);
                                 return Err(bail);
@@ -990,26 +968,21 @@ fn quantify(
     machine: &mut Machine<'_>,
     levels: &[(Eval, Vec<u32>, bool)],
     level: usize,
-    body: &Eval,
-    is_checked: bool,
-    stop: Id,
-) -> Outcome<Id> {
+    body: &Test,
+    is_forall: bool,
+) -> Outcome<bool> {
     let Some((set, slots, tuple)) = levels.get(level) else {
-        let value = body(machine)?;
-        if is_checked && value != TRUE && value != FALSE {
-            return Err(Bail("expected a boolean"));
-        }
-        return Ok(value);
+        return body(machine);
     };
     let set = evaluate_set(machine, set, "quantified over a non-set")?;
     for index in 0..machine.store.size_of(set) {
         let element = machine.store.element_at(set, index);
         assign_bound(machine, slots, *tuple, element)?;
-        if quantify(machine, levels, level + 1, body, is_checked, stop)? == stop {
-            return Ok(stop);
+        if quantify(machine, levels, level + 1, body, is_forall)? != is_forall {
+            return Ok(!is_forall);
         }
     }
-    Ok(1 - stop)
+    Ok(is_forall)
 }
 
 // Pushes the images on the stack, above whatever evaluating them pushes and pops.

@@ -4,10 +4,11 @@
 
 use std::sync::Arc;
 
-use tla_values::store::{EMPTY_SET, FALSE, KIND_INT, KIND_SET, Outcome, TRUE};
+use tla_values::store::{EMPTY_SET, KIND_INT, KIND_SET, Outcome};
 use tla_values::{Bail, Id};
 
 use super::nodes::{assign_bound, evaluate_set};
+use super::predicate::{self, Predicate, Test};
 use super::{Compiled, Filter, Shape, bool_id, eval, leaf};
 use crate::footprint::Footprint;
 use crate::machine::{Eval, Machine};
@@ -54,60 +55,60 @@ pub(crate) fn interval(machine: &mut Machine<'_>, low: &Eval, high: &Eval) -> Ou
 }
 
 /// ForallInterval and ExistsInterval: `\A x \in a..b : P`, a name over an interval at each level,
-/// counted through without building the interval.
+/// counted through without building the interval, its body's predicate walked in the loop.
 pub(crate) fn quantify_intervals(
     levels: Vec<(u32, (Eval, Eval))>,
-    body: Eval,
-    is_checked: bool,
+    body: Predicate,
     is_forall: bool,
 ) -> Eval {
-    let stop = bool_id(!is_forall);
     let levels = Arc::new(levels);
-    eval(move |machine| quantify_level(machine, &levels, 0, &body, is_checked, stop))
+    let body = body.build();
+    eval(move |machine| quantify_level(machine, &levels, 0, &body, is_forall).map(bool_id))
 }
 
 fn quantify_level(
     machine: &mut Machine<'_>,
     levels: &[(u32, (Eval, Eval))],
     level: usize,
-    body: &Eval,
-    is_checked: bool,
-    stop: Id,
-) -> Outcome<Id> {
+    body: &Test,
+    is_forall: bool,
+) -> Outcome<bool> {
     let (slot, (low, high)) = &levels[level];
     let Some((low, high)) = interval_bounds(machine, low, high)? else {
-        return Ok(1 - stop);
+        return Ok(is_forall);
     };
     let is_last = level + 1 == levels.len();
     for value in low..=high {
         machine.locals[*slot as usize] = machine.store.int(i64::from(value))?;
-        let result = if is_last {
-            let value = body(machine)?;
-            if is_checked && value != TRUE && value != FALSE {
-                return Err(Bail("expected a boolean"));
-            }
-            value
+        let holds = if is_last {
+            body(machine)?
         } else {
-            quantify_level(machine, levels, level + 1, body, is_checked, stop)?
+            quantify_level(machine, levels, level + 1, body, is_forall)?
         };
-        if result == stop {
-            return Ok(stop);
+        if holds != is_forall {
+            return Ok(!is_forall);
         }
     }
-    Ok(1 - stop)
+    Ok(is_forall)
 }
 
 /// `f[e]`, and ApplyVar: `f[i]` with `f` a variable and `i` a bound name, read straight from the
 /// registers.
 pub(crate) fn apply(function: &Compiled, argument: &Compiled, footprint: Footprint) -> Compiled {
-    if let (Shape::Current(variable), Shape::Slot(slot)) = (function.shape, argument.shape) {
+    if let (Shape::Current(variable), Some((slot, is_int))) =
+        (function.shape, argument.shape.slot())
+    {
         return Compiled {
-            shape: Shape::ApplyVar { variable, slot },
+            shape: Shape::ApplyVar {
+                variable,
+                slot,
+                is_int,
+            },
             ..leaf(
                 eval(move |machine| {
                     let function = machine.read_current(variable)?;
                     let key = machine.locals[slot as usize];
-                    machine.store.apply(function, key)
+                    predicate::apply(machine, function, key)
                 }),
                 footprint,
             )
@@ -134,67 +135,21 @@ pub(crate) fn except_var_at(variable: u32, key: Eval, value: Eval) -> Eval {
     })
 }
 
-fn equals_id(machine: &mut Machine<'_>, left: Id, right: Id) -> Outcome<bool> {
-    if left == right {
-        return Ok(true);
-    }
-    machine.store.equals(left, right)
-}
-
-/// `a = b` and `a # b`, and VarEqConst (`x = c`), the same of `f[i]` (`pc[i] = "cs"`) and of two
-/// bound names (`i # j`).
-pub(crate) fn equality(left: &Compiled, right: &Compiled, is_equal: bool) -> Eval {
-    match (left.shape, right.shape) {
-        (Shape::Current(variable), Shape::Constant(constant)) => eval(move |machine| {
-            let value = machine.read_current(variable)?;
-            Ok(bool_id(equals_id(machine, value, constant)? == is_equal))
-        }),
-        (Shape::Constant(constant), Shape::Current(variable)) => eval(move |machine| {
-            let value = machine.read_current(variable)?;
-            Ok(bool_id(equals_id(machine, constant, value)? == is_equal))
-        }),
-        (Shape::ApplyVar { variable, slot }, Shape::Constant(constant)) => eval(move |machine| {
-            let function = machine.read_current(variable)?;
-            let key = machine.locals[slot as usize];
-            let value = machine.store.apply(function, key)?;
-            Ok(bool_id(equals_id(machine, value, constant)? == is_equal))
-        }),
-        (Shape::Slot(left), Shape::Slot(right)) => eval(move |machine| {
-            let (left, right) = (
-                machine.locals[left as usize],
-                machine.locals[right as usize],
-            );
-            Ok(bool_id(equals_id(machine, left, right)? == is_equal))
-        }),
-        _ => {
-            let (left, right) = (left.eval.clone(), right.eval.clone());
-            eval(move |machine| {
-                let left = left(machine)?;
-                let right = right(machine)?;
-                Ok(bool_id(equals_id(machine, left, right)? == is_equal))
-            })
-        }
-    }
-}
-
-/// MemberConst: `i \in S` of a bound name and a constant set the engine builds.
-pub(crate) fn member_const(
-    element: &Compiled,
-    set: &Compiled,
-    machine_kind: u8,
-    is_in: bool,
-) -> Option<Eval> {
-    let (Shape::Slot(slot), Shape::Constant(constant)) = (element.shape, set.shape) else {
-        return None;
-    };
-    if machine_kind != KIND_SET || set.member.is_some() || set.infinite.is_some() {
+/// MemberConst: `i \in S` of a bound name and a set the engine builds, such as a constant one,
+/// the element read from its slot and the set tested in place.
+pub(crate) fn member_const(element: &Compiled, set: &Compiled, is_in: bool) -> Option<Eval> {
+    let (slot, _) = element.shape.slot()?;
+    if set.member.is_some() || set.infinite.is_some() {
         return None;
     }
+    let set = set.eval.clone();
     Some(eval(move |machine| {
         let element = machine.locals[slot as usize];
-        Ok(bool_id(
-            machine.store.is_member(element, constant)? == is_in,
-        ))
+        let set = set(machine)?;
+        if machine.store.kind_of(set) != KIND_SET {
+            return Err(Bail("membership in a non-set"));
+        }
+        Ok(bool_id(machine.store.is_member(element, set)? == is_in))
     }))
 }
 
@@ -206,7 +161,7 @@ pub(crate) fn cardinality_filter(filter: Arc<Filter>) -> Eval {
         for index in 0..machine.store.size_of(id) {
             let element = machine.store.element_at(id, index);
             assign_bound(machine, &filter.slots, filter.tuple, element)?;
-            if (filter.predicate)(machine)? == TRUE {
+            if (filter.predicate)(machine)? {
                 count += 1;
             }
         }

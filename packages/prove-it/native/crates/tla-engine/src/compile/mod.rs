@@ -17,6 +17,7 @@
 mod builtins;
 mod fused;
 mod nodes;
+mod predicate;
 mod sets;
 
 use std::cell::{Cell, RefCell};
@@ -122,11 +123,24 @@ pub(crate) enum Shape {
     /// An unprimed variable, which fails while unassigned.
     Current(u32),
     Slot(u32),
+    /// A bound name whose values are integers, as a name bound over an interval's are.
+    IntSlot(u32),
     /// `f[i]`, with `f` an unprimed variable and `i` a bound name.
     ApplyVar {
         variable: u32,
         slot: u32,
+        is_int: bool,
     },
+}
+
+impl Shape {
+    pub(crate) fn slot(self) -> Option<(u32, bool)> {
+        match self {
+            Shape::Slot(slot) => Some((slot, false)),
+            Shape::IntSlot(slot) => Some((slot, true)),
+            _ => None,
+        }
+    }
 }
 
 /// A set filter's parts, for a Cardinality of it that counts without building it.
@@ -134,7 +148,7 @@ pub(crate) struct Filter {
     pub set: Eval,
     pub slots: Vec<u32>,
     pub tuple: bool,
-    pub predicate: Eval,
+    pub predicate: predicate::Test,
 }
 
 /// A compiled expression, with what `compile.ts`'s `Compiled` and `LazySet` say of it.
@@ -162,6 +176,8 @@ pub struct Compiled {
     /// For `a..b`: its bounds, which a quantifier over it counts through without the set.
     pub(crate) interval: Option<(Eval, Eval)>,
     pub(crate) filter: Option<Arc<Filter>>,
+    /// For a boolean: the fused predicate a parent can walk in place of calling it.
+    pub(crate) predicate: Option<Arc<predicate::Predicate>>,
 }
 
 impl Compiled {
@@ -181,10 +197,18 @@ impl Compiled {
         self.footprint.slots.contains(&PRINT_SLOT)
     }
 
+    fn with_predicate(self, predicate: predicate::Predicate) -> Compiled {
+        Compiled {
+            predicate: Some(Arc::new(predicate)),
+            ..self
+        }
+    }
+
     fn with_eval(&self, eval: Eval) -> Compiled {
         Compiled {
             eval,
             shape: Shape::Other,
+            predicate: None,
             ..self.clone()
         }
     }
@@ -206,7 +230,17 @@ pub(crate) fn leaf(eval: Eval, footprint: Footprint) -> Compiled {
         shape: Shape::Other,
         interval: None,
         filter: None,
+        predicate: None,
     }
+}
+
+// A boolean whose value is a fused predicate.
+pub(crate) fn predicate_node(predicate: predicate::Predicate, footprint: Footprint) -> Compiled {
+    Compiled {
+        is_boolean: true,
+        ..leaf(predicate::evaluate(&predicate), footprint)
+    }
+    .with_predicate(predicate)
 }
 
 pub(crate) fn constant(id: Id) -> Compiled {
@@ -285,7 +319,7 @@ enum Binding {
     /// A value, or a function a LET defines, which TLC keeps lazy, with the context it is defined
     /// in and, once a prime reaches it, the function compiled again to read the next state.
     Value {
-        compiled: Compiled,
+        compiled: Box<Compiled>,
         lazy: Option<Rc<LazyFunction>>,
     },
     /// A recursive function defined in a LET, whose body sees the LET's scope, itself included:
@@ -453,6 +487,8 @@ pub struct Compiler<'a> {
     recursive_operators: HashMap<usize, OperatorEntries>,
     recursive_functions: HashMap<(NodeId, usize), FunctionEntries>,
     expanding: HashSet<NodeId>,
+    /// The slots of names bound over intervals, whose values are integers.
+    int_slots: HashSet<u32>,
     depth: u32,
     // The unsettled fixed points the compiles under way have read, innermost first.
     reads: Option<Vec<Rc<FixedPoint>>>,
@@ -498,6 +534,7 @@ impl<'a> Compiler<'a> {
             recursive_operators: HashMap::new(),
             recursive_functions: HashMap::new(),
             expanding: HashSet::new(),
+            int_slots: HashSet::new(),
             depth: 0,
             reads: None,
             provisional: HashMap::new(),
@@ -935,7 +972,11 @@ impl<'a> Compiler<'a> {
             Binding::Slot(slot) => {
                 let slot = *slot;
                 Ok(Compiled {
-                    shape: Shape::Slot(slot),
+                    shape: if self.int_slots.contains(&slot) {
+                        Shape::IntSlot(slot)
+                    } else {
+                        Shape::Slot(slot)
+                    },
                     ..leaf(
                         eval(move |machine| Ok(machine.locals[slot as usize])),
                         Footprint::slot(slot),
@@ -958,7 +999,7 @@ impl<'a> Compiler<'a> {
                     .as_ref()
                     .filter(|lazy| context.is_primed && !lazy.context.is_primed)
                 else {
-                    return Ok(compiled.clone());
+                    return Ok((**compiled).clone());
                 };
                 if let Some(primed) = &*lazy.primed.borrow() {
                     return Ok(primed.clone());
@@ -1122,7 +1163,7 @@ impl<'a> Compiler<'a> {
                         &scope,
                         definition.name,
                         Binding::Value {
-                            compiled,
+                            compiled: Box::new(compiled),
                             lazy: Some(Rc::new(LazyFunction {
                                 definition: node,
                                 context: definition_context,

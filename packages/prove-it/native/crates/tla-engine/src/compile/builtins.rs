@@ -12,11 +12,12 @@ use tla_values::{Bail, Id};
 
 use super::fused;
 use super::nodes::{evaluate_set, expect_set};
+use super::predicate::{Leaf, Predicate};
 use super::sets::not_in;
 use super::{
     Binding, Compiled, Compiler, Compiling, Context, DISTINCT_SLOT, LEVEL_SLOT, NEXT_LEVEL_SLOT,
     Operand, OperatorBody, Shape, bind, bool_id, decline, eval, leaf, lookup, member,
-    operator_context, unsupported,
+    operator_context, predicate_node, unsupported,
 };
 use crate::footprint::Footprint;
 use crate::machine::{Eval, Machine};
@@ -356,21 +357,22 @@ impl Compiler<'_> {
                 arity(2)?;
                 let left = self.operand(&operands[0])?;
                 let right = self.operand(&operands[1])?;
-                Compiled {
-                    is_boolean: true,
-                    ..leaf(
-                        fused::equality(&left, &right, name == "="),
-                        left.footprint.merge(&right.footprint),
-                    )
-                }
+                predicate_node(
+                    Predicate::Equal {
+                        left: Leaf::of(&left),
+                        right: Leaf::of(&right),
+                        is_equal: name == "=",
+                    },
+                    left.footprint.merge(&right.footprint),
+                )
             }
             "~" => {
                 arity(1)?;
-                let negated = self.boolean_operand(&operands[0])?;
-                Compiled {
-                    is_boolean: true,
-                    ..unary(&negated, |_, value| Ok(1 - value), false)
-                }
+                let negated = self.operand(&operands[0])?;
+                predicate_node(
+                    Predicate::Not(Box::new(Predicate::of(&negated))),
+                    negated.footprint.clone(),
+                )
             }
             "/\\" | "\\/" => {
                 let compiled = operands
@@ -381,22 +383,15 @@ impl Compiler<'_> {
             }
             "=>" => {
                 arity(2)?;
-                let left = self.boolean_operand(&operands[0])?;
-                let right = self.boolean_operand(&operands[1])?;
-                let (left_eval, right_eval) = (left.eval.clone(), right.eval.clone());
-                Compiled {
-                    is_boolean: true,
-                    ..leaf(
-                        eval(move |machine| {
-                            if left_eval(machine)? == FALSE {
-                                Ok(TRUE)
-                            } else {
-                                right_eval(machine)
-                            }
-                        }),
-                        left.footprint.merge(&right.footprint),
-                    )
-                }
+                let left = self.operand(&operands[0])?;
+                let right = self.operand(&operands[1])?;
+                predicate_node(
+                    Predicate::Implies(
+                        Box::new(Predicate::of(&left)),
+                        Box::new(Predicate::of(&right)),
+                    ),
+                    left.footprint.merge(&right.footprint),
+                )
             }
             "<=>" => {
                 arity(2)?;
@@ -416,19 +411,14 @@ impl Compiler<'_> {
                 let set = self.operand(&operands[1])?;
                 let is_in = name == "\\in";
                 let footprint = element.footprint.merge(&set.footprint);
-                let set_kind = match set.shape {
-                    Shape::Constant(id) => self.store.kind_of(id),
-                    _ => u8::MAX,
-                };
-                let evaluate =
-                    fused::member_const(&element, &set, set_kind, is_in).unwrap_or_else(|| {
-                        let test = self.member_test(&set);
-                        let element = element.eval.clone();
-                        eval(move |machine| {
-                            let value = element(machine)?;
-                            Ok(bool_id(test(machine, value)? == is_in))
-                        })
-                    });
+                let evaluate = fused::member_const(&element, &set, is_in).unwrap_or_else(|| {
+                    let test = self.member_test(&set);
+                    let element = element.eval.clone();
+                    eval(move |machine| {
+                        let value = element(machine)?;
+                        Ok(bool_id(test(machine, value)? == is_in))
+                    })
+                });
                 Compiled {
                     is_costly: set.member.is_some(),
                     is_boolean: true,
