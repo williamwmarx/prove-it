@@ -100,6 +100,20 @@ describe("_POSSIBLE matches TLC", () => {
     ]);
   });
 
+  // TLC checks it after the next-state relation fails, but not after an invariant or action
+  // property does.
+  it.each([
+    ["INVARIANT P", "P == x < 2 \\/ 1 \\div 0 = 0", undefined],
+    ["PROPERTY P", "P == [][x' < 2 \\/ 1 \\div 0 = 0]_x", undefined],
+    ["INVARIANT P", "P == TRUE\nStep == IF x = 2 THEN 1 \\div 0 = 0 ELSE Next", "Never"],
+  ])("checks a POSTCONDITION after %s fails to evaluate as TLC does", async (kind, body, name) => {
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 5 /\\ x' = x + 1\nNever == TLCGet("level") < 0\n${body}\nSpec == Init /\\ [][${body.includes("Step") ? "Step" : "Next"}]_x\n====`,
+      config: `SPECIFICATION Spec\nPOSTCONDITION Never\n${kind}`,
+    });
+    expect([result.status, result.failure?.postcondition?.name]).toEqual(["error", name]);
+  });
+
   it("rejects a constant POSTCONDITION like TLC and skips it after a violation", async () => {
     const failed = await checkModule("Never == FALSE", "POSTCONDITION Never");
     expect([failed.status, failed.failure?.message]).toEqual([

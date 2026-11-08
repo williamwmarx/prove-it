@@ -1032,8 +1032,10 @@ const searchStates = (
   ) => {
     const error = isStackOverflow(failed) ? new TlaStackOverflowError() : failed;
     if (!(error instanceof TlaEvaluationError)) throw error;
+    // ModelChecker.doNextEvalFailed, which reports an invariant or action property that fails to
+    // evaluate, prints the trace without checking the postconditions.
     const checked =
-      behavior.trace.length > 0 && !failureOptions.traceFailure
+      behavior.trace.length > 0 && !failureOptions.traceFailure && !isHeadedError(error)
         ? checkTracePostconditions(behavior.trace, undefined)
         : undefined;
     const postcondition = checked?.unwitnessed ?? checked?.postcondition;
