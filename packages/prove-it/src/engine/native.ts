@@ -5,15 +5,25 @@
 
 import { EngineInvariantError } from "../errors";
 import type { LiveExpression } from "../tableau";
-import { createStateDecoder, forEachEncodedState } from "../transfer";
+import {
+  createStateDecoder,
+  FALSE_TAG,
+  FUNCTION_TAG,
+  INTEGER_TAG,
+  INTERVAL_FUNCTION_TAG,
+  MODEL_VALUE_TAG,
+  SET_TAG,
+  STRING_TAG,
+  TRUE_TAG,
+} from "../transfer";
 import { formatPrinted, type Value } from "../values";
-import { fromEnumeratedValue, fromValue } from "./convert";
+import { fromEnumeratedValue } from "./convert";
 import { resetFingerprints } from "./fingerprint";
 import type { IrOutcome } from "./ir";
 import type { LiveOracle } from "./live";
 import type { EngineCheckpoint, EngineInput, EngineResult } from "./search";
 import { getEngineAddon, getEnvironmentFlag, getStopAt, reportEngine } from "./settings";
-import { Bailout, resetStore } from "./store";
+import { Bailout, FALSE, functionOf, int, model, resetStore, setOf, str, TRUE } from "./store";
 
 // The addon's test hooks into its store, which native-store.ts calls (binding/store.rs).
 export interface NativeStoreHooks {
@@ -220,14 +230,48 @@ export const checkNatively = (
 
 // The states the native engine found, as ids of this process's engine store, which the
 // interpreter's hand-over reads.
-// The states interned one at a time: a search can hand over millions, too many to hold as values.
+// The states interned straight from their encoding, with the ids fromValue gives each value, but
+// without building it: a search can hand over millions of states.
 const decodeStates = (words: Int32Array, strings: string[], width: number, count: number) => {
   const ids = new Int32Array(count * width);
-  forEachEncodedState(width, { words, strings, count }, (state, index) => {
-    state.forEach((value, variable) => {
-      ids[index * width + variable] = fromValue(value);
-    });
-  });
+  let cursor = 0;
+  const decodeAll = (length: number) => {
+    const decoded: number[] = new Array(length);
+    for (let index = 0; index < length; index++) decoded[index] = decodeValue();
+    return decoded;
+  };
+  const decodeValue = (): number => {
+    const tag = words[cursor++];
+    switch (tag) {
+      case FALSE_TAG:
+        return FALSE;
+      case TRUE_TAG:
+        return TRUE;
+      case INTEGER_TAG:
+        return int(words[cursor++]);
+      case STRING_TAG:
+        return str(strings[words[cursor++]]);
+      case MODEL_VALUE_TAG:
+        return model(strings[words[cursor++]]);
+      case SET_TAG:
+        return setOf(decodeAll(words[cursor++]));
+      case INTERVAL_FUNCTION_TAG: {
+        cursor++;
+        const low = words[cursor++];
+        const length = words[cursor++];
+        const keys: number[] = new Array(length);
+        for (let index = 0; index < length; index++) keys[index] = int(low + index);
+        return functionOf(keys, decodeAll(length));
+      }
+      default: {
+        if (tag !== FUNCTION_TAG) throw new EngineInvariantError(`a transfer tag ${tag}`);
+        cursor++;
+        const keys = decodeAll(words[cursor++]);
+        return functionOf(keys, decodeAll(keys.length));
+      }
+    }
+  };
+  for (let index = 0; index < count * width; index++) ids[index] = decodeValue();
   return ids;
 };
 
