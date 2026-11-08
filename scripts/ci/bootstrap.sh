@@ -47,7 +47,9 @@ for tool in "$@"; do
     rm -rf "$directory"
     mkdir -p "$directory"
     archive=$directory/archive
-    curl --fail --silent --show-error --location --retry 3 --output "$archive" "$url"
+    # GitHub's release downloads return 504 for minutes at a time, so curl retries eight times,
+    # waiting twice as long each time, about four minutes in all.
+    curl --fail --silent --show-error --location --retry 8 --output "$archive" "$url"
     printf '%s  %s\n' "$sha256" "$archive" | sha256sum --check --quiet - || die "$name $version doesn't match its pinned sha256"
     case $url in
       *.zip) unzip -q "$archive" -d "$directory" ;;
