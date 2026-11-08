@@ -1,0 +1,4 @@
+# The toolchain scripts/ci/bootstrap.sh rust installs.
+[toolchain]
+channel = "1.99.1"
+components = ["clippy", "rustfmt"]
