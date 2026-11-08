@@ -254,6 +254,10 @@ impl Fingerprints {
     // Computes a value's F and length, its parts' first, without recursing: a value is computed
     // when it comes off the stack the second time, after the parts pushed above it.
     fn compute(&mut self, store: &Store, id: Id) {
+        // A value met before is known, as nearly every value of a generated state is.
+        if self.get_entry(id).is_computed {
+            return;
+        }
         let mut pending = vec![(id, false)];
         while let Some((top, is_expanded)) = pending.pop() {
             if self.get_entry(top).is_computed {
