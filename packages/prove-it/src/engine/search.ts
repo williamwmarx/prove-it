@@ -33,7 +33,7 @@ import {
   seedState,
   stopWorkers,
 } from "./parallel";
-import { getEnvironmentFlag } from "./settings";
+import { getEnvironmentFlag, getStopAt } from "./settings";
 import { writeStateLog } from "./state-log";
 import { bail, Bailout, freezeTexts, getValueCount, resetStore, shareStore } from "./store";
 import { createCanonicalizer, type NamedPermutation } from "./symmetry";
@@ -414,6 +414,10 @@ export const runEngine = (input: EngineInput): EngineResult => {
     visitSuccessor();
   };
 
+  // PROVE_IT_STOP_AT=k stops the search before it expands state k, as it stops for anything it
+  // doesn't handle, so the interpreter goes on from there. It searches on one thread then.
+  const stopAt = getStopAt();
+
   // --- workers ---
   const canShare =
     input.workers > 1 &&
@@ -422,7 +426,8 @@ export const runEngine = (input: EngineInput): EngineResult => {
     !canonicalize &&
     typeof SharedArrayBuffer === "function" &&
     typeof Atomics.wait === "function" &&
-    !getEnvironmentFlag("PROVE_IT_SERIAL");
+    !getEnvironmentFlag("PROVE_IT_SERIAL") &&
+    stopAt === -1;
   // How many states the search had found when the workers joined.
   let seeded = 0;
   const parallel: { workers?: EngineWorkers; isSpawned: boolean; threads: number } = {
@@ -555,6 +560,7 @@ export const runEngine = (input: EngineInput): EngineResult => {
       }
       checkpointCount = stateCount;
       checkpointGenerated = generated;
+      if (expanding === stopAt) bail("stopped where PROVE_IT_STOP_AT asked");
       // The interpreter checks temporal properties on the graph as it grows, so it may find a
       // violation early in a state space the engine would search without end. Past this many
       // states, the engine hands its graph over and the interpreter goes on.

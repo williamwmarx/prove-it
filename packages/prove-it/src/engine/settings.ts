@@ -26,6 +26,12 @@ export const getFingerprintSetting = () => getEnvironment()?.PROVE_IT_FINGERPRIN
 
 export const getEnvironmentFlag = (name: string) => getEnvironment()?.[name] === "1";
 
+// The state PROVE_IT_STOP_AT names, before whose expansion the engine's search stops, or -1.
+export const getStopAt = () => {
+  const stopAt = Number(getEnvironment()?.PROVE_IT_STOP_AT ?? -1);
+  return Number.isInteger(stopAt) && stopAt >= 0 ? stopAt : -1;
+};
+
 // How many threads the engine searches with: PROVE_IT_WORKERS, else one. TLC's -workers doesn't
 // change it, since a model tuned for TLC's workers is usually faster on one engine thread; the
 // engine keeps TLC's order whatever the number.
