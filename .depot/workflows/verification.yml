@@ -66,13 +66,22 @@ jobs:
       matrix:
         include:
           - task: Cargo Build
-            # The native tests load the addon in Bun from the sources and in Node from dist, and the
-            # store and fingerprint tests run on the native store too.
+            # The native tests load the addon in Bun from the sources and in Node from dist, the
+            # store and fingerprint tests run on the native store too, and the native search's tests
+            # compare it with the interpreter and the TypeScript engine.
             command: |
               cd packages/prove-it
               bun scripts/platform-packages.ts build
               bun run build
-              PROVE_IT_ENGINE_ADDON="$PWD/native/npm/linux-x64-gnu/prove-it-engine.node" bun test tests/unit/native.test.ts tests/unit/engine-store.test.ts tests/unit/engine-fingerprints.test.ts
+              PROVE_IT_ENGINE_ADDON="$PWD/native/npm/linux-x64-gnu/prove-it-engine.node" bun test tests/unit/native.test.ts tests/unit/native-search.test.ts tests/unit/engine-store.test.ts tests/unit/engine-fingerprints.test.ts
+          # Every unit test with the native engine searching, but those native/ts-only-tests.json
+          # lists, which read the TypeScript engine's internals and skip themselves.
+          - task: Unit Tests (Rust)
+            command: |
+              cd packages/prove-it
+              bun scripts/platform-packages.ts build
+              bun run build
+              PROVE_IT_ENGINE_BACKEND=rust PROVE_IT_ENGINE_ADDON="$PWD/native/npm/linux-x64-gnu/prove-it-engine.node" bun test tests/unit
           - task: Cargo Test
             command: cd packages/prove-it/native && cargo test --locked
           - task: Cargo Clippy
@@ -81,7 +90,7 @@ jobs:
             command: cd packages/prove-it/native && cargo fmt --check
           # Packs the main package and the platform package as release.yml does, then installs them
           # without scripts: the main package alone runs on the TypeScript engine, and with its
-          # platform package it loads the addon, which declines.
+          # platform package it loads the addon, which searches the model.
           - task: Packages
             command: |
               cd packages/prove-it
@@ -102,7 +111,7 @@ jobs:
               grep -q '^\[engine\] checked 251 states on 1 thread ' engine.log
               npm install --ignore-scripts --no-audit --no-fund "$packs"/atemp-prove-it-linux-x64-gnu-*.tgz
               PROVE_IT_ENGINE=debug PROVE_IT_ENGINE_BACKEND=rust npx --no prove-it Commit.cfg 2> engine.log > /dev/null
-              grep -q '^\[engine\] native: declined: ' engine.log
+              grep -q '^\[engine\] native: complete: ' engine.log
               grep -q '^\[engine\] checked 251 states on 1 thread ' engine.log
     steps:
       - name: Check out repository

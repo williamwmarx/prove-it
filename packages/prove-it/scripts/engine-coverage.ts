@@ -278,10 +278,12 @@ const work = async (queue: CorpusModel[]) => {
     if (threads?.difference) {
       differences.push(`state log on 1 and 4 threads: ${threads.difference}`);
     }
+    // Both engines searched every state: completed, or found every state of a graph whose temporal
+    // properties the interpreter checks.
     const isStateLogged =
       isLoggingStates &&
       isCompared &&
-      engine.engine === "completed" &&
+      (engine.engine === "completed" || (on.engineLine?.startsWith("found ") ?? false)) &&
       runs.rust?.native?.tier === "complete";
     if (isStateLogged) differences.push(...(await compareBackends(model, expected)));
     const bucket =
