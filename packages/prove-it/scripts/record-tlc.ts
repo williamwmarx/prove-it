@@ -1,5 +1,12 @@
+// Records TLC's outcome on each corpus model in tests/conformance/expected.json, or with --stdout
+// its full output, in the default and -tool modes, in tests/conformance/tlc-stdout (see
+// tlc-recordings.ts). --stdout records only the models expected.json lists with TLC under
+// --max-tlc-ms, and only those it has no recording of yet.
+// Usage: TLA2TOOLS_JAR=path [TLC_COMMIT=commit] bun scripts/run.ts record-tlc [--stdout]
+//        [--max-tlc-ms 20000] [--filter text] [--concurrency 2]
+
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 
@@ -8,10 +15,20 @@ import {
   type CorpusModel,
   EXPECTED_PATH,
   findModels,
-  LIBRARY_PATH,
+  getOption,
   linkLibraryModules,
-  TLC_SEED,
 } from "./corpora";
+import {
+  getRecordingPath,
+  getTlcArguments,
+  LIBRARY_OPTION,
+  OUTPUT_MODES,
+  type OutputMode,
+  readRecording,
+  TLC_COMMIT,
+  TLC_STDOUT_DIRECTORY,
+  type TlcRecording,
+} from "./tlc-recordings";
 
 export interface ExpectedResult {
   id: string;
@@ -21,6 +38,8 @@ export interface ExpectedResult {
   distinctStates?: number;
   depth?: number;
   traceLength?: number;
+  // TLC's estimate "based on the actual fingerprints", as check-model.ts's ModelOutcome has it.
+  fingerprintProbability?: string;
   tlcMilliseconds: number;
 }
 
@@ -31,7 +50,11 @@ interface ManifestModel {
 }
 
 const MAXIMUM_RECORDED_RUNTIME_SECONDS = 60;
-const CONCURRENCY = 2;
+
+const isStdout = process.argv.includes("--stdout");
+const maximumTlcMilliseconds = Number(getOption("--max-tlc-ms") ?? 20000);
+const filter = getOption("--filter");
+const concurrency = Number(getOption("--concurrency") ?? 2);
 
 const jarPath = process.env.TLA2TOOLS_JAR;
 if (!jarPath || !existsSync(jarPath)) {
@@ -77,37 +100,38 @@ const getFirstTraceLength = (output: string) => {
   return restart === -1 ? numbers.length : restart;
 };
 
+// TLC prints a line about JAVA_TOOL_OPTIONS and its kin when they're set, which would land in
+// its output.
+const getJavaEnvironment = () =>
+  Object.fromEntries(
+    Object.entries(process.env).filter(
+      ([name]) => !["JAVA_TOOL_OPTIONS", "_JAVA_OPTIONS", "JDK_JAVA_OPTIONS"].includes(name),
+    ),
+  );
+
+const spawnTlc = (model: CorpusModel, mode: OutputMode, metadataDirectory: string) =>
+  spawn(
+    "java",
+    [
+      "-XX:+UseParallelGC",
+      "-Xmx768m",
+      LIBRARY_OPTION,
+      "-cp",
+      jarPath,
+      "tlc2.TLC",
+      ...getTlcArguments(model, mode, metadataDirectory),
+    ],
+    { cwd: model.directory, env: getJavaEnvironment() },
+  );
+
+const getFingerprintProbability = (output: string) =>
+  /based on the actual fingerprints: {2}val = (\S+)/.exec(output)?.[1];
+
 const runTlc = (model: CorpusModel) =>
   new Promise<ExpectedResult>((resolve) => {
     const metadataDirectory = mkdtempSync(join(tmpdir(), "tla-ts-tlc-"));
     const startedAt = performance.now();
-    const child = spawn(
-      "java",
-      [
-        "-XX:+UseParallelGC",
-        "-Xmx768m",
-        `-DTLA-Library=${LIBRARY_PATH}`,
-        "-cp",
-        jarPath,
-        "tlc2.TLC",
-        "-workers",
-        "1",
-        "-nowarning",
-        "-seed",
-        String(TLC_SEED),
-        "-fp",
-        "0",
-        "-lncheck",
-        "final",
-        "-noGenerateSpecTE",
-        "-metadir",
-        metadataDirectory,
-        "-config",
-        model.configPath,
-        model.specPath,
-      ],
-      { cwd: model.directory },
-    );
+    const child = spawnTlc(model, "default", metadataDirectory);
     const chunks: Buffer[] = [];
     child.stdout.on("data", (chunk: Buffer) => chunks.push(chunk));
     child.stderr.on("data", (chunk: Buffer) => chunks.push(chunk));
@@ -120,6 +144,7 @@ const runTlc = (model: CorpusModel) =>
       ].at(-1);
       const depth = /The depth of the complete state graph search is (\d+)/.exec(output);
       const violation = /(?:Invariant|property) (\S+) is violated/.exec(output);
+      const fingerprintProbability = getFingerprintProbability(output);
       resolve({
         id: model.id,
         status,
@@ -128,6 +153,7 @@ const runTlc = (model: CorpusModel) =>
           ? { generatedStates: Number(statistics[1]), distinctStates: Number(statistics[2]) }
           : {}),
         ...(status === "success" && depth ? { depth: Number(depth[1]) } : {}),
+        ...(status === "success" && fingerprintProbability ? { fingerprintProbability } : {}),
         ...(status !== "success" && status !== "error"
           ? {
               traceLength: output.includes("is violated by the initial state")
@@ -140,21 +166,108 @@ const runTlc = (model: CorpusModel) =>
     });
   });
 
-linkLibraryModules();
-const models = findModels().filter(isRecordable);
-const results: ExpectedResult[] = [];
-const queue = { next: 0 };
+// A recording is only as good as the commit its key names, which a jar built without its git
+// history doesn't print.
+if (isStdout && process.env.TLC_COMMIT !== TLC_COMMIT) {
+  console.error(`Build tla2tools.jar from ${TLC_COMMIT} and set TLC_COMMIT to it`);
+  process.exit(1);
+}
 
-const work = async () => {
-  while (queue.next < models.length) {
-    const model = models[queue.next++];
-    const result = await runTlc(model);
-    results.push(result);
-    console.log(`[${results.length}/${models.length}] ${result.status.padEnd(20)} ${model.id}`);
+const recordOutput = (model: CorpusModel, mode: OutputMode) =>
+  new Promise<TlcRecording>((resolve) => {
+    const metadataDirectory = mkdtempSync(join(tmpdir(), "prove-it-tlc-"));
+    const child = spawnTlc(model, mode, metadataDirectory);
+    const stdout: Buffer[] = [];
+    const stderr: Buffer[] = [];
+    child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
+    child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
+    child.on("close", (exitCode) => {
+      rmSync(metadataDirectory, { recursive: true, force: true });
+      const recording: TlcRecording = {
+        id: model.id,
+        mode,
+        tlcCommit: TLC_COMMIT,
+        exitCode: exitCode ?? -1,
+        stdout: Buffer.concat(stdout).toString("utf8"),
+        stderr: Buffer.concat(stderr).toString("utf8"),
+      };
+      writeFileSync(getRecordingPath(model, mode), `${JSON.stringify(recording, null, 2)}\n`);
+      resolve(recording);
+    });
+  });
+
+// The recordings run TLC as the outcomes do, so they give expected.json the fingerprint estimate of
+// each model they agree with on the counts.
+const addFingerprintProbabilities = (expectedResults: ExpectedResult[], models: CorpusModel[]) => {
+  const expectedById = new Map(expectedResults.map((result) => [result.id, result]));
+  for (const model of models) {
+    const expected = expectedById.get(model.id);
+    const recording = readRecording(model, "default");
+    if (expected?.status !== "success" || !recording) continue;
+    const statistics = [
+      ...recording.stdout.matchAll(/(\d+) states generated, (\d+) distinct states found/g),
+    ].at(-1);
+    const fingerprintProbability = getFingerprintProbability(recording.stdout);
+    if (
+      statistics &&
+      fingerprintProbability &&
+      Number(statistics[1]) === expected.generatedStates &&
+      Number(statistics[2]) === expected.distinctStates
+    ) {
+      expected.fingerprintProbability = fingerprintProbability;
+    }
   }
+  writeFileSync(EXPECTED_PATH, `${JSON.stringify(expectedResults, null, 2)}\n`);
 };
 
-await Promise.all(Array.from({ length: CONCURRENCY }, work));
-results.sort((left, right) => (left.id < right.id ? -1 : 1));
-writeFileSync(EXPECTED_PATH, `${JSON.stringify(results, null, 2)}\n`);
-console.log(`Wrote ${results.length} TLC results to ${EXPECTED_PATH}`);
+const recordOutputs = async () => {
+  const expectedResults: ExpectedResult[] = JSON.parse(readFileSync(EXPECTED_PATH, "utf8"));
+  const expectedById = new Map(expectedResults.map((result) => [result.id, result]));
+  const models = findModels().filter((model) => {
+    const expected = expectedById.get(model.id);
+    return (
+      expected !== undefined &&
+      expected.tlcMilliseconds <= maximumTlcMilliseconds &&
+      (filter === undefined || model.id.includes(filter))
+    );
+  });
+  const runs = models
+    .flatMap((model) => OUTPUT_MODES.map((mode) => ({ model, mode })))
+    .filter((run) => !existsSync(getRecordingPath(run.model, run.mode)));
+  mkdirSync(TLC_STDOUT_DIRECTORY, { recursive: true });
+  const progress = { next: 0, done: 0 };
+  const work = async () => {
+    while (progress.next < runs.length) {
+      const run = runs[progress.next++];
+      const recording = await recordOutput(run.model, run.mode);
+      progress.done++;
+      console.log(
+        `[${progress.done}/${runs.length}] exit ${String(recording.exitCode).padEnd(4)} ${run.mode.padEnd(8)} ${run.model.id}`,
+      );
+    }
+  };
+  await Promise.all(Array.from({ length: concurrency }, work));
+  console.log(`Recorded ${runs.length} outputs in ${TLC_STDOUT_DIRECTORY}`);
+  addFingerprintProbabilities(expectedResults, models);
+};
+
+const recordOutcomes = async () => {
+  const models = findModels().filter(isRecordable);
+  const results: ExpectedResult[] = [];
+  const queue = { next: 0 };
+  const work = async () => {
+    while (queue.next < models.length) {
+      const model = models[queue.next++];
+      const result = await runTlc(model);
+      results.push(result);
+      console.log(`[${results.length}/${models.length}] ${result.status.padEnd(20)} ${model.id}`);
+    }
+  };
+  await Promise.all(Array.from({ length: concurrency }, work));
+  results.sort((left, right) => (left.id < right.id ? -1 : 1));
+  writeFileSync(EXPECTED_PATH, `${JSON.stringify(results, null, 2)}\n`);
+  console.log(`Wrote ${results.length} TLC results to ${EXPECTED_PATH}`);
+};
+
+linkLibraryModules();
+await (isStdout ? recordOutputs() : recordOutcomes());

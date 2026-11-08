@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { getSteadyLines } from "../../scripts/normalize-output";
 import { readMarshaled } from "../../src/prover/tlapm/ocaml-marshal";
 
 const FIXTURES = join(import.meta.dirname, "../fixtures");
@@ -62,19 +63,6 @@ describe("the CLI prints traces like TLC", () => {
     expect(getStateLines(result.stdout).slice(0, 2)).toEqual(["/\\ large = 0", "/\\ small = 0"]);
   });
 });
-
-// The lines in which TLC reports its version and runtime, and the files SANY parses.
-const STARTUP_LINE =
-  /^(TLC2 Version |Running breadth-first search |Parsing file |Semantic processing of module |Linting of module )/;
-
-// TLC's output for the same models without -tool, with the time it ran and the dates it printed as _,
-// and without its startup lines.
-const getSteadyLines = (output: string) =>
-  output
-    .replace(/\d{4}-\d\d-\d\d \d\d:\d\d:\d\d/g, "_")
-    .replace(/ in \d\ds at /g, " in _ at ")
-    .split("\n")
-    .filter((line) => !STARTUP_LINE.test(line));
 
 const TLC_REPORTS = [
   [

@@ -1,0 +1,18 @@
+TLC2 Version 2026.11.08.065739 (rev: ${git.shortRevision})
+Running breadth-first search Model-Checking with fp 0 and seed 4 with 1 worker on 4 cores with 3420MB heap and 64MB offheap memory [pid: 2468] (Linux 6.18.44-fc-v310 amd64, Ubuntu 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /home/user/prove-it/packages/prove-it/tests/fixtures/cli-output/Success.tla
+Parsing file /tmp/tlc-6005898904367365387/Naturals.tla (jar:file:/tmp/tlaplus/tlatools/org.lamport.tlatools/dist/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Semantic processing of module Naturals
+Semantic processing of module Success
+Linting of module Success
+Starting... (2026-11-08 07:03:37)
+Computing initial states...
+Finished computing initial states: 2 distinct states generated at 2026-11-08 07:03:37.
+Model checking completed. No error has been found.
+  Estimates of the probability that TLC did not check all reachable states
+  because two distinct states had the same fingerprint:
+  calculated (optimistic):  val = 1.3E-18
+10 states generated, 6 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 3.
+The average outdegree of the complete state graph is 1 (minimum is 0, the maximum 1 and the 95th percentile is 1).
+Finished in 00s at (2026-11-08 07:03:37)

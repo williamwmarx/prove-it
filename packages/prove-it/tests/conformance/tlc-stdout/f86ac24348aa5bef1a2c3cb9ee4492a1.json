@@ -1,0 +1,8 @@
+{
+  "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test49c.cfg",
+  "mode": "default",
+  "tlcCommit": "d8fb231de4e4b5d02c1b2ed1ac759c086f694021",
+  "exitCode": 150,
+  "stdout": "TLC2 Version 2026.11.08.065739 (rev: ${git.shortRevision})\nRunning breadth-first search Model-Checking with fp 0 and seed 4 with 1 worker on 4 cores with 683MB heap and 64MB offheap memory [pid: 22300] (Linux 6.18.44-fc-v310 amd64, Ubuntu 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).\nParsing file /home/user/prove-it/packages/prove-it/tests/conformance/.corpora/tlc/tlatools/org.lamport.tlatools/test-model/suite/test49c.tla\n***Parse Error***\nWas expecting \"==== or more Module body\"\nEncountered \"u\" at line 16, column 1 and token \"u\" \n\nResidual stack trace follows:\nModule definition starting at line 1, column 1.\n\n\nFatal errors while parsing TLA+ spec in file test49c\n\nIn module test49c\n\nCould not parse module test49c from file test49c.tla\n*** Errors: 1\n\nIn module test49c\n\nCould not parse module test49c from file test49c.tla\n\n\n\nStarting... (2026-11-08 07:11:41)\nError: Parsing or semantic analysis failed.\nFinished in 00s at (2026-11-08 07:11:41)\n",
+  "stderr": ""
+}

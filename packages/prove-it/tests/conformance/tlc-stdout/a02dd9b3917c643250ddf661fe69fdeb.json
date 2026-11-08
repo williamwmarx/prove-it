@@ -1,0 +1,8 @@
+{
+  "id": "tlc/tlatools/org.lamport.tlatools/test-model/Bug156/TE.cfg",
+  "mode": "default",
+  "tlcCommit": "d8fb231de4e4b5d02c1b2ed1ac759c086f694021",
+  "exitCode": 150,
+  "stdout": "TLC2 Version 2026.11.08.065739 (rev: ${git.shortRevision})\nRunning breadth-first search Model-Checking with fp 0 and seed 4 with 1 worker on 4 cores with 683MB heap and 64MB offheap memory [pid: 6804] (Linux 6.18.44-fc-v310 amd64, Ubuntu 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).\nParsing file /home/user/prove-it/packages/prove-it/tests/conformance/.corpora/tlc/tlatools/org.lamport.tlatools/test-model/Bug156/TE.tla\n\nFatal errors while parsing TLA+ spec in file TE\n\nIn module TE\n\nCannot find source file for module FindOpWithoutPrint imported in module TE.\n*** Errors: 1\n\nIn module TE\n\nCannot find source file for module FindOpWithoutPrint imported in module TE.\n\n\n\nStarting... (2026-11-08 07:05:56)\nError: Parsing or semantic analysis failed.\nFinished in 04s at (2026-11-08 07:05:56)\n",
+  "stderr": ""
+}

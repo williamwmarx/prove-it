@@ -1257,6 +1257,98 @@ baseline.
 - the normaliser unit test passes with mutated counts surviving;
 - `bun run test` is unchanged.
 
+#### M0 as built
+
+Where the code made this design change, the code wins, and this records how:
+
+- **Recordings (6.2).** TLC's outputs are committed in `tests/conformance/tlc-stdout/`, one JSON
+  file per model and mode (exit code, stdout, stderr), not kept as a CI artifact. All 1,466 runs of
+  the 733 models under 20 s take 8.7 MB, so PR runs need neither a JVM nor a download. The file name
+  is a hash of `TLC_COMMIT`, the mode, the model id, every file in the model's directory, and the
+  commits of the `tlapm` and `community` corpora that hold the library modules
+  (`scripts/tlc-recordings.ts`). `TLC_COMMIT` lives there, and `record-tlc.ts --stdout` refuses to
+  record unless the environment's `TLC_COMMIT` names it, since a jar built without its git history
+  can't say which commit it is. `.depot/workflows/record-tlc.yml` records what is missing on Depot,
+  by hand, and keeps the recordings as its artifact to commit.
+- **What the differential runs (6.2).** It runs `dist/cli.js` with TLC's own command line
+  (`-DTLA-Library=… tlc2.TLC -workers 1 -nowarning -seed 4 -fp 0 -lncheck final
+  -noGenerateSpecTE [-tool] -metadir … -config …`), not a compiled binary, under whichever runtime
+  runs the script. The pairs it compares are `tlc/ts`, `ts/interpreter` and, with `--stop-at`,
+  `ts/stopped` (6.11). Each entry of `known-differences.json` is keyed by model, mode and pair, and
+  holds the diff as the lines one side drops (`-`) and the other adds (`+`), without positions.
+  An entry whose difference is gone is reported, not failed; `--update` rewrites the file and
+  keeps the reasons.
+- **Normalisation (6.2).** Besides the list above, the normaliser:
+  - drops what TLC appends to a `Parsing file` line about where it found the module, the jar of a
+    standard module or the library-path link of a library module, which Prove It doesn't print;
+  - reduces every other path in those lines to its file name, as recordings are made in another
+    directory;
+  - drops `-tool`'s whole progress message (code 2200), not only its `Progress(…)` line;
+  - and drops Prove It's `[engine]` lines from stderr.
+- **The fingerprint field (6.1).** TLC prints a probability, not a distance, so the field is
+  `fingerprintProbability`: the text after "based on the actual fingerprints:  val =". TLC prints
+  that line only when the optimistic estimate is at least 1E-10 (`ModelChecker.reportSuccess`), so
+  14 of the 449 successful models under 20 s have it. `record-tlc.ts --stdout` adds it to
+  `expected.json` from the default-mode recordings whose counts agree with it, rather than
+  re-recording every outcome.
+- **The backend (6.1).** `check-model.ts` checks in-process, so it can't read its own `[engine]`
+  lines. The runners read them from its stderr (`scripts/engine-runs.ts`), and `conformance.ts`
+  keeps each verdict's backend and `[engine]` line in `.results.json`. `--threads` is left for
+  M1. `engine-coverage.ts` keeps each run under `runs`, keyed `off` and by backend, instead of
+  `on` and `off`.
+- **The state log (6.3).** The TS engine writes it once the search completes or stops, as JSON
+  lines: a header (`version`, `variables`, `count`, `stopped`, `expanding`), then per state
+  `[index, parent, action, fingerprint, words, strings]`. The state itself is in `transfer.ts`'s
+  encoding, which Rust can write too (5.2), so `state-log-diff.ts` prints both states and their
+  parents without running the model again. Two logs agree when their headers' variables and the
+  first four fields of every state do. The TS engine knows a state's action only when it labels
+  its steps for ENABLED (`isLabelled` in `check.ts`); otherwise the action is `-1`. The optional
+  per-expansion counts are left out: a level the workers expand reports only its totals to the
+  coordinator.
+- **The store trace (6.6).** One JSON line per operation, `[name, arguments, result]`, with
+  `{"bail": reason}` for a stop, rather than words. An operation another calls is not written. A
+  reset records TLC's string order then, which ranks the strings the store makes. The operations
+  are exported with `let` and replaced by tracing wrappers only when the setting names a file, so
+  the code that runs without it is the code that ran before. Only the main thread writes, so a
+  trace is of a search on one thread (the default). `scripts/store-replay.ts` replays a trace on
+  the TS store, as the reference for `native/tools/replay`.
+- **Forced hand-over (6.11).** With `PROVE_IT_STOP_AT` the TS search stays on one thread, since
+  a level the workers expand has no single state to stop before. `differential.ts --stop-at`
+  picks the state from those the engine's run found, by a hash of the model's id, and only for
+  models the engine searched.
+- **Cost when off.** On `benchmarks/commit`, six interleaved runs each of `main` and this branch:
+  the engine's time is 474–545 ms on this branch and 481–730 ms on `main` under Bun (median about
+  500 ms both), and 594–722 ms and 572–660 ms under Node (median about 628 ms both).
+
+#### M0 acceptance, as run
+
+Against the 733 models with TLC under 20 s, on a 16-core Depot machine with main merged (run
+`5ggqq5wkdr`, after review):
+- **Differential.** The 1,466 runs (default and `-tool`) leave 54 listed differences, each with
+  its reason in `known-differences.json`: 52 between TLC and the TS engine, 2 between the TS
+  engine and the interpreter, and none between the engine and the engine stopped part way.
+  - 18 of the 52 are TLC at `TLC_COMMIT` rejecting precedence conflicts in SANY (on 7 models)
+    that the TLC behind `expected.json` accepted, so those outcomes in `expected.json` are not
+    TLC_COMMIT's.
+  - The 2 engine/interpreter differences are InitialLivenessEvaluationError's "Finished computing
+    initial states" line, which comes before the error with the engine on. The engine's missing
+    "Computed N initial states" lines (AssignmentInit, simple_strings) are fixed on main.
+  - The rest are Prove It printing records' fields in another order in traces, error messages
+    worded otherwise, a step named `Next` where TLC names its action, a POSTCONDITION reported
+    false, and a crash in `getSpanLocation` on `test52`; and two that depend on TLC's runtime: a
+    Java stack overflow and the install path in `TLCGet("config")`.
+- **Forced hand-over.** `differential.ts --stop-at` stopped the engine part way in 986 runs, the
+  violating ones among them, each counted only when the engine said the stop took it, with output
+  identical to the run without the stop each time. In 144 runs the engine hands over before any
+  state a stop could take, so nothing was forced there.
+- **State logs.** `engine-coverage.ts --state-logs` compared the logs on 1 and 4 threads on the
+  245 models the engine completes. They are identical on all 245, but the workers took levels on
+  only 2 (`ccf/tla/consistency/MCSingleNode`, `TeachingConcurrency/SimpleRegular`); the rest are
+  too small or use symmetry or a VIEW. `benchmarks/commit` is the test that does take them.
+- **Normaliser, unit tests, conformance.** The normaliser's test passes with mutated counts
+  surviving; `bun test tests/unit` passes (2,939 tests); `conformance --check` matches all 772
+  models of `passing.json`; the engine on and off reach the same outcome on every model.
+
 ### M1. Crate, binding, loader, packaging
 
 **Work:**
