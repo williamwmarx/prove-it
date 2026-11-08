@@ -23,8 +23,12 @@ const traceFixture = (fixture: string, name: string) => {
   return readFileSync(path, "utf8");
 };
 
+// Tests of the TypeScript engine's internals, which native/ts-only-tests.json lists with their Rust
+// counterparts, don't apply when the native engine searches.
+const isTypeScriptOnly = process.env.PROVE_IT_ENGINE_BACKEND === "rust";
+
 describe("PROVE_IT_STORE_TRACE", () => {
-  it.each([
+  it.skipIf(isTypeScriptOnly).each([
     ["queue", "Queue"],
     ["commit", "Commit"],
     ["symmetry", "Symmetry"],
@@ -56,7 +60,7 @@ describe("PROVE_IT_STORE_TRACE", () => {
     expect(result.stderr).toContain("checked 282251 states on 1 thread ");
   }, 60_000);
 
-  it("is caught out by an operation whose result changed", () => {
+  it.skipIf(isTypeScriptOnly)("is caught out by an operation whose result changed", () => {
     const lines = traceFixture("queue", "Queue").split("\n");
     const index = lines.findIndex(
       (line) => line.startsWith('["tupleOf"') || line.startsWith('["appendTuple"'),

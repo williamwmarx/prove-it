@@ -8,8 +8,9 @@ use std::ffi::{CStr, c_char, c_void};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::ptr::{null, null_mut};
 
-use crate::{ABI_VERSION, Outcome, check};
+use crate::ABI_VERSION;
 
+mod check;
 mod store;
 
 type napi_env = *mut c_void;
@@ -130,54 +131,36 @@ unsafe extern "C" fn abi_version(env: napi_env, _info: napi_callback_info) -> na
     }
 }
 
-// check(ir: Uint8Array): { status: "declined", reason: string }. It decodes the IR in place.
-unsafe extern "C" fn check_model(env: napi_env, info: napi_callback_info) -> napi_value {
-    unsafe {
-        guard(env, || {
-            let mut argc = 1;
-            let mut ir = null_mut();
-            status(napi_get_cb_info(
-                env,
-                info,
-                &mut argc,
-                &mut ir,
-                null_mut(),
-                null_mut(),
-            ))?;
-            let mut is_typed_array = false;
-            if argc >= 1 {
-                status(napi_is_typedarray(env, ir, &mut is_typed_array))?;
-            }
-            let not_bytes = Thrown::TypeError(c"check takes the engine IR as a Uint8Array");
-            if !is_typed_array {
-                return Err(not_bytes);
-            }
-            let (mut kind, mut length, mut data, mut offset) = (0, 0, null_mut(), 0);
-            status(napi_get_typedarray_info(
-                env,
-                ir,
-                &mut kind,
-                &mut length,
-                &mut data,
-                null_mut(),
-                &mut offset,
-            ))?;
-            if kind != NAPI_UINT8_ARRAY {
-                return Err(not_bytes);
-            }
-            let bytes = if length == 0 {
-                &[][..]
-            } else {
-                std::slice::from_raw_parts(data.cast::<u8>(), length)
-            };
-            let Outcome::Declined(reason) = check(bytes);
-            let mut result = null_mut();
-            status(napi_create_object(env, &mut result))?;
-            set_property(env, result, c"status", create_string(env, "declined")?)?;
-            set_property(env, result, c"reason", create_string(env, &reason)?)?;
-            Ok(result)
-        })
+// The bytes of a Uint8Array, in place.
+unsafe fn get_bytes<'a>(env: napi_env, value: napi_value) -> Result<&'a [u8], Thrown> {
+    let mut is_typed_array = false;
+    if !value.is_null() {
+        status(unsafe { napi_is_typedarray(env, value, &mut is_typed_array) })?;
     }
+    let not_bytes = Thrown::TypeError(c"check takes the engine IR as a Uint8Array");
+    if !is_typed_array {
+        return Err(not_bytes);
+    }
+    let (mut kind, mut length, mut data, mut offset) = (0, 0, null_mut(), 0);
+    status(unsafe {
+        napi_get_typedarray_info(
+            env,
+            value,
+            &mut kind,
+            &mut length,
+            &mut data,
+            null_mut(),
+            &mut offset,
+        )
+    })?;
+    if kind != NAPI_UINT8_ARRAY {
+        return Err(not_bytes);
+    }
+    Ok(if length == 0 {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(data.cast::<u8>(), length) }
+    })
 }
 
 unsafe fn export(
@@ -210,7 +193,7 @@ pub unsafe extern "C" fn napi_register_module_v1(env: napi_env, exports: napi_va
     unsafe {
         guard(env, || {
             export(env, exports, c"abiVersion", abi_version)?;
-            export(env, exports, c"check", check_model)?;
+            export(env, exports, c"check", check::check_model)?;
             store::export_hooks(env, exports)?;
             Ok(exports)
         })

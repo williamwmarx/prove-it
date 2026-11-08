@@ -4,10 +4,14 @@
 //! [`machine::Machine`] runs them. The search is M5's.
 
 pub mod compile;
+pub mod context;
 pub mod footprint;
+pub mod live;
 pub mod machine;
 pub mod memo;
+pub mod search;
+pub mod symmetry;
 
 pub use compile::{CompileError, Compiled, Compiler, Options, Root};
-pub use machine::{Eval, Machine, Program, UNASSIGNED};
+pub use machine::{Continue, Eval, Machine, Printed, Program, Step, UNASSIGNED};
 pub use tla_values::on_nesting_stack;

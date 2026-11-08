@@ -12,7 +12,7 @@ use tla_values::{Bail, Id};
 use super::predicate::{Predicate, Test};
 use super::{
     Binding, Compiled, Compiler, Compiling, Context, Filter, Shape, bind, bool_id,
-    call_recursive_function, constant, decline, eval, leaf, lookup, predicate_node, unsupported,
+    call_recursive_function, constant, eval, leaf, lookup, predicate_node, unsupported,
 };
 use crate::footprint::Footprint;
 use crate::machine::{Eval, Machine};
@@ -93,7 +93,7 @@ struct Level {
     tuple: bool,
 }
 
-fn kind_name(kind: &NodeKind) -> &'static str {
+pub(crate) fn kind_name(kind: &NodeKind) -> &'static str {
     match kind {
         NodeKind::Number(_) | NodeKind::WideNumber(_) => "Number",
         NodeKind::Decimal(_) => "Decimal",
@@ -408,12 +408,7 @@ impl Compiler<'_> {
                     footprint,
                 ))
             }
-            NodeKind::Enabled(_) => {
-                if context.is_primed || context.is_init {
-                    return unsupported("expression Enabled");
-                }
-                decline("ENABLED, which runs an action as the walker does")
-            }
+            NodeKind::Enabled(action) => self.compile_enabled(*action, context),
             NodeKind::Label { body, .. } => self.compile(*body, context),
             kind => unsupported(format!("expression {}", kind_name(kind))),
         }

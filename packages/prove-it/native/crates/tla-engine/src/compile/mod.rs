@@ -19,6 +19,9 @@ mod fused;
 mod nodes;
 mod predicate;
 mod sets;
+mod walker;
+
+pub use walker::ActionOptions;
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
@@ -333,6 +336,17 @@ struct Argument {
     expression: NodeId,
     context: Context,
     compiled: RefCell<[Option<Compiled>; 2]>,
+    /// For a binding of an instance's scope whose expression closes over that scope: the scope
+    /// that binds it, which its context reaches.
+    own_scope: RefCell<Weak<Scope>>,
+}
+
+// The context an argument's expression compiles in.
+fn argument_context(argument: &Argument) -> Context {
+    match argument.own_scope.borrow().upgrade() {
+        Some(scope) => argument.context.with_scope(Some(scope)),
+        None => argument.context.clone(),
+    }
 }
 
 struct LazyFunction {
@@ -389,14 +403,17 @@ fn bind(scope: &Option<Rc<Scope>>, name: TextId, binding: Binding) -> Option<Rc<
     }))
 }
 
-// The context an operator binding's body sees: a RECURSIVE one's binds the operator itself.
+// The context an operator binding's body sees: a RECURSIVE one's, or one of an instance's scope
+// that closes over that scope, binds the operator itself.
 fn operator_context(operator: &Operator) -> Context {
     if operator.is_recursive {
-        operator
+        return operator
             .context
-            .with_scope(operator.own_scope.borrow().upgrade())
-    } else {
-        operator.context.clone()
+            .with_scope(operator.own_scope.borrow().upgrade());
+    }
+    match operator.own_scope.borrow().upgrade() {
+        Some(scope) => operator.context.with_scope(Some(scope)),
+        None => operator.context.clone(),
     }
 }
 
@@ -499,6 +516,8 @@ pub struct Compiler<'a> {
     entry_count: u64,
     /// Whether an expression reads TLCGet("distinct"), whose slot the search must then set.
     pub is_distinct_read: bool,
+    // The contexts of the instance scopes translated so far.
+    scope_contexts: HashMap<Index, Option<Context>>,
 }
 
 fn add_read(reads: &mut Vec<Rc<FixedPoint>>, fixed_point: &Rc<FixedPoint>) {
@@ -547,6 +566,7 @@ impl<'a> Compiler<'a> {
             provisional: HashMap::new(),
             entry_count: 0,
             is_distinct_read: false,
+            scope_contexts: HashMap::new(),
         }
     }
 
@@ -557,7 +577,20 @@ impl<'a> Compiler<'a> {
 
     /// Compiles a root of the model, as `createEngineContext` compiles it, with no scope.
     pub fn compile_root(&mut self, root: Root) -> Result<Compiled, CompileError> {
-        let context = Context::ROOT;
+        self.compile_root_printing(root, false)
+    }
+
+    /// Compiles a root of the model where what it prints is printed, as an invariant that prints
+    /// is compiled whole.
+    pub fn compile_root_printing(
+        &mut self,
+        root: Root,
+        can_print: bool,
+    ) -> Result<Compiled, CompileError> {
+        let context = Context {
+            can_print,
+            ..Context::ROOT
+        };
         match root {
             Root::Definition(index) => {
                 let definition = self.ir.definitions[index as usize];
@@ -996,8 +1029,10 @@ impl<'a> Compiler<'a> {
                 if let Some(known) = &argument.compiled.borrow()[index] {
                     return Ok(known.clone());
                 }
-                let compiled =
-                    self.compile(argument.expression, &argument.context.primed(is_primed))?;
+                let compiled = self.compile(
+                    argument.expression,
+                    &argument_context(argument).primed(is_primed),
+                )?;
                 argument.compiled.borrow_mut()[index] = Some(compiled.clone());
                 Ok(compiled)
             }
@@ -1190,6 +1225,7 @@ impl<'a> Compiler<'a> {
                             expression: definition.body,
                             context: definition_context,
                             compiled: RefCell::new([None, None]),
+                            own_scope: RefCell::new(Weak::new()),
                         })),
                     );
                 }
@@ -1239,6 +1275,7 @@ impl<'a> Compiler<'a> {
                     expression: argument,
                     context: argument_context.clone(),
                     compiled: RefCell::new([None, None]),
+                    own_scope: RefCell::new(Weak::new()),
                 }))
             };
             scope = bind(&scope, param.name, binding);
@@ -1374,9 +1411,8 @@ impl<'a> Compiler<'a> {
                 context,
             );
         }
-        let base = operator
-            .context
-            .primed(context.is_primed || operator.context.is_primed);
+        let base =
+            operator_context(operator).primed(context.is_primed || operator.context.is_primed);
         let callee = self.bind_arguments(&operator.params, args, context, base)?;
         let compiled = match operator.body {
             OperatorBody::Node(body) => self.compile(body, &callee)?,

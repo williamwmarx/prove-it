@@ -6,9 +6,10 @@ use std::sync::Arc;
 
 use tla_ir::{Builtin, Index, NodeKind};
 use tla_values::store::{
-    EMPTY_SET, FALSE, KIND_INT, KIND_SET, KIND_STRING, KIND_TUPLE, Outcome, TRUE, is_function_kind,
+    EMPTY_SET, FALSE, KIND_FUNCTION, KIND_INT, KIND_SET, KIND_STRING, KIND_TUPLE, Outcome, TRUE,
+    is_function_kind,
 };
-use tla_values::{Bail, Id};
+use tla_values::{Bail, Id, Store};
 
 use super::fused;
 use super::nodes::{evaluate_set, expect_set};
@@ -20,7 +21,7 @@ use super::{
     operator_context, predicate_node, unsupported,
 };
 use crate::footprint::Footprint;
-use crate::machine::{Eval, Machine};
+use crate::machine::{Eval, Machine, Printed};
 
 // Operators whose results depend on more than their arguments, or that print.
 const IMPURE_BUILTINS: [&str; 8] = [
@@ -221,10 +222,7 @@ impl Compiler<'_> {
         let builtin = &self.ir.builtins[index as usize];
         let name = self.text(builtin.name);
         if name == "Print" || name == "PrintT" {
-            if !context.can_print {
-                return unsupported(name);
-            }
-            return decline("Print where it may print, which the engine leaves to the interpreter");
+            return self.compile_print(name, operands, context);
         }
         if name == "TLCGet" {
             return self.compile_tlc_get(operands, context);
@@ -244,6 +242,55 @@ impl Compiler<'_> {
         decline(format!(
             "the builtin {name}, which the TypeScript engine runs in the interpreter"
         ))
+    }
+
+    // Print(a, b) and PrintT(a) print as TLC does where the engine evaluates them as TLC does, and
+    // only a value whose text doesn't depend on how it was built, which the engine forgets. The
+    // search hands what they print to the interpreter's printer once it completes the initial
+    // states or an expansion, and drops it if it hands over.
+    fn compile_print(
+        &mut self,
+        name: &str,
+        operands: &[Operand],
+        context: &Context,
+    ) -> Compiling<Compiled> {
+        if !context.can_print {
+            return unsupported(name);
+        }
+        let is_print = name == "Print";
+        if operands.len() != if is_print { 2 } else { 1 } {
+            return unsupported("an operator applied to the wrong number of arguments");
+        }
+        let compiled = operands
+            .iter()
+            .map(|operand| self.compile(operand.node, &operand.context.without_print()))
+            .collect::<Compiling<Vec<Compiled>>>()?;
+        let footprint = Footprint::merge_all(compiled.iter().map(|operand| &operand.footprint))
+            .merge(&Footprint::slot(super::PRINT_SLOT));
+        let is_boolean = !is_print || compiled[1].is_boolean;
+        let evaluators: Vec<Eval> = compiled.into_iter().map(|operand| operand.eval).collect();
+        Ok(Compiled {
+            is_boolean,
+            ..leaf(
+                eval(move |machine| {
+                    let mut values = Vec::with_capacity(evaluators.len());
+                    for evaluate in &evaluators {
+                        values.push(evaluate(machine)?);
+                    }
+                    for &value in &values {
+                        if !is_printable(&machine.store, value) {
+                            return Err(Bail(
+                                "printing a value whose text depends on how TLC built it",
+                            ));
+                        }
+                    }
+                    let result = if is_print { values[1] } else { TRUE };
+                    machine.output.push(Printed::Values(values));
+                    Ok(result)
+                }),
+                footprint,
+            )
+        })
     }
 
     // TLCGet("level") and TLCGet("distinct") read the slots the search sets.
@@ -965,4 +1012,67 @@ impl Compiler<'_> {
             ..binary(left, right, operation, true, false)
         }))
     }
+}
+
+// Whether TLC writes a value as the interpreter would print the value the engine keeps: a value
+// whose text doesn't depend on how it was built (`isPrintable` in `convert.ts`).
+fn is_printable(store: &Store, id: Id) -> bool {
+    let kind = store.kind_of(id);
+    if kind != KIND_SET && kind != KIND_TUPLE && kind != KIND_FUNCTION {
+        return true;
+    }
+    let size = store.size_of(id);
+    let part = |index: u32| {
+        if kind == KIND_SET {
+            Some(store.element_at(id, index))
+        } else {
+            store.peek_key(id, index)
+        }
+    };
+    for index in 0..size {
+        if kind == KIND_TUPLE {
+            if !is_printable(store, store.get_range_value(id, index)) {
+                return false;
+            }
+            continue;
+        }
+        let (Some(element), Some(first)) = (part(index), part(0)) else {
+            return false;
+        };
+        if store.kind_of(element) != store.kind_of(first) || !is_printable(store, element) {
+            return false;
+        }
+        if kind == KIND_FUNCTION {
+            if store.kind_of(element) == KIND_STRING
+                && (size > 1 || !is_field_name(store.text_of(element)))
+            {
+                return false;
+            }
+            if !is_printable(store, store.get_range_value(id, index)) {
+                return false;
+            }
+        }
+    }
+    // A set of consecutive integers may be an interval.
+    kind != KIND_SET
+        || size == 0
+        || store.kind_of(store.element_at(id, 0)) != KIND_INT
+        || i64::from(store.int_of(store.element_at(id, size - 1)))
+            - i64::from(store.int_of(store.element_at(id, 0)))
+            != i64::from(size) - 1
+}
+
+// `isFieldName` of `values.ts` on ASCII text: letters, digits and _, with a letter, and not
+// WF_ or SF_ past three characters. Text past ASCII, whose letters and digits are Unicode's, is
+// left to the interpreter's printer as a value the engine doesn't print.
+fn is_field_name(text: &[u16]) -> bool {
+    if text.iter().any(|&unit| unit > 0x7f) {
+        return false;
+    }
+    let is_word = |unit: u16| (unit as u8).is_ascii_alphanumeric() || unit == u16::from(b'_');
+    text.iter().all(|&unit| is_word(unit))
+        && text.iter().any(|&unit| (unit as u8).is_ascii_alphabetic())
+        && (text.len() < 4
+            || !(text.starts_with(&[u16::from(b'W'), u16::from(b'F'), u16::from(b'_')])
+                || text.starts_with(&[u16::from(b'S'), u16::from(b'F'), u16::from(b'_')])))
 }

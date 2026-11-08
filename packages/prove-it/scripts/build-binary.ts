@@ -113,7 +113,7 @@ const checks = [
             PROVE_IT_ENGINE_BACKEND: "rust",
             PROVE_IT_ENGINE_ADDON: undefined,
           },
-          expected: ["[engine] native: declined: ", " on 1 thread "],
+          expected: ["[engine] native: complete: ", " on 1 thread "],
         },
       ]),
   {

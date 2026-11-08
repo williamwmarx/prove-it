@@ -33,16 +33,26 @@ const logRun = (
 
 const FIXTURES = join(import.meta.dirname, "../fixtures");
 
+// Tests of the TypeScript engine's internals, which native/ts-only-tests.json lists with their Rust
+// counterparts, don't apply when the native engine searches.
+const isTypeScriptOnly = process.env.PROVE_IT_ENGINE_BACKEND === "rust";
+
 describe("PROVE_IT_STATE_LOG", () => {
-  it("writes the same states with 1 and 4 threads when the workers take levels", () => {
-    const commit = join(import.meta.dirname, "../../benchmarks/commit");
-    const serial = logRun(commit, "Commit", "serial", { PROVE_IT_WORKERS: "1" });
-    const parallel = logRun(commit, "Commit", "parallel", { PROVE_IT_WORKERS: "4" });
-    expect(serial.stderr).toContain("checked 282251 states on 1 thread ");
-    expect(parallel.stderr).toMatch(/checked 282251 states on [2-4] threads /);
-    expect(parallel.log).toBe(serial.log);
-    expect(getStateLogDifference(serial.log.split("\n"), parallel.log.split("\n"))).toBeUndefined();
-  }, 60_000);
+  it.skipIf(isTypeScriptOnly)(
+    "writes the same states with 1 and 4 threads when the workers take levels",
+    () => {
+      const commit = join(import.meta.dirname, "../../benchmarks/commit");
+      const serial = logRun(commit, "Commit", "serial", { PROVE_IT_WORKERS: "1" });
+      const parallel = logRun(commit, "Commit", "parallel", { PROVE_IT_WORKERS: "4" });
+      expect(serial.stderr).toContain("checked 282251 states on 1 thread ");
+      expect(parallel.stderr).toMatch(/checked 282251 states on [2-4] threads /);
+      expect(parallel.log).toBe(serial.log);
+      expect(
+        getStateLogDifference(serial.log.split("\n"), parallel.log.split("\n")),
+      ).toBeUndefined();
+    },
+    60_000,
+  );
 
   it("writes each state's parent and TLC's fingerprint, in TLC's order", () => {
     const lines = logRun(join(FIXTURES, "cli-output"), "Success", "success").log.split("\n");

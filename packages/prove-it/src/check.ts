@@ -4,7 +4,7 @@ import { getMemoStatistics } from "./engine/compile";
 import { toEngineProperties } from "./engine/context";
 import { toValue as toEngineValue } from "./engine/convert";
 import { type IrOutcome, lowerToIr } from "./engine/ir";
-import { checkNatively } from "./engine/native";
+import { checkNatively, toEngineResult, toStop } from "./engine/native";
 import { type EngineCheckpoint, type EngineGraph, isBailout, runEngine } from "./engine/search";
 import {
   getEngineBackend,
@@ -1692,52 +1692,65 @@ const searchStates = (
       return outcome;
     };
     if (isIrDumped()) lowerModel();
-    if (getEngineBackend() !== "ts") {
-      const nativeStartedAt = performance.now();
-      const native = checkNatively(lowerModel);
-      reportEngine(
-        `native: ${native.status}: ${native.reason} (${(performance.now() - nativeStartedAt).toFixed(2)} ms)`,
-      );
-    }
+    const callbacks = {
+      onProgress: (progress: CheckProgress) => {
+        engineReport.isReported = true;
+        if (progress.kind === "initial-states-progress" && liveness) {
+          engineReport.heldProgress.push(progress.count);
+          return;
+        }
+        if (progress.kind === "initial-states-progress") {
+          engineReport.initialProgress = progress.count;
+        }
+        releaseInitialProgress(Infinity);
+        reportComputed();
+        options.onProgress?.(progress);
+      },
+      onInitialStatesStarted: () => {
+        engineReport.isReported = true;
+        options.onProgress?.({ kind: "initial-states-started" });
+      },
+      onInitialStates: (generated: number, distinct: number) => {
+        computed.initialStates = { generated, distinct };
+        if (!liveness) reportComputed();
+      },
+      onPrint: print,
+    };
     const startedAt = performance.now();
+    const native = getEngineBackend() === "ts" ? undefined : checkNatively(lowerModel, callbacks);
+    if (native) {
+      reportEngine(
+        `native: ${native.status}: ${native.reason} (${(performance.now() - startedAt).toFixed(2)} ms)`,
+      );
+      if ("counts" in native && getEnvironmentFlag("PROVE_IT_FP_VERIFY")) {
+        reportEngine(`native: fingerprint collisions: ${native.counts[native.counts.length - 1]}`);
+      }
+    }
     try {
-      const result = runEngine({
-        config,
-        environment,
-        spec: engineSpec,
-        isWarningEnabled: runtime.isWarningEnabled,
-        tlcOrder,
-        startedAt,
-        properties: engineProperties,
-        isRecordingGraph: liveness !== undefined,
-        symmetry,
-        workers: getEngineThreads(),
-        source: options.source,
-        modules: [...loadedModules],
-        version: options.version,
-        onProgress: (progress) => {
-          engineReport.isReported = true;
-          if (progress.kind === "initial-states-progress" && liveness) {
-            engineReport.heldProgress.push(progress.count);
-            return;
-          }
-          if (progress.kind === "initial-states-progress") {
-            engineReport.initialProgress = progress.count;
-          }
-          releaseInitialProgress(Infinity);
-          reportComputed();
-          options.onProgress?.(progress);
-        },
-        onInitialStatesStarted: () => {
-          engineReport.isReported = true;
-          options.onProgress?.({ kind: "initial-states-started" });
-        },
-        onPrint: print,
-        onInitialStates: (generated, distinct) => {
-          computed.initialStates = { generated, distinct };
-          if (!liveness) reportComputed();
-        },
-      });
+      const width = environment.variables.length;
+      const atoms = liveness?.atoms ?? [];
+      if (native?.status === "stopped" || native?.status === "invariant") {
+        throw toStop(native, width, atoms);
+      }
+      const result =
+        native?.status === "complete"
+          ? toEngineResult(native, width, atoms)
+          : runEngine({
+              config,
+              environment,
+              spec: engineSpec,
+              isWarningEnabled: runtime.isWarningEnabled,
+              tlcOrder,
+              startedAt,
+              properties: engineProperties,
+              isRecordingGraph: liveness !== undefined,
+              symmetry,
+              workers: getEngineThreads(),
+              source: options.source,
+              modules: [...loadedModules],
+              version: options.version,
+              ...callbacks,
+            });
       if (result.checkpoint) {
         // The interpreter checks the temporal properties on the graph the engine found.
         takeGraph(result.checkpoint);

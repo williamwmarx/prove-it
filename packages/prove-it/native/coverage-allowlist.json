@@ -1,0 +1,38 @@
+[
+  {
+    "reason": "enumerating a set TLC keeps lazy",
+    "milestone": "M6: the enumerators of DESIGN.md 3.3 (SUBSET, [S -> T], record sets, products, UNION, lazy set operations)"
+  },
+  {
+    "reason": "the builtin SubSeq,",
+    "milestone": "M6: the pure builtins the TypeScript engine bridges to the interpreter"
+  },
+  {
+    "reason": "the builtin SelectSeq,",
+    "milestone": "M6: the pure builtins the TypeScript engine bridges to the interpreter"
+  },
+  {
+    "reason": "the builtin SortSeq,",
+    "milestone": "M6: the pure builtins the TypeScript engine bridges to the interpreter"
+  },
+  {
+    "reason": "the builtin Permutations,",
+    "milestone": "M6: the pure builtins the TypeScript engine bridges to the interpreter"
+  },
+  {
+    "reason": "the builtin IsFiniteSet,",
+    "milestone": "M6: the pure builtins the TypeScript engine bridges to the interpreter"
+  },
+  {
+    "reason": "a SelectSeq test",
+    "milestone": "M6: the pure builtins the TypeScript engine bridges to the interpreter"
+  },
+  {
+    "reason": "a builtin passed to SelectSeq",
+    "milestone": "M6: the pure builtins the TypeScript engine bridges to the interpreter"
+  },
+  {
+    "reason": "a variable past the state's, as ENABLED's rewrite names",
+    "milestone": "M6: ENABLED of an instance's action names the instance's variables at slots past the state's (x@ENABLED), which the M4 compiler declines; M6 is to read them as the TypeScript environment does"
+  }
+]

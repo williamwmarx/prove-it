@@ -3,7 +3,13 @@
 // by the time TLC takes on it. --backend picks the engine's backend, and --compare-backends runs
 // every backend, each checked against the engine off. With --state-logs, each model the engine
 // completes runs again on 1 and on 4 threads, and the two state logs (PROVE_IT_STATE_LOG) must be
+// identical; with --compare-backends too, each model both the TypeScript and the native engine
+// complete runs again on each, with -nowarning and without, and their state logs must be
 // identical.
+//
+// A model the TypeScript engine completes and the native engine doesn't is a coverage regression,
+// which fails the run unless native/coverage-allowlist.json lists its reason, with the milestone
+// that removes it.
 // Usage: bun scripts/run.ts engine-coverage [--max-tlc-ms 20000] [--filter text] [--concurrency 3]
 //        [--timeout-ms 600000] [--out path] [--backend ts | --compare-backends] [--state-logs]
 
@@ -27,6 +33,7 @@ import {
   getBackendEnvironment,
   getBackends,
   getEngineLine,
+  getNativeTier,
 } from "./engine-runs";
 import type { ExpectedResult } from "./record-tlc";
 import { getStateLogDifference, readLogLines } from "./state-logs";
@@ -36,6 +43,8 @@ interface Run {
   verdict: string;
   detail: string | undefined;
   engineLine: string | undefined;
+  // What the native engine did, when it ran.
+  native: { tier: string; reason: string } | undefined;
   stderr: string;
   wallMilliseconds: number;
 }
@@ -54,6 +63,13 @@ interface Coverage {
   runs: Record<string, Run>;
   // With --state-logs, how many threads the run on 4 searched on.
   threads: number | undefined;
+  // With --state-logs and --compare-backends, whether the two engines' state logs were compared.
+  isStateLogged: boolean;
+}
+
+interface AllowedRegression {
+  reason: string;
+  milestone: string;
 }
 
 const maximumTlcMilliseconds = Number(getOption("--max-tlc-ms") ?? 20000);
@@ -76,7 +92,12 @@ const getEngineEnvironment = (backend: string) => ({
   PROVE_IT_ENGINE: "debug",
 });
 
-const runModel = (model: CorpusModel, environment: NodeJS.ProcessEnv, expected: ExpectedResult) =>
+const runModel = (
+  model: CorpusModel,
+  environment: NodeJS.ProcessEnv,
+  expected: ExpectedResult,
+  isWarningEnabled = false,
+) =>
   new Promise<Run>((resolve) => {
     const startedAt = performance.now();
     const child = spawn(
@@ -87,6 +108,7 @@ const runModel = (model: CorpusModel, environment: NodeJS.ProcessEnv, expected: 
         join(import.meta.dirname, "check-model.js"),
         model.specPath,
         model.configPath,
+        ...(isWarningEnabled ? ["--warnings"] : []),
       ],
       {
         stdio: ["ignore", "pipe", "pipe"],
@@ -123,6 +145,7 @@ const runModel = (model: CorpusModel, environment: NodeJS.ProcessEnv, expected: 
               : "match",
         detail: detail ?? outcome?.error,
         engineLine: getEngineLine(errorOutput),
+        native: getNativeTier(errorOutput),
         stderr: errorOutput.slice(0, 4000),
         wallMilliseconds: Math.round(performance.now() - startedAt),
       });
@@ -181,6 +204,45 @@ const compareThreads = async (model: CorpusModel, expected: ExpectedResult) => {
   };
 };
 
+// The state logs of the TypeScript and the native engine, with -nowarning and without, or the
+// first difference.
+const compareBackends = async (model: CorpusModel, expected: ExpectedResult) => {
+  const directory = mkdtempSync(join(tmpdir(), "prove-it-state-logs-"));
+  const differences: string[] = [];
+  for (const isWarningEnabled of [false, true]) {
+    const [typescript, native] = backends.map((backend) => join(directory, `${backend}.jsonl`));
+    for (const [backend, path] of [
+      ["ts", typescript],
+      ["rust", native],
+    ]) {
+      await runModel(
+        model,
+        { ...getEngineEnvironment(backend), PROVE_IT_STATE_LOG: path },
+        expected,
+        isWarningEnabled,
+      );
+    }
+    const difference =
+      existsSync(typescript) && existsSync(native)
+        ? getStateLogDifference(readLogLines(typescript), readLogLines(native))
+        : "a run wrote no state log";
+    if (difference) {
+      differences.push(
+        `state log of ts and rust${isWarningEnabled ? " with warnings" : ""}: ${difference.split("\n")[0]}`,
+      );
+    }
+  }
+  rmSync(directory, { recursive: true, force: true });
+  return differences;
+};
+
+const allowlistPath = join(import.meta.dirname, "../native/coverage-allowlist.json");
+const allowlist: AllowedRegression[] = existsSync(allowlistPath)
+  ? JSON.parse(readFileSync(allowlistPath, "utf8"))
+  : [];
+const isAllowed = (reason: string) =>
+  allowlist.some((allowed) => normalizeReason(reason).startsWith(allowed.reason));
+
 const results: Coverage[] = [];
 
 const work = async (queue: CorpusModel[]) => {
@@ -208,13 +270,22 @@ const work = async (queue: CorpusModel[]) => {
         ),
       ];
     });
+    const isCompared = backends.length > 1;
     const threads =
-      isLoggingStates && engine.engine === "completed"
+      isLoggingStates && !isCompared && engine.engine === "completed"
         ? await compareThreads(model, expected)
         : undefined;
     if (threads?.difference) {
       differences.push(`state log on 1 and 4 threads: ${threads.difference}`);
     }
+    // Both engines searched every state: completed, or found every state of a graph whose temporal
+    // properties the interpreter checks.
+    const isStateLogged =
+      isLoggingStates &&
+      isCompared &&
+      (engine.engine === "completed" || (on.engineLine?.startsWith("found ") ?? false)) &&
+      runs.rust?.native?.tier === "complete";
+    if (isStateLogged) differences.push(...(await compareBackends(model, expected)));
     const bucket =
       engine.reason === undefined
         ? engine.engine
@@ -231,6 +302,7 @@ const work = async (queue: CorpusModel[]) => {
       differences,
       runs,
       threads: threads?.threads,
+      isStateLogged,
     });
     console.log(
       `[${results.length}/${models.length}] ${differences.length === 0 ? "same" : "DIFFERENT"}  ${on.verdict.padEnd(11)} ${bucket.slice(0, 80).padEnd(80)} ${model.id}${differences.length === 0 ? "" : `  ${differences.join("; ")}`}`,
@@ -271,6 +343,49 @@ if (isLoggingStates) {
   console.log(
     `\nThe state logs on 1 and 4 threads were compared on ${logged.length} models, ${logged.filter((result) => (result.threads ?? 0) > 1).length} of which the workers took levels of.`,
   );
+}
+
+if (backends.includes("rust")) {
+  // The TypeScript engine searched every state: it completed, or found every state of a graph
+  // whose temporal properties the interpreter checks.
+  const tiers = results.map((result) => ({
+    result,
+    native: result.runs.rust?.native,
+    isCompleted:
+      classifyEngineLine(result.runs.ts?.engineLine).engine === "completed" ||
+      (result.runs.ts?.engineLine?.startsWith("found ") ?? false),
+  }));
+  console.table(
+    tally("native engine", (result) => {
+      const native = result.runs.rust?.native;
+      return native
+        ? `${native.tier}${native.tier === "complete" ? "" : `: ${normalizeReason(native.reason)}`}`.slice(
+            0,
+            100,
+          )
+        : "not reached";
+    }),
+  );
+  const regressions = tiers.filter((tier) => tier.isCompleted && tier.native?.tier !== "complete");
+  const unallowed = regressions.filter((tier) => !isAllowed(tier.native?.reason ?? ""));
+  console.log(
+    `\nThe native engine completes ${tiers.filter((tier) => tier.native?.tier === "complete").length} models; of the ${tiers.filter((tier) => tier.isCompleted).length} the TypeScript engine searches whole, it doesn't complete ${regressions.length}, ${regressions.length - unallowed.length} of them for a reason the allowlist names.`,
+  );
+  const gained = tiers.filter((tier) => !tier.isCompleted && tier.native?.tier === "complete");
+  if (gained.length > 0) {
+    console.log(`Gained: ${gained.map((tier) => tier.result.id).join(", ")}`);
+  }
+  if (isLoggingStates) {
+    console.log(
+      `The state logs of the two engines were compared on ${results.filter((result) => result.isStateLogged).length} models.`,
+    );
+  }
+  if (unallowed.length > 0) {
+    console.log(
+      `Coverage regressions the allowlist doesn't name:\n${unallowed.map((tier) => `  ${tier.result.id}: ${tier.native?.tier ?? "not reached"}: ${tier.native?.reason ?? ""}`).join("\n")}`,
+    );
+    process.exitCode = 1;
+  }
 }
 
 const different = results.filter((result) => !result.isSame);
