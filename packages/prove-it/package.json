@@ -59,6 +59,7 @@
     "bench:suite": "bun run build && bun scripts/bench-suite.ts",
     "bench:prove": "bun run build && bun scripts/run.ts prove-benchmark",
     "conformance": "bun scripts/run.ts conformance",
+    "conformance:differential": "bun run build && bun scripts/differential.ts",
     "conformance:fetch": "bun scripts/run.ts fetch-corpora",
     "conformance:fingerprint": "bun scripts/run.ts fingerprint-conformance",
     "conformance:isabelle": "bun scripts/run.ts isabelle-conformance",
