@@ -125,6 +125,17 @@ describe("getTranscript", () => {
   });
 });
 
+describe("normalizeOutput on where a run's files were", () => {
+  it("keeps only the name of the class an operator override was loaded from", () => {
+    const line = (directory: string) =>
+      `Loading Get operator override from file:${directory}/UserModuleOverride.class with signature: <Java Method: public static tlc2.value.impl.Value UserModuleOverride.Get()>.`;
+    expect(normalizeOutput(line("/home/user/models"))).toBe(normalizeOutput(line("/runner/work")));
+    expect(normalizeOutput(line("/home/user/models"))).toBe(
+      "Loading Get operator override from file:UserModuleOverride.class with signature: <Java Method: public static tlc2.value.impl.Value UserModuleOverride.Get()>.",
+    );
+  });
+});
+
 describe("normalizeOutput on the times of a run", () => {
   it("rewrites the times of TLC's reports and keeps those in a spec's states", () => {
     const trace = (time: string) =>

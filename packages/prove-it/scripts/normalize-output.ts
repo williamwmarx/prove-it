@@ -37,6 +37,7 @@ export const getSteadyLines = (output: string) =>
 // - the directory of each file SANY parses, and where TLC found it: the jar a standard module
 //   comes from, the path on the library path that led to a library module, or the module a copy
 //   in the metadata directory was made from;
+// - the directory of the class file an operator override was loaded from, or failed to match;
 // - the Progress lines, with -tool their message 2200 whole, whose presence depends on how long the
 //   run takes, since they come once a minute. The counts in them are those of the lines that end
 //   the run.
@@ -58,7 +59,11 @@ export const normalizeOutput = (output: string) =>
         )
         .replace(/^(Parsing file \S+) \(\S+\)$/, "$1")
         .replace(/^(Parsing file \/tmp\/tlc-)\d+\//, "$1_/")
-        .replace(/^(Parsing file )(?!\/tmp\/tlc-_\/)\S*\/(\S+)$/, "$1$2"),
+        .replace(/^(Parsing file )(?!\/tmp\/tlc-_\/)\S*\/(\S+)$/, "$1$2")
+        .replace(
+          /^((?:Loading|Failed to match) \S+ operator override from file:)\S*\/(\S+\.class )/,
+          "$1$2",
+        ),
     )
     .join("\n");
 
