@@ -6,6 +6,7 @@
 // value, and a state's fingerprint takes one shift and one xor per variable, or, from its parent's,
 // per variable that changed.
 
+import { EngineInvariantError } from "../errors";
 import { getStringRank } from "../values";
 import { getFingerprintSetting } from "./settings";
 import {
@@ -402,7 +403,9 @@ export const getStateFingerprints = (
     const reference = getStateFingerprintsReference(states, count, width, order);
     for (let state = 0; state < count; state++) {
       if (fingerprints[state] !== reference[state]) {
-        throw new Error(`the fingerprint of state ${state} differs from the reference`);
+        throw new EngineInvariantError(
+          `the fingerprint of state ${state} differs from the reference`,
+        );
       }
     }
   }

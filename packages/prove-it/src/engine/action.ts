@@ -36,6 +36,11 @@ interface ActionOptions {
   isAssignedShortcut: boolean;
 }
 
+// Whether a step of the next-state relation took the shortcut past a conjunct it would otherwise
+// walk, such as a disjunction. TLC's ENABLED walks every conjunct, so it may fail on one, or reach
+// a successor in another order, where the step evaluated it.
+export const shortcuts = { isPastWalk: false };
+
 export const resetAssigned = () => {
   registers.assigned = 0;
   undoTop.value = 0;
@@ -172,6 +177,10 @@ export const compileAction = (
       (guards[index] ??= compiler.compile(operands[index], conjunctionContext));
     const count = conjuncts.length;
     const isShortcut = options.isAssignedShortcut;
+    const isWalkedFrom = conjuncts.map(
+      (_, index) =>
+        !isInit && conjuncts.slice(index).some((conjunct) => conjunct.kind === "branch"),
+    );
     // Each conjunct is a closure that returns whether the conjunction goes on, pushing any variable
     // it assigns on the undo stack, or a branch that the runner continues through.
     const simple: ((() => boolean) | undefined)[] = conjuncts.map((conjunct) => {
@@ -234,6 +243,7 @@ export const compileAction = (
       let index = start;
       for (; index < count; index++) {
         if (index > 0 && isShortcut && registers.assigned === variableCount) {
+          if (isWalkedFrom[index]) shortcuts.isPastWalk = true;
           let holds = true;
           for (let rest = index; rest < count; rest++) {
             const value = getGuard(rest).evaluate();

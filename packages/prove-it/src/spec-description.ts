@@ -24,7 +24,14 @@ import {
 import { ACTION_LEVEL, CONSTANT_LEVEL, TEMPORAL_LEVEL, VARIABLE_LEVEL } from "./levels";
 import { getLevel } from "./liveness";
 import type { TlcVersion } from "./tlc/version";
-import { createRecord, createSet, createTuple, formatValue, type Value } from "./values";
+import {
+  createRecord,
+  createSet,
+  createTuple,
+  formatValue,
+  isSameValue,
+  type Value,
+} from "./values";
 
 export interface SpecAction {
   name: string;
@@ -485,6 +492,44 @@ export const getNextActions = (
   environment: Environment,
   instanceActions: Map<string, InstanceAction>,
 ) => getSpecDescription(config, environment, instanceActions).actions;
+
+const isSameScope = (scope: Scope | undefined, other: Scope | undefined): boolean => {
+  if (scope === other) return true;
+  if (!scope || !other || scope.name !== other.name) return false;
+  const binding = scope.binding;
+  const otherBinding = other.binding;
+  const isSameBinding =
+    binding === otherBinding ||
+    (binding.kind === "Value" &&
+      otherBinding.kind === "Value" &&
+      isSameValue(binding.value, otherBinding.value));
+  return isSameBinding && isSameScope(scope.parent, other.parent);
+};
+
+// The positions among TLC's actions of the actions TLC splits an action into, as it splits the
+// next-state relation, or undefined unless each is one of them, the same expression with the same
+// bindings, and they come in TLC's order.
+export const findActionPositions = (
+  actions: SpecAction[],
+  expression: Expression,
+  scope: Scope | undefined,
+  environment: Environment,
+  instanceActions: Map<string, InstanceAction>,
+) => {
+  const positions: number[] = [];
+  for (const split of getActions(expression, scope, undefined, environment, instanceActions)) {
+    const previous = positions.at(-1) ?? -1;
+    const position = actions.findIndex(
+      (action, index) =>
+        index > previous &&
+        action.expression === split.expression &&
+        isSameScope(action.scope, split.scope),
+    );
+    if (position === -1) return undefined;
+    positions.push(position);
+  }
+  return positions;
+};
 
 const formatParameters = (action: SpecAction) =>
   action.parameters.length === 0

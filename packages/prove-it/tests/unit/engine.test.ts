@@ -11,12 +11,15 @@ import { getEngineThreads } from "../../src/engine/settings";
 
 const setting = process.env.PROVE_IT_ENGINE;
 const threads = process.env.PROVE_IT_WORKERS;
+const liveCheck = process.env.PROVE_IT_LIVE_CHECK;
 
 afterEach(() => {
   if (setting === undefined) delete process.env.PROVE_IT_ENGINE;
   else process.env.PROVE_IT_ENGINE = setting;
   if (threads === undefined) delete process.env.PROVE_IT_WORKERS;
   else process.env.PROVE_IT_WORKERS = threads;
+  if (liveCheck === undefined) delete process.env.PROVE_IT_LIVE_CHECK;
+  else process.env.PROVE_IT_LIVE_CHECK = liveCheck;
 });
 
 describe("the engine between checks", () => {
@@ -719,5 +722,212 @@ describe("the engine", () => {
     );
     expect(result.status).toBe("success");
     expect(lines).toEqual([expect.stringMatching(/^\[engine\] checked 1 states/)]);
+  });
+});
+
+// ReadersWriters from tlaplus/Examples, whose fairness is on parts of Next, quantified over actors.
+const readersWriters = (fairness: string[]) =>
+  [
+    "---- MODULE ReadersWriters ----",
+    "EXTENDS FiniteSets, Naturals, Sequences",
+    "CONSTANT NumActors",
+    "VARIABLES readers, writers, waiting",
+    "vars == <<readers, writers, waiting>>",
+    "Actors == 1..NumActors",
+    "ToSet(s) == { s[i] : i \\in DOMAIN s }",
+    'read(s) == s[1] = "read"',
+    'write(s) == s[1] = "write"',
+    "WaitingToRead == { p[2] : p \\in ToSet(SelectSeq(waiting, read)) }",
+    "WaitingToWrite == { p[2] : p \\in ToSet(SelectSeq(waiting, write)) }",
+    "TryRead(actor) ==",
+    "  /\\ actor \\notin WaitingToRead",
+    '  /\\ waiting\' = Append(waiting, <<"read", actor>>)',
+    "  /\\ UNCHANGED <<readers, writers>>",
+    "TryWrite(actor) ==",
+    "  /\\ actor \\notin WaitingToWrite",
+    '  /\\ waiting\' = Append(waiting, <<"write", actor>>)',
+    "  /\\ UNCHANGED <<readers, writers>>",
+    "Read(actor) ==",
+    "  /\\ readers' = readers \\union {actor}",
+    "  /\\ waiting' = Tail(waiting)",
+    "  /\\ UNCHANGED writers",
+    "Write(actor) ==",
+    "  /\\ readers = {}",
+    "  /\\ writers' = writers \\union {actor}",
+    "  /\\ waiting' = Tail(waiting)",
+    "  /\\ UNCHANGED readers",
+    "ReadOrWrite ==",
+    "  /\\ waiting /= <<>>",
+    "  /\\ writers = {}",
+    "  /\\ LET pair == Head(waiting)",
+    "         actor == pair[2]",
+    '     IN CASE pair[1] = "read" -> Read(actor)',
+    '          [] pair[1] = "write" -> Write(actor)',
+    "StopActivity(actor) ==",
+    "  IF actor \\in readers",
+    "  THEN /\\ readers' = readers \\ {actor}",
+    "       /\\ UNCHANGED <<writers, waiting>>",
+    "  ELSE /\\ writers' = writers \\ {actor}",
+    "       /\\ UNCHANGED <<readers, waiting>>",
+    "Stop == \\E actor \\in readers \\cup writers : StopActivity(actor)",
+    "Init == readers = {} /\\ writers = {} /\\ waiting = <<>>",
+    "Next ==",
+    "  \\/ \\E actor \\in Actors : TryRead(actor)",
+    "  \\/ \\E actor \\in Actors : TryWrite(actor)",
+    "  \\/ ReadOrWrite",
+    "  \\/ Stop",
+    "Fairness ==",
+    ...fairness.map((part) => `  /\\ ${part}`),
+    "Spec == Init /\\ [][Next]_vars /\\ Fairness",
+    "Liveness ==",
+    "  /\\ \\A actor \\in Actors : []<>(actor \\in readers)",
+    "  /\\ \\A actor \\in Actors : []<>(actor \\in writers)",
+    "BoundedWaiting == Len(waiting) <= 2",
+    "NoWriteAfterRead == ~(readers /= {} /\\ writers' /= {})",
+    "====",
+  ].join("\n");
+const READERS_WRITERS_FAIRNESS = [
+  "\\A actor \\in Actors : WF_vars(TryRead(actor))",
+  "\\A actor \\in Actors : WF_vars(TryWrite(actor))",
+  "WF_vars(ReadOrWrite)",
+  "WF_vars(Stop)",
+];
+const READERS_WRITERS_CONFIG = "CONSTANT NumActors = 2\nSPECIFICATION Spec\nPROPERTY Liveness";
+
+// EWD426's token ring from tlaplus/Examples, whose fairness is on the whole of Next.
+const tokenRing = (property: string) =>
+  [
+    "---- MODULE TokenRing ----",
+    "EXTENDS Naturals",
+    "CONSTANTS N, M",
+    "Node == 0 .. N-1",
+    "VARIABLE c",
+    "vars == << c >>",
+    "Init == c \\in [ Node -> 0 .. M-1 ]",
+    "CreateToken ==",
+    "  /\\ c[0] = c[N-1]",
+    "  /\\ c' = [ c EXCEPT ![0] = (c[N-1] + 1) % M ]",
+    "PassToken(i) ==",
+    "  /\\ i # 0",
+    "  /\\ c[i] # c[i-1]",
+    "  /\\ c' = [ c EXCEPT ![i] = c[i-1] ]",
+    "Next == CreateToken \\/ \\E i \\in Node \\ {0} : PassToken(i)",
+    "Spec == Init /\\ [][Next]_vars /\\ WF_vars(Next)",
+    "UniqueToken ==",
+    "  \\E i \\in 0 .. N :",
+    "    /\\ \\A j \\in 0..i-1 : c[j] = c[0]",
+    "    /\\ \\A j \\in i..N-1 : c[j] = (c[0] - 1) % M",
+    `Property == ${property}`,
+    "====",
+  ].join("\n");
+const TOKEN_RING_CONFIG =
+  "CONSTANTS N = 3\nM = 3\nCHECK_DEADLOCK FALSE\nSPECIFICATION Spec\nPROPERTY Property";
+
+describe("the engine's answers to ENABLED", () => {
+  // Checks a model with the engine, with PROVE_IT_LIVE_CHECK=1, which also runs each action whose
+  // ENABLED it answers from the steps of its search and takes each step through Next as well as
+  // through the actions that label it, and without the engine.
+  const checkBoth = async (source: string, config: string) => {
+    process.env.PROVE_IT_ENGINE = "debug";
+    process.env.PROVE_IT_LIVE_CHECK = "1";
+    const lines: string[] = [];
+    const spy = spyOn(console, "error").mockImplementation((message: unknown) => {
+      if (typeof message === "string" && message.startsWith("[engine] ")) lines.push(message);
+    });
+    try {
+      const result = await check({ source, config, onPrint: () => {} });
+      process.env.PROVE_IT_ENGINE = "0";
+      const reference = await check({ source, config, onPrint: () => {} });
+      expect(result).toEqual(reference);
+      // The engine searched every state, rather than handing the search over.
+      expect(lines).toContainEqual(expect.stringMatching(/^\[engine\] found \d+ states/));
+      return {
+        result,
+        isFromSteps: lines.some((line) =>
+          line.endsWith("answers ENABLED from the steps its search took"),
+        ),
+      };
+    } finally {
+      spy.mockRestore();
+    }
+  };
+
+  it("answers ENABLED of the whole next-state relation from the steps the search took", async () => {
+    const stable = await checkBoth(tokenRing("<>[]UniqueToken"), TOKEN_RING_CONFIG);
+    expect([stable.result.status, stable.result.distinctStates]).toEqual(["success", 27]);
+    expect(stable.isFromSteps).toBe(true);
+    const violated = await checkBoth(tokenRing("<>[](c[0] = 0)"), TOKEN_RING_CONFIG);
+    expect(violated.result.status).toBe("liveness-violation");
+    expect(violated.result.violation?.loopStart).toBeDefined();
+    expect(violated.isFromSteps).toBe(true);
+  });
+
+  it("answers ENABLED of quantified parts of the next-state relation from the actions that took each step", async () => {
+    const live = await checkBoth(readersWriters(READERS_WRITERS_FAIRNESS), READERS_WRITERS_CONFIG);
+    expect(live.result.status).toBe("success");
+    expect(live.isFromSteps).toBe(true);
+    // Without fairness on TryWrite, an actor need never ask to write.
+    const unfair = await checkBoth(
+      readersWriters(READERS_WRITERS_FAIRNESS.filter((fairness) => !fairness.includes("TryWrite"))),
+      READERS_WRITERS_CONFIG,
+    );
+    expect(unfair.result.status).toBe("liveness-violation");
+    expect(unfair.result.violation?.loopStart).toBeDefined();
+    expect(unfair.isFromSteps).toBe(true);
+    const strong = await checkBoth(
+      readersWriters(["\\A actor \\in Actors : SF_vars(TryRead(actor) \\/ TryWrite(actor))"]),
+      READERS_WRITERS_CONFIG,
+    );
+    expect(strong.result.status).toBe("liveness-violation");
+    expect(strong.isFromSteps).toBe(true);
+  });
+
+  it("runs the action for ENABLED of what isn't the next-state relation's actions in order", async () => {
+    for (const fairness of [
+      "WF_vars(Stop \\/ ReadOrWrite)",
+      "WF_vars(waiting' = <<>> /\\ UNCHANGED <<readers, writers>>)",
+    ]) {
+      const { result } = await checkBoth(
+        readersWriters([...READERS_WRITERS_FAIRNESS, fairness]),
+        READERS_WRITERS_CONFIG,
+      );
+      expect([fairness, result.status, result.failure?.message]).toEqual([
+        fairness,
+        "success",
+        undefined,
+      ]);
+    }
+  });
+
+  it("runs the action for ENABLED under a constraint, which drops steps", async () => {
+    for (const constraint of ["CONSTRAINT BoundedWaiting", "ACTION_CONSTRAINT NoWriteAfterRead"]) {
+      const { result, isFromSteps } = await checkBoth(
+        readersWriters(READERS_WRITERS_FAIRNESS),
+        `${READERS_WRITERS_CONFIG}\n${constraint}`,
+      );
+      expect(result.status).not.toBe("error");
+      expect(isFromSteps).toBe(false);
+    }
+  });
+
+  it("runs the action for ENABLED once the search evaluated a conjunct TLC's ENABLED walks", async () => {
+    // From x = 1, TLC's ENABLED takes the first branch's step, which leaves x unchanged, and fails
+    // comparing x with "a" in the second, which the search never evaluated once the first held.
+    const { result, isFromSteps } = await checkBoth(
+      [
+        "---- MODULE M ----",
+        "VARIABLE x",
+        "Init == x = 0",
+        "Next ==",
+        "  \\/ x = 0 /\\ x' = 1",
+        "  \\/ x = 1 /\\ x' = x /\\ (x' = 1 \\/ x' = \"a\")",
+        "Spec == Init /\\ [][Next]_x /\\ WF_x(Next)",
+        "Live == <>(x = 2)",
+        "====",
+      ].join("\n"),
+      "SPECIFICATION Spec\nPROPERTY Live",
+    );
+    expect(result.status).toBe("error");
+    expect(isFromSteps).toBe(false);
   });
 });

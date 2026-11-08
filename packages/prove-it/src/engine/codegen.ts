@@ -8,7 +8,7 @@
 // Hosts that refuse code generation from strings get the closures of action.ts instead.
 
 import { type Expression, isLocallyResolved } from "../ast";
-import { compileAction, createActionAnalysis, type Step } from "./action";
+import { compileAction, createActionAnalysis, shortcuts, type Step } from "./action";
 import {
   booleanCodeOf,
   type CodeGen,
@@ -175,6 +175,19 @@ if (${flag} === 1) { ${T}[${variable}] = -1; ${R}.assigned--; } }`,
     );
   };
 
+  // Whether walkConjunct walks an operand, rather than assigning, comparing or testing it.
+  const isWalked = (operand: Expression, operandContext: CompileContext) =>
+    !(
+      (operand.kind === "Apply" &&
+        operand.operator === "=" &&
+        !isLocallyResolved(operand) &&
+        analysis.getAssignableIndex(operand.args[0], operandContext) !== undefined) ||
+      (!isInit &&
+        operand.kind === "Unchanged" &&
+        analysis.getUnchangedIndices(operand.expression, operandContext) !== undefined) ||
+      analysis.isGuard(operand, operandContext)
+    );
+
   const restAsGuards = (
     operands: Expression[],
     operandContext: CompileContext,
@@ -182,7 +195,10 @@ if (${flag} === 1) { ${T}[${variable}] = -1; ${R}.assigned--; } }`,
     rest: Continuation,
   ) => {
     const guards = operands.map((operand) => guardCode(operand, operandContext));
-    return emit(`if (${guards.join(" && ")}) {\n${rest(known)}\n}`);
+    const isPastWalk = !isInit && operands.some((operand) => isWalked(operand, operandContext));
+    return emit(
+      `${isPastWalk ? `${gen.ref(shortcuts)}.isPastWalk = true;\n` : ""}if (${guards.join(" && ")}) {\n${rest(known)}\n}`,
+    );
   };
 
   const conjunction = (

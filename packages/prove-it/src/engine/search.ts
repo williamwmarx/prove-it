@@ -8,10 +8,11 @@
 
 import type { CheckProgress } from "../check";
 import type { ModelConfig } from "../config";
+import { EngineInvariantError } from "../errors";
 import type { Environment } from "../evaluate";
 import type { TlcVersion } from "../tlc/version";
 import type { Value } from "../values";
-import { resetAssigned } from "./action";
+import { resetAssigned, shortcuts } from "./action";
 import { EPOCH, nextEpoch, resetCompileState, setCurrent, setNext } from "./compile";
 import {
   createEngineContext,
@@ -21,7 +22,7 @@ import {
   holdsAllChanged,
 } from "./context";
 import { getStateFingerprints, resetFingerprints } from "./fingerprint";
-import { createLiveOracle, type LiveOracle } from "./live";
+import { createLiveOracle, type EnabledActions, type LiveOracle } from "./live";
 import {
   createSharedSearch,
   createStorageBlock,
@@ -66,11 +67,13 @@ export interface EngineInput {
 // The steps of a complete search, for the interpreter to check temporal properties on: for each
 // state, how many successors it generated, how many of them were new, and the states, in the
 // model, its steps went to in the order generated, between edgeOffsets[i] and edgeOffsets[i + 1].
+// A search of spec.actions labels each step with the position of the action that took it.
 export interface EngineGraph {
   successorCounts: Int32Array;
   newCounts: Int32Array;
   edgeOffsets: Int32Array;
   edges: Int32Array;
+  labels: Int32Array | undefined;
 }
 
 // The search up to the state the engine was expanding when it stopped: the states found before
@@ -103,8 +106,12 @@ export interface EngineResult {
   threads: number;
   // A complete search the interpreter is to replay, when it checks temporal properties.
   checkpoint: EngineCheckpoint | undefined;
-  // Answers the interpreter's liveness checker for the states, given each state's ids.
-  createLiveOracle: (getIds: (state: Value[]) => Int32Array | undefined) => LiveOracle;
+  // Answers the interpreter's liveness checker for the states, given the index of each state and
+  // the actions ENABLED of an action asks about.
+  createLiveOracle: (
+    getIndex: (state: Value[]) => number | undefined,
+    getEnabledActions: EnabledActions,
+  ) => LiveOracle;
 }
 
 const MAXIMUM_GRAPH_STATES = 4_000_000;
@@ -123,6 +130,7 @@ export const runEngine = (input: EngineInput): EngineResult => {
   if (getEnvironmentFlag("PROVE_IT_SHARED")) shareStore();
   resetFingerprints();
   resetAssigned();
+  shortcuts.isPastWalk = false;
   const context = createEngineContext(
     environment,
     config,
@@ -310,22 +318,33 @@ export const runEngine = (input: EngineInput): EngineResult => {
     });
   };
 
+  const actionSteps = input.isRecordingGraph ? context.actionSteps : undefined;
   const graph = input.isRecordingGraph
     ? {
         successorCounts: new Int32Array(1024),
         newCounts: new Int32Array(1024),
         edgeOffsets: new Int32Array(1025),
         edges: new Int32Array(4096),
+        labels: actionSteps && new Int32Array(4096),
         edgeCount: 0,
       }
     : undefined;
+  // The position of the action whose steps the search is taking.
+  let action = 0;
   const recordEdge = (target: number) => {
     const recording = graph!;
     if (recording.edgeCount === recording.edges.length) {
-      const nextEdges = new Int32Array(recording.edges.length * 2);
+      const capacity = recording.edges.length * 2;
+      const nextEdges = new Int32Array(capacity);
       nextEdges.set(recording.edges);
       recording.edges = nextEdges;
+      if (recording.labels) {
+        const nextLabels = new Int32Array(capacity);
+        nextLabels.set(recording.labels);
+        recording.labels = nextLabels;
+      }
     }
+    if (recording.labels) recording.labels[recording.edgeCount] = action;
     recording.edges[recording.edgeCount++] = target;
   };
   const recordExpansion = (index: number) => {
@@ -375,9 +394,21 @@ export const runEngine = (input: EngineInput): EngineResult => {
     depth = level + 1;
   };
 
+  // PROVE_IT_LIVE_CHECK=1 takes each state's steps through nextStep too, and throws unless the
+  // actions took the same steps in the same order.
+  const checkedSuccessors: Int32Array[] | undefined =
+    actionSteps && getEnvironmentFlag("PROVE_IT_LIVE_CHECK") ? [] : undefined;
+  const collectSuccessor = () => {
+    checkedSuccessors!.push(next.slice());
+  };
+
   const onSuccessor = () => {
     for (let index = 0; index < width; index++) {
       if (next[index] === -1) bail("a successor that isn't complete");
+    }
+    const checked = checkedSuccessors?.[successors];
+    if (checkedSuccessors && !checked?.every((id, variable) => id === next[variable])) {
+      throw new EngineInvariantError("the actions took other steps than the next-state relation");
     }
     visitSuccessor();
   };
@@ -525,7 +556,19 @@ export const runEngine = (input: EngineInput): EngineResult => {
       expansionEpoch = nextEpoch();
       setCurrent(current, expansionEpoch);
       setNext(next);
-      context.nextStep(onSuccessor);
+      if (!actionSteps) context.nextStep(onSuccessor);
+      else {
+        if (checkedSuccessors) {
+          checkedSuccessors.length = 0;
+          context.nextStep(collectSuccessor);
+        }
+        for (action = 0; action < actionSteps.length; action++) actionSteps[action](onSuccessor);
+        if (checkedSuccessors && checkedSuccessors.length !== successors) {
+          throw new EngineInvariantError(
+            "the actions took other steps than the next-state relation",
+          );
+        }
+      }
       if (successors === 0 && config.checkDeadlock) bail("deadlock");
       if (graph) recordExpansion(expanding);
       outDegrees[Math.min(newStates, OUT_DEGREE_BUCKETS - 1)]++;
@@ -553,6 +596,9 @@ export const runEngine = (input: EngineInput): EngineResult => {
   } finally {
     parallel.workers?.terminate();
   }
+  // TLC's ENABLED walks what the shortcut evaluated, so only a search that took no shortcut past a
+  // walk found the successors ENABLED finds.
+  const isPastWalk = shortcuts.isPastWalk;
 
   return {
     generatedStates: generated,
@@ -572,7 +618,19 @@ export const runEngine = (input: EngineInput): EngineResult => {
           ),
     valueCount: getValueCount(),
     threads: parallel.threads,
-    createLiveOracle: (getIds) => createLiveOracle(context.compiler, getIds),
+    createLiveOracle: (getIndex, getEnabledActions) =>
+      createLiveOracle(
+        context.compiler,
+        {
+          states,
+          edgeOffsets: graph?.edgeOffsets,
+          edges: graph?.edges,
+          labels: graph?.labels,
+          isEnabledExact: !isPastWalk,
+        },
+        getIndex,
+        getEnabledActions,
+      ),
     checkpoint: graph && {
       expanding: 0,
       count: stateCount,
@@ -587,6 +645,7 @@ export const runEngine = (input: EngineInput): EngineResult => {
         newCounts: graph.newCounts,
         edgeOffsets: graph.edgeOffsets,
         edges: graph.edges.slice(0, graph.edgeCount),
+        labels: graph.labels?.slice(0, graph.edgeCount),
       },
     },
   };
