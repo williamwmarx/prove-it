@@ -43,6 +43,9 @@ export const resetAssigned = () => {
 };
 
 const FOUND = Symbol("found");
+const stopAtFound = () => {
+  throw FOUND;
+};
 
 // Whether a step has a successor from the current state, which ENABLED asks. It runs the step from
 // a next state of its own until the first successor, and puts back the next state and assignments
@@ -61,9 +64,7 @@ export const createEnabledTest = (step: Step, width: number) => {
     setNext(next);
     registers.assigned = 0;
     try {
-      step(() => {
-        throw FOUND;
-      });
+      step(stopAtFound);
       return false;
     } catch (error) {
       if (error === FOUND) return true;
