@@ -2,7 +2,7 @@
 // handing the engine's input across the FFI.
 import { readFileSync } from "node:fs";
 
-import { parseModule } from "/home/user/prove-it/packages/prove-it/src/parser";
+import { parseModule } from "../../../src/parser";
 
 for (const path of process.argv.slice(2)) {
   const source = readFileSync(path, "utf8");

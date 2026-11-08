@@ -1,10 +1,6 @@
 // The TypeScript FP64 of the sample state in src/fp.rs, which must print the same fingerprint.
-import { getTlcFingerprint } from "/home/user/prove-it/packages/prove-it/src/tlc/fingerprint";
-import {
-  createRecord,
-  createSet,
-  createTuple,
-} from "/home/user/prove-it/packages/prove-it/src/values";
+import { getTlcFingerprint } from "../../../src/tlc/fingerprint";
+import { createRecord, createSet, createTuple } from "../../../src/values";
 
 const sample = [
   7,

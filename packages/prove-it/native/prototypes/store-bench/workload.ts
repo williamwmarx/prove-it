@@ -16,8 +16,8 @@ import {
   sizeOf,
   str,
   withElement,
-} from "/home/user/prove-it/packages/prove-it/src/engine/store";
-import { setStringOrder } from "/home/user/prove-it/packages/prove-it/src/values";
+} from "../../../src/engine/store";
+import { setStringOrder } from "../../../src/values";
 
 const ITERATIONS = Number(process.argv[2] ?? 2_000_000);
 const STATE_WIDTH = 4;
