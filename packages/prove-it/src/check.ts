@@ -1534,6 +1534,18 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         (expression) => enabledActions.get(expression),
       );
     };
+    // TLC adds each initial state to the liveness checker before it reports the initial states, so
+    // with temporal properties the engine reports them only once it reports its progress, and
+    // otherwise the interpreter does, once it has added them.
+    const computed = {
+      initialStates: undefined as { generated: number; distinct: number } | undefined,
+    };
+    const reportComputed = () => {
+      const initialStates = computed.initialStates;
+      if (!initialStates || engineReport.isComputedReported) return;
+      engineReport.isComputedReported = true;
+      options.onProgress?.({ kind: "initial-states-computed", initialStates });
+    };
     // A search labels each step with the action that took it only when ENABLED asks about some.
     const isLabelled = [...enabledActions.values()].some((positions) => positions !== "all");
     const startedAt = performance.now();
@@ -1566,6 +1578,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         version: options.version,
         onProgress: (progress) => {
           engineReport.isReported = true;
+          reportComputed();
           options.onProgress?.(progress);
         },
         onInitialStatesStarted: () => {
@@ -1573,11 +1586,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
           options.onProgress?.({ kind: "initial-states-started" });
         },
         onInitialStates: (generated, distinct) => {
-          engineReport.isComputedReported = true;
-          options.onProgress?.({
-            kind: "initial-states-computed",
-            initialStates: { generated, distinct },
-          });
+          computed.initialStates = { generated, distinct };
+          if (!liveness) reportComputed();
         },
       });
       if (result.checkpoint) {

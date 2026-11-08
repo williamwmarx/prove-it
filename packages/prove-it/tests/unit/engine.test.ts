@@ -933,11 +933,22 @@ describe("the engine's answers to ENABLED", () => {
 });
 
 describe("the engine's hand-over to the interpreter part way through a search", () => {
-  // Checks a model with the engine and without, and returns what the engine said it did.
+  // Checks a model with the engine and without, comparing the results and what each reported in
+  // order, and returns what the engine said it did.
   const checkBoth = async (lines: string[], config: string) => {
     const source = ["---- MODULE M ----", ...lines, "===="].join("\n");
+    const checkReporting = async () => {
+      const kinds: string[] = [];
+      const result = await check({
+        source,
+        config,
+        onPrint: () => {},
+        onProgress: (progress) => kinds.push(progress.kind),
+      });
+      return { result, kinds };
+    };
     process.env.PROVE_IT_ENGINE = "0";
-    const reference = await check({ source, config, onPrint: () => {} });
+    const reference = await checkReporting();
     process.env.PROVE_IT_ENGINE = "debug";
     const engineLines: string[] = [];
     const spy = spyOn(console, "error").mockImplementation((message: unknown) => {
@@ -946,8 +957,9 @@ describe("the engine's hand-over to the interpreter part way through a search", 
       }
     });
     try {
-      const result = await check({ source, config, onPrint: () => {} });
-      expect(result).toEqual(reference);
+      const reported = await checkReporting();
+      expect(reported).toEqual(reference);
+      const result = reported.result;
       return { result, handedOver: engineLines.find((line) => line.includes("handed over")) };
     } finally {
       spy.mockRestore();
