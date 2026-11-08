@@ -1959,3 +1959,71 @@ unless it says otherwise:
 - `prove-it-rust-aot` is within 10% of `prove-it-rust` on the large models (decides 7.3);
 - the full parity workflow (6.12) is green on main for a week of pushes and the nightly jobs are
   green for seven consecutive nights before `auto` ships in a release.
+
+#### M7 as built (fingerprints)
+
+Branch `native-m7-fingerprints`, the first part of M7: the measurement harness, the fingerprints,
+the fingerprint set and the search's bookkeeping. Measured on the 4-core cloud machine, not on
+Depot yet. Where the code made this design change, the code wins, and this records how:
+
+- **Measurement.** `bench-suite.ts` gains `prove-it-rust`, `prove-it-rust-aot` and
+  `prove-it-base-rust`: the JIT, ahead-of-time and base binaries with
+  `PROVE_IT_ENGINE_BACKEND=rust`, each available where its binary embeds the addon. The binary Bun
+  compiles ahead of time loads it. Benchmark builds the addon and times both by default; Compare
+  builds it in both checkouts and times `prove-it-rust` and `prove-it-base-rust` beside the
+  TypeScript backend. The runs no longer inherit `PROVE_IT_ENGINE_BACKEND` from the shell.
+- **Incremental fingerprints (2.3, 2.4).** `Fingerprints::set_parent` takes the state being expanded
+  and its fingerprint, and finds, by position in TLC's order, the length of the values after each
+  and the table that shifts by it; `get_child` fingerprints a successor from it. Where every changed
+  value keeps its length, it xors in the shift of `F(v) ^ F(v')` by that tail, as `get_states` does
+  after the search. Otherwise it extends the parent's fingerprint before the first changed value by
+  the successor's values from there; those prefixes are computed once per parent and only as far as
+  a successor asks. The second case matters: on Commit nearly every step changes a string's length.
+  Both are exact by FP64's linearity. Under a VIEW or symmetry the key is still fingerprinted from
+  scratch.
+- **Tables for tails.** A tail can take any length, and a model whose values grow (MCLamportMutex)
+  meets a new one at nearly every parent. Making a table for each filled the 1,024-table cap, after
+  which every shift took the slow path by powers of two, 13% slower than from scratch. Tails make
+  tables only up to half the cap, and a successor whose tail has none takes the prefix. Lengths
+  below 4,096 find their table by index rather than in a map.
+- **The fingerprint set (2.3).** Fingerprints in one array, 0 marking an empty slot and a state
+  whose fingerprint is 0 kept apart, and the indices in a parallel one that only a graph's edge or
+  `PROVE_IT_FP_VERIFY` reads, so a probe reads 8-byte slots, eight to a cache line. The indices stay
+  even without a graph, for the verification. The load factor stays at most one half: a third full
+  measured slower (the larger table misses the cache more than a probe leaves its line), and 70% no
+  faster.
+- **Bookkeeping.** A successor is checked as a state by swapping the machine's current and next
+  states rather than copying it in and the expanded state back, twice for a new state; a state's
+  predicates read no primed variable, and ENABLED restores the next state it borrows. A successor is
+  copied into the state table only when it is new.
+- **Not done.** Prefetching the slot or probing a level's fingerprints in a batch would hide the
+  probe's miss, now the largest single cost on Commit, but a batch reorders the checks within an
+  expansion relative to what Print prints; it is left for later. Nibble-wide shift tables (2 KB
+  rather than 16 KB, 16 lookups rather than 8) might suit models with many lengths; unmeasured.
+
+#### M7 acceptance, as run (fingerprints)
+
+On the 4-core cloud machine, with `main` at 6448120 merged, against the 733 models with TLC under
+20 s:
+- **State logs: met.** `engine-coverage --compare-backends --state-logs` with
+  `PROVE_IT_FP_VERIFY=1`: the Rust search completes 318 models, and its state log equals the
+  TypeScript engine's on all 318, with `-nowarning` and without; the engine on and off reach the
+  same outcome on every model, and every coverage regression is allowlisted, as before.
+- **`PROVE_IT_FP_VERIFY`: met.** No collision in the 397 Rust runs that searched.
+- **Unit tests: met.** With `BACKEND=rust`, 3,035 pass, 7 skip, 0 fail; with the default backend,
+  3,004 pass, 23 skip, 0 fail. `cargo test`, `clippy -D warnings` and `fmt --check` are clean.
+- **Default path unchanged: met.** No TypeScript outside `scripts/` changed; against a sweep of
+  `main`, no model changed bucket.
+- **Speed: not met.** Medians of 9 interleaved runs of `dist/prove-it`, engine time (wall time),
+  `main` against this branch, on a machine whose runs of one binary spread by 10–30%:
+  Commit, Rust 767 → 751 ms (850 → 823), TypeScript 496–507 ms; btree, Rust 1,300 → 1,280 ms
+  (1,471 → 1,458), TypeScript 968–1,003 ms; MCDisruptor_MPMC, Rust 293 → 298 ms, level;
+  MCLamportMutex, Rust 4,004 → 4,215 ms in the binary but level in 4 interleaved rounds of the
+  search alone (3,906 and 3,926 ms); test19, Rust 196 → 163 ms; MCBakery declines (M6). On Commit
+  the search does 9% fewer instructions (7.31 → 6.65 billion, callgrind), and its fingerprints take
+  about 7% of its time where M5's profile gave 13%; the Rust search is still about 50% slower than
+  the TypeScript engine on Commit and 30% on btree. A fresh profile of Commit (gdb, about ±3
+  points) puts the fingerprint set's probe at 13% (a miss to memory, which batching or prefetching
+  would hide), memo lookups at 16% with their `memcmp` (packing keys of width two or less into a
+  `u64`), and set membership at 13% (`is_member` and `find_in_block` for `TypeOK`), with the walker
+  around them: those are the next three things to fix.
