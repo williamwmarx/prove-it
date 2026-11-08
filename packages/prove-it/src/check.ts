@@ -15,7 +15,6 @@ import {
 import { createEnvironment } from "./environment";
 import {
   createStackOverflowError,
-  EngineInvariantError,
   getErrorExitCode,
   isStackOverflow,
   MissingBuildFileError,
@@ -1406,9 +1405,21 @@ const searchStates = (
     // The last count of initial states the engine reported, which the interpreter, computing them
     // again, reports only past.
     initialProgress: 0,
+    // With temporal properties, the counts of initial states the engine hasn't reported yet: TLC
+    // reports them as it adds the initial states to the liveness checker, which may fail first.
+    heldProgress: [] as number[],
     checkpoint: undefined as EngineCheckpoint | undefined,
     // TLC's fingerprints of the states of a graph the engine handed over.
     fingerprints: undefined as BigInt64Array | undefined,
+  };
+  // Reports the counts held back below the number of initial states generated so far.
+  const releaseInitialProgress = (generated: number) => {
+    const held = engineReport.heldProgress;
+    const released = held.findIndex((count) => count >= generated);
+    for (const count of held.splice(0, released === -1 ? held.length : released)) {
+      engineReport.initialProgress = count;
+      options.onProgress?.({ kind: "initial-states-progress", count });
+    }
   };
   // States the engine found, which the interpreter took over without their actions, so a trace
   // through them finds its actions again as it does for a reduced state space.
@@ -1448,8 +1459,39 @@ const searchStates = (
     engineIndices.set(state, index);
     const fingerprintState = toEngineKey(checkpoint, index, state);
     state.forEach(markFingerprinted);
-    markSeen(getStateHash(fingerprintState), index);
-    return { state, fingerprintState };
+    return { state, fingerprintState, hash: getStateHash(fingerprintState) };
+  };
+  // TLC reports an error in an initial state once it has replayed the initial predicate with its call
+  // stack.
+  const reportInitialFailure = (error: unknown, state: Value[]) => {
+    const replay = captureOutput(replayInit);
+    return createFailureResult(
+      error,
+      { trace: [], traceOutput: replay.lines },
+      { initialState: state, ...replay.result, isInitial: true },
+    );
+  };
+  // TLC adds each initial state to the liveness checker as it finds it, with the counts so far and
+  // TLCGet("level") at 1, before it stores the state.
+  const addEngineInitialState = (
+    checkpoint: EngineCheckpoint,
+    index: number,
+    taken: { state: Value[]; fingerprintState: Value[] },
+  ) => {
+    runtime.generatedStates = checkpoint.initialCounts?.[index] ?? index + 1;
+    releaseInitialProgress(runtime.generatedStates);
+    runtime.initialStates = runtime.generatedStates;
+    countDistinctState(1);
+    runtime.queueSize = index + 1;
+    current.candidate = taken.state;
+    current.candidateLevel = 1;
+    unstoredState.fingerprint = taken.fingerprintState;
+    try {
+      liveness?.addInitialState(index, taken.state);
+      return undefined;
+    } catch (error) {
+      return reportInitialFailure(error, taken.state);
+    }
   };
   // Takes over the rest of the engine's states, once the interpreter goes past the one it expands
   // again.
@@ -1461,6 +1503,7 @@ const searchStates = (
     for (let index = 0; index < checkpoint.count; index++) {
       if (states[index] !== UNTAKEN) continue;
       const taken = takeState(checkpoint, index);
+      markSeen(taken.hash, index);
       states[index] = taken.state;
       fingerprintStates[index] = taken.fingerprintState;
     }
@@ -1478,25 +1521,14 @@ const searchStates = (
     ) {
       onPath.add(position);
     }
-    // The initial states the interpreter found are the engine's first states.
-    const initialCount = states.length;
-    const isSameInitial = (index: number) =>
-      checkpoint.parents[index] === -1 &&
-      isSameState(
-        fingerprintStates[index],
-        toEngineKey(checkpoint, index, toEngineState(checkpoint, index)),
-      );
-    for (let index = 0; index < initialCount; index++) {
-      if (!isSameInitial(index))
-        throw new EngineInvariantError("the engine found other initial states");
-      engineIndices.set(states[index], index);
-    }
-    for (let index = initialCount; index < checkpoint.count; index++) {
+    for (let index = 0; index < checkpoint.count; index++) {
       const parent = checkpoint.parents[index];
-      if (parent === -1 && checkpoint.graph) {
-        throw new EngineInvariantError("the engine found other initial states");
-      }
       const taken = !findState || onPath.has(index) ? takeState(checkpoint, index) : undefined;
+      if (taken && parent === -1 && checkpoint.graph) {
+        outcome.result = addEngineInitialState(checkpoint, index, taken);
+        if (outcome.result) return 0;
+      }
+      if (taken) markSeen(taken.hash, index);
       countDistinctState(parent === -1 ? 1 : depths[parent] + 1);
       addState(taken?.state ?? UNTAKEN, taken?.fingerprintState ?? UNTAKEN, parent, undefined);
     }
@@ -1504,6 +1536,7 @@ const searchStates = (
       pending.checkpoint = checkpoint;
       pending.findState = findState;
     }
+    releaseInitialProgress(Infinity);
     transferred.count = checkpoint.count;
     if (checkpoint.graph) {
       replayed.discovered = parents.filter((parent) => parent === -1).length;
@@ -1634,9 +1667,14 @@ const searchStates = (
         version: options.version,
         onProgress: (progress) => {
           engineReport.isReported = true;
+          if (progress.kind === "initial-states-progress" && liveness) {
+            engineReport.heldProgress.push(progress.count);
+            return;
+          }
           if (progress.kind === "initial-states-progress") {
             engineReport.initialProgress = progress.count;
           }
+          releaseInitialProgress(Infinity);
           reportComputed();
           options.onProgress?.(progress);
         },
@@ -1733,11 +1771,9 @@ const searchStates = (
   const engineOutcome = tryEngine();
   if (engineOutcome) return engineOutcome;
   if (!engineReport.isReported) options.onProgress?.({ kind: "initial-states-started" });
-  // With a graph, the interpreter finds the initial states itself, adding them to the liveness
-  // checker as it checks them, and replays the engine's search from there.
   const checkpoint = engineReport.checkpoint;
-  const resumeAt = checkpoint && !checkpoint.graph ? resumeFromEngine(checkpoint) : 0;
-  if (spec.init !== undefined && !(checkpoint && !checkpoint.graph)) {
+  const resumeAt = checkpoint ? resumeFromEngine(checkpoint) : 0;
+  if (spec.init !== undefined && !checkpoint) {
     try {
       forEachInitialState(
         spec.init,
@@ -1749,12 +1785,7 @@ const searchStates = (
           try {
             outcome.result = visitInitialState(state);
           } catch (error) {
-            const replay = captureOutput(replayInit);
-            outcome.result = createFailureResult(
-              error,
-              { trace: [], traceOutput: replay.lines },
-              { initialState: state, ...replay.result, isInitial: true },
-            );
+            outcome.result = reportInitialFailure(error, state);
           }
           return outcome.result !== undefined;
         },
@@ -1784,7 +1815,6 @@ const searchStates = (
     }
   }
   if (outcome.result) return outcome.result;
-  if (checkpoint?.graph) resumeFromEngine(checkpoint);
   if (!checkpoint) {
     statistics.initialStates = {
       generated: runtime.initialStates,

@@ -98,6 +98,9 @@ export interface EngineGraph {
 // ENABLED of an action asks about.
 export interface EngineCheckpoint {
   graph?: EngineGraph;
+  // With a graph, how many initial states the search had generated when it found each initial
+  // state it kept, for the counts as the interpreter adds that state to its liveness checker.
+  initialCounts?: number[];
   createLiveOracle?: (
     getIndex: (state: Value[]) => number | undefined,
     getEnabledActions: EnabledActions,
@@ -301,6 +304,7 @@ export const runEngine = (input: EngineInput): EngineResult => {
   };
 
   // --- initial states ---
+  const initialCounts: number[] = [];
   const current = new Int32Array(width).fill(-1);
   const next = new Int32Array(width).fill(-1);
   // The initial predicate assigns the current state in place, so nothing caches by its epoch.
@@ -332,6 +336,7 @@ export const runEngine = (input: EngineInput): EngineResult => {
       if (!holdsAll(context.initialPredicates)) bail("a property violated in an initial state");
       if (isInModel) {
         addState(state, key!, slot, -1);
+        if (input.isRecordingGraph) initialCounts.push(initialGenerated);
         depth = 1;
       }
     }
@@ -603,6 +608,7 @@ export const runEngine = (input: EngineInput): EngineResult => {
       count,
       generated: initialGenerated,
       initialGenerated,
+      initialCounts,
       outDegrees: new Array<number>(OUT_DEGREE_BUCKETS).fill(0),
       states: stored,
       parents: parents.slice(0, count),

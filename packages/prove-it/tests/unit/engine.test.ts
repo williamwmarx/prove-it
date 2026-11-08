@@ -1017,14 +1017,14 @@ describe("the engine's hand-over to the interpreter part way through a search", 
   const checkBoth = async (lines: string[], config: string) => {
     const source = ["---- MODULE M ----", ...lines, "===="].join("\n");
     const checkReporting = async () => {
-      const kinds: string[] = [];
+      const reported: string[] = [];
       const result = await check({
         source,
         config,
-        onPrint: () => {},
-        onProgress: (progress) => kinds.push(progress.kind),
+        onPrint: (line) => reported.push(line),
+        onProgress: (progress) => reported.push(progress.kind),
       });
-      return { result, kinds };
+      return { result, reported };
     };
     process.env.PROVE_IT_ENGINE = "0";
     const reference = await checkReporting();
@@ -1039,7 +1039,10 @@ describe("the engine's hand-over to the interpreter part way through a search", 
       const reported = await checkReporting();
       expect(reported).toEqual(reference);
       const result = reported.result;
-      return { result, handedOver: engineLines.find((line) => line.includes("handed over")) };
+      return {
+        result,
+        handedOver: engineLines.find((line) => /handed over|found \d+ states/.test(line)),
+      };
     } finally {
       spy.mockRestore();
     }
@@ -1102,6 +1105,25 @@ describe("the engine's hand-over to the interpreter part way through a search", 
     );
     expect(handedOver).toMatch(/: deadlock$/);
     expect(result.status).toBe("error");
+  });
+
+  it("counts the initial states up to one the liveness checker fails on as without the engine", async () => {
+    // The constraint drops the initial states with y = 1, which TLC still counts as generated.
+    const { result, handedOver } = await checkBoth(
+      [
+        "EXTENDS Naturals, TLC",
+        "VARIABLES x, y",
+        "Init == x \\in 0..3 /\\ y \\in 0..1",
+        "Next == x' = (x + 1) % 4 /\\ y' = y",
+        "Spec == Init /\\ [][Next]_<<x, y>>",
+        'Counts == PrintT(<<TLCGet("level"), TLCGet("distinct"), TLCGet("generated")>>)',
+        "Live == <>(x = 1 /\\ ~ENABLED (Counts /\\ x' > x))",
+        "Bound == y = 0",
+      ],
+      "SPECIFICATION Spec\nPROPERTY Live\nCONSTRAINT Bound",
+    );
+    expect(handedOver).toMatch(/found \d+ states/);
+    expect([result.status, result.generatedStates, result.distinctStates]).toEqual(["error", 8, 4]);
   });
 
   it("rebuilds a trace through the engine's states at the levels TLCGet reads", async () => {
