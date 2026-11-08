@@ -159,8 +159,13 @@ const absent = expectedResults
   .filter((expected) => isSelected(expected) && !foundIds.has(expected.id))
   .map((expected) => expected.id);
 
+// What the engine says when PROVE_IT_STOP_AT stops it.
+const STOPPED_REASON = "stopped where PROVE_IT_STOP_AT asked";
+
 const comparisons: Comparison[] = [];
 const missing: string[] = [];
+// The runs --stop-at couldn't stop, since the engine handed over before the first state it could.
+const unforced: string[] = [];
 const results: unknown[] = [];
 
 const compare = (id: string, mode: OutputMode, pair: string, left: string, right: string) => {
@@ -210,19 +215,26 @@ const work = async (queue: { model: CorpusModel; mode: OutputMode }[], total: nu
       const isSearched = ["completed", "handed over"].includes(
         classifyEngineLine(engine.engineLine).engine,
       );
-      const stopAt =
-        isStopping && isSearched ? getStopState(model.id, engine.transcript) : undefined;
-      if (stopAt !== undefined) {
+      // The final count includes states the engine never expanded when it handed over, so a stop
+      // there wouldn't stop it: a run counts only when the engine says it stopped, and otherwise
+      // the stop moves to half as far, down to the first state.
+      let stopAt = isStopping && isSearched ? getStopState(model.id, engine.transcript) : undefined;
+      let isForced = false;
+      while (stopAt !== undefined && !isForced) {
         const stopped = await runCli(model, mode, {
           ...getBackendEnvironment(backend),
           PROVE_IT_ENGINE: "debug",
           PROVE_IT_STOP_AT: String(stopAt),
         });
-        outputs[`${backend} stopped at ${stopAt}`] = stopped;
-        modelComparisons.push(
-          compare(model.id, mode, `${backend}/stopped`, engine.transcript, stopped.transcript),
-        );
+        isForced = stopped.engineLine?.endsWith(STOPPED_REASON) ?? false;
+        if (isForced) {
+          outputs[`${backend} stopped at ${stopAt}`] = stopped;
+          modelComparisons.push(
+            compare(model.id, mode, `${backend}/stopped`, engine.transcript, stopped.transcript),
+          );
+        } else stopAt = stopAt > 0 ? Math.floor(stopAt / 2) : undefined;
       }
+      if (isStopping && isSearched && !isForced) unforced.push(`${backend} ${mode} ${model.id}`);
     }
     results.push({ id: model.id, mode, tlc, outputs, comparisons: modelComparisons });
     const unknown = modelComparisons.filter((comparison) => !comparison.isKnown);
@@ -277,6 +289,10 @@ if (missing.length > 0) {
     `\n${missing.length} runs have no TLC recording; record them with record-tlc.ts --stdout.`,
   );
   process.exitCode = 1;
+}
+if (unforced.length > 0) {
+  console.log(`\n${unforced.length} runs the engine handed over before any stop could take it:`);
+  for (const run of unforced.slice(0, 20)) console.log(`  ${run}`);
 }
 if (absent.length > 0) {
   console.log(
