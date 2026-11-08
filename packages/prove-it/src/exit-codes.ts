@@ -42,6 +42,7 @@ export const withLivenessExitCode = (
   return (
     checker && {
       branches: checker.branches,
+      atoms: checker.atoms,
       enabledAtoms: checker.enabledAtoms,
       addInitialState: (index, state, tracing) =>
         withErrorExitCode(() => checker.addInitialState(index, state, tracing)),

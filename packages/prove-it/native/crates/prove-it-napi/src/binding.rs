@@ -125,7 +125,7 @@ unsafe extern "C" fn abi_version(env: napi_env, _info: napi_callback_info) -> na
     }
 }
 
-// check(ir: Uint8Array): { status: "declined", reason: string }. It reads the IR in place.
+// check(ir: Uint8Array): { status: "declined", reason: string }. It decodes the IR in place.
 unsafe extern "C" fn check_model(env: napi_env, info: napi_callback_info) -> napi_value {
     unsafe {
         guard(env, || {
@@ -169,7 +169,7 @@ unsafe extern "C" fn check_model(env: napi_env, info: napi_callback_info) -> nap
             let mut result = null_mut();
             status(napi_create_object(env, &mut result))?;
             set_property(env, result, c"status", create_string(env, "declined")?)?;
-            set_property(env, result, c"reason", create_string(env, reason)?)?;
+            set_property(env, result, c"reason", create_string(env, &reason)?)?;
             Ok(result)
         })
     }
