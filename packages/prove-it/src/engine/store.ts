@@ -547,14 +547,15 @@ export const setElements = (set: number) => {
   return Array.from(heap.subarray(offset, offset + sizes[set]));
 };
 
-export let isMember = (element: number, set: number): boolean => {
+export let isMember = (element: number, set: number): boolean =>
+  findInBlock(payloads[set], sizes[set], element) !== -1 ||
+  (!isComparableWithMembers(element, set) && searchLikeTlc(element, set));
+
+// SetEnumValue.member binary-searches a set TLC has normalized with the element's compareTo, which
+// fails for values TLC can't compare, so a miss makes the same comparisons, in the same order.
+const searchLikeTlc = (element: number, set: number) => {
   const size = sizes[set];
   const offset = payloads[set];
-  if (findInBlock(offset, size, element) !== -1) return true;
-  if (isComparableWithMembers(element, set)) return false;
-  // SetEnumValue.member binary-searches a set TLC has normalized with the element's compareTo,
-  // which fails for values TLC can't compare, so a miss makes the same comparisons, in the same
-  // order.
   let low = 0;
   let high = size;
   while (low < high) {
@@ -678,8 +679,34 @@ const computeIsSafe = (left: Structure, right: Structure) => {
 };
 
 const isComparableWithMembers = (element: number, set: number) => {
+  const size = sizes[set];
+  if (size === 0) return true;
+  // A set holds one kind of value after any untyped model values, which come first, so a boolean,
+  // integer or string at both its ends is the kind of every member.
+  const kind = kinds[element];
+  const offset = payloads[set];
+  if (
+    kind < KIND_MODEL &&
+    kinds[heap[offset]] === kind &&
+    kinds[heap[offset + size - 1]] === kind
+  ) {
+    return true;
+  }
   const structure = getStructure(element);
-  const setStructure = structures[getStructure(set) - 1];
+  const setStructure = getStructure(set);
+  // A miss is often asked again of values of the same structures.
+  if (structure === lastSafety.element && setStructure === lastSafety.set) return lastSafety.isSafe;
+  const isSafeElement = getIsSafeElement(structure, structures[setStructure - 1]);
+  lastSafety.element = structure;
+  lastSafety.set = setStructure;
+  lastSafety.isSafe = isSafeElement;
+  return isSafeElement;
+};
+
+// The structures of the last miss's element and set, and whether it needed no search.
+const lastSafety = { element: 0, set: 0, isSafe: false };
+
+const getIsSafeElement = (structure: number, setStructure: Structure) => {
   const known = setStructure.isSafeElement.get(structure);
   if (known !== undefined) return known;
   const isSafeElement = setStructure.parts.every((member) => isSafe(structure, member));
@@ -688,6 +715,8 @@ const isComparableWithMembers = (element: number, set: number) => {
 };
 
 const resetStructures = () => {
+  lastSafety.element = 0;
+  lastSafety.set = 0;
   structures = [];
   structureNumbers = new Map();
   valueStructures = new Int32Array(0);
