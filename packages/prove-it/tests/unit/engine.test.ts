@@ -1033,3 +1033,216 @@ describe("the engine's answers to ENABLED", () => {
     expect(isFromSteps).toBe(false);
   });
 });
+
+describe("the engine's hand-over to the interpreter part way through a search", () => {
+  // Checks a model with the engine and without, comparing the results and what each reported in
+  // order, and returns what the engine said it did.
+  const checkBoth = async (lines: string[], config: string) => {
+    const source = ["---- MODULE M ----", ...lines, "===="].join("\n");
+    const checkReporting = async () => {
+      const reported: string[] = [];
+      const result = await check({
+        source,
+        config,
+        onPrint: (line) => reported.push(line),
+        onProgress: (progress) => reported.push(progress.kind),
+      });
+      return { result, reported };
+    };
+    process.env.PROVE_IT_ENGINE = "0";
+    const reference = await checkReporting();
+    process.env.PROVE_IT_ENGINE = "debug";
+    const engineLines: string[] = [];
+    const spy = spyOn(console, "error").mockImplementation((message: unknown) => {
+      if (typeof message === "string" && message.startsWith("[engine] ")) {
+        engineLines.push(message);
+      }
+    });
+    try {
+      const reported = await checkReporting();
+      expect(reported).toEqual(reference);
+      const result = reported.result;
+      return {
+        result,
+        handedOver: engineLines.find((line) => /handed over|found \d+ states/.test(line)),
+      };
+    } finally {
+      spy.mockRestore();
+    }
+  };
+  // A counter and a bit that flips below 3, so each level holds states the search hasn't expanded
+  // when it stops.
+  const counter = (move: string, extra: string[] = []) => [
+    "EXTENDS Naturals",
+    "VARIABLES x, y",
+    "vars == <<x, y>>",
+    "Init == x = 0 /\\ y = 0",
+    `Move == ${move} /\\ y' = y`,
+    "Flip == x < 3 /\\ y' = 1 - y /\\ x' = x",
+    "Next == Flip \\/ Move",
+    "Spec == Init /\\ [][Next]_vars /\\ WF_vars(Move)",
+    ...extra,
+  ];
+  const LIVE_CONFIG = "SPECIFICATION Spec\nPROPERTY Live";
+
+  it("checks the temporal properties on the graph found up to a deadlock", async () => {
+    const { result, handedOver } = await checkBoth(
+      counter("x < 3 /\\ x' = x + 1", ["Live == <>(x = 3)"]),
+      `${LIVE_CONFIG}\nCHECK_DEADLOCK TRUE`,
+    );
+    expect(handedOver).toMatch(/: deadlock$/);
+    expect(result.status).toBe("deadlock");
+  });
+
+  it("checks the temporal properties on the graph found up to an invariant violated", async () => {
+    const { result, handedOver } = await checkBoth(
+      counter("x' = (x + 1) % 4", ["Live == []<>(x = 0)", "Inv == x + y < 4"]),
+      `${LIVE_CONFIG}\nINVARIANT Inv`,
+    );
+    expect(handedOver).toMatch(/: an invariant violated$/);
+    expect(result.status).toBe("invariant-violation");
+  });
+
+  it("goes on from the graph found when the engine stops for what it doesn't build", async () => {
+    // The engine doesn't build an interval of more than 10^7 integers, which TLC tests membership
+    // in without building, so it stops once x = 1.
+    const move = "x' = (x + 1) % 4 /\\ 5 \\in 0..(x * 10000000 + 5)";
+    for (const [live, status] of [
+      ["[]<>(x = 0)", "success"],
+      ["<>[](y = 0)", "liveness-violation"],
+      ["[](x = 0 => <>(x = 2 /\\ ENABLED Move))", "success"],
+    ]) {
+      const { result, handedOver } = await checkBoth(
+        counter(move, [`Live == ${live}`]),
+        LIVE_CONFIG,
+      );
+      expect(handedOver).toMatch(/: an interval too large to build$/);
+      expect([live, result.status]).toEqual([live, status]);
+    }
+  });
+
+  it("reports an error the liveness checker meets in an initial state as without the engine", async () => {
+    const { result, handedOver } = await checkBoth(
+      counter("x < 3 /\\ x' = x + 1", ["Live == <>~ENABLED (x' > x)"]),
+      LIVE_CONFIG,
+    );
+    expect(handedOver).toMatch(/: deadlock$/);
+    expect(result.status).toBe("error");
+  });
+
+  it("counts the initial states up to one the liveness checker fails on as without the engine", async () => {
+    // The constraint drops the initial states with y = 1, which TLC still counts as generated.
+    const { result, handedOver } = await checkBoth(
+      [
+        "EXTENDS Naturals, TLC",
+        "VARIABLES x, y",
+        "Init == x \\in 0..3 /\\ y \\in 0..1",
+        "Next == x' = (x + 1) % 4 /\\ y' = y",
+        "Spec == Init /\\ [][Next]_<<x, y>>",
+        'Counts == PrintT(<<TLCGet("level"), TLCGet("distinct"), TLCGet("generated")>>)',
+        "Live == <>(x = 1 /\\ ~ENABLED (Counts /\\ x' > x))",
+        "Bound == y = 0",
+      ],
+      "SPECIFICATION Spec\nPROPERTY Live\nCONSTRAINT Bound",
+    );
+    expect(handedOver).toMatch(/found \d+ states/);
+    expect([result.status, result.generatedStates, result.distinctStates]).toEqual(["error", 8, 4]);
+  });
+
+  it("rebuilds a trace through the engine's states at the levels TLCGet reads", async () => {
+    const levels = [
+      "EXTENDS Naturals, TLC",
+      "VARIABLES x, y",
+      'Init == x = 0 /\\ y = TLCGet("level")',
+      'Next == TLCGet("level") > 0 /\\ x < 3 /\\ x\' = x + 1 /\\ y\' = TLCGet("level")\'',
+      "Spec == Init /\\ [][Next]_<<x, y>>",
+      "Live == <>(x = 3)",
+      "Inv == x < 3",
+    ];
+    for (const [config, expected] of [
+      ["SPECIFICATION Spec\nPROPERTY Live", "deadlock"],
+      ["INIT Init\nNEXT Next\nINVARIANT Inv", "invariant-violation"],
+    ]) {
+      const { result, handedOver } = await checkBoth(levels, config);
+      expect(handedOver).toBeDefined();
+      expect([config, result.status, result.violation?.trace.length]).toEqual([
+        config,
+        expected,
+        4,
+      ]);
+    }
+  });
+
+  it("asks the engine whether a successor is among the states it found", async () => {
+    // From (2, 0), Flip goes to (2, 1), found from (1, 1) before, then Move breaks the invariant.
+    const { result, handedOver } = await checkBoth(
+      counter("x' = x + 1", ["Inv == x < 3"]),
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+    );
+    expect(handedOver).toMatch(/: an invariant violated$/);
+    expect(result.status).toBe("invariant-violation");
+    expect(result.violation?.trace).toHaveLength(4);
+  });
+
+  it("counts a new successor the engine found before it stopped as new", async () => {
+    const { result, handedOver } = await checkBoth(
+      [
+        "EXTENDS Naturals",
+        "VARIABLE x",
+        "Init == x = 0",
+        "Next == x' = x + 1 \\/ x' = x + 1 \\/ x' = x + 10",
+        "Inv == x < 10",
+      ],
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+    );
+    expect(handedOver).toMatch(/: an invariant violated$/);
+    expect([result.status, result.distinctStates]).toEqual(["invariant-violation", 3]);
+  });
+
+  it("finds a successor among the states it found by the view or the symmetry TLC fingerprints", async () => {
+    const symmetric = [
+      "EXTENDS Naturals, TLC",
+      "CONSTANTS A, B",
+      "VARIABLES x, owner",
+      "Init == x = 0 /\\ owner = A",
+      "Next == \\/ x' = x + 1 /\\ owner' = owner",
+      "        \\/ owner' \\in {A, B} /\\ x' = x",
+      "Inv == x < 3",
+      "View == x",
+      "Perms == Permutations({A, B})",
+    ];
+    const config = "CONSTANTS A = A\nB = B\nINIT Init\nNEXT Next\nINVARIANT Inv";
+    for (const reduction of ["VIEW View", "SYMMETRY Perms"]) {
+      const { result, handedOver } = await checkBoth(symmetric, `${config}\n${reduction}`);
+      expect(handedOver).toMatch(/: an invariant violated$/);
+      expect([reduction, result.status]).toEqual([reduction, "invariant-violation"]);
+    }
+  });
+
+  it("takes over the engine's states to find a successor holding a set it keeps lazy", async () => {
+    // SUBSET {1} is the set {{}, {1}}, which the interpreter holds unenumerated.
+    const { result, handedOver } = await checkBoth(
+      [
+        "EXTENDS Naturals",
+        "VARIABLES x, s",
+        "Init == x = 0 /\\ s = {}",
+        "Next == \\/ s' = SUBSET {1} /\\ x' = x",
+        "        \\/ s' = {{}, {1}} /\\ x' = x",
+        "        \\/ x' = x + 1 /\\ s' = s",
+        "Inv == x < 3",
+      ],
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+    );
+    expect(handedOver).toMatch(/: an invariant violated$/);
+    expect(result.status).toBe("invariant-violation");
+  });
+
+  it("takes over the engine's states once it goes past the one the engine stopped in", async () => {
+    const { result, handedOver } = await checkBoth(
+      counter("x' = (x + 1) % 4 /\\ 5 \\in 0..(x * 10000000 + 5)", ["Inv == x < 4"]),
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+    );
+    expect(handedOver).toMatch(/: an interval too large to build$/);
+    expect(result.status).toBe("success");
+  });
+});
