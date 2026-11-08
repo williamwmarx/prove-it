@@ -7,6 +7,7 @@
 // per variable that changed.
 
 import { EngineInvariantError } from "../errors";
+import { BYTE_MOD_HIGH, BYTE_MOD_LOW, INITIAL_HIGH, INITIAL_LOW } from "../tlc/fingerprint";
 import { getStringRank } from "../values";
 import { getFingerprintSetting } from "./settings";
 import {
@@ -25,37 +26,14 @@ import {
   TRUE,
 } from "./store";
 
-const IRREDUCIBLE_POLYNOMIAL = 0x911498ae0e66bad6n;
-
-const BYTE_MOD_TABLE = (() => {
-  const powers: bigint[] = [];
-  for (let power = 1n << 63n; powers.length < 72;) {
-    powers.push(power);
-    power = (power >> 1n) ^ ((power & 1n) === 0n ? 0n : IRREDUCIBLE_POLYNOMIAL);
-  }
-  return Array.from({ length: 256 }, (_, byte) =>
-    powers
-      .slice(64, 72)
-      .reverse()
-      .reduce((value, power, bit) => ((byte >> bit) & 1 ? value ^ power : value), 0n),
-  );
-})();
-const MOD_HIGH = Int32Array.from(BYTE_MOD_TABLE, (entry) =>
-  Number(BigInt.asIntN(32, entry >> 32n)),
-);
-const MOD_LOW = Int32Array.from(BYTE_MOD_TABLE, (entry) => Number(BigInt.asIntN(32, entry)));
-
-const INITIAL_HIGH = Number(BigInt.asIntN(32, IRREDUCIBLE_POLYNOMIAL >> 32n));
-const INITIAL_LOW = Number(BigInt.asIntN(32, IRREDUCIBLE_POLYNOMIAL));
-
 // The fingerprint being extended byte by byte.
 let high = 0;
 let low = 0;
 
 const extendByte = (byte: number) => {
   const index = (byte ^ low) & 0xff;
-  low = ((low >>> 8) | (high << 24)) ^ MOD_LOW[index];
-  high = (high >>> 8) ^ MOD_HIGH[index];
+  low = ((low >>> 8) | (high << 24)) ^ BYTE_MOD_LOW[index];
+  high = (high >>> 8) ^ BYTE_MOD_HIGH[index];
 };
 
 const extendInt = (word: number) => {
