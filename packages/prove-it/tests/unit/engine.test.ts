@@ -593,10 +593,129 @@ describe("the engine", () => {
     }
   });
 
+  it("answers membership in a set it doesn't build as TLC does, for every kind of value", async () => {
+    const sets = [
+      "[{1} -> {1}]",
+      '[{"a"} -> {1}]',
+      "[a : {1}]",
+      "{1} \\X {1}",
+      "SUBSET {1}",
+      "Seq({1})",
+      // UNION {S} of a set the engine can't build tests membership in S.
+      "UNION {[{1} -> Nat]}",
+      "UNION {[a : Nat]}",
+      "UNION {Seq({1})}",
+    ];
+    const values = ["3", '"s"', "{1}", "<<1>>", "[a |-> 1]", "[b |-> 1]", "M", "A_m"];
+    const run = async (source: string, config: string) => {
+      try {
+        const result = await check({ source, config, onPrint: () => {} });
+        return [result.status, result.failure?.message];
+      } catch (error) {
+        return ["thrown", (error as Error).message];
+      }
+    };
+    for (const set of sets) {
+      for (const value of values) {
+        // The invariant reads x, so it is checked on each state rather than once as a constant.
+        const source = `---- MODULE M ----\nEXTENDS Naturals, Sequences\nCONSTANT M, A_m\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1\nInv == x >= 0 => ~(${value} \\in ${set})\n====`;
+        const config =
+          "CONSTANT M = M\nCONSTANT A_m = A_m\nINIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE";
+        delete process.env.PROVE_IT_ENGINE;
+        const actual = await run(source, config);
+        process.env.PROVE_IT_ENGINE = "0";
+        const reference = await run(source, config);
+        expect([value, set, ...actual]).toEqual([value, set, ...reference]);
+      }
+    }
+  });
+
+  it("evaluates a set's parts before testing membership in it, as TLC does", async () => {
+    // TLC makes the set's value, evaluating its parts, before it tests membership, so a part that
+    // fails fails the test even when the element's kind or shape already decides it.
+    const memberships = [
+      "<<>> \\notin [{1} -> {1 \\div x}]",
+      "<<>> \\notin UNION {[{1} -> {1 \\div x}]}",
+      "<<>> \\notin [{1 \\div x} -> Nat]",
+      "<<>> \\notin [{1} -> [{2} -> {1 \\div x}]]",
+      "[b |-> 1] \\notin [a : {1 \\div x}]",
+      "[a |-> 1, b |-> 2] \\notin [b : {2 \\div x}, a : {1 \\div x}]",
+      "<<1>> \\notin {1} \\X {1 \\div x}",
+      "{} \\in SUBSET {1 \\div x}",
+      "<<>> \\in Seq({1 \\div x})",
+      // A part evaluated under one binding is evaluated again under the next.
+      "\\A y \\in {0, 1} : [c |-> 1] \\notin [a : {1 \\div (y - 1)}]",
+      "<<>> \\notin [{1} -> {z \\in {0, 1} : [c |-> 1] \\notin [a : {1 \\div (z - 1)}]}]",
+    ];
+    for (const membership of memberships) {
+      const source = `---- MODULE M ----\nEXTENDS Naturals, Sequences\nVARIABLE x\nInit == x = 0\nNext == UNCHANGED x\nInv == ${membership}\n====`;
+      const config = "INIT Init\nNEXT Next\nINVARIANT Inv";
+      delete process.env.PROVE_IT_ENGINE;
+      const result = await check({ source, config, onPrint: () => {} });
+      process.env.PROVE_IT_ENGINE = "0";
+      const reference = await check({ source, config, onPrint: () => {} });
+      expect([membership, result.status, result.failure?.message]).toEqual([
+        membership,
+        reference.status,
+        reference.failure?.message,
+      ]);
+      expect(result.status).toBe("error");
+    }
+  });
+
+  it("evaluates the parts of a set that definitions share once per membership test", async () => {
+    // Each level names the one below twice, so evaluating its parts on every use took 2^28 runs.
+    const levels = Array.from(
+      { length: 28 },
+      (_, level) => `S${level + 1} == [a : S${level}, b : S${level}]`,
+    );
+    const { result, lines } = await checkInEngine(
+      `VARIABLE x\nS0 == {x}\n${levels.join("\n")}\nInit == x = 0\nNext == UNCHANGED x\nInv == [c |-> 1] \\notin S28`,
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+    );
+    expect(result.status).toBe("success");
+    expect(lines).toEqual([expect.stringMatching(/^\[engine\] checked 1 states/)]);
+  });
+
   it("reads Nat as the set the model substitutes for it", async () => {
     const { result, lines } = await checkInEngine(
       "EXTENDS Integers\nVARIABLE x\nInit == x = 0\nNext == UNCHANGED x\nInv == -1 \\in Nat",
       "CONSTANT Nat <- Int\nINIT Init\nNEXT Next\nINVARIANT Inv",
+    );
+    expect(result.status).toBe("success");
+    expect(lines).toEqual([expect.stringMatching(/^\[engine\] checked 1 states/)]);
+  });
+
+  it("tests membership in the union of one set it can't build", async () => {
+    // As in the Disruptor's RingBuffer, whose slots hold integers or NULL.
+    const spec = (value: string) =>
+      [
+        "EXTENDS Integers",
+        "CONSTANTS NULL, Other",
+        "VARIABLE slots",
+        "Init == slots = [i \\in 0..1 |-> NULL]",
+        `Next == \\E i \\in 0..1 : slots[i] = NULL /\\ slots' = [slots EXCEPT ![i] = ${value}]`,
+        "TypeOk == slots \\in UNION { [0..1 -> Int \\union {NULL}] }",
+      ].join("\n");
+    const config =
+      "CONSTANTS NULL = NULL\nOther = Other\nINIT Init\nNEXT Next\nINVARIANT TypeOk\nCHECK_DEADLOCK FALSE";
+    const typed = await checkInEngine(spec("-3"), config);
+    expect([typed.result.status, typed.result.distinctStates]).toEqual(["success", 4]);
+    expect(typed.lines).toEqual([expect.stringMatching(/^\[engine\] checked 4 states/)]);
+    const mistyped = await checkInEngine(spec("Other"), config);
+    expect(mistyped.result.status).toBe("invariant-violation");
+    expect(mistyped.lines).toEqual([expect.stringMatching(/an invariant violated$/)]);
+  });
+
+  it("compiles each level of nested UNION {S} once", async () => {
+    // Compiling the one element twice per level, for the set and for membership, took 2^24 compiles.
+    const nested = Array.from({ length: 24 }).reduce<string>(
+      (set) => `UNION {${set}}`,
+      "[{1} -> Int]",
+    );
+    const { result, lines } = await checkInEngine(
+      `EXTENDS Integers\nVARIABLE x\nInit == x = 0\nNext == UNCHANGED x\nInv == [i \\in {1} |-> 5] \\in ${nested}`,
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
     );
     expect(result.status).toBe("success");
     expect(lines).toEqual([expect.stringMatching(/^\[engine\] checked 1 states/)]);

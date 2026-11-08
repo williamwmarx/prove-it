@@ -281,7 +281,7 @@ export const isModelId = (id: number) => kinds[id] === KIND_MODEL;
 // A model value named like A_x is typed: TLC compares it only with model values of its type or
 // untyped ones, and fails on anything else. Returns the type's character code, or 0 if untyped.
 let modelTypes: number[] = [];
-const getModelType = (id: number) => {
+export const getModelType = (id: number) => {
   const index = payloads[id];
   const known = modelTypes[index];
   if (known !== undefined) return known;
