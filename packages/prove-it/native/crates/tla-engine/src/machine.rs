@@ -346,3 +346,33 @@ impl<'p> Machine<'p> {
             .expect("a recursive function without its domain")
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_machine_starts_with_only_its_programs_empty_tables() {
+        let program = Program {
+            memo_widths: vec![1, 3],
+            ..Program::default()
+        };
+        let mut store = Store::new();
+        store.reset(std::iter::empty::<&[u16]>());
+        let mut machine = Machine::new(&program, store);
+        let table = machine.tables[0].width();
+        machine.tables[0].set(&[7], 9);
+        assert_eq!(table, 1);
+        let mut store = Store::new();
+        store.reset(std::iter::empty::<&[u16]>());
+        let fresh = Machine::new(&program, store);
+        let statistics = fresh.memo_statistics();
+        assert_eq!(
+            statistics
+                .iter()
+                .map(|table| (table.width, table.size, table.lookups))
+                .collect::<Vec<_>>(),
+            [(1, 0, 0), (3, 0, 0)]
+        );
+    }
+}

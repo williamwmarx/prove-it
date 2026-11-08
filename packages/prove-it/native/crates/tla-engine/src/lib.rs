@@ -6,6 +6,7 @@
 pub mod compile;
 pub mod context;
 pub mod footprint;
+pub mod live;
 pub mod machine;
 pub mod memo;
 pub mod search;

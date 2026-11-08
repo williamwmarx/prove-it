@@ -5,7 +5,8 @@
 use std::collections::HashSet;
 
 use tla_ir::{
-    ConfigName, Definition, DefinitionForm, Index, Ir, NodeId, NodeKind, Resolution, Startup,
+    AtomKind, ConfigName, Definition, DefinitionForm, EnabledActions, Index, Ir, NodeId, NodeKind,
+    Resolution, Startup,
 };
 use tla_values::Bail;
 use tla_values::store::{FALSE, Outcome, TRUE};
@@ -38,6 +39,34 @@ pub struct EngineContext {
     pub initial_predicates: Vec<Eval>,
     /// The value a VIEW maps the current state to, which the search tells states apart by.
     pub view: Option<Eval>,
+    /// The liveness checker's atoms, compiled, when the search records its graph.
+    pub atoms: Vec<Atom>,
+}
+
+/// How the engine answers a liveness atom on its states, or why it can't, in which case the
+/// interpreter answers it (`createLiveOracle` in `live.ts`).
+pub enum Atom {
+    State(Eval),
+    /// An action, false of a step that leaves the subscript unchanged.
+    Action {
+        action: Eval,
+        subscript: Option<Eval>,
+    },
+    /// ENABLED, run, or answered from the steps the search took when the action is made of TLC's
+    /// actions of the next-state relation.
+    Enabled {
+        run: Result<Eval, String>,
+        steps: Option<EnabledSteps>,
+    },
+    Unknown(String),
+}
+
+/// ENABLED <<A>>_v holds of a state the search ran TLC's actions from just when one of the steps A
+/// takes changes v.
+pub struct EnabledSteps {
+    pub subscript: Eval,
+    /// The positions of TLC's actions A splits into, or `None` for all of them.
+    pub actions: Option<Vec<bool>>,
 }
 
 /// Whether a compiled predicate holds, failing on a value that isn't a boolean.
@@ -331,6 +360,15 @@ impl EngineContext {
                 (steps.len() == actions.len()).then_some(steps)
             }
         };
+        let atoms = if model.is_recording_graph {
+            model
+                .atoms
+                .iter()
+                .map(|atom| compile_atom(compiler, ir, atom))
+                .collect()
+        } else {
+            Vec::new()
+        };
         let initial_invariants = invariants
             .iter()
             .zip(&invariant_conjuncts)
@@ -355,6 +393,104 @@ impl EngineContext {
             action_properties,
             initial_predicates,
             view,
+            atoms,
         })
     }
+}
+
+fn resolve(ir: &Ir, node: NodeId) -> &NodeKind {
+    let mut id = node;
+    loop {
+        match &ir.nodes.arena[id as usize].kind {
+            NodeKind::Reference(target) => id = *target,
+            kind => return kind,
+        }
+    }
+}
+
+fn describe(error: CompileError) -> String {
+    match error {
+        CompileError::Bail(reason) | CompileError::Decline(reason) => reason,
+    }
+}
+
+// An expression of an atom, compiled in the atom's scope. What TLCGet reads holds only while the
+// search runs.
+fn compile_live(
+    compiler: &mut Compiler<'_>,
+    node: NodeId,
+    scope: Option<Index>,
+) -> Result<Compiled, String> {
+    match compiler.compile_in_scope(node, scope) {
+        Ok(Some(compiled)) if compiled.reads_search() => {
+            Err("unsupported: TLCGet after the search".into())
+        }
+        Ok(Some(compiled)) => Ok(compiled),
+        Ok(None) => Err("a scope the engine can't translate".into()),
+        Err(error) => Err(describe(error)),
+    }
+}
+
+// A subscript the checker compares in each state of a step: a state function.
+fn compile_subscript(
+    compiler: &mut Compiler<'_>,
+    node: NodeId,
+    scope: Option<Index>,
+) -> Result<Eval, String> {
+    let compiled = compile_live(compiler, node, scope)?;
+    if !compiled.footprint.primes.is_empty() {
+        return Err("unsupported: a subscript that reads a primed variable".into());
+    }
+    Ok(compiled.eval)
+}
+
+fn compile_atom(compiler: &mut Compiler<'_>, ir: &Ir, atom: &tla_ir::Atom) -> Atom {
+    let scope = atom.scope;
+    let compiled = match &atom.kind {
+        AtomKind::State => compile_live(compiler, atom.expression, scope)
+            .map(|compiled| Atom::State(compiled.eval)),
+        AtomKind::Action { unchanged } => (|| {
+            let subscript = match unchanged {
+                None => None,
+                Some(node) => match resolve(ir, *node) {
+                    NodeKind::Unchanged(inner) => Some(compile_subscript(compiler, *inner, scope)?),
+                    _ => return Err("a subscript the engine doesn't read".to_string()),
+                },
+            };
+            let action = compile_live(compiler, atom.expression, scope)?.eval;
+            Ok(Atom::Action { action, subscript })
+        })(),
+        AtomKind::Enabled { actions } => {
+            let run = match compiler.compile_enabled_in_scope(atom.expression, scope) {
+                Ok(Some(compiled)) => Ok(compiled.eval),
+                Ok(None) => Err("a scope the engine can't translate".to_string()),
+                Err(error) => Err(describe(error)),
+            };
+            let steps = match (resolve(ir, atom.expression), actions) {
+                (_, EnabledActions::Unknown) => None,
+                (NodeKind::AngleAction { subscript, .. }, actions) => {
+                    compile_subscript(compiler, *subscript, scope)
+                        .ok()
+                        .map(|subscript| EnabledSteps {
+                            subscript,
+                            actions: match actions {
+                                EnabledActions::Some(positions) => {
+                                    let length =
+                                        positions.iter().max().map_or(0, |&last| last as usize + 1);
+                                    let mut taken = vec![false; length];
+                                    for &position in positions {
+                                        taken[position as usize] = true;
+                                    }
+                                    Some(taken)
+                                }
+                                _ => None,
+                            },
+                        })
+                }
+                _ => None,
+            };
+            Ok(Atom::Enabled { run, steps })
+        }
+    };
+    compiled.unwrap_or_else(Atom::Unknown)
 }

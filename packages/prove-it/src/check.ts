@@ -4,7 +4,7 @@ import { getMemoStatistics } from "./engine/compile";
 import { toEngineProperties } from "./engine/context";
 import { toValue as toEngineValue } from "./engine/convert";
 import { type IrOutcome, lowerToIr } from "./engine/ir";
-import { checkNatively, toBailout, toEngineResult } from "./engine/native";
+import { checkNatively, toEngineResult, toStop } from "./engine/native";
 import { type EngineCheckpoint, type EngineGraph, isBailout, runEngine } from "./engine/search";
 import {
   getEngineBackend,
@@ -1726,10 +1726,14 @@ const searchStates = (
       }
     }
     try {
-      if (native?.status === "stopped") throw toBailout(native, environment.variables.length);
+      const width = environment.variables.length;
+      const atoms = liveness?.atoms ?? [];
+      if (native?.status === "stopped" || native?.status === "invariant") {
+        throw toStop(native, width, atoms);
+      }
       const result =
         native?.status === "complete"
-          ? toEngineResult(native)
+          ? toEngineResult(native, width, atoms)
           : runEngine({
               config,
               environment,

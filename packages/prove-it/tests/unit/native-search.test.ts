@@ -19,6 +19,7 @@ const SETTINGS = [
   "PROVE_IT_STATE_LOG",
   "PROVE_IT_STOP_AT",
   "PROVE_IT_FP_VERIFY",
+  "PROVE_IT_LIVE_CHECK",
 ] as const;
 const saved = Object.fromEntries(SETTINGS.map((name) => [name, process.env[name]]));
 
@@ -253,6 +254,46 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     expect(await compareWithInterpreter(body, config)).toContainEqual(
       expect.stringMatching(COMPLETE),
     );
+  });
+
+  it("records the graph and answers the temporal properties' predicates", async () => {
+    const body = [
+      "EXTENDS Naturals",
+      "VARIABLES x, y",
+      "vars == <<x, y>>",
+      "Init == x = 0 /\\ y = 0",
+      "Inc == x < 3 /\\ x' = x + 1 /\\ y' = y",
+      "Flip == y' = 1 - y /\\ x' = x",
+      "Reset == x = 3 /\\ x' = 0 /\\ y' = y",
+      "Next == Inc \\/ Flip \\/ Reset",
+      "Spec == Init /\\ [][Next]_vars /\\ WF_vars(Inc) /\\ WF_vars(Reset)",
+      "Returns == []<>(x = 0)",
+      "Steps == []<><<Inc>>_vars",
+      "Settles == <>[](y = 0)",
+    ];
+    for (const [properties, status] of [
+      ["PROPERTY Returns\nPROPERTY Steps", "success"],
+      ["PROPERTY Settles", "liveness-violation"],
+    ] as const) {
+      const config = `SPECIFICATION Spec\n${properties}`;
+      const lines = await compareWithInterpreter(body, config, { PROVE_IT_LIVE_CHECK: "1" });
+      expect(lines).toContainEqual(expect.stringMatching(COMPLETE));
+      expect(lines).toContainEqual(
+        expect.stringMatching(/^\[engine\] found 8 states in \d+ ms; the interpreter checks/),
+      );
+      expect(lines).toContain("[engine] answers ENABLED from the steps its search took");
+      const stopped = await compareWithInterpreter(body, config, { PROVE_IT_STOP_AT: "3" });
+      expect(stopped).toContainEqual(
+        expect.stringMatching(/^\[engine\] native: stopped: stopped where PROVE_IT_STOP_AT asked/),
+      );
+      const options = { source: toModule(body), config };
+      const native = await run(options, {
+        PROVE_IT_ENGINE: "debug",
+        PROVE_IT_ENGINE_BACKEND: "rust",
+      });
+      expect(native.result.status).toBe(status);
+    }
+    await compareStateLogs(body, "SPECIFICATION Spec\nPROPERTY Returns", false);
   });
 
   it("hands over a violated invariant, deadlock and a failed action property", async () => {

@@ -16,6 +16,7 @@ use tla_values::{Bail, Id, Store};
 
 use crate::compile::{CompileError, Compiler, DISTINCT_SLOT, LEVEL_SLOT, NEXT_LEVEL_SLOT, Options};
 use crate::context::{EngineContext, holds_all, holds_all_changed};
+use crate::live::{LiveGraph, Table, answer_atoms};
 use crate::machine::{Machine, UNASSIGNED};
 use crate::symmetry::Canonicalizer;
 
@@ -33,6 +34,10 @@ pub struct Settings {
     pub is_fingerprint_verified: bool,
     /// PROVE_IT_STATE_LOG: the file the search writes its states to.
     pub state_log: Option<String>,
+    /// PROVE_IT_LIVE_CHECK=1: take each state's steps through the next-state relation as well as
+    /// through TLC's actions, and run each ENABLED answered from the steps, and fail where the two
+    /// differ.
+    pub is_live_checked: bool,
 }
 
 /// What a search tells its caller as it runs, as `runEngine`'s callbacks.
@@ -67,13 +72,36 @@ pub struct Checkpoint {
     /// What TLC fingerprints in place of each state when that isn't the state, its view, with
     /// the width of each.
     pub keys: Option<(EncodedStates, u32)>,
+    /// The steps of the states expanded, for the interpreter to replay and check temporal
+    /// properties on, when the search records them.
+    pub graph: Option<GraphCheckpoint>,
+}
+
+/// The steps of a search (`EngineGraph`): for each of the first `expanded` states, how many
+/// successors it generated, how many of them were new, and the states, in the model, its steps went
+/// to in the order generated, each labelled with its action when the search took TLC's actions.
+pub struct GraphCheckpoint {
+    pub expanded: u64,
+    pub successor_counts: Vec<u32>,
+    pub new_counts: Vec<u32>,
+    pub edge_offsets: Vec<u32>,
+    pub edges: Vec<u32>,
+    pub labels: Option<Vec<u32>>,
+    /// How many initial states the search had generated when it found each it kept.
+    pub initial_counts: Vec<u64>,
+    /// Whether the steps are those TLC's ENABLED finds: no shortcut passed a walk.
+    pub is_enabled_exact: bool,
+    /// The answers to each of the liveness checker's atoms.
+    pub tables: Vec<Table>,
 }
 
 pub enum SearchOutcome {
     /// The engine doesn't take the model, for this reason, before producing any state.
     Declined(String),
     Complete {
-        counts: Counts,
+        counts: Box<Counts>,
+        /// With temporal properties, the whole search for the interpreter to replay.
+        checkpoint: Option<Box<Checkpoint>>,
         /// TLC's fingerprint of each state's key, in the order found.
         fingerprints: Vec<u64>,
         value_count: usize,
@@ -85,9 +113,31 @@ pub enum SearchOutcome {
     /// checkpoint: the interpreter then starts from scratch.
     Stopped {
         reason: String,
-        checkpoint: Option<Checkpoint>,
+        checkpoint: Option<Box<Checkpoint>>,
         collisions: u64,
     },
+    /// The engine broke one of its own invariants, or a self-check failed
+    /// (`EngineInvariantError`).
+    Invariant(String),
+}
+
+/// What PROVE_IT_LIVE_CHECK finds when TLC's actions take other steps than the next-state relation.
+const OTHER_STEPS: &str = "the actions took other steps than the next-state relation";
+
+// Past this many states the search hands its graph over and the interpreter goes on, since the
+// interpreter checks temporal properties on the graph as it grows and may find a violation early
+// in a state space the engine would search without end.
+const MAXIMUM_GRAPH_STATES: usize = 4_000_000;
+
+// The steps recorded so far.
+#[derive(Default)]
+struct Graph {
+    successor_counts: Vec<u32>,
+    new_counts: Vec<u32>,
+    edge_offsets: Vec<u32>,
+    edges: Vec<u32>,
+    labels: Option<Vec<u32>>,
+    initial_counts: Vec<u64>,
 }
 
 /// The fingerprints found, each with the index of its state: open addressing, keyed by TLC's
@@ -227,6 +277,11 @@ struct Search<'r> {
     next_level_id: Id,
     fingerprints: Fingerprints,
     canonicalizer: Option<Canonicalizer>,
+    graph: Option<Graph>,
+    // The position of the action whose steps the search is taking.
+    action: u32,
+    // Under PROVE_IT_LIVE_CHECK, the steps the next-state relation took from the state.
+    checked: Option<Vec<Vec<Id>>>,
 }
 
 impl Search<'_> {
@@ -303,6 +358,9 @@ impl Search<'_> {
                 let key = std::mem::take(&mut self.key);
                 self.states.add(&state, &key, fingerprint, slot, -1);
                 self.key = key;
+                if let Some(graph) = &mut self.graph {
+                    graph.initial_counts.push(self.initial_generated);
+                }
                 self.depth = 1;
             }
         }
@@ -328,6 +386,11 @@ impl Search<'_> {
     ) -> Outcome<()> {
         if machine.next().contains(&UNASSIGNED) {
             return Err(Bail("a successor that isn't complete"));
+        }
+        if let Some(checked) = &self.checked
+            && checked.get(self.successors as usize).map(Vec::as_slice) != Some(machine.next())
+        {
+            return Err(Bail(OTHER_STEPS));
         }
         self.successors += 1;
         self.generated += 1;
@@ -371,6 +434,17 @@ impl Search<'_> {
                 return Err(Bail("an invariant violated"));
             }
         }
+        if let Some(graph) = &mut self.graph
+            && is_in_model
+        {
+            graph.edges.push(match found {
+                Some(Ok(index)) => index,
+                _ => self.states.count() as u32,
+            });
+            if let Some(labels) = &mut graph.labels {
+                labels.push(self.action);
+            }
+        }
         for (action, unchanged) in &context.action_properties {
             if !crate::context::holds(machine, action)?
                 && !crate::context::holds(machine, unchanged)?
@@ -412,11 +486,6 @@ fn describe(error: CompileError) -> String {
 /// expressions and values, so its caller runs it on a thread with a deep stack.
 pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> SearchOutcome {
     let model = &ir.model;
-    if model.is_recording_graph {
-        return SearchOutcome::Declined(
-            "temporal properties, whose graph the native engine doesn't record yet".into(),
-        );
-    }
     let ranked: Vec<Vec<u16>> = ir.texts[..ir.ranked_count as usize]
         .iter()
         .map(|text| text.encode_utf16().collect())
@@ -485,7 +554,20 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         next_level_id: 0,
         fingerprints: Fingerprints::new(),
         canonicalizer,
+        graph: model.is_recording_graph.then(|| Graph {
+            edge_offsets: vec![0],
+            labels: context.actions.as_ref().map(|_| Vec::new()),
+            ..Graph::default()
+        }),
+        action: 0,
+        checked: None,
     };
+    // The actions take each state's steps when the search labels them for ENABLED.
+    let actions = context
+        .actions
+        .as_ref()
+        .filter(|_| model.is_recording_graph);
+    let is_live_checked = settings.is_live_checked && actions.is_some();
     let mut out_degrees = [0u64; OUT_DEGREE_BUCKETS];
     let mut checkpoint_count = 0usize;
     let mut checkpoint_generated = 0u64;
@@ -528,6 +610,9 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             if Some(expanding) == settings.stop_at {
                 return Err(Bail("stopped where PROVE_IT_STOP_AT asked"));
             }
+            if search.graph.is_some() && search.states.count() > MAXIMUM_GRAPH_STATES {
+                return Err(Bail("a state graph too large to keep"));
+            }
             search.current.clear();
             search
                 .current
@@ -541,11 +626,39 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             search.next_level_id = machine.store.int(search.level as i64 + 1)?;
             search.set_expanded_current(&mut machine);
             machine.set_slot(NEXT_LEVEL_SLOT, search.next_level_id);
-            (context.next)(&mut machine, &mut |machine: &mut Machine<'_>| {
-                search.visit_successor(machine, &context)
-            })?;
+            match actions {
+                None => (context.next)(&mut machine, &mut |machine: &mut Machine<'_>| {
+                    search.visit_successor(machine, &context)
+                })?,
+                Some(actions) => {
+                    if is_live_checked {
+                        let mut checked = Vec::new();
+                        (context.next)(&mut machine, &mut |machine: &mut Machine<'_>| {
+                            checked.push(machine.next().to_vec());
+                            Ok(())
+                        })?;
+                        search.checked = Some(checked);
+                    }
+                    for (position, action) in actions.iter().enumerate() {
+                        search.action = position as u32;
+                        action(&mut machine, &mut |machine: &mut Machine<'_>| {
+                            search.visit_successor(machine, &context)
+                        })?;
+                    }
+                    if let Some(checked) = search.checked.take()
+                        && checked.len() as u64 != search.successors
+                    {
+                        return Err(Bail(OTHER_STEPS));
+                    }
+                }
+            }
             if search.successors == 0 && model.check_deadlock {
                 return Err(Bail("deadlock"));
+            }
+            if let Some(graph) = &mut search.graph {
+                graph.successor_counts.push(search.successors as u32);
+                graph.new_counts.push(search.new_states as u32);
+                graph.edge_offsets.push(graph.edges.len() as u32);
             }
             out_degrees[(search.new_states as usize).min(OUT_DEGREE_BUCKETS - 1)] += 1;
             if expanding & 0xff == 0 && Instant::now() >= progress_at {
@@ -567,24 +680,83 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         .iter()
         .map(|&text| &*ir.texts[text as usize])
         .collect();
-    let store = &machine.store;
     let collisions = search.states.collisions;
+    let is_enabled_exact = !machine.is_past_walk;
+    // The first `count` states and the steps of the first `expanded`, for the interpreter to
+    // replay from the initial states on, with the answers to the liveness checker's atoms.
+    let graph_checkpoint = |machine: &mut Machine<'_>,
+                            search: &Search<'_>,
+                            expanded: usize,
+                            count: usize,
+                            expanding: usize|
+     -> Result<Checkpoint, &'static str> {
+        let graph = search.graph.as_ref().expect("a graph");
+        let states = &search.states;
+        let edge_count = graph.edge_offsets[expanded] as usize;
+        let live = LiveGraph {
+            states: &states.ids[..count * width],
+            width,
+            count,
+            expanded,
+            edge_offsets: &graph.edge_offsets[..=expanded],
+            edges: &graph.edges[..edge_count],
+            labels: graph.labels.as_ref().map(|labels| &labels[..edge_count]),
+            is_enabled_exact,
+        };
+        let tables = answer_atoms(machine, &live, &context.atoms, settings.is_live_checked)?;
+        Ok(Checkpoint {
+            expanding: expanding as u64,
+            count: count as u64,
+            generated: search.initial_generated,
+            initial_generated: search.initial_generated,
+            out_degrees: [0; OUT_DEGREE_BUCKETS],
+            states: states.encode(&machine.store, &states.ids, width, count),
+            parents: states.parents[..count].to_vec(),
+            keys: None,
+            graph: Some(GraphCheckpoint {
+                expanded: expanded as u64,
+                successor_counts: graph.successor_counts[..expanded].to_vec(),
+                new_counts: graph.new_counts[..expanded].to_vec(),
+                edge_offsets: graph.edge_offsets[..=expanded].to_vec(),
+                edges: graph.edges[..edge_count].to_vec(),
+                labels: graph
+                    .labels
+                    .as_ref()
+                    .map(|labels| labels[..edge_count].to_vec()),
+                initial_counts: graph.initial_counts.clone(),
+                is_enabled_exact,
+                tables,
+            }),
+        })
+    };
     match result {
+        Err(bail) if bail.0 == OTHER_STEPS => SearchOutcome::Invariant(OTHER_STEPS.into()),
         Ok(()) => {
+            let count = search.states.count();
             if let Some(path) = &settings.state_log {
                 write_state_log(
                     path,
                     &variables,
                     &search.states,
-                    store,
-                    search.states.count(),
-                    None,
-                    search.states.count(),
+                    &machine.store,
+                    &Logged {
+                        count,
+                        stopped: None,
+                        expanding: count,
+                        graph: search.graph.as_ref(),
+                    },
                 );
             }
+            let checkpoint = match search.graph {
+                Some(_) => match graph_checkpoint(&mut machine, &search, count, count, 0) {
+                    Ok(checkpoint) => Some(Box::new(checkpoint)),
+                    Err(reason) => return SearchOutcome::Invariant(reason.into()),
+                },
+                None => None,
+            };
             let counts = Counts {
                 generated: search.generated,
-                distinct: search.states.count() as u64,
+                distinct: count as u64,
                 depth: if search.generated == 0 {
                     0
                 } else {
@@ -595,8 +767,9 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 out_degrees,
             };
             SearchOutcome::Complete {
-                counts,
-                value_count: store.value_count(),
+                counts: Box::new(counts),
+                checkpoint,
+                value_count: machine.store.value_count(),
                 collisions,
                 fingerprints: search.states.fingerprints,
             }
@@ -607,37 +780,56 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             collisions,
         },
         Err(bail) => {
-            let states = &search.states;
             let count = checkpoint_count;
-            if let Some(path) = &settings.state_log {
+            let is_kept = search.graph.is_none() || count <= MAXIMUM_GRAPH_STATES;
+            if let Some(path) = settings.state_log.as_ref().filter(|_| is_kept) {
                 write_state_log(
                     path,
                     &variables,
-                    states,
-                    store,
-                    count,
-                    Some(bail.0),
-                    search.expanding,
+                    &search.states,
+                    &machine.store,
+                    &Logged {
+                        count,
+                        stopped: Some(bail.0),
+                        expanding: search.expanding,
+                        graph: None,
+                    },
                 );
             }
-            let checkpoint = Checkpoint {
-                expanding: search.expanding as u64,
-                count: count as u64,
-                generated: checkpoint_generated,
-                initial_generated: search.initial_generated,
-                out_degrees,
-                states: states.encode(store, &states.ids, width, count),
-                parents: states.parents[..count].to_vec(),
-                keys: states.key_width.map(|key_width| {
-                    (
-                        states.encode(store, &states.keys, key_width, count),
-                        key_width as u32,
-                    )
-                }),
+            let checkpoint = if search.graph.is_none() {
+                let states = &search.states;
+                let store = &machine.store;
+                Some(Box::new(Checkpoint {
+                    expanding: search.expanding as u64,
+                    count: count as u64,
+                    generated: checkpoint_generated,
+                    initial_generated: search.initial_generated,
+                    out_degrees,
+                    states: states.encode(store, &states.ids, width, count),
+                    parents: states.parents[..count].to_vec(),
+                    keys: states.key_width.map(|key_width| {
+                        (
+                            states.encode(store, &states.keys, key_width, count),
+                            key_width as u32,
+                        )
+                    }),
+                    graph: None,
+                }))
+            } else if !is_kept {
+                // The interpreter searches a graph too large to keep from the start, since its
+                // liveness checker may stop in the first states, before it has taken all of them
+                // over.
+                None
+            } else {
+                let expanding = search.expanding;
+                match graph_checkpoint(&mut machine, &search, expanding, count, expanding) {
+                    Ok(checkpoint) => Some(Box::new(checkpoint)),
+                    Err(reason) => return SearchOutcome::Invariant(reason.into()),
+                }
             };
             SearchOutcome::Stopped {
                 reason: bail.0.to_string(),
-                checkpoint: Some(checkpoint),
+                checkpoint,
                 collisions,
             }
         }
@@ -686,16 +878,25 @@ fn write_encoded(out: &mut String, encoded: &EncodedStates) {
     out.push(']');
 }
 
+// What a state log holds of a search: its first `count` states, why it stopped and where, and
+// the steps that label each state with the action that first reached it.
+struct Logged<'g> {
+    count: usize,
+    stopped: Option<&'g str>,
+    expanding: usize,
+    graph: Option<&'g Graph>,
+}
+
 // PROVE_IT_STATE_LOG: the states found, in TLC's order, as `state-log.ts` writes them.
 fn write_state_log(
     path: &str,
     variables: &[&str],
     states: &States,
     store: &Store,
-    count: usize,
-    stopped: Option<&str>,
-    expanding: usize,
+    logged: &Logged<'_>,
 ) {
+    let (count, stopped, expanding, graph) =
+        (logged.count, logged.stopped, logged.expanding, logged.graph);
     let Ok(file) = std::fs::File::create(path) else {
         return;
     };
@@ -732,11 +933,29 @@ fn write_state_log(
         let _ = write!(line, ",\"keyWidth\":{key_width}");
     }
     line.push_str("}\n");
+    // The action that first reached each state, when the search labels its steps.
+    let mut actions = vec![-1i64; count];
+    if let Some(Graph {
+        edges,
+        labels: Some(labels),
+        ..
+    }) = graph
+    {
+        let mut is_reached = vec![false; count];
+        for (edge, &target) in edges.iter().enumerate() {
+            let target = target as usize;
+            if target >= count || is_reached[target] || states.parents[target] == -1 {
+                continue;
+            }
+            is_reached[target] = true;
+            actions[target] = i64::from(labels[edge]);
+        }
+    }
     let width = states.width;
-    for index in 0..count {
+    for (index, action) in actions.iter().enumerate() {
         let _ = write!(
             line,
-            "[{index},{},-1,\"{:016x}\",",
+            "[{index},{},{action},\"{:016x}\",",
             states.parents[index], states.fingerprints[index]
         );
         let encoded = states.encode(store, &states.ids[index * width..], width, 1);

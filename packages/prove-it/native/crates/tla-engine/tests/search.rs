@@ -27,6 +27,7 @@ fn run(path: &str, settings: &Settings) -> SearchOutcome {
 fn describe(outcome: &SearchOutcome) -> String {
     match outcome {
         SearchOutcome::Declined(reason) => format!("declined: {reason}"),
+        SearchOutcome::Invariant(reason) => format!("invariant: {reason}"),
         SearchOutcome::Complete { counts, .. } => format!(
             "complete: {} generated, {} distinct, depth {}",
             counts.generated, counts.distinct, counts.depth
@@ -84,6 +85,63 @@ fn completes_with_tlc_counts() {
             "{path}"
         );
     }
+}
+
+#[test]
+fn stops_where_tlc_finds_deadlock() {
+    for path in [
+        "tlc/tlatools/org.lamport.tlatools/test-model/TLCGetLevel",
+        "kafka/transactions/diary/01_InitPidRequest/tlaplus/kafka_transactions",
+    ] {
+        let outcome = describe(&run(path, &Settings::default()));
+        assert!(
+            outcome.starts_with("stopped: deadlock before state "),
+            "{path}: {outcome}"
+        );
+    }
+}
+
+// With temporal properties, a search hands over its graph and the answers to each atom the
+// liveness checker asks about, for every state and step.
+#[test]
+fn records_the_graph_and_answers_the_atoms() {
+    let outcome = run(
+        "examples/specifications/ReadersWriters/MC",
+        &Settings {
+            is_live_checked: true,
+            ..Settings::default()
+        },
+    );
+    let SearchOutcome::Complete {
+        counts,
+        checkpoint: Some(checkpoint),
+        ..
+    } = outcome
+    else {
+        panic!("ReadersWriters didn't complete with a graph");
+    };
+    let graph = checkpoint.graph.expect("a graph");
+    assert_eq!(graph.expanded, counts.distinct);
+    assert_eq!(
+        graph.edges.len() as u64,
+        counts.generated - counts.initial_generated
+    );
+    assert_eq!(
+        graph
+            .successor_counts
+            .iter()
+            .map(|&count| u64::from(count))
+            .sum::<u64>(),
+        graph.edges.len() as u64
+    );
+    assert!(graph.is_enabled_exact);
+    assert!(graph.labels.is_some());
+    assert!(!graph.tables.is_empty());
+    for table in &graph.tables {
+        assert_eq!(table.unknown, None);
+        assert!(table.answers.iter().all(|&answer| answer < 2));
+    }
+    assert!(graph.tables.iter().any(|table| table.is_from_steps));
 }
 
 #[test]

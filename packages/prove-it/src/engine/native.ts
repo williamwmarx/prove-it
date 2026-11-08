@@ -3,13 +3,16 @@
 // as the engine IR and searches it as runEngine does, or declines it before producing any state,
 // and the TypeScript engine checks what it declines.
 
+import { EngineInvariantError } from "../errors";
+import type { LiveExpression } from "../tableau";
 import { createStateDecoder, type EncodedStates } from "../transfer";
 import type { Value } from "../values";
 import { fromEnumeratedValue, fromValue } from "./convert";
 import { resetFingerprints } from "./fingerprint";
 import type { IrOutcome } from "./ir";
+import type { LiveOracle } from "./live";
 import type { EngineCheckpoint, EngineInput, EngineResult } from "./search";
-import { getEngineAddon, getEnvironmentFlag, getStopAt } from "./settings";
+import { getEngineAddon, getEnvironmentFlag, getStopAt, reportEngine } from "./settings";
 import { Bailout, resetStore } from "./store";
 
 // The addon's test hooks into its store, which native-store.ts calls (binding/store.rs).
@@ -50,9 +53,44 @@ interface NativeAddon extends NativeStoreHooks {
   ) => NativeOutcome;
 }
 
+// The steps of a search the native engine recorded for temporal properties, with its answers to
+// each of the liveness checker's atoms (binding/check.rs).
+interface NativeGraph {
+  expanded: number;
+  // Each expanded state's successors, then its new states, then the edge offsets, one more.
+  counts: Int32Array;
+  edges: Int32Array;
+  labels?: Int32Array;
+  initialCounts: Float64Array;
+  isEnabledExact: number;
+  // Per atom: 1 or 0 for each state, or for an action each step and then each state's stuttering
+  // step, and 2 where the interpreter answers.
+  tables: Uint8Array[];
+  fromSteps: Float64Array;
+  // Why the engine answers an atom not at all, or "".
+  unknown: string[];
+}
+
+// The search up to the state the native engine stopped at, or all of it with temporal properties.
+interface NativeCheckpoint {
+  // The state being expanded, the states before it, the generated and initial generated counts,
+  // and the collisions; only the collisions where nothing is handed over.
+  counts: Float64Array;
+  outDegrees?: Float64Array;
+  parents?: Int32Array;
+  words?: Int32Array;
+  strings?: string[];
+  keyWords?: Int32Array;
+  keyStrings?: string[];
+  keyWidth?: number;
+  graph?: NativeGraph;
+}
+
 // What the native engine did with a model (binding/check.rs).
 export type NativeOutcome =
   | { status: "unavailable" | "declined"; reason: string }
+  // A self-check failed.
+  | { status: "invariant"; reason: string }
   | {
       status: "complete";
       reason: string;
@@ -60,22 +98,9 @@ export type NativeOutcome =
       counts: Float64Array;
       outDegrees: Float64Array;
       fingerprints: BigInt64Array;
+      checkpoint?: NativeCheckpoint;
     }
-  | {
-      status: "stopped";
-      reason: string;
-      // The state being expanded, the states before it, the generated and initial generated
-      // counts, and the collisions; only the collisions for a stop in the initial states, which
-      // hands over nothing, so the interpreter starts from scratch.
-      counts: Float64Array;
-      outDegrees?: Float64Array;
-      parents?: Int32Array;
-      words?: Int32Array;
-      strings?: string[];
-      keyWords?: Int32Array;
-      keyStrings?: string[];
-      keyWidth?: number;
-    };
+  | ({ status: "stopped"; reason: string } & NativeCheckpoint);
 
 // The contract between this loader and the addon, ABI_VERSION in its lib.rs.
 const ABI_VERSION = 2;
@@ -167,6 +192,7 @@ export const checkNatively = (
     getEnvironmentFlag("PROVE_IT_EPOCH_CHECK") ? 1 : 0,
     getStopAt(),
     getEnvironmentFlag("PROVE_IT_FP_VERIFY") ? 1 : 0,
+    getEnvironmentFlag("PROVE_IT_LIVE_CHECK") ? 1 : 0,
   );
   return addon.check(
     lowered.ir,
@@ -200,42 +226,107 @@ const decodeStates = (words: Int32Array, strings: string[], width: number, count
   return ids;
 };
 
-// A search the native engine completed, as runEngine returns one.
-export const toEngineResult = (
-  outcome: Extract<NativeOutcome, { status: "complete" }>,
-): EngineResult => {
-  const counts = outcome.counts;
-  return {
-    generatedStates: counts[0],
-    distinctStates: counts[1],
-    initialStates: { generated: counts[2], distinct: counts[3] },
-    depth: counts[4],
-    valueCount: counts[5],
-    outDegrees: Array.from(outcome.outDegrees),
-    getFingerprints: () => outcome.fingerprints,
-    threads: 1,
-    checkpoint: undefined,
+// Answers the liveness checker from the native engine's tables, as live.ts's oracle answers it
+// from the TypeScript engine's states, and leaves the rest to the interpreter.
+const createNativeOracle = (
+  graph: NativeGraph,
+  edgeOffsets: Int32Array,
+  atoms: LiveExpression[],
+  getIndex: (state: Value[]) => number | undefined,
+): LiveOracle => {
+  const positions = new Map(atoms.map((atom, position) => [atom, position]));
+  const edgeCount = graph.edges.length;
+  const reported = new Set<number>();
+  const report = { isReported: false };
+  const toAnswer = (answer: number | undefined) =>
+    answer === 1 ? true : answer === 0 ? false : undefined;
+  return (expression, state, next) => {
+    const position = positions.get(expression);
+    const index = position === undefined ? undefined : getIndex(state);
+    if (position === undefined || index === undefined) return undefined;
+    const unknown = graph.unknown[position];
+    if (unknown !== "") {
+      if (!reported.has(position)) {
+        reported.add(position);
+        reportEngine(`leaves a temporal predicate to the interpreter: ${unknown}`);
+      }
+      return undefined;
+    }
+    const table = graph.tables[position];
+    if (expression.kind !== "Action") {
+      const isFromSteps = graph.fromSteps[position] === 1;
+      if (
+        expression.kind === "Enabled" &&
+        index < graph.expanded &&
+        !report.isReported &&
+        (isFromSteps || graph.isEnabledExact === 0)
+      ) {
+        report.isReported = true;
+        reportEngine(
+          isFromSteps
+            ? "answers ENABLED from the steps its search took"
+            : "runs each action ENABLED asks about: its search evaluated conjuncts TLC's ENABLED walks",
+        );
+      }
+      return toAnswer(table[index]);
+    }
+    const nextIndex = next && getIndex(next);
+    if (nextIndex === undefined) return undefined;
+    if (nextIndex === index) return toAnswer(table[edgeCount + index]);
+    if (index >= graph.expanded) return undefined;
+    for (let edge = edgeOffsets[index]; edge < edgeOffsets[index + 1]; edge++) {
+      if (graph.edges[edge] === nextIndex) return toAnswer(table[edge]);
+    }
+    return undefined;
   };
 };
 
-// A search the native engine stopped, as the Bailout runEngine throws, with the states decoded
-// into the engine's store for the interpreter to take over.
-export const toBailout = (
-  outcome: Extract<NativeOutcome, { status: "stopped" }>,
+// The search the native engine handed over, with the states decoded into the engine's store for
+// the interpreter to take over, or undefined when it handed over nothing.
+const toCheckpoint = (
+  native: NativeCheckpoint,
   width: number,
-): Bailout => {
-  const bailout = new Bailout(outcome.reason);
-  if (!outcome.parents || !outcome.words || !outcome.strings || !outcome.outDegrees) return bailout;
+  atoms: LiveExpression[],
+): EngineCheckpoint | undefined => {
+  if (!native.parents || !native.words || !native.strings || !native.outDegrees) return undefined;
   resetStore();
   resetFingerprints();
-  const counts = outcome.counts;
+  const counts = native.counts;
   const count = counts[1];
-  const states = decodeStates(outcome.words, outcome.strings, width, count);
-  const keyWidth = outcome.keyWidth;
+  const states = decodeStates(native.words, native.strings, width, count);
+  const base = {
+    expanding: counts[0],
+    count,
+    generated: counts[2],
+    initialGenerated: counts[3],
+    outDegrees: Array.from(native.outDegrees),
+    states,
+    parents: native.parents,
+    width,
+  };
+  const graph = native.graph;
+  if (graph) {
+    const expanded = graph.expanded;
+    const edgeOffsets = graph.counts.subarray(2 * expanded);
+    return {
+      ...base,
+      initialCounts: Array.from(graph.initialCounts),
+      graph: {
+        expanded,
+        successorCounts: graph.counts.subarray(0, expanded),
+        newCounts: graph.counts.subarray(expanded, 2 * expanded),
+        edgeOffsets,
+        edges: graph.edges,
+        labels: graph.labels,
+      },
+      createLiveOracle: (getIndex) => createNativeOracle(graph, edgeOffsets, atoms, getIndex),
+    };
+  }
+  const keyWidth = native.keyWidth;
   const keys =
     keyWidth === undefined
       ? undefined
-      : decodeStates(outcome.keyWords!, outcome.keyStrings!, keyWidth, count);
+      : decodeStates(native.keyWords!, native.keyStrings!, keyWidth, count);
   const stored = keys ?? states;
   const storedWidth = keyWidth ?? width;
   // The index of each state's key, built when the interpreter first asks whether a successor is
@@ -259,15 +350,8 @@ export const toBailout = (
     }
     return getIndices().get(ids.join()) ?? -1;
   };
-  const checkpoint: EngineCheckpoint = {
-    expanding: counts[0],
-    count,
-    generated: counts[2],
-    initialGenerated: counts[3],
-    outDegrees: Array.from(outcome.outDegrees),
-    states,
-    parents: outcome.parents,
-    width,
+  return {
+    ...base,
     ...(keys && { keys, keyWidth }),
     findState: (key) => {
       try {
@@ -278,6 +362,38 @@ export const toBailout = (
       }
     },
   };
-  bailout.checkpoint = checkpoint;
+};
+
+// A search the native engine completed, as runEngine returns one: with temporal properties, the
+// whole search for the interpreter to replay.
+export const toEngineResult = (
+  outcome: Extract<NativeOutcome, { status: "complete" }>,
+  width: number,
+  atoms: LiveExpression[],
+): EngineResult => {
+  const counts = outcome.counts;
+  return {
+    generatedStates: counts[0],
+    distinctStates: counts[1],
+    initialStates: { generated: counts[2], distinct: counts[3] },
+    depth: counts[4],
+    valueCount: counts[5],
+    outDegrees: Array.from(outcome.outDegrees),
+    getFingerprints: () => outcome.fingerprints,
+    threads: 1,
+    checkpoint: outcome.checkpoint && toCheckpoint(outcome.checkpoint, width, atoms),
+  };
+};
+
+// What the native engine's search stopping throws, as runEngine throws it: a Bailout with the
+// search for the interpreter to go on from, or an EngineInvariantError where a self-check failed.
+export const toStop = (
+  outcome: Extract<NativeOutcome, { status: "stopped" | "invariant" }>,
+  width: number,
+  atoms: LiveExpression[],
+): Error => {
+  if (outcome.status === "invariant") return new EngineInvariantError(outcome.reason);
+  const bailout = new Bailout(outcome.reason);
+  bailout.checkpoint = toCheckpoint(outcome, width, atoms);
   return bailout;
 };

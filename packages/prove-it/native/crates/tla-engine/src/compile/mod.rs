@@ -334,6 +334,17 @@ struct Argument {
     expression: NodeId,
     context: Context,
     compiled: RefCell<[Option<Compiled>; 2]>,
+    /// For a binding of an instance's scope whose expression closes over that scope: the scope
+    /// that binds it, which its context reaches.
+    own_scope: RefCell<Weak<Scope>>,
+}
+
+// The context an argument's expression compiles in.
+fn argument_context(argument: &Argument) -> Context {
+    match argument.own_scope.borrow().upgrade() {
+        Some(scope) => argument.context.with_scope(Some(scope)),
+        None => argument.context.clone(),
+    }
 }
 
 struct LazyFunction {
@@ -390,14 +401,17 @@ fn bind(scope: &Option<Rc<Scope>>, name: TextId, binding: Binding) -> Option<Rc<
     }))
 }
 
-// The context an operator binding's body sees: a RECURSIVE one's binds the operator itself.
+// The context an operator binding's body sees: a RECURSIVE one's, or one of an instance's scope
+// that closes over that scope, binds the operator itself.
 fn operator_context(operator: &Operator) -> Context {
     if operator.is_recursive {
-        operator
+        return operator
             .context
-            .with_scope(operator.own_scope.borrow().upgrade())
-    } else {
-        operator.context.clone()
+            .with_scope(operator.own_scope.borrow().upgrade());
+    }
+    match operator.own_scope.borrow().upgrade() {
+        Some(scope) => operator.context.with_scope(Some(scope)),
+        None => operator.context.clone(),
     }
 }
 
@@ -1000,8 +1014,10 @@ impl<'a> Compiler<'a> {
                 if let Some(known) = &argument.compiled.borrow()[index] {
                     return Ok(known.clone());
                 }
-                let compiled =
-                    self.compile(argument.expression, &argument.context.primed(is_primed))?;
+                let compiled = self.compile(
+                    argument.expression,
+                    &argument_context(argument).primed(is_primed),
+                )?;
                 argument.compiled.borrow_mut()[index] = Some(compiled.clone());
                 Ok(compiled)
             }
@@ -1194,6 +1210,7 @@ impl<'a> Compiler<'a> {
                             expression: definition.body,
                             context: definition_context,
                             compiled: RefCell::new([None, None]),
+                            own_scope: RefCell::new(Weak::new()),
                         })),
                     );
                 }
@@ -1243,6 +1260,7 @@ impl<'a> Compiler<'a> {
                     expression: argument,
                     context: argument_context.clone(),
                     compiled: RefCell::new([None, None]),
+                    own_scope: RefCell::new(Weak::new()),
                 }))
             };
             scope = bind(&scope, param.name, binding);
@@ -1378,9 +1396,8 @@ impl<'a> Compiler<'a> {
                 context,
             );
         }
-        let base = operator
-            .context
-            .primed(context.is_primed || operator.context.is_primed);
+        let base =
+            operator_context(operator).primed(context.is_primed || operator.context.is_primed);
         let callee = self.bind_arguments(&operator.params, args, context, base)?;
         let compiled = match operator.body {
             OperatorBody::Node(body) => self.compile(body, &callee)?,

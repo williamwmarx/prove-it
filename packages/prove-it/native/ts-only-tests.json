@@ -1,0 +1,7 @@
+[
+  {
+    "test": "tests/unit/engine.test.ts > the engine between checks > keeps only the current check's memo tables",
+    "reason": "It reads the TypeScript engine's memo tables through getMemoStatistics.",
+    "counterpart": "cargo test -p tla-engine machine::tests::a_machine_starts_with_only_its_programs_empty_tables"
+  }
+]

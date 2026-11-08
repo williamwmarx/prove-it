@@ -22,8 +22,12 @@ afterEach(() => {
   else process.env.PROVE_IT_LIVE_CHECK = liveCheck;
 });
 
+// Tests of the TypeScript engine's internals, which native/ts-only-tests.json lists with their Rust
+// counterparts, don't apply when the native engine searches.
+const isTypeScriptOnly = process.env.PROVE_IT_ENGINE_BACKEND === "rust";
+
 describe("the engine between checks", () => {
-  it("keeps only the current check's memo tables", async () => {
+  it.skipIf(isTypeScriptOnly)("keeps only the current check's memo tables", async () => {
     const options = {
       source: [
         "---- MODULE M ----",
@@ -602,7 +606,13 @@ describe("the engine", () => {
       const counts: number[] = [];
       const lines: string[] = [];
       const spy = spyOn(console, "error").mockImplementation((message: unknown) => {
-        if (typeof message === "string" && message.startsWith("[engine] ")) lines.push(message);
+        if (
+          typeof message === "string" &&
+          message.startsWith("[engine] ") &&
+          !message.startsWith("[engine] native: ")
+        ) {
+          lines.push(message);
+        }
       });
       try {
         await check({

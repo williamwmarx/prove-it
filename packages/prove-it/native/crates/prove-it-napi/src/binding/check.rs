@@ -4,22 +4,32 @@
 //! initial states (generated, distinct), 3 progress (generated, distinct, queued, depth).
 //!
 //! `settings` is an Int32Array: whether the memo tables are off, whether epoch caches are checked,
-//! the state to stop before (-1 for none), and whether fingerprints are verified. `stateLog` is
+//! the state to stop before (-1 for none), whether fingerprints are verified, and whether the
+//! liveness answers are checked (PROVE_IT_LIVE_CHECK). `stateLog` is
 //! the file to write the state log to, or "". It returns:
 //! - `{ status: "declined", reason }`;
-//! - `{ status: "complete", counts, outDegrees, fingerprints }`, with `counts` a Float64Array of
-//!   the generated, distinct and initial counts, the depth, the values and the collisions;
+//! - `{ status: "complete", counts, outDegrees, fingerprints[, checkpoint] }`, with `counts` a
+//!   Float64Array of the generated, distinct and initial counts, the depth, the values and the
+//!   collisions, and with temporal properties the checkpoint of the whole search;
 //! - `{ status: "stopped", reason, counts, outDegrees, parents, words, strings[, keyWords,
 //!   keyStrings, keyWidth] }`, with `counts` the state being expanded, the states before it, the
 //!   generated and initial generated counts and the collisions, and the states and keys in
-//!   `transfer.ts`'s encoding; or, for a stop in the initial states, which hands over no
-//!   checkpoint, `{ status: "stopped", reason, counts }` with only the collisions.
+//!   `transfer.ts`'s encoding, and with temporal properties `graph`; or, for a stop that hands over
+//!   no checkpoint, `{ status: "stopped", reason, counts }` with only the collisions;
+//! - `{ status: "invariant", reason }` where a self-check failed.
+//!
+//! A graph is `{ expanded, counts, edges, labels?, initialCounts, isEnabledExact, tables,
+//! fromSteps, unknown }`: `counts` an Int32Array of each expanded state's successors, new states
+//! and edge offset (with one more offset), `tables` a Uint8Array per atom of the liveness
+//! checker, `fromSteps` whether each ENABLED atom is answered from the steps, and `unknown` why
+//! the engine answers an atom not at all, or "".
 
 use std::ffi::{CStr, c_void};
 use std::ptr::null_mut;
 
 use crate::{Event, SearchOutcome, Settings, check_on_thread};
 use tla_engine::Options;
+use tla_engine::search::{Checkpoint, GraphCheckpoint};
 use tla_values::transfer::EncodedStates;
 
 use super::store::{
@@ -32,6 +42,7 @@ use super::{
     napi_value, set_property, status,
 };
 
+const NAPI_UINT8_ARRAY: i32 = 1;
 const NAPI_FLOAT64_ARRAY: i32 = 8;
 
 unsafe extern "C" {
@@ -101,6 +112,128 @@ fn to_numbers(values: &[u64]) -> Vec<f64> {
     values.iter().map(|&value| value as f64).collect()
 }
 
+// Sets a checkpoint's properties, as above, on an object.
+unsafe fn set_checkpoint(
+    env: napi_env,
+    object: napi_value,
+    checkpoint: &Checkpoint,
+    collisions: u64,
+) -> Result<(), Thrown> {
+    unsafe {
+        let numbers = [
+            checkpoint.expanding,
+            checkpoint.count,
+            checkpoint.generated,
+            checkpoint.initial_generated,
+            collisions,
+        ];
+        set(
+            env,
+            object,
+            c"counts",
+            create_numbers(env, &to_numbers(&numbers))?,
+        )?;
+        set(
+            env,
+            object,
+            c"outDegrees",
+            create_numbers(env, &to_numbers(&checkpoint.out_degrees))?,
+        )?;
+        set(
+            env,
+            object,
+            c"parents",
+            create_int32s(env, &checkpoint.parents)?,
+        )?;
+        set_encoded(env, object, c"words", c"strings", &checkpoint.states)?;
+        if let Some((keys, key_width)) = &checkpoint.keys {
+            set_encoded(env, object, c"keyWords", c"keyStrings", keys)?;
+            set(
+                env,
+                object,
+                c"keyWidth",
+                create_number(env, f64::from(*key_width))?,
+            )?;
+        }
+        if let Some(graph) = &checkpoint.graph {
+            set(env, object, c"graph", create_graph(env, graph)?)?;
+        }
+        Ok(())
+    }
+}
+
+fn to_words(values: &[u32]) -> Vec<i32> {
+    values.iter().map(|&value| value as i32).collect()
+}
+
+unsafe fn create_graph(env: napi_env, graph: &GraphCheckpoint) -> Result<napi_value, Thrown> {
+    unsafe {
+        let mut object = null_mut();
+        status(napi_create_object(env, &mut object))?;
+        set(
+            env,
+            object,
+            c"expanded",
+            create_number(env, graph.expanded as f64)?,
+        )?;
+        let mut counts = to_words(&graph.successor_counts);
+        counts.extend(to_words(&graph.new_counts));
+        counts.extend(to_words(&graph.edge_offsets));
+        set(env, object, c"counts", create_int32s(env, &counts)?)?;
+        set(
+            env,
+            object,
+            c"edges",
+            create_int32s(env, &to_words(&graph.edges))?,
+        )?;
+        if let Some(labels) = &graph.labels {
+            set(
+                env,
+                object,
+                c"labels",
+                create_int32s(env, &to_words(labels))?,
+            )?;
+        }
+        set(
+            env,
+            object,
+            c"initialCounts",
+            create_numbers(env, &to_numbers(&graph.initial_counts))?,
+        )?;
+        set(
+            env,
+            object,
+            c"isEnabledExact",
+            create_number(env, f64::from(u8::from(graph.is_enabled_exact)))?,
+        )?;
+        let mut tables = null_mut();
+        status(napi_create_array_with_length(
+            env,
+            graph.tables.len(),
+            &mut tables,
+        ))?;
+        let mut unknown = Vec::with_capacity(graph.tables.len());
+        let mut from_steps = Vec::with_capacity(graph.tables.len());
+        for (index, table) in graph.tables.iter().enumerate() {
+            let answers = create_typed(env, NAPI_UINT8_ARRAY, &table.answers)?;
+            status(napi_set_element(env, tables, index as u32, answers))?;
+            unknown.push(
+                table
+                    .unknown
+                    .as_deref()
+                    .unwrap_or("")
+                    .encode_utf16()
+                    .collect::<Vec<u16>>(),
+            );
+            from_steps.push(f64::from(u8::from(table.is_from_steps)));
+        }
+        set(env, object, c"tables", tables)?;
+        set(env, object, c"unknown", create_texts(env, &unknown)?)?;
+        set(env, object, c"fromSteps", create_numbers(env, &from_steps)?)?;
+        Ok(object)
+    }
+}
+
 // check(ir: Uint8Array, settings: Int32Array, stateLog: string, report: Function)
 pub(super) unsafe extern "C" fn check_model(env: napi_env, info: napi_callback_info) -> napi_value {
     unsafe {
@@ -108,8 +241,15 @@ pub(super) unsafe extern "C" fn check_model(env: napi_env, info: napi_callback_i
             let [ir, settings, state_log, report] = get_arguments::<4>(env, info)?;
             let bytes = super::get_bytes(env, ir)?;
             let words = get_int32s(env, settings, "the settings")?;
-            let [memo_off, epoch_checked, stop_at, fingerprint_verified] = words[..] else {
-                return Err(wrong("the settings must hold four numbers".into()));
+            let [
+                memo_off,
+                epoch_checked,
+                stop_at,
+                fingerprint_verified,
+                live_checked,
+            ] = words[..]
+            else {
+                return Err(wrong("the settings must hold five numbers".into()));
             };
             if type_of(env, state_log)? != NAPI_STRING {
                 return Err(wrong("the state log must be a string".into()));
@@ -123,6 +263,7 @@ pub(super) unsafe extern "C" fn check_model(env: napi_env, info: napi_callback_i
                 stop_at: usize::try_from(stop_at).ok(),
                 is_fingerprint_verified: fingerprint_verified != 0,
                 state_log: (!state_log.is_empty()).then_some(state_log),
+                is_live_checked: live_checked != 0,
             };
             let mut undefined = null_mut();
             status(napi_get_undefined(env, &mut undefined))?;
@@ -172,10 +313,17 @@ pub(super) unsafe extern "C" fn check_model(env: napi_env, info: napi_callback_i
                 }
                 SearchOutcome::Complete {
                     counts,
+                    checkpoint,
                     fingerprints,
                     value_count,
                     collisions,
                 } => {
+                    if let Some(checkpoint) = &checkpoint {
+                        let mut object = null_mut();
+                        status(napi_create_object(env, &mut object))?;
+                        set_checkpoint(env, object, checkpoint, collisions)?;
+                        set(env, result, c"checkpoint", object)?;
+                    }
                     set(env, result, c"status", create_string(env, "complete")?)?;
                     set(env, result, c"reason", create_string(env, "")?)?;
                     let numbers = [
@@ -213,50 +361,19 @@ pub(super) unsafe extern "C" fn check_model(env: napi_env, info: napi_callback_i
                 } => {
                     set(env, result, c"status", create_string(env, "stopped")?)?;
                     set(env, result, c"reason", create_string(env, &reason)?)?;
-                    let Some(checkpoint) = checkpoint else {
-                        set(
+                    match &checkpoint {
+                        Some(checkpoint) => set_checkpoint(env, result, checkpoint, collisions)?,
+                        None => set(
                             env,
                             result,
                             c"counts",
                             create_numbers(env, &[collisions as f64])?,
-                        )?;
-                        return Ok(result);
-                    };
-                    let numbers = [
-                        checkpoint.expanding,
-                        checkpoint.count,
-                        checkpoint.generated,
-                        checkpoint.initial_generated,
-                        collisions,
-                    ];
-                    set(
-                        env,
-                        result,
-                        c"counts",
-                        create_numbers(env, &to_numbers(&numbers))?,
-                    )?;
-                    set(
-                        env,
-                        result,
-                        c"outDegrees",
-                        create_numbers(env, &to_numbers(&checkpoint.out_degrees))?,
-                    )?;
-                    set(
-                        env,
-                        result,
-                        c"parents",
-                        create_int32s(env, &checkpoint.parents)?,
-                    )?;
-                    set_encoded(env, result, c"words", c"strings", &checkpoint.states)?;
-                    if let Some((keys, key_width)) = &checkpoint.keys {
-                        set_encoded(env, result, c"keyWords", c"keyStrings", keys)?;
-                        set(
-                            env,
-                            result,
-                            c"keyWidth",
-                            create_number(env, f64::from(*key_width))?,
-                        )?;
+                        )?,
                     }
+                }
+                SearchOutcome::Invariant(reason) => {
+                    set(env, result, c"status", create_string(env, "invariant")?)?;
+                    set(env, result, c"reason", create_string(env, &reason)?)?;
                 }
             }
             Ok(result)

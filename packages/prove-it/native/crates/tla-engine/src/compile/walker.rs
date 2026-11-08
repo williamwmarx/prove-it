@@ -313,8 +313,12 @@ fn get_bound_slots(scope: &Option<Rc<Scope>>, slots: &mut Vec<u32>, seen: &mut H
         }
         match &node.binding {
             Binding::Slot(slot) => slots.push(*slot),
-            Binding::Argument(argument) => get_bound_slots(&argument.context.scope, slots, seen),
-            Binding::Operator(operator) => get_bound_slots(&operator.context.scope, slots, seen),
+            Binding::Argument(argument) => {
+                get_bound_slots(&super::argument_context(argument).scope, slots, seen)
+            }
+            Binding::Operator(operator) => {
+                get_bound_slots(&super::operator_context(operator).scope, slots, seen)
+            }
             _ => {}
         }
         current = node.parent.clone();
@@ -353,8 +357,7 @@ impl<'a> Compiler<'a> {
                     return Ok(match &found.binding {
                         Binding::Argument(argument) => Some((
                             argument.expression,
-                            argument
-                                .context
+                            super::argument_context(argument)
                                 .primed(argument.context.is_primed || context.is_primed),
                         )),
                         _ => None,
@@ -387,8 +390,7 @@ impl<'a> Compiler<'a> {
                         return Ok(None);
                     }
                     let operator = Rc::clone(operator);
-                    let base = operator
-                        .context
+                    let base = super::operator_context(&operator)
                         .primed(context.is_primed || operator.context.is_primed);
                     let callee = self.bind_arguments(&operator.params, args, context, base)?;
                     return Ok(Some((body, callee)));
@@ -780,7 +782,8 @@ impl<'a> Compiler<'a> {
                     && let Some(found) = lookup(&context.scope, name.text)
                 {
                     if let Binding::Argument(argument) = &found.binding {
-                        return self.describe_set(argument.expression, &argument.context);
+                        return self
+                            .describe_set(argument.expression, &super::argument_context(argument));
                     }
                     return self.text(name.text).to_string();
                 }
@@ -1353,15 +1356,9 @@ impl<'a> Compiler<'a> {
         let Some(parent) = self.context_from_scope(scope.parent)? else {
             return Ok(None);
         };
-        // A closure or thunk in the reference may close over the scope that binds it, which
-        // the engine doesn't model yet.
-        let closed_over = |inner: Option<Index>| {
-            if inner == Some(index) {
-                decline("a binding of an instance's scope that closes over itself")
-            } else {
-                Ok(inner)
-            }
-        };
+        // A closure or thunk in the reference may close over the scope that binds it, so a binding
+        // whose scope is its own node reaches the scope that binds it once that exists.
+        let mut own_scope: Option<&RefCell<std::rc::Weak<Scope>>> = None;
         let binding = match &scope.binding {
             ScopeBinding::Value(Some(value)) => Binding::Value {
                 compiled: Box::new(super::constant(self.intern_value(*value)?)),
@@ -1371,13 +1368,19 @@ impl<'a> Compiler<'a> {
                 return decline("a value in an instance's scope the IR can't hold");
             }
             ScopeBinding::Thunk { expression, scope } => {
-                let Some(context) = self.context_from_scope(closed_over(*scope)?)? else {
-                    return Ok(None);
+                let context = if *scope == Some(index) {
+                    parent.clone()
+                } else {
+                    match self.context_from_scope(*scope)? {
+                        Some(context) => context,
+                        None => return Ok(None),
+                    }
                 };
                 Binding::Argument(Rc::new(super::Argument {
                     expression: *expression,
                     context,
                     compiled: RefCell::new([None, None]),
+                    own_scope: RefCell::new(std::rc::Weak::new()),
                 }))
             }
             ScopeBinding::Closure {
@@ -1386,8 +1389,13 @@ impl<'a> Compiler<'a> {
                 scope,
                 ..
             } => {
-                let Some(context) = self.context_from_scope(closed_over(*scope)?)? else {
-                    return Ok(None);
+                let context = if *scope == Some(index) {
+                    parent.clone()
+                } else {
+                    match self.context_from_scope(*scope)? {
+                        Some(context) => context,
+                        None => return Ok(None),
+                    }
                 };
                 Binding::Operator(super::Operator::new(
                     params.clone(),
@@ -1397,11 +1405,23 @@ impl<'a> Compiler<'a> {
             }
             ScopeBinding::Opaque => return Ok(None),
         };
-        Ok(Some(parent.with_scope(super::bind(
-            &parent.scope,
-            scope.name,
-            binding,
-        ))))
+        let is_self = matches!(
+            &scope.binding,
+            ScopeBinding::Thunk { scope: inner, .. } | ScopeBinding::Closure { scope: inner, .. }
+                if *inner == Some(index)
+        );
+        let bound = super::bind(&parent.scope, scope.name, binding);
+        if is_self && let Some(node) = &bound {
+            match &node.binding {
+                Binding::Argument(argument) => own_scope = Some(&argument.own_scope),
+                Binding::Operator(operator) => own_scope = Some(&operator.own_scope),
+                _ => {}
+            }
+            if let Some(own) = own_scope {
+                *own.borrow_mut() = Rc::downgrade(node);
+            }
+        }
+        Ok(Some(parent.with_scope(bound)))
     }
 
     /// Compiles the walk of the initial predicate (`is_init`) or of an action in the scope of an
@@ -1439,5 +1459,20 @@ impl<'a> Compiler<'a> {
             return Ok(None);
         };
         self.compile(node, &context).map(Some)
+    }
+}
+
+impl<'a> Compiler<'a> {
+    /// Compiles ENABLED of an action in the scope of an instance, as the liveness checker's
+    /// ENABLED atoms are compiled, or `None` when the engine can't translate the scope.
+    pub fn compile_enabled_in_scope(
+        &mut self,
+        action: NodeId,
+        scope: Option<Index>,
+    ) -> Result<Option<Compiled>, CompileError> {
+        let Some(context) = self.context_from_scope(scope)? else {
+            return Ok(None);
+        };
+        self.compile_enabled(action, &context).map(Some)
     }
 }
