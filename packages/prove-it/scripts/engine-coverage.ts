@@ -9,7 +9,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import type { ModelOutcome } from "./check-model";
-import { compareOutcome } from "./compare-outcome";
+import { compareOutcome, OUTCOME_FIELDS } from "./compare-outcome";
 import {
   CONFORMANCE_DIRECTORY,
   type CorpusModel,
@@ -48,16 +48,6 @@ const filter = getOption("--filter");
 const concurrency = Number(getOption("--concurrency") ?? 3);
 const timeoutMilliseconds = Number(getOption("--timeout-ms") ?? 600000);
 const outPath = getOption("--out") ?? join(CONFORMANCE_DIRECTORY, ".engine-coverage.json");
-
-const OUTCOME_FIELDS = [
-  "status",
-  "violation",
-  "generatedStates",
-  "distinctStates",
-  "depth",
-  "traceLength",
-  "error",
-] as const;
 
 // Names of the spec's own definitions and variables would split one missing feature into many rows.
 const normalizeReason = (reason: string) =>
