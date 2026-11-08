@@ -643,6 +643,9 @@ describe("the engine", () => {
       "<<1>> \\notin {1} \\X {1 \\div x}",
       "{} \\in SUBSET {1 \\div x}",
       "<<>> \\in Seq({1 \\div x})",
+      // A part evaluated under one binding is evaluated again under the next.
+      "\\A y \\in {0, 1} : [c |-> 1] \\notin [a : {1 \\div (y - 1)}]",
+      "<<>> \\notin [{1} -> {z \\in {0, 1} : [c |-> 1] \\notin [a : {1 \\div (z - 1)}]}]",
     ];
     for (const membership of memberships) {
       const source = `---- MODULE M ----\nEXTENDS Naturals, Sequences\nVARIABLE x\nInit == x = 0\nNext == UNCHANGED x\nInv == ${membership}\n====`;
@@ -658,6 +661,20 @@ describe("the engine", () => {
       ]);
       expect(result.status).toBe("error");
     }
+  });
+
+  it("evaluates the parts of a set that definitions share once per membership test", async () => {
+    // Each level names the one below twice, so evaluating its parts on every use took 2^28 runs.
+    const levels = Array.from(
+      { length: 28 },
+      (_, level) => `S${level + 1} == [a : S${level}, b : S${level}]`,
+    );
+    const { result, lines } = await checkInEngine(
+      `VARIABLE x\nS0 == {x}\n${levels.join("\n")}\nInit == x = 0\nNext == UNCHANGED x\nInv == [c |-> 1] \\notin S28`,
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+    );
+    expect(result.status).toBe("success");
+    expect(lines).toEqual([expect.stringMatching(/^\[engine\] checked 1 states/)]);
   });
 
   it("reads Nat as the set the model substitutes for it", async () => {

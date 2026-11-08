@@ -2360,6 +2360,29 @@ export const createCompiler = (environment: Environment): Compiler => {
 
   const NO_PARTS = () => {};
 
+  // A membership test evaluates its set's parts in a round of its own, in which each lazy set's
+  // parts run once: definitions can share a set, as Sn == [a : Sm, b : Sm] does, and bindings
+  // don't change within a round, so a second run would evaluate the same parts again.
+  let partsRounds = 0;
+  let partsRound = 0;
+  const onceARound = (parts: () => void) => {
+    let round = -1;
+    return () => {
+      if (round === partsRound) return;
+      parts();
+      round = partsRound;
+    };
+  };
+  const runParts = (parts: () => void) => {
+    const outer = partsRound;
+    partsRound = ++partsRounds;
+    try {
+      parts();
+    } finally {
+      partsRound = outer;
+    }
+  };
+
   // The parts of a set TLC evaluates to make its value: a lazy set's own, none for a set such as
   // Nat, and otherwise the set itself.
   const partsOf = (set: Compiled): (() => void) => {
@@ -2382,10 +2405,11 @@ export const createCompiler = (environment: Environment): Compiler => {
       const domainEvaluate = domain.evaluate;
       const rangeMember = memberTest(range);
       const footprint = mergeFootprints(domain.footprint, range.footprint);
-      const parts = ((domainParts, rangeParts) => () => {
-        domainParts();
-        rangeParts();
-      })(partsOf(domain), partsOf(range));
+      const parts = ((domainParts, rangeParts) =>
+        onceARound(() => {
+          domainParts();
+          rangeParts();
+        }))(partsOf(domain), partsOf(range));
       return {
         evaluate: () => {
           const domainSet = domainEvaluate();
@@ -2407,7 +2431,7 @@ export const createCompiler = (environment: Environment): Compiler => {
         ),
         parts,
         member: (element) => {
-          parts();
+          runParts(parts);
           const kind = kindOf(element);
           if (kind !== KIND_FUNCTION && kind !== KIND_TUPLE)
             return notIn(element, "a set of functions");
@@ -2428,9 +2452,9 @@ export const createCompiler = (environment: Environment): Compiler => {
       }));
       // TLC evaluates the fields' sets in the order they're written.
       const fieldParts = written.map((field) => partsOf(field.set));
-      const parts = () => {
+      const parts = onceARound(() => {
         for (const part of fieldParts) part();
-      };
+      });
       const fields = [...written].sort((left, right) => compare(left.key, right.key));
       const keys = fields.map((field) => field.key);
       const members = fields.map((field) => memberTest(field.set));
@@ -2463,7 +2487,7 @@ export const createCompiler = (environment: Environment): Compiler => {
         ),
         parts,
         member: (element) => {
-          parts();
+          runParts(parts);
           if (kindOf(element) !== KIND_FUNCTION) return notIn(element, "a set of records");
           if (sizeOf(element) !== keys.length) return false;
           for (let index = 0; index < keys.length; index++) {
@@ -2477,9 +2501,9 @@ export const createCompiler = (environment: Environment): Compiler => {
     const factors = expression.factors.map((factor) => compile(factor, context) as LazySet);
     const members = factors.map(memberTest);
     const factorParts = factors.map(partsOf);
-    const parts = () => {
+    const parts = onceARound(() => {
       for (const part of factorParts) part();
-    };
+    });
     return {
       evaluate: () => {
         let partial: number[][] = [[]];
@@ -2504,7 +2528,7 @@ export const createCompiler = (environment: Environment): Compiler => {
       })),
       parts,
       member: (element) => {
-        parts();
+        runParts(parts);
         if (kindOf(element) !== KIND_TUPLE) return notIn(element, "a set of tuples");
         if (sizeOf(element) !== factors.length) return false;
         for (let index = 0; index < factors.length; index++) {
@@ -2805,7 +2829,7 @@ export const createCompiler = (environment: Environment): Compiler => {
           })),
           parts: partsOf(base),
           member: ((baseMember, baseParts) => (element: number) => {
-            baseParts();
+            runParts(baseParts);
             // TLC fails on anything it can't enumerate, untyped model values included.
             if (kindOf(element) !== KIND_SET) return bail("a membership in SUBSET of a non-set");
             for (let index = 0; index < sizeOf(element); index++)
@@ -2974,7 +2998,7 @@ export const createCompiler = (environment: Environment): Compiler => {
           infinite: "Seq",
           parts,
           member: (element: number) => {
-            parts();
+            runParts(parts);
             if (kindOf(element) !== KIND_TUPLE) return notIn(element, "Seq");
             for (let index = 0; index < sizeOf(element); index++)
               if (!member(getRangeValue(element, index))) return false;
