@@ -172,6 +172,15 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
       "Next == \\A i \\in {1, 2} : (s' = (s + i) % 4 /\\ t' = t) \\/ UNCHANGED <<s, t>>",
     ];
     await compareStateLogs(body, "INIT Init\nNEXT Next", false);
+    // TLC walks the first binding, then the others in reverse: from the first, y' = 3 comes
+    // before y' = 2.
+    const reversed = [
+      "EXTENDS Naturals",
+      "VARIABLES x, y",
+      "Init == x = 0 /\\ y = 0",
+      "Next == \\A i \\in {1, 2, 3} : IF i = 1 THEN x' = (x + 1) % 3 ELSE y' = i \\/ y' \\in 0..4",
+    ];
+    await compareStateLogs(reversed, "INIT Init\nNEXT Next", false);
     expect(await compareWithInterpreter(body, "INIT Init\nNEXT Next")).toContainEqual(
       expect.stringMatching(COMPLETE),
     );
@@ -204,7 +213,7 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
       "VARIABLES x, steps",
       "Init == x = 0 /\\ steps = 0",
       "Next == x' = (x + 1) % 5 /\\ steps' = steps + 1",
-      "View == x",
+      "View == x % 3",
     ];
     const config = "INIT Init\nNEXT Next\nVIEW View";
     await compareStateLogs(body, config, false);
@@ -361,11 +370,26 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     const config = "INIT Init\nNEXT Next";
     const options = { source: toModule(WALKS), config };
     const whole = await run(options, { PROVE_IT_ENGINE: "debug", PROVE_IT_ENGINE_BACKEND: "rust" });
-    for (const stopAt of ["0", "1", "7", "20"]) {
-      const lines = await compareWithInterpreter(WALKS, config, { PROVE_IT_STOP_AT: stopAt });
-      expect(lines).toContainEqual(
-        expect.stringMatching(stopped("stopped where PROVE_IT_STOP_AT asked")),
-      );
+    const directory = mkdtempSync(join(tmpdir(), "prove-it-native-stop-"));
+    try {
+      for (const stopAt of ["0", "1", "7", "20"]) {
+        const log = join(directory, `${stopAt}.jsonl`);
+        const lines = await compareWithInterpreter(WALKS, config, {
+          PROVE_IT_STOP_AT: stopAt,
+          PROVE_IT_STATE_LOG: log,
+        });
+        expect(lines).toContainEqual(
+          expect.stringMatching(stopped("stopped where PROVE_IT_STOP_AT asked")),
+        );
+        // The search stopped before expanding that state, with the states found before.
+        const header = JSON.parse(readLogLines(log)[0]);
+        expect([header.expanding, header.stopped]).toEqual([
+          Number(stopAt),
+          "stopped where PROVE_IT_STOP_AT asked",
+        ]);
+      }
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
     }
     const viewed = [...WALKS, "View == <<x, z>>"];
     const lines = await compareWithInterpreter(viewed, `${config}\nVIEW View`, {

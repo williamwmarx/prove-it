@@ -999,3 +999,57 @@ fn write_state_log(
     let _ = writer.write_all(line.as_bytes());
     let _ = writer.flush();
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn verified_states() -> States {
+        States {
+            width: 1,
+            key_width: None,
+            ids: Vec::new(),
+            keys: Vec::new(),
+            parents: Vec::new(),
+            fingerprints: Vec::new(),
+            set: FingerprintSet::new(),
+            order: vec![0],
+            is_verified: true,
+            collisions: 0,
+        }
+    }
+
+    // PROVE_IT_FP_VERIFY: a fingerprint two different keys share is a collision, which merges the
+    // two as TLC does, and counts it.
+    #[test]
+    fn counts_a_fingerprint_two_keys_share() {
+        let mut states = verified_states();
+        let Err(slot) = states.find(&[7], 42) else {
+            panic!("an empty set found a state");
+        };
+        states.add(&[7], &[7], 42, slot, -1);
+        assert_eq!(states.find(&[7], 42), Ok(0));
+        assert_eq!(states.collisions, 0);
+        assert_eq!(states.find(&[8], 42), Ok(0));
+        assert_eq!(states.collisions, 1);
+        assert!(states.find(&[8], 43).is_err());
+        assert_eq!(states.collisions, 1);
+    }
+
+    #[test]
+    fn finds_every_fingerprint_after_growing() {
+        let mut states = verified_states();
+        for index in 0..10_000u32 {
+            let fingerprint = u64::from(index).wrapping_mul(0x2545_f491_4f6c_dd1d);
+            let Err(slot) = states.find(&[index], fingerprint) else {
+                panic!("a fingerprint found before it was added");
+            };
+            states.add(&[index], &[index], fingerprint, slot, -1);
+        }
+        for index in 0..10_000u32 {
+            let fingerprint = u64::from(index).wrapping_mul(0x2545_f491_4f6c_dd1d);
+            assert_eq!(states.find(&[index], fingerprint), Ok(index));
+        }
+        assert_eq!(states.collisions, 0);
+    }
+}
