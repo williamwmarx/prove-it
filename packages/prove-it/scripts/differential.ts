@@ -7,7 +7,8 @@
 //
 // --stop-at also runs the engine stopped by PROVE_IT_STOP_AT before a state picked at random
 // from those it found, and its output must not differ from the engine's. --backend picks the
-// engine's backend, and --compare-backends runs every one. --update rewrites
+// engine's backend, and --compare-backends runs every one: the first is compared with TLC and the
+// interpreter, and each other with the first (ts/rust). --update rewrites
 // known-differences.json from the run, keeping the reasons it gives.
 // A run without a TLC recording fails the check, since nothing compared it with TLC. --timeout-ms
 // stops a checker that runs longer, and without it nothing does.
@@ -199,17 +200,30 @@ const work = async (queue: { model: CorpusModel; mode: OutputMode }[], total: nu
         PROVE_IT_ENGINE: "debug",
       });
       outputs[backend] = engine;
-      if (tlc)
-        modelComparisons.push(compare(model.id, mode, `tlc/${backend}`, tlc, engine.transcript));
-      modelComparisons.push(
-        compare(
-          model.id,
-          mode,
-          `${backend}/interpreter`,
-          engine.transcript,
-          interpreter.transcript,
-        ),
-      );
+      const first = backends[0];
+      if (backend !== first) {
+        modelComparisons.push(
+          compare(
+            model.id,
+            mode,
+            `${first}/${backend}`,
+            outputs[first].transcript,
+            engine.transcript,
+          ),
+        );
+      } else {
+        if (tlc)
+          modelComparisons.push(compare(model.id, mode, `tlc/${backend}`, tlc, engine.transcript));
+        modelComparisons.push(
+          compare(
+            model.id,
+            mode,
+            `${backend}/interpreter`,
+            engine.transcript,
+            interpreter.transcript,
+          ),
+        );
+      }
       // A stop needs a search to stop: an engine that skipped the spec would only run the
       // interpreter again.
       const isSearched = ["completed", "handed over"].includes(

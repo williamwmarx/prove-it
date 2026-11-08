@@ -22,7 +22,13 @@ export interface ModelOutcome {
 
 const libraryModules = getLibraryModules();
 
-export const checkModel = async (specPath: string, configPath: string): Promise<ModelOutcome> => {
+export const checkModel = async (
+  specPath: string,
+  configPath: string,
+  // TLC records the expected results with -nowarning; --warnings checks with warnings on, which
+  // changes how the engine walks the next-state relation.
+  isWarningEnabled = false,
+): Promise<ModelOutcome> => {
   const directory = dirname(specPath);
   const startedAt = performance.now();
   const source = readFileSync(specPath, "utf8");
@@ -33,8 +39,7 @@ export const checkModel = async (specPath: string, configPath: string): Promise<
     );
   }
   const result = await check({
-    // TLC records the expected results with -nowarning.
-    isWarningEnabled: false,
+    isWarningEnabled,
     source,
     config: readFileSync(configPath, "utf8"),
     // TLC reads a module beside the spec before one on its library path.
@@ -99,8 +104,7 @@ const getErrorOutcome = (error: unknown, milliseconds: number): ModelOutcome => 
 };
 
 if (process.argv[1] === import.meta.filename) {
-  // The runners pick the engine's backend with PROVE_IT_ENGINE_BACKEND, of which only the
-  // TypeScript engine exists yet.
+  // The runners pick the engine's backend with PROVE_IT_ENGINE_BACKEND.
   const backend = process.env.PROVE_IT_ENGINE_BACKEND;
   if (backend !== undefined && !BACKENDS.includes(backend)) {
     console.error(`PROVE_IT_ENGINE_BACKEND takes one of ${BACKENDS.join(", ")}, not ${backend}`);
@@ -109,7 +113,11 @@ if (process.argv[1] === import.meta.filename) {
   const startedAt = performance.now();
   const outcome = { value: undefined as ModelOutcome | undefined };
   try {
-    outcome.value = await checkModel(process.argv[2], process.argv[3]);
+    outcome.value = await checkModel(
+      process.argv[2],
+      process.argv[3],
+      process.argv.includes("--warnings"),
+    );
   } catch (error) {
     outcome.value = getErrorOutcome(error, Math.round(performance.now() - startedAt));
   }
