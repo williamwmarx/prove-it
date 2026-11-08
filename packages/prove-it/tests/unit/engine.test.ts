@@ -630,6 +630,36 @@ describe("the engine", () => {
     }
   });
 
+  it("evaluates a set's parts before testing membership in it, as TLC does", async () => {
+    // TLC makes the set's value, evaluating its parts, before it tests membership, so a part that
+    // fails fails the test even when the element's kind or shape already decides it.
+    const memberships = [
+      "<<>> \\notin [{1} -> {1 \\div x}]",
+      "<<>> \\notin UNION {[{1} -> {1 \\div x}]}",
+      "<<>> \\notin [{1 \\div x} -> Nat]",
+      "<<>> \\notin [{1} -> [{2} -> {1 \\div x}]]",
+      "[b |-> 1] \\notin [a : {1 \\div x}]",
+      "[a |-> 1, b |-> 2] \\notin [b : {2 \\div x}, a : {1 \\div x}]",
+      "<<1>> \\notin {1} \\X {1 \\div x}",
+      "{} \\in SUBSET {1 \\div x}",
+      "<<>> \\in Seq({1 \\div x})",
+    ];
+    for (const membership of memberships) {
+      const source = `---- MODULE M ----\nEXTENDS Naturals, Sequences\nVARIABLE x\nInit == x = 0\nNext == UNCHANGED x\nInv == ${membership}\n====`;
+      const config = "INIT Init\nNEXT Next\nINVARIANT Inv";
+      delete process.env.PROVE_IT_ENGINE;
+      const result = await check({ source, config, onPrint: () => {} });
+      process.env.PROVE_IT_ENGINE = "0";
+      const reference = await check({ source, config, onPrint: () => {} });
+      expect([membership, result.status, result.failure?.message]).toEqual([
+        membership,
+        reference.status,
+        reference.failure?.message,
+      ]);
+      expect(result.status).toBe("error");
+    }
+  });
+
   it("reads Nat as the set the model substitutes for it", async () => {
     const { result, lines } = await checkInEngine(
       "EXTENDS Integers\nVARIABLE x\nInit == x = 0\nNext == UNCHANGED x\nInv == -1 \\in Nat",
