@@ -101,6 +101,8 @@ import {
   combineHash,
   createCanonicalizer,
   createModelValue,
+  forgetDeepWrittenOrder,
+  forgetNormalizedWrittenOrder,
   formatState,
   getFingerprintError,
   getHeldValues,
@@ -925,10 +927,16 @@ const searchStates = (
     isSameState(getFingerprintState(state), fingerprintStates[index]);
   const findSuccessorWithFingerprint = (state: Value[], index: number) =>
     findTraceSuccessor(state, (successor) => hasFingerprint(successor.state, index));
-  // Without a VIEW or SYMMETRY, TLC fingerprints the state itself to recover it, which sorts each
-  // record and set it holds, as the search does with each state it stores.
+  // TLC fingerprints a state to recover it, which sorts the records it reaches: without a VIEW or
+  // SYMMETRY each record and set the state holds, as the search does with each state it stores.
+  // Under SYMMETRY it permutes each value, and under a VIEW it deep-normalizes the state and
+  // fingerprints the view.
   const settleRecoveredState = (state: Value[]) => {
-    if (isReducing) return;
+    if (search.isSymmetric) return state.forEach(forgetDeepWrittenOrder);
+    if (isReducing) {
+      state.forEach(forgetNormalizedWrittenOrder);
+      return getFingerprintState(state).forEach(forgetDeepWrittenOrder);
+    }
     for (const value of state) getValueHash(value);
     state.forEach(markFingerprinted);
   };
@@ -965,6 +973,9 @@ const searchStates = (
         ? getPathStates(path, INITIAL_RECOVERY_FAILURE)
         : path.map((position) => ({ state: states[position], action: actions[position] }));
     if (!lastSuccessor) return toTrace(steps, path);
+    // Tool.getState finds the last state among the successors with equals, which sorts each
+    // record in it.
+    if (isReducing) lastSuccessor.state.forEach(forgetDeepWrittenOrder);
     const action = isReducing
       ? findTraceSuccessor(states[index], (successor) =>
           isSameState(successor.state, lastSuccessor.state),

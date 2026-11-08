@@ -556,6 +556,37 @@ describe("check matches TLC", () => {
     ]);
   });
 
+  // TLC's output for each config.
+  it.each([
+    [
+      "VIEW View",
+      ["([b |-> 0, a |-> 0] :> 1)", "([b |-> 0, a |-> 0] :> 1)", "([a |-> 1, b |-> 1] :> 1)"],
+    ],
+    [
+      "VIEW ViewOfS",
+      ["([a |-> 0, b |-> 0] :> 1)", "([a |-> 0, b |-> 0] :> 1)", "([a |-> 1, b |-> 1] :> 1)"],
+    ],
+    [
+      "SYMMETRY Symmetry",
+      ["([a |-> 0, b |-> 0] :> 1)", "([a |-> 0, b |-> 0] :> 1)", "([a |-> 1, b |-> 1] :> 1)"],
+    ],
+  ])("prints the records of a trace under %s in the order TLC sorts them", async (reduction, s) => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals, TLC\nCONSTANT P\nVARIABLES x, r, s, t\nGet(v) == v.a + v.b\nInit == x = 0 /\\ r = [b |-> 0, a |-> 0] /\\ s = ([b |-> 0, a |-> 0] :> 1) /\\ t = {[b |-> 1, a |-> 1]}\nNext == x < 2 /\\ x' = x + 1 /\\ r' = [b |-> x, a |-> x] /\\ s' = ([b |-> x, a |-> x] :> 1) /\\ t' = {[b |-> x, a |-> 1]}\nView == x\nViewOfS == <<x, s>>\nSymmetry == Permutations(P)\nInv == x < 2\n====",
+      config: `CONSTANT P = {p1, p2}\nINIT Init\nNEXT Next\nINVARIANT Inv\n${reduction}`,
+    });
+    expect(
+      result.violation?.trace.map((step) =>
+        ["r", "s", "t"].map((name) => formatValue(step.state[name])),
+      ),
+    ).toEqual([
+      ["[a |-> 0, b |-> 0]", s[0], "{[a |-> 1, b |-> 1]}"],
+      ["[a |-> 0, b |-> 0]", s[1], "{[a |-> 1, b |-> 0]}"],
+      ["[a |-> 1, b |-> 1]", s[2], "{[a |-> 1, b |-> 1]}"],
+    ]);
+  });
+
   it("evaluates a VIEW on the symmetry representative TLC picks by its variable order", async () => {
     const result = await checkFixture("view", "ViewSymmetry");
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([7, 4, 4]);
