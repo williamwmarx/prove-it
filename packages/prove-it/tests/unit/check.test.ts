@@ -1400,6 +1400,23 @@ describe("evaluation errors match TLC", () => {
     );
   });
 
+  it.each([
+    [
+      "(CHOOSE v : TRUE) = 1",
+      "TLC attempted to evaluate an unbounded CHOOSE.\nMake sure that the expression is of form CHOOSE x \\in S: P(x).\nline 3, col 9 to line 3, col 23 of module M",
+    ],
+    [
+      "\\A v, w : v = w",
+      "TLC attempted to evaluate an unbounded \\A.\nMake sure that the expression is of form \\A x \\in S: P(x).\nline 3, col 8 to line 3, col 22 of module M",
+    ],
+  ])("reports an unbounded %s like TLC", async (assumption, message) => {
+    const result = await check({
+      source: `---- MODULE M ----\nVARIABLE x\nASSUME ${assumption}\nInit == x = 0\nNext == UNCHANGED x\n====`,
+      config: "INIT Init\nNEXT Next",
+    });
+    expect(result.violation?.message).toBe(message);
+  });
+
   it("reports a CASE with no true guard in the next-state relation like TLC", async () => {
     const result = await check({
       source:

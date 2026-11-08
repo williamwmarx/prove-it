@@ -1739,7 +1739,7 @@ const compileSetComprehension = (
   if (!set) {
     return () => {
       throw new TlaEvaluationError(
-        `TLC cannot evaluate an unbounded CHOOSE at ${describeLocation(expression)}`,
+        `TLC attempted to evaluate an unbounded CHOOSE.\nMake sure that the expression is of form CHOOSE x \\in S: P(x).\n${describeRange(expression)}`,
       );
     };
   }
@@ -1924,12 +1924,15 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
     case "Forall":
     case "Exists":
       return compileQuantifier(expression, environment);
-    case "UnboundedQuantifier":
+    case "UnboundedQuantifier": {
+      const symbol = expression.quantifier === "Exists" ? "\\E" : "\\A";
+      const message = expression.isTemporal
+        ? `TLC cannot evaluate an unbounded quantifier at ${describeLocation(expression)}`
+        : `TLC attempted to evaluate an unbounded ${symbol}.\nMake sure that the expression is of form ${symbol} x \\in S: P(x).\n${describeRange(expression)}`;
       return () => {
-        throw new TlaEvaluationError(
-          `TLC cannot evaluate an unbounded quantifier at ${describeLocation(expression)}`,
-        );
+        throw new TlaEvaluationError(message);
       };
+    }
     case "Choose":
     case "SetFilter":
     case "SetMap":
