@@ -247,6 +247,26 @@ describe.each(STORES)("the engine's %s store", (mode, store) => {
     for (const [operation, reason] of cases) expect(operation).toThrow(new Bailout(reason));
   });
 
+  it("answers a miss among records of several sizes, which TLC compares without failing", () => {
+    const kind = store.str("kind");
+    const from = store.str("from");
+    const messages = store.setOf([
+      store.recordOf(store.createRecordShape([kind]), [store.str("abort")]),
+      ...[1, 2, 3].map((participant) =>
+        store.recordOf(store.createRecordShape([from, kind]), [
+          store.model(`p${participant}`),
+          store.str("prepared"),
+        ]),
+      ),
+    ]);
+    const commit = store.recordOf(store.createRecordShape([kind]), [store.str("commit")]);
+    expect(store.isMember(commit, messages)).toBe(false);
+    // Asked again, of a set of the same structure, and with a member whose field TLC can't compare.
+    expect(store.isMember(commit, store.setOf([commit]))).toBe(true);
+    const typed = store.recordOf(store.createRecordShape([kind]), [store.model("A_x")]);
+    expect(() => store.isMember(typed, messages)).toThrow(new Bailout("typed model value"));
+  });
+
   it("stops a membership TLC's search passes but its equals of a set enumeration fails", () => {
     // A_x ranks before m, so TRUE's search ends past m without comparing it with A_x. TLC checks a
     // set it hasn't normalized with each element's equals, which fails on A_x.

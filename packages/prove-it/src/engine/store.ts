@@ -195,6 +195,7 @@ const internHashed = (
 export let resetStore = () => {
   generation++;
   resetDomains();
+  resetStructures();
   if (shared) {
     shared = undefined;
     kinds = new Uint8Array(INITIAL_CAPACITY);
@@ -550,6 +551,7 @@ export let isMember = (element: number, set: number): boolean => {
   const size = sizes[set];
   const offset = payloads[set];
   if (findInBlock(offset, size, element) !== -1) return true;
+  if (isComparableWithMembers(element, set)) return false;
   // SetEnumValue.member binary-searches a set TLC has normalized with the element's compareTo,
   // which fails for values TLC can't compare, so a miss makes the same comparisons, in the same
   // order.
@@ -585,6 +587,111 @@ const checkComparable = (left: number, right: number) => {
   }
   if (isFunctionKind(leftKind) && isFunctionKind(rightKind)) return;
   bail("membership of a value TLC can't compare");
+};
+
+// A value's structure: its kind, a model value's type, and the structures of a function's keys and
+// values or of a set's members. TLC compares two values of structures that can't fail without
+// failing, so a miss that compares the element only with such members needs no search. The
+// structures are numbered from 1 as they are first seen, and those of the values by id.
+interface Structure {
+  kind: number;
+  modelType: number;
+  parts: number[];
+  // A set's: whether a miss compares an element of each structure only with members it can't fail
+  // on.
+  isSafeElement: Map<number, boolean>;
+}
+
+let structures: Structure[] = [];
+let structureNumbers = new Map<string, number>();
+let valueStructures = new Int32Array(0);
+// Whether compare may fail on values of two structures, by the pair.
+let isSafePair = new Map<number, boolean>();
+
+const getStructure = (id: number): number => {
+  if (id < valueStructures.length && valueStructures[id] !== 0) return valueStructures[id];
+  const kind = isFunctionKind(kinds[id]) ? KIND_FUNCTION : kinds[id];
+  const offset = payloads[id];
+  const size = kind === KIND_SET || kind === KIND_FUNCTION ? sizes[id] : 0;
+  const parts =
+    kind === KIND_SET
+      ? [...new Set(Array.from({ length: size }, (_, index) => getStructure(heap[offset + index])))]
+      : [
+          ...Array.from({ length: size }, (_, index) => getStructure(getKey(id, index))),
+          ...Array.from({ length: size }, (_, index) => getStructure(getRangeValue(id, index))),
+        ];
+  if (kind === KIND_SET) parts.sort((left, right) => left - right);
+  const modelType = kind === KIND_MODEL ? getModelType(id) : 0;
+  const name = `${kind} ${modelType} ${parts.join(" ")}`;
+  const known = structureNumbers.get(name);
+  const structure = known ?? structures.push({ kind, modelType, parts, isSafeElement: new Map() });
+  if (known === undefined) structureNumbers.set(name, structure);
+  if (id >= valueStructures.length) {
+    const grown = new Int32Array(Math.max(1024, (id + 1) * 2));
+    grown.set(valueStructures);
+    valueStructures = grown;
+  }
+  valueStructures[id] = structure;
+  return structure;
+};
+
+const isRecordStructure = (structure: Structure) => {
+  const size = structure.parts.length / 2;
+  for (let index = 0; index < size; index++) {
+    if (structures[structure.parts[index] - 1].kind !== KIND_STRING) return false;
+  }
+  return true;
+};
+
+// Whether compare and checkComparable never fail on two values of these structures, either way
+// round.
+const isSafe = (left: number, right: number): boolean => {
+  if (left === right) return true;
+  const key = left * 0x4000000 + right;
+  const known = isSafePair.get(key);
+  if (known !== undefined) return known;
+  const isSafeNow = computeIsSafe(structures[left - 1], structures[right - 1]);
+  isSafePair.set(key, isSafeNow);
+  return isSafeNow;
+};
+
+const computeIsSafe = (left: Structure, right: Structure) => {
+  if (left.kind === KIND_MODEL || right.kind === KIND_MODEL) {
+    return left.kind === right.kind
+      ? left.modelType === 0 || right.modelType === 0 || left.modelType === right.modelType
+      : (left.kind === KIND_MODEL ? left : right).modelType === 0;
+  }
+  if (left.kind !== right.kind) return false;
+  if (left.kind === KIND_SET) {
+    return left.parts.every((leftPart) =>
+      right.parts.every((rightPart) => isSafe(leftPart, rightPart)),
+    );
+  }
+  if (left.kind !== KIND_FUNCTION) return true;
+  const size = left.parts.length;
+  if (size === 0 || right.parts.length === 0) return true;
+  if (isRecordStructure(left) !== isRecordStructure(right)) return false;
+  return (
+    size !== right.parts.length ||
+    left.parts.every((part, index) => isSafe(part, right.parts[index]))
+  );
+};
+
+const isComparableWithMembers = (element: number, set: number) => {
+  const structure = getStructure(element);
+  const setStructure = structures[getStructure(set) - 1];
+  const known = setStructure.isSafeElement.get(structure);
+  if (known !== undefined) return known;
+  const isSafeElement = setStructure.parts.every((member) => isSafe(structure, member));
+  setStructure.isSafeElement.set(structure, isSafeElement);
+  return isSafeElement;
+};
+
+const resetStructures = () => {
+  structures = [];
+  structureNumbers = new Map();
+  valueStructures = new Int32Array(0);
+  isSafePair = new Map();
 };
 
 let mergeScratch = new Int32Array(64);
