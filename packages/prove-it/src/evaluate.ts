@@ -12,7 +12,7 @@ import {
   type RecordField,
   type SourceRange,
 } from "./ast";
-import { getKindString } from "./builtins";
+import { getKindString, reportAsJavaFailure } from "./builtins";
 import { generateEvaluator } from "./codegen";
 import {
   type DefinitionFacts,
@@ -252,6 +252,9 @@ type GlobalName =
   | { kind: "Definition"; definition: Definition };
 
 const EXCEPT_AT = "@";
+
+const TLC_EVAL_SIGNATURE =
+  "public static tlc2.value.impl.Value tlc2.module.TLCEval.tlcEval(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel)";
 
 export const describeLocation = (expression: Expression) =>
   `line ${expression.location.line}, column ${expression.location.column}`;
@@ -1426,7 +1429,13 @@ const compileApply = (
   }
   // TLC sorts the value of a constant TLCEval argument only where no context binds a name.
   if (global?.kind === "Builtin" && global.name === "TLCEval" && args.length === 1) {
-    const operand = getEvaluator(args[0], environment);
+    // TLC's TLCEval is an @Evaluation method that evaluates its argument itself, which TLC 1.7.4's
+    // Java override of TLC.TLCEval did not.
+    const evaluateOperand = getEvaluator(args[0], environment);
+    const operand =
+      environment.runtime.version === "1.7.4"
+        ? evaluateOperand
+        : reportAsJavaFailure(TLC_EVAL_SIGNATURE, true, evaluateOperand);
     if (contextualApplications.has(expression) || isNonconstant(args[0], environment)) {
       return operand;
     }

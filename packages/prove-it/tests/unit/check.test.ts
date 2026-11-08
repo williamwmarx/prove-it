@@ -1417,6 +1417,24 @@ describe("evaluation errors match TLC", () => {
     expect(result.violation?.message).toBe(message);
   });
 
+  // TLC's TLCEval evaluates its argument in its Java method, which TLC 1.7.4's did not.
+  it.each([
+    [undefined, 2],
+    ["1.7.4" as const, 0],
+  ])("reports a failure inside TLCEval in TLC %s as the method's", async (version, depth) => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nF(n) == TLCEval(1 \\div n)\nASSUME TLCEval(F(0)) = 1\nInit == x = 0\nNext == UNCHANGED x\n====",
+      config: "INIT Init\nNEXT Next",
+      version,
+    });
+    const wrapper =
+      "Attempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.Value tlc2.module.TLCEval.tlcEval(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel),\nbut it produced the following error:\n";
+    expect(result.violation?.message).toBe(
+      `${wrapper.repeat(depth)}The second argument of \\div is 0.`,
+    );
+  });
+
   it("reports a CASE with no true guard in the next-state relation like TLC", async () => {
     const result = await check({
       source:
