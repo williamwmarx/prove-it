@@ -35,8 +35,10 @@ export type EnabledActions = (expression: LiveEnabled) => readonly number[] | "a
 // of the action that took it when the search took TLC's actions one by one.
 export interface LiveGraph {
   states: Int32Array;
-  edgeOffsets: Int32Array | undefined;
-  edges: Int32Array | undefined;
+  // How many of the states, from the first, the search took all the steps of.
+  expanded: number;
+  edgeOffsets: Int32Array;
+  edges: Int32Array;
   labels: Int32Array | undefined;
   // Whether a state's steps are those TLC's ENABLED finds when it runs an action from the state.
   isEnabledExact: boolean;
@@ -250,11 +252,11 @@ export const createLiveOracle = (
   // Whether a step from the state with the index that the question's action takes changes the
   // subscript, scanning the steps in the order generated.
   const holdsOnEdges = (question: EdgeQuestion, index: number) => {
-    const edges = graph.edges!;
+    const edges = graph.edges;
     const labels = graph.labels;
     const actions = question.actions;
-    const end = graph.edgeOffsets![index + 1];
-    for (let edge = graph.edgeOffsets![index]; edge < end; edge++) {
+    const end = graph.edgeOffsets[index + 1];
+    for (let edge = graph.edgeOffsets[index]; edge < end; edge++) {
       if (actions && actions[labels![edge]] !== 1) continue;
       if (!isUnchanged(question.subscript, index, edges[edge])) return true;
     }
@@ -314,7 +316,9 @@ export const createLiveOracle = (
     }
     const index = getStateIndex(state);
     if (index === undefined) return undefined;
-    if (expression.kind !== "Enabled" || !graph.edges) return ask(expression, index, successor);
+    if (expression.kind !== "Enabled" || index >= graph.expanded) {
+      return ask(expression, index, successor);
+    }
     const fromEdges = askOnEdges(expression, index);
     if (fromEdges !== undefined && !isLiveChecked) return fromEdges;
     const ran = ask(expression, index, undefined);
