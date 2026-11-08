@@ -18,7 +18,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 import { ADDON_FILE } from "../src/engine/native";
 
@@ -163,11 +163,13 @@ const build = (requested: string | undefined) => {
   console.log(`Built ${manifest.name}@${manifest.version} in ${directory}`);
 };
 
-const pack = (destination: string | undefined) => {
-  if (destination === undefined) {
+const pack = (argument: string | undefined) => {
+  if (argument === undefined) {
     console.error("Usage: bun scripts/platform-packages.ts pack <destination>");
     process.exit(1);
   }
+  // npm runs in each package's directory, so a relative destination is resolved here first.
+  const destination = resolve(argument);
   mkdirSync(destination, { recursive: true });
   const built = existsSync(NPM_DIRECTORY) ? readdirSync(NPM_DIRECTORY).sort() : [];
   if (built.length === 0) {
