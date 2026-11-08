@@ -1,0 +1,8 @@
+{
+  "id": "tla-rs/test_cases/official/Voting.cfg",
+  "mode": "tool",
+  "tlcCommit": "d8fb231de4e4b5d02c1b2ed1ac759c086f694021",
+  "exitCode": 151,
+  "stdout": "@!@!@STARTMSG 2262:0 @!@!@\nTLC2 Version 2026.11.08.065739 (rev: ${git.shortRevision})\n@!@!@ENDMSG 2262 @!@!@\n@!@!@STARTMSG 2187:0 @!@!@\nRunning breadth-first search Model-Checking with fp 0 and seed 4 with 1 worker on 4 cores with 683MB heap and 64MB offheap memory [pid: 424] (Linux 6.18.44-fc-v310 amd64, Ubuntu 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).\n@!@!@ENDMSG 2187 @!@!@\n@!@!@STARTMSG 2220:0 @!@!@\nStarting SANY...\n@!@!@ENDMSG 2220 @!@!@\nParsing file /home/user/prove-it/packages/prove-it/tests/conformance/.corpora/tla-rs/test_cases/official/Voting.tla\nParsing file /tmp/tlc-5735413643519228949/Integers.tla (jar:file:/tmp/tlaplus/tlatools/org.lamport.tlatools/dist/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)\nParsing file /tmp/tlc-5735413643519228949/Naturals.tla (jar:file:/tmp/tlaplus/tlatools/org.lamport.tlatools/dist/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)\nSemantic processing of module Naturals\nSemantic processing of module Integers\nSemantic processing of module Voting\nLinting of module Voting\n@!@!@STARTMSG 2219:0 @!@!@\nSANY finished.\n@!@!@ENDMSG 2219 @!@!@\n@!@!@STARTMSG 2185:0 @!@!@\nStarting... (2026-11-08 07:14:20)\n@!@!@ENDMSG 2185 @!@!@\n@!@!@STARTMSG 2231:1 @!@!@\nThe configuration file did not specify the initial state predicate.\n@!@!@ENDMSG 2231 @!@!@\n@!@!@STARTMSG 2186:0 @!@!@\nFinished in 381ms at (2026-11-08 07:14:20)\n@!@!@ENDMSG 2186 @!@!@\n",
+  "stderr": ""
+}

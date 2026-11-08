@@ -1,0 +1,29 @@
+TLC2 Version 2026.11.08.065739 (rev: ${git.shortRevision})
+Running breadth-first search Model-Checking with fp 0 and seed 4 with 1 worker on 4 cores with 3420MB heap and 64MB offheap memory [pid: 2706] (Linux 6.18.44-fc-v310 amd64, Ubuntu 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /home/user/prove-it/packages/prove-it/tests/fixtures/cli-output/Lasso.tla
+Parsing file /tmp/tlc-11693438675435633466/Naturals.tla (jar:file:/tmp/tlaplus/tlatools/org.lamport.tlatools/dist/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Semantic processing of module Naturals
+Semantic processing of module Lasso
+Linting of module Lasso
+Starting... (2026-11-08 07:03:41)
+Implied-temporal checking--satisfiability problem has 1 branches.
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-11-08 07:03:41.
+Progress(2) at 2026-11-08 07:03:41: 3 states generated, 2 distinct states found, 0 states left on queue.
+Checking temporal properties for the complete state space with 2 total distinct states at (2026-11-08 07:03:41)
+Error: Temporal property Prop was violated.
+
+Error: The following behavior constitutes a counter-example:
+
+State 1: <Initial predicate>
+x = 0
+
+State 2: <Next line 5, col 9 to line 5, col 18 of module Lasso>
+x = 1
+
+Back to state 1: <Next line 5, col 9 to line 5, col 18 of module Lasso>
+
+Finished checking temporal properties in 00s at 2026-11-08 07:03:41
+3 states generated, 2 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 2.
+Finished in 00s at (2026-11-08 07:03:41)

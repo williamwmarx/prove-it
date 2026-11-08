@@ -1,0 +1,8 @@
+{
+  "id": "kafka/groupprotocol/consumer_group_protocol_kip_848_v2.cfg",
+  "mode": "default",
+  "tlcCommit": "d8fb231de4e4b5d02c1b2ed1ac759c086f694021",
+  "exitCode": 150,
+  "stdout": "TLC2 Version 2026.11.08.065739 (rev: ${git.shortRevision})\nRunning breadth-first search Model-Checking with fp 0 and seed 4 with 1 worker on 4 cores with 683MB heap and 64MB offheap memory [pid: 3117] (Linux 6.18.44-fc-v310 amd64, Ubuntu 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).\nParsing file /home/user/prove-it/packages/prove-it/tests/conformance/.corpora/kafka/groupprotocol/consumer_group_protocol_kip_848_v2.tla\n***Parse Error***\n\n  Precedence conflict between ops SUBSET in block line 129, col 31 to line 129, col 36 of module consumer_group_protocol_kip_848_v2 and \\union.\n\nResidual stack trace follows:\nExtendableExpr starting at line 129, column 38.\nExpression starting at line 129, column 31.\nField Set starting at line 129, column 6.\nSome [] Form starting at line 120, column 5.\nExtendableExpr starting at line 120, column 5.\n\n\nFatal errors while parsing TLA+ spec in file consumer_group_protocol_kip_848_v2\n\nIn module consumer_group_protocol_kip_848_v2\n\nCould not parse module consumer_group_protocol_kip_848_v2 from file consumer_group_protocol_kip_848_v2.tla\n*** Errors: 1\n\nIn module consumer_group_protocol_kip_848_v2\n\nCould not parse module consumer_group_protocol_kip_848_v2 from file consumer_group_protocol_kip_848_v2.tla\n\n\n\nStarting... (2026-11-08 07:15:32)\nError: Parsing or semantic analysis failed.\nFinished in 00s at (2026-11-08 07:15:32)\n",
+  "stderr": ""
+}

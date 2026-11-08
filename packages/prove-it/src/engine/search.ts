@@ -45,7 +45,8 @@ import {
   seedState,
   stopWorkers,
 } from "./parallel";
-import { getEnvironmentFlag } from "./settings";
+import { getEnvironmentFlag, getStopAt, isStoreTraced } from "./settings";
+import { writeStateLog } from "./state-log";
 import { bail, Bailout, freezeTexts, getValueCount, int, resetStore, shareStore } from "./store";
 import { createCanonicalizer, type NamedPermutation } from "./symmetry";
 import { type EngineWorkers, spawnEngineWorkers } from "./workers";
@@ -475,6 +476,10 @@ export const runEngine = (input: EngineInput): EngineResult => {
     visitSuccessor();
   };
 
+  // PROVE_IT_STOP_AT=k stops the search before it expands state k, as it stops for anything it
+  // doesn't handle, so the interpreter goes on from there. It searches on one thread then.
+  const stopAt = getStopAt();
+
   // --- workers ---
   const canShare =
     input.workers > 1 &&
@@ -483,7 +488,9 @@ export const runEngine = (input: EngineInput): EngineResult => {
     !canonicalize &&
     typeof SharedArrayBuffer === "function" &&
     typeof Atomics.wait === "function" &&
-    !getEnvironmentFlag("PROVE_IT_SERIAL");
+    !getEnvironmentFlag("PROVE_IT_SERIAL") &&
+    stopAt === -1 &&
+    !isStoreTraced();
   // How many states the search had found when the workers joined.
   let seeded = 0;
   const parallel: { workers?: EngineWorkers; isSpawned: boolean; threads: number } = {
@@ -638,6 +645,18 @@ export const runEngine = (input: EngineInput): EngineResult => {
     };
   };
 
+  // TLC's fingerprints of the first `count` states' keys.
+  const getFingerprints = (count: number) =>
+    view
+      ? getStateFingerprints(separateKeys, count, 1, [0])
+      : getStateFingerprints(
+          hasSeparateKeys ? separateKeys : states,
+          count,
+          width,
+          input.tlcOrder,
+          parents,
+        );
+
   // The counts before the state being expanded, which a bailout hands to the interpreter: it
   // expands that state again from there, finding what the engine stopped at.
   let checkpointCount = 0;
@@ -676,6 +695,7 @@ export const runEngine = (input: EngineInput): EngineResult => {
       }
       checkpointCount = stateCount;
       checkpointGenerated = generated;
+      if (expanding === stopAt) bail("stopped where PROVE_IT_STOP_AT asked");
       // The interpreter checks temporal properties on the graph as it grows, so it may find a
       // violation early in a state space the engine would search without end. Past this many
       // states, the engine hands its graph over and the interpreter goes on.
@@ -735,11 +755,33 @@ export const runEngine = (input: EngineInput): EngineResult => {
             findState: (key) => findStateBefore(key, checkpointCount),
           };
       error.checkpoint = checkpoint;
+      writeStateLog(() => ({
+        variables: environment.variables,
+        states: checkpoint.states,
+        parents: checkpoint.parents,
+        count: checkpointCount,
+        fingerprints: getFingerprints(checkpointCount),
+        edges: undefined,
+        labels: undefined,
+        stopped: error.message,
+        expanding,
+      }));
     }
     throw error;
   } finally {
     parallel.workers?.terminate();
   }
+  writeStateLog(() => ({
+    variables: environment.variables,
+    states,
+    parents,
+    count: stateCount,
+    fingerprints: getFingerprints(stateCount),
+    edges: graph?.edges.subarray(0, graph.edgeCount),
+    labels: graph?.labels,
+    stopped: undefined,
+    expanding: stateCount,
+  }));
 
   return {
     generatedStates: generated,
@@ -747,16 +789,7 @@ export const runEngine = (input: EngineInput): EngineResult => {
     depth: generated === 0 ? 0 : Math.max(depth, 1),
     outDegrees,
     initialStates,
-    getFingerprints: () =>
-      view
-        ? getStateFingerprints(separateKeys, stateCount, 1, [0])
-        : getStateFingerprints(
-            hasSeparateKeys ? separateKeys : states,
-            stateCount,
-            width,
-            input.tlcOrder,
-            parents,
-          ),
+    getFingerprints: () => getFingerprints(stateCount),
     valueCount: getValueCount(),
     threads: parallel.threads,
     checkpoint: graph && getGraphCheckpoint(stateCount, stateCount, 0),

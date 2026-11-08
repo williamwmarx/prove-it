@@ -90,11 +90,14 @@ const STANDARD_MODULES = new Set([
   "Toolbox",
 ]);
 
-// The modules that the corpora extend from TLAPS and the Community Modules, by name.
+// The modules that the corpora extend from TLAPS and the Community Modules, by name. A library
+// that hasn't been fetched has none, so a script checking a model outside the corpora still runs.
 export const getLibraryModules = () =>
   new Map(
     ["tlapm/library", "community/modules"]
-      .flatMap((library) => listFiles(join(CORPORA_DIRECTORY, library)))
+      .map((library) => join(CORPORA_DIRECTORY, library))
+      .filter((directory) => existsSync(directory))
+      .flatMap((directory) => listFiles(directory))
       .filter((path) => path.endsWith(".tla") && !STANDARD_MODULES.has(basename(path, ".tla")))
       .map((path): [string, string] => [basename(path, ".tla"), path])
       .reverse(),

@@ -5,6 +5,18 @@ const EXIT_STATUSES: Record<string, string> = {
   "postcondition-violation": "assumption-violation",
 };
 
+// The fields of an outcome that two runs of a model must agree on.
+export const OUTCOME_FIELDS = [
+  "status",
+  "violation",
+  "generatedStates",
+  "distinctStates",
+  "depth",
+  "traceLength",
+  "fingerprintProbability",
+  "error",
+] as const;
+
 const getExitStatus = (status: string) => EXIT_STATUSES[status] ?? status;
 
 export const compareOutcome = (
@@ -22,6 +34,7 @@ export const compareOutcome = (
     "distinctStates",
     "depth",
     "traceLength",
+    "fingerprintProbability",
   ] as const;
   const differences = fields
     .filter((field) => expected[field] !== undefined && expected[field] !== actual[field])

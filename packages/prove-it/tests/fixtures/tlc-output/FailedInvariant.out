@@ -1,0 +1,26 @@
+TLC2 Version 2026.11.08.065739 (rev: ${git.shortRevision})
+Running breadth-first search Model-Checking with fp 0 and seed 4 with 1 worker on 4 cores with 3420MB heap and 64MB offheap memory [pid: 2603] (Linux 6.18.44-fc-v310 amd64, Ubuntu 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /home/user/prove-it/packages/prove-it/tests/fixtures/cli-output/FailedInvariant.tla
+Parsing file /tmp/tlc-3037189798869992043/Naturals.tla (jar:file:/tmp/tlaplus/tlatools/org.lamport.tlatools/dist/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Semantic processing of module Naturals
+Semantic processing of module FailedInvariant
+Linting of module FailedInvariant
+Starting... (2026-11-08 07:03:39)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-11-08 07:03:39.
+Error: Evaluating invariant Inv failed.
+The second argument of \div is 0.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+State 2: <Next line 5, col 9 to line 5, col 27 of module FailedInvariant>
+x = 1
+
+State 3: <Next line 5, col 9 to line 5, col 27 of module FailedInvariant>
+x = 2
+
+3 states generated, 3 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 3.
+The average outdegree of the complete state graph is 1 (minimum is 1, the maximum 1 and the 95th percentile is 1).
+Finished in 00s at (2026-11-08 07:03:39)

@@ -1,0 +1,8 @@
+{
+  "id": "tla-rs/test_cases/should_error/definition_parse_error.cfg",
+  "mode": "default",
+  "tlcCommit": "d8fb231de4e4b5d02c1b2ed1ac759c086f694021",
+  "exitCode": 150,
+  "stdout": "TLC2 Version 2026.11.08.065739 (rev: ${git.shortRevision})\nRunning breadth-first search Model-Checking with fp 0 and seed 4 with 1 worker on 4 cores with 683MB heap and 64MB offheap memory [pid: 441] (Linux 6.18.44-fc-v310 amd64, Ubuntu 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).\nParsing file /home/user/prove-it/packages/prove-it/tests/conformance/.corpora/tla-rs/test_cases/should_error/definition_parse_error.tla\n***Parse Error***\nEncountered \"|->\" at line 5, column 13 and token \"b\" \n\nResidual stack trace follows:\nSome [] Form starting at line 5, column 8.\nExtendableExpr starting at line 5, column 8.\nExpression starting at line 5, column 8.\nDefinition starting at line 5, column 1.\nModule body starting at line 3, column 1.\n\n\nFatal errors while parsing TLA+ spec in file definition_parse_error\n\nIn module definition_parse_error\n\nCould not parse module definition_parse_error from file definition_parse_error.tla\n*** Errors: 1\n\nIn module definition_parse_error\n\nCould not parse module definition_parse_error from file definition_parse_error.tla\n\n\n\nStarting... (2026-11-08 07:14:20)\nError: Parsing or semantic analysis failed.\nFinished in 00s at (2026-11-08 07:14:20)\n",
+  "stderr": ""
+}

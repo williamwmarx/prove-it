@@ -2,7 +2,9 @@ import { existsSync, readFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 
 import { check, TlaError, TlaSyntaxError, TlaUnsupportedError } from "../src";
+import { formatProbability, getActualProbability } from "../src/tlc/summary";
 import { getLibraryModules, TLC_SEED } from "./corpora";
+import { BACKENDS } from "./engine-runs";
 
 export interface ModelOutcome {
   status: string;
@@ -11,6 +13,9 @@ export interface ModelOutcome {
   distinctStates?: number;
   depth?: number;
   traceLength?: number;
+  // TLC's estimate "based on the actual fingerprints" of the chance that two distinct states had
+  // the same fingerprint, as it prints it. It depends on every state's fingerprint.
+  fingerprintProbability?: string;
   error?: string;
   milliseconds: number;
 }
@@ -67,6 +72,9 @@ export const checkModel = async (specPath: string, configPath: string): Promise<
       generatedStates: result.generatedStates,
       distinctStates: result.distinctStates,
       depth: result.depth,
+      ...(result.fingerprintDistance !== undefined && {
+        fingerprintProbability: formatProbability(getActualProbability(result.fingerprintDistance)),
+      }),
       milliseconds,
     };
   }
@@ -91,6 +99,13 @@ const getErrorOutcome = (error: unknown, milliseconds: number): ModelOutcome => 
 };
 
 if (process.argv[1] === import.meta.filename) {
+  // The runners pick the engine's backend with PROVE_IT_ENGINE_BACKEND, of which only the
+  // TypeScript engine exists yet.
+  const backend = process.env.PROVE_IT_ENGINE_BACKEND;
+  if (backend !== undefined && !BACKENDS.includes(backend)) {
+    console.error(`PROVE_IT_ENGINE_BACKEND takes one of ${BACKENDS.join(", ")}, not ${backend}`);
+    process.exit(2);
+  }
   const startedAt = performance.now();
   const outcome = { value: undefined as ModelOutcome | undefined };
   try {

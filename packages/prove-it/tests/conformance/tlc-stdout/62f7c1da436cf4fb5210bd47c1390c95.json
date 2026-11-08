@@ -1,0 +1,8 @@
+{
+  "id": "tla-rs/test_cases/should_pass/symbolic_nat.cfg",
+  "mode": "tool",
+  "tlcCommit": "d8fb231de4e4b5d02c1b2ed1ac759c086f694021",
+  "exitCode": 151,
+  "stdout": "@!@!@STARTMSG 2262:0 @!@!@\nTLC2 Version 2026.11.08.065739 (rev: ${git.shortRevision})\n@!@!@ENDMSG 2262 @!@!@\n@!@!@STARTMSG 2187:0 @!@!@\nRunning breadth-first search Model-Checking with fp 0 and seed 4 with 1 worker on 4 cores with 683MB heap and 64MB offheap memory [pid: 2068] (Linux 6.18.44-fc-v310 amd64, Ubuntu 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).\n@!@!@ENDMSG 2187 @!@!@\n@!@!@STARTMSG 5006:1 @!@!@\nTLC found an error in the configuration file at line 4\nIt was expecting a keyword, but did not find it.\n@!@!@ENDMSG 5006 @!@!@\n@!@!@STARTMSG 2186:0 @!@!@\nFinished in 260ms at (2026-11-08 07:14:41)\n@!@!@ENDMSG 2186 @!@!@\n",
+  "stderr": ""
+}

@@ -6,8 +6,8 @@
 // Composite values keep their elements in TLC's order, so enumerating a set visits elements in the
 // order TLC does and the engine generates successors in TLC's order.
 
-import { findStringRank, getStringRank } from "../values";
-import { getEnvironmentFlag } from "./settings";
+import { findStringRank, getRankedStringCount, getStringOrder, getStringRank } from "../values";
+import { getEnvironmentFlag, openDebugLog } from "./settings";
 
 export const KIND_BOOL = 0;
 export const KIND_INT = 1;
@@ -192,7 +192,7 @@ const internHashed = (
   }
 };
 
-export const resetStore = () => {
+export let resetStore = () => {
   generation++;
   resetDomains();
   if (shared) {
@@ -232,7 +232,7 @@ export const textOf = (id: number) => texts[payloads[id]];
 
 export const bool = (value: boolean) => (value ? TRUE : FALSE);
 
-export const int = (value: number) => {
+export let int = (value: number) => {
   if (value >= SMALL_INT_MIN && value <= SMALL_INT_MAX) return smallInts[value - SMALL_INT_MIN];
   if (value > 2147483647 || value < -2147483648 || !Number.isInteger(value)) {
     return bail("integer overflow");
@@ -251,7 +251,7 @@ const internText = (text: string, kind: number) => {
   return index;
 };
 
-export const str = (text: string) => {
+export let str = (text: string) => {
   const known = stringIds.get(text);
   if (known !== undefined) return known;
   // A string the spec mentions has a rank already. One it builds keeps whatever rank it has now.
@@ -264,7 +264,7 @@ export const str = (text: string) => {
 
 const peekRank = (text: string) => findStringRank(text) ?? -1;
 
-export const model = (name: string) => {
+export let model = (name: string) => {
   const known = modelIds.get(name);
   if (known !== undefined) return known;
   // Typed model values, such as A_a, change how TLC compares values. The engine leaves them to the
@@ -300,7 +300,7 @@ const checkModelTypes = (left: number, right: number) => {
 };
 
 // TLC's Value#compareTo. Two values TLC can't compare make the engine bail out.
-export const compare = (left: number, right: number): number => {
+export let compare = (left: number, right: number): number => {
   if (left === right) return 0;
   const leftKind = kinds[left];
   const rightKind = kinds[right];
@@ -383,7 +383,7 @@ const compareFunctions = (left: number, right: number) => {
 // TLC's equality. Equal values have equal ids, so two distinct ids are unequal, but TLC compares
 // composite values element by element up to the first difference, which fails where those elements
 // are values TLC can't compare. The engine bails out wherever TLC would fail.
-export const equals = (left: number, right: number): boolean => {
+export let equals = (left: number, right: number): boolean => {
   if (left === right) return true;
   const leftKind = kinds[left];
   const rightKind = kinds[right];
@@ -449,7 +449,7 @@ const equalsFunctions = (left: number, right: number) => {
 // --- sets ---
 
 // The set of the given elements, in any order and with duplicates.
-export const setOf = (elements: number[]) => {
+export let setOf = (elements: number[]) => {
   const length = elements.length;
   if (length === 0) return EMPTY_SET;
   if (length === 1) return internBlock(KIND_SET, elements, 1, 1);
@@ -467,7 +467,7 @@ export const setOf = (elements: number[]) => {
 };
 
 // The set of words[start..start + length), in any order and with duplicates.
-export const setOfRange = (words: Int32Array, start: number, length: number) =>
+export let setOfRange = (words: Int32Array, start: number, length: number) =>
   length === 0 ? EMPTY_SET : internSortedSet(fromStart(words, start, length), length);
 
 // Sorts the set of words[0..length), duplicates and all, and interns it.
@@ -525,11 +525,11 @@ const sortWords = (words: Int32Array, length: number) => {
 };
 
 // The set of elements already in TLC's order without duplicates.
-export const setOfSorted = (elements: ArrayLike<number>, length: number) =>
+export let setOfSorted = (elements: ArrayLike<number>, length: number) =>
   internBlock(KIND_SET, elements, length, length);
 
 // The set of words[start..start + length), already in TLC's order without duplicates.
-export const setOfSortedRange = (words: Int32Array, start: number, length: number) =>
+export let setOfSortedRange = (words: Int32Array, start: number, length: number) =>
   internBlock(KIND_SET, fromStart(words, start, length), length, length);
 
 // words[start..start + length), moved to the start of an array for interning.
@@ -546,7 +546,7 @@ export const setElements = (set: number) => {
   return Array.from(heap.subarray(offset, offset + sizes[set]));
 };
 
-export const isMember = (element: number, set: number): boolean => {
+export let isMember = (element: number, set: number): boolean => {
   const size = sizes[set];
   if (findInBlock(payloads[set], size, element) !== -1) return true;
   // TLC compares the element with those of the set, which fails for values it can't compare. A set
@@ -581,7 +581,7 @@ const takeMergeScratch = (length: number) => {
   return mergeScratch;
 };
 
-export const union = (left: number, right: number) => {
+export let union = (left: number, right: number) => {
   const leftSize = sizes[left];
   const rightSize = sizes[right];
   if (leftSize === 0) return right;
@@ -616,7 +616,7 @@ export const union = (left: number, right: number) => {
   return internBlock(KIND_SET, merged, length, length);
 };
 
-export const intersection = (left: number, right: number) => {
+export let intersection = (left: number, right: number) => {
   const leftSize = sizes[left];
   const rightSize = sizes[right];
   if (leftSize === 0 || left === right) return left;
@@ -644,7 +644,7 @@ export const intersection = (left: number, right: number) => {
   return internBlock(KIND_SET, merged, length, length);
 };
 
-export const difference = (left: number, right: number) => {
+export let difference = (left: number, right: number) => {
   const leftSize = sizes[left];
   const rightSize = sizes[right];
   if (leftSize === 0 || rightSize === 0) return left;
@@ -673,7 +673,7 @@ export const difference = (left: number, right: number) => {
   return internBlock(KIND_SET, merged, length, length);
 };
 
-export const isSubset = (left: number, right: number) => {
+export let isSubset = (left: number, right: number) => {
   if (left === right) return true;
   const leftSize = sizes[left];
   if (leftSize > sizes[right]) {
@@ -689,7 +689,7 @@ export const isSubset = (left: number, right: number) => {
   return true;
 };
 
-export const withElement = (set: number, element: number) => {
+export let withElement = (set: number, element: number) => {
   const size = sizes[set];
   const offset = payloads[set];
   const merged = takeMergeScratch(size + 1);
@@ -710,10 +710,10 @@ export const withElement = (set: number, element: number) => {
 
 // --- functions, records, and tuples ---
 
-export const tupleOf = (elements: ArrayLike<number>, length: number) =>
+export let tupleOf = (elements: ArrayLike<number>, length: number) =>
   length === 0 ? EMPTY_TUPLE : internBlock(KIND_TUPLE, elements, length, length);
 
-export const tupleOfRange = (words: Int32Array, start: number, length: number) =>
+export let tupleOfRange = (words: Int32Array, start: number, length: number) =>
   length === 0
     ? EMPTY_TUPLE
     : internBlock(KIND_TUPLE, fromStart(words, start, length), length, length);
@@ -739,7 +739,7 @@ export const createRecordShape = (keys: number[]): RecordShape => {
 };
 
 // The record of a shape with these values, which are as many as its keys.
-export const recordOf = (shape: RecordShape, values: ArrayLike<number>) => {
+export let recordOf = (shape: RecordShape, values: ArrayLike<number>) => {
   const keys = shape.keys;
   const size = keys.length;
   const length = 2 * size;
@@ -778,7 +778,7 @@ export const recordOf = (shape: RecordShape, values: ArrayLike<number>) => {
 
 // The function with the given domain in TLC's order and the range in the same order. A domain of
 // 1..n makes a tuple.
-export const functionOfSorted = (
+export let functionOfSorted = (
   domain: ArrayLike<number>,
   range: ArrayLike<number>,
   size: number,
@@ -814,7 +814,7 @@ const internPairs = (words: Int32Array, size: number) => {
 };
 
 // The function from the elements of a set, in its order, to values[start..start + its size).
-export const functionOverSet = (set: number, values: Int32Array, start: number) => {
+export let functionOverSet = (set: number, values: Int32Array, start: number) => {
   const size = sizes[set];
   if (size === 0) return EMPTY_TUPLE;
   const offset = payloads[set];
@@ -836,7 +836,7 @@ export const functionOverSet = (set: number, values: Int32Array, start: number) 
 };
 
 // The function of the given pairs, keys in any order but without duplicates.
-export const functionOf = (keys: number[], values: number[]) => {
+export let functionOf = (keys: number[], values: number[]) => {
   const size = keys.length;
   let isSorted = true;
   for (let index = 1; index < size; index++) {
@@ -879,7 +879,7 @@ export const getRangeValue = (fn: number, index: number) =>
   kinds[fn] === KIND_TUPLE ? heap[payloads[fn] + index] : heap[payloads[fn] + sizes[fn] + index];
 
 // The position of a key in the domain of a function, or -1.
-export const findKey = (fn: number, key: number) => {
+export let findKey = (fn: number, key: number) => {
   const size = sizes[fn];
   if (kinds[fn] === KIND_TUPLE) {
     if (kinds[key] !== KIND_INT) return -1;
@@ -957,7 +957,7 @@ export const resetDomains = () => {
   domainLows = new Int32Array(0);
 };
 
-export const apply = (fn: number, key: number) => {
+export let apply = (fn: number, key: number) => {
   const kind = kinds[fn];
   if (kind === KIND_FUNCTION && kinds[key] === KIND_INT) {
     const domainKind =
@@ -1051,7 +1051,7 @@ const isPatched = (other: number, offset: number, length: number, count: number)
 };
 
 // [fn EXCEPT ![key] = value].
-export const except = (fn: number, key: number, value: number) => {
+export let except = (fn: number, key: number, value: number) => {
   const kind = kinds[fn];
   if (kind !== KIND_FUNCTION && kind !== KIND_TUPLE) return bail("EXCEPT on a non-function");
   const position = findKey(fn, key);
@@ -1066,7 +1066,7 @@ export const except = (fn: number, key: number, value: number) => {
 };
 
 // [fn EXCEPT ![k1] = v1, ..., ![kn] = vn], given the position of each key in fn, interned once.
-export const exceptAt = (fn: number, positions: number[], values: number[], count: number) => {
+export let exceptAt = (fn: number, positions: number[], values: number[], count: number) => {
   const offset = payloads[fn];
   const valueStart = kinds[fn] === KIND_TUPLE ? 0 : sizes[fn];
   if (patchIndexes.length < count) {
@@ -1103,7 +1103,7 @@ export const exceptAt = (fn: number, positions: number[], values: number[], coun
 
 // r.field for a record, given where the field was in the last record read: records of one type
 // keep their fields at the same position, so the hint usually saves the search.
-export const applyField = (fn: number, key: number, hint: { position: number }) => {
+export let applyField = (fn: number, key: number, hint: { position: number }) => {
   if (kinds[fn] === KIND_FUNCTION) {
     const size = sizes[fn];
     const offset = payloads[fn];
@@ -1118,7 +1118,7 @@ export const applyField = (fn: number, key: number, hint: { position: number }) 
   return apply(fn, key);
 };
 
-export const domainOf = (fn: number) => {
+export let domainOf = (fn: number) => {
   const size = sizes[fn];
   const keys = takeMergeScratch(size);
   for (let index = 0; index < size; index++) keys[index] = getKey(fn, index);
@@ -1126,7 +1126,7 @@ export const domainOf = (fn: number) => {
 };
 
 // The elements of a tuple from position `from` up to `to`, as Tail takes them.
-export const sliceTuple = (tuple: number, from: number, to: number) => {
+export let sliceTuple = (tuple: number, from: number, to: number) => {
   const length = to - from;
   if (length <= 0) return EMPTY_TUPLE;
   const words = takeMergeScratch(length);
@@ -1135,7 +1135,7 @@ export const sliceTuple = (tuple: number, from: number, to: number) => {
   return internBlock(KIND_TUPLE, words, length, length);
 };
 
-export const concatTuples = (left: number, right: number) => {
+export let concatTuples = (left: number, right: number) => {
   const leftSize = sizes[left];
   const rightSize = sizes[right];
   if (rightSize === 0) return left;
@@ -1150,7 +1150,7 @@ export const concatTuples = (left: number, right: number) => {
   return internBlock(KIND_TUPLE, words, length, length);
 };
 
-export const appendTuple = (tuple: number, element: number) => {
+export let appendTuple = (tuple: number, element: number) => {
   const size = sizes[tuple];
   const words = takeMergeScratch(size + 1);
   const offset = payloads[tuple];
@@ -1417,3 +1417,104 @@ export const attachSharedStore = (buffers: SharedStore) => {
 export const freezeTexts = () => {
   if (shared) shared.isTextFrozen = true;
 };
+
+// PROVE_IT_STORE_TRACE=path writes each operation of the store to the file, one JSON line each:
+// its name, its arguments, as ids, numbers and texts, and its result, or {"bail": reason}. An
+// operation another calls isn't written. A reset's argument is TLC's order of strings then, which
+// ranks the strings the store makes; a string something else ranks later, such as ToString, is
+// written as ["rankStrings", [texts], null] before the next operation, in the order it was ranked. Another store given the same operations must return the
+// same ids and stop for the same reasons, since TLC's order and the engine's ids follow from them.
+// Without the setting, the operations are the functions above.
+const writeTrace = openDebugLog("PROVE_IT_STORE_TRACE");
+if (writeTrace) {
+  // The number of strings ranked when the trace last wrote them or an operation ranked them.
+  const tracing = { depth: 0, ranked: 0 };
+  const writeRankedStrings = () => {
+    const count = getRankedStringCount();
+    if (count <= tracing.ranked) return;
+    writeTrace(JSON.stringify(["rankStrings", [getStringOrder().slice(tracing.ranked)], null]));
+    tracing.ranked = count;
+  };
+  const getWords = (words: ArrayLike<number>, start: number, length: number) =>
+    Array.from({ length }, (_, index) => words[start + index]);
+  const trace =
+    <Args extends unknown[], Result>(
+      name: string,
+      operation: (...args: Args) => Result,
+      getArguments: (...args: Args) => unknown[] = (...args) =>
+        args.map((argument) => (Array.isArray(argument) ? [...argument] : argument)),
+    ) =>
+    (...args: Args): Result => {
+      if (tracing.depth > 0) return operation(...args);
+      if (name !== "resetStore") writeRankedStrings();
+      // Some operations sort or reuse their arrays, so the arguments are copied first.
+      const recorded = getArguments(...args);
+      tracing.depth++;
+      try {
+        const result = operation(...args);
+        writeTrace(JSON.stringify([name, recorded, result ?? null]));
+        return result;
+      } catch (error) {
+        if (error instanceof Bailout) {
+          writeTrace(JSON.stringify([name, recorded, { bail: error.message }]));
+        }
+        throw error;
+      } finally {
+        tracing.depth--;
+        // The strings the operation ranked, a replay ranks again by running it.
+        tracing.ranked = getRankedStringCount();
+      }
+    };
+  resetStore = trace("resetStore", resetStore, () => [getStringOrder()]);
+  int = trace("int", int);
+  str = trace("str", str);
+  model = trace("model", model);
+  compare = trace("compare", compare);
+  equals = trace("equals", equals);
+  setOf = trace("setOf", setOf);
+  setOfRange = trace("setOfRange", setOfRange, (words, start, length) => [
+    getWords(words, start, length),
+  ]);
+  setOfSorted = trace("setOfSorted", setOfSorted, (elements, length) => [
+    getWords(elements, 0, length),
+  ]);
+  setOfSortedRange = trace("setOfSortedRange", setOfSortedRange, (words, start, length) => [
+    getWords(words, start, length),
+  ]);
+  isMember = trace("isMember", isMember);
+  union = trace("union", union);
+  intersection = trace("intersection", intersection);
+  difference = trace("difference", difference);
+  isSubset = trace("isSubset", isSubset);
+  withElement = trace("withElement", withElement);
+  tupleOf = trace("tupleOf", tupleOf, (elements, length) => [getWords(elements, 0, length)]);
+  tupleOfRange = trace("tupleOfRange", tupleOfRange, (words, start, length) => [
+    getWords(words, start, length),
+  ]);
+  recordOf = trace("recordOf", recordOf, (shape, values) => [
+    [...shape.keys],
+    getWords(values, 0, shape.keys.length),
+  ]);
+  functionOfSorted = trace("functionOfSorted", functionOfSorted, (domain, range, size) => [
+    getWords(domain, 0, size),
+    getWords(range, 0, size),
+  ]);
+  functionOverSet = trace("functionOverSet", functionOverSet, (set, values, start) => [
+    set,
+    getWords(values, start, sizes[set]),
+  ]);
+  functionOf = trace("functionOf", functionOf);
+  findKey = trace("findKey", findKey);
+  apply = trace("apply", apply);
+  except = trace("except", except);
+  exceptAt = trace("exceptAt", exceptAt, (fn, positions, values, count) => [
+    fn,
+    positions.slice(0, count),
+    values.slice(0, count),
+  ]);
+  applyField = trace("applyField", applyField, (fn, key) => [fn, key]);
+  domainOf = trace("domainOf", domainOf);
+  sliceTuple = trace("sliceTuple", sliceTuple);
+  concatTuples = trace("concatTuples", concatTuples);
+  appendTuple = trace("appendTuple", appendTuple);
+}
