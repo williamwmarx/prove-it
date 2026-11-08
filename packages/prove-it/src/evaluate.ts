@@ -12,7 +12,7 @@ import {
   type RecordField,
   type SourceRange,
 } from "./ast";
-import { getKindString } from "./builtins";
+import { getJavaClassName, getKindString, reportAsJavaFailure } from "./builtins";
 import { generateEvaluator } from "./codegen";
 import {
   type DefinitionFacts,
@@ -20,7 +20,12 @@ import {
   isImpureDefinition,
   isNonconstant,
 } from "./dependencies";
-import { isStackOverflow, TlaEvaluationError, TlaUnassignedError } from "./errors";
+import {
+  isStackOverflow,
+  TlaEvaluationError,
+  TlaUnassignedError,
+  TlaUnsupportedError,
+} from "./errors";
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import { contextualApplications } from "./instances";
 import { prettyPrint } from "./pretty-print";
@@ -252,6 +257,9 @@ type GlobalName =
   | { kind: "Definition"; definition: Definition };
 
 const EXCEPT_AT = "@";
+
+const TLC_EVAL_SIGNATURE =
+  "public static tlc2.value.impl.Value tlc2.module.TLCEval.tlcEval(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel)";
 
 export const describeLocation = (expression: Expression) =>
   `line ${expression.location.line}, column ${expression.location.column}`;
@@ -1398,6 +1406,47 @@ const compileClosureCall = (
   };
 };
 
+const TEXT_SERIALIZE_SIGNATURE =
+  "public static synchronized tlc2.value.impl.Value tlc2.module.Json.textSerialize(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel)";
+
+const isTextSerialized = (closure: Closure, environment: Environment) =>
+  environment.runtime.version !== "1.7.4" &&
+  closure.name === "Serialize" &&
+  closure.params.length === 3 &&
+  closure.body.location.range?.module === "IOUtils";
+
+// Json.textSerialize, an @Evaluation method of TLC's for IOUtils's Serialize, reads the format from
+// the options, writes NDJSON itself, and otherwise evaluates the definition, reporting any failure
+// as its own.
+const compileTextSerialize = (closure: Closure, args: Expression[], environment: Environment) => {
+  const call = compileClosureCall(closure, args, environment);
+  const options = getEvaluator(args[2], environment);
+  return reportAsJavaFailure(TEXT_SERIALIZE_SIGNATURE, true, (context: Context) => {
+    const value = options(context);
+    const fields = isFunctionValue(value) ? toFiniteFunction(value).domain : [];
+    if (!isFunctionValue(value) || fields.some((key) => typeof key !== "string")) {
+      throw new TlaEvaluationError(
+        `The third argument of ndJsonSerialize should be a sequence, but instead it is:\n${formatValue(value)}`,
+      );
+    }
+    // Value.toRcd makes an empty function the empty record.
+    if (fields.length === 0) {
+      throw new TlaEvaluationError("Attempted to access nonexistent field 'format' of record\n[]");
+    }
+    const format = applyFunction(value, "format");
+    if (typeof format !== "string") {
+      const javaClass = `tlc2.value.impl.${getJavaClassName(format)}`;
+      throw new TlaEvaluationError(
+        `class ${javaClass} cannot be cast to class tlc2.value.impl.StringValue (${javaClass} and tlc2.value.impl.StringValue are in unnamed module of loader 'app')`,
+      );
+    }
+    if (format === "NDJSON") {
+      throw new TlaUnsupportedError("IOUtils's Serialize with the NDJSON format is not supported");
+    }
+    return call(context);
+  });
+};
+
 const compileApply = (
   expression: Expression & { kind: "Apply" },
   environment: Environment,
@@ -1418,7 +1467,11 @@ const compileApply = (
   const global = isLocallyResolved(expression)
     ? undefined
     : resolveGlobalOperator(expression.operator, environment);
-  if (global?.kind === "Closure") return compileClosureCall(global, args, environment);
+  if (global?.kind === "Closure") {
+    return isTextSerialized(global, environment)
+      ? compileTextSerialize(global, args, environment)
+      : compileClosureCall(global, args, environment);
+  }
   if (global?.kind === "Builtin" && global.name === "DOMAIN") {
     const operand = getEvaluator(args[0], environment);
     const domain = getDomainOperator(expression);
@@ -1426,7 +1479,13 @@ const compileApply = (
   }
   // TLC sorts the value of a constant TLCEval argument only where no context binds a name.
   if (global?.kind === "Builtin" && global.name === "TLCEval" && args.length === 1) {
-    const operand = getEvaluator(args[0], environment);
+    // TLC's TLCEval is an @Evaluation method that evaluates its argument itself, which TLC 1.7.4's
+    // Java override of TLC.TLCEval did not.
+    const evaluateOperand = getEvaluator(args[0], environment);
+    const operand =
+      environment.runtime.version === "1.7.4"
+        ? evaluateOperand
+        : reportAsJavaFailure(TLC_EVAL_SIGNATURE, true, evaluateOperand);
     if (contextualApplications.has(expression) || isNonconstant(args[0], environment)) {
       return operand;
     }
@@ -1739,7 +1798,7 @@ const compileSetComprehension = (
   if (!set) {
     return () => {
       throw new TlaEvaluationError(
-        `TLC cannot evaluate an unbounded CHOOSE at ${describeLocation(expression)}`,
+        `TLC attempted to evaluate an unbounded CHOOSE.\nMake sure that the expression is of form CHOOSE x \\in S: P(x).\n${describeRange(expression)}`,
       );
     };
   }
@@ -1924,12 +1983,15 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
     case "Forall":
     case "Exists":
       return compileQuantifier(expression, environment);
-    case "UnboundedQuantifier":
+    case "UnboundedQuantifier": {
+      const symbol = expression.quantifier === "Exists" ? "\\E" : "\\A";
+      const message = expression.isTemporal
+        ? `TLC cannot evaluate an unbounded quantifier at ${describeLocation(expression)}`
+        : `TLC attempted to evaluate an unbounded ${symbol}.\nMake sure that the expression is of form ${symbol} x \\in S: P(x).\n${describeRange(expression)}`;
       return () => {
-        throw new TlaEvaluationError(
-          `TLC cannot evaluate an unbounded quantifier at ${describeLocation(expression)}`,
-        );
+        throw new TlaEvaluationError(message);
       };
+    }
     case "Choose":
     case "SetFilter":
     case "SetMap":

@@ -38,6 +38,8 @@ export const getSteadyLines = (output: string) =>
 //   comes from, the path on the library path that led to a library module, or the module a copy
 //   in the metadata directory was made from;
 // - the directory of the class file an operator override was loaded from, or failed to match;
+// - in a stack trace, where Prove It's built files are, the hash in a chunk's name, and the line
+//   and column in it, which change with every build;
 // - the Progress lines, with -tool their message 2200 whole, whose presence depends on how long the
 //   run takes, since they come once a minute. The counts in them are those of the lines that end
 //   the run.
@@ -63,6 +65,10 @@ export const normalizeOutput = (output: string) =>
         .replace(
           /^((?:Loading|Failed to match) \S+ operator override from file:)\S*\/(\S+\.class )/,
           "$1$2",
+        )
+        .replace(
+          /(?:file:\/\/)?[^\s(]*\/dist\/([\w.]+?)(-[a-z0-9]{8})?\.js(?::\d+)*/g,
+          (_, name: string, hash: string | undefined) => `dist/${name}${hash ? "-_" : ""}.js:_`,
         ),
     )
     .join("\n");

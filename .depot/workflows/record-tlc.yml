@@ -2,7 +2,9 @@
 # packages/prove-it/scripts/differential.ts to compare Prove It's with: TLC is built from
 # TLC_COMMIT in packages/prove-it/scripts/tlc-recordings.ts, as the Benchmark workflow builds it, and
 # record-tlc.ts --stdout records each model expected.json lists under max_tlc_ms that has no
-# recording yet, then adds TLC's fingerprint estimates to expected.json. It runs by hand only and
+# recording yet, then adds TLC's fingerprint estimates to expected.json. With outcomes, it instead
+# records TLC's outcome on every corpus model in expected.json, keeping the entries of the models
+# the first recorder stopped TLC on at 300 s (record-tlc.ts --keep-unfinished). It runs by hand only and
 # holds no credential. The recordings and expected.json are its artifact, to commit to
 # packages/prove-it/tests/conformance.
 name: Record TLC
@@ -15,6 +17,10 @@ name: Record TLC
       max_tlc_ms:
         description: Leave out the models TLC took longer than this to check
         default: "20000"
+      outcomes:
+        description: Record TLC's outcome on every model in expected.json instead of its output
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -64,14 +70,21 @@ jobs:
         env:
           FILTER: ${{ inputs.filter || '' }}
           MAX_TLC_MS: ${{ inputs.max_tlc_ms || '20000' }}
+          OUTCOMES: ${{ inputs.outcomes && 'true' || 'false' }}
         run: |
           set -euo pipefail
           PATH="$(scripts/ci/bootstrap.sh bun java):$PATH"
           export TLA2TOOLS_JAR="$RUNNER_TEMP/tlaplus/tlatools/org.lamport.tlatools/dist/tla2tools.jar"
           cd packages/prove-it
-          # Each TLC runs one worker with a 768 MB heap, so 12 leave room for the collectors.
-          bun scripts/record-tlc.ts --stdout --concurrency 12 --max-tlc-ms "$MAX_TLC_MS" \
-            ${FILTER:+--filter "$FILTER"} | tee "$RUNNER_TEMP/record-tlc.log"
+          # Each TLC runs one worker with a 768 MB heap, so 12 leave room for the collectors. The
+          # outcomes keep the entries of models the first recorder stopped TLC on at 300 s.
+          if [ "$OUTCOMES" = true ]; then
+            bun scripts/record-tlc.ts --keep-unfinished --concurrency 12 \
+              | tee "$RUNNER_TEMP/record-tlc.log"
+          else
+            bun scripts/record-tlc.ts --stdout --concurrency 12 --max-tlc-ms "$MAX_TLC_MS" \
+              ${FILTER:+--filter "$FILTER"} | tee "$RUNNER_TEMP/record-tlc.log"
+          fi
           tail -1 "$RUNNER_TEMP/record-tlc.log" >> "$GITHUB_STEP_SUMMARY"
       - name: Keep the recordings
         if: always()

@@ -1337,6 +1337,10 @@ Against the 733 models with TLC under 20 s, on a 16-core Depot machine with main
     worded otherwise, a step named `Next` where TLC names its action, a POSTCONDITION reported
     false, and a crash in `getSpanLocation` on `test52`; and two that depend on TLC's runtime: a
     Java stack overflow and the install path in `TLCGet("config")`.
+  - Since then, Prove It matches TLC in all but 6 of those runs, the ones that depend on TLC's
+    runtime: the stack overflow, the install path, and a NullPointerException in TLC on
+    semantic_error1. `expected.json` is re-recorded at `TLC_COMMIT`, where SANY rejects 8 models
+    for a precedence conflict, as Prove It now does.
 - **Forced hand-over.** `differential.ts --stop-at` stopped the engine part way in 986 runs, the
   violating ones among them, each counted only when the engine said the stop took it, with output
   identical to the run without the stop each time. In 144 runs the engine hands over before any

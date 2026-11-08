@@ -238,6 +238,32 @@ const forgetWrittenOrder = (value: Value): void => {
   value.range.forEach(forgetWrittenOrder);
 };
 
+// TLC sorts a record it compares, fingerprints, or permutes, and each value inside it, keys
+// included. A lambda it evaluates again to print.
+export const forgetDeepWrittenOrder = (value: Value): void => {
+  if (typeof value !== "object" || (value.kind !== "Function" && value.kind !== "Set")) return;
+  if (value.hash !== 0 || value.fingerprint !== 0) return;
+  if (value.kind === "Set") return value.elements.forEach(forgetDeepWrittenOrder);
+  if (value.functionClass === "lambda") return;
+  value.writtenKeys = undefined;
+  value.domain.forEach(forgetDeepWrittenOrder);
+  value.range.forEach(forgetDeepWrittenOrder);
+};
+
+// IValue.deepNormalize, which TLCStateMut.fingerPrint applies to a state under a VIEW: a set or a
+// function compares its elements or keys to sort them only when it has two or more.
+export const forgetNormalizedWrittenOrder = (value: Value): void => {
+  if (typeof value !== "object" || (value.kind !== "Function" && value.kind !== "Set")) return;
+  if (value.hash !== 0 || value.fingerprint !== 0) return;
+  const forgetSorted = (keys: Value[]) =>
+    keys.forEach(keys.length > 1 ? forgetDeepWrittenOrder : forgetNormalizedWrittenOrder);
+  if (value.kind === "Set") return forgetSorted(value.elements);
+  if (value.functionClass === "lambda") return;
+  value.writtenKeys = undefined;
+  if (value.domain.length > 1) forgetSorted(value.domain);
+  value.range.forEach(forgetNormalizedWrittenOrder);
+};
+
 const isRecordDomain = (domain: Value[]) => domain.every((key) => typeof key === "string");
 
 // TLC compares a record only with another record, so comparing one with a function of another size

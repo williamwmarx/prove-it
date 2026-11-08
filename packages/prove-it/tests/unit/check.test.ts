@@ -42,6 +42,29 @@ const checkFixture = (directory: string, name: string) =>
   });
 
 describe("check matches TLC", () => {
+  // TLC prints C once, as it computes the constant definitions.
+  it.each(["0", undefined])(
+    "takes the value of a constant definition that prints, with PROVE_IT_ENGINE=%s",
+    async (engine) => {
+      const setting = process.env.PROVE_IT_ENGINE;
+      if (engine === undefined) delete process.env.PROVE_IT_ENGINE;
+      else process.env.PROVE_IT_ENGINE = engine;
+      const printed: string[] = [];
+      try {
+        await check({
+          source:
+            '---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nC == PrintT("C")\nInit == x = 0 /\\ C\nNext == x < 3 /\\ C /\\ x\' = x + 1\nInv == x >= 0 /\\ C\n====',
+          config: "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
+          onPrint: (text) => printed.push(text),
+        });
+      } finally {
+        if (setting === undefined) delete process.env.PROVE_IT_ENGINE;
+        else process.env.PROVE_IT_ENGINE = setting;
+      }
+      expect(printed).toEqual(['"C"']);
+    },
+  );
+
   it("evaluates every assumption in the semantics fixture", async () => {
     const result = await checkFixture("semantics", "Semantics");
     expect(result.status).toBe("success");
@@ -556,6 +579,37 @@ describe("check matches TLC", () => {
     ]);
   });
 
+  // TLC's output for each config.
+  it.each([
+    [
+      "VIEW View",
+      ["([b |-> 0, a |-> 0] :> 1)", "([b |-> 0, a |-> 0] :> 1)", "([a |-> 1, b |-> 1] :> 1)"],
+    ],
+    [
+      "VIEW ViewOfS",
+      ["([a |-> 0, b |-> 0] :> 1)", "([a |-> 0, b |-> 0] :> 1)", "([a |-> 1, b |-> 1] :> 1)"],
+    ],
+    [
+      "SYMMETRY Symmetry",
+      ["([a |-> 0, b |-> 0] :> 1)", "([a |-> 0, b |-> 0] :> 1)", "([a |-> 1, b |-> 1] :> 1)"],
+    ],
+  ])("prints the records of a trace under %s in the order TLC sorts them", async (reduction, s) => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals, TLC\nCONSTANT P\nVARIABLES x, r, s, t\nGet(v) == v.a + v.b\nInit == x = 0 /\\ r = [b |-> 0, a |-> 0] /\\ s = ([b |-> 0, a |-> 0] :> 1) /\\ t = {[b |-> 1, a |-> 1]}\nNext == x < 2 /\\ x' = x + 1 /\\ r' = [b |-> x, a |-> x] /\\ s' = ([b |-> x, a |-> x] :> 1) /\\ t' = {[b |-> x, a |-> 1]}\nView == x\nViewOfS == <<x, s>>\nSymmetry == Permutations(P)\nInv == x < 2\n====",
+      config: `CONSTANT P = {p1, p2}\nINIT Init\nNEXT Next\nINVARIANT Inv\n${reduction}`,
+    });
+    expect(
+      result.violation?.trace.map((step) =>
+        ["r", "s", "t"].map((name) => formatValue(step.state[name])),
+      ),
+    ).toEqual([
+      ["[a |-> 0, b |-> 0]", s[0], "{[a |-> 1, b |-> 1]}"],
+      ["[a |-> 0, b |-> 0]", s[1], "{[a |-> 1, b |-> 0]}"],
+      ["[a |-> 1, b |-> 1]", s[2], "{[a |-> 1, b |-> 1]}"],
+    ]);
+  });
+
   it("evaluates a VIEW on the symmetry representative TLC picks by its variable order", async () => {
     const result = await checkFixture("view", "ViewSymmetry");
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([7, 4, 4]);
@@ -793,6 +847,24 @@ ASSUME TLCFP(a) = -887695703
       "Action line 5, col 20 to line 5, col 29 of module M",
       "Action line 5, col 20 to line 5, col 29 of module M",
     ]);
+  });
+
+  // TLC's labels: a SPECIFICATION that an INSTANCE substitutes into is one unnamed action.
+  it.each([
+    ["Spec", "Action line 4, col 1 to line 4, col 14 of module M"],
+    ["OwnSpec", "Next line 4, col 1 to line 4, col 14 of module M"],
+    ["NamedSpec", "Action line 7, col 1 to line 7, col 19 of module M"],
+  ])("labels the steps of SPECIFICATION %s through an INSTANCE like TLC", async (spec, label) => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nINSTANCE Inner\nInv == x < 2\nOwnSpec == Init /\\ [][Next]_x\nI == INSTANCE Inner\nNamedSpec == I!Spec\n====",
+      config: `SPECIFICATION ${spec}\nINVARIANT Inv`,
+      loadModule: (name) =>
+        name === "Inner"
+          ? "---- MODULE Inner ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = x + 1 \\/ x' = x + 2\nSpec == Init /\\ [][Next]_x\n===="
+          : undefined,
+    });
+    expect(result.violation?.trace.map((step) => step.label)).toEqual([undefined, label]);
   });
 
   it("labels steps after evaluating the initial predicate again like TLC", async () => {
@@ -1348,6 +1420,63 @@ describe("evaluation errors match TLC", () => {
     });
     expect(result.violation?.message).toBe(
       "Attempted to evaluate a CASE with no conditions true.\nline 3, col 8 to line 3, col 22 of module M",
+    );
+  });
+
+  it.each([
+    [
+      "(CHOOSE v : TRUE) = 1",
+      "TLC attempted to evaluate an unbounded CHOOSE.\nMake sure that the expression is of form CHOOSE x \\in S: P(x).\nline 3, col 9 to line 3, col 23 of module M",
+    ],
+    [
+      "\\A v, w : v = w",
+      "TLC attempted to evaluate an unbounded \\A.\nMake sure that the expression is of form \\A x \\in S: P(x).\nline 3, col 8 to line 3, col 22 of module M",
+    ],
+  ])("reports an unbounded %s like TLC", async (assumption, message) => {
+    const result = await check({
+      source: `---- MODULE M ----\nVARIABLE x\nASSUME ${assumption}\nInit == x = 0\nNext == UNCHANGED x\n====`,
+      config: "INIT Init\nNEXT Next",
+    });
+    expect(result.violation?.message).toBe(message);
+  });
+
+  // TLC's TLCEval evaluates its argument in its Java method, which TLC 1.7.4's did not.
+  it.each([
+    [undefined, 2],
+    ["1.7.4" as const, 0],
+  ])("reports a failure inside TLCEval in TLC %s as the method's", async (version, depth) => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nF(n) == TLCEval(1 \\div n)\nASSUME TLCEval(F(0)) = 1\nInit == x = 0\nNext == UNCHANGED x\n====",
+      config: "INIT Init\nNEXT Next",
+      version,
+    });
+    const wrapper =
+      "Attempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.Value tlc2.module.TLCEval.tlcEval(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel),\nbut it produced the following error:\n";
+    expect(result.violation?.message).toBe(
+      `${wrapper.repeat(depth)}The second argument of \\div is 0.`,
+    );
+  });
+
+  // TLC's Json.textSerialize evaluates IOUtils's Serialize unless the format is NDJSON.
+  it.each([
+    [
+      '[format |-> "TXT"]',
+      "Attempted to enumerate a set of the form [l1 : v1, ..., ln : vn],\nbut can't enumerate the value of the `exitValue' field:\nInt",
+    ],
+    ["42", "The third argument of ndJsonSerialize should be a sequence, but instead it is:\n42"],
+    ["<<>>", "Attempted to access nonexistent field 'format' of record\n[]"],
+  ])("reports a failure in IOUtils's Serialize with %s as Json's", async (options, error) => {
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS Naturals, IOUtils\nVARIABLE x\nASSUME Serialize(1, "/tmp/x", ${options}).exitValue = 0\nInit == x = 0\nNext == UNCHANGED x\n====`,
+      config: "INIT Init\nNEXT Next",
+      loadModule: (name) =>
+        name === "IOUtils"
+          ? "---- MODULE IOUtils ----\nEXTENDS Integers\nSerialize(value, dest, options) == CHOOSE r \\in [exitValue : Int, stdout : STRING, stderr : STRING] : TRUE\n===="
+          : undefined,
+    });
+    expect(result.violation?.message).toBe(
+      `Attempted to apply the operator overridden by the Java method\npublic static synchronized tlc2.value.impl.Value tlc2.module.Json.textSerialize(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel),\nbut it produced the following error:\n${error}`,
     );
   });
 
@@ -3147,6 +3276,17 @@ describe("name resolution matches SANY", () => {
     expect((await checkSource(source)).status).toBe("success");
   });
 
+  // TLC's SANY gives SUBSET the precedence 8, below \X, and TLC 1.7.4's gave it 10-13, as \X.
+  it("reads SUBSET before \\X by the precedence of SANY in each TLC", async () => {
+    const source =
+      "---- MODULE M ----\nVARIABLE x\nASSUME SUBSET {1} \\X {2} = {{}, {<<1, 2>>}}\nInit == x = 0\nNext == UNCHANGED x\n====";
+    const config = "INIT Init\nNEXT Next";
+    expect((await check({ source, config })).status).toBe("success");
+    await expect(check({ source, config, version: "1.7.4" })).rejects.toThrow(
+      "Precedence conflict",
+    );
+  });
+
   it("defines prefix, postfix, and <: operators", async () => {
     const result = await checkSource(
       "EXTENDS Naturals\nn ^+ == n + 1\n-. n == 10 - n\na <: b == a - b\nASSUME (2^+) = 3 /\\ -4 = 6 /\\ (5 <: 2) = 3",
@@ -4723,7 +4863,7 @@ describe("initial predicate and next-state relation match TLC", () => {
       );
       return [result.generatedStates, result.distinctStates];
     };
-    expect(await getCounts("SUBSET {1} \\cup SUBSET {2}")).toEqual([7, 3]);
+    expect(await getCounts("(SUBSET {1}) \\cup SUBSET {2}")).toEqual([7, 3]);
     expect(await getCounts("(1..3) \\cup SUBSET {}")).toEqual([8, 4]);
     expect(await getCounts("{1} \\cup {1, 2}")).toEqual([4, 2]);
   });

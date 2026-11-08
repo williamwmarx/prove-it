@@ -2,6 +2,7 @@ import type { Expression, Module, SourceLocation, SourceRange } from "../ast";
 import { TlaSyntaxError } from "../errors";
 import { readAtAsIdentifier, type Token, tokenize } from "../lexer";
 import { parseSanyModule } from "../parser";
+import type { TlcVersion } from "../tlc/version";
 import { getTabStop } from "./lexer";
 import type { SanyLocation } from "./nodes";
 import { getSanyParseError } from "./parse-error";
@@ -185,7 +186,7 @@ export const isBoxToken = (file: SourceFile, index: number) => {
 // blanked out, which keeps every other token where it was. SANY's parser takes them only in an
 // ASSUME/PROVE, which unboxing hides. Such a [] comes right before its keyword, so a source that
 // never spells one has nothing to blank out.
-export const getUnboxedSource = (source: string) => {
+export const getUnboxedSource = (source: string, version?: TlcVersion) => {
   if (!/(?:\[\]|□)(?:ASSUME|PROVE)/.test(source)) return source;
   const file = createSourceFile("", source);
   const unboxed = file.tokens.reduce((text, token, index) => {
@@ -193,7 +194,7 @@ export const getUnboxedSource = (source: string) => {
     const offset = getOffset(file, token.line, token.column);
     return `${text.slice(0, offset)}  ${text.slice(offset + 2)}`;
   }, source);
-  if (unboxed !== source && getSanyParseError(source) !== undefined) {
+  if (unboxed !== source && getSanyParseError(source, version) !== undefined) {
     throw new TlaSyntaxError("SANY rejects a []ASSUME or []PROVE outside an ASSUME/PROVE");
   }
   return unboxed;
@@ -210,18 +211,23 @@ export interface SanyReading {
   isUnboxed: boolean;
 }
 
-export const readSanyText = (readings: Map<string, SanyReading>, text: string) => {
+// A run reads its texts as SANY in one version of TLC does.
+export const readSanyText = (
+  readings: Map<string, SanyReading>,
+  text: string,
+  version?: TlcVersion,
+) => {
   const known = readings.get(text);
   if (known) return known;
   // HACK: the parser reports a syntax error by throwing it, and every reader of the text gets it.
   const read = (): SanyReading => {
     try {
       const tokens = tokenize(text);
-      const unboxed = getUnboxedSource(text);
+      const unboxed = getUnboxedSource(text, version);
       const isUnboxed = unboxed !== text;
       return {
         tokens,
-        module: parseSanyModule(unboxed, isUnboxed ? undefined : tokens),
+        module: parseSanyModule(unboxed, isUnboxed ? undefined : tokens, version),
         isUnboxed,
       };
     } catch (error) {

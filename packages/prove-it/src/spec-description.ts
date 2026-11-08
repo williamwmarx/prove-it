@@ -293,15 +293,38 @@ const getActions = (
   }, callAction);
 };
 
+// SpecProcessor.processConfigSpec wraps the next-state relation in the substitutions of each
+// INSTANCE it reaches it through, which makes it one action that names no definition, at the first
+// of them.
+interface SpecNext {
+  expression: Expression;
+  scope: Scope | undefined;
+  substitution: SourceLocation | undefined;
+}
+
 const describeSpecification = (
   expression: Expression,
   scope: Scope | undefined,
   environment: Environment,
   description: SpecDescription,
-  next: { expression: Expression; scope: Scope | undefined }[],
+  next: SpecNext[],
+  instanceActions: Map<string, InstanceAction>,
+  substitution: SourceLocation | undefined,
 ): void => {
-  const recurse = (inner: Expression, innerScope: Scope | undefined) =>
-    describeSpecification(inner, innerScope, environment, description, next);
+  const recurse = (
+    inner: Expression,
+    innerScope: Scope | undefined,
+    innerSubstitution = substitution,
+  ) =>
+    describeSpecification(
+      inner,
+      innerScope,
+      environment,
+      description,
+      next,
+      instanceActions,
+      innerSubstitution,
+    );
   if (expression.kind === "Let") {
     recurse(
       expression.body,
@@ -321,7 +344,10 @@ const describeSpecification = (
       description.inits.push(createAction(called.name, called.body));
       return;
     }
-    recurse(called.body, called.scope);
+    const instanceAction = isLocallyResolved(expression)
+      ? undefined
+      : instanceActions.get(getOperatorName(expression) ?? "");
+    recurse(called.body, called.scope, substitution ?? instanceAction?.location);
     return;
   }
   if (called && expression.kind === "Apply" && called.params.length === expression.args.length) {
@@ -337,7 +363,7 @@ const describeSpecification = (
   }
   if (expression.kind === "Always") {
     if (expression.expression.kind === "BoxAction") {
-      next.push({ expression: expression.expression.action, scope });
+      next.push({ expression: expression.expression.action, scope, substitution });
       return;
     }
     description.temporals.push(createAction(UNNAMED_ACTION, expression));
@@ -439,16 +465,34 @@ const getSpecDescription = (
     impliedActions: [],
     impliedTemporals: [],
   };
-  const next: { expression: Expression; scope: Scope | undefined }[] = [];
+  const next: SpecNext[] = [];
   const specification =
     config.specification === undefined
       ? undefined
       : getOperatorDefinition(config.specification, environment);
   if (specification) {
-    describeSpecification(specification.body, undefined, environment, description, next);
+    describeSpecification(
+      specification.body,
+      undefined,
+      environment,
+      description,
+      next,
+      instanceActions,
+      instanceActions.get(config.specification ?? "")?.location,
+    );
     next.forEach((item) =>
       description.actions.push(
-        ...getActions(item.expression, item.scope, undefined, environment, instanceActions),
+        ...(item.substitution
+          ? [
+              {
+                name: UNNAMED_ACTION,
+                location: item.substitution,
+                parameters: [],
+                expression: item.expression,
+                scope: item.scope,
+              },
+            ]
+          : getActions(item.expression, item.scope, undefined, environment, instanceActions)),
       ),
     );
   }
