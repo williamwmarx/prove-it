@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { getStateLogDifference } from "../../scripts/state-log-diff";
+import { getStateLogDifference } from "../../scripts/state-logs";
 
 // The workers run from the build, which bun run test makes first.
 const CLI = join(import.meta.dirname, "../../dist/cli.js");
