@@ -3,8 +3,10 @@
 // Rust; the golden models' IR matches tests/conformance/ir; and each IR's string table is TLC's
 // string order, as createTlcOrder and getStringRank give it.
 //
-// Usage: bun scripts/run.ts engine-ir [--filter <text>] [--concurrency <n>] [--update]
-// --update rewrites the golden files. Cargo must be on the PATH, for the Rust round trip.
+// Usage: bun scripts/run.ts engine-ir [--filter <text>] [--concurrency <n>] [--timeout-ms <ms>]
+//        [--update]
+// --update rewrites the golden files. --timeout-ms stops a model that hasn't reached the engine
+// by then, and counts it as a failure; without it nothing does. Cargo must be on the PATH, for the Rust round trip.
 
 import { spawn, spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -64,8 +66,9 @@ const GOLDEN_MODELS = [
 const GOLDEN_DIRECTORY = join(CONFORMANCE_DIRECTORY, "ir");
 const OUT_DIRECTORY = join(CONFORMANCE_DIRECTORY, ".ir");
 const NATIVE_DIRECTORY = join(import.meta.dirname, "../native");
-// A model that hasn't reached the engine in this long won't.
-const TIMEOUT_MILLISECONDS = 120_000;
+const timeoutOption = getOption("--timeout-ms");
+const timeoutMilliseconds = timeoutOption === undefined ? undefined : Number(timeoutOption);
+const TIMED_OUT = "timed out before the engine";
 
 const filter = getOption("--filter");
 const concurrency = Number(getOption("--concurrency") ?? 4);
@@ -100,10 +103,13 @@ const lowerModel = (model: CorpusModel) =>
       },
     );
     const run: { result?: IrRun } = {};
-    const timer = setTimeout(() => {
-      run.result ??= { id: model.id, reason: "timed out before the engine" };
-      child.kill("SIGKILL");
-    }, TIMEOUT_MILLISECONDS);
+    const timer =
+      timeoutMilliseconds === undefined
+        ? undefined
+        : setTimeout(() => {
+            run.result ??= { id: model.id, reason: TIMED_OUT };
+            child.kill("SIGKILL");
+          }, timeoutMilliseconds);
     const stdout: Buffer[] = [];
     const stderr: string[] = [];
     child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
@@ -197,6 +203,10 @@ await Promise.all(
 );
 
 const failures: string[] = [];
+// A model stopped before it reached the engine had its IR checked by nothing.
+for (const run of runs) {
+  if (run.reason === TIMED_OUT) failures.push(`${run.id}: ${TIMED_OUT}`);
+}
 const lowered = runs.filter((run) => run.bytes !== undefined);
 for (const run of lowered) {
   const model = models.find((candidate) => candidate.id === run.id)!;
