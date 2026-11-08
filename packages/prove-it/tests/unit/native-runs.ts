@@ -36,7 +36,7 @@ interface Run {
 
 // Checks a model with the engine set as given, keeping the [engine] lines and what it reports.
 export const run = async (
-  options: Pick<CheckOptions, "source" | "config" | "isWarningEnabled">,
+  options: Pick<CheckOptions, "source" | "config" | "isWarningEnabled" | "loadModule">,
   settings: Partial<Record<(typeof SETTINGS)[number], string>>,
 ): Promise<Run> => {
   for (const name of SETTINGS) delete process.env[name];

@@ -396,4 +396,30 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
       expect.stringMatching(/^\[engine\] checked 2 states on 1 thread /),
     ]);
   });
+
+  it("gives ENABLED's rewrite of an instance's variables a next state of their own", async () => {
+    // Under ENABLED, TLC takes the instance's primed variable u for one apart from x, so H holds
+    // and K, which asks u' for two values, doesn't.
+    const options = {
+      source: toModule([
+        "EXTENDS Naturals",
+        "VARIABLE x",
+        "I == INSTANCE Inner WITH u <- x",
+        "Init == x = 0",
+        "Next == \\/ x' = (x + 1) % 3 /\\ I!H",
+        "        \\/ x' = 7 /\\ I!K",
+      ]),
+      config: "INIT Init\nNEXT Next",
+      loadModule: () =>
+        "---- MODULE Inner ----\nVARIABLE u\nH == ENABLED (u' = 100)\nK == ENABLED (u' = 100 /\\ u' = 101)\n====",
+    };
+    const native = await run(options, {
+      PROVE_IT_ENGINE: "debug",
+      PROVE_IT_ENGINE_BACKEND: "rust",
+    });
+    const interpreter = await run(options, { PROVE_IT_ENGINE: "0" });
+    expect(native.result).toEqual(interpreter.result);
+    expect(native.lines).toContainEqual(expect.stringMatching(COMPLETE));
+    expect(native.result.distinctStates).toBe(3);
+  });
 });

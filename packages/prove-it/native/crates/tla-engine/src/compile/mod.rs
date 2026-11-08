@@ -544,6 +544,11 @@ pub struct Compiler<'a> {
     expanding: HashSet<NodeId>,
     /// The slots of names bound over intervals, whose values are integers.
     int_slots: HashSet<u32>,
+    /// How many ENABLED actions the compiler is inside, whose private next state also holds the
+    /// variables ENABLED's rewrite of an instance names (`x@ENABLED`), at slots past the state's.
+    enabled_depth: u32,
+    /// The variables an ENABLED's next state holds: the state's and those past it.
+    variable_extent: usize,
     /// The name EXCEPT binds `@` to: its text, or one no text has if the IR holds none.
     at: TextId,
     depth: u32,
@@ -594,6 +599,8 @@ impl<'a> Compiler<'a> {
             recursive_functions: HashMap::new(),
             expanding: HashSet::new(),
             int_slots: HashSet::new(),
+            enabled_depth: 0,
+            variable_extent: ir.variables.len(),
             at: ir
                 .texts
                 .iter()
@@ -1026,10 +1033,11 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    fn read_variable(&self, index: u32, context: &Context) -> Compiling<Compiled> {
-        if index as usize >= self.ir.variables.len() {
-            return decline("a variable past the state's, as ENABLED's rewrite names");
+    fn read_variable(&mut self, index: u32, context: &Context) -> Compiling<Compiled> {
+        if index as usize >= self.ir.variables.len() && !context.is_primed {
+            return unsupported("an unprimed variable past the state's");
         }
+        self.note_variable(index)?;
         if context.is_primed {
             return Ok(leaf(
                 eval(move |machine| machine.read_next(index)),
@@ -1043,6 +1051,18 @@ impl<'a> Compiler<'a> {
                 Footprint::var(index),
             )
         })
+    }
+
+    // A variable past the state's is one ENABLED's rewrite names, which only its next state holds.
+    fn note_variable(&mut self, index: u32) -> Compiling<()> {
+        if (index as usize) < self.ir.variables.len() {
+            return Ok(());
+        }
+        if self.enabled_depth == 0 {
+            return unsupported("a variable past the state's outside ENABLED");
+        }
+        self.variable_extent = self.variable_extent.max(index as usize + 1);
+        Ok(())
     }
 
     pub(crate) fn read_slot(&self, slot: u32) -> Compiled {

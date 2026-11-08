@@ -531,7 +531,11 @@ impl<'a> Compiler<'a> {
             };
         }
         if let Resolution::Variable(index) = name.resolution {
-            return Ok(if is_primed { None } else { Some(index) });
+            if is_primed {
+                return Ok(None);
+            }
+            self.note_variable(index)?;
+            return Ok(Some(index));
         }
         match self.resolve_action(node, context)? {
             Some((body, inner)) => self.get_assignable(body, &inner, is_primed, depth + 1),
@@ -1296,15 +1300,19 @@ impl<'a> Compiler<'a> {
         if context.is_primed || context.is_init {
             return unsupported("expression Enabled");
         }
-        let walk = self.compile_step(
-            action,
-            context,
-            WalkOptions {
-                is_init: false,
-                is_shortcut: false,
-            },
-        )?;
-        let footprint = self.get_enabled_footprint(action, context)?;
+        self.enabled_depth += 1;
+        let compiled = self
+            .compile_step(
+                action,
+                context,
+                WalkOptions {
+                    is_init: false,
+                    is_shortcut: false,
+                },
+            )
+            .and_then(|walk| Ok((walk, self.get_enabled_footprint(action, context)?)));
+        self.enabled_depth -= 1;
+        let (walk, footprint) = compiled?;
         if footprint
             .slots
             .iter()
@@ -1312,7 +1320,7 @@ impl<'a> Compiler<'a> {
         {
             return unsupported("ENABLED of an action that reads TLCGet");
         }
-        let width = self.ir.variables.len();
+        let width = self.variable_extent;
         Ok(Compiled {
             is_costly: true,
             is_boolean: true,

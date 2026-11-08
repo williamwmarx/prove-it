@@ -1,6 +1,1 @@
-[
-  {
-    "reason": "a variable past the state's, as ENABLED's rewrite names",
-    "milestone": "M6: ENABLED of an instance's action names the instance's variables at slots past the state's (x@ENABLED), which the M4 compiler declines; M6 is to read them as the TypeScript environment does"
-  }
-]
+[]
