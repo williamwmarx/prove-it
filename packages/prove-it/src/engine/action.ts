@@ -367,6 +367,8 @@ export const compileAction = (
               frames[at + levelCount + level] = 0;
             }
           }
+          // No finally: what throws out of the walk ends the expansion or the ENABLED test running
+          // it, and each puts frameTop back itself.
           frameTop = at;
         };
       }

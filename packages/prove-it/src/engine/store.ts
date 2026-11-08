@@ -801,6 +801,18 @@ export const functionOfSorted = (
   return internBlock(KIND_FUNCTION, words, 2 * size, size);
 };
 
+// The function whose sorted keys and their values fill words, keys first, as a function's block
+// does. A domain of 1..n makes a tuple of the values, moved down over the keys.
+const internPairs = (words: Int32Array, size: number) => {
+  for (let index = 0; index < size; index++) {
+    const key = words[index];
+    if (kinds[key] !== KIND_INT || payloads[key] !== index + 1)
+      return internBlock(KIND_FUNCTION, words, 2 * size, size);
+  }
+  words.copyWithin(0, size, 2 * size);
+  return internBlock(KIND_TUPLE, words, size, size);
+};
+
 // The function from the elements of a set, in its order, to values[start..start + its size).
 export const functionOverSet = (set: number, values: Int32Array, start: number) => {
   const size = sizes[set];
@@ -848,7 +860,7 @@ export const functionOf = (keys: number[], values: number[]) => {
       words[position] = key;
       words[size + position] = values[index];
     }
-    return functionOfSorted(words, words.subarray(size, 2 * size), size);
+    return internPairs(words, size);
   }
   const order = keys
     .map((_, index) => index)
