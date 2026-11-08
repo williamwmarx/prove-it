@@ -8,32 +8,39 @@ import {
   type Value,
 } from "../values";
 
-// FP64 with TLC's first irreducible polynomial, FP64.Polys[0], which `-fp 0` selects.
-const IRREDUCIBLE_POLYNOMIAL = 0x911498ae0e66bad6n;
+// FP64 with TLC's first irreducible polynomial, FP64.Polys[0], which `-fp 0` selects, as its high
+// and low 32 bits, which avoids a BigInt operation for every byte. A fingerprint starts as the
+// polynomial. The engine's fingerprints share these and the table.
+export const INITIAL_HIGH = 0x911498ae | 0;
+export const INITIAL_LOW = 0x0e66bad6;
 
-const BYTE_MOD_TABLE = (() => {
-  const powers: bigint[] = [];
-  for (let power = 1n << 63n; powers.length < 72;) {
-    powers.push(power);
-    power = (power >> 1n) ^ ((power & 1n) === 0n ? 0n : IRREDUCIBLE_POLYNOMIAL);
+// FP64's ByteModTable: entry b is the fingerprint from zero of byte b, the sum of x^(71 - k) mod the
+// polynomial for each bit k of b, with x^0 in a fingerprint's top bit. It is built from 32-bit
+// halves, as building it from BigInts took about a millisecond of each run's startup.
+const createByteModTable = () => {
+  const highs = new Int32Array(256);
+  const lows = new Int32Array(256);
+  let powerHigh = 1 << 31;
+  let powerLow = 0;
+  for (let exponent = 1; exponent < 72; exponent++) {
+    const isReduced = (powerLow & 1) !== 0;
+    powerLow = ((powerLow >>> 1) | (powerHigh << 31)) ^ (isReduced ? INITIAL_LOW : 0);
+    powerHigh = (powerHigh >>> 1) ^ (isReduced ? INITIAL_HIGH : 0);
+    const bit = exponent < 64 ? 0 : 1 << (71 - exponent);
+    for (let byte = 0; byte < 256; byte++) {
+      if ((byte & bit) === 0) continue;
+      highs[byte] ^= powerHigh;
+      lows[byte] ^= powerLow;
+    }
   }
-  return Array.from({ length: 256 }, (_, byte) =>
-    powers
-      .slice(64, 72)
-      .reverse()
-      .reduce((value, power, bit) => ((byte >> bit) & 1 ? value ^ power : value), 0n),
-  );
-})();
+  return { highs, lows };
+};
 
-const BYTE_MOD_HIGH = Int32Array.from(BYTE_MOD_TABLE, (entry) =>
-  Number(BigInt.asIntN(32, entry >> 32n)),
-);
-const BYTE_MOD_LOW = Int32Array.from(BYTE_MOD_TABLE, (entry) => Number(BigInt.asIntN(32, entry)));
+const BYTE_MOD_TABLE = createByteModTable();
+export const BYTE_MOD_HIGH = BYTE_MOD_TABLE.highs;
+export const BYTE_MOD_LOW = BYTE_MOD_TABLE.lows;
 
-// The fingerprint being extended, as its high and low 32 bits, which avoids a BigInt operation
-// for every byte.
-const INITIAL_HIGH = Number(BigInt.asIntN(32, IRREDUCIBLE_POLYNOMIAL >> 32n));
-const INITIAL_LOW = Number(BigInt.asIntN(32, IRREDUCIBLE_POLYNOMIAL));
+// The fingerprint being extended.
 let high = INITIAL_HIGH;
 let low = INITIAL_LOW;
 

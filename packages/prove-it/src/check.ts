@@ -15,6 +15,7 @@ import {
   createStackOverflowError,
   getErrorExitCode,
   isStackOverflow,
+  MissingBuildFileError,
   TlaConfigError,
   TlaEvaluationError,
   TlaIllegalStateError,
@@ -1544,6 +1545,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         ),
       };
     } catch (error) {
+      // A build without the engine's workers fails, rather than leave the search to one thread.
+      if (error instanceof MissingBuildFileError) throw error;
       // A search that stopped part way has no graph for the temporal properties, so the
       // interpreter starts over then.
       if (isBailout(error) && error.checkpoint && !liveness) {

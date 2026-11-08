@@ -6,7 +6,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 
-import { TlaError } from "../errors";
+import { MissingBuildFileError, TlaError } from "../errors";
 import { parseSanyModule } from "../parser";
 import {
   generateSanySpecification,
@@ -237,8 +237,17 @@ export const getPrecomputedModules = (snapshot: SanySnapshot): PrecomputedModule
   };
 };
 
-// The snapshot the build wrote beside the bundle, which a run from the sources goes without.
-export const readSanySnapshot = () =>
-  existsSync(SNAPSHOT_URL)
-    ? getPrecomputedModules(JSON.parse(readFileSync(SNAPSHOT_URL, "utf8")))
-    : undefined;
+// The executables build-binary.ts compiles define PROVE_IT_BINARY, and embed the snapshot.
+declare const PROVE_IT_BINARY: boolean | undefined;
+
+// The snapshot the build wrote beside the bundle, which a run from the sources goes without. An
+// executable that can't find it would analyze the standard modules on every run.
+export const readSanySnapshot = () => {
+  if (existsSync(SNAPSHOT_URL)) {
+    return getPrecomputedModules(JSON.parse(readFileSync(SNAPSHOT_URL, "utf8")));
+  }
+  if (typeof PROVE_IT_BINARY === "boolean" && PROVE_IT_BINARY) {
+    throw new MissingBuildFileError(SNAPSHOT_URL);
+  }
+  return undefined;
+};

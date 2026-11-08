@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, spyOn } from "bun:test";
 import { check } from "../../src";
 import { fromValue } from "../../src/engine/convert";
 import { getStateFingerprints, getStateFingerprintsReference } from "../../src/engine/fingerprint";
+import { resetStore } from "../../src/engine/store";
 import { getTlcFingerprint } from "../../src/tlc/fingerprint";
 import {
   createModelValue,
@@ -33,6 +34,8 @@ afterEach(() => {
 
 describe("the fingerprints of the engine's states", () => {
   it("match TLC's whichever parent each state names", () => {
+    // A search resets the store before it interns values, as this test does.
+    resetStore();
     // Several values share a length, so that many changes from a parent keep the lengths.
     const values: Value[] = [
       true,

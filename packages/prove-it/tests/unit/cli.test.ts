@@ -11,8 +11,12 @@ const FIXTURES = join(import.meta.dirname, "../fixtures");
 
 const CLI = join(import.meta.dirname, "../../src/cli.ts");
 
-const runCliWith = (directory: string, args: string[]) =>
-  spawnSync("bun", [CLI, ...args], { cwd: join(FIXTURES, directory), encoding: "utf8" });
+const runCliWith = (directory: string, args: string[], env?: Record<string, string>) =>
+  spawnSync("bun", [CLI, ...args], {
+    cwd: join(FIXTURES, directory),
+    encoding: "utf8",
+    env: env && { ...process.env, ...env },
+  });
 
 const copies: string[] = [];
 
@@ -519,6 +523,29 @@ describe("the CLI reports results like TLC", () => {
     },
   );
 
+  // TLC prints its dates in the local time zone, which TZ names.
+  it.each([
+    "UTC",
+    "Etc/UCT",
+    ":Etc/UTC",
+    "Asia/Kolkata",
+    "America/Los_Angeles",
+    "Pacific/Kiritimati",
+  ])("prints its dates in the time zone %s", (timeZone) => {
+    const format = new Intl.DateTimeFormat("sv-SE", {
+      timeZone: timeZone.replace(/^:/, ""),
+      dateStyle: "short",
+      timeStyle: "medium",
+    });
+    const before = format.format(new Date());
+    const result = runCliWith("cli-output", ["Success.tla"], { TZ: timeZone });
+    const after = format.format(new Date());
+    expect(result.status).toBe(0);
+    const finished = result.stdout.match(/^Finished in .+ at \((.+)\)$/m)?.[1] ?? "";
+    // The run may cross into the next second or minute.
+    expect([before, finished, after].toSorted()).toEqual([before, finished, after]);
+  });
+
   it("rejects a spec whose file name differs from its module name like TLC", () => {
     const result = runCli("cli-module-name", "Renamed");
     const reason =
@@ -537,6 +564,28 @@ describe("the CLI reports results like TLC", () => {
       "",
       reason,
       "",
+      "",
+      "",
+      "Starting... (_)",
+      "Error: Parsing or semantic analysis failed.",
+      "Finished in _ at (_)",
+      "",
+    ]);
+  });
+
+  it("rejects a spec whose file name differs from its module name like TLC 1.7.4", () => {
+    const result = runCliWith("cli-module-name", ["-Dtla-ts.tlc=1.7.4", "tlc2.TLC", "Renamed"]);
+    expect(result.status).toBe(150);
+    expect(getSteadyLines(result.stdout)).toEqual([
+      "",
+      "Fatal errors while parsing TLA+ spec in file Renamed",
+      "",
+      "tla2sany.semantic.AbortException",
+      "*** Abort messages: 1",
+      "",
+      "Unknown location",
+      "",
+      "File name 'Renamed' does not match the name 'Other' of the top level module it contains.",
       "",
       "",
       "Starting... (_)",

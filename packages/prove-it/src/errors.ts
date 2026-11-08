@@ -305,6 +305,16 @@ export class EngineInvariantError extends TlaError {
   }
 }
 
+// A file the build puts beside the bundle, such as a worker's entry or SANY's snapshot of the
+// standard modules, isn't there: the build left it out, or put it where the bundle doesn't look.
+// index.ts doesn't export it.
+export class MissingBuildFileError extends TlaError {
+  constructor(url: URL) {
+    super(`Cannot find ${url.href}, which the build puts beside the bundle.`);
+    this.name = "MissingBuildFileError";
+  }
+}
+
 // nlsat reached a case Z3 leaves unimplemented, where Z3 exits the process. nra answers unknown
 // instead. index.ts doesn't export it.
 export class NlsatUnsupportedError extends TlaError {

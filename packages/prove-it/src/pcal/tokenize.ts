@@ -71,41 +71,49 @@ export const peekPcalReader = (reader: PcalCharReader) => {
 const LEFT_PARENS = new Set(["(", "[", "{", "<<", "⟨"]);
 const RIGHT_PARENS = new Set([">>_", "⟩_", "]_", ")", "}", "]", ">>", "⟩"]);
 
-// PcalBuiltInSymbols.buildHashTable.
-const BUILT_IN_SYMBOLS = new Set([
-  ...LEFT_PARENS,
-  ...RIGHT_PARENS,
-  ..."_ ASSUME ASSUMPTION AXIOM BOOLEAN CASE CONSTANT CONSTANTS EXCEPT EXTENDS FALSE IF INSTANCE LOCAL MODULE OTHER STRING THEOREM TRUE VARIABLE VARIABLES WITH WF_ SF_".split(
-    " ",
-  ),
-  ..."\\A ∀ \\forall \\E ∃ \\exists \\AA \\EE ~ ¬ \\lnot \\neg <> ◇ CHOOSE ENABLED UNCHANGED SUBSET UNION DOMAIN ' ^+ ⁺ ^* ^#".split(
-    " ",
-  ),
-  ..."=> ⇒ \\cdot ⋅ <=> ⇔ \\equiv ≡ ~> ↝ -+-> ⇸ \\subseteq ⊆ \\subset ⊂ \\supset ⊃ \\supseteq ⊇ \\ll ≪ \\gg ≫ \\ \\cap \\intersect ∩ \\cup \\union ∪ /\\ ∧ \\/ ∨ \\land \\lor \\X × - + * / ^ | || ‖ & && ++ -- ** // ^^ |- ⊢ |= ⊨ -| ⊣ =| ⫤ <: :> := ≔ ::= ⩴".split(
-    " ",
-  ),
-  ..."(+) ⊕ (-) ⊖ \\oplus \\ominus (.) ⊙ \\odot (/) ⊘ \\oslash (\\X) ⊗ \\otimes \\uplus ⊎ \\sqcap ⊓ \\sqcup ⊔ \\div ÷ \\star ⋆ \\o ∘ \\circ \\bigcirc ◯ \\bullet ●".split(
-    " ",
-  ),
-  ..."\\in ∈ \\notin ∉ = # /= ≠ < > =< <= ≤ >= ≥ \\prec ≺ \\succ ≻ \\preceq ⪯ \\succeq ⪰ \\sim ∼ \\simeq ≃ \\approx ≈ \\doteq ≐ \\asymp ≍ \\sqsubset ⊏ \\sqsupset ⊐ \\sqsubseteq ⊑ \\sqsupseteq ⊒ \\propto ∝".split(
-    " ",
-  ),
-  ...": -> → |-> ↦ <- ← == ≜ ELSE THEN LET IN [] □ .. ‥ ... … $ $$ ? ?? ⁇ % %% ## @@ !! ‼ \\times \\leq \\geq \\mod \\wr ≀ ≅ ! ; , . -. @".split(
-    " ",
-  ),
-]);
+// PcalBuiltInSymbols.buildHashTable, and buildPrefixHashTable: the prefixes of the symbols that
+// are not words. They are built on first use, as only a spec with PlusCal is tokenized.
+const createBuiltIns = () => {
+  const symbols = new Set([
+    ...LEFT_PARENS,
+    ...RIGHT_PARENS,
+    ..."_ ASSUME ASSUMPTION AXIOM BOOLEAN CASE CONSTANT CONSTANTS EXCEPT EXTENDS FALSE IF INSTANCE LOCAL MODULE OTHER STRING THEOREM TRUE VARIABLE VARIABLES WITH WF_ SF_".split(
+      " ",
+    ),
+    ..."\\A ∀ \\forall \\E ∃ \\exists \\AA \\EE ~ ¬ \\lnot \\neg <> ◇ CHOOSE ENABLED UNCHANGED SUBSET UNION DOMAIN ' ^+ ⁺ ^* ^#".split(
+      " ",
+    ),
+    ..."=> ⇒ \\cdot ⋅ <=> ⇔ \\equiv ≡ ~> ↝ -+-> ⇸ \\subseteq ⊆ \\subset ⊂ \\supset ⊃ \\supseteq ⊇ \\ll ≪ \\gg ≫ \\ \\cap \\intersect ∩ \\cup \\union ∪ /\\ ∧ \\/ ∨ \\land \\lor \\X × - + * / ^ | || ‖ & && ++ -- ** // ^^ |- ⊢ |= ⊨ -| ⊣ =| ⫤ <: :> := ≔ ::= ⩴".split(
+      " ",
+    ),
+    ..."(+) ⊕ (-) ⊖ \\oplus \\ominus (.) ⊙ \\odot (/) ⊘ \\oslash (\\X) ⊗ \\otimes \\uplus ⊎ \\sqcap ⊓ \\sqcup ⊔ \\div ÷ \\star ⋆ \\o ∘ \\circ \\bigcirc ◯ \\bullet ●".split(
+      " ",
+    ),
+    ..."\\in ∈ \\notin ∉ = # /= ≠ < > =< <= ≤ >= ≥ \\prec ≺ \\succ ≻ \\preceq ⪯ \\succeq ⪰ \\sim ∼ \\simeq ≃ \\approx ≈ \\doteq ≐ \\asymp ≍ \\sqsubset ⊏ \\sqsupset ⊐ \\sqsubseteq ⊑ \\sqsupseteq ⊒ \\propto ∝".split(
+      " ",
+    ),
+    ...": -> → |-> ↦ <- ← == ≜ ELSE THEN LET IN [] □ .. ‥ ... … $ $$ ? ?? ⁇ % %% ## @@ !! ‼ \\times \\leq \\geq \\mod \\wr ≀ ≅ ! ; , . -. @".split(
+      " ",
+    ),
+  ]);
+  const prefixes = new Set(
+    [...symbols]
+      .filter(
+        (symbol) => !isLetter(symbol[0]) && !(symbol[0] === "\\" && isLetter(symbol[1] ?? "")),
+      )
+      .flatMap((symbol) =>
+        Array.from(symbol, (_, index) => symbol.slice(0, symbol.length - index)),
+      ),
+  );
+  return { symbols, prefixes };
+};
+
+const builtIns: { value?: ReturnType<typeof createBuiltIns> } = {};
 
 // tla2tex.Misc.IsLetter, IsDigit and IsSpace, which only accept ASCII.
 const isLetter = (char: string) => /^[A-Za-z_]$/.test(char);
 const isDigit = (char: string) => /^[0-9]$/.test(char);
 const isSpace = (char: string) => char === " " || char === "\f" || char === "\r";
-
-// PcalBuiltInSymbols.buildPrefixHashTable: the prefixes of the symbols that are not words.
-const BUILT_IN_PREFIXES = new Set(
-  [...BUILT_IN_SYMBOLS]
-    .filter((symbol) => !isLetter(symbol[0]) && !(symbol[0] === "\\" && isLetter(symbol[1] ?? "")))
-    .flatMap((symbol) => Array.from(symbol, (_, index) => symbol.slice(0, symbol.length - index))),
-);
 
 // PcalBuiltInSymbols.buildStringCharTable.
 const STRING_CHARS = new Set(
@@ -161,6 +169,7 @@ const tokenize = (
   isExpr: boolean,
   isInDefineBlock: boolean,
 ) => {
+  const symbolTables = (builtIns.value ??= createBuiltIns());
   const scan: PcalScan = {
     lines: [],
     line: [],
@@ -283,7 +292,7 @@ const tokenize = (
           startNewLine();
           return gotoStart();
         }
-        if (BUILT_IN_PREFIXES.has(next)) return addAndGoto("builtIn");
+        if (symbolTables.prefixes.has(next)) return addAndGoto("builtIn");
         if (next === "\t") {
           scan.state = "done";
           return;
@@ -294,7 +303,7 @@ const tokenize = (
         if (scan.token === "WF_" || scan.token === "SF_") return outputToken(TOKEN_TYPE.builtin);
         if (isLetter(next) || isDigit(next)) return addNextChar();
         return outputToken(
-          BUILT_IN_SYMBOLS.has(scan.token) ? TOKEN_TYPE.builtin : TOKEN_TYPE.ident,
+          symbolTables.symbols.has(scan.token) ? TOKEN_TYPE.builtin : TOKEN_TYPE.ident,
         );
       case "numOrId":
         if (isDigit(next)) return addNextChar();
@@ -326,14 +335,14 @@ const tokenize = (
         return;
       case "bsBuiltIn":
         if (isLetter(next) && next !== "_") return addNextChar();
-        if (BUILT_IN_SYMBOLS.has(scan.token)) return outputToken(TOKEN_TYPE.builtin);
+        if (symbolTables.symbols.has(scan.token)) return outputToken(TOKEN_TYPE.builtin);
         return throwTokenizingError("Illegal lexeme ");
       case "builtIn":
-        if (BUILT_IN_PREFIXES.has(scan.token + next)) return addNextChar();
+        if (symbolTables.prefixes.has(scan.token + next)) return addNextChar();
         // A prefix that is no symbol backs up to its longest symbol.
-        if (!BUILT_IN_SYMBOLS.has(scan.token)) {
+        if (!symbolTables.symbols.has(scan.token)) {
           backspacePcalReader(reader);
-          while (!BUILT_IN_SYMBOLS.has(scan.token)) {
+          while (!symbolTables.symbols.has(scan.token)) {
             backspacePcalReader(reader);
             if (scan.token.length === 0) throwTokenizingError("Illegal lexeme");
             scan.token = Array.from(scan.token).slice(0, -1).join("");
