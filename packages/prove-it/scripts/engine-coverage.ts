@@ -234,3 +234,5 @@ console.log(
     : `\n${different.length} models differ between the engine on and off:\n${different.map((result) => `  ${result.id}: ${result.differences.join("; ")}`).join("\n")}`,
 );
 console.log(`Wrote ${outPath}`);
+// A model whose outcome depends on the engine fails the run, so CI can gate on it.
+if (different.length > 0) process.exitCode = 1;
