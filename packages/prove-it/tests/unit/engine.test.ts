@@ -58,11 +58,18 @@ describe("the engine's threads", () => {
   });
 });
 
+// The TypeScript engine's lines. The native engine's, with PROVE_IT_ENGINE_BACKEND=rust, come first.
 const checkInEngine = async (body: string, config: string) => {
   process.env.PROVE_IT_ENGINE = "debug";
   const lines: string[] = [];
   const spy = spyOn(console, "error").mockImplementation((message: unknown) => {
-    if (typeof message === "string" && message.startsWith("[engine] ")) lines.push(message);
+    if (
+      typeof message === "string" &&
+      message.startsWith("[engine] ") &&
+      !message.startsWith("[engine] native: ")
+    ) {
+      lines.push(message);
+    }
   });
   try {
     const result = await check({ source: `---- MODULE M ----\n${body}\n====`, config });
@@ -843,6 +850,7 @@ describe("the engine's answers to ENABLED", () => {
       expect(lines).toContainEqual(expect.stringMatching(/^\[engine\] found \d+ states/));
       return {
         result,
+        lines,
         isFromSteps: lines.some((line) =>
           line.endsWith("answers ENABLED from the steps its search took"),
         ),
@@ -907,6 +915,39 @@ describe("the engine's answers to ENABLED", () => {
       );
       expect(result.status).not.toBe("error");
       expect(isFromSteps).toBe(false);
+    }
+  });
+
+  it("leaves ENABLED to the interpreter where the engine fails, so the error reads as TLC's", async () => {
+    const { result } = await checkBoth(
+      [
+        "---- MODULE M ----",
+        "EXTENDS Naturals",
+        "VARIABLE x",
+        "Init == x = 0",
+        "Next == x' = 1 - x",
+        "A == x = 1 /\\ x' \\in Nat",
+        "Spec == Init /\\ [][Next]_x /\\ WF_x(A)",
+        "P == <>(x = 0)",
+        "====",
+      ].join("\n"),
+      "SPECIFICATION Spec\nPROPERTY P",
+    );
+    expect(result.failure?.message).toContain("The right side of \\IN is not enumerable.");
+  });
+
+  it("evaluates <<A>>_v and [A]_v of the temporal properties itself", async () => {
+    for (const [property, status] of [
+      ["[]<><<Next>>_vars", "success"],
+      ["[]<><<CreateToken>>_vars", "success"],
+      ["<>[][PassToken(1)]_vars", "liveness-violation"],
+      ["<>[][CreateToken \\/ PassToken(1)]_c", "liveness-violation"],
+      ["[]<><<PassToken(1) /\\ c[0] = M>>_vars", "liveness-violation"],
+      ["<>[][Next]_vars", "success"],
+    ]) {
+      const { result, lines } = await checkBoth(tokenRing(property), TOKEN_RING_CONFIG);
+      expect([property, result.status]).toEqual([property, status]);
+      expect(lines.filter((line) => line.includes("leaves a temporal predicate"))).toEqual([]);
     }
   });
 

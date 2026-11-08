@@ -81,16 +81,23 @@ jobs:
           bun run format:check
           bun run test
           test -z "$(git status --porcelain)"
+      # Packs the native engine's platform packages too, but publishes none of them: they need
+      # their npm packages set up first, and the main package doesn't list them yet
+      # (packages/prove-it/native/DESIGN.md, section 7.1).
       - name: Pack
         id: pack
         if: steps.plan.outputs.publish == 'true'
         run: |
           set -euo pipefail
-          PATH="$(scripts/ci/bootstrap.sh bun node):$PATH"
+          PATH="$(scripts/ci/bootstrap.sh bun node rust):$PATH"
           cd packages/prove-it
           tarball=$(npm pack --silent --pack-destination "$RUNNER_TEMP")
           echo "tarball=$RUNNER_TEMP/$tarball" >> "$GITHUB_OUTPUT"
           echo "Packed $tarball, sha256 $(sha256sum "$RUNNER_TEMP/$tarball" | cut -d' ' -f1)" | tee -a "$GITHUB_STEP_SUMMARY"
+          bun scripts/platform-packages.ts build
+          for platform in $(bun scripts/platform-packages.ts pack "$RUNNER_TEMP/platform-packages"); do
+            echo "Packed $(basename "$platform") but didn't publish it, sha256 $(sha256sum "$platform" | cut -d' ' -f1)" | tee -a "$GITHUB_STEP_SUMMARY"
+          done
       # op run puts NPM_TOKEN in npm's environment alone; the npmrc names the variable, not the
       # value, and npm expands it.
       - name: Publish the packed tarball

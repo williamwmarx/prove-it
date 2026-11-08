@@ -3,8 +3,10 @@ import { type ModelConfig, parseConfig } from "./config";
 import { getMemoStatistics } from "./engine/compile";
 import { toEngineProperties } from "./engine/context";
 import { toValue as toEngineValue } from "./engine/convert";
+import { checkNatively } from "./engine/native";
 import { type EngineCheckpoint, type EngineGraph, isBailout, runEngine } from "./engine/search";
 import {
+  getEngineBackend,
   getEngineSetting,
   getEngineThreads,
   getEnvironmentFlag,
@@ -1421,6 +1423,7 @@ const searchStates = (
         canonicalizeState(replayed);
         replayed.forEach(markFingerprinted);
         states[checkpoint.expanding] = replayed;
+        engineIndices.set(replayed, checkpoint.expanding);
       }
     }
     runtime.generatedStates = checkpoint.generated;
@@ -1444,6 +1447,13 @@ const searchStates = (
     const init = spec.init;
     const next = spec.next;
     if (init === undefined || next === undefined) return undefined;
+    if (getEngineBackend() !== "ts") {
+      const nativeStartedAt = performance.now();
+      const native = checkNatively();
+      reportEngine(
+        `native: ${native.status}: ${native.reason} (${(performance.now() - nativeStartedAt).toFixed(2)} ms)`,
+      );
+    }
     // The engine answers ENABLED <<A>>_v of a state from the steps its search took when A is made of
     // TLC's actions of the next-state relation. A constraint drops steps, and TLC's ENABLED shows
     // the effects of running A, such as printing, so then the engine runs A.
@@ -1749,11 +1759,13 @@ const searchStates = (
       { isNextState: true, ...replay.result },
     );
   };
-  // A state of a search the engine completed: its successors are the steps the engine recorded.
+  // A state of a search the engine completed: its successors are the steps the engine recorded,
+  // each state one successor for every step into it.
+  const engineSuccessors: LiveSuccessor[] = [];
   const replayExpansion = (index: number, liveSuccessors: LiveSuccessor[], graph: EngineGraph) => {
     for (let edge = graph.edgeOffsets[index]; edge < graph.edgeOffsets[index + 1]; edge++) {
       const target = graph.edges[edge];
-      liveSuccessors.push({ index: target, state: states[target] });
+      liveSuccessors.push((engineSuccessors[target] ??= { index: target, state: states[target] }));
     }
     runtime.generatedStates += graph.successorCounts[index];
     expansion.newStates = graph.newCounts[index];
