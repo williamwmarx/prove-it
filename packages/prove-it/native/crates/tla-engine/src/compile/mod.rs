@@ -17,6 +17,7 @@
 mod bridged;
 mod builtins;
 mod fused;
+mod lazy;
 mod nodes;
 mod predicate;
 mod sets;
@@ -182,6 +183,9 @@ pub struct Compiled {
     pub(crate) filter: Option<Arc<Filter>>,
     /// For a boolean: the fused predicate a parent can walk in place of calling it.
     pub(crate) predicate: Option<Arc<predicate::Predicate>>,
+    /// For a set TLC keeps lazy: the interpreter's value of it, which says the order TLC
+    /// enumerates it in.
+    pub(crate) reference: Option<lazy::Reference>,
 }
 
 impl Compiled {
@@ -235,7 +239,38 @@ pub(crate) fn leaf(eval: Eval, footprint: Footprint) -> Compiled {
         interval: None,
         filter: None,
         predicate: None,
+        reference: None,
     }
+}
+
+// A set's reference, or None for a set TLC keeps lazy that the engine has no reference for, such
+// as a UNION that streams duplicates.
+pub(crate) fn reference_of(set: &Compiled) -> Option<lazy::Reference> {
+    if set.reference.is_some() || !set.is_normalized {
+        return set.reference.clone();
+    }
+    let evaluate = set.eval.clone();
+    Some(Arc::new(move |machine| {
+        Ok(lazy::Lazy::Set(evaluate(machine)?))
+    }))
+}
+
+// A reference built from components, when every component has one.
+pub(crate) fn combine_references(
+    components: &[&Compiled],
+    build: impl Fn(&mut Machine<'_>, Vec<lazy::Lazy>) -> Outcome<lazy::Lazy> + Send + Sync + 'static,
+) -> Option<lazy::Reference> {
+    let references: Vec<lazy::Reference> = components
+        .iter()
+        .map(|component| reference_of(component))
+        .collect::<Option<_>>()?;
+    Some(Arc::new(move |machine| {
+        let mut values = Vec::with_capacity(references.len());
+        for reference in &references {
+            values.push(reference(machine)?);
+        }
+        build(machine, values)
+    }))
 }
 
 // A boolean whose value is a fused predicate.

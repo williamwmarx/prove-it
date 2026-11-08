@@ -12,13 +12,14 @@ use tla_values::store::{
 use tla_values::{Bail, Id, Store};
 
 use super::fused;
+use super::lazy::{Lazy, Operator, Reference};
 use super::nodes::{evaluate_set, expect_set};
 use super::predicate::{Leaf, Predicate};
 use super::sets::not_in;
 use super::{
     Binding, Compiled, Compiler, Compiling, Context, DISTINCT_SLOT, LEVEL_SLOT, NEXT_LEVEL_SLOT,
-    Operand, OperatorBody, Shape, bind, bool_id, decline, eval, leaf, lookup, member,
-    operator_context, predicate_node, unsupported,
+    Operand, OperatorBody, Shape, bind, bool_id, combine_references, decline, eval, leaf, lookup,
+    member, operator_context, predicate_node, reference_of, unsupported,
 };
 use crate::footprint::Footprint;
 use crate::machine::{Eval, Machine, Printed};
@@ -204,6 +205,7 @@ impl Compiler<'_> {
         Compiled {
             is_normalized: false,
             infinite: Some(name),
+            reference: Some(Arc::new(move |_| Ok(Lazy::Infinite(name)))),
             ..leaf(eval(move |_| Err(Bail(reason))), Footprint::default())
         }
     }
@@ -548,6 +550,9 @@ impl Compiler<'_> {
                 let base_parts = Self::parts_of(&base);
                 Compiled {
                     is_normalized: false,
+                    reference: combine_references(&[&base], |_, mut bases| {
+                        Ok(Lazy::Subset(Box::new(bases.remove(0))))
+                    }),
                     parts: Some(base_parts.clone()),
                     member: Some(member(move |machine, element| {
                         machine.run_parts(&base_parts)?;
@@ -1051,9 +1056,38 @@ impl Compiler<'_> {
             "\\cap" => left.is_normalized || right.is_normalized,
             _ => left.is_normalized && right.is_normalized,
         };
+        // TLC combines a set it keeps lazy with another lazily, as the interpreter does. It
+        // enumerates the left set of a difference or an intersection and only tests the right one
+        // for membership, which any value of it answers alike.
+        let reference = if is_normalized {
+            None
+        } else {
+            let operator = match name {
+                "\\cup" => Operator::Union,
+                "\\cap" => Operator::Intersection,
+                _ => Operator::Difference,
+            };
+            let right_reference = reference_of(right).or_else(|| {
+                (operator != Operator::Union).then(|| {
+                    let evaluate = right.eval.clone();
+                    Arc::new(move |machine: &mut Machine<'_>| Ok(Lazy::Set(evaluate(machine)?)))
+                        as Reference
+                })
+            });
+            reference_of(left)
+                .zip(right_reference)
+                .map(|(left, right)| {
+                    Arc::new(move |machine: &mut Machine<'_>| {
+                        let left = left(machine)?;
+                        let right = right(machine)?;
+                        Lazy::combine(machine, operator, left, right)
+                    }) as Reference
+                })
+        };
         Ok(Some(Compiled {
             is_normalized,
             member: lazy_member,
+            reference,
             ..binary(left, right, operation, true, false)
         }))
     }

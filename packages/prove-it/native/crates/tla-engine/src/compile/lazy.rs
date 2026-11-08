@@ -1,0 +1,486 @@
+//! The sets TLC keeps lazy, enumerated in TLC's order (DESIGN.md 3.3). Where the TypeScript engine
+//! rebuilds the interpreter's value of such a set (`reference`) and asks the interpreter for its
+//! elements (`getStreamedElements`, `getQuantifierElements`), this builds a [`Lazy`] of the same
+//! shape and enumerates it as `values.ts` does: `enumerate` is `toFiniteSet`'s order (`enumerateSet`),
+//! the order a quantifier binds, and `stream` is `getStreamedElements`', the order `x' \in S`
+//! assigns, in which a `\cup` the set hasn't cached yields an element of both operands twice.
+
+use std::sync::Arc;
+
+use tla_values::store::{KIND_INT, KIND_SET, KIND_STRING, KIND_TUPLE, Outcome, is_function_kind};
+use tla_values::{Bail, Id};
+
+use super::sets::not_in;
+use crate::machine::Machine;
+
+// Beyond these the interpreter would list more elements than a search can use.
+const MAXIMUM_SUBSET_BASE: usize = 20;
+const MAXIMUM_ELEMENTS: f64 = 1e6;
+
+/// What a set expression's value is, as the interpreter builds it.
+pub(crate) type Reference = Arc<dyn Fn(&mut Machine<'_>) -> Outcome<Lazy> + Send + Sync>;
+
+/// A filter's test of an element, with its names bound to it.
+pub(crate) type Test = Arc<dyn Fn(&mut Machine<'_>, Id) -> Outcome<bool> + Send + Sync>;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Operator {
+    Union,
+    Intersection,
+    Difference,
+}
+
+/// The interpreter's value of a set: a normalized set (TLC's SetEnumValue), or one of the sets
+/// TLC implements lazily.
+pub(crate) enum Lazy {
+    Set(Id),
+    /// Nat, Int or STRING, which TLC tests for membership and can't enumerate.
+    Infinite(&'static str),
+    Subset(Box<Lazy>),
+    FunctionSet(Box<Lazy>, Box<Lazy>),
+    /// The keys in TLC's order, each with its set.
+    RecordSet(Vec<Id>, Vec<Lazy>),
+    Product(Vec<Lazy>),
+    Filtered(Box<Lazy>, Test),
+    Operation(Operator, Box<Lazy>, Box<Lazy>),
+}
+
+impl Lazy {
+    fn is_enumerable(&self) -> bool {
+        !matches!(self, Lazy::Infinite(_))
+    }
+
+    fn set(machine: &Machine<'_>, id: Id) -> Outcome<Id> {
+        if machine.store.kind_of(id) == KIND_SET {
+            Ok(id)
+        } else {
+            Err(Bail("enumerated a non-set"))
+        }
+    }
+
+    /// A set whose elements are those of a set enumeration in this order.
+    fn of(machine: &mut Machine<'_>, elements: &[Id]) -> Outcome<Lazy> {
+        Ok(Lazy::Set(machine.store.set_of(elements)?))
+    }
+
+    /// `S \cup T`, `S \cap T` or `S \ T` as the interpreter's builtins build it: two set
+    /// enumerations combine at once, a set enumeration and another set element by element (a
+    /// union only when the enumeration is empty), and anything else lazily, a union with the set
+    /// enumeration first.
+    pub(crate) fn combine(
+        machine: &mut Machine<'_>,
+        operator: Operator,
+        left: Lazy,
+        right: Lazy,
+    ) -> Outcome<Lazy> {
+        match (left, right) {
+            (Lazy::Set(left), Lazy::Set(right)) => {
+                let (left, right) = (Self::set(machine, left)?, Self::set(machine, right)?);
+                Ok(Lazy::Set(match operator {
+                    Operator::Union => machine.store.union(left, right)?,
+                    Operator::Intersection => machine.store.intersection(left, right)?,
+                    Operator::Difference => machine.store.difference(left, right)?,
+                }))
+            }
+            (Lazy::Set(set), other) => Self::combine_reducible(machine, operator, set, other),
+            (other, Lazy::Set(set)) if operator != Operator::Difference => {
+                Self::combine_reducible(machine, operator, set, other)
+            }
+            (left, right) => Ok(Lazy::Operation(operator, Box::new(left), Box::new(right))),
+        }
+    }
+
+    fn combine_reducible(
+        machine: &mut Machine<'_>,
+        operator: Operator,
+        set: Id,
+        other: Lazy,
+    ) -> Outcome<Lazy> {
+        let set = Self::set(machine, set)?;
+        let elements = machine.store.set_elements(set).to_vec();
+        if operator == Operator::Union {
+            return Ok(if elements.is_empty() {
+                other
+            } else {
+                Lazy::Operation(operator, Box::new(Lazy::Set(set)), Box::new(other))
+            });
+        }
+        let is_kept = operator == Operator::Intersection;
+        let mut kept = Vec::new();
+        for element in elements {
+            if other.contains(machine, element)? == is_kept {
+                kept.push(element);
+            }
+        }
+        Self::of(machine, &kept)
+    }
+
+    /// `{x \in S : P}` as the interpreter builds it: a set enumeration filtered at once, and any
+    /// other set lazily.
+    pub(crate) fn filter(machine: &mut Machine<'_>, base: Lazy, test: Test) -> Outcome<Lazy> {
+        let Lazy::Set(set) = base else {
+            return Ok(Lazy::Filtered(Box::new(base), test));
+        };
+        let set = Self::set(machine, set)?;
+        let mut kept = Vec::new();
+        for element in machine.store.set_elements(set).to_vec() {
+            if test(machine, element)? {
+                kept.push(element);
+            }
+        }
+        Ok(Lazy::Set(machine.store.set_of_sorted(&kept)))
+    }
+
+    /// The elements in `toFiniteSet`'s order, which a quantifier binds.
+    pub(crate) fn enumerate(&self, machine: &mut Machine<'_>) -> Outcome<Vec<Id>> {
+        self.elements(machine, false)
+    }
+
+    /// The elements in `getStreamedElements`' order, which `x' \in S` assigns.
+    pub(crate) fn stream(&self, machine: &mut Machine<'_>) -> Outcome<Vec<Id>> {
+        self.elements(machine, true)
+    }
+
+    // A set of functions, records or tuples streams the sets it combines (`isStreamedApart`),
+    // where enumerating them gives the same elements in the same order unless one streams a
+    // union, so streaming each in turn is `streamElements`' choice of the two.
+    fn elements(&self, machine: &mut Machine<'_>, is_streamed: bool) -> Outcome<Vec<Id>> {
+        match self {
+            Lazy::Set(set) => Ok(machine
+                .store
+                .set_elements(Self::set(machine, *set)?)
+                .to_vec()),
+            Lazy::Infinite(_) => Err(Bail("enumerated an infinite set")),
+            Lazy::Subset(base) => {
+                // SubsetValue sizes and lists its base, never streaming it.
+                let base = base.elements(machine, false)?;
+                if base.len() > MAXIMUM_SUBSET_BASE {
+                    return Err(Bail("a power set too large to build"));
+                }
+                let mut subsets = Vec::new();
+                for size in 0..=base.len() {
+                    let mut indices: Vec<usize> = (0..size).collect();
+                    loop {
+                        let chosen: Vec<Id> = indices.iter().map(|&index| base[index]).collect();
+                        subsets.push(machine.store.set_of(&chosen)?);
+                        if !advance_combination(&mut indices, base.len()) {
+                            break;
+                        }
+                    }
+                }
+                Ok(subsets)
+            }
+            Lazy::FunctionSet(domain, range) => {
+                if self.is_empty(machine)? {
+                    return Ok(Vec::new());
+                }
+                if !domain.is_enumerable() {
+                    return Err(Bail("enumerated [D -> R] with D infinite"));
+                }
+                let is_sorted = matches!(**domain, Lazy::Set(_));
+                let keys = domain.elements(machine, false)?;
+                if keys.is_empty() {
+                    return Ok(vec![machine.store.function_of_sorted(&[], &[])]);
+                }
+                if !range.is_enumerable() {
+                    return Err(Bail("enumerated [D -> R] with R infinite"));
+                }
+                let choices = range.elements(machine, is_streamed)?;
+                let lists = vec![choices; keys.len()];
+                let mut functions = Vec::new();
+                for values in cartesian(&lists)? {
+                    functions.push(if is_sorted {
+                        machine.store.function_of_sorted(&keys, &values)
+                    } else {
+                        machine.store.function_of(&keys, &values)?
+                    });
+                }
+                Ok(functions)
+            }
+            Lazy::RecordSet(keys, sets) => {
+                let Some(lists) = self.components(machine, sets, is_streamed)? else {
+                    return Ok(Vec::new());
+                };
+                cartesian(&lists)?
+                    .iter()
+                    .map(|values| Ok(machine.store.function_of_sorted(keys, values)))
+                    .collect()
+            }
+            Lazy::Product(factors) => {
+                let Some(lists) = self.components(machine, factors, is_streamed)? else {
+                    return Ok(Vec::new());
+                };
+                Ok(cartesian(&lists)?
+                    .iter()
+                    .map(|values| machine.store.tuple_of(values))
+                    .collect())
+            }
+            Lazy::Filtered(base, test) => {
+                if !base.is_enumerable() {
+                    return Err(Bail("filtered an infinite set"));
+                }
+                let mut kept = Vec::new();
+                for element in base.elements(machine, is_streamed)? {
+                    if test(machine, element)? {
+                        kept.push(element);
+                    }
+                }
+                Ok(kept)
+            }
+            Lazy::Operation(Operator::Union, left, right) => {
+                if !left.is_enumerable() || !right.is_enumerable() {
+                    return Err(Bail("enumerated a union with an infinite set"));
+                }
+                let left = left.elements(machine, is_streamed)?;
+                let right = right.elements(machine, is_streamed)?;
+                if is_streamed {
+                    return Ok([left, right].concat());
+                }
+                sorted_union(machine, left, right)
+            }
+            Lazy::Operation(operator, left, right) => {
+                let is_left_enumerated = *operator == Operator::Difference || left.is_enumerable();
+                let (enumerated, other) = if is_left_enumerated {
+                    (left, right)
+                } else {
+                    (right, left)
+                };
+                if !enumerated.is_enumerable() {
+                    return Err(Bail("enumerated an operation on infinite sets"));
+                }
+                let is_kept = *operator == Operator::Intersection;
+                let mut kept = Vec::new();
+                for element in enumerated.elements(machine, is_streamed)? {
+                    if other.contains(machine, element)? == is_kept {
+                        kept.push(element);
+                    }
+                }
+                Ok(kept)
+            }
+        }
+    }
+
+    // The elements of each set a set of records or tuples combines, or None for an empty one:
+    // TLC decides that it's empty first, and then enumerates its sets in turn.
+    fn components(
+        &self,
+        machine: &mut Machine<'_>,
+        sets: &[Lazy],
+        is_streamed: bool,
+    ) -> Outcome<Option<Vec<Vec<Id>>>> {
+        if self.is_empty(machine)? {
+            return Ok(None);
+        }
+        let mut lists = Vec::with_capacity(sets.len());
+        for set in sets {
+            if !set.is_enumerable() {
+                return Err(Bail("enumerated a product of an infinite set"));
+            }
+            let elements = set.elements(machine, is_streamed)?;
+            if elements.is_empty() {
+                return Ok(None);
+            }
+            lists.push(elements);
+        }
+        Ok(Some(lists))
+    }
+
+    // `isEmptySet`.
+    fn is_empty(&self, machine: &mut Machine<'_>) -> Outcome<bool> {
+        Ok(match self {
+            Lazy::Set(set) => machine.store.size_of(Self::set(machine, *set)?) == 0,
+            Lazy::Infinite(_) | Lazy::Subset(_) => false,
+            Lazy::FunctionSet(domain, range) => {
+                !domain.is_empty(machine)? && range.is_empty(machine)?
+            }
+            Lazy::RecordSet(_, sets) | Lazy::Product(sets) => {
+                for set in sets {
+                    if set.is_empty(machine)? {
+                        return Ok(true);
+                    }
+                }
+                false
+            }
+            Lazy::Filtered(..) | Lazy::Operation(..) => self.enumerate(machine)?.is_empty(),
+        })
+    }
+
+    /// Membership as TLC tests it, failing where it fails.
+    pub(crate) fn contains(&self, machine: &mut Machine<'_>, element: Id) -> Outcome<bool> {
+        let kind = machine.store.kind_of(element);
+        match self {
+            Lazy::Set(set) => {
+                let set = Self::set(machine, *set)?;
+                machine.store.is_member(element, set)
+            }
+            Lazy::Infinite(name) => match (*name, kind) {
+                ("Nat", KIND_INT) => Ok(machine.store.int_of(element) >= 0),
+                ("Int", KIND_INT) | ("STRING", KIND_STRING) => Ok(true),
+                _ => not_in(machine, element, "a mistyped membership in an infinite set"),
+            },
+            Lazy::Subset(base) => {
+                if kind != KIND_SET {
+                    return Err(Bail("a membership in SUBSET of a non-set"));
+                }
+                for index in 0..machine.store.size_of(element) {
+                    let value = machine.store.element_at(element, index);
+                    if !base.contains(machine, value)? {
+                        return Ok(false);
+                    }
+                }
+                Ok(true)
+            }
+            Lazy::FunctionSet(domain, range) => {
+                if !is_function_kind(kind) {
+                    return not_in(
+                        machine,
+                        element,
+                        "a mistyped membership in a set of functions",
+                    );
+                }
+                let keys = domain.enumerate(machine)?;
+                let domain = machine.store.set_of(&keys)?;
+                let size = machine.store.size_of(element);
+                if size != machine.store.size_of(domain) {
+                    return Ok(false);
+                }
+                for index in 0..size {
+                    let key = machine.store.get_key(element, index);
+                    let expected = machine.store.element_at(domain, index);
+                    if key != expected && machine.store.compare(key, expected)? != 0 {
+                        return Ok(false);
+                    }
+                }
+                for index in 0..size {
+                    let value = machine.store.get_range_value(element, index);
+                    if !range.contains(machine, value)? {
+                        return Ok(false);
+                    }
+                }
+                Ok(true)
+            }
+            Lazy::RecordSet(keys, sets) => {
+                if !is_function_kind(kind) || kind == KIND_TUPLE {
+                    return not_in(
+                        machine,
+                        element,
+                        "a mistyped membership in a set of records",
+                    );
+                }
+                if machine.store.size_of(element) as usize != keys.len() {
+                    return Ok(false);
+                }
+                for (index, (&key, set)) in keys.iter().zip(sets).enumerate() {
+                    if machine.store.get_key(element, index as u32) != key {
+                        return Ok(false);
+                    }
+                    let value = machine.store.get_range_value(element, index as u32);
+                    if !set.contains(machine, value)? {
+                        return Ok(false);
+                    }
+                }
+                Ok(true)
+            }
+            Lazy::Product(factors) => {
+                if kind != KIND_TUPLE {
+                    return not_in(machine, element, "a mistyped membership in a set of tuples");
+                }
+                if machine.store.size_of(element) as usize != factors.len() {
+                    return Ok(false);
+                }
+                for (index, factor) in factors.iter().enumerate() {
+                    let value = machine.store.get_range_value(element, index as u32);
+                    if !factor.contains(machine, value)? {
+                        return Ok(false);
+                    }
+                }
+                Ok(true)
+            }
+            Lazy::Filtered(base, test) => {
+                Ok(base.contains(machine, element)? && test(machine, element)?)
+            }
+            Lazy::Operation(operator, left, right) => {
+                let is_left = left.contains(machine, element)?;
+                Ok(match operator {
+                    Operator::Union => is_left || right.contains(machine, element)?,
+                    Operator::Intersection => is_left && right.contains(machine, element)?,
+                    Operator::Difference => is_left && !right.contains(machine, element)?,
+                })
+            }
+        }
+    }
+}
+
+// The next combination of `indices.len()` positions below `length`, in lexicographic order.
+fn advance_combination(indices: &mut [usize], length: usize) -> bool {
+    let count = indices.len();
+    for position in (0..count).rev() {
+        if indices[position] < length - count + position {
+            indices[position] += 1;
+            for next in position + 1..count {
+                indices[next] = indices[next - 1] + 1;
+            }
+            return true;
+        }
+    }
+    false
+}
+
+// Every combination of one element from each list, the last list turning fastest.
+fn cartesian(lists: &[Vec<Id>]) -> Outcome<Vec<Vec<Id>>> {
+    let total: f64 = lists.iter().map(|list| list.len() as f64).product();
+    if total > MAXIMUM_ELEMENTS {
+        return Err(Bail("a lazy set too large to enumerate"));
+    }
+    let mut combinations = Vec::with_capacity(total as usize);
+    let mut positions = vec![0usize; lists.len()];
+    for _ in 0..total as usize {
+        combinations.push(
+            lists
+                .iter()
+                .zip(&positions)
+                .map(|(list, &position)| list[position])
+                .collect(),
+        );
+        for index in (0..lists.len()).rev() {
+            positions[index] += 1;
+            if positions[index] < lists[index].len() {
+                break;
+            }
+            positions[index] = 0;
+        }
+    }
+    Ok(combinations)
+}
+
+// `getSortedUnion`: a merge of the two lists by TLC's order, an element of both kept once, from
+// the left. The lists of lazy sets need not be in TLC's order, which the merge doesn't check.
+fn sorted_union(machine: &mut Machine<'_>, left: Vec<Id>, right: Vec<Id>) -> Outcome<Vec<Id>> {
+    if left.is_empty() {
+        return Ok(right);
+    }
+    if right.is_empty() {
+        return Ok(left);
+    }
+    let mut merged = Vec::with_capacity(left.len() + right.len());
+    let (mut left_index, mut right_index) = (0, 0);
+    while left_index < left.len() && right_index < right.len() {
+        let order = machine
+            .store
+            .compare(left[left_index], right[right_index])?;
+        if order < 0 {
+            merged.push(left[left_index]);
+            left_index += 1;
+        } else if order > 0 {
+            merged.push(right[right_index]);
+            right_index += 1;
+        } else {
+            merged.push(left[left_index]);
+            left_index += 1;
+            right_index += 1;
+        }
+    }
+    merged.extend_from_slice(&left[left_index..]);
+    merged.extend_from_slice(&right[right_index..]);
+    Ok(merged)
+}

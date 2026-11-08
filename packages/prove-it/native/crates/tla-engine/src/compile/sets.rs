@@ -7,8 +7,11 @@ use tla_values::store::{
 };
 use tla_values::{Bail, Id};
 
+use super::lazy::Lazy;
 use super::nodes::expect_set;
-use super::{Compiled, Compiler, Compiling, Context, eval, leaf, member, parts};
+use super::{
+    Compiled, Compiler, Compiling, Context, combine_references, eval, leaf, member, parts,
+};
 use crate::footprint::Footprint;
 use crate::machine::{Eval, Machine, Member, Parts};
 
@@ -200,8 +203,13 @@ impl Compiler<'_> {
         let member_parts = set_parts.clone();
         Ok(Compiled {
             is_costly: true,
-            // TLC enumerates [S -> T] in its own order, which the engine leaves to the reference.
+            // TLC enumerates [S -> T] in its own order, which the reference gives.
             is_normalized: false,
+            reference: combine_references(&[&domain, &range], |_, mut sets| {
+                let range = sets.pop().expect("a range");
+                let domain = sets.pop().expect("a domain");
+                Ok(Lazy::FunctionSet(Box::new(domain), Box::new(range)))
+            }),
             parts: Some(set_parts),
             member: Some(member(move |machine, element| {
                 machine.run_parts(&member_parts)?;
@@ -274,10 +282,15 @@ impl Compiler<'_> {
         let sets: Vec<Eval> = sorted.iter().map(|field| field.1.eval.clone()).collect();
         let footprint = Footprint::merge_all(sorted.iter().map(|field| &field.1.footprint));
         let member_keys = keys.clone();
+        let reference_keys = keys.clone();
         let member_parts = set_parts.clone();
+        let fields: Vec<&Compiled> = sorted.iter().map(|field| &field.1).collect();
         Ok(Compiled {
             is_costly: true,
             is_normalized: false,
+            reference: combine_references(&fields, move |_, sets| {
+                Ok(Lazy::RecordSet(reference_keys.clone(), sets))
+            }),
             parts: Some(set_parts),
             member: Some(member(move |machine, element| {
                 machine.run_parts(&member_parts)?;
@@ -334,9 +347,11 @@ impl Compiler<'_> {
         let set_parts = self.once_a_round(factors.iter().map(Self::parts_of).collect());
         let sets: Vec<Eval> = factors.iter().map(|factor| factor.eval.clone()).collect();
         let member_parts = set_parts.clone();
+        let components: Vec<&Compiled> = factors.iter().collect();
         Ok(Compiled {
             is_costly: true,
             is_normalized: false,
+            reference: combine_references(&components, |_, sets| Ok(Lazy::Product(sets))),
             parts: Some(set_parts),
             member: Some(member(move |machine, element| {
                 machine.run_parts(&member_parts)?;
