@@ -1012,7 +1012,7 @@ impl<'a> Compiler<'a> {
                     if !member(machine, value)? {
                         return Err(Bail("applied a function outside its domain"));
                     }
-                    let value = argument(machine)?;
+                    // The argument once, as the interpreter evaluates it: a Print in it prints once.
                     machine.locals[slot as usize] = value;
                     walk(machine, on_complete)
                 }))

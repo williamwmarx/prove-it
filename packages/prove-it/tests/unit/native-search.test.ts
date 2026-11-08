@@ -212,6 +212,18 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     expect(native.lines).toContainEqual(expect.stringMatching(COMPLETE));
   });
 
+  it("evaluates a walked function's argument once, so a Print in it prints once", async () => {
+    const body = [
+      "EXTENDS Naturals, TLC",
+      "VARIABLE x",
+      "Init == x = 0",
+      'Next == LET f[n \\in 0..2] == x\' = n IN f[Print("ARG", (x + 1) % 3)]',
+    ];
+    expect(await compareWithInterpreter(body, "INIT Init\nNEXT Next")).toContainEqual(
+      expect.stringMatching(COMPLETE),
+    );
+  });
+
   it("checks invariants, constraints, action constraints and action properties", async () => {
     const body = [
       "EXTENDS Naturals, TLC",
