@@ -37,7 +37,7 @@ pub struct Bail(pub &'static str);
 pub type Outcome<T> = Result<T, Bail>;
 
 const SMALL_INT_MIN: i32 = -256;
-const SMALL_INT_MAX: i32 = 4096;
+pub(crate) const SMALL_INT_MAX: i32 = 4096;
 const INITIAL_CAPACITY: usize = 1 << 12;
 const EMPTY_SLOT: Id = Id::MAX;
 // A short sort runs by insertion, in place; longer ones are merged from such runs.

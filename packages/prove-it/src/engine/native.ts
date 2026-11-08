@@ -89,10 +89,13 @@ interface NativeCheckpoint {
   counts: Float64Array;
   outDegrees?: Float64Array;
   parents?: Int32Array;
+  // The values of the states, each once, and each state's values by position among them.
   words?: Int32Array;
   strings?: string[];
+  states?: Int32Array;
   keyWords?: Int32Array;
   keyStrings?: string[];
+  keyStates?: Int32Array;
   keyWidth?: number;
   graph?: NativeGraph;
 }
@@ -229,18 +232,22 @@ export const checkNatively = (
 };
 
 // The states the native engine found, as ids of this process's engine store, which the
-// interpreter's hand-over reads.
-// The states interned straight from their encoding, with the ids fromValue gives each value, but
-// without building it: a search can hand over millions of states.
-const decodeStates = (words: Int32Array, strings: string[], width: number, count: number) => {
-  const ids = new Int32Array(count * width);
+// interpreter's hand-over reads. The checkpoint holds each value once, after its parts, which are
+// positions of values before it, and each state as the positions of its values (SharedStates in
+// transfer.rs), so this interns each value with the id fromValue gives it, in the order decoding
+// each state's values would, but neither builds it nor reads it twice: a search can hand over
+// millions of states.
+const decodeStates = (words: Int32Array, strings: string[], positions: Int32Array) => {
+  // Each value takes a word at least.
+  const values = new Int32Array(words.length);
+  let count = 0;
   let cursor = 0;
-  const decodeAll = (length: number) => {
-    const decoded: number[] = new Array(length);
-    for (let index = 0; index < length; index++) decoded[index] = decodeValue();
-    return decoded;
+  const readParts = (length: number) => {
+    const parts: number[] = new Array(length);
+    for (let index = 0; index < length; index++) parts[index] = values[words[cursor++]];
+    return parts;
   };
-  const decodeValue = (): number => {
+  const readValue = (): number => {
     const tag = words[cursor++];
     switch (tag) {
       case FALSE_TAG:
@@ -254,25 +261,26 @@ const decodeStates = (words: Int32Array, strings: string[], width: number, count
       case MODEL_VALUE_TAG:
         return model(strings[words[cursor++]]);
       case SET_TAG:
-        return setOf(decodeAll(words[cursor++]));
+        return setOf(readParts(words[cursor++]));
       case INTERVAL_FUNCTION_TAG: {
         cursor++;
         const low = words[cursor++];
         const length = words[cursor++];
         const keys: number[] = new Array(length);
         for (let index = 0; index < length; index++) keys[index] = int(low + index);
-        return functionOf(keys, decodeAll(length));
+        return functionOf(keys, readParts(length));
       }
       default: {
         if (tag !== FUNCTION_TAG) throw new EngineInvariantError(`a transfer tag ${tag}`);
         cursor++;
-        const keys = decodeAll(words[cursor++]);
-        return functionOf(keys, decodeAll(keys.length));
+        const length = words[cursor++];
+        const keys = readParts(length);
+        return functionOf(keys, readParts(length));
       }
     }
   };
-  for (let index = 0; index < count * width; index++) ids[index] = decodeValue();
-  return ids;
+  while (cursor < words.length) values[count++] = readValue();
+  return Int32Array.from(positions, (position) => values[position]);
 };
 
 // Answers the liveness checker from the native engine's tables, as live.ts's oracle answers it
@@ -341,12 +349,14 @@ const toCheckpoint = (
   width: number,
   atoms: LiveExpression[],
 ): EngineCheckpoint | undefined => {
-  if (!native.parents || !native.words || !native.strings || !native.outDegrees) return undefined;
+  if (!native.parents || !native.words || !native.strings || !native.states || !native.outDegrees) {
+    return undefined;
+  }
   resetStore();
   resetFingerprints();
   const counts = native.counts;
   const count = counts[1];
-  const states = decodeStates(native.words, native.strings, width, count);
+  const states = decodeStates(native.words, native.strings, native.states);
   const base = {
     expanding: counts[0],
     count,
@@ -379,7 +389,7 @@ const toCheckpoint = (
   const keys =
     keyWidth === undefined
       ? undefined
-      : decodeStates(native.keyWords!, native.keyStrings!, keyWidth, count);
+      : decodeStates(native.keyWords!, native.keyStrings!, native.keyStates!);
   const stored = keys ?? states;
   const storedWidth = keyWidth ?? width;
   // The index of each state's key, built when the interpreter first asks whether a successor is

@@ -194,7 +194,8 @@ fn stops_where_asked_with_the_states_before() {
     assert_eq!(reason, "stopped where PROVE_IT_STOP_AT asked");
     assert_eq!(checkpoint.expanding, 10);
     assert_eq!(checkpoint.parents.len() as u64, checkpoint.count);
-    assert_eq!(checkpoint.states.count as u64, checkpoint.count);
+    // TCommit has one variable.
+    assert_eq!(checkpoint.states.states.len() as u64, checkpoint.count);
     assert!(checkpoint.count > 10);
 }
 
