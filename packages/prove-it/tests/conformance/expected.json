@@ -19,8 +19,7 @@
   },
   {
     "id": "ccf/tla/consensus/Traceccfraft.cfg",
-    "status": "assumption-violation",
-    "traceLength": 0,
+    "status": "error",
     "tlcMilliseconds": 1606
   },
   {
@@ -34,6 +33,7 @@
     "generatedStates": 3896264,
     "distinctStates": 1546226,
     "depth": 15,
+    "fingerprintProbability": "9.2E-7",
     "tlcMilliseconds": 131890
   },
   {
@@ -47,6 +47,7 @@
     "generatedStates": 353036,
     "distinctStates": 166428,
     "depth": 12,
+    "fingerprintProbability": "1.3E-9",
     "tlcMilliseconds": 57166
   },
   {
@@ -63,6 +64,7 @@
     "generatedStates": 281317,
     "distinctStates": 210806,
     "depth": 15,
+    "fingerprintProbability": "1.1E-7",
     "tlcMilliseconds": 42183
   },
   {
@@ -107,6 +109,7 @@
     "generatedStates": 3403584,
     "distinctStates": 655200,
     "depth": 1,
+    "fingerprintProbability": "3.7E-9",
     "tlcMilliseconds": 31178
   },
   {
@@ -120,8 +123,8 @@
     "generatedStates": 104697,
     "distinctStates": 34534,
     "depth": 13,
-    "tlcMilliseconds": 2689,
-    "fingerprintProbability": "8.0E-11"
+    "fingerprintProbability": "8.0E-11",
+    "tlcMilliseconds": 2689
   },
   {
     "id": "examples/specifications/CheckpointCoordination/MCCheckpointCoordination.cfg",
@@ -129,6 +132,7 @@
     "generatedStates": 23112567,
     "distinctStates": 901692,
     "depth": 29,
+    "fingerprintProbability": "3.6E-6",
     "tlcMilliseconds": 284760
   },
   {
@@ -190,8 +194,8 @@
     "generatedStates": 422781,
     "distinctStates": 112929,
     "depth": 81,
-    "tlcMilliseconds": 11641,
-    "fingerprintProbability": "5.8E-10"
+    "fingerprintProbability": "5.8E-10",
+    "tlcMilliseconds": 11641
   },
   {
     "id": "examples/specifications/Disruptor/MCDisruptor_SPMC.cfg",
@@ -241,6 +245,7 @@
     "generatedStates": 131072,
     "distinctStates": 65536,
     "depth": 1,
+    "fingerprintProbability": "3.9E-14",
     "tlcMilliseconds": 63560
   },
   {
@@ -274,10 +279,7 @@
   },
   {
     "id": "examples/specifications/KeyValueStore/MCKVsnap.cfg",
-    "status": "success",
-    "generatedStates": 63082,
-    "distinctStates": 32293,
-    "depth": 13,
+    "status": "error",
     "tlcMilliseconds": 26633
   },
   {
@@ -397,6 +399,7 @@
     "generatedStates": 320053,
     "distinctStates": 25617,
     "depth": 22,
+    "fingerprintProbability": "1.8E-11",
     "tlcMilliseconds": 59536
   },
   {
@@ -443,6 +446,7 @@
     "generatedStates": 1044320,
     "distinctStates": 65396,
     "depth": 6,
+    "fingerprintProbability": "7.4E-11",
     "tlcMilliseconds": 21733
   },
   {
@@ -480,8 +484,8 @@
     "generatedStates": 1454776,
     "distinctStates": 277726,
     "depth": 25,
-    "tlcMilliseconds": 6434,
-    "fingerprintProbability": "2.7E-9"
+    "fingerprintProbability": "2.7E-9",
+    "tlcMilliseconds": 6434
   },
   {
     "id": "examples/specifications/TransitiveClosure/TransitiveClosure.cfg",
@@ -541,15 +545,12 @@
     "generatedStates": 218352,
     "distinctStates": 54944,
     "depth": 21,
-    "tlcMilliseconds": 5723,
-    "fingerprintProbability": "2.5E-12"
+    "fingerprintProbability": "2.5E-12",
+    "tlcMilliseconds": 5723
   },
   {
     "id": "examples/specifications/allocator/AllocatorImplementation.cfg",
-    "status": "success",
-    "generatedStates": 64414,
-    "distinctStates": 17701,
-    "depth": 16,
+    "status": "error",
     "tlcMilliseconds": 11124
   },
   {
@@ -590,8 +591,8 @@
     "generatedStates": 104515,
     "distinctStates": 29279,
     "depth": 93,
-    "tlcMilliseconds": 3571,
-    "fingerprintProbability": "1.6E-11"
+    "fingerprintProbability": "1.6E-11",
+    "tlcMilliseconds": 3571
   },
   {
     "id": "examples/specifications/bcastByz/bcastByz.cfg",
@@ -599,8 +600,8 @@
     "generatedStates": 227344,
     "distinctStates": 14424,
     "depth": 7,
-    "tlcMilliseconds": 14402,
-    "fingerprintProbability": "1.3E-11"
+    "fingerprintProbability": "1.3E-11",
+    "tlcMilliseconds": 14402
   },
   {
     "id": "examples/specifications/braf/BufferedRandomAccessFile.cfg",
@@ -616,6 +617,7 @@
     "generatedStates": 2820091,
     "distinctStates": 374727,
     "depth": 38,
+    "fingerprintProbability": "5.6E-9",
     "tlcMilliseconds": 40194
   },
   {
@@ -680,8 +682,8 @@
     "generatedStates": 318877,
     "distinctStates": 6962,
     "depth": 14,
-    "tlcMilliseconds": 17279,
-    "fingerprintProbability": "8.6E-12"
+    "fingerprintProbability": "8.6E-12",
+    "tlcMilliseconds": 17279
   },
   {
     "id": "examples/specifications/cf1s-folklore/cf1s_folklore.cfg",
@@ -689,6 +691,7 @@
     "generatedStates": 22438432,
     "distinctStates": 2057174,
     "depth": 25,
+    "fingerprintProbability": "8.5E-9",
     "tlcMilliseconds": 270841
   },
   {
@@ -713,6 +716,7 @@
     "generatedStates": 314144,
     "distinctStates": 109604,
     "depth": 16,
+    "fingerprintProbability": "5.3E-9",
     "tlcMilliseconds": 77223
   },
   {
@@ -729,8 +733,8 @@
     "generatedStates": 248832,
     "distinctStates": 46656,
     "depth": 1,
-    "tlcMilliseconds": 3582,
-    "fingerprintProbability": "9.8E-13"
+    "fingerprintProbability": "9.8E-13",
+    "tlcMilliseconds": 3582
   },
   {
     "id": "examples/specifications/ewd687a/MCEWD687a.cfg",
@@ -789,6 +793,7 @@
     "generatedStates": 2808396,
     "distinctStates": 321370,
     "depth": 47,
+    "fingerprintProbability": "3.1E-9",
     "tlcMilliseconds": 62229
   },
   {
@@ -821,6 +826,7 @@
     "generatedStates": 2729079,
     "distinctStates": 724274,
     "depth": 61,
+    "fingerprintProbability": "4.3E-8",
     "tlcMilliseconds": 33135
   },
   {
@@ -861,8 +867,8 @@
     "generatedStates": 159538,
     "distinctStates": 24922,
     "depth": 16,
-    "tlcMilliseconds": 5885,
-    "fingerprintProbability": "1.5E-11"
+    "fingerprintProbability": "1.5E-11",
+    "tlcMilliseconds": 5885
   },
   {
     "id": "examples/specifications/spanning/MC_spanning.cfg",
@@ -908,6 +914,7 @@
     "generatedStates": 16959159,
     "distinctStates": 1321761,
     "depth": 28,
+    "fingerprintProbability": "2.8E-7",
     "tlcMilliseconds": 176610
   },
   {
@@ -928,8 +935,7 @@
   },
   {
     "id": "kafka/groupprotocol/consumer_group_protocol_kip_848_v2.cfg",
-    "status": "deadlock",
-    "traceLength": 11,
+    "status": "error",
     "tlcMilliseconds": 3679
   },
   {
@@ -1041,6 +1047,7 @@
     "generatedStates": 527042,
     "distinctStates": 220597,
     "depth": 26,
+    "fingerprintProbability": "3.6E-9",
     "tlcMilliseconds": 21780
   },
   {
@@ -1062,8 +1069,8 @@
     "generatedStates": 1238092,
     "distinctStates": 423490,
     "depth": 14,
-    "tlcMilliseconds": 18100,
-    "fingerprintProbability": "5.6E-7"
+    "fingerprintProbability": "5.6E-7",
+    "tlcMilliseconds": 18100
   },
   {
     "id": "mongodb/src/mongo/tla_plus/Streams/ExactInitialSync/MCExactInitialSync.cfg",
@@ -1071,6 +1078,7 @@
     "generatedStates": 39107880,
     "distinctStates": 9610407,
     "depth": 20,
+    "fingerprintProbability": "8.0E-6",
     "tlcMilliseconds": 119098
   },
   {
@@ -1129,6 +1137,7 @@
     "generatedStates": 12009349,
     "distinctStates": 2806275,
     "depth": 31,
+    "fingerprintProbability": "1.2E-5",
     "tlcMilliseconds": 287508
   },
   {
@@ -1157,6 +1166,7 @@
     "generatedStates": 2182249,
     "distinctStates": 481533,
     "depth": 23,
+    "fingerprintProbability": "7.5E-9",
     "tlcMilliseconds": 58506
   },
   {
@@ -1226,8 +1236,8 @@
     "generatedStates": 190893,
     "distinctStates": 75793,
     "depth": 44,
-    "tlcMilliseconds": 3908,
-    "fingerprintProbability": "1.3E-10"
+    "fingerprintProbability": "1.3E-10",
+    "tlcMilliseconds": 3908
   },
   {
     "id": "s3-wal/opendata/Buffer.cfg",
@@ -1240,6 +1250,7 @@
     "generatedStates": 5250541,
     "distinctStates": 1389537,
     "depth": 49,
+    "fingerprintProbability": "1.0E-6",
     "tlcMilliseconds": 102281
   },
   {
@@ -1248,6 +1259,7 @@
     "generatedStates": 15930846,
     "distinctStates": 3606090,
     "depth": 56,
+    "fingerprintProbability": "1.3E-6",
     "tlcMilliseconds": 264280
   },
   {
@@ -1256,6 +1268,7 @@
     "generatedStates": 2058641,
     "distinctStates": 684441,
     "depth": 82,
+    "fingerprintProbability": "3.2E-8",
     "tlcMilliseconds": 34136
   },
   {
@@ -1264,6 +1277,7 @@
     "generatedStates": 12722216,
     "distinctStates": 3274048,
     "depth": 99,
+    "fingerprintProbability": "7.1E-7",
     "tlcMilliseconds": 165242
   },
   {
@@ -1370,10 +1384,7 @@
   },
   {
     "id": "spectacle/specs/RaftWithReconfigSingleServer.cfg",
-    "status": "success",
-    "generatedStates": 3564513,
-    "distinctStates": 298493,
-    "depth": 26,
+    "status": "error",
     "tlcMilliseconds": 278876
   },
   {
@@ -1570,8 +1581,7 @@
   },
   {
     "id": "spectacle/specs/with_state_graphs/RaftWithReconfigBroken_Bounded.cfg",
-    "status": "deadlock",
-    "traceLength": 4,
+    "status": "error",
     "tlcMilliseconds": 924
   },
   {
@@ -1592,10 +1602,7 @@
   },
   {
     "id": "spectacle/specs/with_state_graphs/TestLinQueue.cfg",
-    "status": "success",
-    "generatedStates": 3,
-    "distinctStates": 1,
-    "depth": 1,
+    "status": "error",
     "tlcMilliseconds": 11164
   },
   {
@@ -2577,6 +2584,7 @@
     "generatedStates": 1581200,
     "distinctStates": 485988,
     "depth": 25,
+    "fingerprintProbability": "5.2E-9",
     "tlcMilliseconds": 120149
   },
   {
@@ -2593,6 +2601,7 @@
     "generatedStates": 1676240,
     "distinctStates": 174755,
     "depth": 27,
+    "fingerprintProbability": "6.5E-9",
     "tlcMilliseconds": 218373
   },
   {
@@ -2614,6 +2623,7 @@
     "generatedStates": 7084273,
     "distinctStates": 832785,
     "depth": 29,
+    "fingerprintProbability": "3.2E-8",
     "tlcMilliseconds": 266350
   },
   {
@@ -3718,10 +3728,7 @@
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/NormalizationAssume.cfg",
-    "status": "success",
-    "generatedStates": 0,
-    "distinctStates": 0,
-    "depth": 0,
+    "status": "error",
     "tlcMilliseconds": 557
   },
   {
@@ -4480,6 +4487,7 @@
     "generatedStates": 2127012,
     "distinctStates": 952912,
     "depth": 82,
+    "fingerprintProbability": "5.1E-7",
     "tlcMilliseconds": 82261
   },
   {
@@ -4945,8 +4953,8 @@
     "generatedStates": 800000,
     "distinctStates": 400000,
     "depth": 1,
-    "tlcMilliseconds": 1737,
-    "fingerprintProbability": "8.7E-13"
+    "fingerprintProbability": "8.7E-13",
+    "tlcMilliseconds": 1737
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test2.cfg",
@@ -5169,8 +5177,8 @@
     "generatedStates": 1109824,
     "distinctStates": 63504,
     "depth": 7,
-    "tlcMilliseconds": 3261,
-    "fingerprintProbability": "1.1E-10"
+    "fingerprintProbability": "1.1E-10",
+    "tlcMilliseconds": 3261
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test28.cfg",
@@ -5231,8 +5239,8 @@
     "generatedStates": 235298,
     "distinctStates": 117649,
     "depth": 1,
-    "tlcMilliseconds": 963,
-    "fingerprintProbability": "9.8E-13"
+    "fingerprintProbability": "9.8E-13",
+    "tlcMilliseconds": 963
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test34.cfg",

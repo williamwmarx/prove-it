@@ -107,8 +107,12 @@ const getExtendees = (module: Module) => {
 
 // The report parses a module to find the lines SANY's validation of its PlusCal reads, and a
 // module that doesn't parse is one SANY stops at before validating it.
-const parseValidatedModule = (readings: Map<string, SanyReading>, text: string) => {
-  const module = readSanyText(readings, text).module;
+const parseValidatedModule = (
+  readings: Map<string, SanyReading>,
+  text: string,
+  version: TlcVersion | undefined,
+) => {
+  const module = readSanyText(readings, text, version).module;
   return module instanceof TlaSyntaxError ? undefined : module;
 };
 
@@ -116,7 +120,7 @@ const parseValidatedModule = (readings: Map<string, SanyReading>, text: string) 
 export const getSanyModuleName = (text: string, version?: TlcVersion) =>
   version === "1.7.4" && getSany174LexicalError(text) !== undefined
     ? undefined
-    : parseValidatedModule(new Map(), text)?.name;
+    : parseValidatedModule(new Map(), text, version)?.name;
 
 // What SANY prints while TLC runs it on the specification in rootPath, and whether SANY rejects the
 // specification. loadModule finds the source of the other modules, and SANY's standard modules fill
@@ -216,7 +220,7 @@ export const getSanyReport = (
   // and for a module loaded earlier, when the generator loads a module that extends it.
   const loadValidatedModule = (moduleName: string, text: string) => {
     if (options.isXmlExport || loadedModules.has(moduleName)) return;
-    const module = parseValidatedModule(readings, text);
+    const module = parseValidatedModule(readings, text, options.version);
     if (module === undefined || module.name !== moduleName) return;
     const extenders = [...loadedModules.values()].filter((loaded) =>
       getExtendees(loaded.module).includes(moduleName),

@@ -229,7 +229,9 @@ const getConjuncts = (expression: Expression, environment: Environment): Express
     return expression.operands.flatMap((operand) => getConjuncts(operand, environment));
   if (expression.kind === "Identifier" && !environment.constants.has(expression.name)) {
     const definition = getDefinition(expression.name, environment);
-    if (definition?.kind === "Operator" && definition.params.length === 0) {
+    // TLC takes the boolean it computed at startup for a constant definition.
+    const isComputed = definition && typeof getStartupValue(definition, environment) === "boolean";
+    if (definition?.kind === "Operator" && definition.params.length === 0 && !isComputed) {
       return getConjuncts(definition.body, environment);
     }
   }

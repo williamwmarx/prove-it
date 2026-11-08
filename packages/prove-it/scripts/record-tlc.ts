@@ -3,7 +3,7 @@
 // tlc-recordings.ts). --stdout records only the models expected.json lists with TLC under
 // --max-tlc-ms, and only those it has no recording of yet.
 // Usage: TLA2TOOLS_JAR=path [TLC_COMMIT=commit] bun scripts/run.ts record-tlc [--stdout]
-//        [--max-tlc-ms 20000] [--filter text] [--concurrency 2]
+//        [--keep-unfinished] [--max-tlc-ms 20000] [--filter text] [--concurrency 2]
 
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -251,16 +251,34 @@ const recordOutputs = async () => {
   addFingerprintProbabilities(expectedResults, models);
 };
 
+// The recorder that made the first expected.json stopped TLC at 300 s and recorded an error, so an
+// entry like that says only that TLC didn't finish in 300 s, which running TLC without a limit can't
+// reproduce. --keep-unfinished carries those entries over without running TLC on their models.
+const UNFINISHED_MILLISECONDS = 300000;
+
+const getUnfinishedResults = () =>
+  process.argv.includes("--keep-unfinished")
+    ? (JSON.parse(readFileSync(EXPECTED_PATH, "utf8")) as ExpectedResult[]).filter(
+        (result) => result.status === "error" && result.tlcMilliseconds >= UNFINISHED_MILLISECONDS,
+      )
+    : [];
+
 const recordOutcomes = async () => {
-  const models = findModels().filter(isRecordable);
-  const results: ExpectedResult[] = [];
+  const unfinished = getUnfinishedResults();
+  const unfinishedIds = new Set(unfinished.map((result) => result.id));
+  const models = findModels().filter(
+    (model) => isRecordable(model) && !unfinishedIds.has(model.id),
+  );
+  const results: ExpectedResult[] = [...unfinished];
   const queue = { next: 0 };
   const work = async () => {
     while (queue.next < models.length) {
       const model = models[queue.next++];
       const result = await runTlc(model);
       results.push(result);
-      console.log(`[${results.length}/${models.length}] ${result.status.padEnd(20)} ${model.id}`);
+      console.log(
+        `[${results.length - unfinished.length}/${models.length}] ${result.status.padEnd(20)} ${model.id}`,
+      );
     }
   };
   await Promise.all(Array.from({ length: concurrency }, work));

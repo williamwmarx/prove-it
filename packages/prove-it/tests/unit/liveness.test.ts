@@ -49,6 +49,17 @@ describe("liveness matches TLC", () => {
     expect(result.status).toBe("liveness-violation");
   }, 60_000);
 
+  // TLC at the commit it is recorded at names the property it finds the lasso violates, after a
+  // step to any of a thousand states.
+  it("names the temporal property a lasso through one of many states violates", async () => {
+    const result = await check({
+      source:
+        "---- MODULE Many ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == IF x = 0 THEN x' \\in 1..1000 ELSE UNCHANGED x\nLive == <>(x = 1)\n====",
+      config: "INIT Init\nNEXT Next\nPROPERTY Live",
+    });
+    expect([result.status, result.violation?.properties]).toEqual(["liveness-violation", ["Live"]]);
+  });
+
   it("reports a lasso whose cycle returns to an earlier state", async () => {
     const result = await check({
       source: SOURCE,

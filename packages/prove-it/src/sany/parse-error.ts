@@ -1,4 +1,5 @@
 import { SANY_OPERATOR_SYNONYMS } from "../tlc/jar-data";
+import type { TlcVersion } from "../tlc/version";
 import { createSanyLexer, escapeLexeme, getKind, type SanyToken } from "./lexer";
 
 // The report SANY's parser, TLAplusParser, gives for a module it fails to parse. This interprets
@@ -125,6 +126,7 @@ interface LookaheadOptions {
 }
 
 interface ParserState {
+  operators: Map<string, Operator | undefined>;
   readToken: () => SanyToken;
   lexicalError: string | undefined;
   token: SanyToken;
@@ -195,7 +197,8 @@ const CANONICAL_OPERATORS = new Map([
   ...createOperators("postfix", 160, 160, true, "["),
   ...createOperators("postfix", 150, 150, false, "'", "^+", "^*", "^#"),
   ...createOperators("prefix", 120, 120, false, "-."),
-  ...createOperators("prefix", 100, 130, false, "SUBSET", "UNION", "DOMAIN"),
+  ...createOperators("prefix", 80, 80, false, "SUBSET", "UNION"),
+  ...createOperators("prefix", 90, 90, false, "DOMAIN"),
   ...createOperators("prefix", 40, 150, false, "[]", "<>", "ENABLED", "UNCHANGED"),
   ...createOperators("prefix", 40, 40, true, "\\lnot"),
   ...createOperators("nfix", 100, 130, true, "\\times"),
@@ -294,6 +297,11 @@ const OPERATORS = new Map([
   ...SANY_OPERATOR_SYNONYMS.flatMap((synonyms) =>
     synonyms.slice(1).map((synonym) => [synonym, CANONICAL_OPERATORS.get(synonyms[0])] as const),
   ),
+]);
+// TLC 1.7.4's SANY read its operators from ConfigConstants, which gave these three 10-13.
+const OPERATORS_174 = new Map([
+  ...OPERATORS,
+  ...createOperators("prefix", 100, 130, false, "SUBSET", "UNION", "DOMAIN"),
 ]);
 // OperatorStack's fcnOp, which a function application's "[" pushes, and Operator.VoidOperator,
 // which OperatorStack.finalReduce pushes to reduce the whole stack.
@@ -526,7 +534,7 @@ const PUSH_OPERATOR = pushOnStack(() => true);
 
 // TLAplusParser's lastOp, which the productions of operators set.
 const SET_LAST_OPERATOR = action((state) => {
-  state.lastOperator = OPERATORS.get(state.token.image);
+  state.lastOperator = state.operators.get(state.token.image);
 });
 
 // The OpArgs node that a PrimitiveExp's heirs end with, directly or in their last "!" extension.
@@ -2119,10 +2127,11 @@ const parse = (state: ParserState, unit: Unit): boolean => {
 };
 
 // What SANY reports for a module its lexer or parser rejects, or undefined if it accepts the module.
-export const getSanyParseError = (source: string) => {
+export const getSanyParseError = (source: string, version?: TlcVersion) => {
   const readToken = createSanyLexer(source);
   const start: SanyToken = { kind: EOF, image: "", beginLine: 0, beginColumn: 0, next: undefined };
   const state: ParserState = {
+    operators: version === "1.7.4" ? OPERATORS_174 : OPERATORS,
     readToken: () => {
       const token = readToken();
       if (typeof token !== "string") return token;

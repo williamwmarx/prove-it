@@ -279,28 +279,34 @@ export const createJavaOverrideError = (signature: string, message: string) =>
 // TLC reports a failure inside an operator's Java method as a failure of the method, except an
 // EvalException that the method raises itself. A method that evaluates its own arguments reports
 // every failure that way.
+export const reportAsJavaFailure =
+  <Arguments extends unknown[]>(
+    signature: string,
+    isLazy: boolean,
+    compute: (...args: Arguments) => Value,
+  ) =>
+  (...args: Arguments) => {
+    const depth = setTrace.sets?.length ?? 0;
+    try {
+      return compute(...args);
+    } catch (error) {
+      const isWrapped =
+        error instanceof TlaEvaluationError && (isLazy || !(error instanceof TlaModuleError));
+      if (!isWrapped) throw error;
+      // The wrapping error replaces a FingerprintException that a set with a source raised.
+      if (setTrace.sets) setTrace.sets.length = depth;
+      throw createJavaOverrideError(signature, error.message);
+    }
+  };
+
 export const overrideWithJava = (builtin: Builtin, signature: string): Builtin => {
-  const reportAsJavaFailure =
-    <Arguments extends unknown[]>(compute: (...args: Arguments) => Value) =>
-    (...args: Arguments) => {
-      const depth = setTrace.sets?.length ?? 0;
-      try {
-        return compute(...args);
-      } catch (error) {
-        const isWrapped =
-          error instanceof TlaEvaluationError &&
-          (builtin.isLazy === true || !(error instanceof TlaModuleError));
-        if (!isWrapped) throw error;
-        // The wrapping error replaces a FingerprintException that a set with a source raised.
-        if (setTrace.sets) setTrace.sets.length = depth;
-        throw createJavaOverrideError(signature, error.message);
-      }
-    };
+  const report = <Arguments extends unknown[]>(compute: (...args: Arguments) => Value) =>
+    reportAsJavaFailure(signature, builtin.isLazy === true, compute);
   return {
     ...builtin,
-    evaluate: reportAsJavaFailure(builtin.evaluate),
-    evaluateUnary: builtin.evaluateUnary && reportAsJavaFailure(builtin.evaluateUnary),
-    evaluateBinary: builtin.evaluateBinary && reportAsJavaFailure(builtin.evaluateBinary),
+    evaluate: report(builtin.evaluate),
+    evaluateUnary: builtin.evaluateUnary && report(builtin.evaluateUnary),
+    evaluateBinary: builtin.evaluateBinary && report(builtin.evaluateBinary),
   };
 };
 

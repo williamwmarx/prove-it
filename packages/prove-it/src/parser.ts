@@ -25,6 +25,7 @@ import type {
 import { createSanyError, formatRange, TlaSyntaxError } from "./errors";
 import { getNumeralValue, readAtAsIdentifier, type Token, tokenize } from "./lexer";
 import { getSanyParseError } from "./sany/parse-error";
+import type { TlcVersion } from "./tlc/version";
 
 interface Precedence {
   low: number;
@@ -347,7 +348,12 @@ export const extractModule = (source: string, name: string) => {
 // generator.
 type ParseMode = "tlc" | "tlapm" | "sany";
 
-const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source)): Module => {
+const parse = (
+  source: string,
+  mode: ParseMode,
+  sourceTokens = tokenize(source),
+  version?: TlcVersion,
+): Module => {
   const isTlapm = mode === "tlapm";
   const tokens = isTlapm ? sourceTokens : sourceTokens.map(readAtAsIdentifier);
   const cursor = { index: 0, offsideColumns: [] as number[] };
@@ -1193,15 +1199,22 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
           return { kind: "Unchanged", expression: parsePrefixOperand(token, 4, 15), location };
         case "SUBSET":
         case "UNION":
-        case "DOMAIN":
+        case "DOMAIN": {
           advance();
+          // tlapm gives these operators the precedence 8 of the TLA+ book. SANY gives SUBSET and
+          // UNION 8 and DOMAIN 9, and in TLC 1.7.4 gave all three 10-13.
+          const precedence = version === "1.7.4" ? 10 : token.text === "DOMAIN" ? 9 : 8;
           return {
             kind: "Apply",
             operator: token.text,
-            // tlapm gives these operators the precedence 8 of the TLA+ book, and SANY 10-13.
-            args: [isTlapm ? parseExpression(9) : parsePrefixOperand(token, 10, 13)],
+            args: [
+              isTlapm
+                ? parseExpression(9)
+                : parsePrefixOperand(token, precedence, version === "1.7.4" ? 13 : precedence),
+            ],
             location,
           };
+        }
       }
     }
     return parsePrimary(preceding);
@@ -2095,16 +2108,18 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
   const module = parseModuleBody();
   // SANY's lexer marks where each definition begins before its parser runs, which can split a
   // module's name from a keyword that the parser would take for one.
-  const sanyError = keywordModuleName.isUsed ? getSanyParseError(source) : undefined;
+  const sanyError = keywordModuleName.isUsed ? getSanyParseError(source, version) : undefined;
   if (sanyError !== undefined) throw new TlaSyntaxError(sanyError);
   return module;
 };
 
 export const parseModule = (source: string) => parse(source, "tlc");
 
-// Parses a module the caller has tokenized already.
-export const parseModuleTokens = (source: string, tokens: Token[]) => parse(source, "tlc", tokens);
+// Parses a module the caller has tokenized already, as SANY in a version of TLC does.
+export const parseModuleTokens = (source: string, tokens: Token[], version?: TlcVersion) =>
+  parse(source, "tlc", tokens, version);
 
 export const parseTlapmModule = (source: string) => parse(source, "tlapm");
 
-export const parseSanyModule = (source: string, tokens?: Token[]) => parse(source, "sany", tokens);
+export const parseSanyModule = (source: string, tokens?: Token[], version?: TlcVersion) =>
+  parse(source, "sany", tokens, version);

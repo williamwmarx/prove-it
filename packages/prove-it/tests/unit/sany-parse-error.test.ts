@@ -185,6 +185,36 @@ EXTENDS Naturals, Sequences, FiniteSets , TLC
       ],
     },
     {
+      check: "a precedence conflict of SUBSET with \\cup",
+      body: "F == SUBSET a \\cup b",
+      report: [
+        "",
+        "  Precedence conflict between ops SUBSET in block line 2, col 6 to line 2, col 11 of module Test and \\union.",
+        "",
+        "Residual stack trace follows:",
+        "ExtendableExpr starting at line 2, column 13.",
+        "Expression starting at line 2, column 6.",
+        "Definition starting at line 2, column 1.",
+        "Module body starting at line 2, column 1.",
+        "Module definition starting at line 1, column 1.",
+      ],
+    },
+    {
+      check: "a precedence conflict of DOMAIN with ..",
+      body: "F == DOMAIN a .. b",
+      report: [
+        "",
+        "  Precedence conflict between ops DOMAIN in block line 2, col 6 to line 2, col 11 of module Test and ...",
+        "",
+        "Residual stack trace follows:",
+        "ExtendableExpr starting at line 2, column 13.",
+        "Expression starting at line 2, column 6.",
+        "Definition starting at line 2, column 1.",
+        "Module body starting at line 2, column 1.",
+        "Module definition starting at line 1, column 1.",
+      ],
+    },
+    {
       check: "a precedence conflict with a postfix operator",
       body: "F == ENABLED x'",
       report: [
@@ -341,6 +371,12 @@ EXTENDS Naturals, Sequences, FiniteSets , TLC
     expect(getSanyParseError(`---- MODULE Test ----\n${testCase.body}\n====\n`)).toBe(
       toText(testCase.report),
     );
+  });
+
+  // TLC 1.7.4's SANY gave SUBSET, UNION, and DOMAIN the precedence 10-13.
+  it("accepts SUBSET and DOMAIN before an operator of precedence 8 or 9 in TLC 1.7.4", () => {
+    const source = "---- MODULE Test ----\nF == SUBSET a \\cup b\nG == DOMAIN a .. b\n====\n";
+    expect(getSanyParseError(source, "1.7.4")).toBeUndefined();
   });
 
   // The modules and messages come from SANY.

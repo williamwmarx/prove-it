@@ -47,6 +47,27 @@ Spec == Init /\\ [][Next]_x
     expect(report).toEqual({ text: "", isFailed: false });
   });
 
+  // From TLC's test52.
+  it("takes prefix and postfix operators as operator arguments", () => {
+    const report = getReport({
+      Ops: `---- MODULE Ops ----
+VARIABLE x
+BoxTest(-._) == -(x = 0)
+-. a == {{"a"}} \\ a
+a ^+ == {{"a"}} \\ a
+SetOpTest(Foo(_)) == Foo({{"b"}})
+EnabledTest(Foo(_)) == Foo(x' = x)
+PrimeTest(Foo(_)) == Foo(x) = x
+Box == BoxTest([]) /\\ BoxTest(<>)
+Sets == SetOpTest(-.) /\\ SetOpTest(^+) /\\ SetOpTest(SUBSET) /\\ SetOpTest(UNION) /\\ SetOpTest(DOMAIN)
+Enabled == EnabledTest(ENABLED)
+Prime == PrimeTest(')
+====
+`,
+    });
+    expect(report).toEqual({ text: "", isFailed: false });
+  });
+
   it("parses a module once the module that names it reaches it, though another loaded it", () => {
     const report = getReport(
       {

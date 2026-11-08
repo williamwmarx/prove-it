@@ -101,7 +101,7 @@ describe("parseModule reads operators like SANY", () => {
     },
   );
 
-  it.each(["SUBSET a + b", "DOMAIN a \\o b", "- a \\X b", "[]a = b", "<>a \\cdot b", "[]a'"])(
+  it.each(["UNION a \\cup b", "DOMAIN a .. b", "- a \\X b", "[]a = b", "<>a \\cdot b", "[]a'"])(
     "rejects an operator after the operand of a prefix operator it overlaps in %s",
     (expression) => {
       expect(() =>
@@ -111,8 +111,9 @@ describe("parseModule reads operators like SANY", () => {
   );
 
   it.each([
-    ["SUBSET 0..2", ".."],
-    ["UNION a \\cup b", "\\cup"],
+    ["SUBSET 0..2", "SUBSET"],
+    ["SUBSET a + b", "SUBSET"],
+    ["DOMAIN a \\o b", "DOMAIN"],
     ["SUBSET a ^ b", "SUBSET"],
     ["~a = b", "~"],
   ])("groups %s under %s as SANY does", (expression, operator) => {
