@@ -3,5 +3,30 @@
     "test": "tests/unit/engine.test.ts > the engine between checks > keeps only the current check's memo tables",
     "reason": "It reads the TypeScript engine's memo tables through getMemoStatistics.",
     "counterpart": "cargo test -p tla-engine machine::tests::a_machine_starts_with_only_its_programs_empty_tables"
+  },
+  {
+    "test": "tests/unit/state-log.test.ts > PROVE_IT_STATE_LOG > writes the same states with 1 and 4 threads when the workers take levels",
+    "reason": "It needs the TypeScript engine's workers to take levels; the native engine searches on one thread until stage 2.",
+    "counterpart": "tests/unit/native-search.test.ts > the native engine's search > walks actions in TLC's order"
+  },
+  {
+    "test": "tests/unit/store-trace.test.ts > PROVE_IT_STORE_TRACE > writes operations of queue that the store replays to the same ids",
+    "reason": "PROVE_IT_STORE_TRACE traces the TypeScript engine's store, which the native engine doesn't use.",
+    "counterpart": "cargo test -p tla-values --test store gives_the_typescript_stores_ids_to_the_workload"
+  },
+  {
+    "test": "tests/unit/store-trace.test.ts > PROVE_IT_STORE_TRACE > writes operations of commit that the store replays to the same ids",
+    "reason": "PROVE_IT_STORE_TRACE traces the TypeScript engine's store, which the native engine doesn't use.",
+    "counterpart": "cargo test -p tla-values --test store gives_the_typescript_stores_ids_to_the_workload"
+  },
+  {
+    "test": "tests/unit/store-trace.test.ts > PROVE_IT_STORE_TRACE > writes operations of symmetry that the store replays to the same ids",
+    "reason": "PROVE_IT_STORE_TRACE traces the TypeScript engine's store, which the native engine doesn't use.",
+    "counterpart": "cargo test -p tla-values --test store gives_the_typescript_stores_ids_to_the_workload"
+  },
+  {
+    "test": "tests/unit/store-trace.test.ts > PROVE_IT_STORE_TRACE > is caught out by an operation whose result changed",
+    "reason": "PROVE_IT_STORE_TRACE traces the TypeScript engine's store, which the native engine doesn't use.",
+    "counterpart": "cargo test -p tla-values --test store gives_the_typescript_stores_ids_to_the_workload"
   }
 ]

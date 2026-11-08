@@ -17,8 +17,16 @@ const run = async (body: string, config: string, engine: string) => {
   process.env.PROVE_IT_ENGINE = engine;
   const printed: string[] = [];
   const lines: string[] = [];
+  // The TypeScript engine's lines. The native engine's, with PROVE_IT_ENGINE_BACKEND=rust, come
+  // first.
   const spy = spyOn(console, "error").mockImplementation((message: unknown) => {
-    if (typeof message === "string" && message.startsWith("[engine] ")) lines.push(message);
+    if (
+      typeof message === "string" &&
+      message.startsWith("[engine] ") &&
+      !message.startsWith("[engine] native: ")
+    ) {
+      lines.push(message);
+    }
   });
   try {
     const result = await check({
