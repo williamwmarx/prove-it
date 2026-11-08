@@ -3,9 +3,11 @@
 //! disjunctions, quantifiers and operators as TLC's Tool does, assigning a variable at its first
 //! conjunct of the form x' = e or x' \in S, and evaluating every other conjunct as a guard.
 //!
-//! A walk is a [`Step`]: it calls its continuation once for each state it completes. A branch of a
-//! conjunction goes on through the conjuncts after it, so the continuation a branch gets runs the
-//! rest of the conjunction, then the conjunction's own continuation.
+//! A walk is a [`Step`]: it calls its continuation once for each state it completes. It is compiled
+//! path by path, as `codegen.ts` writes it out: a branch of a conjunction is compiled with the
+//! conjuncts after it as its rest, and each conjunct knows which variables its path has assigned,
+//! so it assigns or tests without checking, and only where a path can't know does it check at run
+//! time.
 
 use std::cell::RefCell;
 use std::collections::HashSet;
@@ -113,114 +115,298 @@ impl Ordered {
     }
 }
 
-enum Conjunct {
-    Guard(Eval),
-    Assign { variable: u32, value: Eval },
-    Unchanged(Vec<u32>),
-    Branch(Step),
+/// What a walk does once a conjunct is done: a step, or, for `None`, the walk's own continuation.
+/// The walk is compiled path by path, as `codegen.ts` writes it out: each conjunct knows the step
+/// after it, so nothing at run time builds a continuation or keeps an undo stack.
+type Rest = Option<Step>;
+
+#[inline(always)]
+fn run_rest(rest: &Rest, machine: &mut Machine<'_>, on_complete: &mut Continue<'_>) -> Outcome<()> {
+    match rest {
+        Some(step) => step(machine, on_complete),
+        None => on_complete(machine),
+    }
 }
 
-struct Conjunction {
-    conjuncts: Vec<Conjunct>,
-    // Each conjunct as a guard, from the second on, for the shortcut.
-    guards: Vec<Option<Deferred>>,
-    // Whether a conjunct from each on is walked, so the shortcut passes a walk.
-    walked_from: Vec<bool>,
-    options: WalkOptions,
-    width: u32,
+// Whether a variable is unassigned, assigned, or either, on the path being compiled (`UNASSIGNED`,
+// `ASSIGNED` and `UNKNOWN` in `codegen.ts`).
+const UNSET: u8 = 0;
+const SET: u8 = 1;
+const EITHER: u8 = 2;
+
+/// What the walk knows of each variable on a path, the variables past `states` being `beyond`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Known {
+    states: Vec<u8>,
+    beyond: u8,
 }
 
-// Runs a conjunction from a conjunct on, unassigning on the way out what it assigned.
-fn run_from(
-    conjunction: &Conjunction,
-    machine: &mut Machine<'_>,
-    start: usize,
-    on_complete: &mut Continue<'_>,
-) -> Outcome<()> {
-    let mark = machine.undo.len();
-    let count = conjunction.conjuncts.len();
-    let is_init = conjunction.options.is_init;
-    let mut index = start;
-    while index < count {
-        if index > 0 && conjunction.options.is_shortcut && machine.assigned == conjunction.width {
-            if conjunction.walked_from[index] {
+/// Whether TLC's shortcut past the rest of a conjunction applies on a path, which it does where
+/// every variable has a value (`registers.assigned` equals the width).
+enum Shortcut {
+    Never,
+    Always,
+    Maybe,
+}
+
+impl Known {
+    /// A walk starts with every variable unassigned.
+    fn start() -> Known {
+        Known {
+            states: Vec::new(),
+            beyond: UNSET,
+        }
+    }
+
+    /// Nothing known, which is right on every path.
+    fn unknown() -> Known {
+        Known {
+            states: Vec::new(),
+            beyond: EITHER,
+        }
+    }
+
+    fn get(&self, variable: u32) -> u8 {
+        self.states
+            .get(variable as usize)
+            .copied()
+            .unwrap_or(self.beyond)
+    }
+
+    fn with(&self, variable: u32, state: u8) -> Known {
+        let mut known = self.clone();
+        let index = variable as usize;
+        if known.states.len() <= index {
+            known.states.resize(index + 1, known.beyond);
+        }
+        known.states[index] = state;
+        known
+    }
+
+    /// After a walk the compiler doesn't follow: what was assigned still is, and the rest may be.
+    fn opaque(&self) -> Known {
+        Known {
+            states: self
+                .states
+                .iter()
+                .map(|&state| if state == SET { SET } else { EITHER })
+                .collect(),
+            beyond: EITHER,
+        }
+    }
+
+    // How many variables are assigned at least, and how many more may be.
+    fn shortcut(&self, width: u32) -> Shortcut {
+        let assigned = self.states.iter().filter(|&&state| state == SET).count() as u64;
+        let either = if self.beyond == EITHER {
+            u64::MAX
+        } else {
+            self.states.iter().filter(|&&state| state == EITHER).count() as u64
+        };
+        let width = u64::from(width);
+        if either == 0 {
+            if assigned == width {
+                Shortcut::Always
+            } else {
+                Shortcut::Never
+            }
+        } else if assigned > width || assigned.saturating_add(either) < width {
+            Shortcut::Never
+        } else {
+            Shortcut::Maybe
+        }
+    }
+}
+
+/// The continuation a compile of a walk takes: given what is known on a path, the rest of the walk
+/// after it. It may be asked for several paths, so callers that branch share it through
+/// [`Shared`].
+type Then<'t, 'a> = dyn FnMut(&mut Compiler<'a>, &Known) -> Compiling<Rest> + 't;
+
+/// A continuation compiled once for each thing known on the paths that reach it: a few, and past
+/// those once for nothing known, so a walk compiles in time linear in its size.
+struct Shared<'s, 't, 'a> {
+    then: &'s mut Then<'t, 'a>,
+    compiled: Vec<(Known, Rest)>,
+}
+
+const SHARED_PATHS: usize = 4;
+
+impl<'s, 't, 'a> Shared<'s, 't, 'a> {
+    fn new(then: &'s mut Then<'t, 'a>) -> Self {
+        Shared {
+            then,
+            compiled: Vec::new(),
+        }
+    }
+
+    fn call(&mut self, compiler: &mut Compiler<'a>, known: &Known) -> Compiling<Rest> {
+        let known = if self.compiled.len() >= SHARED_PATHS
+            && !self.compiled.iter().any(|(seen, _)| seen == known)
+        {
+            Known::unknown()
+        } else {
+            known.clone()
+        };
+        if let Some((_, rest)) = self.compiled.iter().find(|(seen, _)| *seen == known) {
+            return Ok(rest.clone());
+        }
+        let rest = (self.then)(compiler, &known)?;
+        self.compiled.push((known, rest.clone()));
+        Ok(rest)
+    }
+}
+
+/// What an assignment assigns: an expression's value, or the variable's current value, as
+/// UNCHANGED assigns it.
+#[derive(Clone)]
+enum Source {
+    Value(Eval),
+    Current,
+}
+
+/// One conjunct, or one variable of an UNCHANGED, of a run of them the compiler knows the
+/// assignments of on its path.
+enum Op {
+    /// A guard, or one conjunct of the rest TLC's shortcut evaluates, failing with its reason.
+    Check(Eval, &'static str),
+    /// An assignment of a variable unassigned on the path.
+    Assign(u32, Source),
+    /// An assignment of a variable assigned on the path: an equality test.
+    Test(u32, Source),
+    /// TLC's shortcut passes a conjunct it would walk (`shortcuts.isPastWalk`).
+    PastWalk,
+}
+
+/// A run of conjuncts, then the rest of the walk. Its assignments are undone in reverse once the
+/// rest returns, as each conjunction of `action.ts` unassigns its own.
+struct Segment {
+    ops: Vec<Op>,
+    rest: Rest,
+    is_init: bool,
+}
+
+impl Segment {
+    #[inline(always)]
+    fn source(machine: &mut Machine<'_>, source: &Source, variable: u32) -> Outcome<Id> {
+        match source {
+            Source::Value(value) => value(machine),
+            Source::Current => Ok(machine.cur[variable as usize]),
+        }
+    }
+
+    // Applies one conjunct: whether the walk goes on past it.
+    #[inline(always)]
+    fn apply(&self, machine: &mut Machine<'_>, op: &Op) -> Outcome<bool> {
+        match op {
+            Op::Check(evaluate, reason) => match evaluate(machine)? {
+                TRUE => Ok(true),
+                FALSE => Ok(false),
+                _ => Err(Bail(reason)),
+            },
+            Op::Assign(variable, source) => {
+                let value = Self::source(machine, source, *variable)?;
+                target(machine, self.is_init)[*variable as usize] = value;
+                machine.assigned += 1;
+                Ok(true)
+            }
+            Op::Test(variable, source) => {
+                let value = Self::source(machine, source, *variable)?;
+                let current = target(machine, self.is_init)[*variable as usize];
+                Ok(current == value || machine.store.equals(current, value)?)
+            }
+            Op::PastWalk => {
                 machine.is_past_walk = true;
-            }
-            let mut holds = true;
-            for guard in &conjunction.guards[index..] {
-                let value =
-                    run_deferred(machine, guard.as_ref().expect("a guard for the shortcut"))?;
-                if value == FALSE {
-                    holds = false;
-                    break;
-                }
-                if value != TRUE {
-                    return Err(Bail("a conjunct that isn't a boolean"));
-                }
-            }
-            if holds {
-                on_complete(machine)?;
-            }
-            break;
-        }
-        match &conjunction.conjuncts[index] {
-            Conjunct::Guard(evaluate) => {
-                let value = evaluate(machine)?;
-                if value == FALSE {
-                    break;
-                }
-                if value != TRUE {
-                    return Err(Bail("a conjunct that isn't a boolean"));
-                }
-            }
-            Conjunct::Assign { variable, value } => {
-                let value = value(machine)?;
-                let current = target(machine, is_init)[*variable as usize];
-                if current == UNASSIGNED {
-                    target(machine, is_init)[*variable as usize] = value;
-                    machine.assigned += 1;
-                    machine.undo.push(*variable);
-                } else if current != value && !machine.store.equals(current, value)? {
-                    break;
-                }
-            }
-            Conjunct::Unchanged(variables) => {
-                let mut holds = true;
-                for &variable in variables {
-                    let now = machine.cur[variable as usize];
-                    let current = machine.next[variable as usize];
-                    if current == UNASSIGNED {
-                        machine.next[variable as usize] = now;
-                        machine.assigned += 1;
-                        machine.undo.push(variable);
-                    } else if current != now && !machine.store.equals(current, now)? {
-                        holds = false;
-                        break;
-                    }
-                }
-                if !holds {
-                    break;
-                }
-            }
-            Conjunct::Branch(branch) => {
-                branch(machine, &mut |machine: &mut Machine<'_>| {
-                    run_from(conjunction, machine, index + 1, on_complete)
-                })?;
-                break;
+                Ok(true)
             }
         }
-        index += 1;
     }
-    if index == count {
-        on_complete(machine)?;
+
+    fn run(&self, machine: &mut Machine<'_>, on_complete: &mut Continue<'_>) -> Outcome<()> {
+        let mut reached = self.ops.len();
+        let mut result = Ok(());
+        for (index, op) in self.ops.iter().enumerate() {
+            match self.apply(machine, op) {
+                Ok(true) => {}
+                Ok(false) => {
+                    reached = index;
+                    break;
+                }
+                Err(bail) => {
+                    reached = index;
+                    result = Err(bail);
+                    break;
+                }
+            }
+        }
+        if reached == self.ops.len() {
+            result = run_rest(&self.rest, machine, on_complete);
+        }
+        for op in self.ops[..reached].iter().rev() {
+            if let Op::Assign(variable, _) = op {
+                target(machine, self.is_init)[*variable as usize] = UNASSIGNED;
+                machine.assigned -= 1;
+            }
+        }
+        result
     }
-    for position in (mark..machine.undo.len()).rev() {
-        let variable = machine.undo[position] as usize;
-        target(machine, is_init)[variable] = UNASSIGNED;
+}
+
+// A run of conjuncts before the rest, or the rest alone.
+fn segment(ops: Vec<Op>, rest: Rest, is_init: bool) -> Rest {
+    if ops.is_empty() {
+        return rest;
     }
-    machine.assigned -= (machine.undo.len() - mark) as u32;
-    machine.undo.truncate(mark);
-    Ok(())
+    let segment = Segment { ops, rest, is_init };
+    Some(step(move |machine, on_complete| {
+        segment.run(machine, on_complete)
+    }))
+}
+
+// An assignment of a variable that may or may not be assigned on the path: it assigns or tests,
+// as the run-time check decides.
+fn either_step(variable: u32, source: Source, rest: Rest, is_init: bool) -> Step {
+    let index = variable as usize;
+    step(move |machine, on_complete| {
+        let value = Segment::source(machine, &source, variable)?;
+        let current = target(machine, is_init)[index];
+        if current == UNASSIGNED {
+            target(machine, is_init)[index] = value;
+            machine.assigned += 1;
+            let result = run_rest(&rest, machine, on_complete);
+            target(machine, is_init)[index] = UNASSIGNED;
+            machine.assigned -= 1;
+            return result;
+        }
+        if current == value || machine.store.equals(current, value)? {
+            return run_rest(&rest, machine, on_complete);
+        }
+        Ok(())
+    })
+}
+
+// A deferred compile as an expression, which fails only once the walk evaluates it.
+fn deferred_eval(deferred: Deferred) -> Eval {
+    match deferred {
+        Ok(evaluate) => evaluate,
+        Err(bail) => Arc::new(move |_: &mut Machine<'_>| Err(bail)),
+    }
+}
+
+/// A conjunct of a conjunction, as the walk treats it: assigning, an UNCHANGED of variables, a
+/// guard, or walked.
+#[derive(Clone)]
+enum Shape {
+    Assign(u32, NodeId),
+    Unchanged(Rc<[u32]>),
+    Guard,
+    Branch,
+}
+
+#[derive(Clone)]
+struct Item {
+    node: NodeId,
+    shape: Shape,
 }
 
 // A walk of a universal quantifier whose body assigns or branches, as TLC walks the conjunction of
@@ -867,45 +1053,83 @@ impl<'a> Compiler<'a> {
 
     // --- the walk ---
 
-    /// Compiles the walk of an action, or of the initial predicate.
+    /// Compiles the walk of an action, or of the initial predicate, from a state with no variable
+    /// assigned.
     pub(crate) fn compile_step(
         &mut self,
         node: NodeId,
         context: &Context,
         options: WalkOptions,
     ) -> Compiling<Step> {
+        self.compile_step_from(node, context, options, &Known::start())
+    }
+
+    // A walk with its own continuation, from a path where `known` holds.
+    fn compile_step_from(
+        &mut self,
+        node: NodeId,
+        context: &Context,
+        options: WalkOptions,
+        known: &Known,
+    ) -> Compiling<Step> {
+        let rest = self.walk(node, context, options, known, &mut |_, _| Ok(None))?;
+        Ok(rest.unwrap_or_else(|| step(|machine, on_complete| on_complete(machine))))
+    }
+
+    // Compiles the walk of an expression on a path where `known` holds, followed by `then`.
+    fn walk(
+        &mut self,
+        node: NodeId,
+        context: &Context,
+        options: WalkOptions,
+        known: &Known,
+        then: &mut Then<'_, 'a>,
+    ) -> Compiling<Rest> {
         self.depth += 1;
         let result = self
             .walk_depth()
-            .and_then(|()| self.compile_step_kind(node, context, options));
+            .and_then(|()| self.walk_kind(node, context, options, known, then));
         self.depth -= 1;
         result
     }
 
-    fn guard_step(&mut self, node: NodeId, context: &Context) -> Compiling<Step> {
+    fn guard_step(
+        &mut self,
+        node: NodeId,
+        context: &Context,
+        known: &Known,
+        then: &mut Then<'_, 'a>,
+    ) -> Compiling<Rest> {
         let evaluate = self.compile(node, context)?.eval;
-        Ok(step(move |machine, on_complete| {
+        let rest = then(self, known)?;
+        Ok(Some(step(move |machine, on_complete| {
             let value = evaluate(machine)?;
             if value == TRUE {
-                on_complete(machine)
+                run_rest(&rest, machine, on_complete)
             } else if value == FALSE {
                 Ok(())
             } else {
                 Err(Bail("a guard that isn't a boolean"))
             }
-        }))
+        })))
     }
 
-    fn compile_step_kind(
+    fn walk_kind(
         &mut self,
         node: NodeId,
         context: &Context,
         options: WalkOptions,
-    ) -> Compiling<Step> {
+        known: &Known,
+        then: &mut Then<'_, 'a>,
+    ) -> Compiling<Rest> {
         let is_init = options.is_init;
         match self.node(node).1 {
-            NodeKind::And(operands) => self.compile_conjunction(operands, context, options),
-            NodeKind::Or(operands) => self.compile_disjunction(operands, context, options),
+            NodeKind::And(operands) => {
+                self.walk_conjunction(operands, context, options, known, then)
+            }
+            NodeKind::Or(operands) => {
+                self.walk_disjunction(operands, context, options, known, then)
+            }
             NodeKind::Exists { bounds, body } => {
                 let mut inner = context.clone();
                 let mut levels = Vec::new();
@@ -918,12 +1142,12 @@ impl<'a> Compiler<'a> {
                     inner = binder.context;
                     levels.push((set, binder.slots[0]));
                 }
-                let body = self.compile_step(*body, &inner, options)?;
-                Ok(exists_step(levels, body))
+                let body = self.walk(*body, &inner, options, known, then)?;
+                Ok(Some(exists_step(levels, body)))
             }
             NodeKind::Forall { bounds, body } => {
                 if !self.is_walked_body(*body, context)? {
-                    return self.guard_step(node, context);
+                    return self.guard_step(node, context, known, then);
                 }
                 let mut inner = context.clone();
                 let mut levels = Vec::new();
@@ -936,18 +1160,24 @@ impl<'a> Compiler<'a> {
                     inner = binder.context;
                     levels.push((set.eval, binder.slots[0]));
                 }
-                let walk = self.compile_step(*body, &inner, options)?;
+                // Each binding's walk starts where the last left off, which the compiler doesn't
+                // follow, so it knows only what was assigned before.
+                let after = known.opaque();
+                let walk = self.compile_step_from(*body, &inner, options, &after)?;
                 let guard = is_init.then(|| deferred(self.compile(*body, &inner)));
-                let forall = Arc::new(WalkedForall {
+                let forall = WalkedForall {
                     levels,
                     body: walk,
                     guard,
                     is_init,
                     width: self.ir.variables.len() as u32,
-                });
-                Ok(step(move |machine, on_complete| {
-                    forall.run(machine, on_complete)
-                }))
+                };
+                let rest = then(self, &after)?;
+                Ok(Some(step(move |machine, on_complete| {
+                    forall.run(machine, &mut |machine: &mut Machine<'_>| {
+                        run_rest(&rest, machine, on_complete)
+                    })
+                })))
             }
             NodeKind::If {
                 condition,
@@ -955,44 +1185,53 @@ impl<'a> Compiler<'a> {
                 alternative,
             } => {
                 let condition = self.compile(*condition, context)?.eval;
-                let consequent = self.compile_step(*consequent, context, options)?;
-                let alternative = self.compile_step(*alternative, context, options)?;
-                Ok(step(move |machine, on_complete| {
+                let mut shared = Shared::new(then);
+                let mut then =
+                    |compiler: &mut Compiler<'a>, known: &Known| shared.call(compiler, known);
+                let consequent = self.walk(*consequent, context, options, known, &mut then)?;
+                let alternative = self.walk(*alternative, context, options, known, &mut then)?;
+                Ok(Some(step(move |machine, on_complete| {
                     let value = condition(machine)?;
                     if value == TRUE {
-                        consequent(machine, on_complete)
+                        run_rest(&consequent, machine, on_complete)
                     } else if value == FALSE {
-                        alternative(machine, on_complete)
+                        run_rest(&alternative, machine, on_complete)
                     } else {
                         Err(Bail("an IF condition that isn't a boolean"))
                     }
-                }))
+                })))
             }
             NodeKind::Case { arms, other } => {
+                let mut shared = Shared::new(then);
+                let mut then =
+                    |compiler: &mut Compiler<'a>, known: &Known| shared.call(compiler, known);
                 let mut compiled = Vec::with_capacity(arms.len());
                 for &(condition, body) in arms {
                     let condition = self.compile(condition, context)?.eval;
-                    compiled.push((condition, self.compile_step(body, context, options)?));
+                    compiled.push((
+                        condition,
+                        self.walk(body, context, options, known, &mut then)?,
+                    ));
                 }
                 let other = match other {
-                    Some(other) => Some(self.compile_step(*other, context, options)?),
+                    Some(other) => Some(self.walk(*other, context, options, known, &mut then)?),
                     None => None,
                 };
-                Ok(step(move |machine, on_complete| {
+                Ok(Some(step(move |machine, on_complete| {
                     for (condition, body) in &compiled {
                         let value = condition(machine)?;
                         if value == TRUE {
-                            return body(machine, on_complete);
+                            return run_rest(body, machine, on_complete);
                         }
                         if value != FALSE {
                             return Err(Bail("a CASE condition that isn't a boolean"));
                         }
                     }
                     match &other {
-                        Some(other) => other(machine, on_complete),
+                        Some(other) => run_rest(other, machine, on_complete),
                         None => Err(Bail("no CASE arm holds")),
                     }
-                }))
+                })))
             }
             NodeKind::Let {
                 instances,
@@ -1000,49 +1239,59 @@ impl<'a> Compiler<'a> {
                 body,
             } => {
                 let inner = self.bind_let_definitions(*instances, definitions, context)?;
-                self.compile_step(*body, &inner, options)
+                self.walk(*body, &inner, options, known, then)
             }
             NodeKind::Unchanged(expression) => {
                 if is_init {
                     return unsupported("UNCHANGED in the initial predicate");
                 }
-                self.compile_unchanged_step(*expression, context, options)
+                self.walk_unchanged(*expression, context, options, known, then)
             }
             NodeKind::AngleAction { action, subscript } => {
-                let body = self.compile_step(*action, context, options)?;
-                let subscript = *subscript;
                 // TLC evaluates the subscript as an expression, which the engine doesn't evaluate
                 // as TLC does, so a Print in it is the interpreter's.
+                let subscript = *subscript;
                 let unchanged = self
                     .wrap_compile(|compiler| {
                         compiler.compile_unchanged(subscript, &context.without_print())
                     })?
                     .eval;
-                Ok(step(move |machine, on_complete| {
-                    body(machine, &mut |machine: &mut Machine<'_>| {
+                let mut shared = Shared::new(then);
+                let mut then = |compiler: &mut Compiler<'a>, known: &Known| {
+                    let rest = shared.call(compiler, known)?;
+                    let unchanged = unchanged.clone();
+                    Ok(Some(step(move |machine, on_complete| {
                         if unchanged(machine)? == FALSE {
-                            on_complete(machine)
+                            run_rest(&rest, machine, on_complete)
                         } else {
                             Ok(())
                         }
-                    })
-                }))
+                    })))
+                };
+                let mut checked = Shared::new(&mut then);
+                self.walk(*action, context, options, known, &mut |compiler, known| {
+                    checked.call(compiler, known)
+                })
             }
             NodeKind::BoxAction { action, subscript } => {
-                let action = self.compile_step(*action, context, options)?;
-                let unchanged = self.compile_unchanged_step(*subscript, context, options)?;
-                Ok(step(move |machine, on_complete| {
-                    action(machine, on_complete)?;
-                    unchanged(machine, on_complete)
-                }))
+                let mut shared = Shared::new(then);
+                let mut then =
+                    |compiler: &mut Compiler<'a>, known: &Known| shared.call(compiler, known);
+                let action = self.walk(*action, context, options, known, &mut then)?;
+                let unchanged =
+                    self.walk_unchanged(*subscript, context, options, known, &mut then)?;
+                Ok(Some(step(move |machine, on_complete| {
+                    run_rest(&action, machine, on_complete)?;
+                    run_rest(&unchanged, machine, on_complete)
+                })))
             }
-            NodeKind::Label { body, .. } => self.compile_step(*body, context, options),
+            NodeKind::Label { body, .. } => self.walk(*body, context, options, known, then),
             NodeKind::FunctionApplication { args, .. } => {
                 let Some(lazy) = self.resolve_lazy_application(node, context)? else {
-                    return self.guard_step(node, context);
+                    return self.guard_step(node, context, known, then);
                 };
                 if !self.is_walked_body(lazy.body, &lazy.base)? {
-                    return self.guard_step(node, context);
+                    return self.guard_step(node, context, known, then);
                 }
                 if lazy.is_recursive {
                     return unsupported("walking a recursive function in an action");
@@ -1052,29 +1301,31 @@ impl<'a> Compiler<'a> {
                 let member: Member = self.member_test(&set);
                 let binder = self.bind_bound(&lazy.pattern, &lazy.base);
                 let slot = binder.slots[0];
-                let walk = self.compile_step(lazy.body, &binder.context, options)?;
-                Ok(step(move |machine, on_complete| {
+                let walk = self.walk(lazy.body, &binder.context, options, known, then)?;
+                Ok(Some(step(move |machine, on_complete| {
                     let value = argument(machine)?;
                     if !member(machine, value)? {
                         return Err(Bail("applied a function outside its domain"));
                     }
                     // The argument once, as the interpreter evaluates it: a Print in it prints once.
                     machine.locals[slot as usize] = value;
-                    walk(machine, on_complete)
-                }))
+                    run_rest(&walk, machine, on_complete)
+                })))
             }
             NodeKind::Identifier(_) => match self.resolve_action(node, context)? {
-                Some((body, inner)) => self.compile_step(body, &inner, options),
-                None => self.guard_step(node, context),
+                Some((body, inner)) => self.walk(body, &inner, options, known, then),
+                None => self.guard_step(node, context, known, then),
             },
             NodeKind::Apply { name, args } => {
                 let operator = self.text(name.text);
                 if !name.is_local && matches!(operator, "=" | "\\in" | "\\subseteq") {
                     if let Some(variable) = self.get_assignable_index(args[0], context, is_init)? {
                         return match operator {
-                            "=" => self.compile_conjunction(&[node], context, options),
+                            "=" => self.walk_conjunction(&[node], context, options, known, then),
                             "\\subseteq" => unsupported("x' \\subseteq S"),
-                            _ => self.compile_membership(variable, args[1], node, context, options),
+                            _ => self.walk_membership(
+                                variable, args[1], node, context, options, known, then,
+                            ),
                         };
                     }
                     if self.is_possibly_assignable(args[0]) {
@@ -1086,175 +1337,405 @@ impl<'a> Compiler<'a> {
                 }
                 if !name.is_local && operator == "=>" {
                     let condition = self.compile(args[0], context)?.eval;
-                    let right = self.compile_step(args[1], context, options)?;
-                    return Ok(step(move |machine, on_complete| {
+                    let mut shared = Shared::new(then);
+                    let mut then =
+                        |compiler: &mut Compiler<'a>, known: &Known| shared.call(compiler, known);
+                    let right = self.walk(args[1], context, options, known, &mut then)?;
+                    let left = then(self, known)?;
+                    return Ok(Some(step(move |machine, on_complete| {
                         let value = condition(machine)?;
                         if value == FALSE {
-                            on_complete(machine)
+                            run_rest(&left, machine, on_complete)
                         } else if value == TRUE {
-                            right(machine, on_complete)
+                            run_rest(&right, machine, on_complete)
                         } else {
                             Err(Bail("the left side of => isn't a boolean"))
                         }
-                    }));
+                    })));
                 }
                 if !name.is_local && operator == "/\\" {
-                    return self.compile_conjunction(args, context, options);
+                    return self.walk_conjunction(args, context, options, known, then);
                 }
                 if !name.is_local && operator == "\\/" {
-                    return self.compile_disjunction(args, context, options);
+                    return self.walk_disjunction(args, context, options, known, then);
                 }
                 match self.resolve_action(node, context)? {
-                    Some((body, inner)) => self.compile_step(body, &inner, options),
-                    None => self.guard_step(node, context),
+                    Some((body, inner)) => self.walk(body, &inner, options, known, then),
+                    None => self.guard_step(node, context, known, then),
                 }
             }
-            _ => self.guard_step(node, context),
+            _ => self.guard_step(node, context, known, then),
         }
     }
 
-    fn compile_disjunction(
+    fn walk_disjunction(
         &mut self,
         operands: &[NodeId],
         context: &Context,
         options: WalkOptions,
-    ) -> Compiling<Step> {
+        known: &Known,
+        then: &mut Then<'_, 'a>,
+    ) -> Compiling<Rest> {
+        let mut shared = Shared::new(then);
+        let mut then = |compiler: &mut Compiler<'a>, known: &Known| shared.call(compiler, known);
         let branches = operands
             .iter()
-            .map(|&operand| self.compile_step(operand, context, options))
-            .collect::<Compiling<Vec<Step>>>()?;
-        Ok(step(move |machine, on_complete| {
+            .map(|&operand| self.walk(operand, context, options, known, &mut then))
+            .collect::<Compiling<Vec<Rest>>>()?;
+        Ok(Some(step(move |machine, on_complete| {
             for branch in &branches {
-                branch(machine, on_complete)?;
+                run_rest(branch, machine, on_complete)?;
             }
             Ok(())
-        }))
+        })))
     }
 
     // UNCHANGED e as a step: an assignment or test of each variable of e, or a guard.
-    fn compile_unchanged_step(
+    fn walk_unchanged(
         &mut self,
         expression: NodeId,
         context: &Context,
         options: WalkOptions,
-    ) -> Compiling<Step> {
+        known: &Known,
+        then: &mut Then<'_, 'a>,
+    ) -> Compiling<Rest> {
         if let Some(indices) = self.get_unchanged_indices(expression, context, 0)? {
-            let conjunction = Arc::new(Conjunction {
-                conjuncts: vec![Conjunct::Unchanged(indices)],
-                guards: vec![None],
-                walked_from: vec![false],
-                options,
-                width: self.ir.variables.len() as u32,
-            });
-            return Ok(step(move |machine, on_complete| {
-                run_from(&conjunction, machine, 0, on_complete)
-            }));
+            let items: Rc<[Item]> = Rc::new([Item {
+                node: expression,
+                shape: Shape::Unchanged(indices.into()),
+            }]);
+            return self.conjunction(&items, context, options, 0, 0, known.clone(), then);
         }
         let evaluate = self
             .wrap_compile(|compiler| {
                 compiler.compile_unchanged(expression, &context.without_print())
             })?
             .eval;
-        Ok(step(move |machine, on_complete| {
+        let rest = then(self, known)?;
+        Ok(Some(step(move |machine, on_complete| {
             let value = evaluate(machine)?;
             if value == TRUE {
-                on_complete(machine)
+                run_rest(&rest, machine, on_complete)
             } else if value == FALSE {
                 Ok(())
             } else {
                 Err(Bail("a guard that isn't a boolean"))
             }
-        }))
+        })))
     }
 
-    fn conjunct_of(
+    fn shape_of(
         &mut self,
         operand: NodeId,
         context: &Context,
         options: WalkOptions,
-    ) -> Compiling<Conjunct> {
+    ) -> Compiling<Shape> {
         if let Some(("=", args, false)) = self.operator_text(operand)
             && let Some(variable) = self.get_assignable_index(args[0], context, options.is_init)?
         {
-            let value = self.compile(args[1], context)?.eval;
-            return Ok(Conjunct::Assign { variable, value });
+            return Ok(Shape::Assign(variable, args[1]));
         }
         if !options.is_init
             && let NodeKind::Unchanged(expression) = self.node(operand).1
             && let Some(indices) = self.get_unchanged_indices(*expression, context, 0)?
         {
-            return Ok(Conjunct::Unchanged(indices));
+            return Ok(Shape::Unchanged(indices.into()));
         }
         if self.is_guard(operand, context, options.is_init)? {
-            return Ok(Conjunct::Guard(self.compile(operand, context)?.eval));
+            return Ok(Shape::Guard);
         }
-        Ok(Conjunct::Branch(
-            self.compile_step(operand, context, options)?,
-        ))
+        Ok(Shape::Branch)
     }
 
-    fn compile_conjunction(
+    fn walk_conjunction(
         &mut self,
         operands: &[NodeId],
         context: &Context,
         options: WalkOptions,
-    ) -> Compiling<Step> {
-        let conjuncts = operands
+        known: &Known,
+        then: &mut Then<'_, 'a>,
+    ) -> Compiling<Rest> {
+        let items = operands
             .iter()
-            .map(|&operand| self.conjunct_of(operand, context, options))
-            .collect::<Compiling<Vec<Conjunct>>>()?;
-        let guards = conjuncts
-            .iter()
-            .enumerate()
-            .map(|(index, conjunct)| match conjunct {
-                _ if index == 0 || !options.is_shortcut => None,
-                Conjunct::Guard(evaluate) => Some(Ok(evaluate.clone())),
-                _ => Some(deferred(self.compile(operands[index], context))),
+            .map(|&operand| {
+                Ok(Item {
+                    node: operand,
+                    shape: self.shape_of(operand, context, options)?,
+                })
             })
-            .collect();
-        let walked_from = (0..conjuncts.len())
-            .map(|index| {
-                !options.is_init
-                    && conjuncts[index..]
-                        .iter()
-                        .any(|conjunct| matches!(conjunct, Conjunct::Branch(_)))
-            })
-            .collect();
-        let conjunction = Arc::new(Conjunction {
-            conjuncts,
-            guards,
-            walked_from,
-            options,
-            width: self.ir.variables.len() as u32,
-        });
-        Ok(step(move |machine, on_complete| {
-            run_from(&conjunction, machine, 0, on_complete)
-        }))
+            .collect::<Compiling<Rc<[Item]>>>()?;
+        self.conjunction(&items, context, options, 0, 0, known.clone(), then)
     }
 
-    fn compile_membership(
+    // The conjuncts of a conjunction from one on (and, within an UNCHANGED, from one of its
+    // variables on), as a segment of what the path knows, then the rest.
+    #[allow(clippy::too_many_arguments)]
+    fn conjunction(
+        &mut self,
+        items: &Rc<[Item]>,
+        context: &Context,
+        options: WalkOptions,
+        start: usize,
+        start_variable: usize,
+        mut known: Known,
+        then: &mut Then<'_, 'a>,
+    ) -> Compiling<Rest> {
+        let is_init = options.is_init;
+        let width = self.ir.variables.len() as u32;
+        let mut ops = Vec::new();
+        let mut index = start;
+        let mut first_variable = start_variable;
+        while index < items.len() {
+            if index > 0 && first_variable == 0 && options.is_shortcut {
+                match known.shortcut(width) {
+                    Shortcut::Never => {}
+                    Shortcut::Always => {
+                        ops.extend(self.shortcut_guards(items, context, options, index)?);
+                        let rest = then(self, &known)?;
+                        return Ok(segment(ops, rest, is_init));
+                    }
+                    Shortcut::Maybe => {
+                        let guards = self.shortcut_guards(items, context, options, index)?;
+                        let mut shared = Shared::new(then);
+                        let guarded = shared.call(self, &known)?;
+                        let guarded = segment(guards, guarded, is_init);
+                        let walked = self.conjunct(
+                            items,
+                            context,
+                            options,
+                            index,
+                            0,
+                            known,
+                            &mut |compiler, known| shared.call(compiler, known),
+                        )?;
+                        let shortcut = step(move |machine, on_complete| {
+                            if machine.assigned == width {
+                                run_rest(&guarded, machine, on_complete)
+                            } else {
+                                run_rest(&walked, machine, on_complete)
+                            }
+                        });
+                        return Ok(segment(ops, Some(shortcut), is_init));
+                    }
+                }
+            }
+            let item = &items[index];
+            match &item.shape {
+                Shape::Guard => {
+                    let evaluate = self.compile(item.node, context)?.eval;
+                    ops.push(Op::Check(evaluate, "a conjunct that isn't a boolean"));
+                }
+                Shape::Assign(variable, value) => {
+                    let variable = *variable;
+                    let value = Source::Value(self.compile(*value, context)?.eval);
+                    match known.get(variable) {
+                        UNSET => {
+                            ops.push(Op::Assign(variable, value));
+                            known = known.with(variable, SET);
+                        }
+                        SET => ops.push(Op::Test(variable, value)),
+                        _ => {
+                            let after = known.with(variable, SET);
+                            let rest = self.conjunction(
+                                items,
+                                context,
+                                options,
+                                index + 1,
+                                0,
+                                after,
+                                then,
+                            )?;
+                            let either = either_step(variable, value, rest, is_init);
+                            return Ok(segment(ops, Some(either), is_init));
+                        }
+                    }
+                }
+                Shape::Unchanged(variables) => {
+                    for (position, &variable) in variables.iter().enumerate().skip(first_variable) {
+                        match known.get(variable) {
+                            UNSET => {
+                                ops.push(Op::Assign(variable, Source::Current));
+                                known = known.with(variable, SET);
+                            }
+                            SET => ops.push(Op::Test(variable, Source::Current)),
+                            _ => {
+                                let after = known.with(variable, SET);
+                                let rest = self.conjunction(
+                                    items,
+                                    context,
+                                    options,
+                                    index,
+                                    position + 1,
+                                    after,
+                                    then,
+                                )?;
+                                let either = either_step(variable, Source::Current, rest, is_init);
+                                return Ok(segment(ops, Some(either), is_init));
+                            }
+                        }
+                    }
+                }
+                Shape::Branch => {
+                    let rest = self.conjunct(items, context, options, index, 0, known, then)?;
+                    return Ok(segment(ops, rest, is_init));
+                }
+            }
+            first_variable = 0;
+            index += 1;
+        }
+        let rest = then(self, &known)?;
+        Ok(segment(ops, rest, is_init))
+    }
+
+    // The walk of one conjunct that branches, or of the conjunction from it on, its rest the
+    // conjuncts after it.
+    #[allow(clippy::too_many_arguments)]
+    fn conjunct(
+        &mut self,
+        items: &Rc<[Item]>,
+        context: &Context,
+        options: WalkOptions,
+        index: usize,
+        first_variable: usize,
+        known: Known,
+        then: &mut Then<'_, 'a>,
+    ) -> Compiling<Rest> {
+        if !matches!(items[index].shape, Shape::Branch) {
+            return self.conjunction_from(
+                items,
+                context,
+                options,
+                index,
+                first_variable,
+                known,
+                then,
+            );
+        }
+        let mut rest = |compiler: &mut Compiler<'a>, known: &Known| {
+            compiler.conjunction(items, context, options, index + 1, 0, known.clone(), then)
+        };
+        let mut shared = Shared::new(&mut rest);
+        self.walk(
+            items[index].node,
+            context,
+            options,
+            &known,
+            &mut |compiler, known| shared.call(compiler, known),
+        )
+    }
+
+    // The conjunction from a conjunct on, past the shortcut's check, which its caller made.
+    #[allow(clippy::too_many_arguments)]
+    fn conjunction_from(
+        &mut self,
+        items: &Rc<[Item]>,
+        context: &Context,
+        options: WalkOptions,
+        index: usize,
+        first_variable: usize,
+        known: Known,
+        then: &mut Then<'_, 'a>,
+    ) -> Compiling<Rest> {
+        let unchecked = WalkOptions {
+            is_shortcut: false,
+            ..options
+        };
+        // The conjunct at `index` without the check, and the ones after it with it.
+        let mut rest = |compiler: &mut Compiler<'a>, known: &Known| {
+            compiler.conjunction(items, context, options, index + 1, 0, known.clone(), then)
+        };
+        let head: Rc<[Item]> = Rc::new([items[index].clone()]);
+        self.conjunction(
+            &head,
+            context,
+            unchecked,
+            0,
+            first_variable,
+            known,
+            &mut rest,
+        )
+    }
+
+    // The conjuncts from one on, as the guards TLC's shortcut evaluates them as.
+    fn shortcut_guards(
+        &mut self,
+        items: &Rc<[Item]>,
+        context: &Context,
+        options: WalkOptions,
+        index: usize,
+    ) -> Compiling<Vec<Op>> {
+        let mut guards = Vec::with_capacity(items.len() - index + 1);
+        if !options.is_init
+            && items[index..]
+                .iter()
+                .any(|item| matches!(item.shape, Shape::Branch))
+        {
+            guards.push(Op::PastWalk);
+        }
+        for item in &items[index..] {
+            // A conjunct that fails to compile as the walk would compile it fails the walk's
+            // compile, even past the shortcut, as each conjunction compiles all of its conjuncts.
+            match &item.shape {
+                Shape::Assign(_, value) => {
+                    self.compile(*value, context)?;
+                }
+                Shape::Branch => {
+                    self.compile_step(item.node, context, options)?;
+                }
+                Shape::Guard | Shape::Unchanged(_) => {}
+            }
+            let evaluate = match &item.shape {
+                Shape::Guard => self.compile(item.node, context)?.eval,
+                _ => deferred_eval(deferred(self.compile(item.node, context))),
+            };
+            guards.push(Op::Check(evaluate, "a conjunct that isn't a boolean"));
+        }
+        Ok(guards)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn walk_membership(
         &mut self,
         variable: u32,
         set: NodeId,
         guard: NodeId,
         context: &Context,
         options: WalkOptions,
-    ) -> Compiling<Step> {
-        let set = self.compile_ordered(set, context, true)?;
-        // The guard only where the variable is assigned already, as the TypeScript engine compiles
-        // it only where it may be.
-        let guard = deferred(self.compile(guard, context));
+        known: &Known,
+        then: &mut Then<'_, 'a>,
+    ) -> Compiling<Rest> {
         let is_init = options.is_init;
         let index = variable as usize;
-        Ok(step(move |machine, on_complete| {
-            if target(machine, is_init)[index] != UNASSIGNED {
-                let value = run_deferred(machine, &guard)?;
-                return if value == TRUE {
-                    on_complete(machine)
-                } else if value == FALSE {
-                    Ok(())
-                } else {
-                    Err(Bail("a guard that isn't a boolean"))
+        let state = known.get(variable);
+        // The guard only where the variable is assigned already, as the TypeScript engine compiles
+        // it only where it may be.
+        if state == SET {
+            let guard = deferred(self.compile(guard, context));
+            let rest = then(self, known)?;
+            return Ok(Some(step(
+                move |machine, on_complete| match run_deferred(machine, &guard)? {
+                    TRUE => run_rest(&rest, machine, on_complete),
+                    FALSE => Ok(()),
+                    _ => Err(Bail("a guard that isn't a boolean")),
+                },
+            )));
+        }
+        let set = self.compile_ordered(set, context, true)?;
+        let guard = (state == EITHER).then(|| deferred(self.compile(guard, context)));
+        let mut shared = Shared::new(then);
+        let assigned = shared.call(self, &known.with(variable, SET))?;
+        let guarded = match guard {
+            Some(_) => shared.call(self, known)?,
+            None => None,
+        };
+        Ok(Some(step(move |machine, on_complete| {
+            if let Some(guard) = &guard
+                && target(machine, is_init)[index] != UNASSIGNED
+            {
+                return match run_deferred(machine, guard)? {
+                    TRUE => run_rest(&guarded, machine, on_complete),
+                    FALSE => Ok(()),
+                    _ => Err(Bail("a guard that isn't a boolean")),
                 };
             }
             let id = (set.eval)(machine)?;
@@ -1263,12 +1744,12 @@ impl<'a> Compiler<'a> {
             for position in 0..size {
                 let element = machine.store.element_at(id, position);
                 target(machine, is_init)[index] = element;
-                on_complete(machine)?;
+                run_rest(&assigned, machine, on_complete)?;
             }
             target(machine, is_init)[index] = UNASSIGNED;
             machine.assigned -= 1;
             Ok(())
-        }))
+        })))
     }
 
     // --- ENABLED ---
@@ -1339,12 +1820,10 @@ impl<'a> Compiler<'a> {
                     next.resize(width, UNASSIGNED);
                     let outer = std::mem::replace(&mut machine.next, next);
                     let assigned = std::mem::replace(&mut machine.assigned, 0);
-                    let mark = machine.undo.len();
                     let result = walk(machine, &mut |_: &mut Machine<'_>| Err(Bail(FOUND)));
                     let inner = std::mem::replace(&mut machine.next, outer);
                     machine.spare_states.push(inner);
                     machine.assigned = assigned;
-                    machine.undo.truncate(mark);
                     match result {
                         Ok(()) => Ok(FALSE),
                         Err(bail) if is_found(&bail) => Ok(TRUE),
@@ -1357,7 +1836,7 @@ impl<'a> Compiler<'a> {
     }
 }
 
-fn exists_step(levels: Vec<(Ordered, u32)>, body: Step) -> Step {
+fn exists_step(levels: Vec<(Ordered, u32)>, body: Rest) -> Step {
     if let [(set, slot)] = &levels[..] {
         let (set, slot) = (set.clone(), *slot as usize);
         return step(move |machine, on_complete| {
@@ -1365,7 +1844,7 @@ fn exists_step(levels: Vec<(Ordered, u32)>, body: Step) -> Step {
             let size = set.size(machine, id)?;
             for position in 0..size {
                 machine.locals[slot] = machine.store.element_at(id, position);
-                body(machine, on_complete)?;
+                run_rest(&body, machine, on_complete)?;
             }
             Ok(())
         });
@@ -1390,7 +1869,7 @@ fn exists_step(levels: Vec<(Ordered, u32)>, body: Step) -> Step {
                 machine.locals[slot as usize] =
                     machine.store.element_at(sets[level], positions[level]);
             }
-            body(machine, on_complete)?;
+            run_rest(&body, machine, on_complete)?;
             let mut level = 0;
             while level < levels.len() {
                 positions[level] += 1;

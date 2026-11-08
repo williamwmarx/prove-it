@@ -95,6 +95,52 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     );
   });
 
+  it("assigns or tests where a path may or may not have assigned a variable", async () => {
+    // The walk is compiled path by path, knowing which variables each has assigned. Past more
+    // paths than it compiles apart, or a walked \A, it knows only what every path assigned, and
+    // decides at run time whether x' = e and UNCHANGED assign or test, and whether TLC's shortcut
+    // applies.
+    const paths = [
+      "EXTENDS Naturals",
+      "VARIABLES x, y, z",
+      "Init == x = 0 /\\ y = 0 /\\ z = 0",
+      "Next ==",
+      "  /\\ \\/ x' = (x + 1) % 3",
+      "     \\/ y' = (y + 1) % 3",
+      "     \\/ z' = (z + 1) % 3",
+      "     \\/ x' = x /\\ y' = (y + 2) % 3",
+      "     \\/ y' = y /\\ z' = z",
+      "     \\/ x' = (x + 2) % 3 /\\ z' = (z + 2) % 3",
+      "     \\/ TRUE",
+      "  /\\ x' \\in {x, (x + 1) % 3}",
+      "  /\\ y' = y",
+      "  /\\ UNCHANGED <<y, z>>",
+      "  /\\ x' + y' + z' # 5",
+      "  /\\ x' = 2 \\/ z' = 1 \\/ y' = 0",
+    ];
+    const walked = [
+      "EXTENDS Naturals",
+      "VARIABLES x, y, z",
+      "Init == x = 0 /\\ y = 0 /\\ z \\in {0, 1}",
+      "Next == /\\ \\A i \\in {1, 2} : x' = i \\/ y' = (y + i) % 3",
+      "        /\\ x' \\in {0, 1, 2}",
+      "        /\\ y' = y \\/ y' = 2",
+      "        /\\ UNCHANGED z",
+      "        /\\ x' = 1 \\/ y' = 2",
+    ];
+    const config = "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE";
+    for (const body of [paths, walked]) {
+      for (const isWarningEnabled of [false, true]) {
+        expect(await compareStateLogs(body, config, isWarningEnabled)).toContainEqual(
+          expect.stringMatching(COMPLETE),
+        );
+        expect(await compareWithInterpreter(body, config, {}, isWarningEnabled)).toContainEqual(
+          expect.stringMatching(COMPLETE),
+        );
+      }
+    }
+  });
+
   it("walks a universal quantifier with 2^32 bindings, and doesn't skip its body", async () => {
     // The product of the sizes doesn't fit 32 bits, and the first binding already rules out every
     // successor. The interpreter builds the product of the sets, so this compares with the
