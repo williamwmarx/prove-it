@@ -561,13 +561,22 @@ recording (`canShare` in `search.ts`). Rust keeps the algorithm and removes thos
    - found from an **earlier level**: a duplicate. Generated count +1, nothing else, except the
      per-step checks (action constraints, action properties, the graph edge) and the invariant
      check for a state outside the model, all of which depend only on this step;
-   - found as a **candidate of this level**: `fetch_min` on its `AtomicU64` key `(p << 32) | s`;
+   - found as a **candidate of this level**: the candidate keeps the occurrence with the smallest
+     key `(p << 32) | s`, together with that occurrence's own payload: the ids of the concrete
+     state it reached and the result of its invariant check. Under VIEW or symmetry two different
+     concrete states share one fingerprint, as `getKey` and `addState` in `search.ts` keep the
+     state apart from its key, so the payload must follow the key: replacing only the key would
+     give the earlier parent the later occurrence's state, and the next level would expand the
+     wrong one. The candidate's slot is a small lock (or a pointer to an occurrence record swapped
+     with compare-and-swap on the key), so the key and its payload change together;
    - absent: insert a candidate holding the fingerprint, the ids, key `(p, s)`, and the result of
      the invariant check, which is a pure function of the state, so any thread can compute it.
 3. At the barrier the coordinator sorts the candidates by key. That is the order TLC's single
    worker queues them: it dequeues parents in order and generates successors in order, so the
    first occurrence of a state is its smallest (parent, step). The candidates become states
-   `end, end+1, …` with `parents[i]` taken from the key. `newCounts` and the out-degree histogram
+   `end, end+1, …` with `parents[i]` taken from the key and each state's ids and invariant result
+   from the winning occurrence. Without VIEW or symmetry every occurrence of a fingerprint is the
+   same state, so the payload never changes and the lock is never taken. `newCounts` and the out-degree histogram
    come from the winning keys. The generated count is a sum. The depth is the level number.
 4. Levels smaller than a threshold (2,048 states, as `MINIMUM_SHARED_LEVEL`) run on the
    coordinator alone, so short runs never pay for a barrier.
@@ -575,6 +584,12 @@ recording (`canShare` in `search.ts`). Rust keeps the algorithm and removes thos
 The counts, depth, out-degrees, state numbering, parents and therefore traces are the same as one
 TLC worker's **for any number of threads**. The state log is a pure function of the previous
 level's ordered list.
+
+Stage 2's acceptance includes the case that breaks a key-only update: a spec whose VIEW (and one
+whose SYMMETRY) maps different concrete states reached from two parents of one level to one key,
+run with the thread holding the later parent forced to insert first. Its state log and output must
+equal one thread's. The state-log differential also runs with 1 and 4 threads on every VIEW and
+SYMMETRY model in the corpora.
 
 ### 4.2 Stopping exactly where TLC stops
 
