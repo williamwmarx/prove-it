@@ -4,6 +4,7 @@
 
 import type { Expression } from "./ast";
 import type { ModelConfig } from "./config";
+import { tlc } from "./engine/compile";
 import { createEngineContext, type EngineProperties, toEngineProperties } from "./engine/context";
 import { attachSearch, type GoMessage, serveLevels } from "./engine/parallel";
 import { attachSharedStore } from "./engine/store";
@@ -78,12 +79,15 @@ const serve = () => {
   const go = state.go;
   if (!prepared || !go) return;
   attachSharedStore(go.store);
+  // A worker keeps none of what TLCGet reads, and its successors print out of TLC's order.
+  tlc.isShared = true;
   const context = createEngineContext(
     prepared.environment,
     prepared.config,
     { init: prepared.init, next: prepared.next, scope: prepared.scope },
     prepared.isWarningEnabled,
     prepared.properties,
+    false,
   );
   serveLevels(context, attachSearch(go.search));
 };

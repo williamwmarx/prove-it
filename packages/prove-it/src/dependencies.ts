@@ -369,5 +369,9 @@ export const getReadVariables = (
   return row[0] & READS_IMPURE ? undefined : toVariables(row);
 };
 
+// Whether evaluating an expression again can show, such as by printing twice.
+export const hasRepeatedEffect = (expression: Expression, environment: Environment) =>
+  (getExpressionsRow([expression], environment)[0] & REPEATED_EFFECT) !== 0;
+
 export const isNonconstant = (expression: Expression, environment: Environment) =>
   (getExpressionsRow([expression], environment)[0] & NONCONSTANT) !== 0;

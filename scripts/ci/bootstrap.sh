@@ -5,9 +5,9 @@
 #   PATH="$(scripts/ci/bootstrap.sh bun node):$PATH"
 #
 # Tools: bun, node (with npm), gitleaks, op (the 1Password CLI), and for the checker benchmark java
-# (Temurin JDK), ant (which builds TLC) and rust (rustc and cargo). bun-canary is a Bun canary with
-# the ahead-of-time compiler that build-binary.ts --aot needs; its bin directory holds a bun, so put
-# it on PATH only for that build.
+# (Temurin JDK), ant (which builds TLC) and rust (rustc, cargo, clippy and rustfmt), which also
+# builds the native engine. bun-canary is a Bun canary with the ahead-of-time compiler that
+# build-binary.ts --aot needs; its bin directory holds a bun, so put it on PATH only for that build.
 # Linux x64 only, which is what depot-ubuntu-24.04 runs. The bun, node, gitleaks and op pins match
 # Argos's scripts/verification/toolchains.json.
 set -eu
@@ -58,7 +58,7 @@ for tool in "$@"; do
     # Rust's standalone archive holds an installer rather than a tree to use in place.
     if [ "$name" = rust ]; then
       "$directory/rust-$version-x86_64-unknown-linux-gnu/install.sh" --prefix="$directory/toolchain" --disable-ldconfig \
-        --components=rustc,cargo,rust-std-x86_64-unknown-linux-gnu >/dev/null
+        --components=rustc,cargo,rust-std-x86_64-unknown-linux-gnu,clippy-preview,rustfmt-preview >/dev/null
       rm -rf "$directory"/rust-*
     fi
     # Bun's npm package ships bun alone; its installer adds bunx, which runs bun as "bun x".

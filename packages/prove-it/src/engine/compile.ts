@@ -16,6 +16,7 @@ import {
   type OperatorDefinition,
   type OperatorParam,
 } from "../ast";
+import { isImpureDefinition } from "../dependencies";
 import { EngineInvariantError } from "../errors";
 import type {
   Builtin,
@@ -24,7 +25,7 @@ import type {
   EvaluationScope,
   OperatorValue,
 } from "../evaluate";
-import { getDefinition, getQuantifierElements } from "../evaluate";
+import { getDefinition, getQuantifierElements, getStartupValue } from "../evaluate";
 import {
   createSortedSet,
   getStreamedElements,
@@ -32,7 +33,7 @@ import {
   toFiniteSet,
   type Value,
 } from "../values";
-import { fromValue, toValue } from "./convert";
+import { formatPrintedId, fromValue, toValue } from "./convert";
 import { EPOCH_KEYS, EpochCache, MemoTable } from "./memo";
 import { getEnvironmentFlag } from "./settings";
 import {
@@ -144,6 +145,35 @@ const allocateSlot = () => {
   }
   return slot;
 };
+
+// What TLCGet reads of TLC's search, at slots of their own so that an expression that reads one is
+// cached by its value: the level of the current state and of the next, and the number of distinct
+// states, which the search sets. An expression that prints has the print slot, which nothing sets,
+// in its footprint, and nothing caches it.
+export const LEVEL_SLOT = allocateSlot();
+export const NEXT_LEVEL_SLOT = allocateSlot();
+export const DISTINCT_SLOT = allocateSlot();
+const PRINT_SLOT = allocateSlot();
+
+export const tlc = {
+  // The number of distinct states, which the distinct slot holds once an expression reads it.
+  distinct: 0,
+  isDistinctRead: false,
+  // Whether an expression reads TLCGet or prints, which only a search on one thread keeps up.
+  isUsed: false,
+  // Whether threads share the search, while which nothing may start to.
+  isShared: false,
+  // The lines printed since the search last passed them on, and between them each count of initial
+  // states the search reports once the initial predicate has printed.
+  output: [] as (string | number)[],
+};
+
+export const isPrinting = (compiled: Compiled) => compiled.footprint.slots.includes(PRINT_SLOT);
+
+// Whether an expression prints or reads what TLCGet reads, which only the search keeps.
+const SEARCH_SLOTS = [LEVEL_SLOT, NEXT_LEVEL_SLOT, DISTINCT_SLOT, PRINT_SLOT];
+export const readsSearch = (footprint: Footprint) =>
+  footprint.slots.some((slot) => SEARCH_SLOTS.includes(slot));
 
 // The slots compiles may take while generated code runs, which compiles what it first evaluates,
 // such as the rest of a conjunction once every variable is assigned.
@@ -571,6 +601,11 @@ const memoTables: MemoTable[] = [];
 // every run's tables and its deepest recursion's stack.
 export const resetCompileState = () => {
   memoTables.length = 0;
+  tlc.distinct = 0;
+  tlc.isDistinctRead = false;
+  tlc.isUsed = false;
+  tlc.isShared = false;
+  tlc.output = [];
   if (STACK.length > INITIAL_STACK) STACK = new Int32Array(INITIAL_STACK);
   stackTop = 0;
 };
@@ -624,6 +659,7 @@ const cachedInEpoch = (compiled: Compiled): Compiled => {
 
 // Caches a costly expression by the ids it reads, and evaluates one that reads nothing only once.
 const cached = (compiled: Compiled): Compiled => {
+  if (isPrinting(compiled)) return compiled;
   const footprint = compiled.footprint;
   const inner = compiled.evaluate;
   const width = footprintWidth(footprint);
@@ -681,6 +717,9 @@ interface Context {
   isPrimed: boolean;
   // Whether the expression is part of the initial predicate, where unprimed variables are assigned.
   isInit: boolean;
+  // Whether the engine evaluates the expression exactly when TLC does, as often and in the same
+  // order, so that it may print.
+  canPrint?: boolean;
 }
 
 type Binding =
@@ -824,7 +863,17 @@ const PURE_BUILTINS = new Set([
   "SetToBag",
 ]);
 
+// The builtins whose operands the engine evaluates as TLC does, each once and in order.
+const PRINT_TRANSPARENT_BUILTINS = new Set(["Print", "PrintT", "=", "#", "~"]);
+
 const unsupported = (what: string): never => bail(`unsupported: ${what}`);
+
+// The value TLC computed when it started for a constant definition with effects, such as printing,
+// which it then reads wherever the spec names the definition rather than evaluate it again.
+export const getStartupEffectValue = (definition: Definition, environment: Environment) =>
+  isImpureDefinition(definition, environment, "repeated")
+    ? getStartupValue(definition, environment)
+    : undefined;
 
 export const createCompiler = (environment: Environment): Compiler => {
   const variableCount = environment.variables.length;
@@ -894,12 +943,54 @@ export const createCompiler = (environment: Environment): Compiler => {
   const compile = (expression: Expression, context: Context): Compiled => {
     if (++depth > 2000) unsupported("expansion too deep");
     try {
-      const compiled = compileNode(expression, context);
+      const inner =
+        context.canPrint && !isEvaluatedAsTlc(expression, context)
+          ? { ...context, canPrint: false }
+          : context;
+      const compiled = compileNode(expression, inner);
+      // A definition compiled where it may print may be cached, then named where it may not.
+      if (!context.canPrint && isPrinting(compiled))
+        return unsupported("Print where TLC evaluates it otherwise");
       return compiled.isCostly || footprintWidth(compiled.footprint) === 0
         ? cached(compiled)
         : compiled;
     } finally {
       depth--;
+    }
+  };
+
+  // Whether the engine evaluates the operands of an expression exactly when TLC does, as long as it
+  // so evaluates the expression: those of a conjunction, disjunction, IF, CASE or label, the body of
+  // a LET, a definition a name refers to, the body of an operator, and the operands of Print,
+  // PrintT, =, # and ~. A LET's definitions and an operator's arguments, which TLC evaluates
+  // lazily, never are.
+  const isEvaluatedAsTlc = (expression: Expression, context: Context) => {
+    switch (expression.kind) {
+      case "And":
+      case "Or":
+      case "If":
+      case "Case":
+      case "Let":
+      case "Label":
+      case "Identifier":
+        return true;
+      case "Apply": {
+        const name = expression.operator;
+        if (isLocallyResolved(expression)) {
+          const binding = lookup(context.scope, name);
+          if (binding) return binding.kind === "operator" && !binding.operator.isRecursive;
+        }
+        const target = environment.substitutions.get(name) ?? name;
+        const definition = environment.definitions.get(target);
+        if (definition) {
+          return (
+            definition.kind === "Operator" && !definition.isRecursive && !expanding.has(definition)
+          );
+        }
+        return PRINT_TRANSPARENT_BUILTINS.has(target);
+      }
+      default:
+        return false;
     }
   };
 
@@ -972,6 +1063,12 @@ export const createCompiler = (environment: Environment): Compiler => {
   };
 
   const compileDefinitionReference = (definition: Definition, context: Context): Compiled => {
+    const startup = getStartupEffectValue(definition, environment);
+    if (startup !== undefined) {
+      return typeof startup === "object"
+        ? unsupported("a value TLC computed at startup with effects")
+        : constant(fromValue(startup));
+    }
     if (definition.kind === "Function") return compileFunctionDefinition(definition, context);
     if (definition.params.length > 0) return unsupported("an operator used as a value");
     const index = context.isPrimed ? 1 : 0;
@@ -991,6 +1088,7 @@ export const createCompiler = (environment: Environment): Compiler => {
                 scope: undefined,
                 isPrimed: context.isPrimed,
                 isInit: context.isInit,
+                canPrint: context.canPrint,
               }),
             ),
           ),
@@ -1095,10 +1193,13 @@ export const createCompiler = (environment: Environment): Compiler => {
           ),
           isCostly: consequent.isCostly || alternative.isCostly,
           isNormalized: consequent.isNormalized && alternative.isNormalized,
-          reference: combineReferences([consequent, alternative], ([then, otherwise]) => {
-            const evaluateCondition = condition.evaluate;
-            return () => (evaluateCondition() === TRUE ? then() : otherwise());
-          }),
+          // The reference evaluates the condition again, which mustn't print twice.
+          reference: [condition, consequent, alternative].some(isPrinting)
+            ? undefined
+            : combineReferences([consequent, alternative], ([then, otherwise]) => {
+                const evaluateCondition = condition.evaluate;
+                return () => (evaluateCondition() === TRUE ? then() : otherwise());
+              }),
           isEnumerated: consequent.isEnumerated === true && alternative.isEnumerated === true,
           areElementsEnumerated:
             consequent.areElementsEnumerated === true && alternative.areElementsEnumerated === true,
@@ -1243,6 +1344,27 @@ export const createCompiler = (environment: Environment): Compiler => {
           mergeFootprints(now.footprint, next.footprint),
         );
       }
+      // TLC evaluates <<A>>_e and [A]_e as A, then, unless A decides, e in each state.
+      case "AngleAction":
+      case "BoxAction": {
+        if (context.isPrimed) return unsupported("a primed action");
+        const action = compileBoolean(expression.action, context);
+        const now = compile(expression.subscript, context);
+        const next = compile(expression.subscript, { ...context, isPrimed: true });
+        const actionEvaluate = action.evaluate;
+        const nowEvaluate = now.evaluate;
+        const nextEvaluate = next.evaluate;
+        const isAngle = expression.kind === "AngleAction";
+        return leaf(
+          () => {
+            if ((actionEvaluate() === TRUE) !== isAngle) return isAngle ? FALSE : TRUE;
+            const value = nowEvaluate();
+            const isUnchanged = equals(value, nextEvaluate());
+            return isUnchanged !== isAngle ? TRUE : FALSE;
+          },
+          mergeFootprints(action.footprint, now.footprint, next.footprint),
+        );
+      }
       case "Enabled":
         return compileEnabled(expression.expression, context);
       case "Label":
@@ -1285,8 +1407,10 @@ export const createCompiler = (environment: Environment): Compiler => {
     if (!compileEnabledTest || context.isPrimed || context.isInit)
       return unsupported("expression Enabled");
     const test = compileEnabledTest(action, context);
+    const footprint = getEnabledFootprint(action, context);
+    if (readsSearch(footprint)) return unsupported("ENABLED of an action that reads TLCGet");
     return {
-      ...leaf(() => (test() ? TRUE : FALSE), getEnabledFootprint(action, context)),
+      ...leaf(() => (test() ? TRUE : FALSE), footprint),
       isCostly: true,
       isBoolean: true,
     } as Compiled;
@@ -1330,7 +1454,7 @@ export const createCompiler = (environment: Environment): Compiler => {
     if (expression.instances && expression.instances.length > 0) unsupported("INSTANCE in LET");
     let scope = context.scope;
     for (const definition of expression.definitions) {
-      const definitionContext = { ...context, scope };
+      const definitionContext = { ...context, scope, canPrint: false };
       if (definition.kind === "Function") {
         if (definition.isRecursive || definition.isSelfReferential) {
           const binding: Binding = { kind: "recursive", definition, scope: undefined };
@@ -1385,18 +1509,19 @@ export const createCompiler = (environment: Environment): Compiler => {
     if (params.length !== args.length)
       return unsupported("an operator applied to the wrong number of arguments");
     let scope = calleeContext.scope;
+    const argumentContext = { ...callerContext, canPrint: false };
     params.forEach((param, index) => {
       const argument = args[index];
       if (param.arity > 0) {
         scope = bind(scope, param.name, {
           kind: "operator",
-          operator: resolveOperatorArgument(argument, callerContext),
+          operator: resolveOperatorArgument(argument, argumentContext),
         });
       } else {
         scope = bind(scope, param.name, {
           kind: "argument",
           expression: argument,
-          context: callerContext,
+          context: argumentContext,
           compiled: [],
         });
       }
@@ -1477,6 +1602,7 @@ export const createCompiler = (environment: Environment): Compiler => {
           scope: undefined,
           isPrimed: context.isPrimed,
           isInit: context.isInit,
+          canPrint: context.canPrint,
         });
         return cached(compile(definition.body, callee));
       } finally {
@@ -2652,6 +2778,8 @@ export const createCompiler = (environment: Environment): Compiler => {
     expression: Expression & { kind: "Apply" },
     context: Context,
   ): Compiled => {
+    if (name === "Print" || name === "PrintT") return compilePrint(name, expression.args, context);
+    if (name === "TLCGet") return compileTlcGet(expression.args, context);
     if (builtin.isStateLevel || IMPURE_BUILTINS.has(name)) {
       if (name === "TLCEval" && expression.args.length === 1)
         return compile(expression.args[0], context);
@@ -2662,6 +2790,57 @@ export const createCompiler = (environment: Environment): Compiler => {
     if (native) return native;
     if (!PURE_BUILTINS.has(name)) return unsupported(name);
     return compileBridgedBuiltin(name, builtin, args, context);
+  };
+
+  // Print(a, b) and PrintT(a) print as TLC does where the engine evaluates them as TLC does, and
+  // only a value whose text doesn't depend on how it was built, which the engine forgets.
+  const compilePrint = (name: string, args: Expression[], context: Context): Compiled => {
+    if (!context.canPrint || tlc.isShared) return unsupported(name);
+    if (args.length !== (name === "Print" ? 2 : 1))
+      return unsupported("an operator applied to the wrong number of arguments");
+    tlc.isUsed = true;
+    const operands = args.map((argument) => compile(argument, { ...context, canPrint: false }));
+    const first = operands[0].evaluate;
+    const second = operands[1]?.evaluate;
+    return {
+      ...leaf(
+        second
+          ? () => {
+              const shown = first();
+              const value = second();
+              tlc.output.push(`${formatPrintedId(shown)}  ${formatPrintedId(value)}`);
+              return value;
+            }
+          : () => {
+              tlc.output.push(formatPrintedId(first()));
+              return TRUE;
+            },
+        mergeFootprints(...operands.map((operand) => operand.footprint), {
+          vars: [],
+          primes: [],
+          slots: [PRINT_SLOT],
+        }),
+      ),
+      isBoolean: name === "PrintT" || operands[1].isBoolean === true,
+    };
+  };
+
+  // TLCGet("level") and TLCGet("distinct") read the slots the search sets.
+  const compileTlcGet = (args: Expression[], context: Context): Compiled => {
+    const key = args.length === 1 && args[0].kind === "String" ? args[0].value : undefined;
+    if ((key !== "level" && key !== "distinct") || tlc.isShared) return unsupported("TLCGet");
+    if (context.isInit && context.isPrimed) return unsupported("TLCGet");
+    tlc.isUsed = true;
+    if (key === "distinct" && !tlc.isDistinctRead) {
+      tlc.isDistinctRead = true;
+      LOC[DISTINCT_SLOT] = int(tlc.distinct);
+    }
+    const slot =
+      key === "distinct" ? DISTINCT_SLOT : context.isPrimed ? NEXT_LEVEL_SLOT : LEVEL_SLOT;
+    return {
+      ...leaf(() => LOC[slot], { vars: [], primes: [], slots: [slot] }),
+      emit: (gen) => `${gen.locals}[${slot}]`,
+    };
   };
 
   const binary = (
@@ -3308,10 +3487,19 @@ export const createCompiler = (environment: Environment): Compiler => {
       )
         return undefined;
       const definition = getDefinition(expression.name, environment);
-      if (definition?.kind === "Operator" && definition.params.length === 0) {
+      if (
+        definition?.kind === "Operator" &&
+        definition.params.length === 0 &&
+        getStartupEffectValue(definition, environment) === undefined
+      ) {
         return {
           body: definition.body,
-          context: { scope: undefined, isPrimed: context.isPrimed, isInit: context.isInit },
+          context: {
+            scope: undefined,
+            isPrimed: context.isPrimed,
+            isInit: context.isInit,
+            canPrint: context.canPrint,
+          },
           name: definition.name,
         };
       }
@@ -3345,6 +3533,7 @@ export const createCompiler = (environment: Environment): Compiler => {
           scope: undefined,
           isPrimed: context.isPrimed,
           isInit: context.isInit,
+          canPrint: context.canPrint,
         }),
         name: definition.name,
       };

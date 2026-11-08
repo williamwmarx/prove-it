@@ -19,6 +19,7 @@ import {
   type SharedFingerprints,
   writeStateFingerprint,
 } from "./fingerprints";
+import type { SanyReading } from "./sany/source";
 import {
   createSearch,
   findAssumptionViolation,
@@ -71,7 +72,14 @@ export type WorkerMessage =
 export type CoordinatorMessage =
   { type: "level" } | { type: "resize"; fingerprints: SharedFingerprints };
 
-export const check = async (options: CheckOptions): Promise<CheckResult> => {
+export const check = (options: CheckOptions): Promise<CheckResult> => checkParsed(options);
+
+// Checks a spec as check does. The readings are those of a spec SANY accepted, which the check
+// reads its modules from.
+export const checkParsed = async (
+  options: CheckOptions,
+  readings?: ReadonlyMap<string, SanyReading>,
+): Promise<CheckResult> => {
   const config =
     typeof options.config === "string"
       ? parseConfig(options.config, options.version)
@@ -95,14 +103,17 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
   // skips that.
   const fallBack = () => {
     const skipped = { count: printed.count };
-    return checkSequentially({
-      ...options,
-      config,
-      onPrint: (text) => (skipped.count-- > 0 ? undefined : print(text)),
-      onProgress: (progress) => {
-        if (!reported.has(getKey(progress))) options.onProgress?.(progress);
+    return checkSequentially(
+      {
+        ...options,
+        config,
+        onPrint: (text) => (skipped.count-- > 0 ? undefined : print(text)),
+        onProgress: (progress) => {
+          if (!reported.has(getKey(progress))) options.onProgress?.(progress);
+        },
       },
-    });
+      readings,
+    );
   };
   const workerCount = options.workers ?? 1;
   // TLC's workers write the -dump state graph, and print the violations -continue goes on past, in
@@ -131,7 +142,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     classes.set(name, bytes);
     return bytes;
   };
-  const order = createTlcOrder(options.source, loadModule);
+  const order = createTlcOrder(options.source, loadModule, readings);
   setStringOrder(order.getStringOrder(config));
   setValueVersion(options.version);
   const startupStrings = getRankedStringCount();
@@ -148,6 +159,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     isTool: options.isTool,
     isTraceRecorded: options.isTraceRecorded,
     isSanyReported: options.isSanyReported,
+    isSanyAccepted: readings !== undefined,
     isWarningEnabled: options.isWarningEnabled,
     version: options.version,
   });
