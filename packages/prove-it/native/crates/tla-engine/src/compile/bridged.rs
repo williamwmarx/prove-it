@@ -12,16 +12,11 @@ use tla_values::{Bail, Id};
 use super::builtins::Applier;
 use super::{Compiled, Compiler, Compiling, Context, Operand, eval, leaf, unsupported};
 use crate::footprint::Footprint;
-use crate::machine::{Eval, Machine};
+use crate::machine::Machine;
 
 // Beyond these the interpreter would build more values than a model can use.
 const MAXIMUM_PERMUTED: usize = 10;
 const MAXIMUM_SUB_BAGS: f64 = 1e6;
-
-enum Argument {
-    Value(Eval),
-    Operator(Applier),
-}
 
 type Bridged = fn(&mut Machine<'_>, &[Id], &[Applier]) -> Outcome<Id>;
 
@@ -55,36 +50,29 @@ impl Compiler<'_> {
             return unsupported("an operator applied to the wrong number of arguments");
         }
         let mut footprint = Footprint::default();
-        let mut arguments = Vec::new();
+        let mut values = Vec::new();
+        let mut operators: Vec<Applier> = Vec::new();
         for operand in operands {
             if self.is_operator_argument(operand) {
                 let applier = self.compile_applier(operand, context)?;
                 footprint = footprint.merge(&applier.footprint);
-                arguments.push(Argument::Operator(applier));
+                operators.push(applier);
             } else {
                 let value = self.operand(operand)?;
                 footprint = footprint.merge(&value.footprint);
-                arguments.push(Argument::Value(value.eval));
-            }
-        }
-        if name == "BagOfAll" && self.is_literal_operator(&arguments) {
-            // TLC passes an operator whose body is a literal to Bags.java as the literal.
-            return Ok(Some(leaf(
-                eval(|_| Err(Bail("BagOfAll of a literal"))),
-                footprint,
-            )));
-        }
-        let mut values = Vec::new();
-        let mut operators = Vec::new();
-        for argument in arguments {
-            match argument {
-                Argument::Value(value) => values.push(value),
-                Argument::Operator(applier) => operators.push(applier),
+                values.push(value.eval);
             }
         }
         let expected = usize::from(name == "SortSeq" || name == "BagOfAll");
         if operators.len() != expected {
             return unsupported(format!("{name} of an operator where it takes a value"));
+        }
+        if name == "BagOfAll" && operators[0].is_literal {
+            // TLC passes an operator whose body is a literal to Bags.java as the literal.
+            return Ok(Some(leaf(
+                eval(|_| Err(Bail("BagOfAll of a literal"))),
+                footprint,
+            )));
         }
         Ok(Some(Compiled {
             is_costly: true,
@@ -100,13 +88,6 @@ impl Compiler<'_> {
                 footprint,
             )
         }))
-    }
-
-    fn is_literal_operator(&self, arguments: &[Argument]) -> bool {
-        matches!(
-            arguments.first(),
-            Some(Argument::Operator(applier)) if applier.is_literal
-        )
     }
 }
 
