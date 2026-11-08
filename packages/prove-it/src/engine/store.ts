@@ -461,19 +461,83 @@ export const setOf = (elements: number[]) => {
     }
   }
   if (isSorted) return internBlock(KIND_SET, elements, length, length);
-  const sorted = elements.slice().sort(compare);
   const words = takeMergeScratch(length);
-  words[0] = sorted[0];
+  for (let index = 0; index < length; index++) words[index] = elements[index];
+  return internSortedSet(words, length);
+};
+
+// The set of words[start..start + length), in any order and with duplicates.
+export const setOfRange = (words: Int32Array, start: number, length: number) =>
+  length === 0 ? EMPTY_SET : internSortedSet(fromStart(words, start, length), length);
+
+// Sorts the set of words[0..length), duplicates and all, and interns it.
+const internSortedSet = (words: Int32Array, length: number) => {
+  sortWords(words, length);
   let unique = 1;
   for (let index = 1; index < length; index++) {
-    if (sorted[index] !== words[unique - 1]) words[unique++] = sorted[index];
+    if (words[index] !== words[unique - 1]) words[unique++] = words[index];
   }
   return internBlock(KIND_SET, words, unique, unique);
+};
+
+// Runs this short sort by insertion, in place; longer ones are merged from such runs.
+const INSERTION_LENGTH = 16;
+
+let sortScratch = new Int32Array(64);
+
+// Sorts words[0..length) in TLC's order.
+const sortWords = (words: Int32Array, length: number) => {
+  for (let start = 0; start < length; start += INSERTION_LENGTH) {
+    const end = Math.min(start + INSERTION_LENGTH, length);
+    for (let index = start + 1; index < end; index++) {
+      const word = words[index];
+      let position = index;
+      while (position > start && compare(words[position - 1], word) > 0) {
+        words[position] = words[position - 1];
+        position--;
+      }
+      words[position] = word;
+    }
+  }
+  if (length <= INSERTION_LENGTH) return;
+  if (sortScratch.length < length) sortScratch = new Int32Array(2 * length);
+  let source: Int32Array = words;
+  let target: Int32Array = sortScratch;
+  for (let width = INSERTION_LENGTH; width < length; width *= 2) {
+    for (let low = 0; low < length; low += 2 * width) {
+      const middle = Math.min(low + width, length);
+      const high = Math.min(low + 2 * width, length);
+      let left = low;
+      let right = middle;
+      let out = low;
+      while (left < middle && right < high) {
+        target[out++] =
+          compare(source[left], source[right]) <= 0 ? source[left++] : source[right++];
+      }
+      while (left < middle) target[out++] = source[left++];
+      while (right < high) target[out++] = source[right++];
+    }
+    const merged = target;
+    target = source;
+    source = merged;
+  }
+  if (source !== words) for (let index = 0; index < length; index++) words[index] = source[index];
 };
 
 // The set of elements already in TLC's order without duplicates.
 export const setOfSorted = (elements: ArrayLike<number>, length: number) =>
   internBlock(KIND_SET, elements, length, length);
+
+// The set of words[start..start + length), already in TLC's order without duplicates.
+export const setOfSortedRange = (words: Int32Array, start: number, length: number) =>
+  internBlock(KIND_SET, fromStart(words, start, length), length, length);
+
+// words[start..start + length), moved to the start of an array for interning.
+const fromStart = (words: Int32Array, start: number, length: number) => {
+  const moved = takeMergeScratch(length);
+  for (let index = 0; index < length; index++) moved[index] = words[start + index];
+  return moved;
+};
 
 export const elementAt = (set: number, index: number) => heap[payloads[set] + index];
 
@@ -649,6 +713,11 @@ export const withElement = (set: number, element: number) => {
 export const tupleOf = (elements: ArrayLike<number>, length: number) =>
   length === 0 ? EMPTY_TUPLE : internBlock(KIND_TUPLE, elements, length, length);
 
+export const tupleOfRange = (words: Int32Array, start: number, length: number) =>
+  length === 0
+    ? EMPTY_TUPLE
+    : internBlock(KIND_TUPLE, fromStart(words, start, length), length, length);
+
 let pairScratch = new Int32Array(64);
 
 const takePairScratch = (length: number) => {
@@ -732,6 +801,40 @@ export const functionOfSorted = (
   return internBlock(KIND_FUNCTION, words, 2 * size, size);
 };
 
+// The function whose sorted keys and their values fill words, keys first, as a function's block
+// does. A domain of 1..n makes a tuple of the values, moved down over the keys.
+const internPairs = (words: Int32Array, size: number) => {
+  for (let index = 0; index < size; index++) {
+    const key = words[index];
+    if (kinds[key] !== KIND_INT || payloads[key] !== index + 1)
+      return internBlock(KIND_FUNCTION, words, 2 * size, size);
+  }
+  words.copyWithin(0, size, 2 * size);
+  return internBlock(KIND_TUPLE, words, size, size);
+};
+
+// The function from the elements of a set, in its order, to values[start..start + its size).
+export const functionOverSet = (set: number, values: Int32Array, start: number) => {
+  const size = sizes[set];
+  if (size === 0) return EMPTY_TUPLE;
+  const offset = payloads[set];
+  let isTuple = true;
+  for (let index = 0; index < size; index++) {
+    const key = heap[offset + index];
+    if (kinds[key] !== KIND_INT || payloads[key] !== index + 1) {
+      isTuple = false;
+      break;
+    }
+  }
+  if (isTuple) return internBlock(KIND_TUPLE, fromStart(values, start, size), size, size);
+  const words = takePairScratch(2 * size);
+  for (let index = 0; index < size; index++) {
+    words[index] = heap[offset + index];
+    words[size + index] = values[start + index];
+  }
+  return internBlock(KIND_FUNCTION, words, 2 * size, size);
+};
+
 // The function of the given pairs, keys in any order but without duplicates.
 export const functionOf = (keys: number[], values: number[]) => {
   const size = keys.length;
@@ -743,6 +846,22 @@ export const functionOf = (keys: number[], values: number[]) => {
     }
   }
   if (isSorted) return functionOfSorted(keys, values, size);
+  if (size <= INSERTION_LENGTH) {
+    // The pairs, sorted by key as they are inserted: the keys, then the values.
+    const words = takeMergeScratch(2 * size);
+    for (let index = 0; index < size; index++) {
+      const key = keys[index];
+      let position = index;
+      while (position > 0 && compare(words[position - 1], key) > 0) {
+        words[position] = words[position - 1];
+        words[size + position] = words[size + position - 1];
+        position--;
+      }
+      words[position] = key;
+      words[size + position] = values[index];
+    }
+    return internPairs(words, size);
+  }
   const order = keys
     .map((_, index) => index)
     .sort((left, right) => compare(keys[left], keys[right]));
@@ -1001,9 +1120,43 @@ export const applyField = (fn: number, key: number, hint: { position: number }) 
 
 export const domainOf = (fn: number) => {
   const size = sizes[fn];
-  const keys: number[] = new Array(size);
+  const keys = takeMergeScratch(size);
   for (let index = 0; index < size; index++) keys[index] = getKey(fn, index);
   return setOfSorted(keys, size);
+};
+
+// The elements of a tuple from position `from` up to `to`, as Tail takes them.
+export const sliceTuple = (tuple: number, from: number, to: number) => {
+  const length = to - from;
+  if (length <= 0) return EMPTY_TUPLE;
+  const words = takeMergeScratch(length);
+  const offset = payloads[tuple] + from;
+  for (let index = 0; index < length; index++) words[index] = heap[offset + index];
+  return internBlock(KIND_TUPLE, words, length, length);
+};
+
+export const concatTuples = (left: number, right: number) => {
+  const leftSize = sizes[left];
+  const rightSize = sizes[right];
+  if (rightSize === 0) return left;
+  if (leftSize === 0) return right;
+  const length = leftSize + rightSize;
+  const words = takeMergeScratch(length);
+  const leftOffset = payloads[left];
+  const rightOffset = payloads[right];
+  for (let index = 0; index < leftSize; index++) words[index] = heap[leftOffset + index];
+  for (let index = 0; index < rightSize; index++)
+    words[leftSize + index] = heap[rightOffset + index];
+  return internBlock(KIND_TUPLE, words, length, length);
+};
+
+export const appendTuple = (tuple: number, element: number) => {
+  const size = sizes[tuple];
+  const words = takeMergeScratch(size + 1);
+  const offset = payloads[tuple];
+  for (let index = 0; index < size; index++) words[index] = heap[offset + index];
+  words[size] = element;
+  return internBlock(KIND_TUPLE, words, size + 1, size + 1);
 };
 
 export const tupleElements = (tuple: number) => {

@@ -47,6 +47,22 @@ const MAXIMUM_WRITTEN_LENGTH = 50_000_000;
 
 class TooLarge extends Error {}
 
+// The prefixes of the names fresh gives: a local of one run of an action, or a name outside it,
+// which any run may read: a continuation made once (w) or a hoisted function (h). A new prefix
+// must go in one of the two, which decides whether code that reads it can be hoisted.
+const LOCAL_PREFIXES = ["c", "g", "j", "k", "n", "o", "s", "u", "v"] as const;
+type SharedPrefix = "h" | "w";
+type NamePrefix = (typeof LOCAL_PREFIXES)[number] | SharedPrefix;
+
+// Whether generated code reads only the locals it declares, besides the registers, the
+// continuation, the shared names and the values the code refers to.
+const LOCAL_NAME = new RegExp(`\\b[${LOCAL_PREFIXES.join("")}]\\d+\\b`, "g");
+const DECLARED_NAME = new RegExp(`\\b(?:const|let) ([${LOCAL_PREFIXES.join("")}]\\d+)\\b`, "g");
+const isSelfContained = (code: string) => {
+  const declared = new Set(Array.from(code.matchAll(DECLARED_NAME), (match) => match[1]));
+  return Array.from(code.matchAll(LOCAL_NAME)).every((match) => declared.has(match[0]));
+};
+
 const expectSetSize = (id: number) =>
   kindOf(id) === KIND_SET ? sizeOf(id) : bail("an action quantified over a non-set");
 const orderedSize = (id: number) => sizeOf(id);
@@ -102,7 +118,7 @@ const generateActionCode = (
   const equal = gen.ref(equals);
   const nonBoolean = gen.ref(notBoolean);
   let counter = 0;
-  const fresh = (prefix: string) => `${prefix}${counter++}`;
+  const fresh = (prefix: NamePrefix) => `${prefix}${counter++}`;
   let length = 0;
   const emit = (code: string) => {
     length += code.length;
@@ -248,6 +264,9 @@ if (${flag} === 1) { ${T}[${variable}] = -1; ${R}.assigned--; } }`,
           unchanged(indices, position + 1, after, rest),
         );
 
+  // The continuations the closures of action.ts go on to that are kept in variables of their own.
+  const continuations: string[] = [];
+
   // Hands a subtree the generator doesn't write to the closures of action.ts.
   const opaque = (
     operand: Expression,
@@ -257,7 +276,15 @@ if (${flag} === 1) { ${T}[${variable}] = -1; ${R}.assigned--; } }`,
   ) => {
     const closure = compileAction(compiler, operand, operandContext, options);
     const after = known.map((state) => (state === ASSIGNED ? ASSIGNED : UNKNOWN));
-    return emit(`${gen.ref(closure)}(() => {\n${rest(after)}\n});`);
+    const code = rest(after);
+    if (!isSelfContained(code)) return emit(`${gen.ref(closure)}(() => {\n${code}\n});`);
+    // A continuation that reads no local of the code around it is made once for the registers
+    // and continuation it reads, rather than on every run, by a function outside the action: a
+    // closure inside it would make the action keep its locals in a context it allocates per run.
+    const name = fresh("w");
+    continuations.push(name);
+    hoisted.push(`function make${name}(K, C, N, L) {\nreturn () => {\n${code}\n};\n}`);
+    return emit(`${gen.ref(closure)}(${name} ??= make${name}(K, C, N, L));`);
   };
 
   const quantified = (
@@ -509,11 +536,17 @@ ${T}[${variable}] = -1; ${R}.assigned--; }`;
   }
   if (body.length + hoisted.reduce((total, code) => total + code.length, 0) > MAXIMUM_CODE_LENGTH)
     return undefined;
+  // The continuations kept are made again once the registers or the continuation change.
+  const forget =
+    continuations.length === 0
+      ? ""
+      : `if (K !== wK || C !== wC || N !== wN || L !== wL) { wK = K; wC = C; wN = N; wL = L; ${continuations.join(" = ")} = undefined; }\n`;
   try {
-    if (getCodegenSetting() === "dump") console.error([...hoisted, body].join("\n"));
+    if (getCodegenSetting() === "dump") console.error([...hoisted, forget, body].join("\n"));
+    const declarations = ["wK", "wC", "wN", "wL", ...continuations];
     const factory = new Function(
       ...names.values(),
-      `"use strict";\n${hoisted.join("\n")}\nreturn function generatedAction(K) {\nconst C = ${R}.cur, N = ${R}.next, L = ${R}.locals;\n${body}\n};`,
+      `"use strict";\n${hoisted.join("\n")}\nlet ${declarations.join(", ")};\nreturn function generatedAction(K) {\nconst C = ${R}.cur, N = ${R}.next, L = ${R}.locals;\n${forget}${body}\n};`,
     );
     const action = factory(...values) as Step;
     return (onComplete) => {

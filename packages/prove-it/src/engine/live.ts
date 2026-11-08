@@ -62,20 +62,30 @@ export const createLiveOracle = (
   };
 
   // The compiled forms of each predicate the checker asks about, found once through the caches
-  // above, since it asks about the same predicates on every state.
-  const answers = {
-    values: new Map<LiveExpression, Compiled | typeof UNKNOWN>(),
-    unchanged: new Map<LiveExpression, Compiled | typeof UNKNOWN>(),
+  // above, since it asks about the same predicates on every state. They are built only when a
+  // lookup misses, so asking again allocates nothing.
+  const answers = new Map<LiveExpression, Compiled | typeof UNKNOWN>();
+  const unchangedAnswers = new Map<LiveExpression, Compiled | typeof UNKNOWN>();
+  const compileIn = (expression: Expression, scope: EvaluationScope | undefined) =>
+    getCompiled(values, expression, scope, (context) => compiler.compile(expression, context));
+  const answer = (expression: Extract<LiveExpression, { scope: unknown }>) => {
+    // ENABLED compiles as an expression, cached by what the action reads.
+    const built =
+      expression.kind === "Enabled"
+        ? compileIn(
+            { kind: "Enabled", expression: expression.step, location: expression.step.location },
+            expression.scope,
+          )
+        : compileIn(expression.expression, expression.scope);
+    answers.set(expression, built);
+    return built;
   };
-  const getAnswer = <Result>(
-    cache: Map<LiveExpression, Result | typeof UNKNOWN>,
-    expression: LiveExpression,
-    build: () => Result | typeof UNKNOWN,
+  const answerUnchanged = (
+    expression: Extract<LiveExpression, { kind: "Action" }>,
+    unchanged: Expression,
   ) => {
-    const known = cache.get(expression);
-    if (known !== undefined) return known;
-    const built = build();
-    cache.set(expression, built);
+    const built = compileIn(unchanged, expression.scope);
+    unchangedAnswers.set(expression, built);
     return built;
   };
 
@@ -120,48 +130,23 @@ export const createLiveOracle = (
     try {
       setCurrent(ids);
       setNext(next);
-      if (expression.kind === "State") {
-        const compiled = getAnswer(answers.values, expression, () =>
-          getCompiled(values, expression.expression, expression.scope, (context) =>
-            compiler.compile(expression.expression, context),
-          ),
-        );
+      if (expression.kind !== "Action") {
+        const compiled = answers.get(expression) ?? answer(expression);
         return compiled === UNKNOWN ? undefined : holds(compiled);
-      }
-      if (expression.kind === "Enabled") {
-        // ENABLED compiles as an expression, cached by what the action reads.
-        const enabled = getAnswer(answers.values, expression, () => {
-          const node: Expression = {
-            kind: "Enabled",
-            expression: expression.step,
-            location: expression.step.location,
-          };
-          return getCompiled(values, node, expression.scope, (context) =>
-            compiler.compile(node, context),
-          );
-        });
-        return enabled === UNKNOWN ? undefined : holds(enabled);
       }
       const nextIds = successor && getNextIds(successor);
       if (!nextIds) return undefined;
       setNext(nextIds);
       const unchangedExpression = expression.unchanged;
       if (unchangedExpression) {
-        const unchanged = getAnswer(answers.unchanged, expression, () =>
-          getCompiled(values, unchangedExpression, expression.scope, (context) =>
-            compiler.compile(unchangedExpression, context),
-          ),
-        );
+        const unchanged =
+          unchangedAnswers.get(expression) ?? answerUnchanged(expression, unchangedExpression);
         if (unchanged === UNKNOWN) return undefined;
         const isUnchanged = holds(unchanged);
         if (isUnchanged === undefined) return undefined;
         if (isUnchanged) return false;
       }
-      const action = getAnswer(answers.values, expression, () =>
-        getCompiled(values, expression.expression, expression.scope, (context) =>
-          compiler.compile(expression.expression, context),
-        ),
-      );
+      const action = answers.get(expression) ?? answer(expression);
       return action === UNKNOWN ? undefined : holds(action);
     } catch (error) {
       if (error instanceof Bailout) return undefined;
