@@ -28,6 +28,7 @@ import {
   getEntryEvaluator,
   getLazyFunction,
   getReevaluatedDefinitions,
+  getStartupValue,
   lookupScope,
   resolveApplyOperator,
   resolveGlobalOperator,
@@ -651,7 +652,8 @@ const compileIdentifier = (
       );
       return;
     }
-    if (binding || !definition) {
+    // TLC takes the boolean it computed at startup for a constant definition.
+    if (binding || !definition || typeof getStartupValue(definition, environment) === "boolean") {
       guard(run, scope, partial, action, isFixed, onComplete);
       return;
     }

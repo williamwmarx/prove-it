@@ -42,6 +42,29 @@ const checkFixture = (directory: string, name: string) =>
   });
 
 describe("check matches TLC", () => {
+  // TLC prints C once, as it computes the constant definitions.
+  it.each(["0", undefined])(
+    "takes the value of a constant definition that prints, with PROVE_IT_ENGINE=%s",
+    async (engine) => {
+      const setting = process.env.PROVE_IT_ENGINE;
+      if (engine === undefined) delete process.env.PROVE_IT_ENGINE;
+      else process.env.PROVE_IT_ENGINE = engine;
+      const printed: string[] = [];
+      try {
+        await check({
+          source:
+            '---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nC == PrintT("C")\nInit == x = 0 /\\ C\nNext == x < 3 /\\ C /\\ x\' = x + 1\nInv == x >= 0 /\\ C\n====',
+          config: "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
+          onPrint: (text) => printed.push(text),
+        });
+      } finally {
+        if (setting === undefined) delete process.env.PROVE_IT_ENGINE;
+        else process.env.PROVE_IT_ENGINE = setting;
+      }
+      expect(printed).toEqual(['"C"']);
+    },
+  );
+
   it("evaluates every assumption in the semantics fixture", async () => {
     const result = await checkFixture("semantics", "Semantics");
     expect(result.status).toBe("success");
