@@ -114,7 +114,7 @@ export type NativeOutcome =
   | ({ status: "stopped"; reason: string } & NativeCheckpoint);
 
 // The contract between this loader and the addon, ABI_VERSION in its lib.rs.
-const ABI_VERSION = 2;
+const ABI_VERSION = 3;
 
 export const ADDON_FILE = "prove-it-engine.node";
 

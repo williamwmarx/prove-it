@@ -103,11 +103,19 @@ fn stops_where_tlc_finds_deadlock() {
 }
 
 // With temporal properties, a search hands over its graph and the answers to each atom the
-// liveness checker asks about, for every state and step.
+// liveness checker asks about, for every state and step, but the steps of an action from a state
+// where the ENABLED of its fairness is false, which the checker doesn't ask about.
 #[test]
 fn records_the_graph_and_answers_the_atoms() {
+    let path = "examples/specifications/ReadersWriters/MC";
+    let bytes = std::fs::read(format!(
+        "{}/../../../tests/conformance/ir/{path}.ir",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .expect("a golden IR");
+    let atoms = tla_ir::decode(&bytes).expect("an IR").model.atoms;
     let outcome = run(
-        "examples/specifications/ReadersWriters/MC",
+        path,
         &Settings {
             is_live_checked: true,
             ..Settings::default()
@@ -137,11 +145,31 @@ fn records_the_graph_and_answers_the_atoms() {
     );
     assert!(graph.is_enabled_exact);
     assert!(graph.labels.is_some());
-    assert!(!graph.tables.is_empty());
-    for table in &graph.tables {
+    assert_eq!(graph.tables.len(), atoms.len());
+    let mut skipped = 0;
+    for (table, atom) in graph.tables.iter().zip(&atoms) {
         assert_eq!(table.unknown, None);
-        assert!(table.answers.iter().all(|&answer| answer < 2));
+        let tla_ir::AtomKind::Action {
+            enabled: Some(enabled),
+            ..
+        } = atom.kind
+        else {
+            assert!(table.answers.iter().all(|&answer| answer < 2));
+            continue;
+        };
+        let enabled = &graph.tables[enabled as usize].answers;
+        let edge_count = graph.edges.len();
+        for (index, &is_enabled) in enabled.iter().enumerate().take(graph.expanded as usize) {
+            let start = graph.edge_offsets[index] as usize;
+            let end = graph.edge_offsets[index + 1] as usize;
+            let steps = (start..end).chain([edge_count + index]);
+            for answer in steps.map(|step| table.answers[step]) {
+                assert_eq!(answer == 2, is_enabled == 0);
+                skipped += usize::from(answer == 2);
+            }
+        }
     }
+    assert!(skipped > 0);
     assert!(graph.tables.iter().any(|table| table.is_from_steps));
 }
 

@@ -53,23 +53,31 @@ struct Evaluator<'m, 'p, 'g> {
     machine: &'m mut Machine<'p>,
     graph: &'g LiveGraph<'g>,
     unassigned: Vec<Id>,
+    // The epoch each state is current under, 0 until it first is: a state keeps one epoch for the
+    // whole of the answers, so what its steps evaluate of it is cached across them.
+    epochs: Vec<u64>,
+    current: Option<usize>,
 }
 
 impl Evaluator<'_, '_, '_> {
-    fn state(&self, index: usize) -> &[Id] {
-        &self.graph.states[index * self.graph.width..(index + 1) * self.graph.width]
-    }
-
     fn set_current(&mut self, index: usize) {
-        let state =
-            self.graph.states[index * self.graph.width..(index + 1) * self.graph.width].to_vec();
-        let epoch = self.machine.next_epoch();
-        self.machine.set_current(&state, epoch);
-        self.machine.set_next(&self.unassigned);
+        if self.current == Some(index) {
+            return;
+        }
+        if self.epochs[index] == 0 {
+            self.epochs[index] = self.machine.next_epoch();
+        }
+        let graph = self.graph;
+        self.machine.set_current(
+            &graph.states[index * graph.width..(index + 1) * graph.width],
+            self.epochs[index],
+        );
+        self.current = Some(index);
     }
 
     fn evaluate_state(&mut self, index: usize, eval: &Eval) -> u8 {
         self.set_current(index);
+        self.machine.set_next(&self.unassigned);
         answer(eval(self.machine))
     }
 
@@ -84,6 +92,7 @@ impl Evaluator<'_, '_, '_> {
             return Ok(values[index]);
         }
         self.set_current(index);
+        self.machine.set_next(&self.unassigned);
         let value = subscript(self.machine)?;
         values[index] = value;
         Ok(value)
@@ -117,11 +126,10 @@ impl Evaluator<'_, '_, '_> {
                 Err(_) => return UNKNOWN,
             }
         }
-        let current = self.state(index).to_vec();
-        let successor = self.state(next).to_vec();
-        let epoch = self.machine.next_epoch();
-        self.machine.set_current(&current, epoch);
-        self.machine.set_next(&successor);
+        self.set_current(index);
+        let graph = self.graph;
+        self.machine
+            .set_next(&graph.states[next * graph.width..(next + 1) * graph.width]);
         answer(action(self.machine))
     }
 
@@ -159,6 +167,8 @@ pub fn answer_atoms(
         machine,
         graph,
         unassigned: vec![UNASSIGNED; graph.width],
+        epochs: vec![0; graph.count],
+        current: None,
     };
     let mut tables = Vec::with_capacity(atoms.len());
     for atom in atoms {
@@ -176,11 +186,26 @@ pub fn answer_atoms(
                 is_from_steps: false,
                 unknown: None,
             },
-            Atom::Action { action, subscript } => {
+            Atom::Action {
+                action,
+                subscript,
+                enabled,
+            } => {
+                // The checker asks about no step from a state where the ENABLED of the action's
+                // fairness is false, and the interpreter answers any it does.
+                let disabled = enabled
+                    .and_then(|position| tables.get(position))
+                    .filter(|table: &&Table| table.answers.len() == graph.count)
+                    .map(|table| &table.answers);
+                let is_asked = |index: usize| disabled.is_none_or(|answers| answers[index] != 0);
                 let mut answers = Vec::with_capacity(graph.edges.len() + graph.count);
                 for index in 0..graph.expanded {
                     let start = graph.edge_offsets[index] as usize;
                     let end = graph.edge_offsets[index + 1] as usize;
+                    if !is_asked(index) {
+                        answers.resize(answers.len() + end - start, UNKNOWN);
+                        continue;
+                    }
                     for edge in start..end {
                         let next = graph.edges[edge] as usize;
                         answers.push(evaluator.action(
@@ -193,13 +218,11 @@ pub fn answer_atoms(
                     }
                 }
                 for index in 0..graph.count {
-                    answers.push(evaluator.action(
-                        &mut values,
-                        action,
-                        subscript.as_ref(),
-                        index,
-                        index,
-                    ));
+                    answers.push(if is_asked(index) {
+                        evaluator.action(&mut values, action, subscript.as_ref(), index, index)
+                    } else {
+                        UNKNOWN
+                    });
                 }
                 Table {
                     answers,
