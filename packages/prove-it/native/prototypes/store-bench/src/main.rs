@@ -6,12 +6,14 @@ use std::time::Instant;
 
 const STATE_WIDTH: usize = 4;
 
-// An open-addressed set of nonzero 64-bit fingerprints.
-struct FingerprintSet { slots: Vec<u64>, mask: usize, count: usize }
+// An open-addressed set of 64-bit fingerprints: an empty slot holds 0, so the fingerprint 0 is kept
+// in a flag of its own, as FpShard.has_zero is in DESIGN.md.
+struct FingerprintSet { slots: Vec<u64>, mask: usize, count: usize, has_zero: bool }
 impl FingerprintSet {
-    fn new() -> Self { FingerprintSet { slots: vec![0; 1 << 10], mask: (1 << 10) - 1, count: 0 } }
+    fn new() -> Self { FingerprintSet { slots: vec![0; 1 << 10], mask: (1 << 10) - 1, count: 0, has_zero: false } }
     fn insert(&mut self, fp: u64) -> bool {
-        let key = fp | 1;
+        if fp == 0 { let is_new = !self.has_zero; self.has_zero = true; return is_new; }
+        let key = fp;
         let mut slot = (key ^ (key >> 29)) as usize & self.mask;
         loop {
             let stored = self.slots[slot];

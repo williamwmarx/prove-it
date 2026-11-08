@@ -1031,7 +1031,7 @@ boundary. CPU baseline is `x86-64-v2` (no AVX2 assumption) and the default for a
 
 ### 8.1 Model and assumptions
 
-`native/prototypes/estimate.py` projects each model from today's Depot times
+`native/prototypes/estimate.ts` projects each model from today's Depot times
 (`dash/r3/suite.json`). It uses these assumptions:
 - **Fixed cost F.** Process start, parse, SANY and environment take `min(40 ms, 80% of the run)`
   in stages 1–3: 36 ms for the bytecode binary on a one-state spec, plus parsing. In stage 4 F is
