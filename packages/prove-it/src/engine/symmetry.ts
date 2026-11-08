@@ -16,9 +16,9 @@ import {
   KIND_TUPLE,
   kindOf,
   model,
-  setOf,
+  setOfRange,
   sizeOf,
-  tupleOf,
+  tupleOfRange,
 } from "./store";
 
 // A permutation as the model values it moves, by name, to their images.
@@ -57,7 +57,8 @@ export const createCanonicalizer = (group: NamedPermutation[], order: number[]) 
         stack[at + position] = image;
         if (image !== element) isMoved = true;
       }
-      if (isMoved) result = kind === KIND_SET ? setOf(stack, size, at) : tupleOf(stack, size, at);
+      if (isMoved)
+        result = kind === KIND_SET ? setOfRange(stack, at, size) : tupleOfRange(stack, at, size);
       top = at;
     } else {
       const keys: number[] = new Array(size);

@@ -39,7 +39,7 @@ interface ActionOptions {
 export const resetAssigned = () => {
   registers.assigned = 0;
   undoTop.value = 0;
-  frameTop.value = 0;
+  frameTop = 0;
 };
 
 const FOUND = Symbol("found");
@@ -57,7 +57,7 @@ export const createEnabledTest = (step: Step, width: number) => {
     const outerNext = NXT;
     const outerAssigned = registers.assigned;
     const outerTop = undoTop.value;
-    const outerFrameTop = frameTop.value;
+    const outerFrameTop = frameTop;
     const next = (buffers[depth] ??= new Int32Array(width));
     next.fill(-1);
     depth++;
@@ -74,7 +74,7 @@ export const createEnabledTest = (step: Step, width: number) => {
       setNext(outerNext);
       registers.assigned = outerAssigned;
       undoTop.value = outerTop;
-      frameTop.value = outerFrameTop;
+      frameTop = outerFrameTop;
     }
   };
 };
@@ -88,15 +88,15 @@ const undoTop = { value: 0 };
 // What each running walk of a universal action keeps while its body runs, above what the walks
 // around it keep: the binding it is at, then each level's set, stride and saved slot.
 let frames = new Int32Array(1024);
-const frameTop = { value: 0 };
+let frameTop = 0;
 
 // The offset of room for length words, which the walk pops by restoring frameTop.
 const pushFrame = (length: number) => {
-  const at = frameTop.value;
-  frameTop.value += length;
-  if (frameTop.value > frames.length) {
+  const at = frameTop;
+  frameTop += length;
+  if (frameTop > frames.length) {
     let capacity = frames.length * 2;
-    while (frameTop.value > capacity) capacity *= 2;
+    while (frameTop > capacity) capacity *= 2;
     const grown = new Int32Array(capacity);
     grown.set(frames);
     frames = grown;
@@ -367,7 +367,7 @@ export const compileAction = (
               frames[at + levelCount + level] = 0;
             }
           }
-          frameTop.value = at;
+          frameTop = at;
         };
       }
       case "Forall": {
@@ -603,7 +603,7 @@ export const compileAction = (
         frame = outerFrame;
         count = outerCount;
         complete = outerComplete;
-        frameTop.value = at;
+        frameTop = at;
       }
     };
     function getForallGuard() {

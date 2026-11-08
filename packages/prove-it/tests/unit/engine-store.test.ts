@@ -16,6 +16,7 @@ import {
   recordOf,
   resetStore,
   setOf,
+  setOfRange,
   setOfSorted,
   shareStore,
   sliceTuple,
@@ -88,7 +89,8 @@ describe.each(["local", "shared"])("the engine's %s store", (mode) => {
       const shuffled = [...sorted, ...sorted].map((_, index) => sorted[(index * 37) % length]);
       expect(setOf(shuffled)).toBe(setOfSorted(sorted, length));
       // The elements from an offset, as the engine gathers them on its stack.
-      expect(setOf([int(-1), ...shuffled], shuffled.length, 1)).toBe(setOfSorted(sorted, length));
+      const stack = Int32Array.from([int(-1), ...shuffled]);
+      expect(setOfRange(stack, 1, shuffled.length)).toBe(setOfSorted(sorted, length));
     }
   });
 

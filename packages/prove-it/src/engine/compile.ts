@@ -76,13 +76,16 @@ import {
   kindOf,
   recordOf,
   setOf,
+  setOfRange,
   setOfSorted,
+  setOfSortedRange,
   sizeOf,
   sliceTuple,
   str,
   textOf,
   TRUE,
   tupleOf,
+  tupleOfRange,
   union,
 } from "./store";
 
@@ -195,7 +198,7 @@ const evaluateTuple = (evaluators: Evaluate[]) => {
       const value = evaluators[index]();
       STACK[at + index] = value;
     }
-    return tupleOf(STACK, evaluators.length, at);
+    return tupleOfRange(STACK, at, evaluators.length);
   } finally {
     stackTop = at;
   }
@@ -2014,7 +2017,7 @@ export const createCompiler = (environment: Environment): Compiler => {
             assignBound(binding.slots, binding.tuple, element);
             if (predicateEvaluate() === TRUE) STACK[at + kept++] = element;
           }
-          return kept === size ? id : setOfSorted(STACK, kept, at);
+          return kept === size ? id : setOfSortedRange(STACK, at, kept);
         } finally {
           stackTop = at;
         }
@@ -2092,7 +2095,7 @@ export const createCompiler = (environment: Environment): Compiler => {
         const at = stackTop;
         try {
           visit(0);
-          return setOf(STACK, stackTop - at, at);
+          return setOfRange(STACK, at, stackTop - at);
         } finally {
           stackTop = at;
         }
@@ -3056,7 +3059,7 @@ export const createCompiler = (environment: Environment): Compiler => {
                 if (holds === TRUE) STACK[at + kept++] = value;
                 else if (holds !== FALSE) bail("a SelectSeq test that isn't a boolean");
               }
-              return kept === size ? tuple : tupleOf(STACK, kept, at);
+              return kept === size ? tuple : tupleOfRange(STACK, at, kept);
             } finally {
               stackTop = at;
             }

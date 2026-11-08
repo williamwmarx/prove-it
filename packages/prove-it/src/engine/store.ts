@@ -448,19 +448,30 @@ const equalsFunctions = (left: number, right: number) => {
 
 // --- sets ---
 
-// The set of elements[start..start + length), in any order and with duplicates.
-export const setOf = (elements: ArrayLike<number>, length = elements.length, start = 0) => {
+// The set of the given elements, in any order and with duplicates.
+export const setOf = (elements: number[]) => {
+  const length = elements.length;
   if (length === 0) return EMPTY_SET;
+  if (length === 1) return internBlock(KIND_SET, elements, 1, 1);
   let isSorted = true;
-  for (let index = start + 1; index < start + length; index++) {
+  for (let index = 1; index < length; index++) {
     if (compare(elements[index - 1], elements[index]) >= 0) {
       isSorted = false;
       break;
     }
   }
-  if (isSorted) return internBlock(KIND_SET, fromStart(elements, start, length), length, length);
+  if (isSorted) return internBlock(KIND_SET, elements, length, length);
   const words = takeMergeScratch(length);
-  for (let index = 0; index < length; index++) words[index] = elements[start + index];
+  for (let index = 0; index < length; index++) words[index] = elements[index];
+  return internSortedSet(words, length);
+};
+
+// The set of words[start..start + length), in any order and with duplicates.
+export const setOfRange = (words: Int32Array, start: number, length: number) =>
+  length === 0 ? EMPTY_SET : internSortedSet(fromStart(words, start, length), length);
+
+// Sorts the set of words[0..length), duplicates and all, and interns it.
+const internSortedSet = (words: Int32Array, length: number) => {
   sortWords(words, length);
   let unique = 1;
   for (let index = 1; index < length; index++) {
@@ -513,13 +524,16 @@ const sortWords = (words: Int32Array, length: number) => {
   if (source !== words) for (let index = 0; index < length; index++) words[index] = source[index];
 };
 
-// The set of elements[start..start + length), already in TLC's order without duplicates.
-export const setOfSorted = (elements: ArrayLike<number>, length: number, start = 0) =>
-  internBlock(KIND_SET, fromStart(elements, start, length), length, length);
+// The set of elements already in TLC's order without duplicates.
+export const setOfSorted = (elements: ArrayLike<number>, length: number) =>
+  internBlock(KIND_SET, elements, length, length);
+
+// The set of words[start..start + length), already in TLC's order without duplicates.
+export const setOfSortedRange = (words: Int32Array, start: number, length: number) =>
+  internBlock(KIND_SET, fromStart(words, start, length), length, length);
 
 // words[start..start + length), moved to the start of an array for interning.
-const fromStart = (words: ArrayLike<number>, start: number, length: number) => {
-  if (start === 0) return words;
+const fromStart = (words: Int32Array, start: number, length: number) => {
   const moved = takeMergeScratch(length);
   for (let index = 0; index < length; index++) moved[index] = words[start + index];
   return moved;
@@ -696,10 +710,13 @@ export const withElement = (set: number, element: number) => {
 
 // --- functions, records, and tuples ---
 
-export const tupleOf = (elements: ArrayLike<number>, length: number, start = 0) =>
+export const tupleOf = (elements: ArrayLike<number>, length: number) =>
+  length === 0 ? EMPTY_TUPLE : internBlock(KIND_TUPLE, elements, length, length);
+
+export const tupleOfRange = (words: Int32Array, start: number, length: number) =>
   length === 0
     ? EMPTY_TUPLE
-    : internBlock(KIND_TUPLE, fromStart(elements, start, length), length, length);
+    : internBlock(KIND_TUPLE, fromStart(words, start, length), length, length);
 
 let pairScratch = new Int32Array(64);
 
@@ -785,7 +802,7 @@ export const functionOfSorted = (
 };
 
 // The function from the elements of a set, in its order, to values[start..start + its size).
-export const functionOverSet = (set: number, values: ArrayLike<number>, start: number) => {
+export const functionOverSet = (set: number, values: Int32Array, start: number) => {
   const size = sizes[set];
   if (size === 0) return EMPTY_TUPLE;
   const offset = payloads[set];
