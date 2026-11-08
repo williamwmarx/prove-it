@@ -9,7 +9,7 @@ use std::io::Write as _;
 use std::time::{Duration, Instant};
 
 use tla_ir::Ir;
-use tla_values::fingerprint::Fingerprints;
+use tla_values::fingerprint::{Fingerprints, Parent};
 use tla_values::store::Outcome;
 use tla_values::transfer::{EncodedStates, StateEncoder};
 use tla_values::{Bail, Id, Store};
@@ -143,58 +143,86 @@ struct Graph {
     initial_counts: Vec<u64>,
 }
 
-/// The fingerprints found, each with the index of its state: open addressing, keyed by TLC's
-/// FP64 of the key (DESIGN.md 2.3).
+/// The fingerprints found, each with the index of its state: open addressing with linear probing,
+/// keyed by TLC's FP64 of the key (DESIGN.md 2.3). A probe reads only the fingerprints, eight to a
+/// cache line; the indices, in an array of their own, are read only for an edge of the graph or
+/// to verify a fingerprint. 0 marks an empty slot, so a state whose fingerprint is 0 is kept apart.
 struct FingerprintSet {
-    slots: Vec<(u64, u32)>,
+    fingerprints: Vec<u64>,
+    indices: Vec<u32>,
     mask: usize,
     len: usize,
+    zero: Option<u32>,
 }
 
-const EMPTY: u32 = u32::MAX;
+// The slot that stands for the fingerprint 0, past the table's.
+const ZERO_SLOT: usize = usize::MAX;
 
 impl FingerprintSet {
+    const INITIAL_CAPACITY: usize = 1 << 12;
+
     fn new() -> FingerprintSet {
         FingerprintSet {
-            slots: vec![(0, EMPTY); 1 << 12],
-            mask: (1 << 12) - 1,
+            fingerprints: vec![0; Self::INITIAL_CAPACITY],
+            indices: vec![0; Self::INITIAL_CAPACITY],
+            mask: Self::INITIAL_CAPACITY - 1,
             len: 0,
+            zero: None,
         }
     }
 
+    #[inline(always)]
     fn home(&self, fingerprint: u64) -> usize {
         (fingerprint.wrapping_mul(0x9e37_79b9_7f4a_7c15) >> 32) as usize & self.mask
     }
 
-    /// The state with this fingerprint, or the slot to put it in.
-    fn find(&self, fingerprint: u64) -> Result<u32, usize> {
+    /// The slot that holds this fingerprint, or the slot to put it in.
+    #[inline(always)]
+    fn find(&self, fingerprint: u64) -> Result<usize, usize> {
+        if fingerprint == 0 {
+            return self.zero.map_or(Err(ZERO_SLOT), |_| Ok(ZERO_SLOT));
+        }
         let mut slot = self.home(fingerprint);
         loop {
-            let (stored, index) = self.slots[slot];
-            if index == EMPTY {
-                return Err(slot);
+            match self.fingerprints[slot] {
+                0 => return Err(slot),
+                stored if stored == fingerprint => return Ok(slot),
+                _ => slot = (slot + 1) & self.mask,
             }
-            if stored == fingerprint {
-                return Ok(index);
-            }
-            slot = (slot + 1) & self.mask;
+        }
+    }
+
+    /// The index of the state whose fingerprint is in a slot.
+    fn index(&self, slot: usize) -> u32 {
+        match self.zero {
+            Some(index) if slot == ZERO_SLOT => index,
+            _ => self.indices[slot],
         }
     }
 
     fn insert(&mut self, slot: usize, fingerprint: u64, index: u32) {
-        self.slots[slot] = (fingerprint, index);
+        if slot == ZERO_SLOT {
+            self.zero = Some(index);
+            return;
+        }
+        self.fingerprints[slot] = fingerprint;
+        self.indices[slot] = index;
         self.len += 1;
-        if self.len * 2 > self.slots.len() {
-            let capacity = self.slots.len() * 2;
-            let old = std::mem::replace(&mut self.slots, vec![(0, EMPTY); capacity]);
-            self.mask = self.slots.len() - 1;
-            for (stored, index) in old {
-                if index != EMPTY {
+        // At most half full: a third full measured slower, the larger table missing the cache
+        // more often than a probe leaves its cache line, and 70% no faster.
+        if self.len * 2 > self.fingerprints.len() {
+            let capacity = self.fingerprints.len() * 2;
+            let fingerprints = std::mem::replace(&mut self.fingerprints, vec![0; capacity]);
+            let indices = std::mem::replace(&mut self.indices, vec![0; capacity]);
+            self.mask = capacity - 1;
+            for (stored, index) in fingerprints.into_iter().zip(indices) {
+                if stored != 0 {
                     let mut slot = self.home(stored);
-                    while self.slots[slot].1 != EMPTY {
+                    while self.fingerprints[slot] != 0 {
                         slot = (slot + 1) & self.mask;
                     }
-                    self.slots[slot] = (stored, index);
+                    self.fingerprints[slot] = stored;
+                    self.indices[slot] = index;
                 }
             }
         }
@@ -228,12 +256,12 @@ impl States {
         }
     }
 
-    // The index of the state with this key's fingerprint, or the slot to add it at.
-    fn find(&mut self, key: &[Id], fingerprint: u64) -> Result<u32, usize> {
+    // The slot of the state with this key's fingerprint, or the slot to add it at.
+    fn find(&mut self, key: &[Id], fingerprint: u64) -> Result<usize, usize> {
         let found = self.set.find(fingerprint);
         if self.is_verified
-            && let Ok(index) = found
-            && self.key_of(index as usize) != key
+            && let Ok(slot) = found
+            && self.key_of(self.set.index(slot) as usize) != key
         {
             self.collisions += 1;
         }
@@ -274,11 +302,15 @@ struct Search<'r> {
     expanding: usize,
     current: Vec<Id>,
     successor: Vec<Id>,
+    // The key, when it isn't the state.
     key: Vec<Id>,
     expansion_epoch: u64,
     level_id: Id,
     next_level_id: Id,
     fingerprints: Fingerprints,
+    // The state being expanded, whose successors' fingerprints follow from its own when the key is
+    // the state.
+    parent: Parent,
     canonicalizer: Option<Canonicalizer>,
     graph: Option<Graph>,
     // The position of the action whose steps the search is taking.
@@ -312,9 +344,29 @@ impl Search<'_> {
         Ok(())
     }
 
-    // The key of the state that is current, and its fingerprint.
-    // TLC fingerprints the view of the representative when it has both.
-    fn compute_key(&mut self, machine: &mut Machine<'_>, context: &EngineContext) -> Outcome<u64> {
+    // The fingerprint of the key of the state that is current, which is the successor when the
+    // search visits one: from the fingerprint of the state being expanded when the key is the
+    // state. TLC fingerprints the view of the representative when it has both.
+    fn compute_key(
+        &mut self,
+        machine: &mut Machine<'_>,
+        context: &EngineContext,
+        is_successor: bool,
+    ) -> Outcome<u64> {
+        if self.states.key_width.is_none() {
+            let (store, order) = (&machine.store, &self.states.order);
+            return Ok(if is_successor {
+                self.fingerprints.get_child(
+                    store,
+                    &mut self.parent,
+                    &self.current,
+                    &self.successor,
+                    order,
+                )
+            } else {
+                self.fingerprints.get_state(store, machine.current(), order)
+            });
+        }
         self.key.clear();
         self.key.extend_from_slice(machine.current());
         if let Some(canonicalizer) = &mut self.canonicalizer {
@@ -358,11 +410,12 @@ impl Search<'_> {
         self.initial_generated += 1;
         let is_in_model = holds_all_changed_none(machine, context)?;
         let found = if is_in_model {
-            let fingerprint = self.compute_key(machine, context)?;
-            Some((
-                fingerprint,
-                self.states.find(&self.key.clone(), fingerprint),
-            ))
+            let fingerprint = self.compute_key(machine, context, false)?;
+            let key = self
+                .states
+                .key_width
+                .map_or(machine.current(), |_| &self.key);
+            Some((fingerprint, self.states.find(key, fingerprint)))
         } else {
             None
         };
@@ -377,10 +430,8 @@ impl Search<'_> {
                 return Err(Bail("a property violated in an initial state"));
             }
             if let Some((fingerprint, Err(slot))) = found {
-                let state = machine.current().to_vec();
-                let key = std::mem::take(&mut self.key);
-                self.states.add(&state, &key, fingerprint, slot, -1);
-                self.key = key;
+                self.states
+                    .add(machine.current(), &self.key, fingerprint, slot, -1);
                 if let Some(graph) = &mut self.graph {
                     graph.initial_counts.push(self.initial_generated);
                 }
@@ -392,14 +443,17 @@ impl Search<'_> {
         Ok(())
     }
 
-    fn set_successor_current(&self, machine: &mut Machine<'_>, epoch: u64) {
-        machine.set_current(&self.successor, epoch);
-        machine.set_slot(LEVEL_SLOT, self.next_level_id);
-    }
-
     fn set_expanded_current(&self, machine: &mut Machine<'_>) {
         machine.set_current(&self.current, self.expansion_epoch);
         machine.set_slot(LEVEL_SLOT, self.level_id);
+    }
+
+    // While the search checks a successor as a state, it is current and the state being expanded
+    // is the next one, which a state's predicates don't read: the two swap rather than copy.
+    fn swap_successor(&self, machine: &mut Machine<'_>, epoch: u64, level: Id) {
+        std::mem::swap(&mut machine.cur, &mut machine.next);
+        machine.epoch = epoch;
+        machine.set_slot(LEVEL_SLOT, level);
     }
 
     fn visit_successor(
@@ -420,27 +474,26 @@ impl Search<'_> {
         self.successor.clear();
         self.successor.extend_from_slice(machine.next());
         let successor_epoch = machine.next_epoch();
-        self.set_successor_current(machine, successor_epoch);
+        self.swap_successor(machine, successor_epoch, self.next_level_id);
         // The state being expanded is in the model, so each constraint held of it.
         let is_state_in_model = holds_all_changed(
             machine,
             &context.constraints,
             &self.successor,
             &self.current,
-        )?;
-        let fingerprint = if is_state_in_model {
-            Some(self.compute_key(machine, context)?)
-        } else {
-            None
+        );
+        let fingerprint = match is_state_in_model {
+            Ok(true) => self.compute_key(machine, context, true).map(Some),
+            Ok(false) => Ok(None),
+            Err(bail) => Err(bail),
         };
-        self.set_expanded_current(machine);
+        self.swap_successor(machine, self.expansion_epoch, self.level_id);
+        let (is_state_in_model, fingerprint) = (is_state_in_model?, fingerprint?);
         let is_in_model = is_state_in_model && holds_all(machine, &context.action_constraints)?;
         let found = match fingerprint {
             Some(fingerprint) if is_in_model => {
-                let key = std::mem::take(&mut self.key);
-                let found = self.states.find(&key, fingerprint);
-                self.key = key;
-                Some(found)
+                let key = self.states.key_width.map_or(&self.successor, |_| &self.key);
+                Some(self.states.find(key, fingerprint))
             }
             _ => None,
         };
@@ -449,11 +502,11 @@ impl Search<'_> {
             self.set_distinct(machine, self.states.count() + 1)?;
         }
         if !is_in_model || is_new {
-            self.set_successor_current(machine, successor_epoch);
+            self.swap_successor(machine, successor_epoch, self.next_level_id);
             let holds =
-                holds_all_changed(machine, &context.invariants, &self.successor, &self.current)?;
-            self.set_expanded_current(machine);
-            if !holds {
+                holds_all_changed(machine, &context.invariants, &self.successor, &self.current);
+            self.swap_successor(machine, self.expansion_epoch, self.level_id);
+            if !holds? {
                 return Err(Bail("an invariant violated"));
             }
         }
@@ -461,7 +514,7 @@ impl Search<'_> {
             && is_in_model
         {
             graph.edges.push(match found {
-                Some(Ok(index)) => index,
+                Some(Ok(slot)) => self.states.set.index(slot),
                 _ => self.states.count() as u32,
             });
             if let Some(labels) = &mut graph.labels {
@@ -476,12 +529,13 @@ impl Search<'_> {
             }
         }
         if let (Some(Err(slot)), Some(fingerprint)) = (found, fingerprint) {
-            let key = std::mem::take(&mut self.key);
-            let successor = std::mem::take(&mut self.successor);
-            self.states
-                .add(&successor, &key, fingerprint, slot, self.expanding as i32);
-            self.key = key;
-            self.successor = successor;
+            self.states.add(
+                &self.successor,
+                &self.key,
+                fingerprint,
+                slot,
+                self.expanding as i32,
+            );
             self.new_states += 1;
             self.depth = self.level + 1;
         }
@@ -576,6 +630,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         level_id: 0,
         next_level_id: 0,
         fingerprints: Fingerprints::new(),
+        parent: Parent::default(),
         canonicalizer,
         graph: model.is_recording_graph.then(|| Graph {
             edge_offsets: vec![0],
@@ -650,6 +705,15 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             search.next_level_id = machine.store.int(search.level as i64 + 1)?;
             search.set_expanded_current(&mut machine);
             machine.set_slot(NEXT_LEVEL_SLOT, search.next_level_id);
+            if search.states.key_width.is_none() {
+                search.fingerprints.set_parent(
+                    &machine.store,
+                    &search.current,
+                    &search.states.order,
+                    search.states.fingerprints[expanding],
+                    &mut search.parent,
+                );
+            }
             match actions {
                 None => (context.next)(&mut machine, &mut |machine: &mut Machine<'_>| {
                     search.visit_successor(machine, &context)
@@ -1027,29 +1091,73 @@ mod tests {
         let Err(slot) = states.find(&[7], 42) else {
             panic!("an empty set found a state");
         };
-        states.add(&[7], &[7], 42, slot, -1);
-        assert_eq!(states.find(&[7], 42), Ok(0));
+        states.add(&[7], &[], 42, slot, -1);
+        let found = states.find(&[7], 42).expect("a state found");
+        assert_eq!(states.set.index(found), 0);
         assert_eq!(states.collisions, 0);
-        assert_eq!(states.find(&[8], 42), Ok(0));
+        assert_eq!(states.find(&[8], 42), Ok(found));
         assert_eq!(states.collisions, 1);
         assert!(states.find(&[8], 43).is_err());
         assert_eq!(states.collisions, 1);
     }
 
+    // Every fingerprint finds its state after the table has grown many times.
     #[test]
     fn finds_every_fingerprint_after_growing() {
         let mut states = verified_states();
+        let fingerprint_of = |index: u32| u64::from(index).wrapping_mul(0x2545_f491_4f6c_dd1d);
         for index in 0..10_000u32 {
-            let fingerprint = u64::from(index).wrapping_mul(0x2545_f491_4f6c_dd1d);
-            let Err(slot) = states.find(&[index], fingerprint) else {
+            let Err(slot) = states.find(&[index], fingerprint_of(index)) else {
                 panic!("a fingerprint found before it was added");
             };
-            states.add(&[index], &[index], fingerprint, slot, -1);
+            states.add(&[index], &[], fingerprint_of(index), slot, -1);
         }
         for index in 0..10_000u32 {
-            let fingerprint = u64::from(index).wrapping_mul(0x2545_f491_4f6c_dd1d);
-            assert_eq!(states.find(&[index], fingerprint), Ok(index));
+            let slot = states
+                .find(&[index], fingerprint_of(index))
+                .expect("a fingerprint added");
+            assert_eq!(states.set.index(slot), index);
         }
         assert_eq!(states.collisions, 0);
+        assert_eq!(states.ids.len(), 10_000);
+    }
+
+    // The fingerprint 0 marks an empty slot, so a state whose fingerprint is 0 is kept apart.
+    #[test]
+    fn keeps_a_state_whose_fingerprint_is_zero() {
+        let mut states = verified_states();
+        let Err(slot) = states.find(&[5], 0) else {
+            panic!("an empty set found a state");
+        };
+        states.add(&[5], &[], 0, slot, -1);
+        let Err(slot) = states.find(&[6], 1) else {
+            panic!("a fingerprint found before it was added");
+        };
+        states.add(&[6], &[], 1, slot, -1);
+        let found = states
+            .find(&[5], 0)
+            .expect("the state whose fingerprint is 0");
+        assert_eq!(states.set.index(found), 0);
+        assert_eq!(states.collisions, 0);
+        assert_eq!(states.set.len, 1);
+    }
+
+    // Under a VIEW or symmetry the key is kept beside the state, and compared for a collision.
+    #[test]
+    fn compares_the_key_when_it_isnt_the_state() {
+        let mut states = verified_states();
+        states.key_width = Some(1);
+        let Err(slot) = states.find(&[70], 42) else {
+            panic!("an empty set found a state");
+        };
+        states.add(&[7], &[70], 42, slot, -1);
+        assert!(states.find(&[70], 42).is_ok());
+        assert_eq!(states.collisions, 0);
+        assert!(states.find(&[80], 42).is_ok());
+        assert_eq!(states.collisions, 1);
+        assert_eq!(
+            (states.ids.as_slice(), states.keys.as_slice()),
+            (&[7][..], &[70][..])
+        );
     }
 }

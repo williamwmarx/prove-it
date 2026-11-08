@@ -1,8 +1,8 @@
 # Times this commit's Prove It against another commit's (main by default) on one machine: both
-# builds' binaries, the JIT one and the one Bun compiles ahead of time, take turns on each model of
-# packages/prove-it/scripts/bench-suite.json, and each must agree with TLC's recorded result where
-# there is one. Run it by hand, or with depot ci run on a branch, to see what a change does to
-# speed. It holds no credential.
+# builds' binaries, the JIT one on the TypeScript and the Rust engine and the one Bun compiles ahead
+# of time, take turns on each model of packages/prove-it/scripts/bench-suite.json, and each must
+# agree with TLC's recorded result where there is one. Run it by hand, or with depot ci run on a
+# branch, to see what a change does to speed. It holds no credential.
 name: Compare
 "on":
   workflow_dispatch:
@@ -40,7 +40,7 @@ jobs:
           REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
-          PATH="$(scripts/ci/bootstrap.sh bun node):$PATH"
+          PATH="$(scripts/ci/bootstrap.sh bun node rust):$PATH"
           base="$RUNNER_TEMP/base"
           # Fetched from GitHub rather than read from the checkout, whose origin/main can name the
           # commit under test.
@@ -49,7 +49,8 @@ jobs:
           canary="$(scripts/ci/bootstrap.sh bun-canary)"
           for root in "$PWD" "$base"; do
             (cd "$root" && bun install --frozen-lockfile --ignore-scripts && bun run build \
-              && cd packages/prove-it && bun scripts/build-binary.ts \
+              && cd packages/prove-it && bun scripts/platform-packages.ts build \
+              && bun scripts/build-binary.ts \
               && "$canary/bun" scripts/build-binary.ts --aot)
           done
           echo "Base: $(git -C "$base" rev-parse --short HEAD), this: $(git rev-parse --short HEAD) plus any local changes" >> "$GITHUB_STEP_SUMMARY"
@@ -71,7 +72,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/compare"
           cd packages/prove-it
           status=0
-          bun scripts/bench-suite.ts --runs "$RUNS" --checkers prove-it,prove-it-base,prove-it-aot,prove-it-base-aot \
+          bun scripts/bench-suite.ts --runs "$RUNS" --checkers prove-it,prove-it-base,prove-it-rust,prove-it-base-rust,prove-it-aot,prove-it-base-aot \
             ${FILTER:+--filter "$FILTER"} \
             --out "$RUNNER_TEMP/compare/results.json" \
             --markdown "$RUNNER_TEMP/compare/results.md" || status=$?

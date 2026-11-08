@@ -2,7 +2,7 @@
 //! src/tlc/fingerprint.ts (DESIGN.md 10.3), and the engine's ways of fingerprinting a state against
 //! each other.
 
-use tla_values::fingerprint::{Fingerprints, INITIAL, extend_byte, extend_int};
+use tla_values::fingerprint::{Fingerprints, INITIAL, Parent, extend_byte, extend_int};
 use tla_values::store::{Id, Store, TRUE};
 
 fn utf16(text: &str) -> Vec<u16> {
@@ -180,6 +180,21 @@ fn are_the_same_from_a_parent_from_the_state_before_and_from_scratch() {
         Fingerprints::new().get_states_reference(&store, &states, width, &order),
         scratch
     );
+    // As the search fingerprints a successor, from the parent being expanded, whether or not the
+    // values that changed keep their lengths, on fingerprints that start out knowing no value.
+    let mut from_parents = Fingerprints::new();
+    let mut parent = Parent::default();
+    for (state, row) in states.chunks_exact(width).enumerate() {
+        let Ok(index) = usize::try_from(parents[state]) else {
+            continue;
+        };
+        let parent_row = &states[index * width..][..width];
+        from_parents.set_parent(&store, parent_row, &order, scratch[index], &mut parent);
+        assert_eq!(
+            from_parents.get_child(&store, &mut parent, parent_row, row, &order),
+            scratch[state]
+        );
+    }
     // A tuple's keys are fingerprinted, not interned.
     let count = store.value_count();
     let mut fresh = Fingerprints::new();
@@ -201,4 +216,25 @@ fn forget_the_values_of_a_store_that_was_reset() {
         fingerprints.get_value(&store, second),
         Fingerprints::new().get_value(&store, second)
     );
+}
+
+// Parents whose tails take more lengths than the tables made for tails, so later successors are
+// fingerprinted from the parent's prefix, still as from scratch.
+#[test]
+fn are_the_same_from_a_parent_past_the_tables_for_tails() {
+    let mut store = Store::new();
+    let (one, two) = (store.int(1).unwrap(), store.int(2).unwrap());
+    let order = [0, 1];
+    let mut fingerprints = Fingerprints::new();
+    let mut parent = Parent::default();
+    for length in 1..if cfg!(miri) { 20 } else { 700 } {
+        let text = store.str(&utf16(&"x".repeat(length)));
+        let (parent_row, row) = ([one, text], [two, text]);
+        let expected = Fingerprints::new().get_state(&store, &parent_row, &order);
+        fingerprints.set_parent(&store, &parent_row, &order, expected, &mut parent);
+        assert_eq!(
+            fingerprints.get_child(&store, &mut parent, &parent_row, &row, &order),
+            Fingerprints::new().get_state(&store, &row, &order)
+        );
+    }
 }
