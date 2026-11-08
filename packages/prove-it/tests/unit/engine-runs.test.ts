@@ -39,6 +39,11 @@ describe("the engine's backends in the conformance scripts", () => {
     expect(
       getEngineLine("[engine] Next runs as closures\n[engine] skipped: -dump\n[engine] other\n"),
     ).toBe("skipped: -dump");
+    expect(
+      getEngineLine(
+        "[engine] level of 255 states: 3 workers, coordinator generated 112 of 255\n[engine] checked 9 states on 4 threads in 1 ms with 7 values\n",
+      ),
+    ).toBe("checked 9 states on 4 threads in 1 ms with 7 values");
     expect(classifyEngineLine("handed over after 12 ms: deadlock")).toEqual({
       engine: "handed over",
       reason: "deadlock",

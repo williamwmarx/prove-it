@@ -24,11 +24,12 @@ export const getBackendEnvironment = (backend: string) => ({
   PROVE_IT_ENGINE_BACKEND: backend,
 });
 
-// Notes on how the engine runs, such as closures standing in for generated code, aren't outcomes.
+// Notes on how the engine runs, such as closures standing in for generated code or what the workers
+// did with a level, aren't outcomes.
 export const getEngineLine = (stderr: string) =>
   [...stderr.matchAll(/^\[engine\] (.*)$/gm)]
     .map((match) => match[1])
-    .find((line) => !line.endsWith(" runs as closures"));
+    .find((line) => !line.endsWith(" runs as closures") && !line.startsWith("level of "));
 
 export const classifyEngineLine = (engineLine: string | undefined) => {
   if (engineLine === undefined) return { engine: "not reached", reason: undefined };
