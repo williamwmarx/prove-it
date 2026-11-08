@@ -122,7 +122,17 @@ if (isChecked) {
   }
   const passing = new Set<string>(JSON.parse(readFileSync(PASSING_PATH, "utf8")));
   const verdicts = new Map(results.map((result) => [result.id, result.verdict]));
-  const regressed = [...passing].filter((id) => verdicts.has(id) && verdicts.get(id) !== "match");
+  // A listed model the run's options leave out is skipped; one the run didn't find, such as when
+  // the corpora weren't fetched, fails the run.
+  const isSelected = (id: string) => {
+    const expected = expectedById.get(id);
+    return (
+      expected !== undefined &&
+      (expected.status !== "error" || (expected.tlcMilliseconds ?? 0) <= maximumTlcMilliseconds) &&
+      (filter === undefined || id.includes(filter))
+    );
+  };
+  const regressed = [...passing].filter((id) => isSelected(id) && verdicts.get(id) !== "match");
   const gained = results.filter((result) => result.verdict === "match" && !passing.has(result.id));
   if (gained.length > 0) {
     console.log(`\n${gained.length} models match that passing.json doesn't list:`);
@@ -130,7 +140,7 @@ if (isChecked) {
   }
   if (regressed.length > 0) {
     console.log(`\n${regressed.length} models listed in passing.json no longer match:`);
-    for (const id of regressed) console.log(`  ${id}: ${verdicts.get(id)}`);
+    for (const id of regressed) console.log(`  ${id}: ${verdicts.get(id) ?? "not found"}`);
     process.exitCode = 1;
   }
 }
