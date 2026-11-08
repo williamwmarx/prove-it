@@ -115,3 +115,5 @@ export const compareStateLogs = async (
 export const COMPLETE = /^\[engine\] native: complete: {2}\(\d+\.\d\d ms\)$/;
 export const stopped = (reason: string) =>
   new RegExp(`^\\[engine\\] native: stopped: ${reason} \\(\\d+\\.\\d\\d ms\\)$`);
+export const declined = (reason: string) =>
+  new RegExp(`^\\[engine\\] native: declined: ${reason} \\(\\d+\\.\\d\\d ms\\)$`);
