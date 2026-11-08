@@ -2002,22 +2002,47 @@ made this design change, the code wins, and this records how:
 
 #### M6 acceptance, as run
 
-On the 4-core cloud machine, with `main` at ed37317, against the 733 models with TLC under 20 s:
-- **Enumeration oracle: met.** 100,000 generated sets (200,000 enumerations, a quantifier's order
-  and `x' \in S`'s): the native engine lists the interpreter's elements in the interpreter's
-  order on every one (it stops alone on 140, which costs a hand-over), never answers where TLC
-  fails, and on the 137,810 enumerations all three answer, lists TLC's elements in TLC's order.
-  300 cases are frozen in `tests/conformance/enumeration`.
-- **Builtins: met.** `native-builtins.test.ts` checks each on 40 seeded generated inputs against
-  the TypeScript engine's state log and the interpreter's result, and on inputs the interpreter
-  fails on, where the native engine must stop.
-- **Allowlist empty: met.** The native engine completes 394 models; of the 393 the TypeScript
-  engine completes, it completes all, and gains test55. `coverage-allowlist.json` is `[]`.
-- **M5's acceptance:** state logs identical on all 393 (`engine-coverage --compare-backends
-  --state-logs`), and `off`, `ts` and `rust` reach the same outcome on every model; `bun test`
-  with `BACKEND=rust` 3,091 pass, 0 fail; on the default backend 3,005 pass, 0 fail. The default
-  path is unchanged: every model's bucket and TypeScript `[engine]` line match a sweep of `main`,
-  and `dist/` is byte-identical.
+On the 4-core cloud machine, with `main` at 6448120 merged, against the 733 models with TLC under
+20 s unless it says otherwise:
+- **Enumeration oracle: met.** 100,000 generated sets, 200,000 enumerations (a quantifier's order
+  and `x' \in S`'s), against live TLC built at `TLC_COMMIT`: the native engine lists the
+  interpreter's elements in the interpreter's order on every one, where it doesn't stop alone (140,
+  which costs a hand-over); it never answers where TLC fails; and on the 137,810 enumerations all
+  three answer, it lists TLC's elements in TLC's order. 300 cases are frozen in
+  `tests/conformance/enumeration`.
+- **Builtins: met.** `native-builtins.test.ts` checks each builtin on 40 seeded generated inputs
+  against the TypeScript engine's state log and the interpreter's result, and on inputs the
+  interpreter fails on, where the native engine must stop.
+- **Allowlist empty: met.** The native engine completes 394 models: all 393 the TypeScript engine
+  completes, and test55. `coverage-allowlist.json` is `[]`. Against a sweep of `main`, 76 more
+  models complete in Rust and 38 more search in Rust until a stop the interpreter finishes; 11 that
+  declined for a lazy set are now refused for the TypeScript engine's own reason (a lazy set with no
+  reference, such as a UNION, a filter of an infinite set, a tuple pattern in `\E`, ENABLED).
+- **M5's acceptance: met.** State logs are identical on all 393, with `-nowarning` and without;
+  `off`, `ts` and `rust` reach the same outcome on every model; `PROVE_IT_FP_VERIFY=1` reports no
+  collision in 511 native searches. `conformance --check --compare-backends`: 770 of 770 match on
+  each backend (`main` with `--backend rust`: 770 of 770), the two backends agree on every model.
+  `bun test` with `BACKEND=rust`: 3,094 pass, 0 fail; on the default backend 3,005 pass, 0 fail.
+  `differential --compare-backends --stop-at` on the 114 models the native engine newly reaches,
+  in default and `-tool` mode (1,118 runs): the TypeScript and Rust engines' output is identical on
+  all 228 comparisons, and the forced hand-over equals the run without it on 216 of 218; the other
+  two, MCTxnsMoveRange's, run out of memory in the interpreter, as the interpreter alone and the
+  TypeScript engine's hand-over do there too.
+- **Hand-over at scale.** Rust now searches the VSR state-transfer models (TLC 100 s), whose
+  deadlock hands over millions of states. Decoding them into interpreter values first ran the
+  process out of its heap; `native.ts` now interns the transfer encoding straight to ids and
+  indexes the states in an `Int32Array` table. A search that size still peaks near 12 GB resident
+  in the Rust store, which M7 should look at.
+- **Default path unchanged.** Every model's bucket and TypeScript `[engine]` line match the sweep of
+  `main`. The only TypeScript changes outside tests and scripts are the hand-over decoder in
+  `native.ts`, which only the native backend runs, and the transfer tags it exports.
+- **Time** (binaries, median of 9 interleaved rounds, ms; `main` then this branch): default backend
+  Commit 664 and 616, btree 1,421 and 1,392, MCDisruptor_MPMC 538 and 519, Chameneos 247 and 255,
+  TokenRing 946 and 919, Paxos_MC 2,305 and 2,225, all within noise. Rust backend: Commit 923 and
+  907, btree 1,585 and 1,550, MCDisruptor_MPMC 426 and 422; Chameneos 259 and 161 and Paxos_MC
+  2,330 and 1,450, now searched in Rust; TokenRing 1,021 and 1,152, also now searched in Rust,
+  whose liveness checking asks the interpreter about steps the native tables don't hold (the
+  oracle answers only recorded edges), which M7 should look at.
 
 ### M7. Performance and default on
 
