@@ -58,12 +58,22 @@ const getMainThreadFileSystem = () => {
     : undefined;
 };
 
-// Writes text to the file the setting `name` names, if it names one: PROVE_IT_STATE_LOG names the
-// file a search writes its states to.
-export const writeDebugFile = (name: string, getText: () => string) => {
+// Writes lines to the file the setting `name` names, if it names one, a batch at a time, since a
+// file may be longer than a string can be: PROVE_IT_STATE_LOG names the file a search writes its
+// states to.
+export const writeDebugFile = (name: string, getLines: () => Iterable<string>) => {
   const path = getEnvironment()?.[name];
   const fileSystem = path ? getMainThreadFileSystem() : undefined;
-  if (path && fileSystem) fileSystem.writeFileSync(path, getText());
+  if (!path || !fileSystem) return;
+  fileSystem.writeFileSync(path, "");
+  const batch: string[] = [];
+  for (const line of getLines()) {
+    batch.push(line);
+    if (batch.length < 8192) continue;
+    fileSystem.appendFileSync(path, `${batch.join("\n")}\n`);
+    batch.length = 0;
+  }
+  if (batch.length > 0) fileSystem.appendFileSync(path, `${batch.join("\n")}\n`);
 };
 
 // Appends lines to the file the setting `name` names, from empty, keeping them until there are

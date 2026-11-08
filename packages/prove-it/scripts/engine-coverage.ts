@@ -29,7 +29,7 @@ import {
   getEngineLine,
 } from "./engine-runs";
 import type { ExpectedResult } from "./record-tlc";
-import { getStateLogDifference } from "./state-logs";
+import { getStateLogDifference, readLogLines } from "./state-logs";
 
 interface Run {
   outcome: ModelOutcome | undefined;
@@ -172,7 +172,7 @@ const compareThreads = async (model: CorpusModel, expected: ExpectedResult) => {
   );
   const difference =
     existsSync(serial) && existsSync(parallel)
-      ? getStateLogDifference(readFileSync(serial, "utf8"), readFileSync(parallel, "utf8"))
+      ? getStateLogDifference(readLogLines(serial), readLogLines(parallel))
       : "a run wrote no state log";
   rmSync(directory, { recursive: true, force: true });
   return {

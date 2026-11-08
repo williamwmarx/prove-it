@@ -38,7 +38,7 @@ describe("PROVE_IT_STATE_LOG", () => {
     expect(serial.stderr).toContain("checked 282251 states on 1 thread ");
     expect(parallel.stderr).toMatch(/checked 282251 states on [2-4] threads /);
     expect(parallel.log).toBe(serial.log);
-    expect(getStateLogDifference(serial.log, parallel.log)).toBeUndefined();
+    expect(getStateLogDifference(serial.log.split("\n"), parallel.log.split("\n"))).toBeUndefined();
   }, 60_000);
 
   it("writes each state's parent and TLC's fingerprint, in TLC's order", () => {
@@ -76,7 +76,7 @@ describe("PROVE_IT_STATE_LOG", () => {
     const lines = log.split("\n");
     const record = JSON.parse(lines[4]);
     lines[4] = JSON.stringify([...record.slice(0, 3), "0000000000000000", ...record.slice(4)]);
-    const difference = getStateLogDifference(log, lines.join("\n")) ?? "";
+    const difference = getStateLogDifference(log.split("\n"), lines) ?? "";
     expect(difference.split("\n")[0]).toBe("state 3:");
     expect(difference).toContain(`with fingerprint ${record[3]} from ${record[1]} (`);
     expect(difference).toContain("with fingerprint 0000000000000000 from");

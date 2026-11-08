@@ -25,7 +25,7 @@ export interface StateLog {
 }
 
 export const writeStateLog = (getLog: () => StateLog) =>
-  writeDebugFile("PROVE_IT_STATE_LOG", () => {
+  writeDebugFile("PROVE_IT_STATE_LOG", function* () {
     const log = getLog();
     const width = log.variables.length;
     const actions = new Int32Array(log.count).fill(-1);
@@ -37,15 +37,13 @@ export const writeStateLog = (getLog: () => StateLog) =>
         actions[target] = log.labels[edge];
       }
     }
-    const lines = [
-      JSON.stringify({
-        version: 1,
-        variables: log.variables,
-        count: log.count,
-        stopped: log.stopped ?? null,
-        expanding: log.expanding,
-      }),
-    ];
+    yield JSON.stringify({
+      version: 1,
+      variables: log.variables,
+      count: log.count,
+      stopped: log.stopped ?? null,
+      expanding: log.expanding,
+    });
     for (let index = 0; index < log.count; index++) {
       const encoder = createStateEncoder();
       encoder.encode(
@@ -54,16 +52,13 @@ export const writeStateLog = (getLog: () => StateLog) =>
         ),
       );
       const encoded = encoder.finish();
-      lines.push(
-        JSON.stringify([
-          index,
-          log.parents[index],
-          actions[index],
-          BigInt.asUintN(64, log.fingerprints[index]).toString(16).padStart(16, "0"),
-          [...encoded.words],
-          encoded.strings,
-        ]),
-      );
+      yield JSON.stringify([
+        index,
+        log.parents[index],
+        actions[index],
+        BigInt.asUintN(64, log.fingerprints[index]).toString(16).padStart(16, "0"),
+        [...encoded.words],
+        encoded.strings,
+      ]);
     }
-    return `${lines.join("\n")}\n`;
   });
