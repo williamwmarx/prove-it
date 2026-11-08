@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import type { ModelOutcome } from "./check-model";
@@ -114,6 +114,12 @@ if (isUpdate) {
 }
 
 if (isChecked) {
+  if (!existsSync(PASSING_PATH)) {
+    console.error(
+      `\n--check compares with ${PASSING_PATH}, which doesn't exist. Record it with --update.`,
+    );
+    process.exit(1);
+  }
   const passing = new Set<string>(JSON.parse(readFileSync(PASSING_PATH, "utf8")));
   const verdicts = new Map(results.map((result) => [result.id, result.verdict]));
   const regressed = [...passing].filter((id) => verdicts.has(id) && verdicts.get(id) !== "match");
