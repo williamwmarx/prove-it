@@ -1,6 +1,7 @@
-import type { Expression, SourceLocation, SourceRange } from "../ast";
+import type { Expression, Module, SourceLocation, SourceRange } from "../ast";
 import { TlaSyntaxError } from "../errors";
 import { readAtAsIdentifier, type Token, tokenize } from "../lexer";
+import { parseSanyModule } from "../parser";
 import { getTabStop } from "./lexer";
 import type { SanyLocation } from "./nodes";
 import { getSanyParseError } from "./parse-error";
@@ -196,6 +197,41 @@ export const getUnboxedSource = (source: string) => {
     throw new TlaSyntaxError("SANY rejects a []ASSUME or []PROVE outside an ASSUME/PROVE");
   }
   return unboxed;
+};
+
+// What SANY's parser reads from a module's text: the text's tokens and its module, or the syntax
+// error that stops the parser. SANY's report, its generator, and TLC's order and environment read
+// each text once.
+export interface SanyReading {
+  tokens: Token[];
+  module: Module | TlaSyntaxError;
+  // Whether the parser read the text without the boxes of []ASSUME and []PROVE, so the module is
+  // not the one of the text's tokens.
+  isUnboxed: boolean;
+}
+
+export const readSanyText = (readings: Map<string, SanyReading>, text: string) => {
+  const known = readings.get(text);
+  if (known) return known;
+  // HACK: the parser reports a syntax error by throwing it, and every reader of the text gets it.
+  const read = (): SanyReading => {
+    try {
+      const tokens = tokenize(text);
+      const unboxed = getUnboxedSource(text);
+      const isUnboxed = unboxed !== text;
+      return {
+        tokens,
+        module: parseSanyModule(unboxed, isUnboxed ? undefined : tokens),
+        isUnboxed,
+      };
+    } catch (error) {
+      if (!(error instanceof TlaSyntaxError)) throw error;
+      return { tokens: [], module: error, isUnboxed: false };
+    }
+  };
+  const reading = read();
+  readings.set(text, reading);
+  return reading;
 };
 
 // The comments between a token and the one before it, which SANY's parser attaches to the token.

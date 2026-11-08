@@ -25,8 +25,6 @@ import {
   TlaUnsupportedError,
 } from "../errors";
 import { TEMPORAL_LEVEL } from "../levels";
-import { tokenize } from "../lexer";
-import { parseSanyModule } from "../parser";
 import { SANY_OPERATOR_SYNONYMS } from "../tlc/jar-data";
 import type { TlcVersion } from "../tlc/version";
 import { BUILTIN_LOCATION, createBuiltins, createLevelFields } from "./builtins";
@@ -95,9 +93,10 @@ import {
   getTokenIndex,
   getTokenLocation,
   getTokenSource,
-  getUnboxedSource,
   isBoxToken,
   isToken,
+  readSanyText,
+  type SanyReading,
   type SourceFile,
   type TokenSpan,
 } from "./source";
@@ -182,6 +181,8 @@ interface SanyGenerationOptions {
   // SANY's analysis of TLC master's standard modules, made ahead of time, which stands in for
   // analyzing a module whose text and dependencies are those of a standard module.
   precomputed?: PrecomputedModules;
+  // What the parser read from each module text, which the generator reads from and adds to.
+  readings?: Map<string, SanyReading>;
 }
 
 export interface ModuleDependencies {
@@ -518,6 +519,7 @@ export const generateSanySpecification = (
   // parsing them unless it has to analyze them itself.
   const precomputedNames = new Set<string>();
   const isLoaded = (name: string) => sources.has(name) || precomputedNames.has(name);
+  const readings = options.readings ?? new Map<string, SanyReading>();
 
   const parseSource = (name: string, text: string) => {
     const file = (name === options.rootFileName && options.rootFilePath) || `${name}.tla`;
@@ -525,18 +527,15 @@ export const generateSanySpecification = (
       new TlaSanyFatalError(`Could not parse module ${name} from file ${file}`, name, parseError);
     const lexicalError = options.version === "1.7.4" ? getSany174LexicalError(text) : undefined;
     if (lexicalError !== undefined) throw getParseFailure(lexicalError);
-    // HACK: the parser's errors are not SANY's, so a module that fails to parse gets the report
-    // of SANY's parser, and the parser's own report where SANY's parser would accept the module,
-    // such as for an error SANY finds after parsing. The tokens serve the parser and the source
-    // file alike, unless unboxing changed the text the parser reads.
-    try {
-      const tokens = tokenize(text);
-      const unboxed = getUnboxedSource(text);
-      return { tokens, module: parseSanyModule(unboxed, unboxed === text ? tokens : undefined) };
-    } catch (error) {
-      if (!(error instanceof TlaSyntaxError)) throw error;
-      throw getParseFailure(getSanyParseError(text) ?? `***Parse Error***\n${error.message}`);
+    // The parser's errors are not SANY's, so a module that fails to parse gets the report of
+    // SANY's parser, and the parser's own report where SANY's parser would accept the module, such
+    // as for an error SANY finds after parsing.
+    const reading = readSanyText(readings, text);
+    const module = reading.module;
+    if (module instanceof TlaSyntaxError) {
+      throw getParseFailure(getSanyParseError(text) ?? `***Parse Error***\n${module.message}`);
     }
+    return { tokens: reading.tokens, module };
   };
 
   const parseFile = (name: string, text: string) => {
