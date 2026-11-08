@@ -11,8 +11,14 @@
 // `native/tools/replay expressions` each write a line per root, then a line per state and root, and
 // the lines are compared as they stream. The files of one model are deleted before the next.
 // PROVE_IT_MEMO=off and PROVE_IT_EPOCH_CHECK=1 reach the native side as they are set.
+//
+// --record writes the fixtures of tests/conformance/expressions, which cargo test compares the
+// native side with: in each directory, a spec whose states.cfg makes states.jsonl and whose
+// roots.cfg names the expressions, the IR of roots.cfg as model.ir, and the TypeScript side's
+// lines as expected.txt.
 // Usage: bun scripts/run.ts native-expressions --coverage <engine-coverage --out> [--states 1000]
 //        [--filter text] [--concurrency 2] [--out path]
+//        bun scripts/run.ts native-expressions --record
 
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import {
@@ -20,6 +26,7 @@ import {
   existsSync,
   mkdtempSync,
   openSync,
+  readdirSync,
   readFileSync,
   readSync,
   rmSync,
@@ -48,12 +55,12 @@ import { fromValue } from "../src/engine/convert";
 import { getStateFingerprints, resetFingerprints } from "../src/engine/fingerprint";
 import { Bailout, int, resetStore } from "../src/engine/store";
 import { createEnvironment } from "../src/environment";
-import { getDefinition } from "../src/evaluate";
+import { evaluateStartupDefinitions, getDefinition } from "../src/evaluate";
 import { createSearch } from "../src/search";
 import { createTlcOrder } from "../src/tlc/order";
 import { createStateDecoder } from "../src/transfer";
 import { setStringOrder } from "../src/values";
-import { findModels, getLibraryModules, getOption } from "./corpora";
+import { CONFORMANCE_DIRECTORY, findModels, getLibraryModules, getOption } from "./corpora";
 
 const LOCATION = { line: 0, column: 0 };
 
@@ -76,8 +83,12 @@ const readFirstLines = (path: string, count: number) => {
   return Buffer.concat(chunks).toString("utf8").split("\n").slice(0, count);
 };
 
+// Why an evaluation stopped. TLA+ recursion deep enough to overflow the TypeScript stack is where
+// the native engine stops at its limit, before it overflows its own.
 const describeError = (error: unknown) => {
   if (error instanceof Bailout) return `bail ${error.message}`;
+  if (error instanceof RangeError && error.message === "Maximum call stack size exceeded")
+    return "bail recursion too deep";
   throw error;
 };
 
@@ -96,7 +107,7 @@ const evaluate = (specPath: string, configPath: string, logPath: string, limit: 
   const config = parseConfig(readFileSync(configPath, "utf8"));
   const order = createTlcOrder(source, loadModule);
   setStringOrder(order.getStringOrder(config));
-  const environment = createEnvironment(config, {
+  const specification = createEnvironment(config, {
     source,
     loadModule,
     order,
@@ -110,7 +121,11 @@ const evaluate = (specPath: string, configPath: string, logPath: string, limit: 
     },
     isWarningEnabled: false,
     version: undefined,
-  }).environment;
+  });
+  const environment = specification.environment;
+  // TLC computes the constant definitions when it starts, and the engine reads the values of those
+  // with effects in their place, as check() does.
+  evaluateStartupDefinitions(specification.startupDefinitions, environment);
   const search = createSearch(config, environment, () => order.getDeclarationOrder("variable"));
   const properties = search && toEngineProperties(search.properties);
   if (!search || !properties) throw new Error("the model has no engine properties");
@@ -264,6 +279,19 @@ const readChild = (child: ChildProcess) => {
   };
 };
 
+const checkModel = (specPath: string, configPath: string, environment: NodeJS.ProcessEnv) =>
+  runProcess(
+    process.execPath,
+    [
+      "--stack-size=8000",
+      "--max-old-space-size=6144",
+      join(import.meta.dirname, "check-model.js"),
+      specPath,
+      configPath,
+    ],
+    { ...process.env, PROVE_IT_ENGINE: "debug", PROVE_IT_WORKERS: "1", ...environment },
+  );
+
 const compareModel = async (
   model: { id: string; specPath: string; configPath: string },
   states: number,
@@ -281,31 +309,16 @@ const compareModel = async (
     difference: undefined,
   };
   try {
-    const run = await runProcess(
-      process.execPath,
-      [
-        "--stack-size=8000",
-        "--max-old-space-size=6144",
-        join(import.meta.dirname, "check-model.js"),
-        model.specPath,
-        model.configPath,
-      ],
-      {
-        ...process.env,
-        PROVE_IT_ENGINE: "debug",
-        PROVE_IT_WORKERS: "1",
-        PROVE_IT_IR_DUMP: irPath,
-        PROVE_IT_STATE_LOG: logPath,
-      },
-    );
+    const run = await checkModel(model.specPath, model.configPath, {
+      PROVE_IT_IR_DUMP: irPath,
+      PROVE_IT_STATE_LOG: logPath,
+    });
     comparison.engineLine = run.stderr
       .split("\n")
       .find((line) => /^\[engine\] (checked|handed over|found)/.test(line))
       ?.slice("[engine] ".length);
-    if (!existsSync(irPath)) {
-      comparison.difference = "no IR";
-      return comparison;
-    }
+    // The engine never reached the model, or declined it before its IR.
+    if (!existsSync(irPath)) return comparison;
     // A search that stopped before it wrote a log still has roots to compile.
     if (!existsSync(logPath)) writeFileSync(logPath, "{}\n");
     const typescript = readChild(
@@ -376,9 +389,45 @@ const compareModel = async (
   }
 };
 
+const recordFixtures = async () => {
+  const fixtures = join(CONFORMANCE_DIRECTORY, "expressions");
+  for (const name of readdirSync(fixtures).sort()) {
+    const directory = join(fixtures, name);
+    const specPath = join(directory, `${name}.tla`);
+    const logPath = join(directory, "states.jsonl");
+    const irPath = join(directory, "model.ir");
+    await checkModel(specPath, join(directory, "states.cfg"), { PROVE_IT_STATE_LOG: logPath });
+    await checkModel(specPath, join(directory, "roots.cfg"), { PROVE_IT_IR_DUMP: irPath });
+    const evaluated = spawnSync(
+      process.execPath,
+      [
+        "--stack-size=8000",
+        process.argv[1],
+        "--evaluate",
+        specPath,
+        join(directory, "roots.cfg"),
+        logPath,
+        "1000",
+      ],
+      { encoding: "utf8", env: { ...process.env, PROVE_IT_ENGINE: "1" } },
+    );
+    if (evaluated.status !== 0 || !existsSync(irPath)) {
+      console.error(`${name}: ${evaluated.stderr}`);
+      process.exit(1);
+    }
+    writeFileSync(join(directory, "expected.txt"), evaluated.stdout);
+    const lines = evaluated.stdout.split("\n").filter((line) => line !== "");
+    console.log(
+      `${name}: ${lines.filter((line) => line.startsWith("root ")).length} roots, ${lines.filter((line) => !line.startsWith("root ")).length} values`,
+    );
+  }
+};
+
 if (process.argv[2] === "--evaluate") {
   const [specPath, configPath, logPath, limit] = process.argv.slice(3);
   evaluate(specPath, configPath, logPath, Number(limit));
+} else if (process.argv.includes("--record")) {
+  await recordFixtures();
 } else {
   const coveragePath = getOption("--coverage");
   const filter = getOption("--filter");

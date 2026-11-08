@@ -1,0 +1,80 @@
+root 0 invariant Sums: ok
+root 1 invariant Factorials: ok
+root 2 invariant Parity: ok
+root 3 invariant HigherOrder: ok
+root 4 invariant LetRecursive: ok
+root 5 invariant LetFunction: ok
+root 6 invariant Outside: ok
+root 7 invariant Deep: ok
+root 8 invariant TooDeep: ok
+root 9 invariant Fold: ok
+0 0 fp ed25d25eb15e6737
+0 1 fp 3d9c8628874bbb0a
+0 2 fp 7fdd7bd70c2d7dbd
+0 3 fp eb1369b97e1df5aa
+0 4 fp d0ba3e880dcdd983
+0 5 fp b131d4d5ce419610
+0 6 bail applied a recursive function outside its domain
+0 7 fp 11fe1fcc1def110f
+0 8 bail recursion too deep
+0 9 fp bbfdc940f166fed3
+1 0 fp 3d9c8628874bbb0a
+1 1 fp 3d9c8628874bbb0a
+1 2 fp 2a6bc273546b0683
+1 3 fp f3424517a09f4cbd
+1 4 fp f67893cfa654c4b3
+1 5 fp 112e4bb7bd156aa6
+1 6 bail applied a recursive function outside its domain
+1 7 fp 1939bf191206fd56
+1 8 bail recursion too deep
+1 9 fp 4bb08b96a3a9ad43
+2 0 fp bec71f98f7ad76dd
+2 1 fp 6e7e4beec1b8aae0
+2 2 fp 7fdd7bd70c2d7dbd
+2 3 fp dbb130e4c3188784
+2 4 fp 9d3f64075affe3e3
+2 5 fp 2db7e793a5c42b89
+2 6 bail applied a recursive function outside its domain
+2 7 fp d3d9b2d8c72c0c60
+2 8 bail recursion too deep
+2 9 fp 6d7226d10830b073
+3 0 fp 4ae049d23cb844e3
+3 1 fp 4ae049d23cb844e3
+3 2 fp 2a6bc273546b0683
+3 3 fp c3e01c4a1d9a3e93
+3 4 fp bbfdc940f166fed3
+3 5 fp 89ee0ca9c054d993
+3 6 bail applied a recursive function outside its domain
+3 7 fp 7f871862833e0861
+3 8 bail recursion too deep
+3 9 fp 0635d119f49b9723
+4 0 fp 27424f973bb976e6
+4 1 fp 3661ded4bf5c033d
+4 2 fp 7fdd7bd70c2d7dbd
+4 3 fp 8a57db02041711f6
+4 4 fp 4bb08b96a3a9ad43
+4 5 fp 55e99596970baa90
+4 6 bail applied a recursive function outside its domain
+4 7 fp 3cd76db03476ffa0
+4 8 bail recursion too deep
+4 9 fp 20f77c5e5f028a13
+5 0 fp d36519ddf0ac44d8
+5 1 fp 3d0abf18a2020de2
+5 2 fp 2a6bc273546b0683
+5 3 fp 9206f7acda95a8e1
+5 4 fp 6d7226d10830b073
+5 5 fp e1ca5195a45aca0b
+5 6 bail applied a recursive function outside its domain
+5 7 fp c078aa8f70728b15
+5 8 bail recursion too deep
+5 9 fp c48665e94dc845ae
+6 0 fp 8b7a8ce78e48ed05
+6 1 fp 0419128a334199d5
+6 2 fp 7fdd7bd70c2d7dbd
+6 3 fp baf5825fb91263d8
+6 4 fp 0635d119f49b9723
+6 5 fp 3692b0436e022516
+6 6 bail applied a recursive function outside its domain
+6 7 fp 4e5591aae54b96ba
+6 8 bail recursion too deep
+6 9 fp e244c8aee651589e

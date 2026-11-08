@@ -1,0 +1,375 @@
+root 0 invariant Operations: ok
+root 1 invariant Powers: ok
+root 2 invariant Filtered: ok
+root 3 invariant Mapped: ok
+root 4 invariant Products: ok
+root 5 invariant Members: ok
+root 6 invariant Infinite: ok
+root 7 invariant Mistyped: ok
+root 8 invariant ModelValues: ok
+root 9 invariant Incomparable: ok
+root 10 invariant Choice: ok
+root 11 invariant Unions: ok
+root 12 invariant Lazy: ok
+root 13 invariant Combined: ok
+root 14 invariant Large: ok
+0 0 fp 56b4ce8e95a7a557
+0 1 fp f3c8a8a9b453b56a
+0 2 fp d0ba3e880dcdd983
+0 3 fp 09bfe0c41a365a4a
+0 4 fp 3d08ee9239c4091f
+0 5 fp 4481ccf9434be010
+0 6 fp dcc594aa903aa985
+0 7 bail a mistyped membership in Nat
+0 8 fp f0892fd9d730275b
+0 9 fp b1914e3e40096eb5
+0 10 bail CHOOSE found no element
+0 11 fp ece303dc6f239923
+0 12 fp ea2d200f6669c366
+0 13 fp 5318f189ed6c2a9c
+0 14 bail a power set too large to build
+1 0 fp 56b4ce8e95a7a557
+1 1 fp f3c8a8a9b453b56a
+1 2 fp d0ba3e880dcdd983
+1 3 fp 09bfe0c41a365a4a
+1 4 fp 3d08ee9239c4091f
+1 5 fp 4481ccf9434be010
+1 6 fp dcc594aa903aa985
+1 7 bail a mistyped membership in Nat
+1 8 fp f0892fd9d730275b
+1 9 fp b1914e3e40096eb5
+1 10 bail CHOOSE found no element
+1 11 fp 1aa86b05b4084880
+1 12 fp ea2d200f6669c366
+1 13 fp 5318f189ed6c2a9c
+1 14 bail a power set too large to build
+2 0 fp 56b4ce8e95a7a557
+2 1 fp f3c8a8a9b453b56a
+2 2 fp d0ba3e880dcdd983
+2 3 fp 09bfe0c41a365a4a
+2 4 fp 3d08ee9239c4091f
+2 5 fp 4481ccf9434be010
+2 6 fp dcc594aa903aa985
+2 7 bail a mistyped membership in Nat
+2 8 fp f598f204d9727e73
+2 9 fp b1914e3e40096eb5
+2 10 bail CHOOSE found no element
+2 11 fp 1aa86b05b4084880
+2 12 fp ea2d200f6669c366
+2 13 fp 5318f189ed6c2a9c
+2 14 bail a power set too large to build
+3 0 fp 9b6fd73173f6fab7
+3 1 fp 41d3bcea4a8e4c4b
+3 2 fp d0ba3e880dcdd983
+3 3 fp 5ccd008cfecaac69
+3 4 fp 9cdd98182e1d5a66
+3 5 fp b8aaed40600ab487
+3 6 fp dcc594aa903aa985
+3 7 bail a mistyped membership in Nat
+3 8 fp f0892fd9d730275b
+3 9 bail values TLC can't compare
+3 10 bail CHOOSE found no element
+3 11 fp ece303dc6f239923
+3 12 fp d4535580a729085c
+3 13 fp 5318f189ed6c2a9c
+3 14 bail a power set too large to build
+4 0 fp 9b6fd73173f6fab7
+4 1 fp 41d3bcea4a8e4c4b
+4 2 fp d0ba3e880dcdd983
+4 3 fp 5ccd008cfecaac69
+4 4 fp 9cdd98182e1d5a66
+4 5 fp b8aaed40600ab487
+4 6 fp dcc594aa903aa985
+4 7 bail a mistyped membership in Nat
+4 8 fp f0892fd9d730275b
+4 9 bail values TLC can't compare
+4 10 bail CHOOSE found no element
+4 11 fp 1aa86b05b4084880
+4 12 fp d4535580a729085c
+4 13 fp 5318f189ed6c2a9c
+4 14 bail a power set too large to build
+5 0 fp 9b6fd73173f6fab7
+5 1 fp 41d3bcea4a8e4c4b
+5 2 fp d0ba3e880dcdd983
+5 3 fp 5ccd008cfecaac69
+5 4 fp 9cdd98182e1d5a66
+5 5 fp b8aaed40600ab487
+5 6 fp dcc594aa903aa985
+5 7 bail a mistyped membership in Nat
+5 8 fp f598f204d9727e73
+5 9 bail values TLC can't compare
+5 10 bail CHOOSE found no element
+5 11 fp 1aa86b05b4084880
+5 12 fp d4535580a729085c
+5 13 fp 5318f189ed6c2a9c
+5 14 bail a power set too large to build
+6 0 fp 7870f5f9f25f8701
+6 1 fp 1151f3a2c4f792ff
+6 2 fp f67893cfa654c4b3
+6 3 fp e10518d5fb37c599
+6 4 fp 1f05c4340439520c
+6 5 fp 4481ccf9434be010
+6 6 fp dcc594aa903aa985
+6 7 bail a mistyped membership in Nat
+6 8 fp f0892fd9d730275b
+6 9 bail values TLC can't compare
+6 10 bail CHOOSE found no element
+6 11 fp ece303dc6f239923
+6 12 fp 4d55347f3b9be5ae
+6 13 fp 5318f189ed6c2a9c
+6 14 bail a power set too large to build
+7 0 fp 7870f5f9f25f8701
+7 1 fp 1151f3a2c4f792ff
+7 2 fp f67893cfa654c4b3
+7 3 fp e10518d5fb37c599
+7 4 fp 1f05c4340439520c
+7 5 fp 4481ccf9434be010
+7 6 fp dcc594aa903aa985
+7 7 bail a mistyped membership in Nat
+7 8 fp f0892fd9d730275b
+7 9 bail values TLC can't compare
+7 10 bail CHOOSE found no element
+7 11 fp 1aa86b05b4084880
+7 12 fp 4d55347f3b9be5ae
+7 13 fp 5318f189ed6c2a9c
+7 14 bail a power set too large to build
+8 0 fp 7870f5f9f25f8701
+8 1 fp 1151f3a2c4f792ff
+8 2 fp f67893cfa654c4b3
+8 3 fp e10518d5fb37c599
+8 4 fp 1f05c4340439520c
+8 5 fp 4481ccf9434be010
+8 6 fp dcc594aa903aa985
+8 7 bail a mistyped membership in Nat
+8 8 fp f598f204d9727e73
+8 9 bail values TLC can't compare
+8 10 bail CHOOSE found no element
+8 11 fp 1aa86b05b4084880
+8 12 fp 4d55347f3b9be5ae
+8 13 fp 5318f189ed6c2a9c
+8 14 bail a power set too large to build
+9 0 fp d2a5d26ae142b786
+9 1 fp ccdcef718a988013
+9 2 fp f67893cfa654c4b3
+9 3 fp 48f15bedbecf3044
+9 4 fp 61b20fd01ddaaa2a
+9 5 fp 4481ccf9434be010
+9 6 fp dcc594aa903aa985
+9 7 bail a mistyped membership in Nat
+9 8 fp f0892fd9d730275b
+9 9 bail values TLC can't compare
+9 10 fp bbfdc940f166fed3
+9 11 fp ece303dc6f239923
+9 12 fp 3a5714d5b00a4100
+9 13 fp 5318f189ed6c2a9c
+9 14 bail a power set too large to build
+10 0 fp d2a5d26ae142b786
+10 1 fp ccdcef718a988013
+10 2 fp f67893cfa654c4b3
+10 3 fp 48f15bedbecf3044
+10 4 fp 61b20fd01ddaaa2a
+10 5 fp 4481ccf9434be010
+10 6 fp dcc594aa903aa985
+10 7 bail a mistyped membership in Nat
+10 8 fp f0892fd9d730275b
+10 9 bail values TLC can't compare
+10 10 fp bbfdc940f166fed3
+10 11 fp 1aa86b05b4084880
+10 12 fp 3a5714d5b00a4100
+10 13 fp 5318f189ed6c2a9c
+10 14 bail a power set too large to build
+11 0 fp d2a5d26ae142b786
+11 1 fp ccdcef718a988013
+11 2 fp f67893cfa654c4b3
+11 3 fp 48f15bedbecf3044
+11 4 fp 61b20fd01ddaaa2a
+11 5 fp 4481ccf9434be010
+11 6 fp dcc594aa903aa985
+11 7 bail a mistyped membership in Nat
+11 8 fp f598f204d9727e73
+11 9 bail values TLC can't compare
+11 10 fp bbfdc940f166fed3
+11 11 fp 1aa86b05b4084880
+11 12 fp 3a5714d5b00a4100
+11 13 fp 5318f189ed6c2a9c
+11 14 bail a power set too large to build
+12 0 fp 2ecae430bd1f708d
+12 1 fp 4c711062cb837397
+12 2 fp f67893cfa654c4b3
+12 3 fp 661eea67870b07cb
+12 4 fp de98b5cf6a2636ab
+12 5 fp b8aaed40600ab487
+12 6 fp 62c131c7451a4ca0
+12 7 bail a mistyped membership in Nat
+12 8 fp f0892fd9d730275b
+12 9 bail values TLC can't compare
+12 10 bail CHOOSE found no element
+12 11 fp ece303dc6f239923
+12 12 fp 7a8cd5eef11bc49f
+12 13 fp 5318f189ed6c2a9c
+12 14 bail a power set too large to build
+13 0 fp 2ecae430bd1f708d
+13 1 fp 4c711062cb837397
+13 2 fp f67893cfa654c4b3
+13 3 fp 661eea67870b07cb
+13 4 fp de98b5cf6a2636ab
+13 5 fp b8aaed40600ab487
+13 6 fp 62c131c7451a4ca0
+13 7 bail a mistyped membership in Nat
+13 8 fp f0892fd9d730275b
+13 9 bail values TLC can't compare
+13 10 bail CHOOSE found no element
+13 11 fp 1aa86b05b4084880
+13 12 fp 7a8cd5eef11bc49f
+13 13 fp 5318f189ed6c2a9c
+13 14 bail a power set too large to build
+14 0 fp 2ecae430bd1f708d
+14 1 fp 4c711062cb837397
+14 2 fp f67893cfa654c4b3
+14 3 fp 661eea67870b07cb
+14 4 fp de98b5cf6a2636ab
+14 5 fp b8aaed40600ab487
+14 6 fp 62c131c7451a4ca0
+14 7 bail a mistyped membership in Nat
+14 8 fp f598f204d9727e73
+14 9 bail values TLC can't compare
+14 10 bail CHOOSE found no element
+14 11 fp 1aa86b05b4084880
+14 12 fp 7a8cd5eef11bc49f
+14 13 fp 5318f189ed6c2a9c
+14 14 bail a power set too large to build
+15 0 fp 54bf8ffb26b98dac
+15 1 fp 1cb29da10d202863
+15 2 fp f67893cfa654c4b3
+15 3 fp cfeaa95fc2f3f216
+15 4 fp 910706c5268b7cab
+15 5 fp b8aaed40600ab487
+15 6 fp dcc594aa903aa985
+15 7 bail a mistyped membership in Nat
+15 8 fp f0892fd9d730275b
+15 9 bail values TLC can't compare
+15 10 fp bbfdc940f166fed3
+15 11 fp ece303dc6f239923
+15 12 fp 0d8ef5447a8a6031
+15 13 fp 5318f189ed6c2a9c
+15 14 bail a power set too large to build
+16 0 fp 54bf8ffb26b98dac
+16 1 fp 1cb29da10d202863
+16 2 fp f67893cfa654c4b3
+16 3 fp cfeaa95fc2f3f216
+16 4 fp 910706c5268b7cab
+16 5 fp b8aaed40600ab487
+16 6 fp dcc594aa903aa985
+16 7 bail a mistyped membership in Nat
+16 8 fp f0892fd9d730275b
+16 9 bail values TLC can't compare
+16 10 fp bbfdc940f166fed3
+16 11 fp 1aa86b05b4084880
+16 12 fp 0d8ef5447a8a6031
+16 13 fp 5318f189ed6c2a9c
+16 14 bail a power set too large to build
+17 0 fp 54bf8ffb26b98dac
+17 1 fp 1cb29da10d202863
+17 2 fp f67893cfa654c4b3
+17 3 fp cfeaa95fc2f3f216
+17 4 fp 910706c5268b7cab
+17 5 fp b8aaed40600ab487
+17 6 fp dcc594aa903aa985
+17 7 bail a mistyped membership in Nat
+17 8 fp f598f204d9727e73
+17 9 bail values TLC can't compare
+17 10 fp bbfdc940f166fed3
+17 11 fp 1aa86b05b4084880
+17 12 fp 0d8ef5447a8a6031
+17 13 fp 5318f189ed6c2a9c
+17 14 bail a power set too large to build
+18 0 fp d7dc088f95d3ff32
+18 1 fp 2bd0b4de12a760f2
+18 2 fp 9d3f64075affe3e3
+18 3 fp 46c93a037be9b1ad
+18 4 fp 2c3d4467fcf401c8
+18 5 fp 4481ccf9434be010
+18 6 fp dcc594aa903aa985
+18 7 bail a mistyped membership in Nat
+18 8 fp f0892fd9d730275b
+18 9 bail values TLC can't compare
+18 10 fp bbfdc940f166fed3
+18 11 fp ece303dc6f239923
+18 12 fp 8ea850349c9576cd
+18 13 fp 5318f189ed6c2a9c
+18 14 bail a power set too large to build
+19 0 fp d7dc088f95d3ff32
+19 1 fp 2bd0b4de12a760f2
+19 2 fp 9d3f64075affe3e3
+19 3 fp 46c93a037be9b1ad
+19 4 fp 2c3d4467fcf401c8
+19 5 fp 4481ccf9434be010
+19 6 fp dcc594aa903aa985
+19 7 bail a mistyped membership in Nat
+19 8 fp f0892fd9d730275b
+19 9 bail values TLC can't compare
+19 10 fp bbfdc940f166fed3
+19 11 fp 1aa86b05b4084880
+19 12 fp 8ea850349c9576cd
+19 13 fp 5318f189ed6c2a9c
+19 14 bail a power set too large to build
+20 0 fp d7dc088f95d3ff32
+20 1 fp 2bd0b4de12a760f2
+20 2 fp 9d3f64075affe3e3
+20 3 fp 46c93a037be9b1ad
+20 4 fp 2c3d4467fcf401c8
+20 5 fp 4481ccf9434be010
+20 6 fp dcc594aa903aa985
+20 7 bail a mistyped membership in Nat
+20 8 fp f598f204d9727e73
+20 9 bail values TLC can't compare
+20 10 fp bbfdc940f166fed3
+20 11 fp 1aa86b05b4084880
+20 12 fp 8ea850349c9576cd
+20 13 fp 5318f189ed6c2a9c
+20 14 bail a power set too large to build
+21 0 fp 1f68764a04ebb4fe
+21 1 fp df0e3ddc79ac166b
+21 2 fp 9d3f64075affe3e3
+21 3 fp 2a08406545134cf8
+21 4 fp db29a926e559d77c
+21 5 fp b8aaed40600ab487
+21 6 fp 62c131c7451a4ca0
+21 7 bail a mistyped membership in Nat
+21 8 fp f0892fd9d730275b
+21 9 bail values TLC can't compare
+21 10 fp bbfdc940f166fed3
+21 11 fp ece303dc6f239923
+21 12 fp af5a47a36a6c1d49
+21 13 fp 5318f189ed6c2a9c
+21 14 bail a power set too large to build
+22 0 fp 1f68764a04ebb4fe
+22 1 fp df0e3ddc79ac166b
+22 2 fp 9d3f64075affe3e3
+22 3 fp 2a08406545134cf8
+22 4 fp db29a926e559d77c
+22 5 fp b8aaed40600ab487
+22 6 fp 62c131c7451a4ca0
+22 7 bail a mistyped membership in Nat
+22 8 fp f0892fd9d730275b
+22 9 bail values TLC can't compare
+22 10 fp bbfdc940f166fed3
+22 11 fp 1aa86b05b4084880
+22 12 fp af5a47a36a6c1d49
+22 13 fp 5318f189ed6c2a9c
+22 14 bail a power set too large to build
+23 0 fp 1f68764a04ebb4fe
+23 1 fp df0e3ddc79ac166b
+23 2 fp 9d3f64075affe3e3
+23 3 fp 2a08406545134cf8
+23 4 fp db29a926e559d77c
+23 5 fp b8aaed40600ab487
+23 6 fp 62c131c7451a4ca0
+23 7 bail a mistyped membership in Nat
+23 8 fp f598f204d9727e73
+23 9 bail values TLC can't compare
+23 10 fp bbfdc940f166fed3
+23 11 fp 1aa86b05b4084880
+23 12 fp af5a47a36a6c1d49
+23 13 fp 5318f189ed6c2a9c
+23 14 bail a power set too large to build
