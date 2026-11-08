@@ -573,6 +573,28 @@ describe("the CLI reports results like TLC", () => {
     ]);
   });
 
+  it("rejects a spec whose file name differs from its module name like TLC 1.7.4", () => {
+    const result = runCliWith("cli-module-name", ["-Dtla-ts.tlc=1.7.4", "tlc2.TLC", "Renamed"]);
+    expect(result.status).toBe(150);
+    expect(getSteadyLines(result.stdout)).toEqual([
+      "",
+      "Fatal errors while parsing TLA+ spec in file Renamed",
+      "",
+      "tla2sany.semantic.AbortException",
+      "*** Abort messages: 1",
+      "",
+      "Unknown location",
+      "",
+      "File name 'Renamed' does not match the name 'Other' of the top level module it contains.",
+      "",
+      "",
+      "Starting... (_)",
+      "Error: Parsing or semantic analysis failed.",
+      "Finished in _ at (_)",
+      "",
+    ]);
+  });
+
   it("prints SANY's message for an extended module it cannot parse like TLC", () => {
     const result = runCli("cli-parse-error", "Root");
     expect(result.status).toBe(150);

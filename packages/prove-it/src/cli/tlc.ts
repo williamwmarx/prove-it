@@ -39,7 +39,6 @@ import {
 import { describeRange } from "../evaluate";
 import { EXIT_STATUS, setExitCode } from "../exit-codes";
 import { check } from "../parallel";
-import { parseModule } from "../parser";
 import { SANY_174_STANDARD_MODULES, SANY_STANDARD_MODULES } from "../sany/modules";
 import { getSanyReport, type SanyModuleOrigin } from "../sany/report";
 import { readSanySnapshot } from "../sany/snapshot";
@@ -837,15 +836,9 @@ const checkSpec = async (
     printFinished();
     return EXIT_STATUS.specParseError;
   }
+  // SANY rejected a spec whose module isn't named for its file, so check reads the spec's module.
   try {
     const source = readFileSync(specPath, "utf8");
-    const moduleName = parseModule(source).name;
-    if (moduleName !== fileName) {
-      throw new TlaSanyFatalError(
-        `File name '${fileName}' does not match the name '${moduleName}' of the top level module it contains.`,
-        undefined,
-      );
-    }
     const result = await check({
       workers,
       livenessCheck: ["final", "seqfinal", "off"].includes(livenessCheck) ? "final" : "default",
