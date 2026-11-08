@@ -236,7 +236,7 @@ fn stops_where_tlc_fails_to_compare_for_the_typescript_stores_reasons() {
     assert_eq!(store.equals(typed, untyped), Ok(false));
     assert_eq!(
         store.is_member(key, set),
-        Err(Bail("membership of a value TLC can't compare"))
+        Err(Bail("values TLC can't compare"))
     );
     // The first element fails where the last doesn't: models come first, ordered by rank.
     let models = [other_type, untyped];
@@ -268,6 +268,65 @@ fn stops_where_tlc_fails_to_compare_for_the_typescript_stores_reasons() {
     // An untyped model value is less than any other value.
     let sorted = store.set_of_sorted(&[untyped, one]);
     assert_eq!(store.set_of(&[one, untyped]), Ok(sorted));
+}
+
+// Cases the value oracle found: TLC's SetEnumValue.member binary-searches the set with the
+// element's compareTo, and fails where that fails.
+#[test]
+fn stops_a_membership_where_tlcs_search_of_the_set_fails_to_compare() {
+    let mut store = Store::new();
+    let keys = [str(&mut store, "a"), str(&mut store, "b")];
+    let record = |store: &mut Store, values: &[i64]| {
+        let shape = store.create_record_shape(&keys[..values.len()]);
+        let values = ints(store, values);
+        store.record_of(&shape, &values)
+    };
+    let (one, two) = (store.int(1).unwrap(), store.int(2).unwrap());
+    let tuples = [store.tuple_of(&[one]), store.tuple_of(&[two])];
+    let tuples = store.set_of(&tuples).unwrap();
+    let small = record(&mut store, &[0]);
+    let pair = record(&mut store, &[0, 1]);
+    let inner = record(&mut store, &[1]);
+    let records = store.set_of(&[inner]).unwrap();
+    let nested = store.tuple_of(&[inner]);
+    let nested = store.set_of(&[nested]).unwrap();
+    let long: Vec<Id> = (0..40)
+        .map(|value| {
+            let value = store.int(value).unwrap();
+            store.tuple_of(&[value])
+        })
+        .collect();
+    let long = store.set_of(&long).unwrap();
+    let domain = ints(&mut store, &[0, 1]);
+    let range = ints(&mut store, &[5, 5]);
+    let function = store.function_of_sorted(&domain, &range);
+    let functions = store.set_of(&[function]).unwrap();
+    let tuple = store.tuple_of(&[one]);
+    let deep = store.tuple_of(&[two]);
+    let deep = store.tuple_of(&[deep]);
+    let cases = [
+        (small, tuples, "values TLC can't compare"),
+        (pair, tuples, "record compared with a function"),
+        (tuple, records, "values TLC can't compare"),
+        (deep, nested, "values TLC can't compare"),
+        (small, long, "values TLC can't compare"),
+        (small, functions, "record compared with a function"),
+    ];
+    for (element, set, reason) in cases {
+        assert_eq!(store.is_member(element, set), Err(Bail(reason)));
+    }
+}
+
+#[test]
+fn stops_a_membership_tlcs_search_passes_but_its_equals_of_a_set_enumeration_fails() {
+    let mut store = Store::new();
+    // A_x ranks before m, so TRUE's search ends past m without comparing it with A_x. TLC checks a
+    // set it hasn't normalized with each element's equals, which fails on A_x.
+    let elements = [store.model(&utf16("A_x")), store.model(&utf16("m"))];
+    let set = store.set_of(&elements).unwrap();
+    assert_eq!(store.is_member(TRUE, set), Err(Bail("typed model value")));
+    let other = store.model(&utf16("p"));
+    assert_eq!(store.is_member(other, set), Ok(false));
 }
 
 // A deterministic generator, so that a failure names its seed.

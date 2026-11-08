@@ -31,6 +31,7 @@ import {
   shareStore,
   sliceTuple,
   str,
+  TRUE,
   tupleOf,
 } from "../../src/engine/store";
 import { createStateEncoder } from "../../src/transfer";
@@ -202,10 +203,7 @@ describe.each(STORES)("the engine's %s store", (mode, store) => {
       [() => store.equals(store.int(1), store.str("a")), "equality of values TLC can't compare"],
       [() => store.compare(typed, store.int(1)), "typed model value"],
       [() => store.equals(typed, store.model("B_y")), "differently typed model values"],
-      [
-        () => store.isMember(store.str("a"), store.setOf(ints([1, 2]))),
-        "membership of a value TLC can't compare",
-      ],
+      [() => store.isMember(store.str("a"), store.setOf(ints([1, 2]))), "values TLC can't compare"],
       [() => store.setOf([store.int(1), store.str("a")]), "values TLC can't compare"],
       [() => store.isMember(typed, models), "differently typed model values"],
       [() => store.except(fn, store.int(5), store.int(0)), "EXCEPT outside the domain"],
@@ -216,6 +214,45 @@ describe.each(STORES)("the engine's %s store", (mode, store) => {
     expect(store.setOf([store.int(1), store.model("m")])).toBe(
       store.setOfSorted([store.model("m"), store.int(1)], 2),
     );
+  });
+
+  // Cases the value oracle found: TLC's SetEnumValue.member binary-searches the set with the
+  // element's compareTo, and fails where that fails.
+  it("stops a membership where TLC's search of the set fails to compare", () => {
+    const record = (values: number[]) =>
+      store.recordOf(
+        store.createRecordShape(values.map((_, index) => store.str("abc"[index]))),
+        values.map(store.int),
+      );
+    const tuples = store.setOf([1, 2].map((value) => store.tupleOf([store.int(value)], 1)));
+    const nested = store.setOf([store.tupleOf([record([1])], 1)]);
+    const long = store.setOf(
+      Array.from({ length: 40 }, (_, index) => store.tupleOf([store.int(index)], 1)),
+    );
+    const fn = store.functionOfSorted(ints([0, 1]), ints([5, 5]), 2);
+    const cases: [() => unknown, string][] = [
+      [() => store.isMember(record([0]), tuples), "values TLC can't compare"],
+      [() => store.isMember(record([0, 1]), tuples), "record compared with a function"],
+      [
+        () => store.isMember(store.tupleOf([store.int(1)], 1), store.setOf([record([1])])),
+        "values TLC can't compare",
+      ],
+      [
+        () => store.isMember(store.tupleOf([store.tupleOf(ints([2]), 1)], 1), nested),
+        "values TLC can't compare",
+      ],
+      [() => store.isMember(record([0]), long), "values TLC can't compare"],
+      [() => store.isMember(record([0]), store.setOf([fn])), "record compared with a function"],
+    ];
+    for (const [operation, reason] of cases) expect(operation).toThrow(new Bailout(reason));
+  });
+
+  it("stops a membership TLC's search passes but its equals of a set enumeration fails", () => {
+    // A_x ranks before m, so TRUE's search ends past m without comparing it with A_x. TLC checks a
+    // set it hasn't normalized with each element's equals, which fails on A_x.
+    const set = store.setOf([store.model("A_x"), store.model("m")]);
+    expect(() => store.isMember(TRUE, set)).toThrow(new Bailout("typed model value"));
+    expect(store.isMember(store.model("p"), set)).toBe(false);
   });
 });
 
