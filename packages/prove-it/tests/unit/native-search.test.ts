@@ -473,6 +473,97 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     );
   });
 
+  it("prints once where the walk evaluates an expression as TLC does", async () => {
+    const cases: [string[], string, boolean][] = [
+      [
+        [
+          "Init == x = 0 /\\ \\A i \\in {1, 2} : (y = 0 \\/ y = 1) /\\ Print(<<i, y>>, TRUE)",
+          "Next == IF Print(x < 2, x < 2) THEN x' = x + 1 /\\ y' = y ELSE x' = 0 /\\ y' = 1 - y",
+        ],
+        "INIT Init\nNEXT Next",
+        false,
+      ],
+      [
+        [
+          "Init == x = 0 /\\ y = 0",
+          "Next == /\\ CASE Print(x, x = 0) -> x' = 1 [] OTHER -> x' = 0",
+          "        /\\ (Print(y, y = 1) => y' = 0) /\\ y' = 1 - y",
+        ],
+        "INIT Init\nNEXT Next",
+        false,
+      ],
+      [
+        [
+          "Init == x = 0 /\\ y = 0",
+          "Next == \\E i \\in IF Print(<<x, y>>, TRUE) THEN {1, 2} ELSE {} :",
+          "  \\A j \\in {3, 4} : x' = (x + i) % 3 /\\ y' = 0 /\\ Print(<<i, j, x'>>, TRUE)",
+        ],
+        "INIT Init\nNEXT Next",
+        false,
+      ],
+      [
+        [
+          "C == Print(1, 1)",
+          "Init == x = 0 /\\ y = 0",
+          "Next == LET n == (x + C) % 3",
+          "        IN x' = n /\\ y' = y /\\ ~Print(x', FALSE) /\\ Print(y', y') = y'",
+          "           /\\ (\\E i \\in {1, 2} : TRUE)",
+        ],
+        "INIT Init\nNEXT Next",
+        true,
+      ],
+    ];
+    for (const [actions, config, isWarningEnabled] of cases) {
+      const body = ["EXTENDS Naturals, TLC", "VARIABLES x, y", ...actions];
+      expect(await compareWithInterpreter(body, config, {}, isWarningEnabled)).toContainEqual(
+        expect.stringMatching(COMPLETE),
+      );
+    }
+  });
+
+  it("leaves a Print to the interpreter where TLC evaluates it otherwise", async () => {
+    const declined = /^\[engine\] native: declined: unsupported: Print \(/;
+    const prints = "Print(x, TRUE)";
+    const next = "x' = (x + 1) % 3";
+    const cases: [string[], string][] = [
+      [[`Next == <<${next}>>_(Print(x, x))`], ""],
+      [[`Next == [${next}]_(Print(x, x)) /\\ x' # x`], ""],
+      [[`Next == LET p == ${prints} IN p /\\ ${next}`], ""],
+      [["Op(a) == a", `Next == Op(${prints}) /\\ ${next}`], ""],
+      [[`Next == {i \\in {1} : ${prints}} # {} /\\ ${next}`], ""],
+      [[`P == ${prints}`, `Next == P /\\ {P} # {} /\\ ${next}`], ""],
+      [[`A == ${prints} /\\ ${next}`, "Next == A \\/ (~ENABLED A /\\ x' = 0)"], ""],
+      [[`Next == ${next}`, `Constraint == ${prints}`], "\nCONSTRAINT Constraint"],
+      [[`Next == ${next}`, "Constraint == Print(x', TRUE)"], "\nACTION_CONSTRAINT Constraint"],
+      [[`Next == ${next}`, "View == Print(x, x)"], "\nVIEW View"],
+      [[`Next == ${prints} /\\ ${next}`, "Live == <>(x = 2)"], "\nPROPERTY Live"],
+    ];
+    for (const [actions, config] of cases) {
+      const body = ["EXTENDS Naturals, TLC", "VARIABLE x", "Init == x = 0", ...actions];
+      const spec = "Spec == Init /\\ [][Next]_x /\\ WF_x(Next)";
+      expect(
+        await compareWithInterpreter([...body, spec], `SPECIFICATION Spec${config}`),
+      ).toContainEqual(expect.stringMatching(declined));
+    }
+  });
+
+  it("evaluates the guard of x' \\in S only where x' has a value", async () => {
+    const body = [
+      "EXTENDS Naturals, TLC",
+      "VARIABLE x",
+      "Init == x \\in IF Print(0, TRUE) THEN {0, 1} ELSE {}",
+      "Next == x' \\in IF Print(x, TRUE) THEN {(x + 1) % 3} ELSE {}",
+    ];
+    expect(await compareWithInterpreter(body, "INIT Init\nNEXT Next")).toContainEqual(
+      expect.stringMatching(COMPLETE),
+    );
+    // With x' assigned, x' \in S is a guard, whose S the engine doesn't evaluate as TLC does.
+    const assigned = body.map((line) => line.replace("Next == ", "Next == x' = (x + 1) % 3 /\\ "));
+    expect(await compareWithInterpreter(assigned, "INIT Init\nNEXT Next")).toContainEqual(
+      expect.stringMatching(stopped("unsupported: Print")),
+    );
+  });
+
   it("leaves a model it can't search yet to the TypeScript engine", async () => {
     // TLC keeps SUBSET lazy, and the native engine doesn't enumerate it in TLC's order yet.
     const body = ["VARIABLE x", "Init == x \\in SUBSET {1, 2}", "Next == UNCHANGED x"];
