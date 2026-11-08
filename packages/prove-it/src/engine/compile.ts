@@ -55,6 +55,7 @@ import {
   functionOf,
   functionOfSorted,
   getKey,
+  getModelType,
   getRangeValue,
   int,
   intersection,
@@ -2381,7 +2382,8 @@ export const createCompiler = (environment: Environment): Compiler => {
         ),
         member: (element) => {
           const kind = kindOf(element);
-          if (kind !== KIND_FUNCTION && kind !== KIND_TUPLE) return false;
+          if (kind !== KIND_FUNCTION && kind !== KIND_TUPLE)
+            return notIn(element, "a set of functions");
           const domainSet = domainEvaluate();
           if (!equalsDomain(element, domainSet)) return false;
           const size = sizeOf(element);
@@ -2426,7 +2428,8 @@ export const createCompiler = (environment: Environment): Compiler => {
           }),
         ),
         member: (element) => {
-          if (kindOf(element) !== KIND_FUNCTION || sizeOf(element) !== keys.length) return false;
+          if (kindOf(element) !== KIND_FUNCTION) return notIn(element, "a set of records");
+          if (sizeOf(element) !== keys.length) return false;
           for (let index = 0; index < keys.length; index++) {
             if (getKey(element, index) !== keys[index]) return false;
             if (!members[index](getRangeValue(element, index))) return false;
@@ -2460,7 +2463,8 @@ export const createCompiler = (environment: Environment): Compiler => {
         factors: references.map((reference) => reference()),
       })),
       member: (element) => {
-        if (kindOf(element) !== KIND_TUPLE || sizeOf(element) !== factors.length) return false;
+        if (kindOf(element) !== KIND_TUPLE) return notIn(element, "a set of tuples");
+        if (sizeOf(element) !== factors.length) return false;
         for (let index = 0; index < factors.length; index++) {
           if (!members[index](getRangeValue(element, index))) return false;
         }
@@ -2473,8 +2477,12 @@ export const createCompiler = (environment: Environment): Compiler => {
     if (kindOf(domain) !== KIND_SET) return bail("a function set over a non-set domain");
     const size = sizeOf(fn);
     if (size !== sizeOf(domain)) return false;
-    for (let index = 0; index < size; index++)
-      if (getKey(fn, index) !== elementAt(domain, index)) return false;
+    for (let index = 0; index < size; index++) {
+      const key = getKey(fn, index);
+      const element = elementAt(domain, index);
+      // TLC compares the domains element by element, and fails on two values it can't compare.
+      if (key !== element) return compare(key, element) === 0;
+    }
     return true;
   };
 
@@ -2502,8 +2510,12 @@ export const createCompiler = (environment: Environment): Compiler => {
   };
 
   // TLC fails to test a value other than a model value for membership in a set of another kind.
+  // The answer TLC gives for a value of a kind the set can't hold: an untyped model value isn't a
+  // member, and anything else, a typed model value included, fails, which the reference reports.
   const notIn = (element: number, set: string) =>
-    kindOf(element) === KIND_MODEL ? false : bail(`a mistyped membership in ${set}`);
+    kindOf(element) === KIND_MODEL && getModelType(element) === 0
+      ? false
+      : bail(`a mistyped membership in ${set}`);
 
   // A membership test for a compiled set, which builds the set only when it must.
   const memberTest = (set: Compiled): ((element: number) => boolean) => {
@@ -2750,7 +2762,8 @@ export const createCompiler = (environment: Environment): Compiler => {
             base: baseReference(),
           })),
           member: ((baseMember) => (element: number) => {
-            if (kindOf(element) !== KIND_SET) return false;
+            // TLC fails on anything it can't enumerate, untyped model values included.
+            if (kindOf(element) !== KIND_SET) return bail("a membership in SUBSET of a non-set");
             for (let index = 0; index < sizeOf(element); index++)
               if (!baseMember(elementAt(element, index))) return false;
             return true;
@@ -2904,7 +2917,7 @@ export const createCompiler = (environment: Environment): Compiler => {
           ...leaf(() => bail("enumerated Seq(S)"), base.footprint, false),
           infinite: "Seq",
           member: (element: number) => {
-            if (kindOf(element) !== KIND_TUPLE) return false;
+            if (kindOf(element) !== KIND_TUPLE) return notIn(element, "Seq");
             for (let index = 0; index < sizeOf(element); index++)
               if (!member(getRangeValue(element, index))) return false;
             return true;

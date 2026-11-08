@@ -593,6 +593,31 @@ describe("the engine", () => {
     }
   });
 
+  it("answers membership in a set it doesn't build as TLC does, for every kind of value", async () => {
+    const sets = ["[{1} -> {1}]", '[{"a"} -> {1}]', "[a : {1}]", "{1} \\X {1}", "SUBSET {1}", "Seq({1})"];
+    const values = ["3", '"s"', "{1}", "<<1>>", "[a |-> 1]", "[b |-> 1]", "M", "A_m"];
+    const run = async (source: string, config: string) => {
+      try {
+        const result = await check({ source, config, onPrint: () => {} });
+        return [result.status, result.failure?.message];
+      } catch (error) {
+        return ["thrown", (error as Error).message];
+      }
+    };
+    for (const set of sets) {
+      for (const value of values) {
+        // The invariant reads x, so it is checked on each state rather than once as a constant.
+        const source = `---- MODULE M ----\nEXTENDS Naturals, Sequences\nCONSTANT M, A_m\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1\nInv == x >= 0 => ~(${value} \\in ${set})\n====`;
+        const config = "CONSTANT M = M\nCONSTANT A_m = A_m\nINIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE";
+        delete process.env.PROVE_IT_ENGINE;
+        const actual = await run(source, config);
+        process.env.PROVE_IT_ENGINE = "0";
+        const reference = await run(source, config);
+        expect([value, set, ...actual]).toEqual([value, set, ...reference]);
+      }
+    }
+  });
+
   it("reads Nat as the set the model substitutes for it", async () => {
     const { result, lines } = await checkInEngine(
       "EXTENDS Integers\nVARIABLE x\nInit == x = 0\nNext == UNCHANGED x\nInv == -1 \\in Nat",
