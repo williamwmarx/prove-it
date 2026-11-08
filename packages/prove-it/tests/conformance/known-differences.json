@@ -3348,46 +3348,6 @@
     ]
   },
   {
-    "id": "tlc/tlatools/org.lamport.tlatools/test-model/InitialLivenessEvaluationError.cfg",
-    "mode": "default",
-    "pair": "tlc/ts",
-    "reason": "The engine prints \"Finished computing initial states\" before the error in the initial state, which TLC and the interpreter don't. An engine bug.",
-    "diff": [
-      "+Finished computing initial states: 1 distinct state generated at _."
-    ]
-  },
-  {
-    "id": "tlc/tlatools/org.lamport.tlatools/test-model/InitialLivenessEvaluationError.cfg",
-    "mode": "default",
-    "pair": "ts/interpreter",
-    "reason": "The engine prints \"Finished computing initial states\" before the error in the initial state, which TLC and the interpreter don't. An engine bug.",
-    "diff": [
-      "-Finished computing initial states: 1 distinct state generated at _."
-    ]
-  },
-  {
-    "id": "tlc/tlatools/org.lamport.tlatools/test-model/InitialLivenessEvaluationError.cfg",
-    "mode": "tool",
-    "pair": "tlc/ts",
-    "reason": "The engine prints \"Finished computing initial states\" before the error in the initial state, which TLC and the interpreter don't. An engine bug.",
-    "diff": [
-      "+@!@!@STARTMSG 2190:0 @!@!@",
-      "+Finished computing initial states: 1 distinct state generated at _.",
-      "+@!@!@ENDMSG 2190 @!@!@"
-    ]
-  },
-  {
-    "id": "tlc/tlatools/org.lamport.tlatools/test-model/InitialLivenessEvaluationError.cfg",
-    "mode": "tool",
-    "pair": "ts/interpreter",
-    "reason": "The engine prints \"Finished computing initial states\" before the error in the initial state, which TLC and the interpreter don't. An engine bug.",
-    "diff": [
-      "-@!@!@STARTMSG 2190:0 @!@!@",
-      "-Finished computing initial states: 1 distinct state generated at _.",
-      "-@!@!@ENDMSG 2190 @!@!@"
-    ]
-  },
-  {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/NormalizationAssume.cfg",
     "mode": "default",
     "pair": "tlc/ts",
