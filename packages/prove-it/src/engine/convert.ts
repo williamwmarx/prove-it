@@ -7,6 +7,8 @@ import {
   createSortedRecord,
   createSortedSet,
   createTuple,
+  formatPrinted,
+  isFieldName,
   isTlcEnumerable,
   toFiniteFunction,
   toFiniteSet,
@@ -140,6 +142,41 @@ const fromEnumeratedValues = (values: Value[]) => {
     ids.push(id);
   }
   return ids;
+};
+
+// The text Print gives a value whose text TLC doesn't derive from how it was built, which the
+// engine forgets: TLC prints an interval as one, such as 1..3, and a record's fields in the order
+// they were written.
+export const formatPrintedId = (id: number) =>
+  isPrintable(id)
+    ? formatPrinted(toValue(id))
+    : bail("printing a value whose text depends on how TLC built it");
+
+const isPrintable = (id: number): boolean => {
+  const kind = kindOf(id);
+  if (kind !== KIND_SET && kind !== KIND_TUPLE && kind !== KIND_FUNCTION) return true;
+  const size = sizeOf(id);
+  for (let index = 0; index < size; index++) {
+    if (kind === KIND_TUPLE) {
+      if (!isPrintable(getRangeValue(id, index))) return false;
+      continue;
+    }
+    const element = kind === KIND_SET ? elementAt(id, index) : getKey(id, index);
+    const first = kind === KIND_SET ? elementAt(id, 0) : getKey(id, 0);
+    if (kindOf(element) !== kindOf(first) || !isPrintable(element)) return false;
+    if (kind === KIND_FUNCTION) {
+      if (kindOf(element) === KIND_STRING && (size > 1 || !isFieldName(textOf(element))))
+        return false;
+      if (!isPrintable(getRangeValue(id, index))) return false;
+    }
+  }
+  // A set of consecutive integers may be an interval.
+  return (
+    kind !== KIND_SET ||
+    size === 0 ||
+    kindOf(elementAt(id, 0)) !== KIND_INT ||
+    intOf(elementAt(id, size - 1)) - intOf(elementAt(id, 0)) !== size - 1
+  );
 };
 
 export const fromTuple = (elements: number[]) => tupleOf(elements, elements.length);

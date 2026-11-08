@@ -3,6 +3,7 @@
 
 import { type Definition, type Expression, isLocallyResolved } from "../ast";
 import type { ModelConfig } from "../config";
+import { hasRepeatedEffect } from "../dependencies";
 import { type Environment, type EvaluationScope, getDefinition } from "../evaluate";
 import { compileAction, createEnabledTest, type Step } from "./action";
 import { generateAction } from "./codegen";
@@ -11,6 +12,9 @@ import {
   type Compiled,
   type Compiler,
   createCompiler,
+  getStartupEffectValue,
+  isPrinting,
+  readsSearch,
   ROOT_CONTEXT,
 } from "./compile";
 import { getCodegenSetting, reportEngine } from "./settings";
@@ -134,7 +138,11 @@ const getAssertedDefinition = (expression: Expression, environment: Environment)
   const name = expression.name;
   if (environment.variableIndex.has(name) || environment.constants.has(name)) return undefined;
   const definition = getDefinition(name, environment);
-  return definition?.kind === "Operator" && definition.params.length === 0 ? definition : undefined;
+  return definition?.kind === "Operator" &&
+    definition.params.length === 0 &&
+    getStartupEffectValue(definition, environment) === undefined
+    ? definition
+    : undefined;
 };
 
 const compilePredicate = (compiled: Compiled) => {
@@ -182,6 +190,9 @@ export const createEngineContext = (
   spec: EngineSpec,
   isWarningEnabled: boolean,
   properties: EngineProperties,
+  // Whether the initial predicate, the next-state relation and the invariants may print, which
+  // only a search on one thread that hands over no more than the state it was expanding allows.
+  canPrint: boolean,
 ): EngineContext => {
   const compiler = createEngineCompiler(environment);
   const width = environment.variables.length;
@@ -193,7 +204,7 @@ export const createEngineContext = (
   const specContext = compiler.contextFromScope(spec.scope);
   if (!specContext) return bail("a specification scope the engine can't translate");
   const buildAction = (expression: Expression, isInit: boolean, isAssignedShortcut: boolean) => {
-    const context = isInit ? { ...specContext, isInit: true } : specContext;
+    const context = { ...specContext, isInit, canPrint };
     const step = buildStep(compiler, expression, context, isInit, isAssignedShortcut);
     if (!step.isGenerated) reportEngine(`${isInit ? "init" : "next"} runs as closures`);
     return step.step;
@@ -212,21 +223,33 @@ export const createEngineContext = (
   };
   const predicate = (expression: Expression) =>
     compilePredicate(compiler.compile(expression, ROOT_CONTEXT));
+  const getRoots = (kind: string, names: string[], expressions: Expression[] = []) => [
+    ...names.map((name) => {
+      if (!getDefinition(name, environment)) return bail(`the ${kind} ${name} isn't defined`);
+      return identifier(name);
+    }),
+    ...expressions,
+  ];
   // Each invariant and constraint is checked conjunct by conjunct, so a successor skips each
-  // conjunct that reads only variables its step left unchanged.
-  const getAllConjuncts = (kind: string, names: string[], expressions: Expression[] = []) => [
+  // conjunct that reads only variables its step left unchanged. An invariant that may print is
+  // checked whole each time, as TLC checks it.
+  const invariantRoots = getRoots("invariant", config.invariants, properties.invariants);
+  const printedInvariants = new Set(
+    invariantRoots.filter((root) => canPrint && hasRepeatedEffect(root, environment)),
+  );
+  const invariantConjuncts = [
     ...new Set(
-      [
-        ...names.map((name) => {
-          if (!getDefinition(name, environment)) return bail(`the ${kind} ${name} isn't defined`);
-          return identifier(name);
-        }),
-        ...expressions,
-      ].flatMap((expression) => [...getConjuncts(expression, environment)]),
+      invariantRoots.flatMap((root) =>
+        printedInvariants.has(root) ? [root] : [...getConjuncts(root, environment)],
+      ),
     ),
   ];
-  const invariantConjuncts = getAllConjuncts("invariant", config.invariants, properties.invariants);
-  const invariants = invariantConjuncts.map((conjunct) => compiler.compile(conjunct, ROOT_CONTEXT));
+  const invariants = invariantConjuncts.map((conjunct) =>
+    compiler.compile(
+      conjunct,
+      printedInvariants.has(conjunct) ? { ...ROOT_CONTEXT, canPrint } : ROOT_CONTEXT,
+    ),
+  );
   // An initial predicate in an instance's scope resolves its names there, so it implies nothing.
   const initConjuncts =
     spec.scope === undefined ? getConjuncts(spec.init, environment) : new Set<Expression>();
@@ -241,23 +264,28 @@ export const createEngineContext = (
   });
   const initialPredicates = properties.initialPredicates.map(predicate);
   const view =
-    config.view === undefined
-      ? undefined
-      : compiler.compile(identifier(config.view), ROOT_CONTEXT).evaluate;
-  const constraints = getAllConjuncts("constraint", config.constraints).map((conjunct) =>
-    compiler.compile(conjunct, ROOT_CONTEXT),
-  );
+    config.view === undefined ? undefined : compiler.compile(identifier(config.view), ROOT_CONTEXT);
+  if (view && readsSearch(view.footprint)) return bail("unsupported: TLCGet in a VIEW");
+  const constraints = [
+    ...new Set(
+      getRoots("constraint", config.constraints).flatMap((root) => [
+        ...getConjuncts(root, environment),
+      ]),
+    ),
+  ].map((conjunct) => compiler.compile(conjunct, ROOT_CONTEXT));
   return {
     compiler,
     width,
     invariants: invariants.map(compilePredicate),
     initialInvariants: invariants
-      .filter((_, index) => !initConjuncts.has(invariantConjuncts[index]))
+      .filter(
+        (compiled, index) => isPrinting(compiled) || !initConjuncts.has(invariantConjuncts[index]),
+      )
       .map(compilePredicate),
     invariantVars: invariants.map((compiled) => getPredicateVars(compiled, width)),
     actionProperties,
     initialPredicates,
-    view,
+    view: view?.evaluate,
     constraints: constraints.map(compilePredicate),
     constraintVars: constraints.map((compiled) => getPredicateVars(compiled, width)),
     actionConstraints: config.actionConstraints.map((name) => named("action constraint", name)),

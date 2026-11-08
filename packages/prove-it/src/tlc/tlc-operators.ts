@@ -25,6 +25,7 @@ import {
   createSet,
   createTuple,
   createWrittenFunction,
+  formatPrinted,
   formatValue,
   getWrittenPairs,
   rankString,
@@ -158,12 +159,12 @@ export const createTlcOperators = (
 ): Builtin[] => [
   defineOperator("Print", 2, (args) => {
     print(
-      `${prettyPrint(formatValue(getValue(args, 0, "Print"), true, true))}  ${prettyPrint(formatValue(getValue(args, 1, "Print"), true, true))}`,
+      `${formatPrinted(getValue(args, 0, "Print"))}  ${formatPrinted(getValue(args, 1, "Print"))}`,
     );
     return getValue(args, 1, "Print");
   }),
   defineOperator("PrintT", 1, (args) => {
-    print(prettyPrint(formatValue(getValue(args, 0, "PrintT"), true, true)));
+    print(formatPrinted(getValue(args, 0, "PrintT")));
     return true;
   }),
   defineOperator("Assert", 2, (args) => {

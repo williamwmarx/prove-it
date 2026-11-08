@@ -355,6 +355,8 @@ export const createLivenessChecker = (
   const shared = {
     states: new Map<Value[], Map<LiveExpression, boolean>>(),
     actions: new Map<Value[], Map<Value[], number>>(),
+    // The state the checker is adding and the row of its stuttering step.
+    self: { state: undefined as Value[] | undefined, step: -1 },
   };
   // The state each index stands for, and the results of the state predicates on it.
   const memo = {
@@ -396,14 +398,17 @@ export const createLivenessChecker = (
     atomCache.offset = index * atomIds.size;
     return atomCache;
   };
-  // TLCGet("level") reads the level of the state whose successors the checks run on.
+  // The results of the state checks on the state, kept for every node of the state. TLCGet("level")
+  // reads the level of the state whose successors the checks run on.
   const checkState = (behavior: BehaviorGraph, index: number, state: Value[]) => {
     const predicates = behavior.solution.stateChecks;
-    const results = new Uint8Array(predicates.length);
+    const offset = index * predicates.length;
+    reservePool(behavior.stateResults, offset + predicates.length);
+    const results = behavior.stateResults.data;
     environment.runtime.setLivenessSource(index);
     for (let position = 0; position < predicates.length; position++) {
       const cache = getCache(index, state);
-      results[position] = evaluateLive(
+      results[offset + position] = evaluateLive(
         predicates[position],
         state,
         undefined,
@@ -414,7 +419,6 @@ export const createLivenessChecker = (
         : 0;
     }
     environment.runtime.setLivenessSource(undefined);
-    return results;
   };
   // The result of an action check that the state decides whatever the step, since evaluateLive
   // reaches no action or next state before it knows the result, or undefined.
@@ -484,6 +488,13 @@ export const createLivenessChecker = (
     }
     environment.runtime.setLivenessSource(undefined);
   };
+  const getSharedStep = (state: Value[], successor: Value[]) => {
+    const successors = shared.actions.get(state) ?? new Map<Value[], number>();
+    shared.actions.set(state, successors);
+    const step = successors.get(successor) ?? addSteps(1);
+    successors.set(successor, step);
+    return step;
+  };
   // The row of a step that a node found late checks, which the checks of the state share.
   const checkAction = (
     behavior: BehaviorGraph,
@@ -496,10 +507,10 @@ export const createLivenessChecker = (
       checkStep(behavior, source, state, successor, step, undefined);
       return step;
     }
-    const successors = shared.actions.get(state) ?? new Map<Value[], number>();
-    shared.actions.set(state, successors);
-    const step = successors.get(successor) ?? addSteps(1);
-    successors.set(successor, step);
+    const step =
+      state === shared.self.state && successor === state
+        ? shared.self.step
+        : getSharedStep(state, successor);
     checkStep(behavior, source, state, successor, step, undefined);
     return step;
   };
@@ -588,57 +599,67 @@ export const createLivenessChecker = (
     node: number,
     targets: number[],
     edgeSteps: number[],
-    stateResults: Uint8Array,
   ) => {
     const start = behavior.edgeTargets.length;
     writeToPool(behavior.edgeTargets, start, targets);
     writeToPool(behavior.edgeSteps, start, edgeSteps);
-    writeToPool(
-      behavior.stateResults,
-      behavior.nodeStates[node] * stateResults.length,
-      stateResults,
-    );
     behavior.edgeStarts[node] = start;
     behavior.edgeCounts[node] = targets.length;
   };
 
   // TLC collects a state's successors and the state itself in a SetOfStates, a hash set it
   // iterates in slot order. Its capacity starts at 16 times a factor that grows with every set
-  // that outgrows it.
+  // that outgrows it. The slots hold positions in the successors, the state last, plus one, and
+  // the set comes out in a list each state reuses.
+  const successorSet = {
+    slots: createPool((length) => new Int32Array(length)),
+    entries: [] as LiveSuccessor[],
+    ordered: [] as LiveSuccessor[],
+  };
   const getSuccessorSet = (index: number, state: Value[], successors: LiveSuccessor[]) => {
-    const table = {
-      slots: new Array<LiveSuccessor | undefined>(SUCCESSOR_CAPACITY * capacity.multiplier).fill(
-        undefined,
-      ),
-      count: 0,
-    };
-    const insertSuccessor = (slots: (LiveSuccessor | undefined)[], successor: LiveSuccessor) => {
+    const entries = successorSet.entries;
+    entries.length = 0;
+    // A loop, not a spread: a spread passes every successor as an argument to push.
+    for (const successor of successors) entries.push(successor);
+    entries.push({ index, state });
+    const table = { size: SUCCESSOR_CAPACITY * capacity.multiplier, count: 0 };
+    getScratch(successorSet.slots, table.size).fill(0, 0, table.size);
+    const insertSuccessor = (slots: Int32Array, size: number, position: number) => {
+      const successor = entries[position];
       for (
-        let slot = (search.getFingerprint(successor) & 0x7fffffff) % slots.length;
+        let slot = (search.getFingerprint(successor) & 0x7fffffff) % size;
         ;
-        slot = (slot + 1) % slots.length
+        slot = (slot + 1) % size
       ) {
-        const entry = slots[slot];
-        if (entry === undefined) {
-          slots[slot] = successor;
+        const stored = slots[slot];
+        if (stored === 0) {
+          slots[slot] = position + 1;
           return true;
         }
+        const entry = entries[stored - 1];
         if (entry.index === successor.index && isSameState(entry.state, successor.state))
           return false;
       }
     };
-    const addSuccessor = (successor: LiveSuccessor) => {
-      if (table.count >= table.slots.length >> 1) {
-        const old = table.slots;
-        table.slots = new Array<LiveSuccessor | undefined>(2 * old.length + 1).fill(undefined);
-        for (const entry of old) if (entry) insertSuccessor(table.slots, entry);
+    for (let position = 0; position < entries.length; position++) {
+      if (table.count >= table.size >> 1) {
+        const old = successorSet.slots.data.slice(0, table.size);
+        table.size = 2 * table.size + 1;
+        getScratch(successorSet.slots, table.size).fill(0, 0, table.size);
+        for (const stored of old) {
+          if (stored !== 0) insertSuccessor(successorSet.slots.data, table.size, stored - 1);
+        }
       }
-      if (insertSuccessor(table.slots, successor)) table.count++;
-    };
-    successors.forEach(addSuccessor);
-    addSuccessor({ index, state });
-    if (table.slots.length > SUCCESSOR_CAPACITY * capacity.multiplier) capacity.multiplier++;
-    return table.slots.filter((entry): entry is LiveSuccessor => entry !== undefined);
+      if (insertSuccessor(successorSet.slots.data, table.size, position)) table.count++;
+    }
+    if (table.size > SUCCESSOR_CAPACITY * capacity.multiplier) capacity.multiplier++;
+    const ordered = successorSet.ordered;
+    ordered.length = 0;
+    for (let slot = 0; slot < table.size; slot++) {
+      const stored = successorSet.slots.data[slot];
+      if (stored !== 0) ordered.push(entries[stored - 1]);
+    }
+    return ordered;
   };
 
   // TLC's TableauLiveChecker#addNextState for a node it finds after it expanded the node's state.
@@ -649,7 +670,7 @@ export const createLivenessChecker = (
     index: number,
     node: number,
   ) => {
-    const stateResults = checkState(behavior, index, state);
+    checkState(behavior, index, state);
     const tableauNode = tableau.nodes[behavior.nodeTableaux[node]];
     const edgeSteps: number[] = [];
     const successors: number[] = [];
@@ -692,7 +713,7 @@ export const createLivenessChecker = (
         }
       }
     }
-    if (successors.length > 0) writeNode(behavior, node, successors, edgeSteps, stateResults);
+    if (successors.length > 0) writeNode(behavior, node, successors, edgeSteps);
   };
 
   const addTableauState = (
@@ -700,7 +721,6 @@ export const createLivenessChecker = (
     tableau: Tableau,
     set: LiveSuccessor[],
     firstStep: number,
-    stateResults: Uint8Array,
     index: number,
   ) => {
     const nodeCount = tableau.nodes.length;
@@ -751,7 +771,7 @@ export const createLivenessChecker = (
           }
         }
       }
-      writeNode(behavior, node, successors, edgeSteps, stateResults);
+      writeNode(behavior, node, successors, edgeSteps);
     }
     if (behavior.errorNode === undefined) return undefined;
     return removeRepeats(
@@ -765,7 +785,6 @@ export const createLivenessChecker = (
     behavior: BehaviorGraph,
     set: LiveSuccessor[],
     firstStep: number,
-    stateResults: Uint8Array,
     index: number,
   ) => {
     while (behavior.nodeStates.length <= index) pushNode(behavior, behavior.nodeStates.length, -1);
@@ -776,7 +795,7 @@ export const createLivenessChecker = (
       successors.push(successor.index);
       edgeSteps.push(firstStep + position);
     });
-    writeNode(behavior, index, successors, edgeSteps, stateResults);
+    writeNode(behavior, index, successors, edgeSteps);
   };
 
   // The shortest path from an initial node to the node, last node first, as TLC's getPath finds it.
@@ -1103,6 +1122,7 @@ export const createLivenessChecker = (
     evaluation.isMemoized = isShared && tracing === undefined;
     if (shared.states.size > 0) shared.states.clear();
     if (shared.actions.size > 0) shared.actions.clear();
+    shared.self.state = undefined;
   };
   const endChecks = () => {
     evaluation.environment = environment;
@@ -1142,7 +1162,8 @@ export const createLivenessChecker = (
         // A node of the state found late checks the stuttering step again, and finds its results.
         const self = set.findIndex((successor) => successor.state === state);
         if (isShared && self !== -1) {
-          shared.actions.set(state, new Map([[state, sharedSteps + self]]));
+          shared.self.state = state;
+          shared.self.step = sharedSteps + self;
         }
         for (const behavior of behaviors) {
           const firstStep = isShared ? sharedSteps : addSteps(set.length);
@@ -1151,13 +1172,13 @@ export const createLivenessChecker = (
           for (let position = 0; position < checkedCount; position++) {
             checkStep(behavior, index, state, set[position].state, firstStep + position, decided);
           }
-          const stateResults = checkState(behavior, index, state);
+          checkState(behavior, index, state);
           const tableau = behavior.solution.tableau;
           if (!tableau) {
-            addPlainState(behavior, set, firstStep, stateResults, index);
+            addPlainState(behavior, set, firstStep, index);
             continue;
           }
-          const accepted = addTableauState(behavior, tableau, set, firstStep, stateResults, index);
+          const accepted = addTableauState(behavior, tableau, set, firstStep, index);
           if (accepted) return accepted;
         }
         return undefined;

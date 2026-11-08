@@ -3,8 +3,10 @@ import { type ModelConfig, parseConfig } from "./config";
 import { getMemoStatistics } from "./engine/compile";
 import { toEngineProperties } from "./engine/context";
 import { toValue as toEngineValue } from "./engine/convert";
+import { checkNatively } from "./engine/native";
 import { type EngineCheckpoint, type EngineGraph, isBailout, runEngine } from "./engine/search";
 import {
+  getEngineBackend,
   getEngineSetting,
   getEngineThreads,
   getEnvironmentFlag,
@@ -45,6 +47,7 @@ import {
   type LivenessChecker,
   type LiveSuccessor,
 } from "./liveness-checker";
+import type { SanyReading } from "./sany/source";
 import {
   createIdentifier,
   createSearch,
@@ -383,12 +386,16 @@ const getReplayExitCode = (error: TlaEvaluationError): number => {
   return error instanceof TlaModuleError ? error.exitCode : EXIT_STATUS.specEvaluationFailure;
 };
 
-// TLC finishes the -dump file whether or not the search finds a violation.
-export const checkSequentially = (options: CheckOptions): CheckResult => {
+// TLC finishes the -dump file whether or not the search finds a violation. The readings are those
+// of a spec SANY accepted.
+export const checkSequentially = (
+  options: CheckOptions,
+  readings?: ReadonlyMap<string, SanyReading>,
+): CheckResult => {
   const stateWriter =
     options.dump && createStateWriter(options.dump, options.writeFile, options.version);
   try {
-    return searchStates(options, stateWriter);
+    return searchStates(options, stateWriter, readings);
   } catch (error) {
     throw isStackOverflow(error) ? createStackOverflowError() : error;
   } finally {
@@ -403,7 +410,11 @@ const PROGRESS_INTERVAL = 60_000;
 const LIVENESS_GROWTH = 0.1;
 const LIVENESS_RATIO = 0.2;
 
-const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefined): CheckResult => {
+const searchStates = (
+  options: CheckOptions,
+  stateWriter: StateWriter | undefined,
+  readings: ReadonlyMap<string, SanyReading> | undefined,
+): CheckResult => {
   const config =
     typeof options.config === "string"
       ? parseConfig(options.config, options.version)
@@ -433,7 +444,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     loadedModules.set(name, source);
     return source;
   };
-  const order = createTlcOrder(options.source, loadModule);
+  const order = createTlcOrder(options.source, loadModule, readings);
   setStringOrder(order.getStringOrder(config));
   setValueVersion(options.version);
   const specification = createEnvironment(config, {
@@ -447,6 +458,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     isTool: options.isTool,
     isTraceRecorded: options.isTraceRecorded,
     isSanyReported: options.isSanyReported,
+    isSanyAccepted: readings !== undefined,
     isWarningEnabled: options.isWarningEnabled,
     version: options.version,
   });
@@ -1363,6 +1375,9 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   const engineReport = {
     isReported: false,
     isComputedReported: false,
+    // The last count of initial states the engine reported, which the interpreter, computing them
+    // again, reports only past.
+    initialProgress: 0,
     checkpoint: undefined as EngineCheckpoint | undefined,
     // TLC's fingerprints of the states of a graph the engine handed over.
     fingerprints: undefined as BigInt64Array | undefined,
@@ -1485,6 +1500,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         canonicalizeState(replayed);
         replayed.forEach(markFingerprinted);
         states[checkpoint.expanding] = replayed;
+        engineIndices.set(replayed, checkpoint.expanding);
       }
     }
     runtime.generatedStates = checkpoint.generated;
@@ -1508,6 +1524,13 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     const init = spec.init;
     const next = spec.next;
     if (init === undefined || next === undefined) return undefined;
+    if (getEngineBackend() !== "ts") {
+      const nativeStartedAt = performance.now();
+      const native = checkNatively();
+      reportEngine(
+        `native: ${native.status}: ${native.reason} (${(performance.now() - nativeStartedAt).toFixed(2)} ms)`,
+      );
+    }
     // The engine answers ENABLED <<A>>_v of a state from the steps its search took when A is made of
     // TLC's actions of the next-state relation. A constraint drops steps, and TLC's ENABLED shows
     // the effects of running A, such as printing, so then the engine runs A.
@@ -1578,6 +1601,9 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         version: options.version,
         onProgress: (progress) => {
           engineReport.isReported = true;
+          if (progress.kind === "initial-states-progress") {
+            engineReport.initialProgress = progress.count;
+          }
           reportComputed();
           options.onProgress?.(progress);
         },
@@ -1585,6 +1611,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
           engineReport.isReported = true;
           options.onProgress?.({ kind: "initial-states-started" });
         },
+        onPrint: print,
         onInitialStates: (generated, distinct) => {
           computed.initialStates = { generated, distinct };
           if (!liveness) reportComputed();
@@ -1683,7 +1710,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         spec.init,
         environment,
         (state) => {
-          if (!engineReport.isReported) {
+          if (runtime.initialStates > engineReport.initialProgress) {
             reportInitialStatesProgress(runtime.initialStates, options.onProgress);
           }
           try {
@@ -1832,11 +1859,13 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       { isNextState: true, ...replay.result },
     );
   };
-  // A state of a search the engine completed: its successors are the steps the engine recorded.
+  // A state of a search the engine completed: its successors are the steps the engine recorded,
+  // each state one successor for every step into it.
+  const engineSuccessors: LiveSuccessor[] = [];
   const replayExpansion = (index: number, liveSuccessors: LiveSuccessor[], graph: EngineGraph) => {
     for (let edge = graph.edgeOffsets[index]; edge < graph.edgeOffsets[index + 1]; edge++) {
       const target = graph.edges[edge];
-      liveSuccessors.push({ index: target, state: states[target] });
+      liveSuccessors.push((engineSuccessors[target] ??= { index: target, state: states[target] }));
     }
     runtime.generatedStates += graph.successorCounts[index];
     expansion.newStates = graph.newCounts[index];
