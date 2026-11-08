@@ -501,8 +501,10 @@ impl Compiler<'_> {
                         Ok(bool_id(test(machine, value)? == is_in))
                     })
                 });
+                // A miss in a set that isn't constant compares the element with the set's elements
+                // as TLC's binary search does, to fail where it fails, so it is cached too.
                 Compiled {
-                    is_costly: set.member.is_some(),
+                    is_costly: set.member.is_some() || set.footprint.width() > 0,
                     is_boolean: true,
                     ..leaf(evaluate, footprint)
                 }

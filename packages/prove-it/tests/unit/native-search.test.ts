@@ -182,6 +182,37 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     );
   });
 
+  it("caches membership in a set that isn't constant by the element and the set", async () => {
+    // x \in S is cached by the ids it reads when S isn't constant: a miss would compare x with
+    // S's elements, as TLC's binary search does, to fail where TLC fails, which isn't cached.
+    const body = [
+      "EXTENDS Naturals",
+      "VARIABLES sent, n",
+      "Init == sent = {} /\\ n = 0",
+      "Next == \\E p \\in 1..3 :",
+      '  /\\ [kind |-> "ack", from |-> p] \\notin sent',
+      '  /\\ \\/ [kind |-> "req", from |-> p] \\in sent',
+      "     \\/ p = n + 1",
+      '  /\\ sent\' = sent \\cup {[kind |-> IF [kind |-> "req", from |-> p] \\in sent',
+      '                                   THEN "ack" ELSE "req", from |-> p]}',
+      "  /\\ n' = (n + p) % 3",
+    ];
+    const config = "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE";
+    await compareStateLogs(body, config, false);
+    expect(await compareWithInterpreter(body, config)).toContainEqual(
+      expect.stringMatching(COMPLETE),
+    );
+    const incomparable = [
+      "EXTENDS Naturals, FiniteSets",
+      "VARIABLE s",
+      "Init == s = {[a |-> 1]}",
+      'Next == s\' = s \\cup {[a |-> Cardinality(s) + 1]} /\\ (Cardinality(s) < 3 \\/ "x" \\in s)',
+    ];
+    expect(await compareWithInterpreter(incomparable, config)).toContainEqual(
+      expect.stringMatching(stopped("values TLC can't compare")),
+    );
+  });
+
   it("walks a universal quantifier with 2^32 bindings, and doesn't skip its body", async () => {
     // The product of the sizes doesn't fit 32 bits, and the first binding already rules out every
     // successor. The interpreter builds the product of the sets, so this compares with the
