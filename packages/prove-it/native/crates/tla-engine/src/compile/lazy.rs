@@ -7,10 +7,11 @@
 
 use std::sync::Arc;
 
-use tla_values::store::{KIND_INT, KIND_SET, KIND_STRING, KIND_TUPLE, Outcome, is_function_kind};
+use tla_values::store::{
+    KIND_INT, KIND_MODEL, KIND_SET, KIND_STRING, KIND_TUPLE, Outcome, is_function_kind,
+};
 use tla_values::{Bail, Id};
 
-use super::sets::not_in;
 use crate::machine::Machine;
 
 // Beyond these the interpreter would list more elements than a search can use.
@@ -305,9 +306,10 @@ impl Lazy {
         })
     }
 
-    /// Membership as TLC tests it, failing where it fails.
+    /// Membership as the interpreter tests it (`isElementOf`), failing where it fails.
     pub(crate) fn contains(&self, machine: &mut Machine<'_>, element: Id) -> Outcome<bool> {
         let kind = machine.store.kind_of(element);
+        let is_model = kind == KIND_MODEL;
         match self {
             Lazy::Set(set) => {
                 let set = Self::set(machine, *set)?;
@@ -316,7 +318,8 @@ impl Lazy {
             Lazy::Infinite(name) => match (*name, kind) {
                 ("Nat", KIND_INT) => Ok(machine.store.int_of(element) >= 0),
                 ("Int", KIND_INT) | ("STRING", KIND_STRING) => Ok(true),
-                _ => not_in(machine, element, "a mistyped membership in an infinite set"),
+                _ if is_model => Ok(false),
+                _ => Err(Bail("a mistyped membership in an infinite set")),
             },
             Lazy::Subset(base) => {
                 if kind != KIND_SET {
@@ -332,11 +335,11 @@ impl Lazy {
             }
             Lazy::FunctionSet(domain, range) => {
                 if !is_function_kind(kind) {
-                    return not_in(
-                        machine,
-                        element,
-                        "a mistyped membership in a set of functions",
-                    );
+                    return if is_model {
+                        Ok(false)
+                    } else {
+                        Err(Bail("a mistyped membership in a set of functions"))
+                    };
                 }
                 let keys = domain.enumerate(machine)?;
                 let domain = machine.store.set_of(&keys)?;
@@ -360,21 +363,28 @@ impl Lazy {
                 Ok(true)
             }
             Lazy::RecordSet(keys, sets) => {
-                if !is_function_kind(kind) || kind == KIND_TUPLE {
-                    return not_in(
-                        machine,
-                        element,
-                        "a mistyped membership in a set of records",
-                    );
+                let size = machine.store.size_of(element);
+                let is_record = is_function_kind(kind)
+                    && (0..size).all(|index| {
+                        let key = machine.store.get_key(element, index);
+                        machine.store.kind_of(key) == KIND_STRING
+                    });
+                if !is_record {
+                    return if is_model {
+                        Ok(false)
+                    } else {
+                        Err(Bail("a mistyped membership in a set of records"))
+                    };
                 }
-                if machine.store.size_of(element) as usize != keys.len() {
+                if size as usize != keys.len() {
                     return Ok(false);
                 }
-                for (index, (&key, set)) in keys.iter().zip(sets).enumerate() {
-                    if machine.store.get_key(element, index as u32) != key {
+                for (&key, set) in keys.iter().zip(sets) {
+                    let position = machine.store.find_key(element, key)?;
+                    if position < 0 {
                         return Ok(false);
                     }
-                    let value = machine.store.get_range_value(element, index as u32);
+                    let value = machine.store.get_range_value(element, position as u32);
                     if !set.contains(machine, value)? {
                         return Ok(false);
                     }
@@ -383,7 +393,19 @@ impl Lazy {
             }
             Lazy::Product(factors) => {
                 if kind != KIND_TUPLE {
-                    return not_in(machine, element, "a mistyped membership in a set of tuples");
+                    // A function over integers other than 1..n isn't a tuple, and isn't one of
+                    // the set's; anything else fails.
+                    let size = machine.store.size_of(element);
+                    let is_integer_function = is_function_kind(kind)
+                        && (0..size).all(|index| {
+                            let key = machine.store.get_key(element, index);
+                            machine.store.kind_of(key) == KIND_INT
+                        });
+                    return if is_integer_function || is_model {
+                        Ok(false)
+                    } else {
+                        Err(Bail("a mistyped membership in a set of tuples"))
+                    };
                 }
                 if machine.store.size_of(element) as usize != factors.len() {
                     return Ok(false);
