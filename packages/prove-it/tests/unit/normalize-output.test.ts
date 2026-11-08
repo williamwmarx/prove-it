@@ -136,6 +136,29 @@ describe("normalizeOutput on where a run's files were", () => {
   });
 });
 
+describe("normalizeOutput on a stack trace", () => {
+  it("rewrites where the built files are, a chunk's hash, and the line and column in it", () => {
+    const trace = (directory: string, chunk: string, line: number) =>
+      [
+        `file://${directory}/dist/${chunk}.js:${line}`,
+        "TypeError: Cannot read properties of undefined (reading 'line')",
+        `    at getSpanLocation (file://${directory}/dist/${chunk}.js:${line}:38)`,
+        `    at main (${directory}/dist/cli.js:12:3)`,
+      ].join("\n");
+    expect(normalizeOutput(trace("/home/user/prove-it", "index-18v97dsn", 4086))).toBe(
+      normalizeOutput(trace("/home/runner/work/prove-it", "index-bxdpbxvb", 4092)),
+    );
+    expect(normalizeOutput(trace("/home/user/prove-it", "index-18v97dsn", 4086))).toBe(
+      [
+        "dist/index-_.js:_",
+        "TypeError: Cannot read properties of undefined (reading 'line')",
+        "    at getSpanLocation (dist/index-_.js:_)",
+        "    at main (dist/cli.js:_)",
+      ].join("\n"),
+    );
+  });
+});
+
 describe("normalizeOutput on the times of a run", () => {
   it("rewrites the times of TLC's reports and keeps those in a spec's states", () => {
     const trace = (time: string) =>
