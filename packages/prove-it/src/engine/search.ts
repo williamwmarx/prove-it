@@ -648,9 +648,10 @@ export const runEngine = (input: EngineInput): EngineResult => {
       if ((expanding & 0xff) === 0) reportProgress();
     }
   } catch (error) {
-    if (error instanceof Bailout) {
-      // With a graph, the interpreter replays the steps of the states before the one the engine
-      // was expanding, counting them again.
+    // With a graph, the interpreter replays the steps of the states before the one the engine was
+    // expanding, counting them again. It searches a graph too large to keep from the start, since
+    // its liveness checker may stop in the first states, before it has taken all of them over.
+    if (error instanceof Bailout && !(graph && checkpointCount > MAXIMUM_GRAPH_STATES)) {
       const checkpoint: EngineCheckpoint = graph
         ? getGraphCheckpoint(expanding, checkpointCount, expanding)
         : {
