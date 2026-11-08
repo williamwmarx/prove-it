@@ -1,0 +1,21 @@
+Starting... (_)
+Computing initial states...
+Error: Attempted to check equality of typed model value A_y and non-model value
+TRUE
+While working on the initial state:
+x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 6, column 9 to line 6, column 13 in EnumeratedModels
+1. Line 5, column 8 to line 5, column 31 in EnumeratedModels
+2. Line 5, column 20 to line 5, column 31 in EnumeratedModels
+
+
+Reason:
+Attempted to check equality of typed model value A_y and non-model value
+TRUE
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
+Finished in _ at (_)
