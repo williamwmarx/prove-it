@@ -259,12 +259,27 @@ fn main() -> ExitCode {
             }
         };
     }
+    if arguments.first().map(String::as_str) == Some("enumerate") {
+        // Each request of the enumeration oracle, answered as ValueOracle.java answers it.
+        let Some(path) = arguments.get(1) else {
+            eprintln!("usage: replay enumerate <requests>");
+            return ExitCode::from(2);
+        };
+        let Ok(requests) = std::fs::read_to_string(path) else {
+            eprintln!("{path}: can't read the requests");
+            return ExitCode::FAILURE;
+        };
+        for answer in on_nesting_stack(|| tla_engine::oracle::answer_requests(requests.lines())) {
+            println!("{answer}");
+        }
+        return ExitCode::SUCCESS;
+    }
     let replay = match arguments.first().map(String::as_str) {
         Some("store") => replay_trace,
         Some("fingerprints") => replay_log,
         _ => {
             eprintln!(
-                "usage: replay store <trace>... | replay fingerprints <state log>... | replay expressions <ir> <state log> [states]"
+                "usage: replay store <trace>... | replay fingerprints <state log>... | replay expressions <ir> <state log> [states] | replay enumerate <requests>"
             );
             return ExitCode::from(2);
         }

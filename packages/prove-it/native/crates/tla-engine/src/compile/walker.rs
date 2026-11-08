@@ -96,11 +96,20 @@ fn element_at(machine: &Machine<'_>, id: Id, position: u32) -> Id {
     }
 }
 
-fn expect_set_size(machine: &Machine<'_>, id: Id) -> Outcome<u32> {
-    if machine.store.kind_of(id) == KIND_SET {
-        Ok(machine.store.size_of(id))
-    } else {
-        Err(Bail("an action quantified over a non-set"))
+/// The set an action enumerates: a set, or the tuple of a lazy set's elements in TLC's order.
+#[derive(Clone)]
+struct Ordered {
+    eval: Eval,
+    is_ordered: bool,
+}
+
+impl Ordered {
+    fn size(&self, machine: &Machine<'_>, id: Id) -> Outcome<u32> {
+        if self.is_ordered || machine.store.kind_of(id) == KIND_SET {
+            Ok(machine.store.size_of(id))
+        } else {
+            Err(Bail("an action quantified over a non-set"))
+        }
     }
 }
 
@@ -522,7 +531,11 @@ impl<'a> Compiler<'a> {
             };
         }
         if let Resolution::Variable(index) = name.resolution {
-            return Ok(if is_primed { None } else { Some(index) });
+            if is_primed {
+                return Ok(None);
+            }
+            self.note_variable(index)?;
+            return Ok(Some(index));
         }
         match self.resolve_action(node, context)? {
             Some((body, inner)) => self.get_assignable(body, &inner, is_primed, depth + 1),
@@ -779,18 +792,47 @@ impl<'a> Compiler<'a> {
     }
 
     // The elements of a set in the order TLC enumerates them where an action quantifies over the
-    // set or assigns a variable from it: the set itself when TLC normalizes it. A set TLC keeps
-    // lazy is the interpreter's to enumerate, so the TypeScript engine takes the model.
-    fn compile_ordered(&mut self, node: NodeId, context: &Context) -> Compiling<Compiled> {
+    // set or assigns a variable from it (streamed): the set itself when TLC normalizes it, else a
+    // tuple of its elements in the interpreter's order, cached like any other value.
+    fn compile_ordered(
+        &mut self,
+        node: NodeId,
+        context: &Context,
+        is_streamed: bool,
+    ) -> Compiling<Ordered> {
         let set = self.compile(node, context)?;
         if set.is_normalized {
-            return Ok(set);
+            return Ok(Ordered {
+                eval: set.eval,
+                is_ordered: false,
+            });
         }
-        let line = self.ir.nodes.arena[node as usize].line;
-        decline(format!(
-            "enumerating a set TLC keeps lazy ({} at line {line})",
-            self.describe_set(node, context)
-        ))
+        let Some(reference) = super::reference_of(&set) else {
+            let line = self.ir.nodes.arena[node as usize].line;
+            return unsupported(format!(
+                "enumerating a set TLC keeps lazy ({} at line {line})",
+                self.describe_set(node, context)
+            ));
+        };
+        let ordered = Compiled {
+            is_costly: true,
+            ..leaf(
+                eval(move |machine| {
+                    let lazy = reference(machine)?;
+                    let elements = if is_streamed {
+                        lazy.stream(machine)?
+                    } else {
+                        lazy.enumerate(machine)?
+                    };
+                    Ok(machine.store.tuple_of(&elements))
+                }),
+                set.footprint,
+            )
+        };
+        Ok(Ordered {
+            eval: self.cached(ordered).eval,
+            is_ordered: true,
+        })
     }
 
     fn describe_set(&self, node: NodeId, context: &Context) -> String {
@@ -871,10 +913,10 @@ impl<'a> Compiler<'a> {
                     if !matches!(bound.pattern, Pattern::Name(_)) {
                         return unsupported("a tuple pattern in an action's \\E");
                     }
-                    let set = self.compile_ordered(bound.set, &inner)?;
+                    let set = self.compile_ordered(bound.set, &inner, false)?;
                     let binder = self.bind_bound(&bound.pattern, &inner);
                     inner = binder.context;
-                    levels.push((set.eval, binder.slots[0]));
+                    levels.push((set, binder.slots[0]));
                 }
                 let body = self.compile_step(*body, &inner, options)?;
                 Ok(exists_step(levels, body))
@@ -889,7 +931,7 @@ impl<'a> Compiler<'a> {
                     if !matches!(bound.pattern, Pattern::Name(_)) {
                         return unsupported("a tuple pattern in an action's \\A");
                     }
-                    let set = self.compile_ordered(bound.set, &inner)?;
+                    let set = self.compile_ordered(bound.set, &inner, false)?;
                     let binder = self.bind_bound(&bound.pattern, &inner);
                     inner = binder.context;
                     levels.push((set.eval, binder.slots[0]));
@@ -1198,7 +1240,7 @@ impl<'a> Compiler<'a> {
         context: &Context,
         options: WalkOptions,
     ) -> Compiling<Step> {
-        let set = self.compile_ordered(set, context)?.eval;
+        let set = self.compile_ordered(set, context, true)?;
         // The guard only where the variable is assigned already, as the TypeScript engine compiles
         // it only where it may be.
         let guard = deferred(self.compile(guard, context));
@@ -1215,8 +1257,8 @@ impl<'a> Compiler<'a> {
                     Err(Bail("a guard that isn't a boolean"))
                 };
             }
-            let id = set(machine)?;
-            let size = expect_set_size(machine, id)?;
+            let id = (set.eval)(machine)?;
+            let size = set.size(machine, id)?;
             machine.assigned += 1;
             for position in 0..size {
                 let element = machine.store.element_at(id, position);
@@ -1266,15 +1308,19 @@ impl<'a> Compiler<'a> {
         if context.is_primed || context.is_init {
             return unsupported("expression Enabled");
         }
-        let walk = self.compile_step(
-            action,
-            context,
-            WalkOptions {
-                is_init: false,
-                is_shortcut: false,
-            },
-        )?;
-        let footprint = self.get_enabled_footprint(action, context)?;
+        self.enabled_depth += 1;
+        let compiled = self
+            .compile_step(
+                action,
+                context,
+                WalkOptions {
+                    is_init: false,
+                    is_shortcut: false,
+                },
+            )
+            .and_then(|walk| Ok((walk, self.get_enabled_footprint(action, context)?)));
+        self.enabled_depth -= 1;
+        let (walk, footprint) = compiled?;
         if footprint
             .slots
             .iter()
@@ -1282,7 +1328,7 @@ impl<'a> Compiler<'a> {
         {
             return unsupported("ENABLED of an action that reads TLCGet");
         }
-        let width = self.ir.variables.len();
+        let width = self.variable_extent;
         Ok(Compiled {
             is_costly: true,
             is_boolean: true,
@@ -1311,12 +1357,12 @@ impl<'a> Compiler<'a> {
     }
 }
 
-fn exists_step(levels: Vec<(Eval, u32)>, body: Step) -> Step {
+fn exists_step(levels: Vec<(Ordered, u32)>, body: Step) -> Step {
     if let [(set, slot)] = &levels[..] {
         let (set, slot) = (set.clone(), *slot as usize);
         return step(move |machine, on_complete| {
-            let id = set(machine)?;
-            let size = expect_set_size(machine, id)?;
+            let id = (set.eval)(machine)?;
+            let size = set.size(machine, id)?;
             for position in 0..size {
                 machine.locals[slot] = machine.store.element_at(id, position);
                 body(machine, on_complete)?;
@@ -1329,8 +1375,8 @@ fn exists_step(levels: Vec<(Eval, u32)>, body: Step) -> Step {
         let mut sets = Vec::with_capacity(levels.len());
         let mut is_empty = false;
         for (set, _) in &levels {
-            let id = set(machine)?;
-            if expect_set_size(machine, id)? == 0 {
+            let id = (set.eval)(machine)?;
+            if set.size(machine, id)? == 0 {
                 is_empty = true;
             }
             sets.push(id);

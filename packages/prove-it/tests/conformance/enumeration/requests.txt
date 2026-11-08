@@ -1,0 +1,901 @@
+strings s0061 s0062 s0063
+value Lr1 s0062 Lp Lu S2 i3 i2 S3 i3 i0 i1
+enumerate q 0
+enumerate s 0
+value Lx1 Lx2 Lf S3 s0061 s0062 s0062 S2 s0061 s0062 Lp S0
+enumerate q 1
+enumerate s 1
+value Ld Lu Li S0 S0 Lr1 s0063 S1 s0061 Lu Li S0 S0 Lr1 s0063 S1 s0061
+enumerate q 2
+enumerate s 2
+value Lu Lx2 Lp S0 Lx1 S2 i2 i3 Lx3 Lu S2 i2 i3 S2 i0 i1 Lp S1 i3 Lx1 S3 i3 i0 i1
+enumerate q 3
+enumerate s 3
+value Lp Li Lp S1 s0063 Lp S1 s0063
+enumerate q 4
+enumerate s 4
+value Lx1 Ld Lu S0 S0 Lx1 S2 i1 i2
+enumerate q 5
+enumerate s 5
+value Lu Lf Li S3 i0 i1 i2 S3 i2 i3 i0 Li S1 i1 S0 Li Lf S0 S2 i2 i1 Lf S2 i3 i3 S2 i4 i0
+enumerate q 6
+enumerate s 6
+value S3 i0 i3 i4
+enumerate q 7
+enumerate s 7
+value Lu Lp Lp S2 S0 S0 Lp Lp S2 S0 S0
+enumerate q 8
+enumerate s 8
+value Lu Lp Lp S2 s0063 s0063 Lp Lp S2 s0063 s0063
+enumerate q 9
+enumerate s 9
+value Lu Lp Lx2 S0 S1 s0062 Li Ld S2 s0063 s0062 S2 s0063 s0062 Ld S2 s0063 s0062 S2 s0063 s0062
+enumerate q 10
+enumerate s 10
+value Lx1 Li Ld S1 S3 s0062 s0062 i1 S2 s0061 s0063 Lu S0 S3 S2 s0063 s0063 S2 s0062 s0062 S0
+enumerate q 11
+enumerate s 11
+value Lx1 Lu Lp S3 S1 i4 S3 i3 i4 i1 S1 i3 Lp S3 S1 i2 S3 s0062 i4 i1 S1 i2
+enumerate q 12
+enumerate s 12
+value Lr2 s0062 Lu Lu S2 S2 s0063 s0062 S0 S2 S2 s0063 s0062 S0 Lu S2 S2 s0063 s0062 S0 S2 S2 s0063 s0062 S0 s0063 Lu Lr2 s0063 S0 s0061 S2 S1 s0063 S3 s0062 s0062 s0062 Lx2 S1 s0061 S1 s0063
+enumerate q 13
+enumerate s 13
+value Lp S3 i1 i1 i4
+enumerate q 14
+enumerate s 14
+value Lx2 Lu S1 i2 S1 i1 Lx1 Li S2 i3 i4 S2 i3 i4
+enumerate q 15
+enumerate s 15
+value Lx1 Li Lf S1 i4 S2 i2 i1 Lu S1 i3 S0
+enumerate q 16
+enumerate s 16
+value Ld Lu Lr1 s0061 S1 i2 Lr2 s0061 S3 i2 i3 i0 s0063 S0 Lu Lr1 s0061 S1 i1 Lr2 s0061 S3 i2 i2 i1 s0063 S0
+enumerate q 17
+enumerate s 17
+value Lx3 Li Lp S0 Lp S0 Ld S0 S0 Lu Lp S0 Lp S0
+enumerate q 18
+enumerate s 18
+value Lr1 s0061 Lr1 s0063 Ld S2 i3 i1 S1 i1
+enumerate q 19
+enumerate s 19
+value Lx3 Lr1 s0061 S1 i2 Lu Lp S1 i0 Lp S1 i1 Lp Lf S0 S2 i1 i2
+enumerate q 20
+enumerate s 20
+value S2 s0063 s0062
+enumerate q 21
+enumerate s 21
+value Lu Ld Ld S3 s0061 s0063 s0061 S3 s0061 s0063 s0061 Lx2 S2 s0062 i0 S3 s0063 s0061 s0063 Ld Ld S3 s0061 s0063 s0061 S3 s0061 s0063 s0061 Lx2 S2 s0062 s0062 S3 s0063 s0061 s0063
+enumerate q 22
+enumerate s 22
+value Lu Lp Ld S0 S0 Lu S2 s0062 s0063 Ld S2 S0 S2 s0062 s0062 S2 S0 S2 s0062 s0062
+enumerate q 23
+enumerate s 23
+value Lu S3 s0062 s0063 s0062 S3 s0063 s0061 s0063
+enumerate q 24
+enumerate s 24
+value Lu Lu Lf S0 S1 i2 Lx3 S1 S3 i4 i4 i2 S3 S1 i1 S0 S2 i0 i0 S3 i1 i1 i3 Ld Li S2 S0 S2 i1 i4 S2 i3 i2 Lx1 S0
+enumerate q 25
+enumerate s 25
+value Li Ld Lx3 S0 S0 S1 i0 Lx3 S0 S0 S1 i2 Ld Lx3 S0 S0 S1 i3 Lx3 S0 S0 S1 s0063
+enumerate q 26
+enumerate s 26
+value Lf Lu Ld S3 i2 i4 i2 S2 i4 i1 Ld S3 i0 i3 i1 S2 i0 i1 S0
+enumerate q 27
+enumerate s 27
+value Lx2 Lx2 Lf S0 S3 s0062 s0062 s0061 Lp S2 s0063 s0062 Lp S3 s0063 s0063 s0062
+enumerate q 28
+enumerate s 28
+value Lp Lu Lx3 S0 S3 i3 i3 s0062 S1 S1 i2 Lu S3 S1 i1 S2 i3 i4 S2 i1 i4 S3 S1 i4 S2 i2 i4 S2 i2 i3
+enumerate q 29
+enumerate s 29
+value Lu Lu Ld S3 s0061 s0061 s0061 S3 s0061 s0062 s0061 Lf S1 s0063 S3 s0063 s0063 s0061 Ld Lp S2 s0062 s0063 Lp S2 s0062 s0063
+enumerate q 30
+enumerate s 30
+value Lu Lx2 S2 i1 i3 Lx2 S1 i4 S0 Lr2 s0061 Lu S1 i4 S2 i3 i4 s0062 Ld S1 i4 S3 i4 i3 i2
+enumerate q 31
+enumerate s 31
+value Lu Lu Ld S3 S1 s0063 S1 s0061 S1 i2 S1 s0063 Ld S3 S1 s0063 S1 s0061 S1 s0063 S1 s0063 Lu Ld S3 S1 s0063 S1 s0061 S1 s0063 S1 s0063 Ld S3 S1 s0063 S1 s0061 S1 s0063 S1 s0063
+enumerate q 32
+enumerate s 32
+value Lu Li Lu S3 s0063 s0063 s0061 S3 s0063 s0063 s0061 S3 s0062 s0062 s0061 Lu Lp S2 s0061 s0062 Lp S2 s0061 s0062
+enumerate q 33
+enumerate s 33
+value Lr1 s0061 Lf Lu S1 i0 S1 i3 Lu S3 i1 i4 i0 S1 S3 i4 i4 i0
+enumerate q 34
+enumerate s 34
+value Lu Lu Lf S2 i0 s0063 S0 Lf S2 i1 s0063 S0 Lu Lf S2 i1 s0063 S0 Lf S2 i0 s0063 S0
+enumerate q 35
+enumerate s 35
+value Ld Lp Lu S3 s0062 s0063 s0063 S3 s0062 s0063 s0063 Lu Lf S0 S3 s0062 s0062 s0062 Lf S0 S3 s0062 s0062 s0062
+enumerate q 36
+enumerate s 36
+value Lp Lp Lu S0 S0
+enumerate q 37
+enumerate s 37
+value Lu Ld Li S2 i2 i2 S2 i0 i4 Li S2 i4 i4 S2 i3 i2 Li Li S0 S0 Li S0 S0
+enumerate q 38
+enumerate s 38
+value Lu Lf Ld S2 S2 s0062 s0061 S0 S2 S2 s0062 s0061 S0 Ld S1 s0062 S1 s0062 Lf Ld S2 S2 s0062 s0061 S0 S2 S2 s0062 s0061 S0 Ld S1 s0062 S1 s0062
+enumerate q 39
+enumerate s 39
+value Li Lp Ld S1 S1 s0061 S1 S1 s0061 S1 s0063
+enumerate q 40
+enumerate s 40
+value Lx2 Lr3 s0061 Li S0 S3 i1 i4 i3 s0062 Lp S0 s0063 Ld S3 S1 i1 S2 i2 i1 S0 S3 S1 i2 S2 i3 i1 S0 Ld Lx1 S3 S2 i0 i0 S0 S0 Lr1 s0063 S3 S2 i0 i0 S1 i1 S1 i1
+enumerate q 41
+enumerate s 41
+value Lx3 Ld Lr1 s0063 S0 Lp S1 s0061 Ld Lu S3 s0062 s0062 s0062 S3 s0062 s0062 s0062 Lu S3 s0062 s0062 s0062 S3 s0062 s0062 s0062 Lp Ld S1 s0062 S0
+enumerate q 42
+enumerate s 42
+value Lf Ld Ld S2 s0062 s0063 S2 s0062 s0061 Lu S2 s0062 s0063 S2 s0062 s0063 Lr1 s0061 Ld S0 S0
+enumerate q 43
+enumerate s 43
+value Lu Lf Lr1 s0063 S0 Lr2 s0062 S2 s0062 s0061 s0063 S2 s0063 s0063 Lf Lr1 s0063 S0 Lr2 s0062 S2 s0062 s0061 s0063 S2 s0063 s0063
+enumerate q 44
+enumerate s 44
+value S0
+enumerate q 45
+enumerate s 45
+value Lu Lu Lr1 s0063 S3 s0062 s0061 s0063 Lf S1 i0 S3 S1 s0061 S2 s0062 s0061 S3 s0063 s0061 s0061 Lu Lf S0 S1 s0062 Lr2 s0061 S2 s0063 s0061 s0062 S3 s0062 s0063 s0061
+enumerate q 46
+enumerate s 46
+value Lp Ld Lf S0 S3 i2 i3 i1 Lr2 s0061 S0 s0062 S0
+enumerate q 47
+enumerate s 47
+value Lx2 Lu Lr1 s0061 S3 i0 i1 i0 Lu S0 S0 Lu Ld S3 S3 i4 i4 i2 S3 i1 i1 i4 S0 S0 Ld S3 S3 s0063 i2 i4 S3 i3 i0 i4 S0 S0
+enumerate q 48
+enumerate s 48
+value Li Lx2 Lu S0 S0 Lp S3 S1 s0062 S2 s0061 s0063 S3 s0061 s0063 s0061 Lx2 Lu S0 S0 Lp S3 S1 s0062 S2 s0061 s0063 S3 s0061 s0063 s0061
+enumerate q 49
+enumerate s 49
+value Ld Lp Lu S1 s0063 S3 s0061 s0062 s0061 Lp Lu S1 s0063 S3 s0061 s0062 s0061
+enumerate q 50
+enumerate s 50
+value Li Ld Ld S1 i0 S2 i1 i1 Ld S1 i1 S2 i1 i1 Ld Lx2 S0 S0 Lx2 S0 S0
+enumerate q 51
+enumerate s 51
+value Lu Ld Lr1 s0061 S0 Ld S3 s0062 s0062 s0063 S3 s0062 s0062 s0063 Ld Lr1 s0061 S0 Ld S3 s0062 s0062 s0063 S3 s0062 s0062 s0063
+enumerate q 52
+enumerate s 52
+value Lp Lu Lu S3 s0061 s0061 s0061 S0 S1 s0063
+enumerate q 53
+enumerate s 53
+value Li Lu Lp S0 Lp S0 Li Lr2 s0062 S3 i4 i4 i1 s0061 S0 Lu S0 S2 i2 i0
+enumerate q 54
+enumerate s 54
+value Ld Lx1 Lf S3 s0061 s0063 s0062 S2 S3 s0063 s0061 s0061 S2 s0061 s0063 Lx1 Lf S3 s0061 s0063 s0062 S2 S3 s0063 s0061 s0061 S2 s0061 s0063
+enumerate q 55
+enumerate s 55
+value Ld Li Lp S2 s0062 s0063 S2 i4 s0061 Lr2 s0061 Ld S0 S1 s0063 s0063 Lr1 s0062 S2 s0061 i2
+enumerate q 56
+enumerate s 56
+value Lu S1 i4 Lx2 S1 i1 Lu S1 i1 S1 i1
+enumerate q 57
+enumerate s 57
+value Lp Lr1 s0061 Lu S2 s0062 s0063 S0
+enumerate q 58
+enumerate s 58
+value Lx3 Lu Ld S2 i2 i4 S2 i3 i1 Li S0 S3 i0 i3 i1 S3 i0 i1 i1 Lu Li S1 i3 S1 i0 Lu S0 S0
+enumerate q 59
+enumerate s 59
+value Li Lp Lu S0 S2 s0062 s0063 S3 s0061 s0063 s0062
+enumerate q 60
+enumerate s 60
+value Li Lx1 Lf S2 s0062 s0061 S0 Lp Lp S2 s0063 s0063
+enumerate q 61
+enumerate s 61
+value Lu Lu Lp S2 s0061 s0062 Lp S2 s0061 s0062 Ld Ld S0 S2 s0063 s0063 Lu S1 s0063 S1 s0063
+enumerate q 62
+enumerate s 62
+value Lp Lr1 s0061 Lf S3 s0062 s0061 s0062 S0
+enumerate q 63
+enumerate s 63
+value Lu Li Lf S0 S3 i4 i0 i4 Ld S1 i0 S1 i1 Lr2 s0063 Lr3 s0061 S0 s0062 S0 s0063 S1 i2 s0061 Lf S1 i4 S2 i2 i4
+enumerate q 64
+enumerate s 64
+value Ld Lx1 Lf S3 i0 i0 i2 S2 i2 i0 Lx1 Lf S3 s0062 i0 i0 S2 i2 i3
+enumerate q 65
+enumerate s 65
+value Lu Lf Lp S2 S3 i0 i0 i3 S0 Lr1 s0061 S3 i0 i3 i0 Lf Lp S2 S3 i2 i4 i1 S0 Lr1 s0061 S3 i4 i4 i1
+enumerate q 66
+enumerate s 66
+value Li S2 S3 s0063 i1 i1 S3 i0 i0 i2 Lr1 s0061 Li S1 i1 S1 i3
+enumerate q 67
+enumerate s 67
+value Lf Lu Lu S3 S1 i0 S3 i4 i4 i2 S2 i2 i4 S2 S2 i1 i0 S2 i3 i3 Lu S3 S1 i0 S3 i4 i3 i0 S2 i4 i2 S2 S2 i4 i2 S2 i3 i3 Lr1 s0061 Lf S0 S0
+enumerate q 68
+enumerate s 68
+value Lf Lx1 Ld S1 i3 S0 Lu Lx3 S2 i4 i3 S3 i2 i2 i3 S2 i4 i0 Lu S0 S0
+enumerate q 69
+enumerate s 69
+value Li Ld Lx2 S1 s0063 S0 S0 Ld Lx2 S1 s0063 S0 S0
+enumerate q 70
+enumerate s 70
+value Lu Lf Ld S3 s0061 s0063 s0063 S2 s0062 s0061 Lu S0 S3 s0063 s0062 s0061 Ld Lx3 S2 s0061 s0063 S1 s0063 S2 s0062 s0061 Lx3 S2 s0061 s0063 S1 s0063 S2 s0062 s0061
+enumerate q 71
+enumerate s 71
+value Lx3 Lu Lr3 s0061 S2 s0062 s0063 s0062 S1 s0063 s0063 S0 Lr3 s0061 S2 s0062 s0063 s0062 S1 s0063 s0063 S0 Li Lu S1 S2 s0063 s0061 S1 S2 s0063 s0061 S1 s0062 Lu Lf S1 s0061 S2 s0062 s0063 Ld S1 s0063 S1 s0063
+enumerate q 72
+enumerate s 72
+value S1 s0062
+enumerate q 73
+enumerate s 73
+value Lu Li Lf S3 i4 i0 i0 S2 S1 i1 S0 Lf S0 S3 i0 i0 i2 Lu Li S1 i4 S3 i3 i4 i1 Li S1 i0 S3 i0 i1 i2
+enumerate q 74
+enumerate s 74
+value Lu Lu Lu S1 i3 S1 i1 S3 i3 i0 i2 Li Lr2 s0062 S2 S3 i3 i4 i0 S3 i4 i4 i4 s0063 S1 i0 Lr2 s0062 S2 S3 i4 i4 i4 S3 i1 i1 i0 s0063 S1 i2
+enumerate q 75
+enumerate s 75
+value Lu Li Lx1 S1 s0062 Lx1 S1 s0062 Li S2 s0061 s0061 Lf S3 S2 s0063 s0061 S3 s0062 s0061 s0062 S2 s0061 s0061 S0
+enumerate q 76
+enumerate s 76
+value Li Lp Lr1 s0061 S0 Li Lu S1 i2 S0 S3 S0 S3 i3 i4 i4 S1 i0
+enumerate q 77
+enumerate s 77
+value Lx1 Lp Lu S2 i0 i2 S2 i4 i1
+enumerate q 78
+enumerate s 78
+value Lu Lp Lp S1 S0 Lp Lp S1 S0
+enumerate q 79
+enumerate s 79
+value Ld Lx3 Lf S2 i0 i1 S0 Ld S2 i1 i4 S2 i2 i4 Lf S3 i2 i1 i3 S1 S1 i1 Lx3 Lf S2 i3 i0 S0 Ld S2 i4 i2 S2 i0 i4 Lf S3 i3 i0 i4 S1 S1 i4
+enumerate q 80
+enumerate s 80
+value Ld Li Lu S0 S0 Ld S0 S0 Li Lu S0 S0 Ld S0 S0
+enumerate q 81
+enumerate s 81
+value Lx2 S0 Li Lu S2 i4 i2 S0 Lu S3 i1 i1 i3 S2 S3 i0 i4 i2 S1 i2
+enumerate q 82
+enumerate s 82
+value Li Lx1 Lx3 S3 i4 i1 i0 S2 i3 i1 S0 Lu Lx1 S2 i2 i1 Lp S1 i3
+enumerate q 83
+enumerate s 83
+value Lx1 Lx3 S1 S1 i4 Lu S0 S0 Lu S0 S0
+enumerate q 84
+enumerate s 84
+value Lu Lu Lr2 s0062 S0 s0061 S1 s0062 Lf S1 s0063 S2 S1 s0062 S3 s0061 s0063 i3 Lu Lr2 s0062 S0 s0061 S1 s0062 Lf S1 s0063 S2 S1 s0062 S3 s0061 s0063 s0061
+enumerate q 85
+enumerate s 85
+value Lf Lu Ld S0 S0 Lx1 S0 Lf Lf S0 S2 i2 i0 Lp S1 i1
+enumerate q 86
+enumerate s 86
+value Lp Lp Ld S0 S0
+enumerate q 87
+enumerate s 87
+value Lr1 s0061 Li Lp S1 i0 Li S1 i0 S3 i4 i4 i3
+enumerate q 88
+enumerate s 88
+value Lr1 s0062 Lp Lp S2 i3 i0
+enumerate q 89
+enumerate s 89
+value Li Lu Lp S3 S2 s0061 s0063 S1 s0063 S1 s0063 Ld S1 S3 s0062 s0063 s0061 S2 S3 s0062 s0061 s0061 S3 s0061 s0062 s0063 Lu Lu S3 s0061 s0063 s0062 S0 S3 s0063 s0061 s0063
+enumerate q 90
+enumerate s 90
+value Li Lu Lr1 s0061 S2 s0063 s0063 Lr1 s0061 S2 s0063 s0063 Lu Lr1 s0061 S2 s0063 s0063 Lr1 s0061 S2 s0063 s0063
+enumerate q 91
+enumerate s 91
+value Lr2 s0061 S3 s0062 s0063 s0062 s0062 Li Lu S1 s0061 S1 s0061 Lf S2 s0063 s0061 S0
+enumerate q 92
+enumerate s 92
+value Lx2 Lx1 Lu S0 S2 s0063 s0063 Lu Lx2 S3 s0062 s0063 s0061 S1 S0 Lx2 S3 s0062 s0063 s0061 S1 S0
+enumerate q 93
+enumerate s 93
+value Lu Lx1 Lu S1 s0061 S0 Lx1 Lu S1 s0061 S0
+enumerate q 94
+enumerate s 94
+value Lr2 s0061 Lu S0 Lp S0 s0063 S0
+enumerate q 95
+enumerate s 95
+value Lx2 Lf Ld S2 S2 s0063 s0062 S1 s0062 S3 s0063 s0062 s0062 Lx2 S0 S0 Li Lu S0 S0 Lu S3 S0 S2 s0061 s0061 S3 s0062 s0061 s0061 S0
+enumerate q 96
+enumerate s 96
+value Li Ld Lr1 s0061 S1 s0063 Lr1 s0061 S1 s0063 Ld Lr1 s0061 S1 s0063 Lr1 s0061 S1 s0063
+enumerate q 97
+enumerate s 97
+value Lp Lx1 Lr3 s0061 S0 s0062 S2 s0063 s0062 s0063 S2 s0062 s0063
+enumerate q 98
+enumerate s 98
+value Lr2 s0061 Lu Ld S1 s0061 S1 s0061 Ld S1 s0061 S1 s0061 s0063 Lr2 s0061 Ld S1 s0063 S3 S0 S0 S2 s0061 s0063 s0063 S3 s0061 s0061 s0061
+enumerate q 99
+enumerate s 99
+value Lu Lr2 s0061 Li S2 s0062 s0061 S1 s0061 s0062 Lx1 S0 Lr2 s0061 Li S2 s0062 s0061 S1 s0061 s0062 Lx1 S0
+enumerate q 100
+enumerate s 100
+value S2 S1 i0 S3 i0 i0 i0
+enumerate q 101
+enumerate s 101
+value Lp Lr2 s0063 Lf S3 S3 i1 i1 i2 S2 i1 i4 S2 i3 i3 S1 i3 s0062 Li S0 S1 S2 i3 i4
+enumerate q 102
+enumerate s 102
+value S1 S3 s0063 s0063 s0063
+enumerate q 103
+enumerate s 103
+value Lr1 s0062 Lp S0
+enumerate q 104
+enumerate s 104
+value Ld Li S3 s0061 s0062 s0063 Ld S0 S0 Ld Lr1 s0062 S1 s0063 Lr1 s0062 S1 s0063
+enumerate q 105
+enumerate s 105
+value Lu Lu Lx3 S2 s0061 s0063 S2 s0061 s0063 S0 Lx3 S2 s0061 s0063 S2 s0061 s0063 S0 Lu Lu S0 S1 s0063 Li S2 S0 S1 s0061 S1 s0062
+enumerate q 106
+enumerate s 106
+value Li S1 S3 s0061 s0062 s0061 Lr2 s0062 Lu S2 s0061 s0061 S2 s0061 s0061 s0063 Lu S0 S2 s0061 s0061
+enumerate q 107
+enumerate s 107
+value Lx2 Lf Lr3 s0062 S0 s0061 S2 s0061 s0063 s0063 S1 s0062 Li S2 s0063 s0061 S1 s0061 S3 s0062 s0063 s0062
+enumerate q 108
+enumerate s 108
+value Lf Lr2 s0061 Lf S0 S0 s0063 S1 i3 Lu Lr1 s0062 S0 Lf S3 i0 i0 i3 S3 S3 i2 i0 i4 S0 S0
+enumerate q 109
+enumerate s 109
+value Lr2 s0062 Lr1 s0063 Lr1 s0061 S1 i4 s0061 Li Ld S1 S0 S1 S0 Ld S1 S0 S1 S0
+enumerate q 110
+enumerate s 110
+value Lu Ld Ld S3 i0 i3 i0 S3 i1 i2 i2 S0 Li Lu S3 S2 i1 i2 S1 i4 S2 i3 i1 S3 S2 i2 i0 S1 i1 S2 i3 i0 Lr1 s0061 S2 i1 i1
+enumerate q 111
+enumerate s 111
+value Li Lp Lu S3 s0061 s0062 s0062 S3 s0061 s0062 s0062 Lp Lu S3 s0061 s0062 s0062 S3 s0061 s0062 s0062
+enumerate q 112
+enumerate s 112
+value Lp S1 i2
+enumerate q 113
+enumerate s 113
+value Lx2 Lu S2 s0062 s0062 S2 s0062 s0062 Lp Lx2 S2 s0062 s0062 S0
+enumerate q 114
+enumerate s 114
+value Lr1 s0061 Lu Ld S3 s0063 s0063 s0062 S3 s0063 s0061 s0063 Ld S3 s0063 s0063 s0062 S3 s0063 s0061 s0063
+enumerate q 115
+enumerate s 115
+value Li Lf Lx3 S2 S0 S0 S0 S3 s0061 s0063 s0062 Lf S3 s0062 s0062 s0061 S3 s0062 s0063 s0063 Lp Lu S0 S0
+enumerate q 116
+enumerate s 116
+value Li S1 s0061 S1 s0061
+enumerate q 117
+enumerate s 117
+value Lu Lu Lu S3 i2 i3 i2 S1 i0 S3 S2 i1 i1 S0 S2 i3 i0 Lu Lu S3 s0063 i1 i0 S1 i2 S3 S2 i3 i2 S0 S2 i3 i1
+enumerate q 118
+enumerate s 118
+value Lx3 Ld Ld S0 S0 Lu S3 i3 i1 i0 S1 i0 Lu Lr2 s0063 S1 i4 s0061 S2 S3 i1 i1 i0 S2 i3 i4 Lr2 s0063 S1 i2 s0061 S2 S3 i3 i1 i2 S2 i0 i0 Lx2 Lp S3 S1 i3 S1 i0 S2 i4 i2 S2 i0 i3
+enumerate q 119
+enumerate s 119
+value Lu Lf Li S1 s0061 S1 s0061 Li S0 S0 Lf Li S1 s0061 S1 s0061 Li S0 S0
+enumerate q 120
+enumerate s 120
+value S3 S1 i2 S1 i1 S0
+enumerate q 121
+enumerate s 121
+value Lu S2 S3 s0063 s0061 s0061 S2 s0061 s0063 S2 S3 s0063 s0061 s0061 S2 s0061 s0063
+enumerate q 122
+enumerate s 122
+value Lp Ld Lu S1 i4 S3 i3 i3 i4 Lf S0 S3 i0 i3 i1
+enumerate q 123
+enumerate s 123
+value Lr2 s0062 S1 i4 s0061 Lu Li S1 S0 S0 Lu S2 i3 i1 S2 i4 i2
+enumerate q 124
+enumerate s 124
+value Lx1 Lp Lf S2 i3 i1 S1 i1
+enumerate q 125
+enumerate s 125
+value S3 S0 S0 S1 s0062
+enumerate q 126
+enumerate s 126
+value Lr1 s0061 Lp Lx1 S1 S2 i0 i3
+enumerate q 127
+enumerate s 127
+value Lu Li Lx3 S2 s0063 s0063 S2 i3 s0063 S0 Lu S0 S0 Lr1 s0062 Lr1 s0062 S0
+enumerate q 128
+enumerate s 128
+value Lu Li Lu S2 s0063 s0062 S3 s0063 s0061 s0061 Lu S1 s0063 S2 s0063 s0062 Li Lu S2 s0063 s0062 S3 s0063 s0061 s0061 Lu S1 s0063 S2 s0063 s0062
+enumerate q 129
+enumerate s 129
+value Lu Ld Ld S2 s0063 i1 S2 s0063 i3 Ld S2 s0063 i1 S2 s0063 i0 Lu Ld S0 S0 Li S0 S0
+enumerate q 130
+enumerate s 130
+value Lr3 s0062 Li Lf S0 S3 S3 s0062 s0061 s0062 S2 s0061 s0063 S2 s0063 s0061 Li S3 s0063 s0063 s0063 S3 S1 s0063 S0 S2 s0061 s0061 s0063 Lu Lf S0 S2 S2 s0062 s0063 S1 s0063 Lf S0 S2 S2 s0062 s0063 S1 s0063 s0061 S2 s0063 s0063
+enumerate q 131
+enumerate s 131
+value Lu S1 s0061 Lu Li S2 s0062 s0063 S3 S1 s0063 S1 s0061 S3 s0061 s0061 s0063 Ld S0 S0
+enumerate q 132
+enumerate s 132
+value Lf Ld Lx2 S1 i4 S0 S1 S2 i1 i1 Lu Li S2 S0 S2 i1 s0063 S2 i3 i2 Lf S0 S0
+enumerate q 133
+enumerate s 133
+value Lx1 S0
+enumerate q 134
+enumerate s 134
+value Lx3 Ld Lx3 S1 S3 s0063 s0062 s0062 S2 s0062 s0063 S2 s0062 s0063 S0 Lu S3 s0061 s0061 s0063 S3 s0061 s0061 s0063 Lu Lf S0 S3 s0063 s0063 s0061 Lf S0 S3 s0063 s0063 s0061
+enumerate q 135
+enumerate s 135
+value Ld S2 i1 i2 Lr1 s0061 Li S0 S0
+enumerate q 136
+enumerate s 136
+value Li Lr1 s0061 Ld S1 i3 S3 S0 S1 i0 S0 Lp Lu S3 S0 S3 i1 i0 i3 S2 i0 i4 S3 S0 S3 i3 i4 i4 S2 i2 i3
+enumerate q 137
+enumerate s 137
+value Lr1 s0061 Lr2 s0062 Lu S2 i2 i4 S2 i3 i3 s0063 Lu S0 S0
+enumerate q 138
+enumerate s 138
+value Lp Lu Lp S0 Lp S0
+enumerate q 139
+enumerate s 139
+value Ld Lf Lu S0 S2 s0062 s0061 Ld S1 s0062 S2 s0061 s0061 Lf Lu S0 S2 s0062 s0061 Ld S1 s0062 S2 s0061 s0061
+enumerate q 140
+enumerate s 140
+value Lu Lr1 s0063 Lp S3 i0 i2 i4 Lr1 s0063 Lp S3 i4 i0 i3
+enumerate q 141
+enumerate s 141
+value Lr1 s0061 S0
+enumerate q 142
+enumerate s 142
+value Lp Ld Lx1 S0 Lx1 S0
+enumerate q 143
+enumerate s 143
+value Lr3 s0063 Lp Lu S2 s0061 s0062 S2 s0061 s0062 s0062 Ld Lu S0 S0 Lu S0 S0 s0061 Li Lx3 S3 S1 s0063 S1 s0062 S0 S0 S1 S3 s0063 s0061 s0061 Lu S0 S1 S3 s0061 s0062 s0061
+enumerate q 144
+enumerate s 144
+value Lp S2 i0 i3
+enumerate q 145
+enumerate s 145
+value Ld Lx3 Lu S2 s0061 s0062 S2 s0061 s0062 Li S2 S2 s0063 s0062 S3 s0061 s0062 s0061 S2 S2 s0063 s0062 S3 s0061 s0062 s0061 Ld S0 S0 Lx3 Lu S2 s0061 s0062 S2 s0061 s0062 Li S2 S2 s0063 s0062 S3 s0061 s0062 s0061 S2 S2 s0063 s0062 S3 s0061 s0062 s0061 Ld S0 S0
+enumerate q 146
+enumerate s 146
+value Ld Ld Lf S0 S1 S3 i4 i4 i3 Li S2 S3 i3 i4 i0 S1 i3 S2 S3 i1 i3 i3 S1 i0 Ld Lf S0 S1 S3 i1 i0 i3 Li S2 S3 i4 i1 i1 S1 i3 S2 S3 i3 i0 i3 S1 i4
+enumerate q 147
+enumerate s 147
+value Lp Lp Lx1 S3 i1 i0 i2
+enumerate q 148
+enumerate s 148
+value Lu Lx3 Lx1 S2 i2 i0 Lr2 s0062 S1 i4 s0063 S0 Lu S1 S1 i3 S1 S1 i3 Lx3 Lx1 S2 i3 i2 Lr2 s0062 S1 i1 s0063 S0 Lu S1 S1 i1 S1 S1 i0
+enumerate q 149
+enumerate s 149
+value Lr1 s0061 Lu Lu S0 S0 Lu S0 S0
+enumerate q 150
+enumerate s 150
+value Lf Lp Lp S1 i3 Lr1 s0063 Lp S2 i0 i1
+enumerate q 151
+enumerate s 151
+value Lf Lp S0 Li Lf S3 s0061 s0061 s0063 S2 S1 s0063 S2 s0063 s0062 Lf S3 s0061 s0061 s0063 S2 S1 s0063 S2 s0063 s0062
+enumerate q 152
+enumerate s 152
+value Lu Lu Lp S3 i4 i3 i3 Lu S2 S3 i0 i0 i2 S1 i1 S0 Lu Lp S3 i4 i3 s0062 Lu S2 S3 i2 i1 i2 S1 i3 S0
+enumerate q 153
+enumerate s 153
+value Lu Li Lp S0 Lp S0 Li Lp S0 Lp S0
+enumerate q 154
+enumerate s 154
+value Lu Lp Ld S3 i3 i3 i4 S3 i2 i4 i0 Lp Ld S3 i3 i3 i0 S3 i2 i2 i0
+enumerate q 155
+enumerate s 155
+value Li Lu Ld S2 S0 S0 S3 i1 i4 i3 Ld S2 S0 S0 S3 i0 i0 i1 Lu Ld S2 S0 S0 S3 i0 i1 i3 Ld S2 S0 S0 S3 s0062 i3 i0
+enumerate q 156
+enumerate s 156
+value Lp Lp Lr2 s0062 S1 S3 s0062 i1 i3 s0063 S1 i3
+enumerate q 157
+enumerate s 157
+value Lf S0 S2 s0061 s0061
+enumerate q 158
+enumerate s 158
+value Lu Lp Ld S0 S1 i0 Lp Ld S0 S1 i0
+enumerate q 159
+enumerate s 159
+value S2 S3 s0062 s0063 s0063 S1 s0061
+enumerate q 160
+enumerate s 160
+value Lu Lp Li S2 i2 i2 S1 i4 Lr1 s0063 Lu S0 S0
+enumerate q 161
+enumerate s 161
+value Lf Lx2 Ld S2 S1 i2 S0 S2 S1 i2 S0 Lr2 s0062 S0 s0063 S1 i0 Lu Li S1 i3 S1 i0 Lu S0 S0
+enumerate q 162
+enumerate s 162
+value Lu Lu Lr3 s0061 S3 s0063 s0061 s0062 s0062 S2 s0063 s0062 s0063 S0 Lr3 s0061 S3 s0063 s0061 s0062 s0062 S2 s0063 s0062 s0063 S0 Lu Lr3 s0061 S3 s0063 s0061 s0062 s0062 S2 s0063 s0062 s0063 S0 Lr3 s0061 S3 s0063 s0061 s0062 s0062 S2 s0063 s0062 s0063 S0
+enumerate q 163
+enumerate s 163
+value Lu Lu Ld S2 i2 i4 S1 i0 Ld S2 i1 i3 S1 i3 Li Ld S3 S2 i2 i3 S1 i3 S2 i3 i0 S3 S2 i0 i1 S1 i2 S2 i2 i4 Ld S3 S2 i4 i3 S1 i0 S2 i0 i3 S3 S2 i1 i2 S1 i1 S2 i0 i2
+enumerate q 164
+enumerate s 164
+value Lu Lf Lp S0 Lp S1 i2 Lr2 s0063 Lr1 s0062 S0 s0062 Lu S2 i2 s0061 S2 i1 s0061
+enumerate q 165
+enumerate s 165
+value Lu Lu Lx2 S3 S0 S1 s0062 S3 s0061 s0063 s0062 S0 Lx2 S3 S0 S1 s0062 S3 s0061 s0063 s0062 S0 Lu Lx2 S3 S0 S1 s0062 S3 s0061 s0063 s0062 S0 Lx2 S3 S0 S1 s0062 S3 s0061 s0063 s0062 S0
+enumerate q 166
+enumerate s 166
+value Lu Lu Lf S2 s0063 s0062 S1 s0063 Lf S2 s0063 s0062 S1 s0063 Lu Lf S2 s0063 s0062 S1 s0063 Lf S2 s0063 s0062 S1 s0063
+enumerate q 167
+enumerate s 167
+value Lu Ld Li S3 s0063 s0062 s0061 S0 Li S3 s0063 s0062 s0061 S0 Ld Li S3 s0063 s0062 s0061 S0 Li S3 s0063 s0062 s0061 S0
+enumerate q 168
+enumerate s 168
+value Lx1 Li Lu S2 S2 s0062 s0063 S1 s0062 S1 s0061 Ld S2 s0062 s0062 S2 s0062 s0062
+enumerate q 169
+enumerate s 169
+value Lf Lr1 s0063 Lu S3 i2 i3 i3 S0 S1 i2
+enumerate q 170
+enumerate s 170
+value Ld S1 s0061 Lx2 Lx3 S3 s0062 s0062 s0061 S2 s0062 s0062 S1 i3 Lu S2 s0062 s0062 S0
+enumerate q 171
+enumerate s 171
+value Li Lp Li S3 i1 i2 i4 S0 Lp Li S3 i4 i4 i4 S0
+enumerate q 172
+enumerate s 172
+value Li Lp Lx2 S3 s0063 s0063 s0061 S0 Li Lr1 s0061 S3 s0061 s0062 s0063 Lr1 s0061 S3 s0061 s0062 s0063
+enumerate q 173
+enumerate s 173
+value Lr2 s0062 Lp Lx3 S1 S2 s0061 s0061 S3 s0061 s0063 s0063 S2 s0063 s0062 s0063 Lp S1 s0062
+enumerate q 174
+enumerate s 174
+value Lr1 s0062 Lp Lu S3 S3 s0063 s0061 s0063 S2 s0061 s0062 S2 s0061 s0063 S3 S3 s0063 s0061 s0063 S2 s0061 s0062 S2 s0061 s0063
+enumerate q 175
+enumerate s 175
+value Lf Lu Lu S0 S0 Lu S0 S0 Li Lr1 s0061 S3 s0062 s0061 s0061 Lp S1 s0062
+enumerate q 176
+enumerate s 176
+value Li Li Lx2 S2 S3 s0061 s0061 s0062 S2 s0062 s0063 S0 Lx2 S2 S3 s0061 s0061 s0062 S2 s0062 s0063 S0 Li Lx2 S2 S3 s0061 s0061 s0062 S2 s0062 s0063 S0 Lx2 S2 S3 s0061 s0061 s0062 S2 s0062 s0063 S0
+enumerate q 177
+enumerate s 177
+value Li Lr2 s0062 Ld S0 S0 s0061 Lp S0 Li Ld S2 S1 s0063 S2 s0061 s0062 S2 S1 s0063 S2 s0061 s0062 Ld S2 S1 s0063 S2 s0061 s0062 S2 S1 s0063 S2 s0061 s0062
+enumerate q 178
+enumerate s 178
+value Ld Lp Lu S2 i2 i3 S2 i0 i4 Lu Lu S1 s0062 S1 s0062 Lu S1 s0062 S1 s0062
+enumerate q 179
+enumerate s 179
+value Lf Lu Lf S1 s0061 S3 S3 s0061 s0062 i1 S1 s0061 S0 Lu S2 s0061 s0061 S2 s0061 s0061 S0
+enumerate q 180
+enumerate s 180
+value Lx2 S1 S3 i4 i1 i1 Lx1 Ld S1 i4 S1 i3
+enumerate q 181
+enumerate s 181
+value Ld Lp Lf S1 i3 S2 i2 i2 Lp Lf S1 i4 S2 i3 i3
+enumerate q 182
+enumerate s 182
+value Lf Lp Lx3 S2 S1 s0061 S0 S1 s0061 S1 s0063 Lr1 s0061 Lu S0 S0
+enumerate q 183
+enumerate s 183
+value Lu Lx1 Lu S2 s0063 s0063 S3 S2 s0061 s0061 S2 s0063 s0061 S0 Lu Ld S2 S1 s0063 S3 s0061 s0063 s0062 S2 S1 s0063 S3 s0061 s0063 s0062 Lr1 s0062 S3 s0062 s0062 s0063
+enumerate q 184
+enumerate s 184
+value Li Lr1 s0062 S3 S1 s0063 S0 S0 Lr1 s0062 S3 S1 s0063 S0 S0
+enumerate q 185
+enumerate s 185
+value Lu S0 Lf Li S0 S0 Ld S0 S0
+enumerate q 186
+enumerate s 186
+value Lu Lx1 Lf S3 i0 i3 i2 S3 S3 i2 i4 i0 S2 i4 i2 S2 i0 i3 Lx1 Lf S3 i3 i2 i1 S3 S3 i0 i4 i0 S2 i3 i0 S2 i3 s0062
+enumerate q 187
+enumerate s 187
+value Lu Ld S2 s0061 s0062 S2 s0061 s0062 S3 s0061 s0062 s0061
+enumerate q 188
+enumerate s 188
+value Lx1 Lp Lr2 s0062 S0 s0061 S2 s0063 s0062
+enumerate q 189
+enumerate s 189
+value Lu Lp Lx3 S3 i3 i2 i4 S0 S0 Lu Lu S1 i3 S1 i3 Lu S3 i1 i1 i1 S1 i4
+enumerate q 190
+enumerate s 190
+value Li Li Lu S2 i0 i4 S1 S2 i3 i0 Lu S2 i1 i1 S1 S2 i1 i0 S3 i1 i1 i3
+enumerate q 191
+enumerate s 191
+value Lu Ld Lx3 S1 s0062 S1 s0063 S1 s0061 Lx3 S1 s0062 S1 s0063 S1 s0061 Ld Lx3 S1 s0062 S1 s0063 S1 s0061 Lx3 S1 s0062 S1 s0063 S1 s0061
+enumerate q 192
+enumerate s 192
+value Lx1 Lx1 Lu S2 i2 i3 S2 i4 i2
+enumerate q 193
+enumerate s 193
+value Lr2 s0061 Ld Lr1 s0061 S1 i4 Lr2 s0061 S1 s0061 s0062 S2 s0061 s0063 s0063 Ld Lx1 S3 s0063 s0061 s0063 Lx1 S3 s0063 s0061 s0063
+enumerate q 194
+enumerate s 194
+value Lu Lr1 s0061 Lf S3 i1 i4 i2 S1 i4 Lr1 s0061 Lf S3 i1 i1 i0 S1 i4
+enumerate q 195
+enumerate s 195
+value Lu S3 i2 i0 i1 Lp Lx2 S1 S1 i2 S0
+enumerate q 196
+enumerate s 196
+value Lp Lu Lp S2 i0 i0 Lp S2 i2 i2
+enumerate q 197
+enumerate s 197
+value Lu Lu Lu S3 S1 s0062 S0 S3 s0061 s0062 s0063 S3 S1 s0062 S0 S3 s0061 s0062 s0063 Lu S3 S1 s0062 S0 S3 s0061 s0062 s0063 S3 S1 s0062 S0 S3 s0061 s0062 s0063 Lu Lu S3 S1 s0062 S0 S3 s0061 s0062 s0063 S3 S1 s0062 S0 S3 s0061 s0062 s0063 Lu S3 S1 s0062 S0 S3 s0061 s0062 s0063 S3 S1 s0062 S0 S3 s0061 s0062 s0063
+enumerate q 198
+enumerate s 198
+value Li S0 Ld Li S0 S0 Lx1 S2 S2 i3 i3 S3 i1 i0 i3
+enumerate q 199
+enumerate s 199
+value Lr1 s0061 Ld Lu S3 i2 i2 i0 S3 i3 i3 i3 Lu S3 i2 i3 i3 S3 i2 i3 i3
+enumerate q 200
+enumerate s 200
+value Lx2 Lp Lu S3 s0061 s0063 s0061 S2 s0062 s0063 Lu Ld S1 s0062 S3 s0063 s0063 s0063 Ld S1 s0062 S3 s0063 s0063 s0063
+enumerate q 201
+enumerate s 201
+value Lu Lr2 s0061 S0 s0063 Lu S2 i1 i0 S2 i4 i3 Ld Lf S1 i3 S2 i4 i3 Lf S1 i4 S2 i2 i2
+enumerate q 202
+enumerate s 202
+value Lu Lf Li S2 i2 i4 S2 i0 i2 Lx1 S3 i2 i2 i0 Lf Li S2 i2 i1 S2 i0 i4 Lx1 S3 i4 i0 i1
+enumerate q 203
+enumerate s 203
+value Lx3 Lf Lf S1 S1 s0061 S0 Lr3 s0063 S1 S1 s0063 s0061 S0 s0062 S0 Lp Lx1 S2 s0061 s0061 Lr1 s0061 S0
+enumerate q 204
+enumerate s 204
+value Lu Lx3 Lu S1 s0061 S1 s0061 Lr1 s0062 S3 s0061 s0062 s0062 Lu S1 S1 s0063 S3 s0061 s0062 s0063 Lu Lu S2 s0063 s0062 S3 S0 S2 s0062 s0062 S1 s0062 Lr2 s0062 S2 s0061 s0061 s0063 S2 s0061 s0061
+enumerate q 205
+enumerate s 205
+value Lx3 Lx1 Lf S3 S0 S1 i4 S0 S0 Lf Lf S2 i0 i0 S2 i1 i4 S3 i1 i3 i4 Lr1 s0062 Lf S3 S2 i2 i2 S0 S0 S1 i2
+enumerate q 206
+enumerate s 206
+value Ld S3 s0063 s0061 s0061 Lf Ld S0 S0 Lu S2 S0 S1 s0061 S2 S0 S1 s0061
+enumerate q 207
+enumerate s 207
+value Lu Lf Lf S1 i3 S2 i3 i1 Li S1 i0 S0 Lx3 Lp S3 S3 i0 i3 i2 S3 i1 i2 i3 S1 i4 Lp S3 i3 i1 i4 Ld S1 i1 S1 i0
+enumerate q 208
+enumerate s 208
+value Li Lu Lu S3 i1 i2 i1 S3 i4 i2 i4 Lp S0 Lu Lu S3 i4 i1 i4 S3 i0 i1 i3 Lp S0
+enumerate q 209
+enumerate s 209
+value Ld Lu Lu S3 i1 i0 i4 S3 i4 i1 i2 Lu S3 i1 i1 i0 S3 i1 i3 i0 Lu Lp S0 Lp S0
+enumerate q 210
+enumerate s 210
+value Lu Lp Lr2 s0062 S0 s0063 S2 S3 s0063 s0061 s0062 S0 Li Li S0 S3 s0061 s0063 s0062 Lf S0 S0
+enumerate q 211
+enumerate s 211
+value Li Lx1 Lr1 s0062 S1 i4 Lu Lf S3 i0 i4 i2 S2 i3 i3 Lf S3 i1 i2 i1 S2 i1 i1
+enumerate q 212
+enumerate s 212
+value Li Lr2 s0061 Lp S2 s0062 s0062 s0062 Li S2 s0062 s0062 S1 s0061 Li S2 S0 S2 s0061 s0061 S2 S0 S2 s0061 s0061
+enumerate q 213
+enumerate s 213
+value Ld Lu Lu S0 S0 Lx2 S3 S3 i1 i3 i3 S1 i4 S0 S2 i1 i4 S1 i3
+enumerate q 214
+enumerate s 214
+value Lx3 Lr1 s0063 Ld S3 s0062 s0062 s0063 S0 Lr3 s0061 Ld S1 s0062 S1 s0062 s0062 Lu S0 S0 s0063 Lu S1 s0063 S1 s0063 Lx1 Lu S1 s0062 S1 s0062
+enumerate q 215
+enumerate s 215
+value Ld Lu Lx3 S0 S3 S1 i2 S1 i1 S1 i3 S2 i2 i2 S1 i0 Lu Lx3 S0 S3 S1 i2 S1 i4 S1 i0 S2 i1 i4 S1 i4
+enumerate q 216
+enumerate s 216
+value Lx2 Lf S0 Lu S0 S2 S2 s0061 s0062 S2 s0061 s0061 Li S3 s0063 s0062 i3 Lx2 S3 s0063 s0061 s0061 S0
+enumerate q 217
+enumerate s 217
+value Lx3 Lu Lp S3 s0063 s0062 s0063 S1 s0063 Lx1 Lu S0 S2 s0061 s0061 Lx3 Li S0 S0 Lf S2 i3 s0061 S1 s0063 Lu S3 S3 s0061 s0062 s0062 S3 s0062 s0061 s0062 S1 s0061 S3 S3 s0061 s0062 s0062 S3 s0062 s0061 s0062 S1 s0061
+enumerate q 218
+enumerate s 218
+value Lu Lu S1 i2 S1 i4 Ld Lx1 S1 i2 Lx1 S1 i2
+enumerate q 219
+enumerate s 219
+value Lu Lr1 s0061 Lf S2 s0062 s0062 S2 s0061 s0063 Lr1 s0061 Lf S2 s0062 s0062 S2 s0061 s0063
+enumerate q 220
+enumerate s 220
+value Ld Lx2 Lu S2 i1 i3 S2 i0 i3 Lf S1 i0 S1 i0 Lx2 Lu S2 i2 i2 S2 i2 i3 Lf S1 i3 S1 i2
+enumerate q 221
+enumerate s 221
+value Lp Lr2 s0061 Li S3 S3 s0062 s0063 s0063 S0 S0 S3 s0061 s0062 s0062 s0063 Lu S0 S0
+enumerate q 222
+enumerate s 222
+value Ld Lf Lf S0 S2 S3 i1 i4 i0 S2 i2 i3 Lr1 s0061 S3 i4 i4 i0 Lp Lu S3 i4 i4 i3 S3 i3 i0 i3
+enumerate q 223
+enumerate s 223
+value Lu S0 S0
+enumerate q 224
+enumerate s 224
+value Lu Lp Lp S2 S0 S1 i3 Lp Lp S2 S0 S1 i4
+enumerate q 225
+enumerate s 225
+value Lp Lu Lu S1 s0061 S2 s0061 s0062 Lu S1 s0061 S2 s0061 s0062
+enumerate q 226
+enumerate s 226
+value Lu Lp Lu S3 i3 i4 i2 S0 Lp Lu S3 i4 i1 i3 S0
+enumerate q 227
+enumerate s 227
+value Lu S2 i0 i1 S2 i4 i1
+enumerate q 228
+enumerate s 228
+value Ld Lf Lu S0 S0 Lp S2 i2 i3 Li Li S2 S2 i2 i0 S1 i0 S3 i2 i4 i0 Li S2 S2 i4 i3 S1 i4 S3 i1 i0 i3
+enumerate q 229
+enumerate s 229
+value Lu Lu Lu S2 s0061 s0063 S2 s0061 s0063 Lp S3 S3 s0062 s0062 s0061 S1 s0062 S1 s0061 Lx2 S0 Lu S2 s0063 s0063 S2 s0063 s0063
+enumerate q 230
+enumerate s 230
+value Li Ld Ld S1 S1 s0062 S1 S1 s0062 Lu S1 s0062 S1 s0062 Ld Ld S1 S1 s0062 S1 S1 s0062 Lu S1 s0062 S1 s0062
+enumerate q 231
+enumerate s 231
+value Lu Lu Li S0 S0 Li S0 S0 Lr1 s0061 Lu S0 S0
+enumerate q 232
+enumerate s 232
+value Lf S1 i0 Lf Lu S1 S1 i3 S0 Ld S3 i4 i3 i1 S3 i3 i2 i0
+enumerate q 233
+enumerate s 233
+value Lu Lf Lp S0 Ld S3 i2 i0 i0 S1 i2 Li Li S3 i0 i1 i3 S3 i1 i3 i2 Li S3 i3 i2 i0 S3 i0 i4 i1
+enumerate q 234
+enumerate s 234
+value Ld S0 S0
+enumerate q 235
+enumerate s 235
+value Lu Lx3 Lu S2 i3 i4 S0 Lx3 S3 i3 i0 i2 S2 i0 i0 S0 Lx2 S1 S1 i2 S2 i2 i0 Lx1 Li S0 S0
+enumerate q 236
+enumerate s 236
+value Li Lp Li S0 S0 Lf Lf S2 i0 i1 S2 S2 i4 i1 S3 i0 i3 i3 Lr3 s0063 S1 i0 s0062 S0 s0061 S2 i3 i0
+enumerate q 237
+enumerate s 237
+value Lx2 Lf Lf S0 S2 s0063 s0061 Lu S2 S2 s0061 s0063 S1 s0062 S2 S2 s0061 s0063 S1 s0062 S2 s0062 s0063
+enumerate q 238
+enumerate s 238
+value Lf Lr1 s0061 S3 S1 s0061 S2 s0062 s0063 S2 s0062 s0061 Lr1 s0063 Lf S1 s0063 S1 s0063
+enumerate q 239
+enumerate s 239
+value Lu Lf Ld S2 s0062 s0062 S2 s0062 s0062 Lf S3 s0061 s0063 s0061 S1 S1 s0063 Li Li S3 s0063 s0063 s0063 S3 s0063 s0063 s0063 Li S3 s0063 s0063 s0063 S3 s0063 s0063 s0063
+enumerate q 240
+enumerate s 240
+value Lr1 s0061 Ld Lx3 S2 i4 i0 S0 S2 S2 i3 i2 S2 i0 i2 Lx3 S0 S2 S3 i0 i1 i3 S0 S1 i4
+enumerate q 241
+enumerate s 241
+value Lf Lr1 s0061 Lu S2 s0061 s0061 S1 s0061 Ld Lu S0 S1 s0063 Lu S0 S1 s0063
+enumerate q 242
+enumerate s 242
+value Lu Lr2 s0063 Lr1 s0063 S0 s0061 Lu S1 S3 s0063 s0063 s0062 S1 S3 s0063 s0063 s0062 Lr2 s0063 Lr1 s0063 S0 s0061 Lu S1 S3 s0063 s0063 s0062 S1 S3 s0063 s0063 s0062
+enumerate q 243
+enumerate s 243
+value Li Ld Lu S2 S3 i1 i3 i2 S1 i0 S1 i1 Lu S2 S3 i3 i3 i4 S1 i3 S1 i3 Li Lx1 S0 Li S2 i0 i4 S1 i0
+enumerate q 244
+enumerate s 244
+value S3 S1 s0063 S3 s0061 s0061 s0063 S0
+enumerate q 245
+enumerate s 245
+value Li Ld Li S2 s0061 s0061 S0 Lx3 S2 s0063 s0063 S2 s0063 s0062 S0 Lu Lf S1 s0063 S3 S0 S2 s0061 s0062 S2 s0062 s0061 Lf S1 s0063 S3 S0 S2 s0061 s0062 S2 s0062 s0061
+enumerate q 246
+enumerate s 246
+value Lx1 Lp Ld S1 S0 S1 S0
+enumerate q 247
+enumerate s 247
+value S2 S3 s0063 s0061 s0062 S2 s0061 s0063
+enumerate q 248
+enumerate s 248
+value Lu Lp Lu S1 s0062 S3 s0061 s0062 s0061 Lu Lu S0 S0 Lf S3 s0063 s0062 s0062 S1 s0063
+enumerate q 249
+enumerate s 249
+value Lr3 s0062 Lp Lf S0 S0 s0061 Lu Lf S0 S3 S0 S2 i2 i0 S3 i3 i4 i0 Lf S0 S3 S0 S2 i2 i2 S3 i2 i3 s0061 s0063 Lx2 Ld S2 i0 i4 S2 i4 i4 Lu S0 S2 i1 i2
+enumerate q 250
+enumerate s 250
+value Lu Lx2 Lr1 s0061 S3 i1 i3 i2 Lu S1 i1 S0 Li Lp S0 Lp S0
+enumerate q 251
+enumerate s 251
+value Lp Li Lf S3 i0 i3 i1 S0 Lf S3 i0 i0 i1 S0
+enumerate q 252
+enumerate s 252
+value Lu Lx2 Lr2 s0063 S3 s0061 s0061 s0063 s0062 S2 s0062 i2 Ld S1 S3 s0061 s0062 s0063 S0 Li Li S3 s0063 s0062 s0063 S3 s0063 s0062 s0063 Lp S0
+enumerate q 253
+enumerate s 253
+value Lu Lf Lx3 S3 i1 i1 i4 S2 i3 i2 S3 S1 i3 S0 S3 i2 i3 i1 Lr1 s0061 S0 Lf Lx3 S3 i0 i4 i2 S2 i3 i1 S3 S1 i0 S0 S3 i0 i0 i1 Lr1 s0061 S0
+enumerate q 254
+enumerate s 254
+value Lx2 Lx1 Lu S1 S0 S1 S0 Lu Lu S2 i4 i4 S3 i2 i0 i3 Lu S2 i4 s0063 S3 i3 i1 i4
+enumerate q 255
+enumerate s 255
+value Lu Lr2 s0061 Lp S0 s0062 Lp S1 S1 s0063 Lx2 Li S0 S0 Lu S0 S0
+enumerate q 256
+enumerate s 256
+value Lr1 s0061 Ld S3 s0062 s0061 s0063 S3 s0062 s0061 s0063
+enumerate q 257
+enumerate s 257
+value Lx2 Lu Lu S1 s0063 S1 S0 Lu S1 s0063 S1 S0 Lx1 Lr2 s0061 S3 S3 s0061 s0061 s0061 S0 S1 s0063 s0062 S0
+enumerate q 258
+enumerate s 258
+value Lr1 s0061 Lu S3 S3 i2 i1 i1 S1 i4 S1 i1 S3 S3 i1 i4 i3 S1 i2 S1 i4
+enumerate q 259
+enumerate s 259
+value Li Lu Lu S2 s0063 s0061 S2 s0063 s0061 Lu S2 s0063 s0061 S2 s0063 s0061 Li Lx1 S2 S0 S0 Lx1 S2 S0 S0
+enumerate q 260
+enumerate s 260
+value Lr1 s0061 Lr2 s0061 S0 s0063 Lu S0 S0
+enumerate q 261
+enumerate s 261
+value Lu Lf S1 S1 s0061 Lf S0 S1 s0061 Lf S1 S1 s0061 Lf S0 S1 s0061
+enumerate q 262
+enumerate s 262
+value S1 S2 i2 i0
+enumerate q 263
+enumerate s 263
+value Lu Lu Lu S2 S3 i0 i2 i2 S1 i2 S2 S3 i0 i2 i2 S1 i2 Lf S2 i4 i3 S3 i4 i2 i3 Lf Li S0 S1 i4 Li S0 S1 i2
+enumerate q 264
+enumerate s 264
+value Lu Lr1 s0061 Lf S0 S2 i2 i1 Lu Li S1 i1 S1 i1 Ld S1 S2 i0 i4 S2 i1 i1
+enumerate q 265
+enumerate s 265
+value Lp Lx1 S0
+enumerate q 266
+enumerate s 266
+value Li Li Lu S3 i2 s0063 i0 S3 i3 s0063 i4 Lu S3 i1 s0063 i4 S3 i2 s0063 i3 Li Lu S3 i1 s0063 i1 S3 i4 s0063 i1 Lu S3 i4 s0063 i4 S3 i3 s0063 i3
+enumerate q 267
+enumerate s 267
+value Lu Li Lr1 s0061 S2 s0063 s0062 S2 S3 s0063 s0062 s0062 S3 s0061 s0062 s0062 S1 s0063
+enumerate q 268
+enumerate s 268
+value Lu Lx1 Li S3 i0 i3 i4 S0 Lx1 Li S3 i0 i4 i0 S0
+enumerate q 269
+enumerate s 269
+value Ld Lr3 s0062 Lf S0 S2 i0 i2 s0061 S2 S0 S0 s0063 Lu S0 S2 S2 i2 i0 S0 Lr3 s0062 Lf S0 S2 i4 i4 s0061 S2 S0 S0 s0063 Lu S0 S2 S2 i2 i4 S0
+enumerate q 270
+enumerate s 270
+value Lf Li Li S2 i0 s0061 S2 s0062 s0063 Li S2 s0061 s0061 S2 s0062 s0063 Lf Lp S3 s0063 s0062 s0062 Lx3 S0 S2 S0 S3 s0062 s0063 s0062 S1 s0062
+enumerate q 271
+enumerate s 271
+value Ld Ld Lu S0 S1 s0061 Lu S0 S1 s0061 Ld Ld S3 S2 s0062 s0062 S3 s0061 s0061 s0061 S2 s0061 s0062 S3 S2 s0062 s0062 S3 s0061 s0061 s0061 S2 s0061 s0062 Lp S0
+enumerate q 272
+enumerate s 272
+value Lx1 Li Ld S1 i1 S0 Ld S1 s0062 S0
+enumerate q 273
+enumerate s 273
+value Lx2 Lx2 Ld S1 s0061 S1 s0063 Lu S0 S1 s0063 Lr3 s0061 Lx2 S2 s0063 s0061 S0 s0062 Lu S3 s0061 s0062 s0062 S3 s0061 s0062 s0062 s0063 Lf S1 s0062 S0
+enumerate q 274
+enumerate s 274
+value Lu Lx1 Lp S3 i0 i0 i0 Lx1 Lp S3 i4 i0 i2
+enumerate q 275
+enumerate s 275
+value Lx3 Lr2 s0061 Lu S3 s0061 s0063 s0063 S3 s0061 s0063 s0063 s0063 Ld S3 S3 s0062 s0061 s0062 S2 s0063 s0061 S3 s0061 s0061 s0063 S3 S3 s0062 s0061 s0062 S2 s0063 s0061 S3 s0061 s0061 s0063 Lr1 s0063 Lx1 S2 s0061 s0063 Lp Li S0 S0
+enumerate q 276
+enumerate s 276
+value Li Lu S2 i1 i4 Lu S2 i0 i0 S0 Lu S2 i4 i3 Lu S2 i2 i2 S0
+enumerate q 277
+enumerate s 277
+value Lf Lu Li S1 i1 S0 Li S1 i0 S0 Lf Lx3 S1 i0 S1 i1 S2 S3 i3 i4 i0 S0 Lx1 S3 S0 S1 i0 S3 i1 i3 i1
+enumerate q 278
+enumerate s 278
+value Lu S1 s0062 S1 s0062
+enumerate q 279
+enumerate s 279
+value Lp Lr2 s0062 Lx2 S3 i1 i2 i1 S0 s0063 Lf S0 S1 S2 i4 i0
+enumerate q 280
+enumerate s 280
+value Ld Li Lf S1 i0 S3 i0 i1 i4 Lf S1 i4 S3 i3 i2 i0 Lf Ld S2 i4 i0 S1 i2 Lp S1 i0
+enumerate q 281
+enumerate s 281
+value Li Lu Ld S2 S3 s0062 s0061 s0061 S1 s0062 S1 S1 s0063 Li S2 s0062 s0063 S0 Lp Lx1 S3 s0061 s0063 s0063
+enumerate q 282
+enumerate s 282
+value Ld S3 s0063 s0062 s0063 S3 s0063 s0062 s0063
+enumerate q 283
+enumerate s 283
+value Lu Lr1 s0061 Lx3 S1 i2 S2 i3 i4 S1 i1 S0
+enumerate q 284
+enumerate s 284
+value Lx3 Lr1 s0061 Lf S0 S0 Lx3 S2 s0062 s0061 Lr1 s0062 S3 S2 s0062 s0063 S1 s0061 S0 Li S0 S2 s0063 s0063 Li Lu S0 S0 Lu S0 S0
+enumerate q 285
+enumerate s 285
+value Lf Lu Li S1 s0063 S1 s0063 Li S1 s0063 S1 s0063 Lr2 s0061 S1 s0061 s0062 Lp S2 s0062 s0062
+enumerate q 286
+enumerate s 286
+value Lp Ld Lr1 s0061 S1 i0 Lr1 s0061 S1 i4
+enumerate q 287
+enumerate s 287
+value Lx2 Li Lx1 S2 S2 i2 i2 S2 i4 i3 Lp S1 S3 i0 i0 i4 Lr2 s0061 Lf S0 S3 i4 i2 i4 s0062 S0
+enumerate q 288
+enumerate s 288
+value Lu Lr1 s0061 Li S0 S1 s0062 Ld Lr1 s0061 S3 S0 S1 s0062 S0 Lu S3 s0063 s0061 s0062 S3 s0063 s0061 s0062
+enumerate q 289
+enumerate s 289
+value Lf Lf Lx3 S0 S1 i4 S3 i3 i3 i4 Lp S2 S0 S0 Lu Li S3 S1 i2 S0 S3 i3 i2 i3 S3 i3 i0 i0 Lf S0 S3 S0 S1 i1 S3 i4 i4 i2
+enumerate q 290
+enumerate s 290
+value Li Lu Li S3 s0062 s0063 s0063 S2 s0063 s0063 Lu S0 S0 Lu Li S3 s0062 s0063 s0063 S2 s0063 s0063 Lu S0 S0
+enumerate q 291
+enumerate s 291
+value Lf Lp S3 s0063 s0063 s0062 Lr1 s0061 Lu S1 s0063 S1 s0063
+enumerate q 292
+enumerate s 292
+value Lx1 Ld Li S0 S0 Li S0 S0
+enumerate q 293
+enumerate s 293
+value Lp Li Ld S0 S0 Lu S0 S0
+enumerate q 294
+enumerate s 294
+value Lr2 s0063 Lp Ld S1 S2 i3 i0 S2 i1 i0 s0062 Lf Ld S1 S2 i1 i2 S0 Lf S1 i3 S2 s0063 i4
+enumerate q 295
+enumerate s 295
+value Lp Lp Lx3 S3 S1 i2 S1 i3 S3 i1 i2 i0 S0 S0
+enumerate q 296
+enumerate s 296
+value Lu Li Lf S1 S0 S1 s0063 Lf S1 S0 S1 s0063 Li Lf S1 S0 S1 s0063 Lf S1 S0 S1 s0063
+enumerate q 297
+enumerate s 297
+value Lp Lf Lx1 S0 Lu S3 i3 i1 i0 S3 i1 i3 i1
+enumerate q 298
+enumerate s 298
+value Ld Ld S0 Lu S0 S0 Li Lr2 s0061 S1 i4 s0063 S3 i1 i0 i4 Lr2 s0061 S1 i0 s0063 S3 i1 i0 i2
+enumerate q 299
+enumerate s 299

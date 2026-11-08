@@ -10,14 +10,14 @@ import {
   type Value,
 } from "./values";
 
-const FALSE_TAG = 0;
-const TRUE_TAG = 1;
-const INTEGER_TAG = 2;
-const STRING_TAG = 3;
-const MODEL_VALUE_TAG = 4;
-const SET_TAG = 5;
-const FUNCTION_TAG = 6;
-const INTERVAL_FUNCTION_TAG = 7;
+export const FALSE_TAG = 0;
+export const TRUE_TAG = 1;
+export const INTEGER_TAG = 2;
+export const STRING_TAG = 3;
+export const MODEL_VALUE_TAG = 4;
+export const SET_TAG = 5;
+export const FUNCTION_TAG = 6;
+export const INTERVAL_FUNCTION_TAG = 7;
 
 // A function's TLC class follows its tag, so a worker words errors about it as TLC does.
 const FUNCTION_CLASSES: (FunctionClass | undefined)[] = [undefined, "lambda", "tuple", "record"];

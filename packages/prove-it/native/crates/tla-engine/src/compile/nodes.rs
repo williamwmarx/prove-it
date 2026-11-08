@@ -9,10 +9,12 @@ use tla_values::store::{
 };
 use tla_values::{Bail, Id};
 
+use super::lazy;
 use super::predicate::{Predicate, Test};
 use super::{
     Binding, Compiled, Compiler, Compiling, Context, Filter, Shape, bind, bool_id,
-    call_recursive_function, constant, eval, leaf, lookup, predicate_node, unsupported,
+    call_recursive_function, combine_references, constant, eval, leaf, lookup, predicate_node,
+    reference_of, unsupported,
 };
 use crate::footprint::Footprint;
 use crate::machine::{Eval, Machine};
@@ -181,6 +183,26 @@ impl Compiler<'_> {
                     are_elements_enumerated: consequent.are_elements_enumerated
                         && alternative.are_elements_enumerated,
                     is_boolean: consequent.is_boolean && alternative.is_boolean,
+                    // The reference evaluates the condition again, which mustn't print twice.
+                    reference: if [&condition, &consequent, &alternative]
+                        .iter()
+                        .any(|part| part.is_printing())
+                    {
+                        None
+                    } else {
+                        let test = condition.eval.clone();
+                        reference_of(&consequent)
+                            .zip(reference_of(&alternative))
+                            .map(|(then, otherwise)| {
+                                Arc::new(move |machine: &mut Machine<'_>| {
+                                    if test(machine)? == TRUE {
+                                        then(machine)
+                                    } else {
+                                        otherwise(machine)
+                                    }
+                                }) as lazy::Reference
+                            })
+                    },
                     ..leaf(
                         eval(move |machine| {
                             if test(machine)? == TRUE {
@@ -618,9 +640,32 @@ impl Compiler<'_> {
             predicate: Predicate::of(&predicate).build(),
         });
         let parts = Arc::clone(&filter);
+        // TLC filters a set it can't enumerate, such as SUBSET S, lazily, in the order of the set.
+        let reference = if set.is_normalized {
+            None
+        } else {
+            let tested = Arc::clone(&filter);
+            let test: lazy::Test = Arc::new(move |machine, element| {
+                let saved: Vec<Id> = tested
+                    .slots
+                    .iter()
+                    .map(|&slot| machine.locals[slot as usize])
+                    .collect();
+                let kept = assign_bound(machine, &tested.slots, tested.tuple, element)
+                    .and_then(|()| (tested.predicate)(machine));
+                for (&slot, &value) in tested.slots.iter().zip(&saved) {
+                    machine.locals[slot as usize] = value;
+                }
+                kept
+            });
+            combine_references(&[&set], move |machine, mut bases| {
+                lazy::Lazy::filter(machine, bases.remove(0), Arc::clone(&test))
+            })
+        };
         Ok(Compiled {
             is_costly: true,
             is_normalized: set.is_normalized,
+            reference,
             is_enumerated: set.is_enumerated,
             are_elements_enumerated: set.are_elements_enumerated,
             filter: Some(filter),

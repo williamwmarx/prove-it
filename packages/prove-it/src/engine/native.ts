@@ -5,15 +5,25 @@
 
 import { EngineInvariantError } from "../errors";
 import type { LiveExpression } from "../tableau";
-import { createStateDecoder, type EncodedStates } from "../transfer";
+import {
+  createStateDecoder,
+  FALSE_TAG,
+  FUNCTION_TAG,
+  INTEGER_TAG,
+  INTERVAL_FUNCTION_TAG,
+  MODEL_VALUE_TAG,
+  SET_TAG,
+  STRING_TAG,
+  TRUE_TAG,
+} from "../transfer";
 import { formatPrinted, type Value } from "../values";
-import { fromEnumeratedValue, fromValue } from "./convert";
+import { fromEnumeratedValue } from "./convert";
 import { resetFingerprints } from "./fingerprint";
 import type { IrOutcome } from "./ir";
 import type { LiveOracle } from "./live";
 import type { EngineCheckpoint, EngineInput, EngineResult } from "./search";
 import { getEngineAddon, getEnvironmentFlag, getStopAt, reportEngine } from "./settings";
-import { Bailout, resetStore } from "./store";
+import { Bailout, FALSE, functionOf, int, model, resetStore, setOf, str, TRUE } from "./store";
 
 // The addon's test hooks into its store, which native-store.ts calls (binding/store.rs).
 export interface NativeStoreHooks {
@@ -220,15 +230,48 @@ export const checkNatively = (
 
 // The states the native engine found, as ids of this process's engine store, which the
 // interpreter's hand-over reads.
+// The states interned straight from their encoding, with the ids fromValue gives each value, but
+// without building it: a search can hand over millions of states.
 const decodeStates = (words: Int32Array, strings: string[], width: number, count: number) => {
-  const encoded: EncodedStates = { words, strings, count };
-  const states = createStateDecoder(width)(encoded);
-  const ids = new Int32Array(states.length * width);
-  states.forEach((state, index) => {
-    state.forEach((value, variable) => {
-      ids[index * width + variable] = fromValue(value);
-    });
-  });
+  const ids = new Int32Array(count * width);
+  let cursor = 0;
+  const decodeAll = (length: number) => {
+    const decoded: number[] = new Array(length);
+    for (let index = 0; index < length; index++) decoded[index] = decodeValue();
+    return decoded;
+  };
+  const decodeValue = (): number => {
+    const tag = words[cursor++];
+    switch (tag) {
+      case FALSE_TAG:
+        return FALSE;
+      case TRUE_TAG:
+        return TRUE;
+      case INTEGER_TAG:
+        return int(words[cursor++]);
+      case STRING_TAG:
+        return str(strings[words[cursor++]]);
+      case MODEL_VALUE_TAG:
+        return model(strings[words[cursor++]]);
+      case SET_TAG:
+        return setOf(decodeAll(words[cursor++]));
+      case INTERVAL_FUNCTION_TAG: {
+        cursor++;
+        const low = words[cursor++];
+        const length = words[cursor++];
+        const keys: number[] = new Array(length);
+        for (let index = 0; index < length; index++) keys[index] = int(low + index);
+        return functionOf(keys, decodeAll(length));
+      }
+      default: {
+        if (tag !== FUNCTION_TAG) throw new EngineInvariantError(`a transfer tag ${tag}`);
+        cursor++;
+        const keys = decodeAll(words[cursor++]);
+        return functionOf(keys, decodeAll(keys.length));
+      }
+    }
+  };
+  for (let index = 0; index < count * width; index++) ids[index] = decodeValue();
   return ids;
 };
 
@@ -336,25 +379,49 @@ const toCheckpoint = (
   const stored = keys ?? states;
   const storedWidth = keyWidth ?? width;
   // The index of each state's key, built when the interpreter first asks whether a successor is
-  // among them.
-  const lookup: { indices?: Map<string, number> } = {};
-  const getIndices = () => {
-    if (lookup.indices) return lookup.indices;
-    const indices = new Map<string, number>();
-    for (let index = 0; index < count; index++) {
-      indices.set(stored.subarray(index * storedWidth, (index + 1) * storedWidth).join(), index);
+  // among them: an open-addressing table of state indices, as small as the states for a search of
+  // millions of them.
+  const lookup: { slots?: Int32Array } = {};
+  const hashAt = (source: Int32Array, offset: number) => {
+    let hash = 0x811c9dc5;
+    for (let index = 0; index < storedWidth; index++) {
+      hash = Math.imul(hash ^ source[offset + index], 0x01000193);
     }
-    lookup.indices = indices;
-    return indices;
+    return hash;
+  };
+  const isStoredAt = (index: number, ids: Int32Array) => {
+    for (let position = 0; position < storedWidth; position++) {
+      if (stored[index * storedWidth + position] !== ids[position]) return false;
+    }
+    return true;
+  };
+  const getSlots = () => {
+    if (lookup.slots) return lookup.slots;
+    let capacity = 1;
+    while (capacity < count * 2) capacity *= 2;
+    const slots = new Int32Array(capacity).fill(-1);
+    for (let index = 0; index < count; index++) {
+      let slot = hashAt(stored, index * storedWidth) & (capacity - 1);
+      while (slots[slot] !== -1) slot = (slot + 1) & (capacity - 1);
+      slots[slot] = index;
+    }
+    lookup.slots = slots;
+    return slots;
   };
   const findState = (key: Value[]) => {
-    const ids: number[] = [];
-    for (const value of key) {
-      const id = fromEnumeratedValue(value);
+    const ids = new Int32Array(storedWidth);
+    for (let position = 0; position < storedWidth; position++) {
+      const id = fromEnumeratedValue(key[position]);
       if (id === undefined) return undefined;
-      ids.push(id);
+      ids[position] = id;
     }
-    return getIndices().get(ids.join()) ?? -1;
+    const slots = getSlots();
+    let slot = hashAt(ids, 0) & (slots.length - 1);
+    while (slots[slot] !== -1) {
+      if (isStoredAt(slots[slot], ids)) return slots[slot];
+      slot = (slot + 1) & (slots.length - 1);
+    }
+    return -1;
   };
   return {
     ...base,

@@ -4,7 +4,7 @@ A design for a Rust model checker that is faster than today's Prove It and print
 TLC prints, staged so that every step ships on its own, is measurably faster, and is proven
 identical to TLC and to the TypeScript checker before it is switched on.
 
-Status: proposal, with M1 to M5 built (their outcomes are in section 11). Every number marked *measured*
+Status: proposal, with M1 to M6 built (their outcomes are in section 11). Every number marked *measured*
 comes from the prototypes under `native/prototypes/` (section 10) on a local 4-core cloud machine
 (Rust 1.97.0, Bun 1.4.4, Node 22.23.4). Those timings vary by about 10% between runs. Depot
 numbers come from the benchmark of `main` at f284739 (run cb7zd2w63s), as summarised on the
@@ -1938,6 +1938,111 @@ unless it says otherwise:
 - the builtins agree with the interpreter on generated inputs, including bails;
 - the coverage allowlist from M5 is **empty**: Rust completes every model the TS engine completes;
 - all of M5's acceptance tests still pass.
+
+#### M6 as built
+
+Branch `native-m6-sets`, measured on the 4-core cloud machine, not on Depot yet. Where the code
+made this design change, the code wins, and this records how:
+
+- **The bridged builtins** (`compile/bridged.rs`). SubSeq, SortSeq, Permutations, IsFiniteSet and
+  the Bags operators (EmptyBag a constant) compute on ids what the interpreter's builtin computes
+  on the values `toValue` gives them. They evaluate their value arguments in order, as
+  `compileBridgedBuiltin` does, and stop wherever the interpreter throws, which then reports TLC's
+  message. An operator argument compiles once with its parameters at slots (`Applier`). A builtin
+  passed as one, as in `SelectSeq(s, IsABag)`, is applied to operands that read those slots
+  (`Operand::slot`), as `resolveOperatorArgument` writes `$0`, `$1`. Permutations stops past 10
+  elements and SubBag past 10^6 sub-bags, where the interpreter would build more than a search can
+  use. ToString still declines: it needs TLC's printer (2.8), and no corpus model the TypeScript
+  engine completes uses it.
+- **The sets TLC keeps lazy** (`compile/lazy.rs`). A compiled set TLC keeps lazy carries a
+  `reference`, a closure that builds a `Lazy` of the shape the interpreter's value has where
+  `compile.ts`'s references build it: a normalized set, Nat, Int or STRING, SUBSET, `[S -> T]`, a
+  record set with its fields in TLC's order, a product, a filter (filtered at once over a set
+  enumeration), and `\cup`, `\cap` and `\` as the interpreter's builtins combine them
+  (`combineReducible`: a set enumeration takes the other set element by element, and a union with
+  it stays lazy, the enumeration first). IF passes its branches' references on unless a part
+  prints. `compile_ordered` caches the tuple of the elements in `enumerate`'s order
+  (`toFiniteSet`'s: emptiness decided first, the last component turning fastest, a union merged
+  as `getSortedUnion` merges) for `\E` and a walked `\A`, and in `stream`'s order
+  (`getStreamedElements`': a union's sets one after the other, duplicates and all, and a set of
+  functions, records or tuples streaming its components) for `x' \in S`. The walker counts the
+  tuple's elements where it would a set's. Membership in the other operand of a lazy `\cap` or
+  `\` follows the interpreter's `isElementOf`, not the engine's membership tests, which differ on
+  a function over integers in a product and on a non-record in a record set. A lazy set with no
+  reference, such as a UNION that isn't a set enumeration of set enumerations, is refused
+  (`unsupported`), as `compileOrdered` refuses it. SUBSET stops past a base of 20, and a set of
+  functions, records or tuples past 10^6 elements.
+- **TLC 1.7.4** never reaches the engine (`getEngineIneligibility`), so `getContextElements`'
+  1.7.4 branch, which streams where later versions normalize, isn't ported.
+- **ENABLED's rewrite** (`x@ENABLED`). Inside ENABLED (`enabled_depth`), a primed variable past
+  the state's is accepted, and ENABLED's private next state is sized to hold it
+  (`variable_extent`); anywhere else it is refused. This gives TLC's answer: under ENABLED, an
+  instance's primed variable is apart from the variable substituted for it, so
+  `ENABLED (u' = 100)` holds. The TypeScript engine reads and writes past the end of its next
+  state there and hands over once it compares what it read; test56's action property doesn't
+  depend on the answer, so both engines complete test56.
+- **The enumeration oracle** (6.8). `ValueOracle.java` builds the lazy sets with TLC's own classes
+  as `Tool.evalAppl` builds them (`Reducible.cup`, `cap` and `diff`) and answers `enumerate q`
+  (`elements(Ordering.NORMALIZED)`, a quantifier's order) and `enumerate s` (`elements()`,
+  `x' \in S`'s) as the elements' fingerprints. `tla_engine::oracle` answers the same requests
+  (`replay enumerate`), and `scripts/enumeration-oracle.ts` compares both with the interpreter,
+  asked as the TypeScript engine asks it (`scripts/enumeration-cases.ts`), on seeded generated
+  sets. `--record` froze 300 cases, one of each shape, in `tests/conformance/enumeration`, which
+  `cargo test` (replay's) and `enumeration-oracle.test.ts` check without Java. Filters aren't in
+  the oracle, since TLC's SetPredValue needs a Tool; the unit tests check them against the
+  interpreter.
+- **Differences outside M6 that the oracle and the tests found.** (1) TLC caches a lazy set it
+  compares or sizes, and from then on `x' \in S` streams the cached set, without a union's
+  duplicates. The interpreter follows that, but both engines build S again at each evaluation and
+  keep streaming duplicates, so `S # {} /\ x' \in S` with S a constant union counts more states
+  generated than TLC (73 against 66 in the case found). No corpus model does this. (2) The
+  interpreter fails on some streamed unions of sets TLC streams without comparing them, and
+  answers some unions of records with functions that TLC fails to normalize. The native engine
+  stops on both, so it never answers where TLC fails.
+
+#### M6 acceptance, as run
+
+On the 4-core cloud machine, with `main` at 6448120 merged, against the 733 models with TLC under
+20 s unless it says otherwise:
+- **Enumeration oracle: met.** 100,000 generated sets, 200,000 enumerations (a quantifier's order
+  and `x' \in S`'s), against live TLC built at `TLC_COMMIT`: the native engine lists the
+  interpreter's elements in the interpreter's order on every one, where it doesn't stop alone (140,
+  which costs a hand-over); it never answers where TLC fails; and on the 137,810 enumerations all
+  three answer, it lists TLC's elements in TLC's order. 300 cases are frozen in
+  `tests/conformance/enumeration`.
+- **Builtins: met.** `native-builtins.test.ts` checks each builtin on 40 seeded generated inputs
+  against the TypeScript engine's state log and the interpreter's result, and on inputs the
+  interpreter fails on, where the native engine must stop.
+- **Allowlist empty: met.** The native engine completes 394 models: all 393 the TypeScript engine
+  completes, and test55. `coverage-allowlist.json` is `[]`. Against a sweep of `main`, 76 more
+  models complete in Rust and 38 more search in Rust until a stop the interpreter finishes; 11 that
+  declined for a lazy set are now refused for the TypeScript engine's own reason (a lazy set with no
+  reference, such as a UNION, a filter of an infinite set, a tuple pattern in `\E`, ENABLED).
+- **M5's acceptance: met.** State logs are identical on all 393, with `-nowarning` and without;
+  `off`, `ts` and `rust` reach the same outcome on every model; `PROVE_IT_FP_VERIFY=1` reports no
+  collision in 511 native searches. `conformance --check --compare-backends`: 770 of 770 match on
+  each backend (`main` with `--backend rust`: 770 of 770), the two backends agree on every model.
+  `bun test` with `BACKEND=rust`: 3,094 pass, 0 fail; on the default backend 3,005 pass, 0 fail.
+  `differential --compare-backends --stop-at` on the 114 models the native engine newly reaches,
+  in default and `-tool` mode (1,118 runs): the TypeScript and Rust engines' output is identical on
+  all 228 comparisons, and the forced hand-over equals the run without it on 216 of 218; the other
+  two, MCTxnsMoveRange's, run out of memory in the interpreter, as the interpreter alone and the
+  TypeScript engine's hand-over do there too.
+- **Hand-over at scale.** Rust now searches the VSR state-transfer models (TLC 100 s), whose
+  deadlock hands over millions of states. Decoding them into interpreter values first ran the
+  process out of its heap; `native.ts` now interns the transfer encoding straight to ids and
+  indexes the states in an `Int32Array` table. A search that size still peaks near 12 GB resident
+  in the Rust store, which M7 should look at.
+- **Default path unchanged.** Every model's bucket and TypeScript `[engine]` line match the sweep of
+  `main`. The only TypeScript changes outside tests and scripts are the hand-over decoder in
+  `native.ts`, which only the native backend runs, and the transfer tags it exports.
+- **Time** (binaries, median of 9 interleaved rounds, ms; `main` then this branch): default backend
+  Commit 664 and 616, btree 1,421 and 1,392, MCDisruptor_MPMC 538 and 519, Chameneos 247 and 255,
+  TokenRing 946 and 919, Paxos_MC 2,305 and 2,225, all within noise. Rust backend: Commit 923 and
+  907, btree 1,585 and 1,550, MCDisruptor_MPMC 426 and 422; Chameneos 259 and 161 and Paxos_MC
+  2,330 and 1,450, now searched in Rust; TokenRing 1,021 and 1,152, also now searched in Rust,
+  whose liveness checking asks the interpreter about steps the native tables don't hold (the
+  oracle answers only recorded edges), which M7 should look at.
 
 ### M7. Performance and default on
 
