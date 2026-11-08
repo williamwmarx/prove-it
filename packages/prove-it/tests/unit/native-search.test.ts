@@ -114,6 +114,8 @@ const compareStateLogs = async (body: string[], config: string, isWarningEnabled
 const COMPLETE = /^\[engine\] native: complete: {2}\(\d+\.\d\d ms\)$/;
 const stopped = (reason: string) =>
   new RegExp(`^\\[engine\\] native: stopped: ${reason} \\(\\d+\\.\\d\\d ms\\)$`);
+const declined = (reason: string) =>
+  new RegExp(`^\\[engine\\] native: declined: ${reason} \\(\\d+\\.\\d\\d ms\\)$`);
 
 // A spec whose actions walk each construct the walker handles: disjunctions, existentials over one
 // and several bounds, IF, CASE, =>, UNCHANGED, a guard, a lazily applied function, x' \in S, and an
@@ -523,28 +525,33 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
   });
 
   it("leaves a Print to the interpreter where TLC evaluates it otherwise", async () => {
-    const declined = /^\[engine\] native: declined: unsupported: Print \(/;
     const prints = "Print(x, TRUE)";
     const next = "x' = (x + 1) % 3";
-    const cases: [string[], string][] = [
+    const cases: [string[], string, string?][] = [
       [[`Next == <<${next}>>_(Print(x, x))`], ""],
       [[`Next == [${next}]_(Print(x, x)) /\\ x' # x`], ""],
       [[`Next == LET p == ${prints} IN p /\\ ${next}`], ""],
       [["Op(a) == a", `Next == Op(${prints}) /\\ ${next}`], ""],
       [[`Next == {i \\in {1} : ${prints}} # {} /\\ ${next}`], ""],
       [[`P == ${prints}`, `Next == P /\\ {P} # {} /\\ ${next}`], ""],
+      // A definition compiled where it may print, then named where it may not.
+      [
+        [`P == ${prints}`, `Next == (P = TRUE) /\\ {P} # {} /\\ ${next}`],
+        "",
+        " where TLC evaluates it otherwise",
+      ],
       [[`A == ${prints} /\\ ${next}`, "Next == A \\/ (~ENABLED A /\\ x' = 0)"], ""],
       [[`Next == ${next}`, `Constraint == ${prints}`], "\nCONSTRAINT Constraint"],
       [[`Next == ${next}`, "Constraint == Print(x', TRUE)"], "\nACTION_CONSTRAINT Constraint"],
       [[`Next == ${next}`, "View == Print(x, x)"], "\nVIEW View"],
       [[`Next == ${prints} /\\ ${next}`, "Live == <>(x = 2)"], "\nPROPERTY Live"],
     ];
-    for (const [actions, config] of cases) {
+    for (const [actions, config, where = ""] of cases) {
       const body = ["EXTENDS Naturals, TLC", "VARIABLE x", "Init == x = 0", ...actions];
       const spec = "Spec == Init /\\ [][Next]_x /\\ WF_x(Next)";
       expect(
         await compareWithInterpreter([...body, spec], `SPECIFICATION Spec${config}`),
-      ).toContainEqual(expect.stringMatching(declined));
+      ).toContainEqual(expect.stringMatching(declined(`unsupported: Print${where}`)));
     }
   });
 
