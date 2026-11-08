@@ -794,7 +794,8 @@ const production = (
   exit,
 });
 
-const PRODUCTIONS: Record<string, Production> = {
+// The productions, built on first use, as only a module that fails to parse needs them.
+const createProductions = (): Record<string, Production> => ({
   CompilationUnit: production(undefined, [action(belchDef), optional("Prelude"), "Module"]),
   Prelude: production(undefined, [
     "<BEGIN_PRAGMA>",
@@ -1841,7 +1842,10 @@ const PRODUCTIONS: Record<string, Production> = {
       "<T_FORALL>",
     ),
   ]),
-};
+});
+
+const productions: { value?: Record<string, Production> } = {};
+const getProduction = (name: string) => (productions.value ??= createProductions())[name];
 
 const analyses = new Map<Unit, Analysis>();
 
@@ -1862,7 +1866,7 @@ const analyze = (unit: Unit): Analysis => {
     analysis.first = unit.kinds;
     analysis.isNullable = false;
   } else if (unit.type === "call") {
-    Object.assign(analysis, analyze(PRODUCTIONS[unit.name].body));
+    Object.assign(analysis, analyze(getProduction(unit.name).body));
   } else if (unit.type === "lookahead") {
     analysis.hasSemanticStart = unit.semantic !== undefined;
   } else if (unit.type === "sequence") {
@@ -1913,7 +1917,7 @@ const scanToken = (state: ParserState, kinds: Set<number>): ScanResult => {
 // its body's lookahead, but a choice checks the semantic part of each alternative's.
 const scan = (state: ParserState, unit: Unit): ScanResult => {
   if (unit.type === "tokens") return scanToken(state, unit.kinds);
-  if (unit.type === "call") return scan(state, PRODUCTIONS[unit.name].body);
+  if (unit.type === "call") return scan(state, getProduction(unit.name).body);
   if (unit.type === "action") return "matched";
   if (unit.type === "lookahead") {
     return unit.semantic === undefined || evaluateSemantic(state, unit.semantic)
@@ -2066,7 +2070,7 @@ const consume = (state: ParserState, kinds: Set<number>) => {
 
 // Parses a production, and adds the node it returns to those of the production that called it.
 const parseProduction = (state: ParserState, name: string) => {
-  const production = PRODUCTIONS[name];
+  const production = getProduction(name);
   if (production.message !== undefined) {
     state.messages.push({ name: production.message, token: getToken(state, 1) });
     state.expecting = "";
