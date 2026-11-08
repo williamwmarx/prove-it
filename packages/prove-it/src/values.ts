@@ -2723,6 +2723,9 @@ export const formatValue = (value: Value, isStrict = false, isNormalized = false
   }
 };
 
+// The text of a value that Print and PrintT print.
+export const formatPrinted = (value: Value) => prettyPrint(formatValue(value, true, true));
+
 // TLC's TLCState.toString: a line per variable, as a conjunction when there are several.
 export const formatState = (state: Record<string, Value>) => {
   const entries = Object.entries(state);
