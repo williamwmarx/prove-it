@@ -195,6 +195,7 @@ const internHashed = (
 export let resetStore = () => {
   generation++;
   resetDomains();
+  resetStructures();
   if (shared) {
     shared = undefined;
     kinds = new Uint8Array(INITIAL_CAPACITY);
@@ -546,15 +547,30 @@ export const setElements = (set: number) => {
   return Array.from(heap.subarray(offset, offset + sizes[set]));
 };
 
-export let isMember = (element: number, set: number): boolean => {
+export let isMember = (element: number, set: number): boolean =>
+  findInBlock(payloads[set], sizes[set], element) !== -1 ||
+  (!isComparableWithMembers(element, set) && searchLikeTlc(element, set));
+
+// SetEnumValue.member binary-searches a set TLC has normalized with the element's compareTo, which
+// fails for values TLC can't compare, so a miss makes the same comparisons, in the same order.
+const searchLikeTlc = (element: number, set: number) => {
   const size = sizes[set];
-  if (findInBlock(payloads[set], size, element) !== -1) return true;
-  // TLC compares the element with those of the set, which fails for values it can't compare. A set
-  // holds one kind of value after any untyped model values, which come first, so its first and its
-  // last element are the kinds to check.
+  const offset = payloads[set];
+  let low = 0;
+  let high = size;
+  while (low < high) {
+    const middle = low + ((high - low) >> 1);
+    const comparison = compare(element, heap[offset + middle]);
+    if (comparison === 0) return true;
+    if (comparison < 0) high = middle;
+    else low = middle + 1;
+  }
+  // A set TLC hasn't normalized, a set enumeration's, it checks element by element with equals,
+  // which fails on a value of another kind. A set holds one kind of value after any untyped model
+  // values, which come first, so its first and its last element are the kinds to check.
   if (size > 0) {
-    checkComparable(element, heap[payloads[set]]);
-    if (size > 1) checkComparable(element, heap[payloads[set] + size - 1]);
+    checkComparable(element, heap[offset]);
+    if (size > 1) checkComparable(element, heap[offset + size - 1]);
   }
   return false;
 };
@@ -572,6 +588,146 @@ const checkComparable = (left: number, right: number) => {
   }
   if (isFunctionKind(leftKind) && isFunctionKind(rightKind)) return;
   bail("membership of a value TLC can't compare");
+};
+
+// A value's structure: its kind, a model value's type, and the structures of a function's keys and
+// values or of a set's members. TLC compares two values of structures that can't fail without
+// failing, so a miss that compares the element only with such members needs no search. The
+// structures are numbered from 1 as they are first seen, and those of the values by id.
+interface Structure {
+  kind: number;
+  modelType: number;
+  parts: number[];
+  // A set's: whether a miss compares an element of each structure only with members it can't fail
+  // on.
+  isSafeElement: Map<number, boolean>;
+}
+
+let structures: Structure[] = [];
+let structureNumbers = new Map<string, number>();
+let valueStructures = new Int32Array(0);
+// Whether compare may fail on values of two structures, by the pair.
+let isSafePair = new Map<number, boolean>();
+
+const getStructure = (id: number): number => {
+  if (id < valueStructures.length && valueStructures[id] !== 0) return valueStructures[id];
+  const kind = isFunctionKind(kinds[id]) ? KIND_FUNCTION : kinds[id];
+  const offset = payloads[id];
+  const size = kind === KIND_SET || kind === KIND_FUNCTION ? sizes[id] : 0;
+  const parts =
+    kind === KIND_SET
+      ? [...new Set(Array.from({ length: size }, (_, index) => getStructure(heap[offset + index])))]
+      : [
+          ...Array.from({ length: size }, (_, index) => getStructure(getKey(id, index))),
+          ...Array.from({ length: size }, (_, index) => getStructure(getRangeValue(id, index))),
+        ];
+  if (kind === KIND_SET) parts.sort((left, right) => left - right);
+  const modelType = kind === KIND_MODEL ? getModelType(id) : 0;
+  const name = `${kind} ${modelType} ${parts.join(" ")}`;
+  const known = structureNumbers.get(name);
+  const structure = known ?? structures.push({ kind, modelType, parts, isSafeElement: new Map() });
+  if (known === undefined) structureNumbers.set(name, structure);
+  if (id >= valueStructures.length) {
+    const grown = new Int32Array(Math.max(1024, (id + 1) * 2));
+    grown.set(valueStructures);
+    valueStructures = grown;
+  }
+  valueStructures[id] = structure;
+  return structure;
+};
+
+const isRecordStructure = (structure: Structure) => {
+  const size = structure.parts.length / 2;
+  for (let index = 0; index < size; index++) {
+    if (structures[structure.parts[index] - 1].kind !== KIND_STRING) return false;
+  }
+  return true;
+};
+
+// Whether compare and checkComparable never fail on two values of these structures, either way
+// round.
+const isSafe = (left: number, right: number): boolean => {
+  if (left === right) return true;
+  const key = left * 0x4000000 + right;
+  const known = isSafePair.get(key);
+  if (known !== undefined) return known;
+  const isSafeNow = computeIsSafe(structures[left - 1], structures[right - 1]);
+  isSafePair.set(key, isSafeNow);
+  return isSafeNow;
+};
+
+const computeIsSafe = (left: Structure, right: Structure) => {
+  if (left.kind === KIND_MODEL || right.kind === KIND_MODEL) {
+    return left.kind === right.kind
+      ? left.modelType === 0 || right.modelType === 0 || left.modelType === right.modelType
+      : (left.kind === KIND_MODEL ? left : right).modelType === 0;
+  }
+  if (left.kind !== right.kind) return false;
+  if (left.kind === KIND_SET) {
+    return left.parts.every((leftPart) =>
+      right.parts.every((rightPart) => isSafe(leftPart, rightPart)),
+    );
+  }
+  if (left.kind !== KIND_FUNCTION) return true;
+  const size = left.parts.length;
+  if (size === 0 || right.parts.length === 0) return true;
+  if (isRecordStructure(left) !== isRecordStructure(right)) return false;
+  return (
+    size !== right.parts.length ||
+    left.parts.every((part, index) => isSafe(part, right.parts[index]))
+  );
+};
+
+const isComparableWithMembers = (element: number, set: number) => {
+  const size = sizes[set];
+  if (size === 0) return true;
+  // A set holds one kind of value after any untyped model values, which come first, so a boolean,
+  // integer or string at both its ends is the kind of every member.
+  const kind = kinds[element];
+  const offset = payloads[set];
+  if (
+    kind < KIND_MODEL &&
+    kinds[heap[offset]] === kind &&
+    kinds[heap[offset + size - 1]] === kind
+  ) {
+    return true;
+  }
+  // A short run never optimizes this, so a known structure is read here rather than in a call.
+  const structure =
+    element < valueStructures.length && valueStructures[element] !== 0
+      ? valueStructures[element]
+      : getStructure(element);
+  const setStructure =
+    set < valueStructures.length && valueStructures[set] !== 0
+      ? valueStructures[set]
+      : getStructure(set);
+  // A miss is often asked again of values of the same structures.
+  if (structure === lastSafety.element && setStructure === lastSafety.set) return lastSafety.isSafe;
+  const isSafeElement = getIsSafeElement(structure, structures[setStructure - 1]);
+  lastSafety.element = structure;
+  lastSafety.set = setStructure;
+  lastSafety.isSafe = isSafeElement;
+  return isSafeElement;
+};
+
+// The structures of the last miss's element and set, and whether it needed no search.
+const lastSafety = { element: 0, set: 0, isSafe: false };
+
+const getIsSafeElement = (structure: number, setStructure: Structure) => {
+  const known = setStructure.isSafeElement.get(structure);
+  if (known !== undefined) return known;
+  const isSafeElement = setStructure.parts.every((member) => isSafe(structure, member));
+  setStructure.isSafeElement.set(structure, isSafeElement);
+  return isSafeElement;
+};
+
+const resetStructures = () => {
+  lastSafety.element = 0;
+  lastSafety.set = 0;
+  structures = [];
+  structureNumbers = new Map();
+  valueStructures = new Int32Array(0);
+  isSafePair = new Map();
 };
 
 let mergeScratch = new Int32Array(64);

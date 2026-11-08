@@ -1195,6 +1195,27 @@ describe("the CLI reproduces the TLC that -Dtla-ts.tlc names without a jar", () 
   });
 });
 
+// TLC searches a set it has normalized, a constant's, by halving with the element's compareTo, and
+// one it hasn't, a set enumeration's, element by element with equals. Each fails where TLC does,
+// with the engine and without it. The .out files are TLC's output at TLC_COMMIT.
+describe("the CLI fails a membership where TLC does", () => {
+  it.each([["SearchedRecord"], ["SearchedTuple"], ["EnumeratedTuple"], ["EnumeratedModels"]])(
+    "fails %s as TLC does",
+    (name) => {
+      const expected = readFileSync(join(FIXTURES, "membership", `${name}.out`), "utf8").split(
+        "\n",
+      );
+      for (const engine of ["1", "0"]) {
+        const result = runCliWith("membership", ["-nowarning", `${name}.tla`], {
+          PROVE_IT_ENGINE: engine,
+        });
+        expect(result.status).toBe(75);
+        expect(getSteadyLines(result.stdout)).toEqual(expected);
+      }
+    },
+  );
+});
+
 describe("the CLI takes several specs and globs", () => {
   it("checks each spec a glob matches and exits with the first failure", () => {
     const result = runCliWith("cli-output", ["*.tla"]);

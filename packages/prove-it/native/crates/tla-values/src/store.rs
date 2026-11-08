@@ -860,18 +860,35 @@ impl Store {
     }
 
     pub fn is_member(&mut self, element: Id, set: Id) -> Outcome<bool> {
-        let size = self.size_of(set);
         if self.find_in_block(set, element)? != -1 {
             return Ok(true);
         }
-        // TLC compares the element with those of the set, which fails for values it can't
-        // compare. A set holds one kind of value after any untyped model values, which come
-        // first, so its first and its last element are the kinds to check.
+        // SetEnumValue.member binary-searches a set TLC has normalized with the element's
+        // compareTo, which fails for values TLC can't compare, so a miss makes the same
+        // comparisons, in the same order.
+        let size = self.size_of(set) as usize;
+        let offset = self.offset_of(set) as usize;
+        let (mut low, mut high) = (0, size);
+        while low < high {
+            let middle = low + ((high - low) >> 1);
+            let comparison = self.compare(element, self.word(offset + middle))?;
+            if comparison == 0 {
+                return Ok(true);
+            }
+            if comparison < 0 {
+                high = middle;
+            } else {
+                low = middle + 1;
+            }
+        }
+        // A set TLC hasn't normalized, a set enumeration's, it checks element by element with
+        // equals, which fails on a value of another kind. A set holds one kind of value after any
+        // untyped model values, which come first, so its first and its last element are the kinds
+        // to check.
         if size > 0 {
-            let offset = self.offset_of(set) as usize;
             self.check_comparable(element, self.word(offset))?;
             if size > 1 {
-                self.check_comparable(element, self.word(offset + size as usize - 1))?;
+                self.check_comparable(element, self.word(offset + size - 1))?;
             }
         }
         Ok(false)
