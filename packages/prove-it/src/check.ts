@@ -1411,6 +1411,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         canonicalizeState(replayed);
         replayed.forEach(markFingerprinted);
         states[checkpoint.expanding] = replayed;
+        engineIndices.set(replayed, checkpoint.expanding);
       }
     }
     runtime.generatedStates = checkpoint.generated;
