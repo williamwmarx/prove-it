@@ -9,6 +9,10 @@ use crate::{
 
 /// Encodes an IR.
 pub fn encode(ir: &Ir) -> Vec<u8> {
+    crate::on_nesting_stack(|| encode_here(ir))
+}
+
+fn encode_here(ir: &Ir) -> Vec<u8> {
     let mut nodes = NodeWriter {
         ir,
         words: Vec::new(),

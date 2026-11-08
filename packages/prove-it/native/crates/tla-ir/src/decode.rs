@@ -31,6 +31,10 @@ const MAXIMUM_DEPTH: usize = 10_000;
 
 /// Decodes an IR.
 pub fn decode(bytes: &[u8]) -> Decoded<Ir> {
+    crate::on_nesting_stack(|| decode_here(bytes))
+}
+
+fn decode_here(bytes: &[u8]) -> Decoded<Ir> {
     let fail = |message: String| DecodeError { word: 0, message };
     if bytes.len() < 16 || !bytes.len().is_multiple_of(4) {
         return Err(fail(format!("{} bytes are no IR", bytes.len())));

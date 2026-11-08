@@ -6,6 +6,28 @@
 mod decode;
 mod encode;
 
+/// The stack the decoder and the encoder run on. Both follow nested nodes by recursion, up to the
+/// decoder's limit, and a Rust stack overflow aborts the process rather than failing, so they run
+/// on a thread whose stack holds that many levels. Ten thousand levels took between 128 and 256 MB
+/// in a debug build and under 32 MB in a release build; each size is about twice that. The stack
+/// is reserved, not committed.
+const NESTING_STACK_BYTES: usize = if cfg!(debug_assertions) {
+    512 * 1024 * 1024
+} else {
+    64 * 1024 * 1024
+};
+
+fn on_nesting_stack<T: Send>(work: impl FnOnce() -> T + Send) -> T {
+    std::thread::scope(|scope| {
+        std::thread::Builder::new()
+            .stack_size(NESTING_STACK_BYTES)
+            .spawn_scoped(scope, work)
+            .expect("a thread for the nested nodes")
+            .join()
+            .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+    })
+}
+
 pub use decode::{DecodeError, decode};
 pub use encode::encode;
 
