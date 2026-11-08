@@ -8,9 +8,16 @@ import { EngineInvariantError } from "../errors";
 import type { EvaluationScope } from "../evaluate";
 import type { LiveEnabled, LiveExpression } from "../tableau";
 import type { Value } from "../values";
-import { type CompileContext, type Compiled, type Compiler, setCurrent, setNext } from "./compile";
+import {
+  type CompileContext,
+  type Compiled,
+  type Compiler,
+  readsSearch,
+  setCurrent,
+  setNext,
+} from "./compile";
 import { getEnvironmentFlag, reportEngine } from "./settings";
-import { Bailout, FALSE, TRUE } from "./store";
+import { bail, Bailout, FALSE, TRUE } from "./store";
 
 export type LiveOracle = (
   expression: LiveExpression,
@@ -99,8 +106,12 @@ export const createLiveOracle = (
   const answers = new Map<LiveExpression, Compiled | typeof UNKNOWN>();
   const unchangedAnswers = new Map<LiveExpression, Compiled | typeof UNKNOWN>();
   const edgeQuestions = new Map<LiveExpression, EdgeQuestion | typeof UNKNOWN>();
+  // What TLCGet reads holds only while the search runs.
   const compileIn = (expression: Expression, scope: EvaluationScope | undefined) =>
-    getCompiled(values, expression, scope, (context) => compiler.compile(expression, context));
+    getCompiled(values, expression, scope, (context) => {
+      const compiled = compiler.compile(expression, context);
+      return readsSearch(compiled.footprint) ? bail("TLCGet after the search") : compiled;
+    });
   const answer = (expression: Extract<LiveExpression, { scope: unknown }>) => {
     // ENABLED compiles as an expression, cached by what the action reads.
     const built =

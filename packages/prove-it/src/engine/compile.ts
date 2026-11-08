@@ -145,6 +145,28 @@ const allocateSlot = () => {
   return slot;
 };
 
+// What TLCGet reads of TLC's search, at slots of their own so that an expression that reads one is
+// cached by its value: the level of the current state and of the next, and the number of distinct
+// states, which the search sets.
+export const LEVEL_SLOT = allocateSlot();
+export const NEXT_LEVEL_SLOT = allocateSlot();
+export const DISTINCT_SLOT = allocateSlot();
+
+export const tlc = {
+  // The number of distinct states, which the distinct slot holds once an expression reads it.
+  distinct: 0,
+  isDistinctRead: false,
+  // Whether an expression reads TLCGet, which only a search on one thread keeps up.
+  isUsed: false,
+  // Whether threads share the search, while which nothing may start to.
+  isShared: false,
+};
+
+// Whether an expression reads what TLCGet reads, which only the search keeps.
+const SEARCH_SLOTS = [LEVEL_SLOT, NEXT_LEVEL_SLOT, DISTINCT_SLOT];
+export const readsSearch = (footprint: Footprint) =>
+  footprint.slots.some((slot) => SEARCH_SLOTS.includes(slot));
+
 // The slots compiles may take while generated code runs, which compiles what it first evaluates,
 // such as the rest of a conjunction once every variable is assigned.
 const SLOT_HEADROOM = 4096;
@@ -571,6 +593,10 @@ const memoTables: MemoTable[] = [];
 // every run's tables and its deepest recursion's stack.
 export const resetCompileState = () => {
   memoTables.length = 0;
+  tlc.distinct = 0;
+  tlc.isDistinctRead = false;
+  tlc.isUsed = false;
+  tlc.isShared = false;
   if (STACK.length > INITIAL_STACK) STACK = new Int32Array(INITIAL_STACK);
   stackTop = 0;
 };
@@ -1285,8 +1311,10 @@ export const createCompiler = (environment: Environment): Compiler => {
     if (!compileEnabledTest || context.isPrimed || context.isInit)
       return unsupported("expression Enabled");
     const test = compileEnabledTest(action, context);
+    const footprint = getEnabledFootprint(action, context);
+    if (readsSearch(footprint)) return unsupported("ENABLED of an action that reads TLCGet");
     return {
-      ...leaf(() => (test() ? TRUE : FALSE), getEnabledFootprint(action, context)),
+      ...leaf(() => (test() ? TRUE : FALSE), footprint),
       isCostly: true,
       isBoolean: true,
     } as Compiled;
@@ -2652,6 +2680,7 @@ export const createCompiler = (environment: Environment): Compiler => {
     expression: Expression & { kind: "Apply" },
     context: Context,
   ): Compiled => {
+    if (name === "TLCGet") return compileTlcGet(expression.args, context);
     if (builtin.isStateLevel || IMPURE_BUILTINS.has(name)) {
       if (name === "TLCEval" && expression.args.length === 1)
         return compile(expression.args[0], context);
@@ -2662,6 +2691,24 @@ export const createCompiler = (environment: Environment): Compiler => {
     if (native) return native;
     if (!PURE_BUILTINS.has(name)) return unsupported(name);
     return compileBridgedBuiltin(name, builtin, args, context);
+  };
+
+  // TLCGet("level") and TLCGet("distinct") read the slots the search sets.
+  const compileTlcGet = (args: Expression[], context: Context): Compiled => {
+    const key = args.length === 1 && args[0].kind === "String" ? args[0].value : undefined;
+    if ((key !== "level" && key !== "distinct") || tlc.isShared) return unsupported("TLCGet");
+    if (context.isInit && context.isPrimed) return unsupported("TLCGet");
+    tlc.isUsed = true;
+    if (key === "distinct" && !tlc.isDistinctRead) {
+      tlc.isDistinctRead = true;
+      LOC[DISTINCT_SLOT] = int(tlc.distinct);
+    }
+    const slot =
+      key === "distinct" ? DISTINCT_SLOT : context.isPrimed ? NEXT_LEVEL_SLOT : LEVEL_SLOT;
+    return {
+      ...leaf(() => LOC[slot], { vars: [], primes: [], slots: [slot] }),
+      emit: (gen) => `${gen.locals}[${slot}]`,
+    };
   };
 
   const binary = (

@@ -11,6 +11,7 @@ import {
   type Compiled,
   type Compiler,
   createCompiler,
+  readsSearch,
   ROOT_CONTEXT,
 } from "./compile";
 import { getCodegenSetting, reportEngine } from "./settings";
@@ -241,9 +242,8 @@ export const createEngineContext = (
   });
   const initialPredicates = properties.initialPredicates.map(predicate);
   const view =
-    config.view === undefined
-      ? undefined
-      : compiler.compile(identifier(config.view), ROOT_CONTEXT).evaluate;
+    config.view === undefined ? undefined : compiler.compile(identifier(config.view), ROOT_CONTEXT);
+  if (view && readsSearch(view.footprint)) return bail("unsupported: TLCGet in a VIEW");
   const constraints = getAllConjuncts("constraint", config.constraints).map((conjunct) =>
     compiler.compile(conjunct, ROOT_CONTEXT),
   );
@@ -257,7 +257,7 @@ export const createEngineContext = (
     invariantVars: invariants.map((compiled) => getPredicateVars(compiled, width)),
     actionProperties,
     initialPredicates,
-    view,
+    view: view?.evaluate,
     constraints: constraints.map(compilePredicate),
     constraintVars: constraints.map((compiled) => getPredicateVars(compiled, width)),
     actionConstraints: config.actionConstraints.map((name) => named("action constraint", name)),
