@@ -139,20 +139,25 @@ const knownByKey = new Map(
 
 const expectedResults: ExpectedResult[] = JSON.parse(readFileSync(EXPECTED_PATH, "utf8"));
 const expectedById = new Map(expectedResults.map((result) => [result.id, result]));
+const isSelected = (expected: ExpectedResult) =>
+  expected.tlcMilliseconds <= maximumTlcMilliseconds &&
+  (filter === undefined || expected.id.includes(filter));
 const models = findModels()
   .filter((model) => {
     const expected = expectedById.get(model.id);
-    return (
-      expected !== undefined &&
-      expected.tlcMilliseconds <= maximumTlcMilliseconds &&
-      (filter === undefined || model.id.includes(filter))
-    );
+    return expected !== undefined && isSelected(expected);
   })
   .sort(
     (left, right) =>
       (expectedById.get(right.id)?.tlcMilliseconds ?? 0) -
       (expectedById.get(left.id)?.tlcMilliseconds ?? 0),
   );
+
+// A model expected.json selects that isn't in the fetched corpora is one the run didn't check.
+const foundIds = new Set(models.map((model) => model.id));
+const absent = expectedResults
+  .filter((expected) => isSelected(expected) && !foundIds.has(expected.id))
+  .map((expected) => expected.id);
 
 const comparisons: Comparison[] = [];
 const missing: string[] = [];
@@ -271,6 +276,13 @@ if (missing.length > 0) {
   console.log(
     `\n${missing.length} runs have no TLC recording; record them with record-tlc.ts --stdout.`,
   );
+  process.exitCode = 1;
+}
+if (absent.length > 0) {
+  console.log(
+    `\n${absent.length} models aren't in the fetched corpora; fetch them with fetch-corpora.ts:`,
+  );
+  for (const id of absent.slice(0, 20)) console.log(`  ${id}`);
   process.exitCode = 1;
 }
 if (fixed.length > 0) {
