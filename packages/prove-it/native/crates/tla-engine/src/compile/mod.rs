@@ -489,6 +489,8 @@ pub struct Compiler<'a> {
     expanding: HashSet<NodeId>,
     /// The slots of names bound over intervals, whose values are integers.
     int_slots: HashSet<u32>,
+    /// The name EXCEPT binds `@` to: its text, or one no text has if the IR holds none.
+    at: TextId,
     depth: u32,
     // The unsettled fixed points the compiles under way have read, innermost first.
     reads: Option<Vec<Rc<FixedPoint>>>,
@@ -535,6 +537,11 @@ impl<'a> Compiler<'a> {
             recursive_functions: HashMap::new(),
             expanding: HashSet::new(),
             int_slots: HashSet::new(),
+            at: ir
+                .texts
+                .iter()
+                .position(|text| &**text == "@")
+                .map_or(TextId::MAX - 1, |index| index as TextId),
             depth: 0,
             reads: None,
             provisional: HashMap::new(),

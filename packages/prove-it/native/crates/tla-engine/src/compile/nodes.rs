@@ -363,7 +363,7 @@ impl Compiler<'_> {
                 self.compile_except(*function, updates, context)
             }
             NodeKind::ExceptAt => {
-                let at = self.ir_at();
+                let at = self.at;
                 match lookup(&context.scope, at) {
                     Some(found) => self.compile_binding(&found, context),
                     None => unsupported("@ outside EXCEPT"),
@@ -417,15 +417,6 @@ impl Compiler<'_> {
             NodeKind::Label { body, .. } => self.compile(*body, context),
             kind => unsupported(format!("expression {}", kind_name(kind))),
         }
-    }
-
-    // The text "@", which an EXCEPT binds; a text the IR may not hold, so one no name has.
-    fn ir_at(&self) -> u32 {
-        self.ir
-            .texts
-            .iter()
-            .position(|text| &**text == "@")
-            .map_or(u32::MAX - 1, |index| index as u32)
     }
 
     pub(crate) fn compile_unchanged(
@@ -833,7 +824,7 @@ impl Compiler<'_> {
         context: &Context,
     ) -> Compiling<Compiled> {
         let function = self.compile(function, context)?;
-        let at = self.ir_at();
+        let at = self.at;
         let mut compiled = Vec::new();
         for update in updates {
             let mut path = Vec::new();
