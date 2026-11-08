@@ -414,7 +414,7 @@ impl Store {
             let meta = *self.meta(id);
             if stored_hash == hash && meta.kind == kind && meta.size == size {
                 let offset = meta.payload as usize;
-                if self.heap[offset..offset + words.len()] == *words {
+                if is_same(&self.heap[offset..offset + words.len()], words) {
                     return id;
                 }
             }
@@ -600,32 +600,59 @@ impl Store {
     }
 
     fn compare_functions(&mut self, left: Id, right: Id) -> Outcome<i32> {
-        let size = self.size_of(left);
-        let right_size = self.size_of(right);
-        if size != right_size {
+        let (left_meta, right_meta) = (*self.meta(left), *self.meta(right));
+        let size = left_meta.size;
+        if size != right_meta.size {
             // TLC compares a record only with a record, which may fail before the sizes decide.
-            if size > 0 && right_size > 0 && self.is_record(left) != self.is_record(right) {
+            if size > 0 && right_meta.size > 0 && self.is_record(left) != self.is_record(right) {
                 return Err(Bail("record compared with a function"));
             }
-            return Ok(size as i32 - right_size as i32);
+            return Ok(size as i32 - right_meta.size as i32);
         }
+        // A value compares as 0 with itself, and with no side effect, so equal ids are skipped.
         for index in 0..size {
-            let (left_key, right_key) = (self.get_key(left, index), self.get_key(right, index));
+            let left_key = self.key_of(&left_meta, index);
+            let right_key = self.key_of(&right_meta, index);
+            if left_key == right_key {
+                continue;
+            }
             let comparison = self.compare(left_key, right_key)?;
             if comparison != 0 {
                 return Ok(comparison);
             }
         }
         for index in 0..size {
-            let comparison = self.compare(
-                self.get_range_value(left, index),
-                self.get_range_value(right, index),
-            )?;
+            let left_value = self.range_value_of(&left_meta, index);
+            let right_value = self.range_value_of(&right_meta, index);
+            if left_value == right_value {
+                continue;
+            }
+            let comparison = self.compare(left_value, right_value)?;
             if comparison != 0 {
                 return Ok(comparison);
             }
         }
         Ok(0)
+    }
+
+    // get_key and get_range_value of a function whose meta is read already.
+    #[inline(always)]
+    fn key_of(&mut self, meta: &Meta, index: u32) -> Id {
+        if meta.kind == KIND_TUPLE {
+            self.position_key(index)
+        } else {
+            self.word(meta.payload as usize + index as usize)
+        }
+    }
+
+    #[inline(always)]
+    fn range_value_of(&self, meta: &Meta, index: u32) -> Id {
+        let start = if meta.kind == KIND_TUPLE {
+            0
+        } else {
+            meta.size
+        };
+        self.word(meta.payload as usize + (start + index) as usize)
     }
 
     /// TLC's equality. Equal values have equal ids, so two distinct ids are unequal, but TLC
@@ -685,23 +712,24 @@ impl Store {
     // The equals of TLC's functions, records and tuples: functions of one size compare their
     // domains in order and then their ranges, up to the first elements that differ.
     fn equals_functions(&mut self, left: Id, right: Id) -> Outcome<bool> {
-        let size = self.size_of(left);
-        let right_size = self.size_of(right);
-        if size > 0 && right_size > 0 && self.is_record(left) != self.is_record(right) {
+        let (left_meta, right_meta) = (*self.meta(left), *self.meta(right));
+        let size = left_meta.size;
+        if size > 0 && right_meta.size > 0 && self.is_record(left) != self.is_record(right) {
             return Err(Bail("record compared with a function"));
         }
-        if size != right_size {
+        if size != right_meta.size {
             return Ok(false);
         }
         for index in 0..size {
-            let (left_key, right_key) = (self.get_key(left, index), self.get_key(right, index));
+            let left_key = self.key_of(&left_meta, index);
+            let right_key = self.key_of(&right_meta, index);
             if left_key != right_key {
                 return self.equals(left_key, right_key);
             }
         }
         for index in 0..size {
-            let left_value = self.get_range_value(left, index);
-            let right_value = self.get_range_value(right, index);
+            let left_value = self.range_value_of(&left_meta, index);
+            let right_value = self.range_value_of(&right_meta, index);
             if left_value != right_value {
                 return self.equals(left_value, right_value);
             }
@@ -1077,8 +1105,8 @@ impl Store {
             let meta = *self.meta(id);
             if stored_hash == hash && meta.kind == KIND_FUNCTION && meta.size == size as u32 {
                 let other = meta.payload as usize;
-                if self.heap[other + size..other + 2 * size] == *values
-                    && self.heap[other..other + size] == *shape.keys
+                if is_same(&self.heap[other + size..other + 2 * size], values)
+                    && is_same(&self.heap[other..other + size], &shape.keys)
                 {
                     return id;
                 }
@@ -1210,11 +1238,8 @@ impl Store {
 
     /// A function's key at a position. A tuple's key is interned as it is read, as it is there.
     pub fn get_key(&mut self, function: Id, index: u32) -> Id {
-        if self.kind_of(function) == KIND_TUPLE {
-            self.position_key(index)
-        } else {
-            self.word((self.offset_of(function) + index) as usize)
-        }
+        let meta = *self.meta(function);
+        self.key_of(&meta, index)
     }
 
     /// A function's key at a position, if it is interned: always, except for the key of a tuple
@@ -1382,13 +1407,19 @@ impl Store {
         for patch in 0..count {
             let to = self.patch_indexes[patch] as usize;
             if heap[other + to] != self.patch_values[patch]
-                || heap[other + from..other + to] != heap[offset + from..offset + to]
+                || !is_same(
+                    &heap[other + from..other + to],
+                    &heap[offset + from..offset + to],
+                )
             {
                 return false;
             }
             from = to + 1;
         }
-        heap[other + from..other + length] == heap[offset + from..offset + length]
+        is_same(
+            &heap[other + from..other + length],
+            &heap[offset + from..offset + length],
+        )
     }
 
     /// `[fn EXCEPT ![key] = value]`.
@@ -1536,6 +1567,13 @@ enum Merge {
     Union,
     Intersection,
     Difference,
+}
+
+// Whether two blocks of one length hold the same words. Blocks are short, and a loop that stops at
+// the first difference beats a call to memcmp on them.
+#[inline(always)]
+fn is_same(left: &[u32], right: &[u32]) -> bool {
+    left.len() == right.len() && left.iter().zip(right).all(|(left, right)| left == right)
 }
 
 pub fn is_function_kind(kind: u8) -> bool {
