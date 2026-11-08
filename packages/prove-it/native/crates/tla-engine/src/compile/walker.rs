@@ -969,8 +969,12 @@ impl<'a> Compiler<'a> {
             NodeKind::AngleAction { action, subscript } => {
                 let body = self.compile_step(*action, context, options)?;
                 let subscript = *subscript;
+                // TLC evaluates the subscript as an expression, which the engine doesn't evaluate
+                // as TLC does, so a Print in it is the interpreter's.
                 let unchanged = self
-                    .wrap_compile(|compiler| compiler.compile_unchanged(subscript, context))?
+                    .wrap_compile(|compiler| {
+                        compiler.compile_unchanged(subscript, &context.without_print())
+                    })?
                     .eval;
                 Ok(step(move |machine, on_complete| {
                     body(machine, &mut |machine: &mut Machine<'_>| {
@@ -1105,7 +1109,9 @@ impl<'a> Compiler<'a> {
             }));
         }
         let evaluate = self
-            .wrap_compile(|compiler| compiler.compile_unchanged(expression, context))?
+            .wrap_compile(|compiler| {
+                compiler.compile_unchanged(expression, &context.without_print())
+            })?
             .eval;
         Ok(step(move |machine, on_complete| {
             let value = evaluate(machine)?;
@@ -1193,12 +1199,14 @@ impl<'a> Compiler<'a> {
         options: WalkOptions,
     ) -> Compiling<Step> {
         let set = self.compile_ordered(set, context)?.eval;
-        let guard = self.compile(guard, context)?.eval;
+        // The guard only where the variable is assigned already, as the TypeScript engine compiles
+        // it only where it may be.
+        let guard = deferred(self.compile(guard, context));
         let is_init = options.is_init;
         let index = variable as usize;
         Ok(step(move |machine, on_complete| {
             if target(machine, is_init)[index] != UNASSIGNED {
-                let value = guard(machine)?;
+                let value = run_deferred(machine, &guard)?;
                 return if value == TRUE {
                     on_complete(machine)
                 } else if value == FALSE {
