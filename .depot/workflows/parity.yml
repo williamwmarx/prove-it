@@ -1,0 +1,125 @@
+# Checks that Prove It still agrees with TLC on the conformance corpora, on one large machine:
+# Conformance runs every model whose TLC result tests/conformance/expected.json records and fails
+# if a model tests/conformance/passing.json lists no longer matches it; Engine coverage runs every
+# model with the engine on and off and fails if the two reach different outcomes. It runs by hand
+# and on every push to main, never on a pull request, and holds no credential. Each job's results
+# are its artifact.
+name: Parity
+"on":
+  workflow_dispatch:
+    inputs:
+      filter:
+        description: Only the models whose id contains this text
+        default: ""
+      max_tlc_ms:
+        description: Leave out the models TLC took longer than this to check
+        default: "20000"
+  push:
+    branches:
+      - main
+permissions:
+  contents: read
+# A push to main supersedes the run before it. A run by hand checks one change, which may share its
+# ref with other changes run by hand, so each gets a group of its own.
+concurrency:
+  group: parity-${{ github.event_name == 'push' && github.ref || github.run_id }}
+  cancel-in-progress: true
+env:
+  NPM_TOKEN: ""
+  NODE_AUTH_TOKEN: ""
+  OP_SERVICE_ACCOUNT_TOKEN: ""
+  ONEPASSWORD_PROVE_IT_RELEASE_TOKEN: ""
+jobs:
+  conformance:
+    name: Conformance
+    runs-on: depot-ubuntu-24.04-16
+    timeout-minutes: 120
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Build Prove It and fetch the corpora
+        run: |
+          set -euo pipefail
+          PATH="$(scripts/ci/bootstrap.sh bun node):$PATH"
+          bun install --frozen-lockfile --ignore-scripts
+          bun run build
+          cd packages/prove-it
+          bun scripts/fetch-corpora.ts
+      - name: Compare with TLC's recorded results
+        env:
+          FILTER: ${{ inputs.filter || '' }}
+          MAX_TLC_MS: ${{ inputs.max_tlc_ms || '20000' }}
+        run: |
+          set -euo pipefail
+          PATH="$(scripts/ci/bootstrap.sh bun node):$PATH"
+          cd packages/prove-it
+          mkdir -p "$RUNNER_TEMP/parity"
+          status=0
+          bun scripts/run.ts conformance --check --concurrency 12 --max-tlc-ms "$MAX_TLC_MS" \
+            ${FILTER:+--filter "$FILTER"} | tee "$RUNNER_TEMP/parity/conformance.log" || status=$?
+          cp tests/conformance/.results.json "$RUNNER_TEMP/parity/conformance.json"
+          {
+            echo "## Conformance"
+            echo
+            echo '```'
+            sed -n '/^match: \|^mismatch: \|^unsupported: \|^crash: /p; /models match that\|no longer match/,$p' \
+              "$RUNNER_TEMP/parity/conformance.log" | head -100
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+      - name: Keep the results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: conformance-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/parity/
+          if-no-files-found: warn
+          retention-days: 90
+  engine-coverage:
+    name: Engine coverage
+    runs-on: depot-ubuntu-24.04-16
+    timeout-minutes: 120
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Build Prove It and fetch the corpora
+        run: |
+          set -euo pipefail
+          PATH="$(scripts/ci/bootstrap.sh bun node):$PATH"
+          bun install --frozen-lockfile --ignore-scripts
+          bun run build
+          cd packages/prove-it
+          bun scripts/fetch-corpora.ts
+      - name: Run every model with the engine on and off
+        env:
+          FILTER: ${{ inputs.filter || '' }}
+          MAX_TLC_MS: ${{ inputs.max_tlc_ms || '20000' }}
+        run: |
+          set -euo pipefail
+          PATH="$(scripts/ci/bootstrap.sh bun node):$PATH"
+          cd packages/prove-it
+          mkdir -p "$RUNNER_TEMP/parity"
+          status=0
+          bun scripts/run.ts engine-coverage --concurrency 6 --max-tlc-ms "$MAX_TLC_MS" \
+            ${FILTER:+--filter "$FILTER"} --out "$RUNNER_TEMP/parity/engine-coverage.json" \
+            | tee "$RUNNER_TEMP/parity/engine-coverage.log" || status=$?
+          {
+            echo "## Engine coverage"
+            echo
+            echo '```'
+            sed -n '/The engine on and off\|models differ between/,$p' "$RUNNER_TEMP/parity/engine-coverage.log" | head -100
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+      - name: Keep the results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: engine-coverage-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/parity/
+          if-no-files-found: warn
+          retention-days: 90
