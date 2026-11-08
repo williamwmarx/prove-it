@@ -1,5 +1,7 @@
 // Worker threads as Web Workers, or as Node's worker_threads where there are none.
 
+import { MissingBuildFileError } from "./errors";
+
 const WORKER_THREADS_MODULE = "node:worker_threads";
 const BUN_JSC_MODULE = "bun:jsc";
 
@@ -27,12 +29,29 @@ export const isWorkerSupported = () =>
   typeof Worker === "function" ||
   (typeof process !== "undefined" && process.versions?.node !== undefined);
 
+// A worker whose entry isn't in the file its URL names would only report an error once it fails to
+// load, which a search that runs on meanwhile never sees, so a build that left the entry out, or put
+// it elsewhere, fails here rather than checking with fewer threads than it was asked for. Bun runs
+// the entry's TypeScript from the sources, where the build puts its JavaScript.
+export const assertWorkerFile = (url: URL) => {
+  const fs =
+    url.protocol === "file:" && typeof process !== "undefined"
+      ? process.getBuiltinModule?.("node:fs")
+      : undefined;
+  const isFound =
+    fs === undefined ||
+    fs.existsSync(url) ||
+    ("Bun" in globalThis && fs.existsSync(new URL(url.href.replace(/\.js$/, ".ts"))));
+  if (!isFound) throw new MissingBuildFileError(url);
+};
+
 // The caller writes url as new URL("./name.js", import.meta.url) for bundlers to find.
 export const spawnWorker = async (
   url: URL,
   onMessage: (message: unknown) => void,
   onError: (error: unknown) => void,
 ): Promise<WorkerHandle> => {
+  assertWorkerFile(url);
   if (typeof Worker === "function") {
     const worker = new Worker(url, { type: "module" });
     worker.addEventListener("message", (event) => onMessage(event.data));

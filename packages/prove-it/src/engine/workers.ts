@@ -4,6 +4,7 @@
 import type { ModelConfig } from "../config";
 import type { EngineStartMessage } from "../engine-worker";
 import type { TlcVersion } from "../tlc/version";
+import { assertWorkerFile } from "../worker";
 
 interface StartInfo {
   source: string;
@@ -47,8 +48,9 @@ const createThread = (): ThreadHandle | undefined => {
 export const spawnEngineWorkers = (count: number, info: StartInfo): EngineWorkers | undefined => {
   const started = new SharedArrayBuffer(4);
   const threads: ThreadHandle[] = [];
+  assertWorkerFile(WORKER_URL);
   for (let index = 0; index < count; index++) {
-    // A host without workers, or a build without the worker beside this module, searches alone.
+    // A host without workers searches alone.
     const thread = (() => {
       try {
         return createThread();
