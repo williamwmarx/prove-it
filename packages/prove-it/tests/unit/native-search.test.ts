@@ -141,6 +141,47 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     }
   });
 
+  it("checks a successor before what the walk does after it, as it hands over", async () => {
+    // Where nothing prints, the search checks a successor once the walk reaches the next one, so
+    // its fingerprint's probe doesn't wait on memory. A successor the walk completed is still
+    // checked before the walk's next failure or incomplete successor, so the search stops where
+    // it did: at the first successor's invariant.
+    const config = "INIT Init\nNEXT Next\nINVARIANT Inv";
+    const failing = [
+      "EXTENDS Naturals",
+      "VARIABLE x",
+      "Init == x = 0",
+      "Next == \\/ x' = x + 1",
+      "        \\/ x' = x + 2 /\\ 1 \\div (x - x) = 1",
+      "Inv == x < 1",
+    ];
+    const incomplete = [
+      "EXTENDS Naturals",
+      "VARIABLES x, y",
+      "Init == x = 0 /\\ y = 0",
+      "Next == \\/ x' = x + 1 /\\ y' = y",
+      "        \\/ x' = x + 2",
+      "Inv == x < 1",
+    ];
+    for (const body of [failing, incomplete]) {
+      expect(await compareWithInterpreter(body, config)).toContainEqual(
+        expect.stringMatching(stopped("an invariant violated")),
+      );
+    }
+    // A walk that reads the count of distinct states sees each new successor added at once.
+    const counting = [
+      "EXTENDS Naturals, TLC",
+      "VARIABLE x",
+      "Init == x = 0",
+      "Next == \\/ x' = (x + 1) % 5",
+      '        \\/ x\' = (10 + TLCGet("distinct")) % 20',
+    ];
+    await compareStateLogs(counting, "INIT Init\nNEXT Next", false);
+    expect(await compareWithInterpreter(counting, "INIT Init\nNEXT Next")).toContainEqual(
+      expect.stringMatching(COMPLETE),
+    );
+  });
+
   it("walks a universal quantifier with 2^32 bindings, and doesn't skip its body", async () => {
     // The product of the sizes doesn't fit 32 bits, and the first binding already rules out every
     // successor. The interpreter builds the product of the sets, so this compares with the

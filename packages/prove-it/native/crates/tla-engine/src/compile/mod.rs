@@ -559,6 +559,8 @@ pub struct Compiler<'a> {
     entry_count: u64,
     /// Whether an expression reads TLCGet("distinct"), whose slot the search must then set.
     pub is_distinct_read: bool,
+    /// Whether anything compiled may print.
+    pub is_printing: bool,
     // The contexts of the instance scopes translated so far.
     scope_contexts: HashMap<Index, Option<Context>>,
 }
@@ -611,6 +613,7 @@ impl<'a> Compiler<'a> {
             provisional: HashMap::new(),
             entry_count: 0,
             is_distinct_read: false,
+            is_printing: false,
             scope_contexts: HashMap::new(),
         }
     }

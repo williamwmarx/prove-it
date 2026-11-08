@@ -275,6 +275,7 @@ impl Compiler<'_> {
         if operands.len() != if is_print { 2 } else { 1 } {
             return unsupported("an operator applied to the wrong number of arguments");
         }
+        self.is_printing = true;
         let compiled = operands
             .iter()
             .map(|operand| self.compile(operand.node, &operand.context.without_print()))
