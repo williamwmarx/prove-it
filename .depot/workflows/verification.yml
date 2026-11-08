@@ -66,12 +66,13 @@ jobs:
       matrix:
         include:
           - task: Cargo Build
-            # The native tests load the addon in Bun from the sources and in Node from dist.
+            # The native tests load the addon in Bun from the sources and in Node from dist, and the
+            # store and fingerprint tests run on the native store too.
             command: |
               cd packages/prove-it
               bun scripts/platform-packages.ts build
               bun run build
-              PROVE_IT_ENGINE_ADDON="$PWD/native/npm/linux-x64-gnu/prove-it-engine.node" bun test tests/unit/native.test.ts
+              PROVE_IT_ENGINE_ADDON="$PWD/native/npm/linux-x64-gnu/prove-it-engine.node" bun test tests/unit/native.test.ts tests/unit/engine-store.test.ts tests/unit/engine-fingerprints.test.ts
           - task: Cargo Test
             command: cd packages/prove-it/native && cargo test --locked
           - task: Cargo Clippy

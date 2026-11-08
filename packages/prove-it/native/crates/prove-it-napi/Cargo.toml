@@ -9,3 +9,6 @@ publish.workspace = true
 
 [lib]
 crate-type = ["cdylib"]
+
+[dependencies]
+tla-values = { path = "../tla-values" }
