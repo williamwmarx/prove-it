@@ -7,7 +7,7 @@
 
 import { EngineInvariantError } from "../errors";
 import { createStateEncoder } from "../transfer";
-import { getRankedStringCount, getStringOrder, type Value } from "../values";
+import { getRankedStringCount, getStringOrder, getStringRank, type Value } from "../values";
 import { getNativeAddon } from "./native";
 import { bail, type RecordShape } from "./store";
 
@@ -85,7 +85,12 @@ export const nativeStore = {
   getValueCount: () => performNumber("getValueCount", []),
   int: (value: number) => performNumber("int", [value]),
   str: (text: string) => performNumber("str", [text]),
-  model: (name: string) => performNumber("model", [name]),
+  // A model's name takes its rank in values.ts's order, as store.ts's model gives it, so the strings
+  // ranked after it rank after it in both stores.
+  model: (name: string) => {
+    getStringRank(name);
+    return performNumber("model", [name]);
+  },
   compare: (left: number, right: number) => performNumber("compare", [left, right]),
   equals: (left: number, right: number) => performBoolean("equals", [left, right]),
   setOf: (elements: number[]) => performNumber("setOf", [elements]),

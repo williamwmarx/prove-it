@@ -40,6 +40,7 @@ import {
   createRecord,
   createSet,
   createTuple,
+  getStringRank,
   setStringOrder,
   type Value,
 } from "../../src/values";
@@ -120,6 +121,11 @@ describe.each(STORES)("the engine's %s store", (mode, store) => {
     const direct = store.functionOfSorted(keys, ints([3, 4]), 2);
     expect(store.recordOf(shape, ints([3, 4]))).toBe(direct);
     expect(store.except(record, keys[1], store.int(4))).toBe(store.recordOf(shape, ints([1, 4])));
+  });
+
+  it("ranks a model's name in TLC's order of strings, before the texts ranked after it", () => {
+    store.model("m");
+    expect(getStringRank("a")).toBeGreaterThan(getStringRank("m"));
   });
 
   // Some 80,000 calls, each of which crosses into the addon for the native store.
