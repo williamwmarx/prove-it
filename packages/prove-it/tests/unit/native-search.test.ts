@@ -186,6 +186,32 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     );
   });
 
+  it("walks a universal quantifier with 2^32 bindings, and doesn't skip its body", async () => {
+    // The product of the sizes doesn't fit 32 bits, and the first binding already rules out every
+    // successor. The interpreter builds the product of the sets, so this compares with the
+    // TypeScript engine, which walks the bindings as the native engine does.
+    const options = {
+      source: toModule([
+        "EXTENDS Naturals",
+        "VARIABLE x",
+        "Init == x = 0",
+        "Next == x' = 1 /\\ (\\A i \\in 1..65536, j \\in 1..65536 : x' = 0)",
+      ]),
+      config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      isWarningEnabled: false,
+    };
+    const native = await run(options, {
+      PROVE_IT_ENGINE: "debug",
+      PROVE_IT_ENGINE_BACKEND: "rust",
+    });
+    const typescript = await run(options, {
+      PROVE_IT_ENGINE: "debug",
+      PROVE_IT_ENGINE_BACKEND: "ts",
+    });
+    expect(native.result).toEqual(typescript.result);
+    expect(native.lines).toContainEqual(expect.stringMatching(COMPLETE));
+  });
+
   it("checks invariants, constraints, action constraints and action properties", async () => {
     const body = [
       "EXTENDS Naturals, TLC",

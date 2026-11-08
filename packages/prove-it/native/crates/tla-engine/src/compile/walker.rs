@@ -228,17 +228,19 @@ struct WalkedForall {
 // A run of a walked universal quantifier: each level's set, its stride and the slot's value
 // before, and the number of bindings.
 struct ForallRun {
-    sets: Vec<(Id, u32, Id)>,
-    count: u32,
+    sets: Vec<(Id, u64, Id)>,
+    count: u64,
 }
 
 impl WalkedForall {
     // Binds the names for binding `index`, numbered with the first name varying fastest.
-    fn bind(&self, run: &ForallRun, machine: &mut Machine<'_>, index: u32) {
+    fn bind(&self, run: &ForallRun, machine: &mut Machine<'_>, index: u64) {
         let binding = if index == 0 { 0 } else { run.count - index };
         for (level, &(set, stride, _)) in run.sets.iter().enumerate() {
-            let size = machine.store.size_of(set);
-            let element = element_at(machine, set, (binding / stride) % size);
+            let size = u64::from(machine.store.size_of(set));
+            // Below the set's size, so it fits the store's u32 positions.
+            let position = ((binding / stride) % size) as u32;
+            let element = element_at(machine, set, position);
             machine.locals[self.levels[level].1 as usize] = element;
         }
     }
@@ -253,7 +255,7 @@ impl WalkedForall {
         &self,
         run: &ForallRun,
         machine: &mut Machine<'_>,
-        index: u32,
+        index: u64,
         on_complete: &mut Continue<'_>,
     ) -> Outcome<()> {
         if index == run.count {
@@ -287,7 +289,9 @@ impl WalkedForall {
 
     fn run(&self, machine: &mut Machine<'_>, on_complete: &mut Continue<'_>) -> Outcome<()> {
         let mut sets = Vec::with_capacity(self.levels.len());
-        let mut bindings = 1u32;
+        // The TS engine counts the bindings in a double, so they never wrap; a count past u64 can't
+        // be walked anyway, and hands over.
+        let mut bindings = 1u64;
         for (set, slot) in &self.levels {
             let id = set(machine)?;
             let kind = machine.store.kind_of(id);
@@ -295,7 +299,11 @@ impl WalkedForall {
                 return Err(Bail("an action quantified over a non-set"));
             }
             sets.push((id, bindings, machine.locals[*slot as usize]));
-            bindings = bindings.wrapping_mul(machine.store.size_of(id));
+            bindings = bindings
+                .checked_mul(u64::from(machine.store.size_of(id)))
+                .ok_or(Bail(
+                    "an action quantified over more bindings than the engine counts",
+                ))?;
         }
         let run = ForallRun {
             sets,
