@@ -17,6 +17,11 @@ pub type Eval = Arc<dyn Fn(&mut Machine<'_>) -> Outcome<Id> + Send + Sync>;
 pub type Member = Arc<dyn Fn(&mut Machine<'_>, Id) -> Outcome<bool> + Send + Sync>;
 /// What TLC evaluates to make a set's value, evaluated without building the set.
 pub type Parts = Arc<dyn Fn(&mut Machine<'_>) -> Outcome<()> + Send + Sync>;
+/// What a walk of an action does with each state it completes.
+pub type Continue<'c> = dyn FnMut(&mut Machine<'_>) -> Outcome<()> + 'c;
+/// A walk of the initial predicate or of an action, in TLC's order, calling its continuation once
+/// for each state it completes (`Step` in `action.ts`).
+pub type Step = Arc<dyn Fn(&mut Machine<'_>, &mut Continue<'_>) -> Outcome<()> + Send + Sync>;
 
 /// A variable that has no value yet, -1 in the TypeScript registers.
 pub const UNASSIGNED: Id = u32::MAX;
@@ -85,6 +90,15 @@ pub struct Machine<'p> {
     pub(crate) parts_round: u64,
     parts_rounds: u64,
     depth: u32,
+    /// How many variables the walk has assigned (`registers.assigned`).
+    pub(crate) assigned: u32,
+    /// The variables assigned so far, in order, so each conjunction unassigns its own.
+    pub(crate) undo: Vec<u32>,
+    /// Whether a step took TLC's shortcut past a conjunct it would otherwise walk
+    /// (`shortcuts.isPastWalk`).
+    pub is_past_walk: bool,
+    // The next states ENABLED runs its actions into, kept for the next test.
+    pub(crate) spare_states: Vec<Vec<Id>>,
 }
 
 impl<'p> Machine<'p> {
@@ -111,6 +125,10 @@ impl<'p> Machine<'p> {
             parts_round: 0,
             parts_rounds: 0,
             depth: 0,
+            assigned: 0,
+            undo: Vec::new(),
+            is_past_walk: false,
+            spare_states: Vec::new(),
         }
     }
 
@@ -134,6 +152,22 @@ impl<'p> Machine<'p> {
     pub fn set_next(&mut self, state: &[Id]) {
         self.next.clear();
         self.next.extend_from_slice(state);
+    }
+
+    /// The current state.
+    pub fn current(&self) -> &[Id] {
+        &self.cur
+    }
+
+    /// The next state, [`UNASSIGNED`] where a variable has no value.
+    pub fn next(&self) -> &[Id] {
+        &self.next
+    }
+
+    /// Forgets the walk's assignments, as `resetAssigned` does before a state is expanded.
+    pub fn reset_assigned(&mut self) {
+        self.assigned = 0;
+        self.undo.clear();
     }
 
     /// Sets a slot that no bound name takes, such as the level TLCGet reads.

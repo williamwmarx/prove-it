@@ -19,6 +19,7 @@ mod fused;
 mod nodes;
 mod predicate;
 mod sets;
+mod walker;
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
@@ -499,6 +500,8 @@ pub struct Compiler<'a> {
     entry_count: u64,
     /// Whether an expression reads TLCGet("distinct"), whose slot the search must then set.
     pub is_distinct_read: bool,
+    // The contexts of the instance scopes translated so far.
+    scope_contexts: HashMap<Index, Option<Context>>,
 }
 
 fn add_read(reads: &mut Vec<Rc<FixedPoint>>, fixed_point: &Rc<FixedPoint>) {
@@ -547,6 +550,7 @@ impl<'a> Compiler<'a> {
             provisional: HashMap::new(),
             entry_count: 0,
             is_distinct_read: false,
+            scope_contexts: HashMap::new(),
         }
     }
 
