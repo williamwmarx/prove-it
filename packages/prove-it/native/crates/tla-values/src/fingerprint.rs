@@ -175,6 +175,12 @@ impl Fingerprints {
 
     // The number of the table that shifts by a length, or NO_TABLE past the cap.
     fn get_length_table(&mut self, length: u64) -> i32 {
+        self.get_table_under(length, MAXIMUM_LENGTH_TABLES)
+    }
+
+    // The number of the table that shifts by a length, made only while fewer than `cap` tables
+    // exist, or NO_TABLE.
+    fn get_table_under(&mut self, length: u64, cap: usize) -> i32 {
         let is_short = length < SHORT_LENGTHS as u64;
         let known = if is_short {
             self.short_numbers.get(length as usize).copied()
@@ -184,7 +190,7 @@ impl Fingerprints {
         if let Some(number) = known.filter(|&number| number != UNKNOWN_TABLE) {
             return number;
         }
-        if self.lengths.len() >= MAXIMUM_LENGTH_TABLES {
+        if self.lengths.len() >= cap {
             return NO_TABLE;
         }
         // The powers it is built from, made before the closure borrows them.
@@ -485,8 +491,13 @@ impl Fingerprints {
             parent.positions[index] = position;
             // A tail seldom changes from one parent to the next, so its table is looked up again
             // only when it does.
+            // Tails can take any length, and a model whose values grow can meet a new one at nearly
+            // every state: they make tables only up to half the cap, so the values' own lengths
+            // keep theirs, and a successor that needs a tail without one is fingerprinted from
+            // the parent's prefix.
             if parent.tails[position].0 != tail {
-                parent.tails[position] = (tail, self.get_length_table(tail));
+                let table = self.get_table_under(tail, MAXIMUM_LENGTH_TABLES / 2);
+                parent.tails[position] = (tail, table);
             }
             self.compute(store, state[index]);
             tail += self.values[state[index] as usize].length;
@@ -495,8 +506,8 @@ impl Fingerprints {
 
     /// The fingerprint of a successor of the parent [`Fingerprints::set_parent`] last set, from
     /// the parent's: for each value that changed, one shift by the length of the values after it
-    /// where every changed value keeps its length (as [`Fingerprints::get_states`] computes it),
-    /// and otherwise the parent's fingerprint before the first value that changed, extended by
+    /// where every changed value keeps its length and that length has a table (as
+    /// [`Fingerprints::get_states`] computes it), and otherwise the parent's fingerprint before the first value that changed, extended by
     /// the successor's values from there.
     pub fn get_child(
         &mut self,
@@ -509,7 +520,7 @@ impl Fingerprints {
         self.check_generation(store);
         let mut fingerprint = parent.fingerprint;
         let mut first = order.len();
-        let mut is_same_length = true;
+        let mut is_in_place = true;
         for (index, (&id, &parent_id)) in state.iter().zip(parent_state).enumerate() {
             if id == parent_id {
                 continue;
@@ -519,14 +530,14 @@ impl Fingerprints {
             self.compute(store, id);
             self.compute(store, parent_id);
             let (value, parent_value) = (self.values[id as usize], self.values[parent_id as usize]);
-            is_same_length &= value.length == parent_value.length;
-            if is_same_length {
-                let (tail, table) = parent.tails[position];
+            let (tail, table) = parent.tails[position];
+            is_in_place &= value.length == parent_value.length && table != NO_TABLE;
+            if is_in_place {
                 let changed = value.fingerprint ^ parent_value.fingerprint;
                 fingerprint ^= self.shift_by_table(table, changed, tail);
             }
         }
-        if is_same_length {
+        if is_in_place {
             return fingerprint;
         }
         while parent.prefixes.len() <= first {
