@@ -30,29 +30,79 @@ fn hash_keys(keys: &[Id]) -> u32 {
     keys.iter().fold(OFFSET_BASIS, |hash, &key| fold(hash, key))
 }
 
+/// One entry of a table of width one or two: its keys packed in one word, so a probe compares
+/// once, beside its value.
+#[derive(Clone, Copy)]
+struct Packed {
+    key: u64,
+    value: Id,
+}
+
+const EMPTY_PACKED: Packed = Packed {
+    key: 0,
+    value: EMPTY,
+};
+
+#[inline(always)]
+fn pack(keys: &[Id]) -> u64 {
+    match keys {
+        [first] => u64::from(*first),
+        [first, second] => u64::from(*first) | u64::from(*second) << 32,
+        _ => unreachable!("packing more than two keys"),
+    }
+}
+
+#[inline(always)]
+fn mix(key: u64) -> usize {
+    (key.wrapping_mul(0x9e37_79b9_7f4a_7c15) >> 32) as usize
+}
+
+#[inline(always)]
+fn wide_home(keys: &[Id]) -> usize {
+    let hash = hash_keys(keys);
+    (hash ^ (hash >> 15)) as usize
+}
+
 /// A table of the values of one expression, keyed by the ids it reads.
 pub struct MemoTable {
     width: usize,
-    keys: Vec<Id>,
-    values: Vec<Id>,
+    // A table of width 1 is keyed by one id, so while its keys are dense enough its values are an
+    // array indexed by the id, read without hashing or probing.
+    direct: Vec<Id>,
+    // Width 1 once it isn't direct, and width 2: open addressing over packed keys.
+    packed: Vec<Packed>,
+    // Widths 3 to 6: open addressing over rows of the value, then the keys.
+    wide: Vec<Id>,
     mask: usize,
     size: usize,
     lookups: u64,
     hits: u64,
     is_enabled: bool,
-    // A table of width 1 is keyed by one id, so while its keys are dense enough its values are an
-    // array indexed by the id, read without hashing or probing.
     is_direct: bool,
 }
 
+const INITIAL_CAPACITY: usize = 64;
+
 impl MemoTable {
     pub fn new(width: usize) -> MemoTable {
-        let capacity = 64;
         MemoTable {
             width,
-            keys: vec![0; capacity * width],
-            values: vec![EMPTY; capacity],
-            mask: capacity - 1,
+            direct: if width == 1 {
+                vec![EMPTY; INITIAL_CAPACITY]
+            } else {
+                Vec::new()
+            },
+            packed: if width == 2 {
+                vec![EMPTY_PACKED; INITIAL_CAPACITY]
+            } else {
+                Vec::new()
+            },
+            wide: if width > 2 {
+                vec![EMPTY; INITIAL_CAPACITY * (width + 1)]
+            } else {
+                Vec::new()
+            },
+            mask: INITIAL_CAPACITY - 1,
             size: 0,
             lookups: 0,
             hits: 0,
@@ -81,41 +131,59 @@ impl MemoTable {
         self.hits
     }
 
+    fn capacity(&self) -> usize {
+        self.mask + 1
+    }
+
     fn grow(&mut self) {
-        let width = self.width;
-        let old_keys = std::mem::take(&mut self.keys);
-        let old_values = std::mem::take(&mut self.values);
-        let capacity = old_values.len() * 2;
-        self.keys = vec![0; capacity * width];
-        self.values = vec![EMPTY; capacity];
+        let capacity = self.capacity() * 2;
         self.mask = capacity - 1;
-        for (entry, &value) in old_values.iter().enumerate() {
-            if value == EMPTY {
-                continue;
+        if self.width <= 2 {
+            let old = std::mem::replace(&mut self.packed, vec![EMPTY_PACKED; capacity]);
+            for entry in old.into_iter().filter(|entry| entry.value != EMPTY) {
+                let slot = self.free_packed(entry.key);
+                self.packed[slot] = entry;
             }
-            let key = &old_keys[entry * width..(entry + 1) * width];
-            let hash = hash_keys(key);
-            let mut slot = (hash ^ (hash >> 15)) as usize & self.mask;
-            while self.values[slot] != EMPTY {
-                slot = (slot + 1) & self.mask;
-            }
-            self.keys[slot * width..(slot + 1) * width].copy_from_slice(key);
-            self.values[slot] = value;
+            return;
         }
+        let stride = self.width + 1;
+        let old = std::mem::replace(&mut self.wide, vec![EMPTY; capacity * stride]);
+        for row in old.chunks_exact(stride).filter(|row| row[0] != EMPTY) {
+            let slot = self.free_wide(&row[1..]);
+            self.wide[slot * stride..(slot + 1) * stride].copy_from_slice(row);
+        }
+    }
+
+    fn free_packed(&self, key: u64) -> usize {
+        let mut slot = mix(key) & self.mask;
+        while self.packed[slot].value != EMPTY {
+            slot = (slot + 1) & self.mask;
+        }
+        slot
+    }
+
+    fn free_wide(&self, keys: &[Id]) -> usize {
+        let stride = self.width + 1;
+        let mut slot = wide_home(keys) & self.mask;
+        while self.wide[slot * stride] != EMPTY {
+            slot = (slot + 1) & self.mask;
+        }
+        slot
     }
 
     // Grows a direct table's array to hold the id, or makes the table a hash table when its keys
     // are too sparse for the array that would take.
     fn reserve_direct(&mut self, id: Id) {
-        let capacity = (2 * self.values.len()).max(id as usize + 1);
+        let capacity = (2 * self.direct.len()).max(id as usize + 1);
         if capacity <= DIRECT_MAXIMUM && capacity <= DIRECT_SPARSITY * self.size + DIRECT_MINIMUM {
-            self.values.resize(capacity, EMPTY);
+            self.direct.resize(capacity, EMPTY);
             return;
         }
-        let direct = std::mem::take(&mut self.values);
+        let direct = std::mem::take(&mut self.direct);
         self.is_direct = false;
         self.size = 0;
-        self.values = vec![EMPTY; self.keys.len()];
+        self.mask = INITIAL_CAPACITY - 1;
+        self.packed = vec![EMPTY_PACKED; INITIAL_CAPACITY];
         for (key, &value) in direct.iter().enumerate() {
             if value != EMPTY {
                 self.set(&[key as Id], value);
@@ -124,31 +192,29 @@ impl MemoTable {
     }
 
     // Counts a lookup, and says whether the table is on once its probation ends.
+    #[inline(always)]
     fn open(&mut self) -> bool {
         self.lookups += 1;
         if self.lookups == PROBATION && (self.hits as f64) < self.lookups as f64 * MINIMUM_HIT_RATE
         {
             self.is_enabled = false;
-            self.keys = Vec::new();
-            self.values = Vec::new();
+            self.direct = Vec::new();
+            self.packed = Vec::new();
+            self.wide = Vec::new();
         }
         self.is_enabled
     }
 
-    // The empty slot a new entry with this hash goes in, or None when the table takes no more.
-    fn claim(&mut self, hash: u32) -> Option<usize> {
+    // Makes room for a new entry, or says the table takes no more.
+    fn claim(&mut self) -> bool {
         if !self.is_enabled || self.size >= MAXIMUM_ENTRIES {
-            return None;
+            return false;
         }
-        if (self.size + 1) * 2 > self.values.len() {
+        if (self.size + 1) * 2 > self.capacity() {
             self.grow();
         }
-        let mut slot = (hash ^ (hash >> 15)) as usize & self.mask;
-        while self.values[slot] != EMPTY {
-            slot = (slot + 1) & self.mask;
-        }
         self.size += 1;
-        Some(slot)
+        true
     }
 
     /// The value stored for the keys, or [`EMPTY`].
@@ -157,27 +223,34 @@ impl MemoTable {
         if !self.open() {
             return EMPTY;
         }
-        if self.is_direct {
-            let value = self.values.get(keys[0] as usize).copied().unwrap_or(EMPTY);
-            if value != EMPTY {
-                self.hits += 1;
+        let value = if self.is_direct {
+            self.direct.get(keys[0] as usize).copied().unwrap_or(EMPTY)
+        } else if self.width <= 2 {
+            let key = pack(keys);
+            let mut slot = mix(key) & self.mask;
+            loop {
+                let entry = self.packed[slot];
+                if entry.value == EMPTY || entry.key == key {
+                    break entry.value;
+                }
+                slot = (slot + 1) & self.mask;
             }
-            return value;
+        } else {
+            let stride = self.width + 1;
+            let mut slot = wide_home(keys) & self.mask;
+            loop {
+                let row = &self.wide[slot * stride..(slot + 1) * stride];
+                // Compared key by key, which beats a call to memcmp for six keys or fewer.
+                if row[0] == EMPTY || row[1..].iter().zip(keys).all(|(stored, key)| stored == key) {
+                    break row[0];
+                }
+                slot = (slot + 1) & self.mask;
+            }
+        };
+        if value != EMPTY {
+            self.hits += 1;
         }
-        let width = self.width;
-        let hash = hash_keys(keys);
-        let mut slot = (hash ^ (hash >> 15)) as usize & self.mask;
-        loop {
-            let value = self.values[slot];
-            if value == EMPTY {
-                return EMPTY;
-            }
-            if &self.keys[slot * width..(slot + 1) * width] == keys {
-                self.hits += 1;
-                return value;
-            }
-            slot = (slot + 1) & self.mask;
-        }
+        value
     }
 
     /// Stores a value for the keys, unless the table is off or full.
@@ -187,23 +260,31 @@ impl MemoTable {
                 return;
             }
             let key = keys[0];
-            if key as usize >= self.values.len() {
+            if key as usize >= self.direct.len() {
                 self.reserve_direct(key);
             }
             if self.is_direct {
-                if self.values[key as usize] == EMPTY {
+                if self.direct[key as usize] == EMPTY {
                     self.size += 1;
                 }
-                self.values[key as usize] = value;
+                self.direct[key as usize] = value;
                 return;
             }
         }
-        let Some(slot) = self.claim(hash_keys(keys)) else {
+        if !self.claim() {
             return;
-        };
-        let width = self.width;
-        self.keys[slot * width..(slot + 1) * width].copy_from_slice(keys);
-        self.values[slot] = value;
+        }
+        if self.width <= 2 {
+            let key = pack(keys);
+            let slot = self.free_packed(key);
+            self.packed[slot] = Packed { key, value };
+            return;
+        }
+        let stride = self.width + 1;
+        let slot = self.free_wide(keys);
+        let row = &mut self.wide[slot * stride..(slot + 1) * stride];
+        row[0] = value;
+        row[1..].copy_from_slice(keys);
     }
 }
 
@@ -292,13 +373,43 @@ mod tests {
     }
 
     #[test]
+    fn tells_apart_keys_that_differ_only_after_the_first() {
+        for width in 2..=6 {
+            let mut table = MemoTable::new(width);
+            let keys = |first: u32, last: u32| {
+                let mut keys = vec![first; width];
+                keys[width - 1] = last;
+                keys
+            };
+            for first in 0..40u32 {
+                for last in 0..40u32 {
+                    table.set(&keys(first, last), first * 40 + last);
+                }
+            }
+            for first in 0..40u32 {
+                for last in 0..40u32 {
+                    assert_eq!(table.get(&keys(first, last)), first * 40 + last);
+                }
+            }
+            assert_eq!(table.size(), 1600);
+        }
+    }
+
+    #[test]
     fn a_sparse_direct_table_becomes_a_hash_table() {
         let mut table = MemoTable::new(1);
         table.set(&[5], 1);
         table.set(&[DIRECT_MAXIMUM as Id + 10], 2);
+        for key in 100..200 {
+            table.set(&[key * 1_000_003], key);
+        }
         assert!(!table.is_direct);
         assert_eq!(table.get(&[5]), 1);
         assert_eq!(table.get(&[DIRECT_MAXIMUM as Id + 10]), 2);
+        for key in 100..200 {
+            assert_eq!(table.get(&[key * 1_000_003]), key);
+        }
+        assert_eq!(table.size(), 102);
     }
 
     #[test]

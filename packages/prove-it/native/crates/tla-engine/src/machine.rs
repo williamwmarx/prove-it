@@ -323,9 +323,12 @@ impl<'p> Machine<'p> {
         self.depth += 1;
         let result = match recursive.table {
             Some(table) if self.tables[table].is_enabled() => {
-                let mut keys = Vec::with_capacity(recursive.keys.len());
-                keys.extend(recursive.keys.iter().map(|&key| self.read_key(key)));
-                let known = self.tables[table].get(&keys);
+                let mut read = [0; 6];
+                for (index, &key) in recursive.keys.iter().enumerate() {
+                    read[index] = self.read_key(key);
+                }
+                let keys = &read[..recursive.keys.len()];
+                let known = self.tables[table].get(keys);
                 if known != EMPTY {
                     Ok(known)
                 } else {
@@ -335,7 +338,7 @@ impl<'p> Machine<'p> {
                         recursive.slot_end,
                     );
                     if let Ok(value) = value {
-                        self.tables[table].set(&keys, value);
+                        self.tables[table].set(keys, value);
                     }
                     value
                 }
