@@ -31,13 +31,13 @@ use super::{
 
 const NAPI_NULL: i32 = 1;
 const NAPI_NUMBER: i32 = 3;
-const NAPI_STRING: i32 = 4;
-const NAPI_INT32_ARRAY: i32 = 5;
-const NAPI_BIGINT64_ARRAY: i32 = 9;
+pub(super) const NAPI_STRING: i32 = 4;
+pub(super) const NAPI_INT32_ARRAY: i32 = 5;
+pub(super) const NAPI_BIGINT64_ARRAY: i32 = 9;
 const NAPI_UNDEFINED: i32 = 0;
 
 unsafe extern "C" {
-    fn napi_typeof(env: napi_env, value: napi_value, result: *mut i32) -> napi_status;
+    pub(super) fn napi_typeof(env: napi_env, value: napi_value, result: *mut i32) -> napi_status;
     fn napi_get_value_double(env: napi_env, value: napi_value, result: *mut f64) -> napi_status;
     fn napi_get_value_bool(env: napi_env, value: napi_value, result: *mut bool) -> napi_status;
     fn napi_get_value_string_utf16(
@@ -55,7 +55,7 @@ unsafe extern "C" {
         index: u32,
         result: *mut napi_value,
     ) -> napi_status;
-    fn napi_set_element(
+    pub(super) fn napi_set_element(
         env: napi_env,
         object: napi_value,
         index: u32,
@@ -70,18 +70,18 @@ unsafe extern "C" {
         length: usize,
         result: *mut napi_value,
     ) -> napi_status;
-    fn napi_create_array_with_length(
+    pub(super) fn napi_create_array_with_length(
         env: napi_env,
         length: usize,
         result: *mut napi_value,
     ) -> napi_status;
-    fn napi_create_arraybuffer(
+    pub(super) fn napi_create_arraybuffer(
         env: napi_env,
         byte_length: usize,
         data: *mut *mut c_void,
         result: *mut napi_value,
     ) -> napi_status;
-    fn napi_create_typedarray(
+    pub(super) fn napi_create_typedarray(
         env: napi_env,
         kind: i32,
         length: usize,
@@ -130,11 +130,11 @@ fn with_store<T: Send + 'static>(
         .unwrap_or_else(|panic| resume_unwind(panic))
 }
 
-fn wrong(message: String) -> Thrown {
+pub(super) fn wrong(message: String) -> Thrown {
     Thrown::WrongArgument(CString::new(message).unwrap_or_default())
 }
 
-unsafe fn get_arguments<const N: usize>(
+pub(super) unsafe fn get_arguments<const N: usize>(
     env: napi_env,
     info: napi_callback_info,
 ) -> Result<[napi_value; N], Thrown> {
@@ -153,13 +153,13 @@ unsafe fn get_arguments<const N: usize>(
     Ok(argv)
 }
 
-unsafe fn type_of(env: napi_env, value: napi_value) -> Result<i32, Thrown> {
+pub(super) unsafe fn type_of(env: napi_env, value: napi_value) -> Result<i32, Thrown> {
     let mut kind = 0;
     status(unsafe { napi_typeof(env, value, &mut kind) })?;
     Ok(kind)
 }
 
-unsafe fn get_number(env: napi_env, value: napi_value) -> Result<f64, Thrown> {
+pub(super) unsafe fn get_number(env: napi_env, value: napi_value) -> Result<f64, Thrown> {
     let mut number = 0.0;
     status(unsafe { napi_get_value_double(env, value, &mut number) })?;
     Ok(number)
@@ -174,7 +174,7 @@ unsafe fn get_index(env: napi_env, value: napi_value, what: &str) -> Result<usiz
     }
 }
 
-unsafe fn get_text(env: napi_env, value: napi_value) -> Result<Vec<u16>, Thrown> {
+pub(super) unsafe fn get_text(env: napi_env, value: napi_value) -> Result<Vec<u16>, Thrown> {
     let mut length = 0;
     status(unsafe { napi_get_value_string_utf16(env, value, null_mut(), 0, &mut length) })?;
     let mut units = vec![0u16; length + 1];
@@ -208,7 +208,7 @@ unsafe fn get_elements(
 }
 
 // A typed array's elements in place, if the value is one of that kind.
-unsafe fn get_typed<'a, T>(
+pub(super) unsafe fn get_typed<'a, T>(
     env: napi_env,
     value: napi_value,
     expected: i32,
@@ -240,7 +240,7 @@ unsafe fn get_typed<'a, T>(
     }))
 }
 
-unsafe fn get_int32s<'a>(
+pub(super) unsafe fn get_int32s<'a>(
     env: napi_env,
     value: napi_value,
     what: &str,
@@ -287,19 +287,19 @@ unsafe fn get_argument(env: napi_env, value: napi_value) -> Result<Argument, Thr
     Ok(Argument::Numbers(numbers.collect::<Result<_, _>>()?))
 }
 
-unsafe fn create_null(env: napi_env) -> Result<napi_value, Thrown> {
+pub(super) unsafe fn create_null(env: napi_env) -> Result<napi_value, Thrown> {
     let mut result = null_mut();
     status(unsafe { napi_get_null(env, &mut result) })?;
     Ok(result)
 }
 
-unsafe fn create_number(env: napi_env, value: f64) -> Result<napi_value, Thrown> {
+pub(super) unsafe fn create_number(env: napi_env, value: f64) -> Result<napi_value, Thrown> {
     let mut result = null_mut();
     status(unsafe { napi_create_double(env, value, &mut result) })?;
     Ok(result)
 }
 
-unsafe fn create_text(env: napi_env, units: &[u16]) -> Result<napi_value, Thrown> {
+pub(super) unsafe fn create_text(env: napi_env, units: &[u16]) -> Result<napi_value, Thrown> {
     let mut result = null_mut();
     status(unsafe { napi_create_string_utf16(env, units.as_ptr(), units.len(), &mut result) })?;
     Ok(result)
@@ -309,7 +309,7 @@ unsafe fn create_bail(env: napi_env, reason: &str) -> Result<napi_value, Thrown>
     unsafe { create_text(env, &reason.encode_utf16().collect::<Vec<u16>>()) }
 }
 
-unsafe fn create_int32s(env: napi_env, words: &[i32]) -> Result<napi_value, Thrown> {
+pub(super) unsafe fn create_int32s(env: napi_env, words: &[i32]) -> Result<napi_value, Thrown> {
     let (mut data, mut buffer, mut result) = (null_mut(), null_mut(), null_mut());
     status(unsafe { napi_create_arraybuffer(env, size_of_val(words), &mut data, &mut buffer) })?;
     if !words.is_empty() {

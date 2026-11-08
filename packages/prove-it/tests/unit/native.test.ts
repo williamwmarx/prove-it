@@ -1,7 +1,6 @@
-// The native engine declines every model for now, so with PROVE_IT_ENGINE_BACKEND=rust the
-// TypeScript engine checks it, whether the addon loads or not. The model is lowered to the engine
-// IR only once the addon has loaded. Each check runs in a process of its
-// own, since a process loads the addon once. The tests that load it run where the addon was built,
+// With PROVE_IT_ENGINE_BACKEND=rust the native engine searches the model, and when the addon
+// doesn't load the TypeScript engine checks it. The model is lowered to the engine IR only once the
+// addon has loaded. Each check runs in a process of its own, since a process loads the addon once. The tests that load it run where the addon was built,
 // with PROVE_IT_ENGINE_ADDON naming it, as the native job in verification.yml does.
 
 import { describe, expect, it } from "bun:test";
@@ -47,20 +46,15 @@ describe("the native engine", () => {
   it.if(ADDON !== undefined).each([
     ["bun", SOURCE_CLI],
     ["node", BUILT_CLI],
-  ])(
-    "decodes the IR and declines in %s, and the TypeScript engine checks the model",
-    (runtime, cli) => {
-      const lines = getEngineLines(runtime, cli, {
-        PROVE_IT_ENGINE_BACKEND: "rust",
-        PROVE_IT_ENGINE_ADDON: ADDON,
-      });
-      expect(lines).toEqual([
-        expect.stringMatching(/^\[engine\] native: ir: \d+ bytes in \d+\.\d\d ms$/),
-        expect.stringMatching(
-          /^\[engine\] native: declined: the native engine compiles nothing yet \(\d+\.\d\d ms\)$/,
-        ),
-        expect.stringMatching(/^\[engine\] checked 251 states on 1 thread /),
-      ]);
-    },
-  );
+  ])("decodes the IR and searches the model in %s", (runtime, cli) => {
+    const lines = getEngineLines(runtime, cli, {
+      PROVE_IT_ENGINE_BACKEND: "rust",
+      PROVE_IT_ENGINE_ADDON: ADDON,
+    });
+    expect(lines).toEqual([
+      expect.stringMatching(/^\[engine\] native: ir: \d+ bytes in \d+\.\d\d ms$/),
+      expect.stringMatching(/^\[engine\] native: complete: {2}\(\d+\.\d\d ms\)$/),
+      expect.stringMatching(/^\[engine\] checked 251 states on 1 thread /),
+    ]);
+  });
 });

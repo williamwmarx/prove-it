@@ -6,6 +6,7 @@ version = 4
 name = "prove-it-napi"
 version = "0.1.0"
 dependencies = [
+ "tla-engine",
  "tla-ir",
  "tla-values",
 ]
