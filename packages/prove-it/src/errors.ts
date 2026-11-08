@@ -295,6 +295,16 @@ export class SmtInvariantError extends TlaError {
   }
 }
 
+// The engine broke one of its own invariants, or one of its self-checks (PROVE_IT_EPOCH_CHECK,
+// PROVE_IT_LIVE_CHECK, PROVE_IT_FINGERPRINT=check) found two ways of computing one answer that
+// disagree: a bug in the engine rather than in the spec. index.ts doesn't export it.
+export class EngineInvariantError extends TlaError {
+  constructor(message: string) {
+    super(message);
+    this.name = "EngineInvariantError";
+  }
+}
+
 // nlsat reached a case Z3 leaves unimplemented, where Z3 exits the process. nra answers unknown
 // instead. index.ts doesn't export it.
 export class NlsatUnsupportedError extends TlaError {

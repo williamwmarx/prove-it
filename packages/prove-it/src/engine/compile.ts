@@ -16,6 +16,7 @@ import {
   type OperatorDefinition,
   type OperatorParam,
 } from "../ast";
+import { EngineInvariantError } from "../errors";
 import type {
   Builtin,
   BuiltinArgument,
@@ -137,7 +138,8 @@ const growLocals = (length: number) => {
 const allocateSlot = () => {
   const slot = slotCount++;
   if (slot >= LOC.length) {
-    if (generatedDepth.value > 0) throw new Error("bound names grew while generated code ran");
+    if (generatedDepth.value > 0)
+      throw new EngineInvariantError("bound names grew while generated code ran");
     growLocals(LOC.length * 2);
   }
   return slot;
@@ -589,7 +591,8 @@ const epochLookup = (
   const entry = EpochCache.entry(first, second, third, fourth);
   const known = cache.get(epoch, entry, first, second, third, fourth);
   if (known !== -1) {
-    if (isEpochChecked && inner() !== known) throw new Error("an epoch cache hit a stale value");
+    if (isEpochChecked && inner() !== known)
+      throw new EngineInvariantError("an epoch cache hit a stale value");
     return known;
   }
   const value = inner();

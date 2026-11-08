@@ -8,6 +8,7 @@
 
 import type { CheckProgress } from "../check";
 import type { ModelConfig } from "../config";
+import { EngineInvariantError } from "../errors";
 import type { Environment } from "../evaluate";
 import type { TlcVersion } from "../tlc/version";
 import type { Value } from "../values";
@@ -407,7 +408,7 @@ export const runEngine = (input: EngineInput): EngineResult => {
     }
     const checked = checkedSuccessors?.[successors];
     if (checkedSuccessors && !checked?.every((id, variable) => id === next[variable])) {
-      throw new Error("the actions took other steps than the next-state relation");
+      throw new EngineInvariantError("the actions took other steps than the next-state relation");
     }
     visitSuccessor();
   };
@@ -563,7 +564,9 @@ export const runEngine = (input: EngineInput): EngineResult => {
         }
         for (action = 0; action < actionSteps.length; action++) actionSteps[action](onSuccessor);
         if (checkedSuccessors && checkedSuccessors.length !== successors) {
-          throw new Error("the actions took other steps than the next-state relation");
+          throw new EngineInvariantError(
+            "the actions took other steps than the next-state relation",
+          );
         }
       }
       if (successors === 0 && config.checkDeadlock) bail("deadlock");

@@ -4,6 +4,7 @@
 // It returns undefined for anything it can't answer, and the interpreter answers that.
 
 import type { Expression } from "../ast";
+import { EngineInvariantError } from "../errors";
 import type { EvaluationScope } from "../evaluate";
 import type { LiveEnabled, LiveExpression } from "../tableau";
 import type { Value } from "../values";
@@ -270,7 +271,9 @@ export const createLiveOracle = (
     if (fromEdges !== undefined && !isLiveChecked) return fromEdges;
     const ran = ask(expression, undefined);
     if (fromEdges !== undefined && ran !== undefined && ran !== fromEdges) {
-      throw new Error("ENABLED from the steps the search took differs from ENABLED run");
+      throw new EngineInvariantError(
+        "ENABLED from the steps the search took differs from ENABLED run",
+      );
     }
     return fromEdges ?? ran;
   };
