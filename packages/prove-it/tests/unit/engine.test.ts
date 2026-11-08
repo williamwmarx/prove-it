@@ -594,7 +594,18 @@ describe("the engine", () => {
   });
 
   it("answers membership in a set it doesn't build as TLC does, for every kind of value", async () => {
-    const sets = ["[{1} -> {1}]", '[{"a"} -> {1}]', "[a : {1}]", "{1} \\X {1}", "SUBSET {1}", "Seq({1})"];
+    const sets = [
+      "[{1} -> {1}]",
+      '[{"a"} -> {1}]',
+      "[a : {1}]",
+      "{1} \\X {1}",
+      "SUBSET {1}",
+      "Seq({1})",
+      // UNION {S} of a set the engine can't build tests membership in S.
+      "UNION {[{1} -> Nat]}",
+      "UNION {[a : Nat]}",
+      "UNION {Seq({1})}",
+    ];
     const values = ["3", '"s"', "{1}", "<<1>>", "[a |-> 1]", "[b |-> 1]", "M", "A_m"];
     const run = async (source: string, config: string) => {
       try {
@@ -608,7 +619,8 @@ describe("the engine", () => {
       for (const value of values) {
         // The invariant reads x, so it is checked on each state rather than once as a constant.
         const source = `---- MODULE M ----\nEXTENDS Naturals, Sequences\nCONSTANT M, A_m\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1\nInv == x >= 0 => ~(${value} \\in ${set})\n====`;
-        const config = "CONSTANT M = M\nCONSTANT A_m = A_m\nINIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE";
+        const config =
+          "CONSTANT M = M\nCONSTANT A_m = A_m\nINIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE";
         delete process.env.PROVE_IT_ENGINE;
         const actual = await run(source, config);
         process.env.PROVE_IT_ENGINE = "0";
