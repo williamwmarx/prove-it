@@ -4,7 +4,7 @@
 // It returns undefined for anything it can't answer, and the interpreter answers that.
 
 import type { Expression } from "../ast";
-import { EngineInvariantError } from "../errors";
+import { EngineInvariantError, TlaEvaluationError } from "../errors";
 import type { EvaluationScope } from "../evaluate";
 import type { LiveEnabled, LiveExpression } from "../tableau";
 import type { Value } from "../values";
@@ -17,7 +17,7 @@ import {
   setNext,
 } from "./compile";
 import { getEnvironmentFlag, reportEngine } from "./settings";
-import { bail, Bailout, FALSE, TRUE } from "./store";
+import { bail, Bailout, equals, FALSE, TRUE } from "./store";
 
 export type LiveOracle = (
   expression: LiveExpression,
@@ -42,14 +42,26 @@ export interface LiveGraph {
   isEnabledExact: boolean;
 }
 
-// How the steps a state took answer ENABLED <<A>>_v: the subscript's UNCHANGED, and the actions,
-// by position, whose steps A takes, or undefined when A takes every step.
+// A subscript v and its value on each state, -1 until evaluated, since the checker asks whether
+// each step into and out of a state leaves v unchanged.
+interface Subscript {
+  compiled: Compiled;
+  values: Int32Array;
+}
+
+// How the steps a state took answer ENABLED <<A>>_v: the subscript, and the actions, by position,
+// whose steps A takes, or undefined when A takes every step.
 interface EdgeQuestion {
-  unchanged: Compiled;
+  subscript: Subscript;
   actions: Uint8Array | undefined;
 }
 
 const UNKNOWN = Symbol("unknown");
+
+// The engine's evaluation fails as TLC's might not, such as when it enumerates a set through the
+// interpreter, so the interpreter answers then and fails, if it does, as TLC does.
+const isUnanswered = (error: unknown): error is Bailout | TlaEvaluationError =>
+  error instanceof Bailout || error instanceof TlaEvaluationError;
 
 export const createLiveOracle = (
   compiler: Compiler,
@@ -65,6 +77,10 @@ export const createLiveOracle = (
   const report = { isReported: false };
   const contexts = new Map<EvaluationScope | undefined, CompileContext | typeof UNKNOWN>();
   const values = new Map<Expression, Map<EvaluationScope | undefined, Compiled | typeof UNKNOWN>>();
+  const subscriptValues = new Map<
+    Expression,
+    Map<EvaluationScope | undefined, Subscript | typeof UNKNOWN>
+  >();
 
   const getContext = (scope: EvaluationScope | undefined) => {
     let context = contexts.get(scope);
@@ -93,7 +109,8 @@ export const createLiveOracle = (
       try {
         result = build(context);
       } catch (error) {
-        if (!(error instanceof Bailout)) throw error;
+        if (!isUnanswered(error)) throw error;
+        reportEngine(`leaves a temporal predicate to the interpreter: ${error.message}`);
       }
     }
     byScope.set(scope, result);
@@ -104,7 +121,7 @@ export const createLiveOracle = (
   // above, since it asks about the same predicates on every state. They are built only when a
   // lookup misses, so asking again allocates nothing.
   const answers = new Map<LiveExpression, Compiled | typeof UNKNOWN>();
-  const unchangedAnswers = new Map<LiveExpression, Compiled | typeof UNKNOWN>();
+  const unchangedAnswers = new Map<LiveExpression, Subscript | typeof UNKNOWN>();
   const edgeQuestions = new Map<LiveExpression, EdgeQuestion | typeof UNKNOWN>();
   // What TLCGet reads holds only while the search runs.
   const compileIn = (expression: Expression, scope: EvaluationScope | undefined) =>
@@ -124,11 +141,21 @@ export const createLiveOracle = (
     answers.set(expression, built);
     return built;
   };
+  // A subscript that reads a primed variable isn't a state function, and the interpreter answers.
+  const getSubscript = (subscript: Expression, scope: EvaluationScope | undefined) =>
+    getCompiled(subscriptValues, subscript, scope, (context) => {
+      const compiled = compiler.compile(subscript, context);
+      if (compiled.footprint.primes.length > 0) bail("a subscript that reads a primed variable");
+      return { compiled, values: new Int32Array(states.length / width).fill(-1) };
+    });
   const answerUnchanged = (
     expression: Extract<LiveExpression, { kind: "Action" }>,
     unchanged: Expression,
   ) => {
-    const built = compileIn(unchanged, expression.scope);
+    const built =
+      unchanged.kind === "Unchanged"
+        ? getSubscript(unchanged.expression, expression.scope)
+        : UNKNOWN;
     unchangedAnswers.set(expression, built);
     return built;
   };
@@ -138,18 +165,15 @@ export const createLiveOracle = (
     const step = expression.step;
     const actions =
       graph.isEnabledExact && step.kind === "AngleAction" && getEnabledActions(expression);
-    const unchanged =
+    const subscript =
       actions && (actions === "all" || graph.labels)
-        ? compileIn(
-            { kind: "Unchanged", expression: step.subscript, location: step.location },
-            expression.scope,
-          )
+        ? getSubscript(step.subscript, expression.scope)
         : UNKNOWN;
     const question =
-      !actions || unchanged === UNKNOWN
+      !actions || subscript === UNKNOWN
         ? UNKNOWN
         : {
-            unchanged,
+            subscript,
             actions:
               actions === "all"
                 ? undefined
@@ -173,7 +197,7 @@ export const createLiveOracle = (
   // the last lookup of each side of a step is kept.
   const ids = new Int32Array(width);
   const nextIds = new Int32Array(width);
-  const edgeIds = new Int32Array(width);
+  const valueIds = new Int32Array(width);
   const lookups = {
     state: undefined as Value[] | undefined,
     index: undefined as number | undefined,
@@ -208,6 +232,21 @@ export const createLiveOracle = (
     return value === TRUE ? true : value === FALSE ? false : undefined;
   };
 
+  // The subscript's value on the state with the index, which leaves that state current.
+  const getValue = (subscript: Subscript, index: number) => {
+    const known = subscript.values[index];
+    if (known !== -1) return known;
+    setCurrent(load(valueIds, index));
+    const value = subscript.compiled.evaluate();
+    subscript.values[index] = value;
+    return value;
+  };
+  // UNCHANGED v of a step, evaluating v' before v as the compiled UNCHANGED does.
+  const isUnchanged = (subscript: Subscript, index: number, nextIndex: number) => {
+    const next = getValue(subscript, nextIndex);
+    return equals(next, getValue(subscript, index));
+  };
+
   // Whether a step from the state with the index that the question's action takes changes the
   // subscript, scanning the steps in the order generated.
   const holdsOnEdges = (question: EdgeQuestion, index: number) => {
@@ -217,16 +256,14 @@ export const createLiveOracle = (
     const end = graph.edgeOffsets![index + 1];
     for (let edge = graph.edgeOffsets![index]; edge < end; edge++) {
       if (actions && actions[labels![edge]] !== 1) continue;
-      setNext(load(edgeIds, edges[edge]));
-      const isUnchanged = holds(question.unchanged);
-      if (isUnchanged === undefined) return undefined;
-      if (!isUnchanged) return true;
+      if (!isUnchanged(question.subscript, index, edges[edge])) return true;
     }
     return false;
   };
 
   const ask = (
     expression: Extract<LiveExpression, { scope: unknown }>,
+    index: number,
     successor: Value[] | undefined,
   ) => {
     try {
@@ -236,21 +273,21 @@ export const createLiveOracle = (
         const compiled = answers.get(expression) ?? answer(expression);
         return compiled === UNKNOWN ? undefined : holds(compiled);
       }
-      if (!successor || getNextIndex(successor) === undefined) return undefined;
+      const nextIndex = successor && getNextIndex(successor);
+      if (nextIndex === undefined) return undefined;
       setNext(nextIds);
       const unchangedExpression = expression.unchanged;
       if (unchangedExpression) {
-        const unchanged =
+        const subscript =
           unchangedAnswers.get(expression) ?? answerUnchanged(expression, unchangedExpression);
-        if (unchanged === UNKNOWN) return undefined;
-        const isUnchanged = holds(unchanged);
-        if (isUnchanged === undefined) return undefined;
-        if (isUnchanged) return false;
+        if (subscript === UNKNOWN) return undefined;
+        if (isUnchanged(subscript, index, nextIndex)) return false;
+        setCurrent(ids);
       }
       const action = answers.get(expression) ?? answer(expression);
       return action === UNKNOWN ? undefined : holds(action);
     } catch (error) {
-      if (error instanceof Bailout) return undefined;
+      if (isUnanswered(error)) return undefined;
       throw error;
     }
   };
@@ -262,7 +299,7 @@ export const createLiveOracle = (
       setCurrent(ids);
       return holdsOnEdges(question, index);
     } catch (error) {
-      if (error instanceof Bailout) return undefined;
+      if (isUnanswered(error)) return undefined;
       throw error;
     }
   };
@@ -277,10 +314,10 @@ export const createLiveOracle = (
     }
     const index = getStateIndex(state);
     if (index === undefined) return undefined;
-    if (expression.kind !== "Enabled" || !graph.edges) return ask(expression, successor);
+    if (expression.kind !== "Enabled" || !graph.edges) return ask(expression, index, successor);
     const fromEdges = askOnEdges(expression, index);
     if (fromEdges !== undefined && !isLiveChecked) return fromEdges;
-    const ran = ask(expression, undefined);
+    const ran = ask(expression, index, undefined);
     if (fromEdges !== undefined && ran !== undefined && ran !== fromEdges) {
       throw new EngineInvariantError(
         "ENABLED from the steps the search took differs from ENABLED run",
