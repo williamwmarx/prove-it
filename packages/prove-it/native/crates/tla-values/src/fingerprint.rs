@@ -110,15 +110,16 @@ struct ValueFingerprint {
 }
 
 /// What fingerprinting a state's successors from it needs: its fingerprint, and, by position in
-/// the order its values are read, its fingerprint before that value and the length of the values
-/// after it, with the table that shifts by that length.
+/// the order its values are read, the length of the values after that value, with the table that
+/// shifts by that length, and its fingerprint before that value, computed as far as a successor
+/// first asks.
 #[derive(Default)]
 pub struct Parent {
     fingerprint: u64,
     // The position of each of the state's values in the order.
     positions: Vec<usize>,
-    prefixes: Vec<u64>,
     tails: Vec<(u64, i32)>,
+    prefixes: Vec<u64>,
 }
 
 /// F(v) and |v| of the store's values, computed as they are first asked for, and the tables that
@@ -462,38 +463,34 @@ impl Fingerprints {
         Some(fingerprint)
     }
 
-    /// Makes `state`, its values read in `order`, the parent [`Fingerprints::get_child`]
-    /// fingerprints successors from, and returns its fingerprint. `order` holds each of the
+    /// Makes `state`, its values read in `order` and its fingerprint `fingerprint`, the parent
+    /// [`Fingerprints::get_child`] fingerprints successors from. `order` holds each of the
     /// state's positions once.
     pub fn set_parent(
         &mut self,
         store: &Store,
         state: &[Id],
         order: &[usize],
+        fingerprint: u64,
         parent: &mut Parent,
-    ) -> u64 {
+    ) {
         self.check_generation(store);
+        parent.fingerprint = fingerprint;
         parent.positions.resize(state.len(), 0);
-        parent.prefixes.resize(order.len(), 0);
         parent.tails.resize(order.len(), (u64::MAX, NO_TABLE));
-        let mut fingerprint = INITIAL;
-        for (position, &index) in order.iter().enumerate() {
-            parent.positions[index] = position;
-            parent.prefixes[position] = fingerprint;
-            self.compute(store, state[index]);
-            fingerprint = self.extend_known(fingerprint, state[index]);
-        }
+        parent.prefixes.clear();
+        parent.prefixes.push(INITIAL);
         let mut tail = 0;
         for (position, &index) in order.iter().enumerate().rev() {
+            parent.positions[index] = position;
             // A tail seldom changes from one parent to the next, so its table is looked up again
             // only when it does.
             if parent.tails[position].0 != tail {
                 parent.tails[position] = (tail, self.get_length_table(tail));
             }
+            self.compute(store, state[index]);
             tail += self.values[state[index] as usize].length;
         }
-        parent.fingerprint = fingerprint;
-        fingerprint
     }
 
     /// The fingerprint of a successor of the parent [`Fingerprints::set_parent`] last set, from
@@ -504,7 +501,7 @@ impl Fingerprints {
     pub fn get_child(
         &mut self,
         store: &Store,
-        parent: &Parent,
+        parent: &mut Parent,
         parent_state: &[Id],
         state: &[Id],
         order: &[usize],
@@ -531,6 +528,12 @@ impl Fingerprints {
         }
         if is_same_length {
             return fingerprint;
+        }
+        while parent.prefixes.len() <= first {
+            let position = parent.prefixes.len() - 1;
+            let prefix =
+                self.extend_known(parent.prefixes[position], parent_state[order[position]]);
+            parent.prefixes.push(prefix);
         }
         order[first..]
             .iter()

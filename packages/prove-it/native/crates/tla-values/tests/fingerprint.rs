@@ -189,12 +189,9 @@ fn are_the_same_from_a_parent_from_the_state_before_and_from_scratch() {
             continue;
         };
         let parent_row = &states[index * width..][..width];
+        from_parents.set_parent(&store, parent_row, &order, scratch[index], &mut parent);
         assert_eq!(
-            from_parents.set_parent(&store, parent_row, &order, &mut parent),
-            scratch[index]
-        );
-        assert_eq!(
-            from_parents.get_child(&store, &parent, parent_row, row, &order),
+            from_parents.get_child(&store, &mut parent, parent_row, row, &order),
             scratch[state]
         );
     }

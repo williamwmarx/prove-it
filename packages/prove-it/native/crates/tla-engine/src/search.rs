@@ -358,7 +358,7 @@ impl Search<'_> {
             return Ok(if is_successor {
                 self.fingerprints.get_child(
                     store,
-                    &self.parent,
+                    &mut self.parent,
                     &self.current,
                     &self.successor,
                     order,
@@ -706,13 +706,13 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             search.set_expanded_current(&mut machine);
             machine.set_slot(NEXT_LEVEL_SLOT, search.next_level_id);
             if search.states.key_width.is_none() {
-                let fingerprint = search.fingerprints.set_parent(
+                search.fingerprints.set_parent(
                     &machine.store,
                     &search.current,
                     &search.states.order,
+                    search.states.fingerprints[expanding],
                     &mut search.parent,
                 );
-                debug_assert_eq!(fingerprint, search.states.fingerprints[expanding]);
             }
             match actions {
                 None => (context.next)(&mut machine, &mut |machine: &mut Machine<'_>| {
