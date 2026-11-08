@@ -52,6 +52,14 @@ const getMainThreadFileSystem = () => {
     : undefined;
 };
 
+// Writes text to the file the setting `name` names, if it names one: PROVE_IT_STATE_LOG names the
+// file a search writes its states to.
+export const writeDebugFile = (name: string, getText: () => string) => {
+  const path = getEnvironment()?.[name];
+  const fileSystem = path ? getMainThreadFileSystem() : undefined;
+  if (path && fileSystem) fileSystem.writeFileSync(path, getText());
+};
+
 // Appends lines to the file the setting `name` names, from empty, keeping them until there are
 // many or the process exits: PROVE_IT_STORE_TRACE names the file the store writes its operations
 // to.
