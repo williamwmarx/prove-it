@@ -3,7 +3,7 @@ import { basename } from "node:path";
 
 import type { Module } from "../ast";
 import { PcalRuntimeError, TlaSanyFatalError, TlaSyntaxError } from "../errors";
-import { extractModule, parseSanyModule } from "../parser";
+import { extractModule } from "../parser";
 import { createPcalParams } from "../pcal/ast";
 import { createPcalSession } from "../pcal/parse";
 import { validatePcalModule } from "../pcal/validate";
@@ -18,13 +18,15 @@ import { getSany174LexicalError } from "./lexer";
 import { lintSanyModule } from "./linter";
 import { getSanyStandardModules } from "./modules";
 import { formatSanyLocation, type SanyMessage } from "./nodes";
-import { getUnboxedSource } from "./source";
+import { readSanyText, type SanyReading } from "./source";
 
 interface SanyReport {
   text: string;
   isFailed: boolean;
   // The specification SANY analyzes, which has errors when SANY rejects it.
   specification?: SanySpecification;
+  // What SANY's parser read from each module text.
+  readings: Map<string, SanyReading>;
 }
 
 // Where SANY reads a module from: a file of its own, the file of the root module, which holds the
@@ -103,22 +105,18 @@ const getExtendees = (module: Module) => {
   return extendees.filter((extendee) => !innerNames.has(extendee));
 };
 
-// HACK: the report parses a module to find the lines SANY's validation of its PlusCal reads, and
-// a module that doesn't parse is one SANY stops at before validating it.
-const parseValidatedModule = (text: string) => {
-  try {
-    return parseSanyModule(getUnboxedSource(text));
-  } catch (error) {
-    if (error instanceof TlaSyntaxError) return undefined;
-    throw error;
-  }
+// The report parses a module to find the lines SANY's validation of its PlusCal reads, and a
+// module that doesn't parse is one SANY stops at before validating it.
+const parseValidatedModule = (readings: Map<string, SanyReading>, text: string) => {
+  const module = readSanyText(readings, text).module;
+  return module instanceof TlaSyntaxError ? undefined : module;
 };
 
 // ParseUnit.parseFile: SANY names the specification by the root module once it parses it.
 export const getSanyModuleName = (text: string, version?: TlcVersion) =>
   version === "1.7.4" && getSany174LexicalError(text) !== undefined
     ? undefined
-    : parseValidatedModule(text)?.name;
+    : parseValidatedModule(new Map(), text)?.name;
 
 // What SANY prints while TLC runs it on the specification in rootPath, and whether SANY rejects the
 // specification. loadModule finds the source of the other modules, and SANY's standard modules fill
@@ -158,6 +156,7 @@ export const getSanyReport = (
   const parsePhase = { isReported: false, isAborted: false };
   const session = createPcalSession(createPcalParams(), log);
   const loadedModules = new Map<string, LoadedModule>();
+  const readings = new Map<string, SanyReading>();
   // TLC 1.7.4's SpecObj.validateParseUnit prints what it finds, which follows the file SANY parses
   // next, as SANY validates a module once it parses the module or one that extends it.
   const validations: Validation[] = [];
@@ -217,7 +216,7 @@ export const getSanyReport = (
   // and for a module loaded earlier, when the generator loads a module that extends it.
   const loadValidatedModule = (moduleName: string, text: string) => {
     if (options.isXmlExport || loadedModules.has(moduleName)) return;
-    const module = parseValidatedModule(text);
+    const module = parseValidatedModule(readings, text);
     if (module === undefined || module.name !== moduleName) return;
     const extenders = [...loadedModules.values()].filter((loaded) =>
       getExtendees(loaded.module).includes(moduleName),
@@ -276,6 +275,7 @@ export const getSanyReport = (
         version: options.version,
         rootExtendees: options.rootExtendees,
         precomputed: options.precomputed,
+        readings,
         onParse: (moduleName) => {
           if (describeFile) {
             log(`Parsing file ${describeFile(moduleName, origins.get(moduleName) ?? "file")}`);
@@ -359,5 +359,6 @@ export const getSanyReport = (
     text: lines.join(""),
     isFailed: isFailed.value,
     specification: parsePhase.isAborted ? undefined : specification,
+    readings,
   };
 };

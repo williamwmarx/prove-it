@@ -102,6 +102,8 @@ interface EnvironmentOptions {
   // methods then compute the arithmetic of Naturals.
   isTraceRecorded?: boolean;
   isSanyReported?: boolean;
+  // SANY accepted the spec, so the environment leaves out the level checks SANY made.
+  isSanyAccepted?: boolean;
   isWarningEnabled?: boolean;
   version?: TlcVersion;
 }
@@ -467,7 +469,7 @@ export const createEnvironment = (
     const redefinition = loaded && getModuleRedefinition(duplicate, loaded.module);
     if (redefinition) throw createSanyError([redefinition], false, undefined, warnings);
     if (duplicate) throw createModuleRedefinedError(duplicate);
-    levelChecks.forEach((check) => check());
+    if (!options.isSanyAccepted) levelChecks.forEach((check) => check());
     return { linked, closure };
   };
 
