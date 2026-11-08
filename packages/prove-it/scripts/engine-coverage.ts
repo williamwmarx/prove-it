@@ -346,10 +346,14 @@ if (isLoggingStates) {
 }
 
 if (backends.includes("rust")) {
+  // The TypeScript engine searched every state: it completed, or found every state of a graph
+  // whose temporal properties the interpreter checks.
   const tiers = results.map((result) => ({
     result,
     native: result.runs.rust?.native,
-    isCompleted: classifyEngineLine(result.runs.ts?.engineLine).engine === "completed",
+    isCompleted:
+      classifyEngineLine(result.runs.ts?.engineLine).engine === "completed" ||
+      (result.runs.ts?.engineLine?.startsWith("found ") ?? false),
   }));
   console.table(
     tally("native engine", (result) => {
@@ -365,7 +369,7 @@ if (backends.includes("rust")) {
   const regressions = tiers.filter((tier) => tier.isCompleted && tier.native?.tier !== "complete");
   const unallowed = regressions.filter((tier) => !isAllowed(tier.native?.reason ?? ""));
   console.log(
-    `\nThe native engine completes ${tiers.filter((tier) => tier.native?.tier === "complete").length} models; of the ${tiers.filter((tier) => tier.isCompleted).length} the TypeScript engine completes, it doesn't complete ${regressions.length}, ${regressions.length - unallowed.length} of them for a reason the allowlist names.`,
+    `\nThe native engine completes ${tiers.filter((tier) => tier.native?.tier === "complete").length} models; of the ${tiers.filter((tier) => tier.isCompleted).length} the TypeScript engine searches whole, it doesn't complete ${regressions.length}, ${regressions.length - unallowed.length} of them for a reason the allowlist names.`,
   );
   const gained = tiers.filter((tier) => !tier.isCompleted && tier.native?.tier === "complete");
   if (gained.length > 0) {

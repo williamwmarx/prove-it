@@ -4,7 +4,7 @@ A design for a Rust model checker that is faster than today's Prove It and print
 TLC prints, staged so that every step ships on its own, is measurably faster, and is proven
 identical to TLC and to the TypeScript checker before it is switched on.
 
-Status: proposal, with M1 to M4 built (their outcomes are in section 11). Every number marked *measured*
+Status: proposal, with M1 to M5 built (their outcomes are in section 11). Every number marked *measured*
 comes from the prototypes under `native/prototypes/` (section 10) on a local 4-core cloud machine
 (Rust 1.97.0, Bun 1.4.4, Node 22.23.4). Those timings vary by about 10% between runs. Depot
 numbers come from the benchmark of `main` at f284739 (run cb7zd2w63s), as summarised on the
@@ -1800,6 +1800,124 @@ On the 4-core cloud machine, with `main` at 589407b merged, against the 733 mode
 - `bun test` with `BACKEND=rust` is fully green, except tests in `ts-only-tests.json`, each with a
   passing Rust counterpart;
 - `PROVE_IT_FP_VERIFY` reports zero collisions on the corpus.
+
+#### M5 as built
+
+Branch `native-m5-search`, measured on the 4-core cloud machine, not on Depot yet. Where the code
+made this design change, the code wins, and this records how:
+
+- **Where it lives.** `crates/tla-engine` gains the walker as `compile/walker.rs`, a submodule of
+  the compiler so that it reaches scopes, bindings and resolution directly (`resolveAction`,
+  `resolveLazyApplication`, `compileOrdered`, `contextFromScope` and ENABLED live there too);
+  `context.rs` builds what `createEngineContext` builds, in its order; `search.rs` is `runEngine` on
+  one thread; `symmetry.rs` ports `createCanonicalizer`; `live.rs` answers the liveness checker's
+  atoms. `prove-it-napi`'s `check(ir, settings, stateLog, report, print)` runs the search;
+  `ABI_VERSION` is 2.
+- **The walker (3.5).** A `Step` is an `Arc<dyn Fn(&mut Machine, &mut dyn FnMut(&mut Machine))>`.
+  A conjunction runs from a conjunct on and hands a branch the rest of itself as its continuation,
+  so the `pending` and `continuations` of `action.ts` are the Rust call stack; each conjunction
+  unassigns its own variables from an undo stack in the machine on the way out. A walked `\A`
+  rebinds its names after the rest of the conjunction returns, as `advance` does, by recursion
+  rather than frames. The walk follows `codegen.ts` where it differs from `action.ts`, since the
+  generated code is the default path: `\E` and `x' \in S` take only a set. Guards the shortcut may
+  need are compiled with the walk, and a compile that fails stops the walk only if the shortcut
+  reaches it, as the TypeScript engine compiles them only then.
+- **What declines.** A compile error of either kind declines the model, so the TypeScript engine
+  checks it: where the TypeScript engine refuses the same construct it hands over with its own
+  reason, as before. What the TypeScript engine would run in the interpreter's order (sets TLC keeps
+  lazy, the bridged builtins) and a variable past the state's (ENABLED's rewrite of an instance's
+  variables) still decline, and `native/coverage-allowlist.json` lists them with their milestone.
+- **The fingerprint set (2.3).** States are told apart by TLC's FP64 of their key, in one
+  open-addressing table of (fingerprint, index), as the design says; the fingerprint is computed
+  from scratch for each generated key (the incremental form is M7's). `PROVE_IT_FP_VERIFY=1`
+  compares the keys of states whose fingerprints are equal and counts the collisions, which
+  `[engine] native: fingerprint collisions: N` reports.
+- **Threads and callbacks.** The search runs on a thread of its own with a 256 MiB stack (1 GiB in
+  a debug build), reserved rather than committed, and sends what it reports (initial states
+  started, counts, progress, what was printed) down a channel to the calling thread, which calls
+  JavaScript in order while the search goes on. A callback that throws leaves its exception
+  pending and the rest uncalled.
+- **Stops (5.2).** A stop while the initial states are computed hands over no checkpoint, since
+  `runEngine` computes them outside the part of its search that checkpoints: the interpreter starts
+  again. Any other stop hands over the states found before the state being expanded, and their keys
+  under a VIEW or symmetry, in `transfer.ts`'s encoding as `createStateEncoder` writes them, not
+  each value once bottom-up as 5.2 suggests. `native.ts` decodes them into the TypeScript engine's
+  store, so `resumeFromEngine` runs unchanged on ids, and builds `findState` as a map from key to
+  index the first time the interpreter asks.
+- **Liveness (5.1).** With temporal properties the search records the graph as `runEngine` does,
+  labelled with TLC's action when `spec.actions` comes in the IR. Rather than one crossing per
+  predicate, it compiles every atom the IR lists and answers each for every state (state
+  predicates, ENABLED), or for every step and then every state's stuttering step (actions), before
+  it returns: the answers come back with the graph in the one `check()` call, so the interpreter's
+  liveness checker crosses into the addon not at all. ENABLED is answered from the labelled steps
+  where they are exact (no shortcut passed a walk) and by running the action otherwise; with
+  `PROVE_IT_LIVE_CHECK=1` both, and a difference, like the actions taking other steps than the
+  next-state relation, is an `EngineInvariantError`. What the engine can't answer is a 2 in its
+  table, and the interpreter answers it, failing where TLC fails. The oracle reports the `[engine]`
+  lines `live.ts` reports.
+- **Print.** Print and PrintT compile as `compilePrint` does and push what they print to the machine;
+  the search hands it, encoded, to the interpreter's printer (`formatPrinted`) once the initial
+  states or an expansion complete, and drops it on a stop. `isFieldName` is applied to ASCII text;
+  a record key past ASCII stops the search, which the interpreter then prints.
+- **Instance scopes.** A thunk or closure of an instance's scope that closes over that scope reaches
+  it through a weak reference, as `contextFromScope` patches it in.
+- **`[engine]` lines.** `native: ir: …`, then `native: complete:  (<ms> ms)`, `native: stopped:
+  <reason> (<ms> ms)`, `native: declined: <reason> (<ms> ms)` or `native: invariant: <reason>`,
+  then the TypeScript engine's usual line with the native engine's counts and reason. The
+  conformance scripts skip `native:` lines when they read the engine's outcome and read the tier
+  apart (`getNativeTier`); `engine-coverage --compare-backends --state-logs` compares the two
+  engines' state logs with `-nowarning` and without and gates on `coverage-allowlist.json`, and
+  `differential --compare-backends` compares each later backend with the first (`ts/rust`).
+- **Tests that read the TypeScript engine's internals** (its memo tables, its store trace, its
+  workers) run only with the TypeScript backend, and `native/ts-only-tests.json` names each with
+  its Rust counterpart.
+
+#### M5 acceptance, as run
+
+On the 4-core cloud machine, with `main` at 28a01a9, against the 733 models with TLC under 20 s
+unless it says otherwise:
+- **State logs: met.** The Rust search completes 318 models; on each, its state log equals the
+  TypeScript engine's, with `-nowarning` and without: 262 that the TypeScript engine completes
+  (`engine-coverage --compare-backends --state-logs`) and the 56 whose temporal properties the
+  interpreter checks, where both engines search every state and label each step with its action.
+- **`conformance --check --compare-backends`: met.** Every model `passing.json` lists that the run
+  selects (770; two are TLC errors past 20 s, which it leaves out) matches TLC with the TypeScript
+  engine and with the Rust one, the seven past 40 s of TLC included, and the two backends reach the
+  same outcome on every model.
+- **Engine matrix: met, with an allowlist.** `off`, `ts` and `rust` reach the same outcome on all
+  733. The Rust search completes 318, stops at a violation, deadlock or error on 79 (the
+  interpreter then finishes), and declines 165, which the TypeScript engine then checks. Of the 393
+  models the TypeScript engine searches whole, the Rust one completes 318; the other 75 decline for
+  a reason `native/coverage-allowlist.json` names: sets TLC keeps lazy (60) and bridged builtins
+  (14), both M6's, and ENABLED's rewritten instance variables (test56). On the default backend the
+  bucket of every model is the one a sweep of `main` gives.
+- **Differential: met on the models the Rust search reaches.** On the 397 models it completes or
+  stops in, the CLI's normalised output with the TypeScript engine and with the Rust one is
+  byte-identical in default and `-tool` mode (794 runs). On the other 336 the Rust search declines
+  before producing a state, so the TypeScript engine produces the output. The run used a script of
+  its own rather than `differential --compare-backends`, which also runs TLC's comparisons and the
+  interpreter that M0 covers, to fit the machine.
+- **Forced hand-over: met.** Stopped by `PROVE_IT_STOP_AT` at a state picked by a hash of the
+  model's id, the Rust search's output equals its output without the stop in all 764 runs the stop
+  took; in 30 the search handed over before any state a stop could take.
+- **Liveness: met.** ReadersWriters and the corpus's other `PROPERTY` models the Rust search
+  completes (56) give the TypeScript engine's results and state logs, ENABLED answered from the
+  labelled steps where the TypeScript engine answers so, also under `PROVE_IT_LIVE_CHECK=1` in the
+  unit tests. TokenRing and 44 others decline for a lazy set or a bridged builtin (M6). The
+  interpreter's liveness checker reads every answer from the tables that come back with the graph,
+  so it crosses into the addon not at all, fewer than one crossing per predicate.
+- **`bun test` with `BACKEND=rust`: met.** 3,016 pass and 0 fail; 7 skip, the 6 that
+  `native/ts-only-tests.json` lists with their Rust counterparts and one that skips on every
+  backend. With the default backend 2,993 pass and 0 fail.
+- **`PROVE_IT_FP_VERIFY`: met.** No collision in the 397 Rust runs that searched.
+- **Ids.** Where both engines complete, the value counts of the `[engine]` lines agree on 258 of
+  262 models; on the other four the Rust compiler interns one to 62 fewer values. No state log or
+  hand-over shows an id, so the constants' order was left as M4 built it.
+- **Time** (`dist/prove-it`, median of 9 interleaved runs): Commit 631 ms on `main`, 628 ms on
+  this branch, 871 ms with the Rust search; btree 1,279, 1,228 and 1,845 ms; MCDisruptor_MPMC 511,
+  478 and 420 ms; Chameneos, which the Rust search declines, 238, 235 and 245 ms. M5 has no speed
+  target: the Rust search fingerprints each generated state from scratch and runs Next as closures
+  where the TypeScript engine runs generated code, which M7 is to tune.
 
 ### M6. Lazy sets and pure builtins
 
