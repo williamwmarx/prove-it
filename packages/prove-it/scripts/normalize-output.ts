@@ -23,7 +23,8 @@ export const getSteadyLines = (output: string) =>
 // - the machine and process in `Running breadth-first search ...`: the cores, the memory, the pid,
 //   the operating system, the runtime and the kinds of fingerprint set and queue;
 // - the directory of each file SANY parses, and where TLC found it: the jar a standard module
-//   comes from, or the path on the library path that led to a library module;
+//   comes from, the path on the library path that led to a library module, or the module a copy
+//   in the metadata directory was made from;
 // - the Progress lines, with -tool their message 2200 whole, whose presence depends on how long the
 //   run takes, since they come once a minute. The counts in them are those of the lines that end
 //   the run.
@@ -43,7 +44,7 @@ export const normalizeOutput = (output: string) =>
           /^(Running breadth-first search .* on )\d+ cores? with \d+MB heap and \d+MB offheap memory \[pid: \d+\] \(.*\)\.$/,
           "$1_ cores with _MB heap and _MB offheap memory [pid: _] (_).",
         )
-        .replace(/^(Parsing file \S+) \((?:jar:)?file:\S+\)$/, "$1")
+        .replace(/^(Parsing file \S+) \(\S+\)$/, "$1")
         .replace(/^(Parsing file \/tmp\/tlc-)\d+\//, "$1_/")
         .replace(/^(Parsing file )(?!\/tmp\/tlc-_\/)\S*\/(\S+)$/, "$1$2"),
     )
