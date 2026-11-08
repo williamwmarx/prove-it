@@ -631,13 +631,46 @@ describe("the engine", () => {
       const body = `EXTENDS Naturals\nCONSTANT M\nVARIABLE x\nInit == x = 0\nNext == x < 3 /\\ x' = x + 1\nInv == ~("a" \\in ({M} \\cup (1..${size})))`;
       const config = "CONSTANT M = M\nINIT Init\nNEXT Next\nINVARIANT Inv";
       const { result, lines } = await checkInEngine(body, config);
-      expect(lines).toEqual([
-        expect.stringMatching(/handed over .*: (membership of a value|values) TLC can't compare$/),
-      ]);
+      expect(lines).toEqual([expect.stringMatching(/handed over .*: values TLC can't compare$/)]);
       process.env.PROVE_IT_ENGINE = "0";
       const reference = await check({ source: `---- MODULE M ----\n${body}\n====`, config });
       expect(result.status).toBe("error");
       expect(result.failure?.message).toBe(reference.failure?.message);
+    }
+  });
+
+  it("hands over a membership whose search of the set TLC fails, deeper than the kinds", async () => {
+    // TLC's SetEnumValue.member binary-searches a set it has normalized, such as a constant's, with
+    // the element's compareTo. What TLC reports for each, at the commit the recordings pin.
+    const cases = [
+      [
+        "S == {<<1>>, <<2>>}\nInv == [a |-> x] \\notin S",
+        "Attempted to compare record:\n[a |-> 0]\nwith non-record\n<<2>>",
+      ],
+      [
+        "S == {[i \\in 0..1 |-> 5]}\nInv == [a |-> x] \\notin S",
+        "Attempted to compare record:\n[a |-> 0]\nwith non-record\n(0 :> 5 @@ 1 :> 5)",
+      ],
+      [
+        "S == {<<[a |-> 1]>>, <<[a |-> 2]>>}\nInv == <<<<x>>>> \\notin S",
+        'Attempted to compare integer with non-integer:\n"a".',
+      ],
+      [
+        "S == {<<i>> : i \\in 1..40}\nInv == [a |-> x] \\notin S",
+        "Attempted to compare record:\n[a |-> 0]\nwith non-record\n<<21>>",
+      ],
+    ];
+    for (const [definitions, message] of cases) {
+      const body = `EXTENDS Naturals\nVARIABLE x\n${definitions}\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1`;
+      const config = "INIT Init\nNEXT Next\nINVARIANT Inv";
+      const { result, lines } = await checkInEngine(body, config);
+      expect(lines).toEqual([
+        expect.stringMatching(/handed over .*TLC can't compare|with a function$/),
+      ]);
+      process.env.PROVE_IT_ENGINE = "0";
+      const reference = await check({ source: `---- MODULE M ----\n${body}\n====`, config });
+      expect(result).toEqual(reference);
+      expect(result.failure?.message).toContain(message);
     }
   });
 

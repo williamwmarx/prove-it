@@ -866,9 +866,12 @@ const compareTlcFunctions = (functionValue: TlcFunction, left: Value, right: Val
   return compareRanges();
 };
 
+// Each element's compareTo heads its failure, as the outer value's does.
 const compareElementsLikeTlc = (left: Value[], right: Value[]) => {
   for (let index = 0; index < left.length; index++) {
-    const comparison = compareLikeTlc(left[index], right[index]);
+    const comparison = callTracedMethod(left[index], () =>
+      compareLikeTlc(left[index], right[index]),
+    );
     if (comparison !== 0) return comparison;
   }
   return 0;
@@ -951,8 +954,11 @@ const compareLikeTlc = (left: Value, right: Value): number => {
   return compareSetLikeTlc(left, right);
 };
 
+// Each element's equals heads its failure, as the outer value's does.
 const equalsElementsLikeTlc = (left: Value[], right: Value[]) =>
-  left.every((element, index) => equalsLikeTlc(element, right[index]));
+  left.every((element, index) =>
+    callTracedMethod(element, () => equalsLikeTlc(element, right[index])),
+  );
 
 const equalsTlcFunctions = (functionValue: TlcFunction, left: Value, right: Value) => {
   const other = toTlcFunction(right);
@@ -1070,17 +1076,26 @@ const callTracedMethod = <Result>(receiver: Value, method: () => Result) => {
 
 // ValueVec.search on sorted elements: a binary search with compareTo, which ends where the element
 // is or would go.
-const searchLikeTlc = (element: Value, sorted: Value[]) => {
+const searchSorted = (
+  element: Value,
+  sorted: Value[],
+  compare: (left: Value, right: Value) => number,
+) => {
   const bounds = { low: 0, high: sorted.length };
   while (bounds.low < bounds.high) {
     const middle = bounds.low + ((bounds.high - bounds.low) >> 1);
-    const comparison = callTracedMethod(element, () => compareLikeTlc(element, sorted[middle]));
+    const comparison = compare(element, sorted[middle]);
     if (comparison === 0) return { index: middle, isFound: true };
     if (comparison < 0) bounds.high = middle;
     else bounds.low = middle + 1;
   }
   return { index: bounds.low, isFound: false };
 };
+
+const searchLikeTlc = (element: Value, sorted: Value[]) =>
+  searchSorted(element, sorted, (left, right) =>
+    callTracedMethod(left, () => compareLikeTlc(left, right)),
+  );
 
 // TLC checks membership in a set enumeration it hasn't sorted element by element, with the equals
 // method of each member.
@@ -2016,8 +2031,11 @@ export const isElementOf = (element: Value, set: Value): boolean => {
   return isElement;
 };
 
+// A miss also searches as ValueVec.search does, comparing the element with the set's, which fails
+// in TLC where the other way may not, a record with a function for one.
 const isInSortedSet = (element: Value, set: SetValue) =>
-  findSortedIndex(set.elements, element) !== -1;
+  findSortedIndex(set.elements, element) !== -1 ||
+  searchSorted(element, set.elements, compareValues).isFound;
 
 const isInSortedSetLikeTlc = (element: Value, set: SetValue) =>
   normalizedSets.has(set)

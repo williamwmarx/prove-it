@@ -38,10 +38,10 @@ import {
 } from "../src/engine/store";
 import { getTlcFingerprint } from "../src/tlc/fingerprint";
 import {
+  createEnumeratedSet,
   createFunction,
   createModelValue,
   createRecord,
-  createSet,
   createTuple,
   setStringOrder,
   type Value,
@@ -170,7 +170,8 @@ const toValue = (tree: Tree): Value => {
     case "model":
       return createModelValue(tree.text);
     case "set":
-      return createSet(tree.elements.map(toValue));
+      // As the interpreter builds a set enumeration, which TLC sorts only when it must.
+      return createEnumeratedSet(tree.elements.map(toValue));
     case "tuple":
       return createTuple(tree.elements.map(toValue));
     case "record":
