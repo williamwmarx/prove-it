@@ -1494,8 +1494,8 @@ Where the code made this design change, the code wins, and this records how:
   on one thread, with both settings, replays both files and deletes them before the next model;
   `conformance:fp64` is it with `--fingerprints`.
 - **The N-API hooks and the facade (6.5).** The addon exports `storePerform`, `storeDecode`,
-  `storeEncode`, `storeFingerprints` and `storeResetFingerprints`, over one store per JavaScript
-  thread. `ABI_VERSION` stays 1: the loader calls what it called before. Since the style guide
+  `storeEncode`, `storeFingerprints` and `storeResetFingerprints`, over the process's one store
+  (see deep nesting below). `ABI_VERSION` stays 1: the loader calls what it called before. Since the style guide
   forbids star and alias imports, `src/engine/native-store.ts` exports one object, `nativeStore`,
   whose members have `store.ts`'s and `fingerprint.ts`'s names and signatures, and the tests choose
   an implementation object. Its `fromValue` goes through the transfer encoding, so it takes the
@@ -1510,6 +1510,12 @@ Where the code made this design change, the code wins, and this records how:
   `tests/conformance/value-oracle/` yet: no answer was the Rust store's alone.
 - **Fuzzing (6.7).** `native/fuzz` is a workspace of its own, so `libfuzzer-sys` and what it pulls
   in stay out of the addon's `Cargo.lock`.
+- **Deep nesting.** `compare`, `equals` and the transfer encoding recurse with a value's nesting,
+  and a Rust stack overflow aborts the process, so their callers run them through
+  `on_nesting_stack`, a thread whose stack holds values nested 100,000 deep, past the 10,000 to
+  30,000 where the TypeScript store runs out of stack in Bun. The replay tool runs on it, and the
+  N-API hooks send their work to one thread that does, which owns the process's one store. M5's
+  search thread is the natural home for it in the engine.
 
 #### M2 acceptance, as run
 
@@ -1532,7 +1538,12 @@ On the 4-core cloud machine, against the 733 models with TLC under 20 s:
   TLC's search does, changes the TS engine and its bail reasons, so it is a change of its own.
   The interpreter's own fingerprint path also fails 17 times, where `createSet` compares a typed
   model value with a record that TLC's normalisation never compares.
-- **Miri and fuzzing:** running; recorded when they finish.
+- **Miri and fuzzing: met, with a nightly from rustup.** `cargo miri test -p tla-values` passes
+  its 19 tests, on fewer values than a normal run; the three whose numbers are of a fixed size or
+  depth (the million states, the 20,000-step workload, values nested 100,000 deep) are left out.
+  One CPU-hour of `cargo fuzz run store_operations` (140,323 runs, inputs up to 2 KB from the start)
+  found nothing. An earlier run found the fuzzer's own round trip running out of memory on a value
+  whose encoded tree was 2^30 words; the target now skips values past a megabyte.
 - **Workload benchmark: met here.** 174 ns per step, median of 15 runs interleaved with the
   prototype's 172, with the same 37,986 values and checksum −1720536883 as `store.ts`.
 
