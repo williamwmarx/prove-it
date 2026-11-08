@@ -15,6 +15,7 @@ root 13 invariant Chosen: ok
 root 14 invariant Mixed: ok
 root 15 invariant Assertion: ok
 root 16 invariant TypeOK: ok
+root 17 invariant Diagonal: ok
 0 0 fp f67893cfa654c4b3
 0 1 bail modulus by a non-positive number
 0 2 bail negative exponent
@@ -32,6 +33,7 @@ root 16 invariant TypeOK: ok
 0 14 bail equality of values TLC can't compare
 0 15 bail an assertion failed
 0 16 fp d912ae59071cef72
+0 17 fp d912ae59071cef72
 1 0 fp bbfdc940f166fed3
 1 1 bail modulus by a non-positive number
 1 2 bail negative exponent
@@ -49,6 +51,7 @@ root 16 invariant TypeOK: ok
 1 14 bail equality of values TLC can't compare
 1 15 bail an assertion failed
 1 16 fp d912ae59071cef72
+1 17 fp d912ae59071cef72
 2 0 bail division by zero
 2 1 bail modulus by a non-positive number
 2 2 bail negative exponent
@@ -66,6 +69,7 @@ root 16 invariant TypeOK: ok
 2 14 bail equality of values TLC can't compare
 2 15 bail an assertion failed
 2 16 fp 67160b34d23c0a57
+2 17 fp d912ae59071cef72
 3 0 fp 6166100e37cc3b97
 3 1 fp d0ba3e880dcdd983
 3 2 bail negative exponent
@@ -83,6 +87,7 @@ root 16 invariant TypeOK: ok
 3 14 bail equality of values TLC can't compare
 3 15 bail an assertion failed
 3 16 fp 67160b34d23c0a57
+3 17 fp d912ae59071cef72
 4 0 fp 0a21e7c6cb671cc7
 4 1 fp f67893cfa654c4b3
 4 2 bail negative exponent
@@ -100,6 +105,7 @@ root 16 invariant TypeOK: ok
 4 14 bail equality of values TLC can't compare
 4 15 bail an assertion failed
 4 16 fp 67160b34d23c0a57
+4 17 fp d912ae59071cef72
 5 0 fp f67893cfa654c4b3
 5 1 bail modulus by a non-positive number
 5 2 bail negative exponent
@@ -117,6 +123,7 @@ root 16 invariant TypeOK: ok
 5 14 bail equality of values TLC can't compare
 5 15 fp 67160b34d23c0a57
 5 16 fp d912ae59071cef72
+5 17 fp 67160b34d23c0a57
 6 0 fp 9d3f64075affe3e3
 6 1 bail modulus by a non-positive number
 6 2 bail negative exponent
@@ -134,6 +141,7 @@ root 16 invariant TypeOK: ok
 6 14 bail equality of values TLC can't compare
 6 15 fp 67160b34d23c0a57
 6 16 fp d912ae59071cef72
+6 17 fp 67160b34d23c0a57
 7 0 bail division by zero
 7 1 bail modulus by a non-positive number
 7 2 bail negative exponent
@@ -151,6 +159,7 @@ root 16 invariant TypeOK: ok
 7 14 bail equality of values TLC can't compare
 7 15 fp 67160b34d23c0a57
 7 16 fp 67160b34d23c0a57
+7 17 fp 67160b34d23c0a57
 8 0 fp 0a21e7c6cb671cc7
 8 1 fp d0ba3e880dcdd983
 8 2 bail negative exponent
@@ -168,6 +177,7 @@ root 16 invariant TypeOK: ok
 8 14 bail equality of values TLC can't compare
 8 15 fp 67160b34d23c0a57
 8 16 fp 67160b34d23c0a57
+8 17 fp 67160b34d23c0a57
 9 0 fp 2ce34a8160fe01f7
 9 1 fp d0ba3e880dcdd983
 9 2 bail negative exponent
@@ -185,6 +195,7 @@ root 16 invariant TypeOK: ok
 9 14 bail equality of values TLC can't compare
 9 15 fp 67160b34d23c0a57
 9 16 fp 67160b34d23c0a57
+9 17 fp 67160b34d23c0a57
 10 0 fp d0ba3e880dcdd983
 10 1 bail modulus by a non-positive number
 10 2 bail negative exponent
@@ -202,6 +213,7 @@ root 16 invariant TypeOK: ok
 10 14 bail equality of values TLC can't compare
 10 15 fp 67160b34d23c0a57
 10 16 fp d912ae59071cef72
+10 17 fp d912ae59071cef72
 11 0 fp f67893cfa654c4b3
 11 1 bail modulus by a non-positive number
 11 2 bail negative exponent
@@ -219,6 +231,7 @@ root 16 invariant TypeOK: ok
 11 14 bail equality of values TLC can't compare
 11 15 fp 67160b34d23c0a57
 11 16 fp d912ae59071cef72
+11 17 fp d912ae59071cef72
 12 0 bail division by zero
 12 1 bail modulus by a non-positive number
 12 2 bail negative exponent
@@ -236,6 +249,7 @@ root 16 invariant TypeOK: ok
 12 14 bail equality of values TLC can't compare
 12 15 fp 67160b34d23c0a57
 12 16 fp 67160b34d23c0a57
+12 17 fp d912ae59071cef72
 13 0 fp 2ce34a8160fe01f7
 13 1 fp d0ba3e880dcdd983
 13 2 bail negative exponent
@@ -253,6 +267,7 @@ root 16 invariant TypeOK: ok
 13 14 bail equality of values TLC can't compare
 13 15 fp 67160b34d23c0a57
 13 16 fp 67160b34d23c0a57
+13 17 fp d912ae59071cef72
 14 0 fp 2ce34a8160fe01f7
 14 1 fp f67893cfa654c4b3
 14 2 bail negative exponent
@@ -270,6 +285,7 @@ root 16 invariant TypeOK: ok
 14 14 bail equality of values TLC can't compare
 14 15 fp 67160b34d23c0a57
 14 16 fp 67160b34d23c0a57
+14 17 fp d912ae59071cef72
 15 0 fp d0ba3e880dcdd983
 15 1 bail modulus by a non-positive number
 15 2 fp f67893cfa654c4b3
@@ -287,6 +303,7 @@ root 16 invariant TypeOK: ok
 15 14 bail equality of values TLC can't compare
 15 15 fp 67160b34d23c0a57
 15 16 fp d912ae59071cef72
+15 17 fp 67160b34d23c0a57
 16 0 fp d0ba3e880dcdd983
 16 1 bail modulus by a non-positive number
 16 2 fp f67893cfa654c4b3
@@ -304,6 +321,7 @@ root 16 invariant TypeOK: ok
 16 14 bail equality of values TLC can't compare
 16 15 fp 67160b34d23c0a57
 16 16 fp d912ae59071cef72
+16 17 fp 67160b34d23c0a57
 17 0 bail division by zero
 17 1 bail modulus by a non-positive number
 17 2 fp f67893cfa654c4b3
@@ -321,6 +339,7 @@ root 16 invariant TypeOK: ok
 17 14 bail equality of values TLC can't compare
 17 15 fp 67160b34d23c0a57
 17 16 fp 67160b34d23c0a57
+17 17 fp 67160b34d23c0a57
 18 0 fp d0ba3e880dcdd983
 18 1 fp d0ba3e880dcdd983
 18 2 fp f67893cfa654c4b3
@@ -338,6 +357,7 @@ root 16 invariant TypeOK: ok
 18 14 bail equality of values TLC can't compare
 18 15 fp 67160b34d23c0a57
 18 16 fp 67160b34d23c0a57
+18 17 fp 67160b34d23c0a57
 19 0 fp d0ba3e880dcdd983
 19 1 fp d0ba3e880dcdd983
 19 2 fp f67893cfa654c4b3
@@ -355,6 +375,7 @@ root 16 invariant TypeOK: ok
 19 14 bail equality of values TLC can't compare
 19 15 fp 67160b34d23c0a57
 19 16 fp 67160b34d23c0a57
+19 17 fp 67160b34d23c0a57
 20 0 fp 2ce34a8160fe01f7
 20 1 bail modulus by a non-positive number
 20 2 fp 0a21e7c6cb671cc7
@@ -372,6 +393,7 @@ root 16 invariant TypeOK: ok
 20 14 bail equality of values TLC can't compare
 20 15 fp 67160b34d23c0a57
 20 16 fp d912ae59071cef72
+20 17 fp d912ae59071cef72
 21 0 fp 2ce34a8160fe01f7
 21 1 bail modulus by a non-positive number
 21 2 fp 2ce34a8160fe01f7
@@ -389,6 +411,7 @@ root 16 invariant TypeOK: ok
 21 14 bail equality of values TLC can't compare
 21 15 fp 67160b34d23c0a57
 21 16 fp d912ae59071cef72
+21 17 fp d912ae59071cef72
 22 0 bail division by zero
 22 1 bail modulus by a non-positive number
 22 2 fp d0ba3e880dcdd983
@@ -406,6 +429,7 @@ root 16 invariant TypeOK: ok
 22 14 bail equality of values TLC can't compare
 22 15 fp 67160b34d23c0a57
 22 16 fp 67160b34d23c0a57
+22 17 fp d912ae59071cef72
 23 0 fp f67893cfa654c4b3
 23 1 fp d0ba3e880dcdd983
 23 2 fp f67893cfa654c4b3
@@ -423,6 +447,7 @@ root 16 invariant TypeOK: ok
 23 14 bail equality of values TLC can't compare
 23 15 fp 67160b34d23c0a57
 23 16 fp 67160b34d23c0a57
+23 17 fp d912ae59071cef72
 24 0 fp d0ba3e880dcdd983
 24 1 fp f67893cfa654c4b3
 24 2 fp 9d3f64075affe3e3
@@ -440,6 +465,7 @@ root 16 invariant TypeOK: ok
 24 14 bail equality of values TLC can't compare
 24 15 fp 67160b34d23c0a57
 24 16 fp 67160b34d23c0a57
+24 17 fp d912ae59071cef72
 25 0 fp 2ce34a8160fe01f7
 25 1 bail modulus by a non-positive number
 25 2 fp 4bb08b96a3a9ad43
@@ -457,6 +483,7 @@ root 16 invariant TypeOK: ok
 25 14 bail equality of values TLC can't compare
 25 15 fp 67160b34d23c0a57
 25 16 fp d912ae59071cef72
+25 17 fp 67160b34d23c0a57
 26 0 fp 0a21e7c6cb671cc7
 26 1 bail modulus by a non-positive number
 26 2 fp f67893cfa654c4b3
@@ -474,6 +501,7 @@ root 16 invariant TypeOK: ok
 26 14 bail equality of values TLC can't compare
 26 15 fp 67160b34d23c0a57
 26 16 fp d912ae59071cef72
+26 17 fp 67160b34d23c0a57
 27 0 bail division by zero
 27 1 bail modulus by a non-positive number
 27 2 fp d0ba3e880dcdd983
@@ -491,6 +519,7 @@ root 16 invariant TypeOK: ok
 27 14 bail equality of values TLC can't compare
 27 15 fp 67160b34d23c0a57
 27 16 fp 67160b34d23c0a57
+27 17 fp 67160b34d23c0a57
 28 0 fp 9d3f64075affe3e3
 28 1 fp d0ba3e880dcdd983
 28 2 fp f67893cfa654c4b3
@@ -508,6 +537,7 @@ root 16 invariant TypeOK: ok
 28 14 bail equality of values TLC can't compare
 28 15 fp 67160b34d23c0a57
 28 16 fp 67160b34d23c0a57
+28 17 fp 67160b34d23c0a57
 29 0 fp f67893cfa654c4b3
 29 1 fp d0ba3e880dcdd983
 29 2 fp 4bb08b96a3a9ad43
@@ -525,6 +555,7 @@ root 16 invariant TypeOK: ok
 29 14 bail equality of values TLC can't compare
 29 15 fp 67160b34d23c0a57
 29 16 fp 67160b34d23c0a57
+29 17 fp 67160b34d23c0a57
 30 0 fp 0a21e7c6cb671cc7
 30 1 bail modulus by a non-positive number
 30 2 fp dcae085732315267
@@ -542,6 +573,7 @@ root 16 invariant TypeOK: ok
 30 14 bail equality of values TLC can't compare
 30 15 fp 67160b34d23c0a57
 30 16 fp d912ae59071cef72
+30 17 fp d912ae59071cef72
 31 0 fp 6166100e37cc3b97
 31 1 bail modulus by a non-positive number
 31 2 fp 2ce34a8160fe01f7
@@ -559,6 +591,7 @@ root 16 invariant TypeOK: ok
 31 14 bail equality of values TLC can't compare
 31 15 fp 67160b34d23c0a57
 31 16 fp d912ae59071cef72
+31 17 fp d912ae59071cef72
 32 0 bail division by zero
 32 1 bail modulus by a non-positive number
 32 2 fp d0ba3e880dcdd983
@@ -576,6 +609,7 @@ root 16 invariant TypeOK: ok
 32 14 bail equality of values TLC can't compare
 32 15 fp 67160b34d23c0a57
 32 16 fp 67160b34d23c0a57
+32 17 fp d912ae59071cef72
 33 0 fp bbfdc940f166fed3
 33 1 fp d0ba3e880dcdd983
 33 2 fp f67893cfa654c4b3
@@ -593,6 +627,7 @@ root 16 invariant TypeOK: ok
 33 14 bail equality of values TLC can't compare
 33 15 fp 67160b34d23c0a57
 33 16 fp 67160b34d23c0a57
+33 17 fp d912ae59071cef72
 34 0 fp f67893cfa654c4b3
 34 1 fp f67893cfa654c4b3
 34 2 fp c48665e94dc845ae
@@ -610,3 +645,4 @@ root 16 invariant TypeOK: ok
 34 14 bail equality of values TLC can't compare
 34 15 fp 67160b34d23c0a57
 34 16 fp 67160b34d23c0a57
+34 17 fp d912ae59071cef72

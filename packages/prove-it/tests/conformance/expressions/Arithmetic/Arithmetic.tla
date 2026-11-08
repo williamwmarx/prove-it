@@ -23,4 +23,5 @@ Chosen == CHOOSE i \in x..3 : i * i > 4
 Mixed == x = "a"
 Assertion == Assert(x > -3, "x is the lowest")
 TypeOK == x \in Int /\ y \in Nat
+Diagonal == \E i, j \in -1..1 : i = j /\ i + j = x
 ====
