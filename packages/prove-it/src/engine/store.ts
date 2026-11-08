@@ -1417,6 +1417,3 @@ export const attachSharedStore = (buffers: SharedStore) => {
 export const freezeTexts = () => {
   if (shared) shared.isTextFrozen = true;
 };
-
-// The store starts with the values every check has, once every declaration above exists.
-resetStore();
