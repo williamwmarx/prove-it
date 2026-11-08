@@ -32,6 +32,7 @@ import {
   type FingerprintFailure,
   formatRange,
   getDefinition,
+  hasRepeatedEffects,
   isImpure,
 } from "./evaluate";
 import { EXIT_STATUS, getExitCode, setExitCode, withLivenessExitCode } from "./exit-codes";
@@ -53,6 +54,7 @@ import {
   withNextStateExitCode,
 } from "./search";
 import {
+  findActionPositions,
   getActionLabel,
   getActionSignature,
   getInitActions,
@@ -74,6 +76,7 @@ import {
   getSuccessors,
   type Successor,
 } from "./successors";
+import type { LiveEnabled } from "./tableau";
 import {
   type FailureMessage,
   formatNestedMessage,
@@ -1357,8 +1360,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   // States the engine found, which the interpreter took over without their actions, so a trace
   // through them finds its actions again as it does for a reduced state space.
   const transferred = { count: 0 };
-  // The ids of each state the engine handed over, for its answers to the liveness checker.
-  const engineIds = new WeakMap<Value[], Int32Array>();
+  // The index of each state the engine handed over, for its answers to the liveness checker.
+  const engineIndices = new WeakMap<Value[], number>();
   // In a replay of the engine's complete search, how many states the replay has reached.
   const replayed = { discovered: 0 };
   const resumeFromEngine = (checkpoint: EngineCheckpoint) => {
@@ -1370,7 +1373,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       }
       const keys = checkpoint.keys;
       const keyWidth = checkpoint.keyWidth ?? width;
-      engineIds.set(state, checkpoint.states.subarray(index * width, (index + 1) * width));
+      engineIndices.set(state, index);
       const fingerprintState = keys
         ? Array.from({ length: keyWidth }, (_, position) =>
             toEngineValue(keys[index * keyWidth + position]),
@@ -1430,12 +1433,43 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     const init = spec.init;
     const next = spec.next;
     if (init === undefined || next === undefined) return undefined;
+    // The engine answers ENABLED <<A>>_v of a state from the steps its search took when A is made of
+    // TLC's actions of the next-state relation. A constraint drops steps, and TLC's ENABLED shows
+    // the effects of running A, such as printing, so then the engine runs A.
+    const enabledActions = new Map<LiveEnabled, number[] | "all">();
+    if (liveness && !search.isConstrained && !hasRepeatedEffects(environment)) {
+      const actions = getSpecNextActions();
+      for (const atom of liveness.enabledAtoms) {
+        if (atom.step.kind !== "AngleAction") continue;
+        const positions = findActionPositions(
+          actions,
+          atom.step.action,
+          atom.scope,
+          environment,
+          specification.instanceActions,
+        );
+        if (positions)
+          enabledActions.set(atom, positions.length === actions.length ? "all" : positions);
+      }
+    }
+    // A search labels each step with the action that took it only when ENABLED asks about some.
+    const isLabelled = [...enabledActions.values()].some((positions) => positions !== "all");
     const startedAt = performance.now();
     try {
       const result = runEngine({
         config,
         environment,
-        spec: { init, next, scope: spec.scope },
+        spec: {
+          init,
+          next,
+          scope: spec.scope,
+          ...(isLabelled && {
+            actions: getSpecNextActions().map((action) => ({
+              expression: action.expression,
+              scope: action.scope,
+            })),
+          }),
+        },
         isWarningEnabled: runtime.isWarningEnabled,
         tlcOrder: search.getTlcOrder(),
         startedAt,
@@ -1467,7 +1501,10 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       if (result.checkpoint) {
         // The interpreter checks the temporal properties on the graph the engine found.
         engineReport.checkpoint = result.checkpoint;
-        environment.liveOracle = result.createLiveOracle((state) => engineIds.get(state));
+        environment.liveOracle = result.createLiveOracle(
+          (state) => engineIndices.get(state),
+          (expression) => enabledActions.get(expression),
+        );
         // The liveness checker orders each state's successors by TLC's fingerprints of them.
         const fingerprints = result.getFingerprints();
         engineReport.fingerprints = fingerprints;

@@ -5,9 +5,10 @@
 
 import type { Expression } from "../ast";
 import type { EvaluationScope } from "../evaluate";
-import type { LiveExpression } from "../tableau";
+import type { LiveEnabled, LiveExpression } from "../tableau";
 import type { Value } from "../values";
 import { type CompileContext, type Compiled, type Compiler, setCurrent, setNext } from "./compile";
+import { getEnvironmentFlag, reportEngine } from "./settings";
 import { Bailout, FALSE, TRUE } from "./store";
 
 export type LiveOracle = (
@@ -16,14 +17,44 @@ export type LiveOracle = (
   next: Value[] | undefined,
 ) => boolean | undefined;
 
+// The positions, among TLC's actions of the next-state relation, of the actions the action of
+// ENABLED splits into, in their order, "all" when it splits into every one, or undefined when it
+// isn't made of them.
+export type EnabledActions = (expression: LiveEnabled) => readonly number[] | "all" | undefined;
+
+// The states of the search, `width` ids each, and its steps: those from state i between
+// edgeOffsets[i] and edgeOffsets[i + 1], in the order generated, each labelled with the position
+// of the action that took it when the search took TLC's actions one by one.
+export interface LiveGraph {
+  states: Int32Array;
+  edgeOffsets: Int32Array | undefined;
+  edges: Int32Array | undefined;
+  labels: Int32Array | undefined;
+  // Whether a state's steps are those TLC's ENABLED finds when it runs an action from the state.
+  isEnabledExact: boolean;
+}
+
+// How the steps a state took answer ENABLED <<A>>_v: the subscript's UNCHANGED, and the actions,
+// by position, whose steps A takes, or undefined when A takes every step.
+interface EdgeQuestion {
+  unchanged: Compiled;
+  actions: Uint8Array | undefined;
+}
+
 const UNKNOWN = Symbol("unknown");
 
 export const createLiveOracle = (
   compiler: Compiler,
-  getIds: (state: Value[]) => Int32Array | undefined,
+  graph: LiveGraph,
+  getIndex: (state: Value[]) => number | undefined,
+  getEnabledActions: EnabledActions,
 ): LiveOracle => {
   const width = compiler.variableCount;
-  const next = new Int32Array(width);
+  const states = graph.states;
+  // PROVE_IT_LIVE_CHECK=1 also runs each action ENABLED asks about that the steps answer, and
+  // throws where the two answers differ.
+  const isLiveChecked = getEnvironmentFlag("PROVE_IT_LIVE_CHECK");
+  const report = { isReported: false };
   const contexts = new Map<EvaluationScope | undefined, CompileContext | typeof UNKNOWN>();
   const values = new Map<Expression, Map<EvaluationScope | undefined, Compiled | typeof UNKNOWN>>();
 
@@ -66,6 +97,7 @@ export const createLiveOracle = (
   // lookup misses, so asking again allocates nothing.
   const answers = new Map<LiveExpression, Compiled | typeof UNKNOWN>();
   const unchangedAnswers = new Map<LiveExpression, Compiled | typeof UNKNOWN>();
+  const edgeQuestions = new Map<LiveExpression, EdgeQuestion | typeof UNKNOWN>();
   const compileIn = (expression: Expression, scope: EvaluationScope | undefined) =>
     getCompiled(values, expression, scope, (context) => compiler.compile(expression, context));
   const answer = (expression: Extract<LiveExpression, { scope: unknown }>) => {
@@ -88,28 +120,75 @@ export const createLiveOracle = (
     unchangedAnswers.set(expression, built);
     return built;
   };
+  // ENABLED <<A>>_v holds of a state the search ran TLC's actions from just when one of the steps
+  // A takes changes v, which TLC's ENABLED, running A, finds in the same order.
+  const getEdgeQuestion = (expression: LiveEnabled) => {
+    const step = expression.step;
+    const actions =
+      graph.isEnabledExact && step.kind === "AngleAction" && getEnabledActions(expression);
+    const unchanged =
+      actions && (actions === "all" || graph.labels)
+        ? compileIn(
+            { kind: "Unchanged", expression: step.subscript, location: step.location },
+            expression.scope,
+          )
+        : UNKNOWN;
+    const question =
+      !actions || unchanged === UNKNOWN
+        ? UNKNOWN
+        : {
+            unchanged,
+            actions:
+              actions === "all"
+                ? undefined
+                : Uint8Array.from({ length: Math.max(...actions) + 1 }, (_, position) =>
+                    actions.includes(position) ? 1 : 0,
+                  ),
+          };
+    edgeQuestions.set(expression, question);
+    if (!report.isReported && (question !== UNKNOWN || !graph.isEnabledExact)) {
+      report.isReported = true;
+      reportEngine(
+        question === UNKNOWN
+          ? "runs each action ENABLED asks about: its search evaluated conjuncts TLC's ENABLED walks"
+          : "answers ENABLED from the steps its search took",
+      );
+    }
+    return question;
+  };
 
-  // The checker asks about a state many times in a row, so the last lookup of each side of a step
-  // is kept.
+  // The ids of the states the checker asks about. It asks about a state many times in a row, so
+  // the last lookup of each side of a step is kept.
+  const ids = new Int32Array(width);
+  const nextIds = new Int32Array(width);
+  const edgeIds = new Int32Array(width);
   const lookups = {
     state: undefined as Value[] | undefined,
-    ids: undefined as Int32Array | undefined,
+    index: undefined as number | undefined,
     next: undefined as Value[] | undefined,
-    nextIds: undefined as Int32Array | undefined,
+    nextIndex: undefined as number | undefined,
   };
-  const getStateIds = (state: Value[]) => {
+  const load = (target: Int32Array, index: number) => {
+    const offset = index * width;
+    for (let variable = 0; variable < width; variable++)
+      target[variable] = states[offset + variable];
+    return target;
+  };
+  const getStateIndex = (state: Value[]) => {
     if (state !== lookups.state) {
       lookups.state = state;
-      lookups.ids = getIds(state);
+      lookups.index = getIndex(state);
+      if (lookups.index !== undefined) load(ids, lookups.index);
     }
-    return lookups.ids;
+    return lookups.index;
   };
-  const getNextIds = (state: Value[]) => {
+  const getNextIndex = (state: Value[]) => {
     if (state !== lookups.next) {
       lookups.next = state;
-      lookups.nextIds = getIds(state);
+      lookups.nextIndex = getIndex(state);
+      if (lookups.nextIndex !== undefined) load(nextIds, lookups.nextIndex);
     }
-    return lookups.nextIds;
+    return lookups.nextIndex;
   };
 
   const holds = (compiled: Compiled) => {
@@ -117,25 +196,35 @@ export const createLiveOracle = (
     return value === TRUE ? true : value === FALSE ? false : undefined;
   };
 
-  return (expression, state, successor) => {
-    if (
-      expression.kind !== "State" &&
-      expression.kind !== "Action" &&
-      expression.kind !== "Enabled"
-    ) {
-      return undefined;
+  // Whether a step from the state with the index that the question's action takes changes the
+  // subscript, scanning the steps in the order generated.
+  const holdsOnEdges = (question: EdgeQuestion, index: number) => {
+    const edges = graph.edges!;
+    const labels = graph.labels;
+    const actions = question.actions;
+    const end = graph.edgeOffsets![index + 1];
+    for (let edge = graph.edgeOffsets![index]; edge < end; edge++) {
+      if (actions && actions[labels![edge]] !== 1) continue;
+      setNext(load(edgeIds, edges[edge]));
+      const isUnchanged = holds(question.unchanged);
+      if (isUnchanged === undefined) return undefined;
+      if (!isUnchanged) return true;
     }
-    const ids = getStateIds(state);
-    if (!ids) return undefined;
+    return false;
+  };
+
+  const ask = (
+    expression: Extract<LiveExpression, { scope: unknown }>,
+    successor: Value[] | undefined,
+  ) => {
     try {
       setCurrent(ids);
-      setNext(next);
+      setNext(nextIds);
       if (expression.kind !== "Action") {
         const compiled = answers.get(expression) ?? answer(expression);
         return compiled === UNKNOWN ? undefined : holds(compiled);
       }
-      const nextIds = successor && getNextIds(successor);
-      if (!nextIds) return undefined;
+      if (!successor || getNextIndex(successor) === undefined) return undefined;
       setNext(nextIds);
       const unchangedExpression = expression.unchanged;
       if (unchangedExpression) {
@@ -152,5 +241,37 @@ export const createLiveOracle = (
       if (error instanceof Bailout) return undefined;
       throw error;
     }
+  };
+
+  const askOnEdges = (expression: LiveEnabled, index: number) => {
+    const question = edgeQuestions.get(expression) ?? getEdgeQuestion(expression);
+    if (question === UNKNOWN) return undefined;
+    try {
+      setCurrent(ids);
+      return holdsOnEdges(question, index);
+    } catch (error) {
+      if (error instanceof Bailout) return undefined;
+      throw error;
+    }
+  };
+
+  return (expression, state, successor) => {
+    if (
+      expression.kind !== "State" &&
+      expression.kind !== "Action" &&
+      expression.kind !== "Enabled"
+    ) {
+      return undefined;
+    }
+    const index = getStateIndex(state);
+    if (index === undefined) return undefined;
+    if (expression.kind !== "Enabled" || !graph.edges) return ask(expression, successor);
+    const fromEdges = askOnEdges(expression, index);
+    if (fromEdges !== undefined && !isLiveChecked) return fromEdges;
+    const ran = ask(expression, undefined);
+    if (fromEdges !== undefined && ran !== undefined && ran !== fromEdges) {
+      throw new Error("ENABLED from the steps the search took differs from ENABLED run");
+    }
+    return fromEdges ?? ran;
   };
 };

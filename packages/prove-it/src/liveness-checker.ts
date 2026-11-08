@@ -15,6 +15,7 @@ import {
   getSolutions,
   getTermKey,
   isFulfilling,
+  type LiveEnabled,
   type LiveExpression,
   type Solution,
   type Tableau,
@@ -48,6 +49,8 @@ export interface LivenessChecker {
   ) => number[] | undefined;
   findViolation: () => Lasso | undefined;
   getViolatedProperties: (path: Value[][], cycleStart: number) => string[];
+  // The ENABLED predicates the checks ask about.
+  enabledAtoms: LiveEnabled[];
 }
 
 interface SearchGraph {
@@ -1107,6 +1110,7 @@ export const createLivenessChecker = (
 
   return {
     branches: behaviors.length,
+    enabledAtoms: [...atomIds.keys()].filter((atom) => atom.kind === "Enabled"),
     addInitialState: (index, state, tracing) => {
       startChecks(tracing);
       try {

@@ -14,13 +14,16 @@ import {
   ROOT_CONTEXT,
 } from "./compile";
 import { getCodegenSetting, reportEngine } from "./settings";
-import { bail, FALSE, TRUE } from "./store";
+import { bail, Bailout, FALSE, TRUE } from "./store";
 
 export interface EngineSpec {
   init: Expression;
   next: Expression;
   // The bindings of the instance the specification comes from, when it names one.
   scope?: EvaluationScope;
+  // TLC's actions of the next-state relation, as it splits it, for a search that labels each step
+  // with the action that took it.
+  actions?: { expression: Expression; scope: EvaluationScope | undefined }[];
 }
 
 // The temporal properties the engine checks as TLC does in its search: those that assert a state
@@ -66,6 +69,9 @@ export interface EngineContext {
   width: number;
   initStep: Step;
   nextStep: Step;
+  // A step for each of spec.actions, which together take the steps of nextStep in its order, or
+  // undefined when the engine can't build one.
+  actionSteps: Step[] | undefined;
   invariants: (() => boolean)[];
   // The invariants an initial state may violate: the others are conjuncts of the initial predicate,
   // so hold of every state it gives.
@@ -192,6 +198,18 @@ export const createEngineContext = (
     if (!step.isGenerated) reportEngine(`${isInit ? "init" : "next"} runs as closures`);
     return step.step;
   };
+  const getActionSteps = () => {
+    try {
+      return spec.actions?.map((action) => {
+        const actionContext = compiler.contextFromScope(action.scope);
+        if (!actionContext) return bail("an action scope the engine can't translate");
+        return buildStep(compiler, action.expression, actionContext, false, isWarningEnabled).step;
+      });
+    } catch (error) {
+      if (!(error instanceof Bailout)) throw error;
+      return undefined;
+    }
+  };
   const predicate = (expression: Expression) =>
     compilePredicate(compiler.compile(expression, ROOT_CONTEXT));
   // Each invariant and constraint is checked conjunct by conjunct, so a successor skips each
@@ -245,6 +263,7 @@ export const createEngineContext = (
     actionConstraints: config.actionConstraints.map((name) => named("action constraint", name)),
     initStep: buildAction(spec.init, true, true),
     nextStep: buildAction(spec.next, false, isWarningEnabled),
+    actionSteps: getActionSteps(),
   };
 };
 
