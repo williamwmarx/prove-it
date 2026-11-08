@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/prove-it-napi"]
+members = ["crates/prove-it-napi", "crates/tla-ir"]
 # The prototypes are separate crates, kept as the design measured them.
 exclude = ["prototypes"]
 resolver = "3"
