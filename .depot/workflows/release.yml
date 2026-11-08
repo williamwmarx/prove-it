@@ -1,8 +1,8 @@
 # Publishes packages/prove-it to npm when a commit on main changes its version, then tags the
 # commit v<version>. A push that changes package.json but not the version publishes nothing. Run
-# it by hand for a first release or to retry one that failed. The native engine's platform packages
-# for Linux x64 and arm64 go first, each built on its own architecture, and the main package lists
-# them as optionalDependencies, added when it is packed; other platforms get the TypeScript engine.
+# it by hand for a first release or to retry one that failed. The native engine's Linux x64 platform
+# package goes first, and the main package lists it as an optionalDependency, added when it is
+# packed; other platforms get the TypeScript engine.
 #
 # The npm token is NPM_TOKEN in the 1Password Environment prove-it-release, whose ID is below.
 # ONEPASSWORD_PROVE_IT_RELEASE_TOKEN, a Depot CI secret scoped to this repository, main and this
@@ -26,66 +26,8 @@ env:
   # An identifier, not a secret: reading the Environment takes the service account's token.
   ONEPASSWORD_ENVIRONMENT_ID: tt44zeqhf5ciy4i4jorhug2d6i # gitleaks:allow
 jobs:
-  arm64:
-    name: Publish the Linux arm64 engine
-    if: github.ref == 'refs/heads/main'
-    runs-on: depot-ubuntu-24.04-arm
-    timeout-minutes: 30
-    environment: npm
-    steps:
-      - name: Check out exactly the pushed main commit
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          ref: ${{ github.sha }}
-          fetch-depth: 2
-          persist-credentials: false
-      - name: Plan (publish only a version npm doesn't have)
-        id: plan
-        run: |
-          set -euo pipefail
-          PATH="$(scripts/ci/bootstrap.sh node):$PATH"
-          version=$(node -p 'require("./packages/prove-it/package.json").version')
-          name=$(node -p 'require("./packages/prove-it/package.json").name')-linux-arm64-gnu
-          echo "publish=false" >> "$GITHUB_OUTPUT"
-          if [[ "$GITHUB_EVENT_NAME" == push ]]; then
-            previous=$(git show HEAD^:packages/prove-it/package.json | node -p 'JSON.parse(require("fs").readFileSync(0, "utf8")).version')
-            [[ "$previous" == "$version" ]] && exit 0
-          fi
-          if published=$(npm view "$name@$version" version 2>/dev/null) && [[ "$published" == "$version" ]]; then
-            echo "$name@$version is already on npm" | tee -a "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-          echo "publish=true" >> "$GITHUB_OUTPUT"
-      - name: Build and pack
-        id: pack
-        if: steps.plan.outputs.publish == 'true'
-        run: |
-          set -euo pipefail
-          PATH="$(scripts/ci/bootstrap.sh bun node rust):$PATH"
-          cd packages/prove-it
-          bun scripts/platform-packages.ts build
-          tarball=$(bun scripts/platform-packages.ts pack "$RUNNER_TEMP/platform-packages")
-          echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
-          echo "Packed $(basename "$tarball"), sha256 $(sha256sum "$tarball" | cut -d' ' -f1)" | tee -a "$GITHUB_STEP_SUMMARY"
-      - name: Publish the packed tarball
-        if: steps.plan.outputs.publish == 'true'
-        env:
-          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.ONEPASSWORD_PROVE_IT_RELEASE_TOKEN }}
-          TARBALL: ${{ steps.pack.outputs.tarball }}
-        run: |
-          set -euo pipefail
-          [[ -n "$OP_SERVICE_ACCOUNT_TOKEN" ]] || { echo "the Depot secret ONEPASSWORD_PROVE_IT_RELEASE_TOKEN is missing" >&2; exit 1; }
-          PATH="$(scripts/ci/bootstrap.sh node op):$PATH"
-          npmrc="$RUNNER_TEMP/npmrc"
-          # shellcheck disable=SC2016 # npm expands ${NPM_TOKEN} itself, so the shell must not.
-          printf '//registry.npmjs.org/:_authToken=${NPM_TOKEN}\n' > "$npmrc"
-          NPM_CONFIG_USERCONFIG="$npmrc" op run --environment "$ONEPASSWORD_ENVIRONMENT_ID" -- \
-            npm publish "$TARBALL" --access public --ignore-scripts
-          rm -f "$npmrc"
-          echo "Published $(basename "$TARBALL")" >> "$GITHUB_STEP_SUMMARY"
   release:
     name: Publish to npm
-    needs: arm64
     if: github.ref == 'refs/heads/main'
     runs-on: depot-ubuntu-24.04
     timeout-minutes: 30
@@ -141,8 +83,8 @@ jobs:
           bun run format:check
           bun run test
           test -z "$(git status --porcelain)"
-      # Builds the Linux x64 engine's platform package, then lists both Linux platform packages in
-      # the main package's optionalDependencies, at its own version, as it is packed.
+      # Builds the Linux x64 engine's platform package, then lists it in the main package's
+      # optionalDependencies, at its own version, as the main package is packed.
       - name: Pack
         id: pack
         if: steps.plan.outputs.publish == 'true'
@@ -158,7 +100,7 @@ jobs:
             const fs = require("fs");
             const main = JSON.parse(fs.readFileSync("package.json", "utf8"));
             main.optionalDependencies = Object.fromEntries(
-              ["linux-x64-gnu", "linux-arm64-gnu"].map((name) => [`${main.name}-${name}`, main.version]),
+              ["linux-x64-gnu"].map((name) => [`${main.name}-${name}`, main.version]),
             );
             fs.writeFileSync("package.json", `${JSON.stringify(main, null, 2)}\n`);
           '
@@ -182,7 +124,13 @@ jobs:
           npmrc="$RUNNER_TEMP/npmrc"
           # shellcheck disable=SC2016 # npm expands ${NPM_TOKEN} itself, so the shell must not.
           printf '//registry.npmjs.org/:_authToken=${NPM_TOKEN}\n' > "$npmrc"
+          # A retry skips a package an earlier attempt published.
           for tarball in "$PLATFORM" "$TARBALL"; do
+            spec=$(tar -xOzf "$tarball" package/package.json | node -p 'const p = JSON.parse(require("fs").readFileSync(0, "utf8")); `${p.name}@${p.version}`')
+            if [[ "$(npm view "$spec" version 2>/dev/null)" != "" ]]; then
+              echo "$spec is already on npm" >> "$GITHUB_STEP_SUMMARY"
+              continue
+            fi
             NPM_CONFIG_USERCONFIG="$npmrc" op run --environment "$ONEPASSWORD_ENVIRONMENT_ID" -- \
               npm publish "$tarball" --access public --ignore-scripts
           done
