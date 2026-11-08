@@ -65,6 +65,7 @@ fn reads_states_back_as_the_same_values() {
 #[test]
 fn refuses_words_that_are_not_states() {
     let mut store = Store::new();
+    let count = store.value_count();
     let decode = |store: &mut Store, words: Vec<i32>| {
         decode_states(
             store,
@@ -77,8 +78,12 @@ fn refuses_words_that_are_not_states() {
         )
     };
     assert_eq!(
-        decode(&mut store, vec![5, 2, 2]),
+        decode(&mut store, vec![5, 1, 2]),
         Err(DecodeError::Malformed("the words end inside a value"))
+    );
+    assert_eq!(
+        decode(&mut store, vec![7, 0, 1, i32::MAX]),
+        Err(DecodeError::Malformed("a length past the words"))
     );
     assert_eq!(
         decode(&mut store, vec![3, 0]),
@@ -92,4 +97,6 @@ fn refuses_words_that_are_not_states() {
         decode(&mut store, vec![1, 1]),
         Err(DecodeError::Malformed("words follow the last state"))
     );
+    // Nothing was interned for the interval function of 2^31 - 1 keys.
+    assert_eq!(store.value_count(), count);
 }

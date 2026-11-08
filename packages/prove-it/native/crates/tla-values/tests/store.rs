@@ -32,7 +32,9 @@ fn interns_the_constants_first() {
     assert_eq!(store.kind_of(4 + 4352), KIND_INT);
 }
 
+// Its expected numbers are of exactly 20,000 steps, which take Miri too long.
 #[test]
+#[cfg_attr(miri, ignore)]
 fn gives_the_typescript_stores_ids_to_the_workload() {
     let mut store = Store::new();
     let result = workload::run(&mut store, 20_000);
@@ -98,7 +100,7 @@ fn finds_values_again_after_the_table_and_the_heap_grow() {
     let mut store = Store::new();
     let keys = [str(&mut store, "k")];
     let shape = store.create_record_shape(&keys);
-    let records: Vec<Id> = (0..20_000)
+    let records: Vec<Id> = (0..if cfg!(miri) { 2_000 } else { 20_000 })
         .map(|index| {
             let value = store.int(index).unwrap();
             store.record_of(&shape, &[value])
@@ -341,7 +343,7 @@ fn orders_generated_values_antisymmetrically_and_transitively() {
             .map(Vec::as_slice),
     );
     let mut random = Random(0x9e3779b97f4a7c15);
-    let values: Vec<Id> = (0..300)
+    let values: Vec<Id> = (0..if cfg!(miri) { 30 } else { 300 })
         .map(|_| generate(&mut store, &mut random, 3))
         .collect();
     let mut compared = 0;
@@ -359,8 +361,11 @@ fn orders_generated_values_antisymmetrically_and_transitively() {
             assert_eq!(store.equals(left, right), Ok(left == right));
         }
     }
-    assert!(compared > 10_000, "only {compared} pairs compared");
-    for _ in 0..20_000 {
+    assert!(
+        compared > values.len() * values.len() / 10,
+        "only {compared} pairs compared"
+    );
+    for _ in 0..if cfg!(miri) { 300 } else { 20_000 } {
         let pick = |random: &mut Random| values[random.next(values.len() as u64) as usize];
         let (first, second, third) = (pick(&mut random), pick(&mut random), pick(&mut random));
         // A typed model value makes the order partial: A_x < m1 < 1, yet A_x and 1 fail.
@@ -378,7 +383,7 @@ fn orders_generated_values_antisymmetrically_and_transitively() {
 fn builds_one_set_from_any_order_of_its_elements() {
     let mut store = Store::new();
     let mut random = Random(12345);
-    for _ in 0..2_000 {
+    for _ in 0..if cfg!(miri) { 30 } else { 2_000 } {
         let length = 1 + random.next(40) as usize;
         let elements: Vec<Id> = (0..length)
             .map(|_| generate(&mut store, &mut random, 2))

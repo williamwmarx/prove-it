@@ -63,7 +63,9 @@ fn match_tlc_on_model_values_by_their_rank() {
     );
 }
 
+// Its expected xor is of exactly a million states, which take Miri hours.
 #[test]
+#[cfg_attr(miri, ignore)]
 fn match_tlc_on_a_million_states_of_five_integers() {
     let mut store = Store::new();
     let states: Vec<Id> = (0..1_000_000i64)
@@ -140,7 +142,7 @@ fn are_the_same_from_a_parent_from_the_state_before_and_from_scratch() {
     let width = 6;
     let mut states: Vec<Id> = Vec::new();
     let mut parents = Vec::new();
-    for state in 0..3000 {
+    for state in 0..if cfg!(miri) { 100 } else { 3000 } {
         let parent = if state < 3 {
             -1
         } else {

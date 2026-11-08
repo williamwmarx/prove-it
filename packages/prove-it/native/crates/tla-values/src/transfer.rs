@@ -182,8 +182,14 @@ impl Reader<'_> {
         Ok(word)
     }
 
+    // A length of values to read, each of which takes a word at least.
     fn next_length(&mut self) -> Result<usize, DecodeError> {
-        usize::try_from(self.next()?).map_err(|_| DecodeError::Malformed("a negative length"))
+        let length = usize::try_from(self.next()?)
+            .map_err(|_| DecodeError::Malformed("a negative length"))?;
+        if length > self.words.len() - self.index {
+            return Err(DecodeError::Malformed("a length past the words"));
+        }
+        Ok(length)
     }
 
     fn next_text(&mut self) -> Result<&[u16], DecodeError> {
