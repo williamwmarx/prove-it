@@ -236,6 +236,14 @@ fn stops_where_tlc_fails_to_compare_for_the_typescript_stores_reasons() {
         store.is_member(key, set),
         Err(Bail("membership of a value TLC can't compare"))
     );
+    // The first element fails where the last doesn't: models come first, ordered by rank.
+    let models = [other_type, untyped];
+    let sorted_models = store.set_of(&models).unwrap();
+    assert_eq!(store.set_elements(sorted_models), models);
+    assert_eq!(
+        store.is_member(typed, sorted_models),
+        Err(Bail("differently typed model values"))
+    );
     assert_eq!(
         store.set_of(&[one, key]),
         Err(Bail("values TLC can't compare"))

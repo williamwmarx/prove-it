@@ -186,6 +186,8 @@ describe.each(STORES)("the engine's %s store", (mode, store) => {
     const record = store.recordOf(store.createRecordShape([store.str("a")]), [store.int(1)]);
     const fn = store.functionOfSorted([store.int(0), store.int(1)], ints([1, 2]), 2);
     const typed = store.model("A_x");
+    // Model values come first in a set, by rank, so the first element fails where the last doesn't.
+    const models = store.setOf([store.model("B_y"), store.model("m")]);
     const cases: [() => unknown, string][] = [
       [() => store.compare(record, fn), "record compared with a function"],
       [() => store.equals(fn, record), "record compared with a function"],
@@ -198,6 +200,7 @@ describe.each(STORES)("the engine's %s store", (mode, store) => {
         "membership of a value TLC can't compare",
       ],
       [() => store.setOf([store.int(1), store.str("a")]), "values TLC can't compare"],
+      [() => store.isMember(typed, models), "differently typed model values"],
       [() => store.except(fn, store.int(5), store.int(0)), "EXCEPT outside the domain"],
       [() => store.int(2 ** 31), "integer overflow"],
     ];

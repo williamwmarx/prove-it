@@ -44,6 +44,26 @@ fn match_tlc_on_a_sample_of_each_kind() {
 }
 
 #[test]
+fn match_tlc_on_model_values_by_their_rank() {
+    // TLC's fingerprints, from native/oracle/ValueOracle.java, with "a", "m1" and "B_y" interned
+    // first, so that m1 is UniqueString token 2.
+    let mut store = Store::new();
+    store.reset(["a", "m1", "B_y"].map(utf16).iter().map(Vec::as_slice));
+    let model = store.model(&utf16("m1"));
+    let seven = store.int(7).unwrap();
+    let set = store.set_of(&[seven, model]).unwrap();
+    let mut fingerprints = Fingerprints::new();
+    assert_eq!(
+        fingerprints.get_state(&store, &[model], &[0]),
+        5068397444161466873
+    );
+    assert_eq!(
+        fingerprints.get_state(&store, &[set], &[0]),
+        -1941079772221809000i64 as u64
+    );
+}
+
+#[test]
 fn match_tlc_on_a_million_states_of_five_integers() {
     let mut store = Store::new();
     let states: Vec<Id> = (0..1_000_000i64)
