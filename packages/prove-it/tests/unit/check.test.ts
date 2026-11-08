@@ -826,6 +826,24 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  // TLC's labels: a SPECIFICATION that an INSTANCE substitutes into is one unnamed action.
+  it.each([
+    ["Spec", "Action line 4, col 1 to line 4, col 14 of module M"],
+    ["OwnSpec", "Next line 4, col 1 to line 4, col 14 of module M"],
+    ["NamedSpec", "Action line 7, col 1 to line 7, col 19 of module M"],
+  ])("labels the steps of SPECIFICATION %s through an INSTANCE like TLC", async (spec, label) => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nINSTANCE Inner\nInv == x < 2\nOwnSpec == Init /\\ [][Next]_x\nI == INSTANCE Inner\nNamedSpec == I!Spec\n====",
+      config: `SPECIFICATION ${spec}\nINVARIANT Inv`,
+      loadModule: (name) =>
+        name === "Inner"
+          ? "---- MODULE Inner ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = x + 1 \\/ x' = x + 2\nSpec == Init /\\ [][Next]_x\n===="
+          : undefined,
+    });
+    expect(result.violation?.trace.map((step) => step.label)).toEqual([undefined, label]);
+  });
+
   it("labels steps after evaluating the initial predicate again like TLC", async () => {
     const result = await checkFixture("tlc-get-non-determinism", "TLCGetNonDeterminism");
     expect(result.violation?.trace.map((step) => step.label)).toEqual([

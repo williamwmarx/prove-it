@@ -1065,6 +1065,8 @@ export const createEnvironment = (
   linkedRoot.visible.forEach((symbol, name) => {
     const definition = definitions.get(symbol.key);
     if (definition && symbol.key !== name) definitions.set(name, definition);
+    const instanceAction = instanceActions.get(symbol.key);
+    if (instanceAction && symbol.key !== name) instanceActions.set(name, instanceAction);
   });
 
   const assumptions: Assumption[] = [];
