@@ -124,3 +124,21 @@ describe("getTranscript", () => {
     expect(getTranscript("0", "done\n", "[engine] skipped: disabled\n")).toBe("exit 0\ndone\n");
   });
 });
+
+describe("normalizeOutput on the times of a run", () => {
+  it("rewrites the times of TLC's reports and keeps those in a spec's states", () => {
+    const trace = (time: string) =>
+      [
+        "Starting... (2026-11-08 06:59:23)",
+        "State 1: <Initial predicate>",
+        `x = "${time}"`,
+        "Finished in 00s at (2026-11-08 06:59:24)",
+      ].join("\n");
+    expect(normalizeOutput(trace("2026-11-08 06:59:23"))).not.toBe(
+      normalizeOutput(trace("2026-11-08 07:00:00")),
+    );
+    expect(normalizeOutput(trace("t"))).toBe(
+      'Starting... (_)\nState 1: <Initial predicate>\nx = "t"\nFinished in _ at (_)',
+    );
+  });
+});

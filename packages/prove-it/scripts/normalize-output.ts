@@ -6,11 +6,23 @@
 export const STARTUP_LINE =
   /^(TLC2 Version |Running breadth-first search |Parsing file |Semantic processing of module |Linting of module )/;
 
+// The lines in which TLC reports when it started, finished or reached a point, the only ones with
+// a time or date of the run. A spec's states and what it prints keep theirs.
+const TIMED_LINE =
+  /^(Starting\.\.\. |Finished |Progress\(|Checking (\d+ branches of )?temporal properties )/;
+
 // TLC prints a duration as 12ms with -tool, and otherwise as 05s, 02min 05s, 01h 02min or 1d 01h.
 const replaceTimes = (output: string) =>
   output
-    .replace(/\d{4}-\d\d-\d\d \d\d:\d\d:\d\d/g, "_")
-    .replace(/ in (?:\d+ms|\d+s|\d+min \d+s|\d+h \d+min|\d+d \d+h) at /g, " in _ at ");
+    .split("\n")
+    .map((line) =>
+      TIMED_LINE.test(line)
+        ? line
+            .replace(/\d{4}-\d\d-\d\d \d\d:\d\d:\d\d/g, "_")
+            .replace(/ in (?:\d+ms|\d+s|\d+min \d+s|\d+h \d+min|\d+d \d+h) at /g, " in _ at ")
+        : line,
+    )
+    .join("\n");
 
 // TLC's output without its startup lines, with the times and dates it printed as _.
 export const getSteadyLines = (output: string) =>
