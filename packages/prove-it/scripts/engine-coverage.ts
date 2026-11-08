@@ -1,8 +1,9 @@
 // Runs each conformance model with the engine on (PROVE_IT_ENGINE=debug) and off (PROVE_IT_ENGINE=0),
 // checks both runs reach the same outcome, and tallies what the engine did with each model, weighted
-// by the time TLC takes on it.
+// by the time TLC takes on it. --backend picks the engine's backend, and --compare-backends runs
+// every backend, each checked against the engine off.
 // Usage: bun scripts/run.ts engine-coverage [--max-tlc-ms 20000] [--filter text] [--concurrency 3]
-//        [--timeout-ms 600000] [--out path]
+//        [--timeout-ms 600000] [--out path] [--backend ts | --compare-backends]
 
 import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -18,6 +19,12 @@ import {
   getOption,
   writeResults,
 } from "./corpora";
+import {
+  classifyEngineLine,
+  getBackendEnvironment,
+  getBackends,
+  getEngineLine,
+} from "./engine-runs";
 import type { ExpectedResult } from "./record-tlc";
 
 interface Run {
@@ -39,8 +46,8 @@ interface Coverage {
   engineMilliseconds: number | undefined;
   isSame: boolean;
   differences: string[];
-  on: Run;
-  off: Run;
+  // The run with the engine off, and with each backend.
+  runs: Record<string, Run>;
 }
 
 const maximumTlcMilliseconds = Number(getOption("--max-tlc-ms") ?? 20000);
@@ -48,6 +55,7 @@ const filter = getOption("--filter");
 const concurrency = Number(getOption("--concurrency") ?? 3);
 const timeoutMilliseconds = Number(getOption("--timeout-ms") ?? 600000);
 const outPath = getOption("--out") ?? join(CONFORMANCE_DIRECTORY, ".engine-coverage.json");
+const backends = getBackends();
 
 // Names of the spec's own definitions and variables would split one missing feature into many rows.
 const normalizeReason = (reason: string) =>
@@ -56,7 +64,7 @@ const normalizeReason = (reason: string) =>
     .replace(/^the (\w+) .+ isn't defined$/, "the $1 <name> isn't defined")
     .replace(/\d+/g, "N");
 
-const runModel = (model: CorpusModel, setting: string, expected: ExpectedResult) =>
+const runModel = (model: CorpusModel, backend: string | undefined, expected: ExpectedResult) =>
   new Promise<Run>((resolve) => {
     const startedAt = performance.now();
     const child = spawn(
@@ -70,7 +78,9 @@ const runModel = (model: CorpusModel, setting: string, expected: ExpectedResult)
       ],
       {
         stdio: ["ignore", "pipe", "pipe"],
-        env: { ...process.env, PROVE_IT_ENGINE: setting },
+        env: backend
+          ? { ...getBackendEnvironment(backend), PROVE_IT_ENGINE: "debug" }
+          : { ...process.env, PROVE_IT_ENGINE: "0" },
         timeout: timeoutMilliseconds,
         killSignal: "SIGKILL",
       },
@@ -102,28 +112,12 @@ const runModel = (model: CorpusModel, setting: string, expected: ExpectedResult)
               ? "mismatch"
               : "match",
         detail: detail ?? outcome?.error,
-        // Notes on how the engine runs, such as closures standing in for generated code, aren't outcomes.
-        engineLine: [...errorOutput.matchAll(/^\[engine\] (.*)$/gm)]
-          .map((match) => match[1])
-          .find((line) => !line.endsWith(" runs as closures")),
+        engineLine: getEngineLine(errorOutput),
         stderr: errorOutput.slice(0, 4000),
         wallMilliseconds: Math.round(performance.now() - startedAt),
       });
     });
   });
-
-const classify = (engineLine: string | undefined) => {
-  if (engineLine === undefined) return { engine: "not reached", reason: undefined };
-  if (engineLine.startsWith("checked ")) return { engine: "completed", reason: undefined };
-  const skipped = /^skipped: (.*)$/.exec(engineLine);
-  if (skipped) return { engine: "skipped", reason: skipped[1] };
-  const handedOver = /^handed over after (\d+) ms: (.*)$/.exec(engineLine);
-  return {
-    engine: "handed over",
-    reason: handedOver?.[2] ?? engineLine,
-    engineMilliseconds: handedOver ? Number(handedOver[1]) : undefined,
-  };
-};
 
 const expectedResults: ExpectedResult[] = JSON.parse(readFileSync(EXPECTED_PATH, "utf8"));
 const expectedById = new Map(expectedResults.map((result) => [result.id, result]));
@@ -157,15 +151,25 @@ const work = async (queue: CorpusModel[]) => {
   for (let model = queue.shift(); model; model = queue.shift()) {
     const expected = expectedById.get(model.id);
     if (!expected) continue;
-    const on = await runModel(model, "debug", expected);
-    const off = await runModel(model, "0", expected);
-    const engine = classify(on.engineLine);
-    const differences = [
-      ...(on.verdict === off.verdict ? [] : [`verdict: on ${on.verdict}, off ${off.verdict}`]),
-      ...OUTCOME_FIELDS.filter((field) => on.outcome?.[field] !== off.outcome?.[field]).map(
-        (field) => `${field}: on ${on.outcome?.[field]}, off ${off.outcome?.[field]}`,
-      ),
-    ];
+    const runs: Record<string, Run> = {};
+    for (const backend of backends) runs[backend] = await runModel(model, backend, expected);
+    const off = await runModel(model, undefined, expected);
+    runs.off = off;
+    const on = runs[backends[0]];
+    const engine = classifyEngineLine(on.engineLine);
+    // With one backend, the engine is on; with several, each is named.
+    const differences = backends.flatMap((backend) => {
+      const name = backends.length > 1 ? backend : "on";
+      const run = runs[backend];
+      return [
+        ...(run.verdict === off.verdict
+          ? []
+          : [`verdict: ${name} ${run.verdict}, off ${off.verdict}`]),
+        ...OUTCOME_FIELDS.filter((field) => run.outcome?.[field] !== off.outcome?.[field]).map(
+          (field) => `${field}: ${name} ${run.outcome?.[field]}, off ${off.outcome?.[field]}`,
+        ),
+      ];
+    });
     const bucket =
       engine.reason === undefined
         ? engine.engine
@@ -180,8 +184,7 @@ const work = async (queue: CorpusModel[]) => {
       engineMilliseconds: engine.engineMilliseconds,
       isSame: differences.length === 0,
       differences,
-      on,
-      off,
+      runs,
     });
     console.log(
       `[${results.length}/${models.length}] ${differences.length === 0 ? "same" : "DIFFERENT"}  ${on.verdict.padEnd(11)} ${bucket.slice(0, 80).padEnd(80)} ${model.id}${differences.length === 0 ? "" : `  ${differences.join("; ")}`}`,
@@ -201,7 +204,7 @@ const tally = (label: string, key: (result: Coverage) => string) =>
         const group = groups.get(key(result)) ?? { models: 0, tlcSeconds: 0, onSeconds: 0 };
         group.models++;
         group.tlcSeconds += result.tlcMilliseconds / 1000;
-        group.onSeconds += result.on.wallMilliseconds / 1000;
+        group.onSeconds += result.runs[backends[0]].wallMilliseconds / 1000;
         return groups.set(key(result), group);
       }, new Map<string, { models: number; tlcSeconds: number; onSeconds: number }>())
       .entries(),
