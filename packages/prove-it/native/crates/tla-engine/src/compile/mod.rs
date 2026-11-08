@@ -17,7 +17,7 @@
 mod bridged;
 mod builtins;
 mod fused;
-mod lazy;
+pub(crate) mod lazy;
 mod nodes;
 mod predicate;
 mod sets;

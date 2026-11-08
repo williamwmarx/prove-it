@@ -9,12 +9,18 @@
 //   equals <i> <j>          answers true or false
 //   member <i> <j>          answers whether value i is an element of set j
 //   fingerprint <i>         answers fingerPrint(FP64.New()) as a signed decimal
+//   enumerate <q|s> <i>     answers "elements" and the fingerprint of each element of set i, in
+//                           the order a quantifier binds them (q, Ordering.NORMALIZED) or the
+//                           order x' \in S assigns them (s, elements())
 //
 // A request TLC fails on answers "!" and the exception's class. A value is written as prefix
 // tokens: T and F, i<int>, s<text> for a string and m<text> for a model value, S<n> for a set of
 // the n values that follow, U<n> for a tuple, R<n> for a record of n field names (as s tokens) and
 // values, and f<n> for a function of n keys and values. A text is its UTF-16 code units in hex,
-// four digits each.
+// four digits each. The sets TLC keeps lazy are built as Tool builds them: Lp for SUBSET of the
+// value that follows, Lf for [D -> R] of the two, Lr<n> for a set of records of n field names (as
+// s tokens) and sets, Lx<n> for the product of n sets, and Lu, Li and Ld for the union,
+// intersection and difference of two, which a set enumeration combines with the other set itself.
 // Usage: javac -cp tla2tools.jar ValueOracle.java && java -cp tla2tools.jar:. ValueOracle
 
 import java.io.BufferedReader;
@@ -26,14 +32,24 @@ import java.util.List;
 
 import tlc2.util.FP64;
 import tlc2.value.impl.BoolValue;
+import tlc2.value.impl.Enumerable;
 import tlc2.value.impl.FcnRcdValue;
 import tlc2.value.impl.IntValue;
 import tlc2.value.impl.ModelValue;
 import tlc2.value.impl.RecordValue;
+import tlc2.value.impl.Reducible;
+import tlc2.value.impl.SetCapValue;
+import tlc2.value.impl.SetCupValue;
+import tlc2.value.impl.SetDiffValue;
 import tlc2.value.impl.SetEnumValue;
+import tlc2.value.impl.SetOfFcnsValue;
+import tlc2.value.impl.SetOfRcdsValue;
+import tlc2.value.impl.SetOfTuplesValue;
 import tlc2.value.impl.StringValue;
+import tlc2.value.impl.SubsetValue;
 import tlc2.value.impl.TupleValue;
 import tlc2.value.impl.Value;
+import tlc2.value.impl.ValueEnumeration;
 import util.UniqueString;
 
 public final class ValueOracle {
@@ -93,9 +109,71 @@ public final class ValueOracle {
         }
         return (Value) new FcnRcdValue(domain, range, false).normalize();
       }
+      case 'L':
+        return readLazy(rest);
       default:
         throw new IllegalArgumentException("unknown token " + token);
     }
+  }
+
+  // A set TLC keeps lazy, as Tool.evalAppl builds it.
+  private Value readLazy(String kind) {
+    switch (kind.charAt(0)) {
+      case 'p':
+        return new SubsetValue(read());
+      case 'f': {
+        final Value domain = read();
+        return new SetOfFcnsValue(domain, read());
+      }
+      case 'r': {
+        final int size = Integer.parseInt(kind.substring(1));
+        final UniqueString[] names = new UniqueString[size];
+        final Value[] sets = new Value[size];
+        for (int index = 0; index < size; index++) {
+          names[index] = UniqueString.uniqueStringOf(decode(tokens[next++].substring(1)));
+          sets[index] = read();
+        }
+        return new SetOfRcdsValue(names, sets, false);
+      }
+      case 'x':
+        return new SetOfTuplesValue(read(Integer.parseInt(kind.substring(1))));
+      case 'u': {
+        final Value left = read();
+        final Value right = read();
+        if (left instanceof Reducible) return ((Reducible) left).cup(right);
+        if (right instanceof Reducible) return ((Reducible) right).cup(left);
+        return new SetCupValue(left, right);
+      }
+      case 'i': {
+        final Value left = read();
+        final Value right = read();
+        if (left instanceof Reducible) return ((Reducible) left).cap(right);
+        if (right instanceof Reducible) return ((Reducible) right).cap(left);
+        return new SetCapValue(left, right);
+      }
+      case 'd': {
+        final Value left = read();
+        final Value right = read();
+        if (left instanceof Reducible) return ((Reducible) left).diff(right);
+        return new SetDiffValue(left, right);
+      }
+      default:
+        throw new IllegalArgumentException("unknown lazy set L" + kind);
+    }
+  }
+
+  private String enumerate(String order, Value set) {
+    final ValueEnumeration elements =
+        order.equals("q")
+            ? ((Enumerable) set).elements(Enumerable.Ordering.NORMALIZED)
+            : ((Enumerable) set).elements();
+    final StringBuilder answer = new StringBuilder("elements");
+    for (Value element = elements.nextElement();
+        element != null;
+        element = elements.nextElement()) {
+      answer.append(' ').append(element.fingerPrint(FP64.New()));
+    }
+    return answer.toString();
   }
 
   private Value get(int index) {
@@ -128,6 +206,8 @@ public final class ValueOracle {
         return Boolean.toString(get(2).member(get(1)));
       case "fingerprint":
         return Long.toString(get(1).fingerPrint(FP64.New()));
+      case "enumerate":
+        return enumerate(tokens[1], get(2));
       default:
         throw new IllegalArgumentException("unknown request " + tokens[0]);
     }
