@@ -1,0 +1,61 @@
+// The native engine declines every model for now, so with PROVE_IT_ENGINE_BACKEND=rust the
+// TypeScript engine checks it, whether the addon loads or not. Each check runs in a process of its
+// own, since a process loads the addon once. The tests that load it run where the addon was built,
+// with PROVE_IT_ENGINE_ADDON naming it, as the native job in verification.yml does.
+
+import { describe, expect, it } from "bun:test";
+import { spawnSync } from "node:child_process";
+import { join } from "node:path";
+
+const COMMIT = join(import.meta.dirname, "../fixtures/commit");
+const SOURCE_CLI = join(import.meta.dirname, "../../src/cli.ts");
+const BUILT_CLI = join(import.meta.dirname, "../../dist/cli.js");
+const ADDON = process.env.PROVE_IT_ENGINE_ADDON;
+
+const getEngineLines = (runtime: string, cli: string, env: Record<string, string | undefined>) => {
+  const run = spawnSync(runtime, [cli, "Commit.cfg"], {
+    cwd: COMMIT,
+    encoding: "utf8",
+    env: { ...process.env, PROVE_IT_ENGINE_ADDON: undefined, PROVE_IT_ENGINE: "debug", ...env },
+  });
+  expect(run.status).toBe(0);
+  return run.stderr.split("\n").filter((line) => line.startsWith("[engine] "));
+};
+
+describe("the native engine", () => {
+  it("is left alone by default", () => {
+    const lines = getEngineLines("bun", SOURCE_CLI, { PROVE_IT_ENGINE_BACKEND: undefined });
+    expect(lines).toEqual([expect.stringMatching(/^\[engine\] checked 251 states on 1 thread /)]);
+  });
+
+  it.each(["rust", "auto"])(
+    "leaves the model to the TypeScript engine with %s when it can't load the addon",
+    (backend) => {
+      const missing = join(COMMIT, "missing.node");
+      const lines = getEngineLines("bun", SOURCE_CLI, {
+        PROVE_IT_ENGINE_BACKEND: backend,
+        PROVE_IT_ENGINE_ADDON: missing,
+      });
+      expect(lines).toEqual([
+        expect.stringContaining(`[engine] native: unavailable: can't load ${missing}: `),
+        expect.stringMatching(/^\[engine\] checked 251 states on 1 thread /),
+      ]);
+    },
+  );
+
+  it.if(ADDON !== undefined).each([
+    ["bun", SOURCE_CLI],
+    ["node", BUILT_CLI],
+  ])("declines in %s, and the TypeScript engine checks the model", (runtime, cli) => {
+    const lines = getEngineLines(runtime, cli, {
+      PROVE_IT_ENGINE_BACKEND: "rust",
+      PROVE_IT_ENGINE_ADDON: ADDON,
+    });
+    expect(lines).toEqual([
+      expect.stringMatching(
+        /^\[engine\] native: declined: the native engine compiles nothing yet \(\d+\.\d\d ms\)$/,
+      ),
+      expect.stringMatching(/^\[engine\] checked 251 states on 1 thread /),
+    ]);
+  });
+});

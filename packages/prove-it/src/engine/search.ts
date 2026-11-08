@@ -13,7 +13,18 @@ import type { Environment } from "../evaluate";
 import type { TlcVersion } from "../tlc/version";
 import type { Value } from "../values";
 import { resetAssigned, shortcuts } from "./action";
-import { EPOCH, nextEpoch, resetCompileState, setCurrent, setNext } from "./compile";
+import {
+  DISTINCT_SLOT,
+  EPOCH,
+  LEVEL_SLOT,
+  LOC,
+  NEXT_LEVEL_SLOT,
+  nextEpoch,
+  resetCompileState,
+  setCurrent,
+  setNext,
+  tlc,
+} from "./compile";
 import {
   createEngineContext,
   type EngineProperties,
@@ -35,7 +46,7 @@ import {
 } from "./parallel";
 import { getEnvironmentFlag, getStopAt } from "./settings";
 import { writeStateLog } from "./state-log";
-import { bail, Bailout, freezeTexts, getValueCount, resetStore, shareStore } from "./store";
+import { bail, Bailout, freezeTexts, getValueCount, int, resetStore, shareStore } from "./store";
 import { createCanonicalizer, type NamedPermutation } from "./symmetry";
 import { type EngineWorkers, spawnEngineWorkers } from "./workers";
 
@@ -52,6 +63,8 @@ export interface EngineInput {
   // reports them.
   onInitialStatesStarted: () => void;
   onInitialStates: (generated: number, distinct: number) => void;
+  // Prints a line the spec prints.
+  onPrint: (text: string) => void;
   startedAt: number;
   properties: EngineProperties;
   // The symmetry group, as the model values each permutation moves.
@@ -138,6 +151,7 @@ export const runEngine = (input: EngineInput): EngineResult => {
     input.spec,
     input.isWarningEnabled,
     input.properties,
+    !input.isRecordingGraph,
   );
   const width = context.width;
   const constraints = context.constraints;
@@ -265,18 +279,41 @@ export const runEngine = (input: EngineInput): EngineResult => {
   let initialGenerated = 0;
   let depth = 0;
 
+  // TLCGet("distinct") counts the states found so far, and a new state before its checks.
+  const setDistinct = (count: number) => {
+    tlc.distinct = count;
+    if (tlc.isDistinctRead) LOC[DISTINCT_SLOT] = int(count);
+  };
+  // What the spec prints while the engine computes the initial states or expands a state goes out
+  // once that's done: if the engine hands over, the interpreter does it again.
+  const flushOutput = () => {
+    const lines = tlc.output;
+    if (lines.length === 0) return;
+    tlc.output = [];
+    for (const line of lines) {
+      if (typeof line === "string") input.onPrint(line);
+      else input.onProgress?.({ kind: "initial-states-progress", count: line });
+    }
+  };
+
   // --- initial states ---
   const current = new Int32Array(width).fill(-1);
   const next = new Int32Array(width).fill(-1);
   // The initial predicate assigns the current state in place, so nothing caches by its epoch.
   setCurrent(current, 0);
   setNext(next);
+  // TLCGet("level") is 0 in the initial predicate and 1 in the checks of an initial state.
+  LOC[LEVEL_SLOT] = int(0);
+  setDistinct(0);
   input.onInitialStatesStarted();
   context.initStep(() => {
     for (let index = 0; index < width; index++)
       if (current[index] === -1) bail("an initial state that isn't complete");
+    LOC[LEVEL_SLOT] = int(1);
     if (initialGenerated > 1 && (initialGenerated & (initialGenerated - 1)) === 0) {
-      input.onProgress?.({ kind: "initial-states-progress", count: initialGenerated });
+      // A count after what the initial predicate printed waits with it.
+      if (tlc.output.length > 0) tlc.output.push(initialGenerated);
+      else input.onProgress?.({ kind: "initial-states-progress", count: initialGenerated });
     }
     const state = current;
     generated++;
@@ -286,6 +323,7 @@ export const runEngine = (input: EngineInput): EngineResult => {
     const slot = key ? findSlot(key) : -1;
     const isSeen = isInModel && table[2 * slot + 1] !== -1;
     if (!isSeen) {
+      if (isInModel) setDistinct(stateCount + 1);
       if (!holdsAll(context.initialInvariants)) bail("an invariant violated in an initial state");
       if (!holdsAll(context.initialPredicates)) bail("a property violated in an initial state");
       if (isInModel) {
@@ -293,7 +331,9 @@ export const runEngine = (input: EngineInput): EngineResult => {
         depth = 1;
       }
     }
+    LOC[LEVEL_SLOT] = int(0);
   });
+  flushOutput();
   const initialStates = { generated: initialGenerated, distinct: stateCount };
   input.onInitialStates(initialGenerated, stateCount);
 
@@ -368,23 +408,35 @@ export const runEngine = (input: EngineInput): EngineResult => {
 
   // The epoch of the state being expanded, which its successors put back once checked.
   let expansionEpoch = 0;
+  // The ids of the level of the state being expanded and of its successors, for TLCGet("level").
+  let levelId = 0;
+  let nextLevelId = 0;
+  const setSuccessorCurrent = (successor: Int32Array, successorEpoch: number) => {
+    setCurrent(successor, successorEpoch);
+    LOC[LEVEL_SLOT] = nextLevelId;
+  };
+  const setExpandedCurrent = () => {
+    setCurrent(current, expansionEpoch);
+    LOC[LEVEL_SLOT] = levelId;
+  };
   const visitSuccessor = () => {
     successors++;
     generated++;
     const successor = next;
     const successorEpoch = nextEpoch();
-    setCurrent(successor, successorEpoch);
+    setSuccessorCurrent(successor, successorEpoch);
     // The state being expanded is in the model, so each constraint and invariant held of it.
     const isStateInModel = holdsAllChanged(constraints, constraintVars, successor, current);
     const key = isStateInModel ? getKey(successor) : undefined;
-    setCurrent(current, expansionEpoch);
+    setExpandedCurrent();
     const isInModel = isStateInModel && holdsAll(actionConstraints);
     const slot = isInModel ? findSlot(key!) : -1;
     const isNew = isInModel && table[2 * slot + 1] === -1;
+    if (isNew) setDistinct(stateCount + 1);
     if (!isInModel || isNew) {
-      setCurrent(successor, successorEpoch);
+      setSuccessorCurrent(successor, successorEpoch);
       const holds = holdsAllChanged(invariants, invariantVars, successor, current);
-      setCurrent(current, expansionEpoch);
+      setExpandedCurrent();
       if (!holds) bail("an invariant violated");
     }
     if (graph && isInModel) recordEdge(isNew ? stateCount : table[2 * slot + 1]);
@@ -450,6 +502,7 @@ export const runEngine = (input: EngineInput): EngineResult => {
     const go: GoMessage = { type: "go", store, search: views.buffers };
     workers?.post(go);
     const keys = views.keys;
+    tlc.isShared = true;
     try {
       for (;;) {
         const start = expanding;
@@ -477,8 +530,10 @@ export const runEngine = (input: EngineInput): EngineResult => {
         if (added.length === 0) return true;
       }
     } finally {
+      tlc.isShared = false;
       stopWorkers(views);
       reloadFrom(views);
+      setDistinct(stateCount);
     }
   };
 
@@ -532,7 +587,7 @@ export const runEngine = (input: EngineInput): EngineResult => {
       if (expanding === levelEnd) {
         level++;
         levelEnd = stateCount;
-        if (canShare) {
+        if (canShare && !tlc.isUsed) {
           const elapsed = performance.now() - startedAt;
           if (!parallel.isSpawned && elapsed >= WORKER_SPAWN_MS) {
             parallel.isSpawned = true;
@@ -573,7 +628,10 @@ export const runEngine = (input: EngineInput): EngineResult => {
       newStates = 0;
       successors = 0;
       expansionEpoch = nextEpoch();
-      setCurrent(current, expansionEpoch);
+      levelId = int(level);
+      nextLevelId = int(level + 1);
+      setExpandedCurrent();
+      LOC[NEXT_LEVEL_SLOT] = nextLevelId;
       setNext(next);
       if (!actionSteps) context.nextStep(onSuccessor);
       else {
@@ -591,6 +649,7 @@ export const runEngine = (input: EngineInput): EngineResult => {
       if (successors === 0 && config.checkDeadlock) bail("deadlock");
       if (graph) recordExpansion(expanding);
       outDegrees[Math.min(newStates, OUT_DEGREE_BUCKETS - 1)]++;
+      flushOutput();
       if ((expanding & 0xff) === 0) reportProgress();
     }
   } catch (error) {

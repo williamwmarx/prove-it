@@ -2,10 +2,11 @@
 // state's variables in the order of SANY's symbol table. This reproduces both orders.
 import type { Module, SourceLocation } from "../ast";
 import type { ConfigValue, ModelConfig } from "../config";
-import { createMissingModuleError } from "../errors";
+import { createMissingModuleError, TlaSyntaxError } from "../errors";
 import { type Token, tokenize } from "../lexer";
 import { extractModule, parseModule, parseModuleTokens } from "../parser";
 import { isBefore } from "../resolve";
+import type { SanyReading } from "../sany/source";
 import {
   SANY_BUILTINS,
   SANY_NODE_NAMES,
@@ -269,10 +270,12 @@ interface ModuleText {
 }
 
 // A module's source is read into tokens once, and parsed from them once, for every order and for
-// the environment that evaluates it.
-const readModuleText = (text: string | undefined): ModuleText => {
-  const tokens = text === undefined ? [] : tokenize(text);
-  const parsed = { module: undefined as Module | undefined };
+// the environment that evaluates it. SANY's parser reads a text it accepts as TLC's does, so the
+// order takes the tokens and module of a text SANY read.
+const readModuleText = (text: string | undefined, reading: SanyReading | undefined): ModuleText => {
+  const module = reading?.module instanceof TlaSyntaxError ? undefined : reading?.module;
+  const tokens = (module && reading?.tokens) ?? (text === undefined ? [] : tokenize(text));
+  const parsed = { module: reading?.isUnboxed ? undefined : module };
   return {
     tokens,
     ranges: getRanges(tokens),
@@ -284,7 +287,11 @@ const readModuleText = (text: string | undefined): ModuleText => {
 // The modules TLC reads for a spec: the root module, TLC's standard modules, the files the loader
 // returns, the modules that follow the root module, and the modules nested in any of these. A
 // module without a source has no tokens.
-const createModuleSet = (source: string, loadModule: ModuleLoader) => {
+const createModuleSet = (
+  source: string,
+  loadModule: ModuleLoader,
+  readings: ReadonlyMap<string, SanyReading> | undefined,
+) => {
   const files = new Map<string, ParsedModule>();
   const nestedModules = new Map<string, ParsedModule>();
   // The read of each module text, so that the environment parses a text the order read only once.
@@ -292,7 +299,7 @@ const createModuleSet = (source: string, loadModule: ModuleLoader) => {
   const readText = (text: string | undefined) => {
     const known = text === undefined ? undefined : texts.get(text);
     if (known) return known;
-    const read = readModuleText(text);
+    const read = readModuleText(text, text === undefined ? undefined : readings?.get(text));
     if (text !== undefined) texts.set(text, read);
     return read;
   };
@@ -580,9 +587,13 @@ export interface TlcOrder {
 }
 
 // One check reads the spec's modules once, and every order shares their tokens, parses and
-// contexts.
-export const createTlcOrder = (source: string, loadModule: ModuleLoader): TlcOrder => {
-  const modules = createModuleSet(source, loadModule);
+// contexts. The readings are those of the texts of a spec SANY accepted.
+export const createTlcOrder = (
+  source: string,
+  loadModule: ModuleLoader,
+  readings?: ReadonlyMap<string, SanyReading>,
+): TlcOrder => {
+  const modules = createModuleSet(source, loadModule, readings);
   const getParsed = modules.getParsed;
   let contexts: ReturnType<typeof createContexts> | undefined;
   const getContexts = () => (contexts ??= createContexts(getParsed));

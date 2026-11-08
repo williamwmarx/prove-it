@@ -32,7 +32,8 @@ packages/prove-it/tests/conformance/.engine-coverage.json
 packages/prove-it/tests/conformance/.differential.json
 packages/prove-it/.bench-suite.json
 
-# Rust build output and the addons it makes
+# Rust build output, the addons it makes and their packages
 packages/prove-it/native/**/target/
 packages/prove-it/native/**/*.node
 packages/prove-it/native/**/*.node.mjs
+packages/prove-it/native/npm/

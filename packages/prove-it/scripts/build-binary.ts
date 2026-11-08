@@ -2,15 +2,19 @@
 // has compiled to bytecode ahead of time, so a run neither parses nor compiles the bundle first.
 // With --aot, Bun compiles it to machine code instead (Bun's ahead-of-time compiler, in its canary
 // builds: scripts/ci/bootstrap.sh bun-canary), as dist/prove-it-aot. Then it runs the executable
-// on models that need what it embeds.
+// on models that need what it embeds. It embeds the native engine too when
+// scripts/platform-packages.ts has built it for this platform, and checks that the executable loads
+// it.
 // Usage: bun scripts/build-binary.ts [--aot]
 
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
+import { ADDON_FILE } from "../src/engine/native";
 import { createSanySnapshot } from "../src/sany/snapshot";
+import { NPM_DIRECTORY, PLATFORMS } from "./platform-packages";
 
 const PACKAGE_DIRECTORY = join(import.meta.dirname, "..");
 // The ahead-of-time executable embeds a file at its path from the package, and fails to build
@@ -21,6 +25,20 @@ const SNAPSHOT_PATH = join(PACKAGE_DIRECTORY, EMBEDDED_DIRECTORY, "sany-snapshot
 
 mkdirSync(dirname(SNAPSHOT_PATH), { recursive: true });
 writeFileSync(SNAPSHOT_PATH, JSON.stringify(createSanySnapshot()));
+
+// The addon goes beside the snapshot, where the loader looks for it.
+const addonPath = join(PACKAGE_DIRECTORY, EMBEDDED_DIRECTORY, ADDON_FILE);
+const builtAddon = PLATFORMS.filter(
+  (platform) => platform.os === process.platform && platform.cpu === process.arch,
+)
+  .map((platform) => join(NPM_DIRECTORY, platform.name, ADDON_FILE))
+  .find((path) => existsSync(path));
+rmSync(addonPath, { force: true });
+if (builtAddon === undefined) {
+  console.error("No native engine is built for this platform, so the executable goes without it");
+} else {
+  copyFileSync(builtAddon, addonPath);
+}
 
 const isAheadOfTime = process.argv.includes("--aot");
 const outfile = join(PACKAGE_DIRECTORY, isAheadOfTime ? "dist/prove-it-aot" : "dist/prove-it");
@@ -37,7 +55,7 @@ const result = await Bun.build({
     // Bun 1.4.4 doesn't know aot yet; its canary does.
     ...(isAheadOfTime ? ({ aot: true } as object) : {}),
     // The CLI reads the snapshot from beside itself, where the executable embeds it.
-    assets: [SNAPSHOT_PATH],
+    assets: [SNAPSHOT_PATH, ...(builtAddon === undefined ? [] : [addonPath])],
     autoloadDotenv: false,
     autoloadBunfig: false,
   },
@@ -77,13 +95,27 @@ const checks = [
     directory: "benchmarks/commit",
     args: ["Commit.cfg"],
     env: { PROVE_IT_ENGINE: "debug", PROVE_IT_WORKERS: "2" },
-    expected: " on 2 threads ",
+    expected: [" on 2 threads "],
   },
   {
     directory: "tests/fixtures/commit",
     args: ["-workers", "2", "Commit.cfg"],
     env: { PROVE_IT_ENGINE: "0" },
   },
+  ...(builtAddon === undefined
+    ? []
+    : [
+        {
+          directory: "tests/fixtures/commit",
+          args: ["Commit.cfg"],
+          env: {
+            PROVE_IT_ENGINE: "debug",
+            PROVE_IT_ENGINE_BACKEND: "rust",
+            PROVE_IT_ENGINE_ADDON: undefined,
+          },
+          expected: ["[engine] native: declined: ", " on 1 thread "],
+        },
+      ]),
   {
     directory: "tests/fixtures/obligations",
     args: ["tlapm", "--threads", "2", "--cache-dir", cacheDirectory, "Proofs.tla"],
@@ -97,7 +129,7 @@ const failures = checks.flatMap((check) => {
     encoding: "utf8",
   });
   const isPassed =
-    run.status === 0 && (check.expected === undefined || run.stderr.includes(check.expected));
+    run.status === 0 && (check.expected ?? []).every((expected) => run.stderr.includes(expected));
   return isPassed ? [] : [`${check.args.join(" ")} in ${check.directory}:\n${run.stderr}`];
 });
 rmSync(cacheDirectory, { recursive: true, force: true });

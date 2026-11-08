@@ -4,8 +4,8 @@ A design for a Rust model checker that is faster than today's Prove It and print
 TLC prints, staged so that every step ships on its own, is measurably faster, and is proven
 identical to TLC and to the TypeScript checker before it is switched on.
 
-Status: proposal. Nothing in the repository was changed. Every number marked *measured* comes from
-the prototypes under `native/prototypes/` (section 10) on a local 4-core cloud machine
+Status: proposal, with M1 built (its outcome is in section 11). Every number marked *measured*
+comes from the prototypes under `native/prototypes/` (section 10) on a local 4-core cloud machine
 (Rust 1.97.0, Bun 1.4.4, Node 22.23.4). Those timings vary by about 10% between runs. Depot
 numbers come from the benchmark of `main` at f284739 (run cb7zd2w63s), as summarised on the
 headroom page.
@@ -1364,6 +1364,62 @@ On a 4-core machine, against the 733 models with TLC under 20 s:
 - a package without the platform addon installs with `--ignore-scripts` and runs on the TS
   engine;
 - `release.yml` dry-run packs all packages.
+
+**Outcome** (branch `native-m1-crate`; measured on the 4-core cloud machine, not on Depot yet):
+- **Binding.** Hand-written N-API (`crates/prove-it-napi/src/binding.rs`), so the crate has no
+  dependencies at all and `Cargo.lock` lists only itself. It exports `abiVersion()` (1) and
+  `check(ir: Uint8Array)`, which reads the bytes in place and returns
+  `{ status: "declined", reason }`. A panic or a wrong argument becomes a JavaScript `Error` or
+  `TypeError` through `catch_unwind`. The release profile strips the addon: 272 KB on Linux x64.
+- **Loader.** `src/engine/native.ts` runs in `tryEngine` after the eligibility checks when
+  `PROVE_IT_ENGINE_BACKEND` is `rust` or `auto` (the two are the same until M7), and reports
+  `[engine] native: declined: <reason> (<ms> ms)` or `[engine] native: unavailable: <reason>`
+  before the TS engine's line. It finds the addon at `PROVE_IT_ENGINE_ADDON` if set (a new
+  environment variable, for development and CI), else beside the CLI in an executable, else in
+  the first of `@atemp/prove-it-<platform>-<arch>[-gnu|-musl|-msvc]` that `import.meta.resolve`
+  finds. It loads it once per process. The `dist/native/<triple>/` fallback of 7.1 is not built:
+  nothing vendors addons yet.
+- **Load time**, the whole `checkNatively()` (resolve, `process.dlopen`, `abiVersion`, `check`),
+  warm: 0.48–0.63 ms in Bun and 0.66–0.74 ms in Node through the installed platform package;
+  `process.dlopen` alone is 0.27–0.41 ms in Bun and 0.11–0.25 ms in Node. Two costs were avoided
+  to get there: `process.getBuiltinModule("node:url")` takes Bun 1.5–1.8 ms on first use, so a
+  file URL becomes a path by hand, and each `import.meta.resolve` miss costs Node about 0.6 ms, so
+  the loader stops at the first package it finds.
+- **Executables.** Bun's compiler embeds the addon as an asset in both the bytecode and the AOT
+  executable (canary 1.4.4-canary.20261107.1), and `process.dlopen` loads it from
+  `/$bunfs/root/...`: Bun writes it once to the temporary directory as `.bun-0-<hash>.node` and
+  reuses it. Warm loads: 0.48–0.62 ms in the bytecode binary (1.39 ms on the first run) and
+  0.38–0.54 ms in the AOT one. So no beside-the-binary fallback is needed. `build-binary.ts`
+  embeds the addon only when `platform-packages.ts build` has built it, and then checks
+  `[engine] native: declined: ` and ` on 1 thread `.
+- **Packaging.** `scripts/platform-packages.ts` (not `scripts/dist.ts`, which is the prove
+  scripts' import of the built package) builds the addon with cargo and writes
+  `native/npm/<platform>/` with `prove-it-engine.node`, `LICENSE` and a `package.json` carrying
+  the main package's version and `os`, `cpu` and `libc`; `pack <destination>` packs each one
+  built. Only `linux-x64-gnu` is built: `bootstrap.sh` pins Linux x64 alone.
+- **CI.** `verification.yml` has a `native` job, required by Gate: Cargo Build (the addon, then
+  `tests/unit/native.test.ts` with it in Bun from the sources and in Node from `dist`), Cargo Test,
+  Cargo Clippy (`-D warnings`), Cargo Fmt, and Packages, which packs the main package and the
+  platform package as `release.yml` does and installs them with `--ignore-scripts` into an empty
+  project: the main package alone reports `native: unavailable` and checks Commit on the TS
+  engine, and with the platform package it reports `native: declined`. `release.yml` builds and
+  packs the platform package beside the main tarball and publishes only the main one.
+  `bootstrap.sh rust` now installs clippy and rustfmt too.
+- **Tests.** `bun run test` passes with `PROVE_IT_ENGINE_BACKEND=rust`, with the addon (2,872
+  pass) and without it (every check reports `unavailable`). `engine.test.ts`'s `checkInEngine`
+  now collects only the TS engine's `[engine]` lines.
+
+**Left for the maintainer before any platform package is published:**
+- create the seven `@atemp/prove-it-<platform>` packages on npm, or confirm that the release
+  token (`NPM_TOKEN` in the 1Password Environment) may publish new packages in the `@atemp`
+  scope; a granular token limited to `@atemp/prove-it` cannot;
+- then add the publish of each packed platform package to `release.yml`, before the main
+  package, and list them in the main package's `optionalDependencies` at the same version. Until
+  they exist on npm, listing them would make every install try to fetch them;
+- build the other platforms: arm64 and musl need their `rust-std` and a linker (or Depot's arm64
+  runner), macOS needs a macOS runner, and Windows needs an import library for the `napi_*`
+  symbols, which the hand-written binding does not provide yet (napi-rs's `napi-sys` can
+  resolve them at load time instead). A platform that is not built is not packed, and its users get the TS engine.
 
 ### M2. Values and fingerprints (`tla-values`)
 

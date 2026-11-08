@@ -359,8 +359,10 @@ export const getStateFingerprints = (
   };
   for (let state = 0; state < count; state++) {
     const offset = state * width;
+    // An initial state, which has no parent, mostly differs from the one before it in a few values.
     const parent = parents === undefined ? -1 : parents[state];
-    if (parent >= 0 && parent < state && isFromEarlier(offset, parent)) {
+    const earlier = parent === -1 ? state - 1 : parent;
+    if (earlier >= 0 && earlier < state && isFromEarlier(offset, earlier)) {
       words[2 * state] = shiftedLow;
       words[2 * state + 1] = shiftedHigh;
       continue;

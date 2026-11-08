@@ -24,6 +24,13 @@ export const getCodegenSetting = () =>
 // and =check does both and throws where they differ.
 export const getFingerprintSetting = () => getEnvironment()?.PROVE_IT_FINGERPRINT;
 
+// PROVE_IT_ENGINE_BACKEND=rust or =auto tries the native engine before the TypeScript one, which
+// checks whatever the native engine declines; ts, the default, goes straight to the TypeScript one.
+// PROVE_IT_ENGINE_ADDON loads the native engine from that path rather than its platform's package.
+export const getEngineBackend = () => getEnvironment()?.PROVE_IT_ENGINE_BACKEND ?? "ts";
+
+export const getEngineAddon = () => getEnvironment()?.PROVE_IT_ENGINE_ADDON;
+
 export const getEnvironmentFlag = (name: string) => getEnvironment()?.[name] === "1";
 
 // The state PROVE_IT_STOP_AT names, before whose expansion the engine's search stops, or -1.
