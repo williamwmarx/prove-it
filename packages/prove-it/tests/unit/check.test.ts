@@ -1435,6 +1435,28 @@ describe("evaluation errors match TLC", () => {
     );
   });
 
+  // TLC's Json.textSerialize evaluates IOUtils's Serialize unless the format is NDJSON.
+  it.each([
+    [
+      '[format |-> "TXT"]',
+      "Attempted to enumerate a set of the form [l1 : v1, ..., ln : vn],\nbut can't enumerate the value of the `exitValue' field:\nInt",
+    ],
+    ["42", "The third argument of ndJsonSerialize should be a sequence, but instead it is:\n42"],
+    ["<<>>", "Attempted to access nonexistent field 'format' of record\n[]"],
+  ])("reports a failure in IOUtils's Serialize with %s as Json's", async (options, error) => {
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS Naturals, IOUtils\nVARIABLE x\nASSUME Serialize(1, "/tmp/x", ${options}).exitValue = 0\nInit == x = 0\nNext == UNCHANGED x\n====`,
+      config: "INIT Init\nNEXT Next",
+      loadModule: (name) =>
+        name === "IOUtils"
+          ? "---- MODULE IOUtils ----\nEXTENDS Integers\nSerialize(value, dest, options) == CHOOSE r \\in [exitValue : Int, stdout : STRING, stderr : STRING] : TRUE\n===="
+          : undefined,
+    });
+    expect(result.violation?.message).toBe(
+      `Attempted to apply the operator overridden by the Java method\npublic static synchronized tlc2.value.impl.Value tlc2.module.Json.textSerialize(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel),\nbut it produced the following error:\n${error}`,
+    );
+  });
+
   it("reports a CASE with no true guard in the next-state relation like TLC", async () => {
     const result = await check({
       source:

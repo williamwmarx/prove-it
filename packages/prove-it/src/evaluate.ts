@@ -12,7 +12,7 @@ import {
   type RecordField,
   type SourceRange,
 } from "./ast";
-import { getKindString, reportAsJavaFailure } from "./builtins";
+import { getJavaClassName, getKindString, reportAsJavaFailure } from "./builtins";
 import { generateEvaluator } from "./codegen";
 import {
   type DefinitionFacts,
@@ -20,7 +20,12 @@ import {
   isImpureDefinition,
   isNonconstant,
 } from "./dependencies";
-import { isStackOverflow, TlaEvaluationError, TlaUnassignedError } from "./errors";
+import {
+  isStackOverflow,
+  TlaEvaluationError,
+  TlaUnassignedError,
+  TlaUnsupportedError,
+} from "./errors";
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import { contextualApplications } from "./instances";
 import { prettyPrint } from "./pretty-print";
@@ -1401,6 +1406,47 @@ const compileClosureCall = (
   };
 };
 
+const TEXT_SERIALIZE_SIGNATURE =
+  "public static synchronized tlc2.value.impl.Value tlc2.module.Json.textSerialize(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel)";
+
+const isTextSerialized = (closure: Closure, environment: Environment) =>
+  environment.runtime.version !== "1.7.4" &&
+  closure.name === "Serialize" &&
+  closure.params.length === 3 &&
+  closure.body.location.range?.module === "IOUtils";
+
+// Json.textSerialize, an @Evaluation method of TLC's for IOUtils's Serialize, reads the format from
+// the options, writes NDJSON itself, and otherwise evaluates the definition, reporting any failure
+// as its own.
+const compileTextSerialize = (closure: Closure, args: Expression[], environment: Environment) => {
+  const call = compileClosureCall(closure, args, environment);
+  const options = getEvaluator(args[2], environment);
+  return reportAsJavaFailure(TEXT_SERIALIZE_SIGNATURE, true, (context: Context) => {
+    const value = options(context);
+    const fields = isFunctionValue(value) ? toFiniteFunction(value).domain : [];
+    if (!isFunctionValue(value) || fields.some((key) => typeof key !== "string")) {
+      throw new TlaEvaluationError(
+        `The third argument of ndJsonSerialize should be a sequence, but instead it is:\n${formatValue(value)}`,
+      );
+    }
+    // Value.toRcd makes an empty function the empty record.
+    if (fields.length === 0) {
+      throw new TlaEvaluationError("Attempted to access nonexistent field 'format' of record\n[]");
+    }
+    const format = applyFunction(value, "format");
+    if (typeof format !== "string") {
+      const javaClass = `tlc2.value.impl.${getJavaClassName(format)}`;
+      throw new TlaEvaluationError(
+        `class ${javaClass} cannot be cast to class tlc2.value.impl.StringValue (${javaClass} and tlc2.value.impl.StringValue are in unnamed module of loader 'app')`,
+      );
+    }
+    if (format === "NDJSON") {
+      throw new TlaUnsupportedError("IOUtils's Serialize with the NDJSON format is not supported");
+    }
+    return call(context);
+  });
+};
+
 const compileApply = (
   expression: Expression & { kind: "Apply" },
   environment: Environment,
@@ -1421,7 +1467,11 @@ const compileApply = (
   const global = isLocallyResolved(expression)
     ? undefined
     : resolveGlobalOperator(expression.operator, environment);
-  if (global?.kind === "Closure") return compileClosureCall(global, args, environment);
+  if (global?.kind === "Closure") {
+    return isTextSerialized(global, environment)
+      ? compileTextSerialize(global, args, environment)
+      : compileClosureCall(global, args, environment);
+  }
   if (global?.kind === "Builtin" && global.name === "DOMAIN") {
     const operand = getEvaluator(args[0], environment);
     const domain = getDomainOperator(expression);
