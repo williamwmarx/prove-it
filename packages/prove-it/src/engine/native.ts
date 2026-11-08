@@ -285,22 +285,26 @@ const createNativeOracle = (
 ): LiveOracle => {
   const positions = new Map(atoms.map((atom, position) => [atom, position]));
   const edgeCount = graph.edges.length;
-  const reported = new Set<number>();
+  const reported = new Set<number | string>();
   const report = { isReported: false };
+  // Reports, once each, why the interpreter answers a question.
+  const leave = (reason: number | string) => {
+    if (!reported.has(reason)) {
+      reported.add(reason);
+      reportEngine(
+        `leaves a temporal predicate to the interpreter: ${typeof reason === "string" ? reason : graph.unknown[reason]}`,
+      );
+    }
+    return undefined;
+  };
   const toAnswer = (answer: number | undefined) =>
     answer === 1 ? true : answer === 0 ? false : undefined;
   return (expression, state, next) => {
     const position = positions.get(expression);
-    const index = position === undefined ? undefined : getIndex(state);
-    if (position === undefined || index === undefined) return undefined;
-    const unknown = graph.unknown[position];
-    if (unknown !== "") {
-      if (!reported.has(position)) {
-        reported.add(position);
-        reportEngine(`leaves a temporal predicate to the interpreter: ${unknown}`);
-      }
-      return undefined;
-    }
+    if (position === undefined) return leave("not among the atoms");
+    const index = getIndex(state);
+    if (index === undefined) return undefined;
+    if (graph.unknown[position] !== "") return leave(position);
     const table = graph.tables[position];
     if (expression.kind !== "Action") {
       const isFromSteps = graph.fromSteps[position] === 1;
@@ -322,11 +326,11 @@ const createNativeOracle = (
     const nextIndex = next && getIndex(next);
     if (nextIndex === undefined) return undefined;
     if (nextIndex === index) return toAnswer(table[edgeCount + index]);
-    if (index >= graph.expanded) return undefined;
+    if (index >= graph.expanded) return leave("a step from a state the search didn't expand");
     for (let edge = edgeOffsets[index]; edge < edgeOffsets[index + 1]; edge++) {
       if (graph.edges[edge] === nextIndex) return toAnswer(table[edge]);
     }
-    return undefined;
+    return leave("a step the search didn't take");
   };
 };
 
