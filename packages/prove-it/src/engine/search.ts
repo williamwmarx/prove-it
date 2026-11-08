@@ -44,7 +44,7 @@ import {
   seedState,
   stopWorkers,
 } from "./parallel";
-import { getEnvironmentFlag, getStopAt } from "./settings";
+import { getEnvironmentFlag, getStopAt, isStoreTraced } from "./settings";
 import { writeStateLog } from "./state-log";
 import { bail, Bailout, freezeTexts, getValueCount, int, resetStore, shareStore } from "./store";
 import { createCanonicalizer, type NamedPermutation } from "./symmetry";
@@ -479,7 +479,8 @@ export const runEngine = (input: EngineInput): EngineResult => {
     typeof SharedArrayBuffer === "function" &&
     typeof Atomics.wait === "function" &&
     !getEnvironmentFlag("PROVE_IT_SERIAL") &&
-    stopAt === -1;
+    stopAt === -1 &&
+    !isStoreTraced();
   // How many states the search had found when the workers joined.
   let seeded = 0;
   const parallel: { workers?: EngineWorkers; isSpawned: boolean; threads: number } = {
