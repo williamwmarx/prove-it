@@ -1,0 +1,65 @@
+@!@!@STARTMSG 2262:0 @!@!@
+TLC2 Version 2026.11.08.065739 (rev: ${git.shortRevision})
+@!@!@ENDMSG 2262 @!@!@
+@!@!@STARTMSG 2187:0 @!@!@
+Running breadth-first search Model-Checking with fp 0 and seed 4 with 1 worker on 4 cores with 3420MB heap and 64MB offheap memory [pid: 2661] (Linux 6.18.44-fc-v310 amd64, Ubuntu 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
+@!@!@ENDMSG 2187 @!@!@
+@!@!@STARTMSG 2220:0 @!@!@
+Starting SANY...
+@!@!@ENDMSG 2220 @!@!@
+Parsing file /home/user/prove-it/packages/prove-it/tests/fixtures/cli-output/FailedInvariant.tla
+Parsing file /tmp/tlc-3591637531543248311/Naturals.tla (jar:file:/tmp/tlaplus/tlatools/org.lamport.tlatools/dist/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Semantic processing of module Naturals
+Semantic processing of module FailedInvariant
+Linting of module FailedInvariant
+@!@!@STARTMSG 2219:0 @!@!@
+SANY finished.
+@!@!@ENDMSG 2219 @!@!@
+@!@!@STARTMSG 2185:0 @!@!@
+Starting... (2026-11-08 07:03:40)
+@!@!@ENDMSG 2185 @!@!@
+@!@!@STARTMSG 2189:0 @!@!@
+Computing initial states...
+@!@!@ENDMSG 2189 @!@!@
+@!@!@STARTMSG 2190:0 @!@!@
+Finished computing initial states: 1 distinct state generated at 2026-11-08 07:03:40.
+@!@!@ENDMSG 2190 @!@!@
+@!@!@STARTMSG 2111:1 @!@!@
+Evaluating invariant Inv failed.
+@!@!@STARTMSG 2179:0 @!@!@
+The second argument of \div is 0.
+@!@!@ENDMSG 2179 @!@!@
+@!@!@ENDMSG 2111 @!@!@
+@!@!@STARTMSG 2121:1 @!@!@
+The behavior up to this point is:
+@!@!@ENDMSG 2121 @!@!@
+@!@!@STARTMSG 2217:4 @!@!@
+1: <Initial predicate>
+x = 0
+
+@!@!@ENDMSG 2217 @!@!@
+@!@!@STARTMSG 2217:4 @!@!@
+2: <Next line 5, col 9 to line 5, col 27 of module FailedInvariant>
+x = 1
+
+@!@!@ENDMSG 2217 @!@!@
+@!@!@STARTMSG 2217:4 @!@!@
+3: <Next line 5, col 9 to line 5, col 27 of module FailedInvariant>
+x = 2
+
+@!@!@ENDMSG 2217 @!@!@
+@!@!@STARTMSG 2200:0 @!@!@
+Progress(3) at 2026-11-08 07:03:40: 3 states generated (260 s/min), 3 distinct states found (260 ds/min), 0 states left on queue.
+@!@!@ENDMSG 2200 @!@!@
+@!@!@STARTMSG 2199:0 @!@!@
+3 states generated, 3 distinct states found, 0 states left on queue.
+@!@!@ENDMSG 2199 @!@!@
+@!@!@STARTMSG 2194:0 @!@!@
+The depth of the complete state graph search is 3.
+@!@!@ENDMSG 2194 @!@!@
+@!@!@STARTMSG 2268:0 @!@!@
+The average outdegree of the complete state graph is 1 (minimum is 1, the maximum 1 and the 95th percentile is 1).
+@!@!@ENDMSG 2268 @!@!@
+@!@!@STARTMSG 2186:0 @!@!@
+Finished in 696ms at (2026-11-08 07:03:40)
+@!@!@ENDMSG 2186 @!@!@
