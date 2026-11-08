@@ -1072,7 +1072,7 @@ export const generateSanySpecification = (
     ): OpArgNode | OpApplNode => {
       const location = getLocation(argument);
       if (argument.kind === "Lambda") {
-        if (argument.location.range !== undefined)
+        if (argument.operator === undefined)
           return createOpArg(generateLambda(argument), location);
         return createOpArg(resolveName(getOperatorArgumentName(argument), location), location);
       }
@@ -1129,7 +1129,7 @@ export const generateSanySpecification = (
           `Expected an operator argument at ${formatSanyLocation(location)}`,
         );
       }
-      if (argument.kind === "Lambda" && argument.location.range !== undefined) {
+      if (argument.kind === "Lambda" && argument.operator === undefined) {
         const lambda = generateLambda(argument);
         const arity = getSymbolArity(lambda);
         if (arity === expectedArity) return createOpArg(lambda, location);
