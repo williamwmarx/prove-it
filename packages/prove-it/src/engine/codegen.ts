@@ -47,11 +47,17 @@ const MAXIMUM_WRITTEN_LENGTH = 50_000_000;
 
 class TooLarge extends Error {}
 
+// The prefixes of the names fresh gives: a local of one run of an action, or a name outside it,
+// which any run may read: a continuation made once (w) or a hoisted function (h). A new prefix
+// must go in one of the two, which decides whether code that reads it can be hoisted.
+const LOCAL_PREFIXES = ["c", "g", "j", "k", "n", "o", "s", "u", "v"] as const;
+type SharedPrefix = "h" | "w";
+type NamePrefix = (typeof LOCAL_PREFIXES)[number] | SharedPrefix;
+
 // Whether generated code reads only the locals it declares, besides the registers, the
-// continuation and the values the code refers to: the names fresh gives a local, other than a
-// continuation's.
-const LOCAL_NAME = /\b[cgjknosuv]\d+\b/g;
-const DECLARED_NAME = /\b(?:const|let) ([cgjknosuv]\d+)\b/g;
+// continuation, the shared names and the values the code refers to.
+const LOCAL_NAME = new RegExp(`\\b[${LOCAL_PREFIXES.join("")}]\\d+\\b`, "g");
+const DECLARED_NAME = new RegExp(`\\b(?:const|let) ([${LOCAL_PREFIXES.join("")}]\\d+)\\b`, "g");
 const isSelfContained = (code: string) => {
   const declared = new Set(Array.from(code.matchAll(DECLARED_NAME), (match) => match[1]));
   return Array.from(code.matchAll(LOCAL_NAME)).every((match) => declared.has(match[0]));
@@ -112,7 +118,7 @@ const generateActionCode = (
   const equal = gen.ref(equals);
   const nonBoolean = gen.ref(notBoolean);
   let counter = 0;
-  const fresh = (prefix: string) => `${prefix}${counter++}`;
+  const fresh = (prefix: NamePrefix) => `${prefix}${counter++}`;
   let length = 0;
   const emit = (code: string) => {
     length += code.length;
