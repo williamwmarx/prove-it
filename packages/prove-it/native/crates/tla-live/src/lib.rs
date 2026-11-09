@@ -85,6 +85,8 @@ pub enum Event {
     Initial(u32),
     /// TLC adds a state it expanded, with its successors.
     Expanded(u32),
+    /// TLC runs Next from the state for a node of it it finds late.
+    Late(u32),
     /// TLC evaluates an atom: on the state at the position in its table, or on the step.
     Atom { atom: u32, slot: usize },
 }

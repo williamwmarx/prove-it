@@ -1768,6 +1768,16 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     // Under SYMMETRY or a VIEW, the checker may ask about the steps from states the
                     // search reached but didn't store, which the engine takes and checks again.
                     let mut reals = real_states(&search, width);
+                    // The checker logs the states it adds and the atoms it evaluates where the
+                    // atoms print or the search printed, whose prints it then places.
+                    let is_effectful = context.is_live_printing
+                        || search
+                            .held
+                            .as_ref()
+                            .is_some_and(|held| held.iter().any(|printed| !printed.is_empty()));
+                    // Whatever the steps from the states the search didn't store printed, TLC prints
+                    // where the engine doesn't follow.
+                    let mut is_late_printed = false;
                     let (tables, liveness) = loop {
                         let tables = match graph_tables(
                             &mut machine,
@@ -1785,7 +1795,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                             &search,
                             &tables,
                             reals.as_ref(),
-                            context.is_live_printing,
+                            is_effectful,
                             &context.diameter_atoms,
                         );
                         if liveness.verdict != Verdict::Unexpanded {
@@ -1795,6 +1805,8 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                             Some(reals) => expand_reals(&mut machine, &context, &mut search, reals),
                             None => Ok(false),
                         };
+                        is_late_printed |= !machine.output.is_empty();
+                        machine.output.clear();
                         match expanded {
                             Ok(true) => {}
                             Ok(false) => {
@@ -1807,10 +1819,6 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                             }
                         }
                     };
-                    // Whatever the steps from the states the search didn't store printed, TLC prints
-                    // where the engine doesn't follow.
-                    let is_late_printed = !machine.output.is_empty();
-                    machine.output.clear();
                     if let Some(held) = search.held.take() {
                         let order = (!is_late_printed && !settings.is_live_checked)
                             .then(|| order_printed(&held, &tables, &liveness))
@@ -1820,6 +1828,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                             // of it in its order.
                             let why = match &liveness.verdict {
                                 Verdict::Declined(declined) => declined.0.as_str(),
+                                Verdict::Accepted { .. } => "a node that accepts every behavior",
                                 _ if is_late_printed => "steps from states it didn't store",
                                 _ => "PROVE_IT_LIVE_CHECK",
                             };
@@ -2334,9 +2343,10 @@ enum Out<'p> {
 
 // What the search and the atoms printed, in TLC's order: the initial states' prints, then each
 // expanded state's, followed by those of the atoms TLC evaluates as it adds the state to the
-// behavior graphs, up to the state that ends the search. Nothing where anything printed and the
-// native checker leaves the properties to the interpreter, or where an atom printed as TLC adds
-// an initial state, which the engine doesn't follow.
+// behavior graphs, and again where TLC runs Next from a state it adds a node of late. Nothing where
+// anything printed and the native checker leaves the properties to the interpreter or finds a node
+// that accepts every behavior, or where an atom printed as TLC adds an initial state, which the
+// engine doesn't follow.
 fn order_printed<'p>(
     held: &'p [Vec<Printed>],
     tables: &'p [Table],
@@ -2344,7 +2354,12 @@ fn order_printed<'p>(
 ) -> Option<Vec<Out<'p>>> {
     let is_printed = held.iter().any(|printed| !printed.is_empty())
         || tables.iter().any(|table| !table.prints.is_empty());
-    let is_decided = !matches!(liveness.verdict, Verdict::Declined(_) | Verdict::Unexpanded);
+    // The interpreter replays the search to a state whose node accepts every behavior, printing
+    // as it goes, so there it checks from the start.
+    let is_decided = !matches!(
+        liveness.verdict,
+        Verdict::Declined(_) | Verdict::Unexpanded | Verdict::Accepted { .. }
+    );
     if is_printed && !is_decided {
         return None;
     }
@@ -2364,6 +2379,13 @@ fn order_printed<'p>(
                 }
                 next = next.max(end);
             }
+            // TLC runs Next again from a stored state it adds a node of late, and prints what
+            // the search printed expanding it.
+            Event::Late(state) => {
+                if let Some(printed) = expansions.get(state as usize) {
+                    order.extend(printed.iter().map(Out::Printed));
+                }
+            }
             Event::Atom { atom, slot } => {
                 let printed = tables[atom as usize].printed(slot);
                 if is_initial && !printed.is_empty() {
@@ -2373,11 +2395,8 @@ fn order_printed<'p>(
             }
         }
     }
-    // TLC stops at the state whose tableau node accepts every behavior.
-    if !matches!(liveness.verdict, Verdict::Accepted { .. }) {
-        for printed in &expansions[next.min(expansions.len())..] {
-            order.extend(printed.iter().map(Out::Printed));
-        }
+    for printed in &expansions[next.min(expansions.len())..] {
+        order.extend(printed.iter().map(Out::Printed));
     }
     Some(order)
 }

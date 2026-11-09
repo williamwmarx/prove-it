@@ -791,6 +791,7 @@ impl<'c> Checker<'c> {
                 self.expand_late(behavior, state, real, target)?;
             }
         }
+        self.log(Event::Late(real));
         let start = self.graph.edge_offsets[real as usize] as usize;
         let end = self.graph.edge_offsets[real as usize + 1] as usize;
         for edge in start..end {
