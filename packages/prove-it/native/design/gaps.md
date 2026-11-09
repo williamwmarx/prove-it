@@ -465,15 +465,25 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   and level sharing, since only the machine that built a function can apply it.
 - suite/test3, test5, test10, test12, test17 and test202 now print what TLC prints.
 
+## Nat, Int and STRING as values
+
+- TLC holds Nat, Int and STRING as values (`UserValue`): an element of a set, such as `{Nat}`, is
+  one. The engine only tested them, and declined ("enumerated Nat") where one was a value. The
+  store now has a kind for them (`KIND_INFINITE_SET`, its payload `NAT`, `INT` or `STRINGS`):
+  - membership in one is `Naturals.member`, `Integers.member` or `Strings.member`;
+  - Nat compares less than Int, and STRING compares with neither, as their `compareTo` have it,
+    which is how TLC orders `{{Nat}, {Int}}`;
+  - it prints by its name;
+  - a state can't hold one, as TLC can't fingerprint it: the search stops there as it does for a
+    function TLC keeps lazy.
+- Only a set enumeration's element takes the value (`Compiled::infinite_value`). Anywhere else
+  Nat, Int and STRING are tested as before, and enumerating one still stops.
+- suite/test7 now prints what TLC prints.
+
 ## Open: infinite sets as values
 
-These are declined, and lazy functions don't fix them:
+Still declined, and neither lazy functions nor a set held as a value fix it:
 
-- **suite/test7**, Test 14: `CHOOSE j \in {{Nat}, {Int}} : \E k \in j : -1 \in k` holds Nat and Int
-  as elements of a set. TLC keeps them as values and tests membership in them. The engine has no
-  store value for a set it only tests, so it declines with "enumerated Nat". This needs a store
-  kind like the lazy function's, an infinite set by name, with membership and the comparisons TLC
-  makes when it normalizes `{Nat}` and `{Int}`.
 - **RandomSubsetEmpty**: `Cardinality` and `RandomSubset` of `[Nat -> {}]`, `[n1 : Nat, n2 : {}]`,
   `Nat \X {}` and the like decline with "enumerated Nat". TLC counts these sets without
   enumerating them. A product or record set is empty when any factor is, and `[S -> {}]` is empty

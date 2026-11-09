@@ -4,8 +4,8 @@
 //! value, such as an interval or a record's written field order, which TLC prints.
 
 use crate::store::{
-    KIND_BOOL, KIND_FUNCTION, KIND_INT, KIND_LAZY_FUNCTION, KIND_MODEL, KIND_SET, KIND_STRING,
-    KIND_TUPLE, TRUE, is_function_kind,
+    KIND_BOOL, KIND_FUNCTION, KIND_INFINITE_SET, KIND_INT, KIND_LAZY_FUNCTION, KIND_MODEL,
+    KIND_SET, KIND_STRING, KIND_TUPLE, TRUE, infinite_set_name, is_function_kind,
 };
 use crate::{Id, Store};
 
@@ -119,6 +119,7 @@ pub fn write_value(store: &Store, id: Id, out: &mut Vec<u16>) {
         KIND_BOOL => push(out, if id == TRUE { "TRUE" } else { "FALSE" }),
         KIND_INT => push(out, &store.int_of(id).to_string()),
         KIND_MODEL => out.extend_from_slice(store.text_of(id)),
+        KIND_INFINITE_SET => push(out, infinite_set_name(store.infinite_name_of(id))),
         KIND_STRING => {
             out.push(u16::from(b'"'));
             for &unit in store.text_of(id) {
