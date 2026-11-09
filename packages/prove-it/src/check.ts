@@ -1793,7 +1793,15 @@ const searchStates = (
         computed.initialStates = { generated, distinct };
         if (!liveness) reportComputed();
       },
-      onPrint: print,
+      // With temporal properties, the engine prints once it has checked them, after it reports the
+      // initial states, which TLC reports before anything the search prints.
+      onPrint: (text: string) => {
+        if (liveness) {
+          releaseInitialProgress(Infinity);
+          reportComputed();
+        }
+        print(text);
+      },
     };
     const startedAt = performance.now();
     const native = isNativeBackend() ? checkNatively(lowerModel, callbacks) : undefined;
