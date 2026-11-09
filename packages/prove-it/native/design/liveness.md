@@ -289,6 +289,10 @@ Done on native-parity:
   `Compiler::compile_scoped` for the invariants, action properties and implied inits of an
   instance; tla-trace's `check_violation` reads each in `scope_context(scope)`, and
   `evaluate_failure` declines an implied init in a scope that fails to evaluate.
+- A lasso whose atoms print (UserModuleOverrideAnnotation): TLC evaluates each property on the
+  lasso it rebuilt (`Liveness.findViolatedProperties`), each atom anew. `tla-live` logs those
+  evaluations (`Liveness::lasso_events`), the engine carries what they printed in
+  `ViolationKind::Lasso::printed`, and the binary prints it before the violation.
 
 Open, with what is known:
 - The front names a property an instance exports by the definition's own name (`Safe`) where
@@ -298,7 +302,6 @@ Open, with what is known:
 - Test2 (TLCSet in atoms): the engine session is doing online atom evaluation through an
   `Answers` trait in tla-live. My review notes were sent to them: pass the graph to each
   `add_state`, give stuttering steps their own slot space, and keep `unanswered`.
-- UserModuleOverrideAnnotation: "a lasso the engine doesn't hand over". Not investigated.
 - InitialLivenessEvaluationError: it stops at an invariant violation where an atom is
   unanswered (`accepted_at` returns None). `Liveness::unanswered` with `ErrorSite::Atom` is the
   likely way through, applied on the safety-stop path too.

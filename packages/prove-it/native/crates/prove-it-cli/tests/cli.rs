@@ -689,6 +689,26 @@ fn checks_properties_in_the_scope_of_their_instance() {
 }
 
 #[test]
+fn prints_what_the_atoms_print_naming_a_lassos_properties() {
+    // TLC's UserModuleOverrideAnnotation: the atom prints as TLC adds the state to the behavior
+    // graphs, and again as it evaluates the property on the lasso it found.
+    let spec = "---- MODULE Stop ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = FALSE\nNext == x' = FALSE\nSpec == Init /\\ [][Next]_x\nProp == <>[](Print(x, x = TRUE) /\\ TLCGet(\"diameter\") > 0)\n====\n";
+    let (output, directory) = run_lowered(
+        "printing-lasso",
+        spec,
+        "SPECIFICATION Spec\nPROPERTY Prop\n",
+    );
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(13), "{text}");
+    assert!(text.contains(".\nFALSE  FALSE\nProgress(1) at "), "{text}");
+    assert!(
+        text.contains(")\nFALSE  FALSE\nError: Temporal property Prop was violated.\n\nError: The following behavior constitutes a counter-example:\n\nState 1: <Initial predicate>\nx = FALSE\n\nState 2: Stuttering\nWarning: "),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
 fn reads_and_sets_tlcs_registers() {
     // TLCCache evaluates Counted once, TLCFP is TLC's fingerprint under -fp 0, which the
     // interpreter and TLC print the same, and a Java property TLC hasn't set is its key.
