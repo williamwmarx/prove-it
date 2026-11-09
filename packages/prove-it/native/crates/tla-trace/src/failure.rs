@@ -219,6 +219,28 @@ impl<'ir> Rebuilder<'ir> {
         })
     }
 
+    /// What the substitutes, the constant definitions and the definitions the configuration names
+    /// print as TLC starts (`processConstantDefns`, `getConstantValue`), each print's values as
+    /// `Trace` holds them, as TLC built them. A configured definition that fails prints what it
+    /// printed before it failed, as TLC keeps it as an operator.
+    pub fn startup_prints(&mut self) -> Result<Vec<Vec<String>>, Unsupported> {
+        let evaluator = self.evaluator();
+        let ir = evaluator.ir;
+        evaluator.level = 0;
+        run(evaluator.compute_startup_drawing())?;
+        // A constant definition TLC evaluated already keeps its value.
+        let startup = &ir.model.startup;
+        for predicate in &startup.predicates {
+            if startup.definitions.contains(&predicate.definition) {
+                continue;
+            }
+            let node = ir.definitions[predicate.definition as usize];
+            let _ = evaluator.evaluate(evaluator.definition(node).body, &Context::default());
+        }
+        evaluator.random = None;
+        Ok(std::mem::take(&mut evaluator.printed))
+    }
+
     /// Evaluates again the assumption at `position` of the model's assumptions, which failed to
     /// evaluate as TLC started, after the startup's definitions, and returns TLC's report of it
     /// (`checkAssumptions`), with what it printed before it failed.

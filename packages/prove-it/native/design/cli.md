@@ -264,6 +264,10 @@ Still to do:
   binary wires only on this path (`Relay::is_startup_printed`), since a recorded front holds it:
   - `startup_print` prints as `Relay::print` does, with the same `is_printable` check, so a value
     whose text depends on how TLC built it stops the run as not native;
+    Where the store has forgotten how TLC built a value, the binary takes what the substitutes,
+    constant definitions and configured definitions print from the trace evaluator
+    (`Rebuilder::startup_prints`), so long as each print the store words is the same and there
+    are as many; not under SYMMETRY, whose body the evaluator doesn't evaluate;
   - `symmetry_sets_too_small` prints 2300 as `Tool.getSymmetryPerms` words it.
 - Still not native on this path, as TLC prints more as it starts:
   - the Java overrides TLC loads (any `.class` file beside the spec);

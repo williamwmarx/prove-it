@@ -288,6 +288,12 @@ struct Relay<'ir> {
     is_startup_printed: bool,
     ir: &'ir tla_ir::Ir,
     is_tool: bool,
+    /// What the substitutes and constant definitions printed as the store words it, where it
+    /// does, until `startup_done`.
+    startup_worded: Option<Vec<Option<String>>>,
+    /// What the trace evaluator finds they print, as TLC built the values, where the store
+    /// forgot how TLC built one.
+    startup_texts: Option<Option<Vec<String>>>,
 }
 
 impl Reporter for Relay<'_> {
@@ -317,26 +323,61 @@ impl Reporter for Relay<'_> {
         let _ = self.sender.send(Event::LivenessFinished);
     }
 
-    // Print and PrintT print each value as TLC's normalized text, pretty printed, two spaces
-    // apart, unless the store has forgotten how TLC built one.
     fn print(&mut self, store: &Store, values: &[Id]) {
-        let printed = values.iter().all(|&id| is_printable(store, id)).then(|| {
-            values
-                .iter()
-                .map(|&id| {
-                    let mut text = Vec::new();
-                    write_value(store, id, &mut text);
-                    pretty_print(&text)
-                })
-                .collect::<Vec<_>>()
-                .join("  ")
-        });
+        let printed = word_print(store, values);
         let _ = self.sender.send(Event::Print(printed));
     }
 
+    // What the substitutes and constant definitions print, which the trace evaluator prints as
+    // TLC built it where the store forgot, as long as it prints the same: each print the store
+    // words alike, and as many.
     fn startup_print(&mut self, store: &Store, values: &[Id]) {
-        if self.is_startup_printed {
-            self.print(store, values);
+        if !self.is_startup_printed {
+            return;
+        }
+        let worded = word_print(store, values);
+        let Some(worded_prints) = self.startup_worded.as_mut() else {
+            let _ = self.sender.send(Event::Print(worded));
+            return;
+        };
+        worded_prints.push(worded.clone());
+        if self.startup_texts.is_none() && worded.is_some() {
+            let _ = self.sender.send(Event::Print(worded));
+            return;
+        }
+        let ir = self.ir;
+        let startup = &ir.model.startup;
+        let texts = self.startup_texts.get_or_insert_with(|| {
+            let texts = startup
+                .symmetry
+                .is_none()
+                .then(|| Rebuilder::new(ir).and_then(|mut rebuilder| rebuilder.startup_prints()))
+                .and_then(Result::ok)?;
+            let texts: Vec<String> = texts.iter().map(|print| format_print(print)).collect();
+            // The prints already sent, which the store worded, must be the evaluator's.
+            let index = worded_prints.len() - 1;
+            (texts.len() > index
+                && worded_prints[..index]
+                    .iter()
+                    .zip(&texts)
+                    .all(|(worded, text)| worded.as_ref() == Some(text)))
+            .then_some(texts)
+        });
+        let index = worded_prints.len() - 1;
+        let printed = texts
+            .as_ref()
+            .and_then(|texts| texts.get(index))
+            .filter(|text| worded.as_ref().is_none_or(|worded| worded == *text))
+            .cloned();
+        let _ = self.sender.send(Event::Print(printed));
+    }
+
+    fn startup_done(&mut self) {
+        let count = self.startup_worded.take().map(|worded| worded.len());
+        if let Some(Some(texts)) = &self.startup_texts
+            && Some(texts.len()) != count
+        {
+            let _ = self.sender.send(Event::Print(None));
         }
     }
 
@@ -364,6 +405,22 @@ impl Reporter for Relay<'_> {
                 .send(Event::SymmetrySetsTooSmall(names.to_vec()));
         }
     }
+}
+
+// Print and PrintT print each value as TLC's normalized text, pretty printed, two spaces apart,
+// unless the store has forgotten how TLC built one.
+fn word_print(store: &Store, values: &[Id]) -> Option<String> {
+    values.iter().all(|&id| is_printable(store, id)).then(|| {
+        values
+            .iter()
+            .map(|&id| {
+                let mut text = Vec::new();
+                write_value(store, id, &mut text);
+                pretty_print(&text)
+            })
+            .collect::<Vec<_>>()
+            .join("  ")
+    })
 }
 
 /// The counts a Progress line reports.
@@ -603,6 +660,8 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                     is_startup_printed,
                     ir,
                     is_tool,
+                    startup_worded: Some(Vec::new()),
+                    startup_texts: None,
                 };
                 search(ir, &settings, &mut relay)
             })
