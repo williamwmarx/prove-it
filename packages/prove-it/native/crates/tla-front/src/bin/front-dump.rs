@@ -281,10 +281,14 @@ fn write_sany_text(out: &mut String, path: &Path, library: Option<&Path>) {
             describe_file: &describe_file,
         },
     ) {
-        Ok(text) => {
+        Ok(sany) => {
             out.push_str("{\"text\":");
-            write_js_string(out, &text);
-            out.push('}');
+            write_js_string(out, &sany.text);
+            out.push_str(if sany.is_failed {
+                ",\"isFailed\":true}"
+            } else {
+                ",\"isFailed\":false}"
+            });
         }
         Err(error) => dump::environment(&Err(error)).write(out),
     }

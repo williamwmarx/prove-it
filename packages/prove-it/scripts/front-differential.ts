@@ -367,13 +367,13 @@ const MODES: Record<string, (source: string, path: string, spec: string) => stri
   }),
   // What SANY prints, with each file described by its module's name and origin, as front-dump
   // describes it.
-  "sany-text": (_source, path) =>
-    JSON.stringify({
-      text: getSanyReport(path, createLoader(path), {
-        describeFile: (name, origin) =>
-          `${name}|${{ file: "File", "root file": "RootFile", standard: "Standard" }[origin]}`,
-      }).text,
-    }),
+  "sany-text": (_source, path) => {
+    const report = getSanyReport(path, createLoader(path), {
+      describeFile: (name, origin) =>
+        `${name}|${{ file: "File", "root file": "RootFile", standard: "Standard" }[origin]}`,
+    });
+    return JSON.stringify({ text: report.text, isFailed: report.isFailed });
+  },
   model: writeResult((source, _path, spec) =>
     readEnvironment(readFileSync(spec, "utf8"), spec, parseConfig(source)),
   ),
