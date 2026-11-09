@@ -256,6 +256,7 @@ fn rebuild_violation<T: Send>(
                 (Ending::Violation, None)
             }
             ViolationKind::Lasso { loop_start, .. } => (Ending::Lasso, Some(loop_start)),
+            ViolationKind::Error { .. } => panic!("{path}: a failure evaluating the model"),
         };
         let states: Vec<&[Id]> = violation.states.iter().map(Vec::as_slice).collect();
         let mut rebuilder = Rebuilder::new(&ir)?;
