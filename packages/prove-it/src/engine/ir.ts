@@ -54,7 +54,7 @@ import { findStringRank, getRankedStringCount, getStringOrder, type Value } from
 import type { EngineProperties, EngineSpec } from "./context";
 
 // The version of the layout below, which the decoder checks. Any change to it changes this.
-export const IR_VERSION = 11;
+export const IR_VERSION = 12;
 
 // "PIIR" read as a little-endian word.
 const MAGIC = 0x52494950;
@@ -749,6 +749,7 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
   writeRoots(input.properties.initialPredicates);
   writeConfigNames(config.view === undefined ? [] : [config.view]);
   writeConfigNames(config.alias === undefined ? [] : [config.alias]);
+  writeConfigNames(config.postconditions);
   push(model, config.checkDeadlock ? 1 : 0);
   push(model, input.isWarningEnabled ? 1 : 0);
   push(model, input.isRecordingGraph ? 1 : 0);

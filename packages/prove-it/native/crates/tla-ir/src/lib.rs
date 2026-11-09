@@ -34,7 +34,7 @@ pub use decode::{DecodeError, decode};
 pub use encode::encode;
 
 /// The version of the layout, `IR_VERSION` in `ir.ts`.
-pub const IR_VERSION: u32 = 11;
+pub const IR_VERSION: u32 = 12;
 
 /// "PIIR" as a little-endian word.
 pub const MAGIC: u32 = 0x5249_4950;
@@ -261,6 +261,8 @@ pub struct Model {
     pub view: Option<ConfigName>,
     /// The configuration's ALIAS, which TLC prints each state of a trace through.
     pub alias: Option<ConfigName>,
+    /// The configuration's POSTCONDITIONs, which TLC checks once the search ends.
+    pub postconditions: Vec<ConfigName>,
     pub check_deadlock: bool,
     pub is_warning_enabled: bool,
     pub is_recording_graph: bool,

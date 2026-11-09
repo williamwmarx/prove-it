@@ -134,6 +134,8 @@ fn encode_here(ir: &Ir) -> Vec<u8> {
     words.extend(model.view.iter().flat_map(config_name));
     words.push(model.alias.is_some() as i32);
     words.extend(model.alias.iter().flat_map(config_name));
+    words.push(model.postconditions.len() as i32);
+    words.extend(model.postconditions.iter().flat_map(config_name));
     words.extend([
         model.check_deadlock as i32,
         model.is_warning_enabled as i32,

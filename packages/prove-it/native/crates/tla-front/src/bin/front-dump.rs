@@ -172,6 +172,7 @@ fn lower_definitions(
         initial_predicates: Vec::new(),
         view: None,
         alias: None,
+        postconditions: Vec::new(),
         check_deadlock: true,
         is_warning_enabled: true,
         is_recording_graph: false,

@@ -630,6 +630,7 @@ impl Decoder<'_> {
             return self.error(format!("{} aliases", aliases.len()));
         }
         let alias = aliases.pop();
+        let postconditions = self.unprinted()?;
         let check_deadlock = self.flag()?;
         let is_warning_enabled = self.flag()?;
         let is_recording_graph = self.flag()?;
@@ -734,6 +735,7 @@ impl Decoder<'_> {
             initial_predicates,
             view,
             alias,
+            postconditions,
             check_deadlock,
             is_warning_enabled,
             is_recording_graph,

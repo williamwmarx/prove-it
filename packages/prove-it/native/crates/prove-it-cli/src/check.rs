@@ -315,11 +315,11 @@ impl Reporter for Relay {
 }
 
 /// The counts a Progress line reports.
-struct Statistics {
-    generated: u64,
-    distinct: u64,
-    queued: u64,
-    depth: u64,
+pub(crate) struct Statistics {
+    pub generated: u64,
+    pub distinct: u64,
+    pub queued: u64,
+    pub depth: u64,
 }
 
 /// TLC reports a depth of at least 1, even before it finds a state, and rates a minute only once
@@ -612,11 +612,12 @@ fn check_spec(spec_path: &str, args: &Parsed, printer: &mut Printer) -> i32 {
         SearchOutcome::AssumptionViolated { .. } => {
             return report_not_native(printer, "an assumption that is false");
         }
+        // TLC's report of a failure evaluating the model is the trace session's to print.
         SearchOutcome::Stopped {
             violation: Some(violation),
             reason,
             ..
-        } => {
+        } if !matches!(violation.kind, ViolationKind::Error { .. }) => {
             return print_violation(printer, &ir, &config, &violation, None, start).unwrap_or_else(
                 |why| report_not_native(printer, &format!("the engine stopped: {reason}: {why}")),
             );
@@ -707,7 +708,7 @@ fn print_liveness_finished(printer: &mut Printer, checking: Instant) {
 
 /// After a search, TLC prints how many states it found and how deep it went, after the progress
 /// with -tool.
-fn print_statistics(printer: &mut Printer, statistics: &Statistics, start: Instant) {
+pub(crate) fn print_statistics(printer: &mut Printer, statistics: &Statistics, start: Instant) {
     if printer.is_tool {
         print_progress(printer, statistics, Some(start));
     }
@@ -780,6 +781,7 @@ fn print_violation(
             SAFETY_VIOLATION,
         ),
         ViolationKind::Deadlock => (code::DEADLOCK_REACHED, "Deadlock reached.".into(), DEADLOCK),
+        ViolationKind::Error { .. } => return Err(NOT_IN_IR),
         ViolationKind::Lasso { .. } => (
             code::TEMPORAL_PROPERTY_VIOLATED,
             temporal_headline(ir, liveness.ok_or(NOT_IN_IR)?).ok_or(NOT_IN_IR)?,
@@ -956,7 +958,7 @@ fn temporal_headline(ir: &tla_ir::Ir, liveness: &Liveness) -> Option<String> {
 }
 
 /// Without -tool, TLC prints how long it ran for a person to read.
-fn print_finished(printer: &mut Printer, start: Instant) {
+pub(crate) fn print_finished(printer: &mut Printer, start: Instant) {
     let runtime = start.elapsed().as_millis();
     let duration = if printer.is_tool {
         format!("{runtime}ms")
