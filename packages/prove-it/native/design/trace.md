@@ -311,8 +311,9 @@ TLC reports a failure in a method of a value with a source (a set, tuple, record
 the replay built, or a `\cup`, `\cap` or `\`) as a FingerprintException, with the values'
 sources. The replay marks it, as `freezeCallStack` finds it, and returns `Unsupported` for it so
 far. So does a failure reached through an assignment `x' \in S` from a set TLC streams in an
-order of its own, such as a union built during the walk. Every other failure returns `Unsupported`
-too. The pretty printer moved here from the CLI, since the messages need it.
+order of its own, such as a union built during the walk, and one in the predicate of a filter TLC
+keeps lazy, of a set other than an enumeration or an interval. Every other failure returns
+`Unsupported` too. The pretty printer moved here from the CLI, since the messages need it.
 
 Tests: `tests/failure.rs` runs the engine's search on golden IRs of TLC's own tests (etest9, 10 and
 11, AssertExpressionStack, Github461 and EvaluatingValueTest) until it stops, and compares the

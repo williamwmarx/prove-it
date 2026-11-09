@@ -517,7 +517,9 @@ impl<'ir> Evaluator<'ir> {
                                     && !is_in_order
                                     && let Some(stack) = &mut self.call_stack
                                 {
-                                    stack.is_unordered = true;
+                                    stack
+                                        .unfollowed
+                                        .get_or_insert("an assignment from a set TLC streams");
                                 }
                                 if !chosen? {
                                     return Ok(false);
