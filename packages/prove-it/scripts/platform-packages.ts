@@ -108,14 +108,17 @@ export const PLATFORMS: Platform[] = [
   },
 ];
 
+// npm is npm.cmd on Windows, which only a shell runs, and the shell splits an argument at its
+// spaces, as in a temporary directory under C:\Users\Jane Doe, unless it is quoted. No argument
+// here holds a quote.
+const isShell = process.platform === "win32";
+
 const run = (command: string, args: string[], cwd: string) => {
-  const result = spawnSync(command, args, {
-    cwd,
-    stdio: ["ignore", "pipe", "inherit"],
-    encoding: "utf8",
-    // HACK: npm is npm.cmd on Windows, which only a shell runs. No argument here has a space.
-    shell: process.platform === "win32",
-  });
+  const result = spawnSync(
+    command,
+    isShell ? args.map((argument) => (/\s/.test(argument) ? `"${argument}"` : argument)) : args,
+    { cwd, stdio: ["ignore", "pipe", "inherit"], encoding: "utf8", shell: isShell },
+  );
   if (result.status !== 0) {
     console.error(`${command} ${args.join(" ")} failed`);
     process.exit(result.status ?? 1);

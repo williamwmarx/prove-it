@@ -688,6 +688,57 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     }
   });
 
+  it("checks the temporal properties part way through the search, as TLC does", async () => {
+    // Without fairness x stutters at 0, which a check after two states finds with states left to
+    // expand; with it, x returns to 0 forever, so the check finds nothing and the search goes on.
+    const body = [
+      "EXTENDS Naturals",
+      "VARIABLE x",
+      "Init == x = 0",
+      "Next == x' = (x + 1) % 10",
+      "Fair == Init /\\ [][Next]_x /\\ WF_x(Next)",
+      "Unfair == Init /\\ [][Next]_x",
+      "Reaches == <>(x = 9)",
+      "Returns == []<>(x = 0)",
+    ];
+    const directory = mkdtempSync(join(tmpdir(), "prove-it-native-periodic-"));
+    const log = join(directory, "log.jsonl");
+    for (const [spec, property, status] of [
+      ["Unfair", "Reaches", "liveness-violation"],
+      ["Fair", "Returns", "success"],
+    ] as const) {
+      const options = {
+        source: toModule(body),
+        config: `SPECIFICATION ${spec}\nPROPERTY ${property}`,
+      };
+      const native = await run(options, {
+        PROVE_IT_ENGINE: "debug",
+        PROVE_IT_ENGINE_BACKEND: "rust",
+        PROVE_IT_TEST_LIVE_CHECK_AT: "2",
+        PROVE_IT_STATE_LOG: log,
+      });
+      const interpreter = await run(options, {
+        PROVE_IT_ENGINE: "0",
+        PROVE_IT_TEST_LIVE_CHECK_AT: "2",
+      });
+      expect(native.lines).toContainEqual(expect.stringMatching(COMPLETE));
+      expect(native.result.status).toBe(status);
+      expect(native.result).toEqual(interpreter.result);
+      expect(native.progress).toEqual(interpreter.progress);
+      expect(native.progress).toContainEqual(
+        expect.stringMatching(/"isComplete":false,"states":2,/),
+      );
+      // The log holds the states the search found when the check found the counterexample.
+      const header = JSON.parse(readLogLines(log)[0]);
+      expect([header.count, header.expanding, header.stopped]).toEqual(
+        status === "success"
+          ? [10, 10, null]
+          : [3, 2, "a counterexample part way through the search"],
+      );
+    }
+    rmSync(directory, { recursive: true, force: true });
+  });
+
   it("reports a tableau node that accepts every behavior as TLC finds it", async () => {
     // TLC's test model Github1389Counting: x becomes TRUE at most twice.
     const body = [
