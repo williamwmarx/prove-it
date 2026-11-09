@@ -79,6 +79,8 @@ pub struct MemoTable {
     hits: u64,
     is_enabled: bool,
     is_direct: bool,
+    // The largest id stored since the table last forgot, so that it forgets only if it must.
+    largest: Id,
 }
 
 const INITIAL_CAPACITY: usize = 64;
@@ -108,6 +110,7 @@ impl MemoTable {
             hits: 0,
             is_enabled: true,
             is_direct: width == 1,
+            largest: 0,
         }
     }
 
@@ -217,6 +220,48 @@ impl MemoTable {
         true
     }
 
+    /// Forgets every entry that reads or holds an id from `bound` on, ids a store has let go of.
+    pub fn forget_from(&mut self, bound: Id) {
+        if self.largest < bound {
+            return;
+        }
+        // What is kept is below the bound, which a later, lower bound may still have to forget.
+        self.largest = bound.saturating_sub(1);
+        if self.is_direct {
+            self.direct.truncate(bound as usize);
+            for value in self.direct.iter_mut().filter(|value| **value >= bound) {
+                *value = EMPTY;
+            }
+            self.size = self.direct.iter().filter(|&&value| value != EMPTY).count();
+            return;
+        }
+        let capacity = self.capacity();
+        self.size = 0;
+        if self.width <= 2 {
+            let old = std::mem::replace(&mut self.packed, vec![EMPTY_PACKED; capacity]);
+            for entry in old {
+                if entry.value < bound
+                    && (entry.key as Id) < bound
+                    && ((entry.key >> 32) as Id) < bound
+                {
+                    let slot = self.free_packed(entry.key);
+                    self.packed[slot] = entry;
+                    self.size += 1;
+                }
+            }
+            return;
+        }
+        let stride = self.width + 1;
+        let old = std::mem::replace(&mut self.wide, vec![EMPTY; capacity * stride]);
+        for row in old.chunks_exact(stride) {
+            if row.iter().all(|&id| id < bound) {
+                let slot = self.free_wide(&row[1..]);
+                self.wide[slot * stride..(slot + 1) * stride].copy_from_slice(row);
+                self.size += 1;
+            }
+        }
+    }
+
     /// The value stored for the keys, or [`EMPTY`].
     #[inline]
     pub fn get(&mut self, keys: &[Id]) -> Id {
@@ -255,6 +300,9 @@ impl MemoTable {
 
     /// Stores a value for the keys, unless the table is off or full.
     pub fn set(&mut self, keys: &[Id], value: Id) {
+        self.largest = keys
+            .iter()
+            .fold(self.largest.max(value), |largest, &key| largest.max(key));
         if self.is_direct {
             if !self.is_enabled || self.size >= MAXIMUM_ENTRIES {
                 return;
@@ -421,6 +469,33 @@ mod tests {
         }
         assert!(!table.is_enabled());
         assert_eq!(table.get(&[0, 0]), EMPTY);
+    }
+
+    #[test]
+    fn forgets_only_the_entries_that_read_or_hold_forgotten_ids() {
+        for width in 1..=6 {
+            let mut table = MemoTable::new(width);
+            let keys = |key: u32| vec![key; width];
+            for key in 0..100u32 {
+                table.set(&keys(key), 99 - key);
+            }
+            table.forget_from(60);
+            for key in 0..100u32 {
+                let expected = if key < 60 && 99 - key < 60 {
+                    99 - key
+                } else {
+                    EMPTY
+                };
+                assert_eq!(table.get(&keys(key)), expected, "width {width}, key {key}");
+            }
+            assert_eq!(table.size(), 20);
+            // Each entry kept reads or holds an id from 50 on.
+            table.forget_from(50);
+            for key in 0..100u32 {
+                assert_eq!(table.get(&keys(key)), EMPTY, "width {width}, key {key}");
+            }
+            assert_eq!(table.size(), 0);
+        }
     }
 
     #[test]
