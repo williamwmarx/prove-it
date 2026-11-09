@@ -86,7 +86,18 @@ fn enumerate_function_set(machine: &mut Machine<'_>, domain: Id, range: Id) -> O
 }
 
 // Every combination of one element from each set, the first set's turning slowest.
-fn combinations(machine: &Machine<'_>, sets: &[Id]) -> Vec<Vec<Id>> {
+fn combinations(machine: &Machine<'_>, sets: &[Id]) -> Outcome<Vec<Vec<Id>>> {
+    // An empty set empties the whole, however large the others are.
+    if sets.iter().any(|&set| machine.store.size_of(set) == 0) {
+        return Ok(Vec::new());
+    }
+    let total: f64 = sets
+        .iter()
+        .map(|&set| f64::from(machine.store.size_of(set)))
+        .product();
+    if total > super::lazy::MAXIMUM_ELEMENTS {
+        return Err(Bail("a lazy set too large to enumerate"));
+    }
     let mut partial: Vec<Vec<Id>> = vec![Vec::new()];
     for &set in sets {
         let mut next = Vec::new();
@@ -99,7 +110,7 @@ fn combinations(machine: &Machine<'_>, sets: &[Id]) -> Vec<Vec<Id>> {
         }
         partial = next;
     }
-    partial
+    Ok(partial)
 }
 
 const NO_PARTS: fn(&mut Machine<'_>) -> Outcome<()> = |_| Ok(());
@@ -192,14 +203,26 @@ impl Compiler<'_> {
         kind: &NodeKind,
         context: &Context,
     ) -> Compiling<Compiled> {
-        match kind {
+        let set = match kind {
             NodeKind::FunctionSet { domain, range } => {
                 self.compile_function_set(*domain, *range, context)
             }
             NodeKind::RecordSet(fields) => self.compile_record_set(fields, context),
             NodeKind::Product(factors) => self.compile_product(factors, context),
             _ => unreachable!("a lazy set of another kind"),
-        }
+        }?;
+        // Where a part may be a set TLC can't enumerate, TLC's own enumeration decides: it finds
+        // the set empty, or its one function of an empty domain, before it asks that part.
+        let Some(reference) = set.reference.clone().filter(|_| set.has_infinite_part) else {
+            return Ok(set);
+        };
+        Ok(Compiled {
+            eval: eval(move |machine| {
+                let elements = reference(machine)?.enumerate(machine)?;
+                machine.store.set_of(&elements)
+            }),
+            ..set
+        })
     }
 
     fn compile_function_set(
@@ -343,7 +366,7 @@ impl Compiler<'_> {
                     for &set in &values {
                         expect_set(machine, set, "a record set of a non-set")?;
                     }
-                    let records: Vec<Id> = combinations(machine, &values)
+                    let records: Vec<Id> = combinations(machine, &values)?
                         .iter()
                         .map(|combination| machine.store.function_of_sorted(&keys, combination))
                         .collect();
@@ -381,7 +404,18 @@ impl Compiler<'_> {
             parts: Some(set_parts),
             member: Some(member(move |machine, element| {
                 machine.run_parts(&member_parts)?;
-                if machine.store.kind_of(element) != KIND_TUPLE {
+                // A function that isn't a tuple, with integers for its domain, is in no set of
+                // tuples (`SetOfTuplesValue.member`); any other value fails.
+                let kind = machine.store.kind_of(element);
+                if kind == KIND_FUNCTION
+                    && (0..machine.store.size_of(element)).all(|index| {
+                        let key = machine.store.get_key(element, index);
+                        machine.store.kind_of(key) == KIND_INT
+                    })
+                {
+                    return Ok(false);
+                }
+                if kind != KIND_TUPLE {
                     return not_in(machine, element, "a mistyped membership in a set of tuples");
                 }
                 if machine.store.size_of(element) as usize != members.len() {
@@ -404,7 +438,7 @@ impl Compiler<'_> {
                         let set = set(machine)?;
                         values.push(expect_set(machine, set, "a product of a non-set")?);
                     }
-                    let tuples: Vec<Id> = combinations(machine, &values)
+                    let tuples: Vec<Id> = combinations(machine, &values)?
                         .iter()
                         .map(|combination| machine.store.tuple_of(combination))
                         .collect();

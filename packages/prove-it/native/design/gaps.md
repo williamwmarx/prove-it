@@ -493,6 +493,57 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
 - RandomSubsetEmpty now prints what TLC prints. A nonempty set with a part TLC can't enumerate
   still stops, where TLC answers some (`[Nat -> {1}]` has one element).
 
+## Lazy sets in the assumptions (EmptySetEqAssume)
+
+- A set of functions, records or tuples with a part that may be a set TLC can't enumerate is now
+  enumerated as TLC enumerates it (`Lazy::enumerate`): `{<<>>} = [{} -> Nat]` holds, since the
+  empty domain gives the one empty function before TLC asks anything of the range.
+- Cardinality of any such lazy set is TLC's `size` of it (`Lazy::size` in the engine,
+  `cardinality` in `tla-trace`): an empty part decides before one TLC can't enumerate or one too
+  large to is asked, so an empty field after two of 50000 elements answers 0, and a range of one
+  element makes one function whatever the domain, as for `[(SUBSET (1..40)) -> {"d1"}]`. A UNION
+  is empty where each of its sets is, without comparing their elements.
+- A record set or a product an empty part empties is empty before its parts are combined, and one
+  of more than 2^24 combinations stops at a limit, where it exhausted memory.
+- `Seq(S)` has a lazy value (never empty, not enumerable), so `[Seq(S) -> {}]` is empty.
+- A function that isn't a tuple, with integers for its domain, is in no set of tuples
+  (`SetOfTuplesValue.member`), where the engine failed.
+- An assumption the engine stops at a limit of goes to the trace evaluator's `check_assumption`,
+  as an AssertError does. Where that can't check it either, the assumption is reported as one
+  that fails to evaluate, as before.
+- In `tla-trace`: a set its parts empty enumerates to nothing before any part is enumerated; a
+  domain its parts empty gives the one empty function; a nested set of functions, records or
+  tuples is nonempty unless its parts empty it, and SUBSET S and Seq(S) always are.
+
+## Open: what the infinite-sets session left (2026-11-09)
+
+- **EmptySetEqAssume** still declines. What is left, in the order met:
+  - `tla-trace` has no value for `S \ T`, `S \cup T` or `S \cap T` with an operand TLC can't
+    enumerate (`[ref : {}] = [n1 : {}, n2 : (Nat \ {0})]`, assumption 102 of 443). It has
+    `Combined` for a membership only (`combined_set`). Every delegated assumption re-evaluates the
+    ones before it (`check_assumption`), so one the evaluator can't follow stops them all; more
+    may follow that one.
+- **ValueSemanticsAssume** declines: its fifteenth assumption reads TLCFP, which `tla-trace`
+  doesn't evaluate, and every delegated assumption after it re-evaluates that one. Five
+  assumptions fail in the engine with "EXCEPT outside the domain", not looked at.
+- **DoInitFunctorMinimalErrorStack** declines. `tla-trace` has no message yet for a comparison's
+  argument that isn't an integer (2266); `tlc2.module.Naturals#GEQ` names itself `>` there, and
+  the IR doesn't say which module's `>=` a spec has (a flag on the builtin was written, held
+  back). With the message, the call stack's first frame is still wrong: TLC keeps a level-1
+  definition's body whole as one initial predicate (`SpecProcessor.processConfigSpec`) and prints
+  its range, from its first bullet for a bulleted list ("Line 8, column 3"). The IR's
+  `model.init` is the conjunction of the specification's conjuncts with each definition's body
+  taken apart (`expandTemporal` in search.ts), a node without a range or a junction. The fix is
+  in how init is lowered (ir.ts and tla-front's lower.rs).
+- **PrintTraceRace** declines on purpose: TLC searches a set enumeration it hasn't normalized,
+  as `{1..2}` built by the invariant, element by element with `equals`, and words the failure
+  otherwise than the sorted search does. `evaluate_failure` declines an invariant's failure
+  whose membership passes through such a set (`CallStack::is_member_followed`); the replay of the
+  expansion after it is done.
+- **ccf TraceMultiNodeReads** ("enumerated STRING"): TLC fails as it enumerates
+  `[STRING -> STRING]` (IOUtils' IOEnv) checking an implied init of a liveness model, with a
+  FingerprintException whose call stack runs through Json and IOUtils. Not attempted.
+
 ## Open: Test2, liveness atoms answered as the search goes
 
 TLC evaluates the liveness checker's atoms as it finds states, so atoms that print or set
