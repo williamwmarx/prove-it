@@ -425,7 +425,6 @@ impl<'ir> Evaluator<'ir> {
             NodeKind::FunctionApplication { function, .. } | NodeKind::Except { function, .. } => {
                 Some(*function)
             }
-            NodeKind::FieldAccess { record, .. } => Some(*record),
             NodeKind::Apply { name, args } if !name.is_local && args.len() == 2 => {
                 match self.name(name.text) {
                     "\\in" | "\\notin" => Some(args[1]),
@@ -580,6 +579,46 @@ impl<'ir> Evaluator<'ir> {
         self.node(node).0
     }
 
+    // The operands of a junction TLC walks as one: all of a bulleted list or a junction of two, or
+    // otherwise a prefix of an infix chain, then its last operand, as SANY nests the chain.
+    pub fn is_walked_whole(&self, node: NodeId, count: usize) -> bool {
+        count <= 2
+            || self
+                .ir
+                .nodes
+                .junctions
+                .get(&self.resolved(node))
+                .is_some_and(|junction| junction.is_bulleted)
+    }
+
+    // The first `count` operands of a junction, evaluated as TLC evaluates SANY's nesting of an
+    // infix chain: the prefix of one fewer, in a frame of its own, then the last.
+    fn junction(
+        &mut self,
+        node: NodeId,
+        operands: &[NodeId],
+        count: usize,
+        is_conjunction: bool,
+        context: &Context,
+    ) -> Evaluated<bool> {
+        if self.call_stack.is_none() || self.is_walked_whole(node, count) {
+            for &operand in &operands[..count] {
+                if self.boolean(operand, context)? != is_conjunction {
+                    return Ok(!is_conjunction);
+                }
+            }
+            return Ok(is_conjunction);
+        }
+        let frame = StackFrame::Prefix(self.resolved(node), count - 1);
+        let prefix = self.in_frame(frame, &mut |evaluator| {
+            evaluator.junction(node, operands, count - 1, is_conjunction, context)
+        })?;
+        if prefix != is_conjunction {
+            return Ok(prefix);
+        }
+        self.boolean(operands[count - 1], context)
+    }
+
     fn evaluate_node(&mut self, node: NodeId, context: &Context) -> Evaluated<Value> {
         let kind = self.kind(node);
         match kind {
@@ -589,22 +628,20 @@ impl<'ir> Evaluator<'ir> {
             NodeKind::String(text) => Ok(Value::Str(self.text(*text))),
             NodeKind::Identifier(name) => self.identifier(node, name, context),
             NodeKind::Apply { name, args } => self.apply(name, args, context),
-            NodeKind::And(operands) => {
-                for &operand in operands {
-                    if !self.boolean(operand, context)? {
-                        return Ok(Value::Bool(false));
-                    }
-                }
-                Ok(Value::Bool(true))
-            }
-            NodeKind::Or(operands) => {
-                for &operand in operands {
-                    if self.boolean(operand, context)? {
-                        return Ok(Value::Bool(true));
-                    }
-                }
-                Ok(Value::Bool(false))
-            }
+            NodeKind::And(operands) => Ok(Value::Bool(self.junction(
+                node,
+                operands,
+                operands.len(),
+                true,
+                context,
+            )?)),
+            NodeKind::Or(operands) => Ok(Value::Bool(self.junction(
+                node,
+                operands,
+                operands.len(),
+                false,
+                context,
+            )?)),
             NodeKind::Prime(inner) => {
                 if context.is_primed {
                     return fail("a prime under a prime");
@@ -1331,7 +1368,9 @@ impl<'ir> Evaluator<'ir> {
             if let Value::Interval(low, high) = set {
                 let mut values = Vec::new();
                 for key in low..=high {
-                    values.push(self.evaluate(body, &context.bind_value(name, Value::Int(key)))?);
+                    values.push(
+                        self.function_body(body, &context.bind_value(name, Value::Int(key)))?,
+                    );
                 }
                 return Ok(Value::over_interval(low, values, Class::Lambda));
             }
@@ -1339,7 +1378,7 @@ impl<'ir> Evaluator<'ir> {
             let mut values = Vec::new();
             for element in elements(&set)?.iter() {
                 keys.push(element.clone());
-                values.push(self.evaluate(body, &context.bind_value(name, element.clone()))?);
+                values.push(self.function_body(body, &context.bind_value(name, element.clone()))?);
             }
             return sorted_function(keys, values, Class::Lambda);
         }
@@ -1355,11 +1394,24 @@ impl<'ir> Evaluator<'ir> {
                     [element] => element.clone(),
                     _ => Value::tuple(bound.to_vec()),
                 });
-                values.push(evaluator.evaluate(body, inner)?);
+                values.push(evaluator.function_body(body, inner)?);
                 Ok(())
             },
         )?;
         sorted_function(keys, values, Class::Lambda)
+    }
+
+    // A function's value at one key. TLC builds the function in a method of the FcnLambdaValue
+    // that `CallStackTool` gives a source, so a failure there is a FingerprintException, as
+    // `headFingerprint` in `evaluate.ts` marks it.
+    fn function_body(&mut self, body: NodeId, context: &Context) -> Evaluated<Value> {
+        let result = self.evaluate(body, context);
+        if result.is_err()
+            && let Some(stack) = &mut self.call_stack
+        {
+            stack.is_fingerprinted = true;
+        }
+        result
     }
 
     // Each binding of the bounds with the elements bound, the last bound varying fastest.

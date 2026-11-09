@@ -162,6 +162,13 @@ impl Decoder<'_> {
         Ok(count as usize)
     }
 
+    // A 64-bit number as two words, the low first.
+    fn long(&mut self) -> Decoded<u64> {
+        let low = self.next()? as u32;
+        let high = self.next()? as u32;
+        Ok(u64::from(low) | (u64::from(high) << 32))
+    }
+
     fn flag(&mut self) -> Decoded<bool> {
         match self.next()? {
             0 => Ok(false),
@@ -612,6 +619,8 @@ impl Decoder<'_> {
         let is_warning_enabled = self.flag()?;
         let is_recording_graph = self.flag()?;
         let version = self.optional_below(self.text_count as usize, "text")?;
+        let random_seed = self.long()?;
+        let startup_random = self.long()?;
         let count = self.count()?;
         let mut atoms = Vec::with_capacity(count);
         for _ in 0..count {
@@ -683,6 +692,8 @@ impl Decoder<'_> {
             is_warning_enabled,
             is_recording_graph,
             version,
+            random_seed,
+            startup_random,
             atoms,
             live_formula,
             live_properties,

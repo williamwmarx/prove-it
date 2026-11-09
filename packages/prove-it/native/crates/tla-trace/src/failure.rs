@@ -118,12 +118,13 @@ impl<'ir> Rebuilder<'ir> {
                 })
             }
             Site::Next => {
-                evaluator.current = current;
-                evaluator.level = level;
                 // TLC's actions: the IR's, or, where it has none, the next-state relation split
                 // as TLC splits it.
                 let actions = if ir.model.actions.is_empty() {
-                    // TLC splits the relation before it replays, outside the call stack.
+                    // TLC splits the relation at startup, without a state and outside the call
+                    // stack, as `getActions` does.
+                    evaluator.current = vec![None; width];
+                    evaluator.next = vec![None; width];
                     let call_stack = evaluator.call_stack.take();
                     let mut actions = Vec::new();
                     let split = evaluator
@@ -145,6 +146,8 @@ impl<'ir> Rebuilder<'ir> {
                         })
                         .collect()
                 };
+                evaluator.current = current;
+                evaluator.level = level;
                 actions.and_then(|actions| {
                     actions
                         .into_iter()
