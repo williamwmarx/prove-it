@@ -6,6 +6,8 @@
 //! one the search didn't keep, and TLC fingerprinted it only if it satisfies the constraints.
 
 use tla_ir::{Ir, NodeId};
+use tla_values::fingerprint::Fingerprints;
+use tla_values::random::JavaRandom;
 use tla_values::{Id, Store};
 
 use crate::eval::{Context, Evaluator};
@@ -21,6 +23,8 @@ use crate::{Ending, Trace, TraceState, Unsupported};
 pub struct Rebuilder<'ir> {
     evaluator: Evaluator<'ir>,
     key: Key,
+    /// The state of the generator TLC's startup left, which the initial predicate draws from.
+    startup_random: u64,
 }
 
 /// How TLC tells a candidate is the state it looks for: by its fingerprint, which is of the state,
@@ -58,13 +62,18 @@ impl<'ir> Rebuilder<'ir> {
             Some(view) => Key::View(view),
             None => Key::State,
         };
-        Ok(Rebuilder { evaluator, key })
+        Ok(Rebuilder {
+            evaluator,
+            key,
+            startup_random: JavaRandom::seeded(ir.model.random_seed).state(),
+        })
     }
 
     /// Takes the values the search computed at startup, ids of `store`, which TLC's trace reads
-    /// as it computed them.
-    pub fn set_startup(&mut self, store: &Store, values: &[Id]) {
+    /// as it computed them, and the state of the generator the startup left.
+    pub fn set_startup(&mut self, store: &Store, values: &[Id], random: u64) {
         self.evaluator.set_startup(store, values);
+        self.startup_random = random;
     }
 
     /// Takes the symmetry group the search reduced by, each permutation as the names of the model
@@ -126,10 +135,30 @@ impl<'ir> Rebuilder<'ir> {
         // What the spec prints depends on every state TLC enumerates, so where it prints, each
         // walk runs to its end, and each step tries TLC's actions in order, as `findStepAction`
         // does; elsewhere a walk stops at the state it looks for.
-        let is_printing = ir
-            .builtins
-            .iter()
-            .any(|builtin| matches!(&*ir.texts[builtin.name as usize], "Print" | "PrintT"));
+        let is_drawing = ir.builtins.iter().any(|builtin| {
+            matches!(
+                &*ir.texts[builtin.name as usize],
+                "RandomElement" | "RandomSubset"
+            )
+        });
+        // A random draw depends on every draw before it in the expansion, as what the spec prints
+        // does.
+        let is_printing = is_drawing
+            || ir
+                .builtins
+                .iter()
+                .any(|builtin| matches!(&*ir.texts[builtin.name as usize], "Print" | "PrintT"));
+        // TLC's worker seeds the draws of each expansion with the fingerprint of the state it
+        // expands, which is of the state itself where TLC fingerprints no other key.
+        let order: Vec<usize> = ir.tlc_order.iter().map(|&index| index as usize).collect();
+        let mut fingerprints = Fingerprints::new();
+        let mut seeded = |state: &[Id]| {
+            (is_drawing && matches!(self.key, Key::State)).then(|| {
+                JavaRandom::seeded(
+                    fingerprints.get_state(store, state, &order) ^ ir.model.random_seed,
+                )
+            })
+        };
         evaluator.printed.clear();
         let mut rebuilt: Vec<Vec<Value>> = Vec::with_capacity(states.len());
         let context = run(evaluator.scope_context(ir.model.scope))?;
@@ -145,6 +174,9 @@ impl<'ir> Rebuilder<'ir> {
                 &self.key
             }
         };
+        // The initial states draw from the generator startup left, which TLC never reseeds
+        // there, so walking the whole initial predicate draws as the search drew.
+        evaluator.random = is_drawing.then(|| JavaRandom::from_state(self.startup_random));
         let initial = find(
             evaluator,
             key_of(0),
@@ -184,6 +216,7 @@ impl<'ir> Rebuilder<'ir> {
             }
             evaluator.current = previous.into_iter().map(Some).collect();
             evaluator.level = position as i32 + 1;
+            evaluator.random = seeded(pair[0]);
             let candidates = match actions.get(position).copied().flatten() {
                 Some(index) if !is_printing => match ir.model.actions.get(index as usize) {
                     Some(action) => vec![(action.expression, action.scope, Some(index))],
@@ -219,6 +252,9 @@ impl<'ir> Rebuilder<'ir> {
             outputs.push(std::mem::take(&mut evaluator.printed));
             steps.push(step);
         }
+        // The draws of the checks after the expansion follow those of the steps TLC tried, which
+        // the rebuild doesn't take.
+        evaluator.random = None;
         let last = &rebuilt[rebuilt.len() - 1];
         let is_reducing = !matches!(self.key, Key::State);
         if is_held && is_reducing {

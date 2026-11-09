@@ -7,6 +7,8 @@
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
+use tla_values::random::JavaRandom;
+
 use tla_ir::{
     Bound, Definition, DefinitionForm, Index, Ir, Name, NodeId, NodeKind, Param, PathStep, Pattern,
     Resolution, ScopeBinding, TextId,
@@ -15,6 +17,7 @@ use tla_ir::{
 use tla_values::{Id, Store};
 
 use crate::print::{format_pretty, format_printed, format_value};
+use crate::random::{random_element, random_subset};
 use crate::sets::{as_tuple, cardinality, difference, intersection, is_member, is_subset, union};
 use crate::value::{
     Class, Evaluated, Function, Lazy, Text, TlcMessage, Value, compare, elements, equals, fail,
@@ -226,6 +229,9 @@ pub struct Evaluator<'ir> {
     /// The choices the walk made to reach where it is: at each disjunction or enumeration, the
     /// position of the branch or element it took, and whether TLC takes them in the same order.
     pub choices: Vec<(u32, bool)>,
+    /// The generator RandomElement and RandomSubset draw from: seeded with the fingerprint of the
+    /// state TLC expands, as its workers do, and `None` where the evaluator doesn't follow TLC's.
+    pub random: Option<JavaRandom>,
 }
 
 const MAXIMUM_DEPTH: u32 = 10_000;
@@ -252,6 +258,7 @@ impl<'ir> Evaluator<'ir> {
             target: None,
             call_stack: None,
             choices: Vec::new(),
+            random: None,
         }
     }
 
@@ -2145,6 +2152,28 @@ impl<'ir> Evaluator<'ir> {
                     values[1].clone()
                 } else {
                     Value::Bool(true)
+                }
+            }
+            "RandomElement" | "RandomSubset" => {
+                let values = operands
+                    .iter()
+                    .map(|operand| self.operand(operand))
+                    .collect::<Evaluated<Vec<_>>>()?;
+                // A draw is never the same twice, so what reads one isn't cached.
+                self.reads += 1;
+                let is_174 = self.is_174();
+                let Some(random) = self.random.as_mut() else {
+                    return fail(
+                        "a random draw where the evaluator doesn't follow TLC's generator",
+                    );
+                };
+                match (name, values.as_slice()) {
+                    ("RandomElement", [set]) => random_element(random, set)?,
+                    // TLC 1.7.4 draws a subset's indices another way.
+                    ("RandomSubset", [Value::Int(count), set]) if *count >= 0 && !is_174 => {
+                        random_subset(random, *count as u64, set)?
+                    }
+                    _ => return fail(name.to_string()),
                 }
             }
             "TLCEval" => {

@@ -1143,11 +1143,16 @@ impl<'a> Compiler<'a> {
                         "\\cup" | "\\cap" | "\\" | "UNION" => !args
                             .iter()
                             .any(|&arg| self.may_be_lazy(arg, &mut HashSet::new())),
-                        // TLC evaluates the element, then the set, and asks the set whether it
-                        // holds the element, which a set TLC keeps lazy answers its own way.
-                        "\\in" | "\\notin" => !args
-                            .last()
-                            .is_some_and(|&set| self.may_be_lazy(set, &mut HashSet::new())),
+                        // TLC evaluates the operands once each, in order, then asks the set
+                        // whether it holds the element or the other set, or for its size. The
+                        // engine may evaluate a set TLC keeps lazy another way, which shows only
+                        // where it prints or draws.
+                        "\\in" | "\\notin" | "\\subseteq" | "Cardinality" => {
+                            !args.iter().any(|&arg| {
+                                self.may_be_lazy(arg, &mut HashSet::new())
+                                    && self.may_have_effect(arg, &mut HashSet::new())
+                            })
+                        }
                         _ => false,
                     },
                     _ => false,
@@ -1155,6 +1160,36 @@ impl<'a> Compiler<'a> {
             }
             _ => false,
         }
+    }
+
+    // Whether evaluating an expression may print, draw or set a TLC register, itself or through
+    // the definitions it names. An operator bound locally may do anything.
+    fn may_have_effect(&self, node: NodeId, seen: &mut HashSet<NodeId>) -> bool {
+        if !seen.insert(node) {
+            return false;
+        }
+        let named = match self.node(node).1 {
+            NodeKind::Apply { name, .. } if name.is_local => true,
+            NodeKind::Identifier(name) | NodeKind::Apply { name, .. } if !name.is_local => {
+                match name.resolution {
+                    Resolution::Builtin(index) => matches!(
+                        self.builtin_name(index),
+                        "Print" | "PrintT" | "RandomElement" | "RandomSubset" | "TLCSet"
+                    ),
+                    Resolution::Definition(index) => self.may_have_effect(
+                        self.definition(self.ir.definitions[index as usize]).body,
+                        seen,
+                    ),
+                    _ => false,
+                }
+            }
+            _ => false,
+        };
+        named
+            || self
+                .children(node)
+                .into_iter()
+                .any(|child| self.may_have_effect(child, seen))
     }
 
     // Whether TLC may keep the value of an expression lazy, a set it enumerates in its own order

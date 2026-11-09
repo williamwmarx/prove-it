@@ -48,7 +48,11 @@ pub fn rebuild_trace(ir: &Ir, violation: &Violation) -> Result<PrintedTrace, Str
                 };
                 // TLC prints each state through the ALIAS, when there is one.
                 let rebuilt = Rebuilder::new(ir).and_then(|mut rebuilder| {
-                    rebuilder.set_startup(&violation.store, &violation.startup);
+                    rebuilder.set_startup(
+                        &violation.store,
+                        &violation.startup,
+                        violation.startup_random,
+                    );
                     if let Some(group) = &violation.symmetry {
                         rebuilder.set_symmetry(group);
                     }

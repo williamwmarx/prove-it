@@ -9,8 +9,8 @@ use std::sync::Arc;
 use tla_values::store::Outcome;
 use tla_values::{Bail, Id, Store};
 
-use crate::compile::random::JavaRandom;
 use crate::memo::{EMPTY, EPOCH_KEYS, EpochCache, MemoTable};
+use tla_values::random::JavaRandom;
 
 /// A compiled expression: its value, or where TLC would fail, or the engine hands over.
 pub type Eval = Arc<dyn Fn(&mut Machine<'_>) -> Outcome<Id> + Send + Sync>;
@@ -114,6 +114,8 @@ pub struct Machine<'p> {
     /// The generator RandomElement and RandomSubset draw from: the interpreter's for the initial
     /// states, then one seeded for each state the search expands (`runtime.getRandom`).
     pub(crate) random: JavaRandom,
+    /// The state of the generator the startup left, which a violation's trace draws from.
+    pub(crate) startup_random: u64,
 }
 
 impl<'p> Machine<'p> {
@@ -145,6 +147,7 @@ impl<'p> Machine<'p> {
             spare_states: Vec::new(),
             output: Vec::new(),
             random: JavaRandom::seeded(program.random_seed),
+            startup_random: 0,
         }
     }
 

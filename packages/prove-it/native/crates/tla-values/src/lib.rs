@@ -5,6 +5,7 @@
 
 pub mod fingerprint;
 pub mod print;
+pub mod random;
 pub mod store;
 pub mod trace;
 pub mod transfer;

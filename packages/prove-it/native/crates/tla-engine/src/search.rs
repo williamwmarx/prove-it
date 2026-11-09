@@ -161,6 +161,8 @@ pub struct Checkpoint {
     pub possible: Vec<i64>,
     /// The value TLC computed at startup of each of the model's startup definitions, as one row.
     pub startup: SharedStates,
+    /// The state of the generator the startup left (`JavaRandom::state`).
+    pub startup_random: u64,
     /// The symmetry group the search reduced by, if any.
     pub symmetry: Option<NamedGroup>,
 }
@@ -244,6 +246,8 @@ pub struct Violation {
     /// The value TLC computed at startup of each of the model's startup definitions, ids of
     /// `store`.
     pub startup: Vec<Id>,
+    /// The state of the generator the startup left (`JavaRandom::state`).
+    pub startup_random: u64,
     /// The symmetry group the search reduced by, if any.
     pub symmetry: Option<NamedGroup>,
 }
@@ -1664,6 +1668,9 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             started.group
         }
     };
+    // The initial states draw on from where the startup left the generator.
+    let startup_random = machine.random.state();
+    machine.startup_random = startup_random;
     // The group by the names of the model values each permutation moves, for the interpreter and
     // the trace, which read the search's states by another store.
     let named_group = group
@@ -2065,6 +2072,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             }),
             possible,
             startup: share_startup(machine, &context).expect("values computed at startup"),
+            startup_random,
             symmetry: named_group.clone(),
         }
     };
@@ -2392,6 +2400,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     possible: checkpoint_possible.clone(),
                     startup: share_startup(&mut machine, &context)
                         .expect("values computed at startup"),
+                    startup_random,
                     symmetry: named_group.clone(),
                 }))
             } else if !is_kept || search.states.key_width.is_some() || search.held.is_some() {
@@ -2727,6 +2736,7 @@ fn to_violation(
             counts: found.counts,
             store: std::mem::replace(&mut machine.store, Store::new()),
             startup,
+            startup_random: machine.startup_random,
             symmetry,
         })
     })
@@ -2767,6 +2777,7 @@ fn to_lasso(
             },
             store: std::mem::replace(&mut machine.store, Store::new()),
             startup,
+            startup_random: machine.startup_random,
             symmetry: None,
         })
     })

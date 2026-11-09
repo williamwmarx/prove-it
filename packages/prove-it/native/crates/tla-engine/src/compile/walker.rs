@@ -883,7 +883,7 @@ impl<'a> Compiler<'a> {
     }
 
     // The expressions directly inside one, as `collectChildren` finds them.
-    fn children(&self, node: NodeId) -> Vec<NodeId> {
+    pub(super) fn children(&self, node: NodeId) -> Vec<NodeId> {
         let mut children = Vec::new();
         match self.node(node).1 {
             NodeKind::Number(_)

@@ -26,6 +26,8 @@ pub struct Stopped {
     pub states: Vec<Vec<Id>>,
     /// The values the search computed at startup, ids of `store`.
     pub startup: Vec<Id>,
+    /// The state of the generator the startup left.
+    pub startup_random: u64,
     /// The symmetry group the search reduced by, by the names of the model values.
     pub symmetry: Option<tla_engine::symmetry::NamedGroup>,
     pub parents: Vec<i32>,
@@ -57,6 +59,7 @@ pub fn stop_search(ir: &tla_ir::Ir, stop_at: Option<usize>) -> Option<Stopped> {
             store,
             states: Vec::new(),
             startup: Vec::new(),
+            startup_random: tla_values::random::JavaRandom::seeded(ir.model.random_seed).state(),
             symmetry: None,
             parents: Vec::new(),
             reason,
@@ -79,6 +82,7 @@ pub fn stop_search(ir: &tla_ir::Ir, stop_at: Option<usize>) -> Option<Stopped> {
         store,
         states,
         startup,
+        startup_random: checkpoint.startup_random,
         symmetry: checkpoint.symmetry.clone(),
         parents: checkpoint.parents.clone(),
         reason,

@@ -32,7 +32,7 @@ fn evaluate_failure(path: &str) -> (Failure, String) {
         let actions = vec![None; states.len().saturating_sub(1)];
         let failure = Rebuilder::new(&ir)
             .and_then(|mut rebuilder| {
-                rebuilder.set_startup(&stopped.store, &stopped.startup);
+                rebuilder.set_startup(&stopped.store, &stopped.startup, stopped.startup_random);
                 if let Some(group) = &stopped.symmetry {
                     rebuilder.set_symmetry(group);
                 }
@@ -133,7 +133,7 @@ fn reports_an_invariant_that_fails_to_evaluate() {
         let actions = vec![None; states.len() - 1];
         Rebuilder::new(&ir)
             .and_then(|mut rebuilder| {
-                rebuilder.set_startup(&stopped.store, &stopped.startup);
+                rebuilder.set_startup(&stopped.store, &stopped.startup, stopped.startup_random);
                 rebuilder.evaluate_failure(&stopped.store, &states, &actions, Site::Invariant(0))
             })
             .unwrap_or_else(|unsupported| panic!("{}", unsupported.0))
