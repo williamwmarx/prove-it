@@ -5,10 +5,10 @@ TLC prints, staged so that every step ships on its own, is measurably faster, an
 identical to TLC and to the TypeScript checker before it is switched on.
 
 Status: proposal, with M1 to M6 built (their outcomes are in section 11). Every number marked *measured*
-comes from the prototypes under `native/prototypes/` (section 10) on a local 4-core cloud machine
-(Rust 1.97.0, Bun 1.4.4, Node 22.23.4). Those timings vary by about 10% between runs. Depot
-numbers come from the benchmark of `main` at f284739 (run cb7zd2w63s), as summarised on the
-headroom page.
+comes from the prototypes that were under `native/prototypes/` until 1916b69 (section 10) on a
+local 4-core cloud machine (Rust 1.97.0, Bun 1.4.4, Node 22.23.4). Those timings vary by about 10%
+between runs. Depot numbers come from the benchmark of `main` at f284739 (run cb7zd2w63s), as
+summarised on the headroom page.
 
 ---
 
@@ -1157,7 +1157,8 @@ too.
 
 ## 10. What was measured
 
-All under `native/prototypes/`.
+All were under `native/prototypes/`, removed after 1916b69:
+`git show 1916b69:packages/prove-it/native/prototypes/<path>` reads one.
 
 ### 10.1 N-API crossing cost (`napi-cost/`)
 

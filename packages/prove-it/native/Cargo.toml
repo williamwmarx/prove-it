@@ -6,8 +6,6 @@ members = [
   "crates/tla-values",
   "tools/replay",
 ]
-# The prototypes are separate crates, kept as the design measured them.
-exclude = ["prototypes"]
 resolver = "3"
 
 [workspace.package]
