@@ -32,7 +32,7 @@ pub use decode::{DecodeError, decode};
 pub use encode::encode;
 
 /// The version of the layout, `IR_VERSION` in `ir.ts`.
-pub const IR_VERSION: u32 = 2;
+pub const IR_VERSION: u32 = 3;
 
 /// "PIIR" as a little-endian word.
 pub const MAGIC: u32 = 0x5249_4950;
@@ -202,6 +202,23 @@ pub struct Atom {
     pub scope: Option<Index>,
 }
 
+/// A term of the formula the liveness checker solves, in prefix order: a junction is followed by
+/// its operands and a unary term by its body. An atom is its position among the model's atoms, or
+/// past them for one the checker asks nothing of.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LiveTerm {
+    Boolean(bool),
+    State(Index),
+    Enabled(Index),
+    Action { atom: Index, enabled: Option<Index> },
+    Not,
+    Always,
+    Eventually,
+    Next,
+    And(u32),
+    Or(u32),
+}
+
 /// What the configuration and the checker ask of the search.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Model {
@@ -224,6 +241,8 @@ pub struct Model {
     pub is_recording_graph: bool,
     pub version: Option<TextId>,
     pub atoms: Vec<Atom>,
+    /// The fairness and the negated properties as the liveness checker joins them, or no terms.
+    pub live_formula: Vec<LiveTerm>,
 }
 
 /// The nodes, in the order of the blob, and which of them are written at the top level.
@@ -522,6 +541,17 @@ pub(crate) mod code {
     pub const ATOM_ENABLED: i32 = 2;
     pub const ENABLED_UNKNOWN: i32 = -2;
     pub const ENABLED_ALL: i32 = -1;
+    pub const LIVE_FALSE: i32 = 0;
+    pub const LIVE_TRUE: i32 = 1;
+    pub const LIVE_STATE: i32 = 2;
+    pub const LIVE_ENABLED: i32 = 3;
+    pub const LIVE_ACTION: i32 = 4;
+    pub const LIVE_NOT: i32 = 5;
+    pub const LIVE_ALWAYS: i32 = 6;
+    pub const LIVE_EVENTUALLY: i32 = 7;
+    pub const LIVE_NEXT: i32 = 8;
+    pub const LIVE_AND: i32 = 9;
+    pub const LIVE_OR: i32 = 10;
     pub const FALSE: i32 = 0;
     pub const TRUE: i32 = 1;
     pub const INTEGER: i32 = 2;

@@ -10,9 +10,11 @@
 //! liveness answers are checked (PROVE_IT_LIVE_CHECK). `stateLog` is
 //! the file to write the state log to, or "". It returns:
 //! - `{ status: "declined", reason }`;
-//! - `{ status: "complete", counts, outDegrees, fingerprints[, checkpoint] }`, with `counts` a
-//!   Float64Array of the generated, distinct and initial counts, the depth, the values and the
-//!   collisions, and with temporal properties the checkpoint of the whole search;
+//! - `{ status: "complete", counts, outDegrees, fingerprints[, liveness, checkpoint] }`, with
+//!   `counts` a Float64Array of the generated, distinct and initial counts, the depth, the values
+//!   and the collisions, and with temporal properties what checking them found, `{ status:
+//!   "holds" | "lasso" | "accepted" | "declined", reason, path, loopStart, state,
+//!   isCycleConstrained }`, and the checkpoint of the whole search unless they hold;
 //! - `{ status: "stopped", reason, counts, outDegrees, parents, words, strings, states[,
 //!   keyWords, keyStrings, keyStates, keyWidth] }`, with `counts` the state being expanded, the
 //!   states before it, the generated and initial generated counts and the collisions, and the
@@ -34,6 +36,7 @@ use std::ptr::null_mut;
 use crate::{Event, MINIMUM_SHARED_LEVEL, SearchOutcome, Settings, check_on_thread};
 use tla_engine::Options;
 use tla_engine::search::{Checkpoint, GraphCheckpoint};
+use tla_live::Verdict;
 use tla_values::transfer::{EncodedStates, SharedStates};
 
 use super::store::{
@@ -185,6 +188,49 @@ unsafe fn set_checkpoint(
             set(env, object, c"graph", create_graph(env, graph)?)?;
         }
         Ok(())
+    }
+}
+
+// What checking the temporal properties found: `{ status, reason, path, loopStart, state,
+// isCycleConstrained }`.
+unsafe fn create_verdict(env: napi_env, verdict: &Verdict) -> Result<napi_value, Thrown> {
+    let (kind, reason, path, loop_start, state, is_cycle_constrained) = match verdict {
+        Verdict::Holds => ("holds", "", &[][..], 0, 0, false),
+        Verdict::Lasso {
+            path,
+            loop_start,
+            is_cycle_constrained,
+        } => (
+            "lasso",
+            "",
+            &path[..],
+            *loop_start,
+            0,
+            *is_cycle_constrained,
+        ),
+        Verdict::Accepted { state, path } => ("accepted", "", &path[..], 0, *state, false),
+        Verdict::Declined(declined) => ("declined", declined.0.as_str(), &[][..], 0, 0, false),
+    };
+    unsafe {
+        let mut object = null_mut();
+        status(napi_create_object(env, &mut object))?;
+        set(env, object, c"status", create_string(env, kind)?)?;
+        set(env, object, c"reason", create_string(env, reason)?)?;
+        set(env, object, c"path", create_int32s(env, &to_words(path))?)?;
+        set(
+            env,
+            object,
+            c"loopStart",
+            create_number(env, loop_start as f64)?,
+        )?;
+        set(env, object, c"state", create_number(env, f64::from(state))?)?;
+        set(
+            env,
+            object,
+            c"isCycleConstrained",
+            create_number(env, f64::from(u8::from(is_cycle_constrained)))?,
+        )?;
+        Ok(object)
     }
 }
 
@@ -359,10 +405,14 @@ pub(super) unsafe extern "C" fn check_model(env: napi_env, info: napi_callback_i
                 SearchOutcome::Complete {
                     counts,
                     checkpoint,
+                    liveness,
                     fingerprints,
                     value_count,
                     collisions,
                 } => {
+                    if let Some(verdict) = &liveness {
+                        set(env, result, c"liveness", create_verdict(env, verdict)?)?;
+                    }
                     if let Some(checkpoint) = &checkpoint {
                         let mut object = null_mut();
                         status(napi_create_object(env, &mut object))?;

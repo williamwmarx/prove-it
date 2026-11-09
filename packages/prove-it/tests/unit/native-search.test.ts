@@ -81,6 +81,31 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     );
   });
 
+  it("reads f[i][j] of a variable and two bound names in place", async () => {
+    const body = [
+      "EXTENDS Naturals",
+      "VARIABLE f",
+      "Init == f = [i \\in 1..2 |-> [j \\in 1..2 |-> 0]]",
+      "Next == \\E i, j \\in 1..2 : f[i][j] < 2 /\\ f[j][i] # 1 /\\ f' = [f EXCEPT ![i][j] = @ + 1]",
+    ];
+    const config = "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE";
+    expect(await compareStateLogs(body, config, false)).toContainEqual(
+      expect.stringMatching(COMPLETE),
+    );
+    expect(await compareWithInterpreter(body, config)).toContainEqual(
+      expect.stringMatching(COMPLETE),
+    );
+    const outside = [
+      "EXTENDS Naturals",
+      "VARIABLE f",
+      "Init == f = <<<<0>>, <<0, 0>>>>",
+      "Next == \\E i, j \\in 1..2 : f[i][j] = 0 /\\ f' = f",
+    ];
+    expect(await compareWithInterpreter(outside, "INIT Init\nNEXT Next")).toContainEqual(
+      expect.stringMatching(stopped("applied a function outside its domain")),
+    );
+  });
+
   it("takes TLC's shortcut past a walk once every variable is assigned, with warnings on", async () => {
     // With warnings on, the disjunction after y' = 1 is a guard once x and y are assigned, so it
     // gives one successor rather than two.
@@ -417,6 +442,47 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
       expect(native.result.status).toBe(status);
     }
     await compareStateLogs(body, "SPECIFICATION Spec\nPROPERTY Returns", false);
+  });
+
+  it("checks the temporal properties itself, and the interpreter prints its counterexample", async () => {
+    const body = [
+      "EXTENDS Naturals",
+      "VARIABLES x, y",
+      "vars == <<x, y>>",
+      "Init == x = 0 /\\ y = 0",
+      "Inc == x < 3 /\\ x' = x + 1 /\\ y' = y",
+      "Flip == y' = 1 - y /\\ x' = x",
+      "Reset == x = 3 /\\ x' = 0 /\\ y' = y",
+      "Next == Inc \\/ Flip \\/ Reset",
+      "Weak == Init /\\ [][Next]_vars /\\ WF_vars(Inc) /\\ WF_vars(Reset)",
+      "Strong == Init /\\ [][Next]_vars /\\ SF_vars(Inc) /\\ SF_vars(Reset)",
+      "Unfair == Init /\\ [][Next]_vars",
+      "Returns == []<>(x = 0)",
+      "Steps == []<><<Inc>>_vars",
+      "Settles == <>[](y = 0)",
+      "Leads == (x = 3) ~> (y = 1)",
+    ];
+    for (const [config, verdict] of [
+      ["SPECIFICATION Weak\nPROPERTY Returns\nPROPERTY Steps", "holds"],
+      ["SPECIFICATION Strong\nPROPERTY Returns", "holds"],
+      ["SPECIFICATION Weak\nPROPERTY Settles", "lasso"],
+      ["SPECIFICATION Strong\nPROPERTY Leads", "lasso"],
+      ["SPECIFICATION Unfair\nPROPERTY Returns", "lasso"],
+    ] as const) {
+      const lines = await compareWithInterpreter(body, config);
+      expect(lines).toContain(`[engine] native: liveness: ${verdict}`);
+      // PROVE_IT_LIVE_CHECK has the interpreter check the properties on the graph too, and throws
+      // where it finds otherwise.
+      await compareWithInterpreter(body, config, { PROVE_IT_LIVE_CHECK: "1" });
+    }
+    // Without the replay, TLCGet("diameter") still reads the search's depth.
+    const diameter = ["EXTENDS Naturals, TLC", ...body.slice(1), 'Post == TLCGet("diameter") = 5'];
+    const lines = await compareWithInterpreter(
+      diameter,
+      "SPECIFICATION Weak\nPROPERTY Returns\nPOSTCONDITION Post",
+    );
+    expect(lines).toContain("[engine] native: liveness: holds");
+    expect(lines).toContainEqual(expect.stringMatching(COMPLETE));
   });
 
   it("hands over a violated invariant, deadlock and a failed action property", async () => {
