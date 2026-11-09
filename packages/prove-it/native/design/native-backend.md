@@ -1,7 +1,10 @@
 # A native backend of our own (DESIGN.md 3.1's later tier)
 
-Status: design only (this file, rather than a section of DESIGN.md, so it doesn't conflict with other workstreams' notes), for review before any code. The workspace stays std only: no Cranelift, LLVM,
-`dynasm`, `memmap2` or `libc` crate. Everything below is code we write and own.
+Status: **shelved.** N0 and the first part of N1 were built and measured, and showed no win
+worth the machinery, so the code was removed from main. Section 9 records what was measured and
+where to revive the code from. The design below is kept as it was reviewed. The workspace stays
+std only: no Cranelift, LLVM, `dynasm`, `memmap2` or `libc` crate. Everything below is code we
+write and own.
 
 ## 1. Why, and what it replaces
 
@@ -238,3 +241,25 @@ backend on by default except N6.
   - The fingerprint combine, if N2's profiles still show it worth a stage.
 - **N6, default on** where executable memory is granted, after a full conformance run and a
   release with it on behind the setting.
+
+## 9. Shelved: what was built and measured
+
+What was built:
+- **On main, then removed:**
+  - the mapping of executable memory on Linux x86-64 (#77, fc2a21f);
+  - the NIR and its lowering of fused predicates (#96, 374a3d7);
+  - the x86-64 encoder (#125, 518f746).
+- **Never merged:**
+  - Guards and invariants as native code behind `PROVE_IT_NATIVE_CODE=off|on|verify` (#128, closed). That's `call.rs`, `helpers.rs` and `emit.rs`, with the verify mode, a seeded differential against the closures, and a helper wrapper that refreshes the bases and catches panics, which can't unwind through emitted frames. The code is at #128's head, 5be3a00, which the PR's ref keeps.
+  - Inline equality of scalars and a tuple's application to an integer: branch `native-inline`, 345096f.
+
+What was measured:
+- **Per guard (N1), local engine time, setting off → on.** Philosophers went from about 130 to about 165 ms, and MCBakery and MCLamportMutex were flat or slower. Inlining equality and tuple application didn't change that. Crossing into native code once per guard costs about what the closure dispatch it replaces does: about 27 instructions to enter (`Native::run`), plus about 16 in each helper's prologue and epilogue.
+- **The ceiling of whole walks (N2).** Philosophers' `Next`, written by hand in Rust as a step on the same store and continuation, gives the same successors in the same order. Optimised Rust bounds what emitted code could reach.
+  - The action alone (the step minus the search's handling of each successor) fell from 9,390 to 4,280 instructions per state (2.2×).
+  - The whole search fell from 1,518M to 859M instructions, and engine time from about 130 to about 95 ms (1.37×).
+  - 78% of the hand-written action is store work: EXCEPT and its interning, and `apply`. It also reads `phase[seat]` once per seat, where the walk reads it in each disjunct, and it skips the memo lookups of `Left` and `Right`.
+  - Emitted code faithful to the walk, calling the store through helpers, was estimated at 1.4–1.7× fewer instructions for the action and 1.2–1.3× in time. That's short of the 1.5× bar it had to clear, with three ISAs and three operating systems still to support.
+
+The gains the ceiling did show were mostly within reach of the closures: a fast path for applying a function over an integer range, no memo for trivial arithmetic, and fewer repeated reads. Revisit the backend only if profiles after those show dispatch, not store work, dominating the laggards.
+

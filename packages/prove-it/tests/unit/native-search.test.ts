@@ -595,6 +595,53 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     await compareWithInterpreter(body, config, { PROVE_IT_LIVE_CHECK: "1" });
   });
 
+  it("searches again where a search under SYMMETRY with temporal properties stops part way", async () => {
+    // TLC's SymmetryLivenessTableau: the graph a stopped search recorded holds the states it
+    // stored, not those each step reached, so the interpreter searches again from the start.
+    const body = [
+      "EXTENDS TLC",
+      "CONSTANTS a, b, c, d, e, f, NoVal",
+      "VARIABLES mem, ctl, buf, memInt",
+      "Proc == {c, d}",
+      "Adr == {e, f}",
+      "Val == {a, b}",
+      'MReq == [op : {"Rd"}, adr : Adr] \\cup [op : {"Wr"}, adr : Adr, val : Val]',
+      "Init == /\\ mem \\in [Adr -> Val]",
+      '        /\\ ctl = [p \\in Proc |-> "rdy"]',
+      "        /\\ buf = [p \\in Proc |-> NoVal]",
+      "        /\\ memInt \\in {<<p, NoVal>> : p \\in Proc}",
+      'Req(p) == /\\ ctl[p] = "rdy"',
+      "          /\\ \\E req \\in MReq : /\\ memInt' = <<p, req>>",
+      "                               /\\ buf' = [buf EXCEPT ![p] = req]",
+      `                               /\\ ctl' = [ctl EXCEPT ![p] = "busy"]`,
+      "          /\\ UNCHANGED mem",
+      'Do(p) == /\\ ctl[p] = "busy"',
+      `         /\\ mem' = IF buf[p].op = "Wr" THEN [mem EXCEPT ![buf[p].adr] = buf[p].val] ELSE mem`,
+      `         /\\ buf' = [buf EXCEPT ![p] = IF buf[p].op = "Wr" THEN NoVal ELSE mem[buf[p].adr]]`,
+      `         /\\ ctl' = [ctl EXCEPT ![p] = "done"]`,
+      "         /\\ UNCHANGED memInt",
+      'Rsp(p) == /\\ ctl[p] = "done"',
+      "          /\\ memInt' = <<p, buf[p]>>",
+      `          /\\ ctl' = [ctl EXCEPT ![p] = "rdy"]`,
+      "          /\\ UNCHANGED <<mem, buf>>",
+      "vars == <<memInt, mem, ctl, buf>>",
+      "Next == \\E p \\in Proc : Req(p) \\/ Do(p) \\/ Rsp(p)",
+      "Spec == Init /\\ [][Next]_vars /\\ \\A p \\in Proc : WF_vars(Do(p) \\/ Rsp(p))",
+      'Liveness == \\A p \\in Proc : (ctl[p] = "busy") ~> (ctl[p] = "rdy")',
+      "Symmetry == Permutations(Val) \\union Permutations(Proc) \\union Permutations(Adr)",
+    ];
+    const config =
+      "CONSTANTS a = a\nb = b\nc = c\nd = d\ne = e\nf = f\nNoVal = NoVal\nSYMMETRY Symmetry\nSPECIFICATION Spec\nPROPERTY Liveness";
+    for (const backend of ["ts", "rust"]) {
+      expect(
+        await compareWithInterpreter(body, config, {
+          PROVE_IT_ENGINE_BACKEND: backend,
+          PROVE_IT_STOP_AT: "65",
+        }),
+      ).toContainEqual(expect.stringMatching(/stopped where PROVE_IT_STOP_AT asked/));
+    }
+  });
+
   it("reports a tableau node that accepts every behavior as TLC finds it", async () => {
     // TLC's test model Github1389Counting: x becomes TRUE at most twice.
     const body = [
