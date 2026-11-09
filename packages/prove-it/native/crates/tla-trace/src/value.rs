@@ -532,6 +532,28 @@ pub fn settle_normalized(value: &Value) {
     }
 }
 
+/// `deepNormalize` of a state whose lambdas TLC has built into the functions they enumerate, as
+/// permuting the state under SYMMETRY builds them: each lambda becomes the function it enumerates,
+/// and then the state normalizes as `settle_normalized` does.
+pub fn settle_built(value: &Value) {
+    build_lambdas(value);
+    settle_normalized(value);
+}
+
+fn build_lambdas(value: &Value) {
+    match value {
+        Value::Set(elements) => elements.iter().for_each(build_lambdas),
+        Value::Function(function) => {
+            if function.class.get() == Class::Lambda {
+                function.class.set(Class::Plain);
+            }
+            function.domain.iter().for_each(build_lambdas);
+            function.range.iter().for_each(build_lambdas);
+        }
+        _ => {}
+    }
+}
+
 /// Whether two values are the same, by a walk that sorts nothing, unlike TLC's comparisons.
 pub fn is_same(left: &Value, right: &Value) -> bool {
     match (left, right) {

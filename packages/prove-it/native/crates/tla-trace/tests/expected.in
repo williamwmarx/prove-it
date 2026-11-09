@@ -96,3 +96,63 @@ State 4: <Next line 16, col 4 to line 23, col 79 of module TLCGetLevel>
 /\ y = 3
 /\ z = 4
 "#;
+
+// The first state of TLC's deadlock trace of raft/specifications/standard-raft/
+// RaftWithReconfigJointConsensus (default mode), under VIEW and SYMMETRY.
+const RAFT_RECONFIG_INITIAL_STATE: &str = r#"State 1: <Initial predicate>
+/\ messages = <<>>
+/\ matchIndex = ( n1 :> (n1 :> 1 @@ n2 :> 1 @@ n3 :> 1 @@ n4 :> 0) @@
+  n2 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0 @@ n4 :> 0) @@
+  n3 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0 @@ n4 :> 0) @@
+  n4 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0 @@ n4 :> 0) )
+/\ log = ( n1 :>
+      << [ term |-> 1,
+           command |-> NewConfigCommand,
+           value |-> [id |-> 1, members |-> {n1, n2, n3}] ] >> @@
+  n2 :>
+      << [ term |-> 1,
+           command |-> NewConfigCommand,
+           value |-> [id |-> 1, members |-> {n1, n2, n3}] ] >> @@
+  n3 :>
+      << [ term |-> 1,
+           command |-> NewConfigCommand,
+           value |-> [id |-> 1, members |-> {n1, n2, n3}] ] >> @@
+  n4 :> <<>> )
+/\ pendingResponse = ( n1 :> (n1 :> FALSE @@ n2 :> FALSE @@ n3 :> FALSE @@ n4 :> FALSE) @@
+  n2 :> (n1 :> FALSE @@ n2 :> FALSE @@ n3 :> FALSE @@ n4 :> FALSE) @@
+  n3 :> (n1 :> FALSE @@ n2 :> FALSE @@ n3 :> FALSE @@ n4 :> FALSE) @@
+  n4 :> (n1 :> FALSE @@ n2 :> FALSE @@ n3 :> FALSE @@ n4 :> FALSE) )
+/\ state = (n1 :> Leader @@ n2 :> Follower @@ n3 :> Follower @@ n4 :> NotMember)
+/\ electionCtr = 0
+/\ restartCtr = 0
+/\ commitIndex = (n1 :> 1 @@ n2 :> 1 @@ n3 :> 1 @@ n4 :> 0)
+/\ config = ( n1 :>
+      [ committed |-> TRUE,
+        jointConsensus |-> FALSE,
+        id |-> 1,
+        members |-> {n1, n2, n3} ] @@
+  n2 :>
+      [ committed |-> TRUE,
+        jointConsensus |-> FALSE,
+        id |-> 1,
+        members |-> {n1, n2, n3} ] @@
+  n3 :>
+      [ committed |-> TRUE,
+        jointConsensus |-> FALSE,
+        id |-> 1,
+        members |-> {n1, n2, n3} ] @@
+  n4 :>
+      [ committed |-> FALSE,
+        jointConsensus |-> FALSE,
+        id |-> 0,
+        members |-> {} ] )
+/\ currentTerm = (n1 :> 1 @@ n2 :> 1 @@ n3 :> 1 @@ n4 :> 0)
+/\ nextIndex = ( n1 :> (n1 :> 2 @@ n2 :> 2 @@ n3 :> 2 @@ n4 :> 1) @@
+  n2 :> (n1 :> 1 @@ n2 :> 1 @@ n3 :> 1 @@ n4 :> 1) @@
+  n3 :> (n1 :> 1 @@ n2 :> 1 @@ n3 :> 1 @@ n4 :> 1) @@
+  n4 :> (n1 :> 1 @@ n2 :> 1 @@ n3 :> 1 @@ n4 :> 1) )
+/\ reconfigCtr = 0
+/\ valueCtr = <<0, 0>>
+/\ votesGranted = (n1 :> {} @@ n2 :> {} @@ n3 :> {} @@ n4 :> {})
+/\ acked = (v1 :> Nil)
+/\ votedFor = (n1 :> Nil @@ n2 :> Nil @@ n3 :> Nil @@ n4 :> Nil)"#;
