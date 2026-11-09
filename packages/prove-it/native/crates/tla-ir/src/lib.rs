@@ -28,11 +28,13 @@ fn on_nesting_stack<T: Send>(work: impl FnOnce() -> T + Send) -> T {
     })
 }
 
+use std::collections::HashMap;
+
 pub use decode::{DecodeError, decode};
 pub use encode::encode;
 
 /// The version of the layout, `IR_VERSION` in `ir.ts`.
-pub const IR_VERSION: u32 = 9;
+pub const IR_VERSION: u32 = 10;
 
 /// "PIIR" as a little-endian word.
 pub const MAGIC: u32 = 0x5249_4950;
@@ -280,6 +282,17 @@ pub struct Model {
 pub struct Nodes {
     pub arena: Vec<Node>,
     pub top: Vec<NodeId>,
+    /// How each junction that is a bulleted list or an infix chain is written, by its node.
+    pub junctions: HashMap<NodeId, Junction>,
+}
+
+/// How a junction is written: as a bulleted list, or as an infix chain such as A /\ B /\ C, which
+/// SANY parses as (A /\ B) /\ C. TLC prints the range of each prefix of two or more operands, which
+/// ends where `prefix_ends` says, a line and column for each.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Junction {
+    pub is_bulleted: bool,
+    pub prefix_ends: Vec<(i32, i32)>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

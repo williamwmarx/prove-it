@@ -126,7 +126,7 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
 - TLC draws from one java.util.Random per thread (`RandomEnumerableValues`): the main thread's
   for the assumptions and the initial states, and in a worker one it reseeds with the fingerprint
   of each state it expands, xored with the seed. So a state's successors draw the same whatever
-  thread expands it. The IR (version 9) carries the seed and the state the assumptions left the
+  thread expands it. The IR (version 10) carries the seed and the state the assumptions left the
   generator in. The search draws from that for the initial states and reseeds for each expansion
   with the fingerprint it found the state by (`Machine::seed_random`). `compile/random.rs` ports
   java.util.Random and the draws of `tlc/random.ts`: RandomElement draws each component of a set

@@ -23,7 +23,9 @@
 // - the nodes: expressions and definitions in prefix order, each its tag, its line and column, its
 //   source range (the module's name, or -1 for none, then the start's and the end's line and
 //   column, which TLC's messages print), then its fields and children. A node met again is a
-//   reference to its first offset.
+//   reference to its first offset. A junction is flagged when it is a bulleted list, and its fields
+//   are where each prefix of an infix chain such as A /\ B /\ C ends, which SANY parses as nested
+//   junctions whose ranges TLC prints.
 
 import type {
   Bound,
@@ -57,7 +59,7 @@ import type { EngineProperties, EngineSpec } from "./context";
 import type { NamedPermutation } from "./symmetry";
 
 // The version of the layout below, which the decoder checks. Any change to it changes this.
-export const IR_VERSION = 9;
+export const IR_VERSION = 10;
 
 // "PIIR" read as a little-endian word.
 const MAGIC = 0x52494950;
@@ -116,6 +118,7 @@ const WIDE_NUMBER_FLAG = 1 << 8;
 const FORALL_FLAG = 1 << 8;
 const RECURSIVE_FLAG = 1 << 8;
 const HAS_OTHER_FLAG = 1 << 8;
+const BULLETED_FLAG = 1 << 8;
 
 // Flags of a definition record.
 const DEFINITION_RECURSIVE = 1 << 8;
@@ -496,6 +499,12 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
         return;
       case "And":
       case "Or":
+        if (expression.isBulleted) nodes.data[at] |= BULLETED_FLAG;
+        push(nodes, expression.prefixEnds?.length ?? 0);
+        for (const end of expression.prefixEnds ?? []) {
+          push(nodes, end.line);
+          push(nodes, end.column);
+        }
         writeNodes(expression.operands);
         return;
       case "Prime":
