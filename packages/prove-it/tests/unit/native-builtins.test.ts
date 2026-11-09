@@ -270,8 +270,8 @@ describe.if(ADDON !== undefined)("the native engine's bridged builtins", () => {
       );
     }
   });
-  // The temporal atoms the search answers rank strings too, after it found the states.
-  it("hands over a graph whose atoms ranked strings from the start", async () => {
+  // The temporal atoms the search answers rank strings too, which never order them.
+  it("checks a property whose atoms use ToString", async () => {
     const body = [
       "EXTENDS Integers, TLC",
       "VARIABLE n",
@@ -281,7 +281,7 @@ describe.if(ADDON !== undefined)("the native engine's bridged builtins", () => {
       'Live == []<>(ToString(n + 1000 + 7) = "1007")',
     ];
     expect(await compareWithInterpreter(body, "SPECIFICATION Spec\nPROPERTY Live")).toContainEqual(
-      expect.stringMatching(stopped("a graph with strings the search ranked")),
+      expect.stringMatching(COMPLETE),
     );
   });
   // A search that ranked strings may start over, which would print again what it printed.

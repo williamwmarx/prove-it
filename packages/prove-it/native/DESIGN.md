@@ -2286,6 +2286,43 @@ On the 4-core cloud machine, with `main` at a0f66ec before the merge of #31 and 
   could close the 1.3× gate is compiling guards and invariants to code rather than closure trees
   (3.1's later tier), not more tuning of the closures.
 
+#### M7 as built (guards)
+
+Three PRs after the speed work, each measured alone with callgrind on the search (engine time only,
+the addon built with line tables) and on Depot with Compare:
+
+- **Why not Cranelift yet.** Guards are 12–45% of the six laggards' instructions, but most of a
+  guard's cost was the dispatch around it: the segment's `Op::Check` called `evaluate`, which
+  called the predicate's `Test` and made its `bool` an id again, and the `Test` read its operands
+  through `Leaf::read`. Machine code would remove that and little else, since the store's `apply`,
+  `equals` and memo lookups stay calls, and it would bring the workspace its first external crates
+  and a second `unsafe` surface. Fusing the dispatch away cost a few hundred lines.
+- **Membership (#45).** A miss of a boolean, integer or string in a set whose first and last
+  elements are of its kind is `false` without TLC's second binary search by `compareTo`, which
+  can't find or fail on it. MCBakery: −10% of instructions.
+- **Guards (#53).** A guard that compiles to a fused predicate is `Op::Holds(Test)` in its segment.
+  `f[k] = c`, `f[k] = j` and `x = c` get closures of their own, and `e \in S` of a set with no
+  variable or name in it is `Predicate::Member`, so it fuses with the predicates around it.
+  Instructions: Commit −3.7%, Philosophers −8.4%, btree −4.6%, SimpleRegular −4.2%, MCBakery −6.1%,
+  MCLamportMutex −2.4%.
+- **Nested application (#60).** `f[i][j]` of a variable and two bound names is the shape
+  `ApplyVar2`, read in one closure and as a predicate leaf. MCLamportMutex: −6.6%.
+- **Acceptance.** Parity after each, on Depot: Conformance 770 match, Engine coverage the same
+  outcome on every model, Differential with `--compare-backends` tlc/ts 1460 same and 6 known,
+  ts/interpreter 1466, ts/stopped 982, ts/rust 1466/1466, rust/stopped 984/984, no new differences.
+  Against the TypeScript engine (Compare with a base built without the addon, so the base binary
+  runs TypeScript; median of 7, wall seconds, Rust then TypeScript), before (d1a1a37) and after
+  (f1693f4): Commit 0.34/0.31 → 0.32/0.30, Philosophers 0.14/0.15 → 0.13/0.16, btree 0.76/0.70 →
+  0.71/0.72, SimpleRegular 0.63/0.62 → 0.54/0.61, MCBakery 0.99/1.17 → 0.77/1.14, MCLamportMutex
+  1.97/1.97 → 2.04/2.21. Geomean over the 18 models: 1.23× → 1.30× in wall time, 2.20× in CPU.
+  MCBakery now passes the per-model 1.3× gate; the other five don't. On a 4-core runner the
+  TypeScript binary compiles and collects on other cores (Commit: 0.64 s of CPU in 0.30 s), so
+  wall time hides most of the gap that CPU time shows.
+- **What's left.** The rest is spread thin: on Commit the walker's segments (about a quarter),
+  memo lookups (a fifth), fingerprints (a sixth). No single change of this size closes the gate
+  on the other five; compiling whole walks to code (3.1's later tier) is the step that could, and
+  it needs a code generator the workspace doesn't yet depend on.
+
 #### After M7: ToString
 
 - **ToString** (`compile/builtins.rs`) gives TLC's text of its argument (`tla_values::print`,
@@ -2337,6 +2374,56 @@ covering it in Rust, then removing the TypeScript path once the gates below hold
 **Distribution.** The binary ships per platform; the npm package becomes a thin launcher for it and
 then carries the binary alone. The proof checker (`src/prover`, `src/obligations`) is outside this
 plan for now.
+
+### 12.1 Liveness, as built (stage 3, first part)
+
+Branch `rust-liveness`. The crate `tla-live` (std only) ports `tableau.ts` and
+`liveness-checker.ts` as 5.1 sketched them, on the engine's own graph:
+- **The formula travels in the IR** (version 3, ABI 4): after the atoms, the fairness and negated
+  properties as `createLivenessChecker` joins them, its terms in prefix order, each atom by its
+  position (one past the atoms for an atom the checker never asks about). TypeScript still turns
+  the AST into that formula (`toLiveExpression`, front end, stage 4) and still reports the errors
+  TLC reports while it solves it, before the search; Rust solves it again and declines where it
+  can't.
+- **Terms are hash-consed**, so two are equal just when `getTermKey` makes them equal, and particles
+  compare as sets of ids. Junctions keep the shape the TypeScript code gives them (flattened by
+  `createJunction`, binary by `createPair`), since the tableau's node order follows from it.
+- **The graphs are built state by state in the order the interpreter's replay adds them**: each
+  initial state, then every state with its successors in TLC's `SetOfStates` order (slot order of
+  a linear-probing table keyed by the low 31 bits of TLC's fingerprint, with the capacity factor
+  that grows across states), the late expansion of a tableau node found for a state already
+  added, and the search's steps (with their duplicates) for it. Predicates are read from the
+  engine's atom tables; a 2 there, or an atom without a table, declines the whole check. An
+  action of a fairness whose ENABLED is false is false, as the interpreter's checker finds it.
+- **The search** is `LiveWorker#checkSccs` as the TypeScript port has it (one stack of words with
+  the marker frames), and the counterexample is `printTrace`'s: the BFS prefix, the greedy walk
+  through the component, `bfsPostFix`. Rust returns `Holds`, `Lasso { path, loop_start,
+  is_cycle_constrained }` (state indices), `Accepted { state, path }` (a tableau node that accepts
+  every behavior, which TLC reports as it adds `state`), or `Declined(reason)`, in
+  `SearchOutcome::Complete::liveness`.
+- **TypeScript** succeeds on `Holds` without taking the graph over (the engine builds no checkpoint
+  then); on `Lasso` it takes the states over and prints the lasso through `reportLasso`, with the
+  search's counts. `Accepted` and `Declined` replay the graph through the TypeScript checker as
+  before: printing an accepted path needs the replay's partial counts. Under
+  `PROVE_IT_LIVE_CHECK=1` the interpreter replays the graph too and throws where its verdict or
+  lasso differs from Rust's.
+
+As run, on the 4-core cloud machine (Depot's CLI wasn't available to this session):
+- **Parity: met on the liveness models.** `differential --compare-backends --modes default` on the
+  222 corpus models whose configuration has a PROPERTY (TLC under 20 s): tlc/ts 222 same, ts/rust
+  222 same; ts/interpreter 221, the other the engine-off run of MCTxnsMoveRange killed for memory
+  with four runs at once. Of their native searches that complete with a graph, Rust decides 83
+  (53 hold, 30 lasso) and leaves 7 to the replay: Github1389Counting (accepted), and six it
+  declines for a predicate the engine leaves to the interpreter (liveness_error, Github607,
+  Github1389ViolatedB/C, UserModuleOverride, UserModuleOverrideAnnotation).
+- **Speed.** Median of 7 interleaved runs of `dist/cli.js`, wall/CPU ms, TypeScript backend, Rust on
+  `main`, Rust here: ReadersWriters 690/2,120, 434/850, 249/350; TokenRing 941/2,650, 637/1,060,
+  374/450; StarkMutex 981/2,460, 805/1,330, 396/520; MacroQuicksort 672/2,240, 443/910, 268/380;
+  nbacg_guer01 707/1,640, 508/1,070, 282/390; MCDisruptor_SPMC 543/1,740, 321/630, 269/390;
+  OneBitMutexNoSymmetryMC (a lasso) 311/800, 253/610, 227/510.
+- **Left.** Printing an accepted path natively; the engine's last declines above; lifting
+  `MAXIMUM_GRAPH_STATES`, which exists for the interpreter's periodic checks; and deleting the
+  TypeScript checker once nothing but the oracle calls it.
 
 ---
 

@@ -1,0 +1,123 @@
+//! Prove It's liveness checker (native/DESIGN.md 5.1, stage 3): TLC's check of the temporal
+//! properties on the graph of a complete search, as `liveness-checker.ts` makes it. It builds the
+//! tableau of the negated properties and fairness, a behavior graph per solution with each state's
+//! successors in TLC's order, searches each graph's strongly connected components and chooses the
+//! counterexample TLC prints. The predicates it asks about are the engine's answers, one table per
+//! atom (`tla-engine`'s `live`); where the engine left one to the interpreter, it declines, and the
+//! interpreter's checker checks the properties as before.
+
+mod checker;
+mod tableau;
+
+use tableau::{TermId, Terms};
+
+/// A term of the formula, in prefix order: each junction is followed by its operands and each
+/// unary term by its body.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Term {
+    Boolean(bool),
+    /// A state predicate, by the position of its atom, whose table has an answer per state.
+    State(u32),
+    /// ENABLED, by the position of its atom, whose table has an answer per state.
+    Enabled(u32),
+    /// An action predicate, whose table has an answer per step and then per state for its
+    /// stuttering step, with the atom of its fairness's ENABLED.
+    Action {
+        atom: u32,
+        enabled: Option<u32>,
+    },
+    Not,
+    Always,
+    Eventually,
+    Next,
+    And(u32),
+    Or(u32),
+}
+
+/// A complete search: each state's parent, -1 for an initial state, its steps, those from state
+/// i in `edges[edge_offsets[i]..edge_offsets[i + 1]]` in the order generated, and TLC's
+/// fingerprint of each state.
+pub struct Graph<'g> {
+    pub parents: &'g [i32],
+    pub edge_offsets: &'g [u32],
+    pub edges: &'g [u32],
+    pub fingerprints: &'g [u64],
+}
+
+impl Graph<'_> {
+    fn count(&self) -> usize {
+        self.parents.len()
+    }
+}
+
+/// What the check found.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Verdict {
+    /// The properties hold.
+    Holds,
+    /// A counterexample: the states of the lasso, the cycle from `loop_start` on, and whether
+    /// the solution it violates constrains the cycle, so TLC warns of a stuttering one.
+    Lasso {
+        path: Vec<u32>,
+        loop_start: usize,
+        is_cycle_constrained: bool,
+    },
+    /// A tableau node that accepts every behavior, which TLC reports as it adds `state` to the
+    /// graph, with the path of states to it.
+    Accepted { state: u32, path: Vec<u32> },
+    /// The interpreter checks the properties: why.
+    Declined(Declined),
+}
+
+/// Why the native checker leaves the properties to the interpreter.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Declined(pub String);
+
+impl From<&str> for Declined {
+    fn from(reason: &str) -> Self {
+        Self(reason.to_owned())
+    }
+}
+
+fn read_term(terms: &mut Terms, formula: &[Term], at: &mut usize) -> Result<TermId, Declined> {
+    let term = *formula
+        .get(*at)
+        .ok_or_else(|| Declined::from("a formula cut short"))?;
+    *at += 1;
+    let (kind, count) = match term {
+        Term::Boolean(value) => (tableau::Kind::Boolean(value), 0),
+        Term::State(atom) => (tableau::Kind::State(atom), 0),
+        Term::Enabled(atom) => (tableau::Kind::Enabled(atom), 0),
+        Term::Action { atom, enabled } => (tableau::Kind::Action { atom, enabled }, 0),
+        Term::Not => (tableau::Kind::Not, 1),
+        Term::Always => (tableau::Kind::Always, 1),
+        Term::Eventually => (tableau::Kind::Eventually, 1),
+        Term::Next => (tableau::Kind::Next, 1),
+        Term::And(count) => (tableau::Kind::And, count),
+        Term::Or(count) => (tableau::Kind::Or, count),
+    };
+    let children = (0..count)
+        .map(|_| read_term(terms, formula, at))
+        .collect::<Result<_, _>>()?;
+    Ok(terms.create(kind, children))
+}
+
+/// Checks the formula, the fairness and the negated properties as `createLivenessChecker` joins
+/// them, on a complete search's graph, from the engine's answers to each atom (`None` for an atom
+/// it doesn't answer).
+pub fn check(formula: &[Term], graph: &Graph<'_>, tables: &[Option<&[u8]>]) -> Verdict {
+    let run = || {
+        if graph.edge_offsets.len() != graph.count() + 1 {
+            return Err(Declined::from("a search that didn't expand every state"));
+        }
+        let mut terms = Terms::default();
+        let mut at = 0;
+        let root = read_term(&mut terms, formula, &mut at)?;
+        if at != formula.len() {
+            return Err(Declined::from("a formula with terms past its end"));
+        }
+        let mut checker = checker::Checker::new(terms, root, graph, tables)?;
+        checker::check(&mut checker)
+    };
+    run().unwrap_or_else(Verdict::Declined)
+}
