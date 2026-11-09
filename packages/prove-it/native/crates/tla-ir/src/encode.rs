@@ -88,15 +88,15 @@ fn encode_here(ir: &Ir) -> Vec<u8> {
         offset(model.next),
         optional(model.scope),
     ]);
-    match &model.actions {
-        None => words.push(-1),
-        Some(actions) => {
-            words.push(actions.len() as i32);
-            for action in actions {
-                words.extend([offset(action.expression), optional(action.scope)]);
-            }
-        }
+    words.push(model.actions.len() as i32);
+    for action in &model.actions {
+        words.extend([
+            offset(action.expression),
+            optional(action.scope),
+            action.label as i32,
+        ]);
     }
+    words.push(model.is_labelled as i32);
     let config_name = |name: &ConfigName| [name.name as i32, optional(name.definition)].into_iter();
     words.push(model.invariants.len() as i32);
     for invariant in &model.invariants {
@@ -104,12 +104,25 @@ fn encode_here(ir: &Ir) -> Vec<u8> {
         words.push(invariant.has_repeated_effect as i32);
     }
     words.push(model.property_invariants.len() as i32);
-    for invariant in &model.property_invariants {
-        words.extend([offset(invariant.root), invariant.has_repeated_effect as i32]);
+    for (invariant, &name) in model
+        .property_invariants
+        .iter()
+        .zip(&model.property_invariant_names)
+    {
+        words.extend([
+            offset(invariant.root),
+            invariant.has_repeated_effect as i32,
+            name as i32,
+        ]);
     }
     for names in [&model.constraints, &model.action_constraints] {
         words.push(names.len() as i32);
         words.extend(names.iter().flat_map(config_name));
+    }
+    words.push(model.possible.len() as i32);
+    for possible in &model.possible {
+        words.extend(config_name(&possible.name));
+        words.push(possible.is_action as i32);
     }
     words.push(model.action_properties.len() as i32);
     for property in &model.action_properties {
@@ -294,6 +307,16 @@ impl NodeWriter<'_> {
             NodeKind::Reference(_) => unreachable!("written above"),
         };
         self.words.extend([tag_word, node.line, node.column]);
+        match node.range {
+            Some(range) => self.words.extend([
+                range.module as i32,
+                range.start_line,
+                range.start_column,
+                range.end_line,
+                range.end_column,
+            ]),
+            None => self.words.extend([-1, 0, 0, 0, 0]),
+        }
         match &node.kind {
             NodeKind::Number(value) => self.words.push(*value),
             NodeKind::WideNumber(text) | NodeKind::Decimal(text) | NodeKind::String(text) => {

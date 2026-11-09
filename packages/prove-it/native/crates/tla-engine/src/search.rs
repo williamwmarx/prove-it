@@ -6,6 +6,8 @@
 
 use std::fmt::Write as _;
 use std::io::Write as _;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use tla_ir::{Ir, LiveTerm, Model};
@@ -13,12 +15,15 @@ use tla_live::{Liveness, Term, Verdict};
 use tla_values::fingerprint::{Fingerprints, Parent};
 use tla_values::store::Outcome;
 use tla_values::transfer::{EncodedStates, SharedEncoder, SharedStates, StateEncoder};
-use tla_values::{Bail, Id, Store};
+use tla_values::{Bail, Id, NESTING_STACK_BYTES, Store};
 
 use crate::compile::{CompileError, Compiler, DISTINCT_SLOT, LEVEL_SLOT, NEXT_LEVEL_SLOT, Options};
-use crate::context::{EngineContext, holds_all, holds_all_changed};
+use crate::context::{
+    EngineContext, count_possible, first_failing, first_failing_changed, holds_all,
+    holds_all_changed,
+};
 use crate::live::{LiveGraph, Table, answer_atoms};
-use crate::machine::{Machine, Printed, UNASSIGNED};
+use crate::machine::{Machine, Printed, Step, UNASSIGNED};
 use crate::symmetry::Canonicalizer;
 
 pub const OUT_DEGREE_BUCKETS: usize = 32;
@@ -26,7 +31,7 @@ const PROGRESS_INTERVAL: Duration = Duration::from_secs(60);
 const FIRST_PROGRESS: Duration = Duration::from_secs(3);
 
 /// What the caller asks of a search besides the model.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct Settings {
     pub compile: Options,
     /// PROVE_IT_STOP_AT: the state before whose expansion the search stops.
@@ -39,6 +44,33 @@ pub struct Settings {
     /// through TLC's actions, and run each ENABLED answered from the steps, and fail where the two
     /// differ.
     pub is_live_checked: bool,
+    /// Whether the caller reports a violation the search stops at itself: the search passes on
+    /// what the spec printed before it, and finds the action of each step of its trace.
+    pub is_violation_reported: bool,
+    /// PROVE_IT_WORKERS: how many threads expand a level of states, at most as many as the
+    /// machine runs at once.
+    pub threads: usize,
+    /// PROVE_IT_SHARED_LEVEL: the fewest states a level shares between the threads, below which
+    /// one thread expands it, since a short level isn't worth the threads' start.
+    pub minimum_shared_level: usize,
+}
+
+/// A level of fewer states runs on one thread, as `MINIMUM_SHARED_LEVEL` in `search.ts`.
+pub const MINIMUM_SHARED_LEVEL: usize = 2048;
+
+impl Default for Settings {
+    fn default() -> Settings {
+        Settings {
+            compile: Options::default(),
+            stop_at: None,
+            is_fingerprint_verified: false,
+            state_log: None,
+            is_live_checked: false,
+            is_violation_reported: false,
+            threads: 1,
+            minimum_shared_level: MINIMUM_SHARED_LEVEL,
+        }
+    }
 }
 
 /// What a search tells its caller as it runs, as `runEngine`'s callbacks.
@@ -78,6 +110,9 @@ pub struct Checkpoint {
     /// The steps of the states expanded, for the interpreter to replay and check temporal
     /// properties on, when the search records them.
     pub graph: Option<GraphCheckpoint>,
+    /// What each `_POSSIBLE` predicate counted before the expansion the interpreter goes on
+    /// from, or -1 where it wasn't evaluated.
+    pub possible: Vec<i64>,
 }
 
 /// The steps of a search (`EngineGraph`): for each of the first `expanded` states, how many
@@ -108,11 +143,17 @@ pub enum SearchOutcome {
         checkpoint: Option<Box<Checkpoint>>,
         /// With temporal properties, what checking them found.
         liveness: Option<Liveness>,
+        /// For each state of a lasso the check found, the position of the first of TLC's actions
+        /// that takes it to the next state of the lasso (from the last, the cycle's first), or
+        /// `None` where none does or it stutters; empty without a lasso or a walk of the actions.
+        lasso_actions: Vec<Option<u32>>,
         /// TLC's fingerprint of each state's key, in the order found.
         fingerprints: Vec<u64>,
         value_count: usize,
         /// Under PROVE_IT_FP_VERIFY, how many fingerprints two different keys shared.
         collisions: u64,
+        /// What each `_POSSIBLE` predicate counted, or -1 where it wasn't evaluated.
+        possible: Vec<i64>,
     },
     /// The search stopped, with a checkpoint unless it stopped computing the initial states, as
     /// the TypeScript engine computes them before the part of its search that hands over a
@@ -121,10 +162,54 @@ pub enum SearchOutcome {
         reason: String,
         checkpoint: Option<Box<Checkpoint>>,
         collisions: u64,
+        /// What TLC reports for the stop, when the engine knows it.
+        violation: Option<Box<Violation>>,
     },
     /// The engine broke one of its own invariants, or a self-check failed
     /// (`EngineInvariantError`).
     Invariant(String),
+}
+
+/// A violation the search stopped at, with the states TLC prints for it.
+pub struct Violation {
+    pub kind: ViolationKind,
+    /// The states of the trace, each as its variables' values in the engine's order, ids of
+    /// `store`.
+    pub states: Vec<Vec<Id>>,
+    /// For each step of the trace, the position in the model's actions of the first of TLC's
+    /// actions that takes it.
+    pub labels: Vec<u32>,
+    /// The counts TLC reports after the trace.
+    pub counts: StopCounts,
+    pub store: Store,
+}
+
+pub enum ViolationKind {
+    /// An initial state violates an invariant: its position in the model's invariants, then
+    /// past them in its properties checked as invariants.
+    InitialInvariant(usize),
+    /// The last state of the trace violates an invariant, as an `InitialInvariant` names it.
+    Invariant(usize),
+    /// The last state of the trace has no successors.
+    Deadlock,
+}
+
+/// The counts of a search that stopped, as TLC reports them.
+#[derive(Clone, Copy, Default)]
+pub struct StopCounts {
+    pub generated: u64,
+    pub distinct: u64,
+    pub queued: u64,
+    pub depth: u64,
+}
+
+// What a search found stopping it, before it hands over the store: the state found that is the
+// trace's last state or its parent, then that state when the search didn't keep it.
+struct Found {
+    kind: ViolationKind,
+    parent: Option<usize>,
+    last: Option<Vec<Id>>,
+    counts: StopCounts,
 }
 
 /// What PROVE_IT_LIVE_CHECK finds when TLC's actions take other steps than the next-state relation.
@@ -267,6 +352,21 @@ impl States {
         self.parents.len()
     }
 
+    // The states from an initial state to this one, each the parent of the next.
+    fn path_to(&self, index: usize) -> Vec<u32> {
+        let mut path = vec![index as u32];
+        while let parent @ 0.. = self.parents[*path.last().expect("a state") as usize] {
+            path.push(parent as u32);
+        }
+        path.reverse();
+        path
+    }
+
+    fn state(&self, index: u32) -> &[Id] {
+        let index = index as usize;
+        &self.ids[index * self.width..(index + 1) * self.width]
+    }
+
     fn key_of(&self, index: usize) -> &[Id] {
         match self.key_width {
             Some(width) => &self.keys[index * width..(index + 1) * width],
@@ -314,9 +414,62 @@ impl States {
     }
 }
 
+// Where the search finds and adds the states its walks reach: the states found, or, for a thread
+// expanding a level, the states found before the level and what the thread found in it.
+trait Reached {
+    fn key_width(&self) -> Option<usize>;
+    fn order(&self) -> &[usize];
+    fn count(&self) -> usize;
+    // Reads ahead the slot a fingerprint's probe starts at.
+    fn touch(&self, fingerprint: u64);
+    // The slot of the state with this key's fingerprint, or the slot to add it at.
+    fn find(&mut self, key: &[Id], fingerprint: u64) -> Result<usize, usize>;
+    fn add(&mut self, state: &[Id], key: &[Id], fingerprint: u64, slot: usize, parent: i32);
+    // The index of the state in a slot, for an edge of the graph.
+    fn index(&self, slot: usize) -> u32;
+    // Whether an invariant that fails of a new state, false or failing to evaluate, waits to stop
+    // the search until it is known that no other thread found another state with its key first,
+    // which it records with the reason it stops for.
+    fn defers_violation(&mut self, _parent: usize, _fingerprint: u64, _bail: Bail) -> bool {
+        false
+    }
+}
+
+impl Reached for States {
+    fn key_width(&self) -> Option<usize> {
+        self.key_width
+    }
+
+    fn order(&self) -> &[usize] {
+        &self.order
+    }
+
+    fn count(&self) -> usize {
+        States::count(self)
+    }
+
+    #[inline(always)]
+    fn touch(&self, fingerprint: u64) {
+        self.set.touch(fingerprint);
+    }
+
+    #[inline(always)]
+    fn find(&mut self, key: &[Id], fingerprint: u64) -> Result<usize, usize> {
+        States::find(self, key, fingerprint)
+    }
+
+    fn add(&mut self, state: &[Id], key: &[Id], fingerprint: u64, slot: usize, parent: i32) {
+        States::add(self, state, key, fingerprint, slot, parent);
+    }
+
+    fn index(&self, slot: usize) -> u32 {
+        self.set.index(slot)
+    }
+}
+
 // The search's state besides the machine, which the walks' continuations update.
-struct Search<'r> {
-    states: States,
+struct Search<'r, T> {
+    states: T,
     reporter: &'r mut dyn Reporter,
     is_distinct_read: bool,
     generated: u64,
@@ -346,12 +499,55 @@ struct Search<'r> {
     // Whether a successor is checked once the walk reaches the next, when nothing the search
     // evaluates can tell: then the probe of its fingerprint, read ahead, doesn't wait on memory.
     is_pipelined: bool,
+    // The violation the search stops at, when it knows what TLC reports for it.
+    violation: Option<Found>,
     // The successor waiting to be checked, and its fingerprint.
     pending: Vec<Id>,
     pending_fingerprint: Option<u64>,
+    // For each _POSSIBLE predicate, how many states or steps it has held of, or -1 before TLC has
+    // evaluated it.
+    possible: Vec<i64>,
 }
 
-impl Search<'_> {
+impl<'r, T: Reached> Search<'r, T> {
+    fn new(
+        states: T,
+        reporter: &'r mut dyn Reporter,
+        is_distinct_read: bool,
+        is_pipelined: bool,
+    ) -> Search<'r, T> {
+        let width = states.order().len().max(1);
+        Search {
+            states,
+            reporter,
+            is_distinct_read,
+            generated: 0,
+            initial_generated: 0,
+            depth: 0,
+            level: 1,
+            successors: 0,
+            new_states: 0,
+            expanding: 0,
+            current: Vec::with_capacity(width),
+            successor: Vec::with_capacity(width),
+            key: Vec::with_capacity(width),
+            expansion_epoch: 0,
+            level_id: 0,
+            next_level_id: 0,
+            fingerprints: Fingerprints::new(),
+            parent: Parent::default(),
+            canonicalizer: None,
+            graph: None,
+            action: 0,
+            checked: None,
+            is_pipelined,
+            pending: Vec::with_capacity(width),
+            violation: None,
+            pending_fingerprint: None,
+            possible: Vec::new(),
+        }
+    }
+
     // What the spec printed while the engine computed the initial states or expanded a state goes
     // out once that's done: if the engine hands over, the interpreter does it again.
     fn flush(&mut self, machine: &mut Machine<'_>) {
@@ -381,8 +577,8 @@ impl Search<'_> {
         context: &EngineContext,
         is_successor: bool,
     ) -> Outcome<u64> {
-        if self.states.key_width.is_none() {
-            let (store, order) = (&machine.store, &self.states.order);
+        if self.states.key_width().is_none() {
+            let (store, order) = (&machine.store, self.states.order());
             return Ok(if is_successor {
                 self.fingerprints.get_child(
                     store,
@@ -416,7 +612,7 @@ impl Search<'_> {
         }
         Ok(self
             .fingerprints
-            .get_state(&machine.store, &self.key, &self.states.order))
+            .get_state(&machine.store, &self.key, self.states.order()))
     }
 
     fn visit_initial(&mut self, machine: &mut Machine<'_>, context: &EngineContext) -> Outcome<()> {
@@ -437,11 +633,14 @@ impl Search<'_> {
         self.generated += 1;
         self.initial_generated += 1;
         let is_in_model = holds_all_changed_none(machine, context)?;
+        if is_in_model {
+            count_possible(machine, &context.possible, false, &mut self.possible)?;
+        }
         let found = if is_in_model {
             let fingerprint = self.compute_key(machine, context, false)?;
             let key = self
                 .states
-                .key_width
+                .key_width()
                 .map_or(machine.current(), |_| &self.key);
             Some((fingerprint, self.states.find(key, fingerprint)))
         } else {
@@ -451,7 +650,15 @@ impl Search<'_> {
             if is_in_model {
                 self.set_distinct(machine, self.states.count() + 1)?;
             }
-            if !holds_all(machine, &context.initial_invariants)? {
+            if let Some(failing) = first_failing(machine, &context.initial_invariants)? {
+                self.violation = Some(Found {
+                    kind: ViolationKind::InitialInvariant(
+                        context.initial_invariant_owners[failing],
+                    ),
+                    parent: None,
+                    last: Some(machine.current().to_vec()),
+                    counts: StopCounts::default(),
+                });
                 return Err(Bail("an invariant violated in an initial state"));
             }
             if !holds_all(machine, &context.initial_predicates)? {
@@ -503,9 +710,9 @@ impl Search<'_> {
             &mut self.parent,
             &self.current,
             machine.next(),
-            &self.states.order,
+            self.states.order(),
         );
-        self.states.set.touch(fingerprint);
+        self.states.touch(fingerprint);
         self.check_pending(machine, context)?;
         self.pending.clear();
         self.pending.extend_from_slice(machine.next());
@@ -554,7 +761,13 @@ impl Search<'_> {
             &context.constraints,
             &self.successor,
             &self.current,
-        );
+        )
+        .and_then(|is_state_in_model| {
+            if is_state_in_model {
+                count_possible(machine, &context.possible, false, &mut self.possible)?;
+            }
+            Ok(is_state_in_model)
+        });
         let fingerprint = match is_state_in_model {
             Ok(true) => match known {
                 Some(fingerprint) => Ok(Some(fingerprint)),
@@ -566,9 +779,15 @@ impl Search<'_> {
         self.swap_successor(machine, self.expansion_epoch, self.level_id);
         let (is_state_in_model, fingerprint) = (is_state_in_model?, fingerprint?);
         let is_in_model = is_state_in_model && holds_all(machine, &context.action_constraints)?;
+        if is_in_model {
+            count_possible(machine, &context.possible, true, &mut self.possible)?;
+        }
         let found = match fingerprint {
             Some(fingerprint) if is_in_model => {
-                let key = self.states.key_width.map_or(&self.successor, |_| &self.key);
+                let key = self
+                    .states
+                    .key_width()
+                    .map_or(&self.successor, |_| &self.key);
                 Some(self.states.find(key, fingerprint))
             }
             _ => None,
@@ -579,18 +798,48 @@ impl Search<'_> {
         }
         if !is_in_model || is_new {
             self.swap_successor(machine, successor_epoch, self.next_level_id);
-            let holds =
-                holds_all_changed(machine, &context.invariants, &self.successor, &self.current);
+            let failing =
+                first_failing_changed(machine, &context.invariants, &self.successor, &self.current);
             self.swap_successor(machine, self.expansion_epoch, self.level_id);
-            if !holds? {
-                return Err(Bail("an invariant violated"));
+            let failed = match failing {
+                Ok(None) => None,
+                Ok(Some(failing)) => {
+                    let count = self.states.count() as u64;
+                    self.violation = Some(Found {
+                        kind: ViolationKind::Invariant(context.invariant_owners[failing]),
+                        parent: Some(self.expanding),
+                        last: Some(self.successor.clone()),
+                        counts: StopCounts {
+                            generated: self.generated,
+                            distinct: count + u64::from(is_new),
+                            queued: count - self.expanding as u64 - 1,
+                            depth: if is_new {
+                                self.depth.max(self.level + 1)
+                            } else {
+                                self.depth
+                            },
+                        },
+                    });
+                    Some(Bail("an invariant violated"))
+                }
+                Err(bail) => Some(bail),
+            };
+            if let Some(bail) = failed {
+                let is_deferred = is_new
+                    && fingerprint.is_some_and(|fingerprint| {
+                        self.states
+                            .defers_violation(self.expanding, fingerprint, bail)
+                    });
+                if !is_deferred {
+                    return Err(bail);
+                }
             }
         }
         if let Some(graph) = &mut self.graph
             && is_in_model
         {
             graph.edges.push(match found {
-                Some(Ok(slot)) => self.states.set.index(slot),
+                Some(Ok(slot)) => self.states.index(slot),
                 _ => self.states.count() as u32,
             });
             if let Some(labels) = &mut graph.labels {
@@ -616,6 +865,506 @@ impl Search<'_> {
             self.depth = self.level + 1;
         }
         Ok(())
+    }
+}
+
+impl<T: Reached> Search<'_, T> {
+    // Takes the steps of the state `current` holds, the state `expanding` names, whose
+    // fingerprint is given: through the next-state relation, or through each of TLC's actions.
+    fn expand(
+        &mut self,
+        machine: &mut Machine<'_>,
+        context: &EngineContext,
+        fingerprint: u64,
+        actions: Option<&[Step]>,
+        is_live_checked: bool,
+        check_deadlock: bool,
+    ) -> Outcome<()> {
+        machine.next.clear();
+        machine.next.resize(self.current.len(), UNASSIGNED);
+        machine.reset_assigned();
+        self.new_states = 0;
+        self.successors = 0;
+        self.expansion_epoch = machine.next_epoch();
+        self.level_id = machine.store.int(self.level as i64)?;
+        self.next_level_id = machine.store.int(self.level as i64 + 1)?;
+        self.set_expanded_current(machine);
+        machine.set_slot(NEXT_LEVEL_SLOT, self.next_level_id);
+        if self.states.key_width().is_none() {
+            self.fingerprints.set_parent(
+                &machine.store,
+                &self.current,
+                self.states.order(),
+                fingerprint,
+                &mut self.parent,
+            );
+        }
+        match actions {
+            None => {
+                let walked = (context.next)(machine, &mut |machine: &mut Machine<'_>| {
+                    self.visit_successor(machine, context)
+                });
+                self.check_pending(machine, context)?;
+                walked?;
+            }
+            Some(actions) => {
+                if is_live_checked {
+                    let mut checked = Vec::new();
+                    (context.next)(machine, &mut |machine: &mut Machine<'_>| {
+                        checked.push(machine.next().to_vec());
+                        Ok(())
+                    })?;
+                    self.checked = Some(checked);
+                }
+                for (position, action) in actions.iter().enumerate() {
+                    self.action = position as u32;
+                    let walked = action(machine, &mut |machine: &mut Machine<'_>| {
+                        self.visit_successor(machine, context)
+                    });
+                    self.check_pending(machine, context)?;
+                    walked?;
+                }
+                if let Some(checked) = self.checked.take()
+                    && checked.len() as u64 != self.successors
+                {
+                    return Err(Bail(OTHER_STEPS));
+                }
+            }
+        }
+        if self.successors == 0 && check_deadlock {
+            let count = self.states.count() as u64;
+            self.violation = Some(Found {
+                kind: ViolationKind::Deadlock,
+                parent: Some(self.expanding),
+                last: None,
+                counts: StopCounts {
+                    generated: self.generated,
+                    distinct: count,
+                    queued: count - self.expanding as u64 - 1,
+                    depth: self.depth.max(1),
+                },
+            });
+            return Err(Bail("deadlock"));
+        }
+        Ok(())
+    }
+}
+
+// The most states of a level a thread claims at once (`CHUNK` in `parallel.ts`).
+const CHUNK: usize = 32;
+
+// A thread expanding part of a level reports nothing: what it would report, Print's output, makes
+// the search run on one thread.
+struct Quiet;
+
+impl Reporter for Quiet {
+    fn initial_states_started(&mut self) {}
+    fn initial_states_progress(&mut self, _count: u64) {}
+    fn initial_states(&mut self, _generated: u64, _distinct: u64) {}
+    fn progress(&mut self, _generated: u64, _distinct: u64, _queued: u64, _depth: u64) {}
+    fn print(&mut self, _store: &Store, _values: &[Id]) {}
+}
+
+// The states a thread found in a level that weren't found before it, in the order it found them:
+// each once, from the first of its own steps that reached it (DESIGN.md 4.1).
+struct Candidates<'b> {
+    before: &'b States,
+    seen: FingerprintSet,
+    ids: Vec<Id>,
+    keys: Vec<Id>,
+    fingerprints: Vec<u64>,
+    parents: Vec<u32>,
+    deferred: Vec<(u32, u64, Bail)>,
+    collisions: u64,
+}
+
+impl Candidates<'_> {
+    fn key_of(&self, index: usize) -> &[Id] {
+        match self.before.key_width {
+            Some(width) => &self.keys[index * width..(index + 1) * width],
+            None => &self.ids[index * self.before.width..(index + 1) * self.before.width],
+        }
+    }
+}
+
+impl Reached for Candidates<'_> {
+    fn key_width(&self) -> Option<usize> {
+        self.before.key_width
+    }
+
+    fn order(&self) -> &[usize] {
+        &self.before.order
+    }
+
+    fn count(&self) -> usize {
+        self.before.count() + self.parents.len()
+    }
+
+    #[inline(always)]
+    fn touch(&self, fingerprint: u64) {
+        self.before.set.touch(fingerprint);
+    }
+
+    // A key's values that the store held before the level have the same ids in the thread's
+    // overlay, and the others have ids the store doesn't, so the keys compare by id.
+    fn find(&mut self, key: &[Id], fingerprint: u64) -> Result<usize, usize> {
+        let before = self.before;
+        if let Ok(slot) = before.set.find(fingerprint) {
+            if before.is_verified && before.key_of(before.set.index(slot) as usize) != key {
+                self.collisions += 1;
+            }
+            return Ok(slot);
+        }
+        let found = self.seen.find(fingerprint);
+        if before.is_verified
+            && let Ok(slot) = found
+            && self.key_of(self.seen.index(slot) as usize) != key
+        {
+            self.collisions += 1;
+        }
+        found
+    }
+
+    fn add(&mut self, state: &[Id], key: &[Id], fingerprint: u64, slot: usize, parent: i32) {
+        let index = self.parents.len() as u32;
+        self.ids.extend_from_slice(state);
+        if self.before.key_width.is_some() {
+            self.keys.extend_from_slice(key);
+        }
+        self.fingerprints.push(fingerprint);
+        self.parents.push(parent as u32);
+        self.seen.insert(slot, fingerprint, index);
+    }
+
+    fn index(&self, _slot: usize) -> u32 {
+        unreachable!("a search that records its graph runs on one thread")
+    }
+
+    // Where the key isn't the state, a thread that takes a state for new may have missed another
+    // with the same key that another thread found first, whose invariant TLC checks instead.
+    fn defers_violation(&mut self, parent: usize, fingerprint: u64, bail: Bail) -> bool {
+        if self.before.key_width.is_none() {
+            return false;
+        }
+        self.deferred.push((parent as u32, fingerprint, bail));
+        true
+    }
+}
+
+// A thread of the search: its machine, on an overlay of the store, and its caches, which it keeps
+// from level to level but for what they hold of the overlay's own values. Each takes cache lines
+// of its own, since its machine's registers are written on every step.
+#[repr(align(128))]
+struct Worker<'p> {
+    machine: Machine<'p>,
+    fingerprints: Fingerprints,
+    canonicalizer: Option<Canonicalizer>,
+    // The store's count of values when the overlay was last laid on it: its own ids start there.
+    bound: Id,
+    // The id in the store of each of the overlay's values imported.
+    imported: Vec<Id>,
+}
+
+impl Worker<'_> {
+    fn attach(&mut self, store: &Arc<Store>) {
+        self.machine.forget_from(self.bound);
+        self.fingerprints.forget_from(self.bound);
+        if let Some(canonicalizer) = &mut self.canonicalizer {
+            canonicalizer.forget_from(self.bound);
+        }
+        self.machine.store.attach(store.clone());
+        self.bound = store.value_count() as Id;
+        self.imported.clear();
+    }
+}
+
+// A run of a level's states a thread claimed: the first, and where its successor counts and
+// candidates start among the thread's.
+struct Claimed {
+    start: usize,
+    successors: usize,
+    candidates: usize,
+}
+
+// What a thread did in a level: the runs it claimed, how many successors it generated from each
+// state it expanded, the states it found, and where it stopped.
+struct Expanded {
+    claimed: Vec<Claimed>,
+    successors: Vec<u32>,
+    ids: Vec<Id>,
+    keys: Vec<Id>,
+    fingerprints: Vec<u64>,
+    parents: Vec<u32>,
+    // Each state, by its parent, whose invariant failed but which another thread may have found
+    // first under a VIEW or symmetry, as another state with the same key.
+    deferred: Vec<(u32, u64, Bail)>,
+    collisions: u64,
+    stop: Option<(usize, Bail)>,
+    is_past_walk: bool,
+}
+
+// A level the threads share: the states `[start, end)`, the next run to claim, and the first
+// state not to expand, lowered to the state being expanded wherever a thread stops.
+struct Level {
+    start: usize,
+    end: usize,
+    chunk: usize,
+    number: u64,
+    cursor: Padded<AtomicUsize>,
+    stop: Padded<AtomicUsize>,
+    is_pipelined: bool,
+    check_deadlock: bool,
+}
+
+// A value on cache lines of its own, so that writing it doesn't move what threads read beside it.
+#[repr(align(128))]
+struct Padded<T>(T);
+
+impl<T> std::ops::Deref for Padded<T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        &self.0
+    }
+}
+
+// What every thread of a level reads.
+struct Shared<'s> {
+    context: &'s EngineContext,
+    before: &'s States,
+    level: &'s Level,
+}
+
+// Expands runs of a level's states on a thread, until none are left before the first state not to
+// expand, recording where it stops if it stops.
+fn expand_claimed(worker: &mut Worker<'_>, shared: &Shared<'_>) -> Expanded {
+    let (before, level) = (shared.before, shared.level);
+    let candidates = Candidates {
+        before,
+        seen: FingerprintSet::new(),
+        ids: Vec::new(),
+        keys: Vec::new(),
+        fingerprints: Vec::new(),
+        parents: Vec::new(),
+        deferred: Vec::new(),
+        collisions: 0,
+    };
+    let mut quiet = Quiet;
+    let mut search = Search::new(candidates, &mut quiet, false, level.is_pipelined);
+    search.level = level.number;
+    search.fingerprints = std::mem::take(&mut worker.fingerprints);
+    search.canonicalizer = worker.canonicalizer.take();
+    let (mut claimed, mut successors, mut stop) = (Vec::new(), Vec::new(), None);
+    let width = before.width;
+    'claiming: loop {
+        let start = level.cursor.fetch_add(level.chunk, Ordering::Relaxed);
+        if start >= level.end || start >= level.stop.load(Ordering::Relaxed) {
+            break;
+        }
+        claimed.push(Claimed {
+            start,
+            successors: successors.len(),
+            candidates: search.states.parents.len(),
+        });
+        for expanding in start..(start + level.chunk).min(level.end) {
+            if expanding >= level.stop.load(Ordering::Relaxed) {
+                break 'claiming;
+            }
+            search.expanding = expanding;
+            search.current.clear();
+            search
+                .current
+                .extend_from_slice(&before.ids[expanding * width..(expanding + 1) * width]);
+            let fingerprint = before.fingerprints[expanding];
+            let machine = &mut worker.machine;
+            let context = shared.context;
+            match search.expand(
+                machine,
+                context,
+                fingerprint,
+                None,
+                false,
+                level.check_deadlock,
+            ) {
+                Ok(()) => successors.push(search.successors as u32),
+                Err(bail) => {
+                    level.stop.fetch_min(expanding, Ordering::Relaxed);
+                    stop = Some((expanding, bail));
+                    break 'claiming;
+                }
+            }
+        }
+    }
+    worker.fingerprints = std::mem::take(&mut search.fingerprints);
+    worker.canonicalizer = search.canonicalizer.take();
+    let found = search.states;
+    Expanded {
+        claimed,
+        successors,
+        ids: found.ids,
+        keys: found.keys,
+        fingerprints: found.fingerprints,
+        parents: found.parents,
+        deferred: found.deferred,
+        collisions: found.collisions,
+        stop,
+        is_past_walk: worker.machine.is_past_walk,
+    }
+}
+
+impl Search<'_, States> {
+    // Expands the level from the state `expanding` to `end` on the threads (DESIGN.md 4.1, 4.2):
+    // each expands runs of it in an overlay of the store, and the states they found join the
+    // store's in the order of the step that first reached each, by parent and then by step, which
+    // is the order TLC's one worker finds them in. Where a thread stops, the search stops at the
+    // first state whose expansion stopped, with the states and counts found before it.
+    fn expand_level(
+        &mut self,
+        machine: &mut Machine<'_>,
+        workers: &mut [Worker<'_>],
+        context: &EngineContext,
+        level: &Level,
+        stop_at: Option<usize>,
+        out_degrees: &mut [u64; OUT_DEGREE_BUCKETS],
+    ) -> Outcome<()> {
+        let shared = Shared {
+            context,
+            before: &self.states,
+            level,
+        };
+        let store = Arc::new(std::mem::take(&mut machine.store));
+        let expanded: Vec<Expanded> = std::thread::scope(|scope| {
+            let threads: Vec<_> = workers
+                .iter_mut()
+                .map(|worker| {
+                    let (shared, store) = (&shared, &store);
+                    std::thread::Builder::new()
+                        .stack_size(NESTING_STACK_BYTES)
+                        .spawn_scoped(scope, move || {
+                            worker.attach(store);
+                            expand_claimed(worker, shared)
+                        })
+                        .expect("a thread for the search")
+                })
+                .collect();
+            threads
+                .into_iter()
+                .map(|thread| {
+                    thread
+                        .join()
+                        .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+                })
+                .collect()
+        });
+        for worker in workers.iter_mut() {
+            worker.machine.store.detach();
+        }
+        machine.store = Arc::into_inner(store).expect("the store, once the threads let go of it");
+        let mut stop = level.stop.load(Ordering::Relaxed);
+        let mut owners = vec![None; (level.end - level.start).div_ceil(level.chunk)];
+        for (thread, found) in expanded.iter().enumerate() {
+            for (run, claimed) in found.claimed.iter().enumerate() {
+                owners[(claimed.start - level.start) / level.chunk] = Some((thread, run));
+            }
+        }
+        let width = self.states.width;
+        let key_width = self.states.key_width;
+        let is_verified = self.states.is_verified;
+        let mut new_counts = vec![0u32; level.end - level.start];
+        let mut violated = None;
+        let (mut state, mut key) = (Vec::with_capacity(width), Vec::with_capacity(width));
+        // The states in order, each run by the thread that claimed it: what each state's expansion
+        // found joins the states found, unless an invariant it deferred fails of a state that is
+        // new, which stops the search there.
+        'states: for &(thread, run) in owners.iter().map_while(Option::as_ref) {
+            let found = &expanded[thread];
+            let claimed = &found.claimed[run];
+            let next = found.claimed.get(run + 1);
+            let worker = &mut workers[thread];
+            let overlay = &worker.machine.store;
+            let mut import = |ids: &[Id], into: &mut Vec<Id>| {
+                into.clear();
+                into.extend(
+                    ids.iter()
+                        .map(|&id| machine.store.import(overlay, id, &mut worker.imported)),
+                );
+            };
+            let mut candidate = claimed.candidates;
+            let mut deferred = found
+                .deferred
+                .partition_point(|&(parent, _, _)| (parent as usize) < claimed.start);
+            for (offset, parent) in
+                (claimed.start..(claimed.start + level.chunk).min(level.end)).enumerate()
+            {
+                if parent > stop {
+                    break 'states;
+                }
+                while let Some(&(at, fingerprint, bail)) = found.deferred.get(deferred)
+                    && at as usize == parent
+                {
+                    if self.states.set.find(fingerprint).is_err() {
+                        stop = parent;
+                        violated = Some(bail);
+                        break 'states;
+                    }
+                    deferred += 1;
+                }
+                if parent == stop {
+                    break 'states;
+                }
+                self.generated += u64::from(found.successors[claimed.successors + offset]);
+                let candidates =
+                    candidate..next.map_or(found.parents.len(), |next| next.candidates);
+                for index in candidates {
+                    if found.parents[index] as usize != parent {
+                        break;
+                    }
+                    candidate += 1;
+                    let fingerprint = found.fingerprints[index];
+                    let ids = &found.ids[index * width..(index + 1) * width];
+                    let keys = key_width
+                        .map(|key_width| &found.keys[index * key_width..(index + 1) * key_width]);
+                    if is_verified {
+                        import(keys.unwrap_or(ids), &mut key);
+                    }
+                    let Err(slot) = self.states.find(&key, fingerprint) else {
+                        continue;
+                    };
+                    import(ids, &mut state);
+                    if let Some(keys) = keys {
+                        import(keys, &mut key);
+                    }
+                    self.states
+                        .add(&state, &key, fingerprint, slot, parent as i32);
+                    new_counts[parent - level.start] += 1;
+                }
+            }
+        }
+        new_counts.truncate(stop - level.start);
+        for &count in &new_counts {
+            out_degrees[(count as usize).min(OUT_DEGREE_BUCKETS - 1)] += 1;
+        }
+        if new_counts.iter().any(|&count| count > 0) {
+            self.depth = level.number + 1;
+        }
+        for found in &expanded {
+            self.states.collisions += found.collisions;
+            machine.is_past_walk |= found.is_past_walk;
+        }
+        self.expanding = stop;
+        if let Some(bail) = violated {
+            return Err(bail);
+        }
+        if stop < level.end && stop_at == Some(stop) {
+            return Err(Bail("stopped where PROVE_IT_STOP_AT asked"));
+        }
+        match expanded
+            .iter()
+            .find_map(|found| found.stop.filter(|&(at, _)| at == stop))
+        {
+            Some((_, bail)) => Err(bail),
+            None => Ok(()),
+        }
     }
 }
 
@@ -645,20 +1394,42 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         .collect();
     let mut store = Store::new();
     store.reset(ranked.iter().map(Vec::as_slice));
+    store.freeze_string_order();
     let mut compiler = Compiler::new(ir, &mut store, settings.compile);
     let context = match EngineContext::build(&mut compiler, ir) {
         Ok(context) => context,
         Err(error) => return SearchOutcome::Declined(describe(error)),
     };
+    // A search that ranked strings may start over in the interpreter, which would print again
+    // what the search printed.
+    if compiler.is_printing && compiler.is_ranking {
+        return SearchOutcome::Declined("unsupported: Print with ToString".into());
+    }
     let is_distinct_read = compiler.is_distinct_read;
+    let is_printing = compiler.is_printing;
     // Checking a successor once the walk reaches the next reorders nothing anyone can see where
     // nothing prints, reads the count of distinct states, or fingerprints a VIEW or symmetry's
     // representative, which the walk would then interleave with.
-    let is_pipelined = !compiler.is_printing
+    let is_pipelined = !is_printing
         && !is_distinct_read
         && context.view.is_none()
         && model.symmetry.is_none()
         && !settings.is_live_checked;
+    // A level's states are shared between threads where the order of the steps across states
+    // shows nowhere but in the states found: nothing prints or reads the count of distinct states,
+    // and no graph records the steps.
+    // More threads than the machine runs at once would only take turns.
+    let thread_count = settings
+        .threads
+        .min(std::thread::available_parallelism().map_or(1, std::num::NonZero::get));
+    // ToString ranks the strings it makes as it evaluates, which threads would do in no order.
+    let is_shared = thread_count > 1
+        && !compiler.is_ranking
+        && !compiler.is_printing
+        && !is_distinct_read
+        && !model.is_recording_graph
+        && !settings.is_live_checked
+        && context.possible.is_empty();
     let program = compiler.finish();
     let mut machine = Machine::new(&program, store);
     let canonicalizer = model.symmetry.as_ref().map(|group| {
@@ -681,63 +1452,47 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     } else {
         ir.tlc_order.iter().map(|&index| index as usize).collect()
     };
-    let mut search = Search {
-        states: States {
-            width,
-            key_width: if context.view.is_some() {
-                Some(1)
-            } else {
-                model.symmetry.as_ref().map(|_| width)
-            },
-            ids: Vec::new(),
-            keys: Vec::new(),
-            parents: Vec::new(),
-            fingerprints: Vec::new(),
-            set: FingerprintSet::new(),
-            order,
-            is_verified: settings.is_fingerprint_verified,
-            collisions: 0,
+    let states = States {
+        width,
+        key_width: if context.view.is_some() {
+            Some(1)
+        } else {
+            model.symmetry.as_ref().map(|_| width)
         },
-        reporter,
-        is_distinct_read,
-        generated: 0,
-        initial_generated: 0,
-        depth: 0,
-        level: 1,
-        successors: 0,
-        new_states: 0,
-        expanding: 0,
-        current: vec![UNASSIGNED; width],
-        successor: Vec::with_capacity(width),
-        key: Vec::with_capacity(width),
-        expansion_epoch: 0,
-        level_id: 0,
-        next_level_id: 0,
-        fingerprints: Fingerprints::new(),
-        parent: Parent::default(),
-        canonicalizer,
-        graph: model.is_recording_graph.then(|| Graph {
-            edge_offsets: vec![0],
-            labels: context.actions.as_ref().map(|_| Vec::new()),
-            ..Graph::default()
-        }),
-        action: 0,
-        checked: None,
-        is_pipelined,
-        pending: Vec::with_capacity(width),
-        pending_fingerprint: None,
+        ids: Vec::new(),
+        keys: Vec::new(),
+        parents: Vec::new(),
+        fingerprints: Vec::new(),
+        set: FingerprintSet::new(),
+        order,
+        is_verified: settings.is_fingerprint_verified,
+        collisions: 0,
     };
+    let mut search = Search::new(states, reporter, is_distinct_read, is_pipelined);
+    search.possible = vec![-1; context.possible.len()];
+    search.canonicalizer = canonicalizer;
+    search.graph = model.is_recording_graph.then(|| Graph {
+        edge_offsets: vec![0],
+        labels: context
+            .actions
+            .as_ref()
+            .filter(|_| model.is_labelled)
+            .map(|_| Vec::new()),
+        ..Graph::default()
+    });
     // The actions take each state's steps when the search labels them for ENABLED.
     let actions = context
         .actions
         .as_ref()
-        .filter(|_| model.is_recording_graph);
+        .filter(|_| model.is_recording_graph && model.is_labelled);
     let is_live_checked = settings.is_live_checked && actions.is_some();
     let mut out_degrees = [0u64; OUT_DEGREE_BUCKETS];
     let mut checkpoint_count = 0usize;
     let mut checkpoint_generated = 0u64;
+    let mut checkpoint_possible = search.possible.clone();
     let mut initial_states = (0, 0);
     let mut is_past_initial = false;
+    let mut workers: Vec<Worker<'_>> = Vec::new();
     let result = (|| -> Outcome<()> {
         // --- initial states ---
         let unassigned = vec![UNASSIGNED; width];
@@ -761,7 +1516,10 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         is_past_initial = true;
 
         // --- next states ---
-        let mut level_end = search.states.count();
+        // The initial states are the first level, which starts as the loop does, so that it too
+        // can be shared between threads.
+        let mut level_end = 0;
+        search.level = 0;
         let started_at = Instant::now();
         let mut progress_at = started_at + FIRST_PROGRESS;
         search.expanding = 0;
@@ -770,9 +1528,70 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             if expanding == level_end {
                 search.level += 1;
                 level_end = search.states.count();
+                // A thread takes at least half the fewest states a level shares.
+                let threads = thread_count.min(
+                    (level_end - expanding) / settings.minimum_shared_level.div_ceil(2).max(1),
+                );
+                if is_shared
+                    && level_end - expanding >= settings.minimum_shared_level
+                    && threads > 1
+                {
+                    if workers.is_empty() {
+                        workers = (0..thread_count)
+                            .map(|_| Worker {
+                                machine: Machine::new(&program, Store::new()),
+                                fingerprints: Fingerprints::new(),
+                                canonicalizer: search
+                                    .canonicalizer
+                                    .as_ref()
+                                    .map(Canonicalizer::fresh),
+                                bound: machine.store.value_count() as Id,
+                                imported: Vec::new(),
+                            })
+                            .collect();
+                    }
+                    let level = Level {
+                        start: expanding,
+                        end: level_end,
+                        chunk: ((level_end - expanding) / (4 * threads)).clamp(1, CHUNK),
+                        number: search.level,
+                        cursor: Padded(AtomicUsize::new(expanding)),
+                        stop: Padded(AtomicUsize::new(
+                            settings
+                                .stop_at
+                                .filter(|&at| at >= expanding)
+                                .map_or(level_end, |at| at.min(level_end)),
+                        )),
+                        is_pipelined,
+                        check_deadlock: model.check_deadlock,
+                    };
+                    let expanded = search.expand_level(
+                        &mut machine,
+                        &mut workers[..threads],
+                        &context,
+                        &level,
+                        settings.stop_at,
+                        &mut out_degrees,
+                    );
+                    checkpoint_count = search.states.count();
+                    checkpoint_generated = search.generated;
+                    expanded?;
+                    if Instant::now() >= progress_at {
+                        progress_at = Instant::now() + PROGRESS_INTERVAL;
+                        let count = search.states.count() as u64;
+                        search.reporter.progress(
+                            search.generated,
+                            count,
+                            count - search.expanding as u64,
+                            search.depth.max(1),
+                        );
+                    }
+                    continue;
+                }
             }
             checkpoint_count = search.states.count();
             checkpoint_generated = search.generated;
+            checkpoint_possible.clone_from(&search.possible);
             if Some(expanding) == settings.stop_at {
                 return Err(Bail("stopped where PROVE_IT_STOP_AT asked"));
             }
@@ -783,59 +1602,15 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             search
                 .current
                 .extend_from_slice(&search.states.ids[expanding * width..(expanding + 1) * width]);
-            machine.set_next(&unassigned);
-            machine.reset_assigned();
-            search.new_states = 0;
-            search.successors = 0;
-            search.expansion_epoch = machine.next_epoch();
-            search.level_id = machine.store.int(search.level as i64)?;
-            search.next_level_id = machine.store.int(search.level as i64 + 1)?;
-            search.set_expanded_current(&mut machine);
-            machine.set_slot(NEXT_LEVEL_SLOT, search.next_level_id);
-            if search.states.key_width.is_none() {
-                search.fingerprints.set_parent(
-                    &machine.store,
-                    &search.current,
-                    &search.states.order,
-                    search.states.fingerprints[expanding],
-                    &mut search.parent,
-                );
-            }
-            match actions {
-                None => {
-                    let walked = (context.next)(&mut machine, &mut |machine: &mut Machine<'_>| {
-                        search.visit_successor(machine, &context)
-                    });
-                    search.check_pending(&mut machine, &context)?;
-                    walked?;
-                }
-                Some(actions) => {
-                    if is_live_checked {
-                        let mut checked = Vec::new();
-                        (context.next)(&mut machine, &mut |machine: &mut Machine<'_>| {
-                            checked.push(machine.next().to_vec());
-                            Ok(())
-                        })?;
-                        search.checked = Some(checked);
-                    }
-                    for (position, action) in actions.iter().enumerate() {
-                        search.action = position as u32;
-                        let walked = action(&mut machine, &mut |machine: &mut Machine<'_>| {
-                            search.visit_successor(machine, &context)
-                        });
-                        search.check_pending(&mut machine, &context)?;
-                        walked?;
-                    }
-                    if let Some(checked) = search.checked.take()
-                        && checked.len() as u64 != search.successors
-                    {
-                        return Err(Bail(OTHER_STEPS));
-                    }
-                }
-            }
-            if search.successors == 0 && model.check_deadlock {
-                return Err(Bail("deadlock"));
-            }
+            let fingerprint = search.states.fingerprints[expanding];
+            search.expand(
+                &mut machine,
+                &context,
+                fingerprint,
+                actions.map(Vec::as_slice),
+                is_live_checked,
+                model.check_deadlock,
+            )?;
             if let Some(graph) = &mut search.graph {
                 graph.successor_counts.push(search.successors as u32);
                 graph.new_counts.push(search.new_states as u32);
@@ -867,7 +1642,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     // The answers to the liveness checker's atoms about the first `count` states and the steps of
     // the first `expanded`.
     let graph_tables = |machine: &mut Machine<'_>,
-                        search: &Search<'_>,
+                        search: &Search<'_, States>,
                         expanded: usize,
                         count: usize|
      -> Result<Vec<Table>, &'static str> {
@@ -888,11 +1663,12 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     // The first `count` states and the steps of the first `expanded`, for the interpreter to
     // replay from the initial states on, with the answers to the liveness checker's atoms.
     let graph_checkpoint = |machine: &mut Machine<'_>,
-                            search: &Search<'_>,
+                            search: &Search<'_, States>,
                             expanded: usize,
                             count: usize,
                             expanding: usize,
-                            tables: Vec<Table>|
+                            tables: Vec<Table>,
+                            possible: Vec<i64>|
      -> Checkpoint {
         let graph = search.graph.as_ref().expect("a graph");
         let states = &search.states;
@@ -920,9 +1696,10 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 is_enabled_exact,
                 tables,
             }),
+            possible,
         }
     };
-    match result {
+    let outcome = match result {
         Err(bail) if bail.0 == OTHER_STEPS => SearchOutcome::Invariant(OTHER_STEPS.into()),
         Ok(()) => {
             let count = search.states.count();
@@ -943,7 +1720,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             // The temporal properties are checked here, and the interpreter takes the graph over
             // only to print a counterexample, to check them itself, or under PROVE_IT_LIVE_CHECK
             // to check them again.
-            let (checkpoint, liveness) = match search.graph {
+            let (checkpoint, liveness, lasso_actions) = match search.graph {
                 Some(_) => {
                     let tables = match graph_tables(&mut machine, &search, count, count) {
                         Ok(tables) => tables,
@@ -960,11 +1737,19 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                                 count,
                                 0,
                                 tables,
+                                search.possible.clone(),
                             ))
                         });
-                    (checkpoint, Some(liveness))
+                    let lasso_actions = match &liveness.verdict {
+                        Verdict::Lasso {
+                            path, loop_start, ..
+                        } => label_lasso(&mut machine, &context, &search, path, *loop_start)
+                            .unwrap_or_default(),
+                        _ => Vec::new(),
+                    };
+                    (checkpoint, Some(liveness), lasso_actions)
                 }
-                None => (None, None),
+                None => (None, None, Vec::new()),
             };
             let counts = Counts {
                 generated: search.generated,
@@ -982,16 +1767,30 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 counts: Box::new(counts),
                 checkpoint,
                 liveness,
+                lasso_actions,
                 value_count: machine.store.value_count(),
                 collisions,
+                possible: search.possible.clone(),
                 fingerprints: search.states.fingerprints,
             }
         }
-        Err(bail) if !is_past_initial => SearchOutcome::Stopped {
-            reason: bail.0.to_string(),
-            checkpoint: None,
-            collisions,
-        },
+        Err(bail) if !is_past_initial => {
+            let violation = search
+                .violation
+                .take()
+                .filter(|_| settings.is_violation_reported);
+            // Otherwise the interpreter starts from scratch and prints it all again.
+            if violation.is_some() {
+                search.flush(&mut machine);
+            }
+            SearchOutcome::Stopped {
+                reason: bail.0.to_string(),
+                checkpoint: None,
+                collisions,
+                violation: violation
+                    .and_then(|found| to_violation(found, &mut machine, &context, &search)),
+            }
+        }
         Err(bail) => {
             let count = checkpoint_count;
             let is_kept = search.graph.is_none() || count <= MAXIMUM_GRAPH_STATES;
@@ -1027,6 +1826,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                         )
                     }),
                     graph: None,
+                    possible: checkpoint_possible.clone(),
                 }))
             } else if !is_kept {
                 // The interpreter searches a graph too large to keep from the start, since its
@@ -1043,16 +1843,57 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                         count,
                         expanding,
                         tables,
+                        checkpoint_possible.clone(),
                     ))),
                     Err(reason) => return SearchOutcome::Invariant(reason.into()),
                 }
             };
+            // The search finds a trace's actions only where nothing it evaluates for them prints
+            // and the states it keeps are those TLC prints.
+            let is_traced = settings.is_violation_reported
+                && !is_printing
+                && search.graph.is_none()
+                && search.states.key_width.is_none()
+                && model.symmetry.is_none();
+            let violation = search
+                .violation
+                .take()
+                .filter(|_| is_traced)
+                .and_then(|found| to_violation(found, &mut machine, &context, &search));
             SearchOutcome::Stopped {
                 reason: bail.0.to_string(),
                 checkpoint,
                 collisions,
+                violation,
             }
         }
+    };
+    // The strings the search ranked, such as ToString's, the temporal atoms' included, may rank
+    // otherwise in TLC, so the interpreter makes them again from the start rather than taking
+    // over the search.
+    let is_unordered = machine.store.has_unordered_strings();
+    match outcome {
+        // TLC orders a violation's sets of strings by its own ranking, which the search's may not
+        // be, so the interpreter reports it.
+        SearchOutcome::Stopped {
+            reason, collisions, ..
+        } if is_unordered => SearchOutcome::Stopped {
+            reason,
+            checkpoint: None,
+            collisions,
+            violation: None,
+        },
+        SearchOutcome::Complete {
+            checkpoint: Some(_),
+            collisions,
+            ..
+        } if is_unordered => SearchOutcome::Stopped {
+            reason: "a graph with strings the search ranked".into(),
+            checkpoint: None,
+            collisions,
+            violation: None,
+        },
+        outcome => outcome,
     }
 }
 
@@ -1195,8 +2036,129 @@ fn write_state_log(
     let _ = writer.flush();
 }
 
+// The action of each step of a path of the search's states, then of the step from its last state
+// to `last` when given, as TLC's `Tool#getState` finds it: for the step from one state to the
+// next, the first of TLC's actions with a step from the one to the other, or `None` for the first
+// state or where none does. Empty when the engine has no walk of TLC's actions.
+fn label_path(
+    machine: &mut Machine<'_>,
+    context: &EngineContext,
+    search: &Search<'_, States>,
+    path: &[u32],
+    last: Option<&[Id]>,
+) -> Outcome<Vec<Option<u32>>> {
+    let Some(actions) = &context.actions else {
+        return Ok(Vec::new());
+    };
+    let unassigned = vec![UNASSIGNED; context.width];
+    let states = &search.states;
+    // Each state's depth, from its parent's: the search stores a parent before its children.
+    let mut depths: Vec<i64> = Vec::with_capacity(states.parents.len());
+    for &parent in &states.parents {
+        depths.push(if parent == -1 {
+            1
+        } else {
+            depths[parent as usize] + 1
+        });
+    }
+    let mut labels = vec![None];
+    for (position, &state) in path.iter().enumerate() {
+        let target = match (path.get(position + 1), last) {
+            (Some(&next), _) => states.state(next),
+            (None, Some(last)) => last,
+            (None, None) => break,
+        };
+        let depth = depths[state as usize];
+        let epoch = machine.next_epoch();
+        machine.set_current(states.state(state), epoch);
+        let level = machine.store.int(depth)?;
+        let next_level = machine.store.int(depth + 1)?;
+        machine.set_slot(LEVEL_SLOT, level);
+        machine.set_slot(NEXT_LEVEL_SLOT, next_level);
+        let mut found = None;
+        for (index, action) in actions.iter().enumerate() {
+            machine.set_next(&unassigned);
+            machine.reset_assigned();
+            let mut is_found = false;
+            action(machine, &mut |machine: &mut Machine<'_>| {
+                is_found |= machine.next() == target;
+                Ok(())
+            })?;
+            if is_found {
+                found = Some(index as u32);
+                break;
+            }
+        }
+        labels.push(found);
+    }
+    Ok(labels)
+}
+
+// The violation a search found, with the store its states are in, or nothing when the engine can't
+// find the action of each step of its trace.
+fn to_violation(
+    found: Found,
+    machine: &mut Machine<'_>,
+    context: &EngineContext,
+    search: &Search<'_, States>,
+) -> Option<Box<Violation>> {
+    let path = found
+        .parent
+        .map_or_else(Vec::new, |parent| search.states.path_to(parent));
+    let mut states: Vec<Vec<Id>> = path
+        .iter()
+        .map(|&index| search.states.state(index).to_vec())
+        .collect();
+    states.extend(found.last.iter().cloned());
+    let labels = if path.is_empty() {
+        Vec::new()
+    } else {
+        label_path(machine, context, search, &path, found.last.as_deref())
+            .ok()?
+            .into_iter()
+            .skip(1)
+            .collect::<Option<Vec<u32>>>()?
+    };
+    // The store goes with the violation, so whether the search, or finding the actions, ranked
+    // strings is read here, as for the search's outcome.
+    (labels.len() + 1 == states.len() && !machine.store.has_unordered_strings()).then(|| {
+        Box::new(Violation {
+            kind: found.kind,
+            states,
+            labels,
+            counts: found.counts,
+            store: std::mem::replace(&mut machine.store, Store::new()),
+        })
+    })
+}
+
+// The actions of a lasso's steps: from each state to the next, and from the last to the cycle's
+// first, `None` for that step when the cycle is the last state alone, which stutters.
+fn label_lasso(
+    machine: &mut Machine<'_>,
+    context: &EngineContext,
+    search: &Search<'_, States>,
+    path: &[u32],
+    loop_start: usize,
+) -> Outcome<Vec<Option<u32>>> {
+    let is_stuttering = loop_start + 1 == path.len();
+    let mut closed = path.to_vec();
+    if !is_stuttering {
+        closed.push(path[loop_start]);
+    }
+    let mut labels = label_path(machine, context, search, &closed, None)?;
+    if labels.is_empty() {
+        return Ok(labels);
+    }
+    labels.remove(0);
+    if is_stuttering {
+        labels.push(None);
+    }
+    Ok(labels)
+}
+
 // Checks the temporal properties on a complete search's graph from the answers to the atoms.
-fn check_liveness(model: &Model, search: &Search<'_>, tables: &[Table]) -> Liveness {
+fn check_liveness(model: &Model, search: &Search<'_, States>, tables: &[Table]) -> Liveness {
     let graph = search.graph.as_ref().expect("a graph");
     let to_terms = |terms: &[LiveTerm]| -> Vec<Term> {
         terms

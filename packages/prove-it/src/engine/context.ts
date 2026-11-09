@@ -34,6 +34,8 @@ export interface EngineSpec {
 // predicate always ([]P), an action always ([][A]_v), or a state predicate of the initial states.
 export interface EngineProperties {
   invariants: Expression[];
+  // The name TLC gives each invariant when it reports it violated.
+  invariantNames: string[];
   actionProperties: { action: Expression; subscript: Expression }[];
   initialPredicates: Expression[];
 }
@@ -46,7 +48,7 @@ interface ScopedExpression {
 // The properties of the reference search the engine checks, or undefined when one needs the scope
 // of an instance, which the engine doesn't model.
 export const toEngineProperties = (properties: {
-  invariants: ScopedExpression[];
+  invariants: (ScopedExpression & { name: string })[];
   actionProperties:
     | (ScopedExpression & { action: Expression; subscript: Expression })[]
     | { action: Expression; subscript: Expression; scope: unknown }[];
@@ -60,6 +62,7 @@ export const toEngineProperties = (properties: {
   if (all.some((property) => property.scope !== undefined)) return undefined;
   return {
     invariants: properties.invariants.map((property) => property.expression),
+    invariantNames: properties.invariants.map((property) => property.name),
     actionProperties: properties.actionProperties.map((property) => ({
       action: property.action,
       subscript: property.subscript,

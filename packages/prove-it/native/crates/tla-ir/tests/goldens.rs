@@ -126,6 +126,49 @@ fn holds_the_symmetry_group_as_model_values() {
 }
 
 #[test]
+fn names_a_property_tlc_checks_as_an_invariant() {
+    // ACP_NB_WRONG_TLC's PROPERTY AC1 asserts [] of a state predicate, which TLC reports as
+    // "Invariant AC1 is violated."
+    let (_, ir) = read_golden("examples/specifications/acp/ACP_NB_WRONG_TLC.ir");
+    let names: Vec<&str> = ir
+        .model
+        .property_invariant_names
+        .iter()
+        .map(|&name| text(&ir, name))
+        .collect();
+    assert_eq!(names, ["AC1"]);
+    assert_eq!(ir.model.property_invariants.len(), 1);
+}
+
+// TLC prints where an expression is written as `line 41, col 11 to line 41, col 50 of module
+// TCommit`, so each node carries its range.
+#[test]
+fn holds_where_each_expression_is_written() {
+    let (_, ir) = read_golden("examples/specifications/transaction_commit/TCommit.ir");
+    let next = ir
+        .definitions
+        .iter()
+        .find_map(|&id| match &ir.nodes.arena[id as usize].kind {
+            NodeKind::Definition(definition) if text(&ir, definition.name) == "TCNext" => {
+                Some(definition.body)
+            }
+            _ => None,
+        })
+        .expect("TCNext");
+    let range = ir.nodes.arena[next as usize].range.expect("a range");
+    assert_eq!(text(&ir, range.module), "TCommit");
+    assert_eq!(
+        (
+            range.start_line,
+            range.start_column,
+            range.end_line,
+            range.end_column
+        ),
+        (41, 11, 41, 50)
+    );
+}
+
+#[test]
 fn refuses_a_damaged_file() {
     let (bytes, _) = read_golden("examples/specifications/transaction_commit/2PCwithBTM.ir");
     let error = decode(&bytes[..bytes.len() - 4]).expect_err("a truncated file");

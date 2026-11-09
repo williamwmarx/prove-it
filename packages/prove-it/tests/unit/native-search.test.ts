@@ -355,6 +355,46 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     );
   });
 
+  it("checks the invariant of the state that first takes a VIEW's key, on any number of threads", async () => {
+    // Every initial state's successor has the key 0, and only the first's, (0, 0), holds the
+    // invariant, or evaluates at all: TLC checks only that one, though a thread that expands other
+    // initial states meets the others first.
+    const body = [
+      "EXTENDS Naturals",
+      "VARIABLES x, y",
+      "Init == x \\in 1..4096 /\\ y = 0",
+      "Next == \\/ x > 0 /\\ x' = 0 /\\ y' = IF x = 1 THEN 0 ELSE 1",
+      "        \\/ x = 0 /\\ UNCHANGED <<x, y>>",
+      "View == x",
+      "Inv == y = 0",
+      "Divides == 1 \\div (1 - y) = 1",
+    ];
+    const config = "INIT Init\nNEXT Next\nVIEW View\nINVARIANT ";
+    for (const [workers, invariant] of ["1", "2", "4"].flatMap((count) =>
+      ["Inv", "Divides"].map((name) => [count, name]),
+    )) {
+      const settings = { PROVE_IT_WORKERS: workers, PROVE_IT_SHARED_LEVEL: "1" };
+      expect(await compareWithInterpreter(body, config + invariant, settings)).toContainEqual(
+        expect.stringMatching(COMPLETE),
+      );
+    }
+  });
+
+  it("searches a spec that ranks the strings ToString makes on one thread", async () => {
+    const body = [
+      "EXTENDS Naturals, TLC",
+      "VARIABLES x, text",
+      'Init == x \\in 1..3000 /\\ text = ""',
+      "Next == \\/ x < 3002 /\\ x' = x + 1 /\\ text' = ToString(x)",
+      "        \\/ x = 3002 /\\ UNCHANGED <<x, text>>",
+    ];
+    const config = "INIT Init\nNEXT Next";
+    const settings = { PROVE_IT_WORKERS: "4", PROVE_IT_SHARED_LEVEL: "1" };
+    expect(await compareWithInterpreter(body, config, settings)).toContainEqual(
+      expect.stringMatching(COMPLETE),
+    );
+  });
+
   it("reduces by symmetry, with and without a VIEW, and hands over representatives", async () => {
     const body = [
       "EXTENDS Naturals, FiniteSets, TLC",
@@ -710,19 +750,113 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     );
   });
 
-  it("leaves a model it can't search yet to the TypeScript engine", async () => {
-    // ToString prints a value as TLC would, which the native engine doesn't.
+  it("builds a function over a tuple pattern as TLC does", async () => {
+    // TLC binds each element's components and keeps the element as the key.
     const body = [
-      "EXTENDS TLC",
+      "EXTENDS Naturals",
+      "VARIABLE f",
+      "Init == f = [<<i, j>> \\in {<<1, 2>>, <<3, 4>>} |-> i + j]",
+      "Next == f' = [<<i, j>> \\in DOMAIN f |-> f[<<i, j>>] + i * j]",
+      "Small == \\A key \\in DOMAIN f : f[key] < 40",
+    ];
+    expect(
+      await compareWithInterpreter(body, "INIT Init\nNEXT Next\nINVARIANT Small"),
+    ).toContainEqual(expect.stringMatching(stopped("an invariant violated")));
+    // A tuple of another length fails in TLC, which the interpreter then reports.
+    const mismatched = [
+      "VARIABLE f",
+      "Init == f = [<<i, j>> \\in {<<1>>} |-> i]",
+      "Next == UNCHANGED f",
+    ];
+    expect(await compareWithInterpreter(mismatched, "INIT Init\nNEXT Next")).toContainEqual(
+      expect.stringMatching(stopped("a tuple pattern that doesn't match")),
+    );
+  });
+
+  it("binds a tuple pattern in an action's \\E as TLC does", async () => {
+    // TLC's ContextEnumerator varies the first bound fastest, a tuple bound as a name bound.
+    const body = [
+      "EXTENDS Naturals, TLC",
+      "VARIABLES x, y",
+      "Init == x = 0 /\\ y = 0",
+      "Next == \\/ \\E <<i, j>> \\in {<<1, 2>>, <<3, 4>>} : x' = i /\\ y' = j",
+      "        \\/ \\E <<i, j>> \\in {<<1, 2>>, <<3, 4>>}, k \\in {10, 20}, <<n, m>> \\in {<<5, 6>>} :",
+      "             x' = i + k + m /\\ y' = j + n",
+      "        \\/ \\E p \\in Permutations({1, 2, 3}) : x' = p[1] * 10 + p[2] /\\ y' = p[3]",
+      "        \\/ x' \\in {p[7] : p \\in Permutations({7, 8})} /\\ y' \\in Permutations({9})",
+    ];
+    for (const isWarningEnabled of [false, true]) {
+      expect(
+        await compareWithInterpreter(body, "INIT Init\nNEXT Next", {}, isWarningEnabled),
+      ).toContainEqual(expect.stringMatching(COMPLETE));
+    }
+    // A tuple of another length fails in TLC, which the interpreter then reports.
+    const mismatched = [
       "VARIABLE x",
-      "Init == x \\in {ToString(1), ToString(2)}",
-      "Next == UNCHANGED x",
+      "Init == x = 0",
+      "Next == \\E <<i, j>> \\in {<<1>>} : x' = i",
+    ];
+    expect(await compareWithInterpreter(mismatched, "INIT Init\nNEXT Next")).toContainEqual(
+      expect.stringMatching(stopped("a tuple pattern that doesn't match")),
+    );
+  });
+
+  it("leaves a model it can't search to the TypeScript engine", async () => {
+    // TLC assigns x' \subseteq S as x' \in SUBSET S, which neither engine does.
+    const body = ["VARIABLE x", "Init == x = {}", "Next == x' \\subseteq {1, 2}"];
+    const lines = await compareWithInterpreter(body, "INIT Init\nNEXT Next");
+    expect(lines).toEqual([
+      expect.stringMatching(/^\[engine\] native: ir: /),
+      expect.stringMatching(declined("unsupported: x' \\\\subseteq S")),
+      expect.stringMatching(/^\[engine\] handed over after \d+ ms: x' \\subseteq S$/),
+    ]);
+  });
+
+  it("counts the _POSSIBLE predicates as TLC does, and hands the counts over", async () => {
+    // TLC counts the states in the model and the steps each predicate holds of, duplicates and
+    // all, and reports one that never held with the counts.
+    const body = [
+      "EXTENDS Naturals",
+      "VARIABLE x",
+      "Init == x \\in 0..1",
+      "Next == x' = (x + 1) % 5 \\/ x' = (x + 2) % 5",
+      "Spec == Init /\\ [][Next]_x /\\ WF_x(Next)",
+      "Even == x % 2 = 0",
+      "Wrap == x' < x",
+      "Never == x = 7",
+      "Reach == <>(x = 4)",
+    ];
+    for (const possible of ["Even Wrap", "Even Wrap Never"]) {
+      const config = `INIT Init\nNEXT Next\n_POSSIBLE ${possible}`;
+      expect(await compareWithInterpreter(body, config)).toContainEqual(
+        expect.stringMatching(COMPLETE),
+      );
+      expect(await compareWithInterpreter(body, config, { PROVE_IT_STOP_AT: "3" })).toContainEqual(
+        expect.stringMatching(stopped("stopped where PROVE_IT_STOP_AT asked")),
+      );
+      expect(
+        await compareWithInterpreter(
+          body,
+          `SPECIFICATION Spec\nPROPERTY Reach\n_POSSIBLE ${possible}`,
+        ),
+      ).toContainEqual(expect.stringMatching(COMPLETE));
+    }
+  });
+
+  it("stops where TLC fails on action composition, with the states before", async () => {
+    const body = [
+      "EXTENDS Naturals",
+      "VARIABLE x",
+      "Init == x = 0",
+      "A == x' = x + 1",
+      "Next == \\/ x < 2 /\\ A",
+      "        \\/ x = 2 /\\ A \\cdot A",
     ];
     const lines = await compareWithInterpreter(body, "INIT Init\nNEXT Next");
     expect(lines).toEqual([
       expect.stringMatching(/^\[engine\] native: ir: /),
-      expect.stringMatching(/^\[engine\] native: declined: the builtin ToString, /),
-      expect.stringMatching(/^\[engine\] checked 2 states on 1 thread /),
+      expect.stringMatching(stopped("action composition")),
+      expect.stringMatching(/^\[engine\] handed over after \d+ ms: action composition$/),
     ]);
   });
 

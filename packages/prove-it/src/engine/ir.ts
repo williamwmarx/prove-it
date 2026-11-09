@@ -13,17 +13,26 @@
 // - the scopes of instances it reads, which bind a name to a value, an expression or an operator;
 // - the values: those of the constants, scopes and startup values, in transfer.ts's encoding, whose
 //   strings are indices into the texts;
-// - the model: Init, Next, TLC's actions, the configuration's names, the properties, the VIEW, the
-//   symmetry group, the settings, the liveness checker's atoms, each action atom with the
-//   position of the ENABLED atom of its fairness, or -1, and the formula the checker solves, as
-//   its number of words and its terms in prefix order, each atom by its position among the atoms,
-//   or past them for one the checker asks nothing of, then the properties, each its name and its
-//   formula the same way;
+// - the model: Init, Next, TLC's actions, the configuration's names, the properties (each checked as
+//   an invariant with the name TLC reports it by), the VIEW, the symmetry group, the settings, the
+//   liveness checker's atoms, each action atom with the position of the ENABLED atom of its
+//   fairness, or -1, and the formula the checker solves, as its number of words and its terms in
+//   prefix order, each atom by its position among the atoms, or past them for one the checker asks
+//   nothing of, then the properties, each its name and its formula the same way;
 // - the definitions the model reaches, as the offsets of their records among the nodes;
-// - the nodes: expressions and definitions in prefix order, each its tag, its line and column, then
-//   its fields and children. A node met again is a reference to its first offset.
+// - the nodes: expressions and definitions in prefix order, each its tag, its line and column, its
+//   source range (the module's name, or -1 for none, then the start's and the end's line and
+//   column, which TLC's messages print), then its fields and children. A node met again is a
+//   reference to its first offset.
 
-import type { Bound, BoundPattern, Definition, Expression, OperatorParam } from "../ast";
+import type {
+  Bound,
+  BoundPattern,
+  Definition,
+  Expression,
+  OperatorParam,
+  SourceRange,
+} from "../ast";
 import type { ModelConfig } from "../config";
 import { hasRepeatedEffect, isImpureDefinition } from "../dependencies";
 import {
@@ -32,6 +41,8 @@ import {
   getDefinition,
   getStartupValue,
 } from "../evaluate";
+import { ACTION_LEVEL } from "../levels";
+import { getLevel } from "../liveness";
 import type { LiveExpression } from "../tableau";
 import type { TlcVersion } from "../tlc/version";
 import { createStateEncoder } from "../transfer";
@@ -40,7 +51,7 @@ import type { EngineProperties, EngineSpec } from "./context";
 import type { NamedPermutation } from "./symmetry";
 
 // The version of the layout below, which the decoder checks. Any change to it changes this.
-export const IR_VERSION = 4;
+export const IR_VERSION = 8;
 
 // "PIIR" read as a little-endian word.
 const MAGIC = 0x52494950;
@@ -151,10 +162,19 @@ export interface IrAtom {
   actions: readonly number[] | "all" | undefined;
 }
 
+export interface TraceAction {
+  expression: Expression;
+  scope: EvaluationScope | undefined;
+  label: string;
+}
+
 export interface IrInput {
   config: ModelConfig;
   environment: Environment;
   spec: EngineSpec;
+  // TLC's actions, with the label a trace gives each step one takes. The search takes its steps
+  // through them only when spec.actions is given.
+  traceActions: TraceAction[];
   isWarningEnabled: boolean;
   tlcOrder: number[];
   properties: EngineProperties;
@@ -371,6 +391,18 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
     }
   };
 
+  const writeRange = (range: SourceRange | undefined) => {
+    if (!range) {
+      for (const word of [-1, 0, 0, 0, 0]) push(nodes, word);
+      return;
+    }
+    push(nodes, getText(range.module));
+    push(nodes, range.start.line);
+    push(nodes, range.start.column);
+    push(nodes, range.end.line);
+    push(nodes, range.end.column);
+  };
+
   const writeDefinition = (definition: Definition) => {
     const isRepeated = isImpureDefinition(definition, environment, "repeated");
     const startup = isRepeated ? getStartupValue(definition, environment) : undefined;
@@ -387,6 +419,7 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
     );
     push(nodes, definition.location.line);
     push(nodes, definition.location.column);
+    writeRange(definition.location.range);
     push(nodes, getText(definition.name));
     // The value TLC computed at startup, which the compiler reads in place of a definition with
     // effects, as getStartupEffectValue does.
@@ -423,6 +456,7 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
     nodes.data[at + 1] = location.line;
     nodes.data[at + 2] = location.column;
     nodes.length = at + 3;
+    writeRange(location.range);
     switch (expression.kind) {
       case "Number": {
         if (isWide(expression.value)) {
@@ -667,28 +701,40 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
   };
   const hasRepeatedEffectOfName = (name: string) =>
     hasRepeatedEffect({ kind: "Identifier", name, location: { line: 0, column: 0 } }, environment);
-  const writeRoots = (expressions: readonly Expression[], isPrinted = false) => {
+  const writeRoots = (expressions: readonly Expression[]) => {
     push(model, expressions.length);
-    for (const expression of expressions) {
-      push(model, writeRoot(expression));
-      if (isPrinted) push(model, hasRepeatedEffect(expression, environment) ? 1 : 0);
-    }
+    for (const expression of expressions) push(model, writeRoot(expression));
   };
 
   const spec = input.spec;
   push(model, writeRoot(spec.init));
   push(model, writeRoot(spec.next));
   push(model, getScopeIndex(spec.scope));
-  const actions = spec.actions;
-  push(model, actions ? actions.length : -1);
-  for (const action of actions ?? []) {
+  push(model, input.traceActions.length);
+  for (const action of input.traceActions) {
     push(model, writeRoot(action.expression));
     push(model, getScopeIndex(action.scope));
+    push(model, getText(action.label));
   }
+  push(model, spec.actions ? 1 : 0);
   writeConfigNames(config.invariants, true);
-  writeRoots(input.properties.invariants, true);
+  push(model, input.properties.invariants.length);
+  input.properties.invariants.forEach((invariant, index) => {
+    push(model, writeRoot(invariant));
+    push(model, hasRepeatedEffect(invariant, environment) ? 1 : 0);
+    push(model, getText(input.properties.invariantNames[index]));
+  });
   writeConfigNames(config.constraints);
   writeConfigNames(config.actionConstraints);
+  // Each _POSSIBLE predicate, and whether it is of a step rather than a state.
+  push(model, config.possible.length);
+  for (const name of config.possible) {
+    const definition = getDefinition(name, environment);
+    push(model, getText(name));
+    push(model, definition ? getDefinitionIndex(definition) : -1);
+    const identifier = { kind: "Identifier" as const, name, location: { line: 0, column: 0 } };
+    push(model, getLevel(identifier, undefined, environment) >= ACTION_LEVEL ? 1 : 0);
+  }
   push(model, input.properties.actionProperties.length);
   for (const property of input.properties.actionProperties) {
     push(model, writeRoot(property.action));

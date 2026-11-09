@@ -33,7 +33,7 @@
 use std::ffi::{CStr, c_void};
 use std::ptr::null_mut;
 
-use crate::{Event, SearchOutcome, Settings, check_on_thread};
+use crate::{Event, MINIMUM_SHARED_LEVEL, SearchOutcome, Settings, check_on_thread};
 use tla_engine::Options;
 use tla_engine::search::{Checkpoint, GraphCheckpoint};
 use tla_live::{Liveness, Verdict};
@@ -115,6 +115,12 @@ unsafe fn set_encoded(
     }
 }
 
+// What each _POSSIBLE predicate counted, or -1 where it wasn't evaluated.
+unsafe fn create_possible(env: napi_env, counts: &[i64]) -> Result<napi_value, Thrown> {
+    let numbers: Vec<f64> = counts.iter().map(|&count| count as f64).collect();
+    unsafe { create_numbers(env, &numbers) }
+}
+
 fn to_numbers(values: &[u64]) -> Vec<f64> {
     values.iter().map(|&value| value as f64).collect()
 }
@@ -151,6 +157,12 @@ unsafe fn set_checkpoint(
             object,
             c"counts",
             create_numbers(env, &to_numbers(&numbers))?,
+        )?;
+        set(
+            env,
+            object,
+            c"possible",
+            create_possible(env, &checkpoint.possible)?,
         )?;
         set(
             env,
@@ -337,9 +349,11 @@ pub(super) unsafe extern "C" fn check_model(env: napi_env, info: napi_callback_i
                 stop_at,
                 fingerprint_verified,
                 live_checked,
+                threads,
+                minimum_shared_level,
             ] = words[..]
             else {
-                return Err(wrong("the settings must hold five numbers".into()));
+                return Err(wrong("the settings must hold seven numbers".into()));
             };
             if type_of(env, state_log)? != NAPI_STRING {
                 return Err(wrong("the state log must be a string".into()));
@@ -354,6 +368,11 @@ pub(super) unsafe extern "C" fn check_model(env: napi_env, info: napi_callback_i
                 is_fingerprint_verified: fingerprint_verified != 0,
                 state_log: (!state_log.is_empty()).then_some(state_log),
                 is_live_checked: live_checked != 0,
+                threads: usize::try_from(threads).unwrap_or(1).max(1),
+                minimum_shared_level: usize::try_from(minimum_shared_level)
+                    .unwrap_or(MINIMUM_SHARED_LEVEL),
+                // The interpreter reports a violation itself.
+                is_violation_reported: false,
             };
             let mut undefined = null_mut();
             status(napi_get_undefined(env, &mut undefined))?;
@@ -419,13 +438,21 @@ pub(super) unsafe extern "C" fn check_model(env: napi_env, info: napi_callback_i
                     counts,
                     checkpoint,
                     liveness,
+                    lasso_actions,
                     fingerprints,
                     value_count,
                     collisions,
+                    possible,
                 } => {
+                    set(env, result, c"possible", create_possible(env, &possible)?)?;
                     if let Some(verdict) = &liveness {
                         set(env, result, c"liveness", create_verdict(env, verdict)?)?;
                     }
+                    let actions: Vec<i32> = lasso_actions
+                        .iter()
+                        .map(|action| action.map_or(-1, |position| position as i32))
+                        .collect();
+                    set(env, result, c"lassoActions", create_int32s(env, &actions)?)?;
                     if let Some(checkpoint) = &checkpoint {
                         let mut object = null_mut();
                         status(napi_create_object(env, &mut object))?;
@@ -466,6 +493,7 @@ pub(super) unsafe extern "C" fn check_model(env: napi_env, info: napi_callback_i
                     reason,
                     checkpoint,
                     collisions,
+                    ..
                 } => {
                     set(env, result, c"status", create_string(env, "stopped")?)?;
                     set(env, result, c"reason", create_string(env, &reason)?)?;

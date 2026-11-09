@@ -21,6 +21,7 @@ fn with_primes(primes: usize) -> Vec<u8> {
     arena.push(Node {
         line: 1,
         column: 1,
+        range: None,
         kind: NodeKind::Number(0),
     });
     for _ in 0..primes {
@@ -28,6 +29,7 @@ fn with_primes(primes: usize) -> Vec<u8> {
         arena.push(Node {
             line: 1,
             column: 1,
+            range: None,
             kind: NodeKind::Prime(inner),
         });
     }

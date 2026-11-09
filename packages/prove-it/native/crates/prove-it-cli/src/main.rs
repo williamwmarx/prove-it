@@ -8,6 +8,7 @@ mod messages;
 mod pretty;
 mod summary;
 mod time;
+mod trace;
 mod zone;
 
 fn main() {

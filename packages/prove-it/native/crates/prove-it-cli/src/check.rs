@@ -5,7 +5,7 @@ use std::path::Path;
 use std::sync::mpsc;
 use std::time::{Instant, SystemTime};
 
-use tla_engine::search::{Reporter, SearchOutcome, Settings, search};
+use tla_engine::search::{Reporter, SearchOutcome, Settings, Violation, ViolationKind, search};
 use tla_values::print::{is_printable, write_value};
 use tla_values::{Id, Store};
 
@@ -18,9 +18,14 @@ use crate::summary::{
     optimistic_probability, out_degree_summary,
 };
 use crate::time::{format_date, format_duration};
+use crate::trace::format_state;
+use tla_front::TlcVersion;
+use tla_front::config::{ModelConfig, parse_config};
 
 // TLC's exit statuses, from EC.ExitStatus.
 const SUCCESS: i32 = 0;
+const DEADLOCK: i32 = 11;
+const SAFETY_VIOLATION: i32 = 12;
 const CONFIG_PARSE_ERROR: i32 = 151;
 
 /// The exit code of a run that needs something the binary doesn't do natively yet.
@@ -419,6 +424,13 @@ fn check_spec(spec_path: &str, args: &Parsed, printer: &mut Printer) -> i32 {
         return CONFIG_PARSE_ERROR;
     }
     let start = Instant::now();
+    // The front end reports a configuration it can't read; the binary reads what it prints by.
+    let Some(config) = config_path
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .and_then(|text| parse_config(&text, TlcVersion::Master).ok())
+    else {
+        return report_not_native(printer, "a configuration file the front end rejects");
+    };
     if dump.is_some() {
         return report_not_native(printer, "-dump");
     }
@@ -448,7 +460,14 @@ fn check_spec(spec_path: &str, args: &Parsed, printer: &mut Printer) -> i32 {
         let searching = std::thread::Builder::new()
             .stack_size(SEARCH_STACK_BYTES)
             .spawn_scoped(scope, move || {
-                search(ir, &Settings::default(), &mut Relay(sender))
+                search(
+                    ir,
+                    &Settings {
+                        is_violation_reported: true,
+                        ..Settings::default()
+                    },
+                    &mut Relay(sender),
+                )
             })
             .expect("a thread for the search");
         for event in receiver {
@@ -502,6 +521,15 @@ fn check_spec(spec_path: &str, args: &Parsed, printer: &mut Printer) -> i32 {
         SearchOutcome::Declined(reason) => {
             return report_not_native(printer, &format!("the engine declined: {reason}"));
         }
+        SearchOutcome::Stopped {
+            violation: Some(violation),
+            reason,
+            ..
+        } => {
+            return print_violation(printer, &ir, &config, &violation, start).unwrap_or_else(
+                || report_not_native(printer, &format!("the engine stopped: {reason}")),
+            );
+        }
         SearchOutcome::Stopped { reason, .. } => {
             return report_not_native(printer, &format!("the engine stopped: {reason}"));
         }
@@ -526,21 +554,32 @@ fn check_spec(spec_path: &str, args: &Parsed, printer: &mut Printer) -> i32 {
             format_probability(optimistic)
         ),
     );
+    let statistics = Statistics {
+        generated: counts.generated,
+        distinct: counts.distinct,
+        queued: 0,
+        depth: counts.depth,
+    };
+    print_statistics(printer, &statistics, start);
+    if let Some(summary) = out_degree_summary(&counts.out_degrees) {
+        printer.print(code::STATE_GRAPH_OUTDEGREE, Level::None, &summary);
+    }
+    print_finished(printer, start);
+    SUCCESS
+}
+
+/// After a search, TLC prints how many states it found and how deep it went, after the progress
+/// with -tool.
+fn print_statistics(printer: &mut Printer, statistics: &Statistics, start: Instant) {
     if printer.is_tool {
-        let statistics = Statistics {
-            generated: counts.generated,
-            distinct: counts.distinct,
-            queued: 0,
-            depth: counts.depth,
-        };
-        print_progress(printer, &statistics, Some(start));
+        print_progress(printer, statistics, Some(start));
     }
     printer.print(
         code::STATS,
         Level::None,
         &format!(
-            "{} states generated, {} distinct states found, 0 states left on queue.",
-            counts.generated, counts.distinct
+            "{} states generated, {} distinct states found, {} states left on queue.",
+            statistics.generated, statistics.distinct, statistics.queued
         ),
     );
     printer.print(
@@ -548,14 +587,90 @@ fn check_spec(spec_path: &str, args: &Parsed, printer: &mut Printer) -> i32 {
         Level::None,
         &format!(
             "The depth of the complete state graph search is {}.",
-            counts.depth
+            statistics.depth
         ),
     );
-    if let Some(summary) = out_degree_summary(&counts.out_degrees) {
-        printer.print(code::STATE_GRAPH_OUTDEGREE, Level::None, &summary);
+}
+
+/// Prints a violation the engine stopped at, as `printViolation` in `src/cli/tlc.ts` does, and
+/// returns the exit code, or nothing when it can't print it yet.
+fn print_violation(
+    printer: &mut Printer,
+    ir: &tla_ir::Ir,
+    config: &ModelConfig,
+    violation: &Violation,
+    start: Instant,
+) -> Option<i32> {
+    // TLC prints a state through the ALIAS when there is one, which the IR doesn't carry yet, and
+    // checks the postconditions on the trace after it prints it.
+    if config.alias.is_some() || !config.postconditions.is_empty() || !config.possible.is_empty() {
+        return None;
     }
+    // An owner past the configuration's invariants is a property checked as one.
+    let model = &ir.model;
+    let invariant_name = |owner: usize| {
+        let name = match owner.checked_sub(model.invariants.len()) {
+            None => model.invariants[owner].root.name,
+            Some(property) => *model.property_invariant_names.get(property)?,
+        };
+        Some(&ir.texts[name as usize])
+    };
+    let (code, text, exit_code) = match violation.kind {
+        // TLC prints the initial state that violates an invariant in the same message, and no
+        // statistics, since it checks the initial states before it searches.
+        ViolationKind::InitialInvariant(owner) => {
+            let name = invariant_name(owner)?;
+            let state = format_state(ir, &violation.store, violation.states.first()?)?;
+            printer.print(
+                code::INVARIANT_VIOLATED_INITIAL,
+                Level::Error,
+                &format!("Invariant {name} is violated by the initial state:\n{state}"),
+            );
+            print_finished(printer, start);
+            return Some(SAFETY_VIOLATION);
+        }
+        ViolationKind::Invariant(owner) => (
+            code::INVARIANT_VIOLATED_BEHAVIOR,
+            format!("Invariant {} is violated.", invariant_name(owner)?),
+            SAFETY_VIOLATION,
+        ),
+        ViolationKind::Deadlock => (code::DEADLOCK_REACHED, "Deadlock reached.".into(), DEADLOCK),
+    };
+    // TLC prints nothing of the trace until it has rebuilt all of it.
+    let mut steps = Vec::with_capacity(violation.states.len());
+    for (position, state) in violation.states.iter().enumerate() {
+        let label = match position.checked_sub(1) {
+            None => "Initial predicate",
+            Some(step) => {
+                let action = ir
+                    .model
+                    .actions
+                    .get(*violation.labels.get(step)? as usize)?;
+                &ir.texts[action.label as usize]
+            }
+        };
+        let state = format_state(ir, &violation.store, state)?;
+        steps.push(format!("{}: <{label}>\n{state}", position + 1));
+    }
+    printer.print(code, Level::Error, &text);
+    printer.print(
+        code::BEHAVIOR_UP_TO_THIS_POINT,
+        Level::Error,
+        "The behavior up to this point is:",
+    );
+    for step in &steps {
+        printer.print(code::STATE_PRINT_2, Level::State, step);
+    }
+    let counts = &violation.counts;
+    let statistics = Statistics {
+        generated: counts.generated,
+        distinct: counts.distinct,
+        queued: counts.queued,
+        depth: counts.depth,
+    };
+    print_statistics(printer, &statistics, start);
     print_finished(printer, start);
-    SUCCESS
+    Some(exit_code)
 }
 
 /// Without -tool, TLC prints how long it ran for a person to read.

@@ -32,7 +32,7 @@ pub use decode::{DecodeError, decode};
 pub use encode::encode;
 
 /// The version of the layout, `IR_VERSION` in `ir.ts`.
-pub const IR_VERSION: u32 = 4;
+pub const IR_VERSION: u32 = 8;
 
 /// "PIIR" as a little-endian word.
 pub const MAGIC: u32 = 0x5249_4950;
@@ -165,6 +165,15 @@ pub struct Printed<T> {
 pub struct Action {
     pub expression: NodeId,
     pub scope: Option<Index>,
+    /// How TLC names the action in a trace: `Inc line 5, col 8 to line 5, col 41 of module D`.
+    pub label: TextId,
+}
+
+/// A `_POSSIBLE` predicate, which TLC counts the states, or with `is_action` the steps, it holds of.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Possible {
+    pub name: ConfigName,
+    pub is_action: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -232,12 +241,19 @@ pub struct Model {
     pub init: NodeId,
     pub next: NodeId,
     pub scope: Option<Index>,
-    /// TLC's actions of the next-state relation, when the search labels its steps.
-    pub actions: Option<Vec<Action>>,
+    /// TLC's actions of the next-state relation, which a trace labels its steps with.
+    pub actions: Vec<Action>,
+    /// Whether the search takes each state's steps through the actions and labels them, which
+    /// ENABLED asks for, rather than through the next-state relation.
+    pub is_labelled: bool,
     pub invariants: Vec<Printed<ConfigName>>,
     pub property_invariants: Vec<Printed<NodeId>>,
+    /// The name TLC gives each of `property_invariants` when it reports it violated: the operator
+    /// the property asserts always holds, or the property's name.
+    pub property_invariant_names: Vec<TextId>,
     pub constraints: Vec<ConfigName>,
     pub action_constraints: Vec<ConfigName>,
+    pub possible: Vec<Possible>,
     pub action_properties: Vec<ActionProperty>,
     pub initial_predicates: Vec<NodeId>,
     pub view: Option<ConfigName>,
@@ -265,7 +281,20 @@ pub struct Nodes {
 pub struct Node {
     pub line: i32,
     pub column: i32,
+    /// Where the node is written, which TLC's messages print, if the front end knows.
+    pub range: Option<SourceRange>,
     pub kind: NodeKind,
+}
+
+/// A node's source range: its module and where it starts and ends, as TLC prints them in
+/// `line 2, col 3 to line 2, col 9 of module M`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SourceRange {
+    pub module: TextId,
+    pub start_line: i32,
+    pub start_column: i32,
+    pub end_line: i32,
+    pub end_column: i32,
 }
 
 /// What a name refers to outside any binding of it.

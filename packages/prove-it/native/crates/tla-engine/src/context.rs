@@ -26,14 +26,24 @@ pub struct EngineContext {
     pub init: Step,
     pub next: Step,
     /// A walk of each of TLC's actions, which together take the steps of `next` in its order, or
-    /// `None` when the engine can't build one.
+    /// `None` when the engine can't build one. The search walks them only when the model asks it
+    /// to label its steps; they also label the steps of a path it prints.
     pub actions: Option<Vec<Step>>,
     pub invariants: Vec<Predicate>,
+    /// For each of `invariants`, the first invariant it is a conjunct of: a position in the
+    /// model's invariants, then past them in its properties checked as invariants. Checked in
+    /// order, the first that fails names the invariant TLC reports violated.
+    pub invariant_owners: Vec<usize>,
     /// The invariants an initial state may violate: the others are conjuncts of the initial
     /// predicate, so hold of every state it gives.
     pub initial_invariants: Vec<Eval>,
+    /// The owner of each of `initial_invariants`, as `invariant_owners`.
+    pub initial_invariant_owners: Vec<usize>,
     pub constraints: Vec<Predicate>,
     pub action_constraints: Vec<Eval>,
+    /// The `_POSSIBLE` predicates, each with whether it is of a step: TLC counts the states in the
+    /// model, or the steps, each holds of.
+    pub possible: Vec<(Eval, bool)>,
     /// Each holds of a step unless the action and the subscript's UNCHANGED are both false.
     pub action_properties: Vec<(Eval, Eval)>,
     pub initial_predicates: Vec<Eval>,
@@ -81,6 +91,16 @@ pub fn holds(machine: &mut Machine<'_>, predicate: &Eval) -> Outcome<bool> {
     }
 }
 
+/// The position of the first predicate that doesn't hold, if one doesn't.
+pub fn first_failing(machine: &mut Machine<'_>, predicates: &[Eval]) -> Outcome<Option<usize>> {
+    for (position, predicate) in predicates.iter().enumerate() {
+        if !holds(machine, predicate)? {
+            return Ok(Some(position));
+        }
+    }
+    Ok(None)
+}
+
 pub fn holds_all(machine: &mut Machine<'_>, predicates: &[Eval]) -> Outcome<bool> {
     for predicate in predicates {
         if !holds(machine, predicate)? {
@@ -90,15 +110,43 @@ pub fn holds_all(machine: &mut Machine<'_>, predicates: &[Eval]) -> Outcome<bool
     Ok(true)
 }
 
+/// Counts each `_POSSIBLE` predicate of a state, or with `is_action` of a step, that holds, as
+/// `trackPossible` does.
+pub fn count_possible(
+    machine: &mut Machine<'_>,
+    possible: &[(Eval, bool)],
+    is_action: bool,
+    counts: &mut [i64],
+) -> Outcome<()> {
+    for ((predicate, is_of_step), count) in possible.iter().zip(counts) {
+        if *is_of_step == is_action {
+            *count = (*count).max(0) + i64::from(holds(machine, predicate)?);
+        }
+    }
+    Ok(())
+}
+
 /// Whether every predicate holds of the successor that is current, given that each held of its
-/// parent: one that reads only variables the step left unchanged has the parent's value.
+/// parent.
 pub fn holds_all_changed(
     machine: &mut Machine<'_>,
     predicates: &[Predicate],
     successor: &[u32],
     parent: &[u32],
 ) -> Outcome<bool> {
-    for predicate in predicates {
+    Ok(first_failing_changed(machine, predicates, successor, parent)?.is_none())
+}
+
+/// The position of the first predicate that doesn't hold of the successor that is current, given
+/// that each held of its parent: one that reads only variables the step left unchanged has the
+/// parent's value.
+pub fn first_failing_changed(
+    machine: &mut Machine<'_>,
+    predicates: &[Predicate],
+    successor: &[u32],
+    parent: &[u32],
+) -> Outcome<Option<usize>> {
+    for (position, predicate) in predicates.iter().enumerate() {
         if let Some(vars) = &predicate.vars
             && vars
                 .iter()
@@ -107,10 +155,10 @@ pub fn holds_all_changed(
             continue;
         }
         if !holds(machine, &predicate.eval)? {
-            return Ok(false);
+            return Ok(Some(position));
         }
     }
-    Ok(true)
+    Ok(None)
 }
 
 /// A conjunct the engine checks: a name the configuration gives, as an identifier of it, or an
@@ -257,23 +305,29 @@ impl EngineContext {
         let can_print = !model.is_recording_graph;
         let mut conjuncts = Conjuncts::new(ir);
         let mut printed = HashSet::new();
-        for invariant in &model.invariants {
-            let root = Conjunct::Named(named("invariant", ir, &invariant.root)?);
-            if invariant.has_repeated_effect && can_print {
+        let mut invariant_owners = Vec::new();
+        let roots = model
+            .invariants
+            .iter()
+            .map(|invariant| {
+                let root = Conjunct::Named(named("invariant", ir, &invariant.root)?);
+                Ok((root, invariant.has_repeated_effect))
+            })
+            .chain(model.property_invariants.iter().map(|invariant| {
+                Ok((
+                    Conjunct::Node(invariant.root),
+                    invariant.has_repeated_effect,
+                ))
+            }))
+            .collect::<Result<Vec<_>, CompileError>>()?;
+        for (owner, (root, has_repeated_effect)) in roots.into_iter().enumerate() {
+            if has_repeated_effect && can_print {
                 printed.insert(root);
                 conjuncts.add(root);
             } else {
                 conjuncts.collect(root);
             }
-        }
-        for invariant in &model.property_invariants {
-            let root = Conjunct::Node(invariant.root);
-            if invariant.has_repeated_effect && can_print {
-                printed.insert(root);
-                conjuncts.add(root);
-            } else {
-                conjuncts.collect(root);
-            }
+            invariant_owners.resize(conjuncts.found.len(), owner);
         }
         let invariant_conjuncts = conjuncts.found;
         let invariants = invariant_conjuncts
@@ -342,6 +396,16 @@ impl EngineContext {
                     .map(|compiled| compiled.eval)
             })
             .collect::<Result<Vec<Eval>, CompileError>>()?;
+        let possible = model
+            .possible
+            .iter()
+            .map(|possible| {
+                let index = named("possible", ir, &possible.name)?;
+                compiler
+                    .compile_root(Root::Definition(index))
+                    .map(|compiled| (compiled.eval, possible.is_action))
+            })
+            .collect::<Result<Vec<_>, CompileError>>()?;
         let init = compiler.compile_action(
             model.init,
             model.scope,
@@ -362,7 +426,8 @@ impl EngineContext {
             },
             "a specification",
         )?;
-        let actions = match &model.actions {
+        // Compiled whether or not the search walks them, since they also label a printed path.
+        let actions = match Some(&model.actions).filter(|actions| !actions.is_empty()) {
             None => None,
             Some(actions) => {
                 let mut steps = Vec::with_capacity(actions.len());
@@ -378,8 +443,12 @@ impl EngineContext {
                         "an action",
                     ) {
                         Ok(step) => steps.push(step),
-                        Err(CompileError::Bail(_)) => break,
-                        Err(decline) => return Err(decline),
+                        Err(decline)
+                            if model.is_labelled && !matches!(decline, CompileError::Bail(_)) =>
+                        {
+                            return Err(decline);
+                        }
+                        Err(_) => break,
                     }
                 }
                 (steps.len() == actions.len()).then_some(steps)
@@ -394,12 +463,13 @@ impl EngineContext {
         } else {
             Vec::new()
         };
-        let initial_invariants = invariants
+        let (initial_invariants, initial_invariant_owners) = invariants
             .iter()
             .zip(&invariant_conjuncts)
-            .filter(|(_, conjunct)| !init_conjuncts.contains(conjunct))
-            .map(|(compiled, _)| compiled.eval.clone())
-            .collect();
+            .zip(&invariant_owners)
+            .filter(|((_, conjunct), _)| !init_conjuncts.contains(conjunct))
+            .map(|((compiled, _), &owner)| (compiled.eval.clone(), owner))
+            .unzip();
         Ok(EngineContext {
             width,
             init,
@@ -412,9 +482,12 @@ impl EngineContext {
                     eval: compiled.eval,
                 })
                 .collect(),
+            invariant_owners,
             initial_invariants,
+            initial_invariant_owners,
             constraints,
             action_constraints,
+            possible,
             action_properties,
             initial_predicates,
             view,

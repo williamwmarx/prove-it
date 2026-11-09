@@ -373,5 +373,10 @@ export const getReadVariables = (
 export const hasRepeatedEffect = (expression: Expression, environment: Environment) =>
   (getExpressionsRow([expression], environment)[0] & REPEATED_EFFECT) !== 0;
 
+// Whether evaluating the expressions can change what a run does: draw a random value, set or read
+// a TLC register, assert, or print.
+export const hasEffect = (expressions: Expression[], environment: Environment) =>
+  (getExpressionsRow(expressions, environment)[0] & IMPURE) !== 0;
+
 export const isNonconstant = (expression: Expression, environment: Environment) =>
   (getExpressionsRow([expression], environment)[0] & NONCONSTANT) !== 0;
