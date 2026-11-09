@@ -844,18 +844,21 @@ fn find_next(
 }
 
 /// `getInvariants` (`search.ts`): TLC's checks of the invariants the configuration names, which
-/// it makes before it reads the specification.
+/// it makes before it reads the specification. It returns the invariants that are constants equal
+/// to TRUE, which TLC warns about, or none where the engine checks one the evaluator can't compute.
 pub fn check_invariants(
     config: &crate::config::ModelConfig,
     environment: &Environment,
     facts: &DefinitionFacts,
     evaluator: &Evaluator,
-) -> Result<()> {
+) -> Result<Option<Vec<Name>>> {
     let analyzer = environment.create_level_analyzer(&[]);
+    let mut constant_true = Vec::new();
     for name in &config.invariants {
         let Some(definition) =
             get_config_predicate("invariant", name, environment, facts, Some(evaluator))?
         else {
+            constant_true.push(Rc::from(name.as_str()));
             continue;
         };
         let levels = analyzer.analyze_definition(definition, &levels::Scope::default())?;
@@ -872,7 +875,7 @@ pub fn check_invariants(
             )));
         }
     }
-    Ok(())
+    Ok((!evaluator.is_deferring()).then_some(constant_true))
 }
 
 /// `getSpecification` (`search.ts`).

@@ -55,6 +55,8 @@ pub struct Liveness {
     pub formula: Rc<Live>,
     pub properties: Vec<(Name, Rc<Live>)>,
     pub atoms: Vec<Rc<Live>>,
+    /// How many solutions of the formula TLC checks, which it calls branches.
+    pub branches: usize,
 }
 
 fn not_yet(reason: &str) -> FrontError {
@@ -477,17 +479,19 @@ pub fn get_liveness(
     } else {
         junction(true, [fairness, vec![violation]].concat())
     };
-    let atoms = order_atoms(&formula)?;
+    let (atoms, branches) = order_atoms(&formula)?;
     Ok(Some(Liveness {
         formula,
         properties: named,
         atoms,
+        branches,
     }))
 }
 
 /// The atoms in the order the checker asks about them, as `tla_live::atom_order` finds it from the
-/// solutions of the formula, each atom by its position among those of the formula.
-fn order_atoms(formula: &Rc<Live>) -> Result<Vec<Rc<Live>>> {
+/// solutions of the formula, each atom by its position among those of the formula, and how many
+/// solutions there are.
+fn order_atoms(formula: &Rc<Live>) -> Result<(Vec<Rc<Live>>, usize)> {
     let mut atoms: Vec<Rc<Live>> = Vec::new();
     let mut ids: HashMap<*const Live, u32> = HashMap::new();
     let mut terms = Vec::new();
@@ -504,10 +508,14 @@ fn order_atoms(formula: &Rc<Live>) -> Result<Vec<Rc<Live>>> {
         ),
         _ => not_yet("a temporal formula the tableau declines"),
     })?;
-    Ok(order
+    // The tableau found the solutions as it ordered the atoms, so counting them again succeeds.
+    let branches = tla_live::count_branches(&terms)
+        .map_err(|declined| not_yet(&format!("the liveness branches: {}", declined.0)))?;
+    let atoms = order
         .into_iter()
         .map(|id| atoms[id as usize].clone())
-        .collect())
+        .collect();
+    Ok((atoms, branches))
 }
 
 fn write_terms(

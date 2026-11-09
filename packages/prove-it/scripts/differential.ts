@@ -14,11 +14,13 @@
 // too, with the front the first backend's run recorded, and is compared with TLC as tlc/native.
 // That pair fails nothing yet: the run reports how many runs it matches and why the others differ.
 // With --native-front, the binary runs with no recorded front, as tla-front is its whole front end.
+// --native-only runs the native binary alone that way, without the TypeScript runs, so a pass over
+// the whole corpus takes minutes.
 // A run without a TLC recording fails the check, since nothing compared it with TLC. --timeout-ms
 // stops a checker that runs longer, and without it nothing does.
 // Usage: bun scripts/run.ts differential [--max-tlc-ms 20000] [--filter text] [--concurrency 3]
 //        [--modes default,tool] [--stop-at] [--timeout-ms ms] [--update] [--out path]
-//        [--backend ts | --compare-backends] [--native path [--native-front]]
+//        [--backend ts | --compare-backends] [--native path [--native-front | --native-only]]
 
 import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -97,6 +99,8 @@ const backends = getBackends();
 const nativeOption = getOption("--native");
 const nativeBinary = nativeOption && resolve(nativeOption);
 const isNativeFront = process.argv.includes("--native-front");
+const isNativeOnly = process.argv.includes("--native-only");
+if (isNativeOnly && !nativeBinary) throw new Error("--native-only needs --native");
 // The native binary reads the IR the Rust engine reads, so the run on that backend records its
 // front: the TypeScript engine skips models the Rust engine takes.
 const frontBackend = backends.includes("rust") ? "rust" : backends[0];
@@ -271,6 +275,19 @@ const compare = (id: string, mode: OutputMode, pair: string, left: string, right
   return comparison;
 };
 
+// Compares the native binary's run with TLC's, why it couldn't do the run if it said.
+const compareNative = (id: string, mode: OutputMode, tlc: string, native: Output) => {
+  const comparison = getComparison(id, mode, "tlc/native", tlc, native.transcript);
+  nativeComparisons.push({
+    ...comparison,
+    // A run with no front never reached the engine in TypeScript: SANY, the configuration or
+    // an assumption stopped it, which tla-front will report.
+    reason: /^prove-it: not native yet: (.*)$/m
+      .exec(native.stderr)?.[1]
+      ?.replace(/^no recorded front of .*$/, "no recorded front"),
+  });
+};
+
 const work = async (queue: { model: CorpusModel; mode: OutputMode }[], total: number) => {
   for (let run = queue.shift(); run; run = queue.shift()) {
     const model = run.model;
@@ -279,6 +296,18 @@ const work = async (queue: { model: CorpusModel; mode: OutputMode }[], total: nu
     if (!recording) missing.push(`${model.id} ${mode}`);
     const tlc =
       recording && getTranscript(String(recording.exitCode), recording.stdout, recording.stderr);
+    if (nativeBinary && isNativeOnly) {
+      const environment = { ...process.env };
+      delete environment.PROVE_IT_FRONT;
+      const native = await runChecker(nativeBinary, [], model, mode, environment);
+      if (tlc) compareNative(model.id, mode, tlc, native);
+      results.push({ id: model.id, mode, tlc, outputs: { native } });
+      const isSame = native.transcript === tlc;
+      console.log(
+        `[${results.length}/${total}] ${isSame ? "same" : "native"}  ${mode.padEnd(7)} ${model.id}`,
+      );
+      continue;
+    }
     const interpreter = await runCli(model, mode, { ...process.env, PROVE_IT_ENGINE: "0" });
     const modelComparisons: Comparison[] = [];
     const outputs: Record<string, Output> = { interpreter };
@@ -351,17 +380,7 @@ const work = async (queue: { model: CorpusModel; mode: OutputMode }[], total: nu
         frontDirectory,
       );
       outputs.native = native;
-      if (tlc) {
-        const comparison = getComparison(model.id, mode, "tlc/native", tlc, native.transcript);
-        nativeComparisons.push({
-          ...comparison,
-          // A run with no front never reached the engine in TypeScript: SANY, the configuration or
-          // an assumption stopped it, which tla-front will report.
-          reason: /^prove-it: not native yet: (.*)$/m
-            .exec(native.stderr)?.[1]
-            ?.replace(/^no recorded front of .*$/, "no recorded front"),
-        });
-      }
+      if (tlc) compareNative(model.id, mode, tlc, native);
     }
     results.push({ id: model.id, mode, tlc, outputs, comparisons: modelComparisons });
     const unknown = modelComparisons.filter((comparison) => !comparison.isKnown);
