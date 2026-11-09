@@ -333,7 +333,11 @@ const work = async (queue: { model: CorpusModel; mode: OutputMode }[], total: nu
         const comparison = getComparison(model.id, mode, "tlc/native", tlc, native.transcript);
         nativeComparisons.push({
           ...comparison,
-          reason: /^prove-it: not native yet: (.*)$/m.exec(native.stderr)?.[1],
+          // A run with no front never reached the engine in TypeScript: SANY, the configuration or
+          // an assumption stopped it, which tla-front will report.
+          reason: /^prove-it: not native yet: (.*)$/m
+            .exec(native.stderr)?.[1]
+            ?.replace(/^no recorded front of .*$/, "no recorded front"),
         });
       }
     }

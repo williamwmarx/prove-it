@@ -2428,4 +2428,14 @@ banner, then the recorded front, then everything after it. So the recorded part 
 
 ### 13.7 As built
 
-Nothing yet.
+- **#44, the crate.** `prove-it-cli` builds `prove-it`: the arguments and the Java launch, the
+  command-line errors, the printer, the welcome and banner, the engine's events and the summary of
+  a complete search, exit codes, `-deadlock`. 1.3 MB stripped; about 1.4 ms to print the usage.
+  Anything else it reports on stderr as `prove-it: not native yet: <reason>` and exits 1; a search
+  that prints ends at its first `Print`.
+- **The differential's `tlc/native` pair**, on Depot (`depot-ubuntu-24.04-16`, all 1466 runs):
+  **542 of 1466** runs print what TLC prints. Every other run gave its reason; none printed
+  something different. The reasons, by runs: 342 no recorded front (SANY, the configuration or an
+  assumption stopped the TypeScript run before the engine), 264 checking temporal properties, 64
+  deadlock, 52 printing values, 60 invariant violations (14 of them by an initial state), and the
+  engine's other stops and declines (about 140).
