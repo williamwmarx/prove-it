@@ -312,6 +312,32 @@ fn prints_a_lasso_it_rebuilds_under_a_view() {
 }
 
 #[test]
+fn warns_of_a_stuttering_counterexample_without_fairness() {
+    // No recorded IR, so tla-front lowers the model, and TLC prints its warnings.
+    let directory =
+        std::env::temp_dir().join(format!("prove-it-cli-stuttering-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    for (file, contents) in [
+        (
+            "Stutter.tla",
+            "---- MODULE Stutter ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = 1 - x\nSpec == Init /\\ [][Next]_x\nLive == []<>(x = 1)\n====\n",
+        ),
+        ("Stutter.cfg", "SPECIFICATION Spec\nPROPERTY Live\n"),
+        ("Stutter.front", ""),
+    ] {
+        std::fs::write(directory.join(file), contents).expect("a file");
+    }
+    let output = run(&directory, &["Stutter"]);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(13), "{text}");
+    assert!(
+        text.contains("State 2: Stuttering\nWarning: The stuttering counterexample above may be caused by the absence of a fairness constraint in the behavior specification Spec defined at line 6, col 1 to line 6, col 26 of module Stutter. To rule out such counterexamples, conjoin a suitable fairness constraint to Spec (compare Chapter 8, page 87ff of Specifying Systems at https://lamport.azurewebsites.net/tla/book.html).\n"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
 fn prints_a_temporal_propertys_lasso() {
     let ir = include_bytes!(
         "../../../../tests/conformance/ir/tlc/tlatools/org.lamport.tlatools/test-model/Github1389ViolatedB.ir"
