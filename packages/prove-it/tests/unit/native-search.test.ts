@@ -81,6 +81,44 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     );
   });
 
+  it("reads a PlusCal pc once for the actions it switches between, finding and failing as each would", async () => {
+    const body = [
+      "EXTENDS Naturals",
+      "CONSTANT N",
+      "VARIABLES pc, x",
+      "Procs == 1..N",
+      'Init == pc = [p \\in Procs |-> "a"] /\\ x = 0',
+      'a(p) == pc[p] = "a" /\\ pc\' = [pc EXCEPT ![p] = "b"] /\\ x\' = x + 1',
+      'b(p) == pc[p] = "b" /\\ pc\' = [pc EXCEPT ![p] = "c"] /\\ UNCHANGED x',
+      'c(p) == pc[p] = "c" /\\ x < 4 /\\ pc\' = [pc EXCEPT ![p] = "a"] /\\ UNCHANGED x',
+      "Next == \\E p \\in Procs : a(p) \\/ b(p) \\/ c(p)",
+    ];
+    const config = "CONSTANT N = 2\nINIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE";
+    expect(await compareStateLogs(body, config, false)).toContainEqual(
+      expect.stringMatching(COMPLETE),
+    );
+    expect(await compareWithInterpreter(body, config)).toContainEqual(
+      expect.stringMatching(COMPLETE),
+    );
+    // An action that doesn't start with pc[p] = c leaves the others to test their own guards.
+    const mixed = body.map((line) =>
+      line.replace('c(p) == pc[p] = "c" /\\ x < 4', 'c(p) == x < 4 /\\ pc[p] = "c"'),
+    );
+    expect(await compareStateLogs(mixed, config, false)).toContainEqual(
+      expect.stringMatching(COMPLETE),
+    );
+    // A process outside pc's domain fails where the first action reads pc[p], and a constant TLC
+    // can't compare with a string fails where its action compares it.
+    const outside = body.map((line) => line.replace("\\E p \\in Procs", "\\E p \\in 0..N"));
+    expect(await compareWithInterpreter(outside, config)).toContainEqual(
+      expect.stringMatching(stopped("applied a function outside its domain")),
+    );
+    const mistyped = body.map((line) => line.replace('pc[p] = "b"', "pc[p] = 2"));
+    expect(await compareWithInterpreter(mistyped, config)).toContainEqual(
+      expect.stringMatching(stopped("equality of values TLC can't compare")),
+    );
+  });
+
   it("reads f[i][j] of a variable and two bound names in place", async () => {
     const body = [
       "EXTENDS Naturals",
@@ -1179,5 +1217,31 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     ).toContainEqual(
       expect.stringMatching(declined("unsupported: a value TLC computed at startup with effects")),
     );
+  });
+
+  // From tla-rs's function_syntax: TLC applies a recursive function of several bounds to tuples
+  // of its product, and keeps a recursive function lazy where a spec passes it or takes its
+  // domain.
+  it("applies recursive functions as TLC keeps them lazy", async () => {
+    const body = [
+      "EXTENDS Naturals, FiniteSets",
+      "VARIABLE x",
+      "add[a \\in 0..3, b \\in 0..3] == IF b = 0 THEN a ELSE add[a, b - 1] + 1",
+      "fact[n \\in Nat] == IF n = 0 THEN 1 ELSE n * fact[n - 1]",
+      "selfdom[n \\in 0..3] == IF n = 0 THEN Cardinality(DOMAIN selfdom) ELSE selfdom[n - 1]",
+      "k == [a \\in {1}, <<b, c>> \\in {<<2, 3>>, <<4, 5>>} |-> a + b + c]",
+      "ApplyAt(f, n) == f[n]",
+      "Init == x = 0",
+      "Next == x < 3 /\\ x' = add[x, 1]",
+      "Inv == /\\ add[2, 3] = 5 /\\ add[<<1, 1>>] = 2 /\\ DOMAIN add = (0..3) \\X (0..3)",
+      "       /\\ ApplyAt(fact, 4) = 24",
+      "       /\\ selfdom[2] = 4 /\\ k[1, <<4, 5>>] = 10",
+    ];
+    expect(
+      await compareWithInterpreter(
+        body,
+        "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
+      ),
+    ).toContainEqual(expect.stringMatching(COMPLETE));
   });
 });
