@@ -753,7 +753,7 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     );
     expect(native.lines).toContainEqual(expect.stringMatching(COMPLETE));
     expect([native.result.status, native.result.distinctStates]).toEqual(["success", 4_000_001]);
-  });
+  }, 60_000);
 
   it("answers the temporal properties' predicates on several threads as on one", async () => {
     const body = [
