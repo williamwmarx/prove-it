@@ -16,6 +16,17 @@ use crate::{Id, Store};
 /// field name (a record or not), a set of 2^n sets past n = 6 (a SUBSET prints as written), or a
 /// set of more than 1,999 functions (as does a set of functions, records or tuples).
 pub fn is_printable(store: &Store, id: Id) -> bool {
+    is_written_as_held(store, id, false)
+}
+
+/// [`is_printable`] for a value TLC has normalized, as it does each state it fingerprints, such
+/// as a trace's: its records' fields are then sorted, so a record of several fields prints as
+/// [`format_value`] writes it. The rest still depends on how TLC built the value.
+pub fn is_printable_normalized(store: &Store, id: Id) -> bool {
+    is_written_as_held(store, id, true)
+}
+
+fn is_written_as_held(store: &Store, id: Id, is_normalized: bool) -> bool {
     let kind = store.kind_of(id);
     if kind != KIND_SET && kind != KIND_TUPLE && kind != KIND_FUNCTION {
         return true;
@@ -30,7 +41,7 @@ pub fn is_printable(store: &Store, id: Id) -> bool {
     };
     for index in 0..size {
         if kind == KIND_TUPLE {
-            if !is_printable(store, store.get_range_value(id, index)) {
+            if !is_written_as_held(store, store.get_range_value(id, index), is_normalized) {
                 return false;
             }
             continue;
@@ -38,16 +49,18 @@ pub fn is_printable(store: &Store, id: Id) -> bool {
         let (Some(element), Some(first)) = (part(index), part(0)) else {
             return false;
         };
-        if store.kind_of(element) != store.kind_of(first) || !is_printable(store, element) {
+        if store.kind_of(element) != store.kind_of(first)
+            || !is_written_as_held(store, element, is_normalized)
+        {
             return false;
         }
         if kind == KIND_FUNCTION {
             if store.kind_of(element) == KIND_STRING
-                && (size > 1 || !is_field_name(store.text_of(element)))
+                && ((size > 1 && !is_normalized) || !is_field_name(store.text_of(element)))
             {
                 return false;
             }
-            if !is_printable(store, store.get_range_value(id, index)) {
+            if !is_written_as_held(store, store.get_range_value(id, index), is_normalized) {
                 return false;
             }
         }
@@ -266,6 +279,15 @@ mod tests {
         let nested = store.tuple_of(&[interval]);
         for id in [interval, record, spaced, power_set, functions, nested] {
             assert!(!is_printable(&store, id), "{}", format_value(&store, id));
+        }
+        // Normalized, a record's fields are sorted, which is the order the store keeps.
+        assert!(is_printable_normalized(&store, record));
+        for id in [interval, spaced, power_set, functions, nested] {
+            assert!(
+                !is_printable_normalized(&store, id),
+                "{}",
+                format_value(&store, id)
+            );
         }
     }
 
