@@ -641,6 +641,14 @@ export const createActionAnalysis = (compiler: Compiler, isInit: boolean) => {
     if (expression.kind === "Prime" && isPrimed) {
       return getAssignable(expression.expression, assignableContext, false, depth + 1);
     }
+    // TLC's getPrimedVar looks through a LET and a label to the primed variable.
+    if (expression.kind === "Let") {
+      const inner = compiler.bindLet(expression, assignableContext);
+      return getAssignable(expression.body, inner, isPrimed, depth + 1);
+    }
+    if (expression.kind === "Label") {
+      return getAssignable(expression.body, assignableContext, isPrimed, depth + 1);
+    }
     if (expression.kind !== "Identifier") return undefined;
     if (isLocallyResolved(expression)) {
       const resolved = compiler.resolveAction(expression, assignableContext);
