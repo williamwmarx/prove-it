@@ -123,6 +123,12 @@ which std already links. No crate is needed.
   `com.apple.security.cs.allow-jit`), or any failure in the checks of §6.
   - Node and Bun both JIT and carry that entitlement. Whether a `bun build --compile` binary keeps
     it once signed must be checked on macOS before stage N4, and the result recorded here.
+- **macOS signing of the standalone binary.** The end product is the Rust `prove-it` binary as
+  well as the addon in a host process. On arm64 the linker ad-hoc signs it, and without the
+  hardened runtime `MAP_JIT` needs no entitlement. Notarising requires the hardened runtime, so if
+  we ever notarise, the binary must carry `com.apple.security.cs.allow-jit`. N4's check covers
+  both: the standalone binary, ad-hoc signed and, once we sign for release, signed as released;
+  and the addon inside Node, Bun and the `bun build --compile` binary.
 - Memory is mapped per search and freed when the search ends; nothing outlives the `Program` that
   emitted it.
 
@@ -154,6 +160,14 @@ are for:
   stays a separate workspace with its own dependency, as now.
 - **Encoder tests** against known bytes (§4), and a test per OS of the mapping lifecycle: map,
   write, seal, run, free, and confirm a write after sealing faults in a child process.
+- **Threads.** The search is becoming multi-threaded (the parallel search, with a per-thread
+  overlay over a frozen store). Emitted code is shared read-only across threads and must be
+  reentrant:
+  - neither the code nor the helpers have mutable globals, and all per-thread state is reached
+    through the `*mut Machine` argument;
+  - helpers that intern go through the thread's overlay store, never the frozen one;
+  - the bases of §4 are the thread's own, loaded from its `Machine`.
+  N2's gate includes the state logs at 1 and 4 threads with the backend on.
 - **The Platforms workflow** runs the native tests and the unit suite with the backend on, on each
   OS the stage supports. With it off elsewhere, the closures still run there.
 
@@ -195,13 +209,15 @@ backend on by default except N6.
     MCLamportMutex.
 - **N2, x86-64 Linux, whole walks.**
   - Segments, `exists_step`, disjunctions and the continuation, plus inline memo probes.
-  - Gate: the six laggards at 1.3× over the TypeScript engine on Depot.
+  - Gate: the six laggards at 1.3× over the TypeScript engine on Depot, and state logs identical
+    at 1 and 4 threads with the backend on.
 - **N3, aarch64 Linux.**
   - The aarch64 encoder and the icache flush.
   - The Linux arm64 Depot runner in Parity.
 - **N4, macOS (arm64 and x86-64).**
   - `MAP_JIT`, `pthread_jit_write_protect_np` and `sys_icache_invalidate`.
-  - The entitlement check of §5 for the compiled binary.
+  - The signing and entitlement checks of §5, for the standalone binary and for the addon in a
+    host process.
   - Platforms on macOS with the backend on.
 - **N5, Windows x64, and fingerprints.**
   - `VirtualAlloc`, `VirtualProtect` and the Win64 ABI.

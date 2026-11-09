@@ -2347,7 +2347,7 @@ covering it in Rust, then removing the TypeScript path once the gates below hold
 | Engine coverage: TLC operators (Print, PrintT, TLCGet, TLCSet, RandomElement, Any, JavaTime, ToString), lazy sets, every run-time stop | the TypeScript engine as fallback | no decline, no stop on the corpus |
 | TLC's value printer in Rust | `values.ts` printing | ToString and traces identical to TLC |
 | Parallel search (section 4) | the TypeScript parallel search | state logs identical at 1 to 16 threads |
-| Speed: compiled guards and invariants (3.1's later tier) | — | the 1.3× per-model gate |
+| Speed: compiled guards and invariants (3.1's later tier), designed in [design/native-backend.md](design/native-backend.md) | — | the 1.3× per-model gate |
 | Liveness (stage 3) | `tableau.ts`, `liveness-checker.ts`, `liveness.ts` | same verdicts and counterexamples |
 | Front end (stage 4, `tla-front`) | lexer, parser, resolver, levels, SANY, config, TLC order, IR lowering | IR byte-equal to the TypeScript lowering; SANY's messages |
 | CLI and TLC's output (stage 5, `prove-it-cli`) | `cli/`, `check.ts`, `tlc/messages.ts`, traces | the full-stdout differential against TLC |
