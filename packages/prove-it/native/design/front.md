@@ -273,3 +273,25 @@ It prints them as `getSanyReport` does, after the "Parsing file" lines so far. `
 TLC 1.7.4's aborts and SANY's parse errors (`src/sany/parse-error.ts`) are still `NotYet`.
 
 `sany-text` reports 1,825 of 2,357 matching, and 2,117 of 3,957 with `--mutate 400`, with 0 differing.
+
+## (d2) part 3 as built: SANY's semantic errors and warnings
+
+SANY goes on analyzing after a module with errors. After each module it prints every message so far: the warnings, then "Semantic errors:" and the errors. It level-checks a module only while no module so far has an error.
+
+`environment::get_sany_messages` links in a collecting mode, which does this:
+
+- It keeps each top-level module's errors and warnings instead of stopping at the first module with errors.
+- It defers the level checks, then runs them in SANY's order of analysis, which the caller gives.
+- It reports "Substitution error, probably due to error in module being instantiated." at each INSTANCE of a module with errors, as `Generator.createSubstIn` does.
+
+`get_sany_text` prints the messages cumulatively, as `getSanyReport` does, and skips linting when there are errors.
+
+Still `NotYet`:
+
+- TLC 1.7.4's message layout;
+- an error that stops linking itself;
+- a definition whose arity differs from its RECURSIVE declaration. SANY applies the declared arity, and neither resolver models this.
+
+Porting this showed that both resolvers saw a module's own declarations before they're declared. That is fixed in `resolve.ts` and `resolve.rs`.
+
+`sany-text` reports 1,886 of 2,357 matching, and 2,175 of 3,957 with `--mutate 400`, with 0 differing.
