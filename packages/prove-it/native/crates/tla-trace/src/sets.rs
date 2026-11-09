@@ -41,7 +41,12 @@ pub fn enumerate(lazy: &Lazy) -> Evaluated<Vec<Value>> {
         }
         Lazy::FunctionSet(domain_set, range) => {
             let domain = elements(domain_set)?;
-            let range = elements(range)?;
+            // Over an empty domain the set holds the empty function alone, whatever the range.
+            let range = if domain.is_empty() {
+                Rc::new(Vec::new())
+            } else {
+                elements(range)?
+            };
             let tuples = product(&vec![Rc::clone(&range); domain.len()])?;
             // A function over an interval keeps it as its domain.
             let build = |values: Vec<Value>| match domain_set {
