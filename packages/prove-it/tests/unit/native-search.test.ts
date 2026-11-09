@@ -424,6 +424,14 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
       // where it finds otherwise.
       await compareWithInterpreter(body, config, { PROVE_IT_LIVE_CHECK: "1" });
     }
+    // Without the replay, TLCGet("diameter") still reads the search's depth.
+    const diameter = ["EXTENDS Naturals, TLC", ...body.slice(1), 'Post == TLCGet("diameter") = 5'];
+    const lines = await compareWithInterpreter(
+      diameter,
+      "SPECIFICATION Weak\nPROPERTY Returns\nPOSTCONDITION Post",
+    );
+    expect(lines).toContain("[engine] native: liveness: holds");
+    expect(lines).toContainEqual(expect.stringMatching(COMPLETE));
   });
 
   it("hands over a violated invariant, deadlock and a failed action property", async () => {

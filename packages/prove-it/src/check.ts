@@ -1836,6 +1836,7 @@ const searchStates = (
       runtime.queueSize = 0;
       statistics.depth = result.depth;
       statistics.initialStates = result.initialStates;
+      runtime.diameter = result.depth;
       // The native checker found that the temporal properties hold.
       if (liveness && verdict?.status === "holds") {
         releaseInitialProgress(Infinity);
