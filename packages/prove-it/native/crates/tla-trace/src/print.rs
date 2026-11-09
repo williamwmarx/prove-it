@@ -5,7 +5,7 @@
 use tla_values::print::is_field_name;
 
 use crate::sets::cardinality;
-use crate::value::{Class, Function, Lazy, Value};
+use crate::value::{Class, Function, Lazy, Value, normalize};
 
 /// The most functions TLC expands a set of functions, records or tuples into to print it.
 const MAXIMUM_EXPANDED_PRODUCT: usize = 1999;
@@ -78,6 +78,7 @@ fn write_value(value: &Value, is_strict: bool, is_normalized: bool, out: &mut St
         Value::Str(text) => write_string(&text.units, out),
         Value::Model(text) => write_text(&text.units, out),
         Value::Set(elements) | Value::Unsorted(elements) => {
+            normalize(value);
             write_joined(elements, "{", "}", is_strict, is_normalized, out)
         }
         Value::Interval(low, high) => {

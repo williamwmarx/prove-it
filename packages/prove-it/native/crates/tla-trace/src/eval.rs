@@ -21,8 +21,8 @@ use crate::random::{random_element, random_subset};
 use crate::sets::{as_tuple, cardinality, difference, intersection, is_member, is_subset, union};
 use crate::value::{
     Class, EvalError, Evaluated, Function, Lazy, Text, TlcMessage, Value, compare, elements,
-    equals, fail, fail_coded, fail_runtime, fail_with, find_key, from_store, set_of,
-    sorted_function, written_function,
+    equals, fail, fail_coded, fail_runtime, fail_with, find_key, from_store, mark_unnormalized,
+    set_of, sorted_function, written_function,
 };
 
 /// The bindings an expression sees, innermost first.
@@ -957,6 +957,12 @@ impl<'ir> Evaluator<'ir> {
                     {
                         stack.is_unsorted = true;
                         Ok(Value::Unsorted(Rc::new(values)))
+                    }
+                    // A replay keeps track of the set TLC holds unnormalized still, which it
+                    // tests for membership element by element.
+                    (Ok(set), Some(_)) => {
+                        mark_unnormalized(&set, values);
+                        Ok(set)
                     }
                     (set, _) => set,
                 }

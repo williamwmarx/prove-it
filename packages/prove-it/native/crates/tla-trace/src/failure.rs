@@ -10,7 +10,9 @@ use crate::eval::{CallStack, Context, Evaluator, StackFrame, UNFOLLOWED_FRAMES};
 use crate::fingerprint::fingerprint_failure;
 use crate::print::format_value;
 use crate::rebuild::{Rebuilder, is_same, run};
-use crate::value::{Evaluated, TlcMessage, Value, fail, fail_with, normalize_failure};
+use crate::value::{
+    Evaluated, TlcMessage, Value, clear_unnormalized, fail, fail_with, normalize_failure,
+};
 use crate::{Ending, Trace, Unsupported};
 
 /// Where the search failed.
@@ -162,6 +164,7 @@ impl<'ir> Rebuilder<'ir> {
         // The startup printed its definitions and the assumptions before this one already.
         run(evaluator.compute_startup())?;
         evaluator.printed.clear();
+        clear_unnormalized();
         evaluator.call_stack = Some(CallStack::default());
         let result = evaluator.evaluate(node, &Context::default());
         let call_stack = evaluator.call_stack.take().unwrap_or_default();
@@ -259,9 +262,21 @@ impl<'ir> Rebuilder<'ir> {
                     .states,
             ),
         };
+        // TLC reports an invariant that fails to evaluate past the initial states, then replays
+        // the expansion of the predecessor with its `CallStackTool`, checking the invariants of
+        // each successor it hasn't seen. The replay prints nothing only where it sees each one.
+        let is_replay_quiet = match (&site, &last) {
+            (Site::Invariant(_), Some(rebuilt)) if rebuilt.len() >= 2 => {
+                let failed = &rebuilt[rebuilt.len() - 1].values;
+                let predecessor = &rebuilt[rebuilt.len() - 2].values;
+                self.has_only_successor(predecessor, failed, rebuilt.len())?
+            }
+            _ => false,
+        };
         let evaluator = self.evaluator();
         let ir = evaluator.ir;
         evaluator.printed.clear();
+        clear_unnormalized();
         evaluator.call_stack = Some(CallStack::default());
         let width = ir.variables.len();
         let level = states.len() as i32;
@@ -604,7 +619,9 @@ impl<'ir> Rebuilder<'ir> {
                 state: None,
             });
         }
-        if call_stack.is_fingerprinted {
+        // TLC checks an invariant past the initial states without its `CallStackTool`, so no
+        // value has a source there and the failure is reported as it is (`doNextEvalFailed`).
+        if call_stack.is_fingerprinted && !is_replay_quiet {
             return Err(Unsupported(
                 "evaluating the failure again: a failure TLC reports as a FingerprintException"
                     .into(),
@@ -644,6 +661,12 @@ impl<'ir> Rebuilder<'ir> {
         // TLC reports an invariant that fails to evaluate with a headline of its own, and no call
         // stack (`doNextEvalFailed`).
         if let Site::Invariant(position) = site {
+            if !is_replay_quiet {
+                return Err(Unsupported(
+                    "evaluating the failure again: TLC's replay checks a successor it hasn't seen"
+                        .into(),
+                ));
+            }
             let name = &ir.texts[ir.model.invariants[position as usize].root.name as usize];
             let headline = format!("Evaluating invariant {name} failed.");
             return Ok(Failure {
@@ -781,6 +804,56 @@ pub struct Incomplete {
 }
 
 impl Rebuilder<'_> {
+    // Whether every successor of a state, walking TLC's actions in order, is the one given, which
+    // TLC has seen, and the model has no constraint that could keep it unseen.
+    fn has_only_successor(
+        &mut self,
+        predecessor: &[Value],
+        successor: &[Value],
+        level: usize,
+    ) -> Result<bool, Unsupported> {
+        let evaluator = self.evaluator();
+        let ir = evaluator.ir;
+        if !ir.model.constraints.is_empty() || !ir.model.action_constraints.is_empty() {
+            return Ok(false);
+        }
+        let Some(next) = ir.model.next else {
+            return Ok(false);
+        };
+        let candidates: Vec<(NodeId, Option<u32>)> = if ir.model.actions.is_empty() {
+            vec![(next, ir.model.scope)]
+        } else {
+            ir.model
+                .actions
+                .iter()
+                .map(|action| (action.expression, action.scope))
+                .collect()
+        };
+        evaluator.call_stack = None;
+        evaluator.current = predecessor.iter().cloned().map(Some).collect();
+        evaluator.level = level as i32 - 1;
+        let mut is_only = true;
+        for (expression, scope) in candidates {
+            let context = run(evaluator.scope_context(scope))?;
+            evaluator.next = vec![None; predecessor.len()];
+            run(
+                evaluator.walk_action(expression, &context, false, &mut |evaluator| {
+                    is_only = evaluator.next.iter().zip(successor).all(|(value, other)| {
+                        value
+                            .as_ref()
+                            .is_some_and(|value| crate::value::is_same(value, other))
+                    });
+                    Ok(is_only)
+                }),
+            )?;
+            if !is_only {
+                break;
+            }
+        }
+        evaluator.printed.clear();
+        Ok(is_only)
+    }
+
     /// The first successor of the last of `states` that the next-state relation leaves
     /// incomplete, walking TLC's actions in order, as `forEachSuccessor` finds it.
     pub fn incomplete_successor(&mut self, trace: &Trace) -> Result<Incomplete, Unsupported> {
