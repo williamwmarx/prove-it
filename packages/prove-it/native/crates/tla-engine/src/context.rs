@@ -486,19 +486,30 @@ impl EngineContext {
             }
             None => None,
         };
+        // A constraint that may print or set a register is checked whole each time, as TLC
+        // checks it, where the native checker reports what the search finds.
         let mut conjuncts = Conjuncts::new(ir);
         let mut constraint_owners = Vec::new();
+        let mut printed = HashSet::new();
         for (owner, constraint) in model.constraints.iter().enumerate() {
-            conjuncts.collect(Conjunct::Named(named("constraint", ir, constraint)?));
+            let root = Conjunct::Named(named("constraint", ir, constraint)?);
+            if compiler.is_native && compile_conjunct(compiler, root, true)?.is_printing() {
+                printed.insert(root);
+                conjuncts.add(root);
+            } else {
+                conjuncts.collect(root);
+            }
             constraint_owners.resize(conjuncts.found.len(), owner as u32);
         }
         let constraints = conjuncts
             .found
             .into_iter()
             .map(|conjunct| {
-                compile_conjunct(compiler, conjunct, false).map(|compiled| Predicate {
-                    vars: predicate_vars(&compiled, width),
-                    eval: compiled.eval,
+                compile_conjunct(compiler, conjunct, printed.contains(&conjunct)).map(|compiled| {
+                    Predicate {
+                        vars: predicate_vars(&compiled, width),
+                        eval: compiled.eval,
+                    }
                 })
             })
             .collect::<Result<Vec<Predicate>, CompileError>>()?;
