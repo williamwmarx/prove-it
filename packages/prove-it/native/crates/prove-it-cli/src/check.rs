@@ -538,8 +538,20 @@ fn check_spec(spec_path: &str, args: &Parsed, printer: &mut Printer) -> i32 {
             fingerprints,
             liveness,
             violation,
+            possible,
             ..
         } => {
+            // Once the search completes, TLC checks the postconditions, which the binary doesn't
+            // evaluate yet, and reports a _POSSIBLE predicate the search never witnessed.
+            if !config.postconditions.is_empty() {
+                return report_not_native(printer, "a POSTCONDITION");
+            }
+            if possible.iter().any(|&count| count <= 0) {
+                return report_not_native(
+                    printer,
+                    "a _POSSIBLE predicate the search didn't witness",
+                );
+            }
             if let Some(liveness) = liveness {
                 if let (Some(violation), Verdict::Lasso { .. }) = (violation, &liveness.verdict) {
                     return print_violation(
