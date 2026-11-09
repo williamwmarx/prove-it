@@ -36,6 +36,8 @@ import {
 export interface SpecAction {
   name: string;
   location: SourceLocation;
+  // The operator TLC split the action from (Action.getOpDef), whose parameters it binds.
+  operator?: Closure;
   parameters: [string, Value][];
   expression: Expression;
   scope: Scope | undefined;
@@ -180,10 +182,17 @@ const getInstanceActions = (
 ): SpecAction[] => {
   const args = getArguments(expression);
   const callAction = (): SpecAction[] => [
-    { name: instanceAction.name, location: expression.location, parameters: [], expression, scope },
+    {
+      name: instanceAction.name,
+      location: expression.location,
+      operator: called,
+      parameters: [],
+      expression,
+      scope,
+    },
   ];
   if (!called || args.length === 0) {
-    return [{ ...instanceAction, parameters: [], expression, scope }];
+    return [{ ...instanceAction, operator: called, parameters: [], expression, scope }];
   }
   if (args.some((arg) => getLevel(arg, scope, environment) !== CONSTANT_LEVEL)) {
     return callAction();
@@ -192,6 +201,7 @@ const getInstanceActions = (
     () => [
       {
         ...instanceAction,
+        operator: called,
         parameters: args.map((arg, index): [string, Value] => [
           called.params[index].name.replace(/#\d+$/, ""),
           evaluate(arg, getConstantContext(environment, scope)),
@@ -214,6 +224,7 @@ const getActions = (
   const createSplitAction = (): SpecAction => ({
     name: closure?.name ?? UNNAMED_ACTION,
     location: expression.location,
+    operator: closure,
     parameters: getParameters(closure, scope),
     expression,
     scope,
@@ -265,7 +276,14 @@ const getActions = (
     ? called.name
     : (environment.instanceNames.get(getOperatorName(expression) ?? "") ?? called.name);
   const callAction = (): SpecAction[] => [
-    { name: calledName, location: expression.location, parameters: [], expression, scope },
+    {
+      name: calledName,
+      location: expression.location,
+      operator: called,
+      parameters: [],
+      expression,
+      scope,
+    },
   ];
   if (isConstantDefinition(called, environment)) return callAction();
   if (args.some((arg) => getLevel(arg, scope, environment) !== CONSTANT_LEVEL)) {
