@@ -5,7 +5,10 @@
 
 use tla_engine::search::{Violation, ViolationKind};
 use tla_ir::Ir;
-use tla_trace::{Alias, Ending, Rebuilder, Unsupported, Value, format_value};
+use tla_trace::{
+    Alias, CounterExample, Ending, PostconditionInputs, Rebuilder, Stats, Unsupported, Value,
+    Verdict, format_value,
+};
 use tla_values::Id;
 
 use crate::check::SEARCH_STACK_BYTES;
@@ -16,6 +19,22 @@ use tla_trace::pretty_print;
 pub struct PrintedTrace {
     pub states: Vec<PrintedState>,
     pub trace_output: Vec<String>,
+    /// What the postconditions found on the trace, when the caller asked for them.
+    pub postconditions: Option<Postconditions>,
+}
+
+/// What TLCGet reads after the search, for the postconditions.
+pub struct PostconditionRun {
+    /// Each `_POSSIBLE` predicate's name and count, -1 where TLC evaluated it on none.
+    pub possible: Vec<(String, i64)>,
+    pub stats: Stats,
+}
+
+/// What TLC printed as it evaluated the postconditions, each print as one line, and the first one
+/// that doesn't hold, by its position in the model's postconditions, with what TLC found.
+pub struct Postconditions {
+    pub printed: Vec<String>,
+    pub failure: Option<(usize, Verdict)>,
 }
 
 pub struct PrintedState {
@@ -28,7 +47,11 @@ pub struct PrintedState {
 
 /// The violation's trace, or why `tla-trace` can't rebuild it. The evaluator recurses with the
 /// expressions it evaluates, so it runs on a thread with the search's stack.
-pub fn rebuild_trace(ir: &Ir, violation: &Violation) -> Result<PrintedTrace, String> {
+pub fn rebuild_trace(
+    ir: &Ir,
+    violation: &Violation,
+    postconditions: Option<&PostconditionRun>,
+) -> Result<PrintedTrace, String> {
     std::thread::scope(|scope| {
         std::thread::Builder::new()
             .stack_size(SEARCH_STACK_BYTES)
@@ -62,10 +85,33 @@ pub fn rebuild_trace(ir: &Ir, violation: &Violation) -> Result<PrintedTrace, Str
                     let trace =
                         rebuilder.rebuild(&violation.store, &states, &violation.labels, ending)?;
                     let aliases = rebuilder.alias(&trace, cycle_start)?;
-                    Ok((trace, aliases))
+                    // CounterExample closes a lasso with its step back into the cycle, which a
+                    // stuttering one doesn't take.
+                    let cycle = match violation.kind {
+                        ViolationKind::Lasso {
+                            loop_start,
+                            loop_label: Some(label),
+                        } => Some((loop_start, label)),
+                        _ => None,
+                    };
+                    let checked = postconditions
+                        .map(|run| {
+                            check(
+                                &mut rebuilder,
+                                ir,
+                                run,
+                                Some(CounterExample {
+                                    trace: &trace,
+                                    cycle,
+                                }),
+                            )
+                        })
+                        .transpose()?;
+                    Ok((trace, aliases, checked))
                 });
                 rebuilt
-                    .map(|(trace, aliases)| PrintedTrace {
+                    .map(|(trace, aliases, postconditions)| PrintedTrace {
+                        postconditions,
                         states: trace
                             .states
                             .iter()
@@ -98,6 +144,54 @@ pub fn rebuild_trace(ir: &Ir, violation: &Violation) -> Result<PrintedTrace, Str
             .expect("a thread to rebuild the trace")
             .join()
             .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+    })
+}
+
+/// The postconditions of a search that completed, as TLC checks them, or why `tla-trace` can't.
+pub fn check_postconditions(ir: &Ir, run: &PostconditionRun) -> Result<Postconditions, String> {
+    std::thread::scope(|scope| {
+        std::thread::Builder::new()
+            .stack_size(SEARCH_STACK_BYTES)
+            .spawn_scoped(scope, || {
+                Rebuilder::new(ir)
+                    .and_then(|mut rebuilder| check(&mut rebuilder, ir, run, None))
+                    .map_err(|Unsupported(reason)| reason)
+            })
+            .expect("a thread to check the postconditions")
+            .join()
+            .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+    })
+}
+
+// Each postcondition in turn, up to the first that doesn't hold.
+fn check(
+    rebuilder: &mut Rebuilder<'_>,
+    ir: &Ir,
+    run: &PostconditionRun,
+    counter_example: Option<CounterExample<'_>>,
+) -> Result<Postconditions, Unsupported> {
+    let mut printed = Vec::new();
+    for index in 0..ir.model.postconditions.len() {
+        let inputs = PostconditionInputs {
+            possible: &run.possible,
+            stats: run.stats,
+            counter_example: counter_example.as_ref().map(|example| CounterExample {
+                trace: example.trace,
+                cycle: example.cycle,
+            }),
+        };
+        let checked = rebuilder.postcondition(index, &inputs)?;
+        printed.extend(checked.printed.iter().map(|print| format_print(print)));
+        if checked.verdict != Verdict::Holds {
+            return Ok(Postconditions {
+                printed,
+                failure: Some((index, checked.verdict)),
+            });
+        }
+    }
+    Ok(Postconditions {
+        printed,
+        failure: None,
     })
 }
 

@@ -40,7 +40,7 @@ pub fn read_front(
     // one, which the rest of the front still follows until tla-front writes it too.
     let output = match std::env::var_os("PROVE_IT_NATIVE_FRONT") {
         Some(_) => native_sany(spec_path, describer, libraries)
-            .and_then(|sany| Some([sany.into_bytes(), after_sany(&recorded)?.to_vec()].concat()))
+            .and_then(|sany| splice_sany(&recorded, &sany))
             .unwrap_or(recorded),
         None => recorded,
     };
@@ -92,12 +92,18 @@ fn native_sany(spec_path: &str, describer: &FileDescriber, libraries: &[String])
     get_sany_text(spec, &options).ok()
 }
 
-// The recorded front from where SANY's report ends: Starting..., which follows it without -tool;
-// -tool prints none of it.
-fn after_sany(recorded: &[u8]) -> Option<&[u8]> {
+// The recorded front with SANY's report in it replaced: under -tool between "Starting SANY..."
+// (2220) and "SANY finished." (2219), and otherwise before "Starting...".
+fn splice_sany(recorded: &[u8], sany: &str) -> Option<Vec<u8>> {
     let text = std::str::from_utf8(recorded).ok()?;
-    let at = (!text.starts_with("@!@!@STARTMSG"))
-        .then(|| text.find("Starting... ("))
-        .flatten()?;
-    Some(&recorded[at..])
+    let (before, after) = if text.starts_with("@!@!@STARTMSG") {
+        let started = "@!@!@ENDMSG 2220 @!@!@\n";
+        (
+            text.find(started)? + started.len(),
+            text.find("@!@!@STARTMSG 2219:")?,
+        )
+    } else {
+        (0, text.find("Starting... (")?)
+    };
+    Some([&recorded[..before], sany.as_bytes(), &recorded[after..]].concat())
 }
