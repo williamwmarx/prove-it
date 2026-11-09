@@ -13,7 +13,9 @@ use crate::eval::Evaluator;
 use crate::hash::FastMap;
 use crate::lower::{Lowering, RankedTexts};
 use crate::order::TlcOrder;
-use crate::spec::{get_properties, get_specification};
+use crate::spec::{
+    Properties, Specification, create_identifier, get_properties, get_specification,
+};
 use crate::values::ValueOrder;
 
 /// What the model is checked with besides its files.
@@ -99,13 +101,44 @@ pub fn lower_model(
         TlcVersion::V1_7_4 => "1.7.4",
         TlcVersion::Master => "master",
     });
-    let model = lowering.write_model(
-        &config,
-        &specification,
-        &properties,
-        options.is_warning_enabled,
-        version_text,
-        tlc_order,
-    )?;
+    // TLC searches no states of a spec without variables, which `check.ts` lowers with FALSE for
+    // Init and Next, once `createSearch`'s checks of the configuration pass.
+    let model = if environment.variables.is_empty() {
+        let is_checking_behaviors = !config.invariants.is_empty()
+            || !properties.invariants.is_empty()
+            || !properties.action_properties.is_empty()
+            || !properties.liveness.is_empty();
+        let is_missing_init = specification.init.is_none()
+            && (is_checking_behaviors || !properties.initial_predicates.is_empty());
+        if is_missing_init || (specification.next.is_none() && is_checking_behaviors) {
+            return Err(FrontError::NotYet(
+                "a configuration error of a spec without variables".to_owned(),
+            ));
+        }
+        let no_behavior = Some(create_identifier("FALSE"));
+        let constant = Specification {
+            init: no_behavior.clone(),
+            next: no_behavior,
+            scope: None,
+            temporals: Vec::new(),
+        };
+        lowering.write_model(
+            &config,
+            &constant,
+            &Properties::default(),
+            options.is_warning_enabled,
+            version_text,
+            Vec::new(),
+        )?
+    } else {
+        lowering.write_model(
+            &config,
+            &specification,
+            &properties,
+            options.is_warning_enabled,
+            version_text,
+            tlc_order,
+        )?
+    };
     Ok(tla_ir::encode(&lowering.finish(model)?))
 }

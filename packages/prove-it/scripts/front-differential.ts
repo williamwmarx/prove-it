@@ -28,7 +28,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 
 import type { Definition, Expression } from "../src/ast";
-import { getIrStartup } from "../src/check";
+import { getIrStartup, lowerConstantSpec } from "../src/check";
 import { type ModelConfig, parseConfig } from "../src/config";
 import { toEngineProperties } from "../src/engine/context";
 import { lowerToIr } from "../src/engine/ir";
@@ -54,7 +54,7 @@ import { validatePcalModule } from "../src/pcal/validate";
 import { getSany174LexicalError } from "../src/sany/lexer";
 import { getSanyParseError } from "../src/sany/parse-error";
 import { getSanyReport } from "../src/sany/report";
-import { getProperties, getSpecification } from "../src/search";
+import { createSearch, getProperties, getSpecification } from "../src/search";
 import { getNextSubstitution } from "../src/spec-description";
 import { createTlcOrder } from "../src/tlc/order";
 import type { TlcVersion } from "../src/tlc/version";
@@ -236,6 +236,13 @@ const lowerFullModel = (source: string, _path: string, spec: string) => {
   const specification = getSpecification(config, environment);
   const search = getProperties(config, environment, () => {});
   const properties = toEngineProperties(search);
+  // createSearch checks the configuration, and gives no search for a spec without variables,
+  // whose IR check.ts lowers with FALSE for Init and Next.
+  if (environment.variables.length === 0) {
+    createSearch(config, environment, () => [], undefined);
+    const constant = lowerConstantSpec(config, linked, undefined);
+    return "ir" in constant ? { ir: Buffer.from(constant.ir).toString("hex") } : constant;
+  }
   if (!specification.init || !specification.next) return { reason: "no Init or Next" };
   if (!properties) return { reason: "a property read in a scope" };
   const variableOrder = order.getDeclarationOrder("variable");
