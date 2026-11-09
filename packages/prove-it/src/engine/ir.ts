@@ -20,10 +20,19 @@
 //   prefix order, each atom by its position among the atoms, or past them for one the checker asks
 //   nothing of, then the properties, each its name and its formula the same way;
 // - the definitions the model reaches, as the offsets of their records among the nodes;
-// - the nodes: expressions and definitions in prefix order, each its tag, its line and column, then
-//   its fields and children. A node met again is a reference to its first offset.
+// - the nodes: expressions and definitions in prefix order, each its tag, its line and column, its
+//   source range (the module's name, or -1 for none, then the start's and the end's line and
+//   column, which TLC's messages print), then its fields and children. A node met again is a
+//   reference to its first offset.
 
-import type { Bound, BoundPattern, Definition, Expression, OperatorParam } from "../ast";
+import type {
+  Bound,
+  BoundPattern,
+  Definition,
+  Expression,
+  OperatorParam,
+  SourceRange,
+} from "../ast";
 import type { ModelConfig } from "../config";
 import { hasRepeatedEffect, isImpureDefinition } from "../dependencies";
 import {
@@ -42,7 +51,7 @@ import type { EngineProperties, EngineSpec } from "./context";
 import type { NamedPermutation } from "./symmetry";
 
 // The version of the layout below, which the decoder checks. Any change to it changes this.
-export const IR_VERSION = 7;
+export const IR_VERSION = 8;
 
 // "PIIR" read as a little-endian word.
 const MAGIC = 0x52494950;
@@ -382,6 +391,18 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
     }
   };
 
+  const writeRange = (range: SourceRange | undefined) => {
+    if (!range) {
+      for (const word of [-1, 0, 0, 0, 0]) push(nodes, word);
+      return;
+    }
+    push(nodes, getText(range.module));
+    push(nodes, range.start.line);
+    push(nodes, range.start.column);
+    push(nodes, range.end.line);
+    push(nodes, range.end.column);
+  };
+
   const writeDefinition = (definition: Definition) => {
     const isRepeated = isImpureDefinition(definition, environment, "repeated");
     const startup = isRepeated ? getStartupValue(definition, environment) : undefined;
@@ -398,6 +419,7 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
     );
     push(nodes, definition.location.line);
     push(nodes, definition.location.column);
+    writeRange(definition.location.range);
     push(nodes, getText(definition.name));
     // The value TLC computed at startup, which the compiler reads in place of a definition with
     // effects, as getStartupEffectValue does.
@@ -434,6 +456,7 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
     nodes.data[at + 1] = location.line;
     nodes.data[at + 2] = location.column;
     nodes.length = at + 3;
+    writeRange(location.range);
     switch (expression.kind) {
       case "Number": {
         if (isWide(expression.value)) {
