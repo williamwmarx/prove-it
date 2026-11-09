@@ -145,7 +145,80 @@ fn report(message: &TlcMessage, is_next_state: bool) -> (u32, String, String) {
     )
 }
 
+/// An assumption as TLC checks it, where the engine checked those before it.
+pub struct Assumption {
+    pub holds: bool,
+    /// What it printed, each print's values as `Trace` holds them.
+    pub printed: Vec<Vec<String>>,
+    /// The state it leaves TLC's generator in.
+    pub random: u64,
+}
+
 impl<'ir> Rebuilder<'ir> {
+    /// Checks the assumption at `position` as TLC checks it (`checkAssumptions`): after the
+    /// startup's definitions and the assumptions before it, which hold, with or without -tool,
+    /// which AssertError's messages depend on. `Unsupported` where it fails to evaluate, where it
+    /// sets a register, which the search would read, and where the startup evaluates what the
+    /// evaluator doesn't follow: the configuration's predicates or the symmetry.
+    pub fn check_assumption(
+        &mut self,
+        position: u32,
+        is_tool: bool,
+    ) -> Result<Assumption, Unsupported> {
+        let evaluator = self.evaluator();
+        let ir = evaluator.ir;
+        let startup = &ir.model.startup;
+        if !startup.predicates.is_empty() || startup.symmetry.is_some() {
+            return Err(Unsupported(
+                "an assumption after the configuration's predicates or a symmetry".into(),
+            ));
+        }
+        let width = ir.variables.len();
+        evaluator.current = vec![None; width];
+        evaluator.next = vec![None; width];
+        evaluator.level = 0;
+        evaluator.is_tool = Some(is_tool);
+        run(evaluator.compute_startup_drawing())?;
+        for &(node, _) in &startup.assumptions[..position as usize] {
+            if !matches!(
+                evaluator.evaluate(node, &Context::default()),
+                Ok(Value::Bool(true))
+            ) {
+                return Err(Unsupported(
+                    "an assumption the engine found to hold that doesn't again".into(),
+                ));
+            }
+        }
+        let Some(&(node, _)) = startup.assumptions.get(position as usize) else {
+            return Err(Unsupported("an assumption the model doesn't have".into()));
+        };
+        let writes = evaluator.register_writes;
+        evaluator.printed.clear();
+        let holds = match evaluator.evaluate(node, &Context::default()) {
+            Ok(Value::Bool(holds)) => holds,
+            Ok(_) => return Err(Unsupported("an assumption that isn't a boolean".into())),
+            Err(error) => {
+                return Err(Unsupported(format!(
+                    "an assumption the engine doesn't evaluate that fails to: {}",
+                    error.reason
+                )));
+            }
+        };
+        if evaluator.register_writes != writes {
+            return Err(Unsupported("an assumption that sets a register".into()));
+        }
+        let random = evaluator
+            .random
+            .as_ref()
+            .ok_or_else(|| Unsupported("the startup's generator".into()))?
+            .state();
+        Ok(Assumption {
+            holds,
+            printed: std::mem::take(&mut evaluator.printed),
+            random,
+        })
+    }
+
     /// Evaluates again the assumption at `position` of the model's assumptions, which failed to
     /// evaluate as TLC started, after the startup's definitions, and returns TLC's report of it
     /// (`checkAssumptions`), with what it printed before it failed.
