@@ -79,6 +79,7 @@ fn native_sany(spec_path: &str, describer: &FileDescriber, libraries: &[String])
     };
     let options = ReportOptions {
         version: TlcVersion::Master,
+        file_name: None,
         load_module: &load_module,
         describe_file: &|name, origin| describer.describe(name, origin),
     };
