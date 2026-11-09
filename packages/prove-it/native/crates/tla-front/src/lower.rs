@@ -3,21 +3,30 @@
 //! texts in the order it first uses them, and the builtins and constants the names resolve to.
 //! `tla_ir::encode` writes the blob.
 
+use std::cmp::Ordering;
 use std::rc::Rc;
 
 use tla_ir::{
     Bound as IrBound, Builtin as IrBuiltin, ConfigName, Constant, Definition as IrDefinition,
     DefinitionForm, Index, Ir, Model, Name as IrName, Node, NodeId, NodeKind, Nodes, Param,
     PathStep, Pattern, Printed, Resolution, Selector as IrSelector, SourceRange as IrRange,
-    Startup, TextId, Update, Values,
+    Startup, TextId, Update, Value, Values,
 };
 
 use crate::ast::*;
+use crate::config::ConfigValue;
 use crate::dependencies::{DefinitionFacts, create_definition_facts};
 use crate::environment::Environment;
 use crate::errors::FrontError;
 use crate::hash::FastMap;
 use crate::resolve::Result;
+
+/// A model value named like `a_b` has the type `a`, which TLC won't compare with another type.
+fn get_model_value_type(name: &str) -> Option<char> {
+    let mut characters = name.chars();
+    let first = characters.next()?;
+    (name.encode_utf16().count() > 2 && characters.next() == Some('_')).then_some(first)
+}
 
 /// The texts TLC ranks, which come first in the IR's table, in rank order.
 pub struct RankedTexts<'a> {
@@ -41,6 +50,9 @@ pub struct Lowering<'a> {
     builtin_ids: FastMap<Name, Index>,
     constants: Vec<Constant>,
     constant_ids: FastMap<Name, Index>,
+    values: Vec<Value>,
+    value_strings: Vec<Name>,
+    value_string_ids: FastMap<Name, u32>,
     names: FastMap<Name, (TextId, Resolution)>,
     operators: FastMap<Name, (TextId, Resolution)>,
 }
@@ -62,6 +74,9 @@ impl<'a> Lowering<'a> {
             builtin_ids: FastMap::default(),
             constants: Vec::new(),
             constant_ids: FastMap::default(),
+            values: Vec::new(),
+            value_strings: Vec::new(),
+            value_string_ids: FastMap::default(),
             names: FastMap::default(),
             operators: FastMap::default(),
         }
@@ -92,12 +107,170 @@ impl<'a> Lowering<'a> {
         index
     }
 
-    fn get_constant_index(&mut self, name: &Name) -> Result<Index> {
+    fn get_constant_index(&mut self, name: &Name, value: &ConfigValue) -> Result<Index> {
         if let Some(index) = self.constant_ids.get(name) {
             return Ok(*index);
         }
-        // The configuration's values are encoded as transfer.ts encodes them, which slice 3 ports.
-        Err(FrontError::NotYet("a constant's value".to_owned()))
+        let index = self.constant_ids.len() as Index;
+        self.constant_ids.insert(name.clone(), index);
+        let text = self.get_text(name);
+        let value = self.normalize(value)?;
+        let encoded = self.encode_value(&value);
+        self.constants.push(Constant {
+            name: text,
+            value: Some(encoded),
+        });
+        Ok(index)
+    }
+
+    /// The rank of a string or model value in TLC's string order, which the configuration's
+    /// values are all in.
+    fn get_rank(&self, text: &str) -> Result<u32> {
+        self.ranked
+            .ranks
+            .get(text)
+            .copied()
+            .ok_or_else(|| FrontError::NotYet("a configuration value TLC doesn't rank".to_owned()))
+    }
+
+    /// `compareValues` on the configuration's values. Values of kinds TLC can't compare stop the
+    /// front end, whose messages the startup phase will word.
+    fn compare(&self, left: &ConfigValue, right: &ConfigValue) -> Result<Ordering> {
+        Ok(match (left, right) {
+            (ConfigValue::Number(left), ConfigValue::Number(right)) => left.total_cmp(right),
+            (ConfigValue::String(left), ConfigValue::String(right)) => {
+                if left == right {
+                    Ordering::Equal
+                } else {
+                    self.get_rank(left)?.cmp(&self.get_rank(right)?)
+                }
+            }
+            (ConfigValue::Boolean(left), ConfigValue::Boolean(right)) => {
+                if left == right {
+                    Ordering::Equal
+                } else if left < right {
+                    Ordering::Less
+                } else {
+                    Ordering::Greater
+                }
+            }
+            (ConfigValue::ModelValue(left), ConfigValue::ModelValue(right)) => {
+                if get_model_value_type(left).is_some()
+                    && get_model_value_type(right).is_some()
+                    && get_model_value_type(left) != get_model_value_type(right)
+                {
+                    return Err(FrontError::NotYet(
+                        "differently-typed model values".to_owned(),
+                    ));
+                }
+                self.get_rank(left)?.cmp(&self.get_rank(right)?)
+            }
+            (ConfigValue::ModelValue(name), _) | (_, ConfigValue::ModelValue(name))
+                if get_model_value_type(name).is_some() =>
+            {
+                return Err(FrontError::NotYet(
+                    "a typed model value compared".to_owned(),
+                ));
+            }
+            (ConfigValue::ModelValue(_), _) => Ordering::Less,
+            (_, ConfigValue::ModelValue(_)) => Ordering::Greater,
+            (ConfigValue::Set(left), ConfigValue::Set(right)) => {
+                if left.len() != right.len() {
+                    left.len().cmp(&right.len())
+                } else {
+                    for (left, right) in left.iter().zip(right) {
+                        let comparison = self.compare(left, right)?;
+                        if comparison != Ordering::Equal {
+                            return Ok(comparison);
+                        }
+                    }
+                    Ordering::Equal
+                }
+            }
+            _ => {
+                return Err(FrontError::NotYet(
+                    "configuration values TLC can't compare".to_owned(),
+                ));
+            }
+        })
+    }
+
+    /// `toValue`: a set of the configuration is sorted and its duplicates dropped, as `createSet`
+    /// does.
+    fn normalize(&self, value: &ConfigValue) -> Result<ConfigValue> {
+        let ConfigValue::Set(elements) = value else {
+            return Ok(value.clone());
+        };
+        let elements = elements
+            .iter()
+            .map(|element| self.normalize(element))
+            .collect::<Result<Vec<_>>>()?;
+        let mut is_sorted = true;
+        for pair in elements.windows(2) {
+            if self.compare(&pair[0], &pair[1])? != Ordering::Less {
+                is_sorted = false;
+                break;
+            }
+        }
+        if elements.len() < 2 || is_sorted {
+            return Ok(ConfigValue::Set(elements));
+        }
+        // Sorting compares the elements pairwise; a comparison that fails stops the front end.
+        let mut failure = None;
+        let mut sorted = elements.clone();
+        sorted.sort_by(|left, right| {
+            self.compare(left, right).unwrap_or_else(|error| {
+                failure.get_or_insert(error);
+                Ordering::Equal
+            })
+        });
+        if let Some(error) = failure {
+            return Err(error);
+        }
+        let mut unique: Vec<ConfigValue> = Vec::with_capacity(sorted.len());
+        for element in sorted {
+            if let Some(last) = unique.last()
+                && self.compare(last, &element)? == Ordering::Equal
+            {
+                continue;
+            }
+            unique.push(element);
+        }
+        Ok(ConfigValue::Set(unique))
+    }
+
+    /// `createStateEncoder`'s `encode` of one value, whose strings and model values name their
+    /// texts by their position among the encoder's strings.
+    fn encode_value(&mut self, value: &ConfigValue) -> u32 {
+        let encoded = self.to_ir_value(value);
+        self.values.push(encoded);
+        self.values.len() as u32 - 1
+    }
+
+    fn get_value_string(&mut self, text: &str) -> u32 {
+        if let Some(index) = self.value_string_ids.get(text) {
+            return *index;
+        }
+        let index = self.value_strings.len() as u32;
+        let text: Name = Rc::from(text);
+        self.value_string_ids.insert(text.clone(), index);
+        self.value_strings.push(text);
+        index
+    }
+
+    fn to_ir_value(&mut self, value: &ConfigValue) -> Value {
+        match value {
+            ConfigValue::Boolean(value) => Value::Bool(*value),
+            ConfigValue::Number(value) => Value::Int(*value as i32),
+            ConfigValue::String(text) => Value::String(self.get_value_string(text)),
+            ConfigValue::ModelValue(name) => Value::ModelValue(self.get_value_string(name)),
+            ConfigValue::Set(elements) => Value::Set(
+                elements
+                    .iter()
+                    .map(|element| self.to_ir_value(element))
+                    .collect(),
+            ),
+        }
     }
 
     fn get_builtin_index(&mut self, name: &Name) -> Option<Index> {
@@ -122,8 +295,9 @@ impl<'a> Lowering<'a> {
         if let Some(variable) = self.environment.variable_index.get(name) {
             return Ok(Resolution::Variable(*variable as u32));
         }
-        if self.environment.constants.contains(name) {
-            return Ok(Resolution::Constant(self.get_constant_index(name)?));
+        if let Some(value) = self.environment.constants.get(name) {
+            let value = value.clone();
+            return Ok(Resolution::Constant(self.get_constant_index(name, &value)?));
         }
         Ok(self.resolve_operator(name))
     }
@@ -655,6 +829,10 @@ impl<'a> Lowering<'a> {
             self.top.push(id);
             definitions.push(id);
         }
+        let value_strings = std::mem::take(&mut self.value_strings)
+            .iter()
+            .map(|text| self.get_text(text))
+            .collect();
         let variables = self
             .environment
             .variables
@@ -677,8 +855,8 @@ impl<'a> Lowering<'a> {
             constants: self.constants,
             scopes: Vec::new(),
             values: Values {
-                strings: Vec::new(),
-                list: Vec::new(),
+                strings: value_strings,
+                list: self.values,
             },
             model,
             definitions,

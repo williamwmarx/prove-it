@@ -154,3 +154,14 @@ what each milestone built and measured, in the order they landed.
 - `front-differential.ts order`: all 1,111 corpus models match, and all 2,711 with
   `--mutate 400`. Verification's Front End job runs it. The lowering ranks texts by this order
   once the model section (slice 4) is in.
+
+## F8 slice 3b as built (the configuration's values)
+
+- The environment keeps the configuration's values, and the lowering writes each constant with its
+  value in `transfer.ts`'s encoding: a set sorted and its duplicates dropped as `createSet` does,
+  strings and model values compared by their rank in TLC's string order, and the encoder's strings
+  as texts after the nodes'. Values TLC can't compare (mixed kinds, differently typed model values)
+  return `NotYet`; the startup phase will word their errors.
+- `front-differential.ts model-ir` ranks the texts in TLC's string order, as `check.ts` does, links
+  each corpus model with its configuration, and lowers its environment as `ir` does: 1,092 of
+  1,111 models give byte-identical IR and none differ; with `--mutate 400`, 2,682 of 2,711.

@@ -47,9 +47,8 @@ pub struct Environment {
     pub builtins: OrderedMap<Name, Builtin>,
     /// The configuration's substitutions, by the key of what it substitutes for.
     pub substitutions: OrderedMap<Name, Name>,
-    /// The keys the configuration assigns values to, and the same in their order.
-    pub constants: FastSet<Name>,
-    pub constants_order: Vec<Name>,
+    /// The values the configuration assigns, by key.
+    pub constants: OrderedMap<Name, ConfigValue>,
     pub variables: Vec<Name>,
     pub variable_index: OrderedMap<Name, usize>,
     pub root_constants: Vec<Rc<Declaration>>,
@@ -1886,8 +1885,7 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
         definitions,
         builtins,
         substitutions,
-        constants: constants.keys().cloned().collect(),
-        constants_order: constants.keys().cloned().collect(),
+        constants,
         variables,
         variable_index,
         root_constants: linked_root.constants.clone(),
