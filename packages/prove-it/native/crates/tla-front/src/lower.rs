@@ -8,9 +8,10 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use tla_ir::{
-    Bound as IrBound, Builtin as IrBuiltin, ConfigName, Constant, Definition as IrDefinition,
-    DefinitionForm, Index, Ir, Junction, Model, Name as IrName, Node, NodeId, NodeKind, Nodes,
-    Param, PathStep, Pattern, Printed, Resolution, Selector as IrSelector, SourceRange as IrRange,
+    ActionProperty as IrActionProperty, Bound as IrBound, Builtin as IrBuiltin, ConfigName,
+    Constant, Definition as IrDefinition, DefinitionForm, Index, Ir, Junction, Model,
+    Name as IrName, Node, NodeId, NodeKind, Nodes, Param, PathStep, Pattern, Possible, Printed,
+    Resolution, Scope as IrScope, ScopeBinding, Selector as IrSelector, SourceRange as IrRange,
     Startup, TextId, Update, Value, Values,
 };
 
@@ -53,6 +54,10 @@ pub struct Lowering<'a> {
     constants: Vec<Constant>,
     constant_ids: FastMap<Name, Index>,
     values: Vec<Value>,
+    scope_ids: FastMap<usize, Index>,
+    tlc_order: Vec<i32>,
+    scope_queue: Vec<Rc<crate::spec::Scope>>,
+    scopes: Vec<IrScope>,
     value_strings: Vec<Name>,
     value_string_ids: FastMap<Name, u32>,
     names: FastMap<Name, (TextId, Resolution)>,
@@ -78,6 +83,10 @@ impl<'a> Lowering<'a> {
             constants: Vec::new(),
             constant_ids: FastMap::default(),
             values: Vec::new(),
+            scope_ids: FastMap::default(),
+            tlc_order: Vec::new(),
+            scope_queue: Vec::new(),
+            scopes: Vec::new(),
             value_strings: Vec::new(),
             value_string_ids: FastMap::default(),
             names: FastMap::default(),
@@ -836,15 +845,222 @@ impl<'a> Lowering<'a> {
 
     /// Writes the definitions the model reaches, each reaching more in the order first met, and
     /// returns the IR with the model.
+    /// The model section, as `lowerToIr` writes it in its order, for a model whose next-state
+    /// relation the engine splits itself, so with no actions of TLC's.
+    pub fn write_model(
+        &mut self,
+        config: &crate::config::ModelConfig,
+        specification: &crate::spec::Specification,
+        properties: &crate::spec::Properties,
+        is_warning_enabled: bool,
+        version: Option<&str>,
+        tlc_order: Vec<i32>,
+    ) -> Result<Model> {
+        self.tlc_order = tlc_order;
+        let not_yet = |reason: &str| FrontError::NotYet(reason.to_owned());
+        let (Some(init), Some(next)) = (&specification.init, &specification.next) else {
+            return Err(not_yet("a model without Init or Next"));
+        };
+        if !specification.temporals.is_empty() || !properties.liveness.is_empty() {
+            return Err(not_yet("a temporal property or fairness"));
+        }
+        let is_scoped = properties
+            .invariants
+            .iter()
+            .any(|property| property.scope.is_some())
+            || properties
+                .initial_predicates
+                .iter()
+                .any(|property| property.scope.is_some())
+            || properties
+                .action_properties
+                .iter()
+                .any(|property| property.scope.is_some());
+        if is_scoped {
+            return Err(not_yet("a property read in a scope"));
+        }
+        if config.symmetry.is_some() {
+            return Err(not_yet(
+                "SYMMETRY, which the engine's startup phase will compute",
+            ));
+        }
+        let init = self.write_root(init)?;
+        let next = self.write_root(next)?;
+        let scope = self.get_scope_index(specification.scope.as_ref());
+        let invariants = config
+            .invariants
+            .iter()
+            .map(|name| self.config_name(name))
+            .collect();
+        let mut property_invariants = Vec::new();
+        let mut property_invariant_names = Vec::new();
+        for invariant in &properties.invariants {
+            let root = self.write_root(&invariant.expression)?;
+            property_invariants.push(Printed {
+                root,
+                has_repeated_effect: self
+                    .facts
+                    .has_repeated_effect(&invariant.expression, self.environment),
+            });
+            property_invariant_names.push(self.get_text(&invariant.name));
+        }
+        let constraints = config
+            .constraints
+            .iter()
+            .map(|name| self.config_name(name).root)
+            .collect();
+        let action_constraints = config
+            .action_constraints
+            .iter()
+            .map(|name| self.config_name(name).root)
+            .collect();
+        let possible = config
+            .possible
+            .iter()
+            .map(|name| Possible {
+                name: self.config_name(name).root,
+                is_action: crate::spec::get_level(
+                    &crate::spec::create_identifier(name),
+                    None,
+                    self.environment,
+                    &self.facts,
+                    &[],
+                ) >= crate::dependencies::Level::Action,
+            })
+            .collect();
+        let mut action_properties = Vec::new();
+        for property in &properties.action_properties {
+            let action = self.write_root(&property.action)?;
+            let subscript = self.write_root(&property.subscript)?;
+            action_properties.push(IrActionProperty { action, subscript });
+        }
+        let mut initial_predicates = Vec::new();
+        for predicate in &properties.initial_predicates {
+            initial_predicates.push(self.write_root(&predicate.expression)?);
+        }
+        let view = config
+            .view
+            .as_deref()
+            .map(|name| self.config_name(name).root);
+        let alias = config
+            .alias
+            .as_deref()
+            .map(|name| self.config_name(name).root);
+        let version = version.map(|version| self.get_text(version));
+        Ok(Model {
+            init,
+            next,
+            scope,
+            actions: Vec::new(),
+            is_labelled: false,
+            invariants,
+            property_invariants,
+            property_invariant_names,
+            constraints,
+            action_constraints,
+            possible,
+            action_properties,
+            initial_predicates,
+            view,
+            alias,
+            symmetry: None,
+            check_deadlock: config.check_deadlock,
+            is_warning_enabled,
+            is_recording_graph: false,
+            version,
+            // TLC's default seed, 0, and java.util.Random seeded with it, before startup.
+            random_seed: 0,
+            startup_random: 0x5_DEEC_E66D,
+            atoms: Vec::new(),
+            live_formula: Vec::new(),
+            live_properties: Vec::new(),
+        })
+    }
+
+    /// `getScopeIndex`: a scope's place in the scopes, which come after the model in the order
+    /// they are first met.
+    pub fn get_scope_index(&mut self, scope: Option<&Rc<crate::spec::Scope>>) -> Option<Index> {
+        let scope = scope?;
+        let address = Rc::as_ptr(scope) as usize;
+        if let Some(index) = self.scope_ids.get(&address) {
+            return Some(*index);
+        }
+        let index = self.scope_queue.len() as Index;
+        self.scope_ids.insert(address, index);
+        self.scope_queue.push(scope.clone());
+        Some(index)
+    }
+
+    /// `writeScope`.
+    fn write_scope(&mut self, scope: &Rc<crate::spec::Scope>) -> Result<IrScope> {
+        use crate::spec::Binding;
+        let parent = self.get_scope_index(scope.parent.as_ref());
+        let name = self.get_text(&scope.name);
+        let binding = match &scope.binding {
+            Binding::Value(value) => {
+                let value = self.normalize(value)?;
+                ScopeBinding::Value(Some(self.encode_value(&value)))
+            }
+            Binding::Thunk {
+                expression,
+                scope: of,
+            } => {
+                let expression = self.write_root(expression)?;
+                let of = of.resolve(scope);
+                ScopeBinding::Thunk {
+                    expression,
+                    scope: self.get_scope_index(of.as_ref()),
+                }
+            }
+            Binding::Closure {
+                name,
+                params,
+                body,
+                scope: of,
+            } => {
+                let name = self.get_text(name);
+                let params = params
+                    .iter()
+                    .map(|param| Param {
+                        name: self.get_text(&param.name),
+                        arity: param.arity as i32,
+                    })
+                    .collect();
+                let body = self.write_root(body)?;
+                let of = of.resolve(scope);
+                ScopeBinding::Closure {
+                    name,
+                    params,
+                    body,
+                    scope: self.get_scope_index(of.as_ref()),
+                }
+            }
+        };
+        Ok(IrScope {
+            parent,
+            name,
+            binding,
+        })
+    }
+
     pub fn finish(mut self, model: Model) -> Result<Ir> {
         let mut definitions = Vec::new();
-        let mut next = 0;
-        while next < self.definition_queue.len() {
-            let definition = self.definition_queue[next].clone();
-            next += 1;
-            let id = self.write_definition(&definition)?;
-            self.top.push(id);
-            definitions.push(id);
+        let (mut next, mut next_scope) = (0, 0);
+        loop {
+            if next_scope < self.scope_queue.len() {
+                let scope = self.scope_queue[next_scope].clone();
+                next_scope += 1;
+                let written = self.write_scope(&scope)?;
+                self.scopes.push(written);
+            } else if next < self.definition_queue.len() {
+                let definition = self.definition_queue[next].clone();
+                next += 1;
+                let id = self.write_definition(&definition)?;
+                self.top.push(id);
+                definitions.push(id);
+            } else {
+                break;
+            }
         }
         let value_strings = std::mem::take(&mut self.value_strings)
             .iter()
@@ -867,10 +1083,10 @@ impl<'a> Lowering<'a> {
             ranked_count: self.ranked.texts.len() as u32,
             texts,
             variables,
-            tlc_order: Vec::new(),
+            tlc_order: self.tlc_order,
             builtins: self.builtins,
             constants: self.constants,
-            scopes: Vec::new(),
+            scopes: self.scopes,
             values: Values {
                 strings: value_strings,
                 list: self.values,
