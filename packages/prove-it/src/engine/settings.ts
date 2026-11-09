@@ -43,6 +43,14 @@ export const getStopAt = () => {
   return Number.isInteger(stopAt) && stopAt >= 0 ? stopAt : -1;
 };
 
+// PROVE_IT_PERIODIC_AT: after how many expanded states the search checks the temporal properties
+// the first time, rather than after three seconds, so that a test sees the check TLC makes part
+// way through the search. -1 without it.
+export const getPeriodicAt = () => {
+  const periodicAt = Number(getEnvironment()?.PROVE_IT_PERIODIC_AT ?? -1);
+  return Number.isInteger(periodicAt) && periodicAt > 0 ? periodicAt : -1;
+};
+
 // How many threads the native engine searches with: PROVE_IT_WORKERS, else one. The TypeScript
 // engine searches on one. TLC's -workers doesn't change it, since a model tuned for TLC's workers is
 // usually faster on one engine thread; the engine keeps TLC's order whatever the number.

@@ -27,6 +27,7 @@ import {
   getEngineThreads,
   getEnvironmentFlag,
   getMinimumSharedLevel,
+  getPeriodicAt,
   getStopAt,
   reportEngine,
 } from "./settings";
@@ -76,7 +77,7 @@ interface NativeAddon extends NativeStoreHooks {
     ir: Uint8Array,
     settings: Int32Array,
     stateLog: string,
-    report: (kind: number, a: number, b: number, c: number, d: number) => void,
+    report: (kind: number, a: number, b: number, c: number, d: number, e: number) => void,
     print: (width: number, words: Int32Array, strings: string[]) => void,
   ) => NativeOutcome;
 }
@@ -157,7 +158,7 @@ export type NativeOutcome =
   | ({ status: "stopped"; reason: string } & NativeCheckpoint);
 
 // The contract between this loader and the addon, ABI_VERSION in its lib.rs.
-const ABI_VERSION = 9;
+const ABI_VERSION = 10;
 
 export const ADDON_FILE = "prove-it-engine.node";
 
@@ -236,6 +237,7 @@ type NativeCallbacks = Pick<
 export const checkNatively = (
   lower: () => IrOutcome,
   callbacks: NativeCallbacks,
+  isLivenessPeriodic: boolean,
 ): NativeOutcome => {
   const addon = getNativeAddon();
   if (typeof addon === "string") return { status: "unavailable", reason: addon };
@@ -249,15 +251,28 @@ export const checkNatively = (
     getEnvironmentFlag("PROVE_IT_LIVE_CHECK") ? 1 : 0,
     getEngineThreads(),
     getMinimumSharedLevel(),
+    isLivenessPeriodic ? 1 : 0,
+    getPeriodicAt(),
   );
   return addon.check(
     lowered.ir,
     settings,
     globalThis.process?.env?.PROVE_IT_STATE_LOG ?? "",
-    (kind, a, b, c, d) => {
+    (kind, a, b, c, d, e) => {
       if (kind === 0) callbacks.onInitialStatesStarted();
       else if (kind === 1) callbacks.onProgress?.({ kind: "initial-states-progress", count: a });
       else if (kind === 2) callbacks.onInitialStates(a, b);
+      // A check of the temporal properties part way through the search, of a branches on the
+      // graph of the first b states expanded, with c states generated, d found and depth e so far.
+      else if (kind === 4) {
+        callbacks.onProgress?.({
+          kind: "liveness-started",
+          branches: a,
+          isComplete: false,
+          states: b,
+          statistics: { generatedStates: c, distinctStates: d, queuedStates: d - b, depth: e },
+        });
+      } else if (kind === 5) callbacks.onProgress?.({ kind: "liveness-finished" });
       else {
         callbacks.onProgress?.({
           kind: "progress",
@@ -517,6 +532,7 @@ export const toEngineResult = (
     possible: Array.from(outcome.possible),
     getFingerprints: () => outcome.fingerprints,
     threads: counts[6],
+    queuedStates: counts[7],
     checkpoint: outcome.checkpoint && toCheckpoint(outcome.checkpoint, width, atoms),
   };
 };
