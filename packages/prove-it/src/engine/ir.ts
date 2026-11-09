@@ -14,8 +14,10 @@
 // - the values: those of the constants, scopes and startup values, in transfer.ts's encoding, whose
 //   strings are indices into the texts;
 // - the model: Init, Next, TLC's actions, the configuration's names, the properties, the VIEW, the
-//   symmetry group, the settings, and the liveness checker's atoms, each action atom with the
-//   position of the ENABLED atom of its fairness, or -1;
+//   symmetry group, the settings, the liveness checker's atoms, each action atom with the
+//   position of the ENABLED atom of its fairness, or -1, and the formula the checker solves, as
+//   its number of words and its terms in prefix order, each atom by its position among the atoms,
+//   or past them for one the checker asks nothing of;
 // - the definitions the model reaches, as the offsets of their records among the nodes;
 // - the nodes: expressions and definitions in prefix order, each its tag, its line and column, then
 //   its fields and children. A node met again is a reference to its first offset.
@@ -37,7 +39,7 @@ import type { EngineProperties, EngineSpec } from "./context";
 import type { NamedPermutation } from "./symmetry";
 
 // The version of the layout below, which the decoder checks. Any change to it changes this.
-export const IR_VERSION = 2;
+export const IR_VERSION = 3;
 
 // "PIIR" read as a little-endian word.
 const MAGIC = 0x52494950;
@@ -134,6 +136,12 @@ const ATOM_ENABLED = 2;
 // The actions an ENABLED atom splits into: none known, or all of them, else their count.
 const ENABLED_UNKNOWN = -2;
 const ENABLED_ALL = -1;
+const LIVE_FALSE = 0;
+const LIVE_TRUE = 1;
+const LIVE_STATE = 2;
+const LIVE_ENABLED = 3;
+const LIVE_ACTION = 4;
+const LIVE_TAGS = { Not: 5, Always: 6, Eventually: 7, Next: 8, And: 9, Or: 10 };
 
 // A liveness atom the tableau asks about, and for an ENABLED one the positions of TLC's actions it
 // splits into, as check.ts finds them.
@@ -153,6 +161,8 @@ export interface IrInput {
   isRecordingGraph: boolean;
   version: TlcVersion | undefined;
   atoms: IrAtom[];
+  // The fairness and the negated properties as the liveness checker joins them.
+  liveFormula: LiveExpression | undefined;
 }
 
 export type IrOutcome = { ir: Uint8Array } | { reason: string };
@@ -729,6 +739,44 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
       push(model, atom.enabled ? (atomPositions.get(atom.enabled) ?? -1) : -1);
     }
   }
+  const getAtomPosition = (atom: LiveExpression) => {
+    const known = atomPositions.get(atom);
+    if (known !== undefined) return known;
+    atomPositions.set(atom, atomPositions.size);
+    return atomPositions.size - 1;
+  };
+  const live: number[] = [];
+  const writeLive = (term: LiveExpression) => {
+    switch (term.kind) {
+      case "Boolean":
+        live.push(term.value ? LIVE_TRUE : LIVE_FALSE);
+        return;
+      case "State":
+        live.push(LIVE_STATE, getAtomPosition(term));
+        return;
+      case "Enabled":
+        live.push(LIVE_ENABLED, getAtomPosition(term));
+        return;
+      case "Action":
+        live.push(
+          LIVE_ACTION,
+          getAtomPosition(term),
+          term.enabled ? getAtomPosition(term.enabled) : -1,
+        );
+        return;
+      case "And":
+      case "Or":
+        live.push(LIVE_TAGS[term.kind], term.operands.length);
+        term.operands.forEach(writeLive);
+        return;
+      default:
+        live.push(LIVE_TAGS[term.kind]);
+        writeLive(term.body);
+    }
+  };
+  if (input.liveFormula) writeLive(input.liveFormula);
+  push(model, live.length);
+  for (const word of live) push(model, word);
 
   // Definitions and scopes reach more of each, in the order they are first met.
   for (let definition = 0, scope = 0; ;) {
