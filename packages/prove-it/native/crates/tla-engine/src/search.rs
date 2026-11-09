@@ -23,7 +23,7 @@ use crate::context::{
     EngineContext, count_possible, first_failing, first_failing_changed, holds_all,
     holds_all_changed,
 };
-use crate::live::{LiveGraph, Table, answer_atoms};
+use crate::live::{Diameters, LiveGraph, Table, answer_atoms};
 use crate::machine::{Machine, Printed, Step, UNASSIGNED};
 use crate::symmetry::Canonicalizer;
 
@@ -1492,6 +1492,8 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         && !model.is_recording_graph
         && !settings.is_live_checked
         && context.possible.is_empty();
+    // The liveness checker's atoms are answered on the threads too, unless ToString ranks strings.
+    let atom_threads = if compiler.is_ranking { 1 } else { thread_count };
     let program = compiler.finish();
     let mut machine = Machine::new(&program, store);
     let canonicalizer = model.symmetry.as_ref().map(|group| {
@@ -1599,8 +1601,14 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             &context.atoms,
             settings.is_live_checked,
             context.is_live_printing,
-            &context.diameter_atoms,
-            last_diameter,
+            &Diameters {
+                atoms: &context.diameter_atoms,
+                last: last_diameter,
+            },
+            &mut (0..atom_threads)
+                .filter(|_| atom_threads > 1)
+                .map(|_| Machine::new(&program, Store::new()))
+                .collect::<Vec<_>>(),
         )
     };
     // The most threads a level was shared between.

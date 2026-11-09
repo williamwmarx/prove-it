@@ -755,6 +755,28 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     expect([native.result.status, native.result.distinctStates]).toEqual(["success", 4_000_001]);
   });
 
+  it("answers the temporal properties' predicates on several threads as on one", async () => {
+    const body = [
+      "EXTENDS Naturals",
+      "VARIABLES x, y",
+      "vars == <<x, y>>",
+      "Init == x \\in 0..40 /\\ y = 0",
+      "Inc == x < 40 /\\ x' = x + 1 /\\ y' = y",
+      "Flip == y' = 1 - y /\\ x' = x",
+      "Reset == x = 40 /\\ x' = 0 /\\ y' = y",
+      "Next == Inc \\/ Flip \\/ Reset",
+      "Spec == Init /\\ [][Next]_vars /\\ WF_vars(Inc) /\\ SF_vars(Reset)",
+      "Returns == []<>(x = 0)",
+      "Steps == []<><<Inc>>_vars",
+      "Settles == <>[](y = 0)",
+    ];
+    for (const property of ["Returns\nPROPERTY Steps", "Settles"]) {
+      const config = `SPECIFICATION Spec\nPROPERTY ${property}`;
+      const lines = await compareWithInterpreter(body, config, { PROVE_IT_WORKERS: "4" });
+      expect(lines).toContainEqual(expect.stringMatching(COMPLETE));
+    }
+  });
+
   it("reports a tableau node that accepts every behavior as TLC finds it", async () => {
     // TLC's test model Github1389Counting: x becomes TRUE at most twice.
     const body = [

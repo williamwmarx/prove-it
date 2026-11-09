@@ -178,3 +178,10 @@ the interpreter to check as the graph grows, which only the searches the engine 
 way still need. TokenRing at N = 8, M = 7 (5.8 million states, 41 million steps) then checks in 92 s
 at 2.6 GB peak on 4 cores, where the interpreter took 135 s and 9.1 GB on Depot's 16 and TLC 149 s
 and 2.75 GB; 49 s of it answers WF_vars(Next)'s action on each step, as TLC does.
+
+With PROVE_IT_WORKERS above one, `answer_atoms` answers the state and action atoms on that many
+threads, each a run of the states over the search's store, as a parallel search's threads expand a
+level: an evaluation that neither prints, draws nor reads TLC's diameter is the same on any thread.
+Each thread's overlay copies the store's values, as the search's do. TokenRing at N = 8 on 4 threads
+checks in 51 s rather than 81 s, its atoms in about 19 s rather than 49, at 5.0 GB peak rather than
+2.6.
