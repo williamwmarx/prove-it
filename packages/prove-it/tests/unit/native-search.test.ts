@@ -526,6 +526,28 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     expect(lines).toContainEqual(expect.stringMatching(COMPLETE));
   });
 
+  it("reports a tableau node that accepts every behavior as TLC finds it", async () => {
+    // TLC's test model Github1389Counting: x becomes TRUE at most twice.
+    const body = [
+      "EXTENDS Naturals",
+      "VARIABLE x",
+      "RECURSIVE AtMost(_)",
+      "AtMost(n) == IF n = 0 THEN []~x ELSE [](x => [](~x => AtMost(n - 1)))",
+      "Init == x = FALSE",
+      "Next == x' \\in BOOLEAN",
+      "Spec == Init /\\ [][Next]_x",
+      "CountAtMostTwo == AtMost(2)",
+    ];
+    const config = "SPECIFICATION Spec\nCHECK_DEADLOCK FALSE\nPROPERTY CountAtMostTwo";
+    const lines = await compareWithInterpreter(body, config);
+    expect(lines).toContain("[engine] native: liveness: accepted");
+    // The interpreter prints the node's path without checking the properties itself.
+    expect(lines).toContainEqual(
+      expect.stringMatching(/^\[engine\] found 2 states in \d+ ms; the interpreter prints/),
+    );
+    await compareWithInterpreter(body, config, { PROVE_IT_LIVE_CHECK: "1" });
+  });
+
   it("hands over a violated invariant, deadlock and a failed action property", async () => {
     const cases: [string[], string, string][] = [
       [
@@ -841,6 +863,28 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
         ),
       ).toContainEqual(expect.stringMatching(COMPLETE));
     }
+  });
+
+  it("merges states whose strings differ only above U+00FF, as TLC's fingerprints do", async () => {
+    // TLC fingerprints a string by the low byte of each character, so "Ā" and "Ȁ" make one state.
+    const body = [
+      "EXTENDS Naturals",
+      "VARIABLES x, y",
+      'Init == x \\in {"Ā", "Ȁ", "a"} /\\ y = 0',
+      "Next == y' = (y + 1) % 3 /\\ UNCHANGED x",
+    ];
+    const config = "INIT Init\nNEXT Next";
+    expect(await compareWithInterpreter(body, config)).toContainEqual(
+      expect.stringMatching(COMPLETE),
+    );
+    expect(await compareWithInterpreter(body, config, { PROVE_IT_STOP_AT: "2" })).toContainEqual(
+      expect.stringMatching(stopped("stopped where PROVE_IT_STOP_AT asked")),
+    );
+    // Under a VIEW the interpreter takes the states over by TLC's fingerprint of the view.
+    const viewed = [...body, "View == y"];
+    expect(
+      await compareWithInterpreter(viewed, `${config}\nVIEW View`, { PROVE_IT_STOP_AT: "2" }),
+    ).toContainEqual(expect.stringMatching(stopped("stopped where PROVE_IT_STOP_AT asked")));
   });
 
   it("stops where TLC fails on action composition, with the states before", async () => {
