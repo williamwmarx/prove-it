@@ -3,8 +3,9 @@
 
 mod common;
 
-use common::{ir_directory, path_to, stop_search};
-use tla_trace::{Failure, Rebuilder, Site, format_call_stack};
+use common::{Quiet, ir_directory, path_to, stop_search};
+use tla_engine::search::{SearchOutcome, Settings, search};
+use tla_trace::{Failure, Rebuilder, Site, Unsupported, format_call_stack};
 use tla_values::Id;
 
 // The search's stop on the model, evaluated again: in the initial predicate when the search kept
@@ -252,4 +253,39 @@ fn exits_with_the_status_tlc_exits_with() {
         let (failure, _) = evaluate_failure(&format!("{MODELS}/{name}"));
         assert_eq!(failure.exit_code, exit_code, "{name}");
     }
+}
+
+#[test]
+fn walks_a_function_a_definition_defines_as_tlc_does() {
+    // coverage/I applies `N[n \in {1, 2, 3}] == UNCHANGED <<x>>` in its next-state relation,
+    // which TLC walks as an action (`getNextStates` of a FcnLambdaValue): nothing fails there,
+    // though the engine stops.
+    let path = format!("{MODELS}/coverage/I");
+    let bytes = std::fs::read(ir_directory().join(format!("{path}.ir"))).expect("a golden IR");
+    let ir = tla_ir::decode(&bytes).expect("an IR that decodes");
+    let replayed = tla_values::on_nesting_stack(|| {
+        let settings = Settings {
+            is_violation_reported: true,
+            ..Settings::default()
+        };
+        let SearchOutcome::Stopped {
+            violation: Some(violation),
+            ..
+        } = tla_engine::on_nesting_stack(|| search(&ir, &settings, &mut Quiet))
+        else {
+            panic!("a search that stops with a report");
+        };
+        let states: Vec<&[Id]> = violation.states.iter().map(Vec::as_slice).collect();
+        Rebuilder::new(&ir).and_then(|mut rebuilder| {
+            rebuilder
+                .evaluate_failure(&violation.store, &states, &violation.labels, Site::Next)
+                .map(|failure| failure.message)
+        })
+    });
+    assert_eq!(
+        replayed,
+        Err(Unsupported(
+            "evaluating the failure again: it didn't fail".into()
+        ))
+    );
 }

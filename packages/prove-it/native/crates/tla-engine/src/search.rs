@@ -21,10 +21,10 @@ use tla_values::{Bail, Id, NESTING_STACK_BYTES, Store};
 
 use crate::compile::{CompileError, Compiler, DISTINCT_SLOT, LEVEL_SLOT, NEXT_LEVEL_SLOT, Options};
 use crate::context::{
-    EngineContext, Startup, StartupSymmetry, count_possible, first_failing, first_failing_changed,
-    holds_all, holds_all_changed,
+    Atom, EngineContext, Startup, StartupSymmetry, count_possible, first_failing,
+    first_failing_changed, holds_all, holds_all_changed,
 };
-use crate::live::{Diameters, LiveGraph, Table, answer_atoms};
+use crate::live::{Diameters, LiveGraph, Table, UNKNOWN, answer_atoms};
 use crate::machine::{Eval, Machine, Printed, Step, UNASSIGNED};
 use crate::symmetry::{
     Canonicalizer, Group, NamedGroup, close_group, get_permutations, name_group,
@@ -267,6 +267,9 @@ pub enum ViolationKind {
         loop_start: usize,
         loop_label: Option<u32>,
     },
+    /// The last state of the trace reaches a tableau node that accepts every behavior, which TLC
+    /// stops at as it adds the state: the positions of the properties it names.
+    Accepted { violated: Vec<usize> },
     /// Evaluating the model failed where TLC fails (an assertion, a value of the wrong kind, a
     /// function applied outside its domain): the states lead to where, as `ErrorSite` says.
     Error { site: ErrorSite },
@@ -333,6 +336,8 @@ struct Found {
     last: Option<Vec<Id>>,
     counts: StopCounts,
 }
+
+const GRAPH_TOO_LARGE: &str = "a state graph too large to keep";
 
 /// What PROVE_IT_LIVE_CHECK finds when TLC's actions take other steps than the next-state relation.
 const OTHER_STEPS: &str = "the actions took other steps than the next-state relation";
@@ -2079,7 +2084,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 return Err(Bail("stopped where PROVE_IT_STOP_AT asked"));
             }
             if is_graph_bounded.get() && search.states.count() > MAXIMUM_GRAPH_STATES {
-                return Err(Bail("a state graph too large to keep"));
+                return Err(Bail(GRAPH_TOO_LARGE));
             }
             search.current.clear();
             search
@@ -2421,6 +2426,24 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                         &counts,
                     )
                 }
+                Some(Verdict::Accepted {
+                    state,
+                    path,
+                    violated,
+                }) if settings.is_violation_reported
+                    && search.states.key_width.is_none()
+                    && !is_symmetric =>
+                {
+                    to_accepted(
+                        &mut machine,
+                        &context,
+                        &mut search,
+                        initial_states,
+                        *state,
+                        path,
+                        violated.clone(),
+                    )
+                }
                 _ => None,
             };
             SearchOutcome::Complete {
@@ -2536,14 +2559,67 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     Err(reason) => return SearchOutcome::Invariant(reason.into()),
                 }
             };
-            let is_traced = settings.is_violation_reported && search.graph.is_none();
-            let violation = search
-                .violation
-                .take()
-                .filter(|_| is_traced)
-                .and_then(|found| {
-                    to_violation(found, &mut machine, &context, &mut search, is_printing)
-                });
+            let is_traced = settings.is_violation_reported;
+            let found = search.violation.take().filter(|_| is_traced);
+            // TLC adds each state it expands to the behavior graphs, even under -lncheck final, the
+            // deadlocked state too after it reports the deadlock, and stops at the first whose
+            // tableau node accepts every behavior (`LiveCheck#addNextState`), as on its
+            // Github710d: the search reports its violation where TLC wouldn't.
+            let found = match found {
+                Some(found) if search.graph.is_some() => {
+                    let mut expanded = search.expanding;
+                    if matches!(found.kind, ViolationKind::Deadlock) {
+                        let graph = search.graph.as_mut().expect("a graph");
+                        graph.edge_offsets.push(graph.edges.len() as u32);
+                        expanded += 1;
+                    }
+                    graph_tables(&mut machine, &search, expanded, count, None, None)
+                        .ok()
+                        .and_then(|tables| {
+                            accepted_at(model, &context, &search, &tables, expanded, count)
+                        })
+                        .is_some_and(|accepted| accepted.is_none())
+                        .then_some(found)
+                }
+                found => found,
+            };
+            let mut violation = found.and_then(|found| {
+                to_violation(found, &mut machine, &context, &mut search, is_printing)
+            });
+            // Past the states the search keeps, TLC's may have stopped at a tableau node that
+            // accepts every behavior, as on its Github710b, whose x grows without bound. The
+            // path is of the states the search keeps, which are those TLC prints where nothing
+            // printed and no SYMMETRY or VIEW reduced them.
+            if is_traced
+                && bail.0 == GRAPH_TOO_LARGE
+                && !is_printing
+                && search.states.key_width.is_none()
+                && !is_symmetric
+            {
+                let expanded = search.expanding;
+                let accepted = graph_tables(&mut machine, &search, expanded, count, None, None)
+                    .ok()
+                    .and_then(|tables| {
+                        accepted_at(model, &context, &search, &tables, expanded, count)
+                    })
+                    .flatten();
+                if let Some(Verdict::Accepted {
+                    state,
+                    path,
+                    violated,
+                }) = accepted
+                {
+                    violation = to_accepted(
+                        &mut machine,
+                        &context,
+                        &mut search,
+                        initial_states,
+                        state,
+                        &path,
+                        violated,
+                    );
+                }
+            }
             SearchOutcome::Stopped {
                 reason: bail.0.to_string(),
                 checkpoint,
@@ -2859,6 +2935,107 @@ fn to_violation(
     })
 }
 
+// Where TLC's search, adding the states the search expanded to the behavior graphs, stops at a
+// tableau node that accepts every behavior: `Verdict::Accepted`, none, or `None` where the engine
+// can't tell.
+fn accepted_at(
+    model: &Model,
+    context: &EngineContext,
+    search: &Search<'_, States>,
+    tables: &[Table],
+    expanded: usize,
+    count: usize,
+) -> Option<Option<Verdict>> {
+    // TLC evaluates the atoms as it adds each state, and fails where the engine couldn't answer
+    // one: a state predicate on any state, an ENABLED on an expanded one, as on TLC's
+    // InitialLivenessEvaluationError, whose ENABLED reads an x' it never assigns. An action the
+    // checker asks of no step it leaves unanswered.
+    let is_answered = context.atoms.iter().zip(tables).all(|(atom, table)| {
+        table.unknown.is_none()
+            && match atom {
+                Atom::State(_) => !table.answers[..count].contains(&UNKNOWN),
+                Atom::Enabled { .. } => !table.answers[..expanded].contains(&UNKNOWN),
+                Atom::Action { .. } | Atom::Unknown(_) => true,
+            }
+    });
+    if !is_answered || context.is_live_printing || context.diameter_atoms.contains(&true) {
+        return None;
+    }
+    let graph = search.graph.as_ref().expect("a graph");
+    let answers: Vec<Option<&[u8]>> = tables
+        .iter()
+        .map(|table| table.unknown.is_none().then_some(&table.answers[..]))
+        .collect();
+    let properties: Vec<Vec<Term>> = model
+        .live_properties
+        .iter()
+        .map(|property| to_terms(&property.formula))
+        .collect();
+    let property_terms: Vec<&[Term]> = properties.iter().map(Vec::as_slice).collect();
+    tla_live::find_accepted(
+        &to_terms(&model.live_formula),
+        &property_terms,
+        &tla_live::Graph {
+            parents: &search.states.parents[..count],
+            edge_offsets: &graph.edge_offsets[..=expanded],
+            edges: &graph.edges,
+            fingerprints: &search.states.fingerprints[..count],
+            reals: None,
+            diameters: None,
+        },
+        &answers,
+    )
+    .ok()
+}
+
+// A path to a node that accepts every behavior as a violation the caller prints, with the counts of
+// TLC's search when it stops as it adds `state`: what it generated and found by then, as the graph
+// records them.
+fn to_accepted(
+    machine: &mut Machine<'_>,
+    context: &EngineContext,
+    search: &mut Search<'_, States>,
+    initial_states: (u64, u64),
+    state: u32,
+    path: &[u32],
+    violated: Vec<usize>,
+) -> Option<Box<Violation>> {
+    let mut labels = label_path(machine, context, search, path, None, false).ok()?;
+    if labels.len() != path.len() || machine.store.has_unordered_strings() {
+        return None;
+    }
+    labels.remove(0);
+    let startup = startup_values(machine, context).ok()?;
+    let graph = search.graph.as_ref()?;
+    let state = state as usize;
+    let sum = |counts: &[u32]| {
+        counts[..=state]
+            .iter()
+            .map(|&count| u64::from(count))
+            .sum::<u64>()
+    };
+    let distinct = initial_states.1 + sum(&graph.new_counts);
+    let counts = StopCounts {
+        generated: initial_states.0 + sum(&graph.successor_counts),
+        distinct,
+        queued: distinct - state as u64 - 1,
+        depth: u64::from(graph.diameters[state]),
+    };
+    Some(Box::new(Violation {
+        kind: ViolationKind::Accepted { violated },
+        states: path
+            .iter()
+            .map(|&index| search.states.state(index).to_vec())
+            .collect(),
+        labels,
+        counts,
+        store: std::mem::replace(&mut machine.store, Store::new()),
+        startup,
+        startup_random: machine.startup_random,
+        symmetry: None,
+    }))
+}
+
 // A lasso as a violation the caller prints: its states, and the action of each step, which every
 // step but a stuttering last one has.
 fn to_lasso(
@@ -3159,6 +3336,24 @@ fn expand_reals(
 }
 
 // Checks the temporal properties on a complete search's graph from the answers to the atoms.
+fn to_terms(terms: &[LiveTerm]) -> Vec<Term> {
+    terms
+        .iter()
+        .map(|&term| match term {
+            LiveTerm::Boolean(value) => Term::Boolean(value),
+            LiveTerm::State(atom) => Term::State(atom),
+            LiveTerm::Enabled(atom) => Term::Enabled(atom),
+            LiveTerm::Action { atom, enabled } => Term::Action { atom, enabled },
+            LiveTerm::Not => Term::Not,
+            LiveTerm::Always => Term::Always,
+            LiveTerm::Eventually => Term::Eventually,
+            LiveTerm::Next => Term::Next,
+            LiveTerm::And(count) => Term::And(count),
+            LiveTerm::Or(count) => Term::Or(count),
+        })
+        .collect()
+}
+
 fn check_liveness(
     model: &Model,
     search: &Search<'_, States>,
@@ -3168,23 +3363,6 @@ fn check_liveness(
     diameter_atoms: &[bool],
 ) -> Liveness {
     let graph = search.graph.as_ref().expect("a graph");
-    let to_terms = |terms: &[LiveTerm]| -> Vec<Term> {
-        terms
-            .iter()
-            .map(|&term| match term {
-                LiveTerm::Boolean(value) => Term::Boolean(value),
-                LiveTerm::State(atom) => Term::State(atom),
-                LiveTerm::Enabled(atom) => Term::Enabled(atom),
-                LiveTerm::Action { atom, enabled } => Term::Action { atom, enabled },
-                LiveTerm::Not => Term::Not,
-                LiveTerm::Always => Term::Always,
-                LiveTerm::Eventually => Term::Eventually,
-                LiveTerm::Next => Term::Next,
-                LiveTerm::And(count) => Term::And(count),
-                LiveTerm::Or(count) => Term::Or(count),
-            })
-            .collect()
-    };
     // Under SYMMETRY or a VIEW, TLC names the violated properties from the trace it rebuilds, of
     // states the graph doesn't hold, so the checker names none.
     let properties: Vec<Vec<Term>> = model

@@ -207,3 +207,14 @@ Still to do:
   several.
 - An alias whose value isn't a record leaves the state printed as it is. What the rebuild can't
   follow, such as an alias that fails or prints, stays not native.
+
+## The front, from tla-front
+
+- Without a recorded `<Spec>.ir`, the binary lowers the model with `tla_front::model::lower_model`.
+  Its IR has no TLC actions yet, so a trace that needs labels stays not native until the engine
+  splits Next.
+- `files.rs` names the files SANY parses as `createFileDescriber` does. The directory TLC copies
+  a module into is named by TLC's fingerprint of a string, as `getTemporaryName` does it.
+- With PROVE_IT_NATIVE_FRONT=1, and without -tool (which prints none of it), the binary prints
+  SANY's report as `tla_front::report::get_sany_text` writes it, in place of the recorded one. The
+  rest of the recorded front follows from `Starting...`, until tla-front writes that too.

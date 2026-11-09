@@ -30,7 +30,8 @@ import {
 // ENABLED, a VIEW, action constraints, properties checked as invariants, action properties and
 // initial predicates, invariants that print, recursion, LAMBDA, function definitions, values
 // TLC computes at startup, invariants an initial state violates, the run-time errors whose
-// messages and call stacks tla-trace's evaluate_failure gives, and assumptions that print.
+// messages and call stacks tla-trace's evaluate_failure gives, tableau nodes that accept every
+// behavior, and assumptions that print.
 const GOLDEN_MODELS = [
   "examples/specifications/btree/MCbtree.cfg",
   "examples/specifications/TeachingConcurrency/SimpleRegular.cfg",
@@ -82,6 +83,9 @@ const GOLDEN_MODELS = [
   "tlc/tlatools/org.lamport.tlatools/test-model/RandomElementXandY.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/RandomSubset.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/RandomSubsetNextTuples.cfg",
+  "tlc/tlatools/org.lamport.tlatools/test-model/coverage/I.cfg",
+  "tlc/tlatools/org.lamport.tlatools/test-model/Github1389Counting.cfg",
+  "tlc/tlatools/org.lamport.tlatools/test-model/Github710b.cfg",
 ];
 
 const GOLDEN_DIRECTORY = join(CONFORMANCE_DIRECTORY, "ir");

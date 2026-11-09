@@ -503,15 +503,15 @@ impl<'ir> Evaluator<'ir> {
                 let frame = StackFrame::Node(self.resolved(*function));
                 let set =
                     self.in_frame(frame, &mut |evaluator| evaluator.evaluate(bound.set, &base));
-                // A LET's function is built in the frame of its definition too, which the replay
-                // doesn't record.
+                // A function a LET or a definition defines is built in the frame of its
+                // definition too, which the replay doesn't record.
                 if set.is_err()
                     && matches!(self.kind(*function), NodeKind::Identifier(_))
                     && let Some(stack) = &mut self.call_stack
                 {
                     stack
                         .unfollowed
-                        .get_or_insert("the domain of a function a LET defines");
+                        .get_or_insert("the domain of a function a definition defines");
                 }
                 let set = set?;
                 let argument = self.evaluate(args[0], context)?;

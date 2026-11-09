@@ -5,12 +5,16 @@ use std::path::Path;
 use std::sync::mpsc;
 use std::time::{Instant, SystemTime};
 
-use tla_engine::search::{Reporter, SearchOutcome, Settings, Violation, ViolationKind, search};
+use tla_engine::search::{
+    ErrorSite, Reporter, SearchOutcome, Settings, Violation, ViolationKind, search,
+};
 use tla_live::{Liveness, Verdict};
 use tla_values::print::{is_printable, write_value};
 use tla_values::{Id, Store};
 
 use crate::args::{Java, Parsed, USAGE, get_java_launch};
+use crate::failure::{ErrorStop, print_failure};
+use crate::files::FileDescriber;
 use crate::front::read_front;
 use crate::messages::{self as code, Level, Printer};
 use crate::summary::{
@@ -21,7 +25,7 @@ use crate::time::{format_date, format_duration};
 use crate::trace::rebuild_trace;
 use tla_front::TlcVersion;
 use tla_front::config::{ModelConfig, parse_config};
-use tla_trace::pretty_print;
+use tla_trace::{Site, pretty_print};
 
 // TLC's exit statuses, from EC.ExitStatus.
 const SUCCESS: i32 = 0;
@@ -137,7 +141,7 @@ fn check_specs(args: &[String], java: &Java) -> i32 {
             let stem = name.strip_suffix(".tla").unwrap_or(&name);
             printer.line(&format!("Checking {name} with {stem}.cfg"));
         }
-        exit_codes.push(check_spec(path, &parsed, &mut printer));
+        exit_codes.push(check_spec(path, &parsed, java, &mut printer));
     }
     exit_codes
         .into_iter()
@@ -373,7 +377,7 @@ fn print_initial_states(printer: &mut Printer, generated: u64, distinct: u64) {
     }
 }
 
-fn check_spec(spec_path: &str, args: &Parsed, printer: &mut Printer) -> i32 {
+fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer) -> i32 {
     // TLC.handleParameters: TLC reads its options before it says which version it is.
     let seed = if args.has("-seed") {
         args.first("-seed")
@@ -456,6 +460,14 @@ fn check_spec(spec_path: &str, args: &Parsed, printer: &mut Printer) -> i32 {
         spec_path,
         config_text.as_deref().unwrap_or_default(),
         !args.has("-nowarning"),
+        &FileDescriber::new(
+            Path::new(spec_path),
+            &java.libraries,
+            java.temporary_directory.as_deref(),
+            args.first("-metadir"),
+            false,
+        ),
+        &java.libraries,
     ) {
         Ok(front) => front,
         Err(reason) => return report_not_native(printer, &reason),
@@ -558,13 +570,17 @@ fn check_spec(spec_path: &str, args: &Parsed, printer: &mut Printer) -> i32 {
                 );
             }
             if let Some(liveness) = liveness {
-                if let (Some(violation), Verdict::Lasso { .. }) = (violation, &liveness.verdict) {
+                // TLC stops at a node that accepts every behavior as it searches, so it checks
+                // nothing once the search is done.
+                let is_lasso = matches!(liveness.verdict, Verdict::Lasso { .. });
+                let is_accepted = matches!(liveness.verdict, Verdict::Accepted { .. });
+                if let Some(violation) = violation.filter(|_| is_lasso || is_accepted) {
                     return print_violation(
                         printer,
                         &ir,
                         &config,
                         &violation,
-                        Some(&liveness),
+                        is_lasso.then_some(&liveness),
                         start,
                     )
                     .unwrap_or_else(|why| {
@@ -617,15 +633,48 @@ fn check_spec(spec_path: &str, args: &Parsed, printer: &mut Printer) -> i32 {
         SearchOutcome::AssumptionViolated { .. } => {
             return report_not_native(printer, "an assumption that is false");
         }
-        // TLC's report of a failure evaluating the model is the trace session's to print.
         SearchOutcome::Stopped {
             violation: Some(violation),
             reason,
             ..
-        } if !matches!(violation.kind, ViolationKind::Error { .. }) => {
-            return print_violation(printer, &ir, &config, &violation, None, start).unwrap_or_else(
-                |why| report_not_native(printer, &format!("the engine stopped: {reason}: {why}")),
-            );
+        } => {
+            let printed = match violation.kind {
+                // TLC's report of a failure evaluating the model, which it replays.
+                // TLC prints the trace through the ALIAS and checks the postconditions after it,
+                // which the printing doesn't follow yet.
+                ViolationKind::Error { .. }
+                    if config.alias.is_some()
+                        || !config.postconditions.is_empty()
+                        || !config.possible.is_empty() =>
+                {
+                    Err("a failure with an ALIAS, POSTCONDITION or _POSSIBLE".to_string())
+                }
+                ViolationKind::Error { site } => {
+                    let counts = &violation.counts;
+                    let stop = ErrorStop {
+                        store: &violation.store,
+                        states: violation.states.iter().map(Vec::as_slice).collect(),
+                        actions: violation.labels.clone(),
+                        site: match site {
+                            ErrorSite::Init => Site::Init,
+                            ErrorSite::Next => Site::Next,
+                            ErrorSite::Invariant(position) => Site::Invariant(position),
+                        },
+                        statistics: Statistics {
+                            generated: counts.generated,
+                            distinct: counts.distinct,
+                            queued: counts.queued,
+                            depth: counts.depth,
+                        },
+                    };
+                    print_failure(printer, &ir, &stop, start)
+                }
+                _ => print_violation(printer, &ir, &config, &violation, None, start)
+                    .map_err(str::to_string),
+            };
+            return printed.unwrap_or_else(|why| {
+                report_not_native(printer, &format!("the engine stopped: {reason}: {why}"))
+            });
         }
         SearchOutcome::Stopped { reason, .. } => {
             return report_not_native(printer, &format!("the engine stopped: {reason}"));
@@ -792,7 +841,18 @@ fn print_violation(
             temporal_headline(ir, liveness.ok_or(NOT_IN_IR)?).ok_or(NOT_IN_IR)?,
             LIVENESS_VIOLATION,
         ),
+        // A tableau node that accepts every behavior: TLC reports it as it does a safety
+        // violation.
+        ViolationKind::Accepted { ref violated } => (
+            code::TEMPORAL_PROPERTY_VIOLATED,
+            properties_headline(ir, violated).ok_or(NOT_IN_IR)?,
+            SAFETY_VIOLATION,
+        ),
     };
+    let is_counterexample = matches!(
+        violation.kind,
+        ViolationKind::Lasso { .. } | ViolationKind::Accepted { .. }
+    );
     let lasso = match violation.kind {
         ViolationKind::Lasso {
             loop_start,
@@ -864,7 +924,7 @@ fn print_violation(
     // later state's before it, and the rebuild after the trace. TLC rebuilds a counterexample
     // before it reports it, all of it as it recovers the first state (`printViolation`).
     let first_output = trace.states[0].output.iter();
-    let (heading_code, heading) = if lasso.is_some() {
+    let (heading_code, heading) = if is_counterexample {
         for line in first_output.clone().chain(&trace.trace_output) {
             printer.line(line);
         }
@@ -897,6 +957,7 @@ fn print_violation(
         );
     }
     match lasso {
+        None if is_counterexample => {}
         None => {
             for line in &trace.trace_output {
                 printer.line(line);
@@ -944,6 +1005,11 @@ fn temporal_headline(ir: &tla_ir::Ir, liveness: &Liveness) -> Option<String> {
     let Verdict::Lasso { violated, .. } = &liveness.verdict else {
         return None;
     };
+    properties_headline(ir, violated)
+}
+
+// The headline that names the temporal properties at `violated` in the model's properties.
+fn properties_headline(ir: &tla_ir::Ir, violated: &[usize]) -> Option<String> {
     let mut names: Vec<&str> = Vec::new();
     for &position in violated {
         let name = &*ir.texts[ir.model.live_properties.get(position)?.name as usize];

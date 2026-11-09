@@ -1,6 +1,6 @@
 //! The native liveness checker on small graphs: two states that step to each other, from state 0.
 
-use tla_live::{Declined, Graph, Term, Verdict, check};
+use tla_live::{Declined, Graph, Term, Verdict, check, find_accepted};
 
 const PARENTS: [i32; 2] = [-1, 0];
 const OFFSETS: [u32; 3] = [0, 1, 2];
@@ -94,4 +94,41 @@ fn passes_by_the_states_a_check_part_way_hasnt_expanded() {
         false,
     );
     assert_eq!(liveness.verdict, Verdict::Holds);
+}
+
+// The negation of []P, which TLC finds as it adds the states, even under -lncheck final: as it
+// adds state 1, where P is false, the step back to state 0 reaches the node that accepts every
+// behavior. []P is the one property.
+const NOT_ALWAYS: [Term; 3] = [Term::Not, Term::Always, Term::State(0)];
+const ALWAYS: [Term; 2] = [Term::Always, Term::State(0)];
+
+#[test]
+fn finds_a_state_whose_tableau_node_accepts_every_behavior() {
+    assert_eq!(
+        find_accepted(&NOT_ALWAYS, &[&ALWAYS], &graph(), &[Some(&[1, 0])]),
+        Ok(Some(Verdict::Accepted {
+            state: 1,
+            path: vec![0, 1, 0],
+            violated: vec![0],
+        }))
+    );
+    assert_eq!(
+        find_accepted(&NOT_ALWAYS, &[&ALWAYS], &graph(), &[Some(&[1, 1])]),
+        Ok(None)
+    );
+}
+
+#[test]
+fn asks_nothing_where_no_tableau_node_accepts_every_behavior() {
+    // Unknown answers decline the whole check, but []<>P's negation asks for a cycle, which no
+    // state reaches as TLC adds it.
+    assert_eq!(
+        find_accepted(
+            &NOT_INFINITELY_OFTEN,
+            &[&INFINITELY_OFTEN],
+            &graph(),
+            &[Some(&[1, 2])]
+        ),
+        Ok(None)
+    );
 }
