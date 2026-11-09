@@ -502,10 +502,21 @@ what TLC prints itself after the constant definitions and before the assumptions
 
 The CLI prints SANY's report framed under -tool, then 2185 `Starting...`, and, through the engine's
 startup hooks, what Print and PrintT print as TLC starts and the symmetry's 2300, and
-`startup_messages` at `startup_done`. Not native yet in tla-front:
-a Java class beside the spec that overrides a module, TLC 1.7.4, an invariant the engine checks at
-startup with warnings on, and warnings about invariants or properties under a SYMMETRY (the order
-of 2300 among them isn't checked).
+`startup_messages` at `startup_done`. Not native yet in tla-front: TLC 1.7.4, an invariant the
+engine checks at startup with warnings on, and warnings about invariants or properties under a
+SYMMETRY (the order of 2300 among them isn't checked).
+
+`java_overrides` ports `java-overrides.ts`: the public static methods of the class named after a
+module, beside the spec (`EnvironmentOptions::load_class`, which `lower_model` gives), replace the
+operators of the same name and arity with the constant they return (`BoolValue.ValTrue`,
+`IntValue.gen(n)`, `new StringValue(s)`). `LoweredModel::override_messages` is TLC's 2168 for each
+(2400, a warning, for a method that matches no operator), which the binary prints right after
+`Starting...`. Not native: a method that computes its value, overrides of two modules, a class
+path a URL would escape, and more than one report, which TLC lists in the JVM's order.
+
+The binary prints an assumption's Print of a value the store can't word as the trace evaluator
+prints it (`Rebuilder::check_assumption`, each assumption in turn), as 635457c does for the
+startup's, as long as every print before it the store worded alike.
 
 `ModelOptions::random_seed` carries `-seed` into the model, as `runtime.seed` does.
 
@@ -524,3 +535,8 @@ declines, as with a recorded front.
 A property is named by its operator as written (`opNode.getName()`): `PSafe == A!Safe` names
 "A!Safe", while `A!Safe2 == Safe` inside the instance names "Safe". `expand` takes the identifier's
 written name; the TypeScript resolver keeps it in `getWrittenName` (`tests/fixtures/instance-property`).
+
+After the overrides and the assumptions' prints: 1,400 of 1,466 runs in no-recording mode, none
+differing, against 1,402 with recordings. The 2 runs only a recording gives are
+test-model/CyclicRedefineInstance, whose Next `tla_trace::add_actions` can't split through an
+INSTANCE in a LET; the recorded IR holds the TypeScript front end's actions.
