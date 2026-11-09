@@ -9,6 +9,7 @@ pub mod hash;
 pub mod json;
 pub mod lexer;
 pub mod parser;
+pub mod standard_modules;
 
 /// The version of TLC whose behaviour the front end reproduces, as `TlcVersion` in
 /// `src/tlc/version.ts`.
@@ -16,4 +17,16 @@ pub mod parser;
 pub enum TlcVersion {
     Master,
     V1_7_4,
+}
+
+/// The text of a standard module of SANY in this version of TLC.
+pub fn get_standard_module(name: &str, version: TlcVersion) -> Option<&'static str> {
+    let modules = match version {
+        TlcVersion::Master => standard_modules::MASTER,
+        TlcVersion::V1_7_4 => standard_modules::TLC_174,
+    };
+    modules
+        .iter()
+        .find(|module| module.0 == name)
+        .map(|module| module.1)
 }

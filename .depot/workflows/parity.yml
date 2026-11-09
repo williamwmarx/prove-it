@@ -143,6 +143,7 @@ jobs:
           bun run build
           cd packages/prove-it
           bun scripts/platform-packages.ts build
+          (cd native && cargo build --release --locked -p prove-it-cli)
           bun scripts/fetch-corpora.ts
       - name: Compare the full output with TLC's
         env:
@@ -156,7 +157,7 @@ jobs:
           status=0
           export PROVE_IT_ENGINE_ADDON="$PWD/native/npm/linux-x64-gnu/prove-it-engine.node"
           bun scripts/run.ts differential --stop-at --compare-backends --concurrency 12 \
-            --max-tlc-ms "$MAX_TLC_MS" \
+            --max-tlc-ms "$MAX_TLC_MS" --native "$PWD/native/target/release/prove-it" \
             ${FILTER:+--filter "$FILTER"} --out "$RUNNER_TEMP/parity/differential.json" \
             | tee "$RUNNER_TEMP/parity/differential.log" || status=$?
           {
