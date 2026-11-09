@@ -242,7 +242,7 @@ impl<'a> Lowering<'a> {
     /// `createStateEncoder`'s `encode` of one value, whose strings and model values name their
     /// texts by their position among the encoder's strings.
     fn encode_value(&mut self, value: &ConfigValue) -> u32 {
-        let encoded = self.to_ir_value(value);
+        let encoded = self.write_value(value);
         self.values.push(encoded);
         self.values.len() as u32 - 1
     }
@@ -258,7 +258,7 @@ impl<'a> Lowering<'a> {
         index
     }
 
-    fn to_ir_value(&mut self, value: &ConfigValue) -> Value {
+    fn write_value(&mut self, value: &ConfigValue) -> Value {
         match value {
             ConfigValue::Boolean(value) => Value::Bool(*value),
             ConfigValue::Number(value) => Value::Int(*value as i32),
@@ -267,7 +267,7 @@ impl<'a> Lowering<'a> {
             ConfigValue::Set(elements) => Value::Set(
                 elements
                     .iter()
-                    .map(|element| self.to_ir_value(element))
+                    .map(|element| self.write_value(element))
                     .collect(),
             ),
         }
