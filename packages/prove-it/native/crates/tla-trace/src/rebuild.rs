@@ -11,7 +11,10 @@ use tla_values::{Id, Store};
 use crate::eval::{Context, Evaluator};
 use std::rc::Rc;
 
-use crate::value::{Evaluated, Text, Value, compare, equals, from_store, matches, permute, settle};
+use crate::value::{
+    Evaluated, Text, Value, compare, equals, from_store, matches, permute, settle, settle_deep,
+    settle_normalized,
+};
 use crate::{Ending, Trace, TraceState, Unsupported};
 
 /// Rebuilds traces of one model.
@@ -138,7 +141,7 @@ impl<'ir> Rebuilder<'ir> {
         };
         for (position, pair) in states.windows(2).enumerate() {
             // TLC recovers a state, and so fingerprints it, before it takes its step.
-            rebuilt[position].iter().for_each(settle);
+            settle_recovered(evaluator, &self.key, &rebuilt[position])?;
             let previous = rebuilt[position].clone();
             if pair[0] == pair[1] {
                 rebuilt.push(previous);
@@ -179,12 +182,36 @@ impl<'ir> Rebuilder<'ir> {
             rebuilt.push(state);
             outputs.push(std::mem::take(&mut evaluator.printed));
         }
-        if is_in_model(evaluator, &rebuilt)? {
-            rebuilt[rebuilt.len() - 1].iter().for_each(settle);
+        let last = &rebuilt[rebuilt.len() - 1];
+        let is_reducing = !matches!(self.key, Key::State);
+        if is_held && is_reducing {
+            // TLC finds the violating state among the successors by equality, which sorts it.
+            last.iter().for_each(settle_deep);
+        } else if is_in_model(evaluator, &rebuilt)? {
+            settle_recovered(evaluator, &self.key, &rebuilt[rebuilt.len() - 1])?;
         }
         evaluator.printed.clear();
         Ok(compose(rebuilt, initial_output, outputs, ending))
     }
+}
+
+// What TLC's fingerprint of a recovered state sorts, as `settleRecoveredState` gives it: under
+// SYMMETRY each value deeply, but a lambda; under a VIEW the state as `deepNormalize` does and the
+// view deeply; otherwise each value, a lambda becoming the function it enumerates.
+fn settle_recovered(
+    evaluator: &mut Evaluator<'_>,
+    key: &Key,
+    state: &[Value],
+) -> Result<(), Unsupported> {
+    match key {
+        Key::State => state.iter().for_each(settle),
+        Key::Symmetry(_) | Key::ViewOfSymmetry(..) => state.iter().for_each(settle_deep),
+        Key::View(view) => {
+            state.iter().for_each(settle_normalized);
+            settle_deep(&run(view_of(evaluator, *view, state))?);
+        }
+    }
+    Ok(())
 }
 
 // What TLC prints with each state, as `toTrace` gives it. TLC rebuilds the states it doesn't keep

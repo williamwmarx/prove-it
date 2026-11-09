@@ -219,7 +219,9 @@ after each pull request.
   SYMMETRY, some permutation of the group must map it to that state, so the two are in one orbit.
   Under both, the views of their least states in the orbit must be equal (`TLCStateMut.fingerPrint`).
   A violation's last state is matched by its value, as TLC holds it (`getTrace` with the last
-  successor). Every state but the last is settled as `settleRecoveredState` settles it. So is the last one if
+  successor). Every state but the last is settled as `settleRecoveredState` settles it: fingerprinted
+  without VIEW or SYMMETRY, deeply but for lambdas under SYMMETRY, and as `deepNormalize` with the
+  view deeply under a VIEW. So is the last one if
   it satisfies the CONSTRAINTs and ACTION_CONSTRAINTs, as TLC fingerprints only such a state.
   For a plain match where nothing prints, the walk drops an assignment as soon as it differs from
   the search's state. The check sorts nothing, so it changes no value TLC prints, and a model such
