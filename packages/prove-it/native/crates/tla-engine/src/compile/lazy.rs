@@ -19,6 +19,8 @@ const MAXIMUM_SUBSET_BASE: usize = 20;
 /// TLC counts a power set's elements in an int, and fails counting those of SUBSET S where S has
 /// this many elements or more (`SubsetValue.size`).
 pub(crate) const OVERFLOWING_SUBSET_BASE: usize = 31;
+/// What enumerating a set of functions stops with where TLC can't enumerate its domain.
+pub(crate) const INFINITE_DOMAIN: &str = "enumerated [D -> R] with D infinite";
 pub(crate) const SUBSET_OVERFLOW: &str = "an overflow counting the elements of a power set";
 pub(crate) const MAXIMUM_ELEMENTS: f64 = (1u64 << 24) as f64;
 
@@ -198,7 +200,7 @@ impl Lazy {
                     return Ok(Vec::new());
                 }
                 if !domain.is_enumerable() {
-                    return Err(Bail("enumerated [D -> R] with D infinite"));
+                    return Err(Bail(INFINITE_DOMAIN));
                 }
                 let is_sorted = matches!(**domain, Lazy::Set(_));
                 let keys = domain.elements(machine, false)?;
