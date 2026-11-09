@@ -126,13 +126,14 @@ fn get_model_type(units: &[u16]) -> u16 {
 
 /// A store, or an overlay on a store that another holds: a worker of a parallel search interns
 /// in an overlay of its own while the store under it doesn't change, and finds a value the store
-/// under it holds by that value's id there, so each value still has one id. Its own values, blocks
-/// and texts are numbered on from the base's, so an id, a block's offset and a text's index name
-/// the same thing in the base and in every overlay on it.
+/// under it holds by that value's id there, so each value still has one id. An overlay keeps a copy
+/// of the base's values, blocks and texts, extended by what the base added each time it is laid on
+/// again, and numbers its own after them: it reads an id, a block's offset or a text's index as a
+/// store of its own does, and looks a value up in the base's tables and then in its own.
 pub struct Store {
     base: Option<Arc<Store>>,
-    // Where the overlay's own ids, heap words and texts start: the base's counts when it was laid
-    // on, and 0 for a store of its own.
+    // Where the overlay's own values, blocks and texts start, past its copy of the base's: the
+    // base's counts when it was last laid on, and 0 for a store of its own.
     id_base: u32,
     heap_base: usize,
     text_base: usize,
@@ -202,17 +203,35 @@ impl Store {
     }
 
     /// Lays an overlay on a store again, forgetting the values it held: its ids name the store's
-    /// values from now on.
+    /// values from now on. A store only adds values until it is reset, so an overlay laid again on
+    /// the store it was last laid on copies only what the store added since.
     pub fn attach(&mut self, base: Arc<Store>) {
         assert!(base.base.is_none(), "an overlay laid on an overlay");
-        self.id_base = base.value_count() as Id;
+        let is_copied = self.generation == base.generation
+            && self.id_base as usize <= base.meta.len()
+            && self.heap_base <= base.heap.len()
+            && self.text_base <= base.texts.len();
+        let (values, words, texts) = if is_copied {
+            (self.id_base as usize, self.heap_base, self.text_base)
+        } else {
+            (0, 0, 0)
+        };
+        self.meta.truncate(values);
+        self.meta.extend_from_slice(&base.meta[values..]);
+        self.heap.truncate(words);
+        self.heap.extend_from_slice(&base.heap[words..]);
+        self.texts.truncate(texts);
+        self.texts
+            .extend(base.texts[texts..].iter().map(|text| Text {
+                units: text.units.clone(),
+                rank: text.rank,
+                model_type: text.model_type,
+            }));
+        self.id_base = base.meta.len() as Id;
         self.heap_base = base.heap.len();
         self.text_base = base.texts.len();
         self.generation = base.generation;
         self.small_ints.clone_from(&base.small_ints);
-        self.meta.clear();
-        self.heap.clear();
-        self.texts.clear();
         self.table.fill([0, EMPTY_SLOT]);
         self.string_ids.clear();
         self.model_ids.clear();
@@ -234,15 +253,14 @@ impl Store {
         if let Some(&known) = imported.get(index).filter(|&&known| known != EMPTY_SLOT) {
             return known;
         }
-        let meta = overlay.meta[index];
-        let text = || &overlay.texts[meta.payload as usize - overlay.text_base].units;
+        let meta = overlay.meta[id as usize];
+        let text = || &overlay.texts[meta.payload as usize].units;
         let value = match meta.kind {
             KIND_STRING => self.str(text()),
             KIND_MODEL => self.model(text()),
             KIND_SET | KIND_FUNCTION | KIND_TUPLE => {
                 let length = meta.size as usize * if meta.kind == KIND_FUNCTION { 2 } else { 1 };
-                let words: Vec<Id> = overlay.heap[meta.payload as usize - overlay.heap_base..]
-                    [..length]
+                let words: Vec<Id> = overlay.heap[meta.payload as usize..][..length]
                     .iter()
                     .map(|&word| self.import(overlay, word, imported))
                     .collect();
@@ -251,7 +269,7 @@ impl Store {
             _ => self.intern_scalar(meta.kind, meta.payload),
         };
         if imported.len() <= index {
-            imported.resize(overlay.meta.len(), EMPTY_SLOT);
+            imported.resize(overlay.meta.len() - overlay.id_base as usize, EMPTY_SLOT);
         }
         imported[index] = value;
         value
@@ -320,7 +338,7 @@ impl Store {
     }
 
     pub fn value_count(&self) -> usize {
-        self.id_base as usize + self.meta.len()
+        self.meta.len()
     }
 
     // The base's order: an overlay ranks no text of its own.
@@ -328,35 +346,14 @@ impl Store {
         self.base.as_ref().map_or(&self.order, |base| &base.order)
     }
 
-    fn get_base(&self) -> &Store {
-        self.base.as_deref().expect("an id past the store's")
-    }
-
-    // A store of its own has no base, so its ids, offsets and indexes start at 0 and the first
-    // lookup finds them, with the bounds check indexing makes anyway. An overlay's own start past
-    // the base's, and one of the base's wraps past the overlay's.
     #[inline(always)]
     fn meta(&self, id: Id) -> &Meta {
-        match self.meta.get(id.wrapping_sub(self.id_base) as usize) {
-            Some(meta) => meta,
-            None => &self.get_base().meta[id as usize],
-        }
+        &self.meta[id as usize]
     }
 
     #[inline(always)]
     fn text(&self, index: i32) -> &Text {
-        match self
-            .texts
-            .get((index as usize).wrapping_sub(self.text_base))
-        {
-            Some(text) => text,
-            None => &self.get_base().texts[index as usize],
-        }
-    }
-
-    // Where the next block goes.
-    fn heap_end(&self) -> usize {
-        self.heap_base + self.heap.len()
+        &self.texts[index as usize]
     }
 
     #[inline(always)]
@@ -407,23 +404,20 @@ impl Store {
 
     #[inline(always)]
     fn word(&self, at: usize) -> u32 {
-        match self.heap.get(at.wrapping_sub(self.heap_base)) {
-            Some(&word) => word,
-            None => self.get_base().heap[at],
-        }
+        self.heap[at]
     }
 
     // The heap's words at an offset. A scalar's payload is no offset, but its size is 0.
+    #[inline]
     fn words(&self, offset: usize, length: usize) -> &[u32] {
         if length == 0 {
             &[]
-        } else if offset >= self.heap_base {
-            &self.heap[offset - self.heap_base..][..length]
         } else {
-            &self.get_base().heap[offset..offset + length]
+            &self.heap[offset..offset + length]
         }
     }
 
+    #[inline]
     fn block(&self, id: Id) -> &[u32] {
         let meta = self.meta(id);
         let length = if meta.kind == KIND_FUNCTION {
@@ -434,6 +428,7 @@ impl Store {
         self.words(meta.payload as usize, length as usize)
     }
 
+    #[inline]
     pub fn element_at(&self, set: Id, index: u32) -> Id {
         self.word(self.meta(set).payload as usize + index as usize)
     }
@@ -456,7 +451,7 @@ impl Store {
         let slots = self.table.len() * 2;
         let mask = slots - 1;
         let mut next = vec![[0, EMPTY_SLOT]; slots];
-        for (index, meta) in self.meta.iter().enumerate() {
+        for (index, meta) in self.meta[self.id_base as usize..].iter().enumerate() {
             let mut slot = meta.hash as usize & mask;
             while next[slot][1] != EMPTY_SLOT {
                 slot = (slot + 1) & mask;
@@ -550,7 +545,7 @@ impl Store {
         match found {
             Ok(id) => id,
             Err(slot) => {
-                let offset = self.heap_end() as i32;
+                let offset = self.heap.len() as i32;
                 self.heap.extend_from_slice(words);
                 self.allocate(kind, offset, size, hash, slot)
             }
@@ -608,7 +603,7 @@ impl Store {
     }
 
     fn intern_text(&mut self, units: &[u16], rank: i32) -> i32 {
-        let index = (self.text_base + self.texts.len()) as i32;
+        let index = self.texts.len() as i32;
         self.texts.push(Text {
             units: units.into(),
             rank,
@@ -1274,7 +1269,7 @@ impl Store {
         match found {
             Ok(id) => id,
             Err(slot) => {
-                let start = self.heap_end() as i32;
+                let start = self.heap.len() as i32;
                 self.heap.extend_from_slice(&shape.keys);
                 self.heap.extend_from_slice(values);
                 self.allocate(KIND_FUNCTION, start, size as u32, hash, slot)
@@ -1422,6 +1417,7 @@ impl Store {
         None
     }
 
+    #[inline]
     pub fn get_range_value(&self, function: Id, index: u32) -> Id {
         let meta = self.meta(function);
         let start = if meta.kind == KIND_TUPLE {
@@ -1553,21 +1549,12 @@ impl Store {
             Ok(id) => id,
             Err(slot) => {
                 let start = self.heap.len();
-                match self.base.as_ref().filter(|_| offset < self.heap_base) {
-                    Some(base) => self
-                        .heap
-                        .extend_from_slice(&base.heap[offset..offset + length]),
-                    None => {
-                        let from = offset - self.heap_base;
-                        self.heap.extend_from_within(from..from + length);
-                    }
-                }
+                self.heap.extend_from_within(offset..offset + length);
                 for patch in 0..count {
                     self.heap[start + self.patch_indexes[patch] as usize] =
                         self.patch_values[patch];
                 }
-                let offset = (self.heap_base + start) as i32;
-                self.allocate(meta.kind, offset, meta.size, hash, slot)
+                self.allocate(meta.kind, start as i32, meta.size, hash, slot)
             }
         }
     }
