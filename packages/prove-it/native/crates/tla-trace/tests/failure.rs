@@ -354,3 +354,34 @@ fn reports_a_failure_in_a_lazy_filter_as_print_meets_it() {
          5. Line 10, column 27 to line 10, column 36 in Github179c\n\n"
     );
 }
+
+#[test]
+fn reports_a_state_tlc_fails_to_fingerprint() {
+    // FingerprintExceptionInit's initial state x = SUBSET SUBSET (1..36) overflows an int as TLC
+    // counts the inner power set: the trace names the expressions that built both.
+    let (failure, call_stack) = evaluate_failure(&format!("{MODELS}/FingerprintExceptionInit"));
+    let reason = "Overflow when computing the number of elements in:\nSUBSET (1..36)";
+    assert_eq!(failure.code, 2102);
+    assert_eq!(failure.message, reason);
+    assert_eq!(
+        failure.state,
+        Some(vec!["SUBSET SUBSET (1..36)".to_string()])
+    );
+    let fingerprint = failure.fingerprint.expect("a fingerprint failure");
+    assert_eq!(fingerprint.reason, reason);
+    let ranges: Vec<_> = fingerprint
+        .sources
+        .iter()
+        .map(|range| {
+            (
+                range.start_line,
+                range.start_column,
+                range.end_line,
+                range.end_column,
+            )
+        })
+        .collect();
+    assert_eq!(ranges, [(7, 13, 7, 33), (7, 20, 7, 32)]);
+    assert_eq!(call_stack, "    The error call stack is empty.\n");
+    assert_eq!(failure.exit_code, 75);
+}

@@ -326,6 +326,9 @@ pub struct StopCounts {
     pub distinct: u64,
     pub queued: u64,
     pub depth: u64,
+    /// After an invariant that fails to evaluate, the expansions' out-degrees, the one TLC was
+    /// running among them with the new states it had found, as TLC prints them.
+    pub out_degrees: [u64; OUT_DEGREE_BUCKETS],
 }
 
 // What a search found stopping it, before it hands over the store: the state found that is the
@@ -958,6 +961,7 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
                             } else {
                                 self.depth
                             },
+                            ..StopCounts::default()
                         },
                     });
                     Some(Bail("an invariant violated"))
@@ -982,6 +986,13 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
                                 } else {
                                     self.depth
                                 },
+                                // TLC counts the new state before it checks the invariants. The
+                                // search loop adds the expansions it completed.
+                                out_degrees: std::array::from_fn(|bucket| {
+                                    let new_states = self.new_states + u64::from(is_new);
+                                    let failing = (new_states as usize).min(OUT_DEGREE_BUCKETS - 1);
+                                    u64::from(bucket == failing)
+                                }),
                             },
                         });
                     }
@@ -1110,6 +1121,7 @@ impl<T: Reached, E: Entries> Search<'_, T, E> {
                     distinct: count,
                     queued: count - self.expanding as u64 - 1,
                     depth: self.depth.max(1),
+                    ..StopCounts::default()
                 },
             });
             return Err(Bail("deadlock"));
@@ -1135,6 +1147,7 @@ impl<T: Reached, E: Entries> Search<'_, T, E> {
                     distinct: count,
                     queued: count - self.expanding as u64 - 1,
                     depth: self.depth.max(1),
+                    ..StopCounts::default()
                 },
             });
         }
@@ -2091,14 +2104,30 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 .current
                 .extend_from_slice(&search.states.ids[expanding * width..(expanding + 1) * width]);
             let fingerprint = search.states.fingerprints[expanding];
-            search.expand(
+            let expanded = search.expand(
                 &mut machine,
                 &context,
                 fingerprint,
                 actions.map(Vec::as_slice),
                 is_live_checked,
                 model.check_deadlock,
-            )?;
+            );
+            if let Err(bail) = expanded {
+                if let Some(Found {
+                    kind:
+                        ViolationKind::Error {
+                            site: ErrorSite::Invariant(_),
+                        },
+                    counts,
+                    ..
+                }) = &mut search.violation
+                {
+                    for (count, completed) in counts.out_degrees.iter_mut().zip(out_degrees) {
+                        *count += completed;
+                    }
+                }
+                return Err(bail);
+            }
             if let Some(graph) = &mut search.graph {
                 graph.successor_counts.push(search.successors as u32);
                 graph.new_counts.push(search.new_states as u32);
@@ -2468,6 +2497,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                         distinct: count,
                         queued: count,
                         depth: 0,
+                        ..StopCounts::default()
                     },
                 });
             }
@@ -3015,6 +3045,7 @@ fn to_accepted(
         distinct,
         queued: distinct - state as u64 - 1,
         depth: u64::from(graph.diameters[state]),
+        ..StopCounts::default()
     };
     Some(Box::new(Violation {
         kind: ViolationKind::Accepted { violated },
@@ -3077,6 +3108,7 @@ fn to_lasso(
                 distinct: counts.distinct,
                 queued: counts.queued,
                 depth: counts.depth,
+                ..StopCounts::default()
             },
             store: std::mem::replace(&mut machine.store, Store::new()),
             startup,

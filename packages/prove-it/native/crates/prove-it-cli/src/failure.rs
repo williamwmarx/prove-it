@@ -13,7 +13,7 @@ use crate::messages::{self as code, Level, Printer};
 
 // The status TLC exits with after a failure evaluating the spec (`EC.ExitStatus`).
 const FAILURE_SPEC_EVAL: i32 = 75;
-use crate::trace::{format_partial_state, format_print, format_state};
+use crate::trace::{format_partial_state, format_print, format_state, format_texts};
 
 /// Where the search stopped on an error: the path to the state it was expanding, as ids of
 /// `store` (none in the initial predicate), the position in the model's actions of each step's
@@ -70,7 +70,18 @@ pub fn print_failure(
     } else {
         &failure.message
     };
-    printer.print(failure.code, Level::Error, message);
+    // TLC names the initial state it failed to fingerprint in the message.
+    match &failure.state {
+        Some(state) => printer.print(
+            failure.code,
+            Level::Error,
+            &format!(
+                "{message}\nWhile working on the initial state:\n{}",
+                format_texts(ir, state)
+            ),
+        ),
+        None => printer.print(failure.code, Level::Error, message),
+    }
     // TLC prints the trace to the state it was expanding, and none for the initial predicate:
     // what the spec printed as it rebuilt the first state after the error, and each later state's
     // before the state (`printTrace`).
@@ -96,18 +107,68 @@ pub fn print_failure(
             );
         }
     }
+    // A successor TLC can't fingerprint fails again as TLC prints it with the trace.
+    if failure.fingerprint.is_some() && !report.states.is_empty() {
+        printer.print(failure.code, Level::Error, message);
+    }
     for line in &report.after {
         printer.line(line);
     }
-    printer.print(
-        code::NESTED_EXPRESSION,
-        Level::Error,
-        &format!(
-            "The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n{}",
-            format_call_stack(ir, &failure.call_stack)
+    match &failure.fingerprint {
+        // TLC reports where it failed to fingerprint in place of the call stack, innermost first.
+        Some(fingerprint) => {
+            let trace: String = fingerprint
+                .sources
+                .iter()
+                .enumerate()
+                .rev()
+                .map(|(position, range)| {
+                    format!(
+                        "{position}) line {}, col {} to line {}, col {} of module {}\n",
+                        range.start_line,
+                        range.start_column,
+                        range.end_line,
+                        range.end_column,
+                        ir.texts[range.module as usize]
+                    )
+                })
+                .collect();
+            let reason = if printer.is_tool {
+                &fingerprint.tool_reason
+            } else {
+                &fingerprint.reason
+            };
+            printer.print(
+                code::FINGERPRINT_FAILED,
+                Level::Error,
+                &format!(
+                    "TLC was unable to fingerprint.\n\nFingerprint Stack Trace:\n{trace}\nReason:\n{reason}"
+                ),
+            );
+        }
+        None => printer.print(
+            code::NESTED_EXPRESSION,
+            Level::Error,
+            &format!(
+                "The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n{}",
+                format_call_stack(ir, &failure.call_stack)
+            ),
         ),
-    );
-    print_statistics(printer, &stop.statistics, start);
+    }
+    // TLC counts the state it failed to fingerprint as generated, which the search stopped before
+    // counting, and an initial state as at depth 1.
+    let statistics = match (&failure.fingerprint, stop.site) {
+        (Some(_), site) => Statistics {
+            generated: stop.statistics.generated + 1,
+            depth: match site {
+                Site::Init => stop.statistics.depth.max(1),
+                _ => stop.statistics.depth,
+            },
+            ..stop.statistics
+        },
+        (None, _) => stop.statistics,
+    };
+    print_statistics(printer, &statistics, start);
     print_finished(printer, start);
     Ok(failure.exit_code)
 }
