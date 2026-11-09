@@ -1,0 +1,17 @@
+[package]
+name = "prove-it-cli"
+description = "The native prove-it binary: checks a TLA+ spec and prints what TLC prints"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "prove-it"
+path = "src/main.rs"
+
+[dependencies]
+tla-engine = { path = "../tla-engine" }
+tla-ir = { path = "../tla-ir" }
+tla-values = { path = "../tla-values" }

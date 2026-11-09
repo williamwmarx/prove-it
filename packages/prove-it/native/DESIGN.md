@@ -4,7 +4,9 @@ A design for a Rust model checker that is faster than today's Prove It and print
 TLC prints, staged so that every step ships on its own, is measurably faster, and is proven
 identical to TLC and to the TypeScript checker before it is switched on.
 
-Status: proposal, with M1 to M6 built (their outcomes are in section 11). Every number marked *measured*
+Status: M1 to M7 built (their outcomes are in section 11). Section 12 supersedes the fallback
+chain described in sections 0, 1 and 8.4: the target is now an all-Rust checker, with no
+TypeScript fallback. Every number marked *measured*
 comes from the prototypes that were under `native/prototypes/` until 1916b69 (section 10) on a
 local 4-core cloud machine (Rust 1.97.0, Bun 1.4.4, Node 22.23.4). Those timings vary by about 10%
 between runs. Depot numbers come from the benchmark of `main` at f284739 (run cb7zd2w63s), as
@@ -38,8 +40,8 @@ compiled predicates. The staged path takes these one at a time.
 | 1 | The engine core as an N-API addon: store, FP64, compiler, Init/Next walker, invariants, constraints, VIEW, symmetry, single-thread BFS, checkpoints. The TS front end, interpreter and CLI stay. | Large engine models 1.3–2× (store, probe, invariants, no JIT). Makes the AOT binary (16 ms start) as fast as the JIT one. | ≈8.7× (7.7–9.8×) |
 | 2 | A deterministic multi-threaded search, batched liveness answers, parallel symmetry and VIEW | 2–3× on models over 0.5 s on 4 cores | ≈11.3× (10.3–12.3×) |
 | 3 | Liveness on the engine's graph: tableau, SCCs, choosing the counterexample | ReadersWriters 0.38 → ≈0.10 s, TokenRing 0.54 → ≈0.16 s | ≈12.9× (11.6–14.3×) |
-| 4 | A native front door: a Rust binary with the lexer, parser, resolver, level checker and SANY's success path. It hands anything unusual to the JS binary. | Small models from 50–150 ms down to 10–20 ms | ≈20× (17.6–24×) |
-| 5 (optional) | The interpreter's slow paths: traces, errors, Print, TLCGet, `-continue`, `-dump`. TypeScript then stays only as the oracle. | Little speed. Removes the JS process from violation runs. | ≈ stage 4 |
+| 4 | A native binary (13) with the lexer, parser, resolver, level checker and SANY. It hands nothing to JavaScript. | Small models from 50–150 ms down to 10–20 ms | ≈20× (17.6–24×) |
+| 5 | The interpreter's slow paths: traces, errors, Print, TLCGet, `-continue`, `-dump`, and all of TLC's output (13). TypeScript then stays only as the oracle. | Little speed. Removes the JS process from violation runs. | ≈ stage 4 |
 
 **Parity harness.** Section 6 has the details. It has eleven layers, and the strongest four are new:
 1. A **state-log differential**: each engine writes, for every state in BFS order, its parent,
@@ -75,6 +77,11 @@ interpreter, is left optional (stage 5). The reason is structural. A violation, 
 `("a" :> 1)` is rare and short. It is also exactly where hash-consing loses information (section
 2.8). The interpreter already handles all of it by replaying the path (`check.ts`
 `resumeFromEngine`). Porting it buys parity risk, not speed.
+
+**Revised (section 12): C, all of it.** The parity harness has since made porting exact semantics
+routine, and a checker that needs no JavaScript runtime at all is worth more than the startup it
+saves: one native binary, no dependencies, threads everywhere. Stage 5 is no longer optional, and
+the native binary has no JS process to fall back to.
 
 ### 1.2 The boundary in stage 1
 
@@ -1013,7 +1020,7 @@ packages/prove-it/native/           Cargo workspace; rust-toolchain.toml pins 1.
   crates/tla-live        stage 3: tableau, SCCs, counterexamples
   crates/tla-front       stage 4: lexer, parser, resolver, levels, SANY success path, config, TLC order
   crates/prove-it-napi   cdylib: the N-API binding
-  crates/prove-it-cli    stage 4: the native front door
+  crates/prove-it-cli    stages 4–5: the native binary (13)
   oracle/ValueOracle.java, tools/replay, fuzz/
 ```
 `Cargo.lock` is committed and builds use `--locked`, with no network in `build.rs`. Release
@@ -1032,9 +1039,8 @@ boundary. CPU baseline is `x86-64-v2` (no AVX2 assumption) and the default for a
   only because it cannot run generated code. With the Rust engine it does not need to: Init, Next
   and invariants run natively. Its 16 ms start (against 36 ms) then comes free for small models. M7
   measures this; it depends on Bun's AOT compiler loading N-API addons.
-- **Stage 4:** the release archive holds `prove-it` (native, the front door) and `prove-it-js` (the
-  Bun binary). The native binary runs the common path itself and `exec`s `prove-it-js` on a
-  fallback (8.4). It is a single file in stage 5.
+- **Stages 4–5:** the native `prove-it` binary (13) is one file with no runtime beside it, and
+  npm ships it in the per-platform packages (13.6).
 - **Platforms and CI:** Linux builds and smoke tests run on Depot (`depot-ubuntu-24.04`, plus an
   arm64 runner). macOS and Windows build and run the 20-model differential smoke on hosted runners
   of those systems. A platform that cannot be tested is not published, and its users get the TS
@@ -1108,22 +1114,13 @@ boundary. CPU baseline is `x86-64-v2` (no AVX2 assumption) and the default for a
   TS, and Rust adds only its constant factor on top. Its order relative to stage 2 can swap if
   liveness models matter more to users.
 
-### 8.4 Stage 4's process model
+### 8.4 The native binary's process model (stages 4–5, as planned)
 
-The native binary parses the arguments, the config and the modules, runs the IR through the
-engine, and **buffers stdout** until the run completes or the first Progress line is due. At that
-point long runs no longer care about 36 ms. It falls back to `prove-it-js` with the same argv
-(`exec`), having printed nothing, on any of these:
-- an option outside its supported set;
-- a parse or SANY condition other than the success path;
-- an assumption to evaluate that it can't;
-- a decline.
-
-On a stop after output has been flushed, it writes a checkpoint file and runs
-`prove-it-js --resume <file>`. That is an internal option: `check.ts` resumes from the checkpoint
-and the CLI suppresses the lines already printed, tracked as message codes in the file. The
-differential (6.2) covers both paths, and 6.11's forced hand-over runs through the native binary
-too.
+Superseded: the native binary no longer falls back to a JS process. Section 13 plans
+`prove-it-cli`, one Rust binary that parses the arguments, runs the front end (`tla-front`), checks
+the model with the engine, and prints everything TLC prints. It never `exec`s `prove-it-js` and
+never hands a checkpoint to the interpreter. Until a path is native, the JS CLI stays the shipped
+one (13.6), and the TypeScript checker remains the oracle it is compared with (13.5).
 
 ---
 
@@ -2289,7 +2286,150 @@ On the 4-core cloud machine, with `main` at a0f66ec before the merge of #31 and 
   could close the 1.3× gate is compiling guards and invariants to code rather than closure trees
   (3.1's later tier), not more tuning of the closures.
 
-## 12. Stage 4, the Rust front end (`tla-front`)
+---
+
+## 12. Rust end to end
+
+The target is one Rust implementation of the checker: front end, engine, liveness, and TLC's output,
+shipped as a native binary and as the N-API addon, with **no third-party crates** (the standard
+library only) and no TypeScript at run time. Output stays byte-identical to TLC.
+
+**Fallbacks go away.** Today a model can decline to the TypeScript engine, stop and hand over to
+the interpreter, or leave liveness and printing to TypeScript. Each of those paths is closed by
+covering it in Rust, then removing the TypeScript path once the gates below hold on it:
+- a Rust decline or run-time stop (other than a violation or deadlock, which Rust then prints) is a
+  coverage regression, gated by `engine-coverage`;
+- the TypeScript checker remains, for a while, the oracle that the differential and state-log
+  harnesses compare Rust with; it is deleted area by area when Rust has matched it on the whole
+  corpus and TLC's recordings carry the comparison alone.
+
+**Workstreams.** Each lands as small PRs that keep Parity at no new differences:
+
+| Workstream | Replaces | Gate |
+|---|---|---|
+| Engine coverage: TLC operators (Print, PrintT, TLCGet, TLCSet, RandomElement, Any, JavaTime, ToString), lazy sets, every run-time stop | the TypeScript engine as fallback | no decline, no stop on the corpus |
+| TLC's value printer in Rust | `values.ts` printing | ToString and traces identical to TLC |
+| Parallel search (section 4) | the TypeScript parallel search | state logs identical at 1 to 16 threads |
+| Speed: compiled guards and invariants (3.1's later tier) | — | the 1.3× per-model gate |
+| Liveness (stage 3) | `tableau.ts`, `liveness-checker.ts`, `liveness.ts` | same verdicts and counterexamples |
+| Front end (stage 4, `tla-front`) | lexer, parser, resolver, levels, SANY, config, TLC order, IR lowering | IR byte-equal to the TypeScript lowering; SANY's messages |
+| CLI and TLC's output (stage 5, `prove-it-cli`) | `cli/`, `check.ts`, `tlc/messages.ts`, traces | the full-stdout differential against TLC |
+
+**Distribution.** The binary ships per platform; the npm package becomes a thin launcher for it and
+then carries the binary alone. The proof checker (`src/prover`, `src/obligations`) is outside this
+plan for now.
+
+---
+
+## 13. The native binary (`prove-it-cli`), stages 4–5
+
+One Rust binary, `prove-it`, runs `prove-it <spec>` as the TS CLI does (`src/cli.ts`,
+`src/cli/`) and prints exactly what TLC prints: every message, the progress lines, `-tool`'s
+markers, violation and error traces, and TLC's exit codes. It is std only, as every crate here,
+and starts in about 1.5 ms (10.5). It is section 12's CLI workstream, and replaces 8.4's plan of a
+front door that falls back to a JS process: nothing it meets is handed to JavaScript.
+
+### 13.1 What the TypeScript CLI prints, and where
+
+| Output | TypeScript today | Rust |
+|---|---|---|
+| Arguments: `CHECK_COMMAND` (`-config -continue -deadlock -dump -fp -lncheck -metadir -nowarning -seed -tool -workers`), specs and globs, the Java launch form (`-DTLA-Library=`, `-cp`, `tlc2.TLC`, `-Dtla-ts.tlc=1.7.4`) | `cli/options.ts`, `cli/run.ts`, `checkSpecs` and `checkSpec`'s checks in `cli/tlc.ts` | `prove-it-cli`: `args.rs` |
+| Command-line errors (1102 with the usage), the missing configuration file (5001), the welcome (2262) and the banner (2187) | `printCommandLineError`, `printWelcome`, `printStartupBanner` | `prove-it-cli` |
+| The message printer: level prefixes, `-tool`'s `@!@!@STARTMSG code:level @!@!@` markers, a warning once, `-nowarning` and the hint after the first warning | `tlc/messages.ts` `createMessagePrinter` | `prove-it-cli`: `messages.rs` |
+| Coded messages and nested markers in `-tool` (`CODED_MESSAGES`, `formatInnerMessage`, `formatNestedMessage`, `getFailureMessage`) | `tlc/messages.ts` | Rust errors carry their code and their inner error as data, so the printer needs no pattern matching on text |
+| Dates and durations: `formatTlcDate` (local time), `formatTlcDuration` | `tlc/messages.ts` | `time.rs`: UTC, or the local zone read from TZif (`/etc/localtime`, `TZ`) with its POSIX rule |
+| Progress (2200), initial states (2189–2191, 2269), success (2193) with both collision estimates, statistics (2199), depth (2194), outdegree (2268), finished (2186) | `printProgress`, `printInitialStates`, `printResult`, `tlc/summary.ts` | `summary.rs`, from the engine's `Counts` and fingerprints |
+| SANY's output: `Parsing file`, `Semantic processing of module`, its errors, `Starting...`, `Parsing or semantic analysis failed.` | `sany/report.ts`, `formatSanyErrors` | `tla-front` (stage 4) produces it; the binary prints it |
+| Warnings before the search: constant-level invariant (2149), state-level property (2255), liveness and symmetry (2279), constraints (2284, 1.7.4), Java overrides (2168, 2400) | `printCheckProgress` | the front end reports them as events |
+| Assumptions (2104, 2105) | `check.ts` `findViolatedAssumption` | the engine evaluates ASSUME (front end lowers them into the IR) |
+| Violations: invariant (2107, 2110), action property (2112), deadlock (2114), temporal (2116, 2264, 2122, 2218 stuttering), postconditions (2404, 2405), with the trace's states (2217) and what `Print` printed while TLC rebuilt it | `printViolation`, `printTrace`, `printTraceOutput` | `trace.rs`, over the engine's path (state indices, the action of each step, the loop start), with TLC's value printer |
+| Errors: evaluation errors with the nested call stack (2103), the initial state (2102), fingerprint failures (2147), the unexpected-exception wrappers | `printResult`'s failure branch | the engine reports the error, its call stack as source ranges, and the path; `trace.rs` prints them |
+| `Print`, `PrintT` output during the search | `check.ts` `print` | the engine's `Reporter::print`, through the value printer |
+| Exit codes (`EXIT_STATUS`, `EXIT_CODES`) | `exit-codes.ts`, `cli/tlc.ts` | `prove-it-cli`: the same table |
+| Several specs in one run (`Checking X.tla with X.cfg`), the first non-zero exit code | `checkSpecs` | `prove-it-cli` |
+| `tlapm`, `tla2sany.xml.XMLExporter` | `cli/tlapm.ts`, `cli/xml-exporter.ts` | out of scope: the JS CLI keeps them until they have their own plan |
+
+### 13.2 Seams to the other stages
+
+- **Front end.** The binary calls one function, `front(spec, config, options) -> Front`, which
+  returns the IR (1.3) and what TLC prints before the search, as events: SANY's lines, the
+  warnings, the liveness preamble (2212), or SANY's diagnostics and exit code. `tla-front`
+  implements it. Until it lands, the binary reads a recorded front instead: the IR that
+  `PROVE_IT_IR_DUMP` writes and the stdout the TS CLI printed after its banner and before the
+  search, from the directory `PROVE_IT_FRONT` names (13.5 makes them). This is a test seam, not a
+  shipped path: with neither, the binary says which spec it can't parse yet and exits.
+- **Values.** The binary prints values only through a trait, `ValuePrinter`, with one method that
+  formats a value of the engine's store as TLC's `Value.toString` does (records, functions built
+  as `:>`/`@@`, tuples, sets in TLC's order, strings and models). The engine-gaps session builds
+  TLC's printer in Rust; the binary takes it once it lands, and until then it reports any output
+  that needs a value as not native yet.
+- **Liveness.** The liveness session returns a counterexample as state indices plus the loop
+  start. `trace.rs` prints it as `printViolation` does: the rebuilt prefix, 2116 and 2264, the
+  states, then `Back to state` (or 2122 with `-tool`) or `Stuttering`.
+- **The engine.** `prove_it_napi::check_on_thread` is the call: its `Event`s become 2189–2191,
+  2269 and 2200, and `SearchOutcome::Complete` the summary. A `Stopped` or `Declined` outcome is
+  a gap the binary reports on stderr (`prove-it: not native yet: <reason>`, exit 1), never a
+  fallback; it closes as the engine stops stopping.
+
+### 13.3 Pull requests, each small and on its own
+
+1. `docs(native)`: this plan.
+2. `feat(native)`: the `prove-it-cli` crate and binary: arguments, command-line errors, the
+   printer, welcome and banner, the recorded front, the engine's events, the summary of a
+   complete search, exit codes. Unit tests on each formatter against the TS outputs.
+3. `chore(scripts)`: the differential runs the binary as a checker, `native`, and compares it with
+   TLC's recordings (`tlc/native`). The pair is reported and not yet gated: its count of same runs
+   is the binary's coverage, and it becomes a gate (no new differences) once the binary is the
+   CLI.
+4. `feat(native)`: local time from TZif and its POSIX TZ rule, so dates match outside UTC.
+5. `feat(native)`: `Print` and `PrintT` during the search, and traces of violations and errors,
+   over the shared value printer, once it lands.
+6. `feat(native)`: liveness counterexamples, once the liveness session returns them.
+7. `feat(native)`: the front end in place of the recorded one, once `tla-front` lands: SANY's
+   output and diagnostics, warnings, assumptions.
+8. `feat(release)`: the per-platform packages carry the binary, and the JS `prove-it` launches it
+   (13.6), proposed to the coordinator, who owns `release.yml`.
+
+### 13.4 Parity, and the number to track
+
+`scripts/differential.ts --native <path>` runs the binary on each of the 1466 runs (733 models in
+the default and `-tool` modes) with the same command line as the TS CLI, and compares its
+normalised transcript with TLC's recording. The count of runs where the two are equal is the
+binary's coverage; §13.7 records it as it grows. A run the binary can't do yet differs, so the
+count measures exactly what users would see.
+
+### 13.5 The recorded front (until `tla-front` lands)
+
+For each run, the differential first runs the TS CLI with `PROVE_IT_ENGINE_BACKEND=rust`,
+`PROVE_IT_ENGINE=debug` and `PROVE_IT_IR_DUMP`, and keeps the IR and the TS stdout between the
+end of the banner (2187) and the first message the engine prints (2189, `Computing initial
+states...`). A run with no IR (the spec doesn't parse, an assumption fails, the engine isn't
+reached) has no front, and the binary can't do it yet. The binary prints its own welcome and
+banner, then the recorded front, then everything after it. So the recorded part is exactly what
+`tla-front` will produce, and nothing the binary owns is borrowed from TypeScript.
+
+### 13.6 Distribution
+
+- The binary ships in the per-platform packages that already carry the addon
+  (`@atemp/prove-it-linux-x64-gnu`, `-linux-arm64-gnu`, …) as `bin/prove-it`, built by
+  `scripts/platform-packages.ts` beside `prove-it-engine.node`, statically linked against nothing
+  beyond glibc (and fully static on musl). It needs no node or bun.
+- The main package's `bin` stays `dist/cli.js`, which becomes a thin launcher: it resolves the
+  platform package with `import.meta.resolve` and replaces itself with the binary
+  (`spawnSync` with `stdio: "inherit"`, passing the exit code on), for the paths the binary
+  covers. Users who want no JavaScript at all run the binary from the platform package or the
+  release archive directly.
+- Once the differential's `tlc/native` pair equals `tlc/ts` on all 1466 runs, the launcher
+  always runs the binary, and the TS CLI is kept only as the oracle. The release archive holds
+  the binary alone.
+- The release workflow changes this needs (build the binary per target in the existing matrix,
+  add it to each platform package, smoke-test it on x64 and arm64 without node or bun on the PATH)
+  are the coordinator's, proposed rather than made here.
+
+### 13.7 As built
+
+Nothing yet.
+## 14. The front end (`tla-front`), stage 4
 
 Stage 4 ports the front end, so a Rust binary goes from `.tla` and `.cfg` files to the IR, and on
 to the engine, with no JavaScript. The TypeScript front end stays as the oracle, and is retired
@@ -2297,7 +2437,7 @@ piece by piece once the Rust one matches it on the corpora. This section is the 
 replaces the "native front door" of section 0's stage 4 that hands the unusual to the JS binary,
 since the Rust front end reproduces SANY's messages for the unusual too.
 
-### 12.1 Crate boundaries
+### 14.1 Crate boundaries
 
 One crate, `crates/tla-front`, std only, depending on `tla-ir` (whose encoder writes the IR) and
 nothing else. Its modules follow the TypeScript files they port, one for one, so a difference
@@ -2323,14 +2463,12 @@ character's UTF-16 length, so nothing converts the text.
 
 PlusCal translation (`src/pcal`) is a later step: until it is ported, a module SANY would validate
 PlusCal in, which holds a `--algorithm` or `--fair algorithm` comment, is one the front end gives
-up on (12.3).
+up on (`NotYet`, 14.2).
 
-### 12.2 The API (for the Rust CLI)
+### 14.2 The API (for the Rust CLI)
 
-The CLI session calls the front end in TLC's order: the configuration first, SANY next (printing
-as it goes), then the model. Each call either succeeds, fails with what TLC prints, or gives up
-with a reason, in which case the CLI runs the JS binary with the same arguments, having printed
-nothing it can't take back (section 8.4):
+This is the seam 13.2 names. The binary makes one call, in TLC's order inside it: the
+configuration first, SANY next, then the model:
 
 ```rust
 pub enum TlcVersion { Master, V1_7_4 }
@@ -2338,53 +2476,55 @@ pub enum TlcVersion { Master, V1_7_4 }
 /// Where SANY reads a module from, as `SanyModuleOrigin`.
 pub enum ModuleOrigin { File, RootFile, Standard }
 
-/// How the CLI finds a module's text: the spec's directory, then the TLA-Library directories, as
-/// `createModuleLoader`.
-pub trait ModuleLoader { fn load(&self, name: &str) -> Option<String>; }
+/// How the binary finds a module's text: the spec's directory, then the TLA-Library
+/// directories, as `createModuleLoader`; and how SANY names the file it parses a module from
+/// ("Parsing file …"), which depends on the spec's path and the TLC version, as
+/// `createFileDescriber`.
+pub trait Files {
+    fn load(&self, module: &str) -> Option<String>;
+    fn describe(&self, module: &str, origin: ModuleOrigin) -> String;
+}
 
-/// `parseConfig`: the model, or TLC's message for a configuration it can't parse.
-pub fn parse_config(source: &str, version: TlcVersion) -> Result<ModelConfig, ConfigError>;
-
-pub struct SanyRequest<'a> {
-    pub root_path: &'a Path,                 // the spec's .tla file
-    pub file_name: &'a str,                  // what SANY calls the spec in its messages
-    pub loader: &'a dyn ModuleLoader,
-    pub describe_file: &'a dyn Fn(&str, ModuleOrigin) -> String, // "Parsing file …"
-    pub root_extendees: &'a [String],        // _TLCTrace when TLC records the trace
+pub struct FrontRequest<'a> {
+    pub spec: &'a Path,           // the spec's .tla file
+    pub spec_name: &'a str,       // what SANY calls the spec in its messages
+    pub config: &'a str,          // the .cfg file's text
+    pub files: &'a dyn Files,
     pub version: TlcVersion,
+    pub check_deadlock: bool,     // false after -deadlock
+    pub is_warning_enabled: bool, // false after -nowarning
+    pub is_trace_recorded: bool,  // TLC's trace exploration extends _TLCTrace
 }
 
-pub enum Stream { Out, Err }
-
-/// `getSanyReport`: runs SANY on the spec, writing what SANY prints, byte for byte, as it goes.
-/// A rejected spec's output is complete when this returns.
-pub fn run_sany(request: &SanyRequest, print: &mut dyn FnMut(Stream, &str)) -> Result<Sany, GiveUp>;
-pub struct Sany { pub is_failed: bool, /* the modules SANY read, kept for the model */ }
-
-pub struct ModelRequest<'a> {
-    pub sany: &'a Sany,
-    pub config: &'a ModelConfig,
-    pub check_deadlock: bool,       // after -deadlock
-    pub is_warning_enabled: bool,   // -nowarning
-    pub is_trace_recorded: bool,
+/// What TLC prints before the search, in order.
+pub enum FrontEvent {
+    /// Text SANY prints, byte for byte, to standard output or standard error.
+    Sany { is_error: bool, text: String },
+    /// A TLC message by its code, with its parameters: the warnings before the search (2149,
+    /// 2255, 2279, 2284, 2168, 2400) and the liveness preamble (2212).
+    Message { code: u32, parameters: Vec<String> },
 }
 
-/// `createEnvironment`, `createTlcOrder` and `lowerToIr`: the IR the engine runs, byte for byte
-/// what the TypeScript lowering writes, or the TLC error the model raises before the search
-/// (for example an assumption that fails), as structured data the CLI prints.
-pub fn build_model(request: &ModelRequest) -> Result<Model, ModelFailure>;
-pub struct Model { pub ir: Vec<u8> }
-pub enum ModelFailure { Tlc(TlcError), GiveUp(GiveUp) }
+pub enum Front {
+    /// The IR the engine runs, byte for byte what the TypeScript lowering writes.
+    Model { ir: Vec<u8>, events: Vec<FrontEvent> },
+    /// The spec or its configuration is rejected: SANY's diagnostics, or a configuration or
+    /// model error, with TLC's exit code. `error` carries the message code and parameters of a
+    /// TLC error (a configuration error, a constant TLC can't assign), not its text.
+    Rejected { events: Vec<FrontEvent>, error: Option<TlcError>, exit_code: u8 },
+    /// A construct or condition the front end doesn't cover yet, with what it is.
+    NotYet { reason: String },
+}
 
-/// Why the front end gives up: a construct or condition it doesn't port yet. The CLI falls back.
-pub struct GiveUp { pub reason: String }
+pub fn front(request: &FrontRequest) -> Front;
 ```
 
-`TlcError` carries TLC's message code and its parameters, not text, since the CLI session owns
-how TLC prints a message. The names may change as the milestones land; the shape (configuration,
-SANY printing as it goes, then the IR, each with a give-up) won't.
+SANY's output is buffered as events rather than printed as it goes: the front end takes
+milliseconds, and the binary buffers its output until the first progress line anyway (8.4).
+`NotYet` shrinks milestone by milestone, as the binary's own `not native yet` does. The names may
+change as the milestones land; the shape won't.
 
-### 12.3 Milestones
+### 14.3 Milestones
 
 Each is one or more small PRs, and each lands with its mode of the differential harness
 (`scripts/front-differential.ts <mode>`), which runs the TypeScript front end and
