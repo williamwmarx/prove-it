@@ -628,6 +628,17 @@ impl<'a> Compiler<'a> {
         node: NodeId,
         context: &Context,
     ) -> Compiling<Option<(NodeId, Context)>> {
+        self.resolve_operator(node, context, false)
+    }
+
+    // The body of an operator an expression applies, with its arguments bound, where the walk
+    // goes into it: a recursive one only where `is_recursive_taken`.
+    fn resolve_operator(
+        &mut self,
+        node: NodeId,
+        context: &Context,
+        is_recursive_taken: bool,
+    ) -> Compiling<Option<(NodeId, Context)>> {
         match self.node(node).1 {
             NodeKind::Identifier(name) => {
                 if name.is_local
@@ -667,7 +678,7 @@ impl<'a> Compiler<'a> {
                     let OperatorBody::Node(body) = operator.body else {
                         return Ok(None);
                     };
-                    if operator.is_recursive {
+                    if operator.is_recursive && !is_recursive_taken {
                         return Ok(None);
                     }
                     let operator = Rc::clone(operator);
@@ -683,7 +694,7 @@ impl<'a> Compiler<'a> {
                 let DefinitionForm::Operator(params) = &definition.form else {
                     return Ok(None);
                 };
-                if definition.flags & Definition::RECURSIVE != 0 {
+                if definition.flags & Definition::RECURSIVE != 0 && !is_recursive_taken {
                     return Ok(None);
                 }
                 let callee =
@@ -1485,10 +1496,18 @@ impl<'a> Compiler<'a> {
                 if !name.is_local && operator == "\\/" {
                     return self.walk_disjunction(args, context, options, known, then);
                 }
-                match self.resolve_action(node, context)? {
-                    Some((body, inner)) => self.walk(body, &inner, options, known, then),
-                    None => self.guard_step(node, context, known, then),
+                if let Some((body, inner)) = self.resolve_action(node, context)? {
+                    return self.walk(body, &inner, options, known, then);
                 }
+                // TLC walks a recursive operator's body as any other's, which the engine can't
+                // unroll as it compiles: where the body is walked, the interpreter takes over,
+                // rather than the engine evaluate as a guard what TLC walks.
+                if let Some((body, inner)) = self.resolve_operator(node, context, true)?
+                    && self.is_walked_body(body, &inner, is_init)?
+                {
+                    return unsupported("walking a recursive operator");
+                }
+                self.guard_step(node, context, known, then)
             }
             _ => self.guard_step(node, context, known, then),
         }
