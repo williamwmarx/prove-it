@@ -7,8 +7,8 @@ use crate::{
     Action, ActionProperty, Atom, AtomKind, Bound, Builtin, ConfigName, Constant, Definition,
     DefinitionForm, EnabledActions, IR_VERSION, Index, InstanceAction, Ir, Junction, LiveProperty,
     LiveTerm, MAGIC, Model, Name, Node, NodeId, NodeKind, Nodes, Param, PathStep, Pattern,
-    PermutedSet, Possible, Printed, Resolution, Scope, ScopeBinding, Selector, SourceRange,
-    Startup, Symmetry, TextId, Update, Value, Values, code, tag,
+    PermutedSet, Possible, PredicateForm, Printed, Resolution, Scope, ScopeBinding, Selector,
+    SourceRange, Startup, StartupPredicate, Symmetry, TextId, Update, Value, Values, code, tag,
 };
 
 /// Why a blob isn't an IR this decoder reads: where it stopped, in words, and what it found.
@@ -423,6 +423,13 @@ impl Decoder<'_> {
             .chain(
                 model
                     .startup
+                    .predicates
+                    .iter()
+                    .map(|predicate| &predicate.definition),
+            )
+            .chain(
+                model
+                    .startup
                     .symmetry
                     .iter()
                     .map(|symmetry| &symmetry.definition),
@@ -720,6 +727,23 @@ impl Decoder<'_> {
             .collect::<Decoded<_>>()?;
         let count = self.count()?;
         let definitions = (0..count).map(|_| self.index()).collect::<Decoded<_>>()?;
+        let count = self.count()?;
+        let predicates = (0..count)
+            .map(|_| {
+                let form = match self.next()? {
+                    0 => PredicateForm::Predicate,
+                    1 => PredicateForm::Definition,
+                    2 => PredicateForm::Specification,
+                    other => return self.error(format!("predicate form {other}")),
+                };
+                Ok(StartupPredicate {
+                    form,
+                    kind: self.text()?,
+                    name: self.text()?,
+                    definition: self.index()?,
+                })
+            })
+            .collect::<Decoded<_>>()?;
         let symmetry = match self.next()? {
             -1 => None,
             definition if definition >= 0 => {
@@ -790,6 +814,7 @@ impl Decoder<'_> {
             startup: Startup {
                 substitutes,
                 definitions,
+                predicates,
                 symmetry,
                 assumptions,
             },
@@ -1053,7 +1078,7 @@ impl Decoder<'_> {
                 NodeKind::Subexpression(selectors)
             }
             tag::DEFINITION => {
-                if flags & !0x1f != 0 {
+                if flags & !0x3f != 0 {
                     return self.error(format!("definition flags {flags}"));
                 }
                 let name = self.text()?;

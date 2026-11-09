@@ -136,6 +136,46 @@ const getConstantValue = (name: string, definition: Definition, environment: Env
 };
 
 // TLC takes for an operator only a definition it hasn't replaced with its value.
+interface NamedPredicate {
+  form: "predicate" | "definition" | "specification";
+  kind: string;
+  name: string;
+}
+
+// The constant definitions the configuration names, which TLC evaluates as it reads the
+// configuration, in its order, each with how TLC rejects its value: a predicate for any value but
+// TRUE, a definition and the SPECIFICATION for any value.
+export const getConstantPredicates = (config: ModelConfig, environment: Environment) => {
+  const getNamed = (form: NamedPredicate["form"], kind: string, names: string[]) =>
+    names.map((name): NamedPredicate => ({ form, kind, name }));
+  const optional = (name: string | undefined) => (name === undefined ? [] : [name]);
+  const named = [
+    ...getNamed("predicate", "invariant", config.invariants),
+    ...(config.specification === undefined
+      ? [
+          ...getNamed("definition", "initial predicate", optional(config.init)),
+          ...getNamed("definition", "next state action", optional(config.next)),
+        ]
+      : getNamed("specification", "name", [config.specification])),
+    ...getNamed("predicate", "property", config.properties),
+    ...getNamed("predicate", "constraint", config.constraints),
+    ...getNamed("predicate", "action constraint", config.actionConstraints),
+    ...getNamed("definition", "possible", config.possible),
+  ];
+  return named.flatMap((item) => {
+    const definition = environment.constants.has(item.name)
+      ? undefined
+      : getDefinition(item.name, environment);
+    const isEvaluated =
+      definition?.kind === "Operator" &&
+      definition.params.length === 0 &&
+      isConstantLevel(definition, environment) &&
+      definition.body.kind !== "Number" &&
+      definition.body.kind !== "String";
+    return isEvaluated ? [{ ...item, definition }] : [];
+  });
+};
+
 export const getConfigDefinition = (kind: string, name: string, environment: Environment) => {
   const definition = getConfigOperator(kind, name, environment);
   if (getConstantValue(name, definition, environment) !== undefined) {

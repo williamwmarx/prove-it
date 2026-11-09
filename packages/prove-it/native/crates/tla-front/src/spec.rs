@@ -13,6 +13,7 @@ use crate::eval::Evaluator;
 use crate::instances::map_children;
 use crate::levels::{self, ACTION_LEVEL};
 use crate::resolve::{Result, Tables};
+use tla_ir::PredicateForm;
 
 /// `Scope`: a name bound to a value, an expression or an operator, in front of the scope it
 /// extends. The front end evaluates nothing, so a value is a literal or a configuration's.
@@ -584,7 +585,12 @@ fn get_constant_value(
     };
     match evaluator.evaluate(&create_identifier(name), None) {
         Ok(value) => Ok(Some(value)),
-        Err(FrontError::Evaluation(_) | FrontError::NotYet(_)) => Ok(None),
+        Err(FrontError::Evaluation(_)) => Ok(None),
+        // The engine's startup checks what the evaluator can't compute (`Startup::predicates`).
+        Err(FrontError::NotYet(_)) => {
+            evaluator.defer();
+            Ok(None)
+        }
         Err(error) => Err(error),
     }
 }
@@ -1171,4 +1177,69 @@ pub fn check_search_config(
         get_config_operator("view function", name, environment)?;
     }
     Ok(())
+}
+
+/// `getConstantPredicates`: the constant definitions the configuration names, which TLC
+/// evaluates as it reads the configuration, in its order, each with how TLC rejects its value and
+/// what the configuration names it as.
+pub fn get_constant_predicates(
+    config: &crate::config::ModelConfig,
+    environment: &Environment,
+    facts: &DefinitionFacts,
+) -> Vec<(PredicateForm, &'static str, String, Rc<Definition>)> {
+    let named = |form: PredicateForm, kind: &'static str, names: &[String]| {
+        names
+            .iter()
+            .map(|name| (form, kind, name.clone()))
+            .collect::<Vec<_>>()
+    };
+    let optional = |name: &Option<String>| name.iter().cloned().collect::<Vec<_>>();
+    let specification = match &config.specification {
+        None => [
+            named(
+                PredicateForm::Definition,
+                "initial predicate",
+                &optional(&config.init),
+            ),
+            named(
+                PredicateForm::Definition,
+                "next state action",
+                &optional(&config.next),
+            ),
+        ]
+        .concat(),
+        Some(name) => named(
+            PredicateForm::Specification,
+            "name",
+            std::slice::from_ref(name),
+        ),
+    };
+    [
+        named(PredicateForm::Predicate, "invariant", &config.invariants),
+        specification,
+        named(PredicateForm::Predicate, "property", &config.properties),
+        named(PredicateForm::Predicate, "constraint", &config.constraints),
+        named(
+            PredicateForm::Predicate,
+            "action constraint",
+            &config.action_constraints,
+        ),
+        named(PredicateForm::Definition, "possible", &config.possible),
+    ]
+    .concat()
+    .into_iter()
+    .filter_map(|(form, kind, name)| {
+        if environment.constants.contains_key(name.as_str()) {
+            return None;
+        }
+        let definition = get_definition(&name, environment)?;
+        let is_evaluated = matches!(&definition.kind, DefinitionKind::Operator { params, .. } if params.is_empty())
+            && facts.is_constant_level(definition, environment)
+            && !matches!(
+                definition.body.kind,
+                ExpressionKind::Number { .. } | ExpressionKind::String { .. }
+            );
+        is_evaluated.then(|| (form, kind, name, definition.clone()))
+    })
+    .collect()
 }

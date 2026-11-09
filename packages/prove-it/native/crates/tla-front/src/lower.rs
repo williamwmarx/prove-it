@@ -52,11 +52,30 @@ pub struct RankedTexts<'a> {
     pub ranks: FastMap<Rc<str>, u32>,
 }
 
+/// `isStartupDefinition`: a constant definition without parameters the configuration doesn't
+/// replace.
+fn is_startup_definition(
+    definition: &Rc<Definition>,
+    environment: &Environment,
+    facts: &DefinitionFacts,
+) -> bool {
+    let is_nullary = match &definition.kind {
+        DefinitionKind::Operator { params, .. } => params.is_empty(),
+        DefinitionKind::Function { .. } => true,
+    };
+    is_nullary
+        && !environment.constants.contains_key(&definition.name)
+        && !environment.substitutions.contains_key(&definition.name)
+        && facts.is_constant_level(definition, environment)
+}
+
 pub struct Lowering<'a> {
     environment: &'a Environment,
     /// The evaluator of the constant parts of the liveness formula, without which they stay
     /// `NotYet`.
     pub evaluator: Option<&'a crate::eval::Evaluator<'a>>,
+    /// The constant definitions TLC computes and deep-normalizes at startup, by address.
+    normalized: FastSet<usize>,
     facts: DefinitionFacts,
     ranked: RankedTexts<'a>,
     extra_texts: Vec<Name>,
@@ -88,8 +107,15 @@ pub struct Lowering<'a> {
 
 impl<'a> Lowering<'a> {
     pub fn new(environment: &'a Environment, ranked: RankedTexts<'a>) -> Lowering<'a> {
+        let facts = create_definition_facts(environment);
         Lowering {
-            facts: create_definition_facts(environment),
+            normalized: environment
+                .startup_definitions
+                .iter()
+                .filter(|definition| is_startup_definition(definition, environment, &facts))
+                .map(|definition| Rc::as_ptr(definition) as usize)
+                .collect(),
+            facts,
             environment,
             evaluator: None,
             ranked,
@@ -385,6 +411,10 @@ impl<'a> Lowering<'a> {
             0
         } | if self.environment.is_substituted(definition) {
             IrDefinition::SUBSTITUTED
+        } else {
+            0
+        } | if self.normalized.contains(&(Rc::as_ptr(definition) as usize)) {
+            IrDefinition::NORMALIZED
         } else {
             0
         };
@@ -969,23 +999,12 @@ impl<'a> Lowering<'a> {
                 substitutes.push((text, self.get_definition_index(definition)));
             }
         }
-        // `isStartupDefinition`: a constant definition the configuration doesn't replace.
-        let is_startup_definition = |definition: &Rc<Definition>| {
-            let is_nullary = match &definition.kind {
-                DefinitionKind::Operator { params, .. } => params.is_empty(),
-                DefinitionKind::Function { .. } => true,
-            };
-            is_nullary
-                && !environment.constants.contains_key(&definition.name)
-                && !environment.substitutions.contains_key(&definition.name)
-                && self.facts.is_constant_level(definition, environment)
-        };
         let mut seen = FastSet::default();
         let startup_definitions: Vec<Rc<Definition>> = environment
             .startup_definitions
             .iter()
             .filter(|definition| {
-                is_startup_definition(definition)
+                is_startup_definition(definition, environment, &self.facts)
                     && self.facts.is_impure_definition(definition, environment)
                     && seen.insert(Rc::as_ptr(definition) as usize)
             })
@@ -995,6 +1014,17 @@ impl<'a> Lowering<'a> {
             .iter()
             .map(|definition| self.get_definition_index(definition))
             .collect();
+        let mut predicates = Vec::new();
+        for (form, kind, name, definition) in
+            crate::spec::get_constant_predicates(config, environment, &self.facts)
+        {
+            predicates.push(tla_ir::StartupPredicate {
+                form,
+                kind: self.get_text(kind),
+                name: self.get_text(&name),
+                definition: self.get_definition_index(&definition),
+            });
+        }
         let symmetry = match &config.symmetry {
             None => None,
             Some(name) => Some(self.write_symmetry(config, name)?),
@@ -1011,6 +1041,7 @@ impl<'a> Lowering<'a> {
         Ok(Startup {
             substitutes,
             definitions,
+            predicates,
             symmetry,
             assumptions,
         })
