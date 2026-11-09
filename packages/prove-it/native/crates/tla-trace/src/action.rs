@@ -7,6 +7,7 @@
 use tla_ir::{NodeId, NodeKind, Resolution};
 
 use crate::eval::{Context, Evaluator};
+use crate::sets::is_member;
 use crate::value::{Evaluated, Value, elements, equals, fail, is_same};
 
 /// What a walk calls for each state it completes; it returns false to stop the walk.
@@ -225,6 +226,19 @@ impl<'ir> Evaluator<'ir> {
                 self.walk_unchanged(*subscript, context, then)
             }
             NodeKind::Label { body, .. } => self.walk(*body, context, is_init, then),
+            NodeKind::FunctionApplication { function, args } if args.len() == 1 => {
+                let Some((bound, body, base)) = self.walked_function(*function, context)? else {
+                    return self.guard(node, context, then);
+                };
+                // The argument once, as TLC evaluates it, then the body walked at it.
+                let argument = self.evaluate(args[0], context)?;
+                let set = self.evaluate(bound.set, &base)?;
+                if !is_member(&argument, &set)? {
+                    return fail("applied a function outside its domain");
+                }
+                let inner = self.bind_pattern(&bound.pattern, &argument, &base)?;
+                self.walk(body, &inner, is_init, then)
+            }
             NodeKind::Identifier(_) => match self.resolve_action(node, context)? {
                 Some((body, inner)) => self.walk(body, &inner, is_init, then),
                 None => self.guard(node, context, then),
