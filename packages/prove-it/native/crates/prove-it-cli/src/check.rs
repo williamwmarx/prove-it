@@ -39,6 +39,7 @@ const DEADLOCK: i32 = 11;
 const ASSUMPTION_VIOLATION: i32 = 10;
 const SAFETY_VIOLATION: i32 = 12;
 const LIVENESS_VIOLATION: i32 = 13;
+const NO_NEXT_ACTION: i32 = 75;
 const SPEC_PARSE_ERROR: i32 = 150;
 const CONFIG_PARSE_ERROR: i32 = 151;
 
@@ -745,6 +746,16 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
             ..
         } => {
             let printed = match violation.kind {
+                // TLC stops with no statistics, before it would search.
+                ViolationKind::NoNextState => {
+                    printer.print(
+                        code::NO_NEXT_ACTION,
+                        Level::Error,
+                        "No next state actions defined to generate successor states from.",
+                    );
+                    print_finished(printer, start);
+                    Ok(NO_NEXT_ACTION)
+                }
                 // TLC's report of a failure evaluating the model, which it replays.
                 // TLC prints the trace through the ALIAS and checks the postconditions after it,
                 // which the printing doesn't follow yet.
@@ -1012,7 +1023,7 @@ fn print_violation(
         ViolationKind::Deadlock { .. } => {
             (code::DEADLOCK_REACHED, "Deadlock reached.".into(), DEADLOCK)
         }
-        ViolationKind::Error { .. } => return Err(NOT_IN_IR),
+        ViolationKind::NoNextState | ViolationKind::Error { .. } => return Err(NOT_IN_IR),
         // Under SYMMETRY or a VIEW, TLC names the properties the lasso it rebuilt violates.
         ViolationKind::Lasso { .. } => (
             code::TEMPORAL_PROPERTY_VIOLATED,

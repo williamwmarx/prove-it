@@ -319,6 +319,9 @@ pub enum ViolationKind {
     /// The last state of the trace reaches a tableau node that accepts every behavior, which TLC
     /// stops at as it adds the state: the positions of the properties it names.
     Accepted { violated: Vec<usize> },
+    /// The model has initial states and no next-state relation to take their steps by; the
+    /// violation has no states.
+    NoNextState,
     /// Evaluating the model failed where TLC fails (an assertion, a value of the wrong kind, a
     /// function applied outside its domain): the states lead to where, as `ErrorSite` says.
     Error { site: ErrorSite },
@@ -466,6 +469,7 @@ struct Found {
 }
 
 const LAZY_FUNCTION_HELD: Bail = Bail("unsupported: a state holding a function TLC keeps lazy");
+const NO_NEXT_STATE: &str = "initial states and no next-state relation";
 const GRAPH_TOO_LARGE: &str = "a state graph too large to keep";
 
 /// Where TLC may fail evaluating an atom of the temporal properties as it adds a state.
@@ -1267,7 +1271,8 @@ impl<T: Reached, E: Entries> Search<'_, T, E> {
         }
         match actions {
             None => {
-                let walked = (context.next)(machine, &mut |machine: &mut Machine<'_>| {
+                let next = context.next.as_ref().expect("a next-state relation");
+                let walked = next(machine, &mut |machine: &mut Machine<'_>| {
                     self.visit_successor(machine, context)
                 });
                 self.check_pending(machine, context)?;
@@ -1276,7 +1281,8 @@ impl<T: Reached, E: Entries> Search<'_, T, E> {
             Some(actions) => {
                 if is_live_checked {
                     let mut checked = Vec::new();
-                    (context.next)(machine, &mut |machine: &mut Machine<'_>| {
+                    let next = context.next.as_ref().expect("a next-state relation");
+                    next(machine, &mut |machine: &mut Machine<'_>| {
                         checked.push(machine.next().to_vec());
                         Ok(())
                     })?;
@@ -2251,6 +2257,15 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 .initial_states(initial_states.0, initial_states.1);
         }
         is_past_initial = true;
+        if context.next.is_none() && search.states.count() > 0 {
+            search.violation = Some(Found {
+                kind: ViolationKind::NoNextState,
+                parent: None,
+                last: None,
+                counts: StopCounts::default(),
+            });
+            return Err(Bail(NO_NEXT_STATE));
+        }
 
         // --- next states ---
         // The initial states are the first level, which starts as the loop does, so that it too
@@ -3346,9 +3361,10 @@ fn to_violation(
     let is_shaped = labels.len() + 1 == states.len()
         || matches!(
             found.kind,
-            ViolationKind::Error {
-                site: ErrorSite::Init
-            }
+            ViolationKind::NoNextState
+                | ViolationKind::Error {
+                    site: ErrorSite::Init
+                }
         ) && states.is_empty();
     (is_shaped && !machine.store.has_unordered_strings()).then(|| {
         Box::new(Violation {
@@ -3798,7 +3814,7 @@ fn expand_reals(
     let total = reals.states.len() / width;
     let walks: Vec<&Step> = match (&reals.labels, &context.actions) {
         (Some(_), Some(actions)) => actions.iter().collect(),
-        _ => vec![&context.next],
+        _ => context.next.iter().collect(),
     };
     let unassigned = vec![UNASSIGNED; width];
     for state in first..total {

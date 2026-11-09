@@ -123,8 +123,8 @@ fn rebuild(
                     | ViolationKind::InitialInvariant(_)
                     | ViolationKind::InitialPredicate(_) => Ending::Violation,
                     ViolationKind::Lasso { .. } | ViolationKind::Accepted { .. } => Ending::Lasso,
-                    ViolationKind::Error { .. } => {
-                        return Err("a failure evaluating the model".into());
+                    ViolationKind::NoNextState | ViolationKind::Error { .. } => {
+                        return Err("a stop with no trace".into());
                     }
                 };
                 let cycle_start = match *kind {

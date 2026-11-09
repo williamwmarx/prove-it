@@ -628,6 +628,32 @@ fn run_lowered(test: &str, spec: &str, config: &str) -> (Output, PathBuf) {
 }
 
 #[test]
+fn stops_at_initial_states_without_a_next_state_relation() {
+    // TLC reports 2115 with no statistics, and a model with no initial states either succeeds.
+    let spec = "---- MODULE Stop ----\nVARIABLE x\nInit == x = 0\nNone == x \\in {}\n====\n";
+    let (output, directory) = run_lowered("no-next", spec, "INIT Init\n");
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(75), "{text}");
+    assert!(
+        text.contains("Finished computing initial states: 1 distinct state generated at "),
+        "{text}"
+    );
+    assert!(
+        text.contains(".\nError: No next state actions defined to generate successor states from.\nFinished in "),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+    let (output, directory) = run_lowered("no-next-empty", spec, "INIT None\n");
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(0), "{text}");
+    assert!(
+        text.contains("0 states generated, 0 distinct states found, 0 states left on queue."),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
 fn reads_and_sets_tlcs_registers() {
     // TLCCache evaluates Counted once, TLCFP is TLC's fingerprint under -fp 0, which the
     // interpreter and TLC print the same, and a Java property TLC hasn't set is its key.

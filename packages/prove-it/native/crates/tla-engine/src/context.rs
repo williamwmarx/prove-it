@@ -30,7 +30,9 @@ pub struct EngineContext {
     /// checker doesn't follow: it too stops once TLC has started.
     pub is_view_search_read: bool,
     pub init: Step,
-    pub next: Step,
+    /// The walk of the next-state relation, none where the configuration names none: TLC then
+    /// stops once it has the initial states.
+    pub next: Option<Step>,
     /// A walk of each of TLC's actions, which together take the steps of `next` in its order, or
     /// `None` when the engine can't build one. The search walks them only when the model asks it
     /// to label its steps; they also label the steps of a path it prints.
@@ -555,21 +557,33 @@ impl EngineContext {
             },
             "a specification",
         )?;
-        let Some(next) = model.next else {
+        // Without a next-state relation TLC stops once it has the initial states, before the
+        // temporal properties, the postconditions and the `_POSSIBLE` predicates it would check.
+        if model.next.is_none()
+            && (!compiler.is_native
+                || model.is_recording_graph
+                || !model.postconditions.is_empty()
+                || !model.possible.is_empty())
+        {
             return Err(CompileError::Decline(
                 "a model without a next-state relation".into(),
             ));
-        };
-        let next = compiler.compile_action(
-            next,
-            model.scope,
-            ActionOptions {
-                is_init: false,
-                is_shortcut: model.is_warning_enabled,
-                can_print,
-            },
-            "a specification",
-        )?;
+        }
+        let next = model
+            .next
+            .map(|next| {
+                compiler.compile_action(
+                    next,
+                    model.scope,
+                    ActionOptions {
+                        is_init: false,
+                        is_shortcut: model.is_warning_enabled,
+                        can_print,
+                    },
+                    "a specification",
+                )
+            })
+            .transpose()?;
         // Compiled whether or not the search walks them, since they also label a printed path.
         let actions = match Some(&model.actions).filter(|actions| !actions.is_empty()) {
             None => None,
