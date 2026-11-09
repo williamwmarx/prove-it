@@ -4,8 +4,8 @@
 //! value, such as an interval or a record's written field order, which TLC prints.
 
 use crate::store::{
-    KIND_BOOL, KIND_FUNCTION, KIND_INT, KIND_MODEL, KIND_SET, KIND_STRING, KIND_TUPLE, TRUE,
-    is_function_kind,
+    KIND_BOOL, KIND_FUNCTION, KIND_INT, KIND_LAZY_FUNCTION, KIND_MODEL, KIND_SET, KIND_STRING,
+    KIND_TUPLE, TRUE, is_function_kind,
 };
 use crate::{Id, Store};
 
@@ -28,6 +28,9 @@ pub fn is_printable_normalized(store: &Store, id: Id) -> bool {
 
 fn is_written_as_held(store: &Store, id: Id, is_normalized: bool) -> bool {
     let kind = store.kind_of(id);
+    if kind == KIND_LAZY_FUNCTION {
+        return false;
+    }
     if kind != KIND_SET && kind != KIND_TUPLE && kind != KIND_FUNCTION {
         return true;
     }

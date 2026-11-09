@@ -647,6 +647,34 @@ fn reads_and_sets_tlcs_registers() {
 }
 
 #[test]
+fn applies_the_functions_tlc_keeps_lazy() {
+    // TLC keeps a function over Nat or Int lazy (`FcnLambdaValue`): applying one evaluates its
+    // body, EXCEPT records the key, and a state can't hold one, as TLC can't fingerprint it.
+    let spec = "---- MODULE Stop ----\nEXTENDS Integers\nVARIABLE x\nDouble == [n \\in Nat |-> 2 * n]\nPairs == [m, n \\in Int |-> m - n]\nInit == x = 0\nNext == x < 3 /\\ x' = x + 1\nShifted == LET f == [n \\in Nat |-> n + x] IN [f EXCEPT ![1] = @ * 10][1] = 10 + 10 * x /\\ f[2] = 2 + x\nInv == Double[3] = 6 /\\ Pairs[1, 4] = -3 /\\ [Double EXCEPT ![2] = 0][2] = 0 /\\ Shifted\n====\n";
+    let (output, directory) = run_lowered(
+        "lazy",
+        spec,
+        "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE\nINVARIANT Inv\n",
+    );
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(0), "{text}");
+    assert!(
+        text.contains("4 states generated, 4 distinct states found, 0 states left on queue."),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+    let held = "---- MODULE Stop ----\nEXTENDS Naturals\nVARIABLE f\nInit == f = [n \\in Nat |-> n]\nNext == UNCHANGED f\n====\n";
+    let (output, directory) = run_lowered("lazy-held", held, "INIT Init\nNEXT Next\n");
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("unsupported: a state holding a function TLC keeps lazy"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
 fn rebuilds_a_trace_that_sets_registers() {
     // TLC rebuilds the trace from the initial predicate, which sets the register again (as on
     // TLC's TLCGetNonDeterminism).
