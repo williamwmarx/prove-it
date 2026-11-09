@@ -81,14 +81,23 @@ same way:
   effects is the same wherever it is first evaluated, so the engine computes it there. Each is
   compiled once with an empty footprint. The engine declines one TLC may keep lazy (`may_be_lazy`),
   as TLC then evaluates it again where it is used.
+- **symmetry**: the SYMMETRY definition, and each set its body's operator applies to, by the name
+  TLC's warning gives it (`getPermutedSets`, `symmetry.ts`) and, for `Permutations(S)` of a
+  constant or definition the configuration doesn't replace with `<-`, S. TLC evaluates the body
+  again as it builds its `Tool` (`Tool.getSymmetryPerms`), after the constant definitions and
+  before the assumptions. The engine builds the group (`close_group`), and declines a value that
+  isn't a set of functions of model values, or a body TLC may keep lazy, which TLC may reject. It
+  hands the group to the interpreter and `tla-trace` by the model values' names
+  (`Checkpoint.symmetry`, `Rebuilder::set_symmetry`).
 - **assumptions**: each one's expression and the name TLC reports it by (`describeRange`).
 - The settings carry TLC's seed, from which the engine draws what the startup draws
   (`JavaRandom::seeded`), and then reseeds for each state as before. `TLCGet("level")` is 0 at
   startup.
 
 What the engine reports (`Reporter`):
-- `startup_print`: each `Print` and `PrintT` of the substitutes and definitions, then
-  `startup_done`, then what the assumptions print. The front prints TLC's own text between them:
+- `startup_print`: each `Print` and `PrintT` of the substitutes, definitions and symmetry, then
+  `symmetry_sets_too_small` with the sets TLC warns about (2300), then `startup_done`, then what
+  the assumptions print. The front prints TLC's own text between them:
   TLC prints what it prints itself after the constant definitions and before it checks the
   assumptions (`ModelChecker`, then `checkAssumptions`).
 - `SearchOutcome::AssumptionViolated { name }`: the first false assumption (2104, exit code 10).
@@ -108,9 +117,11 @@ Still to do:
   two differ only where printing or drawing definitions sit in more than one module along with
   substitutes. No corpus model has been found that shows the difference; one that does is a
   TypeScript bug to fix on both sides, not a design choice.
-- SYMMETRY (`getSymmetryGroup`, `symmetry.ts`): the IR is to carry the SYMMETRY definition's name,
-  and the engine evaluates it to its permutations and raises its configuration errors word for
-  word.
+- **The small-set warning of a body that isn't an operator application.** TLC counts the
+  arguments of any operator application, `IF` included, as the permuted sets, and names each by
+  its text. `getPermutedSets` reads only an `Apply`, so for `Sym == IF c THEN Permutations(S)
+  ELSE {}` TLC may warn where TypeScript and the engine don't. That is a TypeScript bug to fix on
+  both sides.
 - TLC's actions (`getNextActions`, `spec-description.ts`): the engine is to split Next itself and
   label each action. Then the effect guard on TLC's actions (#72) goes away, which unblocks native
   traces for specs that print (etest3, etest8).
