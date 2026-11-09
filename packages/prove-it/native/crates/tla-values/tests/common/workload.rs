@@ -1,7 +1,7 @@
-// The prototype's store workload (native/prototypes/store-bench/workload.ts), whose TypeScript run
-// on src/engine/store.ts gives the value counts and checksums the tests expect. Each step does an
-// EXCEPT on a 5-key function, a 2-field record, a withElement on a growing set, a 3-element setOf,
-// and an append to or a reset of a short tuple.
+// The prototype's store workload (native/prototypes/store-bench/workload.ts, removed after 1916b69),
+// whose TypeScript run on src/engine/store.ts gives the value counts and checksums the tests expect.
+// Each step does an EXCEPT on a 5-key function, a 2-field record, a withElement on a growing set, a
+// 3-element setOf, and an append to or a reset of a short tuple.
 
 use tla_values::store::{EMPTY_SET, EMPTY_TUPLE, Store};
 
