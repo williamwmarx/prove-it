@@ -72,6 +72,7 @@ const GOLDEN_MODELS = [
   "tlc/tlatools/org.lamport.tlatools/test-model/Github461.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/TESpecTest/TESpecRuntimeErrorTest.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/EvaluatingValueTest.cfg",
+  "spectacle/specs/bfs_anim.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/suite/etest6.cfg",
 ];
 

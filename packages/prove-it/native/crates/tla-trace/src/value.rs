@@ -9,6 +9,8 @@ use std::cmp::Ordering;
 use std::rc::Rc;
 
 use tla_values::Store;
+
+use crate::print::format_pretty;
 use tla_values::store::{KIND_BOOL, KIND_INT, KIND_MODEL, KIND_SET, KIND_STRING, KIND_TUPLE, TRUE};
 
 /// Why an evaluation failed, as TLC would have, or where the evaluator can't follow it: the
@@ -340,7 +342,7 @@ pub fn compare(left: &Value, right: &Value) -> Evaluated<Ordering> {
             }
             Ok(Ordering::Equal)
         }
-        _ => fail("values TLC can't compare"),
+        _ => incomparable(left, right, false),
     }
 }
 
@@ -431,8 +433,41 @@ pub fn equals(left: &Value, right: &Value) -> Evaluated<bool> {
             }
             Ok(true)
         }
-        _ => fail("equality of values TLC can't compare"),
+        _ => incomparable(left, right, true),
     }
+}
+
+// TLC's error for two values of kinds it can't compare, worded by the class of the left operand.
+// A set compares as `toSetEnum` enumerates it.
+fn incomparable<T>(left: &Value, right: &Value, is_equality: bool) -> Evaluated<T> {
+    let reason = if is_equality {
+        "equality of values TLC can't compare"
+    } else {
+        "values TLC can't compare"
+    };
+    let (subject, other) = match left {
+        Value::Int(_) => ("integer", "non-integer:"),
+        Value::Bool(_) => ("boolean", "non-boolean:"),
+        Value::Str(_) => ("string", "non-string:"),
+        _ if left.is_set() => ("the set", "the value:"),
+        _ => return fail(reason),
+    };
+    let verb = match left {
+        Value::Bool(_) if is_equality => "compare equality of",
+        _ if is_equality => "check equality of",
+        _ => "compare",
+    };
+    let shown = match left {
+        Value::Interval(..) | Value::Lazy(_) => format_pretty(&Value::Set(elements(left)?)),
+        _ => format_pretty(left),
+    };
+    fail_runtime(
+        reason,
+        format!(
+            "Attempted to {verb} {subject} {shown} with {other}\n{}",
+            format_pretty(right)
+        ),
+    )
 }
 
 /// A set of elements in any order and with duplicates, sorted into TLC's order.
