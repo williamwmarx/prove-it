@@ -257,7 +257,11 @@ impl<'a> Lowering<'a> {
     /// texts by their position among the encoder's strings.
     fn encode_value(&mut self, value: &ConfigValue) -> u32 {
         let encoded = self.write_value(value);
-        self.values.push(encoded);
+        self.push_value(encoded)
+    }
+
+    fn push_value(&mut self, value: Value) -> u32 {
+        self.values.push(value);
         self.values.len() as u32 - 1
     }
 
@@ -295,11 +299,34 @@ impl<'a> Lowering<'a> {
         let index = self.builtin_ids.len() as Index;
         self.builtin_ids.insert(name.clone(), index);
         let text = self.get_text(name);
+        // `getValue` of each row's arguments as a tuple, and of its value.
+        let table = builtin.table.as_ref().map(|rows| {
+            rows.iter()
+                .map(|(args, value)| {
+                    let args: Option<Vec<ConfigValue>> =
+                        args.iter().map(|arg| self.normalize(arg).ok()).collect();
+                    let tuple = args.map(|args| {
+                        let range = args.iter().map(|arg| self.write_value(arg)).collect();
+                        self.push_value(Value::IntervalFunction {
+                            class: 2,
+                            low: 1,
+                            range,
+                        })
+                    });
+                    let value = self
+                        .normalize(value)
+                        .ok()
+                        .map(|value| self.encode_value(&value));
+                    (tuple, value)
+                })
+                .collect::<Vec<_>>()
+        });
+        let flags = builtin.flags as i32 | table.as_ref().map_or(0, |_| IrBuiltin::TABLE);
         self.builtins.push(IrBuiltin {
             name: text,
             arity: builtin.arity as i32,
-            flags: builtin.flags as i32,
-            table: Vec::new(),
+            flags,
+            table: table.unwrap_or_default(),
         });
         Some(index)
     }
