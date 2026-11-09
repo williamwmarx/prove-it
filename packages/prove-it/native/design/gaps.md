@@ -411,11 +411,24 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
 
 - TLC walks a RECURSIVE operator's body where the initial predicate or an action applies it, as
   any operator's: coverage/Github649's `Init == Flip(clock, FALSE, 1)` assigns clock two calls
-  down. The engine doesn't unroll a recursive operator as it compiles the walk, and evaluated the
-  call as a guard, so it stopped on "variable not assigned", a failure TLC doesn't report. Where
-  the operator's body is one the walk would go into, it now declines ("walking a recursive
-  operator"). Walking it needs the run-time recursion a recursive function's walk has, with the
-  arguments that name a variable kept as they are.
+  down. The engine can't unroll a recursive operator as it compiles the walk, and evaluated the
+  call as a guard, so it stopped on "variable not assigned", a failure TLC doesn't report.
+- Where the operator's body is one the walk would go into, the walk now recurses as it runs
+  (`walk_recursive_operator`, `WalkedOperator`), as a recursive function's does. The body's walk
+  is compiled once for the operator, what the walk knows where it is applied, and the variables
+  its arguments name: an argument that names a variable, primed or not, stays the compile-time
+  binding, since it decides what the body assigns, and the others are evaluated into the
+  parameters' slots at each call, as a recursive operator's are in an expression. A conjunction
+  takes such a call for a walk too, where it took it for a guard.
+- The body may assign, which the compiler doesn't follow through the recursion, so the rest of
+  the walk after a call knows only what was assigned before it (`Known::opaque`). A body that
+  applies itself knowing more each level compiles for nothing known past a few.
+- Declined: an argument that names variables but isn't one, such as a tuple of them or a LET
+  ("walking a recursive operator whose argument names variables indirectly"), and an operator
+  parameter. `\A` and a lazy function's body don't look through a recursive operator to decide
+  whether they are walked (`has_walk`), so one that assigns only inside such a call is a guard
+  there, which stops on a limit.
+- Github649 (TLC's tests) now completes in Rust and prints what TLC prints.
 
 ## UNCHANGED of a tuple that isn't all variables
 
@@ -504,11 +517,6 @@ CyclicRedefineInstance, EWD998Chan).
 
 Open, with what is known:
 
-- **Github649, a recursive operator's walk.** The walker declines ("walking a recursive
-  operator") where TLC walks the body. It needs the run-time recursion `WalkedFunction` has
-  (`walk_recursive_application` in `walker.rs`), keyed by the operator and what the walk knows,
-  with the arguments that name a variable kept as the compile-time binding, since they decide
-  what the body assigns, and the others bound to slots at run time.
 - **Enabled (EWD840/MC02, suite/test216), Print (test11, test20), PrintT (Stones).** Not started.
   test20 prints inside ENABLED and in actions TLC walks differently; start from the decline
   reasons `engine-coverage --backend rust --filter <model>` prints.

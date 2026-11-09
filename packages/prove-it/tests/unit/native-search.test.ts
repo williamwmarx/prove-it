@@ -1335,20 +1335,31 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     ]);
   });
 
-  it("leaves a recursive operator whose body it would walk to the interpreter", async () => {
-    // TLC walks Flip's body, assigning clock, as coverage/Github649 does; the engine can't unroll
-    // it as it compiles, so it declines rather than evaluate the call as a guard.
+  it("walks the body of a recursive operator as it runs", async () => {
+    // TLC walks a RECURSIVE operator's body as any other's, so it assigns the variables its
+    // arguments name however deep, as coverage/Github649's Flip does, and each disjunct at each
+    // level makes a state (checked with TLC: 3 initial states, 72 generated, 12 distinct).
     const body = [
       "EXTENDS Naturals",
-      "VARIABLE clock",
-      "RECURSIVE Flip(_, _, _)",
-      "Flip(v, b, n) == IF n = 0 THEN v = ~b ELSE Flip(v, b, n - 1)",
-      "Init == Flip(clock, FALSE, 1)",
-      "Next == clock' = ~clock",
+      "VARIABLES x, y",
+      "RECURSIVE Pick(_, _), Both(_, _, _), Step(_, _), Keep(_, _)",
+      "Pick(v, n) == IF n = 0 THEN v = 0 ELSE (v = n \\/ Pick(v, n - 1))",
+      "Both(a, b, n) ==",
+      "  IF n = 0 THEN a \\in {0, 1} /\\ b = 0 ELSE Both(a, b, n - 1) /\\ b < 5",
+      "Step(n, k) ==",
+      "  IF n = 0 THEN x' = (x + k) % 4 /\\ UNCHANGED y",
+      "  ELSE Step(n - 1, k + 1) \\/ (y' = (y + n) % 3 /\\ Keep(x', n))",
+      "Keep(v, n) == IF n = 0 THEN v \\in {x, 0} ELSE Keep(v, n - 1)",
+      "Init == Pick(x, 2) /\\ Both(y, y, 1)",
+      "Next ==",
+      "  \\/ Step(2, 0)",
+      "  \\/ LET RECURSIVE Last(_)",
+      "         Last(n) == IF n = 0 THEN x' = 3 /\\ y' = y ELSE Last(n - 1)",
+      "     IN Last(3)",
     ];
-    expect(await compareWithInterpreter(body, "INIT Init\nNEXT Next")).toContainEqual(
-      expect.stringMatching(declined("unsupported: walking a recursive operator")),
-    );
+    const lines = await compareWithInterpreter(body, "INIT Init\nNEXT Next");
+    expect(lines).toContainEqual(expect.stringMatching(COMPLETE));
+    expect(lines).toContainEqual(expect.stringMatching(/^\[engine\] checked 12 states /));
   });
 
   it("counts the _POSSIBLE predicates as TLC does, and hands the counts over", async () => {
