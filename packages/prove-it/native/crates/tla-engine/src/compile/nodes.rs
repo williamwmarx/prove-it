@@ -701,10 +701,22 @@ impl Compiler<'_> {
                 lazy::Lazy::filter(machine, bases.remove(0), Arc::clone(&test))
             })
         };
+        // TLC keeps a filter of a set it doesn't reduce (any but an enumeration or an interval)
+        // lazy too, and tests membership in it the same way: the predicate of the one element.
+        let tested = (!set.is_normalized).then(|| {
+            let base = self.member_test(&set);
+            let tested = Arc::clone(&filter);
+            member(move |machine, element| {
+                Ok(base(machine, element)? && test_element(machine, &tested, element)?)
+            })
+        });
+        let tested_parts = (!set.is_normalized).then(|| Self::parts_of(&set));
         Ok(Compiled {
             is_costly: true,
             is_normalized: set.is_normalized,
             has_infinite_part: set.has_infinite_part,
+            member: tested,
+            parts: tested_parts,
             reference,
             is_enumerated: set.is_enumerated,
             are_elements_enumerated: set.are_elements_enumerated,

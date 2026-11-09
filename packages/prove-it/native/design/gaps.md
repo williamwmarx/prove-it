@@ -202,6 +202,15 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   Community Graphs' `Path(G) == {p \in Seq(G.node) : ...}` is one. MCEWD687a (Examples) and
   Bakery (spectacle), declined before, now search in Rust until the enumeration TLC reports.
 
+## Membership in a filter TLC keeps lazy
+
+- TLC builds `{x \in S : p}` only where S is a set enumeration or an interval (`Reducible`). For
+  any other S, such as `Int \X Int`, a UNION or a set of functions, it keeps a `SetPredValue`,
+  whose `member` is S's membership and then p of the one element. The engine enumerated such a
+  filter to look the element up, which stopped on `Int \X Int` and evaluated p on elements TLC
+  never tests. A filter of a set that isn't normalized now has that membership test beside its
+  enumeration. suite/test9 now prints what TLC prints.
+
 ## Membership in an interval
 
 - TLC tests `x \in a..b` by comparing an integer with the bounds (`IntervalValue.member`), and
@@ -458,19 +467,13 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
 
 ## Open: infinite sets as values
 
-These three are declined, and lazy functions don't fix them:
+These are declined, and lazy functions don't fix them:
 
 - **suite/test7**, Test 14: `CHOOSE j \in {{Nat}, {Int}} : \E k \in j : -1 \in k` holds Nat and Int
   as elements of a set. TLC keeps them as values and tests membership in them. The engine has no
   store value for a set it only tests, so it declines with "enumerated Nat". This needs a store
   kind like the lazy function's, an infinite set by name, with membership and the comparisons TLC
   makes when it normalizes `{Nat}` and `{Int}`.
-- **suite/test9**: `2 \notin {i \in Int : i > 1}` and `<<3,4>> \notin {<<i,j>> \in Int \X Int : j > i}`
-  decline with "enumerated Int". A filter compiles to its membership test only where its set is
-  marked `infinite` (see "Filters of infinite sets"). `Int \X Int` is a product, marked only
-  `has_infinite_part`, so its filter compiles to the enumerating form. Find out whether the
-  constant `\notin` of the plain Int filter also goes that way. The likely fix is to key the
-  filter's membership form on `may_be_infinite` and use the product's own member test.
 - **RandomSubsetEmpty**: `Cardinality` and `RandomSubset` of `[Nat -> {}]`, `[n1 : Nat, n2 : {}]`,
   `Nat \X {}` and the like decline with "enumerated Nat". TLC counts these sets without
   enumerating them. A product or record set is empty when any factor is, and `[S -> {}]` is empty
