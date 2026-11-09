@@ -1048,6 +1048,25 @@ boundary. CPU baseline is `x86-64-v2` (no AVX2 assumption) and the default for a
   of those systems. A platform that cannot be tested is not published, and its users get the TS
   engine.
 
+### 7.4 WebAssembly
+
+Where there is no `process.dlopen`, as in a browser, the engine runs as WebAssembly:
+`crates/prove-it-wasm` builds it for `wasm32-unknown-unknown` with the standard library only, over
+a hand-written ABI that `src/engine/wasm.ts` instantiates as the addon's functions. npm ships it as
+the `wasm32` platform package (`platform-packages.ts build --target wasm32-unknown-unknown`), which
+has no `os` or `cpu` fields; `loadWasmEngine` in `native.ts` fetches and compiles it before a
+check, and `PROVE_IT_ENGINE_WASM` loads it in Node or Bun for testing.
+
+- **One thread.** WebAssembly here has no threads, so the search runs on one, and the store hooks
+  run in place.
+- **Shallower recursion.** The engine's frames are on the host's call stack, not on a thread
+  with a deep stack, so a recursive operator or function reaches only 1,000 to 2,000 calls deep
+  in Bun and 2,000 to 4,000 in Node, against the addon's 20,000 before "recursion too deep". A
+  check that exhausts the stack traps; the loader replaces the instance and returns a stop that
+  hands nothing over, so the interpreter searches from the start.
+- **Output.** On the differential's models that TLC checks within 3 seconds (657 runs, one worker),
+  every transcript matches the addon's.
+
 ---
 
 ## 8. Expected performance

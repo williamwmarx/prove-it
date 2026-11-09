@@ -24,6 +24,7 @@ import type { LiveOracle } from "./live";
 import type { EngineCheckpoint, EngineInput, EngineResult } from "./search";
 import {
   getEngineAddon,
+  getEngineBackend,
   getEngineThreads,
   getEngineWasm,
   getEnvironmentFlag,
@@ -163,6 +164,7 @@ export type NativeOutcome =
 const ABI_VERSION = 10;
 
 export const ADDON_FILE = "prove-it-engine.node";
+export const WASM_FILE = "prove-it-engine.wasm";
 
 // The executables build-binary.ts compiles define PROVE_IT_BINARY, and embed the addon beside the
 // CLI when their build had one.
@@ -236,16 +238,43 @@ const loadWasm = (wasmPath: string): NativeAddon | string => {
 
 const loaded: { addon?: NativeAddon | string } = {};
 
+const isDlopen = () => typeof globalThis.process?.dlopen === "function";
+
 // The addon, or the engine compiled to WebAssembly, loaded on first use, or why it can't be loaded.
 export const getNativeAddon = () => {
   const wasmPath = getEngineWasm();
   loaded.addon ??=
-    wasmPath !== undefined
-      ? loadWasm(wasmPath)
-      : typeof globalThis.process?.dlopen === "function"
-        ? loadAddon()
-        : "no process.dlopen";
+    wasmPath !== undefined ? loadWasm(wasmPath) : isDlopen() ? loadAddon() : "no process.dlopen";
   return loaded.addon;
+};
+
+// Where there is no process.dlopen, as in a browser, fetches and compiles the engine as WebAssembly
+// from the wasm32 platform package, before getNativeAddon is first called: compiling it takes a
+// promise there. A bundler copies the file beside the module that names it in a URL.
+export const loadWasmEngine = async () => {
+  if (
+    loaded.addon !== undefined ||
+    isDlopen() ||
+    getEngineWasm() !== undefined ||
+    getEngineBackend() === "ts"
+  ) {
+    return;
+  }
+  const url = (() => {
+    try {
+      return new URL(import.meta.resolve(`@atemp/prove-it-wasm32/${WASM_FILE}`));
+    } catch {
+      return new URL(`./${WASM_FILE}`, import.meta.url);
+    }
+  })();
+  try {
+    loaded.addon = getChecked(
+      instantiateEngine(await WebAssembly.compileStreaming(fetch(url))),
+      url.href,
+    );
+  } catch (error) {
+    loaded.addon = `can't load ${url.href}: ${error instanceof Error ? error.message : String(error)}`;
+  }
 };
 
 type NativeCallbacks = Pick<
