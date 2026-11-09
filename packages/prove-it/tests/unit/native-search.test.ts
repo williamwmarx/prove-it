@@ -526,6 +526,28 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     expect(lines).toContainEqual(expect.stringMatching(COMPLETE));
   });
 
+  it("reports a tableau node that accepts every behavior as TLC finds it", async () => {
+    // TLC's test model Github1389Counting: x becomes TRUE at most twice.
+    const body = [
+      "EXTENDS Naturals",
+      "VARIABLE x",
+      "RECURSIVE AtMost(_)",
+      "AtMost(n) == IF n = 0 THEN []~x ELSE [](x => [](~x => AtMost(n - 1)))",
+      "Init == x = FALSE",
+      "Next == x' \\in BOOLEAN",
+      "Spec == Init /\\ [][Next]_x",
+      "CountAtMostTwo == AtMost(2)",
+    ];
+    const config = "SPECIFICATION Spec\nCHECK_DEADLOCK FALSE\nPROPERTY CountAtMostTwo";
+    const lines = await compareWithInterpreter(body, config);
+    expect(lines).toContain("[engine] native: liveness: accepted");
+    // The interpreter prints the node's path without checking the properties itself.
+    expect(lines).toContainEqual(
+      expect.stringMatching(/^\[engine\] found 2 states in \d+ ms; the interpreter prints/),
+    );
+    await compareWithInterpreter(body, config, { PROVE_IT_LIVE_CHECK: "1" });
+  });
+
   it("hands over a violated invariant, deadlock and a failed action property", async () => {
     const cases: [string[], string, string][] = [
       [
