@@ -631,6 +631,14 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     const lines = await compareWithInterpreter(body, config);
     expect(lines).toContain("[engine] native: liveness: lasso");
     await compareWithInterpreter(body, config, { PROVE_IT_LIVE_CHECK: "1" });
+    // TLC prints what Next prints from that state where the engine doesn't follow, so the
+    // interpreter checks from the start.
+    const printing = body.map((line) => line.replace("Next == ", "Next == PrintT(arr) /\\ "));
+    expect(await compareWithInterpreter(printing, config)).toContainEqual(
+      expect.stringMatching(
+        /native: stopped: printing where .*: steps from states it didn't store/,
+      ),
+    );
   });
 
   it("searches again where a search under SYMMETRY with temporal properties stops part way", async () => {
@@ -700,6 +708,77 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
       expect.stringMatching(/^\[engine\] found 2 states in \d+ ms; the interpreter prints/),
     );
     await compareWithInterpreter(body, config, { PROVE_IT_LIVE_CHECK: "1" });
+  });
+
+  it("prints what the search and the temporal properties print in TLC's order", async () => {
+    // TLC prints PrintT in Next as the search takes each step, and again each time its liveness
+    // checks evaluate Next: ENABLED of the fairness and the action on each step.
+    const body = [
+      "EXTENDS Naturals, TLC",
+      "VARIABLE x",
+      "Next == \\/ x < 3 /\\ PrintT(x) /\\ x' = x + 1",
+      "        \\/ x = 3 /\\ UNCHANGED x",
+      "Spec == x = 0 /\\ [][Next]_x /\\ WF_x(Next)",
+      "Ends == <>(x = 3)",
+      'Shown == []<>(PrintT(<<"at", x>>) /\\ x = 3)',
+      "Stays == <>[](x = 0)",
+    ];
+    for (const [property, verdict] of [
+      ["Ends", "holds"],
+      ["Shown", "holds"],
+      ["Stays", "lasso"],
+    ] as const) {
+      const lines = await compareWithInterpreter(body, `SPECIFICATION Spec\nPROPERTY ${property}`);
+      expect(lines).toContain(`[engine] native: liveness: ${verdict}`);
+    }
+    // Where only the search prints: again as TLC runs Next from a state it adds a node of late; and
+    // where a node accepts every behavior, the interpreter checks from the start.
+    const cycling = [
+      "EXTENDS Naturals, TLC",
+      "VARIABLE x",
+      "Init == x = 0",
+      "Next == PrintT(x) /\\ x' = (x + 1) % 3",
+      "Fair == Init /\\ [][Next]_x /\\ WF_x(Next)",
+      "Unfair == Init /\\ [][Next]_x",
+      "Never == ~(<>(x = 2))",
+      "Leads == [](x = 0 => <>(x = 2))",
+    ];
+    for (const [spec, property, verdict] of [
+      ["Unfair", "Never", /native: stopped: printing where .*: a node that accepts/],
+      ["Fair", "Leads", /native: liveness: holds/],
+    ] as const) {
+      const lines = await compareWithInterpreter(
+        cycling,
+        `SPECIFICATION ${spec}\nPROPERTY ${property}`,
+      );
+      expect(lines).toContainEqual(expect.stringMatching(verdict));
+    }
+    // TLC checks no invariant as it runs Next again for a late node, so where an invariant prints
+    // the interpreter checks from the start.
+    const checked = [...cycling, 'Shown == PrintT(<<"inv", x>>)'].map((line) =>
+      line.replace("Next == PrintT(x) /\\ ", "Next == "),
+    );
+    expect(
+      await compareWithInterpreter(checked, "SPECIFICATION Fair\nINVARIANT Shown\nPROPERTY Leads"),
+    ).toContainEqual(
+      expect.stringMatching(/native: stopped: printing where .*: prints it doesn't/),
+    );
+    // Nor does Next print the same again where it prints the count of distinct states, which
+    // has grown since.
+    const counted = [
+      "EXTENDS Naturals, TLC",
+      "VARIABLE x",
+      "Init == x = 0",
+      "A == x' = (x + 1) % 3",
+      'Next == PrintT(<<x, TLCGet("distinct")>>) /\\ A',
+      "Fair == Init /\\ [][Next]_x /\\ WF_x(A)",
+      "Leads == [](x = 0 => <>(x = 2))",
+    ];
+    expect(
+      await compareWithInterpreter(counted, "SPECIFICATION Fair\nPROPERTY Leads"),
+    ).toContainEqual(
+      expect.stringMatching(/native: stopped: printing where .*: prints it doesn't/),
+    );
   });
 
   it("hands over a violated invariant, deadlock and a failed action property", async () => {
@@ -898,7 +977,6 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
       [[`Next == ${next}`, `Constraint == ${prints}`], "\nCONSTRAINT Constraint"],
       [[`Next == ${next}`, "Constraint == Print(x', TRUE)"], "\nACTION_CONSTRAINT Constraint"],
       [[`Next == ${next}`, "View == Print(x, x)"], "\nVIEW View"],
-      [[`Next == ${prints} /\\ ${next}`, "Live == <>(x = 2)"], "\nPROPERTY Live"],
     ];
     for (const [actions, config, where = ""] of cases) {
       const body = ["EXTENDS Naturals, TLC", "VARIABLE x", "Init == x = 0", ...actions];
