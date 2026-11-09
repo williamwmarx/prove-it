@@ -3,12 +3,13 @@
 //! texts in the order it first uses them, and the builtins and constants the names resolve to.
 //! `tla_ir::encode` writes the blob.
 
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use tla_ir::{
     Bound as IrBound, Builtin as IrBuiltin, ConfigName, Constant, Definition as IrDefinition,
-    DefinitionForm, Index, Ir, Model, Name as IrName, Node, NodeId, NodeKind, Nodes, Param,
-    PathStep, Pattern, Printed, Resolution, Selector as IrSelector, SourceRange as IrRange,
+    DefinitionForm, Index, Ir, Junction, Model, Name as IrName, Node, NodeId, NodeKind, Nodes,
+    Param, PathStep, Pattern, Printed, Resolution, Selector as IrSelector, SourceRange as IrRange,
     Startup, TextId, Update, Values,
 };
 
@@ -33,6 +34,7 @@ pub struct Lowering<'a> {
     extra_ids: FastMap<Name, TextId>,
     arena: Vec<Node>,
     top: Vec<NodeId>,
+    junctions: HashMap<NodeId, Junction>,
     /// The id of each node written, by address, with the node kept so no other takes it.
     node_ids: FastMap<usize, (Expr, NodeId)>,
     definition_ids: FastMap<usize, Index>,
@@ -55,6 +57,7 @@ impl<'a> Lowering<'a> {
             extra_ids: FastMap::default(),
             arena: Vec::new(),
             top: Vec::new(),
+            junctions: HashMap::new(),
             node_ids: FastMap::default(),
             definition_ids: FastMap::default(),
             definition_queue: Vec::new(),
@@ -337,8 +340,22 @@ impl<'a> Lowering<'a> {
                 }
             }
             ExpressionKind::Junction {
-                is_and, operands, ..
+                is_and,
+                operands,
+                is_bulleted,
+                prefix_ends,
             } => {
+                self.junctions.insert(
+                    id,
+                    Junction {
+                        is_bulleted: *is_bulleted,
+                        prefix_ends: prefix_ends
+                            .iter()
+                            .flatten()
+                            .map(|end| (end.line as i32, end.column as i32))
+                            .collect(),
+                    },
+                );
                 let operands = self.write_nodes(operands)?;
                 if *is_and {
                     NodeKind::And(operands)
@@ -685,6 +702,7 @@ impl<'a> Lowering<'a> {
             nodes: Nodes {
                 arena: self.arena,
                 top: self.top,
+                junctions: self.junctions,
             },
         })
     }
