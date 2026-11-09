@@ -10,7 +10,7 @@
 // engine's backend, and --compare-backends runs every one: the first is compared with TLC and the
 // interpreter, and each other with the first (ts/rust). --update rewrites
 // known-differences.json from the run, keeping the reasons it gives.
-// --native names the native prove-it binary (native/DESIGN.md 12), which then runs on each model
+// --native names the native prove-it binary (native/DESIGN.md 13), which then runs on each model
 // too, with the front the first backend's run recorded, and is compared with TLC as tlc/native.
 // That pair fails nothing yet: the run reports how many runs it matches and why the others differ.
 // A run without a TLC recording fails the check, since nothing compared it with TLC. --timeout-ms
@@ -140,7 +140,7 @@ const runCli = (model: CorpusModel, mode: OutputMode, environment: NodeJS.Proces
 
 // What TLC prints between its banner and the first message of the search, which the front end
 // computes: the native binary reads it, with the IR, as the front of the run until tla-front
-// lands (native/DESIGN.md 12.5). A run whose engine never computed the initial states has none.
+// lands (native/DESIGN.md 13.5). A run whose engine never computed the initial states has none.
 const getFront = (stdout: string) => {
   const isTool = stdout.startsWith("@!@!@STARTMSG");
   const banner = isTool ? "@!@!@ENDMSG 2187 @!@!@\n" : "\nRunning breadth-first search ";
