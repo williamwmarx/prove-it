@@ -5,12 +5,17 @@ use crate::errors::FrontError;
 
 /// EXIT_STATUS in `src/exit-codes.ts`.
 const SPEC_EVALUATION_FAILURE: i32 = 75;
+const SAFETY_EVALUATION_FAILURE: i32 = 76;
 const CONFIG_PARSE_ERROR: i32 = 151;
 const GENERAL_ERROR: i32 = 255;
 
 /// EC.SYSTEM_STACK_OVERFLOW, and STACK_OVERFLOW_MESSAGE in `src/errors.ts`.
 const STACK_OVERFLOW: u32 = 1005;
 pub const STACK_OVERFLOW_MESSAGE: &str = "This was a Java StackOverflowError. It was probably the result\nof an incorrect recursive function definition that caused TLC to enter\nan infinite loop when trying to compute the function or its application\nto an element in its putative domain.";
+
+/// EC.TLC_INVARIANT_VIOLATED_LEVEL, which `errorConstantToExitStatus` exits with as a failure to
+/// evaluate an invariant.
+const INVARIANT_VIOLATED_LEVEL: u32 = 2146;
 
 /// MESSAGE_CODE.general, the code of a message TLC builds from no template.
 pub const GENERAL: u32 = 1000;
@@ -258,7 +263,11 @@ impl FrontError {
         Some(CodedError {
             code,
             text: format_inner_message(code, message, is_tool),
-            exit_code,
+            exit_code: if code == INVARIANT_VIOLATED_LEVEL {
+                SAFETY_EVALUATION_FAILURE
+            } else {
+                exit_code
+            },
         })
     }
 }
