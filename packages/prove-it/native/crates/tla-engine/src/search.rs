@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 use tla_ir::{Ir, LiveTerm, Model, PredicateForm};
 use tla_live::{Event, Liveness, Term, Verdict};
 use tla_values::fingerprint::{Dense, Entries, Fingerprints, Overlaid, Parent, SharedFingerprints};
+use tla_values::random::JavaRandom;
 use tla_values::store::{KIND_SET, Outcome, TRUE};
 use tla_values::transfer::{EncodedStates, SharedEncoder, SharedStates, StateEncoder};
 use tla_values::{Bail, Id, NESTING_STACK_BYTES, Store};
@@ -127,6 +128,22 @@ pub trait Reporter {
     /// TLC has evaluated the substitutes, the constant definitions and the symmetry, and prints
     /// what it prints itself before it checks the assumptions.
     fn startup_done(&mut self) {}
+    /// Checks the assumption at this position of the IR's assumptions, which the engine can't
+    /// evaluate (AssertError, which compares TLC's message for a failure), after those before it
+    /// held, and reports what it prints. `Err` declines the model.
+    fn check_assumption(&mut self, _position: u32) -> Result<Delegated, String> {
+        Err(DELEGATED_ASSUMPTION.into())
+    }
+}
+
+/// Why the engine leaves an assumption to its caller.
+pub const DELEGATED_ASSUMPTION: &str = "unsupported: AssertError";
+
+/// What the caller found of an assumption the engine left to it.
+pub struct Delegated {
+    pub holds: bool,
+    /// The state it leaves TLC's generator in.
+    pub random: u64,
 }
 
 /// The counts TLC reports of a search, so far or in all.
@@ -1839,6 +1856,8 @@ struct Started {
     failed: Option<(u32, Bail)>,
     /// The configuration error a constant definition's value gave, which ends the startup.
     config_error: Option<String>,
+    /// The assumption the engine left to its caller, by its position.
+    delegated: Option<u32>,
 }
 
 // TLC's startup: it evaluates the substitutes and the constant definitions, then the assumptions
@@ -1906,6 +1925,7 @@ fn run_startup(machine: &mut Machine<'_>, startup: &Startup, is_native: bool) ->
             violated: None,
             failed: None,
             config_error: Some(message),
+            delegated: None,
         });
     }
     let (group, small_sets) = match &startup.symmetry {
@@ -1913,31 +1933,56 @@ fn run_startup(machine: &mut Machine<'_>, startup: &Startup, is_native: bool) ->
         None => (None, Vec::new()),
     };
     let printed = take(machine);
-    let mut violated = None;
-    let mut failed = None;
-    for (position, (evaluate, name)) in startup.assumptions.iter().enumerate() {
-        match crate::context::holds(machine, evaluate) {
-            Ok(true) => {}
-            Ok(false) => {
-                violated = Some(name.clone());
-                break;
-            }
-            Err(bail) if is_engine_limit(bail.0) && !is_native => return Err(bail),
-            Err(bail) => {
-                failed = Some((position as u32, bail));
-                break;
-            }
-        }
-    }
+    let assumed = check_assumptions(machine, startup, 0, is_native)?;
     Ok(Started {
         printed,
         small_sets,
         group,
         assumed: take(machine),
-        violated,
-        failed,
+        violated: assumed.violated,
+        failed: assumed.failed,
         config_error: None,
+        delegated: assumed.delegated,
     })
+}
+
+struct Assumed {
+    violated: Option<String>,
+    failed: Option<(u32, Bail)>,
+    delegated: Option<u32>,
+}
+
+// The assumptions from `from` on, until one is false, fails, or is left to the caller.
+fn check_assumptions(
+    machine: &mut Machine<'_>,
+    startup: &Startup,
+    from: usize,
+    is_native: bool,
+) -> Outcome<Assumed> {
+    let mut assumed = Assumed {
+        violated: None,
+        failed: None,
+        delegated: None,
+    };
+    for (position, (evaluate, name)) in startup.assumptions.iter().enumerate().skip(from) {
+        match crate::context::holds(machine, evaluate) {
+            Ok(true) => {}
+            Ok(false) => {
+                assumed.violated = Some(name.clone());
+                break;
+            }
+            Err(Bail(DELEGATED_ASSUMPTION)) if is_native => {
+                assumed.delegated = Some(position as u32);
+                break;
+            }
+            Err(bail) if is_engine_limit(bail.0) && !is_native => return Err(bail),
+            Err(bail) => {
+                assumed.failed = Some((position as u32, bail));
+                break;
+            }
+        }
+    }
+    Ok(assumed)
 }
 
 // The group of the SYMMETRY definition's value as `Tool.getSymmetryPerms` builds it, none where
@@ -2082,10 +2127,47 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             }
             reporter.startup_done();
             report(reporter, &started.assumed);
-            if let Some(name) = started.violated {
+            let mut assumed = Assumed {
+                violated: started.violated,
+                failed: started.failed,
+                delegated: started.delegated,
+            };
+            // The caller checks each assumption the engine leaves to it, and the engine goes on
+            // from the generator's state it leaves.
+            while let Some(position) = assumed.delegated {
+                let delegated = match reporter.check_assumption(position) {
+                    Ok(delegated) => delegated,
+                    Err(reason) => return SearchOutcome::Declined(reason),
+                };
+                if !delegated.holds {
+                    let name = context.startup.assumptions[position as usize].1.clone();
+                    return SearchOutcome::AssumptionViolated { name };
+                }
+                machine.random = JavaRandom::from_state(delegated.random);
+                assumed = match check_assumptions(
+                    &mut machine,
+                    &context.startup,
+                    position as usize + 1,
+                    settings.is_violation_reported,
+                ) {
+                    Ok(assumed) => assumed,
+                    Err(Bail(reason)) => return SearchOutcome::Declined(reason.into()),
+                };
+                let printed = std::mem::take(&mut machine.output)
+                    .into_iter()
+                    .filter_map(|printed| match printed {
+                        Printed::Values(values) => Some(values),
+                        Printed::InitialStates(_) => None,
+                    })
+                    .collect::<Vec<_>>();
+                printed
+                    .iter()
+                    .for_each(|values| reporter.startup_print(&machine.store, values));
+            }
+            if let Some(name) = assumed.violated {
                 return SearchOutcome::AssumptionViolated { name };
             }
-            if let Some((position, _)) = started.failed {
+            if let Some((position, _)) = assumed.failed {
                 return SearchOutcome::AssumptionFailed { position };
             }
             if context.is_diameter_searched || context.is_view_search_read {

@@ -273,6 +273,24 @@ Still to do:
     (`-noTE`) or `-continue` (`isTraceRecorded`).
 - `differential --native <binary> --native-front` runs the binary this way.
 
+## AssertError assumptions
+
+- AssertError compares TLC's message for a failure, which the engine doesn't word. Under
+  `compiler.is_native` it compiles to a failure `DELEGATED_ASSUMPTION`, and an assumption that
+  fails with it is left to the caller (`Reporter::check_assumption`): the binary checks it with
+  the trace evaluator (`Rebuilder::check_assumption`), after the startup and the assumptions
+  before it, with -tool or without, since under -tool a message TLC raises with a code holds the
+  code's markers. The engine takes TLC's generator from where the check left it and checks the
+  assumptions after it itself.
+- Still not native: an AssertError assumption that fails to evaluate, sets a register, or follows
+  the configuration's predicates or a SYMMETRY, and AssertError anywhere but an assumption.
+- The corpus models with AssertError assumptions are blocked elsewhere:
+  - ModuleSemanticsAssume: `RandomSubset` in an operator's argument doesn't compile (the argument
+    may not print);
+  - EmptySetEqAssume (`{<<>>} = [{} -> Nat]`) and RandomSubsetEmpty: the engine fails on an
+    assumption TLC finds true, which the replay catches ("it didn't fail");
+  - ValueSemanticsAssume: the replay enumerates an infinite set the engine failed on.
+
 ## Handoff
 
 - Two paths feed the search. With a recorded front (`PROVE_IT_FRONT/<spec>.front`, what TLC

@@ -6,7 +6,7 @@ use std::sync::mpsc;
 use std::time::{Instant, SystemTime};
 
 use tla_engine::search::{
-    ErrorSite, Reporter, SearchOutcome, Settings, Violation, ViolationKind, search,
+    Delegated, ErrorSite, Reporter, SearchOutcome, Settings, Violation, ViolationKind, search,
 };
 use tla_live::{Liveness, Verdict};
 use tla_values::print::{is_printable, write_value};
@@ -23,14 +23,14 @@ use crate::summary::{
 };
 use crate::time::{format_date, format_duration};
 use crate::trace::{
-    PostconditionRun, Postconditions, PrintedTrace, check_postconditions, rebuild_accepted,
-    rebuild_trace,
+    PostconditionRun, Postconditions, PrintedTrace, check_postconditions, format_print,
+    rebuild_accepted, rebuild_trace,
 };
 use tla_front::TlcVersion;
 use tla_front::config::{ModelConfig, parse_config};
 use tla_front::errors::FrontError;
 use tla_front::tlc_messages::CodedError;
-use tla_trace::{Site, pretty_print};
+use tla_trace::{Rebuilder, Site, Unsupported, pretty_print};
 use tla_trace::{Stats, Verdict as PostconditionVerdict};
 
 // TLC's exit statuses, from EC.ExitStatus.
@@ -283,13 +283,15 @@ enum Event {
     SymmetrySetsTooSmall(Vec<String>),
 }
 
-struct Relay {
+struct Relay<'ir> {
     sender: mpsc::Sender<Event>,
     /// Whether the run prints what TLC prints as it starts, which a recorded front holds.
     is_startup_printed: bool,
+    ir: &'ir tla_ir::Ir,
+    is_tool: bool,
 }
 
-impl Reporter for Relay {
+impl Reporter for Relay<'_> {
     fn initial_states_started(&mut self) {
         let _ = self.sender.send(Event::InitialStatesStarted);
     }
@@ -328,6 +330,23 @@ impl Reporter for Relay {
         if self.is_startup_printed {
             self.print(store, values);
         }
+    }
+
+    // The trace evaluator words TLC's messages, which AssertError compares. It runs on the
+    // search's thread, with its stack.
+    fn check_assumption(&mut self, position: u32) -> Result<Delegated, String> {
+        let checked = Rebuilder::new(self.ir)
+            .and_then(|mut rebuilder| rebuilder.check_assumption(position, self.is_tool))
+            .map_err(|Unsupported(reason)| format!("checking an assumption again: {reason}"))?;
+        if self.is_startup_printed {
+            for print in &checked.printed {
+                let _ = self.sender.send(Event::Print(Some(format_print(print))));
+            }
+        }
+        Ok(Delegated {
+            holds: checked.holds,
+            random: checked.random,
+        })
     }
 
     fn symmetry_sets_too_small(&mut self, names: &[String]) {
@@ -537,7 +556,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                     "SANY's report of the trace exploration spec TLC parses with the spec",
                 );
             }
-            if let Some(reason) = get_unprinted_startup(spec_path, &config, &ir) {
+            if let Some(reason) = get_unprinted_startup(spec_path, sany, &config, &ir) {
                 return report_not_native(printer, reason);
             }
             print_sany(printer, sany);
@@ -578,6 +597,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
         ..Settings::default()
     };
     let (sender, receiver) = mpsc::channel();
+    let is_tool = printer.is_tool;
     // How many initial states TLC generated, which TLCGet("stats") reports.
     let mut initial_generated = 0;
     // When the check of the temporal properties part way through the search that found a
@@ -591,6 +611,8 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                 let mut relay = Relay {
                     sender,
                     is_startup_printed,
+                    ir,
+                    is_tool,
                 };
                 search(ir, &settings, &mut relay)
             })
@@ -1473,27 +1495,19 @@ fn is_trace_recorded(args: &Parsed) -> bool {
 }
 
 // What TLC prints as it starts that the binary doesn't print from tla-front's model yet, which
-// keeps the run not native: TLC's report of the Java overrides it loads, its warning of a
-// constant-level invariant (one the IR doesn't keep, as TLC doesn't check it), and what it prints
-// as it processes the properties.
+// keeps the run not native: TLC's report of the Java overrides it loads, from the class beside the
+// spec named after each module SANY processed, its warning of a constant-level invariant (one the
+// IR doesn't keep, as TLC doesn't check it), and what it prints as it processes the properties.
 fn get_unprinted_startup(
     spec_path: &str,
+    sany: &str,
     config: &ModelConfig,
     ir: &tla_ir::Ir,
 ) -> Option<&'static str> {
     let directory = Path::new(spec_path).parent().unwrap_or(Path::new("."));
-    let directory = if directory.as_os_str().is_empty() {
-        Path::new(".")
-    } else {
-        directory
-    };
-    let has_classes = std::fs::read_dir(directory).is_ok_and(|entries| {
-        entries.flatten().any(|entry| {
-            entry
-                .path()
-                .extension()
-                .is_some_and(|extension| extension == "class")
-        })
+    let has_classes = sany.lines().any(|line| {
+        line.strip_prefix("Semantic processing of module ")
+            .is_some_and(|module| directory.join(format!("{module}.class")).exists())
     });
     if has_classes {
         return Some("the Java overrides TLC reports as it starts");
