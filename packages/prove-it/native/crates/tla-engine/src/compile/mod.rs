@@ -256,6 +256,11 @@ pub(crate) fn leaf(eval: Eval, footprint: Footprint) -> Compiled {
     }
 }
 
+// Where the definition cache keeps a definition compiled in a context.
+fn definition_index(context: &Context) -> usize {
+    usize::from(context.is_primed) + 2 * usize::from(context.is_init)
+}
+
 // A set's reference, or None for a set TLC keeps lazy that the engine has no reference for, such
 // as a UNION that streams duplicates.
 pub(crate) fn reference_of(set: &Compiled) -> Option<lazy::Reference> {
@@ -551,7 +556,9 @@ pub struct Compiler<'a> {
     options: Options,
     program: Program,
     texts: Vec<Option<Vec<u16>>>,
-    definition_cache: HashMap<NodeId, Entries<(u64, Compiled)>>,
+    // A definition compiled unprimed or primed, outside the initial predicate or in it, where a
+    // variable's value isn't yet known to stream in order (`is_in_order`).
+    definition_cache: HashMap<NodeId, [Option<(u64, Compiled)>; 4]>,
     recursive_operators: HashMap<usize, OperatorEntries>,
     recursive_functions: HashMap<(NodeId, usize), FunctionEntries>,
     expanding: HashSet<NodeId>,
@@ -1168,24 +1175,14 @@ impl<'a> Compiler<'a> {
         if !params.is_empty() {
             return unsupported("an operator used as a value");
         }
-        let index = usize::from(context.is_primed);
+        let index = definition_index(context);
         if let Some((entry, known)) = self
             .definition_cache
             .get(&node)
             .and_then(|entries| entries[index].clone())
         {
             self.note_cached_read(entry);
-            // The cache doesn't key on the initial predicate, where a variable's value isn't yet
-            // known to stream in order.
-            return Ok(if context.is_init {
-                Compiled {
-                    is_in_order: false,
-                    are_elements_in_order: false,
-                    ..known
-                }
-            } else {
-                known
-            });
+            return Ok(known);
         }
         if self.expanding.contains(&node) {
             return unsupported("a recursive zero-arity definition");
@@ -1822,7 +1819,7 @@ impl<'a> Compiler<'a> {
             let recursive = self.get_recursive_function(node, context, None)?;
             return Ok(self.materialize_recursive(&recursive));
         }
-        let index = usize::from(context.is_primed);
+        let index = definition_index(context);
         if let Some((entry, known)) = self
             .definition_cache
             .get(&node)

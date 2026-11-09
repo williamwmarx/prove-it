@@ -198,5 +198,16 @@ describe.if(ADDON !== undefined)("the native engine's lazy sets", () => {
     expect(await compareWithInterpreter(aliased, `${CONFIG}\nINVARIANT Same`)).toContainEqual(
       expect.stringMatching(/^\[engine\] native: declined: unsupported: enumerating a set TLC /),
     );
+    // And a UNION an invariant compiled first.
+    const united = [
+      "VARIABLES s, x",
+      "Alias == UNION {s}",
+      "Same == Alias = Alias",
+      "Init == s = (SUBSET {1}) \\cup SUBSET {2} /\\ x \\in Alias",
+      "Next == UNCHANGED <<s, x>>",
+    ];
+    expect(await compareWithInterpreter(united, `${CONFIG}\nINVARIANT Same`)).toContainEqual(
+      expect.stringMatching(/^\[engine\] native: declined: unsupported: enumerating a set TLC /),
+    );
   });
 });
