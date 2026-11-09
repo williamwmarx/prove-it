@@ -274,21 +274,6 @@ pub struct LiveProperty {
     pub formula: Vec<LiveTerm>,
 }
 
-impl Model {
-    /// Whether a property is read in the scope of the instance it comes from.
-    pub fn has_scoped_property(&self) -> bool {
-        self.property_invariant_scopes
-            .iter()
-            .chain(&self.initial_predicate_scopes)
-            .chain(
-                self.action_properties
-                    .iter()
-                    .map(|property| &property.scope),
-            )
-            .any(Option::is_some)
-    }
-}
-
 /// What the configuration and the checker ask of the search.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Model {

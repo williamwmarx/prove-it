@@ -62,7 +62,8 @@ pub fn print_failure(
     // TLC's worker adds the state to the behavior graph before it replays a failure in its next
     // states, which can fail or print in turn.
     let is_atom = matches!(stop.site, Site::Atom { .. });
-    if !ir.model.live_properties.is_empty() && !is_atom {
+    let is_initial_atom = matches!(stop.site, Site::InitialAtom(_));
+    if !ir.model.live_properties.is_empty() && !is_atom && !is_initial_atom {
         return Err("a failure in a model with temporal properties".into());
     }
     if stop.site == Site::Next && stop.reason == "a successor that isn't complete" {
@@ -187,8 +188,11 @@ pub fn print_failure(
         }
         // TLC reports an invariant that fails to evaluate without its call stack, but for the
         // call stack of its replay of the expansion where that fails in turn.
-        None if is_atom || matches!(stop.site, Site::Invariant(_)) && !failure.replay.is_failed => {
-        }
+        // Nor one adding an initial state to the behavior graphs, which its replay of the
+        // initial states doesn't meet again.
+        None if is_atom
+            || is_initial_atom
+            || matches!(stop.site, Site::Invariant(_)) && !failure.replay.is_failed => {}
         None => print_call_stack(printer, ir, &failure.call_stack),
     }
     // TLC counts the state it failed to fingerprint as generated, which the search stopped before
@@ -272,7 +276,10 @@ fn evaluate(ir: &Ir, stop: &ErrorStop<'_>) -> Result<Report, String> {
         // TLC prints no trace for a check of an initial state that fails.
         let trace = if matches!(
             stop.site,
-            Site::InitialConstraint(_) | Site::InitialInvariant(_) | Site::InitialPredicate(_)
+            Site::InitialConstraint(_)
+                | Site::InitialInvariant(_)
+                | Site::InitialPredicate(_)
+                | Site::InitialAtom(_)
         ) {
             Trace {
                 states: Vec::new(),

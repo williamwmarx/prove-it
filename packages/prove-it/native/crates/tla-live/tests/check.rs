@@ -202,6 +202,7 @@ fn names_the_first_atom_it_leaves_unanswered_as_it_adds_the_states() {
             state: 1,
             atom: 0,
             slot: 1,
+            is_initial: false,
         })
     );
 }
