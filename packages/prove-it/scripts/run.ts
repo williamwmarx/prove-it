@@ -11,7 +11,6 @@ const OUT_DIRECTORY = join(PACKAGE_DIRECTORY, ".scripts");
 
 const WORKER_ENTRIES = [
   "src/parallel-worker.ts",
-  "src/engine-worker.ts",
   "src/prover/prove-worker.ts",
   "scripts/check-model.ts",
   "scripts/isabelle-conformance-worker.ts",

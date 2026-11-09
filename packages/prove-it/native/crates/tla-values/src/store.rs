@@ -43,7 +43,7 @@ pub(crate) const SMALL_INT_MAX: i32 = 4096;
 const INITIAL_CAPACITY: usize = 1 << 12;
 // Each store's number, which an overlay keeps of the store it copied.
 static STORES: AtomicU64 = AtomicU64::new(0);
-const EMPTY_SLOT: Id = Id::MAX;
+pub(crate) const EMPTY_SLOT: Id = Id::MAX;
 // A short sort runs by insertion, in place; longer ones are merged from such runs.
 const INSERTION_LENGTH: usize = 16;
 // Blocks this small are searched in order. A larger one is in TLC's order and searched by halving.
