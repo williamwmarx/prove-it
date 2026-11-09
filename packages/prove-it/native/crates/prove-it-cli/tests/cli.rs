@@ -808,3 +808,31 @@ fn reports_a_division_by_zero_after_what_the_expansion_printed() {
     );
     std::fs::remove_dir_all(directory).expect("removed");
 }
+
+#[test]
+fn reports_a_property_an_initial_state_violates() {
+    let directory = std::env::temp_dir().join(format!(
+        "prove-it-cli-initial-property-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    let spec = "---- MODULE P ----\nEXTENDS Integers\nVARIABLE x\nInit == x \\in 1..10\nNext == x' = 0\nSpec == Init /\\ [][Next]_x\nNotNine == x # 9\n====\n";
+    for (file, contents) in [
+        ("P.tla", spec),
+        ("P.cfg", "SPECIFICATION Spec\nPROPERTY NotNine\n"),
+        ("P.front", ""),
+    ] {
+        std::fs::write(directory.join(file), contents).expect("a file");
+    }
+    let output = run(&directory, &["-workers", "1", "P"]);
+    let text = stdout(&output);
+    // As TLC's DoInitFunctorProperty: the state in the message, and no statistics.
+    assert_eq!(output.status.code(), Some(13), "{text}");
+    assert!(
+        text.contains(
+            "Computed 8 initial states...\nError: Property NotNine is violated by the initial state:\nx = 9\n\nFinished in "
+        ),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}

@@ -114,9 +114,9 @@ fn rebuild(
                 // TLC holds a violating state as it found it, and recovers a deadlocked one.
                 let ending = match *kind {
                     ViolationKind::Deadlock { .. } => Ending::Kept,
-                    ViolationKind::Invariant(_) | ViolationKind::InitialInvariant(_) => {
-                        Ending::Violation
-                    }
+                    ViolationKind::Invariant(_)
+                    | ViolationKind::InitialInvariant(_)
+                    | ViolationKind::InitialPredicate(_) => Ending::Violation,
                     ViolationKind::Lasso { .. } | ViolationKind::Accepted { .. } => Ending::Lasso,
                     ViolationKind::Error { .. } => {
                         return Err("a failure evaluating the model".into());

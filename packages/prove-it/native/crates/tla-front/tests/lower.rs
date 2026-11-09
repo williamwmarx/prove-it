@@ -41,6 +41,7 @@ fn lower(source: &str, name: &str) -> Ir {
             possible: Vec::new(),
             action_properties: Vec::new(),
             initial_predicates: Vec::new(),
+            initial_predicate_names: Vec::new(),
             view: None,
             alias: None,
             postconditions: Vec::new(),

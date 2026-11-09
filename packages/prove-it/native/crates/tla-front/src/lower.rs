@@ -885,8 +885,10 @@ impl<'a> Lowering<'a> {
             action_properties.push(IrActionProperty { action, subscript });
         }
         let mut initial_predicates = Vec::new();
+        let mut initial_predicate_names = Vec::new();
         for predicate in &properties.initial_predicates {
             initial_predicates.push(self.write_root(&predicate.expression)?);
+            initial_predicate_names.push(self.get_text(&predicate.name));
         }
         let view = config
             .view
@@ -928,6 +930,7 @@ impl<'a> Lowering<'a> {
             possible,
             action_properties,
             initial_predicates,
+            initial_predicate_names,
             view,
             alias,
             postconditions,
