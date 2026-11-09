@@ -232,6 +232,16 @@ pub struct Evaluator<'ir> {
     /// The generator RandomElement and RandomSubset draw from: seeded with the fingerprint of the
     /// state TLC expands, as its workers do, and `None` where the evaluator doesn't follow TLC's.
     pub random: Option<JavaRandom>,
+    /// What TLCGet and CounterExample read once the search is over, as a postcondition reads them.
+    pub runtime: Option<Runtime>,
+}
+
+/// The values a postcondition reads of the run: TLCGet("all:named"), TLCGet("stats") and TLCExt's
+/// CounterExample, built as TLC builds them.
+pub struct Runtime {
+    pub named: Value,
+    pub stats: Value,
+    pub counter_example: Value,
 }
 
 const MAXIMUM_DEPTH: u32 = 10_000;
@@ -259,6 +269,7 @@ impl<'ir> Evaluator<'ir> {
             call_stack: None,
             choices: Vec::new(),
             random: None,
+            runtime: None,
         }
     }
 
@@ -2193,6 +2204,15 @@ impl<'ir> Evaluator<'ir> {
                     _ => return fail(name.to_string()),
                 }
             }
+            "CounterExample" if self.runtime.is_some() => {
+                arity(0)?;
+                self.reads += 1;
+                self.runtime
+                    .as_ref()
+                    .expect("the runtime")
+                    .counter_example
+                    .clone()
+            }
             "TLCEval" => {
                 arity(1)?;
                 self.operand(&operands[0])?
@@ -2211,6 +2231,30 @@ impl<'ir> Evaluator<'ir> {
                     {
                         self.reads += 1;
                         Value::Int(self.level + i32::from(context.is_primed))
+                    }
+                    // Once the search is over, the run's counts, and its named registers, each
+                    // the tuple of one worker's value.
+                    Value::Str(key) if self.runtime.is_some() => {
+                        self.reads += 1;
+                        let key = String::from_utf16_lossy(&key.units);
+                        let runtime = self.runtime.as_ref().expect("the runtime");
+                        match key.as_str() {
+                            "all:named" => runtime.named.clone(),
+                            "stats" => runtime.stats.clone(),
+                            "generated" | "distinct" | "queue" | "diameter" => {
+                                let Value::Function(stats) = &runtime.stats else {
+                                    return fail("TLCGet");
+                                };
+                                let position = stats.domain.iter().position(|field| {
+                                    matches!(field, Value::Str(name) if String::from_utf16_lossy(&name.units) == key)
+                                });
+                                match position {
+                                    Some(position) => stats.range[position].clone(),
+                                    None => return fail("TLCGet"),
+                                }
+                            }
+                            _ => return fail("TLCGet"),
+                        }
                     }
                     _ => return fail("TLCGet"),
                 }
