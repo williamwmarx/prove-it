@@ -108,14 +108,26 @@ pub fn holds_all(machine: &mut Machine<'_>, predicates: &[Eval]) -> Outcome<bool
 }
 
 /// Whether every predicate holds of the successor that is current, given that each held of its
-/// parent: one that reads only variables the step left unchanged has the parent's value.
+/// parent.
 pub fn holds_all_changed(
     machine: &mut Machine<'_>,
     predicates: &[Predicate],
     successor: &[u32],
     parent: &[u32],
 ) -> Outcome<bool> {
-    for predicate in predicates {
+    Ok(first_failing_changed(machine, predicates, successor, parent)?.is_none())
+}
+
+/// The position of the first predicate that doesn't hold of the successor that is current, given
+/// that each held of its parent: one that reads only variables the step left unchanged has the
+/// parent's value.
+pub fn first_failing_changed(
+    machine: &mut Machine<'_>,
+    predicates: &[Predicate],
+    successor: &[u32],
+    parent: &[u32],
+) -> Outcome<Option<usize>> {
+    for (position, predicate) in predicates.iter().enumerate() {
         if let Some(vars) = &predicate.vars
             && vars
                 .iter()
@@ -124,10 +136,10 @@ pub fn holds_all_changed(
             continue;
         }
         if !holds(machine, &predicate.eval)? {
-            return Ok(false);
+            return Ok(Some(position));
         }
     }
-    Ok(true)
+    Ok(None)
 }
 
 /// A conjunct the engine checks: a name the configuration gives, as an identifier of it, or an

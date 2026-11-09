@@ -24,6 +24,7 @@ use tla_front::config::{ModelConfig, parse_config};
 
 // TLC's exit statuses, from EC.ExitStatus.
 const SUCCESS: i32 = 0;
+const DEADLOCK: i32 = 11;
 const SAFETY_VIOLATION: i32 = 12;
 const CONFIG_PARSE_ERROR: i32 = 151;
 
@@ -553,21 +554,32 @@ fn check_spec(spec_path: &str, args: &Parsed, printer: &mut Printer) -> i32 {
             format_probability(optimistic)
         ),
     );
+    let statistics = Statistics {
+        generated: counts.generated,
+        distinct: counts.distinct,
+        queued: 0,
+        depth: counts.depth,
+    };
+    print_statistics(printer, &statistics, start);
+    if let Some(summary) = out_degree_summary(&counts.out_degrees) {
+        printer.print(code::STATE_GRAPH_OUTDEGREE, Level::None, &summary);
+    }
+    print_finished(printer, start);
+    SUCCESS
+}
+
+/// After a search, TLC prints how many states it found and how deep it went, after the progress
+/// with -tool.
+fn print_statistics(printer: &mut Printer, statistics: &Statistics, start: Instant) {
     if printer.is_tool {
-        let statistics = Statistics {
-            generated: counts.generated,
-            distinct: counts.distinct,
-            queued: 0,
-            depth: counts.depth,
-        };
-        print_progress(printer, &statistics, Some(start));
+        print_progress(printer, statistics, Some(start));
     }
     printer.print(
         code::STATS,
         Level::None,
         &format!(
-            "{} states generated, {} distinct states found, 0 states left on queue.",
-            counts.generated, counts.distinct
+            "{} states generated, {} distinct states found, {} states left on queue.",
+            statistics.generated, statistics.distinct, statistics.queued
         ),
     );
     printer.print(
@@ -575,14 +587,9 @@ fn check_spec(spec_path: &str, args: &Parsed, printer: &mut Printer) -> i32 {
         Level::None,
         &format!(
             "The depth of the complete state graph search is {}.",
-            counts.depth
+            statistics.depth
         ),
     );
-    if let Some(summary) = out_degree_summary(&counts.out_degrees) {
-        printer.print(code::STATE_GRAPH_OUTDEGREE, Level::None, &summary);
-    }
-    print_finished(printer, start);
-    SUCCESS
 }
 
 /// Prints a violation the engine stopped at, as `printViolation` in `src/cli/tlc.ts` does, and
@@ -599,24 +606,68 @@ fn print_violation(
     if config.alias.is_some() || !config.postconditions.is_empty() || !config.possible.is_empty() {
         return None;
     }
-    match violation.kind {
+    let invariant_name = |owner: usize| {
+        ir.model
+            .invariants
+            .get(owner)
+            .map(|invariant| &ir.texts[invariant.root.name as usize])
+    };
+    let (code, text, exit_code) = match violation.kind {
         // TLC prints the initial state that violates an invariant in the same message, and no
         // statistics, since it checks the initial states before it searches.
         ViolationKind::InitialInvariant(owner) => {
-            let invariant = ir.model.invariants.get(owner)?;
+            let name = invariant_name(owner)?;
             let state = format_state(ir, &violation.store, violation.states.first()?)?;
             printer.print(
                 code::INVARIANT_VIOLATED_INITIAL,
                 Level::Error,
-                &format!(
-                    "Invariant {} is violated by the initial state:\n{state}",
-                    ir.texts[invariant.root.name as usize]
-                ),
+                &format!("Invariant {name} is violated by the initial state:\n{state}"),
             );
             print_finished(printer, start);
-            Some(SAFETY_VIOLATION)
+            return Some(SAFETY_VIOLATION);
         }
+        ViolationKind::Invariant(owner) => (
+            code::INVARIANT_VIOLATED_BEHAVIOR,
+            format!("Invariant {} is violated.", invariant_name(owner)?),
+            SAFETY_VIOLATION,
+        ),
+        ViolationKind::Deadlock => (code::DEADLOCK_REACHED, "Deadlock reached.".into(), DEADLOCK),
+    };
+    // TLC prints nothing of the trace until it has rebuilt all of it.
+    let mut steps = Vec::with_capacity(violation.states.len());
+    for (position, state) in violation.states.iter().enumerate() {
+        let label = match position.checked_sub(1) {
+            None => "Initial predicate",
+            Some(step) => {
+                let action = ir
+                    .model
+                    .actions
+                    .get(*violation.labels.get(step)? as usize)?;
+                &ir.texts[action.label as usize]
+            }
+        };
+        let state = format_state(ir, &violation.store, state)?;
+        steps.push(format!("{}: <{label}>\n{state}", position + 1));
     }
+    printer.print(code, Level::Error, &text);
+    printer.print(
+        code::BEHAVIOR_UP_TO_THIS_POINT,
+        Level::Error,
+        "The behavior up to this point is:",
+    );
+    for step in &steps {
+        printer.print(code::STATE_PRINT_2, Level::State, step);
+    }
+    let counts = &violation.counts;
+    let statistics = Statistics {
+        generated: counts.generated,
+        distinct: counts.distinct,
+        queued: counts.queued,
+        depth: counts.depth,
+    };
+    print_statistics(printer, &statistics, start);
+    print_finished(printer, start);
+    Some(exit_code)
 }
 
 /// Without -tool, TLC prints how long it ran for a person to read.
