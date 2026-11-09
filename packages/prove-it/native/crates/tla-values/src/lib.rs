@@ -25,6 +25,10 @@ pub const NESTING_STACK_BYTES: usize = if cfg!(debug_assertions) {
 
 /// Runs work on a thread with a stack for deeply nested values, and returns what it returns.
 pub fn on_nesting_stack<T: Send>(work: impl FnOnce() -> T + Send) -> T {
+    // WebAssembly runs on one thread, whose stack the module sets as it links.
+    #[cfg(target_arch = "wasm32")]
+    return work();
+    #[cfg(not(target_arch = "wasm32"))]
     std::thread::scope(|scope| {
         std::thread::Builder::new()
             .stack_size(NESTING_STACK_BYTES)
