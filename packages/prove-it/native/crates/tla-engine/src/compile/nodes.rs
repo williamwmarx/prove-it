@@ -291,8 +291,12 @@ impl Compiler<'_> {
                 self.compile_quantifier(bounds, *body, false, context)
             }
             NodeKind::Choose { pattern, set, body } => {
+                // TLC fails to evaluate a CHOOSE without a bound, only where it evaluates one.
                 let Some(set) = set else {
-                    return unsupported("unbounded CHOOSE");
+                    return Ok(leaf(
+                        eval(|_| Err(Bail("an unbounded CHOOSE"))),
+                        Footprint::default(),
+                    ));
                 };
                 self.compile_choose(pattern, *set, *body, context)
             }
