@@ -2288,3 +2288,22 @@ On the 4-core cloud machine, with `main` at a0f66ec before the merge of #31 and 
   about 40% under memo lookups, a third of that in the lookups themselves. The next step that
   could close the 1.3× gate is compiling guards and invariants to code rather than closure trees
   (3.1's later tier), not more tuning of the closures.
+
+#### After M7: ToString
+
+- **ToString** (`compile/builtins.rs`) prints its argument as `formatValue(v, true)` does, with a
+  string's `\f` and `\r` escaped too, as TLC's `StringValue.PrintVersion` escapes them, and ranks
+  the string it makes, as `rankString` does. It stops where the text depends on how TLC built the
+  value, which the store forgets, as Print and PrintT do (`is_printable`): a set of consecutive
+  integers (an interval), a record of several fields (in the order written), a function of one
+  key that isn't a field name (a record or not), and now also a set of 2^n sets past n = 6 (a
+  SUBSET) or of more than 1,999 functions (a set of functions, records or tuples), which TLC
+  prints as written rather than enumerated.
+- **The ranks it makes reach the interpreter.** The result of `check` carries `ranked`, the texts
+  the search ranked past the IR's, in the order ranked, and `native.ts` ranks them before it reads
+  a checkpoint, so the interpreter's string order is the one the TypeScript engine would have left
+  (ABI version 4).
+- With it, the native engine declines no corpus model the TypeScript engine searches:
+  simple_strings and UnicodeStringDiskStateQueue, the two it declined for ToString, now search in
+  Rust until the stop the TypeScript engine reaches. The other 49 it declines (TLC under 20 s) the
+  TypeScript engine refuses too, for the same reason.

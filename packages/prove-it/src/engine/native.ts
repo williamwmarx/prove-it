@@ -16,7 +16,7 @@ import {
   STRING_TAG,
   TRUE_TAG,
 } from "../transfer";
-import { formatPrinted, type Value } from "../values";
+import { formatPrinted, rankString, type Value } from "../values";
 import { fromEnumeratedValue } from "./convert";
 import { resetFingerprints } from "./fingerprint";
 import type { IrOutcome } from "./ir";
@@ -123,11 +123,13 @@ export type NativeOutcome =
       outDegrees: Float64Array;
       fingerprints: BigInt64Array;
       checkpoint?: NativeCheckpoint;
+      // The texts the search ranked, such as ToString's, in the order it ranked them.
+      ranked: string[];
     }
-  | ({ status: "stopped"; reason: string } & NativeCheckpoint);
+  | ({ status: "stopped"; reason: string; ranked: string[] } & NativeCheckpoint);
 
 // The contract between this loader and the addon, ABI_VERSION in its lib.rs.
-const ABI_VERSION = 3;
+const ABI_VERSION = 4;
 
 export const ADDON_FILE = "prove-it-engine.node";
 
@@ -473,6 +475,7 @@ export const toEngineResult = (
   width: number,
   atoms: LiveExpression[],
 ): EngineResult => {
+  outcome.ranked.forEach(rankString);
   const counts = outcome.counts;
   return {
     generatedStates: counts[0],
@@ -495,6 +498,7 @@ export const toStop = (
   atoms: LiveExpression[],
 ): Error => {
   if (outcome.status === "invariant") return new EngineInvariantError(outcome.reason);
+  outcome.ranked.forEach(rankString);
   const bailout = new Bailout(outcome.reason);
   bailout.checkpoint = toCheckpoint(outcome, width, atoms);
   return bailout;

@@ -10,6 +10,7 @@ import {
   compareWithInterpreter,
   COMPLETE,
   restoreSettings,
+  stopped,
 } from "./native-runs";
 
 afterEach(restoreSettings);
@@ -44,6 +45,25 @@ const getBag = (random: Random) => {
   return keys.length === 0
     ? "EmptyBag"
     : keys.map((key) => `("${key}" :> ${getInteger(random, 1, 3)})`).join(" @@ ");
+};
+
+// A value whose text doesn't depend on how TLC built it: no set of consecutive integers, which
+// may be an interval, and no record of several fields, whose order may be as written.
+const getPrintable = (random: Random, depth = 0): string => {
+  const choice = getInteger(random, 0, depth > 1 ? 2 : 6);
+  if (choice === 0) return String(getInteger(random, -3, 12));
+  if (choice === 1) {
+    return `"${listOf(random, 3, () => pick(random, ["a", "é", '\\"', "\\\\", "\\n", "\\t"])).join("")}"`;
+  }
+  if (choice === 2) return pick(random, ["TRUE", "FALSE"]);
+  if (choice === 3) {
+    return `<<${listOf(random, 3, () => getPrintable(random, depth + 1)).join(", ")}>>`;
+  }
+  if (choice === 4)
+    return pick(random, ["{}", "{0, 2}", "{-1, 3, 4}", '{"b", "a"}', "{{}, {1, 5}}"]);
+  if (choice === 5)
+    return `[${pick(random, ["a", "f1", "x_y"])} |-> ${getPrintable(random, depth + 1)}]`;
+  return `(0 :> ${getPrintable(random, depth + 1)} @@ 2 :> ${getPrintable(random, depth + 1)})`;
 };
 
 interface Case {
@@ -138,6 +158,15 @@ const CASES: Case[] = [
     invalid: ['SubBag("a" :> 0)', 'SubBag("a" :> "b")', "SubBag({1})"],
   },
   {
+    // A set of its results orders them by rank, which ToString gives each as it makes it.
+    name: "ToString",
+    valid: (random) =>
+      random() < 0.7
+        ? `ToString(${getPrintable(random)})`
+        : `{ToString(${getPrintable(random)}), "b", ToString(${getInteger(random, 8, 11)})}`,
+    invalid: [],
+  },
+  {
     name: "BagToSet and SetToBag",
     valid: (random) =>
       random() < 0.5 ? `BagToSet(${getBag(random)})` : `SetToBag(${getSet(random)})`,
@@ -178,4 +207,41 @@ describe.if(ADDON !== undefined)("the native engine's bridged builtins", () => {
       });
     }
   }
+
+  it("stops on ToString of a value whose text depends on how TLC built it", async () => {
+    for (const application of [
+      "ToString(1..3)",
+      "ToString({2})",
+      "ToString([a |-> 1, b |-> 2])",
+      'ToString(("a b" :> 1))',
+      'ToString(SUBSET {"a", "b", "c", "d", "e", "f", "g"})',
+      "ToString([1..3 -> 1..17])",
+    ]) {
+      const lines = await compareWithInterpreter(toSpec([application]), CONFIG);
+      expect(lines).toContainEqual(
+        expect.stringMatching(
+          stopped("ToString of a value whose text depends on how TLC built it"),
+        ),
+      );
+    }
+  });
+
+  // The strings ToString makes rank in the order made: "2006", made in the guard, before "2007",
+  // which s holds first. CHOOSE takes the string of the lowest rank once the interpreter takes
+  // over.
+  it("hands the ranks of ToString's strings over to the interpreter", async () => {
+    const body = [
+      "EXTENDS Integers, TLC",
+      "VARIABLES n, s",
+      "Init == n = 0 /\\ s = {}",
+      "Next == n < 3 /\\ ToString(n + 1003 + 1003) # \"q\" /\\ n' = n + 1 /\\ s' = s \\cup {ToString(1003 + 1004 - n)}",
+      "First == n < 2 \\/ (CHOOSE x \\in s : TRUE) = ToString(1003 + 1003)",
+    ];
+    const config = "INIT Init\nNEXT Next\nINVARIANT First\nCHECK_DEADLOCK FALSE";
+    for (const stop of ["1", "2"]) {
+      expect(await compareWithInterpreter(body, config, { PROVE_IT_STOP_AT: stop })).toContainEqual(
+        expect.stringMatching(stopped("stopped where PROVE_IT_STOP_AT asked")),
+      );
+    }
+  });
 });

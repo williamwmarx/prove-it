@@ -110,6 +110,8 @@ pub enum SearchOutcome {
         value_count: usize,
         /// Under PROVE_IT_FP_VERIFY, how many fingerprints two different keys shared.
         collisions: u64,
+        /// The texts the search ranked, such as ToString's, in the order it ranked them.
+        ranked: Vec<Vec<u16>>,
     },
     /// The search stopped, with a checkpoint unless it stopped computing the initial states, as
     /// the TypeScript engine computes them before the part of its search that hands over a
@@ -118,6 +120,7 @@ pub enum SearchOutcome {
         reason: String,
         checkpoint: Option<Box<Checkpoint>>,
         collisions: u64,
+        ranked: Vec<Vec<u16>>,
     },
     /// The engine broke one of its own invariants, or a self-check failed
     /// (`EngineInvariantError`).
@@ -646,6 +649,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         .collect();
     let mut store = Store::new();
     store.reset(ranked.iter().map(Vec::as_slice));
+    let initial_rank_count = store.get_string_order().len();
     let mut compiler = Compiler::new(ir, &mut store, settings.compile);
     let context = match EngineContext::build(&mut compiler, ir) {
         Ok(context) => context,
@@ -912,6 +916,10 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             }),
         })
     };
+    let ranked: Vec<Vec<u16>> = machine.store.get_string_order()[initial_rank_count..]
+        .iter()
+        .map(|text| text.to_vec())
+        .collect();
     match result {
         Err(bail) if bail.0 == OTHER_STEPS => SearchOutcome::Invariant(OTHER_STEPS.into()),
         Ok(()) => {
@@ -955,12 +963,14 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 value_count: machine.store.value_count(),
                 collisions,
                 fingerprints: search.states.fingerprints,
+                ranked,
             }
         }
         Err(bail) if !is_past_initial => SearchOutcome::Stopped {
             reason: bail.0.to_string(),
             checkpoint: None,
             collisions,
+            ranked,
         },
         Err(bail) => {
             let count = checkpoint_count;
@@ -1014,6 +1024,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 reason: bail.0.to_string(),
                 checkpoint,
                 collisions,
+                ranked,
             }
         }
     }

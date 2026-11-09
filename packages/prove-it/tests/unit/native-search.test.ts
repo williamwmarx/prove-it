@@ -617,19 +617,14 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     );
   });
 
-  it("leaves a model it can't search yet to the TypeScript engine", async () => {
-    // ToString prints a value as TLC would, which the native engine doesn't.
-    const body = [
-      "EXTENDS TLC",
-      "VARIABLE x",
-      "Init == x \\in {ToString(1), ToString(2)}",
-      "Next == UNCHANGED x",
-    ];
+  it("leaves a model it can't search to the TypeScript engine", async () => {
+    // TLC assigns x' \subseteq S as x' \in SUBSET S, which neither engine does.
+    const body = ["VARIABLE x", "Init == x = {}", "Next == x' \\subseteq {1, 2}"];
     const lines = await compareWithInterpreter(body, "INIT Init\nNEXT Next");
     expect(lines).toEqual([
       expect.stringMatching(/^\[engine\] native: ir: /),
-      expect.stringMatching(/^\[engine\] native: declined: the builtin ToString, /),
-      expect.stringMatching(/^\[engine\] checked 2 states on 1 thread /),
+      expect.stringMatching(declined("unsupported: x' \\\\subseteq S")),
+      expect.stringMatching(/^\[engine\] handed over after \d+ ms: x' \\subseteq S$/),
     ]);
   });
 
