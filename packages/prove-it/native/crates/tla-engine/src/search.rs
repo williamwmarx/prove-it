@@ -2194,8 +2194,9 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 reason: bail.0.to_string(),
                 checkpoint: None,
                 collisions,
-                violation: violation
-                    .and_then(|found| to_violation(found, &mut machine, &context, &mut search)),
+                violation: violation.and_then(|found| {
+                    to_violation(found, &mut machine, &context, &mut search, is_printing)
+                }),
             }
         }
         Err(bail) => {
@@ -2257,15 +2258,14 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     Err(reason) => return SearchOutcome::Invariant(reason.into()),
                 }
             };
-            // The search finds a trace's actions only where nothing it evaluates for them prints
-            // and the states it keeps are those TLC prints.
-            let is_traced =
-                settings.is_violation_reported && !is_printing && search.graph.is_none();
+            let is_traced = settings.is_violation_reported && search.graph.is_none();
             let violation = search
                 .violation
                 .take()
                 .filter(|_| is_traced)
-                .and_then(|found| to_violation(found, &mut machine, &context, &mut search));
+                .and_then(|found| {
+                    to_violation(found, &mut machine, &context, &mut search, is_printing)
+                });
             SearchOutcome::Stopped {
                 reason: bail.0.to_string(),
                 checkpoint,
@@ -2516,13 +2516,14 @@ fn label_path(
     Ok(labels)
 }
 
-// The violation a search found, with the store its states are in, or nothing when the engine can't
-// find the action of each step of its trace.
+// The violation a search found, with the store its states are in, or nothing where the search
+// ranked strings.
 fn to_violation(
     found: Found,
     machine: &mut Machine<'_>,
     context: &EngineContext,
     search: &mut Search<'_, States>,
+    is_printing: bool,
 ) -> Option<Box<Violation>> {
     let path = found
         .parent
@@ -2532,13 +2533,15 @@ fn to_violation(
         .map(|&index| search.states.state(index).to_vec())
         .collect();
     states.extend(found.last.iter().cloned());
+    // The search finds the steps' actions where it keeps the states TLC prints and nothing it
+    // evaluates for them prints. Elsewhere, or where it can't, the caller's rebuild of the trace
+    // finds them, as TLC does.
     let is_reduced = search.states.key_width.is_some() || search.canonicalizer.is_some();
-    let labels = if path.is_empty() {
-        Vec::new()
-    } else if is_reduced {
-        vec![None; states.len() - 1]
+    let unlabelled = vec![None; states.len().saturating_sub(1)];
+    let labels = if path.is_empty() || is_reduced || is_printing {
+        unlabelled
     } else {
-        let mut labels = label_path(
+        label_path(
             machine,
             context,
             search,
@@ -2546,9 +2549,10 @@ fn to_violation(
             found.last.as_deref(),
             false,
         )
-        .ok()?;
-        labels.remove(0);
-        labels
+        .map_or(unlabelled, |mut labels| {
+            labels.remove(0);
+            labels
+        })
     };
     // The store goes with the violation, so whether the search, or finding the actions, ranked
     // strings is read here, as for the search's outcome.
