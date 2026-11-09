@@ -56,6 +56,13 @@ export const getEngineThreads = () => {
   return Number.isInteger(configured) && configured > 0 ? configured : 1;
 };
 
+// PROVE_IT_SHARED_LEVEL: the fewest states a level of the native search shares between its
+// threads, or -1 for the engine's own threshold. A test sets it low to share every level.
+export const getMinimumSharedLevel = () => {
+  const configured = Number(getEnvironment()?.PROVE_IT_SHARED_LEVEL ?? -1);
+  return Number.isInteger(configured) && configured >= 0 ? configured : -1;
+};
+
 // The file system and whether this is the main thread, on a host that has them. The debug logs
 // below are written only from the main thread, since a worker sees the same settings.
 const getMainThreadFileSystem = () => {
