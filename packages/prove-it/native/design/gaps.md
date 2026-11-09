@@ -324,3 +324,12 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   that is the engine's own limit still declines. Elsewhere it declines as before, so the
   interpreter, which checks the assumptions itself, prints nothing twice. The CLI leaves it to
   the interpreter until it prints it.
+
+## A function a definition gives, applied in an action
+
+- `N[n \in S] == UNCHANGED <<x>>` applied in an action as `\E i \in S : N[i]` is a FcnLambdaValue
+  TLC walks as an action (`getNextStates`), so `x'` is assigned. The engine walked only a function
+  a construction or a LET gives, and evaluated a definition's, so it stopped on "primed variable
+  not assigned" where TLC completes. It now walks the body of a function a definition gives too,
+  a recursive one included, unless TLC evaluated the definition at startup. coverage/I (TLC's
+  tests) now completes in Rust: 20 states generated, 5 distinct, as TLC.

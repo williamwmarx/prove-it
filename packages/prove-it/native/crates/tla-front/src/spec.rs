@@ -9,6 +9,7 @@ use crate::config::ConfigValue;
 use crate::dependencies::{DefinitionFacts, Level};
 use crate::environment::Environment;
 use crate::errors::{FrontError, describe_range};
+use crate::eval::Evaluator;
 use crate::instances::map_children;
 use crate::resolve::{Result, Tables};
 
@@ -220,6 +221,8 @@ pub struct Expansion<'a> {
     pub version: TlcVersion,
     /// Whether TLC expands the formula as a property, which unrolls each \A over a constant set.
     pub is_property: bool,
+    /// What computes the sets a property's \A ranges over, without which it is `NotYet`.
+    pub evaluator: Option<&'a Evaluator<'a>>,
 }
 
 impl Expansion<'_> {
@@ -341,11 +344,33 @@ impl Expansion<'_> {
                     );
                 }
             }
+            // TLC unrolls a property's \A over constant sets, and stops at a tautology.
             ExpressionKind::Quantified {
                 quantifier: Quantifier::Forall,
-                ..
-            } if self.is_property => {
-                return Err(not_yet("a property's \\A that TLC unrolls"));
+                bounds,
+                body,
+            } if self.is_property
+                && bounds
+                    .iter()
+                    .all(|bound| self.level(&bound.set, scope) == Level::Constant) =>
+            {
+                let Some(evaluator) = self.evaluator else {
+                    return Err(not_yet("a property's \\A that TLC unrolls"));
+                };
+                let mut expanded = Vec::new();
+                for binding in evaluator.get_bindings(bounds, scope)? {
+                    expanded.extend(self.expand(
+                        body,
+                        binding.as_ref(),
+                        expanding,
+                        is_substituted,
+                        Some(Rc::from(describe_range(body))),
+                    )?);
+                }
+                if expanded.is_empty() {
+                    return Err(not_yet("a property TLC finds a tautology"));
+                }
+                return Ok(expanded);
             }
             _ => {}
         }
@@ -733,6 +758,7 @@ pub fn get_specification(
         facts,
         version,
         is_property: false,
+        evaluator: None,
     };
     let mut init_conjuncts = Vec::new();
     let mut next_actions = Vec::new();
@@ -890,6 +916,7 @@ pub fn get_properties(
     environment: &Environment,
     facts: &DefinitionFacts,
     version: TlcVersion,
+    evaluator: Option<&Evaluator>,
 ) -> Result<Properties> {
     let mut properties = Properties::default();
     let expansion = Expansion {
@@ -897,6 +924,7 @@ pub fn get_properties(
         facts,
         version,
         is_property: version != TlcVersion::V1_7_4,
+        evaluator,
     };
     for name in &config.properties {
         let Some(definition) = get_config_predicate("property", name, environment, facts)? else {

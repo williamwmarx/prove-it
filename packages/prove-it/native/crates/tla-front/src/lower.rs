@@ -3,7 +3,6 @@
 //! texts in the order it first uses them, and the builtins and constants the names resolve to.
 //! `tla_ir::encode` writes the blob.
 
-use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -11,9 +10,9 @@ use tla_ir::{
     ActionProperty as IrActionProperty, Atom as IrAtom, AtomKind, Bound as IrBound,
     Builtin as IrBuiltin, ConfigName, Constant, Definition as IrDefinition, DefinitionForm,
     EnabledActions, Index, Ir, Junction, LiveProperty, LiveTerm, Model, Name as IrName, Node,
-    NodeId, NodeKind, Nodes, Param, PathStep, Pattern, Possible, Printed, Resolution,
+    NodeId, NodeKind, Nodes, Param, PathStep, Pattern, PermutedSet, Possible, Printed, Resolution,
     Scope as IrScope, ScopeBinding, Selector as IrSelector, SourceRange as IrRange, Startup,
-    TextId, Update, Value, Values,
+    Symmetry, TextId, Update, Value, Values,
 };
 
 use crate::ast::*;
@@ -24,12 +23,27 @@ use crate::errors::{FrontError, describe_range};
 use crate::hash::{FastMap, FastSet};
 use crate::live::{Live, Liveness};
 use crate::resolve::Result;
+use crate::values::ValueOrder;
 
-/// A model value named like `a_b` has the type `a`, which TLC won't compare with another type.
-fn get_model_value_type(name: &str) -> Option<char> {
-    let mut characters = name.chars();
-    let first = characters.next()?;
-    (name.encode_utf16().count() > 2 && characters.next() == Some('_')).then_some(first)
+/// SyntaxTreeNode.getHumanReadableImage, which joins the tokens of an expression without spaces.
+fn get_expression_image(expression: &Expression) -> String {
+    let name = expression.reference().unwrap_or_default();
+    match &expression.kind {
+        ExpressionKind::Identifier { .. } => name.to_string(),
+        ExpressionKind::Apply { args, .. } => {
+            let args: Vec<String> = args.iter().map(|arg| get_expression_image(arg)).collect();
+            if name
+                .chars()
+                .next()
+                .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+            {
+                format!("{name}({})", args.join(","))
+            } else {
+                args.join(&name)
+            }
+        }
+        _ => String::new(),
+    }
 }
 
 /// The texts TLC ranks, which come first in the IR's table, in rank order.
@@ -141,120 +155,15 @@ impl<'a> Lowering<'a> {
         Ok(index)
     }
 
-    /// The rank of a string or model value in TLC's string order, which the configuration's
-    /// values are all in.
-    fn get_rank(&self, text: &str) -> Result<u32> {
-        self.ranked
-            .ranks
-            .get(text)
-            .copied()
-            .ok_or_else(|| FrontError::NotYet("a configuration value TLC doesn't rank".to_owned()))
+    /// TLC's order of the configuration's values, by the texts' ranks.
+    fn order(&self) -> ValueOrder<'_> {
+        ValueOrder {
+            ranks: &self.ranked.ranks,
+        }
     }
 
-    /// `compareValues` on the configuration's values. Values of kinds TLC can't compare stop the
-    /// front end, whose messages the startup phase will word.
-    fn compare(&self, left: &ConfigValue, right: &ConfigValue) -> Result<Ordering> {
-        Ok(match (left, right) {
-            (ConfigValue::Number(left), ConfigValue::Number(right)) => left.total_cmp(right),
-            (ConfigValue::String(left), ConfigValue::String(right)) => {
-                if left == right {
-                    Ordering::Equal
-                } else {
-                    self.get_rank(left)?.cmp(&self.get_rank(right)?)
-                }
-            }
-            (ConfigValue::Boolean(left), ConfigValue::Boolean(right)) => {
-                if left == right {
-                    Ordering::Equal
-                } else if left < right {
-                    Ordering::Less
-                } else {
-                    Ordering::Greater
-                }
-            }
-            (ConfigValue::ModelValue(left), ConfigValue::ModelValue(right)) => {
-                if get_model_value_type(left).is_some()
-                    && get_model_value_type(right).is_some()
-                    && get_model_value_type(left) != get_model_value_type(right)
-                {
-                    return Err(FrontError::NotYet(
-                        "differently-typed model values".to_owned(),
-                    ));
-                }
-                self.get_rank(left)?.cmp(&self.get_rank(right)?)
-            }
-            (ConfigValue::ModelValue(name), _) | (_, ConfigValue::ModelValue(name))
-                if get_model_value_type(name).is_some() =>
-            {
-                return Err(FrontError::NotYet(
-                    "a typed model value compared".to_owned(),
-                ));
-            }
-            (ConfigValue::ModelValue(_), _) => Ordering::Less,
-            (_, ConfigValue::ModelValue(_)) => Ordering::Greater,
-            (ConfigValue::Set(left), ConfigValue::Set(right)) => {
-                if left.len() != right.len() {
-                    left.len().cmp(&right.len())
-                } else {
-                    for (left, right) in left.iter().zip(right) {
-                        let comparison = self.compare(left, right)?;
-                        if comparison != Ordering::Equal {
-                            return Ok(comparison);
-                        }
-                    }
-                    Ordering::Equal
-                }
-            }
-            _ => {
-                return Err(FrontError::NotYet(
-                    "configuration values TLC can't compare".to_owned(),
-                ));
-            }
-        })
-    }
-
-    /// `toValue`: a set of the configuration is sorted and its duplicates dropped, as `createSet`
-    /// does.
     fn normalize(&self, value: &ConfigValue) -> Result<ConfigValue> {
-        let ConfigValue::Set(elements) = value else {
-            return Ok(value.clone());
-        };
-        let elements = elements
-            .iter()
-            .map(|element| self.normalize(element))
-            .collect::<Result<Vec<_>>>()?;
-        let mut is_sorted = true;
-        for pair in elements.windows(2) {
-            if self.compare(&pair[0], &pair[1])? != Ordering::Less {
-                is_sorted = false;
-                break;
-            }
-        }
-        if elements.len() < 2 || is_sorted {
-            return Ok(ConfigValue::Set(elements));
-        }
-        // Sorting compares the elements pairwise; a comparison that fails stops the front end.
-        let mut failure = None;
-        let mut sorted = elements.clone();
-        sorted.sort_by(|left, right| {
-            self.compare(left, right).unwrap_or_else(|error| {
-                failure.get_or_insert(error);
-                Ordering::Equal
-            })
-        });
-        if let Some(error) = failure {
-            return Err(error);
-        }
-        let mut unique: Vec<ConfigValue> = Vec::with_capacity(sorted.len());
-        for element in sorted {
-            if let Some(last) = unique.last()
-                && self.compare(last, &element)? == Ordering::Equal
-            {
-                continue;
-            }
-            unique.push(element);
-        }
-        Ok(ConfigValue::Set(unique))
+        self.order().normalize(value)
     }
 
     /// `createStateEncoder`'s `encode` of one value, whose strings and model values name their
@@ -920,11 +829,6 @@ impl<'a> Lowering<'a> {
         if is_scoped {
             return Err(not_yet("a property read in a scope"));
         }
-        if config.symmetry.is_some() {
-            return Err(not_yet(
-                "SYMMETRY, which the engine's startup phase will compute",
-            ));
-        }
         let init = self.write_root(init)?;
         let next = self.write_root(next)?;
         let scope = self.get_scope_index(specification.scope.as_ref());
@@ -997,7 +901,7 @@ impl<'a> Lowering<'a> {
             Some(liveness) => self.write_liveness(liveness)?,
             None => (Vec::new(), Vec::new(), Vec::new()),
         };
-        let startup = self.write_startup()?;
+        let startup = self.write_startup(config)?;
         Ok(Model {
             init,
             next,
@@ -1034,7 +938,7 @@ impl<'a> Lowering<'a> {
     /// `getIrStartup`: what TLC evaluates when it starts. The substitutes it checks, the constant
     /// definitions with effects (one without computes the same wherever it is first used), and
     /// the assumptions that aren't axioms. SYMMETRY is `NotYet` before this.
-    fn write_startup(&mut self) -> Result<Startup> {
+    fn write_startup(&mut self, config: &crate::config::ModelConfig) -> Result<Startup> {
         let environment = self.environment;
         let mut substitutes = Vec::new();
         for (name, target) in environment.substitutions.iter() {
@@ -1078,6 +982,10 @@ impl<'a> Lowering<'a> {
             .iter()
             .map(|definition| self.get_definition_index(definition))
             .collect();
+        let symmetry = match &config.symmetry {
+            None => None,
+            Some(name) => Some(self.write_symmetry(config, name)?),
+        };
         let mut assumptions = Vec::new();
         for assumption in &environment.assumptions {
             if assumption.is_axiom {
@@ -1090,8 +998,78 @@ impl<'a> Lowering<'a> {
         Ok(Startup {
             substitutes,
             definitions,
-            symmetry: None,
+            symmetry,
             assumptions,
+        })
+    }
+
+    /// The SYMMETRY definition and `getPermutedSets`: the sets its body permutes, each by the
+    /// name the configuration substitutes for it or the text of its expression, and, for
+    /// `Permutations(S)` of a name the configuration doesn't replace with `<-`, S.
+    fn write_symmetry(
+        &mut self,
+        config: &crate::config::ModelConfig,
+        name: &str,
+    ) -> Result<Symmetry> {
+        let Some(definition) = self.environment.definitions.get(name).cloned() else {
+            return Err(FrontError::NotYet(
+                "a SYMMETRY the spec doesn't define".to_owned(),
+            ));
+        };
+        let DefinitionKind::Operator { params, .. } = &definition.kind else {
+            return Err(FrontError::NotYet("a SYMMETRY function".to_owned()));
+        };
+        if !params.is_empty() {
+            return Err(FrontError::NotYet(
+                "a SYMMETRY operator with parameters".to_owned(),
+            ));
+        }
+        let index = self.get_definition_index(&definition);
+        let config_names: FastMap<&str, &str> = config
+            .substitutions
+            .iter()
+            .filter(|substitution| substitution.module.is_none())
+            .map(|substitution| (substitution.target.as_str(), substitution.name.as_str()))
+            .collect();
+        let is_substituted = |name: &str| {
+            config
+                .substitutions
+                .iter()
+                .any(|substitution| substitution.name == name)
+        };
+        let permuted = match &definition.body.kind {
+            ExpressionKind::Apply { args, .. } => args.clone(),
+            _ => Vec::new(),
+        };
+        let mut permuted_sets = Vec::new();
+        for set in permuted {
+            let operand = match &set.kind {
+                ExpressionKind::Apply { args, .. }
+                    if args.len() == 1 && set.reference().as_deref() == Some("Permutations") =>
+                {
+                    Some(args[0].clone())
+                }
+                _ => None,
+            };
+            let image = get_expression_image(operand.as_ref().unwrap_or(&set));
+            let name = config_names
+                .get(image.as_str())
+                .map_or(image.clone(), |name| (*name).to_owned());
+            let name = self.get_text(&name);
+            let operand = match operand {
+                Some(operand)
+                    if matches!(operand.kind, ExpressionKind::Identifier { .. })
+                        && !is_substituted(&operand.reference().unwrap_or_default()) =>
+                {
+                    Some(self.write_root(&operand)?)
+                }
+                _ => None,
+            };
+            permuted_sets.push(PermutedSet { name, operand });
+        }
+        Ok(Symmetry {
+            definition: index,
+            permuted_sets,
         })
     }
 

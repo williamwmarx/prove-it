@@ -488,7 +488,7 @@ fn main() -> ExitCode {
                 let config = parse_config(&source, TlcVersion::Master)
                     .map_err(|error| FrontError::Config(error.message))?;
                 let facts = create_definition_facts(&environment);
-                get_properties(&config, &environment, &facts, TlcVersion::Master)
+                get_properties(&config, &environment, &facts, TlcVersion::Master, None)
             });
             dump::properties(&properties).write(&mut line);
         } else if mode == "spec" {

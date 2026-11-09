@@ -326,3 +326,26 @@ What's left `NotYet`:
 - `create_environment` still returns `NotYet` for a substitute that isn't of constant level. The TypeScript environment evaluates it while linking, where the engine evaluates it at startup, so the two would differ on a substitute that fails (etest7, TLCGetNamedUndefined).
 - A configuration's operator table (`F(0) = 1`) gives the environment's builtin its rows. `lower.rs` writes them with `Builtin::TABLE`, each row's arguments as a tuple.
 - model-full: 831 of 1,111 with 0 differing, and 2,336 of 2,711 with `--mutate 400`.
+
+## The constant evaluator as built (`eval.rs`)
+
+`eval::Evaluator` evaluates the constant expressions the front end needs values of before the search, as `evaluate.ts` computes them:
+
+- booleans, integers, strings, model values, and finite sets of them, normalized in TLC's order (`values::ValueOrder`, by the texts' ranks);
+- configuration constants, substitutions, definitions and closures, and LET;
+- the arithmetic, comparison and set operators of Naturals, Integers and FiniteSets, and membership in Nat, Int and STRING;
+- junctions, IF, quantifiers, set filters and set maps.
+
+Anything else is `NotYet`: tuples, records, functions, CHOOSE, SUBSET, TLC 1.7.4's streamed sets, and every evaluation error, which TLC's startup reports.
+
+`get_bindings` binds a list of bounds to their sets' elements in `forEachBoundElement`'s order, the last bound outermost.
+
+A property's `\A` over constant sets is now unrolled, as `expandTemporal` does for properties, with each instance named by `describeRange` of the body. A `\A` over sets that aren't constant stays a single formula, as in TypeScript.
+
+model-full: 842 of 1,111 with 0 differing, and 2,355 of 2,711 with `--mutate 400`.
+
+The liveness session wires the evaluator into `live.rs`: the temporal quantifiers over constant sets, the constant parts and the constant IF conditions.
+
+## SYMMETRY in the startup section
+
+`lower.rs` writes the SYMMETRY entry of `model.startup` as `getIrStartup` does: the definition, then `getPermutedSets` of its body. That is each argument the body's operator applies to, named by the configuration's substitution for its image or by the image (`getHumanReadableImage`, over the resolved keys as TypeScript's AST holds them). For `Permutations(S)` of an identifier the configuration doesn't replace with `<-`, it also writes S. The engine evaluates the group. model-full: 918 of 1,111 with 0 differing, and 2,441 of 2,711 with `--mutate 400`.
