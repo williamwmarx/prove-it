@@ -16,7 +16,9 @@ use tla_values::transfer::{EncodedStates, SharedEncoder, SharedStates, StateEnco
 use tla_values::{Bail, Id, Store};
 
 use crate::compile::{CompileError, Compiler, DISTINCT_SLOT, LEVEL_SLOT, NEXT_LEVEL_SLOT, Options};
-use crate::context::{EngineContext, first_failing, holds_all, holds_all_changed};
+use crate::context::{
+    EngineContext, first_failing, first_failing_changed, holds_all, holds_all_changed,
+};
 use crate::live::{LiveGraph, Table, answer_atoms};
 use crate::machine::{Machine, Printed, UNASSIGNED};
 use crate::symmetry::Canonicalizer;
@@ -39,8 +41,8 @@ pub struct Settings {
     /// through TLC's actions, and run each ENABLED answered from the steps, and fail where the two
     /// differ.
     pub is_live_checked: bool,
-    /// Whether the caller reports a violation the search stops at itself, once the search has
-    /// passed on what the spec printed before it.
+    /// Whether the caller reports a violation the search stops at itself: the search passes on
+    /// what the spec printed before it, and finds the action of each step of its trace.
     pub is_violation_reported: bool,
 }
 
@@ -139,8 +141,14 @@ pub enum SearchOutcome {
 /// A violation the search stopped at, with the states TLC prints for it.
 pub struct Violation {
     pub kind: ViolationKind,
-    /// The states, each as its variables' values in the engine's order, ids of `store`.
+    /// The states of the trace, each as its variables' values in the engine's order, ids of
+    /// `store`.
     pub states: Vec<Vec<Id>>,
+    /// For each step of the trace, the position in the model's actions of the first of TLC's
+    /// actions that takes it.
+    pub labels: Vec<u32>,
+    /// The counts TLC reports after the trace.
+    pub counts: StopCounts,
     pub store: Store,
 }
 
@@ -148,12 +156,28 @@ pub enum ViolationKind {
     /// An initial state violates an invariant: its position in the model's invariants, then
     /// past them in its properties checked as invariants.
     InitialInvariant(usize),
+    /// The last state of the trace violates an invariant, as an `InitialInvariant` names it.
+    Invariant(usize),
+    /// The last state of the trace has no successors.
+    Deadlock,
 }
 
-// What a search found stopping it, before it hands over the store.
+/// The counts of a search that stopped, as TLC reports them.
+#[derive(Clone, Copy, Default)]
+pub struct StopCounts {
+    pub generated: u64,
+    pub distinct: u64,
+    pub queued: u64,
+    pub depth: u64,
+}
+
+// What a search found stopping it, before it hands over the store: the path of states found to
+// the trace's last state or to its parent, then that state when the search didn't keep it.
 struct Found {
     kind: ViolationKind,
-    states: Vec<Vec<Id>>,
+    path: Vec<u32>,
+    last: Option<Vec<Id>>,
+    counts: StopCounts,
 }
 
 /// What PROVE_IT_LIVE_CHECK finds when TLC's actions take other steps than the next-state relation.
@@ -294,6 +318,21 @@ struct States {
 impl States {
     fn count(&self) -> usize {
         self.parents.len()
+    }
+
+    // The states from an initial state to this one, each the parent of the next.
+    fn path_to(&self, index: usize) -> Vec<u32> {
+        let mut path = vec![index as u32];
+        while let parent @ 0.. = self.parents[*path.last().expect("a state") as usize] {
+            path.push(parent as u32);
+        }
+        path.reverse();
+        path
+    }
+
+    fn state(&self, index: u32) -> &[Id] {
+        let index = index as usize;
+        &self.ids[index * self.width..(index + 1) * self.width]
     }
 
     fn key_of(&self, index: usize) -> &[Id] {
@@ -487,7 +526,9 @@ impl Search<'_> {
                     kind: ViolationKind::InitialInvariant(
                         context.initial_invariant_owners[failing],
                     ),
-                    states: vec![machine.current().to_vec()],
+                    path: Vec::new(),
+                    last: Some(machine.current().to_vec()),
+                    counts: StopCounts::default(),
                 });
                 return Err(Bail("an invariant violated in an initial state"));
             }
@@ -616,10 +657,26 @@ impl Search<'_> {
         }
         if !is_in_model || is_new {
             self.swap_successor(machine, successor_epoch, self.next_level_id);
-            let holds =
-                holds_all_changed(machine, &context.invariants, &self.successor, &self.current);
+            let failing =
+                first_failing_changed(machine, &context.invariants, &self.successor, &self.current);
             self.swap_successor(machine, self.expansion_epoch, self.level_id);
-            if !holds? {
+            if let Some(failing) = failing? {
+                let count = self.states.count() as u64;
+                self.violation = Some(Found {
+                    kind: ViolationKind::Invariant(context.invariant_owners[failing]),
+                    path: self.states.path_to(self.expanding),
+                    last: Some(self.successor.clone()),
+                    counts: StopCounts {
+                        generated: self.generated,
+                        distinct: count + u64::from(is_new),
+                        queued: count - self.expanding as u64 - 1,
+                        depth: if is_new {
+                            self.depth.max(self.level + 1)
+                        } else {
+                            self.depth
+                        },
+                    },
+                });
                 return Err(Bail("an invariant violated"));
             }
         }
@@ -688,10 +745,11 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         Err(error) => return SearchOutcome::Declined(describe(error)),
     };
     let is_distinct_read = compiler.is_distinct_read;
+    let is_printing = compiler.is_printing;
     // Checking a successor once the walk reaches the next reorders nothing anyone can see where
     // nothing prints, reads the count of distinct states, or fingerprints a VIEW or symmetry's
     // representative, which the walk would then interleave with.
-    let is_pipelined = !compiler.is_printing
+    let is_pipelined = !is_printing
         && !is_distinct_read
         && context.view.is_none()
         && model.symmetry.is_none()
@@ -876,6 +934,18 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 }
             }
             if search.successors == 0 && model.check_deadlock {
+                let count = search.states.count() as u64;
+                search.violation = Some(Found {
+                    kind: ViolationKind::Deadlock,
+                    path: search.states.path_to(expanding),
+                    last: None,
+                    counts: StopCounts {
+                        generated: search.generated,
+                        distinct: count,
+                        queued: count - expanding as u64 - 1,
+                        depth: search.depth.max(1),
+                    },
+                });
                 return Err(Bail("deadlock"));
             }
             if let Some(graph) = &mut search.graph {
@@ -1050,13 +1120,8 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 reason: bail.0.to_string(),
                 checkpoint: None,
                 collisions,
-                violation: violation.map(|found| {
-                    Box::new(Violation {
-                        kind: found.kind,
-                        states: found.states,
-                        store: std::mem::replace(&mut machine.store, Store::new()),
-                    })
-                }),
+                violation: violation
+                    .and_then(|found| to_violation(found, &mut machine, &context, &search)),
             }
         }
         Err(bail) => {
@@ -1114,11 +1179,23 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     Err(reason) => return SearchOutcome::Invariant(reason.into()),
                 }
             };
+            // The search finds a trace's actions only where nothing it evaluates for them prints
+            // and the states it keeps are those TLC prints.
+            let is_traced = settings.is_violation_reported
+                && !is_printing
+                && search.graph.is_none()
+                && search.states.key_width.is_none()
+                && model.symmetry.is_none();
+            let violation = search
+                .violation
+                .take()
+                .filter(|_| is_traced)
+                .and_then(|found| to_violation(found, &mut machine, &context, &search));
             SearchOutcome::Stopped {
                 reason: bail.0.to_string(),
                 checkpoint,
                 collisions,
-                violation: None,
+                violation,
             }
         }
     }
@@ -1263,26 +1340,25 @@ fn write_state_log(
     let _ = writer.flush();
 }
 
-// The action of each step of a path of the search's states, as TLC's `Tool#getState` finds it:
-// for the step from path[i - 1] to path[i], the first of TLC's actions with a step from the one to
-// the other, or `None` for the first state or where none does. Empty when the engine has no walk
-// of TLC's actions.
+// The action of each step of a path of the search's states, then of the step from its last state
+// to `last` when given, as TLC's `Tool#getState` finds it: for the step from one state to the
+// next, the first of TLC's actions with a step from the one to the other, or `None` for the first
+// state or where none does. Empty when the engine has no walk of TLC's actions.
 fn label_path(
     machine: &mut Machine<'_>,
     context: &EngineContext,
     search: &Search<'_>,
     path: &[u32],
+    last: Option<&[Id]>,
 ) -> Outcome<Vec<Option<u32>>> {
     let Some(actions) = &context.actions else {
         return Ok(Vec::new());
     };
-    let width = context.width;
-    let unassigned = vec![UNASSIGNED; width];
-    let ids = &search.states.ids;
+    let unassigned = vec![UNASSIGNED; context.width];
+    let states = &search.states;
     // Each state's depth, from its parent's: the search stores a parent before its children.
-    let parents = &search.states.parents;
-    let mut depths: Vec<i64> = Vec::with_capacity(parents.len());
-    for &parent in parents {
+    let mut depths: Vec<i64> = Vec::with_capacity(states.parents.len());
+    for &parent in &states.parents {
         depths.push(if parent == -1 {
             1
         } else {
@@ -1290,16 +1366,19 @@ fn label_path(
         });
     }
     let mut labels = vec![None];
-    for step in path.windows(2) {
-        let (state, target) = (step[0] as usize, step[1] as usize);
-        let depth = depths[state];
+    for (position, &state) in path.iter().enumerate() {
+        let target = match (path.get(position + 1), last) {
+            (Some(&next), _) => states.state(next),
+            (None, Some(last)) => last,
+            (None, None) => break,
+        };
+        let depth = depths[state as usize];
         let epoch = machine.next_epoch();
-        machine.set_current(&ids[state * width..(state + 1) * width], epoch);
+        machine.set_current(states.state(state), epoch);
         let level = machine.store.int(depth)?;
         let next_level = machine.store.int(depth + 1)?;
         machine.set_slot(LEVEL_SLOT, level);
         machine.set_slot(NEXT_LEVEL_SLOT, next_level);
-        let target = &ids[target * width..(target + 1) * width];
         let mut found = None;
         for (index, action) in actions.iter().enumerate() {
             machine.set_next(&unassigned);
@@ -1319,6 +1398,40 @@ fn label_path(
     Ok(labels)
 }
 
+// The violation a search found, with the store its states are in, or nothing when the engine can't
+// find the action of each step of its trace.
+fn to_violation(
+    found: Found,
+    machine: &mut Machine<'_>,
+    context: &EngineContext,
+    search: &Search<'_>,
+) -> Option<Box<Violation>> {
+    let mut states: Vec<Vec<Id>> = found
+        .path
+        .iter()
+        .map(|&index| search.states.state(index).to_vec())
+        .collect();
+    states.extend(found.last.iter().cloned());
+    let labels = if found.path.is_empty() {
+        Vec::new()
+    } else {
+        label_path(machine, context, search, &found.path, found.last.as_deref())
+            .ok()?
+            .into_iter()
+            .skip(1)
+            .collect::<Option<Vec<u32>>>()?
+    };
+    (labels.len() + 1 == states.len()).then(|| {
+        Box::new(Violation {
+            kind: found.kind,
+            states,
+            labels,
+            counts: found.counts,
+            store: std::mem::replace(&mut machine.store, Store::new()),
+        })
+    })
+}
+
 // The actions of a lasso's steps: from each state to the next, and from the last to the cycle's
 // first, `None` for that step when the cycle is the last state alone, which stutters.
 fn label_lasso(
@@ -1333,7 +1446,7 @@ fn label_lasso(
     if !is_stuttering {
         closed.push(path[loop_start]);
     }
-    let mut labels = label_path(machine, context, search, &closed)?;
+    let mut labels = label_path(machine, context, search, &closed, None)?;
     if labels.is_empty() {
         return Ok(labels);
     }
