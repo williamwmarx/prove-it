@@ -664,4 +664,45 @@ mod tests {
         let infinite = Lazy::Union(Box::new(Lazy::Infinite("Nat")));
         assert!(infinite.enumerate(&mut machine).is_err());
     }
+
+    // `SetOfFcnsValue.size` and its like: an empty part decides before a part TLC can't enumerate
+    // is asked, and a range of one element makes one function.
+    #[test]
+    fn sizes_a_set_by_its_parts_as_tlc_does() {
+        let program = Program::default();
+        let mut store = Store::new();
+        store.reset(std::iter::empty::<&[u16]>());
+        let mut machine = Machine::new(&program, store);
+        let integers: Vec<Id> = (1..=3)
+            .map(|value| machine.store.int(value).expect("an integer"))
+            .collect();
+        let nat = || Box::new(Lazy::Infinite("Nat"));
+        let empty = || Box::new(Lazy::Set(EMPTY_SET));
+        let one = machine.store.set_of(&integers[..1]).expect("a set");
+        let three = machine.store.set_of(&integers).expect("a set");
+        let mut size = |set: Lazy| set.size(&mut machine).ok();
+        assert_eq!(size(Lazy::FunctionSet(nat(), empty())), Some(0));
+        assert_eq!(size(Lazy::FunctionSet(empty(), nat())), Some(1));
+        assert_eq!(
+            size(Lazy::FunctionSet(nat(), Box::new(Lazy::Set(one)))),
+            Some(1)
+        );
+        assert_eq!(
+            size(Lazy::FunctionSet(
+                Box::new(Lazy::Set(three)),
+                Box::new(Lazy::Set(three))
+            )),
+            Some(27)
+        );
+        assert_eq!(
+            size(Lazy::FunctionSet(nat(), Box::new(Lazy::Set(three)))),
+            None
+        );
+        assert_eq!(size(Lazy::Product(vec![*nat(), *empty()])), Some(0));
+        assert_eq!(
+            size(Lazy::Product(vec![Lazy::Set(three), Lazy::Set(three)])),
+            Some(9)
+        );
+        assert_eq!(size(Lazy::Subset(Box::new(Lazy::Set(three)))), Some(8));
+    }
 }

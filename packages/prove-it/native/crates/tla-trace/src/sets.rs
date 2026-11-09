@@ -569,6 +569,21 @@ mod tests {
                 .text,
             "Overflow when computing the number of elements in:\n[0..2 -> 1..2000]"
         );
+        // An empty part decides before TLC asks anything of Nat, and a range of one element
+        // makes one function whatever the domain.
+        let nat = || Value::Lazy(Rc::new(Lazy::Nat));
+        let count = |domain, range| cardinality(&set(domain, range)).expect("a count");
+        assert_eq!(count(nat(), Value::empty_set()), 0);
+        assert_eq!(count(Value::empty_set(), nat()), 1);
+        assert_eq!(count(nat(), Value::Interval(1, 1)), 1);
+        let large = Value::Lazy(Rc::new(Lazy::Subset(Value::Interval(1, 40))));
+        assert_eq!(count(large, Value::Interval(1, 1)), 1);
+        assert!(cardinality(&set(nat(), Value::Interval(1, 2))).is_err());
+        // A set its parts empty enumerates to nothing, and an empty domain to one function.
+        let emptied = set(nat(), Value::empty_set());
+        assert!(elements(&emptied).expect("no elements").is_empty());
+        let unit = set(emptied, Value::Interval(1, 2));
+        assert_eq!(elements(&unit).expect("one function").len(), 1);
     }
 
     #[test]
