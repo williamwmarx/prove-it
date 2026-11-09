@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use tla_ir::{Ir, LiveTerm, Model};
-use tla_live::{Term, Verdict};
+use tla_live::{Liveness, Term, Verdict};
 use tla_values::fingerprint::{Fingerprints, Parent};
 use tla_values::store::Outcome;
 use tla_values::transfer::{EncodedStates, SharedEncoder, SharedStates, StateEncoder};
@@ -132,7 +132,7 @@ pub enum SearchOutcome {
         /// counterexample from or to check them on, unless they hold.
         checkpoint: Option<Box<Checkpoint>>,
         /// With temporal properties, what checking them found.
-        liveness: Option<Verdict>,
+        liveness: Option<Liveness>,
         /// TLC's fingerprint of each state's key, in the order found.
         fingerprints: Vec<u64>,
         value_count: usize,
@@ -1512,9 +1512,10 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                         Ok(tables) => tables,
                         Err(reason) => return SearchOutcome::Invariant(reason.into()),
                     };
-                    let verdict = check_liveness(model, &search, &tables);
-                    let checkpoint =
-                        (verdict != Verdict::Holds || settings.is_live_checked).then(|| {
+                    let liveness = check_liveness(model, &search, &tables);
+                    let checkpoint = (liveness.verdict != Verdict::Holds
+                        || settings.is_live_checked)
+                        .then(|| {
                             Box::new(graph_checkpoint(
                                 &mut machine,
                                 &search,
@@ -1524,7 +1525,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                                 tables,
                             ))
                         });
-                    (checkpoint, Some(verdict))
+                    (checkpoint, Some(liveness))
                 }
                 None => (None, None),
             };
@@ -1758,30 +1759,38 @@ fn write_state_log(
 }
 
 // Checks the temporal properties on a complete search's graph from the answers to the atoms.
-fn check_liveness(model: &Model, search: &Search<'_, States>, tables: &[Table]) -> Verdict {
+fn check_liveness(model: &Model, search: &Search<'_, States>, tables: &[Table]) -> Liveness {
     let graph = search.graph.as_ref().expect("a graph");
-    let formula: Vec<Term> = model
-        .live_formula
+    let to_terms = |terms: &[LiveTerm]| -> Vec<Term> {
+        terms
+            .iter()
+            .map(|&term| match term {
+                LiveTerm::Boolean(value) => Term::Boolean(value),
+                LiveTerm::State(atom) => Term::State(atom),
+                LiveTerm::Enabled(atom) => Term::Enabled(atom),
+                LiveTerm::Action { atom, enabled } => Term::Action { atom, enabled },
+                LiveTerm::Not => Term::Not,
+                LiveTerm::Always => Term::Always,
+                LiveTerm::Eventually => Term::Eventually,
+                LiveTerm::Next => Term::Next,
+                LiveTerm::And(count) => Term::And(count),
+                LiveTerm::Or(count) => Term::Or(count),
+            })
+            .collect()
+    };
+    let properties: Vec<Vec<Term>> = model
+        .live_properties
         .iter()
-        .map(|&term| match term {
-            LiveTerm::Boolean(value) => Term::Boolean(value),
-            LiveTerm::State(atom) => Term::State(atom),
-            LiveTerm::Enabled(atom) => Term::Enabled(atom),
-            LiveTerm::Action { atom, enabled } => Term::Action { atom, enabled },
-            LiveTerm::Not => Term::Not,
-            LiveTerm::Always => Term::Always,
-            LiveTerm::Eventually => Term::Eventually,
-            LiveTerm::Next => Term::Next,
-            LiveTerm::And(count) => Term::And(count),
-            LiveTerm::Or(count) => Term::Or(count),
-        })
+        .map(|property| to_terms(&property.formula))
         .collect();
+    let property_terms: Vec<&[Term]> = properties.iter().map(Vec::as_slice).collect();
     let answers: Vec<Option<&[u8]>> = tables
         .iter()
         .map(|table| table.unknown.is_none().then_some(&table.answers[..]))
         .collect();
     tla_live::check(
-        &formula,
+        &to_terms(&model.live_formula),
+        &property_terms,
         &tla_live::Graph {
             parents: &search.states.parents,
             edge_offsets: &graph.edge_offsets,

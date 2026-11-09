@@ -32,7 +32,7 @@ pub use decode::{DecodeError, decode};
 pub use encode::encode;
 
 /// The version of the layout, `IR_VERSION` in `ir.ts`.
-pub const IR_VERSION: u32 = 3;
+pub const IR_VERSION: u32 = 4;
 
 /// "PIIR" as a little-endian word.
 pub const MAGIC: u32 = 0x5249_4950;
@@ -219,6 +219,13 @@ pub enum LiveTerm {
     Or(u32),
 }
 
+/// A temporal property, by name, as the liveness checker names it in a counterexample.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LiveProperty {
+    pub name: TextId,
+    pub formula: Vec<LiveTerm>,
+}
+
 /// What the configuration and the checker ask of the search.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Model {
@@ -243,6 +250,8 @@ pub struct Model {
     pub atoms: Vec<Atom>,
     /// The fairness and the negated properties as the liveness checker joins them, or no terms.
     pub live_formula: Vec<LiveTerm>,
+    /// Each property, whose violation a counterexample's checks find, in the configuration's order.
+    pub live_properties: Vec<LiveProperty>,
 }
 
 /// The nodes, in the order of the blob, and which of them are written at the top level.

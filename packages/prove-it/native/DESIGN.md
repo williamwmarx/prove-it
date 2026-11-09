@@ -2388,6 +2388,43 @@ On the 4-core cloud machine, with `main` at a0f66ec before the merge of #31 and 
   could close the 1.3× gate is compiling guards and invariants to code rather than closure trees
   (3.1's later tier), not more tuning of the closures.
 
+#### M7 as built (guards)
+
+Three PRs after the speed work, each measured alone with callgrind on the search (engine time only,
+the addon built with line tables) and on Depot with Compare:
+
+- **Why not Cranelift yet.** Guards are 12–45% of the six laggards' instructions, but most of a
+  guard's cost was the dispatch around it: the segment's `Op::Check` called `evaluate`, which
+  called the predicate's `Test` and made its `bool` an id again, and the `Test` read its operands
+  through `Leaf::read`. Machine code would remove that and little else, since the store's `apply`,
+  `equals` and memo lookups stay calls, and it would bring the workspace its first external crates
+  and a second `unsafe` surface. Fusing the dispatch away cost a few hundred lines.
+- **Membership (#45).** A miss of a boolean, integer or string in a set whose first and last
+  elements are of its kind is `false` without TLC's second binary search by `compareTo`, which
+  can't find or fail on it. MCBakery: −10% of instructions.
+- **Guards (#53).** A guard that compiles to a fused predicate is `Op::Holds(Test)` in its segment.
+  `f[k] = c`, `f[k] = j` and `x = c` get closures of their own, and `e \in S` of a set with no
+  variable or name in it is `Predicate::Member`, so it fuses with the predicates around it.
+  Instructions: Commit −3.7%, Philosophers −8.4%, btree −4.6%, SimpleRegular −4.2%, MCBakery −6.1%,
+  MCLamportMutex −2.4%.
+- **Nested application (#60).** `f[i][j]` of a variable and two bound names is the shape
+  `ApplyVar2`, read in one closure and as a predicate leaf. MCLamportMutex: −6.6%.
+- **Acceptance.** Parity after each, on Depot: Conformance 770 match, Engine coverage the same
+  outcome on every model, Differential with `--compare-backends` tlc/ts 1460 same and 6 known,
+  ts/interpreter 1466, ts/stopped 982, ts/rust 1466/1466, rust/stopped 984/984, no new differences.
+  Against the TypeScript engine (Compare with a base built without the addon, so the base binary
+  runs TypeScript; median of 7, wall seconds, Rust then TypeScript), before (d1a1a37) and after
+  (f1693f4): Commit 0.34/0.31 → 0.32/0.30, Philosophers 0.14/0.15 → 0.13/0.16, btree 0.76/0.70 →
+  0.71/0.72, SimpleRegular 0.63/0.62 → 0.54/0.61, MCBakery 0.99/1.17 → 0.77/1.14, MCLamportMutex
+  1.97/1.97 → 2.04/2.21. Geomean over the 18 models: 1.23× → 1.30× in wall time, 2.20× in CPU.
+  MCBakery now passes the per-model 1.3× gate; the other five don't. On a 4-core runner the
+  TypeScript binary compiles and collects on other cores (Commit: 0.64 s of CPU in 0.30 s), so
+  wall time hides most of the gap that CPU time shows.
+- **What's left.** The rest is spread thin: on Commit the walker's segments (about a quarter),
+  memo lookups (a fifth), fingerprints (a sixth). No single change of this size closes the gate
+  on the other five; compiling whole walks to code (3.1's later tier) is the step that could, and
+  it needs a code generator the workspace doesn't yet depend on.
+
 ---
 
 ## 12. Rust end to end
@@ -2467,6 +2504,13 @@ As run, on the 4-core cloud machine (Depot's CLI wasn't available to this sessio
   374/450; StarkMutex 981/2,460, 805/1,330, 396/520; MacroQuicksort 672/2,240, 443/910, 268/380;
   nbacg_guer01 707/1,640, 508/1,070, 282/390; MCDisruptor_SPMC 543/1,740, 321/630, 269/390;
   OneBitMutexNoSymmetryMC (a lasso) 311/800, 253/610, 227/510.
+- **What the CLI reads (follow-up).** IR version 4 carries each property, its name and its formula,
+  after the joined formula, and `SearchOutcome::Complete::liveness` is a `Liveness { branches,
+  verdict }`: `branches` is the number of solutions TLC prints in 2192 and 2212 (`None` when the
+  check declined before it solved the formula), and a `Lasso` carries `violated`, the positions of
+  the properties `evaluateOnLasso` finds false on it, which TLC names in 2116. Under
+  `PROVE_IT_LIVE_CHECK=1` the interpreter compares both. On the 222 PROPERTY models with that flag,
+  no difference in verdict, lasso, branches or names.
 - **Left.** Printing an accepted path natively; the engine's last declines above; lifting
   `MAXIMUM_GRAPH_STATES`, which exists for the interpreter's periodic checks; and deleting the
   TypeScript checker once nothing but the oracle calls it.
