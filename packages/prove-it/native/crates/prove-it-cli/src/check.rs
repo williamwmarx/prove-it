@@ -61,8 +61,11 @@ fn exists(path: &str) -> bool {
     Path::new(path).exists()
 }
 
-fn file_name(path: &str) -> &str {
-    path.rsplit('/').next().unwrap_or(path)
+fn file_name(path: &str) -> String {
+    Path::new(path).file_name().map_or_else(
+        || path.to_string(),
+        |name| name.to_string_lossy().into_owned(),
+    )
 }
 
 fn check_specs(args: &[String], java: &Java) -> i32 {
@@ -99,13 +102,14 @@ fn check_specs(args: &[String], java: &Java) -> i32 {
     // TLC also looks for the spec itself in the library directories.
     let mut paths: Vec<String> = Vec::new();
     for path in spec_paths {
-        let found = if exists(&path) || path.starts_with('/') {
+        let found = if exists(&path) || Path::new(&path).is_absolute() {
             path
         } else {
             java.libraries
                 .iter()
-                .map(|directory| format!("{directory}/{path}"))
-                .find(|candidate| exists(candidate))
+                .map(|directory| Path::new(directory).join(&path))
+                .find(|candidate| candidate.exists())
+                .map(|candidate| candidate.to_string_lossy().into_owned())
                 .unwrap_or(path)
         };
         if !paths.contains(&found) {
@@ -121,7 +125,7 @@ fn check_specs(args: &[String], java: &Java) -> i32 {
         // TLC checks one spec, so Prove It names each of several it checks.
         if paths.len() > 1 {
             let name = file_name(path);
-            let stem = name.strip_suffix(".tla").unwrap_or(name);
+            let stem = name.strip_suffix(".tla").unwrap_or(&name);
             printer.line(&format!("Checking {name} with {stem}.cfg"));
         }
         exit_codes.push(check_spec(path, &parsed, &mut printer));
@@ -401,17 +405,19 @@ fn check_spec(spec_path: &str, args: &Parsed, printer: &mut Printer) -> i32 {
         Err(reason) => return report_not_native(printer, &reason),
     };
     printer.raw(&front.output);
-    let ir = match tla_ir::decode(&front.ir) {
+    let mut ir = match tla_ir::decode(&front.ir) {
         Ok(ir) => ir,
         Err(error) => {
             return report_not_native(printer, &format!("the engine IR doesn't decode: {error}"));
         }
     };
+    if args.has("-deadlock") {
+        ir.model.check_deadlock = false;
+    }
     if ir.model.is_recording_graph {
         return report_not_native(printer, "checking temporal properties");
     }
     let (sender, receiver) = mpsc::channel();
-    let mut is_printing = false;
     let outcome = std::thread::scope(|scope| {
         let ir = &ir;
         let searching = std::thread::Builder::new()
@@ -421,9 +427,6 @@ fn check_spec(spec_path: &str, args: &Parsed, printer: &mut Printer) -> i32 {
             })
             .expect("a thread for the search");
         for event in receiver {
-            if is_printing {
-                continue;
-            }
             match event {
                 Event::InitialStatesStarted => printer.print(
                     code::COMPUTING_INIT,
@@ -448,16 +451,15 @@ fn check_spec(spec_path: &str, args: &Parsed, printer: &mut Printer) -> i32 {
                     print_progress(printer, &statistics, Some(start));
                     printer.flush();
                 }
-                Event::Print => is_printing = true,
+                // Nothing more this run prints can be right, so it ends here rather than search
+                // on, the search thread with it.
+                Event::Print => std::process::exit(report_not_native(printer, "printing values")),
             }
         }
         searching
             .join()
             .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
     });
-    if is_printing {
-        return report_not_native(printer, "printing values");
-    }
     let (counts, fingerprints) = match outcome {
         SearchOutcome::Complete {
             counts,

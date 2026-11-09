@@ -17,13 +17,17 @@ fn run(directory: &PathBuf, args: &[&str]) -> Output {
 }
 
 fn commit_directory(name: &str) -> PathBuf {
+    commit_directory_with(name, COMMIT_IR)
+}
+
+fn commit_directory_with(name: &str, ir: &[u8]) -> PathBuf {
     let directory =
         std::env::temp_dir().join(format!("prove-it-cli-{name}-{}", std::process::id()));
     std::fs::create_dir_all(&directory).expect("a directory");
     for (file, contents) in [
         ("TCommit.tla", &b""[..]),
         ("TCommit.cfg", b""),
-        ("TCommit.ir", COMMIT_IR),
+        ("TCommit.ir", ir),
         ("TCommit.front", b"Starting... (2026-11-09 00:00:00)\n"),
     ] {
         std::fs::write(directory.join(file), contents).expect("a file");
@@ -96,5 +100,20 @@ fn reports_what_tlc_reports_before_the_search() {
     let usage = run(&directory, &[]);
     assert_eq!(usage.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&usage.stderr).starts_with("Usage: tla-ts "));
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn turns_deadlock_checking_off_with_deadlock() {
+    // TCommit's configuration turns deadlock checking off; with it on, its final states deadlock.
+    let mut ir = tla_ir::decode(COMMIT_IR).expect("an IR");
+    ir.model.check_deadlock = true;
+    let directory = commit_directory_with("deadlock", &tla_ir::encode(&ir));
+    let checked = run(&directory, &["TCommit"]);
+    assert_eq!(checked.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&checked.stderr).contains("the engine stopped: deadlock"));
+    let unchecked = run(&directory, &["-deadlock", "TCommit"]);
+    assert_eq!(unchecked.status.code(), Some(0));
+    assert!(stdout(&unchecked).contains("94 states generated, 34 distinct states found"));
     std::fs::remove_dir_all(directory).expect("removed");
 }
