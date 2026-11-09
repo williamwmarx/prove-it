@@ -44,8 +44,8 @@ how.
     stops it at once: if another thread found that state first, its parent is earlier and stops
     the search first. Under a VIEW or symmetry the state another thread found first can be another
     state with the same key, whose invariant TLC checks instead, so the thread only records the
-    failure, and the merge stops there only if that successor's key is still new when its
-    parent's turn comes.
+    failure, an invariant false or one that fails to evaluate, with its reason, and the merge stops
+    there only if that successor's key is still new when its parent's turn comes.
 - **How many threads.** `PROVE_IT_WORKERS`, at most `available_parallelism`, since more threads
   than the machine runs at once only take turns. The coordinator waits on the threads it spawned,
   and no thread spins.
