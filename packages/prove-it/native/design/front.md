@@ -94,3 +94,18 @@ what each milestone built and measured, in the order they landed.
   SANY's errors and warnings. 1,771 of 2,356 modules match and 585 are not compared yet (an
   INSTANCE, a selecting name, or a module SANY's parser rejects, which F5 ports); with
   `--mutate 400`, 3,268 of 3,956. None differ. Verification's Front End job runs it.
+
+## F8 slice 1b as built (instances and selecting names)
+
+- `instances` ports `instances.ts`: `mapChildren` and `mapDefinition` in the order TypeScript's
+  object literals evaluate their fields (copies are made in that order, and their keys count up
+  in it), `substitute` with its three modes for ENABLED, the renamer, and `withLetInstances`.
+  `sourceNames` is a table by address, as the `WeakMap` is, so a spread copy doesn't carry it.
+- `subexpressions` ports `subexpressions.ts`: the selection of a definition's, label's, LET's or
+  operand's part, with SANY's errors for a name that selects nothing.
+- `environment` links an INSTANCE at the top of a module (its copies under `Name@Module#n`, the
+  names it adds, qualified or not, and the definitions an instance with substitutions makes, which
+  the IR flags), a LET INSTANCE (its definitions put in the LET), and an INSTANCE in a LET or a
+  proof that resolution meets, interleaved with nested modules in the order of the text.
+- `front-differential.ts resolve`: 2,331 of 2,356 modules match, up from 1,771, and none differ;
+  with `--mutate 400`, 3,931 of 3,956. The 25 left are modules SANY's parser rejects (F5).
