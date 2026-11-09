@@ -140,6 +140,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.plan.outputs.version }}
+          PUBLISHED: ${{ steps.plan.outputs.publish }}
         run: |
           set -euo pipefail
           tag="v$VERSION"
@@ -149,8 +150,13 @@ jobs:
             echo "$tag already tags $existing" >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          npm_version=$(PATH="$(scripts/ci/bootstrap.sh node):$PATH" npm view "$PACKAGE@$VERSION" version 2>/dev/null || true)
-          [[ "$npm_version" == "$VERSION" ]] || exit 0
+          PATH="$(scripts/ci/bootstrap.sh node):$PATH"
+          # npm can take minutes to serve a version it has just accepted, so after a publish this
+          # waits until it does; a version this run didn't publish and npm lacks isn't tagged.
+          until [[ "$(npm view "$PACKAGE@$VERSION" version 2>/dev/null || true)" == "$VERSION" ]]; do
+            [[ "$PUBLISHED" == true ]] || exit 0
+            sleep 15
+          done
           AUTH="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
           echo "::add-mask::$AUTH"
           git tag "$tag" "$GITHUB_SHA"
