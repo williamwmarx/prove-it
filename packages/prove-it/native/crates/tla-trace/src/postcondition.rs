@@ -1,7 +1,11 @@
 //! TLC's check of a POSTCONDITION once the search is over (`findPostconditionViolation`): the
 //! definition evaluated with no state, reading what TLCGet and TLCExt's CounterExample give then.
 
-use crate::eval::{Context, Runtime};
+use std::collections::HashMap;
+
+use tla_ir::{DefinitionForm, ScopeBinding};
+
+use crate::eval::{Context, Evaluator, Runtime};
 use crate::rebuild::{Rebuilder, run};
 use crate::value::{Class, Value, set_of, sorted_function};
 use crate::{Trace, Unsupported};
@@ -77,6 +81,26 @@ impl Rebuilder<'_> {
             .body as usize]
             .range
             .map(|range| range.module);
+        // The values TLC binds the parameters of each action of the trace's steps to.
+        let mut parameters = HashMap::new();
+        if let Some(counter_example) = &inputs.counter_example {
+            let positions = counter_example
+                .trace
+                .states
+                .iter()
+                .skip(1)
+                .map(|state| state.action)
+                .chain(counter_example.cycle.map(|(_, closing)| Some(closing)));
+            for position in positions.flatten() {
+                if let (Some(action), None) = (
+                    ir.model.actions.get(position as usize),
+                    parameters.get(&position),
+                ) {
+                    let bound = action_parameters(evaluator, action)?;
+                    parameters.insert(position, bound);
+                }
+            }
+        }
         let text = |name: &str| Value::Str(evaluator.text_of(name.encode_utf16().collect()));
         let record = |fields: Vec<(&str, Value)>| {
             Value::record(
@@ -177,16 +201,10 @@ impl Rebuilder<'_> {
                     else {
                         return unsupported("of a step whose action the trace lacks");
                     };
-                    if action.scope.is_some() {
-                        return unsupported("of an action with parameters");
-                    }
                     let label = &ir.texts[action.label as usize];
                     // A label names an action with the values of its parameters, which the
                     // record holds apart.
-                    let name = label.split(" line ").next().unwrap_or(label);
-                    if name.contains('(') {
-                        return unsupported("of an action with parameters");
-                    }
+                    let name = label.split(['(', ' ']).next().unwrap_or(label);
                     let Some(range) = ir.nodes.arena[action.expression as usize].range else {
                         return unsupported("of an action without a range");
                     };
@@ -203,7 +221,19 @@ impl Rebuilder<'_> {
                         ("endColumn", Value::Int(range.end_column)),
                         ("module", text(&ir.texts[range.module as usize])),
                     ]))?;
-                    run(record(vec![("name", text(name)), ("location", location)]))
+                    let mut fields = vec![("name", text(name)), ("location", location)];
+                    // TLC adds the parameters bound to values, by name and in order.
+                    let bound = position.and_then(|position| parameters.get(&position));
+                    if let Some(bound) = bound.filter(|bound| !bound.is_empty()) {
+                        let context = bound
+                            .iter()
+                            .map(|(name, value)| (*name, value.clone()))
+                            .collect();
+                        let names = bound.iter().map(|(name, _)| text(name)).collect();
+                        fields.push(("context", run(record(context))?));
+                        fields.push(("parameters", Value::tuple(names)));
+                    }
+                    run(record(fields))
                 };
                 let mut steps = Vec::new();
                 for position in 1..states.len() {
@@ -256,4 +286,68 @@ impl Rebuilder<'_> {
         };
         Ok(Checked { verdict, printed })
     }
+}
+
+// The parameters of the operator TLC splits an action from (`Action.getParameters`), with the
+// values the action's scope binds them to.
+fn action_parameters<'ir>(
+    evaluator: &mut Evaluator<'ir>,
+    action: &tla_ir::Action,
+) -> Result<Vec<(&'ir str, Value)>, Unsupported> {
+    let ir = evaluator.ir;
+    let label = &ir.texts[action.label as usize];
+    let Some((name, _)) = label.split_once('(') else {
+        return Ok(Vec::new());
+    };
+    let operators: Vec<_> = ir
+        .definitions
+        .iter()
+        .map(|&node| evaluator.definition(node))
+        .filter(|definition| {
+            &*ir.texts[definition.name as usize] == name
+                && matches!(definition.form, DefinitionForm::Operator(_))
+        })
+        .collect();
+    // Where several operators share the name, as in a LET, the action's is the one whose body it
+    // is.
+    let operator = match operators[..] {
+        [operator] => operator,
+        _ => match operators
+            .iter()
+            .find(|definition| definition.body == action.expression)
+        {
+            Some(operator) => operator,
+            None => return unsupported("of an action whose operator the IR doesn't single out"),
+        },
+    };
+    let DefinitionForm::Operator(params) = &operator.form else {
+        return unsupported("of an action whose operator the IR doesn't single out");
+    };
+    let mut bound = Vec::with_capacity(params.len());
+    for param in params {
+        // The innermost binding of the parameter's name in the action's scope.
+        let mut scope = action.scope;
+        let binding = loop {
+            let Some(index) = scope else {
+                break None;
+            };
+            let entry = &ir.scopes[index as usize];
+            if entry.name == param.name {
+                break Some(&entry.binding);
+            }
+            scope = entry.parent;
+        };
+        match binding {
+            Some(ScopeBinding::Value(Some(value))) => {
+                bound.push((
+                    &*ir.texts[param.name as usize],
+                    run(evaluator.value(*value))?,
+                ));
+            }
+            // TLC leaves out a parameter bound to an operator.
+            Some(ScopeBinding::Closure { .. }) => {}
+            _ => return unsupported("of an action whose parameters its scope doesn't bind"),
+        }
+    }
+    Ok(bound)
 }

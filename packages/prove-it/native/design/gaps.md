@@ -313,3 +313,14 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   model's constraints or invariants, with the state as the violation's one state and TLC's
   counts: 1/0/0 at depth 1 on DoInitFunctorEvalException and 1/1/1 on
   DoInitFunctorMinimalErrorStack. The CLI leaves both to the interpreter until it prints them.
+
+## An assumption that fails to evaluate
+
+- TLC reports an assumption that fails to evaluate at startup (2105, "Evaluating assumption ...
+  failed."), after what the startup and the assumptions before it printed. The engine declined
+  the model. Where the search reports violations (`Settings::is_violation_reported`, as the CLI
+  sets it), it now reports what the startup printed and stops with
+  `SearchOutcome::AssumptionFailed { position }`, the position in the IR's assumptions; a failure
+  that is the engine's own limit still declines. Elsewhere it declines as before, so the
+  interpreter, which checks the assumptions itself, prints nothing twice. The CLI leaves it to
+  the interpreter until it prints it.

@@ -150,3 +150,25 @@ fn reports_a_failing_invariant_with_the_initial_state_it_evaluates() {
         (1, 1, 1, 1)
     );
 }
+
+#[test]
+fn reports_an_assumption_that_fails_to_evaluate_where_it_reports_failures() {
+    // TLC: "Evaluating assumption line 4, col 6 to line 4, col 57 of module etest14 failed."
+    let bytes =
+        std::fs::read(ir_directory().join(format!("{MODELS}/suite/etest14.ir"))).expect("an IR");
+    let ir = tla_ir::decode(&bytes).expect("an IR that decodes");
+    let outcome = |is_violation_reported| {
+        let settings = Settings {
+            is_violation_reported,
+            ..Settings::default()
+        };
+        tla_values::on_nesting_stack(|| {
+            tla_engine::on_nesting_stack(|| search(&ir, &settings, &mut Quiet))
+        })
+    };
+    assert!(matches!(
+        outcome(true),
+        SearchOutcome::AssumptionFailed { position: 0 }
+    ));
+    assert!(matches!(outcome(false), SearchOutcome::Declined(_)));
+}

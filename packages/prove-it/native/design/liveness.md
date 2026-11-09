@@ -118,6 +118,13 @@ On the 26 corpus models with temporal properties under SYMMETRY or a VIEW, all 2
 natively (23 lassos, 3 hold); their outputs match TLC's recordings, and under
 `PROVE_IT_LIVE_CHECK=1` the verdicts, lassos, branches and labels match the interpreter's.
 
+The native binary prints such a lasso itself. The engine hands it the stored states, unlabelled,
+and `tla-trace` rebuilds those TLC prints as it does a reduced safety trace, the step back into the
+cycle with them: the stored path with the cycle's first state once more, whose last step's action
+is the loop's. TLC then names the properties the rebuilt lasso violates
+(`Liveness.findViolatedProperties`), which `tla_live::violated_on_lasso` evaluates on it, each atom
+by `Rebuilder::answer_atom` on the rebuilt states.
+
 ## Print while checking the temporal properties (as built)
 
 TLC prints what Print and PrintT print each time it evaluates them, and its liveness checker
