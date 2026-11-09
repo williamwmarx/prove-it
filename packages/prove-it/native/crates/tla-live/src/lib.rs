@@ -42,6 +42,10 @@ pub struct Graph<'g> {
     pub edge_offsets: &'g [u32],
     pub edges: &'g [u32],
     pub fingerprints: &'g [u64],
+    /// Under SYMMETRY or a VIEW, the state each step reached, which TLC checks: the state stored for
+    /// it, by its index, or a state past them that the search told apart from it by its key. The
+    /// tables of state predicates have an answer for each.
+    pub reals: Option<&'g [u32]>,
 }
 
 impl Graph<'_> {
