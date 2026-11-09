@@ -18,7 +18,8 @@ const getEngineLines = (runtime: string, cli: string, env: Record<string, string
     encoding: "utf8",
     env: { ...process.env, PROVE_IT_ENGINE_ADDON: undefined, PROVE_IT_ENGINE: "debug", ...env },
   });
-  expect(run.status).toBe(0);
+  // The status with what the run wrote to stderr, so that a crash on any platform says why.
+  expect({ status: run.status, stderr: run.stderr }).toMatchObject({ status: 0 });
   return run.stderr.split("\n").filter((line) => line.startsWith("[engine] "));
 };
 
@@ -28,14 +29,14 @@ describe("the native engine", () => {
     expect(lines).toEqual([expect.stringMatching(/^\[engine\] checked 251 states on 1 thread /)]);
   });
 
-  it("tries the native engine first by default on more than one thread", () => {
-    const missing = join(COMMIT, "missing.node");
+  it.if(ADDON !== undefined)("searches natively by default on more than one thread", () => {
     const lines = getEngineLines("bun", SOURCE_CLI, {
       PROVE_IT_ENGINE_BACKEND: undefined,
       PROVE_IT_WORKERS: "2",
-      PROVE_IT_ENGINE_ADDON: missing,
+      PROVE_IT_SHARED_LEVEL: "1",
+      PROVE_IT_ENGINE_ADDON: ADDON,
     });
-    expect(lines[0]).toStartWith(`[engine] native: unavailable: can't load ${missing}: `);
+    expect(lines).toContainEqual(expect.stringMatching(/^\[engine\] native: complete: /));
   });
 
   it.each([undefined, "rust", "auto"])(
