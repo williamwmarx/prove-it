@@ -78,6 +78,7 @@ pub fn lower_model(
         environment: &environment,
         order: ValueOrder { ranks: &ranks },
         version,
+        is_started: true,
     };
     let properties = get_properties(&config, &environment, &facts, version, Some(&evaluator))?;
     // `getTlcOrder`: the variables in TLC's order of declarations.
