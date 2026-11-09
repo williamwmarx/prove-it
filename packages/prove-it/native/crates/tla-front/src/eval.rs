@@ -5,6 +5,7 @@
 //! booleans, integers, strings, model values and finite sets of them, and returns `NotYet` for
 //! anything else, which TLC's own evaluation at startup handles.
 
+use std::cell::Cell;
 use std::cmp::Ordering;
 use std::rc::Rc;
 
@@ -20,6 +21,9 @@ use crate::values::{ValueOrder, get_model_value_type};
 
 /// The most elements the evaluator lists of a set, past which TLC's run is the engine's.
 const MAXIMUM_ELEMENTS: i64 = 100_000;
+
+/// The deepest the evaluator nests, past which a recursion is the engine's.
+const MAXIMUM_DEPTH: usize = 400;
 
 /// The keys of TLCGet that TLC's model checker holds.
 const CHECKER_KEYS: [&str; 6] = [
@@ -88,6 +92,24 @@ pub struct Evaluator<'a> {
     pub version: TlcVersion,
     /// Whether TLC has created its model checker, before which TLCGet reads none of its keys.
     pub is_started: bool,
+    depth: Cell<usize>,
+}
+
+impl<'a> Evaluator<'a> {
+    pub fn new(
+        environment: &'a Environment,
+        order: ValueOrder<'a>,
+        version: TlcVersion,
+        is_started: bool,
+    ) -> Evaluator<'a> {
+        Evaluator {
+            environment,
+            order,
+            version,
+            is_started,
+            depth: Cell::new(0),
+        }
+    }
 }
 
 impl Evaluator<'_> {
@@ -154,7 +176,7 @@ impl Evaluator<'_> {
                 _ => Err(not_yet("an operator or a function definition as a value")),
             };
         }
-        match name {
+        match self.get_builtin_name(name) {
             "TRUE" => Ok(ConfigValue::Boolean(true)),
             "FALSE" => Ok(ConfigValue::Boolean(false)),
             "BOOLEAN" => self.create_set(vec![
@@ -179,12 +201,20 @@ impl Evaluator<'_> {
         {
             return None;
         }
-        match &*name {
+        match self.get_builtin_name(&name) {
             "Nat" => Some(Infinite::Nat),
             "Int" => Some(Infinite::Int),
             "STRING" => Some(Infinite::String),
             _ => None,
         }
+    }
+
+    /// The builtin a name stands for, which the configuration may replace with another.
+    fn get_builtin_name<'b>(&'b self, name: &'b str) -> &'b str {
+        self.environment
+            .substitutions
+            .get(name)
+            .map_or(name, |target| &**target)
     }
 
     fn is_member(
@@ -410,6 +440,22 @@ impl Evaluator<'_> {
 
     /// `evaluate` of a constant expression read in a scope.
     pub fn evaluate(&self, expression: &Expr, scope: Option<&Rc<Scope>>) -> Result<ConfigValue> {
+        // A definition that recurses without end overflows TLC's stack, which TLC words in ways
+        // the front end doesn't follow.
+        if self.depth.get() >= MAXIMUM_DEPTH {
+            return Err(not_yet("a recursion too deep"));
+        }
+        self.depth.set(self.depth.get() + 1);
+        let value = self.evaluate_expression(expression, scope);
+        self.depth.set(self.depth.get() - 1);
+        value
+    }
+
+    fn evaluate_expression(
+        &self,
+        expression: &Expr,
+        scope: Option<&Rc<Scope>>,
+    ) -> Result<ConfigValue> {
         match &expression.kind {
             ExpressionKind::Number { value, .. } if value.fract() == 0.0 => {
                 to_integer(*value as i64)
@@ -467,7 +513,7 @@ impl Evaluator<'_> {
                     }
                 };
                 let Some((params, body, closure_scope)) = closure else {
-                    return self.apply_operator(&name, args, scope);
+                    return self.apply_operator(self.get_builtin_name(&name), args, scope);
                 };
                 let mut bound = closure_scope;
                 for (param, argument) in params.iter().zip(args) {

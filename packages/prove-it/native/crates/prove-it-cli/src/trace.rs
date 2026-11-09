@@ -3,11 +3,11 @@
 //! (`formatState` in `values.ts`) writes them, a line per variable in TLC's order, as a conjunction
 //! when there are several. What the spec printed as TLC rebuilt the trace comes with it.
 
-use tla_engine::search::{Violation, ViolationKind};
+use tla_engine::search::{FinalRegisters, Violation, ViolationKind};
 use tla_ir::Ir;
 use tla_trace::{
-    Alias, CounterExample, Ending, PostconditionInputs, Rebuilder, Stats, Unsupported, Value,
-    Verdict, format_value,
+    Alias, CounterExample, Ending, PostconditionInputs, Rebuilder, Registers, Stats, Unsupported,
+    Value, Verdict, format_value,
 };
 use tla_values::Id;
 
@@ -101,6 +101,11 @@ pub fn rebuild_trace(
                     if let Some(group) = &violation.symmetry {
                         rebuilder.set_symmetry(group);
                     }
+                    rebuilder.set_registers(Registers::from_store(
+                        &violation.store,
+                        &violation.registers.numbered,
+                        &violation.registers.named,
+                    ));
                     let mut trace =
                         rebuilder.rebuild(&violation.store, &states, &labels, ending)?;
                     let loop_action = match closing {
@@ -261,13 +266,26 @@ fn to_term(term: tla_ir::LiveTerm) -> tla_live::Term {
 }
 
 /// The postconditions of a search that completed, as TLC checks them, or why `tla-trace` can't.
-pub fn check_postconditions(ir: &Ir, run: &PostconditionRun) -> Result<Postconditions, String> {
+pub fn check_postconditions(
+    ir: &Ir,
+    run: &PostconditionRun,
+    registers: Option<&FinalRegisters>,
+) -> Result<Postconditions, String> {
     std::thread::scope(|scope| {
         std::thread::Builder::new()
             .stack_size(SEARCH_STACK_BYTES)
             .spawn_scoped(scope, || {
                 Rebuilder::new(ir)
-                    .and_then(|mut rebuilder| check(&mut rebuilder, ir, run, None))
+                    .and_then(|mut rebuilder| {
+                        if let Some(stored) = registers {
+                            rebuilder.set_registers(Registers::from_store(
+                                &stored.store,
+                                &stored.registers.numbered,
+                                &stored.registers.named,
+                            ));
+                        }
+                        check(&mut rebuilder, ir, run, None)
+                    })
                     .map_err(|Unsupported(reason)| reason)
             })
             .expect("a thread to check the postconditions")

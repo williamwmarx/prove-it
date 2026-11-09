@@ -521,6 +521,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
         .is_some_and(|check| ["final", "seqfinal", "off"].contains(&check.to_lowercase().as_str()));
     let settings = Settings {
         is_violation_reported: true,
+        workers,
         is_liveness_periodic,
         test_live_check_at: std::env::var("PROVE_IT_TEST_LIVE_CHECK_AT")
             .ok()
@@ -591,6 +592,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
             liveness,
             violation,
             possible,
+            registers,
             ..
         } => {
             // Once the search completes, TLC reports a _POSSIBLE predicate the search never
@@ -687,7 +689,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                     counts.initial_generated,
                     start,
                 );
-                let checked = match check_postconditions(&ir, &run) {
+                let checked = match check_postconditions(&ir, &run, registers.as_deref()) {
                     Ok(checked) => checked,
                     Err(reason) => return report_not_native(printer, &reason),
                 };

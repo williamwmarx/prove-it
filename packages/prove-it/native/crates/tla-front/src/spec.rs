@@ -11,7 +11,7 @@ use crate::environment::Environment;
 use crate::errors::{FrontError, describe_range};
 use crate::eval::Evaluator;
 use crate::instances::map_children;
-use crate::levels::{self, ACTION_LEVEL, LevelAnalyzer, LevelContext};
+use crate::levels::{self, ACTION_LEVEL};
 use crate::resolve::{Result, Tables};
 
 /// `Scope`: a name bound to a value, an expression or an operator, in front of the scope it
@@ -559,21 +559,39 @@ fn get_config_operator<'a>(
     Ok(definition)
 }
 
-/// Whether TLC computed the definition's value at startup (`getConstantValue`), which the front
-/// end can't tell without evaluating it: a literal stays an operator.
-fn check_not_constant(
+/// `getConstantValue`: the value TLC computed at startup for a constant definition, or none for
+/// a literal, which stays an operator, or a definition that fails to evaluate.
+fn get_constant_value(
+    name: &str,
     definition: &Rc<Definition>,
     environment: &Environment,
     facts: &DefinitionFacts,
-) -> Result<()> {
+    evaluator: Option<&Evaluator>,
+) -> Result<Option<ConfigValue>> {
     let is_literal = matches!(
         definition.body.kind,
         ExpressionKind::Number { .. } | ExpressionKind::String { .. }
     );
-    if facts.is_constant_level(definition, environment) && !is_literal {
-        return Err(not_yet("a constant definition the configuration names"));
+    if !facts.is_constant_level(definition, environment) || is_literal {
+        return Ok(None);
     }
-    Ok(())
+    let Some(evaluator) = evaluator else {
+        return Err(not_yet("a constant definition the configuration names"));
+    };
+    match evaluator.evaluate(&create_identifier(name), None) {
+        Ok(value) => Ok(Some(value)),
+        Err(FrontError::Evaluation(_) | FrontError::NotYet(_)) => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+/// `formatValue` of the values TLC's configuration errors show, or `NotYet` for another.
+fn format_config_value(value: &ConfigValue) -> Result<String> {
+    match value {
+        ConfigValue::Boolean(value) => Ok(if *value { "TRUE" } else { "FALSE" }.to_owned()),
+        ConfigValue::Number(number) if number.fract() == 0.0 => Ok(format!("{number}")),
+        _ => Err(not_yet("a configuration error that shows a value")),
+    }
 }
 
 /// `getConfigDefinition`.
@@ -582,12 +600,15 @@ fn get_config_definition(
     name: &str,
     environment: &Environment,
     facts: &DefinitionFacts,
+    evaluator: Option<&Evaluator>,
 ) -> Result<()> {
-    check_not_constant(
-        get_config_operator(kind, name, environment)?,
-        environment,
-        facts,
-    )
+    let definition = get_config_operator(kind, name, environment)?;
+    if get_constant_value(name, definition, environment, facts, evaluator)?.is_some() {
+        return Err(FrontError::Config(format!(
+            "The {kind} {name} cannot be a constant."
+        )));
+    }
+    Ok(())
 }
 
 /// Where the configuration's SPECIFICATION reaches its next-state relation through a definition an
@@ -730,26 +751,15 @@ pub fn check_invariants(
     config: &crate::config::ModelConfig,
     environment: &Environment,
     facts: &DefinitionFacts,
+    evaluator: &Evaluator,
 ) -> Result<()> {
-    let tables = Tables::default();
-    let analyzer = LevelAnalyzer::new(
-        LevelContext {
-            constants: environment.constants.keys().cloned().collect(),
-            variables: environment.variables.iter().cloned().collect(),
-            get_definition: Box::new(|name| get_definition(name, environment).cloned()),
-            get_qualified_name: Box::new(|_| None),
-        },
-        &tables,
-    );
+    let analyzer = environment.create_level_analyzer(&[]);
     for name in &config.invariants {
-        if environment.constants.contains_key(name.as_str()) {
+        let Some(definition) =
+            get_config_predicate("invariant", name, environment, facts, Some(evaluator))?
+        else {
             continue;
-        }
-        // A constant definition is below the level of an action, whatever value TLC computed.
-        let definition = get_config_operator("invariant", name, environment)?;
-        if facts.is_constant_level(definition, environment) {
-            continue;
-        }
+        };
         let levels = analyzer.analyze_definition(definition, &levels::Scope::default())?;
         if levels.data.level >= ACTION_LEVEL {
             // SANY's level check can give a definition levels of parameters it doesn't have
@@ -778,7 +788,7 @@ pub fn get_specification(
         let operator = |name: &Option<String>, description: &str| {
             name.as_deref()
                 .map(|name| {
-                    get_config_definition(description, name, environment, facts)
+                    get_config_definition(description, name, environment, facts, None)
                         .map(|()| create_identifier(name))
                 })
                 .transpose()
@@ -797,7 +807,12 @@ pub fn get_specification(
         ));
     }
     let definition = get_config_operator("name", specification, environment)?;
-    check_not_constant(definition, environment, facts)?;
+    if let Some(value) = get_constant_value(specification, definition, environment, facts, None)? {
+        return Err(FrontError::Config(format!(
+            "The value of {specification} is equal to {}",
+            format_config_value(&value)?
+        )));
+    }
     let expansion = Expansion {
         environment,
         facts,
@@ -936,24 +951,30 @@ pub struct Properties {
 }
 
 /// `getConfigPredicate`: the definition of what the configuration names, or none for a constant
-/// it assigns TRUE.
+/// whose value is TRUE.
 fn get_config_predicate<'a>(
     kind: &str,
     name: &str,
     environment: &'a Environment,
     facts: &DefinitionFacts,
+    evaluator: Option<&Evaluator>,
 ) -> Result<Option<&'a Rc<Definition>>> {
-    if let Some(value) = environment.constants.get(name) {
-        return match value {
-            ConfigValue::Boolean(true) => Ok(None),
-            _ => Err(not_yet(
-                "a configured constant the configuration names as a predicate",
-            )),
-        };
+    let (definition, value) = match environment.constants.get(name) {
+        Some(value) => (None, Some(value.clone())),
+        None => {
+            let definition = get_config_operator(kind, name, environment)?;
+            let value = get_constant_value(name, definition, environment, facts, evaluator)?;
+            (Some(definition), value)
+        }
+    };
+    match value {
+        None => Ok(definition),
+        Some(ConfigValue::Boolean(true)) => Ok(None),
+        Some(value) => Err(FrontError::Config(format!(
+            "The {kind} of {name} is equal to {}",
+            format_config_value(&value)?
+        ))),
     }
-    let definition = get_config_operator(kind, name, environment)?;
-    check_not_constant(definition, environment, facts)?;
-    Ok(Some(definition))
 }
 
 pub fn get_properties(
@@ -972,7 +993,9 @@ pub fn get_properties(
         evaluator,
     };
     for name in &config.properties {
-        let Some(definition) = get_config_predicate("property", name, environment, facts)? else {
+        let Some(definition) =
+            get_config_predicate("property", name, environment, facts, evaluator)?
+        else {
             continue;
         };
         let name: Name = Rc::from(name.as_str());
@@ -1050,4 +1073,65 @@ pub fn get_properties(
         }
     }
     Ok(properties)
+}
+
+/// `createSearch`'s checks of what the configuration names after the specification and its
+/// properties: the constraints, the RL reward and periodic operators, the possible predicates,
+/// and, for a spec with variables, the SYMMETRY and VIEW.
+pub fn check_search_config(
+    config: &crate::config::ModelConfig,
+    environment: &Environment,
+    facts: &DefinitionFacts,
+    evaluator: &Evaluator,
+) -> Result<()> {
+    let evaluator = Some(evaluator);
+    for name in &config.constraints {
+        get_config_predicate("constraint", name, environment, facts, evaluator)?;
+    }
+    for name in &config.action_constraints {
+        get_config_predicate("action constraint", name, environment, facts, evaluator)?;
+    }
+    if let Some(name) = &config.rl_reward {
+        get_config_operator("rlreward", name, environment)?;
+    }
+    if let Some(name) = &config.periodic {
+        get_config_operator("periodic", name, environment)?;
+    }
+    for (index, name) in config.possible.iter().enumerate() {
+        if config.possible[..index].contains(name) {
+            return Err(FrontError::Config(format!(
+                "_POSSIBLE lists {name} more than once"
+            )));
+        }
+        get_config_definition("possible", name, environment, facts, evaluator)?;
+        if get_level(&create_identifier(name), None, environment, facts, &[]) == Level::Temporal {
+            return Err(FrontError::Config(format!(
+                "The possible of {name} is equal to a temporal formula; only state- and action-level predicates are supported"
+            )));
+        }
+    }
+    if environment.variables.is_empty() {
+        return Ok(());
+    }
+    if let Some(name) = &config.symmetry {
+        // `getSymmetryGroup` reads the definition by its name, without the substitutions.
+        let definition = environment.definitions.get(name.as_str());
+        if definition.is_none() && !environment.constants.contains_key(name.as_str()) {
+            return Err(FrontError::Config(format!(
+                "The symmetry function {name} specified in the configuration file\nis not defined in the specification."
+            )));
+        }
+        if !definition.is_some_and(|definition| {
+            matches!(&definition.kind, DefinitionKind::Operator { params, .. } if params.is_empty())
+        }) {
+            return Err(FrontError::Evaluation(format!(
+                "{}The symmetry function {name} must specify a set of permutations.",
+                crate::errors::UNEXPECTED_EXCEPTION
+            )));
+        }
+    }
+    if let Some(name) = &config.view {
+        get_config_operator("view function", name, environment)?;
+    }
+    Ok(())
 }

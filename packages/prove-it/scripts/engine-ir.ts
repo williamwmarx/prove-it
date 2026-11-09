@@ -101,6 +101,7 @@ const GOLDEN_MODELS = [
   "tlc/tlatools/org.lamport.tlatools/test-model/cdot/CdotWithContextA.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/ConstantOperatorConfiguration.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/PossibleCountsTest.cfg",
+  "etcd-raft/tla/etcdraft.cfg",
 ];
 
 const GOLDEN_DIRECTORY = join(CONFORMANCE_DIRECTORY, "ir");

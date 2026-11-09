@@ -14,8 +14,6 @@ use tla_front::tlc_messages::CodedError;
 
 use crate::files::FileDescriber;
 
-const PROPERTY_NOT_DEFINED: u32 = 2229;
-
 /// What the front end gives a run: the model to check, or where TLC stops before it searches.
 pub enum Read {
     Model(Front),
@@ -132,15 +130,9 @@ fn native_failure(
         lowering.is_warning_enabled,
     )
     .err()?;
-    let coded = error.get_coded(lowering.is_tool)?;
-    // HACK: tla-front doesn't yet check that an invariant is a state predicate (2146), which TLC
-    // checks before it looks up the properties, so its "not defined" (2229) may not be TLC's.
-    if coded.code == PROPERTY_NOT_DEFINED {
-        return None;
-    }
     Some(Failure {
         sany: sany.text,
-        error: Some(coded),
+        error: Some(error.get_coded(lowering.is_tool)?),
     })
 }
 

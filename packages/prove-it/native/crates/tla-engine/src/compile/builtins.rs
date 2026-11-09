@@ -5,12 +5,13 @@
 use std::sync::Arc;
 
 use tla_ir::{Builtin, Index, NodeKind};
+use tla_values::fingerprint::{Fingerprints, INITIAL};
 use tla_values::print::{is_printable, write_value};
 use tla_values::store::{
     EMPTY_SET, EMPTY_TUPLE, FALSE, KIND_INT, KIND_SET, KIND_STRING, KIND_TUPLE, Outcome, TRUE,
     is_function_kind,
 };
-use tla_values::{Bail, Id};
+use tla_values::{Bail, Id, Store};
 
 use super::fused;
 use super::lazy::{Lazy, Operator, Reference};
@@ -242,6 +243,15 @@ impl Compiler<'_> {
         }
         if name == "TLCGet" {
             return self.compile_tlc_get(operands, context);
+        }
+        if name == "TLCSet" {
+            return self.compile_register(operands, context, true);
+        }
+        if name == "TLCFP" {
+            return self.compile_tlc_fp(operands);
+        }
+        if name == "TLCCache" {
+            return self.compile_tlc_cache(operands, context);
         }
         if name == "RandomElement" || name == "RandomSubset" {
             return self.compile_random(name, operands, context);
@@ -477,7 +487,8 @@ impl Compiler<'_> {
         })
     }
 
-    // TLCGet("level") and TLCGet("distinct") read the slots the search sets.
+    // TLCGet("level"), TLCGet("distinct") and TLCGet("diameter") read the slots the search sets,
+    // and TLCGet of a number or of a name that starts with "s:" reads a register.
     fn compile_tlc_get(&mut self, operands: &[Operand], context: &Context) -> Compiling<Compiled> {
         let key = match operands {
             [operand] if !operand.is_param => match self.node(operand.node).1 {
@@ -486,6 +497,12 @@ impl Compiler<'_> {
             },
             _ => None,
         };
+        if key.is_none_or(|key| key.starts_with(NAMED_REGISTER_PREFIX)) {
+            return self.compile_register(operands, context, false);
+        }
+        if key == Some("config") {
+            return self.compile_config();
+        }
         if key != Some("level") && key != Some("distinct") && key != Some("diameter") {
             return unsupported("TLCGet");
         }
@@ -510,6 +527,160 @@ impl Compiler<'_> {
                 Footprint::slot(slot),
             )
         })
+    }
+
+    // TLCGet("config"), the run's settings as TLC's model checker records them
+    // (`AbstractChecker.createConfig`). TLC's install is where its jar is, which the native
+    // checker has none of, so it is TLC's answer where it can't tell.
+    fn compile_config(&mut self) -> Compiling<Compiled> {
+        self.native_only = Some("TLCGet(\"config\")");
+        let model = &self.ir.model;
+        let text = |text: &str| text.encode_utf16().collect::<Vec<u16>>();
+        let fields = [
+            ("mode", Field::Text("bfs".into())),
+            ("deadlock", Field::Bool(model.check_deadlock)),
+            ("worker", Field::Int(self.workers as i64)),
+            ("seed", Field::Text((model.random_seed as i64).to_string())),
+            ("fingerprint", Field::Text((INITIAL as i64).to_string())),
+            ("install", Field::Text("unknown".into())),
+        ];
+        let mut keys = Vec::with_capacity(fields.len());
+        let mut values = Vec::with_capacity(fields.len());
+        for (name, field) in fields {
+            keys.push(self.store.str(&text(name)));
+            values.push(match field {
+                Field::Text(value) => self.store.str(&text(&value)),
+                Field::Bool(value) => bool_id(value),
+                Field::Int(value) => self.store.int(value)?,
+            });
+        }
+        Ok(super::constant(self.store.function_of(&keys, &values)?))
+    }
+
+    // TLCSet(key, value) and TLCGet(key) of a register, as TLC runs them on one worker
+    // (`TLCGetSet.TLCSet`, `TLCGetSet.TLCGetEval`). TLCSet writes in the order TLC evaluates it,
+    // so like Print it compiles only where the engine evaluates as TLC does, and nothing caches
+    // what reads a register. TLCSet("exit", FALSE) and TLCSet("pause", FALSE) do nothing; the
+    // keys that stop or pause TLC, or set a Java property, stop the search.
+    fn compile_register(
+        &mut self,
+        operands: &[Operand],
+        context: &Context,
+        is_set: bool,
+    ) -> Compiling<Compiled> {
+        if is_set && !context.can_print {
+            return unsupported("TLCSet");
+        }
+        if operands.len() != if is_set { 2 } else { 1 } {
+            return unsupported("an operator applied to the wrong number of arguments");
+        }
+        self.is_printing = true;
+        self.native_only = Some("TLC's registers");
+        let compiled = operands
+            .iter()
+            .map(|operand| self.compile(operand.node, &operand.context))
+            .collect::<Compiling<Vec<Compiled>>>()?;
+        let footprint = Footprint::merge_all(compiled.iter().map(|operand| &operand.footprint))
+            .merge(&Footprint::slot(super::REGISTER_SLOT));
+        let footprint = if is_set {
+            footprint.merge(&Footprint::slot(super::PRINT_SLOT))
+        } else {
+            footprint
+        };
+        let mut evaluators = compiled.into_iter().map(|operand| operand.eval);
+        let evaluate_key = evaluators.next().expect("a key");
+        let evaluate_value = evaluators.next();
+        Ok(Compiled {
+            is_boolean: is_set,
+            ..leaf(
+                eval(move |machine| {
+                    let key = evaluate_key(machine)?;
+                    let Some(evaluate_value) = &evaluate_value else {
+                        return get_register(machine, key);
+                    };
+                    let value = evaluate_value(machine)?;
+                    set_register(machine, key, value)?;
+                    Ok(TRUE)
+                }),
+                footprint,
+            )
+        })
+    }
+
+    // TLCFP(v), TLC's fingerprint of v as a number: the low 32 bits of the fingerprint of a state
+    // of v alone (`TLCExt.tlcFingerprint`).
+    fn compile_tlc_fp(&mut self, operands: &[Operand]) -> Compiling<Compiled> {
+        let [operand] = operands else {
+            return unsupported("an operator applied to the wrong number of arguments");
+        };
+        let value = self.operand(operand)?;
+        let evaluate = value.eval;
+        Ok(leaf(
+            eval(move |machine| {
+                let value = evaluate(machine)?;
+                let fingerprint = Fingerprints::new().get_state(&machine.store, &[value], &[0]);
+                machine.store.int(i64::from(fingerprint as i32))
+            }),
+            value.footprint,
+        ))
+    }
+
+    // TLCCache(e, key) (`TLCExt.tlcEval2`): e evaluated once for each key where e reads no
+    // variable, and otherwise each time, as TLC caches it by the state, which only an e that sets
+    // or reads a register could tell. TLC caches by e's node, wherever it is reached from. Where the key is
+    // constant, e's effects happen once, where TLCCache is first evaluated, so they may wherever
+    // TLCCache is.
+    fn compile_tlc_cache(
+        &mut self,
+        operands: &[Operand],
+        context: &Context,
+    ) -> Compiling<Compiled> {
+        let [expression, key] = operands else {
+            return unsupported("an operator applied to the wrong number of arguments");
+        };
+        if expression.is_param || expression.slot.is_some() {
+            return unsupported("TLCCache of an argument");
+        }
+        let node = expression.node;
+        let key = self.compile(key.node, &key.context.without_print())?;
+        let is_key_constant = key.footprint.width() == 0;
+        let value = self.compile(
+            node,
+            &Context {
+                can_print: context.can_print || is_key_constant,
+                ..expression.context.clone()
+            },
+        )?;
+        if !value.is_printing() && !value.uses_registers() {
+            return Ok(value);
+        }
+        if !value.footprint.vars.is_empty() || !value.footprint.primes.is_empty() {
+            return unsupported("TLCCache of an expression with registers that reads variables");
+        }
+        let footprint = key.footprint.merge(&if is_key_constant {
+            value.footprint.without_slots(&[super::PRINT_SLOT])
+        } else {
+            value.footprint
+        });
+        let (evaluate_key, evaluate_value) = (key.eval, value.eval);
+        Ok(leaf(
+            eval(move |machine| {
+                let key = evaluate_key(machine)?;
+                for &(cached, value) in machine.tlc_caches.get(&node).into_iter().flatten() {
+                    if machine.store.equals(cached, key)? {
+                        return Ok(value);
+                    }
+                }
+                let value = evaluate_value(machine)?;
+                machine
+                    .tlc_caches
+                    .entry(node)
+                    .or_default()
+                    .push((key, value));
+                Ok(value)
+            }),
+            footprint,
+        ))
     }
 
     // Whether an argument names or writes an operator, such as Test in SelectSeq(s, Test).
@@ -1358,6 +1529,82 @@ fn model_value(machine: &mut Machine<'_>, name: Id) -> Outcome<Id> {
     let text = machine.store.text_of(name).to_vec();
     machine.store.rank_text(&text);
     Ok(machine.store.model(&text))
+}
+
+/// The prefix of the names of TLC's named registers (`TLCGetSet.NAMED_REGISTER_PREFIX`).
+const NAMED_REGISTER_PREFIX: &str = "s:";
+
+// Where TLC keeps a register's value: under a natural number, or under a name that starts with
+// "s:".
+enum RegisterKey {
+    Numbered(usize),
+    Named(Id),
+}
+
+fn get_register_key(store: &Store, key: Id) -> Option<RegisterKey> {
+    match store.kind_of(key) {
+        KIND_INT if store.int_of(key) >= 0 => {
+            Some(RegisterKey::Numbered(store.int_of(key) as usize))
+        }
+        KIND_STRING
+            if String::from_utf16_lossy(store.text_of(key)).starts_with(NAMED_REGISTER_PREFIX) =>
+        {
+            Some(RegisterKey::Named(key))
+        }
+        _ => None,
+    }
+}
+
+fn get_register(machine: &mut Machine<'_>, key: Id) -> Outcome<Id> {
+    let registers = &machine.registers;
+    let value = match get_register_key(&machine.store, key) {
+        Some(RegisterKey::Numbered(index)) => registers.numbered.get(index).copied().flatten(),
+        Some(RegisterKey::Named(name)) => registers
+            .named
+            .iter()
+            .find(|&&(named, _)| named == name)
+            .map(|&(_, value)| value),
+        None if machine.store.kind_of(key) == KIND_STRING => {
+            return Err(Bail("unsupported: TLCGet of a key the search doesn't keep"));
+        }
+        None => return Err(Bail("TLCGet of a key that isn't a natural number")),
+    };
+    value.ok_or(Bail("TLCGet of a register TLC hasn't set"))
+}
+
+fn set_register(machine: &mut Machine<'_>, key: Id, value: Id) -> Outcome<()> {
+    let registers = &mut machine.registers;
+    match get_register_key(&machine.store, key) {
+        Some(RegisterKey::Numbered(index)) => {
+            if registers.numbered.len() <= index {
+                registers.numbered.resize(index + 1, None);
+            }
+            registers.numbered[index] = Some(value);
+        }
+        Some(RegisterKey::Named(name)) => {
+            match registers.named.iter_mut().find(|(named, _)| *named == name) {
+                Some(entry) => entry.1 = value,
+                None => registers.named.push((name, value)),
+            }
+        }
+        None if machine.store.kind_of(key) == KIND_STRING => {
+            let text = String::from_utf16_lossy(machine.store.text_of(key));
+            if !(matches!(text.as_str(), "exit" | "pause") && value != TRUE) {
+                return Err(Bail(
+                    "unsupported: TLCSet of a key that stops or configures TLC",
+                ));
+            }
+        }
+        None => return Err(Bail("TLCSet of a key that isn't a natural number")),
+    }
+    Ok(())
+}
+
+// A field of TLCGet("config").
+enum Field {
+    Text(String),
+    Bool(bool),
+    Int(i64),
 }
 
 #[cfg(test)]
