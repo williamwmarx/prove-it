@@ -1895,6 +1895,20 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 .take()
                 .expect("the counterexample a check found");
             let count = search.states.count();
+            if let Some(path) = &settings.state_log {
+                write_state_log(
+                    path,
+                    &variables,
+                    &search.states,
+                    &machine.store,
+                    &Logged {
+                        count,
+                        stopped: Some(PERIODIC_LASSO),
+                        expanding: expanded,
+                        graph: search.graph.as_ref(),
+                    },
+                );
+            }
             let lasso_actions = match &liveness.verdict {
                 Verdict::Lasso {
                     path, loop_start, ..
