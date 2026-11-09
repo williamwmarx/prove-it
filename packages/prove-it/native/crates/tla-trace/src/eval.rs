@@ -1478,13 +1478,21 @@ impl<'ir> Evaluator<'ir> {
                 let sequence = self.operand(&operands[0])?;
                 let from = self.operand_int(&operands[1])?;
                 let to = self.operand_int(&operands[2])?;
-                let elements = sequence_of(&sequence)?;
-                if from > to {
-                    Value::tuple(Vec::new())
-                } else if from < 1 || to > elements.len() as i64 {
+                // A string slices as the sequence of its characters, and stays a string.
+                let length = match &sequence {
+                    Value::Str(text) => text.units.len(),
+                    _ => sequence_of(&sequence)?.len(),
+                };
+                let range = if from > to {
+                    0..0
+                } else if from < 1 || to > length as i64 {
                     return fail("SubSeq outside the sequence's domain");
                 } else {
-                    Value::tuple(elements[from as usize - 1..to as usize].to_vec())
+                    from as usize - 1..to as usize
+                };
+                match &sequence {
+                    Value::Str(text) => Value::Str(self.text_of(text.units[range].into())),
+                    _ => Value::tuple(sequence_of(&sequence)?[range].to_vec()),
                 }
             }
             "SelectSeq" => {
