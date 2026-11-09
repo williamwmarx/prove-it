@@ -188,6 +188,15 @@ impl Compiler<'_> {
     pub(crate) fn compile_nullary_builtin(&mut self, index: Index) -> Compiling<Compiled> {
         let builtin = &self.ir.builtins[index as usize];
         let name = self.text(builtin.name);
+        // TLCExt's Trace, the behavior up to the state, which the engine doesn't keep: a spec that
+        // never evaluates it, such as one that serializes it only once an invariant fails, still
+        // searches here, and one that does hands over then.
+        if name == "Trace" {
+            return Ok(leaf(
+                eval(|_| Err(Bail("TLCExt's Trace, the behavior the engine doesn't keep"))),
+                Footprint::default(),
+            ));
+        }
         if builtin.flags & Builtin::STATE_LEVEL != 0 || IMPURE_BUILTINS.contains(&name) {
             return unsupported(name);
         }

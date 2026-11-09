@@ -4,6 +4,7 @@
 pub mod ast;
 pub mod config;
 pub mod dependencies;
+pub mod describe;
 pub mod dump;
 pub mod environment;
 pub mod errors;
