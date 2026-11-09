@@ -35,7 +35,7 @@ pub use decode::{DecodeError, decode};
 pub use encode::encode;
 
 /// The version of the layout, `IR_VERSION` in `ir.ts`.
-pub const IR_VERSION: u32 = 12;
+pub const IR_VERSION: u32 = 13;
 
 /// "PIIR" as a little-endian word.
 pub const MAGIC: u32 = 0x5249_4950;

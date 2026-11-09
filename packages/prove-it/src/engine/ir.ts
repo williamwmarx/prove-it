@@ -64,7 +64,7 @@ import {
 import type { EngineSpec } from "./context";
 
 // The version of the layout below, which the decoder checks. Any change to it changes this.
-export const IR_VERSION = 12;
+export const IR_VERSION = 13;
 
 // "PIIR" read as a little-endian word.
 const MAGIC = 0x52494950;
