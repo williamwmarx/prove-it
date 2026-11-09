@@ -65,3 +65,32 @@ Engine time on the 4-core cloud machine, `PROVE_IT_WORKERS` 1 then 4, after the 
 - Commit: 382 → 250 ms, against 398 → 262 before.
 - MCbtree: 791 → 349 ms.
 - MCLamportMutex: 2,553 → 1,367 ms.
+
+## Closure-level gains after the native backend
+
+The native backend's experiment (native-backend.md, section 9) pointed back at the closures. What
+came of it:
+
+- **Applying a run of integers in place (#133).** `Store::apply` answers a tuple, or a function over a run of integers, at an integer in its domain, with a subtraction and a load, inline. Philosophers' search went from 1,518M to 1,401M instructions.
+- **A PlusCal `pc` switch (#137).** A disjunction each of whose walks starts with `f[k] = c` of the same variable and bound name reads `f[k]` once, and enters only the walks whose constant matches.
+  - It fires on 54 of the 772 passing corpus models, mostly PlusCal translations.
+  - MCBakery went from 10.44B to 9.04B instructions.
+- **Tuples of different lengths told apart in place (#141).** MCLamportMutex went from 16.77B to 16.30B instructions.
+
+Tried and dropped:
+- **Not memoizing trivial arithmetic.** Arithmetic is never marked costly, so it was never memoized. Philosophers' memo tables hold set and function constructions at about 99% hits.
+- **Extending the switch to `f[i][j]` and `#`.** It fires on MCLamportMutex's three receive actions, which lead with `network[q][p] # << >>`. But the search went only from 16.77B to 16.75B instructions. The channels are usually non-empty, so all three actions still run.
+
+## Where the suite's instructions go
+
+Callgrind on the 18 suite models after #137, every model native. Each figure is a function's self cost as a share of its model's search, averaged over the models:
+
+| Group | Mean share | Largest |
+| --- | ---: | --- |
+| Walker dispatch | ~30% | `segment` 11.6%, `build_equal` guards 7.5%, memo lookups 5.2%, `exists_step` 3.4% |
+| Fingerprints | ~16% | `get_child` 6.8%, `shift_by_table` 5.0%, `set_parent` 1.9% |
+| Store | ~8% | `find_in_block` 2.6%, `apply_other` 1.6%, `apply_field` 1.5% |
+| Search | ~7% | `visit_successor` 3.3%, `search` 2.7%, `States::find` 1.1% |
+| Allocation and copies | ~3.5% | `memcpy`, `malloc`, `free` |
+
+In `segment` the cost is spread across closure entry and exit, the match on each op, and the bookkeeping and undo of assignments. No line stands out.
