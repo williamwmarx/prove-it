@@ -610,7 +610,7 @@ pub fn cardinality(set: &Value) -> Evaluated<usize> {
         return Ok(0);
     }
     match set {
-        Value::Interval(low, high) => Ok((i64::from(*high) - i64::from(*low) + 1).max(0) as usize),
+        Value::Interval(low, high) => crate::value::interval_size(*low, *high),
         Value::Lazy(lazy) => match &**lazy {
             Lazy::FunctionSet(domain, range) => match function_set_size(set, domain, range)? {
                 Some(size) => Ok(size),
@@ -702,6 +702,18 @@ mod tests {
         assert_eq!(
             message(equals(&nat(), &Value::Set(Rc::new(vec![Value::Int(1)])))),
             "Attempted to compare overridden value Nat with non-overridden value:\n{1}"
+        );
+    }
+
+    #[test]
+    fn sizes_an_interval_as_tlc_does() {
+        assert_eq!(
+            cardinality(&Value::Interval(0, i32::MAX - 1)).expect("a size"),
+            i32::MAX as usize
+        );
+        assert_eq!(
+            message(cardinality(&Value::Interval(0, i32::MAX)).map(|_| true)),
+            "Size of interval value exceeds the maximum representable size (32bits): 0..2147483647."
         );
     }
 
