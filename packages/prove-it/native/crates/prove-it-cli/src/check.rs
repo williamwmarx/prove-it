@@ -315,11 +315,11 @@ impl Reporter for Relay {
 }
 
 /// The counts a Progress line reports.
-struct Statistics {
-    generated: u64,
-    distinct: u64,
-    queued: u64,
-    depth: u64,
+pub(crate) struct Statistics {
+    pub generated: u64,
+    pub distinct: u64,
+    pub queued: u64,
+    pub depth: u64,
 }
 
 /// TLC reports a depth of at least 1, even before it finds a state, and rates a minute only once
@@ -692,7 +692,7 @@ fn print_liveness_finished(printer: &mut Printer, checking: Instant) {
 
 /// After a search, TLC prints how many states it found and how deep it went, after the progress
 /// with -tool.
-fn print_statistics(printer: &mut Printer, statistics: &Statistics, start: Instant) {
+pub(crate) fn print_statistics(printer: &mut Printer, statistics: &Statistics, start: Instant) {
     if printer.is_tool {
         print_progress(printer, statistics, Some(start));
     }
@@ -942,7 +942,7 @@ fn temporal_headline(ir: &tla_ir::Ir, liveness: &Liveness) -> Option<String> {
 }
 
 /// Without -tool, TLC prints how long it ran for a person to read.
-fn print_finished(printer: &mut Printer, start: Instant) {
+pub(crate) fn print_finished(printer: &mut Printer, start: Instant) {
     let runtime = start.elapsed().as_millis();
     let duration = if printer.is_tool {
         format!("{runtime}ms")

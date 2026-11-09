@@ -88,7 +88,7 @@ fn format_print(texts: &[String]) -> String {
 }
 
 /// A state's values, in the engine's order of the variables, as TLC prints the state.
-fn format_state(ir: &Ir, values: &[Value]) -> String {
+pub(crate) fn format_state(ir: &Ir, values: &[Value]) -> String {
     let is_conjunction = ir.tlc_order.len() > 1;
     let mut text = String::new();
     for &position in &ir.tlc_order {

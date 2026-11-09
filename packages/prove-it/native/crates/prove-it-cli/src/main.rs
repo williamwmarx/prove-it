@@ -3,6 +3,7 @@
 
 mod args;
 mod check;
+mod failure;
 mod front;
 mod messages;
 mod summary;
