@@ -355,4 +355,6 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   whose text depends on how TLC built it"), was reported as TLC's failure: FastMutex2 and
   FastMutex3 reported assumptions that hold in TLC as failing. It now lists the reasons that are
   TLC's failures (`TLC_FAILURES` in `search.rs`), and every other reason is a limit, so a reason
-  it doesn't know falls back to the interpreter.
+  it doesn't know falls back to the interpreter. Enumerating an infinite set is a limit too: the
+  engine enumerates Nat where TLC keeps the set lazy, as on suite/test202's and
+  RandomSubsetEmpty's assumptions, which hold in TLC.
