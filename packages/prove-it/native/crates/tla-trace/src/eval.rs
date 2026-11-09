@@ -1296,6 +1296,32 @@ impl<'ir> Evaluator<'ir> {
         }
     }
 
+    // Membership in a set, through the operands of a `\\cup`, `\\cap` or `\\`, as TLC's lazy
+    // `SetCupValue`, `SetCapValue` and `SetDiffValue` test it, so that an infinite operand such as
+    // Nat isn't enumerated. Both operands are evaluated, as TLC builds the set from both.
+    fn is_member_of(&mut self, element: &Value, set: &Operand) -> Evaluated<bool> {
+        if let Operand::Node(node, context) = set
+            && let NodeKind::Apply { name, args } = self.kind(*node)
+            && let [left, right] = args[..]
+            && !name.is_local
+            && let Resolution::Builtin(index) = name.resolution
+        {
+            let operator = self.name(self.ir.builtins[index as usize].name);
+            if matches!(operator, "\\cup" | "\\cap" | "\\") {
+                let is_left = self.is_member_of(element, &Operand::Node(left, context.clone()))?;
+                let is_right =
+                    self.is_member_of(element, &Operand::Node(right, context.clone()))?;
+                return Ok(match operator {
+                    "\\cup" => is_left || is_right,
+                    "\\cap" => is_left && is_right,
+                    _ => is_left && !is_right,
+                });
+            }
+        }
+        let set = self.operand(set)?;
+        is_member(element, &set)
+    }
+
     fn builtin(
         &mut self,
         index: Index,
@@ -1363,8 +1389,7 @@ impl<'ir> Evaluator<'ir> {
             "\\in" | "\\notin" => {
                 arity(2)?;
                 let element = self.operand(&operands[0])?;
-                let set = self.operand(&operands[1])?;
-                Value::Bool(is_member(&element, &set)? == (name == "\\in"))
+                Value::Bool(self.is_member_of(&element, &operands[1])? == (name == "\\in"))
             }
             "\\subseteq" => {
                 arity(2)?;

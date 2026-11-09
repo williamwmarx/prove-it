@@ -300,6 +300,19 @@ mod tests {
     }
 
     #[test]
+    fn sorts_the_values_within_a_value_compared_with_itself() {
+        let inner = Value::record(vec![
+            (text("b", 1), Value::Int(1)),
+            (text("a", 0), Value::Int(2)),
+        ])
+        .expect("a record");
+        let outer = Value::record(vec![(text("a", 0), inner)]).expect("a record");
+        assert_eq!(format_value(&outer), "[a |-> [b |-> 1, a |-> 2]]");
+        assert!(crate::value::equals(&outer, &outer).expect("an equality"));
+        assert_eq!(format_value(&outer), "[a |-> [a |-> 2, b |-> 1]]");
+    }
+
+    #[test]
     fn leaves_a_lambda_as_written_under_view_or_symmetry() {
         let lambda = || {
             let record = Value::record(vec![
