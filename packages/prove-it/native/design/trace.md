@@ -402,3 +402,50 @@ TLC builds them:
 
 The test checks Github1389Counting's postcondition on its ten-state counterexample, and on one a
 state short.
+
+## Sets TLC holds unnormalized
+
+TLC builds a set enumeration as written (`SetEnumValue` with `isNorm` false) and normalizes it in
+place only as it compares, enumerates, sizes, prints or fingerprints it. Until then `member`
+searches it element by element, asking each element whether it equals the value
+(`ValueVec.search`), so the error and its wording can differ from a sorted search's. A failure
+replay records each set enumeration it builds, with its elements as written, in a registry keyed
+by the set's address (`mark_unnormalized` in `value.rs`). Each entry holds its set, so that no
+other set takes a freed one's address. `elements`, `compare`, `equals` and printing drop the
+entry, as TLC's `normalize` would. `\cap` and `\` of a recorded set test its elements as written
+and give a recorded set, as `SetEnumValue.cap` and `diff` keep `isNorm`. Not followed yet: `\cup`
+normalizes its left operand, where TLC's `cup` doesn't, and DOMAIN of a lambda over a recorded set.
+
+## Unions TLC keeps lazy
+
+A union with an operand that isn't a set is a `SetCupValue` in TLC, with the operand TLC calls
+`cup` on first: the left one if it is a set enumeration or an interval, else the right one if it
+is, else the left. The evaluator keeps it as `Lazy::Cup`. Its members are either operand's, and
+enumerating or fingerprinting it fails with TLC's "Attempted to enumerate S \cup T when S: ...
+are not both enumerable". It prints as written. Its finiteness returns `Unsupported`. A union of
+two sets, lazy ones included, is still enumerated at once.
+
+## Handoff
+
+Done:
+- PrintTraceRace: membership in sets TLC holds unnormalized (above). An invariant past the
+  initial states fails without TLC's `CallStackTool` (`doNextEvalFailed`), so no value has a
+  source there. TLC then sets `keepCallStack` and replays the predecessor's expansion with the
+  `CallStackTool` (`ModelChecker.runTLC`), checking the invariants of each successor its
+  fingerprint set hasn't seen: a FingerprintException there prints "TLC was unable to
+  fingerprint" with the call stack, an EvalException the nested expressions, and each unseen
+  successor adds to the distinct states (FingerprintExceptionHang). The replay is quiet where the
+  failing state is the predecessor's only successor and no constraint applies
+  (`has_only_successor`), and the failure is reported only then; otherwise it returns
+  `Unsupported`.
+- semantic_error1: TLC's own NullPointerException as it reports the failure is a TLC bug. The
+  binary prints Prove It's error, the one tlc/ts and tlc/rust print, and
+  `known-differences.json` lists it for tlc/native as for the others. function_syntax (TLC
+  overflows Java's default stack) is listed for tlc/native too.
+
+Open:
+- TLC's replay of an invariant failure on successors it hasn't seen: modelling it needs the
+  engine's fingerprint set as it stood at the failure.
+- Sets TLC holds unnormalized: `\cup` and DOMAIN, above.
+- Not this workstream's: FingerprintExceptionHang, TSnapShot and DoInitFunctorMinimalErrorStack
+  (infinite sets and the trace's stops).
