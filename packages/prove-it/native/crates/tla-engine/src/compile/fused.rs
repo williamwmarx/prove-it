@@ -7,6 +7,7 @@ use std::sync::Arc;
 use tla_values::store::{EMPTY_SET, KIND_INT, KIND_SET, Outcome};
 use tla_values::{Bail, Id};
 
+use super::lazy_function;
 use super::nodes::{assign_bound, evaluate_set};
 use super::predicate::{self, Predicate, Test};
 use super::{Compiled, Filter, Shape, bool_id, eval, leaf};
@@ -134,7 +135,7 @@ pub(crate) fn apply(function: &Compiled, argument: &Compiled, footprint: Footpri
         eval(move |machine| {
             let function = function(machine)?;
             let key = argument(machine)?;
-            machine.store.apply(function, key)
+            lazy_function::apply(machine, function, key)
         }),
         footprint,
     )

@@ -26,6 +26,9 @@ pub struct EngineContext {
     /// Whether the search reads TLC's diameter, which the native checker doesn't follow: it
     /// stops once TLC has started, as an assumption may stop TLC first.
     pub is_diameter_searched: bool,
+    /// Whether the VIEW reads what the search sets, such as TLCGet("level"), which the native
+    /// checker doesn't follow: it too stops once TLC has started.
+    pub is_view_search_read: bool,
     pub init: Step,
     pub next: Step,
     /// A walk of each of TLC's actions, which together take the steps of `next` in its order, or
@@ -414,6 +417,11 @@ impl EngineContext {
         // With temporal properties, the search keeps what it prints until the checker has
         // evaluated the atoms, whose prints go between its own.
         let can_print = true;
+        if model.has_scoped_property() {
+            return Err(CompileError::Decline(
+                "a property read in an instance's scope".into(),
+            ));
+        }
         let mut conjuncts = Conjuncts::new(ir);
         let mut printed = HashSet::new();
         let mut invariant_owners = Vec::new();
@@ -476,29 +484,44 @@ impl EngineContext {
                     .map(|compiled| compiled.eval)
             })
             .collect::<Result<Vec<Eval>, CompileError>>()?;
+        let mut is_view_search_read = false;
         let view = match &model.view {
             Some(view) => {
                 let compiled = compiler.compile_root(Root::Definition(named("view", ir, view)?))?;
                 if compiled.reads_search() {
-                    return Err(CompileError::Bail("unsupported: TLCGet in a VIEW".into()));
+                    if !compiler.is_native {
+                        return Err(CompileError::Bail(VIEW_SEARCH_READ.into()));
+                    }
+                    is_view_search_read = true;
                 }
                 Some(compiled.eval)
             }
             None => None,
         };
+        // A constraint that may print or set a register is checked whole each time, as TLC
+        // checks it, where the native checker reports what the search finds.
         let mut conjuncts = Conjuncts::new(ir);
         let mut constraint_owners = Vec::new();
+        let mut printed = HashSet::new();
         for (owner, constraint) in model.constraints.iter().enumerate() {
-            conjuncts.collect(Conjunct::Named(named("constraint", ir, constraint)?));
+            let root = Conjunct::Named(named("constraint", ir, constraint)?);
+            if compiler.is_native && compile_conjunct(compiler, root, true)?.is_printing() {
+                printed.insert(root);
+                conjuncts.add(root);
+            } else {
+                conjuncts.collect(root);
+            }
             constraint_owners.resize(conjuncts.found.len(), owner as u32);
         }
         let constraints = conjuncts
             .found
             .into_iter()
             .map(|conjunct| {
-                compile_conjunct(compiler, conjunct, false).map(|compiled| Predicate {
-                    vars: predicate_vars(&compiled, width),
-                    eval: compiled.eval,
+                compile_conjunct(compiler, conjunct, printed.contains(&conjunct)).map(|compiled| {
+                    Predicate {
+                        vars: predicate_vars(&compiled, width),
+                        eval: compiled.eval,
+                    }
                 })
             })
             .collect::<Result<Vec<Predicate>, CompileError>>()?;
@@ -532,8 +555,13 @@ impl EngineContext {
             },
             "a specification",
         )?;
+        let Some(next) = model.next else {
+            return Err(CompileError::Decline(
+                "a model without a next-state relation".into(),
+            ));
+        };
         let next = compiler.compile_action(
-            model.next,
+            next,
             model.scope,
             ActionOptions {
                 is_init: false,
@@ -615,6 +643,7 @@ impl EngineContext {
             possible,
             action_properties,
             is_diameter_searched,
+            is_view_search_read,
             initial_predicates,
             view,
             atoms,
@@ -638,6 +667,7 @@ fn resolve(ir: &Ir, node: NodeId) -> &NodeKind {
 
 /// Why the engine doesn't search a model that reads TLC's diameter.
 pub const DIAMETER_SEARCHED: &str = "unsupported: TLCGet(\"diameter\") in the search";
+pub const VIEW_SEARCH_READ: &str = "unsupported: TLCGet in a VIEW";
 
 fn describe(error: CompileError) -> String {
     match error {

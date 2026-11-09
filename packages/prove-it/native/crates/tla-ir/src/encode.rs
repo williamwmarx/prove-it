@@ -93,7 +93,7 @@ fn encode_here(ir: &Ir) -> Vec<u8> {
     let model = &ir.model;
     words.extend([
         offset(model.init),
-        offset(model.next),
+        model.next.map_or(-1, offset),
         optional(model.scope),
     ]);
     words.push(model.actions.len() as i32);
@@ -115,13 +115,15 @@ fn encode_here(ir: &Ir) -> Vec<u8> {
         words.push(invariant.has_repeated_effect as i32);
     }
     words.push(model.property_invariants.len() as i32);
-    for (invariant, &name) in model
+    for ((invariant, &name), &scope) in model
         .property_invariants
         .iter()
         .zip(&model.property_invariant_names)
+        .zip(&model.property_invariant_scopes)
     {
         words.extend([
             offset(invariant.root),
+            optional(scope),
             invariant.has_repeated_effect as i32,
             name as i32,
         ]);
@@ -137,15 +139,20 @@ fn encode_here(ir: &Ir) -> Vec<u8> {
     }
     words.push(model.action_properties.len() as i32);
     for property in &model.action_properties {
-        words.extend([offset(property.action), offset(property.subscript)]);
+        words.extend([
+            offset(property.action),
+            offset(property.subscript),
+            optional(property.scope),
+        ]);
     }
     words.push(model.initial_predicates.len() as i32);
-    for (&predicate, &name) in model
+    for ((&predicate, &scope), &name) in model
         .initial_predicates
         .iter()
+        .zip(&model.initial_predicate_scopes)
         .zip(&model.initial_predicate_names)
     {
-        words.extend([offset(predicate), name as i32]);
+        words.extend([offset(predicate), name as i32, optional(scope)]);
     }
     words.push(model.view.is_some() as i32);
     words.extend(model.view.iter().flat_map(config_name));

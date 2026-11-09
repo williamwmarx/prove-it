@@ -337,7 +337,11 @@ impl Splitter<'_, '_> {
     // substitutions is one action, named at the INSTANCE.
     fn split_next(&mut self) -> Result<Vec<SplitAction>, Unsupported> {
         let ir = self.evaluator.ir;
-        let (next, scope) = next_state_relation(ir);
+        let Some((next, scope)) = next_state_relation(ir) else {
+            return Err(Unsupported(
+                "TLC's actions of a model without a next-state relation".into(),
+            ));
+        };
         let context = self.evaluator.scope_context(scope).map_err(|error| {
             Unsupported(format!(
                 "TLC's actions of a next-state relation in a scope: {}",
@@ -714,23 +718,24 @@ fn describe_instance(evaluator: &Evaluator<'_>, range: Option<SourceRange>) -> S
 // The next-state relation and the scope it is read in: where the IR names it by a binding of the
 // specification's scope, as `getSpecification` does for one read in an instance's scope, the
 // expression bound.
-fn next_state_relation(ir: &Ir) -> (NodeId, Option<Index>) {
+fn next_state_relation(ir: &Ir) -> Option<(NodeId, Option<Index>)> {
     let model = &ir.model;
-    let NodeKind::Identifier(name) = &ir.nodes.arena[model.next as usize].kind else {
-        return (model.next, model.scope);
+    let next = model.next?;
+    let NodeKind::Identifier(name) = &ir.nodes.arena[next as usize].kind else {
+        return Some((next, model.scope));
     };
     let mut scope = model.scope;
     while let Some(index) = scope.filter(|_| name.is_local) {
         let entry = &ir.scopes[index as usize];
         if entry.name == name.text {
-            return match entry.binding {
+            return Some(match entry.binding {
                 ScopeBinding::Thunk { expression, scope } => (expression, scope),
-                _ => (model.next, model.scope),
-            };
+                _ => (next, model.scope),
+            });
         }
         scope = entry.parent;
     }
-    (model.next, model.scope)
+    Some((next, model.scope))
 }
 
 // Whether evaluating an expression can change what a run does (`hasEffect`): draw a random value,

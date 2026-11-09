@@ -460,6 +460,7 @@ struct Found {
     counts: StopCounts,
 }
 
+const LAZY_FUNCTION_HELD: Bail = Bail("unsupported: a state holding a function TLC keeps lazy");
 const GRAPH_TOO_LARGE: &str = "a state graph too large to keep";
 
 /// What PROVE_IT_LIVE_CHECK finds when TLC's actions take other steps than the next-state relation.
@@ -756,6 +757,9 @@ struct Search<'r, T, E = Dense> {
     // Whether a successor is checked once the walk reaches the next, when nothing the search
     // evaluates can tell: then the probe of its fingerprint, read ahead, doesn't wait on memory.
     is_pipelined: bool,
+    // Whether the spec may build a function TLC keeps lazy, which no state may hold: TLC can't
+    // fingerprint one.
+    is_lambda_built: bool,
     // The violation the search stops at, when it knows what TLC reports for it.
     violation: Option<Found>,
     // The successor waiting to be checked, and its fingerprint.
@@ -801,6 +805,7 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
             action: 0,
             checked: None,
             is_pipelined,
+            is_lambda_built: false,
             pending: Vec::with_capacity(width),
             violation: None,
             pending_fingerprint: None,
@@ -840,6 +845,14 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
         context: &EngineContext,
         is_successor: bool,
     ) -> Outcome<u64> {
+        if self.is_lambda_built
+            && machine
+                .current()
+                .iter()
+                .any(|&value| machine.store.holds_lazy_function(value))
+        {
+            return Err(LAZY_FUNCTION_HELD);
+        }
         if self.states.key_width().is_none() {
             let (store, order) = (&machine.store, self.states.order());
             return Ok(if is_successor {
@@ -1810,7 +1823,11 @@ struct Started {
 // TLC's startup: it evaluates the substitutes and the constant definitions, then the assumptions
 // until one is false. What they print is kept until all of it is evaluated, so a model the engine
 // can't take prints nothing.
-fn run_startup(machine: &mut Machine<'_>, startup: &Startup) -> Outcome<Started> {
+// `is_native`: the native checker reports an assumption the engine fails to evaluate however it
+// fails, since its evaluator of failures words TLC's error or finds none, which keeps the run
+// from being native; otherwise one the engine can't follow is the interpreter's, as is a
+// substitute that fails.
+fn run_startup(machine: &mut Machine<'_>, startup: &Startup, is_native: bool) -> Outcome<Started> {
     let take = |machine: &mut Machine<'_>| {
         std::mem::take(&mut machine.output)
             .into_iter()
@@ -1820,8 +1837,18 @@ fn run_startup(machine: &mut Machine<'_>, startup: &Startup) -> Outcome<Started>
             })
             .collect::<Vec<_>>()
     };
-    for evaluate in startup.substitutes.iter().chain(&startup.definitions) {
-        evaluate(machine)?;
+    // The front end rejects a substitute TLC checks and finds failing (`processConstantDefns`), so
+    // one that fails here is one the native checker leaves to fail where it is used, as TLC does.
+    for evaluate in &startup.substitutes {
+        let result = evaluate(machine);
+        if !is_native {
+            result?;
+        }
+    }
+    // `processConstantDefns`: TLC swallows whatever a constant definition throws and keeps it as
+    // an operator, which evaluates it again, and fails again, where it is used.
+    for evaluate in &startup.definitions {
+        let _ = evaluate(machine);
     }
     // `getConstantValue`: TLC keeps a definition that fails to evaluate as an operator.
     for (evaluate, form, kind, name) in &startup.predicates {
@@ -1830,15 +1857,24 @@ fn run_startup(machine: &mut Machine<'_>, startup: &Startup) -> Outcome<Started>
             Err(bail) if is_engine_limit(bail.0) => return Err(bail),
             Err(_) => continue,
         };
-        let format = |machine: &Machine<'_>| tla_values::print::format_value(&machine.store, value);
+        // The store forgets how TLC built some values, whose text then depends on it.
+        let format = |machine: &Machine<'_>| {
+            if tla_values::print::is_printable(&machine.store, value) {
+                Ok(tla_values::print::format_value(&machine.store, value))
+            } else {
+                Err(Bail(
+                    "unsupported: printing a value whose text depends on how TLC built it",
+                ))
+            }
+        };
         let message = match form {
             PredicateForm::Predicate if value == TRUE => continue,
             PredicateForm::Predicate => {
-                format!("The {kind} of {name} is equal to {}", format(machine))
+                format!("The {kind} of {name} is equal to {}", format(machine)?)
             }
             PredicateForm::Definition => format!("The {kind} {name} cannot be a constant."),
             PredicateForm::Specification => {
-                format!("The value of {name} is equal to {}", format(machine))
+                format!("The value of {name} is equal to {}", format(machine)?)
             }
         };
         return Ok(Started {
@@ -1865,7 +1901,7 @@ fn run_startup(machine: &mut Machine<'_>, startup: &Startup) -> Outcome<Started>
                 violated = Some(name.clone());
                 break;
             }
-            Err(bail) if is_engine_limit(bail.0) => return Err(bail),
+            Err(bail) if is_engine_limit(bail.0) && !is_native => return Err(bail),
             Err(bail) => {
                 failed = Some((position as u32, bail));
                 break;
@@ -1955,8 +1991,8 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         Err(error) => return SearchOutcome::Declined(describe(error)),
     };
     // A search that ranked strings may start over in the interpreter, which would print again
-    // what the search printed.
-    if compiler.is_printing && compiler.is_ranking {
+    // what the search printed; the native checker never starts over.
+    if compiler.is_printing && compiler.is_ranking && !settings.is_violation_reported {
         return SearchOutcome::Declined("unsupported: Print with ToString".into());
     }
     let is_distinct_read = compiler.is_distinct_read;
@@ -1964,7 +2000,9 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     // Checking a successor once the walk reaches the next reorders nothing anyone can see where
     // nothing prints, reads the count of distinct states, or fingerprints a VIEW or symmetry's
     // representative, which the walk would then interleave with.
+    let is_lambda_built = compiler.is_lambda_built;
     let is_pipelined = !is_printing
+        && !is_lambda_built
         && !is_distinct_read
         && context.view.is_none()
         && model.startup.symmetry.is_none()
@@ -1980,18 +2018,27 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     let is_shared = thread_count > 1
         && !compiler.is_ranking
         && !compiler.is_printing
+        && !is_lambda_built
         && !is_distinct_read
         && !model.is_recording_graph
         && !settings.is_live_checked
         && context.possible.is_empty();
     // The liveness checker's atoms are answered on the threads too, unless ToString ranks strings.
-    let atom_threads = if compiler.is_ranking { 1 } else { thread_count };
+    let atom_threads = if compiler.is_ranking || is_lambda_built {
+        1
+    } else {
+        thread_count
+    };
     let program = compiler.finish();
     let mut machine = Machine::new(&program, store);
     // TLCGet("level") is 0 while TLC starts.
     let startup = machine.store.int(0).and_then(|zero| {
         machine.set_slot(LEVEL_SLOT, zero);
-        run_startup(&mut machine, &context.startup)
+        run_startup(
+            &mut machine,
+            &context.startup,
+            settings.is_violation_reported,
+        )
     });
     let group = match startup {
         Err(Bail(reason)) => return SearchOutcome::Declined(reason.into()),
@@ -2020,9 +2067,14 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             if let Some((position, _)) = started.failed {
                 return SearchOutcome::AssumptionFailed { position };
             }
-            if context.is_diameter_searched {
+            if context.is_diameter_searched || context.is_view_search_read {
                 return SearchOutcome::Stopped {
-                    reason: crate::context::DIAMETER_SEARCHED.into(),
+                    reason: if context.is_diameter_searched {
+                        crate::context::DIAMETER_SEARCHED
+                    } else {
+                        crate::context::VIEW_SEARCH_READ
+                    }
+                    .into(),
                     checkpoint: None,
                     collisions: 0,
                     violation: None,
@@ -2069,6 +2121,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     let mut search = Search::new(states, reporter, is_distinct_read, is_pipelined);
     search.possible = vec![-1; context.possible.len()];
     search.canonicalizer = canonicalizer;
+    search.is_lambda_built = is_lambda_built;
     search.held = (model.is_recording_graph && is_printing).then(Vec::new);
     search.graph = model.is_recording_graph.then(|| Graph {
         edge_offsets: vec![0],
