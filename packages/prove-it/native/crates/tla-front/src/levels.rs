@@ -38,6 +38,11 @@ pub struct LevelData {
 }
 
 impl LevelData {
+    /// Whether the level depends on declared parameters (`params`).
+    pub fn has_params(&self) -> bool {
+        !self.params.is_empty()
+    }
+
     fn new(level: u8) -> LevelData {
         LevelData {
             level,
