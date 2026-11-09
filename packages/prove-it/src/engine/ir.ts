@@ -64,7 +64,7 @@ import {
 import type { EngineSpec } from "./context";
 
 // The version of the layout below, which the decoder checks. Any change to it changes this.
-export const IR_VERSION = 12;
+export const IR_VERSION = 13;
 
 // "PIIR" read as a little-endian word.
 const MAGIC = 0x52494950;
@@ -146,6 +146,7 @@ const BUILTIN_STATE_LEVEL = 1;
 const BUILTIN_LEVEL_CONSTANT = 2;
 const BUILTIN_LAZY = 4;
 const BUILTIN_TABLE = 8;
+const BUILTIN_NATURALS_GEQ = 16;
 
 const SCOPE_VALUE = 0;
 const SCOPE_THUNK = 1;
@@ -410,7 +411,8 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
       (builtin.isStateLevel ? BUILTIN_STATE_LEVEL : 0) |
         (builtin.isLevelConstant ? BUILTIN_LEVEL_CONSTANT : 0) |
         (builtin.isLazy ? BUILTIN_LAZY : 0) |
-        (builtin.table ? BUILTIN_TABLE : 0),
+        (builtin.table ? BUILTIN_TABLE : 0) |
+        (builtin.isNaturalsGeq ? BUILTIN_NATURALS_GEQ : 0),
     );
     if (builtin.table) {
       push(builtins, builtin.table.length);

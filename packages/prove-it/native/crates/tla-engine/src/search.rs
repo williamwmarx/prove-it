@@ -25,7 +25,7 @@ use crate::context::{
     Atom, EngineContext, Startup, StartupSymmetry, count_possible, first_failing_changed,
     holds_all, holds_all_changed,
 };
-use crate::live::{Diameters, LiveGraph, Table, UNKNOWN, answer_atoms};
+use crate::live::{Diameters, LiveAnswers, LiveGraph, Table, UNKNOWN, answer_atoms};
 use crate::machine::{Eval, Machine, Printed, Registers, Step, UNASSIGNED};
 use crate::symmetry::{
     Canonicalizer, Group, NamedGroup, close_group, get_permutations, name_group,
@@ -500,6 +500,11 @@ struct Found {
 }
 
 const LAZY_FUNCTION_HELD: Bail = Bail("unsupported: a state holding a function TLC keeps lazy");
+/// Where an atom sets or reads TLC's registers, the search answers the atoms as TLC evaluates
+/// them, which it follows only so far.
+const ONLINE_DECLINED: &str = "the liveness checker declined as the search went";
+const ONLINE_LATE: &str = "a late node where the atoms use TLC's registers";
+const ONLINE_ACCEPTED: &str = "an accepting node where the atoms use TLC's registers";
 const NO_NEXT_STATE: &str = "initial states and no next-state relation";
 const GRAPH_TOO_LARGE: &str = "a state graph too large to keep";
 
@@ -1871,7 +1876,8 @@ struct Started {
     /// The configuration error a constant definition's value gave, which ends the startup.
     config_error: Option<String>,
     /// The assumption the engine left to its caller, by its position.
-    delegated: Option<u32>,
+    // The assumption left to the caller, and why the engine didn't evaluate it.
+    delegated: Option<(u32, Bail)>,
 }
 
 // TLC's startup: it evaluates the substitutes and the constant definitions, then the assumptions
@@ -1963,7 +1969,8 @@ fn run_startup(machine: &mut Machine<'_>, startup: &Startup, is_native: bool) ->
 struct Assumed {
     violated: Option<String>,
     failed: Option<(u32, Bail)>,
-    delegated: Option<u32>,
+    // The assumption left to the caller, and why the engine didn't evaluate it.
+    delegated: Option<(u32, Bail)>,
 }
 
 // The assumptions from `from` on, until one is false, fails, or is left to the caller.
@@ -1985,8 +1992,10 @@ fn check_assumptions(
                 assumed.violated = Some(name.clone());
                 break;
             }
-            Err(Bail(DELEGATED_ASSUMPTION)) if is_native => {
-                assumed.delegated = Some(position as u32);
+            // One the engine stops at a limit of is the caller's too, whose evaluator follows
+            // TLC further, as where TLC compares two sets it can't enumerate part by part.
+            Err(bail) if is_native && is_engine_limit(bail.0) => {
+                assumed.delegated = Some((position as u32, bail));
                 break;
             }
             Err(bail) if is_engine_limit(bail.0) && !is_native => return Err(bail),
@@ -2148,10 +2157,22 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             };
             // The caller checks each assumption the engine leaves to it, and the engine goes on
             // from the generator's state it leaves.
-            while let Some(position) = assumed.delegated {
+            while let Some((position, bail)) = assumed.delegated {
                 let delegated = match reporter.check_assumption(position) {
                     Ok(delegated) => delegated,
-                    Err(reason) => return SearchOutcome::Declined(reason),
+                    Err(reason) if bail.0 == DELEGATED_ASSUMPTION => {
+                        return SearchOutcome::Declined(reason);
+                    }
+                    // Where the caller can't check one the engine stopped at a limit of, TLC may
+                    // fail there, which the caller reports as it does any that fails.
+                    Err(_) => {
+                        assumed = Assumed {
+                            violated: None,
+                            failed: Some((position, bail)),
+                            delegated: None,
+                        };
+                        break;
+                    }
                 };
                 if !delegated.holds {
                     let name = context.startup.assumptions[position as usize].1.clone();
@@ -2250,6 +2271,41 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         reals: search.states.key_width.map(|_| Vec::new()),
         ..Graph::default()
     });
+    // Where an atom sets or reads TLC's registers, the checker adds each state as the search
+    // expands it and asks the atoms then, as TLC evaluates them.
+    let mut online = None;
+    // Why the checker declined as the search went, if it did.
+    let mut online_declined: Option<String> = None;
+    if settings.is_violation_reported && search.graph.is_some() && context.is_live_registered {
+        let properties: Vec<Vec<Term>> = model
+            .live_properties
+            .iter()
+            .map(|property| to_terms(&property.formula))
+            .collect();
+        let property_terms: Vec<&[Term]> = properties.iter().map(Vec::as_slice).collect();
+        let checker = tla_live::Online::new(&to_terms(&model.live_formula), &property_terms);
+        let declined = match &checker {
+            Err(declined) => Some(declined.0.as_str()),
+            Ok(_) if search.states.key_width.is_some() || is_symmetric => {
+                Some("TLC's registers in the atoms under SYMMETRY or a VIEW")
+            }
+            Ok(_) if context.diameter_atoms.contains(&true) => {
+                Some("TLC's registers and TLCGet(\"diameter\") in the atoms")
+            }
+            // TLC evaluates those as it finds each initial state, among the initial predicate's
+            // own evaluations.
+            Ok(checker) if checker.asks_initial_states() => {
+                Some("TLC's registers in atoms of the initial states")
+            }
+            Ok(_) => None,
+        };
+        if let Some(reason) = declined {
+            return SearchOutcome::Declined(reason.into());
+        }
+        // What the search and the atoms print comes out in TLC's order as it is.
+        search.held = None;
+        online = checker.ok();
+    }
     // The actions take each state's steps when the search labels them for ENABLED.
     let actions = context
         .actions
@@ -2322,6 +2378,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     // without the states the search reached but didn't store, prints or TLC's diameter.
     let is_periodic = settings.is_liveness_periodic
         && model.is_recording_graph
+        && online.is_none()
         && search.states.key_width.is_none()
         && search.held.is_none()
         && !context.is_live_printing
@@ -2360,6 +2417,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         // the one.
         if settings.is_violation_reported
             && search.graph.is_some()
+            && online.is_none()
             && search.states.key_width.is_none()
             && search.held.is_none()
             && !context.is_live_printing
@@ -2392,6 +2450,18 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 .initial_states(initial_states.0, initial_states.1);
         }
         is_past_initial = true;
+        if let Some(online) = &mut online {
+            for state in 0..search.states.count() as u32 {
+                add_online(
+                    &mut machine,
+                    &context,
+                    &search,
+                    online,
+                    (state, true),
+                    &mut online_declined,
+                )?;
+            }
+        }
         if context.next.is_none() && search.states.count() > 0 {
             search.violation = Some(Found {
                 kind: ViolationKind::NoNextState,
@@ -2598,6 +2668,17 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             }
             out_degrees[(search.new_states as usize).min(OUT_DEGREE_BUCKETS - 1)] += 1;
             search.flush(&mut machine);
+            if let Some(online) = &mut online {
+                add_online(
+                    &mut machine,
+                    &context,
+                    &search,
+                    online,
+                    (expanding as u32, false),
+                    &mut online_declined,
+                )?;
+                search.flush(&mut machine);
+            }
             if test_live_check_at.is_some_and(|at| expanding + 1 >= at) {
                 test_live_check_at = None;
                 check_periodically(&mut machine, &mut search)?;
@@ -2761,7 +2842,34 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             // The temporal properties are checked here, and the interpreter takes the graph over
             // only to print a counterexample, to check them itself, or under PROVE_IT_LIVE_CHECK
             // to check them again.
+            // TLC rebuilds a counterexample's states before it evaluates the properties on it, each
+            // with what it sets, which the engine doesn't follow.
+            let online_liveness = match &mut online {
+                None => None,
+                Some(online) => {
+                    let verdict = with_online(&mut machine, &context, &search, |source| {
+                        online.finish(source)
+                    });
+                    if verdict != Ok(Verdict::Holds) {
+                        return SearchOutcome::Stopped {
+                            reason: "a counterexample where the atoms use TLC's registers".into(),
+                            checkpoint: None,
+                            collisions,
+                            violation: None,
+                        };
+                    }
+                    Some(Liveness {
+                        branches: Some(online.branches()),
+                        verdict: Verdict::Holds,
+                        events: Vec::new(),
+                        unanswered: None,
+                    })
+                }
+            };
             let (checkpoint, liveness, lasso_actions, lasso_printed) = match search.graph {
+                Some(_) if online_liveness.is_some() => {
+                    (None, online_liveness, Vec::new(), Vec::new())
+                }
                 Some(_) => {
                     // Under SYMMETRY or a VIEW, the checker may ask about the steps from states the
                     // search reached but didn't store, which the engine takes and checks again.
@@ -3028,6 +3136,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 .filter(|_| settings.is_violation_reported)
                 .filter(|found| {
                     search.graph.is_none()
+                        || online.is_some()
                         || matches!(
                             found.kind,
                             ViolationKind::Error {
@@ -3093,7 +3202,11 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     startup_random,
                     symmetry: named_group.clone(),
                 }))
-            } else if !is_kept || search.states.key_width.is_some() || search.held.is_some() {
+            } else if !is_kept
+                || search.states.key_width.is_some()
+                || search.held.is_some()
+                || online.is_some()
+            {
                 // The interpreter searches a graph too large to keep from the start, since its
                 // liveness checker may stop in the first states, before it has taken all of them
                 // over; under SYMMETRY or a VIEW, since its replay of the graph would give its
@@ -3123,6 +3236,11 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             // its violation where TLC wouldn't, and a deadlock with the path to the node the
             // deadlocked state reaches, as on TLC's Github710d.
             let found = match found {
+                // TLC adds a deadlocked state to the behavior graphs once it has reported the
+                // deadlock, with what its atoms set, which the engine doesn't follow.
+                Some(found) if online.is_some() => {
+                    (!matches!(found.kind, ViolationKind::Deadlock { .. })).then_some(found)
+                }
                 Some(mut found) if search.graph.is_some() => {
                     let mut expanded = search.expanding;
                     let is_deadlock = matches!(found.kind, ViolationKind::Deadlock { .. });
@@ -3150,11 +3268,23 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                         .filter(|unanswered| {
                             unanswered.is_initial || (unanswered.state as usize) < search.expanding
                         });
+                    // The tables leave unanswered what the checker asks of no finished search,
+                    // such as ENABLED of a state not yet expanded, as well as what fails: TLC
+                    // stopped at the atom only where evaluating it fails as TLC fails.
+                    let unanswered = unanswered.and_then(|unanswered| {
+                        let failure = atom_failure(&mut machine, &context, &search, unanswered);
+                        machine.output.clear();
+                        match failure {
+                            Some(Ok(_)) => None,
+                            Some(Err(bail)) if !is_engine_limit(bail.0) => Some(Some(unanswered)),
+                            _ => Some(None),
+                        }
+                    });
                     let verdict = tables.and_then(|tables| {
                         accepted_at(model, &context, &search, &tables, expanded, count)
                     });
                     match verdict {
-                        _ if unanswered.is_some() => unanswered.and_then(|unanswered| {
+                        _ if unanswered.is_some() => unanswered.flatten().and_then(|unanswered| {
                             to_atom_failure(&context, &search, initial_states, unanswered)
                         }),
                         Some(None) => Some(found),
@@ -3204,6 +3334,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             // printed and no SYMMETRY or VIEW reduced them.
             if is_traced
                 && bail.0 == GRAPH_TOO_LARGE
+                && online.is_none()
                 && !is_printing
                 && search.states.key_width.is_none()
                 && !is_symmetric
@@ -3233,7 +3364,9 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 }
             }
             SearchOutcome::Stopped {
-                reason: bail.0.to_string(),
+                reason: online_declined
+                    .take()
+                    .map_or_else(|| bail.0.to_string(), |why| format!("{}: {why}", bail.0)),
                 checkpoint,
                 collisions,
                 violation,
@@ -3640,6 +3773,71 @@ fn accepted_at(
     .ok()
 }
 
+// Runs the checker of a search that answers the atoms as it goes on the search's graph so far,
+// with the atoms' answers as the machine gives them now.
+fn with_online<T>(
+    machine: &mut Machine<'_>,
+    context: &EngineContext,
+    search: &Search<'_, States>,
+    run: impl FnOnce(&tla_live::Source<'_>) -> T,
+) -> T {
+    let graph = search.graph.as_ref().expect("a graph");
+    let count = search.states.count();
+    let live = tla_live::Graph {
+        parents: &search.states.parents[..count],
+        edge_offsets: &graph.edge_offsets,
+        edges: &graph.edges,
+        fingerprints: &search.states.fingerprints[..count],
+        reals: None,
+        diameters: None,
+    };
+    let answers = LiveAnswers {
+        machine: std::cell::RefCell::new(machine),
+        atoms: &context.atoms,
+        states: &search.states.ids,
+        width: context.width,
+        edges: &graph.edges,
+    };
+    run(&tla_live::Source {
+        graph: &live,
+        answers: &answers,
+    })
+}
+
+// Adds a state to TLC's behavior graphs as TLC does once it has found an initial state or
+// expanded a state: the atoms it evaluates then are evaluated on the machine as it is. Where the
+// checker declines, into `declined` goes why.
+fn add_online(
+    machine: &mut Machine<'_>,
+    context: &EngineContext,
+    search: &Search<'_, States>,
+    online: &mut tla_live::Online,
+    (state, is_initial): (u32, bool),
+    declined: &mut Option<String>,
+) -> Outcome<()> {
+    let added = with_online(machine, context, search, |source| {
+        if is_initial {
+            online.add_initial_state(source, state).map(|()| None)
+        } else {
+            online.add_state(source, state)
+        }
+    });
+    // TLC runs Next again from a state it adds a node of late, with what Next sets.
+    let is_late = online
+        .take_events()
+        .iter()
+        .any(|event| matches!(event, Event::Late(_)));
+    match added {
+        Err(reason) => {
+            *declined = Some(reason.0);
+            Err(Bail(ONLINE_DECLINED))
+        }
+        Ok(Some(_)) => Err(Bail(ONLINE_ACCEPTED)),
+        Ok(None) if is_late => Err(Bail(ONLINE_LATE)),
+        Ok(None) => Ok(()),
+    }
+}
+
 // Whether every atom of a state evaluates on each initial state the search found before it
 // stopped among them, the one it stopped at included, and prints nothing.
 fn answers_initial_atoms(
@@ -3664,6 +3862,38 @@ fn answers_initial_atoms(
                 Atom::Enabled { run: Err(_), .. } | Atom::Unknown(_) => false,
             })
         })
+}
+
+// What evaluating an atom the tables left unanswered gives, or `None` where the engine has no
+// evaluation of it.
+fn atom_failure(
+    machine: &mut Machine<'_>,
+    context: &EngineContext,
+    search: &Search<'_, States>,
+    unanswered: tla_live::Unanswered,
+) -> Option<Outcome<Id>> {
+    let edges = search.graph.as_ref()?.edges.len() as u32;
+    let slot = match context.atoms.get(unanswered.atom as usize)? {
+        Atom::Action { .. } if unanswered.slot >= edges => {
+            tla_live::Slot::Stutter(unanswered.slot - edges)
+        }
+        Atom::Action { .. } => tla_live::Slot::Step {
+            state: unanswered.state,
+            edge: unanswered.slot,
+        },
+        _ => tla_live::Slot::State(unanswered.slot),
+    };
+    let atoms = &context.atoms;
+    let graph = search.graph.as_ref()?;
+    LiveAnswers {
+        machine: std::cell::RefCell::new(machine),
+        atoms,
+        states: &search.states.ids,
+        width: context.width,
+        edges: &graph.edges,
+    }
+    .evaluate(unanswered.atom, slot)
+    .ok()
 }
 
 // The first atom the engine didn't answer that TLC evaluates as it adds the states the search

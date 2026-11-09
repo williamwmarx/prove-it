@@ -35,7 +35,7 @@ pub use decode::{DecodeError, decode};
 pub use encode::encode;
 
 /// The version of the layout, `IR_VERSION` in `ir.ts`.
-pub const IR_VERSION: u32 = 12;
+pub const IR_VERSION: u32 = 13;
 
 /// "PIIR" as a little-endian word.
 pub const MAGIC: u32 = 0x5249_4950;
@@ -95,6 +95,9 @@ impl Builtin {
     pub const LEVEL_CONSTANT: i32 = 2;
     pub const LAZY: i32 = 4;
     pub const TABLE: i32 = 8;
+    /// `>=` of `tlc2.module.Naturals`, which names itself `>` in its errors, where the `>=` of
+    /// Integers names itself.
+    pub const NATURALS_GEQ: i32 = 16;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -148,6 +148,32 @@ pub enum Lazy {
     RecordSet(Vec<(Rc<Text>, Value)>, Vec<u32>),
     Product(Vec<Value>),
     Seq(Value),
+    /// `S \cap T`, `S \cup T` and `S \ T` where TLC keeps them lazy (`SetCapValue`,
+    /// `SetCupValue`, `SetDiffValue`): neither operand is a set enumeration or an interval, or
+    /// for `\cup` one is and the other isn't, which TLC puts first.
+    Cap(Value, Value),
+    Cup(Value, Value),
+    Diff(Value, Value),
+}
+
+impl Lazy {
+    /// Whether TLC holds the set as a `UserValue` its module overrides (Nat, Int, Real, STRING,
+    /// Seq(S)), which isn't `Enumerable` and compares only with another.
+    pub fn is_overridden(&self) -> bool {
+        matches!(
+            self,
+            Lazy::Nat | Lazy::Int | Lazy::Real | Lazy::Strings | Lazy::Seq(_)
+        )
+    }
+}
+
+/// Whether TLC's value of a set is `Enumerable`, which it may try to enumerate, even where the
+/// set is infinite.
+pub fn is_enumerable(value: &Value) -> bool {
+    match value {
+        Value::Lazy(lazy) => !lazy.is_overridden(),
+        _ => value.is_set() || matches!(value, Value::Unsorted(_)),
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -348,6 +374,21 @@ fn typed_model_failure<T>(left: &Value, right: &Value, is_equality: bool) -> Eva
 }
 
 /// The elements of a set TLC can enumerate, in TLC's order.
+/// `IntervalValue.size`: an interval of more than 2^31 - 1 elements has no int size.
+pub fn interval_size(low: i32, high: i32) -> Evaluated<usize> {
+    let size = (i64::from(high) - i64::from(low) + 1).max(0);
+    if size > i64::from(i32::MAX) {
+        return fail_runtime(
+            "an interval too large to size",
+            format!(
+                "Size of interval value exceeds the maximum representable size (32bits): {}.",
+                format_pretty(&Value::Interval(low, high))
+            ),
+        );
+    }
+    Ok(size as usize)
+}
+
 /// The most elements of an interval the evaluator builds.
 const MAXIMUM_INTERVAL: usize = 1 << 24;
 
@@ -358,9 +399,12 @@ pub fn elements(value: &Value) -> Evaluated<Rc<Vec<Value>>> {
         Value::Interval(low, high)
             if i64::from(*high) - i64::from(*low) >= MAXIMUM_INTERVAL as i64 =>
         {
+            interval_size(*low, *high)?;
             fail("an interval too large to build")
         }
         Value::Interval(low, high) => Ok(Rc::new((*low..=*high).map(Value::Int).collect())),
+        // TLC finds a set its parts empty to be empty before it enumerates any of them.
+        Value::Lazy(_) if crate::sets::is_empty_by_argument(value) => Ok(Rc::new(Vec::new())),
         Value::Lazy(lazy) => crate::sets::enumerate(lazy).map(Rc::new),
         _ => fail(format!("expected a set, not a {}", value.kind_name())),
     }
@@ -403,6 +447,10 @@ pub fn compare(left: &Value, right: &Value) -> Evaluated<Ordering> {
             }
         }
         (Value::Function(left), Value::Function(right)) => compare_functions(left, right),
+        (Value::Lazy(lazy), _) if lazy.is_overridden() => compare_overridden(left, lazy, right),
+        (_, Value::Lazy(lazy)) if lazy.is_overridden() && left.is_set() => {
+            incomparable(left, right, false)
+        }
         _ if left.is_set() && right.is_set() => {
             let (left, right) = (elements(left)?, elements(right)?);
             if left.len() != right.len() {
@@ -485,6 +533,18 @@ pub fn equals(left: &Value, right: &Value) -> Evaluated<bool> {
             }
             Ok(true)
         }
+        // `UserValue.equals` is its `compareTo`.
+        (Value::Lazy(lazy), _) if lazy.is_overridden() => {
+            Ok(compare_overridden(left, lazy, right)? == Ordering::Equal)
+        }
+        (_, Value::Lazy(lazy)) if lazy.is_overridden() && left.is_set() => {
+            incomparable(left, right, true)
+        }
+        (Value::Lazy(left_lazy), Value::Lazy(right_lazy))
+            if is_same_construction(left_lazy, right_lazy) =>
+        {
+            equal_constructions(left, left_lazy, right, right_lazy)
+        }
         _ if left.is_set() && right.is_set() => {
             if let (Value::Interval(low, high), Value::Interval(other_low, other_high)) =
                 (left, right)
@@ -510,6 +570,121 @@ pub fn equals(left: &Value, right: &Value) -> Evaluated<bool> {
         _ => incomparable(left, right, true),
     }
 }
+
+fn is_same_construction(left: &Lazy, right: &Lazy) -> bool {
+    matches!(
+        (left, right),
+        (Lazy::FunctionSet(..), Lazy::FunctionSet(..))
+            | (Lazy::RecordSet(..), Lazy::RecordSet(..))
+            | (Lazy::Product(..), Lazy::Product(..))
+    )
+}
+
+// `equals` of `SetOfFcnsValue`, `SetOfRcdsValue` and `SetOfTuplesValue` with another of their
+// class: by emptiness, then by the sets they're built from, without enumerating them.
+fn equal_constructions(
+    left: &Value,
+    left_lazy: &Lazy,
+    right: &Value,
+    right_lazy: &Lazy,
+) -> Evaluated<bool> {
+    use crate::eval::is_empty;
+    if let (Lazy::FunctionSet(domain, range), Lazy::FunctionSet(other_domain, other_range)) =
+        (left_lazy, right_lazy)
+    {
+        let is_unit = is_empty(domain)?;
+        let is_other_unit = is_empty(other_domain)?;
+        if is_unit || is_other_unit {
+            return Ok(is_unit == is_other_unit);
+        }
+        let is_empty_range = is_empty(range)?;
+        let is_other_empty_range = is_empty(other_range)?;
+        if is_empty_range || is_other_empty_range {
+            return Ok(is_empty_range == is_other_empty_range);
+        }
+        return Ok(equals(domain, other_domain)? && equals(range, other_range)?);
+    }
+    let is_empty_left = is_empty(left)?;
+    if is_empty_left {
+        return is_empty(right);
+    }
+    if is_empty(right)? {
+        return Ok(false);
+    }
+    match (left_lazy, right_lazy) {
+        (Lazy::RecordSet(fields, _), Lazy::RecordSet(other_fields, _)) => {
+            if fields.len() != other_fields.len() {
+                return Ok(false);
+            }
+            for ((name, set), (other_name, other_set)) in fields.iter().zip(other_fields) {
+                if name.units != other_name.units || !equals(set, other_set)? {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        }
+        (Lazy::Product(factors), Lazy::Product(other_factors)) => {
+            if factors.len() != other_factors.len() {
+                return Ok(false);
+            }
+            for (factor, other_factor) in factors.iter().zip(other_factors) {
+                if !equals(factor, other_factor)? {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        }
+        _ => unreachable!("the same construction"),
+    }
+}
+
+// `UserValue.compareTo`: an overridden set compares with another by its module's `compareTo`
+// (Nat before Int, Seq(S) by its range), and with nothing else.
+fn compare_overridden(left: &Value, lazy: &Lazy, right: &Value) -> Evaluated<Ordering> {
+    let shown = || format_pretty(left);
+    let Value::Lazy(other) = right else {
+        return fail_runtime(
+            "compared an overridden set with another value",
+            format!(
+                "Attempted to compare overridden value {} with non-overridden value:\n{}",
+                shown(),
+                format_pretty(right)
+            ),
+        );
+    };
+    if !other.is_overridden() {
+        return fail_runtime(
+            "compared an overridden set with another value",
+            format!(
+                "Attempted to compare overridden value {} with non-overridden value:\n{}",
+                shown(),
+                format_pretty(right)
+            ),
+        );
+    }
+    match (lazy, &**other) {
+        (Lazy::Nat, Lazy::Nat) | (Lazy::Int, Lazy::Int) | (Lazy::Strings, Lazy::Strings) => {
+            Ok(Ordering::Equal)
+        }
+        (Lazy::Nat, Lazy::Int) => Ok(Ordering::Less),
+        (Lazy::Int, Lazy::Nat) => Ok(Ordering::Greater),
+        // Both unbounded: by the range.
+        (Lazy::Seq(range), Lazy::Seq(other_range)) => compare(range, other_range),
+        (Lazy::Real, _) | (_, Lazy::Real) => fail("compared Real"),
+        _ => fail_coded(
+            "compared overridden sets of different modules",
+            COMPARE_VALUE,
+            format!(
+                "Attempted to compare {} with the value\n{}",
+                shown(),
+                format_pretty(right)
+            ),
+        ),
+    }
+}
+
+/// `EC.TLC_MODULE_COMPARE_VALUE`.
+const COMPARE_VALUE: u32 = 2155;
 
 // TLC's error for two values of kinds it can't compare, worded by the class of the left operand.
 // A set compares as `toSetEnum` enumerates it.
@@ -690,6 +865,10 @@ pub fn settle(value: &Value) {
             }
             Lazy::RecordSet(fields, _) => fields.iter().for_each(|(_, set)| settle(set)),
             Lazy::Product(factors) => factors.iter().for_each(settle),
+            Lazy::Cap(left, right) | Lazy::Cup(left, right) | Lazy::Diff(left, right) => {
+                settle(left);
+                settle(right);
+            }
             Lazy::Nat | Lazy::Int | Lazy::Real | Lazy::Strings => {}
         },
         _ => {}

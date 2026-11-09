@@ -6,7 +6,7 @@ use std::rc::Rc;
 use crate::print::{format_pretty, format_value};
 use crate::value::{
     Class, Evaluated, Lazy, Value, compare, elements, equals, fail, fail_coded, fail_runtime,
-    find_key, set_of,
+    find_key, is_enumerable, set_of,
 };
 
 /// How many elements the evaluator enumerates of a lazy set before it gives up, as the engine
@@ -42,6 +42,11 @@ pub fn enumerate(lazy: &Lazy) -> Evaluated<Vec<Value>> {
             sorted(subsets)
         }
         Lazy::FunctionSet(domain_set, range) => {
+            // A domain its own parts empty holds nothing to enumerate, whatever they are, so the
+            // set holds the empty function alone.
+            if is_empty_by_argument(domain_set) {
+                return Ok(vec![Value::function(Vec::new(), Vec::new(), Class::Plain)]);
+            }
             if is_infinite(domain_set) {
                 return fail_runtime(
                     "enumerated an infinite set",
@@ -103,6 +108,65 @@ pub fn enumerate(lazy: &Lazy) -> Evaluated<Vec<Value>> {
             })?;
             sorted(product(&sets)?.into_iter().map(Value::tuple).collect())
         }
+        // `SetCapValue.Enumerator`: the first operand TLC can enumerate, filtered by the other.
+        Lazy::Cap(left, right) => {
+            let (enumerated, tested) = if is_enumerable(left) {
+                (left, right)
+            } else if is_enumerable(right) {
+                (right, left)
+            } else {
+                return fail_runtime(
+                    "enumerated S \\cap T, neither of which TLC enumerates",
+                    format!(
+                        "Attempted to enumerate S \\cap T when neither S:\n{}\nnor T:\n{}\nis enumerable",
+                        format_pretty(left),
+                        format_pretty(right)
+                    ),
+                );
+            };
+            let mut kept = Vec::new();
+            for element in elements(enumerated)?.iter() {
+                if is_member(element, tested)? {
+                    kept.push(element.clone());
+                }
+            }
+            sorted(kept)
+        }
+        // `SetCupValue.Enumerator`: both operands, which TLC must both enumerate.
+        Lazy::Cup(left, right) => {
+            if !is_enumerable(left) || !is_enumerable(right) {
+                return fail_runtime(
+                    "enumerated S \\cup T, not both of which TLC enumerates",
+                    format!(
+                        "Attempted to enumerate S \\cup T when S:\n{}\nand T:\n{}\nare not both enumerable",
+                        format_pretty(left),
+                        format_pretty(right)
+                    ),
+                );
+            }
+            let mut all = elements(left)?.to_vec();
+            all.extend(elements(right)?.iter().cloned());
+            sorted(all)
+        }
+        // `SetDiffValue.Enumerator`: the first operand, filtered by the second.
+        Lazy::Diff(left, right) => {
+            if !is_enumerable(left) {
+                return fail_runtime(
+                    "enumerated S \\ T, whose S TLC doesn't enumerate",
+                    format!(
+                        "Attempted to enumerate S \\ T when S:\n{}\nis not enumerable.",
+                        format_pretty(left)
+                    ),
+                );
+            }
+            let mut kept = Vec::new();
+            for element in elements(left)?.iter() {
+                if !is_member(element, right)? {
+                    kept.push(element.clone());
+                }
+            }
+            sorted(kept)
+        }
     }
 }
 
@@ -117,8 +181,14 @@ fn component_elements<'a>(
     sets: impl Iterator<Item = &'a Value>,
     describe: impl Fn(usize, &Value) -> String,
 ) -> Evaluated<Vec<Rc<Vec<Value>>>> {
+    // TLC finds the set empty by a component that is, before it enumerates any
+    // (`SetOfRcdsValue.elements`, `SetOfTuplesValue.elements`).
+    let sets: Vec<&Value> = sets.collect();
+    if sets.iter().any(|set| is_empty(set)) {
+        return Ok(vec![Rc::new(Vec::new())]);
+    }
     let mut lists = Vec::new();
-    for (index, set) in sets.enumerate() {
+    for (index, set) in sets.into_iter().enumerate() {
         if is_infinite(set) {
             return fail_runtime("enumerated an infinite set", describe(index, set));
         }
@@ -316,10 +386,21 @@ pub fn is_member(value: &Value, set: &Value) -> Evaluated<bool> {
                 }
                 Ok(true)
             }
+            // `SetOfRcdsValue.member`: a value `toRcd` makes no record of fails.
             Lazy::RecordSet(fields, _) => {
                 let Value::Function(function) = value else {
-                    return fail("a mistyped membership in a set of records");
+                    return non_record(value, set);
                 };
+                let is_record = match function.class.get() {
+                    Class::Tuple => function.domain.is_empty(),
+                    _ => function
+                        .domain
+                        .iter()
+                        .all(|key| matches!(key, Value::Str(_))),
+                };
+                if !is_record {
+                    return non_record(value, set);
+                }
                 if function.domain.len() != fields.len() {
                     return Ok(false);
                 }
@@ -335,8 +416,21 @@ pub fn is_member(value: &Value, set: &Value) -> Evaluated<bool> {
                 }
                 Ok(true)
             }
+            // `SetOfTuplesValue.member`: a function `toTuple` makes no tuple of is in none, but a
+            // value that isn't a function, or a function over a key that isn't an integer, fails.
             Lazy::Product(factors) => {
                 let Some(tuple) = as_tuple(value) else {
+                    let Value::Function(function) = value else {
+                        return non_tuple(value, set);
+                    };
+                    if function.interval.is_none()
+                        && !function
+                            .domain
+                            .iter()
+                            .all(|key| matches!(key, Value::Int(_)))
+                    {
+                        return non_tuple(value, set);
+                    }
                     return Ok(false);
                 };
                 if tuple.len() != factors.len() {
@@ -360,12 +454,43 @@ pub fn is_member(value: &Value, set: &Value) -> Evaluated<bool> {
                 }
                 Ok(true)
             }
+            Lazy::Cap(left, right) => Ok(is_member(value, left)? && is_member(value, right)?),
+            Lazy::Cup(left, right) => Ok(is_member(value, left)? || is_member(value, right)?),
+            Lazy::Diff(left, right) => Ok(is_member(value, left)? && !is_member(value, right)?),
         },
         _ => fail(format!(
             "a membership in a {}, which isn't a set",
             set.kind_name()
         )),
     }
+}
+
+fn non_record(value: &Value, set: &Value) -> Evaluated<bool> {
+    if matches!(value, Value::Model(_)) {
+        return fail("a model value's membership in a set of records");
+    }
+    fail_runtime(
+        "a mistyped membership in a set of records",
+        format!(
+            "Attempted to check if non-record\n{}\nis in the set of records:\n{}",
+            format_value(value),
+            format_pretty(set)
+        ),
+    )
+}
+
+fn non_tuple(value: &Value, set: &Value) -> Evaluated<bool> {
+    if matches!(value, Value::Model(_)) {
+        return fail("a model value's membership in a set of tuples");
+    }
+    fail_runtime(
+        "a mistyped membership in a set of tuples",
+        format!(
+            "Attempted to check if non-tuple\n{}\nis in the set of tuples:\n{}",
+            format_pretty(value),
+            format_pretty(set)
+        ),
+    )
 }
 
 /// The elements of a function whose domain is 1..n, in order.
@@ -405,22 +530,45 @@ pub fn union(left: &Value, right: &Value) -> Evaluated<Value> {
     if is_empty_reducible(right) && !is_reducible(left) {
         return Ok(left.clone());
     }
-    let mut all = elements(left)?.to_vec();
-    all.extend(elements(right)?.iter().cloned());
-    set_of(all)
+    // `Tool`'s OPCODE_cup: a reducible operand's `cup`, the other's lazy union otherwise.
+    match (is_reducible(left), is_reducible(right)) {
+        (true, true) => {
+            let mut all = elements(left)?.to_vec();
+            all.extend(elements(right)?.iter().cloned());
+            set_of(all)
+        }
+        (true, false) | (false, false) => Ok(lazy(Lazy::Cup(left.clone(), right.clone()))),
+        (false, true) => Ok(lazy(Lazy::Cup(right.clone(), left.clone()))),
+    }
 }
 
+fn lazy(lazy: Lazy) -> Value {
+    Value::Lazy(Rc::new(lazy))
+}
+
+/// `\cap` (`Tool`'s OPCODE_cap): a reducible operand's elements in the other, the left's first,
+/// and a lazy intersection where neither is reducible.
 pub fn intersection(left: &Value, right: &Value) -> Evaluated<Value> {
+    let (enumerated, tested) = match (is_reducible(left), is_reducible(right)) {
+        (true, _) => (left, right),
+        (false, true) => (right, left),
+        (false, false) => return Ok(lazy(Lazy::Cap(left.clone(), right.clone()))),
+    };
     let mut kept = Vec::new();
-    for element in elements(left)?.iter() {
-        if is_member(element, right)? {
+    for element in elements(enumerated)?.iter() {
+        if is_member(element, tested)? {
             kept.push(element.clone());
         }
     }
     Ok(Value::Set(Rc::new(kept)))
 }
 
+/// `\` (`Tool`'s OPCODE_setdiff): a reducible left operand's elements not in the right, and a
+/// lazy difference otherwise.
 pub fn difference(left: &Value, right: &Value) -> Evaluated<Value> {
+    if !is_reducible(left) {
+        return Ok(lazy(Lazy::Diff(left.clone(), right.clone())));
+    }
     let mut kept = Vec::new();
     for element in elements(left)?.iter() {
         if !is_member(element, right)? {
@@ -453,7 +601,18 @@ pub(crate) fn is_empty_by_argument(set: &Value) -> bool {
     let is_nonempty = |value: &Value| match value {
         Value::Set(elements) => !elements.is_empty(),
         Value::Interval(low, high) => low <= high,
-        Value::Lazy(lazy) => matches!(**lazy, Lazy::Nat | Lazy::Int | Lazy::Real | Lazy::Strings),
+        // A set of functions, records or tuples is nonempty unless its parts empty it
+        // (`SetOfFcnsValue.isEmpty`), and SUBSET S and Seq(S) always are.
+        Value::Lazy(lazy) => match **lazy {
+            Lazy::Nat | Lazy::Int | Lazy::Real | Lazy::Strings | Lazy::Subset(_) | Lazy::Seq(_) => {
+                true
+            }
+            Lazy::FunctionSet(..) | Lazy::RecordSet(..) | Lazy::Product(_) => {
+                !is_empty_by_argument(value)
+            }
+            // TLC can't tell without enumerating it.
+            Lazy::Cap(..) | Lazy::Cup(..) | Lazy::Diff(..) => false,
+        },
         _ => false,
     };
     let Value::Lazy(lazy) = set else {
@@ -467,44 +626,49 @@ pub(crate) fn is_empty_by_argument(set: &Value) -> bool {
     }
 }
 
-/// The number of elements of a set TLC can count.
+/// The number of elements of a set TLC can count (`size` of its values).
 pub fn cardinality(set: &Value) -> Evaluated<usize> {
     if is_empty_by_argument(set) {
         return Ok(0);
     }
     match set {
-        Value::Interval(low, high) => Ok((i64::from(*high) - i64::from(*low) + 1).max(0) as usize),
+        Value::Interval(low, high) => crate::value::interval_size(*low, *high),
         Value::Lazy(lazy) => match &**lazy {
-            Lazy::FunctionSet(domain, range) => match function_set_size(set, domain, range)? {
-                Some(size) => Ok(size),
-                None => Ok(elements(set)?.len()),
-            },
+            Lazy::FunctionSet(domain, range) => function_set_size(set, domain, range),
             _ => Ok(elements(set)?.len()),
         },
         _ => Ok(elements(set)?.len()),
     }
 }
 
-// `SetOfFcnsValue.size`: the number of functions from a domain to a range, both enumerated or
-// intervals, which fails where it overflows an int. None for other domains and ranges.
-fn function_set_size(set: &Value, domain: &Value, range: &Value) -> Evaluated<Option<usize>> {
-    let size = |set: &Value| match set {
-        Value::Set(elements) => Some(elements.len() as i64),
-        Value::Interval(low, high) => Some((i64::from(*high) - i64::from(*low) + 1).max(0)),
-        _ => None,
-    };
-    let (Some(domain), Some(range)) = (size(domain), size(range)) else {
-        return Ok(None);
-    };
-    if domain == 0 {
-        return Ok(Some(1));
+// Whether a set is empty, as TLC's `isEmpty` finds without enumerating it: an enumeration or an
+// interval by itself, a set of functions, records or tuples by its parts.
+fn is_empty(set: &Value) -> bool {
+    match set {
+        Value::Set(elements) => elements.is_empty(),
+        Value::Interval(low, high) => low > high,
+        _ => is_empty_by_argument(set),
     }
-    if range <= 1 {
-        return Ok(Some(range as usize));
+}
+
+// `SetOfFcnsValue.size`: one function over an empty domain, none into an empty range, one into a
+// range of one element whatever the domain, and otherwise the range's size to the power of the
+// domain's, which fails where it overflows an int.
+fn function_set_size(set: &Value, domain: &Value, range: &Value) -> Evaluated<usize> {
+    if is_empty(domain) {
+        return Ok(1);
     }
+    if is_empty(range) {
+        return Ok(0);
+    }
+    let range = cardinality(range)?;
+    if range == 1 {
+        return Ok(1);
+    }
+    let domain = cardinality(domain)?;
     let mut count: i64 = 1;
     for _ in 0..domain {
-        count = count.saturating_mul(range);
+        count = count.saturating_mul(range as i64);
         if count > i64::from(i32::MAX) {
             return fail_runtime(
                 "a function set too large to count",
@@ -515,7 +679,7 @@ fn function_set_size(set: &Value, domain: &Value, range: &Value) -> Evaluated<Op
             );
         }
     }
-    Ok(Some(count as usize))
+    Ok(count as usize)
 }
 
 #[cfg(test)]
@@ -532,6 +696,55 @@ mod tests {
     }
 
     #[test]
+    fn keeps_a_set_operation_lazy_as_tlc_does() {
+        let nat = || Value::Lazy(Rc::new(Lazy::Nat));
+        let set =
+            |ints: &[i32]| Value::Set(Rc::new(ints.iter().map(|&int| Value::Int(int)).collect()));
+        // A reducible operand is filtered by the other, whichever side it is on.
+        let cap = intersection(&nat(), &set(&[-1, 1, 2])).expect("an intersection");
+        assert!(equals(&cap, &set(&[1, 2])).expect("comparable"));
+        // \cup with an enumerable operand and Nat stays lazy, which TLC tests for membership
+        // but can't enumerate.
+        let cup = union(&set(&[-1]), &nat()).expect("a union");
+        assert!(is_member(&Value::Int(-1), &cup).expect("a member"));
+        assert!(is_member(&Value::Int(7), &cup).expect("a member"));
+        assert_eq!(
+            message(elements(&cup).map(|_| true)),
+            "Attempted to enumerate S \\cup T when S:\n{-1}\nand T:\nNat\nare not both enumerable"
+        );
+        let difference = difference(&nat(), &set(&[0])).expect("a difference");
+        assert!(is_subset(&set(&[1, 2]), &difference).expect("a subset"));
+        assert_eq!(
+            message(elements(&difference).map(|_| true)),
+            "Attempted to enumerate S \\ T when S:\nNat\nis not enumerable."
+        );
+    }
+
+    #[test]
+    fn compares_an_overridden_set_as_tlc_does() {
+        let nat = || Value::Lazy(Rc::new(Lazy::Nat));
+        let int = Value::Lazy(Rc::new(Lazy::Int));
+        assert!(equals(&nat(), &nat()).expect("comparable"));
+        assert_eq!(compare(&nat(), &int).expect("comparable"), Ordering::Less);
+        assert_eq!(
+            message(equals(&nat(), &Value::Set(Rc::new(vec![Value::Int(1)])))),
+            "Attempted to compare overridden value Nat with non-overridden value:\n{1}"
+        );
+    }
+
+    #[test]
+    fn sizes_an_interval_as_tlc_does() {
+        assert_eq!(
+            cardinality(&Value::Interval(0, i32::MAX - 1)).expect("a size"),
+            i32::MAX as usize
+        );
+        assert_eq!(
+            message(cardinality(&Value::Interval(0, i32::MAX)).map(|_| true)),
+            "Size of interval value exceeds the maximum representable size (32bits): 0..2147483647."
+        );
+    }
+
+    #[test]
     fn counts_a_function_set_as_tlc_does() {
         let set = |domain, range| Value::Lazy(Rc::new(Lazy::FunctionSet(domain, range)));
         let count = cardinality(&set(Value::Interval(1, 3), Value::Interval(1, 4)));
@@ -544,6 +757,21 @@ mod tests {
                 .text,
             "Overflow when computing the number of elements in:\n[0..2 -> 1..2000]"
         );
+        // An empty part decides before TLC asks anything of Nat, and a range of one element
+        // makes one function whatever the domain.
+        let nat = || Value::Lazy(Rc::new(Lazy::Nat));
+        let count = |domain, range| cardinality(&set(domain, range)).expect("a count");
+        assert_eq!(count(nat(), Value::empty_set()), 0);
+        assert_eq!(count(Value::empty_set(), nat()), 1);
+        assert_eq!(count(nat(), Value::Interval(1, 1)), 1);
+        let large = Value::Lazy(Rc::new(Lazy::Subset(Value::Interval(1, 40))));
+        assert_eq!(count(large, Value::Interval(1, 1)), 1);
+        assert!(cardinality(&set(nat(), Value::Interval(1, 2))).is_err());
+        // A set its parts empty enumerates to nothing, and an empty domain to one function.
+        let emptied = set(nat(), Value::empty_set());
+        assert!(elements(&emptied).expect("no elements").is_empty());
+        let unit = set(emptied, Value::Interval(1, 2));
+        assert_eq!(elements(&unit).expect("one function").len(), 1);
     }
 
     #[test]
