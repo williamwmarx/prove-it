@@ -101,6 +101,7 @@ const readEnvironment = (source: string, path: string) => {
     substituted: [...environment.definitions]
       .filter((entry) => environment.substitutedDefinitions.has(entry[1]))
       .map((entry) => entry[0]),
+    facts: { words: environment.facts.words, rows: [...environment.facts.rows] },
     variables: environment.variables,
     variableIndex: [...environment.variableIndex],
     constants: specification.rootConstants.map((constant) => constant.name),
