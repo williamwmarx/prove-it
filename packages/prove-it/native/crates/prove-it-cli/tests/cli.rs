@@ -837,6 +837,34 @@ fn reports_a_division_by_zero_after_what_the_expansion_printed() {
     std::fs::remove_dir_all(directory).expect("removed");
 }
 
+#[test]
+fn reports_a_property_an_initial_state_violates() {
+    let directory = std::env::temp_dir().join(format!(
+        "prove-it-cli-initial-property-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    let spec = "---- MODULE P ----\nEXTENDS Integers\nVARIABLE x\nInit == x \\in 1..10\nNext == x' = 0\nSpec == Init /\\ [][Next]_x\nNotNine == x # 9\n====\n";
+    for (file, contents) in [
+        ("P.tla", spec),
+        ("P.cfg", "SPECIFICATION Spec\nPROPERTY NotNine\n"),
+        ("P.front", ""),
+    ] {
+        std::fs::write(directory.join(file), contents).expect("a file");
+    }
+    let output = run(&directory, &["-workers", "1", "P"]);
+    let text = stdout(&output);
+    // As TLC's DoInitFunctorProperty: the state in the message, and no statistics.
+    assert_eq!(output.status.code(), Some(13), "{text}");
+    assert!(
+        text.contains(
+            "Computed 8 initial states...\nError: Property NotNine is violated by the initial state:\nx = 9\n\nFinished in "
+        ),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
 const LIVE_WRITE_THROUGH_CACHE_IR: &[u8] = include_bytes!(
     "../../../../tests/conformance/ir/tlc/tlatools/org.lamport.tlatools/test-model/examples/SpecifyingSystems/Liveness/MCLiveWriteThroughCache.ir"
 );
@@ -856,6 +884,30 @@ fn checks_a_postcondition_on_a_lasso_stuttering_at_its_initial_state() {
     assert_eq!(output.status.code(), Some(13), "{text}");
     assert!(text.contains("State 2: Stuttering\n"), "{text}");
     assert!(!text.contains("Postcondition"), "{text}");
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+const CDOT_IMPLIED_INIT_IR: &[u8] = include_bytes!(
+    "../../../../tests/conformance/ir/tlc/tlatools/org.lamport.tlatools/test-model/cdot/CdotWithContextB.ir"
+);
+
+#[test]
+fn reports_an_implied_init_that_fails_on_an_initial_state() {
+    let (output, directory) = run_golden(
+        "implied-init",
+        CDOT_IMPLIED_INIT_IR,
+        "CdotWithContextB",
+        "",
+        &[],
+    );
+    let text = stdout(&output);
+    // ENABLED Next, a property's initial predicate, reaches A(n) \cdot B(n): TLC reports the
+    // state, and the call stack from the initial predicate's infix conjunction through ENABLED.
+    assert_eq!(output.status.code(), Some(75), "{text}");
+    assert!(
+        text.contains(include_str!("cdot-implied-init.txt")),
+        "{text}"
+    );
     std::fs::remove_dir_all(directory).expect("removed");
 }
 

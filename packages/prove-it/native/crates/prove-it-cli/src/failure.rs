@@ -224,7 +224,7 @@ fn evaluate(ir: &Ir, stop: &ErrorStop<'_>) -> Result<Report, String> {
         // TLC prints no trace for a check of an initial state that fails.
         let trace = if matches!(
             stop.site,
-            Site::InitialConstraint(_) | Site::InitialInvariant(_)
+            Site::InitialConstraint(_) | Site::InitialInvariant(_) | Site::InitialPredicate(_)
         ) {
             Trace {
                 states: Vec::new(),

@@ -298,6 +298,9 @@ pub enum ViolationKind {
     /// An initial state violates an invariant: its position in the model's invariants, then
     /// past them in its properties checked as invariants.
     InitialInvariant(usize),
+    /// An initial state violates the state predicate of a property at this position in the
+    /// model's initial predicates.
+    InitialPredicate(usize),
     /// The last state of the trace violates an invariant, as an `InitialInvariant` names it.
     Invariant(usize),
     /// The last state of the trace has no successors. TLC adds it to the behavior graphs after it
@@ -954,7 +957,15 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
             for (position, predicate) in context.initial_predicates.iter().enumerate() {
                 match crate::context::holds(machine, predicate) {
                     Ok(true) => {}
-                    Ok(false) => return Err(Bail("a property violated in an initial state")),
+                    Ok(false) => {
+                        self.violation = Some(Found {
+                            kind: ViolationKind::InitialPredicate(position),
+                            parent: None,
+                            last: Some(machine.current().to_vec()),
+                            counts: StopCounts::default(),
+                        });
+                        return Err(Bail("a property violated in an initial state"));
+                    }
                     Err(bail) => {
                         let distinct = (self.states.count() + usize::from(is_in_model)) as u64;
                         let site = ErrorSite::InitialPredicate(position as u32);

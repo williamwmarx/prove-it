@@ -663,7 +663,11 @@ impl Decoder<'_> {
             })
             .collect::<Decoded<_>>()?;
         let count = self.count()?;
-        let initial_predicates = (0..count).map(|_| node(self)).collect::<Decoded<_>>()?;
+        let (initial_predicates, initial_predicate_names) = (0..count)
+            .map(|_| Ok((node(self)?, self.text()?)))
+            .collect::<Decoded<Vec<_>>>()?
+            .into_iter()
+            .unzip();
         let mut views = self.unprinted()?;
         if views.len() > 1 {
             return self.error(format!("{} views", views.len()));
@@ -815,6 +819,7 @@ impl Decoder<'_> {
             possible,
             action_properties,
             initial_predicates,
+            initial_predicate_names,
             view,
             alias,
             postconditions,
