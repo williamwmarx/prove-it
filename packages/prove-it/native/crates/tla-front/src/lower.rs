@@ -20,8 +20,8 @@ use crate::ast::*;
 use crate::config::ConfigValue;
 use crate::dependencies::{DefinitionFacts, create_definition_facts};
 use crate::environment::Environment;
-use crate::errors::FrontError;
-use crate::hash::FastMap;
+use crate::errors::{FrontError, describe_range};
+use crate::hash::{FastMap, FastSet};
 use crate::live::{Live, Liveness};
 use crate::resolve::Result;
 
@@ -261,7 +261,11 @@ impl<'a> Lowering<'a> {
     /// texts by their position among the encoder's strings.
     fn encode_value(&mut self, value: &ConfigValue) -> u32 {
         let encoded = self.write_value(value);
-        self.values.push(encoded);
+        self.push_value(encoded)
+    }
+
+    fn push_value(&mut self, value: Value) -> u32 {
+        self.values.push(value);
         self.values.len() as u32 - 1
     }
 
@@ -299,11 +303,34 @@ impl<'a> Lowering<'a> {
         let index = self.builtin_ids.len() as Index;
         self.builtin_ids.insert(name.clone(), index);
         let text = self.get_text(name);
+        // `getValue` of each row's arguments as a tuple, and of its value.
+        let table = builtin.table.as_ref().map(|rows| {
+            rows.iter()
+                .map(|(args, value)| {
+                    let args: Option<Vec<ConfigValue>> =
+                        args.iter().map(|arg| self.normalize(arg).ok()).collect();
+                    let tuple = args.map(|args| {
+                        let range = args.iter().map(|arg| self.write_value(arg)).collect();
+                        self.push_value(Value::IntervalFunction {
+                            class: 2,
+                            low: 1,
+                            range,
+                        })
+                    });
+                    let value = self
+                        .normalize(value)
+                        .ok()
+                        .map(|value| self.encode_value(&value));
+                    (tuple, value)
+                })
+                .collect::<Vec<_>>()
+        });
+        let flags = builtin.flags as i32 | table.as_ref().map_or(0, |_| IrBuiltin::TABLE);
         self.builtins.push(IrBuiltin {
             name: text,
             arity: builtin.arity as i32,
-            flags: builtin.flags as i32,
-            table: Vec::new(),
+            flags,
+            table: table.unwrap_or_default(),
         });
         Some(index)
     }
@@ -970,6 +997,7 @@ impl<'a> Lowering<'a> {
             Some(liveness) => self.write_liveness(liveness)?,
             None => (Vec::new(), Vec::new(), Vec::new()),
         };
+        let startup = self.write_startup()?;
         Ok(Model {
             init,
             next,
@@ -996,10 +1024,74 @@ impl<'a> Lowering<'a> {
             atoms,
             live_formula,
             live_properties,
-            startup: Startup::default(),
+            startup,
             next_substitution: None,
             instance_actions: Vec::new(),
             instance_names: Vec::new(),
+        })
+    }
+
+    /// `getIrStartup`: what TLC evaluates when it starts. The substitutes it checks, the constant
+    /// definitions with effects (one without computes the same wherever it is first used), and
+    /// the assumptions that aren't axioms. SYMMETRY is `NotYet` before this.
+    fn write_startup(&mut self) -> Result<Startup> {
+        let environment = self.environment;
+        let mut substitutes = Vec::new();
+        for (name, target) in environment.substitutions.iter() {
+            let Some(definition) = environment.definitions.get(target) else {
+                continue;
+            };
+            let is_checked = environment
+                .root_constants
+                .iter()
+                .any(|constant| constant.name == *name)
+                && matches!(&definition.kind, DefinitionKind::Operator { params, .. } if params.is_empty())
+                && !self.facts.is_constant_level(definition, environment);
+            if is_checked {
+                let text = self.get_text(name);
+                substitutes.push((text, self.get_definition_index(definition)));
+            }
+        }
+        // `isStartupDefinition`: a constant definition the configuration doesn't replace.
+        let is_startup_definition = |definition: &Rc<Definition>| {
+            let is_nullary = match &definition.kind {
+                DefinitionKind::Operator { params, .. } => params.is_empty(),
+                DefinitionKind::Function { .. } => true,
+            };
+            is_nullary
+                && !environment.constants.contains_key(&definition.name)
+                && !environment.substitutions.contains_key(&definition.name)
+                && self.facts.is_constant_level(definition, environment)
+        };
+        let mut seen = FastSet::default();
+        let startup_definitions: Vec<Rc<Definition>> = environment
+            .startup_definitions
+            .iter()
+            .filter(|definition| {
+                is_startup_definition(definition)
+                    && self.facts.is_impure_definition(definition, environment)
+                    && seen.insert(Rc::as_ptr(definition) as usize)
+            })
+            .cloned()
+            .collect();
+        let definitions = startup_definitions
+            .iter()
+            .map(|definition| self.get_definition_index(definition))
+            .collect();
+        let mut assumptions = Vec::new();
+        for assumption in &environment.assumptions {
+            if assumption.is_axiom {
+                continue;
+            }
+            let root = self.write_root(&assumption.expression)?;
+            let name = self.get_text(&describe_range(&assumption.expression));
+            assumptions.push((root, name));
+        }
+        Ok(Startup {
+            substitutes,
+            definitions,
+            symmetry: None,
+            assumptions,
         })
     }
 

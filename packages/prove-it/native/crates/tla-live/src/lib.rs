@@ -192,6 +192,103 @@ fn read_formula(terms: &mut Terms, formula: &[Term]) -> Result<TermId, Declined>
     Ok(root)
 }
 
+/// The positions of the properties a lasso of `length` states, whose cycle starts at
+/// `loop_start`, violates (`Liveness.findViolatedProperties`, `evaluateOnLasso`): each property
+/// evaluated from its first state, an atom by `answer` of its atom term, the position of the state
+/// and that of the next, which for the last state is the cycle's first.
+pub fn violated_on_lasso(
+    properties: &[&[Term]],
+    length: usize,
+    loop_start: usize,
+    answer: &mut dyn FnMut(Term, usize, usize) -> Result<bool, Declined>,
+) -> Result<Vec<usize>, Declined> {
+    let mut lasso = Lasso {
+        length,
+        loop_start,
+        answer,
+    };
+    let mut violated = Vec::new();
+    for (position, terms) in properties.iter().enumerate() {
+        if !lasso.evaluate(terms, 0, 0)? {
+            violated.push(position);
+        }
+    }
+    Ok(violated)
+}
+
+struct Lasso<'a> {
+    length: usize,
+    loop_start: usize,
+    answer: &'a mut dyn FnMut(Term, usize, usize) -> Result<bool, Declined>,
+}
+
+impl Lasso<'_> {
+    fn next(&self, position: usize) -> usize {
+        if position + 1 < self.length {
+            position + 1
+        } else {
+            self.loop_start
+        }
+    }
+
+    /// The term at `at` and those of its operands: where the next term starts.
+    fn skip(terms: &[Term], at: usize) -> usize {
+        let mut at = at;
+        let mut pending = 1usize;
+        while pending > 0 {
+            pending -= 1;
+            pending += match terms[at] {
+                Term::Not | Term::Always | Term::Eventually | Term::Next => 1,
+                Term::And(count) | Term::Or(count) => count as usize,
+                _ => 0,
+            };
+            at += 1;
+        }
+        at
+    }
+
+    fn evaluate(&mut self, terms: &[Term], at: usize, position: usize) -> Result<bool, Declined> {
+        let Some(&term) = terms.get(at) else {
+            return Err(Declined::from("a formula that ends early"));
+        };
+        // The states from the earlier of this one and the cycle's first, which the lasso
+        // repeats from then on.
+        let future = position.min(self.loop_start)..self.length;
+        match term {
+            Term::Boolean(value) => Ok(value),
+            Term::State(_) | Term::Enabled(_) | Term::Action { .. } => {
+                let next = self.next(position);
+                (self.answer)(term, position, next)
+            }
+            Term::Not => Ok(!self.evaluate(terms, at + 1, position)?),
+            Term::Next => {
+                let next = self.next(position);
+                self.evaluate(terms, at + 1, next)
+            }
+            Term::Always | Term::Eventually => {
+                let is_always = term == Term::Always;
+                for future in future {
+                    if self.evaluate(terms, at + 1, future)? != is_always {
+                        return Ok(!is_always);
+                    }
+                }
+                Ok(is_always)
+            }
+            Term::And(count) | Term::Or(count) => {
+                let is_and = matches!(term, Term::And(_));
+                let mut operand = at + 1;
+                for _ in 0..count {
+                    if self.evaluate(terms, operand, position)? != is_and {
+                        return Ok(!is_and);
+                    }
+                    operand = Self::skip(terms, operand);
+                }
+                Ok(is_and)
+            }
+        }
+    }
+}
+
 /// The atoms of a formula, in the order TLC's liveness checker asks about them (`atoms` of
 /// `createLivenessChecker`): the state and ENABLED atoms of each solution's checks and then of its
 /// tableau's nodes, as `collectAtoms` meets them, then the rest the checks ask of, as

@@ -29,6 +29,9 @@ fn describe(outcome: &SearchOutcome) -> String {
     match outcome {
         SearchOutcome::Declined(reason) => format!("declined: {reason}"),
         SearchOutcome::AssumptionViolated { name } => format!("assumption {name} is false"),
+        SearchOutcome::AssumptionFailed { position } => {
+            format!("assumption {position} failed to evaluate")
+        }
         SearchOutcome::Invariant(reason) => format!("invariant: {reason}"),
         SearchOutcome::Complete { counts, .. } => format!(
             "complete: {} generated, {} distinct, depth {}",

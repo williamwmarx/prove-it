@@ -246,6 +246,14 @@ fn sorts_the_records_of_built_lambdas_under_view_and_symmetry() {
     assert_eq!(states[0], tlc_states(RAFT_RECONFIG_INITIAL_STATE)[0]);
 }
 
+#[test]
+fn sorts_the_records_tlc_permutes_under_symmetry() {
+    // TLC permutes the state under SYMMETRY, which sorts each record it permutes, so a state it
+    // finds the least of its orbit prints its records sorted.
+    let (states, _) = deadlock_trace("mongodb-txns/MultiShardTxn/Storage", false);
+    assert_eq!(states[..2], tlc_states(STORAGE_TRACE_START));
+}
+
 // Rebuilds the trace of the violation the search stops at, and hands it to `then` with the
 // rebuilder and the start of a lasso's cycle.
 fn rebuild_violation<T: Send>(
@@ -414,4 +422,86 @@ fn checks_a_postcondition_on_the_counter_example() {
     let verdict = |count| check(count).map(|checked| checked.verdict);
     assert_eq!(verdict(10), Ok(Verdict::Holds));
     assert_eq!(verdict(9), Ok(Verdict::False));
+}
+
+#[test]
+fn records_the_parameters_of_the_counter_examples_actions() {
+    // AsyncTerminationDetection's postcondition is the lasso TLC finds: SendMsg(3, 3), then
+    // RcvMsg(3) back into the initial state, each step's action recorded with the values of its
+    // parameters.
+    let bytes = std::fs::read(ir_directory().join(
+        "tlc/tlatools/org.lamport.tlatools/test-model/examples/ewd998/AsyncTerminationDetection.ir",
+    ))
+    .expect("a golden IR");
+    let ir = tla_ir::decode(&bytes).expect("an IR that decodes");
+    let action = |name: &str| {
+        ir.model
+            .actions
+            .iter()
+            .position(|action| ir.texts[action.label as usize].starts_with(name))
+            .expect("the action") as u32
+    };
+    let (send, receive, terminate) = (
+        action("SendMsg(3,3) "),
+        action("RcvMsg(3) "),
+        action("Terminate(3) "),
+    );
+    let verdict = tla_values::on_nesting_stack(|| {
+        let stopped = tla_engine::on_nesting_stack(|| stop_search(&ir, Some(400)))
+            .expect("a search that stops");
+        let mut rebuilder = Rebuilder::new(&ir)?;
+        rebuilder.set_startup(&stopped.store, &stopped.startup, stopped.startup_random);
+        // TLC's lasso starts in the initial state where only node 3 is active.
+        let active = ir
+            .variables
+            .iter()
+            .position(|&name| &*ir.texts[name as usize] == "active")
+            .expect("the variable");
+        let trace = (1..stopped.states.len())
+            .filter(|&index| {
+                let parent = stopped.parents[index];
+                parent >= 0 && stopped.parents[parent as usize] == -1
+            })
+            .find_map(|index| {
+                let parent = stopped.parents[index] as usize;
+                rebuilder
+                    .rebuild(
+                        &stopped.store,
+                        &[&stopped.states[parent], &stopped.states[index]],
+                        &[None],
+                        Ending::Kept,
+                    )
+                    .ok()
+                    .filter(|trace| {
+                        trace.states[1].action == Some(send)
+                            && format_value(&trace.states[0].values[active])
+                                == "(0 :> FALSE @@ 1 :> FALSE @@ 2 :> FALSE @@ 3 :> TRUE)"
+                    })
+            })
+            .expect("the step SendMsg(3, 3)");
+        let mut check = |closing| {
+            rebuilder
+                .postcondition(
+                    0,
+                    &PostconditionInputs {
+                        possible: &[],
+                        stats: Stats {
+                            queue: 0,
+                            distinct: 0,
+                            initial: 0,
+                            generated: 0,
+                            diameter: 0,
+                            duration: 0,
+                        },
+                        counter_example: Some(CounterExample {
+                            trace: &trace,
+                            cycle: Some((0, closing)),
+                        }),
+                    },
+                )
+                .map(|checked| checked.verdict)
+        };
+        Ok::<_, Unsupported>((check(receive)?, check(terminate)?))
+    });
+    assert_eq!(verdict, Ok((Verdict::Holds, Verdict::False)));
 }

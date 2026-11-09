@@ -287,6 +287,31 @@ fn prints_a_node_that_accepts_every_behavior() {
 }
 
 #[test]
+fn prints_a_lasso_it_rebuilds_under_a_view() {
+    let ir = include_bytes!(
+        "../../../../tests/conformance/ir/tlc/tlatools/org.lamport.tlatools/test-model/examples/FiniteMonotonic/MCDistributedReplicatedLog.ir"
+    );
+    let config = "SPECIFICATION Spec\nCONSTANTS\n    Servers = {n1, n2, n3}\n    Values = {v}\n    Lag = 3\nINVARIANTS TypeOK BoundedLag\nPROPERTIES AllExtending InSync\nVIEW DropCommonPrefix\nCHECK_DEADLOCK TRUE\n";
+    let (output, directory) =
+        run_golden("view-lasso", ir, "MCDistributedReplicatedLog", config, &[]);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(13), "{text}");
+    // TLC rebuilds the lasso from the states it stored, the step back into the cycle with it,
+    // and names the one of the two properties the rebuilt lasso violates.
+    let module = "of module DistributedReplicatedLog";
+    let extend = format!("Extend(n2) line 35, col 5 to line 38, col 49 {module}");
+    let copy = |server: &str| format!("Copy({server}) line 26, col 9 to line 32, col 96 {module}");
+    let lasso = format!(
+        "Error: Temporal property InSync was violated.\n\nError: The following behavior constitutes a counter-example:\n\nState 1: <Initial predicate>\ncLogs = (n1 :> <<>> @@ n2 :> <<>> @@ n3 :> <<>>)\n\nState 2: <{extend}>\ncLogs = (n1 :> <<>> @@ n2 :> <<v, v, v>> @@ n3 :> <<>>)\n\nState 3: <{}>\ncLogs = (n1 :> <<>> @@ n2 :> <<v, v, v>> @@ n3 :> <<v, v, v>>)\n\nState 4: <{}>\ncLogs = (n1 :> <<v, v>> @@ n2 :> <<v, v, v>> @@ n3 :> <<v, v, v>>)\n\nState 5: <{extend}>\ncLogs = (n1 :> <<v, v>> @@ n2 :> <<v, v, v, v, v>> @@ n3 :> <<v, v, v>>)\n\nState 6: <{}>\ncLogs = (n1 :> <<v, v, v>> @@ n2 :> <<v, v, v, v, v>> @@ n3 :> <<v, v, v>>)\n\nBack to state 2: <{extend}>\n\nFinished checking temporal properties in ",
+        copy("n3"),
+        copy("n1"),
+        copy("n1")
+    );
+    assert!(text.contains(&lasso), "{text}");
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
 fn prints_a_temporal_propertys_lasso() {
     let ir = include_bytes!(
         "../../../../tests/conformance/ir/tlc/tlatools/org.lamport.tlatools/test-model/Github1389ViolatedB.ir"
@@ -382,6 +407,30 @@ fn reports_a_postcondition_that_is_false() {
     assert_eq!(output.status.code(), Some(10), "{text}");
     assert!(
         text.contains("Error: Postcondition Enough at line 6, col 11 to line 6, col 38 of module Post is false.\n4 states generated, 4 distinct states found, 0 states left on queue.\n"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+const EVALUATING_VALUE_IR: &[u8] = include_bytes!(
+    "../../../../tests/conformance/ir/tlc/tlatools/org.lamport.tlatools/test-model/EvaluatingValueTest.ir"
+);
+
+#[test]
+fn prints_an_invariant_that_fails_to_evaluate() {
+    let (output, directory) = run_golden(
+        "invariant-failure",
+        EVALUATING_VALUE_IR,
+        "EvaluatingValueTest",
+        "",
+        &[],
+    );
+    let text = stdout(&output);
+    // TLC prints the trace to the state it failed on, no call stack, and the outdegree of the
+    // state graph with the failing state counted.
+    assert_eq!(output.status.code(), Some(76), "{text}");
+    assert!(
+        text.contains("Error: Evaluating invariant Inv failed.\nAttempted to check if the value:\nFALSE\nis an element of Nat.\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 1\n\nState 2: <A line 8, col 6 to line 8, col 15 of module EvaluatingValueTest>\nx = FALSE\n\n2 states generated, 2 distinct states found, 0 states left on queue.\nThe depth of the complete state graph search is 2.\nThe average outdegree of the complete state graph is 1 (minimum is 1, the maximum 1 and the 95th percentile is 1).\nFinished in "),
         "{text}"
     );
     std::fs::remove_dir_all(directory).expect("removed");

@@ -22,7 +22,7 @@ use crate::levels::{
 use crate::lexer::tokenize;
 use crate::order::TlcOrder;
 use crate::ordered_map::OrderedMap;
-use crate::parser::{extract_module, parse_module_tokens};
+use crate::parser::{extract_module, parse_module_for_sany, parse_module_tokens};
 use crate::resolve::{
     ErrorList, GetKey, InstancedModule, KEY_SEPARATOR, MODULE_START, ModuleContext, ModuleReport,
     ModuleSymbol, Result, SemanticUnit, SymbolKind, Symbols, Tables, collect_semantic_errors,
@@ -37,12 +37,17 @@ use crate::subexpressions::{resolve_instance_subexpressions, resolve_module_sube
 
 /// A builtin the environment holds: its name, arity and flags (state-level, level-constant,
 /// lazy), which the IR writes.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Builtin {
     pub name: Name,
     pub arity: usize,
     pub flags: u32,
+    /// A configuration's definition of a constant operator by its values: each row's arguments
+    /// and its value (`createOperatorTable`).
+    pub table: Option<Rc<OperatorTable>>,
 }
+
+pub type OperatorTable = Vec<(Vec<ConfigValue>, ConfigValue)>;
 
 /// What linking makes of a spec.
 pub struct Environment {
@@ -405,6 +410,7 @@ impl Linker<'_> {
                     name: operator_name.clone(),
                     arity: operator.arity,
                     flags: operator.flags,
+                    table: None,
                 },
             );
             let range = operator
@@ -497,7 +503,10 @@ impl Linker<'_> {
                 Vec::new(),
             ));
         }
-        reject_module_literals(&module)?;
+        // SANY accepts the literals TLC can't evaluate.
+        if !self.is_collecting.get() {
+            reject_module_literals(&module)?;
+        }
         Ok(module)
     }
 
@@ -701,6 +710,7 @@ impl Linker<'_> {
                         name: Rc::from(operator.name),
                         arity: operator.arity,
                         flags: operator.flags,
+                        table: None,
                     },
                 );
                 self.definitions.borrow_mut().remove(&symbol.key);
@@ -1793,6 +1803,7 @@ fn create_linker<'a>(options: &'a EnvironmentOptions<'a>, root: &Rc<Module>) -> 
                             name,
                             arity: *arity,
                             flags: *flags,
+                            table: None,
                         },
                     )
                 })
@@ -1828,16 +1839,52 @@ pub fn get_sany_messages(
     options: &EnvironmentOptions,
     order: &[Name],
 ) -> Result<Vec<ModuleMessages>> {
-    let root = Rc::new(parse_module_tokens(
-        options.source,
-        &tokenize(options.source)?,
-        options.version,
-    )?);
+    // SANY reports what the parser rejects in a BY, USE or HIDE as semantic errors of the module,
+    // before the others.
+    let (root, parser_errors) =
+        parse_module_for_sany(options.source, &tokenize(options.source)?, options.version)?;
+    let root = Rc::new(root);
     let linker = create_linker(options, &root);
     linker.is_collecting.set(true);
-    reject_module_literals(&root)?;
-    linker.link_top_level(&root)?;
-    let collected = linker.collected.take();
+    linker.tables.is_collecting.set(true);
+    if let Err(error) = linker.link_top_level(&root) {
+        // An error of the root module that stops linking is one SANY reports with the module's
+        // other messages, after the modules before it.
+        let FrontError::Syntax(SyntaxError {
+            sany: Some(report), ..
+        }) = &error
+        else {
+            return Err(error);
+        };
+        let is_in_root = |location: &str| {
+            location.ends_with(&format!(" of module {}", root.name))
+                || location == format!("In module {}", root.name)
+        };
+        if report.is_fatal || !report.errors.iter().all(|item| is_in_root(&item.location)) {
+            return Err(error);
+        }
+        let mut collected = linker.collected.borrow_mut();
+        collected
+            .errors
+            .entry(root.name.clone())
+            .or_default()
+            .extend(report.errors.iter().cloned());
+        let count = linker.warnings.borrow().len();
+        let owned = collected.warning_modules.len();
+        collected
+            .warning_modules
+            .extend((owned..count).map(|_| root.name.clone()));
+    }
+    let mut collected = linker.collected.take();
+    if !parser_errors.is_empty() {
+        let errors = collected.errors.entry(root.name.clone()).or_default();
+        if !errors.is_empty() {
+            return Err(FrontError::NotYet(
+                "SANY's errors in a BY, USE or HIDE with other errors".to_owned(),
+            ));
+        }
+        *errors = parser_errors;
+    }
     let warnings = linker.warnings.borrow().clone();
     let is_listed = |name: &Name| order.contains(name);
     let is_unlisted = collected
@@ -1991,6 +2038,7 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
                         name: key.clone(),
                         arity,
                         flags: BUILTIN_LAZY,
+                        table: None,
                     },
                     &mut definitions,
                     &mut constants,
@@ -1999,7 +2047,8 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
         }
     }
     // The rows of each operator the configuration gives by its values, as a table.
-    let mut tables: OrderedMap<String, (Name, Option<String>, usize)> = OrderedMap::new();
+    let mut tables: OrderedMap<String, (Name, Option<String>, usize, OperatorTable)> =
+        OrderedMap::new();
     for assignment in &config.constants {
         let Some(args) = &assignment.args else {
             continue;
@@ -2022,16 +2071,21 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
         }
         if !tables.contains_key(&table_key) {
             tables.insert(
-                table_key,
+                table_key.clone(),
                 (
                     Rc::from(assignment.name.as_str()),
                     assignment.module.clone(),
                     args.len(),
+                    Vec::new(),
                 ),
             );
         }
+        if let Some(table) = tables.get_mut(&table_key) {
+            table.3.push((args.clone(), assignment.value.clone()));
+        }
     }
-    for (name, module, row_arity) in tables.values() {
+    for (name, module, row_arity, rows) in tables.values() {
+        let rows = Rc::new(rows.clone());
         for key in get_scoped_keys(name, module.as_deref()) {
             let arity = match get_key_arity(&definitions, &key) {
                 0 => *row_arity,
@@ -2043,6 +2097,7 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
                     name: name.clone(),
                     arity,
                     flags: 0,
+                    table: Some(rows.clone()),
                 },
                 &mut definitions,
                 &mut constants,

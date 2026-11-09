@@ -15,14 +15,14 @@ use std::time::{Duration, Instant};
 use tla_ir::{Ir, LiveTerm, Model};
 use tla_live::{Event, Liveness, Term, Verdict};
 use tla_values::fingerprint::{Dense, Entries, Fingerprints, Overlaid, Parent, SharedFingerprints};
-use tla_values::store::{FALSE, KIND_SET, Outcome, TRUE};
+use tla_values::store::{KIND_SET, Outcome};
 use tla_values::transfer::{EncodedStates, SharedEncoder, SharedStates, StateEncoder};
 use tla_values::{Bail, Id, NESTING_STACK_BYTES, Store};
 
 use crate::compile::{CompileError, Compiler, DISTINCT_SLOT, LEVEL_SLOT, NEXT_LEVEL_SLOT, Options};
 use crate::context::{
-    Atom, EngineContext, Startup, StartupSymmetry, count_possible, first_failing,
-    first_failing_changed, holds_all, holds_all_changed,
+    Atom, EngineContext, Startup, StartupSymmetry, count_possible, first_failing_changed,
+    holds_all, holds_all_changed,
 };
 use crate::live::{Diameters, LiveGraph, Table, UNKNOWN, answer_atoms};
 use crate::machine::{Eval, Machine, Printed, Step, UNASSIGNED};
@@ -191,6 +191,10 @@ pub enum SearchOutcome {
     Declined(String),
     /// The assumption TLC reports by this name is false (2104).
     AssumptionViolated { name: String },
+    /// The assumption at this position of the IR's assumptions failed to evaluate (2105), after
+    /// the startup reported what it printed, the assumptions before it included. Only where
+    /// `Settings::is_violation_reported`; elsewhere the engine declines.
+    AssumptionFailed { position: u32 },
     Complete {
         counts: Box<Counts>,
         /// With temporal properties, the whole search for the interpreter to print a
@@ -285,6 +289,12 @@ pub enum ErrorSite {
     /// Evaluating the invariant at this position of the model's invariants on the trace's last
     /// state, a successor of the state before it.
     Invariant(u32),
+    /// Evaluating the constraint at this position of the model's constraints on an initial state,
+    /// the violation's one state.
+    InitialConstraint(u32),
+    /// Evaluating the invariant at this position of the model's invariants on an initial state,
+    /// the violation's one state.
+    InitialInvariant(u32),
 }
 
 // The stops that are the engine's own limits, not a failure TLC reports: what it doesn't
@@ -326,6 +336,9 @@ pub struct StopCounts {
     pub distinct: u64,
     pub queued: u64,
     pub depth: u64,
+    /// After an invariant that fails to evaluate, the expansions' out-degrees, the one TLC was
+    /// running among them with the new states it had found, as TLC prints them.
+    pub out_degrees: [u64; OUT_DEGREE_BUCKETS],
 }
 
 // What a search found stopping it, before it hands over the store: the state found that is the
@@ -772,7 +785,21 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
         }
         self.generated += 1;
         self.initial_generated += 1;
-        let is_in_model = holds_all_changed_none(machine, context)?;
+        let mut is_in_model = true;
+        for (position, constraint) in context.constraints.iter().enumerate() {
+            match crate::context::holds(machine, &constraint.eval) {
+                Ok(true) => {}
+                Ok(false) => {
+                    is_in_model = false;
+                    break;
+                }
+                Err(bail) => {
+                    let site = ErrorSite::InitialConstraint(context.constraint_owners[position]);
+                    let distinct = self.states.count() as u64;
+                    return Err(self.note_initial_error(machine, site, distinct, bail));
+                }
+            }
+        }
         if is_in_model {
             count_possible(machine, &context.possible, false, &mut self.possible)?;
         }
@@ -790,7 +817,23 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
             if is_in_model {
                 self.set_distinct(machine, self.states.count() + 1)?;
             }
-            if let Some(failing) = first_failing(machine, &context.initial_invariants)? {
+            let mut failing = None;
+            for (position, invariant) in context.initial_invariants.iter().enumerate() {
+                match crate::context::holds(machine, invariant) {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        failing = Some(position);
+                        break;
+                    }
+                    Err(bail) => {
+                        let owner = context.initial_invariant_owners[position] as u32;
+                        let distinct = (self.states.count() + usize::from(is_in_model)) as u64;
+                        let site = ErrorSite::InitialInvariant(owner);
+                        return Err(self.note_initial_error(machine, site, distinct, bail));
+                    }
+                }
+            }
+            if let Some(failing) = failing {
                 self.violation = Some(Found {
                     kind: ViolationKind::InitialInvariant(
                         context.initial_invariant_owners[failing],
@@ -958,6 +1001,7 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
                             } else {
                                 self.depth
                             },
+                            ..StopCounts::default()
                         },
                     });
                     Some(Bail("an invariant violated"))
@@ -982,6 +1026,13 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
                                 } else {
                                     self.depth
                                 },
+                                // TLC counts the new state before it checks the invariants. The
+                                // search loop adds the expansions it completed.
+                                out_degrees: std::array::from_fn(|bucket| {
+                                    let new_states = self.new_states + u64::from(is_new);
+                                    let failing = (new_states as usize).min(OUT_DEGREE_BUCKETS - 1);
+                                    u64::from(bucket == failing)
+                                }),
                             },
                         });
                     }
@@ -1110,6 +1161,7 @@ impl<T: Reached, E: Entries> Search<'_, T, E> {
                     distinct: count,
                     queued: count - self.expanding as u64 - 1,
                     depth: self.depth.max(1),
+                    ..StopCounts::default()
                 },
             });
             return Err(Bail("deadlock"));
@@ -1121,6 +1173,32 @@ impl<T: Reached, E: Entries> Search<'_, T, E> {
 impl<T: Reached, E: Entries> Search<'_, T, E> {
     // A failure computing the successors of the state being expanded, which TLC reports with the
     // path to that state, unless the search already found what stopped it.
+    // A failure evaluating a constraint or an invariant on an initial state, which TLC reports
+    // with the state and the counts so far, the state counted as generated.
+    fn note_initial_error(
+        &mut self,
+        machine: &Machine<'_>,
+        site: ErrorSite,
+        distinct: u64,
+        bail: Bail,
+    ) -> Bail {
+        if self.violation.is_none() && !is_engine_limit(bail.0) {
+            self.violation = Some(Found {
+                kind: ViolationKind::Error { site },
+                parent: None,
+                last: Some(machine.current().to_vec()),
+                counts: StopCounts {
+                    generated: self.generated,
+                    distinct,
+                    queued: distinct,
+                    depth: 1,
+                    ..StopCounts::default()
+                },
+            });
+        }
+        bail
+    }
+
     fn note_next_error(&mut self, bail: Bail) -> Bail {
         if self.violation.is_none() && !is_engine_limit(bail.0) {
             let count = self.states.count() as u64;
@@ -1135,6 +1213,7 @@ impl<T: Reached, E: Entries> Search<'_, T, E> {
                     distinct: count,
                     queued: count - self.expanding as u64 - 1,
                     depth: self.depth.max(1),
+                    ..StopCounts::default()
                 },
             });
         }
@@ -1596,6 +1675,8 @@ struct Started {
     group: Option<Group>,
     assumed: Vec<Vec<Id>>,
     violated: Option<String>,
+    /// The assumption that failed to evaluate, by its position, and why.
+    failed: Option<(u32, Bail)>,
 }
 
 // TLC's startup: it evaluates the substitutes and the constant definitions, then the assumptions
@@ -1620,14 +1701,19 @@ fn run_startup(machine: &mut Machine<'_>, startup: &Startup) -> Outcome<Started>
     };
     let printed = take(machine);
     let mut violated = None;
-    for (evaluate, name) in &startup.assumptions {
-        match evaluate(machine)? {
-            TRUE => {}
-            FALSE => {
+    let mut failed = None;
+    for (position, (evaluate, name)) in startup.assumptions.iter().enumerate() {
+        match crate::context::holds(machine, evaluate) {
+            Ok(true) => {}
+            Ok(false) => {
                 violated = Some(name.clone());
                 break;
             }
-            _ => return Err(Bail("an assumption that isn't a boolean")),
+            Err(bail) if is_engine_limit(bail.0) => return Err(bail),
+            Err(bail) => {
+                failed = Some((position as u32, bail));
+                break;
+            }
         }
     }
     Ok(Started {
@@ -1636,6 +1722,7 @@ fn run_startup(machine: &mut Machine<'_>, startup: &Startup) -> Outcome<Started>
         group,
         assumed: take(machine),
         violated,
+        failed,
     })
 }
 
@@ -1750,6 +1837,10 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     });
     let group = match startup {
         Err(Bail(reason)) => return SearchOutcome::Declined(reason.into()),
+        Ok(Started {
+            failed: Some((_, Bail(reason))),
+            ..
+        }) if !settings.is_violation_reported => return SearchOutcome::Declined(reason.into()),
         Ok(started) => {
             let report = |reporter: &mut dyn Reporter, printed: &[Vec<Id>]| {
                 printed
@@ -1764,6 +1855,9 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             report(reporter, &started.assumed);
             if let Some(name) = started.violated {
                 return SearchOutcome::AssumptionViolated { name };
+            }
+            if let Some((position, _)) = started.failed {
+                return SearchOutcome::AssumptionFailed { position };
             }
             started.group
         }
@@ -2091,14 +2185,30 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 .current
                 .extend_from_slice(&search.states.ids[expanding * width..(expanding + 1) * width]);
             let fingerprint = search.states.fingerprints[expanding];
-            search.expand(
+            let expanded = search.expand(
                 &mut machine,
                 &context,
                 fingerprint,
                 actions.map(Vec::as_slice),
                 is_live_checked,
                 model.check_deadlock,
-            )?;
+            );
+            if let Err(bail) = expanded {
+                if let Some(Found {
+                    kind:
+                        ViolationKind::Error {
+                            site: ErrorSite::Invariant(_),
+                        },
+                    counts,
+                    ..
+                }) = &mut search.violation
+                {
+                    for (count, completed) in counts.out_degrees.iter_mut().zip(out_degrees) {
+                        *count += completed;
+                    }
+                }
+                return Err(bail);
+            }
             if let Some(graph) = &mut search.graph {
                 graph.successor_counts.push(search.successors as u32);
                 graph.new_counts.push(search.new_states as u32);
@@ -2407,25 +2517,20 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 out_degrees,
             };
             let value_count = machine.store.value_count();
-            // Under SYMMETRY or a VIEW the lasso's states are the stored ones, not those TLC
-            // rebuilds and prints.
+            // Under SYMMETRY or a VIEW the lasso's states are the stored ones, from which the
+            // caller rebuilds those TLC prints.
             let violation = match liveness.as_ref().map(|liveness| &liveness.verdict) {
                 Some(Verdict::Lasso {
                     path, loop_start, ..
-                }) if settings.is_violation_reported
-                    && search.states.key_width.is_none()
-                    && !is_symmetric =>
-                {
-                    to_lasso(
-                        &mut machine,
-                        &context,
-                        &search,
-                        path,
-                        *loop_start,
-                        &lasso_actions,
-                        &counts,
-                    )
-                }
+                }) if settings.is_violation_reported => to_lasso(
+                    &mut machine,
+                    &context,
+                    &search,
+                    path,
+                    *loop_start,
+                    &lasso_actions,
+                    &counts,
+                ),
                 Some(Verdict::Accepted {
                     state,
                     path,
@@ -2473,6 +2578,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                         distinct: count,
                         queued: count,
                         depth: 0,
+                        ..StopCounts::default()
                     },
                 });
             }
@@ -3020,6 +3126,7 @@ fn to_accepted(
         distinct,
         queued: distinct - state as u64 - 1,
         depth: u64::from(graph.diameters[state]),
+        ..StopCounts::default()
     };
     Some(Box::new(Violation {
         kind: ViolationKind::Accepted { violated },
@@ -3047,12 +3154,26 @@ fn to_lasso(
     actions: &[Option<u32>],
     counts: &Counts,
 ) -> Option<Box<Violation>> {
-    let (&loop_label, steps) = actions.split_last()?;
-    let labels = steps.to_vec();
-    let is_stuttering = loop_start + 1 == path.len();
-    let is_labelled = actions.len() == path.len() && (is_stuttering || loop_label.is_some());
+    // Under SYMMETRY or a VIEW the stored states aren't those TLC prints, and the caller's rebuild
+    // finds the steps' actions, the step back into the cycle's too, as TLC does.
+    let is_reduced = search.states.key_width.is_some() || search.canonicalizer.is_some();
+    let (labels, loop_label) = if is_reduced {
+        (vec![None; path.len().saturating_sub(1)], None)
+    } else {
+        let (&loop_label, steps) = actions.split_last()?;
+        let is_stuttering = loop_start + 1 == path.len();
+        let is_labelled = actions.len() == path.len() && (is_stuttering || loop_label.is_some());
+        if !is_labelled {
+            return None;
+        }
+        (steps.to_vec(), loop_label)
+    };
     let startup = startup_values(machine, context).ok()?;
-    (is_labelled && !machine.store.has_unordered_strings()).then(|| {
+    let symmetry = search
+        .canonicalizer
+        .as_ref()
+        .map(|canonicalizer| name_group(&machine.store, canonicalizer.group()));
+    (!machine.store.has_unordered_strings()).then(|| {
         Box::new(Violation {
             kind: ViolationKind::Lasso {
                 loop_start,
@@ -3068,11 +3189,12 @@ fn to_lasso(
                 distinct: counts.distinct,
                 queued: counts.queued,
                 depth: counts.depth,
+                ..StopCounts::default()
             },
             store: std::mem::replace(&mut machine.store, Store::new()),
             startup,
             startup_random: machine.startup_random,
-            symmetry: None,
+            symmetry,
         })
     })
 }

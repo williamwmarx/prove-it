@@ -135,6 +135,9 @@ type SelectionError = (Expr, Vec<Expr>, SanyError);
 /// keeps each node it names, so no other node takes its address.
 #[derive(Default)]
 pub struct Tables {
+    /// Whether the linker collects SANY's messages, for which an error that stops linking carries
+    /// SANY's report.
+    pub is_collecting: std::cell::Cell<bool>,
     selected: RefCell<FastMap<usize, Expr>>,
     source_names: RefCell<FastMap<usize, (Rc<Definition>, Name)>>,
     errors: RefCell<FastMap<usize, SelectionError>>,
@@ -1329,6 +1332,23 @@ fn is_referenced(expression: &Expression, name: &str) -> bool {
             .any(|child| is_referenced(child, name))
 }
 
+/// Gives each reference to name in the expression the arity given.
+fn set_reference_arities(expression: &Expr, name: &str, arity: usize, tables: &Tables) {
+    if matches!(
+        expression.kind,
+        ExpressionKind::Identifier { .. } | ExpressionKind::Apply { .. }
+    ) && expression.reference().as_deref() == Some(name)
+    {
+        tables
+            .renamed_arities
+            .borrow_mut()
+            .insert(address(expression), (expression.clone(), arity));
+    }
+    for child in expression.children() {
+        set_reference_arities(&child, name, arity, tables);
+    }
+}
+
 fn mark_recursive_constructions(expression: &Expression, name: &str) {
     if let ExpressionKind::FunctionConstruction { body, .. } = &expression.kind
         && is_referenced(body, name)
@@ -1393,6 +1413,19 @@ fn resolve_definition(
         } else {
             format!("Operator {name} already defined or declared.")
         });
+    }
+    // SANY analyzes the body with the arity of the RECURSIVE declaration, and compares only the
+    // arity of the last parameter.
+    if let (Some(current), DefinitionKind::Operator { params, .. }, true) = (
+        current.as_ref().filter(|_| is_declared),
+        &definition.kind,
+        unit.tables.is_collecting.get(),
+    ) && (current.arity != params.len() || params.last().is_some_and(|param| param.arity != 0))
+    {
+        report(format!(
+            "Definition of {name} has different arity than its RECURSIVE declaration."
+        ));
+        set_reference_arities(&definition.body, name, current.arity, &unit.tables);
     }
     if is_function {
         let own = Local::new(name.clone(), parameter(0, range.cloned()), inner);
@@ -2462,15 +2495,29 @@ fn check_substitutions(
         if let Some(arity) = arity
             && arity != declaration.arity
         {
-            return Err(SyntaxError::new(format!(
+            let mut error = SyntaxError::new(format!(
                 "An operator must be substituted for symbol '{}', and it must have arity {} in the instance of {} at line {}, column {}",
                 declaration.name,
                 declaration.arity,
                 instance.module,
                 instance.location.line,
                 instance.location.column
-            ))
-            .into());
+            ));
+            // Generator.checkSubstitutionForCorrectArity reports it at the substitute, which an
+            // implicit substitution places at the INSTANCE.
+            if let Some(range) = &expression.location.range
+                && unit.tables.is_collecting.get()
+            {
+                error.sany = SyntaxError::sany(vec![SanyError {
+                    location: format_range(range),
+                    message: format!(
+                        "An operator must be substituted for symbol '{}', and it must have arity {}.",
+                        declaration.name, declaration.arity
+                    ),
+                }])
+                .sany;
+            }
+            return Err(error.into());
         }
         Ok(())
     };

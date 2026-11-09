@@ -447,6 +447,11 @@ pub(super) unsafe extern "C" fn check_model(env: napi_env, info: napi_callback_i
                     set(env, result, c"status", create_string(env, "declined")?)?;
                     set(env, result, c"reason", create_string(env, &reason)?)?;
                 }
+                // The search doesn't report violations here, so it declines an assumption that
+                // fails to evaluate rather than report it.
+                SearchOutcome::AssumptionFailed { .. } => {
+                    unreachable!("an assumption's failure reported without is_violation_reported")
+                }
                 // The interpreter checks the assumptions before it hands the search over.
                 SearchOutcome::AssumptionViolated { name } => {
                     set(env, result, c"status", create_string(env, "declined")?)?;

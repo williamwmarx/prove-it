@@ -5,9 +5,7 @@ use std::path::Path;
 use std::rc::Rc;
 
 use crate::TlcVersion;
-use crate::ast::{
-    Assumed, Declaration, DefinitionKind, Expr, ExpressionKind, Module, ModuleUnit, Statement,
-};
+use crate::ast::{Assumed, Expr, ExpressionKind, Module, ModuleUnit, Statement};
 use crate::config::parse_config;
 use crate::environment::{EnvironmentOptions, get_sany_messages};
 use crate::errors::{FrontError, SanyError};
@@ -233,32 +231,6 @@ fn get_dependencies(module: &Rc<Module>) -> Dependencies {
     dependencies
 }
 
-/// Whether a definition has a different arity than SANY sees in its RECURSIVE declaration, which
-/// compares only the arity of the last parameter.
-fn has_mismatched_recursion(module: &Module) -> bool {
-    let declared: Vec<&Rc<Declaration>> = module
-        .units
-        .iter()
-        .flat_map(|unit| match unit {
-            ModuleUnit::Recursive(declarations) => declarations.iter().collect(),
-            _ => Vec::new(),
-        })
-        .collect();
-    module.definitions.iter().any(|definition| {
-        let DefinitionKind::Operator { params, .. } = &definition.kind else {
-            return false;
-        };
-        declared.iter().any(|declaration| {
-            declaration.name == definition.name
-                && (declaration.arity != params.len()
-                    || params.last().is_some_and(|param| param.arity != 0))
-        })
-    }) || module
-        .modules
-        .iter()
-        .any(|inner| has_mismatched_recursion(inner))
-}
-
 struct Loaded {
     text: String,
     module: Rc<Module>,
@@ -368,11 +340,6 @@ impl Loader<'_> {
                 ),
                 parse_error: None,
             });
-        }
-        if has_mismatched_recursion(&module) {
-            return Err(not_yet(
-                "a definition whose arity differs from its RECURSIVE",
-            ));
         }
         let module = Rc::new(module);
         let dependencies = Rc::new(get_dependencies(&module));

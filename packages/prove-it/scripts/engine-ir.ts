@@ -31,7 +31,8 @@ import {
 // initial predicates, invariants that print, recursion, LAMBDA, function definitions, values
 // TLC computes at startup, invariants an initial state violates, the run-time errors whose
 // messages and call stacks tla-trace's evaluate_failure gives, tableau nodes that accept every
-// behavior, and assumptions that print.
+// behavior, assumptions that print, the records TLC sorts as it permutes a state under
+// SYMMETRY, and a lasso under a VIEW.
 const GOLDEN_MODELS = [
   "examples/specifications/btree/MCbtree.cfg",
   "examples/specifications/TeachingConcurrency/SimpleRegular.cfg",
@@ -71,10 +72,13 @@ const GOLDEN_MODELS = [
   "tlc/tlatools/org.lamport.tlatools/test-model/suite/etest9.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/suite/etest10.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/suite/etest11.cfg",
+  "tlc/tlatools/org.lamport.tlatools/test-model/suite/etest14.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/AssertExpressionStack.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/Github461.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/TESpecTest/TESpecRuntimeErrorTest.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/EvaluatingValueTest.cfg",
+  "tlc/tlatools/org.lamport.tlatools/test-model/DoInitFunctor/DoInitFunctorEvalException.cfg",
+  "tlc/tlatools/org.lamport.tlatools/test-model/DoInitFunctor/DoInitFunctorMinimalErrorStack.cfg",
   "spectacle/specs/bfs_anim.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/suite/etest4.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/suite/etest6.cfg",
@@ -90,6 +94,9 @@ const GOLDEN_MODELS = [
   "spectacle/specs/with_state_graphs/Elevator.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/Github1389Counting.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/Github710b.cfg",
+  "tlc/tlatools/org.lamport.tlatools/test-model/examples/FiniteMonotonic/MCDistributedReplicatedLog.cfg",
+  "mongodb-txns/MultiShardTxn/Storage.cfg",
+  "tlc/tlatools/org.lamport.tlatools/test-model/examples/ewd998/AsyncTerminationDetection.cfg",
 ];
 
 const GOLDEN_DIRECTORY = join(CONFORMANCE_DIRECTORY, "ir");

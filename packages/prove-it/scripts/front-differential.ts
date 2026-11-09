@@ -28,6 +28,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 
 import type { Definition, Expression } from "../src/ast";
+import { getIrStartup } from "../src/check";
 import { type ModelConfig, parseConfig } from "../src/config";
 import { toEngineProperties } from "../src/engine/context";
 import { lowerToIr } from "../src/engine/ir";
@@ -259,8 +260,7 @@ const lowerFullModel = (source: string, _path: string, spec: string) => {
     atoms: (liveness?.atoms ?? []).map((atom) => ({ atom, actions: undefined })),
     liveFormula: liveness?.formula,
     liveProperties: liveness?.properties ?? [],
-    // The startup section, which tla-front doesn't write yet.
-    startup: { substitutes: [], definitions: [], symmetry: undefined, assumptions: [] },
+    startup: getIrStartup(config, linked),
     nextSubstitution: getNextSubstitution(config, environment, linked.instanceActions),
     instanceActions: linked.instanceActions,
   });
