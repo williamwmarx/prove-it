@@ -77,8 +77,15 @@ fn native_sany(spec_path: &str, describer: &FileDescriber, libraries: &[String])
                 std::fs::read_to_string(directory.join(format!("{name}.tla"))).ok()
             })
     };
+    // TLC gives SANY the spec as the command line names it, without .tla, unless it's absolute.
+    let file_name = if spec.is_absolute() {
+        spec.file_stem().and_then(|stem| stem.to_str())
+    } else {
+        Some(spec_path.strip_suffix(".tla").unwrap_or(spec_path))
+    };
     let options = ReportOptions {
         version: TlcVersion::Master,
+        file_name,
         load_module: &load_module,
         describe_file: &|name, origin| describer.describe(name, origin),
     };

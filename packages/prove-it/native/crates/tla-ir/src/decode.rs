@@ -302,20 +302,32 @@ impl Decoder<'_> {
             })
             .collect::<Decoded<_>>()?;
 
-        let builtin_count = self.count()?;
-        let builtins = (0..builtin_count)
-            .map(|_| {
-                Ok(Builtin {
-                    name: self.text()?,
-                    arity: self.next()?,
-                    flags: self.next()?,
-                })
-            })
-            .collect::<Decoded<Vec<_>>>()?;
-
-        // The values come after the constants and scopes that name them, so their ordinals are
-        // checked once the values are read.
+        // The values come after the builtins, constants and scopes that name them, so their
+        // ordinals are checked once the values are read.
         let mut value_refs = Vec::new();
+        let builtin_count = self.count()?;
+        let mut builtins = Vec::with_capacity(builtin_count);
+        for _ in 0..builtin_count {
+            let name = self.text()?;
+            let arity = self.next()?;
+            let flags = self.next()?;
+            let mut table = Vec::new();
+            if flags & Builtin::TABLE != 0 {
+                for _ in 0..self.count()? {
+                    value_refs.push(self.at);
+                    let arguments = self.value_ordinal()?;
+                    value_refs.push(self.at);
+                    table.push((arguments, self.value_ordinal()?));
+                }
+            }
+            builtins.push(Builtin {
+                name,
+                arity,
+                flags,
+                table,
+            });
+        }
+
         let constant_count = self.count()?;
         let mut constants = Vec::with_capacity(constant_count);
         for _ in 0..constant_count {

@@ -205,6 +205,22 @@ describe("the engine", () => {
     expect(lines).toEqual([expect.stringMatching(/an invariant violated$/)]);
   });
 
+  it("applies an operator the configuration defines by its values", async () => {
+    // From TLC's ConstantOperatorConfiguration.
+    const { result, lines } = await checkInEngine(
+      [
+        "EXTENDS Naturals",
+        "CONSTANT F(_)",
+        "VARIABLE x",
+        "Init == x = 0",
+        "Next == x' = F(x)",
+      ].join("\n"),
+      "INIT Init\nNEXT Next\nCONSTANT\nF(0) = 1\nF(1) = 2\nF(2) = 2",
+    );
+    expect([result.status, result.distinctStates]).toEqual(["success", 3]);
+    expect(lines).toEqual([expect.stringMatching(/^\[engine\] checked 3 states/)]);
+  });
+
   it("keeps the names a recursive function binds apart in each call", async () => {
     const { result, lines } = await checkInEngine(
       [
