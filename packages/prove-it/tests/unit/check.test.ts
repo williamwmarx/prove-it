@@ -1420,6 +1420,20 @@ describe("evaluation errors match TLC", () => {
     expect(result.failure?.message).toContain(message);
   });
 
+  // TLC evaluates UNCHANGED e, [A]_e and <<A>>_e in the current state before the next one
+  // (Tool.evalAppl), so the first failure is the current state's.
+  it.each(["[FALSE]_(e)", "IF UNCHANGED (e) THEN TRUE ELSE TRUE", "<<TRUE>>_(e)"])(
+    "evaluates %s in the current state first like TLC",
+    async (form) => {
+      const subscript = 'IF x = 0 THEN Assert(FALSE, "before") ELSE Assert(FALSE, "after")';
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS TLC\nVARIABLE x\nInit == x = 0\nNext == x' = 1 /\\ ${form.replace("(e)", `(${subscript})`)}\n====`,
+        config: "INIT Init\nNEXT Next",
+      });
+      expect(result.failure?.message).toContain('"before"');
+    },
+  );
+
   it("reports a CASE with no true guard like TLC", async () => {
     const result = await check({
       source:

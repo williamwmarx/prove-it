@@ -136,6 +136,23 @@ describe("the engine", () => {
     expect(lines).toEqual([expect.stringMatching(/^\[engine\] checked 3 states/)]);
   });
 
+  it("evaluates UNCHANGED in the current state first like TLC", async () => {
+    // Tool.evalAppl evaluates the current state's side first, so its failure is the one TLC meets.
+    const subscript = 'IF x = 0 THEN Assert(FALSE, "before") ELSE <<>>[1]';
+    for (const form of ["[FALSE]_(e)", "IF UNCHANGED (e) THEN TRUE ELSE TRUE", "<<TRUE>>_(e)"]) {
+      const { lines } = await checkInEngine(
+        [
+          "EXTENDS TLC",
+          "VARIABLE x",
+          "Init == x = 0",
+          `Next == x' = 1 /\\ ${form.replace("(e)", `(${subscript})`)}`,
+        ].join("\n"),
+        "INIT Init\nNEXT Next",
+      );
+      expect([form, lines]).toEqual([form, [expect.stringMatching(/an assertion failed$/)]]);
+    }
+  });
+
   it("keeps the names a recursive function binds apart in each call", async () => {
     const { result, lines } = await checkInEngine(
       [

@@ -1345,7 +1345,11 @@ export const createCompiler = (environment: Environment): Compiler => {
         const nowEvaluate = now.evaluate;
         const nextEvaluate = next.evaluate;
         return leaf(
-          () => bool(equals(nextEvaluate(), nowEvaluate())),
+          () => {
+            // TLC evaluates the current state's side first (Tool.evalAppl's OPCODE_unchanged).
+            const value = nowEvaluate();
+            return bool(equals(value, nextEvaluate()));
+          },
           mergeFootprints(now.footprint, next.footprint),
         );
       }

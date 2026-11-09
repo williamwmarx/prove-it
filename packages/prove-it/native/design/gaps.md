@@ -199,3 +199,11 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   argument compiles with those of the place it is written, and only a cycle through definitions
   is taken for recursion. ClientCentricTests and MCMultiShardTxn (mongodb-txns), declined before,
   now search in Rust, and the TypeScript engine searches them too.
+
+## The order UNCHANGED evaluates in
+
+- TLC evaluates `UNCHANGED e`, `[A]_e` and `<<A>>_e` in the current state before the next one
+  (`Tool.evalAppl`, `verifyUnchanged`), so where both sides fail it reports the current state's
+  failure. The interpreter (`codegen.ts`, `evaluate.ts`) and both engines' UNCHANGED evaluated the
+  next state's side first; each now evaluates the current state's first. The engines' `[A]_e` and
+  `<<A>>_e` already did.
