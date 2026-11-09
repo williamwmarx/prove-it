@@ -230,6 +230,7 @@ unsafe fn create_verdict(env: napi_env, liveness: &Liveness) -> Result<napi_valu
         ),
         Verdict::Accepted { state, path } => ("accepted", "", &path[..], 0, *state, false),
         Verdict::Declined(declined) => ("declined", declined.0.as_str(), &[][..], 0, 0, false),
+        Verdict::Unexpanded => ("declined", tla_live::UNEXPANDED, &[][..], 0, 0, false),
     };
     unsafe {
         let mut object = null_mut();
