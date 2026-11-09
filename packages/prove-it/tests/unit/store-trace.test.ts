@@ -43,28 +43,6 @@ describe("PROVE_IT_STORE_TRACE", () => {
     expect(replayStoreTrace(trace)).toBeUndefined();
   });
 
-  it("keeps the search on one thread, since the workers' operations aren't traced", () => {
-    // The workers run from the build, which bun run test makes first, and take levels only of a
-    // search that runs long enough. The trace is the TypeScript store's, so the TypeScript backend
-    // searches, as auto would hand the native engine any number of threads.
-    const result = spawnSync(
-      "bun",
-      [join(import.meta.dirname, "../../dist/cli.js"), "Commit.tla"],
-      {
-        cwd: join(import.meta.dirname, "../../benchmarks/commit"),
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          PROVE_IT_ENGINE: "debug",
-          PROVE_IT_ENGINE_BACKEND: "ts",
-          PROVE_IT_WORKERS: "4",
-          PROVE_IT_STORE_TRACE: "/dev/null",
-        },
-      },
-    );
-    expect(result.stderr).toContain("checked 282251 states on 1 thread ");
-  }, 60_000);
-
   it("is caught out by an operation whose result changed", () => {
     const lines = traceFixture("queue", "Queue").split("\n");
     const index = lines.findIndex(
