@@ -231,6 +231,21 @@ impl<'a> Lowering<'a> {
                     .map(|element| self.write_value(element))
                     .collect(),
             ),
+            // A record is TLC's RecordValue, class 3, its names before its values.
+            ConfigValue::Record(fields) => {
+                let domain = fields
+                    .iter()
+                    .map(|(name, _)| Value::String(self.get_value_string(name)))
+                    .collect();
+                Value::Function {
+                    class: 3,
+                    domain,
+                    range: fields
+                        .iter()
+                        .map(|(_, value)| self.write_value(value))
+                        .collect(),
+                }
+            }
         }
     }
 
