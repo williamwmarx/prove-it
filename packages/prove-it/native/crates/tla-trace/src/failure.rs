@@ -7,8 +7,10 @@ use tla_ir::{NodeId, NodeKind, SourceRange};
 use tla_values::{Id, Store};
 
 use crate::eval::{CallStack, Context, Evaluator, StackFrame};
+use crate::fingerprint::fingerprint_failure;
+use crate::print::format_value;
 use crate::rebuild::{Rebuilder, run};
-use crate::value::{TlcMessage, Value};
+use crate::value::{Evaluated, TlcMessage, Value, fail, fail_with};
 use crate::{Ending, Trace, Unsupported};
 
 /// Where the search failed.
@@ -21,6 +23,15 @@ pub enum Site {
     /// Evaluating the invariant at this position of the model's invariants on the path's last
     /// state, a successor that failed it, past the initial states.
     Invariant(u32),
+}
+
+/// Where TLC fails to fingerprint a state: the ranges of the expressions that built the values it
+/// fails in, outermost first, and the reason, with and without -tool.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FingerprintFailure {
+    pub sources: Vec<SourceRange>,
+    pub reason: String,
+    pub tool_reason: String,
 }
 
 /// TLC's report of an error: the code of the message, its text and its text in -tool output, and
@@ -36,11 +47,20 @@ pub struct Failure {
     /// What the spec printed as TLC replayed the failure, each print's values as `Trace` holds
     /// them.
     pub printed: Vec<Vec<String>>,
+    /// Where a state the replay found fails to fingerprint, which TLC reports in place of the
+    /// call stack: the ranges of the expressions that built the values it fails in, outermost
+    /// first.
+    pub fingerprint: Option<FingerprintFailure>,
+    /// The initial state TLC was working on, where it failed to fingerprint one: each variable's
+    /// value as TLC prints it, in the IR's order of the variables.
+    pub state: Option<Vec<String>>,
 }
 
 const GENERAL: u32 = 1000;
 const INVARIANT_EVALUATION_FAILED: u32 = 2111;
 const ASSERT_FAILED: u32 = 2132;
+/// `EC.TLC_INITIAL_STATE`: an error and the initial state TLC was working on.
+const INITIAL_STATE: u32 = 2102;
 
 const VIOLATION_ASSERT: i32 = 14;
 const FAILURE_SPEC_EVAL: i32 = 75;
@@ -131,7 +151,9 @@ impl<'ir> Rebuilder<'ir> {
                 evaluator.level = 0;
                 let context = evaluator.scope_context(ir.model.scope);
                 context.and_then(|context| {
-                    evaluator.walk_action(ir.model.init, &context, true, &mut |_| Ok(true))
+                    evaluator.walk_action(ir.model.init, &context, true, &mut |evaluator| {
+                        evaluator.fingerprint_found(true)
+                    })
                 })
             }
             Site::Next => {
@@ -171,7 +193,9 @@ impl<'ir> Rebuilder<'ir> {
                         .try_for_each(|(expression, context)| {
                             evaluator.next = vec![None; width];
                             evaluator
-                                .walk_action(expression, &context, false, &mut |_| Ok(true))
+                                .walk_action(expression, &context, false, &mut |evaluator| {
+                                    evaluator.fingerprint_found(false)
+                                })
                                 .map(|_| ())
                         })
                         .map(|()| true)
@@ -217,6 +241,46 @@ impl<'ir> Rebuilder<'ir> {
                 "evaluating the failure again: {reason}"
             )));
         }
+        if let Some((sources, state)) = call_stack.fingerprint {
+            let Some(message) = error.message else {
+                return Err(Unsupported(format!(
+                    "evaluating the failure again: {}",
+                    error.reason
+                )));
+            };
+            let fingerprint = FingerprintFailure {
+                sources: sources
+                    .into_iter()
+                    .filter_map(|node| ir.nodes.arena[node as usize].range)
+                    .collect(),
+                reason: message.text.clone(),
+                tool_reason: nested(&message),
+            };
+            // TLC reports a state it fails to fingerprint as it works on an initial state, or as
+            // an exception it didn't expect in the next states, and exits as for the replay.
+            let (code, text, tool_text, state) = match site {
+                Site::Init => (
+                    INITIAL_STATE,
+                    message.text.clone(),
+                    nested(&message),
+                    Some(state),
+                ),
+                _ => {
+                    let (code, text, tool_text) = report(&message, true);
+                    (code, text, tool_text, None)
+                }
+            };
+            return Ok(Failure {
+                code,
+                message: text,
+                tool_message: tool_text,
+                call_stack: Vec::new(),
+                exit_code: FAILURE_SPEC_EVAL,
+                printed,
+                fingerprint: Some(fingerprint),
+                state,
+            });
+        }
         if call_stack.is_fingerprinted {
             return Err(Unsupported(
                 "evaluating the failure again: a failure TLC reports as a FingerprintException"
@@ -241,6 +305,8 @@ impl<'ir> Rebuilder<'ir> {
                 call_stack: Vec::new(),
                 exit_code: FAILURE_SAFETY_EVAL,
                 printed,
+                fingerprint: None,
+                state: None,
             });
         }
         let (code, text, tool_text) = report(&message, site == Site::Next);
@@ -256,6 +322,8 @@ impl<'ir> Rebuilder<'ir> {
                 _ => FAILURE_SPEC_EVAL,
             },
             printed,
+            fingerprint: None,
+            state: None,
         })
     }
 }
@@ -380,5 +448,54 @@ impl Rebuilder<'_> {
             }
         }
         Err(Unsupported("no successor is incomplete".into()))
+    }
+}
+
+impl Evaluator<'_> {
+    // TLC fingerprints each state its replay finds (`fingerprintReplayed`), outside any
+    // evaluation: where that fails, the failure is the FingerprintException of the values it
+    // fails in. A state whose fingerprint the evaluator can't tell stops the replay.
+    fn fingerprint_found(&mut self, is_init: bool) -> Evaluated<bool> {
+        let ir = self.ir;
+        let state = if is_init { &self.current } else { &self.next };
+        for &position in &ir.tlc_order {
+            let Some(value) = &state[position as usize] else {
+                continue;
+            };
+            let failure = fingerprint_failure(value);
+            let Some(stack) = &mut self.call_stack else {
+                return Ok(true);
+            };
+            match failure {
+                Ok(None) => {}
+                Ok(Some((chain, message))) => {
+                    let sources: Vec<_> = chain
+                        .iter()
+                        .filter_map(|value| stack.source(value))
+                        .collect();
+                    if sources.is_empty() {
+                        stack
+                            .unfollowed
+                            .get_or_insert("a fingerprint of values without sources");
+                    } else {
+                        let texts = state
+                            .iter()
+                            .map(|value| value.as_ref().map(format_value).unwrap_or_default())
+                            .collect();
+                        stack.frames.clear();
+                        stack.is_frozen = true;
+                        stack.fingerprint = Some((sources, texts));
+                    }
+                    return fail_with("a state TLC fails to fingerprint", message);
+                }
+                Err(()) => {
+                    stack
+                        .unfollowed
+                        .get_or_insert("a state whose fingerprint the replay doesn't follow");
+                    return fail("a state whose fingerprint the replay doesn't follow");
+                }
+            }
+        }
+        Ok(true)
     }
 }

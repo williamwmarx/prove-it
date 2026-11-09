@@ -382,6 +382,18 @@ impl<'p> Machine<'p> {
         result
     }
 
+    /// Runs a walk of a recursive function's body one call deeper, as `call_recursive` runs a
+    /// call.
+    pub(crate) fn nested(&mut self, run: impl FnOnce(&mut Self) -> Outcome<()>) -> Outcome<()> {
+        if self.depth >= MAXIMUM_RECURSION {
+            return Err(Bail("recursion too deep"));
+        }
+        self.depth += 1;
+        let result = run(self);
+        self.depth -= 1;
+        result
+    }
+
     pub(crate) fn recursive_domain(&self, index: usize) -> Member {
         self.program.recursives[index]
             .as_ref()
