@@ -82,6 +82,13 @@ jobs:
               bun scripts/platform-packages.ts build
               bun run build
               PROVE_IT_ENGINE_BACKEND=rust PROVE_IT_ENGINE_ADDON="$PWD/native/npm/linux-x64-gnu/prove-it-engine.node" bun test tests/unit
+          # The Rust front end against the TypeScript one, on every module of the corpora and the
+          # fixtures (native/DESIGN.md section 14).
+          - task: Front End
+            command: |
+              cd packages/prove-it
+              bun scripts/fetch-corpora.ts
+              bun scripts/front-differential.ts tokens
           - task: Cargo Test
             command: cd packages/prove-it/native && cargo test --locked
           - task: Cargo Clippy
