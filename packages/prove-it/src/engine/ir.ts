@@ -59,7 +59,7 @@ import type { EngineProperties, EngineSpec } from "./context";
 import type { NamedPermutation } from "./symmetry";
 
 // The version of the layout below, which the decoder checks. Any change to it changes this.
-export const IR_VERSION = 11;
+export const IR_VERSION = 12;
 
 // "PIIR" read as a little-endian word.
 const MAGIC = 0x52494950;
@@ -759,6 +759,7 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
   writeRoots(input.properties.initialPredicates);
   writeConfigNames(config.view === undefined ? [] : [config.view]);
   writeConfigNames(config.alias === undefined ? [] : [config.alias]);
+  writeConfigNames(config.postconditions);
   const symmetry = input.symmetry;
   push(model, symmetry ? symmetry.length : -1);
   for (const permutation of symmetry ?? []) {

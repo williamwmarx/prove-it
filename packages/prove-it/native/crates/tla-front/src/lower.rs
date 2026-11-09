@@ -946,6 +946,11 @@ impl<'a> Lowering<'a> {
             .alias
             .as_deref()
             .map(|name| self.config_name(name).root);
+        let postconditions = config
+            .postconditions
+            .iter()
+            .map(|name| self.config_name(name).root)
+            .collect();
         let version = version.map(|version| self.get_text(version));
         Ok(Model {
             init,
@@ -963,6 +968,7 @@ impl<'a> Lowering<'a> {
             initial_predicates,
             view,
             alias,
+            postconditions,
             symmetry: None,
             check_deadlock: config.check_deadlock,
             is_warning_enabled,
