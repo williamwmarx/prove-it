@@ -90,3 +90,18 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   its base (`Compiled::subset_base`) for `\subseteq` to compare in its place. SubsetEq (TLC's
   tests), which stopped building `SUBSET (1..42)`, now completes in Rust. The interpreter doesn't
   recurse into power sets of power sets, so the unit test leaves that case out.
+
+## Functions of several bounds, and recursive functions TLC keeps lazy
+
+- **A recursive function of several bounds**, such as `add[a \in A, b \in B]`, is TLC's function
+  over `A \X B`. Its argument is a tuple in one slot, each name is its element of the tuple, and
+  `add[a, b]` applies it to `<<a, b>>`. A bound with a tuple pattern still declines.
+- **A function construction of several bounds** binds a tuple pattern at any level
+  (`assign_bound`), as `[a \in S, <<b, c>> \in T |-> e]` does, where it stopped before.
+- TLC keeps a recursive function lazy (`FcnLambdaValue`). So an operator's argument that names
+  one applies it where the operator applies the argument, and DOMAIN of one is its domain. Before,
+  the engine built it, which a domain such as Nat stopped, and a body that reads its own DOMAIN
+  never finished.
+- With them, function_syntax (tla-rs), declined before, now completes in Rust. test45 (TLC's
+  tests) now searches in Rust until a function construction in a recursive body applies the
+  function to itself, which needs the construction to stay lazy as TLC keeps it.
