@@ -32,7 +32,7 @@ pub use decode::{DecodeError, decode};
 pub use encode::encode;
 
 /// The version of the layout, `IR_VERSION` in `ir.ts`.
-pub const IR_VERSION: u32 = 6;
+pub const IR_VERSION: u32 = 7;
 
 /// "PIIR" as a little-endian word.
 pub const MAGIC: u32 = 0x5249_4950;
@@ -273,7 +273,20 @@ pub struct Nodes {
 pub struct Node {
     pub line: i32,
     pub column: i32,
+    /// Where the node is written, which TLC's messages print, if the front end knows.
+    pub range: Option<SourceRange>,
     pub kind: NodeKind,
+}
+
+/// A node's source range: its module and where it starts and ends, as TLC prints them in
+/// `line 2, col 3 to line 2, col 9 of module M`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SourceRange {
+    pub module: TextId,
+    pub start_line: i32,
+    pub start_column: i32,
+    pub end_line: i32,
+    pub end_column: i32,
 }
 
 /// What a name refers to outside any binding of it.

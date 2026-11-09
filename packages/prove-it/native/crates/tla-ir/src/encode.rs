@@ -302,6 +302,16 @@ impl NodeWriter<'_> {
             NodeKind::Reference(_) => unreachable!("written above"),
         };
         self.words.extend([tag_word, node.line, node.column]);
+        match node.range {
+            Some(range) => self.words.extend([
+                range.module as i32,
+                range.start_line,
+                range.start_column,
+                range.end_line,
+                range.end_column,
+            ]),
+            None => self.words.extend([-1, 0, 0, 0, 0]),
+        }
         match &node.kind {
             NodeKind::Number(value) => self.words.push(*value),
             NodeKind::WideNumber(text) | NodeKind::Decimal(text) | NodeKind::String(text) => {
