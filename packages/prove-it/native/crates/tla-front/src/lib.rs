@@ -11,6 +11,7 @@ pub mod hash;
 pub mod instances;
 pub mod json;
 pub mod lexer;
+pub mod lower;
 pub mod ordered_map;
 pub mod parser;
 pub mod resolve;

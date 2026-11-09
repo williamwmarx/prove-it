@@ -442,13 +442,16 @@ impl Compiler<'_> {
             },
             _ => None,
         };
-        if key != Some("level") && key != Some("distinct") {
+        if key != Some("level") && key != Some("distinct") && key != Some("diameter") {
             return unsupported("TLCGet");
         }
         if context.is_init && context.is_primed {
             return unsupported("TLCGet");
         }
-        let slot = if key == Some("distinct") {
+        let slot = if key == Some("diameter") {
+            self.is_diameter_read = true;
+            super::DIAMETER_SLOT
+        } else if key == Some("distinct") {
             self.is_distinct_read = true;
             DISTINCT_SLOT
         } else if context.is_primed {
@@ -761,7 +764,15 @@ impl Compiler<'_> {
             }
             "DOMAIN" => {
                 arity(1)?;
-                let function = self.operand(&operands[0])?;
+                // A recursive function's domain, which TLC reads without applying it.
+                let operand = &operands[0];
+                if operand.slot.is_none()
+                    && let Some(recursive) =
+                        self.get_applied_recursive_function(operand.node, &operand.context)?
+                {
+                    return Ok(Some(recursive.domain.clone()));
+                }
+                let function = self.operand(operand)?;
                 unary(
                     &function,
                     |machine, function| {
@@ -1266,8 +1277,10 @@ fn model_value(machine: &mut Machine<'_>, name: Id) -> Outcome<Id> {
     if machine.store.kind_of(name) != KIND_STRING {
         return Err(Bail("TLCModelValue of a value that isn't a string"));
     }
+    // The name's string, which \o may have made unranked, takes the rank too, as the interpreter's
+    // strings read it.
     let text = machine.store.text_of(name).to_vec();
-    machine.store.get_string_rank(&text);
+    machine.store.rank_text(&text);
     Ok(machine.store.model(&text))
 }
 
