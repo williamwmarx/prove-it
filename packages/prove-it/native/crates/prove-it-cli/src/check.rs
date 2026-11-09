@@ -874,6 +874,16 @@ fn print_violation(
     if possible.len() != ir.model.possible.len() || possible.iter().any(|(_, count)| *count <= 0) {
         return Err("a _POSSIBLE predicate");
     }
+    // TLC prints a trace once it has rebuilt all of it, and a state that the evaluator can't
+    // rebuild as TLC built it keeps the run not native.
+    // After a violation, TLC checks no postcondition where one is a value it computes as it
+    // starts.
+    let checked = postconditions
+        .filter(|_| !ir.model.postconditions.is_empty() && !has_constant_postcondition(ir));
+    let trace = match rebuild_trace(ir, violation, checked) {
+        Ok(trace) => trace,
+        Err(reason) => return Ok(report_not_native(printer, &reason)),
+    };
     // An owner past the configuration's invariants is a property checked as one.
     let model = &ir.model;
     let invariant_name = |owner: usize| {
@@ -906,9 +916,14 @@ fn print_violation(
         ),
         ViolationKind::Deadlock => (code::DEADLOCK_REACHED, "Deadlock reached.".into(), DEADLOCK),
         ViolationKind::Error { .. } => return Err(NOT_IN_IR),
+        // Under SYMMETRY or a VIEW, TLC names the properties the lasso it rebuilt violates.
         ViolationKind::Lasso { .. } => (
             code::TEMPORAL_PROPERTY_VIOLATED,
-            temporal_headline(ir, liveness.ok_or(NOT_IN_IR)?).ok_or(NOT_IN_IR)?,
+            match &trace.violated {
+                Some(violated) => properties_headline(ir, violated),
+                None => temporal_headline(ir, liveness.ok_or(NOT_IN_IR)?),
+            }
+            .ok_or(NOT_IN_IR)?,
             LIVENESS_VIOLATION,
         ),
         // A tableau node that accepts every behavior: TLC reports it as it does a safety
@@ -951,23 +966,13 @@ fn print_violation(
             if !is_stuttering && is_printing {
                 return Err("a step back into the cycle of a spec that prints");
             }
-            let label = match loop_label {
+            let label = match loop_label.or(trace.loop_action) {
                 Some(action) => Some(action_label(action)?),
                 None => None,
             };
             Some((loop_start, is_stuttering, label, is_warned))
         }
         _ => None,
-    };
-    // TLC prints a trace once it has rebuilt all of it, and a state that the evaluator can't
-    // rebuild as TLC built it keeps the run not native.
-    // After a violation, TLC checks no postcondition where one is a value it computes as it
-    // starts.
-    let checked = postconditions
-        .filter(|_| !ir.model.postconditions.is_empty() && !has_constant_postcondition(ir));
-    let trace = match rebuild_trace(ir, violation, checked) {
-        Ok(trace) => trace,
-        Err(reason) => return Ok(report_not_native(printer, &reason)),
     };
     // TLC labels each step with the action it finds taking it as it rebuilds the trace.
     let mut labels = vec!["Initial predicate"];

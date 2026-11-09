@@ -551,7 +551,7 @@ impl<'ir> Evaluator<'ir> {
     // ENABLED A: whether A takes the current state anywhere, as `Tool.enabled` finds with a next
     // state of its own, a successor whether or not it assigns every variable. A failure inside it
     // is one the replay doesn't follow, since `enabled` evaluates apart from the walk.
-    fn enabled(&mut self, action: NodeId, context: &Context) -> Evaluated<Value> {
+    pub(crate) fn enabled(&mut self, action: NodeId, context: &Context) -> Evaluated<Value> {
         let width = self.next.len();
         let next = std::mem::replace(&mut self.next, vec![None; width]);
         let target = self.target.take();

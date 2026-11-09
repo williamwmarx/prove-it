@@ -287,6 +287,22 @@ fn prints_a_node_that_accepts_every_behavior() {
 }
 
 #[test]
+fn prints_a_lasso_it_rebuilds_under_symmetry() {
+    let ir = include_bytes!(
+        "../../../../tests/conformance/ir/tlc/tlatools/org.lamport.tlatools/test-model/symmetry/UnsymmetricMCA.ir"
+    );
+    let config = "CONSTANTS\na = a\nb = b\nCONSTANT\nS <- const_1444366015085101000\nSYMMETRY symm_1444366015096102000\nSPECIFICATION\nspec_1444366015106103000\nPROPERTY\nprop_1444366015116104000\nPROPERTY neg_prop_1444366015116104000\nPROPERTY XVisitsIntegers\nPROPERTY Tautology\n";
+    let (output, directory) = run_golden("symmetry-lasso", ir, "UnsymmetricMCA", config, &[]);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(13), "{text}");
+    // TLC rebuilds the lasso from the states it stored, the step back into the cycle with it,
+    // and names the one of the four properties the rebuilt lasso violates.
+    let lasso = "Error: Temporal property prop_1444366015116104000 was violated.\n\nError: The following behavior constitutes a counter-example:\n\nState 1: <Initial predicate>\nx = a\n\nState 2: <NextA line 17, col 13 to line 19, col 36 of module Unsymmetric>\nx = 1\n\nBack to state 1: <Back line 7, col 12 to line 8, col 22 of module Unsymmetric>\n\nFinished checking temporal properties in ";
+    assert!(text.contains(lasso), "{text}");
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
 fn prints_a_temporal_propertys_lasso() {
     let ir = include_bytes!(
         "../../../../tests/conformance/ir/tlc/tlatools/org.lamport.tlatools/test-model/Github1389ViolatedB.ir"

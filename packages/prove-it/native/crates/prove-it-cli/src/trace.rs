@@ -21,6 +21,11 @@ pub struct PrintedTrace {
     pub trace_output: Vec<String>,
     /// What the postconditions found on the trace, when the caller asked for them.
     pub postconditions: Option<Postconditions>,
+    /// Under SYMMETRY or a VIEW, the action of a lasso's step back into its cycle, as TLC finds it
+    /// from the last state it rebuilt, and the positions of the properties TLC finds the rebuilt
+    /// lasso violates.
+    pub loop_action: Option<u32>,
+    pub violated: Option<Vec<usize>>,
 }
 
 /// What TLCGet reads after the search, for the postconditions.
@@ -56,7 +61,21 @@ pub fn rebuild_trace(
         std::thread::Builder::new()
             .stack_size(SEARCH_STACK_BYTES)
             .spawn_scoped(scope, || {
-                let states: Vec<&[Id]> = violation.states.iter().map(Vec::as_slice).collect();
+                let mut states: Vec<&[Id]> = violation.states.iter().map(Vec::as_slice).collect();
+                let mut labels = violation.labels.clone();
+                // Under SYMMETRY or a VIEW the lasso's states are the stored ones: TLC rebuilds
+                // the states it prints, the step back into the cycle with them, to a state whose
+                // key is the stored first state of the cycle's.
+                let is_reduced = violation.symmetry.is_some() || ir.model.view.is_some();
+                let reduced_cycle = match violation.kind {
+                    ViolationKind::Lasso { loop_start, .. } if is_reduced => Some(loop_start),
+                    _ => None,
+                };
+                let closing = reduced_cycle.filter(|&loop_start| loop_start + 1 < states.len());
+                if let Some(loop_start) = closing {
+                    states.push(states[loop_start]);
+                    labels.push(None);
+                }
                 // TLC holds a violating state as it found it, and recovers a deadlocked one.
                 let ending = match violation.kind {
                     ViolationKind::Deadlock => Ending::Kept,
@@ -82,16 +101,31 @@ pub fn rebuild_trace(
                     if let Some(group) = &violation.symmetry {
                         rebuilder.set_symmetry(group);
                     }
-                    let trace =
-                        rebuilder.rebuild(&violation.store, &states, &violation.labels, ending)?;
+                    let mut trace =
+                        rebuilder.rebuild(&violation.store, &states, &labels, ending)?;
+                    let loop_action = match closing {
+                        Some(_) => trace.states.pop().and_then(|state| state.action),
+                        None => None,
+                    };
+                    if closing.is_some() && loop_action.is_none() {
+                        return Err(Unsupported(
+                            "a step back into the cycle the rebuilt lasso lacks".into(),
+                        ));
+                    }
+                    let violated = match reduced_cycle {
+                        Some(loop_start) => {
+                            Some(name_violated(&mut rebuilder, ir, &trace, loop_start)?)
+                        }
+                        None => None,
+                    };
                     let aliases = rebuilder.alias(&trace, cycle_start)?;
                     // CounterExample closes a lasso with its step back into the cycle, which a
                     // stuttering one doesn't take.
                     let cycle = match violation.kind {
                         ViolationKind::Lasso {
                             loop_start,
-                            loop_label: Some(label),
-                        } => Some((loop_start, label)),
+                            loop_label,
+                        } => loop_label.or(loop_action).map(|label| (loop_start, label)),
                         _ => None,
                     };
                     let checked = postconditions
@@ -107,44 +141,104 @@ pub fn rebuild_trace(
                             )
                         })
                         .transpose()?;
-                    Ok((trace, aliases, checked))
+                    Ok((trace, aliases, checked, loop_action, violated))
                 });
                 rebuilt
-                    .map(|(trace, aliases, postconditions)| PrintedTrace {
-                        postconditions,
-                        states: trace
-                            .states
-                            .iter()
-                            .enumerate()
-                            .map(|(position, state)| PrintedState {
-                                text: match aliases.as_ref().map(|aliases| &aliases[position]) {
-                                    Some(Alias::Record(fields)) => format_fields(
-                                        fields
-                                            .iter()
-                                            .map(|(name, value)| (name.as_str(), Some(value))),
-                                    ),
-                                    _ => format_state(ir, &state.values),
-                                },
-                                action: state.action,
-                                output: state
-                                    .printed
-                                    .iter()
-                                    .map(|print| format_print(print))
-                                    .collect(),
-                            })
-                            .collect(),
-                        trace_output: trace
-                            .trace_output
-                            .iter()
-                            .map(|print| format_print(print))
-                            .collect(),
-                    })
+                    .map(
+                        |(trace, aliases, postconditions, loop_action, violated)| PrintedTrace {
+                            postconditions,
+                            loop_action,
+                            violated,
+                            states: trace
+                                .states
+                                .iter()
+                                .enumerate()
+                                .map(|(position, state)| PrintedState {
+                                    text: match aliases.as_ref().map(|aliases| &aliases[position]) {
+                                        Some(Alias::Record(fields)) => format_fields(
+                                            fields
+                                                .iter()
+                                                .map(|(name, value)| (name.as_str(), Some(value))),
+                                        ),
+                                        _ => format_state(ir, &state.values),
+                                    },
+                                    action: state.action,
+                                    output: state
+                                        .printed
+                                        .iter()
+                                        .map(|print| format_print(print))
+                                        .collect(),
+                                })
+                                .collect(),
+                            trace_output: trace
+                                .trace_output
+                                .iter()
+                                .map(|print| format_print(print))
+                                .collect(),
+                        },
+                    )
                     .map_err(|Unsupported(reason)| reason)
             })
             .expect("a thread to rebuild the trace")
             .join()
             .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
     })
+}
+
+// The properties a rebuilt lasso violates, as TLC's `Liveness.findViolatedProperties` finds them:
+// each evaluated on the lasso's states, with the cycle from `loop_start`.
+fn name_violated(
+    rebuilder: &mut Rebuilder<'_>,
+    ir: &Ir,
+    trace: &tla_trace::Trace,
+    loop_start: usize,
+) -> Result<Vec<usize>, Unsupported> {
+    let properties: Vec<Vec<tla_live::Term>> = ir
+        .model
+        .live_properties
+        .iter()
+        .map(|property| property.formula.iter().map(|&term| to_term(term)).collect())
+        .collect();
+    let property_terms: Vec<&[tla_live::Term]> = properties.iter().map(Vec::as_slice).collect();
+    let mut failure = None;
+    let violated = tla_live::violated_on_lasso(
+        &property_terms,
+        trace.states.len(),
+        loop_start,
+        &mut |term, position, next| {
+            let atom = match term {
+                tla_live::Term::State(atom)
+                | tla_live::Term::Enabled(atom)
+                | tla_live::Term::Action { atom, .. } => atom,
+                _ => return Err(tla_live::Declined::from("a term that isn't an atom")),
+            };
+            let states = &trace.states;
+            rebuilder
+                .answer_atom(atom, &states[position].values, &states[next].values)
+                .map_err(|Unsupported(reason)| {
+                    failure = Some(reason);
+                    tla_live::Declined::from("an atom the rebuilder can't answer")
+                })
+        },
+    );
+    violated.map_err(|declined| Unsupported(failure.unwrap_or(declined.0)))
+}
+
+fn to_term(term: tla_ir::LiveTerm) -> tla_live::Term {
+    use tla_ir::LiveTerm;
+    use tla_live::Term;
+    match term {
+        LiveTerm::Boolean(value) => Term::Boolean(value),
+        LiveTerm::State(atom) => Term::State(atom),
+        LiveTerm::Enabled(atom) => Term::Enabled(atom),
+        LiveTerm::Action { atom, enabled } => Term::Action { atom, enabled },
+        LiveTerm::Not => Term::Not,
+        LiveTerm::Always => Term::Always,
+        LiveTerm::Eventually => Term::Eventually,
+        LiveTerm::Next => Term::Next,
+        LiveTerm::And(count) => Term::And(count),
+        LiveTerm::Or(count) => Term::Or(count),
+    }
 }
 
 /// The postconditions of a search that completed, as TLC checks them, or why `tla-trace` can't.
