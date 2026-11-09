@@ -102,6 +102,9 @@ export interface Builtin {
   // Whether TLC takes an application for a constant one although its value depends on the state.
   isLevelConstant?: boolean;
   isLazy?: boolean;
+  // A configuration's definition of a constant operator by its values, F(0) = 1: each row's
+  // arguments and value.
+  table?: [Value[], Value][];
 }
 
 export interface Closure {

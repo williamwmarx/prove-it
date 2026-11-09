@@ -19,6 +19,8 @@
 //!   its definitions in the order TLC computes them;
 //! - `front-dump model-ir [--library <directory>]` reads lines as `model` does and writes the IR
 //!   of each model's environment as `ir` does, with the texts ranked in TLC's string order;
+//! - `front-dump pcal` writes SANY's validation of each module's PlusCal algorithm, for TLC
+//!   master and 1.7.4: its results, what the translator logs, and the exception it throws;
 //! - `front-dump time` writes the best of five times to tokenize and parse each module, in
 //!   milliseconds.
 
@@ -42,6 +44,7 @@ use tla_front::lower::{Lowering, RankedTexts};
 use tla_front::model::{ModelOptions, lower_model};
 use tla_front::order::TlcOrder;
 use tla_front::parser::{parse_module, parse_sany_module};
+use tla_front::pcal::{PcalFatal, PcalSession};
 use tla_front::report::{ModuleOrigin, ReportOptions, get_sany_text};
 use tla_front::spec::{get_properties, get_specification};
 use tla_ir::{Model, Startup};
@@ -336,6 +339,43 @@ fn write_order(out: &mut String, config: &str, spec_path: &Path, library: Option
     }
 }
 
+fn write_pcal_validation(out: &mut String, source: &str, version: TlcVersion) {
+    let lines: Vec<&str> = source
+        .split("\r\n")
+        .flat_map(|line| line.split(['\r', '\n']))
+        .collect();
+    let mut session = PcalSession::new();
+    let outcome = session.validate(&lines, version);
+    out.push('{');
+    if let Err(fatal) = &outcome {
+        let (PcalFatal::Runtime(message) | PcalFatal::Bug(message)) = fatal;
+        out.push_str("\"fatal\":");
+        write_js_string(out, message);
+        out.push(',');
+    }
+    out.push_str("\"log\":[");
+    for (index, line) in session.log.iter().enumerate() {
+        if index > 0 {
+            out.push(',');
+        }
+        write_js_string(out, line);
+    }
+    out.push(']');
+    if let Ok(results) = &outcome {
+        let mut names: Vec<&str> = results.iter().map(|result| result.name()).collect();
+        names.sort_unstable();
+        out.push_str(",\"results\":[");
+        for (index, name) in names.iter().enumerate() {
+            if index > 0 {
+                out.push(',');
+            }
+            write_js_string(out, name);
+        }
+        out.push(']');
+    }
+    out.push('}');
+}
+
 fn write_time(out: &mut String, source: &str) {
     let best = (0..5)
         .map(|_| {
@@ -362,6 +402,13 @@ fn main() -> ExitCode {
         "ast" => |out, source| write_module(out, source, false),
         "sany-ast" => |out, source| write_module(out, source, true),
         "time" => write_time,
+        "pcal" => |out, source| {
+            out.push_str("{\"master\":");
+            write_pcal_validation(out, source, TlcVersion::Master);
+            out.push_str(",\"v174\":");
+            write_pcal_validation(out, source, TlcVersion::V1_7_4);
+            out.push('}');
+        },
         "config" => |out, source| {
             out.push_str("{\"master\":");
             dump::config(&parse_config(source, TlcVersion::Master)).write(out);
@@ -371,7 +418,7 @@ fn main() -> ExitCode {
         },
         _ => {
             eprintln!(
-                "usage: front-dump tokens|ast|sany-ast|config|resolve|model|ir|order|model-ir|model-full|spec|properties|sany-text|levels|time < paths"
+                "usage: front-dump tokens|ast|sany-ast|config|pcal|resolve|model|ir|order|model-ir|model-full|spec|properties|sany-text|levels|time < paths"
             );
             return ExitCode::from(2);
         }

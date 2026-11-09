@@ -2,7 +2,7 @@
 //! the same bytes.
 
 use crate::{
-    AtomKind, Bound, ConfigName, DefinitionForm, EnabledActions, IR_VERSION, Ir, Junction,
+    AtomKind, Bound, Builtin, ConfigName, DefinitionForm, EnabledActions, IR_VERSION, Ir, Junction,
     LiveTerm, MAGIC, Name, NodeId, NodeKind, Param, PathStep, Pattern, Resolution, ScopeBinding,
     Selector, Value, code, tag,
 };
@@ -46,6 +46,12 @@ fn encode_here(ir: &Ir) -> Vec<u8> {
     words.push(ir.builtins.len() as i32);
     for builtin in &ir.builtins {
         words.extend([builtin.name as i32, builtin.arity, builtin.flags]);
+        if builtin.flags & Builtin::TABLE != 0 {
+            words.push(builtin.table.len() as i32);
+            for &(arguments, value) in &builtin.table {
+                words.extend([optional(arguments), optional(value)]);
+            }
+        }
     }
     words.push(ir.constants.len() as i32);
     for constant in &ir.constants {

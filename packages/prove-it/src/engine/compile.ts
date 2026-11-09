@@ -2798,6 +2798,9 @@ export const createCompiler = (environment: Environment): Compiler => {
   ): Compiled => {
     if (name === "Print" || name === "PrintT") return compilePrint(name, expression.args, context);
     if (name === "TLCGet") return compileTlcGet(expression.args, context);
+    // A configuration's definition of a constant operator by its values applies as the
+    // interpreter applies it.
+    if (builtin.table) return compileBridgedBuiltin(name, builtin, expression.args, context);
     if (builtin.isStateLevel || IMPURE_BUILTINS.has(name)) {
       if (name === "TLCEval" && expression.args.length === 1)
         return compile(expression.args[0], context);

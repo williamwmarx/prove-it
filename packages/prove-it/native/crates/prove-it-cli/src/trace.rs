@@ -104,7 +104,7 @@ fn pretty(text: &str) -> String {
 }
 
 // What one Print or PrintT printed: each value pretty printed, two spaces apart.
-fn format_print(texts: &[String]) -> String {
+pub(crate) fn format_print(texts: &[String]) -> String {
     texts
         .iter()
         .map(|text| pretty(text))

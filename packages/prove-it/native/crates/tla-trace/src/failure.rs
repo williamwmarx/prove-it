@@ -249,10 +249,10 @@ impl<'ir> Rebuilder<'ir> {
             message: text,
             tool_message: tool_text,
             call_stack: ranges(evaluator, &call_stack),
-            // A failed assertion exits as one, and any other error as the nested expression
-            // failure the replay reports.
-            exit_code: match message.code {
-                Some(ASSERT_FAILED) => VIOLATION_ASSERT,
+            // A failed assertion in the next states exits as one, and any other error, or any
+            // in the initial predicate, as the failure of the replay (`getFailureExitCode`).
+            exit_code: match (site, message.code) {
+                (Site::Next, Some(ASSERT_FAILED)) => VIOLATION_ASSERT,
                 _ => FAILURE_SPEC_EVAL,
             },
             printed,

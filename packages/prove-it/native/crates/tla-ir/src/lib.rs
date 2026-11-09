@@ -71,12 +71,16 @@ pub struct Builtin {
     pub name: TextId,
     pub arity: i32,
     pub flags: i32,
+    /// With `TABLE`, a configuration's definition of a constant operator by its values: each
+    /// row's arguments as a tuple and its value, or `None` for one the IR can't hold.
+    pub table: Vec<(Option<Index>, Option<Index>)>,
 }
 
 impl Builtin {
     pub const STATE_LEVEL: i32 = 1;
     pub const LEVEL_CONSTANT: i32 = 2;
     pub const LAZY: i32 = 4;
+    pub const TABLE: i32 = 8;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
