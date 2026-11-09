@@ -742,6 +742,30 @@ impl<'a> Compiler<'a> {
                     _ => return Ok(None),
                 }
             }
+            // A function a definition gives, which TLC keeps lazy unless it evaluated it at
+            // startup.
+            NodeKind::Identifier(name) => {
+                let Resolution::Definition(index) = name.resolution else {
+                    return Ok(None);
+                };
+                let node = self.ir.definitions[index as usize];
+                if self.startup_definitions.contains_key(&node) {
+                    return Ok(None);
+                }
+                let definition = self.definition(node);
+                let DefinitionForm::Function(bounds) = &definition.form else {
+                    return Ok(None);
+                };
+                let is_recursive =
+                    definition.flags & (Definition::RECURSIVE | Definition::SELF_REFERENTIAL) != 0;
+                let scope = is_recursive.then(|| self.global_function_scope(node));
+                (
+                    bounds,
+                    definition.body,
+                    context.global(context.can_print).with_scope(scope),
+                    is_recursive,
+                )
+            }
             _ => return Ok(None),
         };
         let [bound] = &bounds[..] else {

@@ -9,9 +9,12 @@ use crate::config::parse_config;
 use crate::dependencies::create_definition_facts;
 use crate::environment::{EnvironmentOptions, create_environment};
 use crate::errors::FrontError;
+use crate::eval::Evaluator;
+use crate::hash::FastMap;
 use crate::lower::{Lowering, RankedTexts};
 use crate::order::TlcOrder;
 use crate::spec::{get_properties, get_specification};
+use crate::values::ValueOrder;
 
 /// What the model is checked with besides its files.
 pub struct ModelOptions<'a> {
@@ -64,7 +67,17 @@ pub fn lower_model(
     let variable_order = order.get_declaration_order(true)?;
     let facts = create_definition_facts(&environment);
     let specification = get_specification(&config, &environment, &facts, version)?;
-    let properties = get_properties(&config, &environment, &facts, version)?;
+    let ranks: FastMap<Rc<str>, u32> = texts
+        .iter()
+        .enumerate()
+        .map(|(rank, text)| (text.clone(), rank as u32))
+        .collect();
+    let evaluator = Evaluator {
+        environment: &environment,
+        order: ValueOrder { ranks: &ranks },
+        version,
+    };
+    let properties = get_properties(&config, &environment, &facts, version, Some(&evaluator))?;
     // `getTlcOrder`: the variables in TLC's order of declarations.
     let position = |index: &i32| {
         let variable = &environment.variables[*index as usize];
@@ -75,16 +88,11 @@ pub fn lower_model(
     };
     let mut tlc_order: Vec<i32> = (0..environment.variables.len() as i32).collect();
     tlc_order.sort_by_key(position);
-    let ranks = texts
-        .iter()
-        .enumerate()
-        .map(|(rank, text)| (text.clone(), rank as u32))
-        .collect();
     let mut lowering = Lowering::new(
         &environment,
         RankedTexts {
             texts: &texts,
-            ranks,
+            ranks: ranks.clone(),
         },
     );
     let version_text = options.version.map(|version| match version {
