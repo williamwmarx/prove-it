@@ -22,7 +22,14 @@ import { resetFingerprints } from "./fingerprint";
 import type { IrOutcome } from "./ir";
 import type { LiveOracle } from "./live";
 import type { EngineCheckpoint, EngineInput, EngineResult } from "./search";
-import { getEngineAddon, getEnvironmentFlag, getStopAt, reportEngine } from "./settings";
+import {
+  getEngineAddon,
+  getEngineThreads,
+  getEnvironmentFlag,
+  getMinimumSharedLevel,
+  getStopAt,
+  reportEngine,
+} from "./settings";
 import {
   Bailout,
   FALSE,
@@ -127,7 +134,7 @@ export type NativeOutcome =
   | ({ status: "stopped"; reason: string } & NativeCheckpoint);
 
 // The contract between this loader and the addon, ABI_VERSION in its lib.rs.
-const ABI_VERSION = 3;
+const ABI_VERSION = 4;
 
 export const ADDON_FILE = "prove-it-engine.node";
 
@@ -217,6 +224,8 @@ export const checkNatively = (
     getStopAt(),
     getEnvironmentFlag("PROVE_IT_FP_VERIFY") ? 1 : 0,
     getEnvironmentFlag("PROVE_IT_LIVE_CHECK") ? 1 : 0,
+    getEngineThreads(),
+    getMinimumSharedLevel(),
   );
   return addon.check(
     lowered.ir,

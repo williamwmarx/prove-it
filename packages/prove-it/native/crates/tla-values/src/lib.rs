@@ -15,7 +15,7 @@ pub use store::{Bail, Id, Store};
 /// so they run on a thread whose stack holds values nested 100,000 deep, past where the TypeScript
 /// store runs out of stack (between 10,000 and 30,000 in Bun). The stack is reserved, not
 /// committed.
-const NESTING_STACK_BYTES: usize = if cfg!(debug_assertions) {
+pub const NESTING_STACK_BYTES: usize = if cfg!(debug_assertions) {
     1024 * 1024 * 1024
 } else {
     256 * 1024 * 1024

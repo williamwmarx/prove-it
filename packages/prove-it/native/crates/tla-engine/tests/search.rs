@@ -212,3 +212,99 @@ fn finds_no_fingerprint_collision() {
     };
     assert_eq!(collisions, 0);
 }
+
+// What a search found and wrote to its state log, with its counts and where it stopped.
+fn search_on_threads(path: &str, threads: usize, stop_at: Option<usize>) -> (String, String) {
+    let log = std::env::temp_dir().join(format!(
+        "prove-it-{}-{threads}-{stop_at:?}-{}.ndjson",
+        std::process::id(),
+        path.replace('/', "-")
+    ));
+    let settings = Settings {
+        threads,
+        minimum_shared_level: 1,
+        stop_at,
+        is_fingerprint_verified: true,
+        state_log: Some(log.to_string_lossy().into_owned()),
+        ..Settings::default()
+    };
+    let outcome = run(path, &settings);
+    let found = match &outcome {
+        SearchOutcome::Complete {
+            counts,
+            fingerprints,
+            collisions,
+            ..
+        } => format!("{counts:?} {fingerprints:?} {collisions}"),
+        SearchOutcome::Stopped {
+            reason,
+            checkpoint,
+            collisions,
+        } => format!(
+            "{reason} {collisions} {:?}",
+            checkpoint.as_ref().map(|checkpoint| (
+                checkpoint.expanding,
+                checkpoint.count,
+                checkpoint.generated,
+                checkpoint.initial_generated,
+                checkpoint.out_degrees,
+                &checkpoint.parents,
+                &checkpoint.states.states,
+                checkpoint.keys.as_ref().map(|keys| &keys.0.states),
+            ))
+        ),
+        other => describe(other),
+    };
+    let written = std::fs::read_to_string(&log).unwrap_or_default();
+    let _ = std::fs::remove_file(&log);
+    (found, written)
+}
+
+// Threads sharing a level find the states one thread finds, in its order, with its counts, and
+// stop where it stops: at a deadlock, a TLCGet, a VIEW and symmetry, whatever the number of threads.
+#[test]
+fn finds_on_any_number_of_threads_what_one_thread_finds() {
+    let models = [
+        "examples/specifications/transaction_commit/2PCwithBTM",
+        "examples/specifications/byihive/VoucherRedeem",
+        "tlc/tlatools/org.lamport.tlatools/test-model/pcal/SyncCons",
+        "tlc/tlatools/org.lamport.tlatools/test-model/Echo/MCEcho",
+        "tlc/tlatools/org.lamport.tlatools/test-model/EWD840/MC02",
+        "tlc/tlatools/org.lamport.tlatools/test-model/TLCGetLevel",
+        "tlc/tlatools/org.lamport.tlatools/test-model/suite/test216",
+        "tla-rs/test_cases/should_pass/view_symmetry",
+        "examples/specifications/ReadersWriters/MC",
+    ];
+    let mut logged = Vec::new();
+    for path in models {
+        let one = search_on_threads(path, 1, None);
+        if !one.1.is_empty() {
+            logged.push(path);
+        }
+        for threads in [2, 4, 16] {
+            assert_eq!(
+                search_on_threads(path, threads, None),
+                one,
+                "{path} on {threads} threads"
+            );
+        }
+    }
+    assert_eq!(logged.len(), 7);
+}
+
+// A search stopped where PROVE_IT_STOP_AT asks, inside a level the threads share or at its end,
+// hands over the states one thread found before that state.
+#[test]
+fn stops_on_any_number_of_threads_where_one_thread_stops() {
+    let path = "examples/specifications/transaction_commit/2PCwithBTM";
+    for stop_at in [0, 1, 7, 100, 333, 1000, 1244, 1245] {
+        let one = search_on_threads(path, 1, Some(stop_at));
+        for threads in [2, 4] {
+            assert_eq!(
+                search_on_threads(path, threads, Some(stop_at)),
+                one,
+                "stopped at {stop_at} on {threads} threads"
+            );
+        }
+    }
+}
