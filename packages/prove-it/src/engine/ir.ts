@@ -404,14 +404,17 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
     return builtin === -1 ? NO_RESOLUTION : BUILTIN_RESOLUTION | (builtin << RESOLUTION_BITS);
   };
 
-  // Each name's text and resolution, as a name and as an operator, since names recur.
+  // Each name's text and resolution, as a name and as an operator, since names recur. A name
+  // nothing global resolves is one a scope binds, as a definition an INSTANCE in a LET copies in
+  // under a key the resolver leaves alone, so it is written as local.
   const names = new Map<string, number[]>();
   const operators = new Map<string, number[]>();
-  const writeName = (name: string, isOperator: boolean) => {
+  const writeName = (name: string, isOperator: boolean, at?: number) => {
     const cache = isOperator ? operators : names;
     const known = cache.get(name);
     const entry = known ?? [getText(name), isOperator ? resolveOperator(name) : resolveName(name)];
     if (!known) cache.set(name, entry);
+    if (at !== undefined && entry[1] === NO_RESOLUTION) nodes.data[at] |= LOCAL_FLAG;
     reserve(nodes, 3);
     nodes.data[nodes.length++] = entry[0];
     nodes.data[nodes.length++] = entry[1] & RESOLUTION_MASK;
@@ -527,12 +530,12 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
         return;
       case "Identifier":
         if (expression.resolution?.kind === "Local") nodes.data[at] |= LOCAL_FLAG;
-        writeName(expression.name, false);
+        writeName(expression.name, false, at);
         return;
       case "Apply":
         if (expression.resolution?.kind === "Local") nodes.data[at] |= LOCAL_FLAG;
         if (isSpecificationRead(expression)) specificationRead.isRead = true;
-        writeName(expression.operator, true);
+        writeName(expression.operator, true, at);
         writeNodes(expression.args);
         return;
       case "OperatorReference":

@@ -1608,6 +1608,40 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     ).toContainEqual(expect.stringMatching(COMPLETE));
   });
 
+  it("walks and evaluates what an INSTANCE in a LET defines, as CyclicRedefineInstance does", async () => {
+    // The INSTANCE copies the module's definitions into the LET, under names it binds there.
+    const counter = [
+      "---- MODULE Counter ----",
+      "EXTENDS Naturals",
+      "VARIABLE v",
+      "CONSTANT K",
+      "Bump == v' = (v + K) % 5",
+      "Big == v > 2",
+      "====",
+    ].join("\n");
+    const body = [
+      "EXTENDS Naturals",
+      "VARIABLE x",
+      "Init == x = 0",
+      "Next == LET S == INSTANCE Counter WITH v <- x, K <- 2",
+      "        IN  \\/ S!Bump",
+      "            \\/ S!Big /\\ x' = 0",
+      "Inv == LET T == INSTANCE Counter WITH v <- x, K <- 1 IN T!Big => x \\in {3, 4}",
+    ];
+    const options = {
+      source: toModule(body),
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      loadModule: (name: string) => (name === "Counter" ? counter : undefined),
+    };
+    const native = await run(options, {
+      PROVE_IT_ENGINE: "debug",
+      PROVE_IT_ENGINE_BACKEND: "rust",
+    });
+    const interpreter = await run(options, { PROVE_IT_ENGINE: "0" });
+    expect(native.result).toEqual(interpreter.result);
+    expect(native.lines).toContainEqual(expect.stringMatching(COMPLETE));
+  });
+
   it("takes a string as a sequence in Len and Tail, as TLC's Sequences does", async () => {
     const body = [
       "EXTENDS Naturals, Sequences",

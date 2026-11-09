@@ -414,3 +414,15 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   an operator's argument, as the interpreter does; a global definition is still evaluated whole,
   as the interpreter evaluates it. Github702 (TLC's tests) now completes in Rust: 36 states
   generated, 30 distinct, as TLC.
+
+## INSTANCE in a LET
+
+- The environment copies the definitions an INSTANCE in a LET gives into the LET, under keys
+  such as `Next@Base#0.0`, and `B!Next` names its copy. The resolver leaves keys alone, so the IR
+  wrote those names unresolved and not local, and both engines declined any LET with an
+  INSTANCE. The IR now writes a name nothing global resolves as local (`writeName`), which a
+  scope binds, and the engines take a LET's INSTANCE as its definitions. suite/test59 completes in
+  Rust, and CyclicRedefineInstance (TLC's tests) finds the invariant violation TLC does.
+  EWD998Chan (TLC's tests), whose Utils has `LET SE == INSTANCE SequencesExt`, completes in Rust
+  in 25 s with TLC's counts (12882257 generated, 1524022 distinct, depth 58); its recording says
+  "error" only because the first recorder stopped TLC at 300 s.

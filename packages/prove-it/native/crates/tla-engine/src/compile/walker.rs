@@ -812,11 +812,9 @@ impl<'a> Compiler<'a> {
             }
             // TLC's getPrimedVar looks through a LET and a label to the primed variable.
             NodeKind::Let {
-                instances,
-                definitions,
-                body,
+                definitions, body, ..
             } => {
-                let inner = self.bind_let_definitions(*instances, definitions, *body, context)?;
+                let inner = self.bind_let_definitions(definitions, *body, context)?;
                 return self.get_assignable(*body, &inner, is_primed, depth + 1);
             }
             NodeKind::Label { body, .. } => {
@@ -1365,11 +1363,9 @@ impl<'a> Compiler<'a> {
                 })))
             }
             NodeKind::Let {
-                instances,
-                definitions,
-                body,
+                definitions, body, ..
             } => {
-                let inner = self.bind_let_definitions(*instances, definitions, *body, context)?;
+                let inner = self.bind_let_definitions(definitions, *body, context)?;
                 self.walk(*body, &inner, options, known, then)
             }
             NodeKind::Unchanged(expression) => {

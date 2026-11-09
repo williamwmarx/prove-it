@@ -1599,16 +1599,13 @@ impl<'a> Compiler<'a> {
             .try_fold(0, |count, node| Some(count + self.count_uses(node, name)?))
     }
 
+    // A LET's definitions, those an INSTANCE in it copies in among them.
     fn bind_let_definitions(
         &mut self,
-        instances: u32,
         definitions: &[NodeId],
         body: NodeId,
         context: &Context,
     ) -> Compiling<Context> {
-        if instances > 0 {
-            return unsupported("INSTANCE in LET");
-        }
         let mut scope = context.scope.clone();
         for (position, &node) in definitions.iter().enumerate() {
             let definition = self.definition(node);
@@ -2443,11 +2440,9 @@ impl<'a> Compiler<'a> {
         let name = match self.node(function).1 {
             NodeKind::Identifier(name) => *name,
             NodeKind::Let {
-                instances,
-                definitions,
-                body,
+                definitions, body, ..
             } => {
-                let inner = self.bind_let_definitions(*instances, definitions, *body, context)?;
+                let inner = self.bind_let_definitions(definitions, *body, context)?;
                 return self.get_applied_recursive_function(*body, &inner);
             }
             NodeKind::Apply { .. } => {

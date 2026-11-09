@@ -1460,7 +1460,6 @@ export const createCompiler = (environment: Environment): Compiler => {
     expression: Expression & { kind: "Let" },
     context: Context,
   ): Context => {
-    if (expression.instances && expression.instances.length > 0) unsupported("INSTANCE in LET");
     let scope = context.scope;
     for (const definition of expression.definitions) {
       const definitionContext = { ...context, scope, canPrint: false };
