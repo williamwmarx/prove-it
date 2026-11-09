@@ -338,3 +338,21 @@ is outside the evaluator:
 - traces the engine hands over no violation for, as where it can't label a step (ACP_NB_WRONG,
   the raft specs);
 - one ENABLED (spectacle's Elevator).
+
+## The ALIAS
+
+`Rebuilder::alias(trace, cycle_start)` evaluates the configuration's ALIAS on each state of a
+rebuilt trace, as `Tool.evalAlias` does. `TLCGet("level")` is the state's position in the trace
+plus one. The next state is the state after it: for a lasso's last state, the state its cycle
+starts at, and otherwise the state itself. TLC prints a record (`RecordValue.toState`) through
+`PrintTLCState`, in the order of the record's names: as written until TLC sorts it. A value that
+isn't a function gives `Value.toState`'s null, and TLC prints the state itself (`Alias::State`).
+`Unsupported` covers the rest:
+- a function TLC converts to a record (`FcnRcdValue.toState`) or one it keeps lazy;
+- a `_format` field;
+- an alias that prints;
+- an alias that fails, which TLC prints as the state with an `_ALIASEvalError` field.
+
+The test rebuilds Github746's initial state, which violates its invariant, through its alias. The
+alias reads the next state. EWD840/MC02's alias reads ENABLED, and the engine stops at no
+violation there.

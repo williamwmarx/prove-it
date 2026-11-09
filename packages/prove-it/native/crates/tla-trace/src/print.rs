@@ -213,12 +213,7 @@ fn write_function(function: &Function, is_strict: bool, is_normalized: bool, out
             .domain
             .iter()
             .all(|key| matches!(key, Value::Str(text) if is_field_name(&text.units)));
-    let written = function.written.borrow();
-    let order: Vec<usize> = match (&*written, is_normalized || !is_record) {
-        // `written[i]` is where the i-th key written sits in the domain.
-        (Some(written), false) => written.iter().map(|&position| position as usize).collect(),
-        _ => (0..function.domain.len()).collect(),
-    };
+    let order = print_order(function, is_normalized || !is_record);
     let (open, arrow, separator, close) = if is_record {
         ("[", " |-> ", ", ", "]")
     } else {
@@ -243,6 +238,23 @@ fn write_function(function: &Function, is_strict: bool, is_normalized: bool, out
         );
     }
     out.push_str(close);
+}
+
+/// The positions of a function's keys in the order TLC prints them: as written until TLC sorts the
+/// function, unless `is_sorted`.
+pub(crate) fn print_order(function: &Function, is_sorted: bool) -> Vec<usize> {
+    match (&*function.written.borrow(), is_sorted) {
+        // `written[i]` is where the i-th key written sits in the domain.
+        (Some(written), false) => written.iter().map(|&position| position as usize).collect(),
+        _ => (0..function.domain.len()).collect(),
+    }
+}
+
+/// A text's units as a string.
+pub(crate) fn text_string(units: &[u16]) -> String {
+    let mut out = String::new();
+    write_text(units, &mut out);
+    out
 }
 
 #[cfg(test)]
