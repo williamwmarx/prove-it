@@ -631,9 +631,11 @@ impl<'a> Compiler<'a> {
                     return Ok(None);
                 };
                 let definition = self.definition(self.ir.definitions[index as usize]);
-                Ok(match (&definition.form, &definition.startup) {
-                    (DefinitionForm::Operator(params), tla_ir::Startup::None)
-                        if params.is_empty() =>
+                // A definition TLC evaluates at startup keeps its value, so it isn't walked.
+                Ok(match &definition.form {
+                    DefinitionForm::Operator(params)
+                        if params.is_empty()
+                            && !self.ir.model.startup.definitions.contains(&index) =>
                     {
                         Some((definition.body, context.global(context.can_print)))
                     }
@@ -764,7 +766,7 @@ impl<'a> Compiler<'a> {
                 definitions,
                 body,
             } => {
-                let inner = self.bind_let_definitions(*instances, definitions, context)?;
+                let inner = self.bind_let_definitions(*instances, definitions, *body, context)?;
                 return self.get_assignable(*body, &inner, is_primed, depth + 1);
             }
             NodeKind::Label { body, .. } => {
@@ -881,7 +883,7 @@ impl<'a> Compiler<'a> {
     }
 
     // The expressions directly inside one, as `collectChildren` finds them.
-    fn children(&self, node: NodeId) -> Vec<NodeId> {
+    pub(super) fn children(&self, node: NodeId) -> Vec<NodeId> {
         let mut children = Vec::new();
         match self.node(node).1 {
             NodeKind::Number(_)
@@ -1302,7 +1304,7 @@ impl<'a> Compiler<'a> {
                 definitions,
                 body,
             } => {
-                let inner = self.bind_let_definitions(*instances, definitions, context)?;
+                let inner = self.bind_let_definitions(*instances, definitions, *body, context)?;
                 self.walk(*body, &inner, options, known, then)
             }
             NodeKind::Unchanged(expression) => {

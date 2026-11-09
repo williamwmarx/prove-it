@@ -6,7 +6,7 @@ use std::collections::HashSet;
 
 use tla_ir::{
     AtomKind, ConfigName, Definition, DefinitionForm, EnabledActions, Index, Ir, NodeId, NodeKind,
-    Resolution, Startup,
+    Resolution,
 };
 use tla_values::Bail;
 use tla_values::store::{FALSE, Outcome, TRUE};
@@ -57,6 +57,24 @@ pub struct EngineContext {
     pub diameter_atoms: Vec<bool>,
     /// Whether an invariant may print, which the search prints among Next's prints.
     pub is_invariant_printing: bool,
+    /// What TLC evaluates when it starts.
+    pub startup: Startup,
+}
+
+/// What TLC evaluates when it starts, compiled: each substitute, then each constant definition
+/// with effects, then the symmetry, then each assumption, with the name TLC reports it by.
+pub struct Startup {
+    pub substitutes: Vec<Eval>,
+    pub definitions: Vec<Eval>,
+    pub symmetry: Option<StartupSymmetry>,
+    pub assumptions: Vec<(Eval, String)>,
+}
+
+/// The SYMMETRY definition's body, and each set it permutes: the name TLC's warning gives it, and
+/// the set TLC checks for a model value the group moves.
+pub struct StartupSymmetry {
+    pub definition: Eval,
+    pub permuted_sets: Vec<(String, Option<Eval>)>,
 }
 
 /// How the engine answers a liveness atom on its states, or why it can't, in which case the
@@ -213,8 +231,8 @@ impl<'i> Conjuncts<'i> {
         }
     }
 
-    // The definition a conjunct asserts, a zero-arity operator with no startup value, as the
-    // compiler resolves a name nothing binds locally.
+    // The definition a conjunct asserts, a zero-arity operator TLC doesn't evaluate at startup,
+    // as the compiler resolves a name nothing binds locally.
     fn asserted(&self, conjunct: Conjunct) -> Option<Index> {
         let index = match conjunct {
             Conjunct::Named(index) => index,
@@ -226,12 +244,11 @@ impl<'i> Conjuncts<'i> {
                 _ => return None,
             },
         };
-        let definition = self.definition(index);
-        matches!(
-            (&definition.form, &definition.startup),
-            (DefinitionForm::Operator(params), Startup::None) if params.is_empty()
-        )
-        .then_some(index)
+        let is_operator = matches!(
+            &self.definition(index).form,
+            DefinitionForm::Operator(params) if params.is_empty()
+        );
+        (is_operator && !self.ir.model.startup.definitions.contains(&index)).then_some(index)
     }
 
     fn add(&mut self, conjunct: Conjunct) {
@@ -307,6 +324,73 @@ impl EngineContext {
     pub fn build(compiler: &mut Compiler<'_>, ir: &Ir) -> Result<EngineContext, CompileError> {
         let model = &ir.model;
         let width = ir.variables.len();
+        let startup = Startup {
+            substitutes: model
+                .startup
+                .substitutes
+                .iter()
+                .map(|&(_, index)| {
+                    let body = match &ir.nodes.arena[ir.definitions[index as usize] as usize].kind {
+                        NodeKind::Definition(definition) => definition.body,
+                        _ => unreachable!("a definition's node"),
+                    };
+                    compiler
+                        .compile_root_printing(Root::Expression(body), true)
+                        .map(|compiled| compiled.eval)
+                })
+                .collect::<Result<_, CompileError>>()?,
+            definitions: model
+                .startup
+                .definitions
+                .iter()
+                .map(|&index| {
+                    compiler
+                        .compile_root_printing(Root::Definition(index), true)
+                        .map(|compiled| compiled.eval)
+                })
+                .collect::<Result<_, CompileError>>()?,
+            symmetry: model
+                .startup
+                .symmetry
+                .as_ref()
+                .map(|symmetry| {
+                    let body = match &ir.nodes.arena
+                        [ir.definitions[symmetry.definition as usize] as usize]
+                        .kind
+                    {
+                        NodeKind::Definition(definition) => definition.body,
+                        _ => unreachable!("a definition's node"),
+                    };
+                    Ok::<_, CompileError>(StartupSymmetry {
+                        definition: compiler.compile_symmetry(body)?.eval,
+                        permuted_sets: symmetry
+                            .permuted_sets
+                            .iter()
+                            .map(|set| {
+                                let operand = set
+                                    .operand
+                                    .map(|node| compiler.compile_root(Root::Expression(node)))
+                                    .transpose()?;
+                                Ok((
+                                    ir.texts[set.name as usize].to_string(),
+                                    operand.map(|compiled| compiled.eval),
+                                ))
+                            })
+                            .collect::<Result<_, CompileError>>()?,
+                    })
+                })
+                .transpose()?,
+            assumptions: model
+                .startup
+                .assumptions
+                .iter()
+                .map(|&(node, name)| {
+                    compiler
+                        .compile_root_printing(Root::Expression(node), true)
+                        .map(|compiled| (compiled.eval, ir.texts[name as usize].to_string()))
+                })
+                .collect::<Result<_, CompileError>>()?,
+        };
         // Each invariant and constraint is checked conjunct by conjunct, so a successor skips
         // each conjunct that reads only variables its step left unchanged. An invariant that may
         // print is checked whole each time, as TLC checks it, where the search may print.
@@ -515,6 +599,7 @@ impl EngineContext {
             is_live_printing,
             diameter_atoms,
             is_invariant_printing,
+            startup,
         })
     }
 }

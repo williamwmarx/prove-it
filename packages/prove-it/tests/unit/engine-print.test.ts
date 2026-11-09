@@ -216,7 +216,6 @@ describe("the engine's Print, PrintT and TLCGet", () => {
       "Twice(e) == e /\\ e\nP == Twice(Print(x, TRUE))",
       "P == LET e == Print(x, TRUE) IN e /\\ e",
       "P == IF \\E z \\in {x, 5} : Print(z, z = 5) THEN TRUE ELSE FALSE",
-      "P == {Print(z, z) : z \\in {x, 5}} # {}",
       "P == [z \\in {x, 5} |-> Print(z, z)][x] = x",
       "P == Print(Print(x, 1), TRUE)",
     ];
@@ -228,6 +227,15 @@ describe("the engine's Print, PrintT and TLCGet", () => {
         [expect.stringMatching(/handed over .*: unsupported: Print/)],
       ]);
     }
+    // TLC maps the elements of a set in its normalized order, as the native engine does; the
+    // TypeScript engine hands the search over.
+    const mapped = `EXTENDS Naturals, TLC\nVARIABLE x\nP == {Print(z, z) : z \\in {x, 5}} # {}\nInit == x = 0\nNext == x < 2 /\\ P /\\ x' = x + 1`;
+    const { lines } = await checkBoth(mapped, "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE");
+    expect(lines).toEqual([
+      process.env.PROVE_IT_ENGINE_BACKEND === "rust"
+        ? expect.stringMatching(CHECKED)
+        : expect.stringMatching(/handed over .*: unsupported: Print/),
+    ]);
   });
 
   it("hands over Print in a constraint and in ENABLED", async () => {

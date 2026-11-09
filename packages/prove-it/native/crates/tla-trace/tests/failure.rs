@@ -5,7 +5,7 @@ mod common;
 
 use common::{Quiet, ir_directory, path_to, stop_search};
 use tla_engine::search::{SearchOutcome, Settings, search};
-use tla_trace::{Failure, Rebuilder, Site, Unsupported, format_call_stack};
+use tla_trace::{Ending, Failure, Rebuilder, Site, Unsupported, format_call_stack, format_value};
 use tla_values::Id;
 
 // The search's stop on the model, evaluated again: in the initial predicate when the search kept
@@ -33,6 +33,10 @@ fn evaluate_failure(path: &str) -> (Failure, String) {
         let actions = vec![None; states.len().saturating_sub(1)];
         let failure = Rebuilder::new(&ir)
             .and_then(|mut rebuilder| {
+                rebuilder.set_startup(&stopped.store, &stopped.startup, stopped.startup_random);
+                if let Some(group) = &stopped.symmetry {
+                    rebuilder.set_symmetry(group);
+                }
                 rebuilder.evaluate_failure(&stopped.store, &states, &actions, site)
             })
             .unwrap_or_else(|unsupported| {
@@ -130,6 +134,7 @@ fn reports_an_invariant_that_fails_to_evaluate() {
         let actions = vec![None; states.len() - 1];
         Rebuilder::new(&ir)
             .and_then(|mut rebuilder| {
+                rebuilder.set_startup(&stopped.store, &stopped.startup, stopped.startup_random);
                 rebuilder.evaluate_failure(&stopped.store, &states, &actions, Site::Invariant(0))
             })
             .unwrap_or_else(|unsupported| panic!("{}", unsupported.0))
@@ -282,5 +287,70 @@ fn walks_a_function_a_definition_defines_as_tlc_does() {
         Err(Unsupported(
             "evaluating the failure again: it didn't fail".into()
         ))
+    );
+}
+
+#[test]
+fn finds_the_successor_an_action_leaves_incomplete() {
+    // A1 == x' = x + 1 leaves y and z undefined, before A2 assigns all three.
+    let path = format!("{MODELS}/IncompleteNextMultipleActions");
+    let bytes = std::fs::read(ir_directory().join(format!("{path}.ir"))).expect("a golden IR");
+    let ir = tla_ir::decode(&bytes).expect("an IR that decodes");
+    let incomplete = tla_values::on_nesting_stack(|| {
+        let stopped =
+            tla_engine::on_nesting_stack(|| stop_search(&ir, None)).expect("a search that stops");
+        let states: Vec<&[Id]> = path_to(&stopped.parents, stopped.expanding)
+            .into_iter()
+            .map(|position| stopped.states[position].as_slice())
+            .collect();
+        let mut rebuilder = Rebuilder::new(&ir).expect("a rebuilder");
+        let trace = rebuilder
+            .rebuild(
+                &stopped.store,
+                &states,
+                &vec![None; states.len() - 1],
+                Ending::Kept,
+            )
+            .expect("a trace");
+        let incomplete = rebuilder
+            .incomplete_successor(&trace)
+            .expect("an incomplete successor");
+        let partial: Vec<_> = incomplete
+            .partial
+            .iter()
+            .map(|value| value.as_ref().map(format_value))
+            .collect();
+        (incomplete.action, incomplete.missing, partial)
+    });
+    assert_eq!(
+        incomplete,
+        (Some(0), vec![1, 2], vec![Some("1".to_string()), None, None])
+    );
+}
+
+#[test]
+fn reports_a_failure_in_a_lazy_filter_as_print_meets_it() {
+    // Github179c prints a filter of SUBSET {1, 2, 3, 4} whose predicate compares an integer with a
+    // set. TLC keeps the filter lazy and meets the failure as PrintT's Java method enumerates it.
+    let (failure, call_stack) = evaluate_failure(&format!("{MODELS}/Github179c"));
+    let inner = "Attempted to check equality of integer 1 with non-integer:\n{1}";
+    let text = format!(
+        "Attempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.Value tlc2.module.TLC.PrintT(tlc2.value.impl.Value),\nbut it produced the following error:\n{inner}"
+    );
+    assert_eq!(failure.code, 1000);
+    assert_eq!(
+        failure.tool_message,
+        format!(
+            "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: @!@!@STARTMSG 2154:0 @!@!@\n{text}\n@!@!@ENDMSG 2154 @!@!@"
+        )
+    );
+    assert_eq!(
+        call_stack,
+        "0. Line 16, column 9 to line 16, column 42 in Github179c\n\
+         1. Line 16, column 9 to line 16, column 33 in Github179c\n\
+         2. Line 16, column 9 to line 16, column 25 in Github179c\n\
+         3. Line 10, column 11 to line 12, column 39 in Github179c\n\
+         4. Line 10, column 24 to line 12, column 39 in Github179c\n\
+         5. Line 10, column 27 to line 10, column 36 in Github179c\n\n"
     );
 }

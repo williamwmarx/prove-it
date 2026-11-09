@@ -358,7 +358,7 @@ impl Expansion<'_> {
 }
 
 /// `bindDefinitions`, for a LET, where each definition reads the scope that binds it.
-fn bind_definitions(
+pub(crate) fn bind_definitions(
     definitions: &[Rc<Definition>],
     scope: Option<&Rc<Scope>>,
 ) -> Result<Option<Rc<Scope>>> {
@@ -389,7 +389,7 @@ fn bind_definitions(
 }
 
 /// `resolveApplyOperator`, for a closure: its parameters, body and scope.
-fn resolve_apply_operator(
+pub(crate) fn resolve_apply_operator(
     expression: &Expr,
     scope: Option<&Rc<Scope>>,
     environment: &Environment,
@@ -424,7 +424,7 @@ fn resolve_apply_operator(
 }
 
 /// `bindOperatorArguments`: each parameter bound as `compileArgumentBinder` binds it.
-fn bind_operator_arguments(
+pub(crate) fn bind_operator_arguments(
     params: &[OperatorParam],
     args: &[Expr],
     closure_scope: Option<Rc<Scope>>,

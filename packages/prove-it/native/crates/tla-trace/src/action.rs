@@ -7,7 +7,7 @@
 
 use std::collections::HashSet;
 
-use tla_ir::{Bound, DefinitionForm, Name, NodeId, NodeKind, PathStep, Resolution, Startup};
+use tla_ir::{Bound, DefinitionForm, Name, NodeId, NodeKind, PathStep, Resolution};
 
 use crate::eval::{Context, Evaluator, StackFrame, bound_expression};
 use crate::sets::is_member;
@@ -324,7 +324,7 @@ impl<'ir> Evaluator<'ir> {
     }
 
     // Walks a node in its frame of the call stack, as `visit` in `tlc/replay.ts` does.
-    fn walk(
+    pub(crate) fn walk(
         &mut self,
         node: NodeId,
         context: &Context,
@@ -680,11 +680,10 @@ impl<'ir> Evaluator<'ir> {
             NodeKind::Identifier(name) if !name.is_local => match name.resolution {
                 Resolution::Variable(_) => return Ok(!context.is_primed),
                 Resolution::Constant(_) => return Ok(true),
-                Resolution::Definition(index) => {
-                    let definition = self.definition(self.ir.definitions[index as usize]);
-                    if !matches!(definition.startup, Startup::None) {
-                        return Ok(true);
-                    }
+                Resolution::Definition(index)
+                    if self.ir.model.startup.definitions.contains(&index) =>
+                {
+                    return Ok(true);
                 }
                 _ => {}
             },

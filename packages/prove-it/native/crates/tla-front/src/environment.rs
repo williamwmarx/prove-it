@@ -106,7 +106,8 @@ struct ModuleScope {
 }
 
 /// The modules a top-level module links, each with the instances SANY checks with it.
-type LevelChecks = Rc<RefCell<Vec<(Rc<LinkedModule>, Vec<InstanceCheck>)>>>;
+type ModuleLevelChecks = Vec<(Rc<LinkedModule>, Vec<InstanceCheck>)>;
+type LevelChecks = Rc<RefCell<ModuleLevelChecks>>;
 
 /// `createSanyError`.
 fn sany_error(errors: Vec<SanyError>, is_fatal: bool, warnings: Vec<SanyError>) -> FrontError {
@@ -290,6 +291,26 @@ struct Linker<'a> {
     checked_modules: RefCell<FastMap<Name, Rc<LinkedModule>>>,
     /// The qualified name, such as I!Foo, of each copy a named INSTANCE makes.
     qualified_names: RefCell<FastMap<Name, Name>>,
+    /// Whether linking goes on after a module's errors, as SANY's semantic analysis does,
+    /// keeping each module's messages and level checks in `collected`.
+    is_collecting: Cell<bool>,
+    collected: RefCell<Collected>,
+}
+
+/// What linking collects of each top-level module for SANY's report.
+#[derive(Default)]
+struct Collected {
+    errors: FastMap<Name, Vec<SanyError>>,
+    /// The module each warning so far was reported in.
+    warning_modules: Vec<Name>,
+    level_checks: FastMap<Name, ModuleLevelChecks>,
+}
+
+/// SANY's messages for a module: its warnings and its errors.
+#[derive(Clone, Debug, Default)]
+pub struct ModuleMessages {
+    pub warnings: Vec<SanyError>,
+    pub errors: Vec<SanyError>,
 }
 
 fn get_standard_modules(version: TlcVersion) -> &'static [StandardModule] {
@@ -502,6 +523,15 @@ impl Linker<'_> {
         let closure = self.loading.borrow_mut().pop().unwrap_or_default();
         self.linking.borrow_mut().pop();
         let linked = linked?;
+        if self.is_collecting.get() {
+            let mut collected = self.collected.borrow_mut();
+            let count = self.warnings.borrow().len();
+            let owned = collected.warning_modules.len();
+            collected
+                .warning_modules
+                .extend((owned..count).map(|_| parsed.name.clone()));
+            collected.errors.insert(parsed.name.clone(), errors.take());
+        }
         if !errors.borrow().is_empty() {
             return Err(sany_error(
                 errors.take(),
@@ -527,7 +557,12 @@ impl Linker<'_> {
             }
             return Err(module_redefined_error(&duplicate));
         }
-        if self.options.is_level_checked {
+        if self.is_collecting.get() {
+            self.collected
+                .borrow_mut()
+                .level_checks
+                .insert(parsed.name.clone(), level_checks.take());
+        } else if self.options.is_level_checked {
             for (module, checks) in level_checks.take() {
                 self.check_levels(&module, checks)?;
             }
@@ -1262,6 +1297,25 @@ impl Linker<'_> {
             module,
             context,
         )?;
+        // Generator.createSubstIn: the definitions of a module with errors have no bodies to
+        // substitute in, which SANY reports once at each INSTANCE of it.
+        let is_instancee_failed = self
+            .collected
+            .borrow()
+            .errors
+            .get(&instance.module)
+            .is_some_and(|errors| !errors.is_empty());
+        if is_instancee_failed
+            && let Some(report) = context.reports.borrow().last()
+            && let Some(range) = &instance.location.range
+        {
+            report.errors.borrow_mut().push(SanyError {
+                location: format_range(range),
+                message:
+                    "Substitution error, probably due to error \nin module being instantiated."
+                        .to_owned(),
+            });
+        }
         self.instance_checks.borrow_mut().push(InstanceCheck {
             module: instance.module.clone(),
             instancer: module.name.clone(),
@@ -1683,15 +1737,8 @@ pub fn get_enabled_variable_name(name: &str) -> Name {
     Rc::from(format!("{name}@ENABLED"))
 }
 
-/// Links the spec's modules as `createEnvironment` does for a spec without a model
-/// (`isUnconfigured`) that SANY accepted (`isSanyAccepted`), so it runs no level checks.
-pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
-    let root = Rc::new(parse_module_tokens(
-        options.source,
-        &tokenize(options.source)?,
-        options.version,
-    )?);
-    let linker = Linker {
+fn create_linker<'a>(options: &'a EnvironmentOptions<'a>, root: &Rc<Module>) -> Linker<'a> {
+    Linker {
         options,
         root: root.clone(),
         texts: RefCell::new(
@@ -1732,7 +1779,86 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
         instance_checks: RefCell::default(),
         checked_modules: RefCell::default(),
         qualified_names: RefCell::default(),
-    };
+        is_collecting: Cell::new(false),
+        collected: RefCell::default(),
+    }
+}
+
+/// SANY's messages for each module of `order`, the order SANY analyzes the modules in. SANY goes
+/// on after a module's errors, and level-checks a module, when `is_level_checked`, only while no
+/// module so far has errors. A module with messages that isn't in `order` is `NotYet`.
+pub fn get_sany_messages(
+    options: &EnvironmentOptions,
+    order: &[Name],
+) -> Result<Vec<ModuleMessages>> {
+    let root = Rc::new(parse_module_tokens(
+        options.source,
+        &tokenize(options.source)?,
+        options.version,
+    )?);
+    let linker = create_linker(options, &root);
+    linker.is_collecting.set(true);
+    reject_module_literals(&root)?;
+    linker.link_top_level(&root)?;
+    let collected = linker.collected.take();
+    let warnings = linker.warnings.borrow().clone();
+    let is_listed = |name: &Name| order.contains(name);
+    let is_unlisted = collected
+        .errors
+        .iter()
+        .any(|(name, errors)| !errors.is_empty() && !is_listed(name))
+        || collected
+            .warning_modules
+            .iter()
+            .any(|name| !is_listed(name));
+    if is_unlisted {
+        return Err(FrontError::NotYet(
+            "messages of a module SANY doesn't analyze".to_owned(),
+        ));
+    }
+    let mut level_checks = collected.level_checks;
+    let mut has_errors = false;
+    let mut messages = Vec::new();
+    for name in order {
+        let mut errors = collected.errors.get(name).cloned().unwrap_or_default();
+        has_errors = has_errors || !errors.is_empty();
+        if !has_errors && options.is_level_checked {
+            for (module, checks) in level_checks.remove(name).unwrap_or_default() {
+                match linker.check_levels(&module, checks) {
+                    Ok(()) => {}
+                    Err(FrontError::Syntax(SyntaxError {
+                        sany: Some(report), ..
+                    })) => errors.extend(report.errors),
+                    Err(error) => return Err(error),
+                }
+            }
+            has_errors = !errors.is_empty();
+        }
+        messages.push(ModuleMessages {
+            warnings: warnings
+                .iter()
+                .zip(&collected.warning_modules)
+                .filter(|(_, module)| *module == name)
+                .map(|(warning, _)| warning.clone())
+                .collect(),
+            errors,
+        });
+    }
+    if linker.warnings.borrow().len() != warnings.len() {
+        return Err(FrontError::NotYet("a level check's warnings".to_owned()));
+    }
+    Ok(messages)
+}
+
+/// Links the spec's modules as `createEnvironment` does for a spec without a model
+/// (`isUnconfigured`) that SANY accepted (`isSanyAccepted`), so it runs no level checks.
+pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
+    let root = Rc::new(parse_module_tokens(
+        options.source,
+        &tokenize(options.source)?,
+        options.version,
+    )?);
+    let linker = create_linker(options, &root);
     reject_module_literals(&root)?;
     let (linked_root, _) = linker.link_top_level(&root)?;
     let warnings = linker.warnings.borrow().clone();

@@ -269,3 +269,12 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   it as the interpreter does. ConstantOperatorConfiguration (TLC's tests), declined before, now
   searches in Rust, and the TypeScript engine searches it too. The Rust front end lowers no table
   yet (`tla-front`'s `get_builtin_index`).
+
+## Recursive functions an instance or an operator gives
+
+- `f[n \in S] == ...` defined in an instanced module, or returned by an operator as
+  `LET s[n \in Nat] == ... IN s`, is applied as TLC applies it, through its recursive definition.
+  The engines found a recursive function only by an identifier in scope, so they declined
+  `I!f[3]` and `Scaled(2)[3]`. They now see through LET, an applied operator and an instance's
+  definition to the function, and bind its name to itself in a scope kept per definition.
+  function_instance (TLC's tests), declined before, now searches in Rust.

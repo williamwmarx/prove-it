@@ -11,15 +11,18 @@ use tla_values::random::JavaRandom;
 
 use tla_ir::{
     Bound, Definition, DefinitionForm, Index, Ir, Name, NodeId, NodeKind, Param, PathStep, Pattern,
-    Resolution, ScopeBinding, Startup, TextId,
+    Resolution, ScopeBinding, TextId,
 };
+
+use tla_values::{Id, Store};
 
 use crate::print::{format_pretty, format_printed, format_value};
 use crate::random::{random_element, random_subset};
 use crate::sets::{as_tuple, cardinality, difference, intersection, is_member, is_subset, union};
 use crate::value::{
-    Class, Evaluated, Function, Lazy, Text, TlcMessage, Value, compare, elements, equals, fail,
-    fail_coded, fail_runtime, fail_with, find_key, set_of, sorted_function, written_function,
+    Class, EvalError, Evaluated, Function, Lazy, Text, TlcMessage, Value, compare, elements,
+    equals, fail, fail_coded, fail_runtime, fail_with, find_key, from_store, set_of,
+    sorted_function, written_function,
 };
 
 /// The bindings an expression sees, innermost first.
@@ -179,6 +182,9 @@ pub struct CallStack {
     /// Why the replay can't follow TLC to the failure, where it can't: through an assignment
     /// `x' \in S` whose set TLC streams in an order of its own, or through a filter TLC keeps lazy.
     pub unfollowed: Option<&'static str>,
+    /// Where the frames of the predicate of a filter TLC keeps lazy start, when it failed: TLC
+    /// evaluates the predicate only as a method of the value enumerates it, as Print's does.
+    pub lazy_filter: Option<usize>,
 }
 
 // The address of a value TLC's `CallStackTool` can give a source: an object, as a set, a function
@@ -229,9 +235,23 @@ pub struct Evaluator<'ir> {
     /// The generator RandomElement and RandomSubset draw from: seeded with the fingerprint of the
     /// state TLC expands, as its workers do, and `None` where the evaluator doesn't follow TLC's.
     pub random: Option<JavaRandom>,
+    /// What TLCGet and CounterExample read once the search is over, as a postcondition reads them.
+    pub runtime: Option<Runtime>,
+}
+
+/// The values a postcondition reads of the run: TLCGet("all:named"), TLCGet("stats") and TLCExt's
+/// CounterExample, built as TLC builds them.
+pub struct Runtime {
+    pub named: Value,
+    pub stats: Value,
+    pub counter_example: Value,
 }
 
 const MAXIMUM_DEPTH: u32 = 10_000;
+
+const LAZY_FILTER: &str = "a filter TLC keeps lazy";
+/// `EC.TLC_MODULE_VALUE_JAVA_METHOD_OVERRIDE`.
+const JAVA_METHOD_FAILED: u32 = 2154;
 
 impl<'ir> Evaluator<'ir> {
     pub fn new(ir: &'ir Ir) -> Evaluator<'ir> {
@@ -256,6 +276,7 @@ impl<'ir> Evaluator<'ir> {
             call_stack: None,
             choices: Vec::new(),
             random: None,
+            runtime: None,
         }
     }
 
@@ -787,14 +808,17 @@ impl<'ir> Evaluator<'ir> {
                 let mut kept = Vec::new();
                 for element in elements(&set)?.iter() {
                     let inner = self.bind_pattern(&bound.pattern, element, context)?;
+                    let start = self.call_stack.as_ref().map(|stack| stack.frames.len());
                     let test = self.boolean(*predicate, &inner);
                     // TLC filters a set it can't enumerate lazily, so its predicate fails only
-                    // where TLC uses the result, which the replay doesn't follow.
+                    // where TLC uses the result, which the replay follows only into Print.
                     if test.is_err()
                         && !matches!(set, Value::Set(_) | Value::Interval(..))
                         && let Some(stack) = &mut self.call_stack
+                        && stack.unfollowed.is_none()
                     {
-                        stack.unfollowed.get_or_insert("a filter TLC keeps lazy");
+                        stack.unfollowed = Some(LAZY_FILTER);
+                        stack.lazy_filter = start;
                     }
                     if test? {
                         kept.push(element.clone());
@@ -986,18 +1010,33 @@ impl<'ir> Evaluator<'ir> {
         }
     }
 
+    /// Takes the values the search computed at startup for the model's startup definitions,
+    /// ids of `store` in their order, as the values of those definitions.
+    pub fn set_startup(&mut self, store: &Store, values: &[Id]) {
+        for (&index, &id) in self.ir.model.startup.definitions.iter().zip(values) {
+            let node = self.ir.definitions[index as usize];
+            let value = from_store(store, id);
+            self.cache.insert((node, false), value.clone());
+            self.cache.insert((node, true), value);
+        }
+    }
+
     fn definition_value(&mut self, node: NodeId, context: &Context) -> Evaluated<Value> {
         let definition = self.definition(node);
-        match definition.startup {
-            Startup::Value(Some(value)) => return self.value(value),
-            Startup::Value(None) | Startup::Object => {
-                return fail("a value TLC computed at startup with effects");
-            }
-            Startup::None => {}
-        }
         let key = (node, context.is_primed);
         if let Some(value) = self.cache.get(&key) {
             return Ok(value.clone());
+        }
+        // The value TLC computed at startup, which the search computed and hands on.
+        if self
+            .ir
+            .model
+            .startup
+            .definitions
+            .iter()
+            .any(|&index| self.ir.definitions[index as usize] == node)
+        {
+            return fail("a value TLC computed at startup with effects");
         }
         let reads = self.reads;
         let printed = self.printed.len();
@@ -1130,8 +1169,9 @@ impl<'ir> Evaluator<'ir> {
                     return Ok(None);
                 };
                 let definition = self.definition(self.ir.definitions[index as usize]);
-                Ok(match (&definition.form, &definition.startup) {
-                    (DefinitionForm::Operator(params), Startup::None) if params.is_empty() => {
+                let is_startup = self.ir.model.startup.definitions.contains(&index);
+                Ok(match &definition.form {
+                    DefinitionForm::Operator(params) if params.is_empty() && !is_startup => {
                         Some((definition.body, context.global()))
                     }
                     _ => None,
@@ -1629,7 +1669,7 @@ impl<'ir> Evaluator<'ir> {
                     return Ok(None);
                 };
                 if definition.flags & (Definition::RECURSIVE | Definition::SELF_REFERENTIAL) != 0
-                    || !matches!(definition.startup, Startup::None)
+                    || self.ir.model.startup.definitions.contains(&index)
                 {
                     return Ok(None);
                 }
@@ -1681,8 +1721,9 @@ impl<'ir> Evaluator<'ir> {
             return Ok(None);
         };
         let definition = self.definition(self.ir.definitions[index as usize]);
-        Ok(match (&definition.form, &definition.startup) {
-            (DefinitionForm::Function(bounds), Startup::None) => {
+        let is_startup = self.ir.model.startup.definitions.contains(&index);
+        Ok(match &definition.form {
+            DefinitionForm::Function(bounds) if !is_startup => {
                 Some((&bounds[..], definition.body, context.global()))
             }
             _ => None,
@@ -1811,6 +1852,46 @@ impl<'ir> Evaluator<'ir> {
             }
         }
         Ok(Combined::Set(self.operand(set)?))
+    }
+
+    // A failure in the predicate of a filter TLC keeps lazy, which TLC meets as Print's Java method
+    // enumerates the filter it prints: the frames from the predicate's on, after Print's own, in
+    // the error of the method.
+    fn printed_filter_failure(
+        &mut self,
+        name: &str,
+        frame: Option<usize>,
+        error: EvalError,
+    ) -> EvalError {
+        let Some(stack) = &mut self.call_stack else {
+            return error;
+        };
+        let (Some(frame), Some(start), Some(message)) = (frame, stack.lazy_filter, &error.message)
+        else {
+            return error;
+        };
+        if stack.unfollowed != Some(LAZY_FILTER) || start < frame {
+            return error;
+        }
+        stack.frames.drain(frame..start);
+        stack.unfollowed = None;
+        stack.lazy_filter = None;
+        let parameters = if name == "Print" {
+            "tlc2.value.impl.Value,tlc2.value.impl.Value"
+        } else {
+            "tlc2.value.impl.Value"
+        };
+        EvalError {
+            message: Some(TlcMessage {
+                text: format!(
+                    "Attempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.Value tlc2.module.TLC.{name}({parameters}),\nbut it produced the following error:\n{}",
+                    message.text
+                ),
+                code: Some(JAVA_METHOD_FAILED),
+                is_eval_exception: false,
+            }),
+            ..error
+        }
     }
 
     fn builtin(
@@ -2135,10 +2216,32 @@ impl<'ir> Evaluator<'ir> {
                 }
             }
             "Print" | "PrintT" => {
-                let values = operands
-                    .iter()
-                    .map(|operand| self.operand(operand))
-                    .collect::<Evaluated<Vec<_>>>()?;
+                // The frame of the application, which Print's Java method fails in.
+                let frame = self
+                    .call_stack
+                    .as_ref()
+                    .filter(|stack| !stack.is_frozen)
+                    .map(|stack| stack.frames.len());
+                let mut values = Vec::with_capacity(operands.len());
+                for (position, operand) in operands.iter().enumerate() {
+                    match self.operand(operand) {
+                        Ok(value) => values.push(value),
+                        Err(error) => {
+                            // TLC evaluates the rest of the arguments before Print enumerates
+                            // the filter, outside the frames of the failure.
+                            let stack = self.call_stack.take();
+                            let is_rest_evaluated = operands[position + 1..]
+                                .iter()
+                                .all(|operand| self.operand(operand).is_ok());
+                            self.call_stack = stack;
+                            return Err(if is_rest_evaluated {
+                                self.printed_filter_failure(name, frame, error)
+                            } else {
+                                error
+                            });
+                        }
+                    }
+                }
                 let expected = if name == "Print" { 2 } else { 1 };
                 if values.len() != expected {
                     return fail("an operator applied to the wrong number of arguments");
@@ -2173,6 +2276,15 @@ impl<'ir> Evaluator<'ir> {
                     _ => return fail(name.to_string()),
                 }
             }
+            "CounterExample" if self.runtime.is_some() => {
+                arity(0)?;
+                self.reads += 1;
+                self.runtime
+                    .as_ref()
+                    .expect("the runtime")
+                    .counter_example
+                    .clone()
+            }
             "TLCEval" => {
                 arity(1)?;
                 self.operand(&operands[0])?
@@ -2191,6 +2303,30 @@ impl<'ir> Evaluator<'ir> {
                     {
                         self.reads += 1;
                         Value::Int(self.level + i32::from(context.is_primed))
+                    }
+                    // Once the search is over, the run's counts, and its named registers, each
+                    // the tuple of one worker's value.
+                    Value::Str(key) if self.runtime.is_some() => {
+                        self.reads += 1;
+                        let key = String::from_utf16_lossy(&key.units);
+                        let runtime = self.runtime.as_ref().expect("the runtime");
+                        match key.as_str() {
+                            "all:named" => runtime.named.clone(),
+                            "stats" => runtime.stats.clone(),
+                            "generated" | "distinct" | "queue" | "diameter" => {
+                                let Value::Function(stats) = &runtime.stats else {
+                                    return fail("TLCGet");
+                                };
+                                let position = stats.domain.iter().position(|field| {
+                                    matches!(field, Value::Str(name) if String::from_utf16_lossy(&name.units) == key)
+                                });
+                                match position {
+                                    Some(position) => stats.range[position].clone(),
+                                    None => return fail("TLCGet"),
+                                }
+                            }
+                            _ => return fail("TLCGet"),
+                        }
                     }
                     _ => return fail("TLCGet"),
                 }

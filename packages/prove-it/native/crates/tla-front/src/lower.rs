@@ -8,11 +8,12 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use tla_ir::{
-    ActionProperty as IrActionProperty, Bound as IrBound, Builtin as IrBuiltin, ConfigName,
-    Constant, Definition as IrDefinition, DefinitionForm, Index, Ir, Junction, Model,
-    Name as IrName, Node, NodeId, NodeKind, Nodes, Param, PathStep, Pattern, Possible, Printed,
-    Resolution, Scope as IrScope, ScopeBinding, Selector as IrSelector, SourceRange as IrRange,
-    Startup, TextId, Update, Value, Values,
+    ActionProperty as IrActionProperty, Atom as IrAtom, AtomKind, Bound as IrBound,
+    Builtin as IrBuiltin, ConfigName, Constant, Definition as IrDefinition, DefinitionForm,
+    EnabledActions, Index, Ir, Junction, LiveProperty, LiveTerm, Model, Name as IrName, Node,
+    NodeId, NodeKind, Nodes, Param, PathStep, Pattern, Possible, Printed, Resolution,
+    Scope as IrScope, ScopeBinding, Selector as IrSelector, SourceRange as IrRange, Startup,
+    TextId, Update, Value, Values,
 };
 
 use crate::ast::*;
@@ -21,6 +22,7 @@ use crate::dependencies::{DefinitionFacts, create_definition_facts};
 use crate::environment::Environment;
 use crate::errors::FrontError;
 use crate::hash::FastMap;
+use crate::live::{Live, Liveness};
 use crate::resolve::Result;
 
 /// A model value named like `a_b` has the type `a`, which TLC won't compare with another type.
@@ -444,8 +446,6 @@ impl<'a> Lowering<'a> {
         };
         let id = self.open(&definition.location);
         let name = self.get_text(&definition.name);
-        // TLC computes a startup value only when it starts, which the engine's startup phase will
-        // do; until then, linking alone holds none.
         let form = match &definition.kind {
             DefinitionKind::Operator { params, .. } => DefinitionForm::Operator(
                 params
@@ -464,7 +464,6 @@ impl<'a> Lowering<'a> {
         self.arena[id as usize].kind = NodeKind::Definition(IrDefinition {
             name,
             flags,
-            startup: Startup::None,
             form,
             body,
         });
@@ -862,9 +861,17 @@ impl<'a> Lowering<'a> {
         let (Some(init), Some(next)) = (&specification.init, &specification.next) else {
             return Err(not_yet("a model without Init or Next"));
         };
-        if !specification.temporals.is_empty() || !properties.liveness.is_empty() {
-            return Err(not_yet("a temporal property or fairness"));
-        }
+        let liveness = crate::live::get_liveness(
+            &specification.temporals,
+            &properties.liveness,
+            self.environment,
+            &self.facts,
+            if version == Some("1.7.4") {
+                crate::TlcVersion::V1_7_4
+            } else {
+                crate::TlcVersion::Master
+            },
+        )?;
         let is_scoped = properties
             .invariants
             .iter()
@@ -953,6 +960,10 @@ impl<'a> Lowering<'a> {
             .map(|name| self.config_name(name).root)
             .collect();
         let version = version.map(|version| self.get_text(version));
+        let (atoms, live_formula, live_properties) = match &liveness {
+            Some(liveness) => self.write_liveness(liveness)?,
+            None => (Vec::new(), Vec::new(), Vec::new()),
+        };
         Ok(Model {
             init,
             next,
@@ -970,18 +981,80 @@ impl<'a> Lowering<'a> {
             view,
             alias,
             postconditions,
-            symmetry: None,
             check_deadlock: config.check_deadlock,
             is_warning_enabled,
-            is_recording_graph: false,
+            is_recording_graph: liveness.is_some(),
             version,
-            // TLC's default seed, 0, and java.util.Random seeded with it, before startup.
+            // TLC's default seed.
             random_seed: 0,
-            startup_random: 0x5_DEEC_E66D,
-            atoms: Vec::new(),
-            live_formula: Vec::new(),
-            live_properties: Vec::new(),
+            atoms,
+            live_formula,
+            live_properties,
+            startup: Startup::default(),
         })
+    }
+
+    /// The liveness checker's atoms, formula and properties, as `lowerToIr` writes them: each atom
+    /// in the checker's order, then the terms, which take a position past them for an atom the
+    /// checker asks nothing of. TLC's actions aren't split here, so ENABLED's are unknown.
+    fn write_liveness(
+        &mut self,
+        liveness: &Liveness,
+    ) -> Result<(Vec<IrAtom>, Vec<LiveTerm>, Vec<LiveProperty>)> {
+        let mut positions: HashMap<*const Live, Index> = liveness
+            .atoms
+            .iter()
+            .enumerate()
+            .map(|(position, atom)| (Rc::as_ptr(atom), position as Index))
+            .collect();
+        let mut atoms = Vec::with_capacity(liveness.atoms.len());
+        for atom in &liveness.atoms {
+            let (expression, kind, scope) = match &**atom {
+                Live::State { expression, scope } => {
+                    (self.write_root(expression)?, AtomKind::State, scope)
+                }
+                Live::Action {
+                    expression,
+                    unchanged,
+                    scope,
+                    enabled,
+                } => {
+                    let expression = self.write_root(expression)?;
+                    let unchanged = match unchanged {
+                        Some(unchanged) => Some(self.write_root(unchanged)?),
+                        None => None,
+                    };
+                    let enabled = enabled
+                        .as_ref()
+                        .and_then(|enabled| positions.get(&Rc::as_ptr(enabled)).copied());
+                    (expression, AtomKind::Action { unchanged, enabled }, scope)
+                }
+                Live::Enabled { step, scope } => (
+                    self.write_root(step)?,
+                    AtomKind::Enabled {
+                        actions: EnabledActions::Unknown,
+                    },
+                    scope,
+                ),
+                _ => return Err(FrontError::NotYet("a liveness atom that isn't one".into())),
+            };
+            let scope = self.get_scope_index(scope.as_ref());
+            atoms.push(IrAtom {
+                kind,
+                expression,
+                scope,
+            });
+        }
+        let live_formula = write_live(&liveness.formula, &mut positions);
+        let mut live_properties = Vec::with_capacity(liveness.properties.len());
+        for (name, formula) in &liveness.properties {
+            let name = self.get_text(name);
+            live_properties.push(LiveProperty {
+                name,
+                formula: write_live(formula, &mut positions),
+            });
+        }
+        Ok((atoms, live_formula, live_properties))
     }
 
     /// `getScopeIndex`: a scope's place in the scopes, which come after the model in the order
@@ -1107,4 +1180,50 @@ impl<'a> Lowering<'a> {
             },
         })
     }
+}
+
+/// A formula's terms in prefix order, each atom by its position, a new one past the others.
+fn write_live(formula: &Rc<Live>, positions: &mut HashMap<*const Live, Index>) -> Vec<LiveTerm> {
+    fn write(
+        live: &Rc<Live>,
+        positions: &mut HashMap<*const Live, Index>,
+        terms: &mut Vec<LiveTerm>,
+    ) {
+        let mut position = |atom: &Rc<Live>| {
+            let next = positions.len() as Index;
+            *positions.entry(Rc::as_ptr(atom)).or_insert(next)
+        };
+        match &**live {
+            Live::Boolean(value) => terms.push(LiveTerm::Boolean(*value)),
+            Live::State { .. } => terms.push(LiveTerm::State(position(live))),
+            Live::Enabled { .. } => terms.push(LiveTerm::Enabled(position(live))),
+            Live::Action { enabled, .. } => {
+                let atom = position(live);
+                let enabled = enabled.as_ref().map(&mut position);
+                terms.push(LiveTerm::Action { atom, enabled });
+            }
+            Live::Not(body) | Live::Always(body) | Live::Eventually(body) => {
+                terms.push(match &**live {
+                    Live::Not(_) => LiveTerm::Not,
+                    Live::Always(_) => LiveTerm::Always,
+                    _ => LiveTerm::Eventually,
+                });
+                write(body, positions, terms);
+            }
+            Live::Junction { is_and, operands } => {
+                let count = operands.len() as u32;
+                terms.push(if *is_and {
+                    LiveTerm::And(count)
+                } else {
+                    LiveTerm::Or(count)
+                });
+                for operand in operands {
+                    write(operand, positions, terms);
+                }
+            }
+        }
+    }
+    let mut terms = Vec::new();
+    write(formula, positions, &mut terms);
+    terms
 }

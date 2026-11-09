@@ -273,3 +273,48 @@ It prints them as `getSanyReport` does, after the "Parsing file" lines so far. `
 TLC 1.7.4's aborts and SANY's parse errors (`src/sany/parse-error.ts`) are still `NotYet`.
 
 `sany-text` reports 1,825 of 2,357 matching, and 2,117 of 3,957 with `--mutate 400`, with 0 differing.
+
+## (d2) part 3 as built: SANY's semantic errors and warnings
+
+SANY goes on analyzing after a module with errors. After each module it prints every message so far: the warnings, then "Semantic errors:" and the errors. It level-checks a module only while no module so far has an error.
+
+`environment::get_sany_messages` links in a collecting mode, which does this:
+
+- It keeps each top-level module's errors and warnings instead of stopping at the first module with errors.
+- It defers the level checks, then runs them in SANY's order of analysis, which the caller gives.
+- It reports "Substitution error, probably due to error in module being instantiated." at each INSTANCE of a module with errors, as `Generator.createSubstIn` does.
+
+`get_sany_text` prints the messages cumulatively, as `getSanyReport` does, and skips linting when there are errors.
+
+Still `NotYet`:
+
+- TLC 1.7.4's message layout;
+- an error that stops linking itself;
+- a definition whose arity differs from its RECURSIVE declaration. SANY applies the declared arity, and neither resolver models this.
+
+Porting this showed that both resolvers saw a module's own declarations before they're declared. That is fixed in `resolve.ts` and `resolve.rs`.
+
+`sany-text` reports 1,886 of 2,357 matching, and 2,175 of 3,957 with `--mutate 400`, with 0 differing.
+
+## (d) the linter as built (`linter.rs`)
+
+`linter.rs` ports `src/sany/linter.ts` on the modules the report parses, standard modules included, so it reads their texts' dummy definitions as SANY does.
+
+1. **Records.** It collects each top-level module's records (record constructors and sets of records) in SANY's order of generation, with the names bound around each. That covers definitions, assumptions, theorems and their proofs (DEFINE steps included), and instance substitutions, but not inner modules.
+2. **Exemption.** It exempts a record when a field of any record with the same fields (the module's own, or an extended module's) is built from declarations. Reaching a definition by name walks its body: in the defining module, and, through an INSTANCE of a module with declarations, also the instance's substitutions. That way `1 + 2` is built from the parameters of Naturals' `a+b == {a, b}`, while `2 * 3` (`a*b == TRUE`) isn't.
+3. **Warning.** For a field named like a declaration or definition of the module, or of a module it extends, it writes SANY's warning at the field's name.
+
+It returns `NotYet` for:
+
+- a field named like an instance's definition, a theorem or an assumption;
+- a subexpression it would have to follow.
+
+`sany-text` reports 2,257 of 2,357 matching, and 2,558 of 3,957 with `--mutate 400`, with 0 differing. The corpora's 30 specs with linter warnings all match.
+
+What's left `NotYet`:
+
+| Specs | Cause |
+|---|---|
+| 89 | SANY's parse errors (`src/sany/parse-error.ts`) |
+| 10 | Errors that stop linking |
+| 1 | RECURSIVE arity |

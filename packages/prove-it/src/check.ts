@@ -1,10 +1,10 @@
 import type { Expression } from "./ast";
 import { type ModelConfig, parseConfig } from "./config";
-import { hasEffect } from "./dependencies";
+import { hasEffect, isConstantLevel, isImpureDefinition } from "./dependencies";
 import { getMemoStatistics } from "./engine/compile";
 import { toEngineProperties } from "./engine/context";
 import { toValue as toEngineValue } from "./engine/convert";
-import { type IrOutcome, lowerToIr } from "./engine/ir";
+import { type IrOutcome, type IrStartup, lowerToIr } from "./engine/ir";
 import { checkNatively, type NativeLiveness, toEngineResult, toStop } from "./engine/native";
 import {
   type EngineCheckpoint,
@@ -41,6 +41,7 @@ import {
 import {
   type CallStack,
   createTracingEnvironment,
+  describeRange,
   type Environment,
   evaluate,
   type FingerprintFailure,
@@ -48,6 +49,7 @@ import {
   getDefinition,
   hasRepeatedEffects,
   isImpure,
+  isStartupDefinition,
 } from "./evaluate";
 import { EXIT_STATUS, getExitCode, setExitCode, withLivenessExitCode } from "./exit-codes";
 import type { JavaOverride } from "./java-overrides";
@@ -91,6 +93,7 @@ import {
   getSuccessors,
   type Successor,
 } from "./successors";
+import { getPermutedSets } from "./symmetry";
 import type { LiveEnabled } from "./tableau";
 import {
   type FailureMessage,
@@ -541,6 +544,44 @@ const searchStates = (
     ),
   });
 
+  // What TLC evaluates when it starts, for the engine IR: the substitutes it checks, the constant
+  // definitions with effects (one without computes the same wherever it is first used), the
+  // SYMMETRY definition, which the search found to be an operator without parameters, and the
+  // assumptions.
+  const getIrStartup = (): IrStartup => {
+    const symmetry =
+      config.symmetry === undefined ? undefined : environment.definitions.get(config.symmetry);
+    return {
+      substitutes: [...environment.substitutions].flatMap(([name, target]) => {
+        const definition = environment.definitions.get(target);
+        const isChecked =
+          specification.rootConstants.some((constant) => constant.name === name) &&
+          definition?.kind === "Operator" &&
+          definition.params.length === 0 &&
+          !isConstantLevel(definition, environment);
+        return isChecked ? [{ name, definition }] : [];
+      }),
+      definitions: [
+        ...new Set(
+          specification.startupDefinitions.filter(
+            (definition) =>
+              isStartupDefinition(definition, environment) &&
+              isImpureDefinition(definition, environment),
+          ),
+        ),
+      ],
+      symmetry:
+        symmetry?.kind === "Operator"
+          ? { definition: symmetry, permutedSets: getPermutedSets(symmetry, config.substitutions) }
+          : undefined,
+      assumptions: specification.assumptions
+        .filter((assumption) => !assumption.isAxiom)
+        .map((assumption) => ({
+          expression: assumption.expression,
+          name: describeRange(assumption.expression),
+        })),
+    };
+  };
   const search = createSearch(
     config,
     environment,
@@ -572,12 +613,12 @@ const searchStates = (
           actionProperties: [],
           initialPredicates: [],
         },
-        symmetry: undefined,
         isRecordingGraph: false,
         version: options.version,
         atoms: [],
         liveFormula: undefined,
         liveProperties: [],
+        startup: getIrStartup(),
       });
       if ("ir" in outcome) writeDebugBytes("PROVE_IT_IR_DUMP", outcome.ir);
     }
@@ -1784,7 +1825,6 @@ const searchStates = (
         isWarningEnabled: runtime.isWarningEnabled,
         tlcOrder,
         properties: engineProperties,
-        symmetry,
         isRecordingGraph: liveness !== undefined,
         version: options.version,
         atoms: (liveness?.atoms ?? []).map((atom) => ({
@@ -1793,6 +1833,7 @@ const searchStates = (
         })),
         liveFormula: liveness?.formula,
         liveProperties: liveness?.properties ?? [],
+        startup: getIrStartup(),
       });
       const milliseconds = performance.now() - loweredAt;
       if ("ir" in outcome) writeDebugBytes("PROVE_IT_IR_DUMP", outcome.ir);

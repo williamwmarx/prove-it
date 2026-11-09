@@ -50,7 +50,7 @@ use tla_front::pcal::{PcalFatal, PcalSession};
 use tla_front::report::{ModuleOrigin, ReportOptions, get_sany_text};
 use tla_front::sany_parse_error::{get_sany_174_lexical_error, get_sany_parse_error};
 use tla_front::spec::{get_properties, get_specification};
-use tla_ir::Model;
+use tla_ir::{Model, Startup};
 
 fn write_tokens(out: &mut String, source: &str) {
     match tokenize(source) {
@@ -191,18 +191,16 @@ fn lower_definitions(
         view: None,
         alias: None,
         postconditions: Vec::new(),
-        symmetry: None,
         check_deadlock: true,
         is_warning_enabled: true,
         is_recording_graph: false,
         version: None,
-        // TLC's default seed, 0, and java.util.Random seeded with it, which no assumption has drawn
-        // from: the model `ir.ts` writes for an environment that evaluated nothing at startup.
+        // TLC's default seed.
         random_seed: 0,
-        startup_random: 0x5_DEEC_E66D,
         atoms: Vec::new(),
         live_formula: Vec::new(),
         live_properties: Vec::new(),
+        startup: Startup::default(),
     };
     Ok(tla_ir::encode(&lowering.finish(model)?))
 }

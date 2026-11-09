@@ -192,6 +192,55 @@ fn read_formula(terms: &mut Terms, formula: &[Term]) -> Result<TermId, Declined>
     Ok(root)
 }
 
+/// The atoms of a formula, in the order TLC's liveness checker asks about them (`atoms` of
+/// `createLivenessChecker`): the state and ENABLED atoms of each solution's checks and then of its
+/// tableau's nodes, as `collectAtoms` meets them, then the rest the checks ask of, as
+/// `collectQuestions` does. An atom is its position in `formula`'s terms, each term standing for
+/// itself; a tautology, which has no solutions, declines.
+pub fn atom_order(formula: &[Term]) -> Result<Vec<u32>, Declined> {
+    let mut terms = Terms::default();
+    let root = read_formula(&mut terms, formula)?;
+    let solutions = terms.solutions(root)?;
+    let mut order = Vec::new();
+    let mut add = |atom: u32| {
+        if !order.contains(&atom) {
+            order.push(atom);
+        }
+    };
+    let collect = |term: TermId, is_question: bool, add: &mut dyn FnMut(u32)| {
+        let mut pending = vec![term];
+        while let Some(term) = pending.pop() {
+            match terms.kind(term) {
+                tableau::Kind::State(atom) | tableau::Kind::Enabled(atom) => add(atom),
+                tableau::Kind::Action { atom, .. } if is_question => add(atom),
+                tableau::Kind::Action {
+                    enabled: Some(enabled),
+                    ..
+                } => add(enabled),
+                tableau::Kind::Next if !is_question => {}
+                tableau::Kind::Action { .. } | tableau::Kind::Boolean(_) => {}
+                _ => pending.extend(terms.children(term).iter().rev()),
+            }
+        }
+    };
+    for solution in &solutions {
+        for &predicate in solution.state_checks.iter().chain(&solution.action_checks) {
+            collect(predicate, false, &mut add);
+        }
+        for node in solution.tableau.iter().flat_map(|tableau| &tableau.nodes) {
+            for &predicate in &node.state_predicates {
+                collect(predicate, false, &mut add);
+            }
+        }
+    }
+    for solution in &solutions {
+        for &predicate in solution.state_checks.iter().chain(&solution.action_checks) {
+            collect(predicate, true, &mut add);
+        }
+    }
+    Ok(order)
+}
+
 /// Checks the formula, the fairness and the negated properties as `createLivenessChecker` joins
 /// them, on a search's graph, from the engine's answers to each atom (`None` for an atom
 /// it doesn't answer), and finds which of the properties a counterexample violates. Where the

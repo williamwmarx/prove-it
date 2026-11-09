@@ -129,6 +129,23 @@ fn reports_a_missing_module_in_its_importer() {
 }
 
 #[test]
+fn sees_a_declaration_only_after_it() {
+    let error = link(
+        "---- MODULE Main ----\nFoo == x = 1\nVARIABLE x\nP == INSTANCE Counter\nVARIABLE y\n====",
+        &[("Counter", "---- MODULE Counter ----\nVARIABLE x, y\n====")],
+    )
+    .err()
+    .expect("an error");
+    assert_eq!(
+        sany_messages(error),
+        [
+            "line 2, col 8 to line 2, col 8 of module Main: Unknown operator: `x'.",
+            "line 4, col 1 to line 4, col 21 of module Main: Substitution missing for symbol y declared at line 2, col 13 to line 2, col 13 of module Counter \nand instantiated in module Main.",
+        ]
+    );
+}
+
+#[test]
 fn copies_the_definitions_an_instance_substitutes_into() {
     let environment = link(
         "---- MODULE Main ----\nVARIABLE y\nC == INSTANCE Counter WITH x <- y\nNext == C!Step\n====",

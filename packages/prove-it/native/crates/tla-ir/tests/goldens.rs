@@ -113,16 +113,18 @@ fn holds_the_atoms_a_liveness_check_asks_about() {
 }
 
 #[test]
-fn holds_the_symmetry_group_as_model_values() {
+fn holds_the_symmetry_definition_and_the_sets_it_permutes() {
+    // Paxos_MC's SYMMETRY SymmetricPerms permutes the constants Acceptors and Values, which TLC
+    // checks.
     let (_, ir) = read_golden("summerset/tla+/paxos/Paxos_MC.ir");
-    let symmetry = ir.model.symmetry.as_ref().expect("a symmetry group");
-    assert!(!symmetry.is_empty());
-    for &(from, to) in symmetry.iter().flatten() {
-        assert!(
-            from < ir.ranked_count && to < ir.ranked_count,
-            "model values are ranked"
-        );
-    }
+    let symmetry = ir.model.startup.symmetry.as_ref().expect("a symmetry");
+    assert!((symmetry.definition as usize) < ir.definitions.len());
+    let sets: Vec<(&str, bool)> = symmetry
+        .permuted_sets
+        .iter()
+        .map(|set| (&*ir.texts[set.name as usize], set.operand.is_some()))
+        .collect();
+    assert_eq!(sets, [("Acceptors", true), ("Values", true)]);
 }
 
 #[test]

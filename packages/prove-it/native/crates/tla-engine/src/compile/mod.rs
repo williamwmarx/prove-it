@@ -33,8 +33,7 @@ use std::rc::{Rc, Weak};
 use std::sync::Arc;
 
 use tla_ir::{
-    Definition, DefinitionForm, Index, Ir, Name, NodeId, NodeKind, Param, Resolution, Startup,
-    TextId, Value,
+    Definition, DefinitionForm, Index, Ir, Name, NodeId, NodeKind, Param, Resolution, TextId, Value,
 };
 use tla_values::store::{FALSE, Outcome, TRUE};
 use tla_values::{Bail, Id, Store};
@@ -632,8 +631,14 @@ pub struct Compiler<'a> {
     // A definition compiled unprimed or primed, outside the initial predicate or in it, where a
     // variable's value isn't yet known to stream in order (`is_in_order`).
     definition_cache: HashMap<NodeId, [Option<(u64, Compiled)>; 4]>,
+    // The definitions TLC evaluates once at startup, each compiled to read the value it computed
+    // then, once compiled.
+    startup_definitions: HashMap<NodeId, Option<Compiled>>,
     recursive_operators: HashMap<usize, OperatorEntries>,
     recursive_functions: HashMap<(NodeId, usize), FunctionEntries>,
+    /// For each global recursive function, the scope that binds its name to it, so that a body
+    /// naming it locally, as an instance's copy of it does, reaches the same function.
+    global_function_scopes: HashMap<NodeId, Rc<Scope>>,
     /// The slots of names bound over intervals, whose values are integers.
     int_slots: HashSet<u32>,
     /// How many ENABLED actions the compiler is inside, whose private next state also holds the
@@ -694,13 +699,20 @@ impl<'a> Compiler<'a> {
                 slot_count: SEARCH_SLOTS.len(),
                 is_epoch_checked: options.is_epoch_checked,
                 random_seed: ir.model.random_seed,
-                startup_random: ir.model.startup_random,
                 ..Program::default()
             },
             texts: vec![None; ir.texts.len()],
             definition_cache: HashMap::new(),
+            startup_definitions: ir
+                .model
+                .startup
+                .definitions
+                .iter()
+                .map(|&index| (ir.definitions[index as usize], None))
+                .collect(),
             recursive_operators: HashMap::new(),
             recursive_functions: HashMap::new(),
+            global_function_scopes: HashMap::new(),
             int_slots: HashSet::new(),
             enabled_depth: 0,
             variable_extent: ir.variables.len(),
@@ -731,6 +743,16 @@ impl<'a> Compiler<'a> {
     /// Compiles a root of the model, as `createEngineContext` compiles it, with no scope.
     pub fn compile_root(&mut self, root: Root) -> Result<Compiled, CompileError> {
         self.compile_root_printing(root, false)
+    }
+
+    /// Compiles the body of the SYMMETRY definition, which TLC evaluates as it starts, where what
+    /// it prints and draws counts. A set TLC may keep lazy is one TLC may reject as not a set of
+    /// functions, so the interpreter takes it.
+    pub fn compile_symmetry(&mut self, body: NodeId) -> Result<Compiled, CompileError> {
+        if self.may_be_lazy(body, &mut HashSet::new()) {
+            return unsupported("a symmetry TLC may keep lazy");
+        }
+        self.compile_root_printing(Root::Expression(body), true)
     }
 
     /// Compiles a root of the model where what it prints is printed, as an invariant that prints
@@ -1090,8 +1112,20 @@ impl<'a> Compiler<'a> {
             | NodeKind::Case { .. }
             | NodeKind::Let { .. }
             | NodeKind::Label { .. }
-            | NodeKind::Identifier(_) => true,
-            NodeKind::Apply { name, .. } => {
+            | NodeKind::Identifier(_)
+            // TLC evaluates each element, field and part once, in the order written, as the
+            // engine does.
+            | NodeKind::SetEnumeration(_)
+            | NodeKind::Tuple(_)
+            | NodeKind::Record(_)
+            | NodeKind::FieldAccess { .. } => true,
+            // TLC evaluates the body once for each element of the set, in the set's order, which
+            // is the engine's where TLC normalizes the set. The engine evaluates the set of an
+            // inner bound once for each element of the outer one, where TLC evaluates it once.
+            NodeKind::SetMap { bounds, .. } => {
+                matches!(&bounds[..], [bound] if !self.may_be_lazy(bound.set, &mut HashSet::new()))
+            }
+            NodeKind::Apply { name, args } => {
                 if name.is_local
                     && let Some(found) = lookup(&context.scope, name.text)
                 {
@@ -1105,13 +1139,125 @@ impl<'a> Compiler<'a> {
                             && definition.flags & Definition::RECURSIVE == 0
                             && !context.is_expanding(node)
                     }
+                    Resolution::Builtin(index) => match self.builtin_name(index) {
+                        "Print" | "PrintT" | "RandomElement" | "RandomSubset" | "TLCEval" | "="
+                        | "#" | "~" => true,
+                        // TLC evaluates the operands, then builds the set, which the engine
+                        // builds the same way unless an operand is a set TLC keeps lazy.
+                        "\\cup" | "\\cap" | "\\" | "UNION" => !args
+                            .iter()
+                            .any(|&arg| self.may_be_lazy(arg, &mut HashSet::new())),
+                        // TLC evaluates the operands once each, in order, then asks the set
+                        // whether it holds the element or the other set, or for its size. The
+                        // engine may evaluate a set TLC keeps lazy another way, which shows only
+                        // where it prints or draws.
+                        "\\in" | "\\notin" | "\\subseteq" | "Cardinality" => {
+                            !args.iter().any(|&arg| {
+                                self.may_be_lazy(arg, &mut HashSet::new())
+                                    && self.may_have_effect(arg, &mut HashSet::new())
+                            })
+                        }
+                        _ => false,
+                    },
+                    _ => false,
+                }
+            }
+            _ => false,
+        }
+    }
+
+    // Whether evaluating an expression may print, draw or set a TLC register, itself or through
+    // the definitions it names. An operator bound locally may do anything.
+    fn may_have_effect(&self, node: NodeId, seen: &mut HashSet<NodeId>) -> bool {
+        if !seen.insert(node) {
+            return false;
+        }
+        let named = match self.node(node).1 {
+            NodeKind::Apply { name, .. } if name.is_local => true,
+            NodeKind::Identifier(name) | NodeKind::Apply { name, .. } if !name.is_local => {
+                match name.resolution {
                     Resolution::Builtin(index) => matches!(
                         self.builtin_name(index),
-                        "Print" | "PrintT" | "RandomElement" | "RandomSubset" | "=" | "#" | "~"
+                        "Print" | "PrintT" | "RandomElement" | "RandomSubset" | "TLCSet"
+                    ),
+                    Resolution::Definition(index) => self.may_have_effect(
+                        self.definition(self.ir.definitions[index as usize]).body,
+                        seen,
                     ),
                     _ => false,
                 }
             }
+            _ => false,
+        };
+        named
+            || self
+                .children(node)
+                .into_iter()
+                .any(|child| self.may_have_effect(child, seen))
+    }
+
+    // Whether TLC may keep the value of an expression lazy, a set it enumerates in its own order
+    // or a function it applies anew each time, rather than normalize it as the engine's value is:
+    // through the branches and bodies that give the value, any set or function it builds lazily.
+    fn may_be_lazy(&self, node: NodeId, seen: &mut HashSet<NodeId>) -> bool {
+        if !seen.insert(node) {
+            return true;
+        }
+        match self.node(node).1 {
+            NodeKind::FunctionConstruction { .. }
+            | NodeKind::Lambda { .. }
+            | NodeKind::FunctionSet { .. }
+            | NodeKind::RecordSet(_) => true,
+            NodeKind::If {
+                consequent,
+                alternative,
+                ..
+            } => self.may_be_lazy(*consequent, seen) || self.may_be_lazy(*alternative, seen),
+            NodeKind::Case { arms, other } => {
+                arms.iter().any(|&(_, arm)| self.may_be_lazy(arm, seen))
+                    || other.is_some_and(|other| self.may_be_lazy(other, seen))
+            }
+            NodeKind::Let { body, .. } => self.may_be_lazy(*body, seen),
+            NodeKind::SetFilter { bound, .. } => self.may_be_lazy(bound.set, seen),
+            NodeKind::SetEnumeration(elements)
+            | NodeKind::Tuple(elements)
+            | NodeKind::Product(elements) => elements
+                .iter()
+                .any(|&element| self.may_be_lazy(element, seen)),
+            NodeKind::Record(fields) => fields
+                .iter()
+                .any(|&(_, field)| self.may_be_lazy(field, seen)),
+            NodeKind::Identifier(name) if !name.is_local => match name.resolution {
+                Resolution::Definition(index) => self.may_be_lazy(
+                    self.definition(self.ir.definitions[index as usize]).body,
+                    seen,
+                ),
+                Resolution::Builtin(index) => {
+                    matches!(self.builtin_name(index), "Nat" | "Int" | "Real" | "STRING")
+                }
+                _ => false,
+            },
+            NodeKind::Apply { name, args } if !name.is_local => match name.resolution {
+                Resolution::Builtin(index) => {
+                    match self.text(self.ir.builtins[index as usize].name) {
+                        "SUBSET" | "Seq" => true,
+                        "UNION" | "\\cup" | "\\cap" | "\\" => {
+                            args.iter().any(|&arg| self.may_be_lazy(arg, seen))
+                        }
+                        "TLCEval" => self.may_be_lazy(args[0], seen),
+                        "Print" | "PrintT" => {
+                            args.last().is_some_and(|&arg| self.may_be_lazy(arg, seen))
+                        }
+                        _ => false,
+                    }
+                }
+                Resolution::Definition(index) => self.may_be_lazy(
+                    self.definition(self.ir.definitions[index as usize]).body,
+                    seen,
+                ),
+                _ => true,
+            },
+            NodeKind::Apply { .. } => true,
             _ => false,
         }
     }
@@ -1242,12 +1388,11 @@ impl<'a> Compiler<'a> {
         context: &Context,
     ) -> Compiling<Compiled> {
         let definition = self.definition(node);
-        match definition.startup {
-            Startup::Value(Some(value)) => return Ok(constant(self.intern_value(value)?)),
-            Startup::Value(None) | Startup::Object => {
-                return unsupported("a value TLC computed at startup with effects");
-            }
-            Startup::None => {}
+        if let Some(startup) = self.startup_definitions.get(&node) {
+            return match startup {
+                Some(compiled) => Ok(compiled.clone()),
+                None => self.compile_startup_definition(node, context),
+            };
         }
         let params = match &definition.form {
             DefinitionForm::Function(_) => return self.compile_function_definition(node, context),
@@ -1280,6 +1425,43 @@ impl<'a> Compiler<'a> {
         });
         let compiled = result?;
         self.cache_definition(node, index, compiled.clone(), &read);
+        Ok(compiled)
+    }
+
+    // A definition TLC evaluates once at startup: what it computes is its value from then on, so
+    // its effects aren't repeated. TLC keeps a function a definition constructs lazy, applying it
+    // anew each time, which the engine doesn't.
+    fn compile_startup_definition(
+        &mut self,
+        node: NodeId,
+        context: &Context,
+    ) -> Compiling<Compiled> {
+        let definition = self.definition(node);
+        if !matches!(&definition.form, DefinitionForm::Operator(params) if params.is_empty())
+            || self.may_be_lazy(definition.body, &mut HashSet::new())
+        {
+            return unsupported("a value TLC computed at startup with effects");
+        }
+        if context.is_expanding(node) {
+            return unsupported("a recursive zero-arity definition");
+        }
+        // TLC evaluates it where it starts, which may print and draw, and from then on reading
+        // it prints, draws and reads nothing.
+        let body_context = Context {
+            expanding: context.expanding_with(node),
+            ..context.global(true)
+        };
+        let compiled = self.compile(definition.body, &body_context)?;
+        let once = self.allocate_once();
+        let inner = compiled.eval.clone();
+        let compiled = Compiled {
+            is_costly: false,
+            is_constant: true,
+            footprint: Footprint::default(),
+            ..compiled.with_eval(eval(move |machine| machine.once(once, &inner)))
+        };
+        self.startup_definitions
+            .insert(node, Some(compiled.clone()));
         Ok(compiled)
     }
 
@@ -1343,21 +1525,80 @@ impl<'a> Compiler<'a> {
 
     // --- LET ---
 
+    // How many times an expression names a local name, or `None` where it may evaluate a name
+    // more than once each time it is evaluated, under a binder, or where it isn't known.
+    fn count_uses(&self, node: NodeId, name: TextId) -> Option<u32> {
+        match self.node(node).1 {
+            NodeKind::Number(_)
+            | NodeKind::WideNumber(_)
+            | NodeKind::Decimal(_)
+            | NodeKind::String(_) => Some(0),
+            NodeKind::Identifier(identifier) => {
+                Some(u32::from(identifier.is_local && identifier.text == name))
+            }
+            NodeKind::Apply {
+                name: applied,
+                args,
+            } => {
+                let own = u32::from(applied.is_local && applied.text == name);
+                Some(own + self.sum_uses(name, args.iter().copied())?)
+            }
+            NodeKind::And(operands)
+            | NodeKind::Or(operands)
+            | NodeKind::SetEnumeration(operands)
+            | NodeKind::Tuple(operands)
+            | NodeKind::Product(operands) => self.sum_uses(name, operands.iter().copied()),
+            NodeKind::Record(fields) => self.sum_uses(name, fields.iter().map(|&(_, field)| field)),
+            NodeKind::FieldAccess { record, .. } => self.count_uses(*record, name),
+            NodeKind::FunctionApplication { function, args } => {
+                self.sum_uses(name, std::iter::once(*function).chain(args.iter().copied()))
+            }
+            NodeKind::If {
+                condition,
+                consequent,
+                alternative,
+            } => self.sum_uses(name, [*condition, *consequent, *alternative]),
+            NodeKind::Case { arms, other } => self.sum_uses(
+                name,
+                arms.iter()
+                    .flat_map(|&(guard, arm)| [guard, arm])
+                    .chain(*other),
+            ),
+            _ => None,
+        }
+    }
+
+    fn sum_uses(&self, name: TextId, nodes: impl IntoIterator<Item = NodeId>) -> Option<u32> {
+        nodes
+            .into_iter()
+            .try_fold(0, |count, node| Some(count + self.count_uses(node, name)?))
+    }
+
     fn bind_let_definitions(
         &mut self,
         instances: u32,
         definitions: &[NodeId],
+        body: NodeId,
         context: &Context,
     ) -> Compiling<Context> {
         if instances > 0 {
             return unsupported("INSTANCE in LET");
         }
         let mut scope = context.scope.clone();
-        for &node in definitions {
+        for (position, &node) in definitions.iter().enumerate() {
             let definition = self.definition(node);
+            // A definition the rest of the LET names once is evaluated once, as TLC evaluates
+            // it, so it may print.
+            let uses = definitions[position + 1..]
+                .iter()
+                .map(|&later| self.definition(later).body)
+                .chain([body])
+                .try_fold(0, |count, root| {
+                    Some(count + self.count_uses(root, definition.name)?)
+                });
             let definition_context = Context {
                 scope: scope.clone(),
-                can_print: false,
+                can_print: context.can_print && uses.is_some_and(|count| count <= 1),
                 ..context.clone()
             };
             match &definition.form {
@@ -1918,7 +2159,8 @@ impl<'a> Compiler<'a> {
     ) -> Compiling<Compiled> {
         let definition = self.definition(node);
         if definition.flags & (Definition::RECURSIVE | Definition::SELF_REFERENTIAL) != 0 {
-            let recursive = self.get_recursive_function(node, context, None)?;
+            let scope = self.global_function_scope(node);
+            let recursive = self.get_recursive_function(node, context, Some(scope))?;
             return Ok(self.materialize_recursive(&recursive));
         }
         let index = definition_index(context);
@@ -2136,14 +2378,30 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    // The recursive function an application applies, when it names one directly.
+    // The recursive function an application applies, when it names one, or an operator or a LET
+    // gives one, which TLC keeps lazy.
     fn get_applied_recursive_function(
         &mut self,
         function: NodeId,
         context: &Context,
     ) -> Compiling<Option<Rc<RecursiveFunction>>> {
-        let NodeKind::Identifier(name) = self.node(function).1 else {
-            return Ok(None);
+        let name = match self.node(function).1 {
+            NodeKind::Identifier(name) => *name,
+            NodeKind::Let {
+                instances,
+                definitions,
+                body,
+            } => {
+                let inner = self.bind_let_definitions(*instances, definitions, *body, context)?;
+                return self.get_applied_recursive_function(*body, &inner);
+            }
+            NodeKind::Apply { .. } => {
+                return match self.resolve_action(function, context)? {
+                    Some((body, inner)) => self.get_applied_recursive_function(body, &inner),
+                    None => Ok(None),
+                };
+            }
+            _ => return Ok(None),
         };
         if let Some(found) = lookup(&context.scope, name.text) {
             return match &found.binding {
@@ -2166,12 +2424,34 @@ impl<'a> Compiler<'a> {
         };
         let node = self.ir.definitions[index as usize];
         let definition = self.definition(node);
-        if !matches!(definition.form, DefinitionForm::Function(_))
-            || definition.flags & (Definition::RECURSIVE | Definition::SELF_REFERENTIAL) == 0
-        {
+        if matches!(definition.form, DefinitionForm::Operator(_)) {
+            return match self.resolve_action(function, context)? {
+                Some((body, inner)) => self.get_applied_recursive_function(body, &inner),
+                None => Ok(None),
+            };
+        }
+        if definition.flags & (Definition::RECURSIVE | Definition::SELF_REFERENTIAL) == 0 {
             return Ok(None);
         }
-        self.get_recursive_function(node, context, None).map(Some)
+        let scope = self.global_function_scope(node);
+        self.get_recursive_function(node, context, Some(scope))
+            .map(Some)
+    }
+
+    // An instance copies a recursive function with its body naming it as the module did, which
+    // the interpreter binds when it builds the function, as LET binds its own.
+    fn global_function_scope(&mut self, node: NodeId) -> Rc<Scope> {
+        if let Some(scope) = self.global_function_scopes.get(&node) {
+            return Rc::clone(scope);
+        }
+        let name = self.definition(node).name;
+        let scope = Rc::new(Scope {
+            name,
+            binding: Binding::Recursive { definition: node },
+            parent: None,
+        });
+        self.global_function_scopes.insert(node, Rc::clone(&scope));
+        scope
     }
 }
 

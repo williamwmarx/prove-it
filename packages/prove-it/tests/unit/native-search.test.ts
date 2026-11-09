@@ -357,6 +357,38 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     );
   });
 
+  // TLC evaluates a record's fields in the order written (Tool's OPCODE_rc), a set map's body for
+  // each element of its normalized set, and a union's operands left to right, so what they print
+  // comes in that order.
+  it("prints in records, set maps, unions and membership in the order TLC evaluates them", async () => {
+    const body = [
+      "EXTENDS Naturals, TLC",
+      "VARIABLE x",
+      "Init == x = 0",
+      "Next == x < 2 /\\ x' = x + 1",
+      'Record == [zeta |-> PrintT(<<"zeta", x>>), alpha |-> PrintT(<<"alpha", x>>)]',
+      'Mapped == {PrintT(<<"map", n, x>>) : n \\in {3, 1, 2}}',
+      'Joined == UNION {{PrintT(<<"left", x>>)} \\cup {PrintT(<<"right", x>>)}}',
+      'Held == PrintT(<<"element", x>>) \\in {PrintT(<<"set", x>>)}',
+      "Inv == Record.alpha /\\ Mapped = {TRUE} /\\ Joined = {TRUE} /\\ Held",
+    ];
+    const config = "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE";
+    expect(await compareWithInterpreter(body, config)).toContainEqual(
+      expect.stringMatching(COMPLETE),
+    );
+    // TLC evaluates a definition each time it is named, in a set enumeration too.
+    const named = [
+      "EXTENDS Naturals, TLC",
+      "VARIABLE x",
+      "Init == x = 0",
+      "P == Print(x, TRUE)",
+      "Next == P /\\ {P} # {} /\\ x' = (x + 1) % 3",
+    ];
+    expect(await compareWithInterpreter(named, "INIT Init\nNEXT Next")).toContainEqual(
+      expect.stringMatching(COMPLETE),
+    );
+  });
+
   it("checks invariants, constraints, action constraints and action properties", async () => {
     const body = [
       "EXTENDS Naturals, TLC",
@@ -459,6 +491,25 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     expect(await compareWithInterpreter(withSets, `${config}\nINVARIANT Inv`)).toContainEqual(
       expect.stringMatching(stopped("an invariant violated")),
     );
+  });
+
+  // TLC evaluates the SYMMETRY definition as it starts, and the engine builds the group as TLC
+  // does: from sets with fewer than two elements too, and none where no set has two.
+  it("builds the group of the SYMMETRY definition as TLC starts", async () => {
+    const body = [
+      "EXTENDS TLC",
+      "CONSTANTS Procs, Single",
+      "VARIABLE owner",
+      "Init == owner \\in Procs \\cup Single",
+      "Next == owner' \\in Procs \\cup Single",
+      "Sym == Permutations(Procs) \\cup Permutations(Single)",
+    ];
+    for (const procs of ["{p1, p2, p3}", "{p1}"]) {
+      const config = `CONSTANTS Procs = ${procs}\nSingle = {q1}\nINIT Init\nNEXT Next\nSYMMETRY Sym`;
+      expect(await compareWithInterpreter(body, config)).toContainEqual(
+        expect.stringMatching(COMPLETE),
+      );
+    }
   });
 
   it("answers ENABLED by running the action", async () => {
@@ -1108,10 +1159,9 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
       [[`Next == LET p == ${prints} IN p /\\ ${next}`], ""],
       [["Op(a) == a", `Next == Op(${prints}) /\\ ${next}`], ""],
       [[`Next == {i \\in {1} : ${prints}} # {} /\\ ${next}`], ""],
-      [[`P == ${prints}`, `Next == P /\\ {P} # {} /\\ ${next}`], ""],
       // A definition compiled where it may print, then named where it may not.
       [
-        [`P == ${prints}`, `Next == (P = TRUE) /\\ {P} # {} /\\ ${next}`],
+        [`P == ${prints}`, `Next == (P = TRUE) /\\ {i \\in {1} : P} # {} /\\ ${next}`],
         "",
         " where TLC evaluates it otherwise",
       ],
@@ -1139,10 +1189,10 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     expect(await compareWithInterpreter(body, "INIT Init\nNEXT Next")).toContainEqual(
       expect.stringMatching(COMPLETE),
     );
-    // With x' assigned, x' \in S is a guard, whose S the engine doesn't evaluate as TLC does.
+    // With x' assigned, x' \in S is a guard: TLC evaluates S once and asks it for x'.
     const assigned = body.map((line) => line.replace("Next == ", "Next == x' = (x + 1) % 3 /\\ "));
     expect(await compareWithInterpreter(assigned, "INIT Init\nNEXT Next")).toContainEqual(
-      expect.stringMatching(stopped("unsupported: Print")),
+      expect.stringMatching(COMPLETE),
     );
   });
 
@@ -1332,6 +1382,29 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     );
   });
 
+  // TLC evaluates a substitute and the constant definitions with effects when it starts, then the
+  // assumptions, and the search reads what they drew, which the invariant prints.
+  it("draws and prints at startup as TLC does", async () => {
+    const body = [
+      "EXTENDS TLC, Naturals",
+      'Shown == Print("shown", 4)',
+      'Sub == IF PrintT("sub") THEN 5 ELSE 0',
+      "D == 3",
+      "R == RandomElement(1..100)",
+      'ASSUME PrintT(<<"assume", R>>)',
+      "ASSUME Shown > 0",
+      "VARIABLE x",
+      "Init == x = R",
+      "Next == x' = x",
+      'Inv == PrintT(<<"inv", x>>) /\\ x = R /\\ D = 5',
+    ];
+    const lines = await compareWithInterpreter(
+      body,
+      "CONSTANT D <- Sub\nINIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
+    );
+    expect(lines).toContainEqual(expect.stringMatching(COMPLETE));
+  });
+
   // From tla-rs's function_syntax: TLC applies a recursive function of several bounds to tuples
   // of its product, and keeps a recursive function lazy where a spec passes it or takes its
   // domain.
@@ -1450,6 +1523,27 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     ).toContainEqual(
       expect.stringMatching(stopped("an operator's table applied outside its rows")),
     );
+  });
+
+  // From tla-rs's function_instance: an instance's copy of a recursive function names itself as
+  // the module did, and an operator that gives a recursive function keeps it lazy, as TLC does.
+  it("applies recursive functions an instance or an operator gives", async () => {
+    const body = [
+      "EXTENDS Naturals",
+      "VARIABLE x",
+      "---- MODULE Lib ----",
+      "EXTENDS Naturals",
+      "fact[n \\in Nat] == IF n = 0 THEN 1 ELSE n * fact[n - 1]",
+      "====",
+      "I == INSTANCE Lib",
+      "Scaled(b) == LET s[n \\in Nat] == IF n = 0 THEN b ELSE n * s[n - 1] IN s",
+      "Init == x = 0",
+      "Next == x' = (x + 1) % 3",
+      "Inv == I!fact[4] = 24 /\\ Scaled(2)[3] = 12 /\\ Scaled(x + 1)[2] = 2 * (x + 1)",
+    ];
+    expect(
+      await compareWithInterpreter(body, "INIT Init\nNEXT Next\nINVARIANT Inv"),
+    ).toContainEqual(expect.stringMatching(COMPLETE));
   });
 
   it("applies recursive functions as TLC keeps them lazy", async () => {

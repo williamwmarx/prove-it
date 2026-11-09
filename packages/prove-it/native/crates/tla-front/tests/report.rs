@@ -33,6 +33,28 @@ fn reports_a_missing_module_in_the_module_that_names_it() {
 }
 
 #[test]
+fn reprints_every_error_so_far_after_each_module() {
+    assert_eq!(
+        get_text(
+            "errors",
+            "---- MODULE Main ----\nEXTENDS Lib\nAlso == Missing\n====\n---- MODULE Lib ----\nFoo == Undefined\n====\n"
+        ),
+        "Parsing file Main File\nParsing file Lib RootFile\nSemantic processing of module Lib\nSemantic errors:\n\n*** Errors: 1\n\nline 2, col 8 to line 2, col 16 of module Lib\n\nUnknown operator: `Undefined'.\n\n\nSemantic processing of module Main\nSemantic errors:\n\n*** Errors: 2\n\nline 2, col 8 to line 2, col 16 of module Lib\n\nUnknown operator: `Undefined'.\n\n\nline 3, col 9 to line 3, col 15 of module Main\n\nUnknown operator: `Missing'.\n\n\n"
+    );
+}
+
+#[test]
+fn warns_of_a_field_named_like_a_declaration_unless_a_field_is_built_from_one() {
+    assert_eq!(
+        get_text(
+            "lint",
+            "---- MODULE Main ----\nVARIABLE x, y\nA == [x |-> 1]\nB == [y |-> y, z |-> 2]\n====\n"
+        ),
+        "Parsing file Main File\nSemantic processing of module Main\nLinting of module Main\nline 3, col 7 to line 3, col 7 of module Main\n\nThe field name \"x\" in the record constructor is identical to the existing definition or declaration\nnamed x, located at line 2, col 10 to line 2, col 10 of module Main.\nThe field in the record will not take the value of the x definition or declaration.\nIn TLA+, field names in records are strings, regardless of any similarly named declarations or definitions.\nTherefore, DOMAIN [x |-> ...] = {\"x\"} holds true.\n\n\n\n"
+    );
+}
+
+#[test]
 fn names_each_module_sany_parses_analyzes_and_lints() {
     assert_eq!(
         get_text(
