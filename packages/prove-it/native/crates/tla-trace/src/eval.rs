@@ -829,7 +829,13 @@ impl<'ir> Evaluator<'ir> {
                         return Ok(element.clone());
                     }
                 }
-                fail("CHOOSE found no element")
+                fail_runtime(
+                    "CHOOSE found no element",
+                    format!(
+                        "Attempted to compute the value of an expression of form\nCHOOSE x \\in S: P, but no element of S satisfied P.\n{}",
+                        self.describe_range(node)
+                    ),
+                )
             }
             NodeKind::SetEnumeration(items) => {
                 let values = items
