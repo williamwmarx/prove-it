@@ -12,7 +12,7 @@
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use tla_ir::{Index, NodeId, NodeKind, Pattern, Resolution, ScopeBinding};
 use tla_values::store::{FALSE, KIND_SET, KIND_TUPLE, Outcome, TRUE};
@@ -560,6 +560,21 @@ impl WalkedForall {
 }
 
 /// What a lazily kept function applied in an action walks: its body at the argument.
+/// The walk of a recursive function's body, compiled once for what the walk knows where an action
+/// applies the function, and the slots from its argument's to the last the walk binds.
+pub(crate) struct WalkedFunction {
+    body: NodeId,
+    // The scope the function's body closes over, kept so its address isn't reused.
+    scope: Option<Rc<Scope>>,
+    is_primed: bool,
+    can_print: bool,
+    is_init: bool,
+    is_shortcut: bool,
+    known: Known,
+    slot: u32,
+    walk: Arc<OnceLock<(Rest, u32)>>,
+}
+
 struct LazyApplication {
     pattern: Pattern,
     set: NodeId,
@@ -884,116 +899,7 @@ impl<'a> Compiler<'a> {
 
     // The expressions directly inside one, as `collectChildren` finds them.
     pub(super) fn children(&self, node: NodeId) -> Vec<NodeId> {
-        let mut children = Vec::new();
-        match self.node(node).1 {
-            NodeKind::Number(_)
-            | NodeKind::WideNumber(_)
-            | NodeKind::Decimal(_)
-            | NodeKind::String(_)
-            | NodeKind::Identifier(_)
-            | NodeKind::OperatorReference(_)
-            | NodeKind::ExceptAt
-            | NodeKind::Reference(_) => {}
-            NodeKind::Apply { args, .. } => children.extend(args),
-            NodeKind::Lambda { body, .. } => children.push(*body),
-            NodeKind::And(operands)
-            | NodeKind::Or(operands)
-            | NodeKind::SetEnumeration(operands)
-            | NodeKind::Tuple(operands)
-            | NodeKind::Bracket(operands)
-            | NodeKind::Product(operands) => children.extend(operands),
-            NodeKind::Prime(inner)
-            | NodeKind::Unchanged(inner)
-            | NodeKind::Enabled(inner)
-            | NodeKind::Always(inner)
-            | NodeKind::Eventually(inner) => children.push(*inner),
-            NodeKind::If {
-                condition,
-                consequent,
-                alternative,
-            } => children.extend([*condition, *consequent, *alternative]),
-            NodeKind::Case { arms, other } => {
-                for (condition, body) in arms {
-                    children.extend([*condition, *body]);
-                }
-                children.extend(other);
-            }
-            NodeKind::Let {
-                definitions, body, ..
-            } => {
-                children.extend(definitions);
-                children.push(*body);
-            }
-            NodeKind::Forall { bounds, body }
-            | NodeKind::Exists { bounds, body }
-            | NodeKind::FunctionConstruction { bounds, body, .. } => {
-                children.extend(bounds.iter().map(|bound| bound.set));
-                children.push(*body);
-            }
-            NodeKind::SetMap { expression, bounds } => {
-                children.push(*expression);
-                children.extend(bounds.iter().map(|bound| bound.set));
-            }
-            NodeKind::UnboundedQuantifier { body, .. } => children.push(*body),
-            NodeKind::Choose { set, body, .. } => {
-                children.extend(set);
-                children.push(*body);
-            }
-            NodeKind::SetFilter { predicate, .. } => children.push(*predicate),
-            NodeKind::FunctionSet { domain, range } => children.extend([*domain, *range]),
-            NodeKind::Record(fields) | NodeKind::RecordSet(fields) => {
-                children.extend(fields.iter().map(|(_, value)| *value))
-            }
-            NodeKind::Except { function, updates } => {
-                children.push(*function);
-                for update in updates {
-                    for step in &update.path {
-                        if let tla_ir::PathStep::Index(indices) = step {
-                            children.extend(indices);
-                        }
-                    }
-                    children.push(update.value);
-                }
-            }
-            NodeKind::FunctionApplication { function, args } => {
-                children.push(*function);
-                children.extend(args);
-            }
-            NodeKind::FieldAccess { record, .. } => children.push(*record),
-            NodeKind::BoxAction { action, subscript }
-            | NodeKind::AngleAction { action, subscript } => children.extend([*action, *subscript]),
-            NodeKind::WeakFairness {
-                subscript,
-                action,
-                enabled,
-            }
-            | NodeKind::StrongFairness {
-                subscript,
-                action,
-                enabled,
-            } => {
-                children.extend([*subscript, *action]);
-                children.extend(enabled);
-            }
-            NodeKind::Label { body, .. } => children.push(*body),
-            NodeKind::Subexpression(selectors) => {
-                for selector in selectors {
-                    match selector {
-                        tla_ir::Selector::Name { args, .. } | tla_ir::Selector::Bound(args) => {
-                            children.extend(args)
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            NodeKind::Definition(definition) => {
-                if let DefinitionForm::Function(bounds) = &definition.form {
-                    children.extend(bounds.iter().map(|bound| bound.set));
-                }
-                children.push(definition.body);
-            }
-        }
-        children
+        self.node(node).1.children()
     }
 
     // Whether an expression has a disjunction or an existential, for each of which TLC generates
@@ -1036,6 +942,110 @@ impl<'a> Compiler<'a> {
             }
         }
         Ok(false)
+    }
+
+    // TLC walks the body of a function it keeps lazy where an action applies it (getNextStates),
+    // the body of a recursive function too, which may apply the function again. The body's walk
+    // is compiled once for what the walk knows, and runs at each application with a continuation
+    // that goes on with the rest of the walk where the application is, the caller's slots back.
+    fn walk_recursive_application(
+        &mut self,
+        lazy: &LazyApplication,
+        argument: NodeId,
+        context: &Context,
+        options: WalkOptions,
+        known: &Known,
+        then: &mut Then<'_, 'a>,
+    ) -> Compiling<Rest> {
+        if !matches!(lazy.pattern, Pattern::Name(_)) {
+            return unsupported("walking a recursive function over a tuple pattern");
+        }
+        let argument = self.compile(argument, context)?.eval;
+        let set = self.compile(lazy.set, &lazy.base)?;
+        let member = self.member_test(&set);
+        let is_walked = |walked: &&WalkedFunction| {
+            walked.body == lazy.body
+                && match (&walked.scope, &lazy.base.scope) {
+                    (Some(walked), Some(scope)) => Rc::ptr_eq(walked, scope),
+                    (walked, scope) => walked.is_none() && scope.is_none(),
+                }
+                && walked.is_primed == lazy.base.is_primed
+                && walked.can_print == lazy.base.can_print
+                && walked.is_init == options.is_init
+                && walked.is_shortcut == options.is_shortcut
+                && walked.known == *known
+        };
+        let found = self
+            .walked_functions
+            .iter()
+            .find(is_walked)
+            .map(|walked| (walked.slot, Arc::clone(&walked.walk)));
+        let (slot, walk) = match found {
+            Some(found) => found,
+            None => {
+                let binder = self.bind_bound(&lazy.pattern, &lazy.base);
+                let slot = binder.slots[0];
+                let walk = Arc::new(OnceLock::new());
+                self.walked_functions.push(WalkedFunction {
+                    body: lazy.body,
+                    scope: lazy.base.scope.clone(),
+                    is_primed: lazy.base.is_primed,
+                    can_print: lazy.base.can_print,
+                    is_init: options.is_init,
+                    is_shortcut: options.is_shortcut,
+                    known: known.clone(),
+                    slot,
+                    walk: Arc::clone(&walk),
+                });
+                let body = self.walk(
+                    lazy.body,
+                    &binder.context,
+                    options,
+                    known,
+                    &mut |_, after: &Known| {
+                        if after == known {
+                            Ok(None)
+                        } else {
+                            unsupported("walking a recursive function that assigns")
+                        }
+                    },
+                );
+                let body = match body {
+                    Ok(body) => body,
+                    Err(error) => {
+                        self.walked_functions
+                            .retain(|walked| !Arc::ptr_eq(&walked.walk, &walk));
+                        return Err(error);
+                    }
+                };
+                let _ = walk.set((body, self.program.slot_count as u32));
+                (slot, walk)
+            }
+        };
+        let rest = then(self, known)?;
+        Ok(Some(step(move |machine, on_complete| {
+            let value = argument(machine)?;
+            if !member(machine, value)? {
+                return Err(Bail("applied a function outside its domain"));
+            }
+            let (body, end) = walk
+                .get()
+                .expect("a recursive function's walk run before it compiled");
+            let slots = slot as usize..*end as usize;
+            let caller = machine.locals[slots.clone()].to_vec();
+            machine.locals[slot as usize] = value;
+            let result = machine.nested(|machine| {
+                run_rest(body, machine, &mut |machine| {
+                    let callee = machine.locals[slots.clone()].to_vec();
+                    machine.locals[slots.clone()].copy_from_slice(&caller);
+                    let result = run_rest(&rest, machine, on_complete);
+                    machine.locals[slots.clone()].copy_from_slice(&callee);
+                    result
+                })
+            });
+            machine.locals[slots].copy_from_slice(&caller);
+            result
+        })))
     }
 
     fn is_walked_body(&mut self, node: NodeId, context: &Context) -> Compiling<bool> {
@@ -1360,7 +1370,8 @@ impl<'a> Compiler<'a> {
                     return self.guard_step(node, context, known, then);
                 }
                 if lazy.is_recursive {
-                    return unsupported("walking a recursive function in an action");
+                    return self
+                        .walk_recursive_application(&lazy, args[0], context, options, known, then);
                 }
                 let argument = self.compile(args[0], context)?.eval;
                 let set = self.compile(lazy.set, &lazy.base)?;

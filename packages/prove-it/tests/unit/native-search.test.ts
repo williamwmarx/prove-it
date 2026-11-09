@@ -1589,4 +1589,19 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
       ),
     ).toContainEqual(expect.stringMatching(COMPLETE));
   });
+  it("walks a recursive function an action applies, each path a successor, as TLC does", async () => {
+    const body = [
+      "EXTENDS Naturals",
+      "VARIABLE x",
+      "Ok(n) == LET R[k \\in 0..n] ==",
+      "             \\/ k = 0",
+      "             \\/ \\E j \\in 0..1 : (k > 1 => R[k - 1]) /\\ j + k > 1",
+      "          IN R[n]",
+      "Init == x = 0",
+      "Next == x < 4 /\\ Ok(x) /\\ x' = x + 1",
+    ];
+    expect(
+      await compareWithInterpreter(body, "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE"),
+    ).toContainEqual(expect.stringMatching(COMPLETE));
+  });
 });

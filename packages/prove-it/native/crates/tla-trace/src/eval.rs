@@ -4,7 +4,7 @@
 //! at the call site with their arguments evaluated where used, and functions TLC keeps lazy, a
 //! definition's or a LET's, are applied without building them.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use tla_values::random::JavaRandom;
@@ -172,8 +172,9 @@ type KeyedVisit<'v, 'ir> = dyn FnMut(&mut Evaluator<'ir>, &Context, &[Value]) ->
 pub struct CallStack {
     pub frames: Vec<StackFrame>,
     pub is_frozen: bool,
-    /// The values the replay built that TLC's `CallStackTool` gives a source, by their address.
-    sourced: HashSet<usize>,
+    /// The values the replay built that TLC's `CallStackTool` gives a source, by their address,
+    /// each with the node that built it.
+    sourced: HashMap<usize, NodeId>,
     /// The value each node of the replay last evaluated to.
     values: HashMap<NodeId, Value>,
     /// Whether the failure was in a method of a value with a source, which TLC reports as a
@@ -185,6 +186,17 @@ pub struct CallStack {
     /// Where the frames of the predicate of a filter TLC keeps lazy start, when it failed: TLC
     /// evaluates the predicate only as a method of the value enumerates it, as Print's does.
     pub lazy_filter: Option<usize>,
+    /// Where a state the replay found fails to fingerprint: the nodes that built the values the
+    /// fingerprint fails in, outermost first, as TLC's FingerprintException traces them, and the
+    /// state's values as TLC prints them, in the IR's order of the variables.
+    pub fingerprint: Option<(Vec<NodeId>, Vec<String>)>,
+}
+
+impl CallStack {
+    /// The node that built a value with a source.
+    pub(crate) fn source(&self, value: &Value) -> Option<NodeId> {
+        self.sourced.get(&address(value)?).copied()
+    }
 }
 
 // The address of a value TLC's `CallStackTool` can give a source: an object, as a set, a function
@@ -445,7 +457,7 @@ impl<'ir> Evaluator<'ir> {
         let is_sourced = self.is_sourced(node);
         if let (Some(stack), Ok(value)) = (&mut self.call_stack, &result) {
             if is_sourced && let Some(address) = address(value) {
-                stack.sourced.insert(address);
+                stack.sourced.entry(address).or_insert(node);
             }
             stack.values.insert(node, value.clone());
         }
@@ -516,7 +528,7 @@ impl<'ir> Evaluator<'ir> {
         let is_sourced = receiver
             .and_then(|receiver| stack.values.get(&receiver))
             .and_then(address)
-            .is_some_and(|address| stack.sourced.contains(&address));
+            .is_some_and(|address| stack.sourced.contains_key(&address));
         stack.is_fingerprinted |= is_sourced;
     }
 
@@ -1032,6 +1044,24 @@ impl<'ir> Evaluator<'ir> {
             }
             Binding::Operator(_) => fail("an operator used as a value"),
         }
+    }
+
+    /// Computes the model's startup definitions as TLC does when it starts, after the
+    /// substitutes, drawing from the generator TLC seeds then, and keeps them as their values.
+    pub(crate) fn compute_startup(&mut self) -> Evaluated<()> {
+        let ir = self.ir;
+        self.random = Some(JavaRandom::seeded(ir.model.random_seed));
+        let substitutes = ir.model.startup.substitutes.iter().map(|&(_, index)| index);
+        for index in substitutes.chain(ir.model.startup.definitions.iter().copied()) {
+            let node = ir.definitions[index as usize];
+            let value = self.evaluate(self.definition(node).body, &Context::default())?;
+            if ir.model.startup.definitions.contains(&index) {
+                self.cache.insert((node, false), value.clone());
+                self.cache.insert((node, true), value);
+            }
+        }
+        self.random = None;
+        Ok(())
     }
 
     /// Takes the values the search computed at startup for the model's startup definitions,
