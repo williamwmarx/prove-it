@@ -2,7 +2,7 @@
 //! src/tlc/fingerprint.ts (DESIGN.md 10.3), and the engine's ways of fingerprinting a state against
 //! each other.
 
-use tla_values::fingerprint::{Fingerprints, INITIAL, Parent, extend_byte, extend_int};
+use tla_values::fingerprint::{Fingerprints, INITIAL, Overlaid, Parent, extend_byte, extend_int};
 use tla_values::store::{Id, Store, TRUE};
 
 fn utf16(text: &str) -> Vec<u16> {
@@ -252,7 +252,7 @@ fn absorb_what_an_overlay_computed_by_the_ids_its_values_were_imported_as() {
     let bound = base.value_count() as Id;
     let shared = search.share();
     let mut overlay = Store::overlay(base.clone());
-    let mut worker = Fingerprints::new();
+    let mut worker: Fingerprints<Overlaid> = Fingerprints::default();
     worker.attach(&shared, bound);
     // The thread makes values the store doesn't hold, and fingerprints them and a value of the
     // store the search hadn't.

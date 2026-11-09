@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 
 use tla_ir::{Ir, LiveTerm, Model};
 use tla_live::{Event, Liveness, Term, Verdict};
-use tla_values::fingerprint::{Fingerprints, Parent, SharedFingerprints};
+use tla_values::fingerprint::{Dense, Entries, Fingerprints, Overlaid, Parent, SharedFingerprints};
 use tla_values::store::Outcome;
 use tla_values::transfer::{EncodedStates, SharedEncoder, SharedStates, StateEncoder};
 use tla_values::{Bail, Id, NESTING_STACK_BYTES, Store};
@@ -484,7 +484,7 @@ impl Reached for States {
 }
 
 // The search's state besides the machine, which the walks' continuations update.
-struct Search<'r, T> {
+struct Search<'r, T, E = Dense> {
     states: T,
     reporter: &'r mut dyn Reporter,
     is_distinct_read: bool,
@@ -502,7 +502,7 @@ struct Search<'r, T> {
     expansion_epoch: u64,
     level_id: Id,
     next_level_id: Id,
-    fingerprints: Fingerprints,
+    fingerprints: Fingerprints<E>,
     // The state being expanded, whose successors' fingerprints follow from its own when the key is
     // the state.
     parent: Parent,
@@ -528,13 +528,13 @@ struct Search<'r, T> {
     held: Option<Vec<Vec<Printed>>>,
 }
 
-impl<'r, T: Reached> Search<'r, T> {
+impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
     fn new(
         states: T,
         reporter: &'r mut dyn Reporter,
         is_distinct_read: bool,
         is_pipelined: bool,
-    ) -> Search<'r, T> {
+    ) -> Search<'r, T, E> {
         let width = states.order().len().max(1);
         Search {
             states,
@@ -553,7 +553,7 @@ impl<'r, T: Reached> Search<'r, T> {
             expansion_epoch: 0,
             level_id: 0,
             next_level_id: 0,
-            fingerprints: Fingerprints::new(),
+            fingerprints: Fingerprints::default(),
             parent: Parent::default(),
             canonicalizer: None,
             graph: None,
@@ -893,7 +893,7 @@ impl<'r, T: Reached> Search<'r, T> {
     }
 }
 
-impl<T: Reached> Search<'_, T> {
+impl<T: Reached, E: Entries> Search<'_, T, E> {
     // Takes the steps of the state `current` holds, the state `expanding` names, whose
     // fingerprint is given: through the next-state relation, or through each of TLC's actions.
     fn expand(
@@ -1083,7 +1083,7 @@ impl Reached for Candidates<'_> {
 #[repr(align(128))]
 struct Worker<'p> {
     machine: Machine<'p>,
-    fingerprints: Fingerprints,
+    fingerprints: Fingerprints<Overlaid>,
     canonicalizer: Option<Canonicalizer>,
     // The store's count of values when the overlay was last laid on it: its own ids start there.
     bound: Id,
@@ -1605,7 +1605,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                         workers = (0..thread_count)
                             .map(|_| Worker {
                                 machine: Machine::new(&program, Store::new()),
-                                fingerprints: Fingerprints::new(),
+                                fingerprints: Fingerprints::default(),
                                 canonicalizer: search
                                     .canonicalizer
                                     .as_ref()
