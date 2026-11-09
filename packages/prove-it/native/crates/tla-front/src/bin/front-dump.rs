@@ -23,6 +23,8 @@
 //!   master and 1.7.4: its results, what the translator logs, and the exception it throws;
 //! - `front-dump sany-parse-error` writes SANY's report of a module its lexer or parser rejects,
 //!   for TLC master and 1.7.4, and TLC 1.7.4's lexical error, or null for each it accepts;
+//! - `front-dump coded` reads each file as an error's message and writes TLC's code for it, and
+//!   the message as TLC prints it with and without -tool;
 //! - `front-dump time` writes the best of five times to tokenize and parse each module, in
 //!   milliseconds.
 
@@ -284,10 +286,14 @@ fn write_sany_text(out: &mut String, path: &Path, library: Option<&Path>) {
             describe_file: &describe_file,
         },
     ) {
-        Ok(text) => {
+        Ok(sany) => {
             out.push_str("{\"text\":");
-            write_js_string(out, &text);
-            out.push('}');
+            write_js_string(out, &sany.text);
+            out.push_str(if sany.is_failed {
+                ",\"isFailed\":true}"
+            } else {
+                ",\"isFailed\":false}"
+            });
         }
         Err(error) => dump::environment(&Err(error)).write(out),
     }
@@ -421,6 +427,20 @@ fn main() -> ExitCode {
             write(out, get_sany_174_lexical_error(source));
             out.push('}');
         },
+        "coded" => |out, source| {
+            let error = FrontError::Config(source.to_owned());
+            let write = |out: &mut String, is_tool: bool| {
+                if let Some(coded) = error.get_coded(is_tool) {
+                    let _ = write!(out, "{},", coded.code);
+                    write_js_string(out, &coded.text);
+                }
+            };
+            out.push('[');
+            write(out, false);
+            out.push(',');
+            write(out, true);
+            out.push(']');
+        },
         "pcal" => |out, source| {
             out.push_str("{\"master\":");
             write_pcal_validation(out, source, TlcVersion::Master);
@@ -437,7 +457,7 @@ fn main() -> ExitCode {
         },
         _ => {
             eprintln!(
-                "usage: front-dump tokens|ast|sany-ast|config|pcal|sany-parse-error|resolve|model|ir|order|model-ir|model-full|spec|properties|sany-text|levels|time < paths"
+                "usage: front-dump tokens|ast|sany-ast|config|coded|pcal|sany-parse-error|resolve|model|ir|order|model-ir|model-full|spec|properties|sany-text|levels|time < paths"
             );
             return ExitCode::from(2);
         }

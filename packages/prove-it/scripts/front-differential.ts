@@ -34,8 +34,10 @@ import { toEngineProperties } from "../src/engine/context";
 import { lowerToIr } from "../src/engine/ir";
 import { createEnvironment, type InstanceAction } from "../src/environment";
 import {
+  isStackOverflow,
   PcalBugError,
   PcalRuntimeError,
+  STACK_OVERFLOW_MESSAGE,
   TlaConfigError,
   TlaEvaluationError,
   TlaModuleError,
@@ -73,6 +75,8 @@ const BATCH = 50;
 const TIMED_RUNS = 5;
 
 const describe = (error: unknown) => {
+  // TLC overflows its stack where the TypeScript front end does.
+  if (isStackOverflow(error)) return { error: STACK_OVERFLOW_MESSAGE };
   if (
     error instanceof TlaConfigError ||
     error instanceof TlaEvaluationError ||
@@ -376,13 +380,13 @@ const MODES: Record<string, (source: string, path: string, spec: string) => stri
   }),
   // What SANY prints, with each file described by its module's name and origin, as front-dump
   // describes it.
-  "sany-text": (_source, path) =>
-    JSON.stringify({
-      text: getSanyReport(path, createLoader(path), {
-        describeFile: (name, origin) =>
-          `${name}|${{ file: "File", "root file": "RootFile", standard: "Standard" }[origin]}`,
-      }).text,
-    }),
+  "sany-text": (_source, path) => {
+    const report = getSanyReport(path, createLoader(path), {
+      describeFile: (name, origin) =>
+        `${name}|${{ file: "File", "root file": "RootFile", standard: "Standard" }[origin]}`,
+    });
+    return JSON.stringify({ text: report.text, isFailed: report.isFailed });
+  },
   model: writeResult((source, _path, spec) =>
     readEnvironment(readFileSync(spec, "utf8"), spec, parseConfig(source)),
   ),

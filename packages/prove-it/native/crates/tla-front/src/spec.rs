@@ -300,7 +300,8 @@ impl Expansion<'_> {
                             > Level::Constant
                 }) {
                     if expanding.contains(&Rc::as_ptr(definition)) {
-                        return Err(not_yet("a temporal formula that expands itself"));
+                        // TLC recurses until its stack overflows.
+                        return Err(FrontError::StackOverflow);
                     }
                     let expanding = [expanding, &[Rc::as_ptr(definition)]].concat();
                     return self.expand(

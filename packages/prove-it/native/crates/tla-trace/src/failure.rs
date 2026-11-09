@@ -63,12 +63,14 @@ pub struct Failure {
 }
 
 const GENERAL: u32 = 1000;
+const ASSUMPTION_EVALUATION_FAILED: u32 = 2105;
 const INVARIANT_EVALUATION_FAILED: u32 = 2111;
 const ASSERT_FAILED: u32 = 2132;
 const EXPECTED_VALUE: u32 = 2215;
 /// `EC.TLC_INITIAL_STATE`: an error and the initial state TLC was working on.
 const INITIAL_STATE: u32 = 2102;
 
+const VIOLATION_ASSUMPTION: i32 = 10;
 const VIOLATION_ASSERT: i32 = 14;
 const FAILURE_SPEC_EVAL: i32 = 75;
 const FAILURE_SAFETY_EVAL: i32 = 76;
@@ -106,6 +108,55 @@ fn report(message: &TlcMessage, is_next_state: bool) -> (u32, String, String) {
 }
 
 impl<'ir> Rebuilder<'ir> {
+    /// Evaluates again the assumption at `position` of the model's assumptions, which failed to
+    /// evaluate as TLC started, after the startup's definitions, and returns TLC's report of it
+    /// (`checkAssumptions`), with what it printed before it failed.
+    pub fn evaluate_assumption(&mut self, position: u32) -> Result<Failure, Unsupported> {
+        let evaluator = self.evaluator();
+        let ir = evaluator.ir;
+        let Some(&(node, name)) = ir.model.startup.assumptions.get(position as usize) else {
+            return Err(Unsupported("an assumption the model doesn't have".into()));
+        };
+        let width = ir.variables.len();
+        evaluator.current = vec![None; width];
+        evaluator.next = vec![None; width];
+        evaluator.level = 0;
+        // The startup printed its definitions and the assumptions before this one already.
+        run(evaluator.compute_startup())?;
+        evaluator.printed.clear();
+        evaluator.call_stack = Some(CallStack::default());
+        let result = evaluator.evaluate(node, &Context::default());
+        let call_stack = evaluator.call_stack.take().unwrap_or_default();
+        let printed = std::mem::take(&mut evaluator.printed);
+        let Err(error) = result else {
+            return Err(Unsupported(
+                "evaluating the assumption again: it didn't fail".into(),
+            ));
+        };
+        if let Some(reason) = call_stack.unfollowed {
+            return Err(Unsupported(format!(
+                "evaluating the assumption again: {reason}"
+            )));
+        }
+        let Some(message) = error.message else {
+            return Err(Unsupported(format!(
+                "evaluating the assumption again: {}",
+                error.reason
+            )));
+        };
+        let headline = format!("Evaluating assumption {} failed.", ir.texts[name as usize]);
+        Ok(Failure {
+            code: ASSUMPTION_EVALUATION_FAILED,
+            message: format!("{headline}\n{}", message.text),
+            tool_message: format!("{headline}\n{}", nested(&message)),
+            call_stack: Vec::new(),
+            exit_code: VIOLATION_ASSUMPTION,
+            printed,
+            fingerprint: None,
+            state: None,
+        })
+    }
+
     /// Evaluates again where the search failed, at `site`, after the path `states` (as for
     /// `rebuild`; none for the initial predicate), and returns TLC's report of the error.
     /// `Unsupported` where the evaluator doesn't give TLC's message for the error, or where the
