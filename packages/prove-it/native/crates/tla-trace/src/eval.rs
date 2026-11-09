@@ -1720,9 +1720,10 @@ impl<'ir> Evaluator<'ir> {
         {
             let operation = match self.name(self.ir.builtins[index as usize].name) {
                 "\\cup" => Some(SetOperation::Union),
-                // TLC builds an intersection of an enumerable set at once, testing its elements,
-                // so the replay builds it too rather than test the membership lazily.
-                "\\cap" if self.call_stack.is_some() => None,
+                // TLC builds an intersection or a difference of an enumerable set at once,
+                // testing its elements, so the replay builds it too rather than test the
+                // membership lazily.
+                "\\cap" | "\\" if self.call_stack.is_some() => None,
                 "\\cap" => Some(SetOperation::Intersection),
                 "\\" => Some(SetOperation::Difference),
                 _ => None,
