@@ -21,8 +21,8 @@ use tla_values::{Bail, Id, NESTING_STACK_BYTES, Store};
 
 use crate::compile::{CompileError, Compiler, DISTINCT_SLOT, LEVEL_SLOT, NEXT_LEVEL_SLOT, Options};
 use crate::context::{
-    Atom, EngineContext, Startup, StartupSymmetry, count_possible, first_failing,
-    first_failing_changed, holds_all, holds_all_changed,
+    Atom, EngineContext, Startup, StartupSymmetry, count_possible, first_failing_changed,
+    holds_all, holds_all_changed,
 };
 use crate::live::{Diameters, LiveGraph, Table, UNKNOWN, answer_atoms};
 use crate::machine::{Eval, Machine, Printed, Step, UNASSIGNED};
@@ -285,6 +285,12 @@ pub enum ErrorSite {
     /// Evaluating the invariant at this position of the model's invariants on the trace's last
     /// state, a successor of the state before it.
     Invariant(u32),
+    /// Evaluating the constraint at this position of the model's constraints on an initial state,
+    /// the violation's one state.
+    InitialConstraint(u32),
+    /// Evaluating the invariant at this position of the model's invariants on an initial state,
+    /// the violation's one state.
+    InitialInvariant(u32),
 }
 
 // The stops that are the engine's own limits, not a failure TLC reports: what it doesn't
@@ -775,7 +781,21 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
         }
         self.generated += 1;
         self.initial_generated += 1;
-        let is_in_model = holds_all_changed_none(machine, context)?;
+        let mut is_in_model = true;
+        for (position, constraint) in context.constraints.iter().enumerate() {
+            match crate::context::holds(machine, &constraint.eval) {
+                Ok(true) => {}
+                Ok(false) => {
+                    is_in_model = false;
+                    break;
+                }
+                Err(bail) => {
+                    let site = ErrorSite::InitialConstraint(context.constraint_owners[position]);
+                    let distinct = self.states.count() as u64;
+                    return Err(self.note_initial_error(machine, site, distinct, bail));
+                }
+            }
+        }
         if is_in_model {
             count_possible(machine, &context.possible, false, &mut self.possible)?;
         }
@@ -793,7 +813,23 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
             if is_in_model {
                 self.set_distinct(machine, self.states.count() + 1)?;
             }
-            if let Some(failing) = first_failing(machine, &context.initial_invariants)? {
+            let mut failing = None;
+            for (position, invariant) in context.initial_invariants.iter().enumerate() {
+                match crate::context::holds(machine, invariant) {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        failing = Some(position);
+                        break;
+                    }
+                    Err(bail) => {
+                        let owner = context.initial_invariant_owners[position] as u32;
+                        let distinct = (self.states.count() + usize::from(is_in_model)) as u64;
+                        let site = ErrorSite::InitialInvariant(owner);
+                        return Err(self.note_initial_error(machine, site, distinct, bail));
+                    }
+                }
+            }
+            if let Some(failing) = failing {
                 self.violation = Some(Found {
                     kind: ViolationKind::InitialInvariant(
                         context.initial_invariant_owners[failing],
@@ -1133,6 +1169,32 @@ impl<T: Reached, E: Entries> Search<'_, T, E> {
 impl<T: Reached, E: Entries> Search<'_, T, E> {
     // A failure computing the successors of the state being expanded, which TLC reports with the
     // path to that state, unless the search already found what stopped it.
+    // A failure evaluating a constraint or an invariant on an initial state, which TLC reports
+    // with the state and the counts so far, the state counted as generated.
+    fn note_initial_error(
+        &mut self,
+        machine: &Machine<'_>,
+        site: ErrorSite,
+        distinct: u64,
+        bail: Bail,
+    ) -> Bail {
+        if self.violation.is_none() && !is_engine_limit(bail.0) {
+            self.violation = Some(Found {
+                kind: ViolationKind::Error { site },
+                parent: None,
+                last: Some(machine.current().to_vec()),
+                counts: StopCounts {
+                    generated: self.generated,
+                    distinct,
+                    queued: distinct,
+                    depth: 1,
+                    ..StopCounts::default()
+                },
+            });
+        }
+        bail
+    }
+
     fn note_next_error(&mut self, bail: Bail) -> Bail {
         if self.violation.is_none() && !is_engine_limit(bail.0) {
             let count = self.states.count() as u64;
