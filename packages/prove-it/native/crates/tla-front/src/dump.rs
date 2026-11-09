@@ -1188,6 +1188,7 @@ pub fn environment(
                     .collect(),
             )),
         ),
+        ("levels", Some(levels(environment, &keys))),
         (
             "startup",
             Some(list(&environment.startup_definitions, |definition| {
@@ -1195,4 +1196,26 @@ pub fn environment(
             })),
         ),
     ])
+}
+
+/// Each operator without parameters by its first key, with its body's level (`getLevel`).
+fn levels(
+    environment: &crate::environment::Environment,
+    keys: &crate::hash::FastMap<*const Definition, Name>,
+) -> Json {
+    let facts = crate::dependencies::create_definition_facts(environment);
+    Json::Array(
+        environment
+            .definitions
+            .iter()
+            .filter(|(key, definition)| {
+                keys.get(&Rc::as_ptr(definition)) == Some(key)
+                    && matches!(&definition.kind, DefinitionKind::Operator { params, .. } if params.is_empty())
+            })
+            .map(|(key, definition)| {
+                let level = crate::spec::get_level(&definition.body, None, environment, &facts, &[]);
+                Json::Array(vec![name(key), number(level as usize)])
+            })
+            .collect(),
+    )
 }

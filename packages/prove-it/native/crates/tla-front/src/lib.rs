@@ -16,6 +16,7 @@ pub mod order;
 pub mod ordered_map;
 pub mod parser;
 pub mod resolve;
+pub mod spec;
 #[rustfmt::skip]
 pub mod standard_builtins;
 pub mod standard_modules;

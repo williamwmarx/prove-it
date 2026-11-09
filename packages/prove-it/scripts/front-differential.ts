@@ -30,6 +30,7 @@ import { createEnvironment } from "../src/environment";
 import { TlaConfigError, TlaEvaluationError, TlaModuleError, TlaSyntaxError } from "../src/errors";
 import { type Builtin, describeRange, type Environment } from "../src/evaluate";
 import { tokenize } from "../src/lexer";
+import { getLevel } from "../src/liveness";
 import { parseModule, parseSanyModule } from "../src/parser";
 import { createTlcOrder } from "../src/tlc/order";
 import { setStringOrder } from "../src/values";
@@ -147,6 +148,14 @@ const readEnvironment = (source: string, path: string, config?: ModelConfig) => 
     assumptions: specification.assumptions
       .filter((assumption) => !assumption.isAxiom)
       .map((assumption) => describeRange(assumption.expression)),
+    levels: [...environment.definitions]
+      .filter(
+        (entry) =>
+          keys.get(entry[1]) === entry[0] &&
+          entry[1].kind === "Operator" &&
+          entry[1].params.length === 0,
+      )
+      .map((entry) => [entry[0], getLevel(entry[1].body, undefined, environment)]),
     startup: config
       ? specification.startupDefinitions.map((definition) => keys.get(definition))
       : [],
