@@ -206,3 +206,14 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   resolve statically". They now bind the LET's definitions and look through it, and through a
   label. Github725d (TLC's tests), declined before, now searches in Rust, and the TypeScript
   engine searches it too.
+
+## SUBSET of a set with no order
+
+- TLC enumerates `SUBSET S` in the normalized order of S's elements, whatever S's own order
+  (`SubsetValue.elementsNormalized`). Both engines enumerated a power set only where its base had
+  an order of its own, and declined `x' \in SUBSET S` for any other S as "enumerating a set TLC
+  keeps lazy". The power set now enumerates its base's value in that order. test46 (TLC's tests),
+  declined before, now searches in Rust, and the TypeScript engine searches it too.
+- Comparing the results in full, where the native engine stops on a violation whose trace holds
+  sets of records, the interpreter's trace marks a record as fingerprinted and the native engine's
+  doesn't. What either prints is the same.

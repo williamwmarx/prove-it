@@ -1310,6 +1310,22 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     ).toContainEqual(expect.stringMatching(COMPLETE));
   });
 
+  // From TLC's test46: SubsetValue.elementsNormalized enumerates SUBSET S in the normalized order
+  // of S's elements, whatever S's own order.
+  it("assigns from SUBSET of a set it has no order for, in TLC's normalized order", async () => {
+    const body = [
+      "EXTENDS Naturals, FiniteSets",
+      "VARIABLES x, f",
+      "S == UNION {[p : {k}, i : DOMAIN f[k]] : k \\in {1, 2}}",
+      "Init == f = [k \\in {1, 2} |-> <<0>>] /\\ x = {}",
+      "Next == f' = f /\\ x' \\in SUBSET (S' \\X S')",
+      "Inv == Cardinality(x) <= 4",
+    ];
+    expect(
+      await compareWithInterpreter(body, "INIT Init\nNEXT Next\nINVARIANT Inv"),
+    ).toContainEqual(expect.stringMatching(COMPLETE));
+  });
+
   it("applies recursive functions as TLC keeps them lazy", async () => {
     const body = [
       "EXTENDS Naturals, FiniteSets",

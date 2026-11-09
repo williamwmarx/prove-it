@@ -151,6 +151,24 @@ describe("the engine", () => {
     expect(lines).toEqual([expect.stringMatching(/^\[engine\] checked 4 states/)]);
   });
 
+  it("assigns from SUBSET of a set it has no order for, in TLC's normalized order", async () => {
+    // From TLC's test46: SubsetValue.elementsNormalized enumerates SUBSET S in the normalized
+    // order of S's elements, whatever S's own order.
+    const { result, lines } = await checkInEngine(
+      [
+        "EXTENDS Naturals, FiniteSets",
+        "VARIABLES x, f",
+        "S == UNION {[p : {k}, i : DOMAIN f[k]] : k \\in {1, 2}}",
+        "Init == f = [k \\in {1, 2} |-> <<0>>] /\\ x = {}",
+        "Next == f' = f /\\ x' \\in SUBSET (S' \\X S')",
+        "Inv == Cardinality(x) < 3",
+      ].join("\n"),
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+    );
+    expect(result.status).toBe("invariant-violation");
+    expect(lines).toEqual([expect.stringMatching(/an invariant violated$/)]);
+  });
+
   it("keeps the names a recursive function binds apart in each call", async () => {
     const { result, lines } = await checkInEngine(
       [

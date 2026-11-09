@@ -3035,10 +3035,14 @@ export const createCompiler = (environment: Environment): Compiler => {
         return {
           ...unary(base, (set) => powerSet(expectSet(set)), true),
           isNormalized: false,
-          reference: combineReferences([base], ([baseReference]) => () => ({
-            kind: "Subset",
-            base: baseReference(),
-          })),
+          // TLC enumerates SUBSET S in the normalized order of S's elements, whatever S's own
+          // order (SubsetValue.elementsNormalized), so S's value does where S has no reference.
+          reference:
+            combineReferences([base], ([baseReference]) => () => ({
+              kind: "Subset",
+              base: baseReference(),
+            })) ??
+            ((evaluate) => () => ({ kind: "Subset", base: toValue(evaluate()) }))(base.evaluate),
           parts: partsOf(base),
           member: ((baseMember, baseParts) => (element: number) => {
             runParts(baseParts);
