@@ -1219,3 +1219,62 @@ fn levels(
             .collect(),
     )
 }
+
+/// What `front-differential spec` compares of `getSpecification`: Init's conjuncts and Next, each
+/// its name if an identifier and where it is written, the scope's names, and the temporals.
+pub fn specification(
+    value: &Result<crate::spec::Specification, crate::errors::FrontError>,
+) -> Json {
+    use crate::errors::{FrontError, describe_range};
+    let specification = match value {
+        Ok(specification) => specification,
+        Err(FrontError::Syntax(error)) => return syntax_error(error),
+        Err(FrontError::Evaluation(message) | FrontError::Config(message)) => {
+            return object(vec![("error", Some(text(message)))]);
+        }
+        Err(FrontError::NotYet(reason)) => return object(vec![("notYet", Some(text(reason)))]),
+    };
+    let describe = |expression: &Expr| {
+        Json::Array(vec![
+            match &expression.kind {
+                ExpressionKind::Identifier { .. } => {
+                    name(&expression.reference().unwrap_or_default())
+                }
+                _ => Json::Null,
+            },
+            text(&describe_range(expression)),
+        ])
+    };
+    let init = specification.init.as_ref().map(|init| match &init.kind {
+        ExpressionKind::Junction {
+            is_and: true,
+            operands,
+            ..
+        } => Json::Array(operands.iter().map(describe).collect()),
+        _ => Json::Array(vec![describe(init)]),
+    });
+    let mut names = Vec::new();
+    let mut scope = specification.scope.as_ref();
+    while let Some(current) = scope {
+        names.push(name(&current.name));
+        scope = current.parent.as_ref();
+    }
+    object(vec![
+        ("init", Some(init.unwrap_or(Json::Null))),
+        (
+            "next",
+            Some(specification.next.as_ref().map_or(Json::Null, describe)),
+        ),
+        ("scope", Some(Json::Array(names))),
+        (
+            "temporals",
+            Some(Json::Array(
+                specification
+                    .temporals
+                    .iter()
+                    .map(|temporal| text(&describe_range(&temporal.expression)))
+                    .collect(),
+            )),
+        ),
+    ])
+}
