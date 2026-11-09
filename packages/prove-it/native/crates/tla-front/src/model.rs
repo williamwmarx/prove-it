@@ -45,6 +45,23 @@ pub fn load_module(spec_path: &Path, libraries: &[&Path], name: &str) -> Option<
         .find_map(|directory| std::fs::read_to_string(directory.join(&file)).ok())
 }
 
+/// A message TLC prints itself as it starts, once it has computed the constant definitions and
+/// before it checks the assumptions.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StartupMessage {
+    pub code: u32,
+    pub is_warning: bool,
+    pub text: String,
+}
+
+/// A model's IR, and what TLC prints as it starts the model besides SANY's report and what the
+/// startup's Print and PrintT print.
+pub struct LoweredModel {
+    pub ir: Vec<u8>,
+    /// The messages, or why the front end doesn't know them yet.
+    pub startup_messages: Result<Vec<StartupMessage>, String>,
+}
+
 /// The encoded IR of the model the configuration describes, without TLC's actions, which the
 /// engine splits, or `NotYet` for what the front end doesn't lower yet.
 pub fn lower_model(
@@ -52,10 +69,25 @@ pub fn lower_model(
     config_text: &str,
     options: &ModelOptions,
 ) -> Result<Vec<u8>, FrontError> {
+    lower_front(spec_path, config_text, options).map(|lowered| lowered.ir)
+}
+
+/// The model's IR, with what TLC prints itself as it starts: `createSearch`'s warnings about the
+/// invariants and properties, then `createLivenessChecker`'s, in `printCheckProgress`'s words.
+pub fn lower_front(
+    spec_path: &Path,
+    config_text: &str,
+    options: &ModelOptions,
+) -> Result<LoweredModel, FrontError> {
     let version = options.version.unwrap_or(TlcVersion::Master);
     let source = std::fs::read_to_string(spec_path)
         .map_err(|error| FrontError::Config(format!("{}: {error}", spec_path.display())))?;
-    let load = |name: &str| load_module(spec_path, options.libraries, name);
+    // The modules SANY reads, each of which TLC overrides with a Java class beside the spec.
+    let loaded = std::cell::RefCell::new(Vec::new());
+    let load = |name: &str| {
+        loaded.borrow_mut().push(name.to_owned());
+        load_module(spec_path, options.libraries, name)
+    };
     let config =
         parse_config(config_text, version).map_err(|error| FrontError::Config(error.message))?;
     // SANY's errors come from linking, before TLC's orders parse the modules again.
@@ -82,7 +114,7 @@ pub fn lower_model(
         .collect();
     let evaluator = Evaluator::new(&environment, ValueOrder { ranks: &ranks }, version, true);
     let lowered = (|| {
-        check_invariants(&config, &environment, &facts, &evaluator)?;
+        let constant_invariants = check_invariants(&config, &environment, &facts, &evaluator)?;
         let specification =
             get_specification(&config, &environment, &facts, version, Some(&evaluator))?;
         let properties = get_properties(&config, &environment, &facts, version, Some(&evaluator))?;
@@ -160,6 +192,7 @@ pub fn lower_model(
                 tlc_order,
             )?
         };
+        let branches = lowering.branches;
         let ir = lowering.finish(model)?;
         // TLCGet("spec"), where an expression reads it; where the front end can't describe the
         // specification, the engine stops where TLC would read it.
@@ -173,8 +206,45 @@ pub fn lower_model(
         } else {
             ir
         };
-        Ok(tla_ir::encode(&ir))
+        // Under -nowarning TLC prints none of its warnings, so an invariant the engine checks at
+        // startup, which may be a constant TLC warns about, matters only without it.
+        let warnings = if options.is_warning_enabled {
+            constant_invariants
+                .as_ref()
+                .map(|constant_invariants| (&constant_invariants[..], &properties.state_level[..]))
+                .ok_or_else(|| {
+                    "a constant invariant the engine checks, which TLC may warn about".to_owned()
+                })
+        } else {
+            Ok((&[][..], &[][..]))
+        };
+        let startup_messages = warnings.and_then(|(constant_invariants, state_level)| {
+            get_startup_messages(
+                &config,
+                constant_invariants,
+                state_level,
+                branches,
+                version,
+                options.is_warning_enabled,
+            )
+        });
+        Ok(LoweredModel {
+            ir: tla_ir::encode(&ir),
+            startup_messages,
+        })
     })();
+    let directory = spec_path.parent().unwrap_or(Path::new("."));
+    let module_name = spec_path.file_stem().and_then(|stem| stem.to_str());
+    if module_name
+        .into_iter()
+        .map(str::to_owned)
+        .chain(loaded.borrow().iter().cloned())
+        .any(|name| directory.join(format!("{name}.class")).exists())
+    {
+        return Err(FrontError::NotYet(
+            "a Java class overriding a module".to_owned(),
+        ));
+    }
     // TLC stops on a constant predicate the engine checks at startup before what follows it, so
     // the front end can't report what follows.
     match lowered {
@@ -183,6 +253,51 @@ pub fn lower_model(
         ),
         lowered => lowered,
     }
+}
+
+// What TLC prints as it starts after the constant definitions: `createSearch`'s warnings, in the
+// order it makes them, then `createLivenessChecker`'s (`printCheckProgress`). The printer adds
+// the hint after TLC's first warning, drops a warning it printed already, and, under -nowarning,
+// every warning (`createMessagePrinter`); the front end gives no warnings under -nowarning.
+fn get_startup_messages(
+    config: &crate::config::ModelConfig,
+    constant_invariants: &[Rc<str>],
+    state_level_properties: &[Rc<str>],
+    branches: Option<usize>,
+    version: TlcVersion,
+    is_warning_enabled: bool,
+) -> Result<Vec<StartupMessage>, String> {
+    if version == TlcVersion::V1_7_4 {
+        return Err("what TLC 1.7.4 prints as it starts".to_owned());
+    }
+    let warning = |code: u32, text: String| StartupMessage {
+        code,
+        is_warning: true,
+        text,
+    };
+    let mut messages: Vec<StartupMessage> = constant_invariants
+        .iter()
+        .map(|name| warning(2149, format!("The invariant {name} is a constant-level formula (i.e., it contains no variables, primes, or temporal operators) and evaluates to TRUE. To assert constant-level formulas in your spec, use ASSUME ConstInv. If you optionally want to give the assumption a name, write ASSUME YourAssumption == ConstInv instead. See https://explain.tlapl.us/assumptions-and-invariants for additional details.")))
+        .chain(state_level_properties.iter().map(|name| warning(2255, format!("The formula {name} is a state-level formula, but it was used as a PROPERTY (or PROPERTIES), where a temporal formula is typically expected. State-level formulas used as PROPERTY or PROPERTIES are only checked in the initial state. To verify that the formula {name} holds in all states of every behavior, use INVARIANT {name} instead. Alternatively, applying the \"always\" temporal operator ([]) to the state-level formula {name} changes it into a temporal formula, asserting that {name} holds in all states of every behavior. See https://explain.tlapl.us/invariants-and-properties for additional details."))))
+        .collect();
+    // TLC warns about a symmetry set too small as it computes the symmetry, which the engine does
+    // between the constant definitions and these warnings' place in TLC's order: unchecked yet.
+    if config.symmetry.is_some() && !messages.is_empty() {
+        return Err("warnings about the invariants or properties with a symmetry".to_owned());
+    }
+    if let Some(branches) = branches {
+        if config.symmetry.is_some() && is_warning_enabled {
+            messages.push(warning(2279, "Declaring symmetry during liveness checking is dangerous. It might cause TLC to miss violations of the stated liveness properties. Please check liveness without symmetry defined.".to_owned()));
+        }
+        messages.push(StartupMessage {
+            code: 2212,
+            is_warning: false,
+            text: format!(
+                "Implied-temporal checking--satisfiability problem has {branches} branches."
+            ),
+        });
+    }
+    Ok(messages)
 }
 
 // Whether an expression of the IR applies TLC's TLCGet to "spec".
