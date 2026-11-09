@@ -3,9 +3,9 @@
 //! (`formatState` in `values.ts`) writes them, a line per variable in TLC's order, as a conjunction
 //! when there are several. What the spec printed as TLC rebuilt the trace comes with it.
 
-use tla_engine::search::Violation;
+use tla_engine::search::{Violation, ViolationKind};
 use tla_ir::Ir;
-use tla_trace::{Rebuilder, Unsupported, Value, format_value};
+use tla_trace::{Ending, Rebuilder, Unsupported, Value, format_value};
 use tla_values::Id;
 
 use crate::check::SEARCH_STACK_BYTES;
@@ -33,8 +33,15 @@ pub fn rebuild_trace(ir: &Ir, violation: &Violation) -> Result<PrintedTrace, Str
                 let states: Vec<&[Id]> = violation.states.iter().map(Vec::as_slice).collect();
                 let actions: Vec<Option<u32>> =
                     violation.labels.iter().copied().map(Some).collect();
+                // TLC holds a violating state as it found it, and recovers a deadlocked one.
+                let ending = match violation.kind {
+                    ViolationKind::Deadlock => Ending::Kept,
+                    ViolationKind::Invariant(_) | ViolationKind::InitialInvariant(_) => {
+                        Ending::Violation
+                    }
+                };
                 let trace = Rebuilder::new(ir).and_then(|mut rebuilder| {
-                    rebuilder.rebuild(&violation.store, &states, &actions, None)
+                    rebuilder.rebuild(&violation.store, &states, &actions, ending)
                 });
                 trace
                     .map(|trace| PrintedTrace {
