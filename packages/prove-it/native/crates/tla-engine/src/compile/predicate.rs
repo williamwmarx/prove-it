@@ -7,7 +7,7 @@
 //! the nodes it replaces evaluate, in the same order and with the same short circuits, and checks
 //! a boolean where `compileBoolean` does.
 
-use tla_values::store::{FALSE, KIND_SET, KIND_STRING, Outcome, TRUE};
+use tla_values::store::{FALSE, KIND_SET, Outcome, TRUE};
 use tla_values::{Bail, Id};
 
 use super::{Compiled, Shape, bool_id, eval};
@@ -79,20 +79,6 @@ pub(crate) fn apply_var2(
         .store
         .apply(function, machine.locals[slot as usize])?;
     machine.store.apply(inner, machine.locals[second as usize])
-}
-
-/// TLC's equality, with two scalars of one kind told apart by their ids, as the store tells
-/// them apart.
-#[inline(always)]
-pub(crate) fn equals(machine: &mut Machine<'_>, left: Id, right: Id) -> Outcome<bool> {
-    if left == right {
-        return Ok(true);
-    }
-    let kind = machine.store.kind_of(left);
-    if kind <= KIND_STRING && kind == machine.store.kind_of(right) {
-        return Ok(false);
-    }
-    machine.store.equals(left, right)
 }
 
 impl Leaf {
@@ -282,7 +268,7 @@ fn build_equal(left: &Leaf, right: &Leaf, is_equal: bool) -> Test {
                 let function = machine.read_current(variable)?;
                 let key = machine.locals[slot];
                 let value = machine.store.apply(function, key)?;
-                Ok(equals(machine, value, constant)? == is_equal)
+                Ok(machine.store.equals(value, constant)? == is_equal)
             })
         }
         // f[k] = c and f[k] = j, with k and j bound names.
@@ -300,7 +286,7 @@ fn build_equal(left: &Leaf, right: &Leaf, is_equal: bool) -> Test {
                     Leaf::Slot(other) | Leaf::IntSlot(other) => machine.locals[other as usize],
                     _ => unreachable!("a constant or a bound name"),
                 };
-                Ok(equals(machine, value, other)? == is_equal)
+                Ok(machine.store.equals(value, other)? == is_equal)
             })
         }
         // VarEqConst: x = c.
@@ -308,7 +294,7 @@ fn build_equal(left: &Leaf, right: &Leaf, is_equal: bool) -> Test {
             let (variable, constant) = (*variable, *constant);
             test(move |machine| {
                 let value = machine.read_current(variable)?;
-                Ok(equals(machine, value, constant)? == is_equal)
+                Ok(machine.store.equals(value, constant)? == is_equal)
             })
         }
         _ => {
@@ -316,7 +302,7 @@ fn build_equal(left: &Leaf, right: &Leaf, is_equal: bool) -> Test {
             test(move |machine| {
                 let left = left.read(machine)?;
                 let right = right.read(machine)?;
-                Ok(equals(machine, left, right)? == is_equal)
+                Ok(machine.store.equals(left, right)? == is_equal)
             })
         }
     }

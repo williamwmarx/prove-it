@@ -19,7 +19,7 @@ use tla_values::store::{FALSE, KIND_SET, KIND_TUPLE, Outcome, TRUE};
 use tla_values::{Bail, Id};
 
 use super::nodes::assign_bound;
-use super::predicate::{self, Leaf, Predicate, Test};
+use super::predicate::{Leaf, Predicate, Test};
 use super::{
     Binding, CompileError, Compiled, Compiler, Compiling, Context, Definition, DefinitionForm,
     OperatorBody, SEARCH_SLOTS, Scope, decline, eval, leaf, lookup, unsupported,
@@ -1489,7 +1489,7 @@ impl<'a> Compiler<'a> {
                 .store
                 .apply(function, machine.locals[slot as usize])?;
             for (constant, walk) in walks.iter() {
-                if predicate::equals(machine, value, *constant)? {
+                if machine.store.equals(value, *constant)? {
                     walk(machine, on_complete)?;
                 }
             }
