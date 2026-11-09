@@ -66,3 +66,16 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   engine compiles it to an expression that stops the search when evaluated, with the states
   found before it, and the interpreter reports TLC's error from there. Both engines declined
   the five cdot models in TLC's tests before; the native engine now searches them until the stop.
+
+## `_POSSIBLE` predicates
+
+- TLC counts each `_POSSIBLE` predicate on every state the state constraints keep, duplicates
+  included, and each action-level one on every step the action constraints keep
+  (`trackPossible`). It reports one that never held, with the counts, after the search. The IR
+  (version 7) carries the predicates, each with whether it is of a step. The search counts them
+  where the interpreter does, -1 until one is evaluated. It hands the counts over with a
+  checkpoint as they stood before the expansion the interpreter goes on from, or the final counts
+  when it completes. The addon (ABI 8) passes them as `possible`.
+- Only the native engine counts them, so a model with `_POSSIBLE` predicates goes to the
+  interpreter where the native engine doesn't take it, never to the TypeScript engine. The search
+  stays on one thread with them.

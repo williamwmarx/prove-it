@@ -226,6 +226,13 @@ after each pull request.
   For a plain match where nothing prints, the walk drops an assignment as soon as it differs from
   the search's state. The check sorts nothing, so it changes no value TLC prints, and a model such
   as MCBakery's ISpec doesn't enumerate its 1.7 million initial states again.
+- **Enumeration order.** The walks enumerate every set in TLC's normalized order. TLC streams a
+  `\cup`, a UNION, SUBSET and the sets of functions, records and tuples in orders of its own
+  (`compile/lazy.rs` in the engine). The state the evaluator finds doesn't depend on that order
+  without VIEW or SYMMETRY, since it equals the search's. Under VIEW or SYMMETRY, `rebuild` returns
+  `Unsupported` when two different candidates match, rather than guess TLC's first. What a spec
+  prints while TLC enumerates such a set may come in another order; porting the streaming orders
+  is left.
 - **Print.** Where the spec prints, each walk runs to its end, and each step tries TLC's actions in
   order, as `findStepAction` does. What the walks print is composed as `toTrace` composes it.
   Elsewhere a walk stops at the state it looks for.

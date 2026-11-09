@@ -307,7 +307,9 @@ fn find(
         }
         _ => None,
     };
-    let mut found = None;
+    let is_reducing = !matches!(key, Key::State);
+    let mut found: Option<Vec<Value>> = None;
+    let mut is_ambiguous = false;
     run(
         evaluator.walk_action(expression, context, is_init, &mut |evaluator| {
             let state: Vec<Value> = if is_init {
@@ -345,12 +347,26 @@ fn find(
                     }
                 }
             };
-            if is_match && found.is_none() {
-                found = Some(state);
+            if is_match {
+                match &found {
+                    None => found = Some(state),
+                    Some(first) => {
+                        is_ambiguous |= !first
+                            .iter()
+                            .zip(&state)
+                            .all(|(left, right)| crate::value::is_same(left, right));
+                    }
+                }
             }
-            Ok(is_exhaustive || !is_match)
+            Ok(is_exhaustive || !is_reducing || !is_match)
         }),
     )?;
+    // Under VIEW or SYMMETRY, TLC takes the first of the states its view or orbit matches, in the
+    // order it streams them, which the evaluator doesn't follow for every set yet; it takes the
+    // state only where every candidate is the same.
+    if is_ambiguous {
+        return unsupported("several states TLC may take for the search's under VIEW or SYMMETRY");
+    }
     Ok(found)
 }
 
@@ -415,11 +431,15 @@ fn is_in_model(evaluator: &mut Evaluator<'_>, rebuilt: &[Vec<Value>]) -> Result<
         let Some(index) = name.definition else {
             return unsupported("a constraint without a definition");
         };
+        // TLCGet("level") reads the level of the state that is current: the predecessor's for an
+        // action constraint, and the last state's own, one past it, for a constraint.
         if is_action {
             evaluator.current = state(&rebuilt[last - 1]);
             evaluator.next = state(&rebuilt[last]);
+            evaluator.level = last as i32;
         } else {
             evaluator.current = state(&rebuilt[last]);
+            evaluator.level = last as i32 + 1;
         }
         let body = evaluator.definition(ir.definitions[index as usize]).body;
         if !run(evaluator.boolean(body, &Context::default()))? {

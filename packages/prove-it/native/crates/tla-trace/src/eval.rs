@@ -1127,6 +1127,55 @@ impl<'ir> Evaluator<'ir> {
         apply_value(&function, &argument)
     }
 
+    /// For `f[e]` in an action where TLC keeps `f` lazy, a function constructor or a LET's
+    /// function: its bound, its body and the context the body is walked in, which the walk binds
+    /// to the argument (`resolve_lazy_application` in the engine's walker).
+    pub(crate) fn walked_function(
+        &mut self,
+        function: NodeId,
+        context: &Context,
+    ) -> Evaluated<Option<(&'ir Bound, NodeId, Context)>> {
+        let (bounds, body, base) = match self.kind(function) {
+            NodeKind::FunctionConstruction {
+                is_recursive: false,
+                bounds,
+                body,
+            } => (bounds, *body, context.clone()),
+            NodeKind::Identifier(name) if name.is_local => {
+                let Some(frame) = lookup(&context.env, name.text) else {
+                    return Ok(None);
+                };
+                let Binding::Function {
+                    definition,
+                    context: bound,
+                    is_self: false,
+                } = &frame.binding
+                else {
+                    return Ok(None);
+                };
+                let definition = self.definition(*definition);
+                let DefinitionForm::Function(bounds) = &definition.form else {
+                    return Ok(None);
+                };
+                (
+                    bounds,
+                    definition.body,
+                    bound.primed(context.is_primed || bound.is_primed),
+                )
+            }
+            _ => return Ok(None),
+        };
+        match &bounds[..] {
+            [
+                bound @ Bound {
+                    pattern: Pattern::Name(_),
+                    ..
+                },
+            ] => Ok(Some((bound, body, base))),
+            _ => fail("walking a lazy function of several arguments"),
+        }
+    }
+
     // The bounds, body and context of a function definition or LET function a name refers to.
     fn lazy_function(
         &mut self,

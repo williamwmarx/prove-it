@@ -321,6 +321,17 @@ mod tests {
     }
 
     #[test]
+    fn keeps_the_other_operand_of_a_union_with_an_empty_set() {
+        let union = |left: &Value, right: &Value| {
+            format_value(&crate::sets::union(left, right).expect("a union"))
+        };
+        assert_eq!(union(&Value::empty_set(), &Value::Interval(0, 0)), "0..0");
+        let subset = Value::Lazy(Rc::new(Lazy::Subset(Value::Interval(1, 7))));
+        assert_eq!(union(&subset, &Value::empty_set()), "SUBSET (1..7)");
+        assert_eq!(union(&Value::Interval(1, 2), &Value::empty_set()), "{1, 2}");
+    }
+
+    #[test]
     fn prints_intervals_functions_and_tuples() {
         assert_eq!(format_value(&Value::Interval(1, 3)), "1..3");
         assert_eq!(format_value(&Value::Interval(2, 1)), "{}");
