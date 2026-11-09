@@ -171,6 +171,7 @@ fn lower_definitions(
         initial_predicates: Vec::new(),
         view: None,
         alias: None,
+        postconditions: Vec::new(),
         symmetry: None,
         check_deadlock: true,
         is_warning_enabled: true,
