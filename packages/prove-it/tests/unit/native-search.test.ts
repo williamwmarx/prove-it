@@ -1257,13 +1257,16 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     // search only where it is evaluated.
     const enabled = ["EXTENDS Naturals, TLC", "VARIABLE x", "Init == x = 0"];
     const reached = [`A == ${prints} /\\ ${next}`, "Next == A \\/ (~ENABLED A /\\ x' = 0)"];
-    expect(await compareWithInterpreter([...enabled, ...reached], "INIT Init\nNEXT Next")).toContainEqual(
-      expect.stringMatching(stopped("Print inside ENABLED")),
-    );
-    const passed = [`A == ${next} \\/ (${prints} /\\ x' = 5)`, "Next == A \\/ (~ENABLED A /\\ x' = 0)"];
-    expect(await compareWithInterpreter([...enabled, ...passed], "INIT Init\nNEXT Next")).toContainEqual(
-      expect.stringMatching(COMPLETE),
-    );
+    expect(
+      await compareWithInterpreter([...enabled, ...reached], "INIT Init\nNEXT Next"),
+    ).toContainEqual(expect.stringMatching(stopped("Print inside ENABLED")));
+    const passed = [
+      `A == ${next} \\/ (${prints} /\\ x' = 5)`,
+      "Next == A \\/ (~ENABLED A /\\ x' = 0)",
+    ];
+    expect(
+      await compareWithInterpreter([...enabled, ...passed], "INIT Init\nNEXT Next"),
+    ).toContainEqual(expect.stringMatching(COMPLETE));
   });
 
   it("evaluates the guard of x' \\in S only where x' has a value", async () => {
@@ -1436,9 +1439,9 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
       "       /\\ <<x>> \\notin DOMAIN [i \\in Nat, j \\in Int |-> i + j]",
       "       /\\ x \\in DOMAIN [i \\in 0..2 |-> i]",
     ];
-    expect(await compareWithInterpreter(body, "INIT Init\nNEXT Next\nINVARIANT Inv")).toContainEqual(
-      expect.stringMatching(COMPLETE),
-    );
+    expect(
+      await compareWithInterpreter(body, "INIT Init\nNEXT Next\nINVARIANT Inv"),
+    ).toContainEqual(expect.stringMatching(COMPLETE));
   });
 
   it("counts the _POSSIBLE predicates as TLC does, and hands the counts over", async () => {
