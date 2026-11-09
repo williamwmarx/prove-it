@@ -216,6 +216,24 @@ fn assigns_and_substitutes_the_constants_of_the_configuration() {
 }
 
 #[test]
+fn rejects_a_substitute_that_fails_at_startup() {
+    // TLC's etest7 and TLCGetNamedUndefined: TLC evaluates a non-constant substitute at startup.
+    let variable = "---- MODULE Main ----\nCONSTANT C\nVARIABLE x\nFoo == x\n====";
+    assert_eq!(
+        link_model(variable, &[], Some("CONSTANT C <- Foo")).err(),
+        Some(FrontError::Config(
+            "The configuration file substitutes constant C with non-constant Foo - specifically: In evaluation, the identifier x is either undefined or not an operator.\nline 4, col 8 to line 4, col 8 of module Main".to_owned()
+        ))
+    );
+    let checker =
+        "---- MODULE Main ----\nEXTENDS TLC\nCONSTANT A\nqueue == TLCGet(\"queue\")\n====";
+    let error = link_model(checker, &[], Some("CONSTANT A <- queue")).err();
+    assert!(
+        matches!(error, Some(FrontError::Config(message)) if message.ends_with("TLCGet(queue) was undefined."))
+    );
+}
+
+#[test]
 fn lists_the_assumptions_and_startup_definitions_of_a_model() {
     let environment = link_model(
         "---- MODULE Main ----\nEXTENDS Base\nASSUME Two == N > 1\nAXIOM N > 0\nDouble == 2 * N\nInit == TRUE\n====",

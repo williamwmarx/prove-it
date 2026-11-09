@@ -29,6 +29,7 @@ fn evaluate(definitions: &str, name: &str) -> ConfigValue {
         environment: &environment,
         order: ValueOrder { ranks: &ranks },
         version: TlcVersion::Master,
+        is_started: true,
     };
     evaluator
         .evaluate(&create_identifier(name), None)
