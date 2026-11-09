@@ -102,6 +102,7 @@ fn lower(
         libraries: &libraries,
         version: None,
         is_warning_enabled,
+        is_spec_described: true,
     };
     lower_model(Path::new(&path), config_text, &options)
 }

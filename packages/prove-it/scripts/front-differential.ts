@@ -300,6 +300,7 @@ const lowerLinkedModel = (
     startup: getIrStartup(config, linked),
     nextSubstitution: getNextSubstitution(config, environment, linked.instanceActions),
     instanceActions: linked.instanceActions,
+    getSpecification: undefined,
   });
   return "ir" in outcome ? { ir: Buffer.from(outcome.ir).toString("hex") } : outcome;
 };
@@ -334,6 +335,7 @@ const lowerEnvironment = (
     },
     nextSubstitution: undefined,
     instanceActions: specification.instanceActions,
+    getSpecification: undefined,
   });
   return "ir" in outcome ? { ir: Buffer.from(outcome.ir).toString("hex") } : outcome;
 };

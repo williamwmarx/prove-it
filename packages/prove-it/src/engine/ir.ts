@@ -221,6 +221,9 @@ export interface IrInput {
   // substitutions, the first such INSTANCE (getNextSubstitution).
   nextSubstitution: SourceRange | undefined;
   instanceActions: Map<string, InstanceAction>;
+  // TLCGet("spec") as the interpreter computes it, which the IR holds where an expression reads
+  // it, as TLC's actions; the front end's model has neither.
+  getSpecification: (() => Value) | undefined;
 }
 
 // What TLC evaluates when it starts, which the engine evaluates before its search.
@@ -1009,7 +1012,10 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
     push(model, getText(name));
   }
   // TLCGet("spec"), where a node reads it, as the interpreter computes it.
-  push(model, specificationRead.isRead ? getValue(environment.runtime.getSpecification()) : -1);
+  push(
+    model,
+    specificationRead.isRead && input.getSpecification ? getValue(input.getSpecification()) : -1,
+  );
 
   // --- the blob ---
 

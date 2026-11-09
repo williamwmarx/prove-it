@@ -487,6 +487,7 @@ export const lowerUnsearchedSpec = (
     startup: getIrStartup(config, specification),
     // Without a next-state relation, there is none to name actions of.
     nextSubstitution: undefined,
+    getSpecification: undefined,
     instanceActions: specification.instanceActions,
   });
 
@@ -1907,6 +1908,7 @@ const searchStates = (
         startup: getIrStartup(config, specification),
         nextSubstitution: getNextSubstitution(config, environment, specification.instanceActions),
         instanceActions: specification.instanceActions,
+        getSpecification: runtime.getSpecification,
       });
       const milliseconds = performance.now() - loweredAt;
       if ("ir" in outcome) writeDebugBytes("PROVE_IT_IR_DUMP", outcome.ir);
