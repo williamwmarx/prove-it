@@ -27,7 +27,7 @@ fn lower(test: &str, config: &str) -> Result<Vec<u8>, FrontError> {
     let path = directory.join("Checked.tla");
     std::fs::write(&path, SPEC).expect("the spec");
     let options = ModelOptions {
-        library: None,
+        libraries: &[],
         version: None,
         is_warning_enabled: true,
     };
