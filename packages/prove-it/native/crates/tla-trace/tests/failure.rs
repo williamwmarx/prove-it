@@ -127,6 +127,7 @@ fn reports_an_invariant_that_fails_to_evaluate() {
     });
     let text = "Attempted to check if the value:\nFALSE\nis an element of Nat.";
     assert_eq!(failure.code, 2111);
+    assert_eq!(failure.exit_code, 76);
     assert_eq!(
         failure.message,
         format!("Evaluating invariant Inv failed.\n{text}")
@@ -223,4 +224,19 @@ fn reports_a_non_function_applied_as_a_function() {
          2. Line 15, column 12 to line 15, column 26 in etest4\n\
          3. Line 15, column 12 to line 15, column 22 in etest4\n\n"
     );
+}
+
+#[test]
+fn exits_with_the_status_tlc_exits_with() {
+    for (name, exit_code) in [
+        ("suite/etest9", 75),
+        ("suite/etest4", 75),
+        ("suite/etest6", 75),
+        ("AssertExpressionStack", 14),
+        ("Github461", 14),
+        ("TESpecTest/TESpecRuntimeErrorTest", 75),
+    ] {
+        let (failure, _) = evaluate_failure(&format!("{MODELS}/{name}"));
+        assert_eq!(failure.exit_code, exit_code, "{name}");
+    }
 }
