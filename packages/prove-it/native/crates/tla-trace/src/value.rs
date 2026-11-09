@@ -409,6 +409,21 @@ pub(crate) fn normalize(value: &Value) {
 }
 
 /// The elements of a set TLC can enumerate, in TLC's order.
+/// `IntervalValue.size`: an interval of more than 2^31 - 1 elements has no int size.
+pub fn interval_size(low: i32, high: i32) -> Evaluated<usize> {
+    let size = (i64::from(high) - i64::from(low) + 1).max(0);
+    if size > i64::from(i32::MAX) {
+        return fail_runtime(
+            "an interval too large to size",
+            format!(
+                "Size of interval value exceeds the maximum representable size (32bits): {}.",
+                format_pretty(&Value::Interval(low, high))
+            ),
+        );
+    }
+    Ok(size as usize)
+}
+
 /// The most elements of an interval the evaluator builds.
 const MAXIMUM_INTERVAL: usize = 1 << 24;
 
@@ -420,9 +435,12 @@ pub fn elements(value: &Value) -> Evaluated<Rc<Vec<Value>>> {
         Value::Interval(low, high)
             if i64::from(*high) - i64::from(*low) >= MAXIMUM_INTERVAL as i64 =>
         {
+            interval_size(*low, *high)?;
             fail("an interval too large to build")
         }
         Value::Interval(low, high) => Ok(Rc::new((*low..=*high).map(Value::Int).collect())),
+        // TLC finds a set its parts empty to be empty before it enumerates any of them.
+        Value::Lazy(_) if crate::sets::is_empty_by_argument(value) => Ok(Rc::new(Vec::new())),
         Value::Lazy(lazy) => crate::sets::enumerate(lazy).map(Rc::new),
         _ => fail(format!("expected a set, not a {}", value.kind_name())),
     }

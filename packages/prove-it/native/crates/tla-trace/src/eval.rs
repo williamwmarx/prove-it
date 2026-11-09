@@ -329,6 +329,8 @@ const MAXIMUM_DEPTH: u32 = 10_000;
 /// `EC.TLC_MODULE_ONE_ARGUMENT_ERROR`.
 const TLCGET_UNDEFINED: u32 = 2145;
 const ARGUMENT_ERROR: u32 = 2169;
+/// `EC.TLC_MODULE_ARGUMENT_ERROR_AN`.
+const ARGUMENT_ERROR_AN: u32 = 2266;
 /// `EC.TLC_MODULE_DIVISION_BY_ZERO`.
 const DIVISION_BY_ZERO: u32 = 2179;
 const ONE_ARGUMENT_ERROR: u32 = 2283;
@@ -2462,7 +2464,43 @@ impl<'ir> Evaluator<'ir> {
                 let high = self.operand_int(&operands[1])?;
                 Value::Interval(low as i32, high as i32)
             }
-            "+" | "-" | "*" | "\\div" | "%" | "^" | "<" | ">" | "<=" | ">=" => {
+            // TLC evaluates both arguments, then its method checks the first and the second
+            // (`Naturals.LT` and the like).
+            "<" | ">" | "<=" | ">=" => {
+                arity(2)?;
+                let left = self.operand(&operands[0])?;
+                let right = self.operand(&operands[1])?;
+                // `tlc2.module.Naturals#GEQ` names itself > in its errors.
+                let shown = if builtin.flags & Builtin::NATURALS_GEQ != 0 {
+                    ">"
+                } else {
+                    name
+                };
+                let (left, right) = match (&left, &right) {
+                    (Value::Int(left), Value::Int(right)) => (*left, *right),
+                    _ => {
+                        let (position, value) = match left {
+                            Value::Int(_) => ("second", &right),
+                            _ => ("first", &left),
+                        };
+                        return fail_coded(
+                            "expected an integer",
+                            ARGUMENT_ERROR_AN,
+                            format!(
+                                "The {position} argument of {shown} should be an integer, but instead it is:\n{}",
+                                format_pretty(value)
+                            ),
+                        );
+                    }
+                };
+                Value::Bool(match name {
+                    "<" => left < right,
+                    ">" => left > right,
+                    "<=" => left <= right,
+                    _ => left >= right,
+                })
+            }
+            "+" | "-" | "*" | "\\div" | "%" | "^" => {
                 arity(2)?;
                 let left = self.operand_int(&operands[0])?;
                 let right = self.operand_int(&operands[1])?;
@@ -2511,10 +2549,7 @@ impl<'ir> Evaluator<'ir> {
                             None => return fail("integer overflow"),
                         }
                     }
-                    "<" => Value::Bool(left < right),
-                    ">" => Value::Bool(left > right),
-                    "<=" => Value::Bool(left <= right),
-                    _ => Value::Bool(left >= right),
+                    _ => unreachable!("an arithmetic operator"),
                 }
             }
             "-." => {

@@ -1058,6 +1058,11 @@ fn node_range(evaluator: &Evaluator<'_>, node: NodeId) -> Option<SourceRange> {
     if let Some(range) = arena[node as usize].range {
         return Some(range);
     }
+    // The conjunction of the specification's initial predicates is the IR's own, written
+    // nowhere: TLC evaluates each predicate by itself (`SpecProcessor.processConfigSpec`).
+    if arena[node as usize].line == 0 {
+        return None;
+    }
     let (NodeKind::And(operands) | NodeKind::Or(operands)) = &arena[node as usize].kind else {
         return None;
     };
