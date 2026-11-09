@@ -22,6 +22,7 @@ pub mod parser;
 pub mod pcal;
 pub mod report;
 pub mod resolve;
+pub mod sany_parse_error;
 pub mod spec;
 #[rustfmt::skip]
 pub mod standard_builtins;
