@@ -163,7 +163,6 @@ fn lower_definitions(environment: &Environment) -> Result<Vec<u8>, FrontError> {
         action_properties: Vec::new(),
         initial_predicates: Vec::new(),
         view: None,
-        symmetry: None,
         check_deadlock: true,
         is_warning_enabled: true,
         is_recording_graph: false,

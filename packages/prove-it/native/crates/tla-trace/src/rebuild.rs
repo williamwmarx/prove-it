@@ -42,7 +42,7 @@ fn unsupported<T>(reason: impl Into<String>) -> Result<T, Unsupported> {
 impl<'ir> Rebuilder<'ir> {
     pub fn new(ir: &'ir Ir) -> Result<Rebuilder<'ir>, Unsupported> {
         let model = &ir.model;
-        let mut evaluator = Evaluator::new(ir);
+        let evaluator = Evaluator::new(ir);
         let view = match &model.view {
             Some(view) => match view.definition {
                 Some(index) => Some(evaluator.definition(ir.definitions[index as usize]).body),
@@ -50,22 +50,9 @@ impl<'ir> Rebuilder<'ir> {
             },
             None => None,
         };
-        let group = model.symmetry.as_ref().map(|group| {
-            group
-                .iter()
-                .map(|permutation| {
-                    permutation
-                        .iter()
-                        .map(|&(from, to)| (evaluator.text(from), evaluator.text(to)))
-                        .collect()
-                })
-                .collect()
-        });
-        let key = match (view, group) {
-            (Some(view), Some(group)) => Key::ViewOfSymmetry(view, group),
-            (Some(view), None) => Key::View(view),
-            (None, Some(group)) => Key::Symmetry(group),
-            (None, None) => Key::State,
+        let key = match view {
+            Some(view) => Key::View(view),
+            None => Key::State,
         };
         Ok(Rebuilder { evaluator, key })
     }
@@ -74,6 +61,25 @@ impl<'ir> Rebuilder<'ir> {
     /// as it computed them.
     pub fn set_startup(&mut self, store: &Store, values: &[Id]) {
         self.evaluator.set_startup(store, values);
+    }
+
+    /// Takes the symmetry group the search reduced by, each permutation as the names of the model
+    /// values it moves, each with its image's.
+    pub fn set_symmetry(&mut self, group: &[Vec<(Vec<u16>, Vec<u16>)>]) {
+        let text = |units: &[u16]| self.evaluator.text_of(units.into());
+        let group = group
+            .iter()
+            .map(|permutation| {
+                permutation
+                    .iter()
+                    .map(|(name, image)| (text(name), text(image)))
+                    .collect()
+            })
+            .collect();
+        self.key = match &self.key {
+            Key::View(view) | Key::ViewOfSymmetry(view, _) => Key::ViewOfSymmetry(*view, group),
+            Key::State | Key::Symmetry(_) => Key::Symmetry(group),
+        };
     }
 
     /// The states of a path the search found, as TLC prints them. `states` holds each state's

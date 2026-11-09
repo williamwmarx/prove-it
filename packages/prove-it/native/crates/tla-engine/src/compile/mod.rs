@@ -715,6 +715,16 @@ impl<'a> Compiler<'a> {
         self.compile_root_printing(root, false)
     }
 
+    /// Compiles the body of the SYMMETRY definition, which TLC evaluates as it starts, where what
+    /// it prints and draws counts. A set TLC may keep lazy is one TLC may reject as not a set of
+    /// functions, so the interpreter takes it.
+    pub fn compile_symmetry(&mut self, body: NodeId) -> Result<Compiled, CompileError> {
+        if self.may_be_lazy(body, &mut HashSet::new()) {
+            return unsupported("a symmetry TLC may keep lazy");
+        }
+        self.compile_root_printing(Root::Expression(body), true)
+    }
+
     /// Compiles a root of the model where what it prints is printed, as an invariant that prints
     /// is compiled whole.
     pub fn compile_root_printing(

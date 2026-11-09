@@ -43,6 +43,8 @@ struct Stopped {
     states: Vec<Vec<Id>>,
     /// The values the search computed at startup, ids of `store`.
     startup: Vec<Id>,
+    /// The symmetry group the search reduced by, by the names of the model values.
+    symmetry: Option<tla_engine::symmetry::NamedGroup>,
     parents: Vec<i32>,
     reason: String,
     expanding: usize,
@@ -84,6 +86,7 @@ fn stop_search(ir: &tla_ir::Ir, stop_at: Option<usize>) -> Option<Stopped> {
         store,
         states,
         startup,
+        symmetry: checkpoint.symmetry.clone(),
         parents: checkpoint.parents.clone(),
         reason,
         expanding: checkpoint.expanding as usize,
@@ -114,6 +117,9 @@ fn check(path: &std::path::Path) -> Result<usize, String> {
         Err(Unsupported(reason)) => return Err(reason),
     };
     rebuilder.set_startup(&stopped.store, &stopped.startup);
+    if let Some(group) = &stopped.symmetry {
+        rebuilder.set_symmetry(group);
+    }
     let count = stopped.states.len();
     let mut rebuilt = 0;
     for index in count.saturating_sub(3)..count {
@@ -223,6 +229,9 @@ fn deadlock_trace(path: &str) -> Vec<String> {
         let trace = Rebuilder::new(&ir)
             .and_then(|mut rebuilder| {
                 rebuilder.set_startup(&stopped.store, &stopped.startup);
+                if let Some(group) = &stopped.symmetry {
+                    rebuilder.set_symmetry(group);
+                }
                 rebuilder.rebuild(
                     &stopped.store,
                     &states,

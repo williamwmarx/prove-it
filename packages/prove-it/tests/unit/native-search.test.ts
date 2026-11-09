@@ -493,6 +493,25 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     );
   });
 
+  // TLC evaluates the SYMMETRY definition as it starts, and the engine builds the group as TLC
+  // does: from sets with fewer than two elements too, and none where no set has two.
+  it("builds the group of the SYMMETRY definition as TLC starts", async () => {
+    const body = [
+      "EXTENDS TLC",
+      "CONSTANTS Procs, Single",
+      "VARIABLE owner",
+      "Init == owner \\in Procs \\cup Single",
+      "Next == owner' \\in Procs \\cup Single",
+      "Sym == Permutations(Procs) \\cup Permutations(Single)",
+    ];
+    for (const procs of ["{p1, p2, p3}", "{p1}"]) {
+      const config = `CONSTANTS Procs = ${procs}\nSingle = {q1}\nINIT Init\nNEXT Next\nSYMMETRY Sym`;
+      expect(await compareWithInterpreter(body, config)).toContainEqual(
+        expect.stringMatching(COMPLETE),
+      );
+    }
+  });
+
   it("answers ENABLED by running the action", async () => {
     const body = [
       "EXTENDS Naturals",

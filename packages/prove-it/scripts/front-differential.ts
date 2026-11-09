@@ -143,13 +143,12 @@ const lowerDefinitions = (source: string, path: string) => {
     isWarningEnabled: true,
     tlcOrder: [],
     properties: { invariants: [], invariantNames: [], actionProperties: [], initialPredicates: [] },
-    symmetry: undefined,
     isRecordingGraph: false,
     version: undefined,
     atoms: [],
     liveFormula: undefined,
     liveProperties: [],
-    startup: { substitutes: [], definitions: [], assumptions: [] },
+    startup: { substitutes: [], definitions: [], symmetry: undefined, assumptions: [] },
   });
   return "ir" in outcome ? { ir: Buffer.from(outcome.ir).toString("hex") } : outcome;
 };

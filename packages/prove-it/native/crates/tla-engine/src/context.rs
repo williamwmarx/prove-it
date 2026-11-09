@@ -62,11 +62,19 @@ pub struct EngineContext {
 }
 
 /// What TLC evaluates when it starts, compiled: each substitute, then each constant definition
-/// with effects, then each assumption, with the name TLC reports it by.
+/// with effects, then the symmetry, then each assumption, with the name TLC reports it by.
 pub struct Startup {
     pub substitutes: Vec<Eval>,
     pub definitions: Vec<Eval>,
+    pub symmetry: Option<StartupSymmetry>,
     pub assumptions: Vec<(Eval, String)>,
+}
+
+/// The SYMMETRY definition's body, and each set it permutes: the name TLC's warning gives it, and
+/// the set TLC checks for a model value the group moves.
+pub struct StartupSymmetry {
+    pub definition: Eval,
+    pub permuted_sets: Vec<(String, Option<Eval>)>,
 }
 
 /// How the engine answers a liveness atom on its states, or why it can't, in which case the
@@ -339,6 +347,37 @@ impl EngineContext {
                         .map(|compiled| compiled.eval)
                 })
                 .collect::<Result<_, CompileError>>()?,
+            symmetry: model
+                .startup
+                .symmetry
+                .as_ref()
+                .map(|symmetry| {
+                    let body = match &ir.nodes.arena
+                        [ir.definitions[symmetry.definition as usize] as usize]
+                        .kind
+                    {
+                        NodeKind::Definition(definition) => definition.body,
+                        _ => unreachable!("a definition's node"),
+                    };
+                    Ok::<_, CompileError>(StartupSymmetry {
+                        definition: compiler.compile_symmetry(body)?.eval,
+                        permuted_sets: symmetry
+                            .permuted_sets
+                            .iter()
+                            .map(|set| {
+                                let operand = set
+                                    .operand
+                                    .map(|node| compiler.compile_root(Root::Expression(node)))
+                                    .transpose()?;
+                                Ok((
+                                    ir.texts[set.name as usize].to_string(),
+                                    operand.map(|compiled| compiled.eval),
+                                ))
+                            })
+                            .collect::<Result<_, CompileError>>()?,
+                    })
+                })
+                .transpose()?,
             assumptions: model
                 .startup
                 .assumptions

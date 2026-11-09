@@ -41,7 +41,6 @@ fn lower(source: &str, name: &str) -> Ir {
             action_properties: Vec::new(),
             initial_predicates: Vec::new(),
             view: None,
-            symmetry: None,
             check_deadlock: true,
             is_warning_enabled: true,
             is_recording_graph: false,

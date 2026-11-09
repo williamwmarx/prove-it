@@ -4,7 +4,7 @@
 //! error, a feature it doesn't implement) ends the run with a checkpoint, from which the reference
 //! interpreter goes on.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 use std::io::Write as _;
 use std::sync::Arc;
@@ -14,18 +14,18 @@ use std::time::{Duration, Instant};
 use tla_ir::{Ir, LiveTerm, Model};
 use tla_live::{Event, Liveness, Term, Verdict};
 use tla_values::fingerprint::{Carried, Fingerprints, Parent};
-use tla_values::store::{FALSE, Outcome, TRUE};
+use tla_values::store::{FALSE, KIND_SET, Outcome, TRUE};
 use tla_values::transfer::{EncodedStates, SharedEncoder, SharedStates, StateEncoder};
 use tla_values::{Bail, Id, NESTING_STACK_BYTES, Store};
 
 use crate::compile::{CompileError, Compiler, DISTINCT_SLOT, LEVEL_SLOT, NEXT_LEVEL_SLOT, Options};
 use crate::context::{
-    EngineContext, Startup, count_possible, first_failing, first_failing_changed, holds_all,
-    holds_all_changed,
+    EngineContext, Startup, StartupSymmetry, count_possible, first_failing, first_failing_changed,
+    holds_all, holds_all_changed,
 };
 use crate::live::{LiveGraph, Table, answer_atoms};
-use crate::machine::{Machine, Printed, Step, UNASSIGNED};
-use crate::symmetry::Canonicalizer;
+use crate::machine::{Eval, Machine, Printed, Step, UNASSIGNED};
+use crate::symmetry::{Canonicalizer, Group, NamedGroup, close_group, get_permutations};
 
 pub const OUT_DEGREE_BUCKETS: usize = 32;
 const PROGRESS_INTERVAL: Duration = Duration::from_secs(60);
@@ -93,8 +93,12 @@ pub trait Reporter {
     /// definitions were evaluated, before [`Reporter::startup_done`], then as the assumptions
     /// were. The interpreter printed it already where it handed the search over.
     fn startup_print(&mut self, _store: &Store, _values: &[Id]) {}
-    /// TLC has evaluated the substitutes and the constant definitions, and prints what it prints
-    /// itself before it checks the assumptions.
+    /// The sets the symmetry permutes that hold fewer than two elements, by name, which TLC warns
+    /// about once it has evaluated the symmetry (2300, `TLC_SYMMETRY_SET_TOO_SMALL`). The
+    /// interpreter warned already where it handed the search over.
+    fn symmetry_sets_too_small(&mut self, _names: &[String]) {}
+    /// TLC has evaluated the substitutes, the constant definitions and the symmetry, and prints
+    /// what it prints itself before it checks the assumptions.
     fn startup_done(&mut self) {}
 }
 
@@ -130,6 +134,8 @@ pub struct Checkpoint {
     pub possible: Vec<i64>,
     /// The value TLC computed at startup of each of the model's startup definitions, as one row.
     pub startup: SharedStates,
+    /// The symmetry group the search reduced by, if any.
+    pub symmetry: Option<NamedGroup>,
 }
 
 /// The steps of a search (`EngineGraph`): for each of the first `expanded` states, how many
@@ -1436,10 +1442,14 @@ fn describe(error: CompileError) -> String {
     }
 }
 
-// What TLC's startup printed as it evaluated the substitutes and the constant definitions, then
-// as it evaluated the assumptions, and the assumption it found false.
+// What TLC's startup printed as it evaluated the substitutes, the constant definitions and the
+// symmetry, the symmetry's group and the sets it warns about, then what it printed as it evaluated
+// the assumptions, and the assumption it found false.
 struct Started {
     printed: Vec<Vec<Id>>,
+    /// The sets the symmetry permutes that TLC warns hold fewer than two elements, by name.
+    small_sets: Vec<String>,
+    group: Option<Group>,
     assumed: Vec<Vec<Id>>,
     violated: Option<String>,
 }
@@ -1460,6 +1470,10 @@ fn run_startup(machine: &mut Machine<'_>, startup: &Startup) -> Outcome<Started>
     for evaluate in startup.substitutes.iter().chain(&startup.definitions) {
         evaluate(machine)?;
     }
+    let (group, small_sets) = match &startup.symmetry {
+        Some(symmetry) => symmetry_group(machine, symmetry)?,
+        None => (None, Vec::new()),
+    };
     let printed = take(machine);
     let mut violated = None;
     for (evaluate, name) in &startup.assumptions {
@@ -1474,9 +1488,47 @@ fn run_startup(machine: &mut Machine<'_>, startup: &Startup) -> Outcome<Started>
     }
     Ok(Started {
         printed,
+        small_sets,
+        group,
         assumed: take(machine),
         violated,
     })
+}
+
+// The group of the SYMMETRY definition's value as `Tool.getSymmetryPerms` builds it, none where
+// it has no permutation but the identity, and the sets it permutes that TLC warns hold fewer than
+// two elements: all of them where there are as many as permutations, or else each set TLC checks
+// that holds no model value the group moves.
+fn symmetry_group(
+    machine: &mut Machine<'_>,
+    symmetry: &StartupSymmetry,
+) -> Outcome<(Option<Group>, Vec<String>)> {
+    let value = (symmetry.definition)(machine)?;
+    let permutations = get_permutations(&mut machine.store, value)?;
+    let names = |sets: Vec<&(String, Option<Eval>)>| {
+        sets.into_iter().map(|(name, _)| name.clone()).collect()
+    };
+    if symmetry.permuted_sets.len() >= permutations.len() {
+        return Ok((None, names(symmetry.permuted_sets.iter().collect())));
+    }
+    let group = close_group(permutations);
+    let moved: HashSet<Id> = group
+        .iter()
+        .flat_map(|permutation| permutation.values().copied())
+        .collect();
+    let mut small = Vec::new();
+    for set in &symmetry.permuted_sets {
+        let Some(operand) = &set.1 else { continue };
+        let value = operand(machine)?;
+        let store = &machine.store;
+        if store.kind_of(value) == KIND_SET
+            && !(0..store.size_of(value))
+                .any(|index| moved.contains(&store.element_at(value, index)))
+        {
+            small.push(set);
+        }
+    }
+    Ok(((!group.is_empty()).then_some(group), names(small)))
 }
 
 // The values the startup definitions computed, which reading them again gives without effects.
@@ -1526,7 +1578,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     let is_pipelined = !is_printing
         && !is_distinct_read
         && context.view.is_none()
-        && model.symmetry.is_none()
+        && model.startup.symmetry.is_none()
         && !settings.is_live_checked;
     // A level's states are shared between threads where the order of the steps across states
     // shows nowhere but in the states found: nothing prints or reads the count of distinct states,
@@ -1550,7 +1602,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         machine.set_slot(LEVEL_SLOT, zero);
         run_startup(&mut machine, &context.startup)
     });
-    match startup {
+    let group = match startup {
         Err(Bail(reason)) => return SearchOutcome::Declined(reason.into()),
         Ok(started) => {
             let report = |reporter: &mut dyn Reporter, printed: &[Vec<Id>]| {
@@ -1559,26 +1611,37 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     .for_each(|values| reporter.startup_print(&machine.store, values));
             };
             report(reporter, &started.printed);
+            if !started.small_sets.is_empty() {
+                reporter.symmetry_sets_too_small(&started.small_sets);
+            }
             reporter.startup_done();
             report(reporter, &started.assumed);
             if let Some(name) = started.violated {
                 return SearchOutcome::AssumptionViolated { name };
             }
+            started.group
         }
-    }
-    let canonicalizer = model.symmetry.as_ref().map(|group| {
-        let units = |text: u32| ir.texts[text as usize].encode_utf16().collect::<Vec<u16>>();
-        let group: Vec<Vec<(Vec<u16>, Vec<u16>)>> = group
+    };
+    // The group by the names of the model values each permutation moves, for the interpreter and
+    // the trace, which read the search's states by another store.
+    let named_group: Option<NamedGroup> = group.as_ref().map(|group| {
+        let name = |id: Id| machine.store.text_of(id).to_vec();
+        group
             .iter()
-            .map(|pairs| {
-                pairs
+            .map(|permutation| {
+                let mut pairs: Vec<(Vec<u16>, Vec<u16>)> = permutation
                     .iter()
-                    .map(|&(name, image)| (units(name), units(image)))
-                    .collect()
+                    .map(|(&id, &image)| (name(id), name(image)))
+                    .collect();
+                pairs.sort_unstable();
+                pairs
             })
-            .collect();
+            .collect()
+    });
+    let is_symmetric = group.is_some();
+    let canonicalizer = group.map(|group| {
         let order = ir.tlc_order.iter().map(|&index| index as usize).collect();
-        Canonicalizer::new(&mut machine.store, &group, order)
+        Canonicalizer::new(&machine.store, group, order)
     });
     let width = context.width;
     let order: Vec<usize> = if context.view.is_some() {
@@ -1591,7 +1654,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         key_width: if context.view.is_some() {
             Some(1)
         } else {
-            model.symmetry.as_ref().map(|_| width)
+            is_symmetric.then_some(width)
         },
         ids: Vec::new(),
         keys: Vec::new(),
@@ -1886,6 +1949,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             }),
             possible,
             startup: share_startup(machine, &context).expect("values computed at startup"),
+            symmetry: named_group.clone(),
         }
     };
     let outcome = match result {
@@ -2128,6 +2192,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     possible: checkpoint_possible.clone(),
                     startup: share_startup(&mut machine, &context)
                         .expect("values computed at startup"),
+                    symmetry: named_group.clone(),
                 }))
             } else if !is_kept || search.states.key_width.is_some() || search.held.is_some() {
                 // The interpreter searches a graph too large to keep from the start, since its
@@ -2157,7 +2222,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 && !is_printing
                 && search.graph.is_none()
                 && search.states.key_width.is_none()
-                && model.symmetry.is_none();
+                && !is_symmetric;
             let violation = search
                 .violation
                 .take()

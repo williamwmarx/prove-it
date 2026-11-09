@@ -5,9 +5,9 @@ use std::fmt;
 use crate::{
     Action, ActionProperty, Atom, AtomKind, Bound, Builtin, ConfigName, Constant, Definition,
     DefinitionForm, EnabledActions, IR_VERSION, Index, Ir, Junction, LiveProperty, LiveTerm, MAGIC,
-    Model, Name, Node, NodeId, NodeKind, Nodes, Param, PathStep, Pattern, Possible, Printed,
-    Resolution, Scope, ScopeBinding, Selector, SourceRange, Startup, TextId, Update, Value, Values,
-    code, tag,
+    Model, Name, Node, NodeId, NodeKind, Nodes, Param, PathStep, Pattern, PermutedSet, Possible,
+    Printed, Resolution, Scope, ScopeBinding, Selector, SourceRange, Startup, Symmetry, TextId,
+    Update, Value, Values, code, tag,
 };
 
 /// Why a blob isn't an IR this decoder reads: where it stopped, in words, and what it found.
@@ -404,6 +404,13 @@ impl Decoder<'_> {
             .iter()
             .map(|(_, index)| index)
             .chain(&model.startup.definitions)
+            .chain(
+                model
+                    .startup
+                    .symmetry
+                    .iter()
+                    .map(|symmetry| &symmetry.definition),
+            )
             .find(|&&index| index as usize >= definition_count)
         {
             return self.error(format!("definition {index} of {definition_count}"));
@@ -618,20 +625,6 @@ impl Decoder<'_> {
             return self.error(format!("{} views", views.len()));
         }
         let view = views.pop();
-        let symmetry = match self.next()? {
-            -1 => None,
-            count if count >= 0 => Some(
-                (0..count)
-                    .map(|_| {
-                        let pairs = self.count()?;
-                        (0..pairs)
-                            .map(|_| Ok((self.text()?, self.text()?)))
-                            .collect::<Decoded<Vec<_>>>()
-                    })
-                    .collect::<Decoded<_>>()?,
-            ),
-            other => return self.error(format!("{other} permutations")),
-        };
         let check_deadlock = self.flag()?;
         let is_warning_enabled = self.flag()?;
         let is_recording_graph = self.flag()?;
@@ -694,6 +687,28 @@ impl Decoder<'_> {
             .collect::<Decoded<_>>()?;
         let count = self.count()?;
         let definitions = (0..count).map(|_| self.index()).collect::<Decoded<_>>()?;
+        let symmetry = match self.next()? {
+            -1 => None,
+            definition if definition >= 0 => {
+                let count = self.count()?;
+                let mut permuted_sets = Vec::with_capacity(count);
+                for _ in 0..count {
+                    let name = self.text()?;
+                    let operand = if self.words.get(self.at) == Some(&-1) {
+                        self.at += 1;
+                        None
+                    } else {
+                        Some(node(self)?)
+                    };
+                    permuted_sets.push(PermutedSet { name, operand });
+                }
+                Some(Symmetry {
+                    definition: definition as Index,
+                    permuted_sets,
+                })
+            }
+            other => return self.error(format!("symmetry definition {other}")),
+        };
         let count = self.count()?;
         let assumptions = (0..count)
             .map(|_| Ok((node(self)?, self.text()?)))
@@ -713,7 +728,6 @@ impl Decoder<'_> {
             action_properties,
             initial_predicates,
             view,
-            symmetry,
             check_deadlock,
             is_warning_enabled,
             is_recording_graph,
@@ -725,6 +739,7 @@ impl Decoder<'_> {
             startup: Startup {
                 substitutes,
                 definitions,
+                symmetry,
                 assumptions,
             },
         })
@@ -1141,6 +1156,16 @@ impl Model {
             } = &mut atom.kind
             {
                 visit(unchanged)?;
+            }
+        }
+        for set in self
+            .startup
+            .symmetry
+            .iter_mut()
+            .flat_map(|symmetry| &mut symmetry.permuted_sets)
+        {
+            if let Some(operand) = &mut set.operand {
+                visit(operand)?;
             }
         }
         for (assumption, _) in &mut self.startup.assumptions {

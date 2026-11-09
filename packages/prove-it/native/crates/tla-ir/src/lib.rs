@@ -259,8 +259,6 @@ pub struct Model {
     pub action_properties: Vec<ActionProperty>,
     pub initial_predicates: Vec<NodeId>,
     pub view: Option<ConfigName>,
-    /// The symmetry group: each permutation as the model values it moves, by text.
-    pub symmetry: Option<Vec<Vec<(TextId, TextId)>>>,
     pub check_deadlock: bool,
     pub is_warning_enabled: bool,
     pub is_recording_graph: bool,
@@ -278,7 +276,7 @@ pub struct Model {
 }
 
 /// What TLC evaluates when it starts, in the order the engine evaluates it: each substitute,
-/// then each definition, then each assumption.
+/// then each definition, then the symmetry, then each assumption.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Startup {
     /// The substitutes for declared constants that TLC evaluates and rejects if they fail: the
@@ -288,8 +286,30 @@ pub struct Startup {
     /// The constant definitions with effects that TLC evaluates once, in TLC's order. Each keeps
     /// the value it computes.
     pub definitions: Vec<Index>,
+    /// The SYMMETRY definition, which TLC evaluates to its group as it builds its `Tool`.
+    pub symmetry: Option<Symmetry>,
     /// The assumptions that aren't axioms, each with the name TLC reports it by.
     pub assumptions: Vec<(NodeId, TextId)>,
+}
+
+/// The configuration's SYMMETRY: a 0-ary definition whose value is a set of permutations of
+/// model values (`Tool.getSymmetryPerms`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Symmetry {
+    pub definition: Index,
+    /// The sets the definition's body applies its operator to, which TLC warns about where they
+    /// hold fewer than two elements.
+    pub permuted_sets: Vec<PermutedSet>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PermutedSet {
+    /// The name TLC's warning gives the set: the name the configuration substitutes for it, or
+    /// the text of its expression.
+    pub name: TextId,
+    /// For `Permutations(S)` with S a constant or definition the configuration doesn't replace
+    /// with `<-`, S, whose value TLC checks for a model value the group moves.
+    pub operand: Option<NodeId>,
 }
 
 /// The nodes, in the order of the blob, and which of them are written at the top level.

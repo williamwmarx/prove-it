@@ -92,6 +92,7 @@ import {
   getSuccessors,
   type Successor,
 } from "./successors";
+import { getPermutedSets } from "./symmetry";
 import type { LiveEnabled } from "./tableau";
 import {
   type FailureMessage,
@@ -1717,6 +1718,15 @@ const searchStates = (
     const symmetry = search.symmetryGroup?.map((images) =>
       [...images].map(([name, image]): [string, string] => [name, image.name]),
     );
+    // The search found the SYMMETRY definition, if the configuration names one, to be an operator
+    // without parameters.
+    const getStartupSymmetry = () => {
+      const definition =
+        config.symmetry === undefined ? undefined : environment.definitions.get(config.symmetry);
+      return definition?.kind === "Operator"
+        ? { definition, permutedSets: getPermutedSets(definition, config.substitutions) }
+        : undefined;
+    };
     // TLC's actions for the IR, when the search doesn't take its steps through them already.
     // Finding them describes the spec, which evaluates parts of what the configuration names (an
     // action's arguments, a constant conjunct of the specification or invariant), so it happens
@@ -1755,7 +1765,6 @@ const searchStates = (
         isWarningEnabled: runtime.isWarningEnabled,
         tlcOrder,
         properties: engineProperties,
-        symmetry,
         isRecordingGraph: liveness !== undefined,
         version: options.version,
         atoms: (liveness?.atoms ?? []).map((atom) => ({
@@ -1784,6 +1793,7 @@ const searchStates = (
               ),
             ),
           ],
+          symmetry: getStartupSymmetry(),
           assumptions: specification.assumptions
             .filter((assumption) => !assumption.isAxiom)
             .map((assumption) => ({

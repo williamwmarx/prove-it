@@ -132,18 +132,6 @@ fn encode_here(ir: &Ir) -> Vec<u8> {
     words.extend(model.initial_predicates.iter().map(|&id| offset(id)));
     words.push(model.view.is_some() as i32);
     words.extend(model.view.iter().flat_map(config_name));
-    match &model.symmetry {
-        None => words.push(-1),
-        Some(permutations) => {
-            words.push(permutations.len() as i32);
-            for permutation in permutations {
-                words.push(permutation.len() as i32);
-                for &(from, to) in permutation {
-                    words.extend([from as i32, to as i32]);
-                }
-            }
-        }
-    }
     words.extend([
         model.check_deadlock as i32,
         model.is_warning_enabled as i32,
@@ -197,6 +185,18 @@ fn encode_here(ir: &Ir) -> Vec<u8> {
             .iter()
             .map(|&definition| definition as i32),
     );
+    match &startup.symmetry {
+        None => words.push(-1),
+        Some(symmetry) => {
+            words.extend([
+                symmetry.definition as i32,
+                symmetry.permuted_sets.len() as i32,
+            ]);
+            for set in &symmetry.permuted_sets {
+                words.extend([set.name as i32, set.operand.map_or(-1, offset)]);
+            }
+        }
+    }
     words.push(startup.assumptions.len() as i32);
     for &(assumption, name) in &startup.assumptions {
         words.extend([offset(assumption), name as i32]);

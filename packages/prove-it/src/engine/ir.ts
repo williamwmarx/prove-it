@@ -14,16 +14,17 @@
 // - the values: those of the constants and scopes, in transfer.ts's encoding, whose strings are
 //   indices into the texts;
 // - the model: Init, Next, TLC's actions, the configuration's names, the properties (each checked as
-//   an invariant with the name TLC reports it by), the VIEW, the symmetry group, the settings, the
-//   liveness checker's atoms, each action atom with the position of the ENABLED atom of its
-//   fairness, or -1, and the formula the checker solves, as its number of words and its terms in
-//   prefix order, each atom by its position among the atoms, or past them for one the checker asks
-//   nothing of, then the properties, each its name and its formula the same way, then what TLC
-//   evaluates when it starts: the substitutes it checks, each its constant's name and its
-//   definition; the constant definitions with effects, in the order TLC evaluates them; and the
-//   assumptions, each its expression and the name TLC reports it by. Their definitions and nodes
-//   are written after the model's other roots, in that order. The settings hold TLC's seed, from
-//   which the engine draws what the startup and the initial states draw;
+//   an invariant with the name TLC reports it by), the VIEW, the settings, the liveness checker's
+//   atoms, each action atom with the position of the ENABLED atom of its fairness, or -1, and the
+//   formula the checker solves, as its number of words and its terms in prefix order, each atom by
+//   its position among the atoms, or past them for one the checker asks nothing of, then the
+//   properties, each its name and its formula the same way, then what TLC evaluates when it
+//   starts: the substitutes it checks, each its constant's name and its definition; the constant
+//   definitions with effects, in the order TLC evaluates them; the SYMMETRY definition, or -1, with
+//   the sets it permutes, each the name TLC's warning gives it and the set it checks, or -1; and
+//   the assumptions, each its expression and the name TLC reports it by. Their definitions and
+//   nodes are written after the model's other roots, in that order. The settings hold TLC's seed,
+//   from which the engine draws what the startup and the initial states draw;
 // - the definitions the model reaches, as the offsets of their records among the nodes;
 // - the nodes: expressions and definitions in prefix order, each its tag, its line and column, its
 //   source range (the module's name, or -1 for none, then the start's and the end's line and
@@ -45,12 +46,12 @@ import { hasRepeatedEffect, isImpureDefinition } from "../dependencies";
 import { type Environment, type EvaluationScope, getDefinition } from "../evaluate";
 import { ACTION_LEVEL } from "../levels";
 import { getLevel } from "../liveness";
+import type { PermutedSet } from "../symmetry";
 import type { LiveExpression } from "../tableau";
 import type { TlcVersion } from "../tlc/version";
 import { createStateEncoder } from "../transfer";
 import { findStringRank, getRankedStringCount, getStringOrder, type Value } from "../values";
 import type { EngineProperties, EngineSpec } from "./context";
-import type { NamedPermutation } from "./symmetry";
 
 // The version of the layout below, which the decoder checks. Any change to it changes this.
 export const IR_VERSION = 11;
@@ -176,7 +177,6 @@ export interface IrInput {
   isWarningEnabled: boolean;
   tlcOrder: number[];
   properties: EngineProperties;
-  symmetry: NamedPermutation[] | undefined;
   isRecordingGraph: boolean;
   version: TlcVersion | undefined;
   atoms: IrAtom[];
@@ -192,6 +192,8 @@ export interface IrStartup {
   substitutes: { name: string; definition: Definition }[];
   // The constant definitions with effects, in the order TLC evaluates them.
   definitions: Definition[];
+  // The SYMMETRY definition, which TLC evaluates to its group, and the sets it permutes.
+  symmetry: { definition: Definition; permutedSets: PermutedSet[] } | undefined;
   // The assumptions that aren't axioms, each with the name TLC reports it by.
   assumptions: { expression: Expression; name: string }[];
 }
@@ -746,15 +748,6 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
   }
   writeRoots(input.properties.initialPredicates);
   writeConfigNames(config.view === undefined ? [] : [config.view]);
-  const symmetry = input.symmetry;
-  push(model, symmetry ? symmetry.length : -1);
-  for (const permutation of symmetry ?? []) {
-    push(model, permutation.length);
-    for (const [from, to] of permutation) {
-      push(model, getText(from));
-      push(model, getText(to));
-    }
-  }
   push(model, config.checkDeadlock ? 1 : 0);
   push(model, input.isWarningEnabled ? 1 : 0);
   push(model, input.isRecordingGraph ? 1 : 0);
@@ -851,6 +844,15 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
   }
   push(model, startup.definitions.length);
   for (const definition of startup.definitions) push(model, getDefinitionIndex(definition));
+  if (startup.symmetry === undefined) push(model, -1);
+  if (startup.symmetry !== undefined) {
+    push(model, getDefinitionIndex(startup.symmetry.definition));
+    push(model, startup.symmetry.permutedSets.length);
+    for (const permuted of startup.symmetry.permutedSets) {
+      push(model, getText(permuted.name));
+      push(model, permuted.operand === undefined ? -1 : writeRoot(permuted.operand));
+    }
+  }
   push(model, startup.assumptions.length);
   for (const assumption of startup.assumptions) {
     push(model, writeRoot(assumption.expression));
