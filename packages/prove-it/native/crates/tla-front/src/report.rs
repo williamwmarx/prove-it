@@ -5,10 +5,12 @@ use std::path::Path;
 use std::rc::Rc;
 
 use crate::TlcVersion;
-use crate::ast::{Assumed, Expr, ExpressionKind, Module, ModuleUnit, Statement};
+use crate::ast::{
+    Assumed, Declaration, DefinitionKind, Expr, ExpressionKind, Module, ModuleUnit, Statement,
+};
 use crate::config::parse_config;
-use crate::environment::{EnvironmentOptions, create_environment};
-use crate::errors::FrontError;
+use crate::environment::{EnvironmentOptions, get_sany_messages};
+use crate::errors::{FrontError, SanyError};
 use crate::get_standard_module;
 use crate::hash::{FastMap, FastSet};
 use crate::parser::{extract_module, parse_sany_module};
@@ -227,6 +229,32 @@ fn get_dependencies(module: &Rc<Module>) -> Dependencies {
     dependencies
 }
 
+/// Whether a definition has a different arity than SANY sees in its RECURSIVE declaration, which
+/// compares only the arity of the last parameter.
+fn has_mismatched_recursion(module: &Module) -> bool {
+    let declared: Vec<&Rc<Declaration>> = module
+        .units
+        .iter()
+        .flat_map(|unit| match unit {
+            ModuleUnit::Recursive(declarations) => declarations.iter().collect(),
+            _ => Vec::new(),
+        })
+        .collect();
+    module.definitions.iter().any(|definition| {
+        let DefinitionKind::Operator { params, .. } = &definition.kind else {
+            return false;
+        };
+        declared.iter().any(|declaration| {
+            declaration.name == definition.name
+                && (declaration.arity != params.len()
+                    || params.last().is_some_and(|param| param.arity != 0))
+        })
+    }) || module
+        .modules
+        .iter()
+        .any(|inner| has_mismatched_recursion(inner))
+}
+
 struct Loaded {
     text: String,
     module: Rc<Module>,
@@ -314,6 +342,11 @@ impl Loader<'_> {
                     module.name
                 ),
             });
+        }
+        if has_mismatched_recursion(&module) {
+            return Err(not_yet(
+                "a definition whose arity differs from its RECURSIVE",
+            ));
         }
         let module = Rc::new(module);
         let dependencies = Rc::new(get_dependencies(&module));
@@ -733,25 +766,64 @@ fn write_sany_text(loader: &mut Loader, root: &Rc<str>) -> Result<()> {
     // SANY's messages come from linking, which reports what SANY's semantic analysis does.
     let config =
         parse_config("", options.version).map_err(|error| FrontError::Config(error.message))?;
-    let environment = create_environment(&EnvironmentOptions {
-        source,
-        load_module: &|name| loader.read(name).0,
-        config: &config,
-        is_unconfigured: true,
-        version: options.version,
-        is_level_checked: true,
-    })
-    .map_err(|_| not_yet("SANY's semantic errors"))?;
-    if !environment.printed.is_empty() {
-        return Err(not_yet("SANY's warnings"));
-    }
-    for name in &order {
+    let messages = get_sany_messages(
+        &EnvironmentOptions {
+            source,
+            load_module: &|name| loader.read(name).0,
+            config: &config,
+            is_unconfigured: true,
+            version: options.version,
+            is_level_checked: true,
+        },
+        &order,
+    )
+    .map_err(|error| match error {
+        FrontError::NotYet(_) => Stop::Front(error),
+        _ => not_yet("an error that stops linking"),
+    })?;
+    // SANY.frontEndSemanticAnalysis: after each module, SANY prints every message so far.
+    let mut warnings: Vec<SanyError> = Vec::new();
+    let mut errors: Vec<SanyError> = Vec::new();
+    for (name, module_messages) in order.iter().zip(messages) {
         loader
             .lines
             .push(format!("Semantic processing of module {name}\n"));
+        warnings.extend(module_messages.warnings);
+        errors.extend(module_messages.errors);
+        if warnings.is_empty() && errors.is_empty() {
+            continue;
+        }
+        // TLC 1.7.4's SANY prints the errors and warnings together.
+        if options.version == TlcVersion::V1_7_4 {
+            return Err(not_yet("TLC 1.7.4's semantic errors"));
+        }
+        let format_message =
+            |message: &SanyError| format!("{}\n\n{}", message.location, message.message);
+        if !warnings.is_empty() {
+            loader
+                .lines
+                .push(format!("*** Warnings: {}\n\n", warnings.len()));
+            for warning in &warnings {
+                loader
+                    .lines
+                    .push(format!("{}\n\n\n\n", format_message(warning)));
+            }
+        }
+        if !errors.is_empty() {
+            loader.lines.push(format!(
+                "Semantic errors:\n\n*** Errors: {}\n\n",
+                errors.len()
+            ));
+            for error in &errors {
+                loader
+                    .lines
+                    .push(format!("{}\n\n\n", format_message(error)));
+            }
+        }
     }
-    // SANY.frontEndLinting: TLC 1.7.4's SANY has no linter.
-    if options.version != TlcVersion::V1_7_4 {
+    // SANY.frontEndLinting: when SANY accepts the spec, it lints the modules. TLC 1.7.4's SANY
+    // has no linter.
+    if errors.is_empty() && options.version != TlcVersion::V1_7_4 {
         let linted: Vec<&Rc<str>> = order
             .iter()
             .filter(|name| !UNLINTED_MODULES.contains(&&***name))

@@ -33,6 +33,17 @@ fn reports_a_missing_module_in_the_module_that_names_it() {
 }
 
 #[test]
+fn reprints_every_error_so_far_after_each_module() {
+    assert_eq!(
+        get_text(
+            "errors",
+            "---- MODULE Main ----\nEXTENDS Lib\nAlso == Missing\n====\n---- MODULE Lib ----\nFoo == Undefined\n====\n"
+        ),
+        "Parsing file Main File\nParsing file Lib RootFile\nSemantic processing of module Lib\nSemantic errors:\n\n*** Errors: 1\n\nline 2, col 8 to line 2, col 16 of module Lib\n\nUnknown operator: `Undefined'.\n\n\nSemantic processing of module Main\nSemantic errors:\n\n*** Errors: 2\n\nline 2, col 8 to line 2, col 16 of module Lib\n\nUnknown operator: `Undefined'.\n\n\nline 3, col 9 to line 3, col 15 of module Main\n\nUnknown operator: `Missing'.\n\n\n"
+    );
+}
+
+#[test]
 fn names_each_module_sany_parses_analyzes_and_lints() {
     assert_eq!(
         get_text(

@@ -4,6 +4,8 @@ node_modules
 dist
 **/*.tgz
 coverage
+# TLC's coverage test models keep their golden IRs.
+!packages/prove-it/tests/conformance/ir/**/coverage/
 *.tsbuildinfo
 
 # Copied into the package by prepack

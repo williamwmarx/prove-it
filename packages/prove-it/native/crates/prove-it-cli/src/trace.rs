@@ -73,7 +73,9 @@ pub fn rebuild_trace(ir: &Ir, violation: &Violation) -> Result<PrintedTrace, Str
                             .map(|(position, state)| PrintedState {
                                 text: match aliases.as_ref().map(|aliases| &aliases[position]) {
                                     Some(Alias::Record(fields)) => format_fields(
-                                        fields.iter().map(|(name, value)| (name.as_str(), value)),
+                                        fields
+                                            .iter()
+                                            .map(|(name, value)| (name.as_str(), Some(value))),
                                     ),
                                     _ => format_state(ir, &state.values),
                                 },
@@ -114,25 +116,30 @@ pub(crate) fn format_print(texts: &[String]) -> String {
 
 /// A state's values, in the engine's order of the variables, as TLC prints the state.
 pub(crate) fn format_state(ir: &Ir, values: &[Value]) -> String {
+    format_partial_state(ir, &values.iter().map(Some).collect::<Vec<_>>())
+}
+
+/// A state some of whose variables are unassigned, which TLC prints as null.
+pub(crate) fn format_partial_state(ir: &Ir, values: &[Option<&Value>]) -> String {
     format_fields(ir.tlc_order.iter().map(|&position| {
         (
             ir.texts[ir.variables[position as usize] as usize].as_ref(),
-            &values[position as usize],
+            values[position as usize],
         )
     }))
 }
 
 /// Named values as TLC prints a state (`TLCStateMut.toString`): a line each, as a conjunction when
 /// there are several.
-fn format_fields<'v>(fields: impl ExactSizeIterator<Item = (&'v str, &'v Value)>) -> String {
+fn format_fields<'v>(
+    fields: impl ExactSizeIterator<Item = (&'v str, Option<&'v Value>)>,
+) -> String {
     let is_conjunction = fields.len() > 1;
     let mut text = String::new();
     for (name, value) in fields {
         let conjunct = if is_conjunction { "/\\ " } else { "" };
-        text.push_str(&format!(
-            "{conjunct}{name} = {}\n",
-            pretty(&format_value(value))
-        ));
+        let value = value.map_or_else(|| "null".to_string(), |value| pretty(&format_value(value)));
+        text.push_str(&format!("{conjunct}{name} = {value}\n"));
     }
     text
 }

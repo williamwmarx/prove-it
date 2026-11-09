@@ -3418,6 +3418,7 @@ describe("name resolution matches SANY", () => {
       ],
     ],
     ["Ab == 1\nf == Abc", [["line 3, col 6 to line 3, col 8", "Unknown operator: `Abc'."]]],
+    ["Foo == x = 1\nVARIABLE x", [["line 2, col 8 to line 2, col 8", "Unknown operator: `x'."]]],
     [
       "EXTENDS Naturals\nf == -1",
       [
