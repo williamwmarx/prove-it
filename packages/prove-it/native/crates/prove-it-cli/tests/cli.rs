@@ -1021,8 +1021,8 @@ fn reports_an_implied_init_that_fails_on_an_initial_state() {
 
 #[test]
 fn rejects_a_constant_invariant_the_front_end_leaves_to_the_startup() {
-    // tla-front's evaluator computes no records, so the engine evaluates Bad as TLC starts.
-    let source = "---- MODULE Bad ----\nVARIABLE x\nInit == x = 0\nNext == x' = x\nBad == [a |-> 1].a = 2\n====\n";
+    // tla-front's evaluator computes no tuples, so the engine evaluates Bad as TLC starts.
+    let source = "---- MODULE Bad ----\nVARIABLE x\nInit == x = 0\nNext == x' = x\nBad == <<1>>[1] = 2\n====\n";
     let config = "INIT Init\nNEXT Next\nINVARIANT Bad\n";
     let spec = std::env::temp_dir().join(format!("prove-it-cli-bad-{}.tla", std::process::id()));
     std::fs::write(&spec, source).expect("the spec");

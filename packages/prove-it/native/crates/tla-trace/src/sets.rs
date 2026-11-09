@@ -465,8 +465,48 @@ pub fn cardinality(set: &Value) -> Evaluated<usize> {
     }
     match set {
         Value::Interval(low, high) => Ok((i64::from(*high) - i64::from(*low) + 1).max(0) as usize),
+        Value::Lazy(lazy) => match &**lazy {
+            Lazy::FunctionSet(domain, range) => match function_set_size(set, domain, range)? {
+                Some(size) => Ok(size),
+                None => Ok(elements(set)?.len()),
+            },
+            _ => Ok(elements(set)?.len()),
+        },
         _ => Ok(elements(set)?.len()),
     }
+}
+
+// `SetOfFcnsValue.size`: the number of functions from a domain to a range, both enumerated or
+// intervals, which fails where it overflows an int. None for other domains and ranges.
+fn function_set_size(set: &Value, domain: &Value, range: &Value) -> Evaluated<Option<usize>> {
+    let size = |set: &Value| match set {
+        Value::Set(elements) => Some(elements.len() as i64),
+        Value::Interval(low, high) => Some((i64::from(*high) - i64::from(*low) + 1).max(0)),
+        _ => None,
+    };
+    let (Some(domain), Some(range)) = (size(domain), size(range)) else {
+        return Ok(None);
+    };
+    if domain == 0 {
+        return Ok(Some(1));
+    }
+    if range <= 1 {
+        return Ok(Some(range as usize));
+    }
+    let mut count: i64 = 1;
+    for _ in 0..domain {
+        count = count.saturating_mul(range);
+        if count > i64::from(i32::MAX) {
+            return fail_runtime(
+                "a function set too large to count",
+                format!(
+                    "Overflow when computing the number of elements in:\n{}",
+                    format_pretty(set)
+                ),
+            );
+        }
+    }
+    Ok(Some(count as usize))
 }
 
 #[cfg(test)]
@@ -480,6 +520,21 @@ mod tests {
             .message
             .expect("TLC's message")
             .text
+    }
+
+    #[test]
+    fn counts_a_function_set_as_tlc_does() {
+        let set = |domain, range| Value::Lazy(Rc::new(Lazy::FunctionSet(domain, range)));
+        let count = cardinality(&set(Value::Interval(1, 3), Value::Interval(1, 4)));
+        assert_eq!(count.expect("a count"), 64);
+        let huge = cardinality(&set(Value::Interval(0, 2), Value::Interval(1, 2000)));
+        assert_eq!(
+            huge.expect_err("an overflow")
+                .message
+                .expect("TLC's message")
+                .text,
+            "Overflow when computing the number of elements in:\n[0..2 -> 1..2000]"
+        );
     }
 
     #[test]
