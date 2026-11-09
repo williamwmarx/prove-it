@@ -989,9 +989,14 @@ pub(crate) fn field_of(
     key: Id,
     hint: &AtomicU32,
 ) -> Outcome<Id> {
-    let mut position = hint.load(Ordering::Relaxed);
+    let hinted = hint.load(Ordering::Relaxed);
+    let mut position = hinted;
     let value = machine.store.apply_field(record, key, &mut position);
-    hint.store(position, Ordering::Relaxed);
+    // Threads share the hint, so it is written only when it changes: a write on every read would
+    // move its cache line between them.
+    if position != hinted {
+        hint.store(position, Ordering::Relaxed);
+    }
     value
 }
 
