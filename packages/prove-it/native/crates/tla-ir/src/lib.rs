@@ -319,6 +319,9 @@ pub struct Model {
     /// The name TLC gives each definition of the IR a named INSTANCE copies, such as `I!Foo`
     /// (`instanceNames`), by index.
     pub instance_names: Vec<(Index, TextId)>,
+    /// TLCGet("spec"), the record of the specification as TLC processed it, by its position in
+    /// the IR's values, where an expression reads it (`TLCGetSet.TLCGetStringValue`).
+    pub tlc_spec: Option<u32>,
     /// What TLC evaluates when it starts, before the search.
     pub startup: Startup,
 }

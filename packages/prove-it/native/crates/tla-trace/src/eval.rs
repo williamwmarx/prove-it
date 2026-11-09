@@ -2710,6 +2710,14 @@ impl<'ir> Evaluator<'ir> {
                             ),
                         );
                     }
+                    // The specification's record, as the interpreter computes it for TLC's.
+                    Value::Str(key) if *key.units == *"spec".encode_utf16().collect::<Vec<_>>() => {
+                        let ir = self.ir;
+                        match ir.model.tlc_spec {
+                            Some(index) => self.convert(&ir.values.list[index as usize])?,
+                            None => return fail("TLCGet(\"spec\") the IR doesn't hold"),
+                        }
+                    }
                     Value::Str(key)
                         if *key.units == *"level".encode_utf16().collect::<Vec<_>>() =>
                     {
