@@ -363,27 +363,71 @@ fn guard(compiled: Compiled) -> Op {
     }
 }
 
-// A walk's first step, a guard `f[k] = c` of a variable and a bound name.
+// A walk's first step, a guard `f[k] = c` or `f[k] # c`, with `f[k]` a variable applied to one
+// bound name or, twice, to two.
 #[derive(Clone, Copy)]
 pub(crate) struct Leading {
-    variable: u32,
-    slot: u32,
+    read: Read,
     constant: Id,
+    is_equal: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Read {
+    Apply {
+        variable: u32,
+        slot: u32,
+    },
+    Apply2 {
+        variable: u32,
+        slot: u32,
+        second: u32,
+    },
 }
 
 impl Leading {
     fn of(compiled: &Compiled) -> Option<Leading> {
-        match &**compiled.predicate.as_ref()? {
-            Predicate::Equal {
-                left: Leaf::ApplyVar { variable, slot, .. },
-                right: Leaf::Constant(constant),
-                is_equal: true,
-            } => Some(Leading {
-                variable: *variable,
-                slot: *slot,
-                constant: *constant,
-            }),
-            _ => None,
+        let Predicate::Equal {
+            left,
+            right: Leaf::Constant(constant),
+            is_equal,
+        } = &**compiled.predicate.as_ref()?
+        else {
+            return None;
+        };
+        let read = match *left {
+            Leaf::ApplyVar { variable, slot, .. } => Read::Apply { variable, slot },
+            Leaf::ApplyVar2 {
+                variable,
+                slot,
+                second,
+            } => Read::Apply2 {
+                variable,
+                slot,
+                second,
+            },
+            _ => return None,
+        };
+        Some(Leading {
+            read,
+            constant: *constant,
+            is_equal: *is_equal,
+        })
+    }
+}
+
+impl Read {
+    fn run(self, machine: &mut Machine<'_>) -> Outcome<Id> {
+        match self {
+            Read::Apply { variable, slot } => {
+                let function = machine.read_current(variable)?;
+                machine.store.apply(function, machine.locals[slot as usize])
+            }
+            Read::Apply2 {
+                variable,
+                slot,
+                second,
+            } => predicate::apply_var2(machine, variable, slot, second),
         }
     }
 }
@@ -1470,26 +1514,22 @@ impl<'a> Compiler<'a> {
                     .map(|(_, leading)| *leading)
             })
             .collect::<Option<Vec<Leading>>>()?;
-        let (variable, slot) = (leads.first()?.variable, leads[0].slot);
-        if leads.len() < 2
-            || leads
-                .iter()
-                .any(|leading| (leading.variable, leading.slot) != (variable, slot))
-        {
+        let read = leads.first()?.read;
+        if leads.len() < 2 || leads.iter().any(|leading| leading.read != read) {
             return None;
         }
-        let walks: Box<[(Id, Step)]> = leads
+        let walks: Box<[(Id, bool, Step)]> = leads
             .iter()
             .zip(branches)
-            .map(|(leading, branch)| (leading.constant, branch.clone().expect("a walk")))
+            .map(|(leading, branch)| {
+                let walk = branch.clone().expect("a walk");
+                (leading.constant, leading.is_equal, walk)
+            })
             .collect();
         Some(step(move |machine, on_complete| {
-            let function = machine.read_current(variable)?;
-            let value = machine
-                .store
-                .apply(function, machine.locals[slot as usize])?;
-            for (constant, walk) in walks.iter() {
-                if predicate::equals(machine, value, *constant)? {
+            let value = read.run(machine)?;
+            for (constant, is_equal, walk) in walks.iter() {
+                if predicate::equals(machine, value, *constant)? == *is_equal {
                     walk(machine, on_complete)?;
                 }
             }
