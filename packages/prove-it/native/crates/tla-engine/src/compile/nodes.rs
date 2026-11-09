@@ -13,8 +13,8 @@ use super::lazy;
 use super::predicate::{Predicate, Test};
 use super::{
     Binding, Compiled, Compiler, Compiling, Context, Filter, Shape, bind, bool_id,
-    call_recursive_function, combine_references, constant, eval, leaf, lookup, predicate_node,
-    reference_of, unsupported,
+    call_recursive_function, combine_references, constant, eval, leaf, lookup, member,
+    predicate_node, reference_of, unsupported,
 };
 use crate::footprint::Footprint;
 use crate::machine::{Eval, Machine};
@@ -628,9 +628,6 @@ impl Compiler<'_> {
         context: &Context,
     ) -> Compiling<Compiled> {
         let set = self.compile(bound.set, context)?;
-        if set.infinite.is_some() {
-            return unsupported("filtering an infinite set");
-        }
         let binder = self.bind_bound(&bound.pattern, context);
         let predicate = self.compile(predicate, &binder.context)?;
         let footprint = set
@@ -642,25 +639,31 @@ impl Compiler<'_> {
             tuple: binder.tuple,
             predicate: Predicate::of(&predicate).build(),
         });
+        // TLC tests membership in a filter of a set it can't enumerate, such as Nat, by the set's
+        // membership and the predicate (SetPredValue.member), and fails where it enumerates it.
+        if set.infinite.is_some() {
+            let base = self.member_test(&set);
+            let tested = Arc::clone(&filter);
+            return Ok(Compiled {
+                is_costly: true,
+                infinite: set.infinite,
+                member: Some(member(move |machine, element| {
+                    Ok(base(machine, element)? && test_element(machine, &tested, element)?)
+                })),
+                ..leaf(
+                    eval(|_| Err(Bail("enumerated a filter of an infinite set"))),
+                    footprint,
+                )
+            });
+        }
         let parts = Arc::clone(&filter);
         // TLC filters a set it can't enumerate, such as SUBSET S, lazily, in the order of the set.
         let reference = if set.is_normalized {
             None
         } else {
             let tested = Arc::clone(&filter);
-            let test: lazy::Test = Arc::new(move |machine, element| {
-                let saved: Vec<Id> = tested
-                    .slots
-                    .iter()
-                    .map(|&slot| machine.locals[slot as usize])
-                    .collect();
-                let kept = assign_bound(machine, &tested.slots, tested.tuple, element)
-                    .and_then(|()| (tested.predicate)(machine));
-                for (&slot, &value) in tested.slots.iter().zip(&saved) {
-                    machine.locals[slot as usize] = value;
-                }
-                kept
-            });
+            let test: lazy::Test =
+                Arc::new(move |machine, element| test_element(machine, &tested, element));
             combine_references(&[&set], move |machine, mut bases| {
                 lazy::Lazy::filter(machine, bases.remove(0), Arc::clone(&test))
             })
@@ -1046,6 +1049,21 @@ fn map_images(
         map_images(machine, levels, level + 1, body)?;
     }
     Ok(())
+}
+
+// Whether an element passes a filter's predicate, its names bound to it and then restored.
+fn test_element(machine: &mut Machine<'_>, filter: &Filter, element: Id) -> Outcome<bool> {
+    let saved: Vec<Id> = filter
+        .slots
+        .iter()
+        .map(|&slot| machine.locals[slot as usize])
+        .collect();
+    let kept = assign_bound(machine, &filter.slots, filter.tuple, element)
+        .and_then(|()| (filter.predicate)(machine));
+    for (&slot, &value) in filter.slots.iter().zip(&saved) {
+        machine.locals[slot as usize] = value;
+    }
+    kept
 }
 
 #[allow(clippy::too_many_arguments)]
