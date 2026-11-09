@@ -1673,10 +1673,11 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             }
         }
         Err(bail) if !is_past_initial => {
-            let violation = search
-                .violation
-                .take()
-                .filter(|_| settings.is_violation_reported);
+            // The store goes with the violation, so whether the search ranked strings is read
+            // here, as below.
+            let violation = search.violation.take().filter(|_| {
+                settings.is_violation_reported && !machine.store.has_unordered_strings()
+            });
             // Otherwise the interpreter starts from scratch and prints it all again.
             if violation.is_some() {
                 search.flush(&mut machine);
@@ -1762,11 +1763,10 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     // over the search.
     let is_unordered = machine.store.has_unordered_strings();
     match outcome {
+        // TLC orders a violation's sets of strings by its own ranking, which the search's may not
+        // be, so the interpreter reports it.
         SearchOutcome::Stopped {
-            reason,
-            checkpoint: Some(_),
-            collisions,
-            ..
+            reason, collisions, ..
         } if is_unordered => SearchOutcome::Stopped {
             reason,
             checkpoint: None,
