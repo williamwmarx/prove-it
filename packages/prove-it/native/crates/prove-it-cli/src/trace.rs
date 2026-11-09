@@ -56,6 +56,7 @@ pub fn rebuild_trace(
     ir: &Ir,
     violation: &Violation,
     postconditions: Option<&PostconditionRun>,
+    is_tool: bool,
 ) -> Result<PrintedTrace, String> {
     std::thread::scope(|scope| {
         std::thread::Builder::new()
@@ -123,7 +124,7 @@ pub fn rebuild_trace(
                         }
                         None => None,
                     };
-                    let aliases = rebuilder.alias(&trace, cycle_start)?;
+                    let aliases = rebuilder.alias(&trace, cycle_start, is_tool)?;
                     // CounterExample closes a lasso with its step back into the cycle, which a
                     // stuttering one doesn't take.
                     let cycle = match violation.kind {
