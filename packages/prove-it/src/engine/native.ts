@@ -127,6 +127,9 @@ export interface NativeLiveness {
   loopStart: number;
   state: number;
   isCycleConstrained: number;
+  // The positions of the properties a lasso violates, and how many solutions TLC checks, or -1.
+  violated: Int32Array;
+  branches: number;
 }
 
 // What the native engine did with a model (binding/check.rs).
@@ -147,7 +150,7 @@ export type NativeOutcome =
   | ({ status: "stopped"; reason: string } & NativeCheckpoint);
 
 // The contract between this loader and the addon, ABI_VERSION in its lib.rs.
-const ABI_VERSION = 4;
+const ABI_VERSION = 5;
 
 export const ADDON_FILE = "prove-it-engine.node";
 

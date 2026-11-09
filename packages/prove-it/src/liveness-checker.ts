@@ -55,6 +55,8 @@ export interface LivenessChecker {
   enabledAtoms: LiveEnabled[];
   // The fairness and the negated properties, whose solutions the checks are.
   formula: LiveExpression;
+  // Each property, by name, whose violation a counterexample's checks find.
+  properties: { name: string; formula: LiveExpression }[];
 }
 
 interface SearchGraph {
@@ -1164,6 +1166,10 @@ export const createLivenessChecker = (
 
   return {
     formula,
+    properties: properties.map((property, position) => ({
+      name: property.name,
+      formula: negations[position].body,
+    })),
     branches: behaviors.length,
     atoms: [...questions],
     enabledAtoms: [...atomIds.keys()].filter((atom) => atom.kind === "Enabled"),
