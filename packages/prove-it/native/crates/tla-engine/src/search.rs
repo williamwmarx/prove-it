@@ -72,9 +72,8 @@ pub trait Reporter {
     fn initial_states_progress(&mut self, count: u64);
     fn initial_states(&mut self, generated: u64, distinct: u64);
     fn progress(&mut self, generated: u64, distinct: u64, queued: u64, depth: u64);
-    /// What Print or PrintT printed: the values, in `transfer.ts`'s encoding as one state of
-    /// `width` values, for the interpreter's printer.
-    fn print(&mut self, values: EncodedStates, width: usize);
+    /// What Print or PrintT printed: the values, as ids of the search's store.
+    fn print(&mut self, store: &Store, values: &[Id]);
 }
 
 /// The counts TLC reports of a search, so far or in all.
@@ -466,11 +465,7 @@ impl<'r, T: Reached> Search<'r, T> {
     fn flush(&mut self, machine: &mut Machine<'_>) {
         for printed in std::mem::take(&mut machine.output) {
             match printed {
-                Printed::Values(values) => {
-                    let mut encoder = StateEncoder::new();
-                    encoder.encode(&machine.store, &values);
-                    self.reporter.print(encoder.finish(), values.len());
-                }
+                Printed::Values(values) => self.reporter.print(&machine.store, &values),
                 Printed::InitialStates(count) => self.reporter.initial_states_progress(count),
             }
         }
@@ -817,7 +812,7 @@ impl Reporter for Quiet {
     fn initial_states_progress(&mut self, _count: u64) {}
     fn initial_states(&mut self, _generated: u64, _distinct: u64) {}
     fn progress(&mut self, _generated: u64, _distinct: u64, _queued: u64, _depth: u64) {}
-    fn print(&mut self, _values: EncodedStates, _width: usize) {}
+    fn print(&mut self, _store: &Store, _values: &[Id]) {}
 }
 
 // The states a thread found in a level that weren't found before it, in the order it found them:
