@@ -36,7 +36,7 @@ pub(super) const NAPI_INT32_ARRAY: i32 = 5;
 pub(super) const NAPI_BIGINT64_ARRAY: i32 = 9;
 const NAPI_UNDEFINED: i32 = 0;
 
-unsafe extern "C" {
+napi_functions! {
     pub(super) fn napi_typeof(env: napi_env, value: napi_value, result: *mut i32) -> napi_status;
     fn napi_get_value_double(env: napi_env, value: napi_value, result: *mut f64) -> napi_status;
     fn napi_get_value_bool(env: napi_env, value: napi_value, result: *mut bool) -> napi_status;

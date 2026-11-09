@@ -81,8 +81,16 @@ Under SYMMETRY or a VIEW the search records the successor each step generated, a
 that differs from the state stored for its fingerprint, once. `tla-live` takes those positions as
 `Graph::reals`: a state's own checks and the tableau's consistency read the real successor, an
 action atom the step `(stored s0, real s1)`, and a successor set dedups on the stored index and the
-real state. A late node of a real state the search didn't store declines ("a late node of a state
-the search didn't store"), so expanding those states is the next step.
+real state.
+
+A late node of a state the search reached but didn't store has TLC run Next from that state
+(`TableauLiveChecker#addNextState`), which the search never did: it expanded the stored state with
+the same fingerprint. `tla-live` then returns `Verdict::Unexpanded`, and the engine takes the
+steps from each such state it hasn't yet (`expand_reals`), as TLC does: each successor through
+each of TLC's actions when the search labels its steps, in the model and with the action
+constraints, with the stored state with its fingerprint. The engine answers the atoms again and
+checks again, until the checker asks for no state it hasn't expanded. The state checks of a late
+node are of the state it reached, as TLC sets them on the node (`node_reals`).
 
 The checker names no violated property there: TLC names them from the trace it rebuilds, which the
 interpreter's printer rebuilds as TLC does. The labels of a lasso's steps come from that rebuilt
@@ -91,6 +99,6 @@ the next state of the lasso, as `Tool#getState` takes it.
 
 A replay of the graph would hand the interpreter's checker the stored states, so when the native
 checker declines, or under `PROVE_IT_LIVE_CHECK=1`, the interpreter searches again from the start.
-On the 26 corpus models with temporal properties under SYMMETRY or a VIEW, 20 are decided natively
-and 6 decline on a late node; the outputs of all 26 match TLC's recordings, and under
+On the 26 corpus models with temporal properties under SYMMETRY or a VIEW, all 26 are decided
+natively (23 lassos, 3 hold); their outputs match TLC's recordings, and under
 `PROVE_IT_LIVE_CHECK=1` the verdicts, lassos, branches and labels match the interpreter's.
