@@ -1844,6 +1844,15 @@ const searchStates = (
               version: options.version,
               ...callbacks,
             });
+      // Under SYMMETRY or a VIEW, a replay of the graph would give the interpreter's liveness
+      // checker the states stored rather than the states each step reached, so it searches again.
+      const isReplayFaithful = !isReducing || (verdict?.status === "lasso" && !isLiveChecked);
+      if (result.checkpoint && !isReplayFaithful) {
+        reportEngine(
+          `found ${result.distinctStates} states in ${(performance.now() - startedAt).toFixed(0)} ms; the interpreter searches again to check the temporal properties`,
+        );
+        return undefined;
+      }
       if (result.checkpoint) {
         // The interpreter checks the temporal properties on the graph the engine found.
         takeGraph(result.checkpoint);
@@ -1934,9 +1943,6 @@ const searchStates = (
   };
   const getEngineIneligibility = () => {
     if (getEngineSetting() === "0") return "disabled";
-    if (liveness && (search.isSymmetric || config.view !== undefined)) {
-      return "liveness under symmetry or a view";
-    }
     if (stateWriter) return "-dump";
     if (options.isContinued) return "-continue";
     if (search.isFingerprintedLikeTlc) return "wide strings";
@@ -2315,7 +2321,9 @@ const searchStates = (
       loopStart,
     );
     const verdict = engineReport.liveness;
-    if (isLiveChecked && verdict?.status === "lasso") {
+    // Under SYMMETRY or a VIEW, TLC names them from the states it rebuilds, which the native
+    // checker doesn't hold, so it names none.
+    if (isLiveChecked && verdict?.status === "lasso" && !isReducing) {
       const named = [
         ...new Set(Array.from(verdict.violated, (position) => checker.properties[position].name)),
       ];
