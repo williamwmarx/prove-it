@@ -7,6 +7,7 @@ name = "prove-it-cli"
 version = "0.1.0"
 dependencies = [
  "tla-engine",
+ "tla-front",
  "tla-ir",
  "tla-values",
 ]
