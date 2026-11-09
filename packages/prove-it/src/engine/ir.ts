@@ -182,10 +182,15 @@ export interface TraceAction {
   range: SourceRange | undefined;
 }
 
+// The specification the IR holds, with no next-state relation where the configuration names none.
+export interface IrSpec extends Omit<EngineSpec, "next"> {
+  next: Expression | undefined;
+}
+
 export interface IrInput {
   config: ModelConfig;
   environment: Environment;
-  spec: EngineSpec;
+  spec: IrSpec;
   // TLC's actions, with the label a trace gives each step one takes. The search takes its steps
   // through them only when spec.actions is given.
   traceActions: TraceAction[];
@@ -778,7 +783,7 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
 
   const spec = input.spec;
   push(model, writeRoot(spec.init));
-  push(model, writeRoot(spec.next));
+  push(model, spec.next === undefined ? -1 : writeRoot(spec.next));
   push(model, getScopeIndex(spec.scope));
   push(model, input.traceActions.length);
   for (const action of input.traceActions) {

@@ -178,7 +178,7 @@ fn lower_definitions(
         .collect();
     let model = Model {
         init,
-        next,
+        next: Some(next),
         scope: None,
         actions: Vec::new(),
         is_labelled: false,

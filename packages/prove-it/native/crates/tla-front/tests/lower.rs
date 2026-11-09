@@ -29,7 +29,7 @@ fn lower(source: &str, name: &str) -> Ir {
     lowering
         .finish(Model {
             init: 0,
-            next: 0,
+            next: Some(0),
             scope: None,
             actions: Vec::new(),
             is_labelled: false,

@@ -2,9 +2,9 @@ import type { Expression } from "./ast";
 import { type ModelConfig, parseConfig } from "./config";
 import { hasEffect, isConstantLevel, isImpureDefinition } from "./dependencies";
 import { getMemoStatistics } from "./engine/compile";
-import { toEngineProperties } from "./engine/context";
+import { type EngineProperties, toEngineProperties } from "./engine/context";
 import { toValue as toEngineValue } from "./engine/convert";
-import { type IrOutcome, type IrStartup, lowerToIr } from "./engine/ir";
+import { type IrOutcome, type IrSpec, type IrStartup, lowerToIr } from "./engine/ir";
 import { checkNatively, type NativeLiveness, toEngineResult, toStop } from "./engine/native";
 import {
   type EngineCheckpoint,
@@ -454,38 +454,51 @@ export const getIrStartup = (
   };
 };
 
-// The engine IR of a spec without variables, for the native binary: its initial predicate and
-// next-state relation are FALSE, so it finds no state, as TLC does.
-export const lowerConstantSpec = (
+// The engine IR of a model TLC searches no states of, for the native binary: one without
+// variables, whose initial predicate and next-state relation are FALSE, so it finds no state, and
+// one without a next-state relation, whose initial states TLC computes before it stops.
+export const lowerUnsearchedSpec = (
   config: ModelConfig,
   specification: ReturnType<typeof createEnvironment>,
+  spec: IrSpec,
+  tlcOrder: number[],
+  properties: EngineProperties,
   version: TlcVersion | undefined,
-) => {
-  const environment = specification.environment;
-  const noBehavior: Expression = {
-    kind: "Identifier",
-    name: "FALSE",
-    location: { line: 0, column: 0 },
-  };
-  return lowerToIr({
+) =>
+  lowerToIr({
     config,
-    environment,
-    spec: { init: noBehavior, next: noBehavior, scope: undefined },
+    environment: specification.environment,
+    spec,
     traceActions: [],
-    isWarningEnabled: environment.runtime.isWarningEnabled,
-    tlcOrder: [],
-    properties: { invariants: [], invariantNames: [], actionProperties: [], initialPredicates: [] },
+    isWarningEnabled: specification.environment.runtime.isWarningEnabled,
+    tlcOrder,
+    properties,
     isRecordingGraph: false,
     version,
     atoms: [],
     liveFormula: undefined,
     liveProperties: [],
     startup: getIrStartup(config, specification),
-    // A spec without variables has no next-state relation to name actions of.
+    // Without a next-state relation, there is none to name actions of.
     nextSubstitution: undefined,
     instanceActions: specification.instanceActions,
   });
-};
+
+const NO_BEHAVIOR: Expression = { kind: "Identifier", name: "FALSE", location: { line: 0, column: 0 } };
+
+export const lowerConstantSpec = (
+  config: ModelConfig,
+  specification: ReturnType<typeof createEnvironment>,
+  version: TlcVersion | undefined,
+) =>
+  lowerUnsearchedSpec(
+    config,
+    specification,
+    { init: NO_BEHAVIOR, next: NO_BEHAVIOR },
+    [],
+    { invariants: [], invariantNames: [], actionProperties: [], initialPredicates: [] },
+    version,
+  );
 
 export const checkSequentially = (
   options: CheckOptions,
@@ -1753,7 +1766,23 @@ const searchStates = (
     }
     const init = spec.init;
     const next = spec.next;
-    if (init === undefined || next === undefined) return undefined;
+    if (init === undefined) return undefined;
+    // TLC computes the initial states of a model without a next-state relation and then stops. The
+    // native binary does so from the IR; here the interpreter does.
+    if (next === undefined) {
+      if (isIrDumped()) {
+        const outcome = lowerUnsearchedSpec(
+          config,
+          specification,
+          { init, next, scope: spec.scope },
+          search.getTlcOrder(),
+          toEngineProperties(search.properties)!,
+          options.version,
+        );
+        if ("ir" in outcome) writeDebugBytes("PROVE_IT_IR_DUMP", outcome.ir);
+      }
+      return undefined;
+    }
     // The engine answers ENABLED <<A>>_v of a state from the steps its search took when A is made of
     // TLC's actions of the next-state relation. A constraint drops steps, and TLC's ENABLED shows
     // the effects of running A, such as printing, so then the engine runs A.

@@ -272,7 +272,9 @@ pub struct LiveProperty {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Model {
     pub init: NodeId,
-    pub next: NodeId,
+    /// The next-state relation, none where the configuration names none: TLC then computes
+    /// the initial states only, and the configuration checks nothing of behaviors.
+    pub next: Option<NodeId>,
     pub scope: Option<Index>,
     /// TLC's actions of the next-state relation, which a trace labels its steps with.
     pub actions: Vec<Action>,

@@ -602,7 +602,12 @@ impl Decoder<'_> {
             Ok(0)
         };
         let init = node(self)?;
-        let next = node(self)?;
+        let next = if self.words.get(self.at) == Some(&-1) {
+            self.at += 1;
+            None
+        } else {
+            Some(node(self)?)
+        };
         let scope = self.optional_below(scope_count, "scope")?;
         let count = self.count()?;
         let actions = (0..count)
@@ -1219,7 +1224,9 @@ impl Model {
         visit: &mut impl FnMut(&mut NodeId) -> Decoded<()>,
     ) -> Decoded<()> {
         visit(&mut self.init)?;
-        visit(&mut self.next)?;
+        if let Some(next) = &mut self.next {
+            visit(next)?;
+        }
         for action in &mut self.actions {
             visit(&mut action.expression)?;
         }

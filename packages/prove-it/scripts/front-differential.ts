@@ -28,7 +28,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 
 import type { Definition, Expression } from "../src/ast";
-import { getIrStartup, lowerConstantSpec } from "../src/check";
+import { getIrStartup, lowerConstantSpec, lowerUnsearchedSpec } from "../src/check";
 import { type ModelConfig, parseConfig } from "../src/config";
 import { toEngineProperties } from "../src/engine/context";
 import { lowerToIr } from "../src/engine/ir";
@@ -260,13 +260,27 @@ const lowerLinkedModel = (
     const constant = lowerConstantSpec(config, linked, undefined);
     return "ir" in constant ? { ir: Buffer.from(constant.ir).toString("hex") } : constant;
   }
-  if (!specification.init || !specification.next) return { reason: "no Init or Next" };
+  if (!specification.init) return { reason: "no Init" };
   if (!properties) return { reason: "a property read in a scope" };
   const variableOrder = order.getDeclarationOrder("variable");
   const getPosition = (index: number) => {
     const position = variableOrder.indexOf(environment.variables[index]);
     return position === -1 ? environment.variables.length : position;
   };
+  const tlcOrder = environment.variables
+    .map((_, index) => index)
+    .sort((left, right) => getPosition(left) - getPosition(right));
+  if (!specification.next) {
+    const unsearched = lowerUnsearchedSpec(
+      config,
+      linked,
+      { init: specification.init, next: undefined, scope: specification.scope },
+      tlcOrder,
+      properties,
+      undefined,
+    );
+    return "ir" in unsearched ? { ir: Buffer.from(unsearched.ir).toString("hex") } : unsearched;
+  }
   // The checker's formula and atoms, which need no graph before it checks.
   const liveness = createLivenessChecker(search.liveness, specification.temporals, environment, {
     getFingerprint: () => 0,
@@ -278,9 +292,7 @@ const lowerLinkedModel = (
     spec: { init: specification.init!, next: specification.next!, scope: specification.scope },
     traceActions: [],
     isWarningEnabled: true,
-    tlcOrder: environment.variables
-      .map((_, index) => index)
-      .sort((left, right) => getPosition(left) - getPosition(right)),
+    tlcOrder,
     properties,
     isRecordingGraph: liveness !== undefined,
     version: undefined,

@@ -834,8 +834,8 @@ impl<'a> Lowering<'a> {
         self.next_substitution =
             crate::spec::get_next_substitution(config, self.environment, &self.facts)?;
         let not_yet = |reason: &str| FrontError::NotYet(reason.to_owned());
-        let (Some(init), Some(next)) = (&specification.init, &specification.next) else {
-            return Err(not_yet("a model without Init or Next"));
+        let Some(init) = &specification.init else {
+            return Err(not_yet("a model without Init"));
         };
         let liveness = crate::live::get_liveness(
             &specification.temporals,
@@ -865,7 +865,10 @@ impl<'a> Lowering<'a> {
             return Err(not_yet("a property read in a scope"));
         }
         let init = self.write_root(init)?;
-        let next = self.write_root(next)?;
+        let next = match &specification.next {
+            Some(next) => Some(self.write_root(next)?),
+            None => None,
+        };
         let scope = self.get_scope_index(specification.scope.as_ref());
         let invariants = config
             .invariants

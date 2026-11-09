@@ -93,7 +93,7 @@ fn encode_here(ir: &Ir) -> Vec<u8> {
     let model = &ir.model;
     words.extend([
         offset(model.init),
-        offset(model.next),
+        model.next.map_or(-1, offset),
         optional(model.scope),
     ]);
     words.push(model.actions.len() as i32);

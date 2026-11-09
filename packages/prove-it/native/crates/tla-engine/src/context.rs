@@ -532,8 +532,13 @@ impl EngineContext {
             },
             "a specification",
         )?;
+        let Some(next) = model.next else {
+            return Err(CompileError::Decline(
+                "a model without a next-state relation".into(),
+            ));
+        };
         let next = compiler.compile_action(
-            model.next,
+            next,
             model.scope,
             ActionOptions {
                 is_init: false,
