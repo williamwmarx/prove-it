@@ -34,8 +34,10 @@ import { toEngineProperties } from "../src/engine/context";
 import { lowerToIr } from "../src/engine/ir";
 import { createEnvironment } from "../src/environment";
 import {
+  isStackOverflow,
   PcalBugError,
   PcalRuntimeError,
+  STACK_OVERFLOW_MESSAGE,
   TlaConfigError,
   TlaEvaluationError,
   TlaModuleError,
@@ -72,6 +74,8 @@ const BATCH = 50;
 const TIMED_RUNS = 5;
 
 const describe = (error: unknown) => {
+  // TLC overflows its stack where the TypeScript front end does.
+  if (isStackOverflow(error)) return { error: STACK_OVERFLOW_MESSAGE };
   if (
     error instanceof TlaConfigError ||
     error instanceof TlaEvaluationError ||

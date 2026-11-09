@@ -80,6 +80,9 @@ pub enum FrontError {
     Evaluation(String),
     /// `TlaConfigError`.
     Config(String),
+    /// `TlaStackOverflowError`: TLC overflows its stack, as it does expanding a formula whose
+    /// substitutions lead back to it.
+    StackOverflow,
     /// What the Rust front end doesn't cover yet.
     NotYet(String),
 }

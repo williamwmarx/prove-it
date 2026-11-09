@@ -6,6 +6,11 @@ use crate::errors::FrontError;
 /// EXIT_STATUS in `src/exit-codes.ts`.
 const SPEC_EVALUATION_FAILURE: i32 = 75;
 const CONFIG_PARSE_ERROR: i32 = 151;
+const GENERAL_ERROR: i32 = 255;
+
+/// EC.SYSTEM_STACK_OVERFLOW, and STACK_OVERFLOW_MESSAGE in `src/errors.ts`.
+const STACK_OVERFLOW: u32 = 1005;
+pub const STACK_OVERFLOW_MESSAGE: &str = "This was a Java StackOverflowError. It was probably the result\nof an incorrect recursive function definition that caused TLC to enter\nan infinite loop when trying to compute the function or its application\nto an element in its putative domain.";
 
 /// MESSAGE_CODE.general, the code of a message TLC builds from no template.
 pub const GENERAL: u32 = 1000;
@@ -237,6 +242,14 @@ impl FrontError {
         let (message, exit_code) = match self {
             FrontError::Config(message) => (message, CONFIG_PARSE_ERROR),
             FrontError::Evaluation(message) => (message, SPEC_EVALUATION_FAILURE),
+            // TLC reports a stack overflow outside the computation of states on its own.
+            FrontError::StackOverflow => {
+                return Some(CodedError {
+                    code: STACK_OVERFLOW,
+                    text: STACK_OVERFLOW_MESSAGE.to_owned(),
+                    exit_code: GENERAL_ERROR,
+                });
+            }
             _ => return None,
         };
         let code = get_coded_message(message)
