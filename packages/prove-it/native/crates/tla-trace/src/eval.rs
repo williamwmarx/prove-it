@@ -1413,14 +1413,13 @@ impl<'ir> Evaluator<'ir> {
             "IsFiniteSet" => {
                 arity(1)?;
                 let set = self.operand(&operands[0])?;
-                Value::Bool(match &set {
-                    Value::Lazy(lazy) => match &**lazy {
-                        Lazy::Nat | Lazy::Int | Lazy::Real | Lazy::Strings | Lazy::Seq(_) => false,
-                        _ => elements(&set).is_ok(),
-                    },
-                    _ if set.is_set() => true,
-                    _ => return fail("IsFiniteSet of a non-set"),
-                })
+                if matches!(
+                    set,
+                    Value::Bool(_) | Value::Int(_) | Value::Str(_) | Value::Model(_)
+                ) {
+                    return fail("IsFiniteSet of a non-set");
+                }
+                Value::Bool(is_finite(&set))
             }
             "Seq" => {
                 arity(1)?;
@@ -1478,13 +1477,21 @@ impl<'ir> Evaluator<'ir> {
                 let sequence = self.operand(&operands[0])?;
                 let from = self.operand_int(&operands[1])?;
                 let to = self.operand_int(&operands[2])?;
-                let elements = sequence_of(&sequence)?;
-                if from > to {
-                    Value::tuple(Vec::new())
-                } else if from < 1 || to > elements.len() as i64 {
+                // A string slices as the sequence of its characters, and stays a string.
+                let length = match &sequence {
+                    Value::Str(text) => text.units.len(),
+                    _ => sequence_of(&sequence)?.len(),
+                };
+                let range = if from > to {
+                    0..0
+                } else if from < 1 || to > length as i64 {
                     return fail("SubSeq outside the sequence's domain");
                 } else {
-                    Value::tuple(elements[from as usize - 1..to as usize].to_vec())
+                    from as usize - 1..to as usize
+                };
+                match &sequence {
+                    Value::Str(text) => Value::Str(self.text_of(text.units[range].into())),
+                    _ => Value::tuple(sequence_of(&sequence)?[range].to_vec()),
                 }
             }
             "SelectSeq" => {
@@ -1645,6 +1652,21 @@ fn permute(
 enum Operand {
     Node(NodeId, Context),
     Value(Value),
+}
+
+// Whether a set (or a function, which the engine counts as a finite set) is finite, without
+// enumerating it: a lazy set is when its parts are.
+fn is_finite(value: &Value) -> bool {
+    match value {
+        Value::Lazy(lazy) => match &**lazy {
+            Lazy::Nat | Lazy::Int | Lazy::Real | Lazy::Strings | Lazy::Seq(_) => false,
+            Lazy::Subset(base) => is_finite(base),
+            Lazy::FunctionSet(domain, range) => is_finite(domain) && is_finite(range),
+            Lazy::RecordSet(fields, _) => fields.iter().all(|(_, set)| is_finite(set)),
+            Lazy::Product(factors) => factors.iter().all(is_finite),
+        },
+        _ => true,
+    }
 }
 
 fn sequence_of(value: &Value) -> Evaluated<&[Value]> {

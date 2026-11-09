@@ -245,7 +245,7 @@ mod tests {
     use std::rc::Rc;
 
     use super::*;
-    use crate::value::{Text, set_of, settle};
+    use crate::value::{Text, set_of, settle, settle_deep, settle_normalized};
 
     fn text(name: &str, rank: i32) -> Rc<Text> {
         Rc::new(Text {
@@ -284,6 +284,40 @@ mod tests {
         let (left, right) = (record(), record());
         assert!(crate::value::equals(&left, &right).expect("records compare"));
         assert_eq!(format_value(&left), "[b |-> 2, a |-> 1]");
+    }
+
+    #[test]
+    fn settles_the_values_a_lazy_set_enumerates_into() {
+        let record = Value::record(vec![
+            (text("a", 1), Value::Int(1)),
+            (text("b", 0), Value::Int(1)),
+        ])
+        .expect("a record");
+        let subset = Value::Lazy(Rc::new(Lazy::Subset(set_of(vec![record]).expect("a set"))));
+        assert_eq!(format_value(&subset), "{{}, {[a |-> 1, b |-> 1]}}");
+        settle(&subset);
+        assert_eq!(format_value(&subset), "{{}, {[b |-> 1, a |-> 1]}}");
+    }
+
+    #[test]
+    fn leaves_a_lambda_as_written_under_view_or_symmetry() {
+        let lambda = || {
+            let record = Value::record(vec![
+                (text("a", 1), Value::Int(1)),
+                (text("b", 0), Value::Int(1)),
+            ])
+            .expect("a record");
+            Value::over_interval(1, vec![record], Class::Lambda)
+        };
+        let deep = lambda();
+        settle_deep(&deep);
+        assert_eq!(format_value(&deep), "<<[a |-> 1, b |-> 1]>>");
+        let normalized = lambda();
+        settle_normalized(&normalized);
+        assert_eq!(format_value(&normalized), "<<[a |-> 1, b |-> 1]>>");
+        let fingerprinted = lambda();
+        settle(&fingerprinted);
+        assert_eq!(format_value(&fingerprinted), "<<[b |-> 1, a |-> 1]>>");
     }
 
     #[test]
