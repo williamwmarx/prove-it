@@ -1461,7 +1461,7 @@ impl<'a> Compiler<'a> {
                 condition,
                 consequent,
                 alternative,
-            } => self.sum_uses(name, [*condition, *consequent, *alternative].into_iter()),
+            } => self.sum_uses(name, [*condition, *consequent, *alternative]),
             NodeKind::Case { arms, other } => self.sum_uses(
                 name,
                 arms.iter()

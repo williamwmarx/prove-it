@@ -1433,13 +1433,18 @@ fn describe(error: CompileError) -> String {
 
 /// Searches the model the IR describes. It runs compiled closures, which recurse with the
 /// expressions and values, so its caller runs it on a thread with a deep stack.
+// What TLC's startup printed as it evaluated the substitutes and the constant definitions, then
+// as it evaluated the assumptions, and the assumption it found false.
+struct Started {
+    printed: Vec<Vec<Id>>,
+    assumed: Vec<Vec<Id>>,
+    violated: Option<String>,
+}
+
 // TLC's startup: it evaluates the substitutes and the constant definitions, then the assumptions
-// until one is false. What they print, before and from the assumptions, is kept until all of it
-// is evaluated, so a model the engine can't take prints nothing.
-fn run_startup(
-    machine: &mut Machine<'_>,
-    startup: &Startup,
-) -> Outcome<(Vec<Vec<Id>>, Vec<Vec<Id>>, Option<String>)> {
+// until one is false. What they print is kept until all of it is evaluated, so a model the engine
+// can't take prints nothing.
+fn run_startup(machine: &mut Machine<'_>, startup: &Startup) -> Outcome<Started> {
     let take = |machine: &mut Machine<'_>| {
         std::mem::take(&mut machine.output)
             .into_iter()
@@ -1464,7 +1469,11 @@ fn run_startup(
             _ => return Err(Bail("an assumption that isn't a boolean")),
         }
     }
-    Ok((printed, take(machine), violated))
+    Ok(Started {
+        printed,
+        assumed: take(machine),
+        violated,
+    })
 }
 
 pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> SearchOutcome {
@@ -1520,16 +1529,16 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     });
     match startup {
         Err(Bail(reason)) => return SearchOutcome::Declined(reason.into()),
-        Ok((startup, assumed, violated)) => {
+        Ok(started) => {
             let report = |reporter: &mut dyn Reporter, printed: &[Vec<Id>]| {
                 printed
                     .iter()
                     .for_each(|values| reporter.startup_print(&machine.store, values));
             };
-            report(reporter, &startup);
+            report(reporter, &started.printed);
             reporter.startup_done();
-            report(reporter, &assumed);
-            if let Some(name) = violated {
+            report(reporter, &started.assumed);
+            if let Some(name) = started.violated {
                 return SearchOutcome::AssumptionViolated { name };
             }
         }
