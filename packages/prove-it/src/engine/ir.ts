@@ -42,22 +42,13 @@ import type {
 } from "../ast";
 import type { ModelConfig } from "../config";
 import { hasRepeatedEffect, isImpureDefinition } from "../dependencies";
-import {
-  type Environment,
-  type EvaluationScope,
-  getDefinition,
-} from "../evaluate";
+import { type Environment, type EvaluationScope, getDefinition } from "../evaluate";
 import { ACTION_LEVEL } from "../levels";
 import { getLevel } from "../liveness";
 import type { LiveExpression } from "../tableau";
 import type { TlcVersion } from "../tlc/version";
 import { createStateEncoder } from "../transfer";
-import {
-  findStringRank,
-  getRankedStringCount,
-  getStringOrder,
-  type Value,
-} from "../values";
+import { findStringRank, getRankedStringCount, getStringOrder, type Value } from "../values";
 import type { EngineProperties, EngineSpec } from "./context";
 import type { NamedPermutation } from "./symmetry";
 
