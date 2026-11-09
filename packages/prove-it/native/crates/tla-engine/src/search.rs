@@ -63,9 +63,6 @@ pub struct Settings {
     pub threads: usize,
     /// How many workers TLC runs with (`-workers`), which TLCGet("config") reports.
     pub workers: usize,
-    /// Whether the Json module's operators read and write the files they name, which a caller
-    /// with an interpreter beside the engine leaves to it.
-    pub is_io_allowed: bool,
     /// PROVE_IT_SHARED_LEVEL: the fewest states a level shares between the threads, below which
     /// one thread expands it, since a short level isn't worth the threads' start.
     pub minimum_shared_level: usize,
@@ -98,7 +95,6 @@ impl Default for Settings {
             is_violation_reported: false,
             threads: 1,
             workers: 1,
-            is_io_allowed: false,
             minimum_shared_level: MINIMUM_SHARED_LEVEL,
             is_liveness_periodic: false,
             test_live_check_at: None,
@@ -1894,7 +1890,6 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     store.freeze_string_order();
     let mut compiler = Compiler::new(ir, &mut store, settings.compile);
     compiler.workers = settings.workers;
-    compiler.is_io_allowed = settings.is_io_allowed;
     compiler.is_native = settings.is_violation_reported;
     let context = match EngineContext::build(&mut compiler, ir) {
         Ok(context) => context,

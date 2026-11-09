@@ -688,9 +688,6 @@ pub struct Compiler<'a> {
     pub is_native: bool,
     /// How many workers TLC runs with (`-workers`), which TLCGet("config") reports.
     pub workers: usize,
-    /// Whether the Json module's operators may read and write files, as only a caller that runs
-    /// no interpreter beside the engine lets them.
-    pub is_io_allowed: bool,
     // The contexts of the instance scopes translated so far.
     scope_contexts: HashMap<Index, Option<Context>>,
 }
@@ -759,7 +756,6 @@ impl<'a> Compiler<'a> {
             is_ranking: false,
             is_native: false,
             workers: 1,
-            is_io_allowed: false,
             scope_contexts: HashMap::new(),
         }
     }

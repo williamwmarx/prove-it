@@ -260,7 +260,7 @@ impl Compiler<'_> {
         if matches!(
             name,
             "JsonSerialize" | "ndJsonSerialize" | "JsonDeserialize" | "ndJsonDeserialize"
-        ) && self.is_io_allowed
+        ) && self.is_native
         {
             return self.compile_json_file(name, operands);
         }
@@ -496,7 +496,8 @@ impl Compiler<'_> {
     }
 
     // The Json module's operators that write a value to the file a string names, as JSON or one
-    // element of a sequence per line, or read one, as TLC's Json class does (`src/json.ts`).
+    // element of a sequence per line, or read one, as TLC's Json class does (`src/json.ts`). Only
+    // the native checker reads and writes the files: the interpreter does beside the addon.
     // Writing prints in TLC's order, as Print does; reading ranks the strings it reads.
     fn compile_json_file(&mut self, name: &str, operands: &[Operand]) -> Compiling<Compiled> {
         let is_written = name.ends_with("Serialize");
