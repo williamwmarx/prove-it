@@ -1621,9 +1621,9 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     let mut periodic_time = Duration::ZERO;
     let mut test_live_check_at = settings.test_live_check_at.filter(|_| is_periodic);
     // Where the engine doesn't check as the graph grows, or a check couldn't decide, it hands a
-    // large graph to the interpreter, which checks as it grows.
-    let is_graph_bounded =
-        Cell::new(model.is_recording_graph && settings.is_liveness_periodic && !is_periodic);
+    // large graph to the interpreter, which checks as it grows and, even under `-lncheck final`,
+    // stops at a state whose tableau node accepts every behavior.
+    let is_graph_bounded = Cell::new(model.is_recording_graph && !is_periodic);
     // What the check that found a counterexample answered and found, and the states it took.
     let mut periodic_lasso: Option<(Vec<Table>, Liveness, usize)> = None;
     let result = (|| -> Outcome<()> {
