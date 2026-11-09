@@ -23,7 +23,7 @@ fn lower(test: &str, config: &str) -> tla_ir::Model {
     let path = directory.join("Live.tla");
     std::fs::write(&path, SPEC).expect("the spec");
     let options = ModelOptions {
-        library: None,
+        libraries: &[],
         version: None,
         is_warning_enabled: true,
     };

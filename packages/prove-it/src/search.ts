@@ -412,6 +412,21 @@ export const getSpecification = (config: ModelConfig, environment: Environment):
   };
 };
 
+const BOOK = "https://lamport.azurewebsites.net/tla/book.html";
+
+// TLC's error for a property that is an action, which says how to make [A]_v, <<A>>_v or another
+// action a temporal formula.
+const getActionPropertyMessage = (name: string, conjunct: Expression) => {
+  const at = describeRange(conjunct);
+  const advice =
+    conjunct.kind === "BoxAction"
+      ? `To check that action ${name} holds in *every* step of the behavior, define a temporal property by applying the "always" temporal operator ([]) to the formula at ${at} (compare page 90 of Specifying Systems at ${BOOK}).`
+      : conjunct.kind === "AngleAction"
+        ? `To check that infinitely many ${name} steps occur, define a temporal property by applying the "always eventually" temporal operator combination ([]<>) to the formula at ${at} (compare page 91 of Specifying Systems at ${BOOK}).`
+        : `To check that action ${name} holds in *every* step of the behavior, define a temporal property: Let A be the formula at ${at}; rewrite A as [][A]_v, where v is a state function (typically the tuple of variables) (compare page 90 of Specifying Systems at ${BOOK}).`;
+  return `The formula ${name} at ${at} is an action-level formula (i.e., it contains no temporal operators). Only temporal-level (or state-level) formulas are allowed under PROPERTY or PROPERTIES. ${advice}`;
+};
+
 export const getProperties = (
   config: ModelConfig,
   environment: Environment,
@@ -476,9 +491,8 @@ export const getProperties = (
         });
         return;
       }
-      if (level === ACTION_LEVEL) {
-        throw new TlaConfigError(`The property ${name} is an action-level formula`);
-      }
+      if (level === ACTION_LEVEL)
+        throw new TlaConfigError(getActionPropertyMessage(partName, conjunct));
       properties.liveness.push({ name, expression: conjunct, scope: item.scope });
     });
   });

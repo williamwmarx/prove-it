@@ -1019,6 +1019,28 @@ fn get_config_predicate<'a>(
     }
 }
 
+const BOOK: &str = "https://lamport.azurewebsites.net/tla/book.html";
+
+/// `getActionPropertyMessage`: TLC's error for a property that is an action, which says how to
+/// make `[A]_v`, `<<A>>_v` or another action a temporal formula.
+fn get_action_property_message(name: &str, conjunct: &Expr) -> String {
+    let at = describe_range(conjunct);
+    let advice = match conjunct.kind {
+        ExpressionKind::Action { is_box: true, .. } => format!(
+            "To check that action {name} holds in *every* step of the behavior, define a temporal property by applying the \"always\" temporal operator ([]) to the formula at {at} (compare page 90 of Specifying Systems at {BOOK})."
+        ),
+        ExpressionKind::Action { is_box: false, .. } => format!(
+            "To check that infinitely many {name} steps occur, define a temporal property by applying the \"always eventually\" temporal operator combination ([]<>) to the formula at {at} (compare page 91 of Specifying Systems at {BOOK})."
+        ),
+        _ => format!(
+            "To check that action {name} holds in *every* step of the behavior, define a temporal property: Let A be the formula at {at}; rewrite A as [][A]_v, where v is a state function (typically the tuple of variables) (compare page 90 of Specifying Systems at {BOOK})."
+        ),
+    };
+    format!(
+        "The formula {name} at {at} is an action-level formula (i.e., it contains no temporal operators). Only temporal-level (or state-level) formulas are allowed under PROPERTY or PROPERTIES. {advice}"
+    )
+}
+
 pub fn get_properties(
     config: &crate::config::ModelConfig,
     environment: &Environment,
@@ -1103,8 +1125,8 @@ pub fn get_properties(
                     scope: item.scope,
                 }),
                 Level::Action => {
-                    return Err(FrontError::Config(format!(
-                        "The property {name} is an action-level formula"
+                    return Err(FrontError::Config(get_action_property_message(
+                        &part_name, conjunct,
                     )));
                 }
                 Level::Temporal => properties.liveness.push(Property {

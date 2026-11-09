@@ -61,7 +61,7 @@ pub fn read_front(
         };
         return native_failure(&failure, describer, libraries)
             .map(Read::Failed)
-            .ok_or_else(no_front);
+            .map_err(|reason| format!("{}: {reason}", no_front()));
     };
     // PROVE_IT_NATIVE_FRONT=1 prints SANY's report as tla-front writes it in place of the recorded
     // one, which the rest of the front still follows until tla-front writes it too.
@@ -74,9 +74,11 @@ pub fn read_front(
     let ir = match read("ir") {
         Ok(ir) => ir,
         Err(_) => {
-            lower(spec_path, config_text, is_warning_enabled).map_err(|error| match error {
-                FrontError::NotYet(reason) => format!("{}: {reason}", no_front()),
-                _ => no_front(),
+            lower(spec_path, config_text, is_warning_enabled, libraries).map_err(|error| {
+                match error {
+                    FrontError::NotYet(reason) => format!("{}: {reason}", no_front()),
+                    _ => no_front(),
+                }
             })?
         }
     };
@@ -88,14 +90,16 @@ fn lower(
     spec_path: &str,
     config_text: &str,
     is_warning_enabled: bool,
+    libraries: &[String],
 ) -> Result<Vec<u8>, FrontError> {
     let path = if spec_path.ends_with(".tla") {
         spec_path.to_string()
     } else {
         format!("{spec_path}.tla")
     };
+    let libraries: Vec<&Path> = libraries.iter().map(Path::new).collect();
     let options = ModelOptions {
-        library: None,
+        libraries: &libraries,
         version: None,
         is_warning_enabled,
     };
@@ -111,28 +115,38 @@ struct Lowering<'a> {
 }
 
 // Where TLC stops before the search, as tla-front finds: SANY rejects the spec, or lowering the
-// model raises an error TLC reports with a code.
+// model raises an error TLC reports with a code. Otherwise why tla-front doesn't find where.
 fn native_failure(
     lowering: &Lowering<'_>,
     describer: &FileDescriber,
     libraries: &[String],
-) -> Option<Failure> {
-    let sany = native_sany(lowering.spec_path, describer, libraries)?;
+) -> Result<Failure, String> {
+    let sany = native_sany(lowering.spec_path, describer, libraries)
+        .ok_or("SANY's report, which tla-front doesn't write")?;
     if sany.is_failed {
-        return Some(Failure {
+        return Ok(Failure {
             sany: sany.text,
             error: None,
         });
     }
-    let error = lower(
+    let error = match lower(
         lowering.spec_path,
         lowering.config_text,
         lowering.is_warning_enabled,
-    )
-    .err()?;
-    Some(Failure {
+        libraries,
+    ) {
+        Ok(_) => {
+            return Err("an error TLC reports as it starts, which tla-front doesn't raise".into());
+        }
+        Err(FrontError::NotYet(reason)) => return Err(reason),
+        Err(error) => error,
+    };
+    let coded = error
+        .get_coded(lowering.is_tool)
+        .ok_or("an error tla-front raises that TLC reports without a code")?;
+    Ok(Failure {
         sany: sany.text,
-        error: Some(error.get_coded(lowering.is_tool)?),
+        error: Some(coded),
     })
 }
 
