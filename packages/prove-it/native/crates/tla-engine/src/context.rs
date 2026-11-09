@@ -26,7 +26,8 @@ pub struct EngineContext {
     pub init: Step,
     pub next: Step,
     /// A walk of each of TLC's actions, which together take the steps of `next` in its order, or
-    /// `None` when the engine can't build one.
+    /// `None` when the engine can't build one. The search walks them only when the model asks it
+    /// to label its steps; they also label the steps of a path it prints.
     pub actions: Option<Vec<Step>>,
     pub invariants: Vec<Predicate>,
     /// The invariants an initial state may violate: the others are conjuncts of the initial
@@ -362,7 +363,8 @@ impl EngineContext {
             },
             "a specification",
         )?;
-        let actions = match model.is_labelled.then_some(&model.actions) {
+        // Compiled whether or not the search walks them, since they also label a printed path.
+        let actions = match Some(&model.actions).filter(|actions| !actions.is_empty()) {
             None => None,
             Some(actions) => {
                 let mut steps = Vec::with_capacity(actions.len());
@@ -378,8 +380,12 @@ impl EngineContext {
                         "an action",
                     ) {
                         Ok(step) => steps.push(step),
-                        Err(CompileError::Bail(_)) => break,
-                        Err(decline) => return Err(decline),
+                        Err(decline)
+                            if model.is_labelled && !matches!(decline, CompileError::Bail(_)) =>
+                        {
+                            return Err(decline);
+                        }
+                        Err(_) => break,
                     }
                 }
                 (steps.len() == actions.len()).then_some(steps)

@@ -108,6 +108,10 @@ pub enum SearchOutcome {
         checkpoint: Option<Box<Checkpoint>>,
         /// With temporal properties, what checking them found.
         liveness: Option<Liveness>,
+        /// For each state of a lasso the check found, the position of the first of TLC's actions
+        /// that takes it to the next state of the lasso (from the last, the cycle's first), or
+        /// `None` where none does or it stutters; empty without a lasso or a walk of the actions.
+        lasso_actions: Vec<Option<u32>>,
         /// TLC's fingerprint of each state's key, in the order found.
         fingerprints: Vec<u64>,
         value_count: usize,
@@ -718,7 +722,11 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         canonicalizer,
         graph: model.is_recording_graph.then(|| Graph {
             edge_offsets: vec![0],
-            labels: context.actions.as_ref().map(|_| Vec::new()),
+            labels: context
+                .actions
+                .as_ref()
+                .filter(|_| model.is_labelled)
+                .map(|_| Vec::new()),
             ..Graph::default()
         }),
         action: 0,
@@ -731,7 +739,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     let actions = context
         .actions
         .as_ref()
-        .filter(|_| model.is_recording_graph);
+        .filter(|_| model.is_recording_graph && model.is_labelled);
     let is_live_checked = settings.is_live_checked && actions.is_some();
     let mut out_degrees = [0u64; OUT_DEGREE_BUCKETS];
     let mut checkpoint_count = 0usize;
@@ -943,7 +951,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             // The temporal properties are checked here, and the interpreter takes the graph over
             // only to print a counterexample, to check them itself, or under PROVE_IT_LIVE_CHECK
             // to check them again.
-            let (checkpoint, liveness) = match search.graph {
+            let (checkpoint, liveness, lasso_actions) = match search.graph {
                 Some(_) => {
                     let tables = match graph_tables(&mut machine, &search, count, count) {
                         Ok(tables) => tables,
@@ -962,9 +970,16 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                                 tables,
                             ))
                         });
-                    (checkpoint, Some(liveness))
+                    let lasso_actions = match &liveness.verdict {
+                        Verdict::Lasso {
+                            path, loop_start, ..
+                        } => label_lasso(&mut machine, &context, &search, path, *loop_start)
+                            .unwrap_or_default(),
+                        _ => Vec::new(),
+                    };
+                    (checkpoint, Some(liveness), lasso_actions)
                 }
-                None => (None, None),
+                None => (None, None, Vec::new()),
             };
             let counts = Counts {
                 generated: search.generated,
@@ -982,6 +997,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 counts: Box::new(counts),
                 checkpoint,
                 liveness,
+                lasso_actions,
                 value_count: machine.store.value_count(),
                 collisions,
                 fingerprints: search.states.fingerprints,
@@ -1193,6 +1209,61 @@ fn write_state_log(
     }
     let _ = writer.write_all(line.as_bytes());
     let _ = writer.flush();
+}
+
+// The actions of a lasso's steps, as TLC's `Tool#getState` finds them: from each state, the
+// first of TLC's actions with a step to the next.
+fn label_lasso(
+    machine: &mut Machine<'_>,
+    context: &EngineContext,
+    search: &Search<'_>,
+    path: &[u32],
+    loop_start: usize,
+) -> Outcome<Vec<Option<u32>>> {
+    let Some(actions) = &context.actions else {
+        return Ok(Vec::new());
+    };
+    let width = context.width;
+    let unassigned = vec![UNASSIGNED; width];
+    let ids = &search.states.ids;
+    let mut labels = Vec::with_capacity(path.len());
+    for (position, &state) in path.iter().enumerate() {
+        let target = path.get(position + 1).copied().unwrap_or(path[loop_start]);
+        if position + 1 == path.len() && loop_start == position {
+            labels.push(None);
+            continue;
+        }
+        let mut depth = 0;
+        let mut ancestor = state as i32;
+        while ancestor != -1 {
+            depth += 1;
+            ancestor = search.states.parents[ancestor as usize];
+        }
+        let state = state as usize;
+        let epoch = machine.next_epoch();
+        machine.set_current(&ids[state * width..(state + 1) * width], epoch);
+        let level = machine.store.int(depth)?;
+        let next_level = machine.store.int(depth + 1)?;
+        machine.set_slot(LEVEL_SLOT, level);
+        machine.set_slot(NEXT_LEVEL_SLOT, next_level);
+        let target = &ids[target as usize * width..(target as usize + 1) * width];
+        let mut found = None;
+        for (index, action) in actions.iter().enumerate() {
+            machine.set_next(&unassigned);
+            machine.reset_assigned();
+            let mut is_found = false;
+            action(machine, &mut |machine: &mut Machine<'_>| {
+                is_found |= machine.next() == target;
+                Ok(())
+            })?;
+            if is_found {
+                found = Some(index as u32);
+                break;
+            }
+        }
+        labels.push(found);
+    }
+    Ok(labels)
 }
 
 // Checks the temporal properties on a complete search's graph from the answers to the atoms.
