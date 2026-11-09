@@ -695,6 +695,9 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
         SearchOutcome::Declined(reason) => {
             return report_not_native(printer, &format!("the engine declined: {reason}"));
         }
+        SearchOutcome::AssumptionFailed { .. } => {
+            return report_not_native(printer, "an assumption that fails to evaluate");
+        }
         // TLC reports a false assumption with no statistics, since it hasn't searched.
         SearchOutcome::AssumptionViolated { name } => {
             printer.print(

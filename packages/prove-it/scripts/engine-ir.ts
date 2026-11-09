@@ -72,6 +72,7 @@ const GOLDEN_MODELS = [
   "tlc/tlatools/org.lamport.tlatools/test-model/suite/etest9.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/suite/etest10.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/suite/etest11.cfg",
+  "tlc/tlatools/org.lamport.tlatools/test-model/suite/etest14.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/AssertExpressionStack.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/Github461.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/TESpecTest/TESpecRuntimeErrorTest.cfg",

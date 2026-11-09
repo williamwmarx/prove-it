@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 use tla_ir::{Ir, LiveTerm, Model};
 use tla_live::{Event, Liveness, Term, Verdict};
 use tla_values::fingerprint::{Dense, Entries, Fingerprints, Overlaid, Parent, SharedFingerprints};
-use tla_values::store::{FALSE, KIND_SET, Outcome, TRUE};
+use tla_values::store::{KIND_SET, Outcome};
 use tla_values::transfer::{EncodedStates, SharedEncoder, SharedStates, StateEncoder};
 use tla_values::{Bail, Id, NESTING_STACK_BYTES, Store};
 
@@ -191,6 +191,10 @@ pub enum SearchOutcome {
     Declined(String),
     /// The assumption TLC reports by this name is false (2104).
     AssumptionViolated { name: String },
+    /// The assumption at this position of the IR's assumptions failed to evaluate (2105), after
+    /// the startup reported what it printed, the assumptions before it included. Only where
+    /// `Settings::is_violation_reported`; elsewhere the engine declines.
+    AssumptionFailed { position: u32 },
     Complete {
         counts: Box<Counts>,
         /// With temporal properties, the whole search for the interpreter to print a
@@ -1671,6 +1675,8 @@ struct Started {
     group: Option<Group>,
     assumed: Vec<Vec<Id>>,
     violated: Option<String>,
+    /// The assumption that failed to evaluate, by its position, and why.
+    failed: Option<(u32, Bail)>,
 }
 
 // TLC's startup: it evaluates the substitutes and the constant definitions, then the assumptions
@@ -1695,14 +1701,19 @@ fn run_startup(machine: &mut Machine<'_>, startup: &Startup) -> Outcome<Started>
     };
     let printed = take(machine);
     let mut violated = None;
-    for (evaluate, name) in &startup.assumptions {
-        match evaluate(machine)? {
-            TRUE => {}
-            FALSE => {
+    let mut failed = None;
+    for (position, (evaluate, name)) in startup.assumptions.iter().enumerate() {
+        match crate::context::holds(machine, evaluate) {
+            Ok(true) => {}
+            Ok(false) => {
                 violated = Some(name.clone());
                 break;
             }
-            _ => return Err(Bail("an assumption that isn't a boolean")),
+            Err(bail) if is_engine_limit(bail.0) => return Err(bail),
+            Err(bail) => {
+                failed = Some((position as u32, bail));
+                break;
+            }
         }
     }
     Ok(Started {
@@ -1711,6 +1722,7 @@ fn run_startup(machine: &mut Machine<'_>, startup: &Startup) -> Outcome<Started>
         group,
         assumed: take(machine),
         violated,
+        failed,
     })
 }
 
@@ -1825,6 +1837,10 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     });
     let group = match startup {
         Err(Bail(reason)) => return SearchOutcome::Declined(reason.into()),
+        Ok(Started {
+            failed: Some((_, Bail(reason))),
+            ..
+        }) if !settings.is_violation_reported => return SearchOutcome::Declined(reason.into()),
         Ok(started) => {
             let report = |reporter: &mut dyn Reporter, printed: &[Vec<Id>]| {
                 printed
@@ -1839,6 +1855,9 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             report(reporter, &started.assumed);
             if let Some(name) = started.violated {
                 return SearchOutcome::AssumptionViolated { name };
+            }
+            if let Some((position, _)) = started.failed {
+                return SearchOutcome::AssumptionFailed { position };
             }
             started.group
         }
