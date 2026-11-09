@@ -140,7 +140,9 @@ pub fn holds_all_changed(
     successor: &[u32],
     parent: &[u32],
 ) -> Outcome<bool> {
-    Ok(first_failing_changed(machine, predicates, successor, parent)?.is_none())
+    first_failing_changed(machine, predicates, successor, parent)
+        .map(|failing| failing.is_none())
+        .map_err(|(_, bail)| bail)
 }
 
 /// The position of the first predicate that doesn't hold of the successor that is current, given
@@ -151,7 +153,7 @@ pub fn first_failing_changed(
     predicates: &[Predicate],
     successor: &[u32],
     parent: &[u32],
-) -> Outcome<Option<usize>> {
+) -> Result<Option<usize>, (usize, Bail)> {
     for (position, predicate) in predicates.iter().enumerate() {
         if let Some(vars) = &predicate.vars
             && vars
@@ -160,7 +162,7 @@ pub fn first_failing_changed(
         {
             continue;
         }
-        if !holds(machine, &predicate.eval)? {
+        if !holds(machine, &predicate.eval).map_err(|bail| (position, bail))? {
             return Ok(Some(position));
         }
     }

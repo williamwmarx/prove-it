@@ -236,3 +236,16 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
 - Comparing the results in full, where the native engine stops on a violation whose trace holds
   sets of records, the interpreter's trace marks a record as fingerprinted and the native engine's
   doesn't. What either prints is the same.
+
+## Where the search stops on a failure
+
+- The search stopped on a failure evaluating the model, such as an Assert or a value of the wrong
+  kind, with only its reason, so the binary left the model to the interpreter. It now reports the
+  stop as a violation, `ViolationKind::Error { site }`: in the initial predicate with no states,
+  in the next-state relation with the path to the state it was expanding, or in invariant n with
+  the path and the successor that failed it, with TLC's counts. That is what
+  `Rebuilder::evaluate_failure` takes (`tests/stops.rs`), and the binary prints TLC's report from
+  it. A stop at one of the engine's own limits (`is_engine_limit`) stays a stop with no
+  violation.
+- Labelling a path where the engine has no walk of TLC's actions leaves its steps unlabelled,
+  where it panicked on a path of one step.

@@ -41,6 +41,9 @@ pub fn rebuild_trace(ir: &Ir, violation: &Violation) -> Result<PrintedTrace, Str
                         Ending::Violation
                     }
                     ViolationKind::Lasso { .. } => Ending::Lasso,
+                    ViolationKind::Error { .. } => {
+                        return Err("a failure evaluating the model".into());
+                    }
                 };
                 let cycle_start = match violation.kind {
                     ViolationKind::Lasso { loop_start, .. } => Some(loop_start),

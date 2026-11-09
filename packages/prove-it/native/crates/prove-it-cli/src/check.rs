@@ -597,11 +597,12 @@ fn check_spec(spec_path: &str, args: &Parsed, printer: &mut Printer) -> i32 {
         SearchOutcome::Declined(reason) => {
             return report_not_native(printer, &format!("the engine declined: {reason}"));
         }
+        // TLC's report of a failure evaluating the model is the trace session's to print.
         SearchOutcome::Stopped {
             violation: Some(violation),
             reason,
             ..
-        } => {
+        } if !matches!(violation.kind, ViolationKind::Error { .. }) => {
             return print_violation(printer, &ir, &config, &violation, None, start).unwrap_or_else(
                 |why| report_not_native(printer, &format!("the engine stopped: {reason}: {why}")),
             );
@@ -765,6 +766,7 @@ fn print_violation(
             SAFETY_VIOLATION,
         ),
         ViolationKind::Deadlock => (code::DEADLOCK_REACHED, "Deadlock reached.".into(), DEADLOCK),
+        ViolationKind::Error { .. } => return Err(NOT_IN_IR),
         ViolationKind::Lasso { .. } => (
             code::TEMPORAL_PROPERTY_VIOLATED,
             temporal_headline(ir, liveness.ok_or(NOT_IN_IR)?).ok_or(NOT_IN_IR)?,
