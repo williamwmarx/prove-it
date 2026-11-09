@@ -328,6 +328,11 @@ const LAZY_FILTER: &str = "a filter TLC keeps lazy";
 /// `EC.TLC_MODULE_VALUE_JAVA_METHOD_OVERRIDE`.
 const JAVA_METHOD_FAILED: u32 = 2154;
 
+fn is_text(text: &Text, word: &str) -> bool {
+    text.units.iter().copied().eq(word.encode_utf16())
+}
+const TEXT_SERIALIZE: &str = "public static synchronized tlc2.value.impl.Value tlc2.module.Json.textSerialize(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel)";
+
 impl<'ir> Evaluator<'ir> {
     pub fn new(ir: &'ir Ir) -> Evaluator<'ir> {
         let ranks = (0..ir.ranked_count)
@@ -1496,6 +1501,13 @@ impl<'ir> Evaluator<'ir> {
                 let DefinitionForm::Operator(params) = &definition.form else {
                     return fail("applying a function definition as an operator");
                 };
+                if self.is_text_serialized(definition.name, params.len(), definition.body) {
+                    return self.text_serialize(args, context, |evaluator| {
+                        let callee =
+                            evaluator.bind_arguments(params, args, context, context.global())?;
+                        evaluator.nested(|evaluator| evaluator.evaluate(definition.body, &callee))
+                    });
+                }
                 let callee = self.bind_arguments(params, args, context, context.global())?;
                 return self.nested(|evaluator| evaluator.evaluate(definition.body, &callee));
             }
@@ -1527,6 +1539,83 @@ impl<'ir> Evaluator<'ir> {
             );
         }
         fail(format!("the operator {}", self.name(name.text)))
+    }
+
+    // IOUtils's Serialize, which TLC overrides with Json.textSerialize but for TLC 1.7.4.
+    fn is_text_serialized(&self, name: TextId, arity: usize, body: NodeId) -> bool {
+        let node = &self.ir.nodes.arena[self.resolved(body) as usize];
+        !self.is_174()
+            && arity == 3
+            && self.name(name) == "Serialize"
+            && node
+                .range
+                .is_some_and(|range| &*self.ir.texts[range.module as usize] == "IOUtils")
+    }
+
+    // Json.textSerialize, an @Evaluation method of TLC's for IOUtils's Serialize, as
+    // `compileTextSerialize` has it: it reads the format from the options, writes NDJSON itself,
+    // and otherwise evaluates the definition, reporting any failure as its own.
+    fn text_serialize(
+        &mut self,
+        args: &[NodeId],
+        context: &Context,
+        call: impl FnOnce(&mut Self) -> Evaluated<Value>,
+    ) -> Evaluated<Value> {
+        let result = (|| {
+            let options = self.evaluate(args[2], context)?;
+            let fields = match &options {
+                Value::Function(function)
+                    if function
+                        .domain
+                        .iter()
+                        .all(|key| matches!(key, Value::Str(_))) =>
+                {
+                    function
+                }
+                _ => {
+                    return fail_runtime(
+                        "Serialize's options",
+                        format!(
+                            "The third argument of ndJsonSerialize should be a sequence, but instead it is:\n{}",
+                            format_value(&options)
+                        ),
+                    );
+                }
+            };
+            // Value.toRcd makes an empty function the empty record.
+            if fields.domain.is_empty() {
+                return fail_runtime(
+                    "Serialize's options",
+                    "Attempted to access nonexistent field 'format' of record\n[]".into(),
+                );
+            }
+            let format = fields
+                .domain
+                .iter()
+                .position(|key| matches!(key, Value::Str(text) if is_text(text, "format")))
+                .map(|position| &fields.range[position]);
+            match format {
+                Some(Value::Str(text)) if is_text(text, "NDJSON") => {
+                    fail("IOUtils's Serialize with the NDJSON format")
+                }
+                Some(Value::Str(_)) => call(self),
+                _ => fail("IOUtils's Serialize with a format that isn't a string"),
+            }
+        })();
+        result.map_err(|error| match error.message {
+            Some(message) => EvalError {
+                message: Some(TlcMessage {
+                    text: format!(
+                        "Attempted to apply the operator overridden by the Java method\n{TEXT_SERIALIZE},\nbut it produced the following error:\n{}",
+                        message.text
+                    ),
+                    code: Some(JAVA_METHOD_FAILED),
+                    is_eval_exception: false,
+                }),
+                ..error
+            },
+            None => error,
+        })
     }
 
     fn call_operator(
