@@ -2826,10 +2826,9 @@ fn write_state_log(
 ) {
     let (count, stopped, expanding, graph) =
         (logged.count, logged.stopped, logged.expanding, logged.graph);
-    let Ok(file) = std::fs::File::create(path) else {
+    let Some(mut writer) = crate::log_file::create(path) else {
         return;
     };
-    let mut writer = std::io::BufWriter::with_capacity(1 << 20, file);
     let mut line = String::new();
     line.push_str("{\"version\":1,\"variables\":[");
     for (index, variable) in variables.iter().enumerate() {

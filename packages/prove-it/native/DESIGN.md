@@ -1019,7 +1019,9 @@ packages/prove-it/native/           Cargo workspace; rust-toolchain.toml pins 1.
   crates/tla-engine      IR decoder, compiler, memo, walker, search, parallel, symmetry, graph, live tables
   crates/tla-live        stage 3: tableau, SCCs, counterexamples
   crates/tla-front       stage 4: lexer, parser, resolver, levels, SANY success path, config, TLC order
+  crates/prove-it-host   what the engine hands its host, built once for both bindings
   crates/prove-it-napi   cdylib: the N-API binding
+  crates/prove-it-wasm   cdylib: the WebAssembly binding, for hosts without process.dlopen
   crates/prove-it-cli    stages 4–5: the native binary (13)
   oracle/ValueOracle.java, tools/replay, fuzz/
 ```

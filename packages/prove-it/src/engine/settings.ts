@@ -32,6 +32,10 @@ export const getEngineBackend = () => getEnvironment()?.PROVE_IT_ENGINE_BACKEND 
 
 export const getEngineAddon = () => getEnvironment()?.PROVE_IT_ENGINE_ADDON;
 
+// PROVE_IT_ENGINE_WASM loads the native engine from that WebAssembly module rather than the addon,
+// as where there is no process.dlopen.
+export const getEngineWasm = () => getEnvironment()?.PROVE_IT_ENGINE_WASM;
+
 // PROVE_IT_IR_DUMP names the file the engine IR of the model is written to, with any backend.
 export const isIrDumped = () => Boolean(getEnvironment()?.PROVE_IT_IR_DUMP);
 

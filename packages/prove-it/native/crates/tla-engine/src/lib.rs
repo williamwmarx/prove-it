@@ -8,6 +8,7 @@ pub mod compile;
 pub mod context;
 pub mod footprint;
 pub mod live;
+mod log_file;
 pub mod machine;
 pub mod memo;
 pub mod oracle;

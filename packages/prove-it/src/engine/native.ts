@@ -25,6 +25,7 @@ import type { EngineCheckpoint, EngineInput, EngineResult } from "./search";
 import {
   getEngineAddon,
   getEngineThreads,
+  getEngineWasm,
   getEnvironmentFlag,
   getMinimumSharedLevel,
   getStopAt,
@@ -42,6 +43,7 @@ import {
   str,
   TRUE,
 } from "./store";
+import { instantiateEngine } from "./wasm";
 
 // The addon's test hooks into its store, which native-store.ts calls (binding/store.rs).
 export interface NativeStoreHooks {
@@ -71,7 +73,7 @@ export interface EncodedIds {
   count: number;
 }
 
-interface NativeAddon extends NativeStoreHooks {
+export interface NativeAddon extends NativeStoreHooks {
   abiVersion: () => number;
   check: (
     ir: Uint8Array,
@@ -202,6 +204,11 @@ const getAddonPath = () => {
   return process.platform === "win32" ? path.slice(1) : path;
 };
 
+const getChecked = (addon: NativeAddon, path: string) => {
+  const version = addon.abiVersion();
+  return version === ABI_VERSION ? addon : `${path} has ABI version ${version}, not ${ABI_VERSION}`;
+};
+
 const loadAddon = (): NativeAddon | string => {
   const addonPath = getAddonPath();
   if (addonPath === undefined) return `no ${getPackages().join(" or ")}`;
@@ -211,19 +218,33 @@ const loadAddon = (): NativeAddon | string => {
   } catch (error) {
     return `can't load ${addonPath}: ${error instanceof Error ? error.message : String(error)}`;
   }
-  const addon = module.exports as NativeAddon;
-  const version = addon.abiVersion();
-  return version === ABI_VERSION
-    ? addon
-    : `${addonPath} has ABI version ${version}, not ${ABI_VERSION}`;
+  return getChecked(module.exports as NativeAddon, addonPath);
+};
+
+// The engine compiled to WebAssembly that PROVE_IT_ENGINE_WASM names.
+const loadWasm = (wasmPath: string): NativeAddon | string => {
+  const fs = process.getBuiltinModule("node:fs");
+  try {
+    return getChecked(
+      instantiateEngine(new WebAssembly.Module(fs.readFileSync(wasmPath))),
+      wasmPath,
+    );
+  } catch (error) {
+    return `can't load ${wasmPath}: ${error instanceof Error ? error.message : String(error)}`;
+  }
 };
 
 const loaded: { addon?: NativeAddon | string } = {};
 
-// The addon, loaded on first use, or why it can't be loaded.
+// The addon, or the engine compiled to WebAssembly, loaded on first use, or why it can't be loaded.
 export const getNativeAddon = () => {
+  const wasmPath = getEngineWasm();
   loaded.addon ??=
-    typeof globalThis.process?.dlopen === "function" ? loadAddon() : "no process.dlopen";
+    wasmPath !== undefined
+      ? loadWasm(wasmPath)
+      : typeof globalThis.process?.dlopen === "function"
+        ? loadAddon()
+        : "no process.dlopen";
   return loaded.addon;
 };
 

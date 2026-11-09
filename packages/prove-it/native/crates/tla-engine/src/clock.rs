@@ -12,6 +12,7 @@ mod host {
     use std::ops::{Add, Sub};
     use std::time::Duration;
 
+    #[link(wasm_import_module = "env")]
     unsafe extern "C" {
         /// The host's monotonic time in milliseconds, as `performance.now()` gives it.
         fn prove_it_now() -> f64;
