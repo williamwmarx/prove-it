@@ -242,6 +242,9 @@ struct Graph {
     /// Under SYMMETRY or a VIEW, the state each step reached, `width` ids each, which the liveness
     /// checker checks rather than the state stored for it.
     reals: Option<Vec<Id>>,
+    /// The search's depth once it expanded each state, TLC's diameter as it adds the state to the
+    /// behavior graphs.
+    diameters: Vec<u32>,
 }
 
 /// The fingerprints found, each with the index of its state: open addressing with linear probing,
@@ -1678,6 +1681,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 graph.successor_counts.push(search.successors as u32);
                 graph.new_counts.push(search.new_states as u32);
                 graph.edge_offsets.push(graph.edges.len() as u32);
+                graph.diameters.push(search.depth.max(1) as u32);
             }
             out_degrees[(search.new_states as usize).min(OUT_DEGREE_BUCKETS - 1)] += 1;
             search.flush(&mut machine);
@@ -1707,7 +1711,8 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                         search: &Search<'_, States>,
                         expanded: usize,
                         count: usize,
-                        reals: Option<&Reals>|
+                        reals: Option<&Reals>,
+                        last_diameter: Option<u32>|
      -> Result<Vec<Table>, &'static str> {
         let graph = search.graph.as_ref().expect("a graph");
         let edge_count = graph.edge_offsets[expanded] as usize;
@@ -1742,6 +1747,8 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             &context.atoms,
             settings.is_live_checked,
             context.is_live_printing,
+            &context.diameter_atoms,
+            last_diameter,
         )
     };
     // The first `count` states and the steps of the first `expanded`, for the interpreter to
@@ -1820,14 +1827,25 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     // where the engine doesn't follow.
                     let mut is_late_printed = false;
                     let (tables, liveness) = loop {
-                        let tables =
-                            match graph_tables(&mut machine, &search, count, count, reals.as_ref())
-                            {
-                                Ok(tables) => tables,
-                                Err(reason) => return SearchOutcome::Invariant(reason.into()),
-                            };
-                        let mut liveness =
-                            check_liveness(model, &search, &tables, reals.as_ref(), is_effectful);
+                        let tables = match graph_tables(
+                            &mut machine,
+                            &search,
+                            count,
+                            count,
+                            reals.as_ref(),
+                            Some(search.depth.max(1) as u32),
+                        ) {
+                            Ok(tables) => tables,
+                            Err(reason) => return SearchOutcome::Invariant(reason.into()),
+                        };
+                        let mut liveness = check_liveness(
+                            model,
+                            &search,
+                            &tables,
+                            reals.as_ref(),
+                            is_effectful,
+                            &context.diameter_atoms,
+                        );
                         if liveness.verdict != Verdict::Unexpanded {
                             break (tables, liveness);
                         }
@@ -1900,7 +1918,22 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                                 count,
                                 count,
                                 0,
-                                tables,
+                                // The interpreter answers TLCGet("diameter") as the search goes.
+                                tables
+                                    .into_iter()
+                                    .zip(&context.diameter_atoms)
+                                    .map(|(table, &is_diameter_read)| {
+                                        if !is_diameter_read {
+                                            return table;
+                                        }
+                                        Table {
+                                            answers: Vec::new(),
+                                            is_from_steps: false,
+                                            unknown: Some("TLCGet(\"diameter\")".into()),
+                                            prints: Vec::new(),
+                                        }
+                                    })
+                                    .collect(),
                                 search.possible.clone(),
                             ))
                         });
@@ -2005,7 +2038,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 None
             } else {
                 let expanding = search.expanding;
-                match graph_tables(&mut machine, &search, expanding, count, None) {
+                match graph_tables(&mut machine, &search, expanding, count, None, None) {
                     Ok(tables) => Some(Box::new(graph_checkpoint(
                         &mut machine,
                         &search,
@@ -2590,6 +2623,7 @@ fn check_liveness(
     tables: &[Table],
     reals: Option<&Reals>,
     is_effectful: bool,
+    diameter_atoms: &[bool],
 ) -> Liveness {
     let graph = search.graph.as_ref().expect("a graph");
     let to_terms = |terms: &[LiveTerm]| -> Vec<Term> {
@@ -2631,6 +2665,11 @@ fn check_liveness(
             edges: reals.map_or(&graph.edges, |reals| &reals.targets),
             fingerprints: &search.states.fingerprints,
             reals: reals.map(|reals| &reals.edges[..]),
+            diameters: diameter_atoms.contains(&true).then(|| tla_live::Diameters {
+                states: &graph.diameters,
+                last: search.depth.max(1) as u32,
+                atoms: diameter_atoms,
+            }),
         },
         &answers,
         is_effectful,
