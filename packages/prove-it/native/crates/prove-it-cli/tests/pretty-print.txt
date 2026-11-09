@@ -1,0 +1,1153 @@
+
+---
+
+===
+{}
+---
+{}
+===
+<<>>
+---
+<<>>
+===
+[a |-> 1]
+---
+[a |-> 1]
+===
+-
+---
+-
+===
+<< 1
+---
+<< 1
+===
+"unterminated
+---
+"unterminated
+===
+x y
+---
+x y
+===
+-60
+---
+-60
+===
+"ssssssssssss"
+---
+"ssssssssssss"
+===
+SUBSET <<>>
+---
+SUBSET <<>>
+===
+SUBSET [a |-> <<>>, bb |-> 484, count |-> ""]
+---
+SUBSET [a |-> <<>>, bb |-> 484, count |-> ""]
+===
+2..9
+---
+2..9
+===
+a
+---
+a
+===
+{}
+---
+{}
+===
+0..6
+---
+0..6
+===
+[a |-> "ss", bb |-> [a |-> (1172 :> (1588 :> -76 @@ 1108 :> 1268 @@ 1076 :> 1428) @@ -108 :> [a |-> 244] @@ 580 :> [a |-> 660, bb |-> 1492, count |-> 276, phase |-> 1092, msgs |-> 964]), bb |-> a, count |-> a], count |-> ({} :> 3..11), phase |-> (4..12 :> <<>> @@ SUBSET -124 :> <<>>), msgs |-> <<>>]
+---
+[ a |-> "ss",
+  bb |->
+      [ a |->
+            ( 1172 :> (1588 :> -76 @@ 1108 :> 1268 @@ 1076 :> 1428) @@
+              -108 :> [a |-> 244] @@
+              580 :>
+                  [ a |-> 660,
+                    bb |-> 1492,
+                    count |-> 276,
+                    phase |-> 1092,
+                    msgs |-> 964 ] ),
+        bb |-> a,
+        count |-> a ],
+  count |-> ({} :> 3..11),
+  phase |-> (4..12 :> <<>> @@ SUBSET -124 :> <<>>),
+  msgs |-> <<>> ]
+===
+(0..8 :> SUBSET 1284 @@ {} :> ("ssssssssssssssssssssssssss" :> 3..12 @@ [a |-> 596, bb |-> -28, count |-> -124, phase |-> 708, msgs |-> 1508] :> 0..8 @@ <<>> :> a) @@ "ssssssssssssssssssss" :> "ssssssssssssssss" @@ {} :> (a :> 340))
+---
+( 0..8 :> SUBSET 1284 @@
+  {} :>
+      ( "ssssssssssssssssssssssssss" :> 3..12 @@
+        [a |-> 596, bb |-> -28, count |-> -124, phase |-> 708, msgs |-> 1508] :>
+            0..8 @@
+        <<>> :> a ) @@
+  "ssssssssssssssssssss" :> "ssssssssssssssss" @@
+  {} :> (a :> 340) )
+===
+4..9
+---
+4..9
+===
+(SUBSET <<>> :> 420 @@ (36 :> <<>> @@ 852 :> {}) :> {} @@ {} :> "ssss" @@ (68 :> 804 @@ 404 :> 0..13 @@ 1044 :> <<>> @@ 996 :> [a |-> 1028, bb |-> 1492, count |-> 228, phase |-> 84, msgs |-> 132] @@ 100 :> (1076 :> 244 @@ 244 :> 532 @@ -172 :> 1492 @@ 100 :> 628)) :> <<>> @@ "ssssssssssssssssss" :> {})
+---
+( SUBSET <<>> :> 420 @@
+  (36 :> <<>> @@ 852 :> {}) :> {} @@
+  {} :> "ssss" @@
+  ( 68 :> 804 @@
+    404 :> 0..13 @@
+    1044 :> <<>> @@
+    996 :>
+        [a |-> 1028, bb |-> 1492, count |-> 228, phase |-> 84, msgs |-> 132] @@
+    100 :> (1076 :> 244 @@ 244 :> 532 @@ -172 :> 1492 @@ 100 :> 628) ) :>
+      <<>> @@
+  "ssssssssssssssssss" :> {} )
+===
+{}
+---
+{}
+===
+<<>>
+---
+<<>>
+===
+{}
+---
+{}
+===
+a
+---
+a
+===
+{}
+---
+{}
+===
+(<<>> :> <<>> @@ 1668 :> a @@ a :> 1684 @@ "ssssss" :> {})
+---
+(<<>> :> <<>> @@ 1668 :> a @@ a :> 1684 @@ "ssssss" :> {})
+===
+<<>>
+---
+<<>>
+===
+[a |-> a, bb |-> ([a |-> 628, bb |-> 836, count |-> 1044, phase |-> 164, msgs |-> 852] :> "ssssssssssssssssssssssssss" @@ SUBSET 1140 :> {} @@ a :> <<>> @@ {} :> SUBSET {} @@ {} :> {}), count |-> ([a |-> 308, bb |-> 1556, count |-> 1220, phase |-> 1556, msgs |-> 1668] :> SUBSET SUBSET 1348 @@ (908 :> 804) :> {}), phase |-> 1028, msgs |-> "ssssssssssssss"]
+---
+[ a |-> a,
+  bb |->
+      ( [a |-> 628, bb |-> 836, count |-> 1044, phase |-> 164, msgs |-> 852] :>
+            "ssssssssssssssssssssssssss" @@
+        SUBSET 1140 :> {} @@
+        a :> <<>> @@
+        {} :> SUBSET {} @@
+        {} :> {} ),
+  count |->
+      ( [ a |-> 308,
+          bb |-> 1556,
+          count |-> 1220,
+          phase |-> 1556,
+          msgs |-> 1668 ] :>
+            SUBSET SUBSET 1348 @@
+        (908 :> 804) :> {} ),
+  phase |-> 1028,
+  msgs |-> "ssssssssssssss" ]
+===
+SUBSET <<>>
+---
+SUBSET <<>>
+===
+"ssssssssssssssssss"
+---
+"ssssssssssssssssss"
+===
+SUBSET a
+---
+SUBSET a
+===
+<<>>
+---
+<<>>
+===
+[a |-> 1..7]
+---
+[a |-> 1..7]
+===
+564
+---
+564
+===
+"ssssssssss"
+---
+"ssssssssss"
+===
+SUBSET "ssssssssssssssssss"
+---
+SUBSET "ssssssssssssssssss"
+===
+a
+---
+a
+===
+"ssssssssssssssssssssssssss"
+---
+"ssssssssssssssssssssssssss"
+===
+{}
+---
+{}
+===
+<<>>
+---
+<<>>
+===
+SUBSET SUBSET -140
+---
+SUBSET SUBSET -140
+===
+2..9
+---
+2..9
+===
+932
+---
+932
+===
+1508
+---
+1508
+===
+<<>>
+---
+<<>>
+===
+<<>>
+---
+<<>>
+===
+0..7
+---
+0..7
+===
+"ssss"
+---
+"ssss"
+===
+[a |-> 2..9]
+---
+[a |-> 2..9]
+===
+(SUBSET a :> 116 @@ <<>> :> 820 @@ <<>> :> "ssssssss" @@ "ssssssssssssssssss" :> (1012 :> SUBSET "ssssssssss" @@ TRUE :> 388) @@ (1476 :> 1..11 @@ 476 :> 4..7 @@ 948 :> SUBSET -284) :> 100)
+---
+( SUBSET a :> 116 @@
+  <<>> :> 820 @@
+  <<>> :> "ssssssss" @@
+  "ssssssssssssssssss" :> (1012 :> SUBSET "ssssssssss" @@ TRUE :> 388) @@
+  (1476 :> 1..11 @@ 476 :> 4..7 @@ 948 :> SUBSET -284) :> 100 )
+===
+{}
+---
+{}
+===
+"ssssssssssssss"
+---
+"ssssssssssssss"
+===
+516
+---
+516
+===
+212
+---
+212
+===
+a
+---
+a
+===
+{}
+---
+{}
+===
+"ssssssssssssssssssss"
+---
+"ssssssssssssssssssss"
+===
+SUBSET <<>>
+---
+SUBSET <<>>
+===
+1..9
+---
+1..9
+===
+a
+---
+a
+===
+1060
+---
+1060
+===
+a
+---
+a
+===
+((1252 :> (516 :> 1364 @@ 116 :> 1668 @@ 468 :> 1684) @@ 548 :> [a |-> 372] @@ -124 :> {} @@ 52 :> <<>> @@ 380 :> {}) :> {} @@ SUBSET a :> a @@ 0..9 :> {} @@ 0..8 :> 1..8 @@ a :> <<>>)
+---
+( ( 1252 :> (516 :> 1364 @@ 116 :> 1668 @@ 468 :> 1684) @@
+    548 :> [a |-> 372] @@
+    -124 :> {} @@
+    52 :> <<>> @@
+    380 :> {} ) :>
+      {} @@
+  SUBSET a :> a @@
+  0..9 :> {} @@
+  0..8 :> 1..8 @@
+  a :> <<>> )
+===
+{}
+---
+{}
+===
+[a |-> [a |-> 1284], bb |-> SUBSET [a |-> 3..8, bb |-> -300, count |-> 628], count |-> 1..9, phase |-> a, msgs |-> <<>>]
+---
+[ a |-> [a |-> 1284],
+  bb |-> SUBSET [a |-> 3..8, bb |-> -300, count |-> 628],
+  count |-> 1..9,
+  phase |-> a,
+  msgs |-> <<>> ]
+===
+[a |-> 68]
+---
+[a |-> 68]
+===
+0..9
+---
+0..9
+===
+[a |-> [a |-> {}], bb |-> 4..7, count |-> 0..13]
+---
+[a |-> [a |-> {}], bb |-> 4..7, count |-> 0..13]
+===
+"ssssssssss"
+---
+"ssssssssss"
+===
+SUBSET "ssssssssssssssssssssss"
+---
+SUBSET "ssssssssssssssssssssss"
+===
+([a |-> SUBSET 1268, bb |-> a, count |-> <<>>] :> (a :> "ssssssssssssss" @@ a :> [a |-> bb, bb |-> 1540, count |-> <<>>] @@ 4..11 :> 2..6) @@ (84 :> SUBSET 1076 @@ 708 :> [a |-> 1268, bb |-> -300, count |-> 1620]) :> [a |-> {}, bb |-> a, count |-> <<>>, phase |-> a, msgs |-> "ssssssssssssssssssssss"] @@ 2..10 :> {} @@ 1..7 :> 804 @@ [a |-> [a |-> 1396], bb |-> [a |-> -276, bb |-> 292, count |-> 68], count |-> <<>>, phase |-> SUBSET 1172, msgs |-> 1380] :> 1412)
+---
+( [a |-> SUBSET 1268, bb |-> a, count |-> <<>>] :>
+      ( a :> "ssssssssssssss" @@
+        a :> [a |-> bb, bb |-> 1540, count |-> <<>>] @@
+        4..11 :> 2..6 ) @@
+  (84 :> SUBSET 1076 @@ 708 :> [a |-> 1268, bb |-> -300, count |-> 1620]) :>
+      [ a |-> {},
+        bb |-> a,
+        count |-> <<>>,
+        phase |-> a,
+        msgs |-> "ssssssssssssssssssssss" ] @@
+  2..10 :> {} @@
+  1..7 :> 804 @@
+  [ a |-> [a |-> 1396],
+    bb |-> [a |-> -276, bb |-> 292, count |-> 68],
+    count |-> <<>>,
+    phase |-> SUBSET 1172,
+    msgs |-> 1380 ] :>
+      1412 )
+===
+[a |-> (a :> SUBSET "ssssssssssssssssssssssssssss" @@ (1572 :> 868) :> [a |-> 852, bb |-> bb, count |-> [a |-> 644, bb |-> 980, count |-> 1316, phase |-> 1124, msgs |-> 1268], phase |-> [a |-> 1044], msgs |-> a] @@ <<>> :> 4..9 @@ 372 :> [a |-> [a |-> 708]]), bb |-> 772, count |-> 1124, phase |-> (a :> SUBSET SUBSET 804 @@ a :> "ssssssssssssssssssssssssssss"), msgs |-> "ssssssss"]
+---
+[ a |->
+      ( a :> SUBSET "ssssssssssssssssssssssssssss" @@
+        (1572 :> 868) :>
+            [ a |-> 852,
+              bb |-> bb,
+              count |->
+                  [ a |-> 644,
+                    bb |-> 980,
+                    count |-> 1316,
+                    phase |-> 1124,
+                    msgs |-> 1268 ],
+              phase |-> [a |-> 1044],
+              msgs |-> a ] @@
+        <<>> :> 4..9 @@
+        372 :> [a |-> [a |-> 708]] ),
+  bb |-> 772,
+  count |-> 1124,
+  phase |-> (a :> SUBSET SUBSET 804 @@ a :> "ssssssssssssssssssssssssssss"),
+  msgs |-> "ssssssss" ]
+===
+{}
+---
+{}
+===
+""
+---
+""
+===
+SUBSET SUBSET (916 :> {} @@ 1220 :> "ssssssssssssss" @@ 804 :> "ssssssssss" @@ 500 :> {} @@ 644 :> SUBSET 1324)
+---
+SUBSET SUBSET ( 916 :> {} @@
+    1220 :> "ssssssssssssss" @@
+    804 :> "ssssssssss" @@
+    500 :> {} @@
+    644 :> SUBSET 1324 )  
+===
+"ssssssssssssssss"
+---
+"ssssssssssssssss"
+===
+{}
+---
+{}
+===
+SUBSET 980
+---
+SUBSET 980
+===
+{}
+---
+{}
+===
+a
+---
+a
+===
+<<>>
+---
+<<>>
+===
+[a |-> SUBSET "", bb |-> {}, count |-> [a |-> "ssss", bb |-> [a |-> "ssssssss", bb |-> (52 :> -220), count |-> 1..11, phase |-> "ssss", msgs |-> "ssss", rm1 |-> SUBSET 260], count |-> (1044 :> (1204 :> 1364 @@ 68 :> 1316 @@ 740 :> 1684) @@ 1044 :> SUBSET 20), phase |-> SUBSET <<>>, msgs |-> {}]]
+---
+[ a |-> SUBSET "",
+  bb |-> {},
+  count |->
+      [ a |-> "ssss",
+        bb |->
+            [ a |-> "ssssssss",
+              bb |-> (52 :> -220),
+              count |-> 1..11,
+              phase |-> "ssss",
+              msgs |-> "ssss",
+              rm1 |-> SUBSET 260 ],
+        count |->
+            ( 1044 :> (1204 :> 1364 @@ 68 :> 1316 @@ 740 :> 1684) @@
+              1044 :> SUBSET 20 ),
+        phase |-> SUBSET <<>>,
+        msgs |-> {} ] ]
+===
+<<>>
+---
+<<>>
+===
+{}
+---
+{}
+===
+a
+---
+a
+===
+[a |-> 1..10, bb |-> (1..5 :> 3..8 @@ 692 :> 292 @@ "ssssssssssssssssssssssssss" :> SUBSET SUBSET 1540), count |-> <<>>, phase |-> {}, msgs |-> "ss"]
+---
+[ a |-> 1..10,
+  bb |->
+      ( 1..5 :> 3..8 @@
+        692 :> 292 @@
+        "ssssssssssssssssssssssssss" :> SUBSET SUBSET 1540 ),
+  count |-> <<>>,
+  phase |-> {},
+  msgs |-> "ss" ]
+===
+4..5
+---
+4..5
+===
+<<>>
+---
+<<>>
+===
+[a |-> 660, bb |-> ((596 :> -76 @@ -300 :> 500 @@ 228 :> 324 @@ 436 :> 1204) :> SUBSET [a |-> 1156]), count |-> 3..13, phase |-> <<>>, msgs |-> ({} :> "ssssssssssss" @@ <<>> :> SUBSET "ss" @@ a :> 116 @@ SUBSET 964 :> 1076 @@ <<>> :> 0..7)]
+---
+[ a |-> 660,
+  bb |->
+      ( (596 :> -76 @@ -300 :> 500 @@ 228 :> 324 @@ 436 :> 1204) :>
+            SUBSET [a |-> 1156] ),
+  count |-> 3..13,
+  phase |-> <<>>,
+  msgs |->
+      ( {} :> "ssssssssssss" @@
+        <<>> :> SUBSET "ss" @@
+        a :> 116 @@
+        SUBSET 964 :> 1076 @@
+        <<>> :> 0..7 ) ]
+===
+"ssssssssssssssssssssssss"
+---
+"ssssssssssssssssssssssss"
+===
+{}
+---
+{}
+===
+4..10
+---
+4..10
+===
+-188
+---
+-188
+===
+<<>>
+---
+<<>>
+===
+{}
+---
+{}
+===
+<<>>
+---
+<<>>
+===
+<<>>
+---
+<<>>
+===
+{}
+---
+{}
+===
+{}
+---
+{}
+===
+("ssssssssssssssssssssssssss" :> 2..11 @@ 1076 :> (3..11 :> {}))
+---
+("ssssssssssssssssssssssssss" :> 2..11 @@ 1076 :> (3..11 :> {}))
+===
+0..9
+---
+0..9
+===
+{}
+---
+{}
+===
+{}
+---
+{}
+===
+SUBSET "ssssssssssss"
+---
+SUBSET "ssssssssssss"
+===
+[a |-> SUBSET a, bb |-> 2..11, count |-> a, phase |-> a, msgs |-> "ssssssssss"]
+---
+[a |-> SUBSET a, bb |-> 2..11, count |-> a, phase |-> a, msgs |-> "ssssssssss"]
+===
+[a |-> ((-124 :> 1437) :> (580 :> (1364 :> 988)) @@ <<>> :> SUBSET "ssssssss"), bb |-> {}, count |-> a]
+---
+[ a |-> ((-124 :> 1437) :> (580 :> (1364 :> 988)) @@ <<>> :> SUBSET "ssssssss"),
+  bb |-> {},
+  count |-> a ]
+===
+(116 :> {})
+---
+(116 :> {})
+===
+"ssssssssssssssssssssssssssss"
+---
+"ssssssssssssssssssssssssssss"
+===
+"ssssssssss"
+---
+"ssssssssss"
+===
+<<>>
+---
+<<>>
+===
+3..7
+---
+3..7
+===
+1..9
+---
+1..9
+===
+SUBSET a
+---
+SUBSET a
+===
+[a |-> -284]
+---
+[a |-> -284]
+===
+a
+---
+a
+===
+[a |-> <<>>, bb |-> 1204, count |-> {}]
+---
+[a |-> <<>>, bb |-> 1204, count |-> {}]
+===
+3..6
+---
+3..6
+===
+{}
+---
+{}
+===
+1..8
+---
+1..8
+===
+<<>>
+---
+<<>>
+===
+0..11
+---
+0..11
+===
+"ssssssssssssssssssss"
+---
+"ssssssssssssssssssss"
+===
+(868 :> 1668)
+---
+(868 :> 1668)
+===
+{}
+---
+{}
+===
+852
+---
+852
+===
+[a |-> 2..13]
+---
+[a |-> 2..13]
+===
+[a |-> SUBSET ("ssssssss" :> [a |-> 436] @@ -44 :> <<>> @@ -140 :> {}), bb |-> (a :> [a |-> {}, bb |-> 756, count |-> {}] @@ a :> [a |-> -156, bb |-> (1156 :> 1092 @@ 1268 :> 100 @@ 1092 :> -108), count |-> {}, phase |-> SUBSET -268, msgs |-> 1..13] @@ "ssssssssssssssssss" :> (-12 :> (532 :> 356 @@ 804 :> -76 @@ 1044 :> 244) @@ -220 :> {} @@ 788 :> {} @@ 164 :> [a |-> 413, bb |-> -76, count |-> 1092, phase |-> -76, msgs |-> 804] @@ -156 :> (1444 :> -172 @@ 372 :> 1325 @@ -108 :> 1140))), count |-> ((324 :> -60 @@ 548 :> -212) :> SUBSET (212 :> 932) @@ "ssssssss" :> [a |-> (1020 :> 1252 @@ 36 :> 900 @@ 1236 :> 532), bb |-> a, count |-> [a |-> -92, bb |-> -60, count |-> 1492, phase |-> -124, msgs |-> -300]] @@ a :> 308 @@ a :> 0..7 @@ {} :> (1364 :> a)), phase |-> 2..10, msgs |-> ([a |-> 1412] :> SUBSET "ssssssssssssssssssssss")]
+---
+[ a |-> SUBSET ("ssssssss" :> [a |-> 436] @@ -44 :> <<>> @@ -140 :> {}),
+  bb |->
+      ( a :> [a |-> {}, bb |-> 756, count |-> {}] @@
+        a :>
+            [ a |-> -156,
+              bb |-> (1156 :> 1092 @@ 1268 :> 100 @@ 1092 :> -108),
+              count |-> {},
+              phase |-> SUBSET -268,
+              msgs |-> 1..13 ] @@
+        "ssssssssssssssssss" :>
+            ( -12 :> (532 :> 356 @@ 804 :> -76 @@ 1044 :> 244) @@
+              -220 :> {} @@
+              788 :> {} @@
+              164 :>
+                  [ a |-> 413,
+                    bb |-> -76,
+                    count |-> 1092,
+                    phase |-> -76,
+                    msgs |-> 804 ] @@
+              -156 :> (1444 :> -172 @@ 372 :> 1325 @@ -108 :> 1140) ) ),
+  count |->
+      ( (324 :> -60 @@ 548 :> -212) :> SUBSET (212 :> 932) @@
+        "ssssssss" :>
+            [ a |-> (1020 :> 1252 @@ 36 :> 900 @@ 1236 :> 532),
+              bb |-> a,
+              count |->
+                  [ a |-> -92,
+                    bb |-> -60,
+                    count |-> 1492,
+                    phase |-> -124,
+                    msgs |-> -300 ] ] @@
+        a :> 308 @@
+        a :> 0..7 @@
+        {} :> (1364 :> a) ),
+  phase |-> 2..10,
+  msgs |-> ([a |-> 1412] :> SUBSET "ssssssssssssssssssssss") ]
+===
+2..8
+---
+2..8
+===
+{}
+---
+{}
+===
+0..9
+---
+0..9
+===
+"ssssssss"
+---
+"ssssssss"
+===
+"ssssssssssssssssss"
+---
+"ssssssssssssssssss"
+===
+{}
+---
+{}
+===
+[a |-> SUBSET 980, bb |-> <<>>, count |-> {}]
+---
+[a |-> SUBSET 980, bb |-> <<>>, count |-> {}]
+===
+780
+---
+780
+===
+("ssssss" :> "ssssssssssssssssssssssssss")
+---
+("ssssss" :> "ssssssssssssssssssssssssss")
+===
+"ssssssssssssssssssssssssssss"
+---
+"ssssssssssssssssssssssssssss"
+===
+a
+---
+a
+===
+SUBSET 692
+---
+SUBSET 692
+===
+<<>>
+---
+<<>>
+===
+"ssss"
+---
+"ssss"
+===
+("ssssssssssssssssssss" :> "ssssssssssssssssssss" @@ "ssssssssssss" :> <<>> @@ "ssssssssssssssssss" :> ((452 :> -284) :> (996 :> a @@ -12 :> <<>> @@ 228 :> "" @@ -172 :> 1492 @@ 580 :> SUBSET 132) @@ "ss" :> a @@ 1..9 :> <<>> @@ a :> <<>>))
+---
+( "ssssssssssssssssssss" :> "ssssssssssssssssssss" @@
+  "ssssssssssss" :> <<>> @@
+  "ssssssssssssssssss" :>
+      ( (452 :> -284) :>
+            ( 996 :> a @@
+              -12 :> <<>> @@
+              228 :> "" @@
+              -172 :> 1492 @@
+              580 :> SUBSET 132 ) @@
+        "ss" :> a @@
+        1..9 :> <<>> @@
+        a :> <<>> ) )
+===
+"ssssssssssssssssss"
+---
+"ssssssssssssssssss"
+===
+148
+---
+148
+===
+a
+---
+a
+===
+SUBSET 1156
+---
+SUBSET 1156
+===
+[a |-> SUBSET 4..9, bb |-> 1..8, count |-> "ssssssssssss", phase |-> {}, msgs |-> {}]
+---
+[ a |-> SUBSET 4..9,
+  bb |-> 1..8,
+  count |-> "ssssssssssss",
+  phase |-> {},
+  msgs |-> {} ]
+===
+2..5
+---
+2..5
+===
+<<>>
+---
+<<>>
+===
+a
+---
+a
+===
+3..5
+---
+3..5
+===
+[a |-> SUBSET <<>>, bb |-> (a :> (52 :> <<>> @@ 1268 :> SUBSET 916 @@ -140 :> "ssssssssssssssssssssssssss") @@ SUBSET 1460 :> a @@ (1220 :> 996 @@ 676 :> 1428 @@ 1476 :> 1501 @@ -236 :> 868) :> {} @@ (164 :> 868 @@ -236 :> 404 @@ 1652 :> 516) :> (-204 :> "ssssssss")), count |-> 4..12]
+---
+[ a |-> SUBSET <<>>,
+  bb |->
+      ( a :>
+            ( 52 :> <<>> @@
+              1268 :> SUBSET 916 @@
+              -140 :> "ssssssssssssssssssssssssss" ) @@
+        SUBSET 1460 :> a @@
+        (1220 :> 996 @@ 676 :> 1428 @@ 1476 :> 1501 @@ -236 :> 868) :> {} @@
+        (164 :> 868 @@ -236 :> 404 @@ 1652 :> 516) :> (-204 :> "ssssssss") ),
+  count |-> 4..12 ]
+===
+[a |-> a, bb |-> "ss", count |-> 1..7, phase |-> ((628 :> 1444) :> "ssssssssssss"), msgs |-> 1412]
+---
+[ a |-> a,
+  bb |-> "ss",
+  count |-> 1..7,
+  phase |-> ((628 :> 1444) :> "ssssssssssss"),
+  msgs |-> 1412 ]
+===
+a
+---
+a
+===
+SUBSET <<>>
+---
+SUBSET <<>>
+===
+(<<>> :> SUBSET 2..9 @@ 460 :> a @@ 1..12 :> SUBSET 0..6)
+---
+(<<>> :> SUBSET 2..9 @@ 460 :> a @@ 1..12 :> SUBSET 0..6)
+===
+a
+---
+a
+===
+((1396 :> (196 :> 1044 @@ 980 :> 1620 @@ 628 :> 500) @@ -228 :> 372 @@ 948 :> SUBSET -172 @@ 980 :> [a |-> 484]) :> [a |-> [a |-> <<>>, bb |-> "ssssssss", count |-> 2..10], bb |-> 4..10, count |-> SUBSET <<>>, phase |-> SUBSET [a |-> 932, bb |-> 596, count |-> 1380], msgs |-> (324 :> SUBSET 1364)] @@ [a |-> 3..13] :> "ssssssssssssssssssssssssssss" @@ a :> [a |-> {}, bb |-> (1220 :> a @@ 1604 :> "ssssssssssssss" @@ -188 :> 84 @@ 948 :> {} @@ 20 :> SUBSET 1124), count |-> <<>>, phase |-> a, msgs |-> 84] @@ a :> <<>> @@ a :> [a |-> SUBSET [a |-> 436, bb |-> 132, count |-> 612, phase |-> 212, msgs |-> 468], bb |-> SUBSET a, count |-> "ssssssssssssss"])
+---
+( ( 1396 :> (196 :> 1044 @@ 980 :> 1620 @@ 628 :> 500) @@
+    -228 :> 372 @@
+    948 :> SUBSET -172 @@
+    980 :> [a |-> 484] ) :>
+      [ a |-> [a |-> <<>>, bb |-> "ssssssss", count |-> 2..10],
+        bb |-> 4..10,
+        count |-> SUBSET <<>>,
+        phase |-> SUBSET [a |-> 932, bb |-> 596, count |-> 1380],
+        msgs |-> (324 :> SUBSET 1364) ] @@
+  [a |-> 3..13] :> "ssssssssssssssssssssssssssss" @@
+  a :>
+      [ a |-> {},
+        bb |->
+            ( 1220 :> a @@
+              1604 :> "ssssssssssssss" @@
+              -188 :> 84 @@
+              948 :> {} @@
+              20 :> SUBSET 1124 ),
+        count |-> <<>>,
+        phase |-> a,
+        msgs |-> 84 ] @@
+  a :> <<>> @@
+  a :>
+      [ a |->
+            SUBSET [ a |-> 436,
+               bb |-> 132,
+               count |-> 612,
+               phase |-> 212,
+               msgs |-> 468 ] ,
+        bb |-> SUBSET a,
+        count |-> "ssssssssssssss" ] )
+===
+(-28 :> 1..11 @@ SUBSET <<>> :> ((292 :> 628) :> (1316 :> {} @@ 276 :> {} @@ -100 :> a @@ 260 :> <<>>)) @@ {} :> {})
+---
+( -28 :> 1..11 @@
+  SUBSET <<>> :>
+      ((292 :> 628) :> (1316 :> {} @@ 276 :> {} @@ -100 :> a @@ 260 :> <<>>)) @@
+  {} :> {} )
+===
+{}
+---
+{}
+===
+4..9
+---
+4..9
+===
+a
+---
+a
+===
+(3..13 :> "ssssssssssssssssssssssss" @@ a :> 3..5)
+---
+(3..13 :> "ssssssssssssssssssssssss" @@ a :> 3..5)
+===
+a
+---
+a
+===
+"ssss"
+---
+"ssss"
+===
+"ssssssssssssssssssssss"
+---
+"ssssssssssssssssssssss"
+===
+SUBSET 3..12
+---
+SUBSET 3..12
+===
+"ssssssssssssssssssss"
+---
+"ssssssssssssssssssss"
+===
+"ssssssssssssssssssss"
+---
+"ssssssssssssssssssss"
+===
+SUBSET SUBSET 4..11
+---
+SUBSET SUBSET 4..11
+===
+[a |-> 4..5, bb |-> {}, count |-> SUBSET 2..5, phase |-> 1124, msgs |-> ((452 :> 20 @@ 1172 :> 884 @@ 452 :> 180 @@ 301 :> -220 @@ 1172 :> 1300) :> (228 :> SUBSET 1316) @@ SUBSET 1220 :> a)]
+---
+[ a |-> 4..5,
+  bb |-> {},
+  count |-> SUBSET 2..5,
+  phase |-> 1124,
+  msgs |->
+      ( ( 452 :> 20 @@
+          1172 :> 884 @@
+          452 :> 180 @@
+          301 :> -220 @@
+          1172 :> 1300 ) :>
+            (228 :> SUBSET 1316) @@
+        SUBSET 1220 :> a ) ]
+===
+{}
+---
+{}
+===
+"ssssss"
+---
+"ssssss"
+===
+{}
+---
+{}
+===
+<<>>
+---
+<<>>
+===
+<<>>
+---
+<<>>
+===
+[a |-> SUBSET [a |-> (1348 :> 356 @@ -156 :> 1012 @@ -44 :> 1596 @@ 404 :> -12 @@ 276 :> 804), bb |-> SUBSET 20, count |-> 3..11, phase |-> "ssssssssssssssssssssssssss", msgs |-> "ssssssssssssss"], bb |-> 356, count |-> 1364, phase |-> [a |-> 1188], msgs |-> 4..11]
+---
+[ a |->
+      SUBSET [ a |->
+             ( 1348 :> 356 @@
+               -156 :> 1012 @@
+               -44 :> 1596 @@
+               404 :> -12 @@
+               276 :> 804 ),
+         bb |-> SUBSET 20,
+         count |-> 3..11,
+         phase |-> "ssssssssssssssssssssssssss",
+         msgs |-> "ssssssssssssss" ] ,
+  bb |-> 356,
+  count |-> 1364,
+  phase |-> [a |-> 1188],
+  msgs |-> 4..11 ]
+===
+"ssssssssssssssssssssss"
+---
+"ssssssssssssssssssssss"
+===
+820
+---
+820
+===
+a
+---
+a
+===
+[a |-> <<>>, bb |-> 0..6, count |-> [a |-> 2..8, bb |-> <<>>, count |-> 1..8]]
+---
+[a |-> <<>>, bb |-> 0..6, count |-> [a |-> 2..8, bb |-> <<>>, count |-> 1..8]]
+===
+<<>>
+---
+<<>>
+===
+a
+---
+a
+===
+SUBSET 0..13
+---
+SUBSET 0..13
+===
+[a |-> ("ssssssssssssss" :> a @@ a :> (1284 :> (1524 :> -188 @@ 1172 :> 916 @@ -76 :> -60 @@ 1188 :> 756) @@ -124 :> (1556 :> 612 @@ 1124 :> 1252 @@ 772 :> 404) @@ 484 :> [a |-> 804, bb |-> 132, count |-> 788, phase |-> 1428, msgs |-> 356] @@ 676 :> 0..6) @@ 1444 :> a @@ {} :> {} @@ 3..10 :> 3..12)]
+---
+[ a |->
+      ( "ssssssssssssss" :> a @@
+        a :>
+            ( 1284 :>
+                  (1524 :> -188 @@ 1172 :> 916 @@ -76 :> -60 @@ 1188 :> 756) @@
+              -124 :> (1556 :> 612 @@ 1124 :> 1252 @@ 772 :> 404) @@
+              484 :>
+                  [ a |-> 804,
+                    bb |-> 132,
+                    count |-> 788,
+                    phase |-> 1428,
+                    msgs |-> 356 ] @@
+              676 :> 0..6 ) @@
+        1444 :> a @@
+        {} :> {} @@
+        3..10 :> 3..12 ) ]
+===
+SUBSET (3..13 :> SUBSET SUBSET 36 @@ (1140 :> 628 @@ 868 :> 1252 @@ 84 :> 516 @@ 1492 :> 52 @@ 676 :> 1220) :> a)
+---
+SUBSET ( 3..13 :> SUBSET SUBSET 36 @@
+   ( 1140 :> 628 @@
+     868 :> 1252 @@
+     84 :> 516 @@
+     1492 :> 52 @@
+     676 :> 1220 ) :>
+       a ) 
+===
+<<>>
+---
+<<>>
+===
+<<>>
+---
+<<>>
+===
+a
+---
+a
+===
+[a |-> (a :> SUBSET {} @@ {} :> "ssssssssssssssss"), bb |-> 1684, count |-> <<>>]
+---
+[ a |-> (a :> SUBSET {} @@ {} :> "ssssssssssssssss"),
+  bb |-> 1684,
+  count |-> <<>> ]
+===
+3..13
+---
+3..13
+===
+-140
+---
+-140
+===
+[a |-> 52]
+---
+[a |-> 52]
+===
+SUBSET {}
+---
+SUBSET {}
+===
+a
+---
+a
+===
+{}
+---
+{}
+===
+SUBSET "ssss"
+---
+SUBSET "ssss"
+===
+SUBSET SUBSET [a |-> {}, bb |-> <<>>, count |-> 1044]
+---
+SUBSET SUBSET [a |-> {}, bb |-> <<>>, count |-> 1044]
+===
+a
+---
+a
+===
+{}
+---
+{}
+===
+[a |-> 308, bb |-> [a |-> a, bb |-> {}, count |-> <<>>], count |-> a, phase |-> a, msgs |-> 4..8]
+---
+[ a |-> 308,
+  bb |-> [a |-> a, bb |-> {}, count |-> <<>>],
+  count |-> a,
+  phase |-> a,
+  msgs |-> 4..8 ]
+===
+a
+---
+a
+===
+([a |-> 1684, bb |-> [a |-> 1684, bb |-> 1028, count |-> 852], count |-> 4..6, phase |-> SUBSET 1684, msgs |-> [a |-> -12]] :> a @@ "ssssssssssss" :> 996 @@ {} :> {} @@ (884 :> SUBSET 68 @@ 1508 :> <<>> @@ 500 :> "ssssssssssssssssssssssss") :> SUBSET <<>> @@ 324 :> a)
+---
+( [ a |-> 1684,
+    bb |-> [a |-> 1684, bb |-> 1028, count |-> 852],
+    count |-> 4..6,
+    phase |-> SUBSET 1684,
+    msgs |-> [a |-> -12] ] :>
+      a @@
+  "ssssssssssss" :> 996 @@
+  {} :> {} @@
+  (884 :> SUBSET 68 @@ 1508 :> <<>> @@ 500 :> "ssssssssssssssssssssssss") :>
+      SUBSET <<>> @@
+  324 :> a )
+===
+[a |-> (<<>> :> [a |-> SUBSET 212, bb |-> {}, count |-> 1..12, phase |-> 3..8, msgs |-> <<>>] @@ a :> {} @@ {} :> 1364 @@ -236 :> {})]
+---
+[ a |->
+      ( <<>> :>
+            [ a |-> SUBSET 212,
+              bb |-> {},
+              count |-> 1..12,
+              phase |-> 3..8,
+              msgs |-> <<>> ] @@
+        a :> {} @@
+        {} :> 1364 @@
+        -236 :> {} ) ]
+===
+"ssssssssssssssss"
+---
+"ssssssssssssssss"
+===
+3..9
+---
+3..9
+===
+[a |-> SUBSET [a |-> SUBSET 612, bb |-> [a |-> 4], count |-> "ssssssssssssssssssssssssssss", phase |-> <<>>, msgs |-> 1620], bb |-> 4..6, count |-> SUBSET SUBSET (452 :> 212 @@ 836 :> 1636 @@ 1028 :> 260 @@ 244 :> 196 @@ 228 :> 244)]
+---
+[ a |->
+      SUBSET [ a |-> SUBSET 612,
+         bb |-> [a |-> 4],
+         count |-> "ssssssssssssssssssssssssssss",
+         phase |-> <<>>,
+         msgs |-> 1620 ] ,
+  bb |-> 4..6,
+  count |->
+      SUBSET SUBSET ( 452 :> 212 @@
+          836 :> 1636 @@
+          1028 :> 260 @@
+          244 :> 196 @@
+          228 :> 244 )   ]
+===
+SUBSET ("ssssssssssssssssssssssss" :> 4..7 @@ [a |-> 1476] :> 4..12 @@ "ssss" :> "" @@ "ssssssssssssssssssssssssss" :> "ssssssssssssss")
+---
+SUBSET ( "ssssssssssssssssssssssss" :> 4..7 @@
+   [a |-> 1476] :> 4..12 @@
+   "ssss" :> "" @@
+   "ssssssssssssssssssssssssss" :> "ssssssssssssss" ) 
