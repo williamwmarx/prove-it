@@ -1292,7 +1292,7 @@ impl<'a> Compiler<'a> {
                 definitions,
                 body,
             } => {
-                let inner = self.bind_let_definitions(*instances, definitions, context)?;
+                let inner = self.bind_let_definitions(*instances, definitions, *body, context)?;
                 self.walk(*body, &inner, options, known, then)
             }
             NodeKind::Unchanged(expression) => {

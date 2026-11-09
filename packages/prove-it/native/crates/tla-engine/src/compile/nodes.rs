@@ -280,7 +280,7 @@ impl Compiler<'_> {
                 definitions,
                 body,
             } => {
-                let inner = self.bind_let_definitions(*instances, definitions, context)?;
+                let inner = self.bind_let_definitions(*instances, definitions, *body, context)?;
                 self.compile(*body, &inner)
             }
             NodeKind::Forall { bounds, body } => {

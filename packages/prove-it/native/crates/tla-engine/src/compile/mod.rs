@@ -1089,7 +1089,14 @@ impl<'a> Compiler<'a> {
                     }
                     Resolution::Builtin(index) => matches!(
                         self.builtin_name(index),
-                        "Print" | "PrintT" | "RandomElement" | "RandomSubset" | "=" | "#" | "~"
+                        "Print"
+                            | "PrintT"
+                            | "RandomElement"
+                            | "RandomSubset"
+                            | "TLCEval"
+                            | "="
+                            | "#"
+                            | "~"
                     ),
                     _ => false,
                 }
@@ -1272,14 +1279,18 @@ impl<'a> Compiler<'a> {
         context: &Context,
     ) -> Compiling<Compiled> {
         let definition = self.definition(node);
-        if !matches!(&definition.form, DefinitionForm::Operator(params) if params.is_empty()) {
-            return unsupported("a function TLC computes at startup");
+        if !matches!(&definition.form, DefinitionForm::Operator(params) if params.is_empty())
+            || self.may_be_lazy(definition.body, &mut HashSet::new())
+        {
+            return unsupported("a value TLC computed at startup with effects");
         }
         if self.expanding.contains(&node) {
             return unsupported("a recursive zero-arity definition");
         }
+        // TLC evaluates it where it starts, which may print and draw, and from then on reading
+        // it prints, draws and reads nothing.
         self.expanding.insert(node);
-        let compiled = self.compile(definition.body, &context.global(context.can_print));
+        let compiled = self.compile(definition.body, &context.global(true));
         self.expanding.remove(&node);
         let compiled = compiled?;
         let once = self.allocate_once();
@@ -1287,11 +1298,75 @@ impl<'a> Compiler<'a> {
         let compiled = Compiled {
             is_costly: false,
             is_constant: true,
+            footprint: Footprint::default(),
             ..compiled.with_eval(eval(move |machine| machine.once(once, &inner)))
         };
         self.startup_definitions
             .insert(node, Some(compiled.clone()));
         Ok(compiled)
+    }
+
+    // Whether TLC may keep the value of an expression lazy, a set it enumerates in its own order
+    // or a function it applies anew each time, rather than normalize it as the engine's value is:
+    // through the branches and bodies that give the value, any set or function it builds lazily.
+    fn may_be_lazy(&self, node: NodeId, seen: &mut HashSet<NodeId>) -> bool {
+        if !seen.insert(node) {
+            return true;
+        }
+        match self.node(node).1 {
+            NodeKind::FunctionConstruction { .. }
+            | NodeKind::Lambda { .. }
+            | NodeKind::FunctionSet { .. }
+            | NodeKind::RecordSet(_) => true,
+            NodeKind::If {
+                consequent,
+                alternative,
+                ..
+            } => self.may_be_lazy(*consequent, seen) || self.may_be_lazy(*alternative, seen),
+            NodeKind::Case { arms, other } => {
+                arms.iter().any(|&(_, arm)| self.may_be_lazy(arm, seen))
+                    || other.is_some_and(|other| self.may_be_lazy(other, seen))
+            }
+            NodeKind::Let { body, .. } => self.may_be_lazy(*body, seen),
+            NodeKind::SetFilter { bound, .. } => self.may_be_lazy(bound.set, seen),
+            NodeKind::SetEnumeration(elements)
+            | NodeKind::Tuple(elements)
+            | NodeKind::Product(elements) => elements
+                .iter()
+                .any(|&element| self.may_be_lazy(element, seen)),
+            NodeKind::Record(fields) => fields
+                .iter()
+                .any(|&(_, field)| self.may_be_lazy(field, seen)),
+            NodeKind::Identifier(name) if !name.is_local => match name.resolution {
+                Resolution::Definition(index) => self.may_be_lazy(
+                    self.definition(self.ir.definitions[index as usize]).body,
+                    seen,
+                ),
+                _ => false,
+            },
+            NodeKind::Apply { name, args } if !name.is_local => match name.resolution {
+                Resolution::Builtin(index) => {
+                    match self.text(self.ir.builtins[index as usize].name) {
+                        "SUBSET" | "Seq" => true,
+                        "UNION" | "\\cup" | "\\cap" | "\\" => {
+                            args.iter().any(|&arg| self.may_be_lazy(arg, seen))
+                        }
+                        "TLCEval" => self.may_be_lazy(args[0], seen),
+                        "Print" | "PrintT" => {
+                            args.last().is_some_and(|&arg| self.may_be_lazy(arg, seen))
+                        }
+                        _ => false,
+                    }
+                }
+                Resolution::Definition(index) => self.may_be_lazy(
+                    self.definition(self.ir.definitions[index as usize]).body,
+                    seen,
+                ),
+                _ => true,
+            },
+            NodeKind::Apply { .. } => true,
+            _ => false,
+        }
     }
 
     fn cache_definition(
@@ -1354,21 +1429,80 @@ impl<'a> Compiler<'a> {
 
     // --- LET ---
 
+    // How many times an expression names a local name, or `None` where it may evaluate a name
+    // more than once each time it is evaluated, under a binder, or where it isn't known.
+    fn count_uses(&self, node: NodeId, name: TextId) -> Option<u32> {
+        match self.node(node).1 {
+            NodeKind::Number(_)
+            | NodeKind::WideNumber(_)
+            | NodeKind::Decimal(_)
+            | NodeKind::String(_) => Some(0),
+            NodeKind::Identifier(identifier) => {
+                Some(u32::from(identifier.is_local && identifier.text == name))
+            }
+            NodeKind::Apply {
+                name: applied,
+                args,
+            } => {
+                let own = u32::from(applied.is_local && applied.text == name);
+                Some(own + self.sum_uses(name, args.iter().copied())?)
+            }
+            NodeKind::And(operands)
+            | NodeKind::Or(operands)
+            | NodeKind::SetEnumeration(operands)
+            | NodeKind::Tuple(operands)
+            | NodeKind::Product(operands) => self.sum_uses(name, operands.iter().copied()),
+            NodeKind::Record(fields) => self.sum_uses(name, fields.iter().map(|&(_, field)| field)),
+            NodeKind::FieldAccess { record, .. } => self.count_uses(*record, name),
+            NodeKind::FunctionApplication { function, args } => {
+                self.sum_uses(name, std::iter::once(*function).chain(args.iter().copied()))
+            }
+            NodeKind::If {
+                condition,
+                consequent,
+                alternative,
+            } => self.sum_uses(name, [*condition, *consequent, *alternative].into_iter()),
+            NodeKind::Case { arms, other } => self.sum_uses(
+                name,
+                arms.iter()
+                    .flat_map(|&(guard, arm)| [guard, arm])
+                    .chain(*other),
+            ),
+            _ => None,
+        }
+    }
+
+    fn sum_uses(&self, name: TextId, nodes: impl IntoIterator<Item = NodeId>) -> Option<u32> {
+        nodes
+            .into_iter()
+            .try_fold(0, |count, node| Some(count + self.count_uses(node, name)?))
+    }
+
     fn bind_let_definitions(
         &mut self,
         instances: u32,
         definitions: &[NodeId],
+        body: NodeId,
         context: &Context,
     ) -> Compiling<Context> {
         if instances > 0 {
             return unsupported("INSTANCE in LET");
         }
         let mut scope = context.scope.clone();
-        for &node in definitions {
+        for (position, &node) in definitions.iter().enumerate() {
             let definition = self.definition(node);
+            // A definition the rest of the LET names once is evaluated once, as TLC evaluates
+            // it, so it may print.
+            let uses = definitions[position + 1..]
+                .iter()
+                .map(|&later| self.definition(later).body)
+                .chain([body])
+                .try_fold(0, |count, root| {
+                    Some(count + self.count_uses(root, definition.name)?)
+                });
             let definition_context = Context {
                 scope: scope.clone(),
-                can_print: false,
+                can_print: context.can_print && uses.is_some_and(|count| count <= 1),
                 ..context.clone()
             };
             match &definition.form {

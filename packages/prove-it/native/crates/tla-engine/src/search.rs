@@ -1513,7 +1513,12 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         && context.possible.is_empty();
     let program = compiler.finish();
     let mut machine = Machine::new(&program, store);
-    match run_startup(&mut machine, &context.startup) {
+    // TLCGet("level") is 0 while TLC starts.
+    let startup = machine.store.int(0).and_then(|zero| {
+        machine.set_slot(LEVEL_SLOT, zero);
+        run_startup(&mut machine, &context.startup)
+    });
+    match startup {
         Err(Bail(reason)) => return SearchOutcome::Declined(reason.into()),
         Ok((startup, assumed, violated)) => {
             let report = |reporter: &mut dyn Reporter, printed: &[Vec<Id>]| {
