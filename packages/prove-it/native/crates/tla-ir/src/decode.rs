@@ -4,9 +4,9 @@ use std::fmt;
 
 use crate::{
     Action, ActionProperty, Atom, AtomKind, Bound, Builtin, ConfigName, Constant, Definition,
-    DefinitionForm, EnabledActions, IR_VERSION, Index, Ir, LiveTerm, MAGIC, Model, Name, Node,
-    NodeId, NodeKind, Nodes, Param, PathStep, Pattern, Printed, Resolution, Scope, ScopeBinding,
-    Selector, Startup, TextId, Update, Value, Values, code, tag,
+    DefinitionForm, EnabledActions, IR_VERSION, Index, Ir, LiveProperty, LiveTerm, MAGIC, Model,
+    Name, Node, NodeId, NodeKind, Nodes, Param, PathStep, Pattern, Printed, Resolution, Scope,
+    ScopeBinding, Selector, Startup, TextId, Update, Value, Values, code, tag,
 };
 
 /// Why a blob isn't an IR this decoder reads: where it stopped, in words, and what it found.
@@ -110,6 +110,46 @@ impl Decoder<'_> {
             }
             None => self.error("the words end early"),
         }
+    }
+
+    fn live_terms(&mut self) -> Decoded<Vec<LiveTerm>> {
+        let words = self.count()?;
+        let end = self.at + words;
+        let mut terms = Vec::new();
+        while self.at < end {
+            let position = |decoder: &mut Self| -> Decoded<Index> {
+                match decoder.next()? {
+                    word if word >= 0 => Ok(word as Index),
+                    word => decoder.error(format!("an atom at {word}")),
+                }
+            };
+            terms.push(match self.next()? {
+                code::LIVE_FALSE => LiveTerm::Boolean(false),
+                code::LIVE_TRUE => LiveTerm::Boolean(true),
+                code::LIVE_STATE => LiveTerm::State(position(self)?),
+                code::LIVE_ENABLED => LiveTerm::Enabled(position(self)?),
+                code::LIVE_ACTION => LiveTerm::Action {
+                    atom: position(self)?,
+                    enabled: if self.words.get(self.at) == Some(&-1) {
+                        self.at += 1;
+                        None
+                    } else {
+                        Some(position(self)?)
+                    },
+                },
+                code::LIVE_NOT => LiveTerm::Not,
+                code::LIVE_ALWAYS => LiveTerm::Always,
+                code::LIVE_EVENTUALLY => LiveTerm::Eventually,
+                code::LIVE_NEXT => LiveTerm::Next,
+                code::LIVE_AND => LiveTerm::And(self.count()? as u32),
+                code::LIVE_OR => LiveTerm::Or(self.count()? as u32),
+                other => return self.error(format!("a liveness term {other}")),
+            });
+        }
+        if self.at != end {
+            return self.error("a liveness formula past its words");
+        }
+        Ok(terms)
     }
 
     fn count(&mut self) -> Decoded<usize> {
@@ -478,20 +518,17 @@ impl Decoder<'_> {
         let init = node(self)?;
         let next = node(self)?;
         let scope = self.optional_below(scope_count, "scope")?;
-        let actions = match self.next()? {
-            -1 => None,
-            count if count >= 0 => Some(
-                (0..count)
-                    .map(|_| {
-                        Ok(Action {
-                            expression: node(self)?,
-                            scope: self.optional_below(scope_count, "scope")?,
-                        })
-                    })
-                    .collect::<Decoded<_>>()?,
-            ),
-            other => return self.error(format!("{other} actions")),
-        };
+        let count = self.count()?;
+        let actions = (0..count)
+            .map(|_| {
+                Ok(Action {
+                    expression: node(self)?,
+                    scope: self.optional_below(scope_count, "scope")?,
+                    label: self.text()?,
+                })
+            })
+            .collect::<Decoded<_>>()?;
+        let is_labelled = self.flag()?;
         let invariants = self.config_names(true)?;
         let count = self.count()?;
         let property_invariants = (0..count)
@@ -579,47 +616,22 @@ impl Decoder<'_> {
                 scope,
             });
         }
-        let words = self.count()?;
-        let end = self.at + words;
-        let mut live_formula = Vec::new();
-        while self.at < end {
-            let position = |decoder: &mut Self| -> Decoded<Index> {
-                match decoder.next()? {
-                    word if word >= 0 => Ok(word as Index),
-                    word => decoder.error(format!("an atom at {word}")),
-                }
-            };
-            live_formula.push(match self.next()? {
-                code::LIVE_FALSE => LiveTerm::Boolean(false),
-                code::LIVE_TRUE => LiveTerm::Boolean(true),
-                code::LIVE_STATE => LiveTerm::State(position(self)?),
-                code::LIVE_ENABLED => LiveTerm::Enabled(position(self)?),
-                code::LIVE_ACTION => LiveTerm::Action {
-                    atom: position(self)?,
-                    enabled: if self.words.get(self.at) == Some(&-1) {
-                        self.at += 1;
-                        None
-                    } else {
-                        Some(position(self)?)
-                    },
-                },
-                code::LIVE_NOT => LiveTerm::Not,
-                code::LIVE_ALWAYS => LiveTerm::Always,
-                code::LIVE_EVENTUALLY => LiveTerm::Eventually,
-                code::LIVE_NEXT => LiveTerm::Next,
-                code::LIVE_AND => LiveTerm::And(self.count()? as u32),
-                code::LIVE_OR => LiveTerm::Or(self.count()? as u32),
-                other => return self.error(format!("a liveness term {other}")),
-            });
-        }
-        if self.at != end {
-            return self.error("a liveness formula past its words");
-        }
+        let live_formula = self.live_terms()?;
+        let count = self.count()?;
+        let live_properties = (0..count)
+            .map(|_| {
+                Ok(LiveProperty {
+                    name: self.text()?,
+                    formula: self.live_terms()?,
+                })
+            })
+            .collect::<Decoded<_>>()?;
         Ok(Model {
             init,
             next,
             scope,
             actions,
+            is_labelled,
             invariants,
             property_invariants,
             constraints,
@@ -634,6 +646,7 @@ impl Decoder<'_> {
             version,
             atoms,
             live_formula,
+            live_properties,
         })
     }
 
@@ -1010,7 +1023,7 @@ impl Model {
     ) -> Decoded<()> {
         visit(&mut self.init)?;
         visit(&mut self.next)?;
-        for action in self.actions.iter_mut().flatten() {
+        for action in &mut self.actions {
             visit(&mut action.expression)?;
         }
         for invariant in &mut self.property_invariants {

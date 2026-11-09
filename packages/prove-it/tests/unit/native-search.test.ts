@@ -468,6 +468,7 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
       ["SPECIFICATION Weak\nPROPERTY Settles", "lasso"],
       ["SPECIFICATION Strong\nPROPERTY Leads", "lasso"],
       ["SPECIFICATION Unfair\nPROPERTY Returns", "lasso"],
+      ["SPECIFICATION Weak\nPROPERTY Returns\nPROPERTY Settles\nPROPERTY Leads", "lasso"],
     ] as const) {
       const lines = await compareWithInterpreter(body, config);
       expect(lines).toContain(`[engine] native: liveness: ${verdict}`);
@@ -706,6 +707,34 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     const assigned = body.map((line) => line.replace("Next == ", "Next == x' = (x + 1) % 3 /\\ "));
     expect(await compareWithInterpreter(assigned, "INIT Init\nNEXT Next")).toContainEqual(
       expect.stringMatching(stopped("unsupported: Print")),
+    );
+  });
+
+  it("binds a tuple pattern in an action's \\E as TLC does", async () => {
+    // TLC's ContextEnumerator varies the first bound fastest, a tuple bound as a name bound.
+    const body = [
+      "EXTENDS Naturals, TLC",
+      "VARIABLES x, y",
+      "Init == x = 0 /\\ y = 0",
+      "Next == \\/ \\E <<i, j>> \\in {<<1, 2>>, <<3, 4>>} : x' = i /\\ y' = j",
+      "        \\/ \\E <<i, j>> \\in {<<1, 2>>, <<3, 4>>}, k \\in {10, 20}, <<n, m>> \\in {<<5, 6>>} :",
+      "             x' = i + k + m /\\ y' = j + n",
+      "        \\/ \\E p \\in Permutations({1, 2, 3}) : x' = p[1] * 10 + p[2] /\\ y' = p[3]",
+      "        \\/ x' \\in {p[7] : p \\in Permutations({7, 8})} /\\ y' \\in Permutations({9})",
+    ];
+    for (const isWarningEnabled of [false, true]) {
+      expect(
+        await compareWithInterpreter(body, "INIT Init\nNEXT Next", {}, isWarningEnabled),
+      ).toContainEqual(expect.stringMatching(COMPLETE));
+    }
+    // A tuple of another length fails in TLC, which the interpreter then reports.
+    const mismatched = [
+      "VARIABLE x",
+      "Init == x = 0",
+      "Next == \\E <<i, j>> \\in {<<1>>} : x' = i",
+    ];
+    expect(await compareWithInterpreter(mismatched, "INIT Init\nNEXT Next")).toContainEqual(
+      expect.stringMatching(stopped("a tuple pattern that doesn't match")),
     );
   });
 

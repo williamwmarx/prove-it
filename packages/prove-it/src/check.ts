@@ -1,5 +1,6 @@
 import type { Expression } from "./ast";
 import { type ModelConfig, parseConfig } from "./config";
+import { hasEffect } from "./dependencies";
 import { getMemoStatistics } from "./engine/compile";
 import { toEngineProperties } from "./engine/context";
 import { toValue as toEngineValue } from "./engine/convert";
@@ -29,6 +30,7 @@ import {
   isStackOverflow,
   MissingBuildFileError,
   TlaConfigError,
+  TlaError,
   TlaEvaluationError,
   TlaIllegalStateError,
   TlaIncompleteSuccessorError,
@@ -1695,6 +1697,26 @@ const searchStates = (
     const symmetry = search.symmetryGroup?.map((images) =>
       [...images].map(([name, image]): [string, string] => [name, image.name]),
     );
+    // TLC's actions for the IR, when the search doesn't take its steps through them already.
+    // Finding them describes the spec, which evaluates parts of what the configuration names (an
+    // action's arguments, a constant conjunct of the specification or invariant), so it happens
+    // only where none of those has an effect (a random choice, a TLC register, printing), which
+    // would change what the run does. It can also fail where the search doesn't, such as on an
+    // invariant that recurses forever. Either way the IR then has none, and no trace is labelled
+    // natively.
+    const getTraceActions = () => {
+      const names = [config.specification, config.init, config.next];
+      const described = [...names, ...config.invariants, ...config.properties].flatMap((name) =>
+        name === undefined ? [] : (getDefinition(name, environment)?.body ?? []),
+      );
+      if (hasEffect([next, ...described], environment)) return [];
+      try {
+        return getNextActions(config, environment, specification.instanceActions);
+      } catch (error) {
+        if (isStackOverflow(error) || error instanceof TlaError) return [];
+        throw error;
+      }
+    };
     // The engine IR, lowered once if the native engine or PROVE_IT_IR_DUMP asks for it, and written
     // to the file PROVE_IT_IR_DUMP names before the line that reports it.
     const lowered: { outcome?: IrOutcome } = {};
@@ -1705,6 +1727,11 @@ const searchStates = (
         config,
         environment,
         spec: engineSpec,
+        traceActions: (isLabelled ? getSpecNextActions() : getTraceActions()).map((action) => ({
+          expression: action.expression,
+          scope: action.scope,
+          label: getActionLabel(action, options.version),
+        })),
         isWarningEnabled: runtime.isWarningEnabled,
         tlcOrder,
         properties: engineProperties,
@@ -1716,6 +1743,7 @@ const searchStates = (
           actions: atom.kind === "Enabled" ? enabledActions.get(atom) : undefined,
         })),
         liveFormula: liveness?.formula,
+        liveProperties: liveness?.properties ?? [],
       });
       const milliseconds = performance.now() - loweredAt;
       if ("ir" in outcome) writeDebugBytes("PROVE_IT_IR_DUMP", outcome.ir);
@@ -1757,6 +1785,13 @@ const searchStates = (
     const native = isNative ? checkNatively(lowerModel, callbacks) : undefined;
     const verdict = native?.status === "complete" ? native.liveness : undefined;
     engineReport.liveness = verdict;
+    if (isLiveChecked && liveness && verdict && verdict.branches !== -1) {
+      if (verdict.branches !== liveness.branches) {
+        throw new EngineInvariantError(
+          `the native liveness checker has ${verdict.branches} branches, the interpreter ${liveness.branches}`,
+        );
+      }
+    }
     if (native) {
       reportEngine(
         `native: ${native.status}: ${native.reason} (${(performance.now() - startedAt).toFixed(2)} ms)`,
@@ -2242,6 +2277,17 @@ const searchStates = (
       steps.map((step) => step.state),
       loopStart,
     );
+    const verdict = engineReport.liveness;
+    if (isLiveChecked && verdict?.status === "lasso") {
+      const named = [
+        ...new Set(Array.from(verdict.violated, (position) => checker.properties[position].name)),
+      ];
+      if (named.join("\n") !== properties.join("\n")) {
+        throw new EngineInvariantError(
+          `the native liveness checker names ${named.join(", ")}, the interpreter ${properties.join(", ")}`,
+        );
+      }
+    }
     const cycleStart = path[loopStart];
     const cycleEnd = path[path.length - 1];
     const lastState = steps[steps.length - 1].state;

@@ -182,6 +182,9 @@ impl Compiler<'_> {
                     is_enumerated: consequent.is_enumerated && alternative.is_enumerated,
                     are_elements_enumerated: consequent.are_elements_enumerated
                         && alternative.are_elements_enumerated,
+                    is_in_order: consequent.is_in_order && alternative.is_in_order,
+                    are_elements_in_order: consequent.are_elements_in_order
+                        && alternative.are_elements_in_order,
                     is_boolean: consequent.is_boolean && alternative.is_boolean,
                     // The reference evaluates the condition again, which mustn't print twice.
                     reference: if [&condition, &consequent, &alternative]
@@ -668,6 +671,8 @@ impl Compiler<'_> {
             reference,
             is_enumerated: set.is_enumerated,
             are_elements_enumerated: set.are_elements_enumerated,
+            is_in_order: set.is_in_order,
+            are_elements_in_order: set.are_elements_in_order,
             filter: Some(filter),
             ..leaf(
                 eval(move |machine| {
@@ -710,6 +715,7 @@ impl Compiler<'_> {
         let footprint = Footprint::merge_all(levels.iter().map(|level| &level.set.footprint))
             .merge(&body.footprint.without_slots(&bound));
         let are_elements_enumerated = body.is_enumerated;
+        let are_elements_in_order = body.is_in_order;
         let levels: Arc<Vec<(Eval, Vec<u32>, bool)>> = Arc::new(
             levels
                 .into_iter()
@@ -721,6 +727,8 @@ impl Compiler<'_> {
             is_costly: true,
             is_enumerated: true,
             are_elements_enumerated,
+            is_in_order: true,
+            are_elements_in_order,
             ..leaf(
                 eval(move |machine| {
                     let at = machine.stack.len();
@@ -971,6 +979,8 @@ impl Compiler<'_> {
             is_costly: true,
             is_enumerated: true,
             are_elements_enumerated: elements.iter().all(|element| element.is_enumerated),
+            is_in_order: true,
+            are_elements_in_order: elements.iter().all(|element| element.is_in_order),
             ..leaf(
                 eval(move |machine| {
                     let at = push_all(machine, &evaluators)?;
@@ -989,9 +999,14 @@ pub(crate) fn field_of(
     key: Id,
     hint: &AtomicU32,
 ) -> Outcome<Id> {
-    let mut position = hint.load(Ordering::Relaxed);
+    let hinted = hint.load(Ordering::Relaxed);
+    let mut position = hinted;
     let value = machine.store.apply_field(record, key, &mut position);
-    hint.store(position, Ordering::Relaxed);
+    // Threads share the hint, so it is written only when it changes: a write on every read would
+    // move its cache line between them.
+    if position != hinted {
+        hint.store(position, Ordering::Relaxed);
+    }
     value
 }
 

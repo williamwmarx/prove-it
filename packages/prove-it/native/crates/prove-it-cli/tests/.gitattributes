@@ -1,0 +1,2 @@
+# The printer test compares against these bytes, so Windows checkouts keep their LF line ends.
+pretty-print.txt text eol=lf

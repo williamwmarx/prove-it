@@ -17,7 +17,8 @@
 //   symmetry group, the settings, the liveness checker's atoms, each action atom with the
 //   position of the ENABLED atom of its fairness, or -1, and the formula the checker solves, as
 //   its number of words and its terms in prefix order, each atom by its position among the atoms,
-//   or past them for one the checker asks nothing of;
+//   or past them for one the checker asks nothing of, then the properties, each its name and its
+//   formula the same way;
 // - the definitions the model reaches, as the offsets of their records among the nodes;
 // - the nodes: expressions and definitions in prefix order, each its tag, its line and column, then
 //   its fields and children. A node met again is a reference to its first offset.
@@ -39,7 +40,7 @@ import type { EngineProperties, EngineSpec } from "./context";
 import type { NamedPermutation } from "./symmetry";
 
 // The version of the layout below, which the decoder checks. Any change to it changes this.
-export const IR_VERSION = 3;
+export const IR_VERSION = 5;
 
 // "PIIR" read as a little-endian word.
 const MAGIC = 0x52494950;
@@ -150,10 +151,19 @@ export interface IrAtom {
   actions: readonly number[] | "all" | undefined;
 }
 
+export interface TraceAction {
+  expression: Expression;
+  scope: EvaluationScope | undefined;
+  label: string;
+}
+
 export interface IrInput {
   config: ModelConfig;
   environment: Environment;
   spec: EngineSpec;
+  // TLC's actions, with the label a trace gives each step one takes. The search takes its steps
+  // through them only when spec.actions is given.
+  traceActions: TraceAction[];
   isWarningEnabled: boolean;
   tlcOrder: number[];
   properties: EngineProperties;
@@ -161,8 +171,9 @@ export interface IrInput {
   isRecordingGraph: boolean;
   version: TlcVersion | undefined;
   atoms: IrAtom[];
-  // The fairness and the negated properties as the liveness checker joins them.
+  // The fairness and the negated properties as the liveness checker joins them, and each property.
   liveFormula: LiveExpression | undefined;
+  liveProperties: { name: string; formula: LiveExpression }[];
 }
 
 export type IrOutcome = { ir: Uint8Array } | { reason: string };
@@ -677,12 +688,13 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
   push(model, writeRoot(spec.init));
   push(model, writeRoot(spec.next));
   push(model, getScopeIndex(spec.scope));
-  const actions = spec.actions;
-  push(model, actions ? actions.length : -1);
-  for (const action of actions ?? []) {
+  push(model, input.traceActions.length);
+  for (const action of input.traceActions) {
     push(model, writeRoot(action.expression));
     push(model, getScopeIndex(action.scope));
+    push(model, getText(action.label));
   }
+  push(model, spec.actions ? 1 : 0);
   writeConfigNames(config.invariants, true);
   writeRoots(input.properties.invariants, true);
   writeConfigNames(config.constraints);
@@ -774,9 +786,18 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
         writeLive(term.body);
     }
   };
-  if (input.liveFormula) writeLive(input.liveFormula);
-  push(model, live.length);
-  for (const word of live) push(model, word);
+  const pushLive = (formula: LiveExpression | undefined) => {
+    live.length = 0;
+    if (formula) writeLive(formula);
+    push(model, live.length);
+    for (const word of live) push(model, word);
+  };
+  pushLive(input.liveFormula);
+  push(model, input.liveProperties.length);
+  for (const property of input.liveProperties) {
+    push(model, getText(property.name));
+    pushLive(property.formula);
+  }
 
   // Definitions and scopes reach more of each, in the order they are first met.
   for (let definition = 0, scope = 0; ;) {

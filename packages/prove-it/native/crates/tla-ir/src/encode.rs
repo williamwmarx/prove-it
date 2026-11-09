@@ -88,15 +88,15 @@ fn encode_here(ir: &Ir) -> Vec<u8> {
         offset(model.next),
         optional(model.scope),
     ]);
-    match &model.actions {
-        None => words.push(-1),
-        Some(actions) => {
-            words.push(actions.len() as i32);
-            for action in actions {
-                words.extend([offset(action.expression), optional(action.scope)]);
-            }
-        }
+    words.push(model.actions.len() as i32);
+    for action in &model.actions {
+        words.extend([
+            offset(action.expression),
+            optional(action.scope),
+            action.label as i32,
+        ]);
     }
+    words.push(model.is_labelled as i32);
     let config_name = |name: &ConfigName| [name.name as i32, optional(name.definition)].into_iter();
     words.push(model.invariants.len() as i32);
     for invariant in &model.invariants {
@@ -164,26 +164,12 @@ fn encode_here(ir: &Ir) -> Vec<u8> {
             words.push(optional(*enabled));
         }
     }
-    let mut live = Vec::new();
-    for term in &model.live_formula {
-        match *term {
-            LiveTerm::Boolean(false) => live.push(code::LIVE_FALSE),
-            LiveTerm::Boolean(true) => live.push(code::LIVE_TRUE),
-            LiveTerm::State(atom) => live.extend([code::LIVE_STATE, atom as i32]),
-            LiveTerm::Enabled(atom) => live.extend([code::LIVE_ENABLED, atom as i32]),
-            LiveTerm::Action { atom, enabled } => {
-                live.extend([code::LIVE_ACTION, atom as i32, optional(enabled)]);
-            }
-            LiveTerm::Not => live.push(code::LIVE_NOT),
-            LiveTerm::Always => live.push(code::LIVE_ALWAYS),
-            LiveTerm::Eventually => live.push(code::LIVE_EVENTUALLY),
-            LiveTerm::Next => live.push(code::LIVE_NEXT),
-            LiveTerm::And(count) => live.extend([code::LIVE_AND, count as i32]),
-            LiveTerm::Or(count) => live.extend([code::LIVE_OR, count as i32]),
-        }
+    push_live(&mut words, &model.live_formula);
+    words.push(model.live_properties.len() as i32);
+    for property in &model.live_properties {
+        words.push(property.name as i32);
+        push_live(&mut words, &property.formula);
     }
-    words.push(live.len() as i32);
-    words.extend(live);
     words.push(ir.definitions.len() as i32);
     words.extend(ir.definitions.iter().map(|&id| offset(id)));
     words.push(nodes.words.len() as i32);
@@ -534,4 +520,31 @@ impl NodeWriter<'_> {
             self.node(bound.set);
         }
     }
+}
+
+fn push_live(words: &mut Vec<i32>, terms: &[LiveTerm]) {
+    let mut live = Vec::new();
+    for term in terms {
+        match *term {
+            LiveTerm::Boolean(false) => live.push(code::LIVE_FALSE),
+            LiveTerm::Boolean(true) => live.push(code::LIVE_TRUE),
+            LiveTerm::State(atom) => live.extend([code::LIVE_STATE, atom as i32]),
+            LiveTerm::Enabled(atom) => live.extend([code::LIVE_ENABLED, atom as i32]),
+            LiveTerm::Action { atom, enabled } => {
+                live.extend([
+                    code::LIVE_ACTION,
+                    atom as i32,
+                    enabled.map_or(-1, |index| index as i32),
+                ]);
+            }
+            LiveTerm::Not => live.push(code::LIVE_NOT),
+            LiveTerm::Always => live.push(code::LIVE_ALWAYS),
+            LiveTerm::Eventually => live.push(code::LIVE_EVENTUALLY),
+            LiveTerm::Next => live.push(code::LIVE_NEXT),
+            LiveTerm::And(count) => live.extend([code::LIVE_AND, count as i32]),
+            LiveTerm::Or(count) => live.extend([code::LIVE_OR, count as i32]),
+        }
+    }
+    words.push(live.len() as i32);
+    words.extend(live);
 }

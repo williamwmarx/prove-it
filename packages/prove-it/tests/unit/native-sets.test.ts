@@ -52,6 +52,20 @@ const LAZY_SETS = [
   "SUBSET {} ",
 ];
 
+// UNIONs TLC keeps lazy: of sets it keeps lazy, of intervals, of a set map, and over a lazy set.
+const UNION_SETS = [
+  "UNION {SUBSET {1, 2}, {{7}}, SUBSET {3}}",
+  "UNION {[{1} -> {3, 4}], [{2} -> {5}]}",
+  "UNION {1..2, {5}, 2..3}",
+  "UNION {[1..n -> 1..n] : n \\in 0..2}",
+  "UNION SUBSET {1, 2}",
+  "UNION {s \\in SUBSET {1, 2, 3} : 2 \\in s}",
+  "UNION ((SUBSET {1}) \\cup {{4}, {1}})",
+  "UNION {SUBSET {1}}",
+  "{{1}, {3}} \\cap UNION {SUBSET {1}, SUBSET {2}}",
+  "IF y = 0 THEN UNION {1..2, {7}} ELSE {}",
+];
+
 describe.if(ADDON !== undefined)("the native engine's lazy sets", () => {
   for (const [index, set] of LAZY_SETS.entries()) {
     it(`enumerates ${set} in TLC's order`, async () => {
@@ -77,6 +91,42 @@ describe.if(ADDON !== undefined)("the native engine's lazy sets", () => {
       );
     });
   }
+
+  // TLC streams the sets of a UNION it keeps lazy in turn (UnionValue.Enumerator), which the
+  // TypeScript engine refuses: each must give the interpreter's result.
+  for (const [index, set] of UNION_SETS.entries()) {
+    it(`enumerates ${set} in TLC's order`, async () => {
+      const body = [
+        "EXTENDS Naturals",
+        "VARIABLES x, y",
+        `S == ${set}`,
+        "Init == x = 0 /\\ y = 0",
+        "Next == \\/ x' \\in S /\\ y' = 1",
+        "        \\/ \\E e \\in S : x' = e /\\ y' = 2",
+        `        \\/ (${set}) # {} /\\ \\A e \\in S : x' = <<${index}>> /\\ y' = 3`,
+        "        \\/ UNCHANGED <<x, y>>",
+      ];
+      expect(await compareWithInterpreter(body, CONFIG)).toContainEqual(
+        expect.stringMatching(COMPLETE),
+      );
+    });
+  }
+
+  it("streams each set of a UNION in turn, as TLC counts it", async () => {
+    const body = [
+      "VARIABLE x",
+      "Init == x \\in UNION {SUBSET {1, 2}, SUBSET {2, 3}}",
+      "Next == UNCHANGED x",
+    ];
+    const native = await run(
+      { source: toModule(body), config: CONFIG },
+      { PROVE_IT_ENGINE: "debug", PROVE_IT_ENGINE_BACKEND: "rust" },
+    );
+    expect(native.lines).toContainEqual(expect.stringMatching(COMPLETE));
+    // {} and {2} come up from both sets: 8 initial states and 6 steps.
+    expect([native.result.generatedStates, native.result.distinctStates]).toEqual([14, 6]);
+    await compareWithInterpreter(body, CONFIG);
+  });
 
   it("streams an element of both sets of a union twice, as TLC counts it", async () => {
     const body = [
@@ -109,17 +159,55 @@ describe.if(ADDON !== undefined)("the native engine's lazy sets", () => {
   });
 
   it("leaves a set it has no order for, as the TypeScript engine does", async () => {
-    // TLC streams a UNION it hasn't enumerated, which neither engine enumerates.
+    // TLC streams the union in the UNION, duplicates and all, which neither engine follows once it
+    // holds the union as an id, nor where a bound name may hold it.
+    for (const set of [
+      "UNION {(SUBSET {1}) \\cup SUBSET {2}}",
+      "UNION {s : s \\in {(SUBSET {1}) \\cup SUBSET {2}}}",
+      "UNION {[{1} -> s] : s \\in {(SUBSET {1}) \\cup SUBSET {2}}}",
+      "UNION {IF s = {} THEN {} ELSE s : s \\in {(SUBSET {1}) \\cup SUBSET {2}}}",
+    ]) {
+      const body = ["VARIABLE x", `Init == x \\in ${set}`, "Next == UNCHANGED x"];
+      const lines = await compareWithInterpreter(body, CONFIG);
+      expect(lines).toEqual([
+        expect.stringMatching(/^\[engine\] native: ir: /),
+        expect.stringMatching(/^\[engine\] native: declined: unsupported: enumerating a set TLC /),
+        expect.stringMatching(/^\[engine\] handed over after \d+ ms: unsupported: enumerating /),
+      ]);
+    }
+  });
+
+  it("leaves a UNION of a variable the initial predicate assigned", async () => {
+    // TLC fingerprints a state only once the initial predicate has assigned it.
     const body = [
-      "VARIABLE x",
-      "Init == x \\in UNION {SUBSET {1}, SUBSET {2}}",
-      "Next == UNCHANGED x",
+      "VARIABLES s, x",
+      "Init == s = (SUBSET {1}) \\cup SUBSET {2} /\\ x \\in UNION {s}",
+      "Next == UNCHANGED <<s, x>>",
     ];
-    const lines = await compareWithInterpreter(body, CONFIG);
-    expect(lines).toEqual([
-      expect.stringMatching(/^\[engine\] native: ir: /),
+    expect(await compareWithInterpreter(body, CONFIG)).toContainEqual(
       expect.stringMatching(/^\[engine\] native: declined: unsupported: enumerating a set TLC /),
-      expect.stringMatching(/^\[engine\] handed over after \d+ ms: unsupported: enumerating /),
-    ]);
+    );
+    // An alias an invariant compiled first, outside the initial predicate, as well.
+    const aliased = [
+      "VARIABLES s, x",
+      "Alias == s",
+      "Same == Alias = Alias",
+      "Init == s = (SUBSET {1}) \\cup SUBSET {2} /\\ x \\in UNION {Alias}",
+      "Next == UNCHANGED <<s, x>>",
+    ];
+    expect(await compareWithInterpreter(aliased, `${CONFIG}\nINVARIANT Same`)).toContainEqual(
+      expect.stringMatching(/^\[engine\] native: declined: unsupported: enumerating a set TLC /),
+    );
+    // And a UNION an invariant compiled first.
+    const united = [
+      "VARIABLES s, x",
+      "Alias == UNION {s}",
+      "Same == Alias = Alias",
+      "Init == s = (SUBSET {1}) \\cup SUBSET {2} /\\ x \\in Alias",
+      "Next == UNCHANGED <<s, x>>",
+    ];
+    expect(await compareWithInterpreter(united, `${CONFIG}\nINVARIANT Same`)).toContainEqual(
+      expect.stringMatching(/^\[engine\] native: declined: unsupported: enumerating a set TLC /),
+    );
   });
 });

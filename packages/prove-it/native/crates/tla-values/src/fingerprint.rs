@@ -150,6 +150,11 @@ impl Fingerprints {
         self.values.clear();
     }
 
+    /// Forgets the fingerprints of the values from this id on, which an overlay has let go of.
+    pub fn forget_from(&mut self, id: Id) {
+        self.values.truncate(id as usize);
+    }
+
     fn get_power(&mut self, exponent: usize) -> &ShiftTable {
         while self.powers.len() <= exponent {
             let table = match self.powers.last() {

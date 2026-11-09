@@ -5,6 +5,7 @@ mod args;
 mod check;
 mod front;
 mod messages;
+mod pretty;
 mod summary;
 mod time;
 mod zone;

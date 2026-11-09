@@ -521,3 +521,100 @@ fn bails_on_ordering_a_string_ranked_after_the_order_is_frozen() {
     let (a, twelve) = (str(&mut store, "a"), str(&mut store, "12"));
     assert!(store.compare(a, twelve).is_ok());
 }
+
+// Values built from a store's: some it holds, and some it doesn't, made every way the store makes
+// a block, from blocks of the store and from blocks of their own.
+fn build_on(store: &mut Store) -> Vec<Id> {
+    let keys = [str(store, "a"), str(store, "b")];
+    let shape = store.create_record_shape(&keys);
+    let small = ints(store, &[1, 2, 3]);
+    let held = store.record_of(&shape, &small[..2]);
+    let large = ints(store, &[1_000_000, -5_000, 3]);
+    let fresh = store.record_of(&shape, &large[..2]);
+    let text = str(store, "zz");
+    let from_held = store.except(held, keys[0], text).unwrap();
+    let from_fresh = store.except(fresh, keys[1], text).unwrap();
+    let tuple = store.tuple_of(&large);
+    let tail = store.slice_tuple(tuple, 1, 3);
+    let joined = store.concat_tuples(tuple, tail);
+    let set = store.set_of(&[joined, tuple, tail]).unwrap();
+    let nested = store.set_of(&[set, EMPTY_SET]).unwrap();
+    let domain = store.set_of(&large).unwrap();
+    let function = store.function_over_set(domain, &[text, text, keys[0]]);
+    let others = store.set_of(&[small[2], large[0]]).unwrap();
+    let union = store.union(domain, others).unwrap();
+    vec![
+        held, fresh, from_held, from_fresh, joined, nested, function, union, text,
+    ]
+}
+
+fn base_store() -> Store {
+    let mut store = Store::new();
+    store.reset([utf16("b"), utf16("a")].iter().map(Vec::as_slice));
+    let keys = [str(&mut store, "a"), str(&mut store, "b")];
+    let shape = store.create_record_shape(&keys);
+    let small = ints(&mut store, &[1, 2]);
+    store.record_of(&shape, &small);
+    store
+}
+
+#[test]
+fn an_overlay_names_its_bases_values_by_their_ids_and_its_own_after_them() {
+    let base = std::sync::Arc::new(base_store());
+    let count = base.value_count() as Id;
+    let mut overlay = Store::overlay(base.clone());
+    let built = build_on(&mut overlay);
+    let held = {
+        let mut store = base_store();
+        build_on(&mut store)[0]
+    };
+    assert_eq!(built[0], held);
+    assert!(built[1..].iter().all(|&id| id >= count));
+    assert_eq!(base.value_count() as Id, count);
+    // TLC's order and equality read values of both.
+    assert_eq!(overlay.compare(built[0], built[1]).unwrap(), -1);
+    assert!(!overlay.equals(built[0], built[1]).unwrap());
+    let (zz, b) = (str(&mut overlay, "zz"), str(&mut overlay, "b"));
+    assert_eq!(overlay.compare(zz, b).unwrap(), 1);
+    assert_eq!(overlay.text_rank_of(zz), -1);
+}
+
+#[test]
+fn imports_an_overlays_values_with_the_ids_the_store_then_gives_them() {
+    let base = std::sync::Arc::new(base_store());
+    let mut overlay = Store::overlay(base.clone());
+    let built = build_on(&mut overlay);
+    overlay.detach();
+    drop(base);
+    let mut store = base_store();
+    let mut imported = Vec::new();
+    let ids: Vec<Id> = built
+        .iter()
+        .map(|&id| store.import(&overlay, id, &mut imported))
+        .collect();
+    assert_eq!(build_on(&mut store), ids);
+    // An overlay laid on the store again finds them there.
+    let base = std::sync::Arc::new(store);
+    overlay.attach(base.clone());
+    assert_eq!(build_on(&mut overlay), ids);
+    assert_eq!(overlay.value_count(), base.value_count());
+}
+
+// An overlay laid on another store copies that store's values whole, though both stores are of
+// one generation, and a store that was an overlay is reset to one of its own.
+#[test]
+fn an_overlay_laid_on_another_store_copies_it_whole() {
+    let mut first = Store::new();
+    let held = first.int(10_000).unwrap();
+    let mut second = Store::new();
+    assert_eq!(second.int(20_000).unwrap(), held);
+    assert_eq!(first.generation(), second.generation());
+    let mut overlay = Store::overlay(std::sync::Arc::new(first));
+    overlay.detach();
+    overlay.attach(std::sync::Arc::new(second));
+    assert_eq!(overlay.int_of(held), 20_000);
+    overlay.detach();
+    overlay.reset(std::iter::empty::<&[u16]>());
+    assert_eq!(overlay.value_count(), Store::new().value_count());
+    assert_eq!(overlay.int(20_000).unwrap(), held);
+}
