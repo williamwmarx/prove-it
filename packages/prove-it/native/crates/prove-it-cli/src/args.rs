@@ -8,6 +8,9 @@ pub const USAGE: &str = "Usage: tla-ts <Spec.tla|Spec.cfg|glob>... [-config <Spe
        (-cp tla2tools.jar or -Dtla-ts.tlc=1.7.4 picks the TLC to reproduce)
        tla-ts [<JVM option>]... tla2sany.xml.XMLExporter [-I <directory>]... [-o] [-t] [-r] [-u] <Module.tla>";
 
+/// What separates the directories of a path list, as Node's `path.delimiter`.
+const PATH_DELIMITER: char = if cfg!(windows) { ';' } else { ':' };
+
 const JAVA_MAIN_CLASSES: [&str; 2] = ["tlc2.TLC", "tla2sany.xml.XMLExporter"];
 
 /// What the JVM options in front of TLC's set.
@@ -44,7 +47,7 @@ pub fn get_java_launch(args: &[String]) -> Option<Launch> {
             });
         } else if let Some(libraries) = arg.strip_prefix("-DTLA-Library=") {
             java.libraries
-                .extend(libraries.split(':').map(String::from));
+                .extend(libraries.split(PATH_DELIMITER).map(String::from));
         } else if let Some(version) = arg.strip_prefix("-Dtla-ts.tlc=") {
             java.is_174 = version == "1.7.4";
         } else if !arg.starts_with("-D") && !arg.starts_with("-X") {
