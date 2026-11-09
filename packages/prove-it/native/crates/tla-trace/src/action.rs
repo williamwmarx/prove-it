@@ -473,7 +473,18 @@ impl<'ir> Evaluator<'ir> {
                 // then the argument once, and the body walked at it.
                 let frame = StackFrame::Node(self.resolved(*function));
                 let set =
-                    self.in_frame(frame, &mut |evaluator| evaluator.evaluate(bound.set, &base))?;
+                    self.in_frame(frame, &mut |evaluator| evaluator.evaluate(bound.set, &base));
+                // A LET's function is built in the frame of its definition too, which the replay
+                // doesn't record.
+                if set.is_err()
+                    && matches!(self.kind(*function), NodeKind::Identifier(_))
+                    && let Some(stack) = &mut self.call_stack
+                {
+                    stack
+                        .unfollowed
+                        .get_or_insert("the domain of a function a LET defines");
+                }
+                let set = set?;
                 let argument = self.evaluate(args[0], context)?;
                 if !is_member(&argument, &set)? {
                     return fail("applied a function outside its domain");
