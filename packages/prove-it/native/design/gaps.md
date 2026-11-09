@@ -377,3 +377,13 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   the string without its first unit, failing on the empty string as on the empty sequence. The
   engine expected a sequence and stopped with "expected a sequence", which suite/test60's
   assumptions reported as failing where they hold in TLC. Both now take a string.
+
+## A recursive operator TLC walks
+
+- TLC walks a RECURSIVE operator's body where the initial predicate or an action applies it, as
+  any operator's: coverage/Github649's `Init == Flip(clock, FALSE, 1)` assigns clock two calls
+  down. The engine doesn't unroll a recursive operator as it compiles the walk, and evaluated the
+  call as a guard, so it stopped on "variable not assigned", a failure TLC doesn't report. Where
+  the operator's body is one the walk would go into, it now declines ("walking a recursive
+  operator"). Walking it needs the run-time recursion a recursive function's walk has, with the
+  arguments that name a variable kept as they are.
