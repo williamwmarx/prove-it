@@ -168,6 +168,10 @@ fn lower_definitions(environment: &Environment) -> Result<Vec<u8>, FrontError> {
         is_warning_enabled: true,
         is_recording_graph: false,
         version: None,
+        // TLC's default seed, 0, and java.util.Random seeded with it, which no assumption has drawn
+        // from: the model `ir.ts` writes for an environment that evaluated nothing at startup.
+        random_seed: 0,
+        startup_random: 0x5_DEEC_E66D,
         atoms: Vec::new(),
         live_formula: Vec::new(),
         live_properties: Vec::new(),
