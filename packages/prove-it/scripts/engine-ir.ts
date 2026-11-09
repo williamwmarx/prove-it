@@ -29,7 +29,8 @@ import {
 // reach what the suite doesn't: a specification in an instance's scope, TLC's actions for
 // ENABLED, a VIEW, action constraints, properties checked as invariants, action properties and
 // initial predicates, invariants that print, recursion, LAMBDA, function definitions, values
-// TLC computes at startup, and invariants an initial state violates.
+// TLC computes at startup, invariants an initial state violates, and the run-time errors whose
+// messages and call stacks tla-trace's evaluate_failure gives.
 const GOLDEN_MODELS = [
   "examples/specifications/btree/MCbtree.cfg",
   "examples/specifications/TeachingConcurrency/SimpleRegular.cfg",
@@ -64,6 +65,13 @@ const GOLDEN_MODELS = [
   "tlc/tlatools/org.lamport.tlatools/test-model/Github746.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/suite/test57.cfg",
   "examples/specifications/acp/ACP_NB_WRONG_TLC.cfg",
+  "tlc/tlatools/org.lamport.tlatools/test-model/suite/etest9.cfg",
+  "tlc/tlatools/org.lamport.tlatools/test-model/suite/etest10.cfg",
+  "tlc/tlatools/org.lamport.tlatools/test-model/suite/etest11.cfg",
+  "tlc/tlatools/org.lamport.tlatools/test-model/AssertExpressionStack.cfg",
+  "tlc/tlatools/org.lamport.tlatools/test-model/Github461.cfg",
+  "tlc/tlatools/org.lamport.tlatools/test-model/TESpecTest/TESpecRuntimeErrorTest.cfg",
+  "tlc/tlatools/org.lamport.tlatools/test-model/EvaluatingValueTest.cfg",
 ];
 
 const GOLDEN_DIRECTORY = join(CONFORMANCE_DIRECTORY, "ir");

@@ -286,7 +286,7 @@ fn compose(
 }
 
 fn run<T>(evaluated: Evaluated<T>) -> Result<T, Unsupported> {
-    evaluated.map_err(|error| Unsupported(format!("rebuilding a trace: {}", error.0)))
+    evaluated.map_err(|error| Unsupported(format!("rebuilding a trace: {}", error.reason)))
 }
 
 // The first state the walk of an action completes that TLC takes for the search's state.
