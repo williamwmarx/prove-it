@@ -789,6 +789,37 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     ]);
   });
 
+  it("counts the _POSSIBLE predicates as TLC does, and hands the counts over", async () => {
+    // TLC counts the states in the model and the steps each predicate holds of, duplicates and
+    // all, and reports one that never held with the counts.
+    const body = [
+      "EXTENDS Naturals",
+      "VARIABLE x",
+      "Init == x \\in 0..1",
+      "Next == x' = (x + 1) % 5 \\/ x' = (x + 2) % 5",
+      "Spec == Init /\\ [][Next]_x /\\ WF_x(Next)",
+      "Even == x % 2 = 0",
+      "Wrap == x' < x",
+      "Never == x = 7",
+      "Reach == <>(x = 4)",
+    ];
+    for (const possible of ["Even Wrap", "Even Wrap Never"]) {
+      const config = `INIT Init\nNEXT Next\n_POSSIBLE ${possible}`;
+      expect(await compareWithInterpreter(body, config)).toContainEqual(
+        expect.stringMatching(COMPLETE),
+      );
+      expect(await compareWithInterpreter(body, config, { PROVE_IT_STOP_AT: "3" })).toContainEqual(
+        expect.stringMatching(stopped("stopped where PROVE_IT_STOP_AT asked")),
+      );
+      expect(
+        await compareWithInterpreter(
+          body,
+          `SPECIFICATION Spec\nPROPERTY Reach\n_POSSIBLE ${possible}`,
+        ),
+      ).toContainEqual(expect.stringMatching(COMPLETE));
+    }
+  });
+
   it("stops where TLC fails on action composition, with the states before", async () => {
     const body = [
       "EXTENDS Naturals",

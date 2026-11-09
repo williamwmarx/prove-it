@@ -115,6 +115,12 @@ unsafe fn set_encoded(
     }
 }
 
+// What each _POSSIBLE predicate counted, or -1 where it wasn't evaluated.
+unsafe fn create_possible(env: napi_env, counts: &[i64]) -> Result<napi_value, Thrown> {
+    let numbers: Vec<f64> = counts.iter().map(|&count| count as f64).collect();
+    unsafe { create_numbers(env, &numbers) }
+}
+
 fn to_numbers(values: &[u64]) -> Vec<f64> {
     values.iter().map(|&value| value as f64).collect()
 }
@@ -151,6 +157,12 @@ unsafe fn set_checkpoint(
             object,
             c"counts",
             create_numbers(env, &to_numbers(&numbers))?,
+        )?;
+        set(
+            env,
+            object,
+            c"possible",
+            create_possible(env, &checkpoint.possible)?,
         )?;
         set(
             env,
@@ -430,7 +442,9 @@ pub(super) unsafe extern "C" fn check_model(env: napi_env, info: napi_callback_i
                     fingerprints,
                     value_count,
                     collisions,
+                    possible,
                 } => {
+                    set(env, result, c"possible", create_possible(env, &possible)?)?;
                     if let Some(verdict) = &liveness {
                         set(env, result, c"liveness", create_verdict(env, verdict)?)?;
                     }
