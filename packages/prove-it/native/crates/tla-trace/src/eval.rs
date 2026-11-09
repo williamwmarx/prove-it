@@ -259,6 +259,9 @@ pub struct Runtime {
     pub counter_example: Value,
     /// The registers TLCSet sets by index as the postconditions evaluate.
     pub registers: HashMap<i32, Value>,
+    /// Each `_POSSIBLE` predicate's count by name, totalled over the workers, as `_Counts` gives
+    /// it.
+    pub possible_counts: Value,
 }
 
 const MAXIMUM_DEPTH: u32 = 10_000;
@@ -2378,6 +2381,15 @@ impl<'ir> Evaluator<'ir> {
                     }
                     _ => return fail(name.to_string()),
                 }
+            }
+            "_Counts" if self.runtime.is_some() => {
+                arity(0)?;
+                self.reads += 1;
+                self.runtime
+                    .as_ref()
+                    .expect("the runtime")
+                    .possible_counts
+                    .clone()
             }
             "CounterExample" if self.runtime.is_some() => {
                 arity(0)?;

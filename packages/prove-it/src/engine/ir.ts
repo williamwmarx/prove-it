@@ -19,7 +19,8 @@
 //   checker's atoms, each action atom with the position of the ENABLED atom of its fairness, or -1,
 //   and the formula the checker solves, as its number of words and its terms in prefix order, each
 //   atom by its position among the atoms, or past them for one the checker asks nothing of, then
-//   the properties, each its name and its formula the same way, then what TLC evaluates when it
+//   the properties, each its name and its formula the same way, then the source range of the
+//   definition SPECIFICATION names, or -1 and zeros, then what TLC evaluates when it
 //   starts: the substitutes it checks, each its constant's name and its definition; the constant
 //   definitions with effects, in the order TLC evaluates them; the SYMMETRY definition, or -1, with
 //   the sets it permutes, each the name TLC's warning gives it and the set it checks, or -1; and
@@ -864,6 +865,13 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
     push(model, getText(property.name));
     pushLive(property.formula);
   }
+  // The range of the definition SPECIFICATION names, which TLC's warning of a stuttering
+  // counterexample prints.
+  const specification =
+    input.config.specification === undefined
+      ? undefined
+      : getDefinition(input.config.specification, environment)?.location.range;
+  writeRange(model, specification);
   const startup = input.startup;
   push(model, startup.substitutes.length);
   for (const substitute of startup.substitutes) {

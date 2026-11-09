@@ -32,8 +32,8 @@ import {
 // TLC computes at startup, invariants an initial state violates, the run-time errors whose
 // messages and call stacks tla-trace's evaluate_failure gives, tableau nodes that accept every
 // behavior, assumptions that print, the records TLC sorts as it permutes a state under
-// SYMMETRY, a lasso under a VIEW, action composition, and an operator the configuration defines
-// by its values.
+// SYMMETRY, a lasso under a VIEW, action composition, an operator the configuration defines
+// by its values, and a postcondition that reads the _POSSIBLE counts.
 const GOLDEN_MODELS = [
   "examples/specifications/btree/MCbtree.cfg",
   "examples/specifications/TeachingConcurrency/SimpleRegular.cfg",
@@ -100,6 +100,7 @@ const GOLDEN_MODELS = [
   "tlc/tlatools/org.lamport.tlatools/test-model/examples/ewd998/AsyncTerminationDetection.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/cdot/CdotWithContextA.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/ConstantOperatorConfiguration.cfg",
+  "tlc/tlatools/org.lamport.tlatools/test-model/PossibleCountsTest.cfg",
 ];
 
 const GOLDEN_DIRECTORY = join(CONFORMANCE_DIRECTORY, "ir");
