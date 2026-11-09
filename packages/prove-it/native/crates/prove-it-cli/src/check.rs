@@ -525,12 +525,38 @@ fn check_spec(spec_path: &str, args: &Parsed, printer: &mut Printer) -> i32 {
                         Some(&liveness),
                         start,
                     )
-                    .unwrap_or_else(|| {
-                        report_not_native(printer, "a temporal property's counterexample")
+                    .unwrap_or_else(|why| {
+                        report_not_native(
+                            printer,
+                            &format!("a temporal property's counterexample: {why}"),
+                        )
                     });
                 }
-                if liveness.verdict != Verdict::Holds {
-                    return report_not_native(printer, "a temporal property's counterexample");
+                let why = match &liveness.verdict {
+                    Verdict::Holds => None,
+                    Verdict::Lasso { .. }
+                        if ir.model.symmetry.is_some() || ir.model.view.is_some() =>
+                    {
+                        Some(
+                            "a temporal property's counterexample: under SYMMETRY or a VIEW".into(),
+                        )
+                    }
+                    Verdict::Lasso { .. } => Some(
+                        "a temporal property's counterexample: a lasso the engine doesn't hand over".into(),
+                    ),
+                    Verdict::Accepted { .. } => {
+                        Some("a temporal property's counterexample: an accepting node".into())
+                    }
+                    Verdict::Declined(declined) => {
+                        Some(format!("the liveness checker declined: {}", declined.0))
+                    }
+                    Verdict::Unexpanded => Some(format!(
+                        "the liveness checker declined: {}",
+                        tla_live::UNEXPANDED
+                    )),
+                };
+                if let Some(why) = why {
+                    return report_not_native(printer, &why);
                 }
                 let statistics = Statistics {
                     generated: counts.generated,
@@ -552,7 +578,7 @@ fn check_spec(spec_path: &str, args: &Parsed, printer: &mut Printer) -> i32 {
             ..
         } => {
             return print_violation(printer, &ir, &config, &violation, None, start).unwrap_or_else(
-                || report_not_native(printer, &format!("the engine stopped: {reason}")),
+                |_| report_not_native(printer, &format!("the engine stopped: {reason}")),
             );
         }
         SearchOutcome::Stopped { reason, .. } => {
@@ -657,9 +683,12 @@ fn print_statistics(printer: &mut Printer, statistics: &Statistics, start: Insta
     );
 }
 
+/// Why `print_violation` can't print a violation yet, where the IR doesn't name what it reports.
+const NOT_IN_IR: &str = "a name the IR doesn't carry";
+
 /// Prints a violation the engine stopped at, or the lasso the liveness checker found, as
-/// `printViolation` in `src/cli/tlc.ts` does, and returns the exit code, or nothing when it can't
-/// print it yet.
+/// `printViolation` in `src/cli/tlc.ts` does, and returns the exit code, or why it can't print
+/// it yet.
 fn print_violation(
     printer: &mut Printer,
     ir: &tla_ir::Ir,
@@ -667,24 +696,27 @@ fn print_violation(
     violation: &Violation,
     liveness: Option<&Liveness>,
     start: Instant,
-) -> Option<i32> {
+) -> Result<i32, &'static str> {
     // TLC prints a state through the ALIAS when there is one, which the IR doesn't carry yet, and
     // checks the postconditions on the trace after it prints it.
     if config.alias.is_some() || !config.postconditions.is_empty() || !config.possible.is_empty() {
-        return None;
+        return Err("ALIAS, POSTCONDITION or _POSSIBLE");
     }
     // An owner past the configuration's invariants is a property checked as one.
     let model = &ir.model;
     let invariant_name = |owner: usize| {
         let name = match owner.checked_sub(model.invariants.len()) {
             None => model.invariants[owner].root.name,
-            Some(property) => *model.property_invariant_names.get(property)?,
+            Some(property) => *model
+                .property_invariant_names
+                .get(property)
+                .ok_or(NOT_IN_IR)?,
         };
-        Some(&ir.texts[name as usize])
+        Ok(&ir.texts[name as usize])
     };
     let action_label = |action: u32| {
-        let action = model.actions.get(action as usize)?;
-        Some(ir.texts[action.label as usize].as_ref())
+        let action = model.actions.get(action as usize).ok_or(NOT_IN_IR)?;
+        Ok(ir.texts[action.label as usize].as_ref())
     };
     let (code, text, exit_code) = match violation.kind {
         ViolationKind::InitialInvariant(owner) => (
@@ -703,7 +735,7 @@ fn print_violation(
         ViolationKind::Deadlock => (code::DEADLOCK_REACHED, "Deadlock reached.".into(), DEADLOCK),
         ViolationKind::Lasso { .. } => (
             code::TEMPORAL_PROPERTY_VIOLATED,
-            temporal_headline(ir, liveness?)?,
+            temporal_headline(ir, liveness.ok_or(NOT_IN_IR)?).ok_or(NOT_IN_IR)?,
             LIVENESS_VIOLATION,
         ),
     };
@@ -718,16 +750,19 @@ fn print_violation(
             let Verdict::Lasso {
                 is_cycle_constrained,
                 ..
-            } = liveness?.verdict
+            } = liveness.ok_or(NOT_IN_IR)?.verdict
             else {
-                return None;
+                return Err(NOT_IN_IR);
             };
             let is_printing = ir
                 .builtins
                 .iter()
                 .any(|builtin| matches!(&*ir.texts[builtin.name as usize], "Print" | "PrintT"));
-            if is_stuttering && is_cycle_constrained || !is_stuttering && is_printing {
-                return None;
+            if is_stuttering && is_cycle_constrained {
+                return Err("a stuttering counterexample TLC warns of");
+            }
+            if !is_stuttering && is_printing {
+                return Err("a step back into the cycle of a spec that prints");
             }
             let label = match loop_label {
                 Some(action) => Some(action_label(action)?),
@@ -745,7 +780,7 @@ fn print_violation(
     // rebuild as TLC built it keeps the run not native.
     let trace = match rebuild_trace(ir, violation) {
         Ok(trace) => trace,
-        Err(reason) => return Some(report_not_native(printer, &reason)),
+        Err(reason) => return Ok(report_not_native(printer, &reason)),
     };
     let counts = &violation.counts;
     let statistics = Statistics {
@@ -757,10 +792,10 @@ fn print_violation(
     // TLC prints the initial state that violates an invariant in the same message, and no
     // statistics, since it checks the initial states before it searches.
     if let ViolationKind::InitialInvariant(_) = violation.kind {
-        let state = &trace.states.first()?.text;
+        let state = &trace.states.first().ok_or(NOT_IN_IR)?.text;
         printer.print(code, Level::Error, &format!("{text}\n{state}"));
         print_finished(printer, start);
-        return Some(exit_code);
+        return Ok(exit_code);
     }
     let checking =
         liveness.map(|liveness| print_liveness_started(printer, &statistics, liveness.branches));
@@ -831,7 +866,7 @@ fn print_violation(
     }
     print_statistics(printer, &statistics, start);
     print_finished(printer, start);
-    Some(exit_code)
+    Ok(exit_code)
 }
 
 // TLC names the properties the lasso violates, or none when it can't tell which
