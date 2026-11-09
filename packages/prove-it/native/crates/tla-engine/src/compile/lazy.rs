@@ -312,7 +312,7 @@ impl Lazy {
     }
 
     // `isEmptySet`.
-    fn is_empty(&self, machine: &mut Machine<'_>) -> Outcome<bool> {
+    pub(crate) fn is_empty(&self, machine: &mut Machine<'_>) -> Outcome<bool> {
         Ok(match self {
             Lazy::Set(set) => machine.store.size_of(Self::set(machine, *set)?) == 0,
             Lazy::Infinite(_) | Lazy::Subset(_) => false,

@@ -9,6 +9,7 @@ use std::sync::Arc;
 use tla_values::store::Outcome;
 use tla_values::{Bail, Id, Store};
 
+use crate::compile::random::JavaRandom;
 use crate::memo::{EMPTY, EPOCH_KEYS, EpochCache, MemoTable};
 
 /// A compiled expression: its value, or where TLC would fail, or the engine hands over.
@@ -69,6 +70,10 @@ pub struct Program {
     pub(crate) round_count: usize,
     pub(crate) recursives: Vec<Option<Recursive>>,
     pub(crate) is_epoch_checked: bool,
+    /// What a state's fingerprint is xored with to seed the draws of its expansion.
+    pub(crate) random_seed: u64,
+    /// The generator the initial states draw from, as the interpreter left it.
+    pub(crate) startup_random: u64,
 }
 
 /// The statistics of one memo table, as `getMemoStatistics` gives them.
@@ -107,6 +112,9 @@ pub struct Machine<'p> {
     pub(crate) spare_states: Vec<Vec<Id>>,
     /// What was printed since the search last handed it on (`tlc.output`).
     pub output: Vec<Printed>,
+    /// The generator RandomElement and RandomSubset draw from: the interpreter's for the initial
+    /// states, then one seeded for each state the search expands (`runtime.getRandom`).
+    pub(crate) random: JavaRandom,
 }
 
 impl<'p> Machine<'p> {
@@ -137,7 +145,13 @@ impl<'p> Machine<'p> {
             is_past_walk: false,
             spare_states: Vec::new(),
             output: Vec::new(),
+            random: JavaRandom::from_state(program.startup_random),
         }
+    }
+
+    /// Seeds the draws of a state's expansion with its fingerprint, as TLC's workers do.
+    pub(crate) fn seed_random(&mut self, fingerprint: u64) {
+        self.random = JavaRandom::seeded(fingerprint ^ self.program.random_seed);
     }
 
     /// Forgets what the caches hold of ids from `bound` on, which the store has let go of.
