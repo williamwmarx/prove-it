@@ -7,7 +7,7 @@
 
 use std::collections::HashSet;
 
-use tla_ir::{Bound, DefinitionForm, Name, NodeId, NodeKind, PathStep, Resolution};
+use tla_ir::{Bound, Definition, DefinitionForm, Name, NodeId, NodeKind, PathStep, Resolution};
 
 use crate::eval::{Context, Evaluator, StackFrame, bound_expression};
 use crate::sets::is_member;
@@ -664,8 +664,8 @@ impl<'ir> Evaluator<'ir> {
     // Whether TLC enumerates the set an expression gives in normalized order, as this evaluator
     // does: a set enumeration, an interval, a variable of the current state (whose values TLC
     // normalized when it fingerprinted the state), a constant or a definition TLC evaluates at
-    // startup (which it normalizes). TLC streams any other set, such as a union or SUBSET built
-    // during the walk, in an order of its own.
+    // startup and deep-normalizes (`processConstantDefns`). TLC streams any other set, such as a
+    // union or SUBSET built during the walk, in an order of its own.
     fn is_in_normalized_order(
         &mut self,
         node: NodeId,
@@ -702,7 +702,10 @@ impl<'ir> Evaluator<'ir> {
                 Resolution::Variable(_) => return Ok(!context.is_primed),
                 Resolution::Constant(_) => return Ok(true),
                 Resolution::Definition(index)
-                    if self.ir.model.startup.definitions.contains(&index) =>
+                    if self.ir.model.startup.definitions.contains(&index)
+                        || self.definition(self.ir.definitions[index as usize]).flags
+                            & Definition::NORMALIZED
+                            != 0 =>
                 {
                     return Ok(true);
                 }

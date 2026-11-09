@@ -303,35 +303,20 @@ fn action_parameters<'ir>(
     action: &tla_ir::Action,
 ) -> Result<Vec<(&'ir str, Value)>, Unsupported> {
     let ir = evaluator.ir;
-    // A label names the values of an action's parameters, and an action of no operator has
-    // none.
-    let name = &*ir.texts[action.name as usize];
-    if !ir.texts[action.label as usize].contains('(') || name == "UnnamedAction" {
-        return Ok(Vec::new());
-    }
-    let operators: Vec<_> = ir
-        .definitions
-        .iter()
-        .map(|&node| evaluator.definition(node))
-        .filter(|definition| {
-            &*ir.texts[definition.name as usize] == name
-                && matches!(definition.form, DefinitionForm::Operator(_))
-        })
-        .collect();
-    // Where several operators share the name, as in a LET, the action's is the one whose body it
-    // is.
-    let operator = match operators[..] {
-        [operator] => operator,
-        _ => match operators
-            .iter()
-            .find(|definition| definition.body == action.expression)
-        {
-            Some(operator) => operator,
-            None => return unsupported("of an action whose operator the IR doesn't single out"),
-        },
+    // The operator TLC split the action from, whose parameters the action's scope binds. None
+    // stands for an action of no operator, which has no parameters, or for an operator a LET
+    // defines, which a label naming the values of parameters gives away.
+    let Some(index) = action.definition else {
+        return if ir.texts[action.label as usize].contains('(') {
+            unsupported("of an action of an operator a LET defines")
+        } else {
+            Ok(Vec::new())
+        };
     };
-    let DefinitionForm::Operator(params) = &operator.form else {
-        return unsupported("of an action whose operator the IR doesn't single out");
+    let DefinitionForm::Operator(params) =
+        &evaluator.definition(ir.definitions[index as usize]).form
+    else {
+        return unsupported("of an action of a function definition");
     };
     let mut bound = Vec::with_capacity(params.len());
     for param in params {
