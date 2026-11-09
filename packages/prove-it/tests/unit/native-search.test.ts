@@ -1222,6 +1222,27 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
   // From tla-rs's function_syntax: TLC applies a recursive function of several bounds to tuples
   // of its product, and keeps a recursive function lazy where a spec passes it or takes its
   // domain.
+  // From mongodb-txns' ClientCentric, whose fold folds in the operator it applies: a definition
+  // reached again through an argument isn't recursion.
+  it("expands a definition again through an argument", async () => {
+    const body = [
+      "EXTENDS Naturals",
+      "VARIABLE x",
+      "Fold(op(_, _), base, S) ==",
+      "  LET it[s \\in SUBSET S] ==",
+      "        IF s = {} THEN base ELSE LET y == CHOOSE y \\in s : TRUE IN op(y, it[s \\ {y}])",
+      "  IN it[S]",
+      "Sum(S) == Fold(LAMBDA a, b : a + b, 0, S)",
+      "Init == x = 0",
+      "Next == x' = (x + 1) % 3",
+      "Inv == /\\ Fold(LAMBDA a, acc : acc + Sum({i + x : i \\in 1..a}), 0, {1, 2}) = 4 + 3 * x",
+      "       /\\ Fold(LAMBDA a, acc : a + acc, Fold(LAMBDA a, b : a + b, x, {1}), {2}) = 3 + x",
+    ];
+    expect(
+      await compareWithInterpreter(body, "INIT Init\nNEXT Next\nINVARIANT Inv"),
+    ).toContainEqual(expect.stringMatching(COMPLETE));
+  });
+
   it("applies recursive functions as TLC keeps them lazy", async () => {
     const body = [
       "EXTENDS Naturals, FiniteSets",

@@ -117,6 +117,25 @@ describe("the engine", () => {
     expect(lines).toEqual([expect.stringMatching(/^\[engine\] checked 1 states/)]);
   });
 
+  it("expands a definition again through an argument, which isn't recursion", async () => {
+    // As mongodb-txns' ClientCentric does: a fold in the operator a fold applies, and in its base.
+    const { result, lines } = await checkInEngine(
+      [
+        "EXTENDS Naturals",
+        FOLD,
+        "VARIABLE x",
+        "Sum(f) == FoldFunction(LAMBDA a, b : a + b, 0, f)",
+        "Init == x = 0",
+        "Next == x' = (x + 1) % 3",
+        "Inv == /\\ FoldFunction(LAMBDA a, acc : acc + Sum([i \\in 1..a |-> i + x]), 0, <<1, 2>>) = 4 + 3 * x",
+        "       /\\ FoldFunction(LAMBDA a, acc : a + acc, FoldFunction(LAMBDA a, b : a + b, x, <<1>>), <<2>>) = 3 + x",
+      ].join("\n"),
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+    );
+    expect(result.status).toBe("success");
+    expect(lines).toEqual([expect.stringMatching(/^\[engine\] checked 3 states/)]);
+  });
+
   it("keeps the names a recursive function binds apart in each call", async () => {
     const { result, lines } = await checkInEngine(
       [
