@@ -343,7 +343,8 @@ impl Expansion<'_> {
                         expanding,
                         is_substituted
                             || definition.is_some_and(|definition| self.is_substituted(definition)),
-                        Some(operator.clone()),
+                        // An instance copy's application is named by its key.
+                        Some(expression.reference().unwrap_or_else(|| operator.clone())),
                     );
                 }
             }
@@ -462,7 +463,12 @@ pub(crate) fn bind_operator_arguments(
     let mut bound = closure_scope;
     for (param, argument) in params.iter().zip(args) {
         if param.arity > 0 {
-            return Err(not_yet("an operator argument to a temporal formula"));
+            bound = Some(Rc::new(Scope {
+                name: param.name.clone(),
+                binding: bind_operator_argument(argument, scope, environment)?,
+                parent: bound,
+            }));
+            continue;
         }
         let thunk = || Binding::Thunk {
             expression: argument.clone(),
@@ -504,6 +510,64 @@ pub(crate) fn bind_operator_arguments(
         }));
     }
     Ok(bound)
+}
+
+/// `evaluateOperatorArgument`: a LAMBDA, or the operator an argument names, as a closure.
+fn bind_operator_argument(
+    argument: &Expr,
+    scope: Option<&Rc<Scope>>,
+    environment: &Environment,
+) -> Result<Binding> {
+    let not_closure = || not_yet("an operator argument that isn't a definition");
+    let name = match &argument.kind {
+        ExpressionKind::Lambda { params, body, .. } => {
+            return Ok(Binding::Closure {
+                name: Rc::from("LAMBDA"),
+                params: params
+                    .iter()
+                    .map(|name| OperatorParam {
+                        name: name.clone(),
+                        arity: 0,
+                        location: None,
+                    })
+                    .collect(),
+                body: body.clone(),
+                scope: ScopeOf::Other(scope.cloned()),
+            });
+        }
+        ExpressionKind::OperatorReference { .. } | ExpressionKind::Identifier { .. } => {
+            argument.reference().ok_or_else(not_closure)?
+        }
+        _ => return Err(not_closure()),
+    };
+    if argument.is_locally_resolved() || get_definition(&name, environment).is_none() {
+        return match lookup_scope(scope, &name) {
+            Some((
+                node,
+                Binding::Closure {
+                    name,
+                    params,
+                    body,
+                    scope,
+                },
+            )) => Ok(Binding::Closure {
+                name: name.clone(),
+                params: params.clone(),
+                body: body.clone(),
+                scope: ScopeOf::Other(scope.resolve(node)),
+            }),
+            _ => Err(not_closure()),
+        };
+    }
+    match get_definition(&name, environment).map(|definition| (definition, &definition.kind)) {
+        Some((definition, DefinitionKind::Operator { params, .. })) => Ok(Binding::Closure {
+            name: definition.name.clone(),
+            params: params.clone(),
+            body: definition.body.clone(),
+            scope: ScopeOf::Other(None),
+        }),
+        _ => Err(not_closure()),
+    }
 }
 
 enum GlobalName {
@@ -572,6 +636,7 @@ fn get_constant_value(
     environment: &Environment,
     facts: &DefinitionFacts,
     evaluator: Option<&Evaluator>,
+    is_deferrable: bool,
 ) -> Result<Option<ConfigValue>> {
     let is_literal = matches!(
         definition.body.kind,
@@ -587,7 +652,9 @@ fn get_constant_value(
         Ok(value) => Ok(Some(value)),
         Err(FrontError::Evaluation(_)) => Ok(None),
         // The engine's startup checks what the evaluator can't compute (`Startup::predicates`).
-        Err(FrontError::NotYet(_)) => {
+        // TLC rejects any value of a definition that isn't a predicate, which the front end then
+        // can't tell from one that fails to evaluate.
+        Err(FrontError::NotYet(_)) if is_deferrable => {
             evaluator.defer();
             Ok(None)
         }
@@ -634,7 +701,7 @@ fn get_config_definition(
     evaluator: Option<&Evaluator>,
 ) -> Result<()> {
     let definition = get_config_operator(kind, name, environment)?;
-    if get_constant_value(name, definition, environment, facts, evaluator)?.is_some() {
+    if get_constant_value(name, definition, environment, facts, evaluator, false)?.is_some() {
         return Err(FrontError::Config(format!(
             "The {kind} {name} cannot be a constant."
         )));
@@ -839,9 +906,14 @@ pub fn get_specification(
         ));
     }
     let definition = get_config_operator("name", specification, environment)?;
-    if let Some(value) =
-        get_constant_value(specification, definition, environment, facts, evaluator)?
-    {
+    if let Some(value) = get_constant_value(
+        specification,
+        definition,
+        environment,
+        facts,
+        evaluator,
+        false,
+    )? {
         return Err(FrontError::Config(format!(
             "The value of {specification} is equal to {}",
             format_config_value(&value)?
@@ -1005,7 +1077,7 @@ fn get_config_predicate<'a>(
         Some(value) => (None, Some(value.clone())),
         None => {
             let definition = get_config_operator(kind, name, environment)?;
-            let value = get_constant_value(name, definition, environment, facts, evaluator)?;
+            let value = get_constant_value(name, definition, environment, facts, evaluator, true)?;
             (Some(definition), value)
         }
     };
