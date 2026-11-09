@@ -338,7 +338,7 @@ pub fn check_postconditions(
 }
 
 // Each postcondition in turn, up to the first that doesn't hold.
-fn check(
+pub(crate) fn check(
     rebuilder: &mut Rebuilder<'_>,
     ir: &Ir,
     run: &PostconditionRun,

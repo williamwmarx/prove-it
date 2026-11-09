@@ -7,11 +7,14 @@ use std::time::Instant;
 use tla_engine::search::Violation;
 use tla_ir::{Ir, SourceRange};
 use tla_trace::{
-    Alias, Ending, Failure, Rebuilder, Registers, Site, Trace, Unsupported, format_call_stack,
+    Alias, CounterExample, Ending, Failure, Rebuilder, Registers, Site, Trace, Unsupported,
+    format_call_stack,
 };
 use tla_values::{Id, Store};
 
-use crate::check::{SEARCH_STACK_BYTES, Statistics, print_finished, print_statistics};
+use crate::check::{
+    SEARCH_STACK_BYTES, Statistics, print_finished, print_postcondition_failure, print_statistics,
+};
 use crate::messages::{self as code, Level, Printer};
 use crate::summary::out_degree_summary;
 
@@ -19,7 +22,10 @@ use crate::summary::out_degree_summary;
 // expect (`EC.ExitStatus`).
 const FAILURE_SPEC_EVAL: i32 = 75;
 const ERROR: i32 = 255;
-use crate::trace::{format_fields, format_partial_state, format_print, format_state, format_texts};
+use crate::trace::{
+    PostconditionRun, Postconditions, check, format_fields, format_partial_state, format_print,
+    format_state, format_texts,
+};
 
 /// Where the search stopped on an error: the path to the state it was expanding, as ids of
 /// `store` (none in the initial predicate), the position in the model's actions of each step's
@@ -35,9 +41,13 @@ pub struct ErrorStop<'a> {
     /// The outdegree buckets of the state graph TLC reports after an invariant that fails to
     /// evaluate.
     pub out_degrees: &'a [u64],
-    /// With an ALIAS, the violation the search stopped at, for what the alias may read: TLC
-    /// prints the trace's states through it.
-    pub aliased: Option<&'a Violation>,
+    /// With an ALIAS or postconditions, the violation the search stopped at, for the startup
+    /// values and registers they may read.
+    pub replayed: Option<&'a Violation>,
+    /// Whether TLC prints the trace's states through an ALIAS.
+    pub is_aliased: bool,
+    /// What TLCGet reads as TLC checks the postconditions after the failure, where it does.
+    pub postconditions: Option<PostconditionRun>,
 }
 
 // The failure and the trace's states as TLC prints them, each with its label and what the spec
@@ -47,6 +57,7 @@ struct Report {
     failure: Failure,
     states: Vec<PrintedStep>,
     after: Vec<String>,
+    postconditions: Option<Postconditions>,
 }
 
 struct PrintedStep {
@@ -75,8 +86,15 @@ pub fn print_failure(
     }
     let report = evaluate(ir, stop, printer.is_tool)?;
     let failure = &report.failure;
-    if stop.aliased.is_some() && failure.fingerprint.is_some() {
-        return Err("a state TLC fails to fingerprint with an ALIAS".into());
+    if stop.replayed.is_some() && failure.fingerprint.is_some() {
+        return Err("a state TLC fails to fingerprint with an ALIAS or a POSTCONDITION".into());
+    }
+    // TLC rebuilds the trace again for the postconditions, between what it prints after the
+    // trace and what the replay prints, which the printing doesn't order.
+    if let Some(checked) = &report.postconditions
+        && (!checked.printed.is_empty() || !report.after.is_empty())
+    {
+        return Err("a failure with a POSTCONDITION in a spec that prints".into());
     }
     if is_atom && failure.fingerprint.is_some() {
         return Err("a state TLC fails to fingerprint as it adds it to the behavior graphs".into());
@@ -145,6 +163,7 @@ pub fn print_failure(
     for line in &report.after {
         printer.line(line);
     }
+    print_postcondition_failure(printer, ir, report.postconditions.as_ref());
     match &failure.fingerprint {
         // TLC reports where it failed to fingerprint in place of the call stack, innermost first.
         // TLC prints the call stack of its replay where the replay threw the FingerprintException.
@@ -261,7 +280,7 @@ pub fn print_assumption_failure(
 fn evaluate(ir: &Ir, stop: &ErrorStop<'_>, is_tool: bool) -> Result<Report, String> {
     on_search_stack(|| {
         let mut rebuilder = Rebuilder::new(ir)?;
-        if let Some(violation) = stop.aliased {
+        if let Some(violation) = stop.replayed {
             rebuilder.set_startup(
                 &violation.store,
                 &violation.startup,
@@ -315,14 +334,28 @@ fn evaluate(ir: &Ir, stop: &ErrorStop<'_>, is_tool: bool) -> Result<Report, Stri
             .collect();
         // TLC prints a state it was expanding alone, an initial one, as it is, and every other
         // trace through the ALIAS (`TLCTrace.printTrace`).
-        let aliases = match stop.aliased {
-            Some(_) if trace.states.len() > 1 => rebuilder.alias(&trace, None, is_tool)?,
-            _ => None,
+        let aliases = if stop.is_aliased && trace.states.len() > 1 {
+            rebuilder.alias(&trace, None, is_tool)?
+        } else {
+            None
         };
+        // TLC's worker checks the postconditions on the trace to the state it was expanding.
+        let postconditions = stop
+            .postconditions
+            .as_ref()
+            .map(|run| {
+                let counter_example = CounterExample {
+                    trace: &trace,
+                    cycle: None,
+                };
+                check(&mut rebuilder, ir, run, Some(counter_example))
+            })
+            .transpose()?;
         Ok(Report {
             failure,
             states: labelled(ir, &trace, aliases.as_deref())?,
             after,
+            postconditions,
         })
     })
 }
@@ -403,8 +436,8 @@ fn print_incomplete(
     if actions.is_empty() || is_174 {
         return Err("an incomplete successor of a model whose actions the IR lacks".into());
     }
-    if stop.aliased.is_some() {
-        return Err("an incomplete successor with an ALIAS".into());
+    if stop.replayed.is_some() {
+        return Err("an incomplete successor with an ALIAS or a POSTCONDITION".into());
     }
     let (states, incomplete) = on_search_stack(|| {
         let mut rebuilder = Rebuilder::new(ir)?;
