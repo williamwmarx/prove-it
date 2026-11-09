@@ -249,3 +249,12 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   violation.
 - Labelling a path where the engine has no walk of TLC's actions leaves its steps unlabelled,
   where it panicked on a path of one step.
+
+## A power set TLC can't count
+
+- TLC counts a power set's elements in an int, so it fails counting those of SUBSET S where S has
+  31 elements or more (`SubsetValue.size`), which it reports, wrapped in a FingerprintException
+  where it fingerprints the set. The engine stopped at its own limit on building a power set, and
+  such a stop isn't a failure TLC reports. It now fails on a base of 31 elements or more as TLC
+  does, and stops at its limit only below that. FingerprintExceptionInit and
+  FingerprintExceptionNext (TLC's tests) now stop on that failure in Rust.
