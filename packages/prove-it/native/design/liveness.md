@@ -337,7 +337,10 @@ Done on native-parity:
   which the engine follows only where there is one; with more it declines. A violation found
   among the initial states is reported only where every atom evaluates on them
   (`answers_initial_atoms`). At a safety stop, the first atom unanswered on a state TLC had
-  added by then (`unanswered_at`) is reported as at the search's end.
+  added by then (`unanswered_at`) is reported as at the search's end, but only where evaluating
+  it fails as TLC fails (`atom_failure`): the tables of a search that stopped also leave
+  unanswered what the checker asks of states not yet expanded, which TLC evaluates without
+  failing, and there the violation the search found stands (ACP_NB_WRONG_TLC, SDP_Attack_Spec).
 - A lasso a check part way through the search finds: the search builds the violation with
   `to_lasso` and the counts so far, and the binary prints it after the check's start, which the
   search reported as the check began.

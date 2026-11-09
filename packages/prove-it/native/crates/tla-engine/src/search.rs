@@ -3251,11 +3251,23 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                         .filter(|unanswered| {
                             unanswered.is_initial || (unanswered.state as usize) < search.expanding
                         });
+                    // The tables leave unanswered what the checker asks of no finished search,
+                    // such as ENABLED of a state not yet expanded, as well as what fails: TLC
+                    // stopped at the atom only where evaluating it fails as TLC fails.
+                    let unanswered = unanswered.and_then(|unanswered| {
+                        let failure = atom_failure(&mut machine, &context, &search, unanswered);
+                        machine.output.clear();
+                        match failure {
+                            Some(Ok(_)) => None,
+                            Some(Err(bail)) if !is_engine_limit(bail.0) => Some(Some(unanswered)),
+                            _ => Some(None),
+                        }
+                    });
                     let verdict = tables.and_then(|tables| {
                         accepted_at(model, &context, &search, &tables, expanded, count)
                     });
                     match verdict {
-                        _ if unanswered.is_some() => unanswered.and_then(|unanswered| {
+                        _ if unanswered.is_some() => unanswered.flatten().and_then(|unanswered| {
                             to_atom_failure(&context, &search, initial_states, unanswered)
                         }),
                         Some(None) => Some(found),
@@ -3833,6 +3845,38 @@ fn answers_initial_atoms(
                 Atom::Enabled { run: Err(_), .. } | Atom::Unknown(_) => false,
             })
         })
+}
+
+// What evaluating an atom the tables left unanswered gives, or `None` where the engine has no
+// evaluation of it.
+fn atom_failure(
+    machine: &mut Machine<'_>,
+    context: &EngineContext,
+    search: &Search<'_, States>,
+    unanswered: tla_live::Unanswered,
+) -> Option<Outcome<Id>> {
+    let edges = search.graph.as_ref()?.edges.len() as u32;
+    let slot = match context.atoms.get(unanswered.atom as usize)? {
+        Atom::Action { .. } if unanswered.slot >= edges => {
+            tla_live::Slot::Stutter(unanswered.slot - edges)
+        }
+        Atom::Action { .. } => tla_live::Slot::Step {
+            state: unanswered.state,
+            edge: unanswered.slot,
+        },
+        _ => tla_live::Slot::State(unanswered.slot),
+    };
+    let atoms = &context.atoms;
+    let graph = search.graph.as_ref()?;
+    LiveAnswers {
+        machine: std::cell::RefCell::new(machine),
+        atoms,
+        states: &search.states.ids,
+        width: context.width,
+        edges: &graph.edges,
+    }
+    .evaluate(unanswered.atom, slot)
+    .ok()
 }
 
 // The first atom the engine didn't answer that TLC evaluates as it adds the states the search

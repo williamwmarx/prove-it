@@ -819,6 +819,27 @@ fn answers_atoms_that_use_registers_as_the_search_goes() {
 }
 
 #[test]
+fn reports_an_invariant_violated_before_atoms_the_tables_leave_unanswered() {
+    // The shape of TLC's ACP_NB_WRONG_TLC and SDP_Attack_Spec: an invariant violated while the
+    // tables of the atoms, answered where the search stopped, leave unanswered what the checker
+    // asks of states not yet expanded. TLC evaluates those atoms without failing, so it reports
+    // the invariant.
+    let spec = "---- MODULE Stop ----\nEXTENDS Naturals\nVARIABLES x, y\nvars == <<x, y>>\nP == {0, 1}\nInit == x = 0 /\\ y = [i \\in P |-> 0]\nA == x < 4 /\\ x' = x + 1 /\\ y' = y\nB(i, j) == x % 2 = 1 /\\ y[j] = 0 /\\ y' = [y EXCEPT ![i] = 1] /\\ x' = x\nC == x = 4 /\\ x' = 0 /\\ y' = y\nNext == A \\/ C \\/ \\E i, j \\in P : B(i, j)\nFair == /\\ \\A i \\in P : WF_vars(\\E j \\in P : B(i, j))\n        /\\ WF_vars(A \\/ C)\nSpec == Init /\\ [][Next]_vars /\\ Fair\nSafe == [] \\A i, j \\in P : y[i] = 0 \\/ y[j] = 0 \\/ x < 3\nLeads == \\A p \\in P : \\A q \\in P : (y[p] = 1) ~> (y[q] = 1)\n====\n";
+    let (output, directory) = run_lowered(
+        "unanswered-past-a-violation",
+        spec,
+        "SPECIFICATION Spec\nPROPERTIES\nSafe\nPROPERTY Leads\nCHECK_DEADLOCK FALSE\n",
+    );
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(12), "{text}");
+    assert!(
+        text.contains("Error: Invariant Safe is violated.\nError: The behavior up to this point is:\nState 1: <Initial predicate>\n"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
 fn reads_and_sets_tlcs_registers() {
     // TLCCache evaluates Counted once, TLCFP is TLC's fingerprint under -fp 0, which the
     // interpreter and TLC print the same, and a Java property TLC hasn't set is its key.

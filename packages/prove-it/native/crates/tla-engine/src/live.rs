@@ -638,7 +638,28 @@ impl LiveAnswers<'_, '_, '_> {
 
 impl Answers for LiveAnswers<'_, '_, '_> {
     fn answer(&self, atom: u32, slot: Slot, _diameter: u32) -> Result<bool, Declined> {
-        let value = match (self.atoms.get(atom as usize), slot) {
+        match self.evaluate(atom, slot)? {
+            Ok(TRUE) => Ok(true),
+            Ok(FALSE) => Ok(false),
+            _ => Err(Declined::from(
+                "a predicate the engine leaves to the interpreter",
+            )),
+        }
+    }
+
+    fn position(&self, _atom: u32, slot: Slot, _diameter: u32) -> usize {
+        match slot {
+            Slot::State(state) => state as usize,
+            Slot::Step { edge, .. } => edge as usize,
+            Slot::Stutter(state) => self.edges.len() + state as usize,
+        }
+    }
+}
+
+impl LiveAnswers<'_, '_, '_> {
+    /// What evaluating the atom at the slot gives, or why the engine has no evaluation of it.
+    pub fn evaluate(&self, atom: u32, slot: Slot) -> Result<Outcome<Id>, Declined> {
+        Ok(match (self.atoms.get(atom as usize), slot) {
             (Some(Atom::State(eval) | Atom::Enabled { run: Ok(eval), .. }), Slot::State(index)) => {
                 self.of_state(index, eval)
             }
@@ -666,21 +687,6 @@ impl Answers for LiveAnswers<'_, '_, '_> {
                 return Err(Declined(reason.clone()));
             }
             _ => return Err(Declined::from("an atom the engine doesn't answer")),
-        };
-        match value {
-            Ok(TRUE) => Ok(true),
-            Ok(FALSE) => Ok(false),
-            _ => Err(Declined::from(
-                "a predicate the engine leaves to the interpreter",
-            )),
-        }
-    }
-
-    fn position(&self, _atom: u32, slot: Slot, _diameter: u32) -> usize {
-        match slot {
-            Slot::State(state) => state as usize,
-            Slot::Step { edge, .. } => edge as usize,
-            Slot::Stutter(state) => self.edges.len() + state as usize,
-        }
+        })
     }
 }
