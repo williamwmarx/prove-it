@@ -495,7 +495,7 @@ fn records_the_parameters_of_the_counter_examples_actions() {
                         },
                         counter_example: Some(CounterExample {
                             trace: &trace,
-                            cycle: Some((0, closing)),
+                            cycle: Some((0, Some(closing))),
                         }),
                     },
                 )

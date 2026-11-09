@@ -836,3 +836,25 @@ fn reports_a_division_by_zero_after_what_the_expansion_printed() {
     );
     std::fs::remove_dir_all(directory).expect("removed");
 }
+
+const LIVE_WRITE_THROUGH_CACHE_IR: &[u8] = include_bytes!(
+    "../../../../tests/conformance/ir/tlc/tlatools/org.lamport.tlatools/test-model/examples/SpecifyingSystems/Liveness/MCLiveWriteThroughCache.ir"
+);
+
+#[test]
+fn checks_a_postcondition_on_a_lasso_stuttering_at_its_initial_state() {
+    let (output, directory) = run_golden(
+        "stutter-postcondition",
+        LIVE_WRITE_THROUGH_CACHE_IR,
+        "MCLiveWriteThroughCache",
+        "",
+        &[],
+    );
+    let text = stdout(&output);
+    // The postcondition is TLC's CounterExample, whose step back into the cycle TLC holds no
+    // action for: Action.UNKNOWN, unnamed, at the TLA+ builtins' null location.
+    assert_eq!(output.status.code(), Some(13), "{text}");
+    assert!(text.contains("State 2: Stuttering\n"), "{text}");
+    assert!(!text.contains("Postcondition"), "{text}");
+    std::fs::remove_dir_all(directory).expect("removed");
+}

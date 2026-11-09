@@ -174,19 +174,14 @@ fn rebuild(
                                     .then(|| trace.states.last().and_then(|state| state.action))
                                     .flatten()
                             })
-                            .map(|label| (loop_start, label)),
+                            .map(|label| (loop_start, Some(label)))
+                            // TLC holds no action for a lasso that stutters at its initial
+                            // state, whose TLCStateInfo it rebuilt from the initial predicate.
+                            .or_else(|| {
+                                (loop_start == 0 && trace.states.len() == 1).then_some((0, None))
+                            }),
                         _ => None,
                     };
-                    // TLC's record of a lasso that stutters at its first state closes it by an
-                    // unnamed action, which CounterExample doesn't take yet.
-                    let is_unnamed_cycle =
-                        matches!(*kind, ViolationKind::Lasso { loop_start: 0, .. })
-                            && trace.states.len() == 1;
-                    if postconditions.is_some() && is_unnamed_cycle {
-                        return Err(Unsupported(
-                            "a postcondition of a lasso that stutters at its first state".into(),
-                        ));
-                    }
                     let checked = postconditions
                         .map(|run| {
                             check(
