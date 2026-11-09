@@ -54,7 +54,7 @@ import { validatePcalModule } from "../src/pcal/validate";
 import { getSany174LexicalError } from "../src/sany/lexer";
 import { getSanyParseError } from "../src/sany/parse-error";
 import { getSanyReport } from "../src/sany/report";
-import { createSearch, getProperties, getSpecification } from "../src/search";
+import { createSearch, getInvariants, getProperties, getSpecification } from "../src/search";
 import { getNextSubstitution } from "../src/spec-description";
 import { createTlcOrder } from "../src/tlc/order";
 import type { TlcVersion } from "../src/tlc/version";
@@ -233,6 +233,8 @@ const lowerFullModel = (source: string, _path: string, spec: string) => {
     isSanyAccepted: true,
   });
   const environment = linked.environment;
+  // createSearch checks the invariants before it reads the specification.
+  getInvariants(config.invariants, environment);
   const specification = getSpecification(config, environment);
   const search = getProperties(config, environment, () => {});
   const properties = toEngineProperties(search);

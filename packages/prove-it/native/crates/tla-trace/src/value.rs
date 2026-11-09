@@ -140,6 +140,9 @@ pub enum Value {
     Model(Rc<Text>),
     /// A set enumeration, its elements distinct and in TLC's order.
     Set(Rc<Vec<Value>>),
+    /// A set enumeration TLC fails to normalize, its elements as written: TLC keeps it as it is
+    /// until it fingerprints or prints it, which then fails.
+    Unsorted(Rc<Vec<Value>>),
     /// `low..high`, an `IntervalValue`.
     Interval(i32, i32),
     Function(Rc<Function>),
@@ -274,12 +277,53 @@ fn compare_texts(left: &Text, right: &Text) -> Ordering {
     }
 }
 
-fn check_model_types(left: &Text, right: &Text) -> Evaluated<()> {
-    let (left_type, right_type) = (left.model_type(), right.model_type());
+fn check_model_types(left: &Value, right: &Value, is_equality: bool) -> Evaluated<()> {
+    let (Value::Model(left_text), Value::Model(right_text)) = (left, right) else {
+        return Ok(());
+    };
+    let (left_type, right_type) = (left_text.model_type(), right_text.model_type());
     if left_type != 0 && right_type != 0 && left_type != right_type {
-        return fail("differently typed model values");
+        return typed_model_failure(left, right, is_equality);
     }
     Ok(())
+}
+
+// TLC's error for a typed model value compared with a value of another type, as
+// `checkModelValueTypes` in `src/values.ts` words it.
+fn typed_model_failure<T>(left: &Value, right: &Value, is_equality: bool) -> Evaluated<T> {
+    let action = if is_equality {
+        "check equality of"
+    } else {
+        "compare"
+    };
+    let (reason, text) = match (left, right) {
+        (Value::Model(_), Value::Model(_)) => (
+            "differently typed model values",
+            format!(
+                "Attempted to {action} the differently-typed model values {} and {}",
+                format_pretty(left),
+                format_pretty(right)
+            ),
+        ),
+        (Value::Model(_), _) => (
+            "typed model value",
+            format!(
+                "Attempted to {action}{} typed model value {} and non-model value\n{}",
+                if is_equality { "" } else { " the" },
+                format_pretty(left),
+                format_pretty(right)
+            ),
+        ),
+        _ => (
+            "typed model value",
+            format!(
+                "Attempted to {action} the typed model value {} and the non-model value\n{}",
+                format_pretty(right),
+                format_pretty(left)
+            ),
+        ),
+    };
+    fail_runtime(reason, text)
 }
 
 /// The elements of a set TLC can enumerate, in TLC's order.
@@ -310,22 +354,22 @@ pub fn compare(left: &Value, right: &Value) -> Evaluated<Ordering> {
         (Value::Int(left), Value::Int(right)) => Ok(left.cmp(right)),
         (Value::Bool(left), Value::Bool(right)) => Ok(left.cmp(right)),
         (Value::Str(left), Value::Str(right)) => Ok(compare_texts(left, right)),
-        (Value::Model(left), Value::Model(right)) => {
-            check_model_types(left, right)?;
-            Ok(compare_texts(left, right))
+        (Value::Model(left_text), Value::Model(right_text)) => {
+            check_model_types(left, right, false)?;
+            Ok(compare_texts(left_text, right_text))
         }
         (Value::Model(model), _) => {
             if model.model_type() == 0 {
                 Ok(Ordering::Less)
             } else {
-                fail("typed model value")
+                typed_model_failure(left, right, false)
             }
         }
         (_, Value::Model(model)) => {
             if model.model_type() == 0 {
                 Ok(Ordering::Greater)
             } else {
-                fail("typed model value")
+                typed_model_failure(left, right, false)
             }
         }
         (Value::Function(left), Value::Function(right)) => compare_functions(left, right),
@@ -378,15 +422,15 @@ pub fn equals(left: &Value, right: &Value) -> Evaluated<bool> {
         (Value::Int(left), Value::Int(right)) => Ok(left == right),
         (Value::Bool(left), Value::Bool(right)) => Ok(left == right),
         (Value::Str(left), Value::Str(right)) => Ok(left.units == right.units),
-        (Value::Model(left), Value::Model(right)) => {
-            check_model_types(left, right)?;
-            Ok(left.units == right.units)
+        (Value::Model(left_text), Value::Model(right_text)) => {
+            check_model_types(left, right, true)?;
+            Ok(left_text.units == right_text.units)
         }
         (Value::Model(model), _) | (_, Value::Model(model)) => {
             if model.model_type() == 0 {
                 Ok(false)
             } else {
-                fail("typed model value")
+                typed_model_failure(left, right, true)
             }
         }
         (Value::Function(left), Value::Function(right)) => {
@@ -492,6 +536,32 @@ pub fn set_of(mut elements: Vec<Value>) -> Evaluated<Value> {
         distinct.push(element);
     }
     Ok(Value::Set(Rc::new(distinct)))
+}
+
+/// Where TLC fails to normalize a set enumeration: the first comparison that fails as
+/// `ValueVec.sort` inserts each element, in the order written, into those it sorted before it.
+pub fn normalize_failure(elements: &[Value]) -> Option<EvalError> {
+    let mut sorted: Vec<&Value> = Vec::with_capacity(elements.len());
+    for element in elements {
+        let (mut low, mut high) = (0, sorted.len());
+        let mut is_duplicate = false;
+        while low < high {
+            let middle = low + (high - low) / 2;
+            match compare(element, sorted[middle]) {
+                Err(error) => return Some(error),
+                Ok(Ordering::Equal) => {
+                    is_duplicate = true;
+                    break;
+                }
+                Ok(Ordering::Less) => high = middle,
+                Ok(Ordering::Greater) => low = middle + 1,
+            }
+        }
+        if !is_duplicate {
+            sorted.insert(low, element);
+        }
+    }
+    None
 }
 
 /// The position of a key in a function's domain, by binary search in TLC's order.

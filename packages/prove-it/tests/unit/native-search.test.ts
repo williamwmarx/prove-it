@@ -1561,6 +1561,22 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     ).toContainEqual(expect.stringMatching(COMPLETE));
   });
 
+  it("takes a string as a sequence in Len and Tail, as TLC's Sequences does", async () => {
+    const body = [
+      "EXTENDS Naturals, Sequences",
+      "VARIABLE x",
+      'Init == x = "abc"',
+      'Next == x # "" /\\ x\' = Tail(x)',
+      'Inv == Len(x) <= 3 /\\ (x # "" => Len(Tail(x)) = Len(x) - 1)',
+    ];
+    expect(
+      await compareWithInterpreter(
+        body,
+        "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
+      ),
+    ).toContainEqual(expect.stringMatching(COMPLETE));
+  });
+
   it("applies recursive functions as TLC keeps them lazy", async () => {
     const body = [
       "EXTENDS Naturals, FiniteSets",

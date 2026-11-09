@@ -138,8 +138,9 @@ impl Rebuilder<'_> {
             .iter()
             .filter(|(_, count)| *count >= 0)
             .collect();
-        let named = if counted.is_empty() {
-            run(sorted_function(Vec::new(), Vec::new(), Class::Plain))?
+        let (named, possible_counts) = if counted.is_empty() {
+            let empty = run(sorted_function(Vec::new(), Vec::new(), Class::Plain))?;
+            (empty.clone(), empty)
         } else {
             let mut counts = Vec::with_capacity(counted.len());
             for (_, count) in &counted {
@@ -150,11 +151,12 @@ impl Rebuilder<'_> {
             }
             let names = counted.iter().map(|(name, _)| text(name)).collect();
             let counts = run(sorted_function(names, counts, Class::Plain))?;
-            run(sorted_function(
+            let named = run(sorted_function(
                 vec![text("s:_possible")],
-                vec![Value::tuple(vec![counts])],
+                vec![Value::tuple(vec![counts.clone()])],
                 Class::Plain,
-            ))?
+            ))?;
+            (named, counts)
         };
         let counter_example = match &inputs.counter_example {
             None => run(record(vec![
@@ -258,6 +260,7 @@ impl Rebuilder<'_> {
             stats,
             counter_example,
             registers: HashMap::new(),
+            possible_counts,
         });
         let result = evaluator.evaluate(body, &Context::default());
         evaluator.runtime = None;

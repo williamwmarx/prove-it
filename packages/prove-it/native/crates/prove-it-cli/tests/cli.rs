@@ -616,3 +616,28 @@ fn reports_a_spec_sany_rejects() {
     );
     std::fs::remove_dir_all(directory).expect("removed");
 }
+
+#[test]
+fn reports_an_initial_state_tlc_fails_to_print() {
+    // TLC's Github696b: TLC keeps the set as written, then fails to compare its model values as it
+    // fingerprints the state and again as it prints it.
+    let spec = "---- MODULE Stop ----\nEXTENDS Integers, TLCExt\nVARIABLE v\nInit == v = {TLCModelValue(\"A_a\"), TLCModelValue(\"B_a\")}\nNext == UNCHANGED v\nInv == TLCModelValue(\"B_a\") \\in v\n====\n";
+    let directory =
+        std::env::temp_dir().join(format!("prove-it-cli-unprintable-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    for (extension, contents) in [
+        ("tla", spec),
+        ("cfg", "INIT Init\nNEXT Next\nINVARIANT Inv\n"),
+        ("front", ""),
+    ] {
+        std::fs::write(directory.join(format!("Stop.{extension}")), contents).expect("a file");
+    }
+    let output = run(&directory, &["Stop"]);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(255), "{text}");
+    assert!(
+        text.contains("Computing initial states...\nError: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: Attempted to compare the differently-typed model values B_a and A_a\nFinished in "),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
