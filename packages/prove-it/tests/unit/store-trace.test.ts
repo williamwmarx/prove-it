@@ -17,18 +17,21 @@ const traceFixture = (fixture: string, name: string) => {
   const result = spawnSync("bun", [CLI, `${name}.tla`], {
     cwd: join(import.meta.dirname, "../fixtures", fixture),
     encoding: "utf8",
-    env: { ...process.env, PROVE_IT_ENGINE: "debug", PROVE_IT_STORE_TRACE: path },
+    // The trace is the TypeScript engine's store's, so the TypeScript backend searches;
+    // native/ts-only-tests.json names the Rust counterpart.
+    env: {
+      ...process.env,
+      PROVE_IT_ENGINE: "debug",
+      PROVE_IT_ENGINE_BACKEND: "ts",
+      PROVE_IT_STORE_TRACE: path,
+    },
   });
   expect(result.stderr).toContain("[engine] checked ");
   return readFileSync(path, "utf8");
 };
 
-// Tests of the TypeScript engine's internals, which native/ts-only-tests.json lists with their Rust
-// counterparts, don't apply when the native engine searches.
-const isTypeScriptOnly = process.env.PROVE_IT_ENGINE_BACKEND === "rust";
-
 describe("PROVE_IT_STORE_TRACE", () => {
-  it.skipIf(isTypeScriptOnly).each([
+  it.each([
     ["queue", "Queue"],
     ["commit", "Commit"],
     ["symmetry", "Symmetry"],
@@ -60,7 +63,7 @@ describe("PROVE_IT_STORE_TRACE", () => {
     expect(result.stderr).toContain("checked 282251 states on 1 thread ");
   }, 60_000);
 
-  it.skipIf(isTypeScriptOnly)("is caught out by an operation whose result changed", () => {
+  it("is caught out by an operation whose result changed", () => {
     const lines = traceFixture("queue", "Queue").split("\n");
     const index = lines.findIndex(
       (line) => line.startsWith('["tupleOf"') || line.startsWith('["appendTuple"'),

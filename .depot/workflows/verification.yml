@@ -75,7 +75,7 @@ jobs:
               bun run build
               PROVE_IT_ENGINE_ADDON="$PWD/native/npm/linux-x64-gnu/prove-it-engine.node" bun test tests/unit/native.test.ts tests/unit/native-search.test.ts tests/unit/engine-store.test.ts tests/unit/engine-fingerprints.test.ts
           # Every unit test with the native engine searching, but those native/ts-only-tests.json
-          # lists, which read the TypeScript engine's internals and skip themselves.
+          # lists, which read the TypeScript engine's internals and pin its backend.
           - task: Unit Tests (Rust)
             command: |
               cd packages/prove-it
