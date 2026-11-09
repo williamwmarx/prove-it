@@ -61,6 +61,7 @@ pub fn extend_int(fingerprint: u64, word: i32) -> u64 {
 
 // A table that shifts a fingerprint by a fixed number of zero bytes: entry [k][b] holds the shift
 // of the fingerprint whose byte k is b and whose other bytes are zero.
+#[derive(Clone)]
 struct ShiftTable([[u64; 256]; 8]);
 
 impl ShiftTable {
@@ -124,7 +125,7 @@ pub struct Parent {
 
 /// F(v) and |v| of the store's values, computed as they are first asked for, and the tables that
 /// shift by their lengths.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Fingerprints {
     generation: Option<u32>,
     values: Vec<ValueFingerprint>,
@@ -148,6 +149,11 @@ impl Fingerprints {
     /// forget them when the store they were computed from is reset.
     pub fn reset(&mut self) {
         self.values.clear();
+    }
+
+    /// Forgets the fingerprints of the values from this id on, which an overlay has let go of.
+    pub fn forget_from(&mut self, id: Id) {
+        self.values.truncate(id as usize);
     }
 
     fn get_power(&mut self, exponent: usize) -> &ShiftTable {

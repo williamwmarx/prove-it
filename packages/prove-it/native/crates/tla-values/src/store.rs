@@ -9,6 +9,7 @@
 
 use std::collections::HashMap;
 use std::mem::take;
+use std::sync::Arc;
 
 /// The name of an interned value.
 pub type Id = u32;
@@ -123,7 +124,18 @@ fn get_model_type(units: &[u16]) -> u16 {
     }
 }
 
+/// A store, or an overlay on a store that another holds: a worker of a parallel search interns
+/// in an overlay of its own while the store under it doesn't change, and finds a value the store
+/// under it holds by that value's id there, so each value still has one id. Its own values, blocks
+/// and texts are numbered on from the base's, so an id, a block's offset and a text's index name
+/// the same thing in the base and in every overlay on it.
 pub struct Store {
+    base: Option<Arc<Store>>,
+    // Where the overlay's own ids, heap words and texts start: the base's counts when it was laid
+    // on, and 0 for a store of its own.
+    id_base: u32,
+    heap_base: usize,
+    text_base: usize,
     meta: Vec<Meta>,
     heap: Vec<u32>,
     // The intern table: a hash and an id per slot, an id of EMPTY_SLOT marking an empty one.
@@ -152,7 +164,17 @@ impl Default for Store {
 impl Store {
     /// A store reset with no strings ranked.
     pub fn new() -> Store {
-        let mut store = Store {
+        let mut store = Store::empty();
+        store.reset(std::iter::empty::<&[u16]>());
+        store
+    }
+
+    fn empty() -> Store {
+        Store {
+            base: None,
+            id_base: 0,
+            heap_base: 0,
+            text_base: 0,
             meta: Vec::with_capacity(INITIAL_CAPACITY),
             heap: Vec::with_capacity(1 << 16),
             table: vec![[0, EMPTY_SLOT]; INITIAL_CAPACITY * 2],
@@ -168,14 +190,77 @@ impl Store {
             pair_scratch: vec![0; 64],
             patch_indexes: vec![0; 16],
             patch_values: vec![0; 16],
-        };
-        store.reset(std::iter::empty::<&[u16]>());
+        }
+    }
+
+    /// An overlay on a store, which interns what the store doesn't hold while the store doesn't
+    /// change: each thread of a parallel search evaluates in one of its own.
+    pub fn overlay(base: Arc<Store>) -> Store {
+        let mut store = Store::empty();
+        store.attach(base);
         store
+    }
+
+    /// Lays an overlay on a store again, forgetting the values it held: its ids name the store's
+    /// values from now on.
+    pub fn attach(&mut self, base: Arc<Store>) {
+        assert!(base.base.is_none(), "an overlay laid on an overlay");
+        self.id_base = base.value_count() as Id;
+        self.heap_base = base.heap.len();
+        self.text_base = base.texts.len();
+        self.generation = base.generation;
+        self.small_ints.clone_from(&base.small_ints);
+        self.meta.clear();
+        self.heap.clear();
+        self.texts.clear();
+        self.table.fill([0, EMPTY_SLOT]);
+        self.string_ids.clear();
+        self.model_ids.clear();
+        self.base = Some(base);
+    }
+
+    /// Lets go of the store under an overlay, keeping the overlay's own values to import.
+    pub fn detach(&mut self) {
+        self.base = None;
+    }
+
+    /// The id here of a value of an overlay laid on this store, which the overlay may have let go
+    /// of: the overlay's own values are interned here, parts first, and `imported` keeps the id
+    /// each was given, by its position among them.
+    pub fn import(&mut self, overlay: &Store, id: Id, imported: &mut Vec<Id>) -> Id {
+        let Some(index) = id.checked_sub(overlay.id_base).map(|index| index as usize) else {
+            return id;
+        };
+        if let Some(&known) = imported.get(index).filter(|&&known| known != EMPTY_SLOT) {
+            return known;
+        }
+        let meta = overlay.meta[index];
+        let text = || &overlay.texts[meta.payload as usize - overlay.text_base].units;
+        let value = match meta.kind {
+            KIND_STRING => self.str(text()),
+            KIND_MODEL => self.model(text()),
+            KIND_SET | KIND_FUNCTION | KIND_TUPLE => {
+                let length = meta.size as usize * if meta.kind == KIND_FUNCTION { 2 } else { 1 };
+                let words: Vec<Id> = overlay.heap[meta.payload as usize - overlay.heap_base..]
+                    [..length]
+                    .iter()
+                    .map(|&word| self.import(overlay, word, imported))
+                    .collect();
+                self.intern_block(meta.kind, &words, meta.size)
+            }
+            _ => self.intern_scalar(meta.kind, meta.payload),
+        };
+        if imported.len() <= index {
+            imported.resize(overlay.meta.len(), EMPTY_SLOT);
+        }
+        imported[index] = value;
+        value
     }
 
     /// Empties the store and ranks the given texts, in order, as `setStringOrder` and then
     /// `resetStore` do.
     pub fn reset<'a>(&mut self, order: impl IntoIterator<Item = &'a [u16]>) {
+        assert!(self.base.is_none(), "an overlay reset");
         self.generation = self.generation.wrapping_add(1);
         self.order.ranks.clear();
         for text in order {
@@ -200,6 +285,7 @@ impl Store {
 
     /// Ranks texts the store's caller ranked, as a trace's `rankStrings` records.
     pub fn rank_strings<'a>(&mut self, texts: impl IntoIterator<Item = &'a [u16]>) {
+        assert!(self.base.is_none(), "an overlay ranks texts");
         for text in texts {
             self.order.rank(text);
         }
@@ -207,13 +293,22 @@ impl Store {
 
     /// TLC's rank of a text, ranking it if it has none, as `getStringRank` does.
     pub fn get_string_rank(&mut self, text: &[u16]) -> i32 {
-        self.order.rank(text)
+        match &self.base {
+            // TLC ranks a text when it first meets it, which threads would race to do.
+            Some(base) => *base
+                .order
+                .ranks
+                .get(text)
+                .expect("a text ranked while workers run"),
+            None => self.order.rank(text),
+        }
     }
 
     /// TLC's ranked texts, in the order of their ranks, as `getStringOrder` gives them.
     pub fn get_string_order(&self) -> Vec<&[u16]> {
-        let mut texts = vec![&[][..]; self.order.ranks.len()];
-        for (text, &rank) in &self.order.ranks {
+        let order = self.get_order();
+        let mut texts = vec![&[][..]; order.ranks.len()];
+        for (text, &rank) in &order.ranks {
             texts[rank as usize] = text;
         }
         texts
@@ -225,12 +320,43 @@ impl Store {
     }
 
     pub fn value_count(&self) -> usize {
-        self.meta.len()
+        self.id_base as usize + self.meta.len()
+    }
+
+    // The base's order: an overlay ranks no text of its own.
+    fn get_order(&self) -> &StringOrder {
+        self.base.as_ref().map_or(&self.order, |base| &base.order)
+    }
+
+    fn get_base(&self) -> &Store {
+        self.base.as_deref().expect("an id past the store's")
+    }
+
+    // A store of its own has no base, so its ids, offsets and indexes start at 0 and the first
+    // lookup finds them, with the bounds check indexing makes anyway. An overlay's own start past
+    // the base's, and one of the base's wraps past the overlay's.
+    #[inline(always)]
+    fn meta(&self, id: Id) -> &Meta {
+        match self.meta.get(id.wrapping_sub(self.id_base) as usize) {
+            Some(meta) => meta,
+            None => &self.get_base().meta[id as usize],
+        }
     }
 
     #[inline(always)]
-    fn meta(&self, id: Id) -> &Meta {
-        &self.meta[id as usize]
+    fn text(&self, index: i32) -> &Text {
+        match self
+            .texts
+            .get((index as usize).wrapping_sub(self.text_base))
+        {
+            Some(text) => text,
+            None => &self.get_base().texts[index as usize],
+        }
+    }
+
+    // Where the next block goes.
+    fn heap_end(&self) -> usize {
+        self.heap_base + self.heap.len()
     }
 
     #[inline(always)]
@@ -257,12 +383,12 @@ impl Store {
 
     /// The text of a string or a model value.
     pub fn text_of(&self, id: Id) -> &[u16] {
-        &self.texts[self.meta(id).payload as usize].units
+        &self.text(self.meta(id).payload).units
     }
 
     /// The rank a string or a model value's text had when the store interned it, or -1.
     pub fn text_rank_of(&self, id: Id) -> i32 {
-        self.texts[self.meta(id).payload as usize].rank
+        self.text(self.meta(id).payload).rank
     }
 
     pub fn is_model_id(&self, id: Id) -> bool {
@@ -272,7 +398,7 @@ impl Store {
     /// A model value named like A_x is typed: TLC compares it only with model values of its type
     /// or untyped ones. Returns its type's character code, or 0 if it is untyped.
     pub fn get_model_type(&self, id: Id) -> u16 {
-        self.texts[self.meta(id).payload as usize].model_type
+        self.text(self.meta(id).payload).model_type
     }
 
     pub fn is_record(&self, id: Id) -> bool {
@@ -281,15 +407,20 @@ impl Store {
 
     #[inline(always)]
     fn word(&self, at: usize) -> u32 {
-        self.heap[at]
+        match self.heap.get(at.wrapping_sub(self.heap_base)) {
+            Some(&word) => word,
+            None => self.get_base().heap[at],
+        }
     }
 
     // The heap's words at an offset. A scalar's payload is no offset, but its size is 0.
     fn words(&self, offset: usize, length: usize) -> &[u32] {
         if length == 0 {
             &[]
+        } else if offset >= self.heap_base {
+            &self.heap[offset - self.heap_base..][..length]
         } else {
-            &self.heap[offset..offset + length]
+            &self.get_base().heap[offset..offset + length]
         }
     }
 
@@ -325,12 +456,12 @@ impl Store {
         let slots = self.table.len() * 2;
         let mask = slots - 1;
         let mut next = vec![[0, EMPTY_SLOT]; slots];
-        for (id, meta) in self.meta.iter().enumerate() {
+        for (index, meta) in self.meta.iter().enumerate() {
             let mut slot = meta.hash as usize & mask;
             while next[slot][1] != EMPTY_SLOT {
                 slot = (slot + 1) & mask;
             }
-            next[slot] = [meta.hash, id as Id];
+            next[slot] = [meta.hash, self.id_base + index as Id];
         }
         self.table = next;
         self.mask = mask;
@@ -338,7 +469,7 @@ impl Store {
 
     // Adds a value whose block, if any, is already on the heap at `payload`.
     fn allocate(&mut self, kind: u8, payload: i32, size: u32, hash: u32, slot: usize) -> Id {
-        let id = self.meta.len() as Id;
+        let id = self.value_count() as Id;
         let flags = if kind >= KIND_SET {
             self.get_flags(kind, payload as usize, size as usize)
         } else {
@@ -359,7 +490,7 @@ impl Store {
     }
 
     fn get_flags(&self, kind: u8, offset: usize, size: usize) -> u8 {
-        let keys = &self.heap[offset..offset + size];
+        let keys = self.words(offset, size);
         let is_record =
             kind == KIND_FUNCTION && keys.iter().all(|&key| self.meta(key).kind == KIND_STRING);
         let is_run = match (keys.first(), keys.last()) {
@@ -374,21 +505,28 @@ impl Store {
         (if is_record { IS_RECORD } else { 0 }) | if is_run { IS_INT_RUN } else { 0 }
     }
 
+    // The id of the value with this hash that `is_match` accepts: an overlay looks in its base's
+    // table first, then in its own, and gives the slot of its own table to put a new value in.
+    #[inline(always)]
+    fn find(&self, hash: u32, is_match: impl Fn(Id) -> bool) -> Result<Id, usize> {
+        if let Some(base) = &self.base
+            && let Ok(id) = probe(&base.table, base.mask, hash, &is_match)
+        {
+            return Ok(id);
+        }
+        probe(&self.table, self.mask, hash, &is_match)
+    }
+
     // Interns a scalar: a boolean, an integer, a string, or a model value, by its payload.
     fn intern_scalar(&mut self, kind: u8, payload: i32) -> Id {
         let hash = mix(imul(kind as u32 + 1, 0x9e3779b1) ^ payload as u32);
-        let mut slot = hash as usize & self.mask;
-        loop {
-            let [stored_hash, id] = self.table[slot];
-            if id == EMPTY_SLOT {
-                return self.allocate(kind, payload, 0, hash, slot);
-            }
+        let found = self.find(hash, |id| {
             let meta = self.meta(id);
-            if stored_hash == hash && meta.kind == kind && meta.payload == payload && meta.size == 0
-            {
-                return id;
-            }
-            slot = (slot + 1) & self.mask;
+            meta.kind == kind && meta.payload == payload && meta.size == 0
+        });
+        match found {
+            Ok(id) => id,
+            Err(slot) => self.allocate(kind, payload, 0, hash, slot),
         }
     }
 
@@ -403,22 +541,19 @@ impl Store {
     // Interns a block whose hash over its words, before mixing, is already known.
     fn intern_hashed(&mut self, kind: u8, words: &[u32], size: u32, unmixed: u32) -> Id {
         let hash = mix(unmixed);
-        let mut slot = hash as usize & self.mask;
-        loop {
-            let [stored_hash, id] = self.table[slot];
-            if id == EMPTY_SLOT {
-                let offset = self.heap.len() as i32;
+        let found = self.find(hash, |id| {
+            let meta = self.meta(id);
+            meta.kind == kind
+                && meta.size == size
+                && is_same(self.words(meta.payload as usize, words.len()), words)
+        });
+        match found {
+            Ok(id) => id,
+            Err(slot) => {
+                let offset = self.heap_end() as i32;
                 self.heap.extend_from_slice(words);
-                return self.allocate(kind, offset, size, hash, slot);
+                self.allocate(kind, offset, size, hash, slot)
             }
-            let meta = *self.meta(id);
-            if stored_hash == hash && meta.kind == kind && meta.size == size {
-                let offset = meta.payload as usize;
-                if is_same(&self.heap[offset..offset + words.len()], words) {
-                    return id;
-                }
-            }
-            slot = (slot + 1) & self.mask;
         }
     }
 
@@ -473,7 +608,7 @@ impl Store {
     }
 
     fn intern_text(&mut self, units: &[u16], rank: i32) -> i32 {
-        let index = self.texts.len() as i32;
+        let index = (self.text_base + self.texts.len()) as i32;
         self.texts.push(Text {
             units: units.into(),
             rank,
@@ -485,10 +620,14 @@ impl Store {
     /// A string. One the spec mentions has a rank already; one it builds keeps whatever rank it
     /// has now.
     pub fn str(&mut self, units: &[u16]) -> Id {
-        if let Some(&id) = self.string_ids.get(units) {
+        let known = self
+            .base
+            .as_ref()
+            .and_then(|base| base.string_ids.get(units));
+        if let Some(&id) = known.or_else(|| self.string_ids.get(units)) {
             return id;
         }
-        let rank = self.order.ranks.get(units).copied().unwrap_or(-1);
+        let rank = self.get_order().ranks.get(units).copied().unwrap_or(-1);
         let index = self.intern_text(units, rank);
         let id = self.intern_scalar(KIND_STRING, index);
         self.string_ids.insert(units.into(), id);
@@ -497,9 +636,14 @@ impl Store {
 
     /// A model value, ranked as TLC ranks its name.
     pub fn model(&mut self, units: &[u16]) -> Id {
-        if let Some(&id) = self.model_ids.get(units) {
+        let known = self
+            .base
+            .as_ref()
+            .and_then(|base| base.model_ids.get(units));
+        if let Some(&id) = known.or_else(|| self.model_ids.get(units)) {
             return id;
         }
+        assert!(self.base.is_none(), "a model value made while workers run");
         let rank = self.order.rank(units);
         let index = self.intern_text(units, rank);
         let id = self.intern_scalar(KIND_MODEL, index);
@@ -537,8 +681,7 @@ impl Store {
                 KIND_BOOL => Ok(if left < right { -1 } else { 1 }),
                 KIND_MODEL => {
                     self.check_model_types(left, right)?;
-                    Ok(self.texts[left_meta.payload as usize].rank
-                        - self.texts[right_meta.payload as usize].rank)
+                    Ok(self.text(left_meta.payload).rank - self.text(right_meta.payload).rank)
                 }
                 KIND_SET => self.compare_sets(left, right),
                 _ => self.compare_functions(left, right),
@@ -565,7 +708,7 @@ impl Store {
     }
 
     fn compare_texts(&self, left: i32, right: i32) -> i32 {
-        let (left, right) = (&self.texts[left as usize], &self.texts[right as usize]);
+        let (left, right) = (self.text(left), self.text(right));
         match (left.rank, right.rank) {
             (-1, -1) => {
                 if left.units < right.units {
@@ -1110,25 +1253,22 @@ impl Store {
             .iter()
             .fold(shape.prefix, |hash, &value| fold(hash, value));
         let hash = mix(unmixed);
-        let mut slot = hash as usize & self.mask;
-        loop {
-            let [stored_hash, id] = self.table[slot];
-            if id == EMPTY_SLOT {
-                let start = self.heap.len() as i32;
+        let found = self.find(hash, |id| {
+            let meta = self.meta(id);
+            let other = meta.payload as usize;
+            meta.kind == KIND_FUNCTION
+                && meta.size == size as u32
+                && is_same(self.words(other + size, size), values)
+                && is_same(self.words(other, size), &shape.keys)
+        });
+        match found {
+            Ok(id) => id,
+            Err(slot) => {
+                let start = self.heap_end() as i32;
                 self.heap.extend_from_slice(&shape.keys);
                 self.heap.extend_from_slice(values);
-                return self.allocate(KIND_FUNCTION, start, size as u32, hash, slot);
+                self.allocate(KIND_FUNCTION, start, size as u32, hash, slot)
             }
-            let meta = *self.meta(id);
-            if stored_hash == hash && meta.kind == KIND_FUNCTION && meta.size == size as u32 {
-                let other = meta.payload as usize;
-                if is_same(&self.heap[other + size..other + 2 * size], values)
-                    && is_same(&self.heap[other..other + size], &shape.keys)
-                {
-                    return id;
-                }
-            }
-            slot = (slot + 1) & self.mask;
         }
     }
 
@@ -1173,11 +1313,11 @@ impl Store {
             return EMPTY_TUPLE;
         }
         let offset = self.offset_of(set) as usize;
-        if self.is_position_keys(&self.heap[offset..offset + size]) {
+        if self.is_position_keys(self.words(offset, size)) {
             return self.intern_block(KIND_TUPLE, &values[..size], size as u32);
         }
         let mut words = self.take_pair_scratch(2 * size);
-        words[..size].copy_from_slice(&self.heap[offset..offset + size]);
+        words[..size].copy_from_slice(self.words(offset, size));
         words[size..2 * size].copy_from_slice(&values[..size]);
         let id = self.intern_block(KIND_FUNCTION, &words[..2 * size], size as u32);
         self.pair_scratch = words;
@@ -1393,50 +1533,49 @@ impl Store {
             unmixed = fold(unmixed, self.word(offset + index));
         }
         let hash = mix(unmixed);
-        let mut slot = hash as usize & self.mask;
-        loop {
-            let [stored_hash, id] = self.table[slot];
-            if id == EMPTY_SLOT {
+        let found = self.find(hash, |id| {
+            let other = self.meta(id);
+            other.kind == meta.kind
+                && other.size == meta.size
+                && self.is_patched(other.payload as usize, offset, length, count)
+        });
+        match found {
+            Ok(id) => id,
+            Err(slot) => {
                 let start = self.heap.len();
-                self.heap.extend_from_within(offset..offset + length);
+                match self.base.as_ref().filter(|_| offset < self.heap_base) {
+                    Some(base) => self
+                        .heap
+                        .extend_from_slice(&base.heap[offset..offset + length]),
+                    None => {
+                        let from = offset - self.heap_base;
+                        self.heap.extend_from_within(from..from + length);
+                    }
+                }
                 for patch in 0..count {
                     self.heap[start + self.patch_indexes[patch] as usize] =
                         self.patch_values[patch];
                 }
-                return self.allocate(meta.kind, start as i32, meta.size, hash, slot);
+                let offset = (self.heap_base + start) as i32;
+                self.allocate(meta.kind, offset, meta.size, hash, slot)
             }
-            let other = *self.meta(id);
-            if stored_hash == hash
-                && other.kind == meta.kind
-                && other.size == meta.size
-                && self.is_patched(other.payload as usize, offset, length, count)
-            {
-                return id;
-            }
-            slot = (slot + 1) & self.mask;
         }
     }
 
     // Whether the block at other is the block at offset with the patches applied.
     fn is_patched(&self, other: usize, offset: usize, length: usize, count: usize) -> bool {
-        let heap = &self.heap;
+        let (other, source) = (self.words(other, length), self.words(offset, length));
         let mut from = 0;
         for patch in 0..count {
             let to = self.patch_indexes[patch] as usize;
-            if heap[other + to] != self.patch_values[patch]
-                || !is_same(
-                    &heap[other + from..other + to],
-                    &heap[offset + from..offset + to],
-                )
+            if other[to] != self.patch_values[patch]
+                || !is_same(&other[from..to], &source[from..to])
             {
                 return false;
             }
             from = to + 1;
         }
-        is_same(
-            &heap[other + from..other + length],
-            &heap[offset + from..offset + length],
-        )
+        is_same(&other[from..length], &source[from..length])
     }
 
     /// `[fn EXCEPT ![key] = value]`.
@@ -1542,7 +1681,7 @@ impl Store {
         let offset = self.offset_of(tuple) as usize;
         let length = (to - from) as usize;
         let mut words = self.take_scratch(length);
-        words[..length].copy_from_slice(&self.heap[offset + from as usize..][..length]);
+        words[..length].copy_from_slice(self.words(offset + from as usize, length));
         self.scratch = words;
         self.intern_scratch(KIND_TUPLE, length, length as u32)
     }
@@ -1561,9 +1700,8 @@ impl Store {
             self.offset_of(right) as usize,
         );
         let mut words = self.take_scratch(length);
-        words[..left_size].copy_from_slice(&self.heap[left_offset..left_offset + left_size]);
-        words[left_size..length]
-            .copy_from_slice(&self.heap[right_offset..right_offset + right_size]);
+        words[..left_size].copy_from_slice(self.words(left_offset, left_size));
+        words[left_size..length].copy_from_slice(self.words(right_offset, right_size));
         self.scratch = words;
         self.intern_scratch(KIND_TUPLE, length, length as u32)
     }
@@ -1584,6 +1722,28 @@ enum Merge {
     Union,
     Intersection,
     Difference,
+}
+
+// The id in a table of a value with this hash that `is_match` accepts, or the empty slot where the
+// probe ended.
+#[inline(always)]
+fn probe(
+    table: &[[u32; 2]],
+    mask: usize,
+    hash: u32,
+    is_match: &impl Fn(Id) -> bool,
+) -> Result<Id, usize> {
+    let mut slot = hash as usize & mask;
+    loop {
+        let [stored_hash, id] = table[slot];
+        if id == EMPTY_SLOT {
+            return Err(slot);
+        }
+        if stored_hash == hash && is_match(id) {
+            return Ok(id);
+        }
+        slot = (slot + 1) & mask;
+    }
 }
 
 // Whether two blocks of one length hold the same words. Blocks are short, and a loop that stops at

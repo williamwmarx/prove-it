@@ -14,6 +14,7 @@ use tla_values::{Id, Store};
 
 const NONE: Id = u32::MAX;
 
+#[derive(Clone)]
 pub struct Canonicalizer {
     permutations: Vec<HashMap<Id, Id>>,
     // TLC sorts each image, which fails where it mixes model values of different types; the images
@@ -74,6 +75,17 @@ impl Canonicalizer {
             positions: Vec::new(),
             stamp: 0,
             smallest: vec![NONE; width],
+        }
+    }
+
+    /// Forgets the images of ids from `bound` on, and the images that are such ids, which the
+    /// store has let go of.
+    pub fn forget_from(&mut self, bound: Id) {
+        for table in self.images.iter_mut().chain(&mut self.larger_than) {
+            table.truncate(bound as usize);
+            for image in table.iter_mut().filter(|image| **image >= bound) {
+                *image = NONE;
+            }
         }
     }
 

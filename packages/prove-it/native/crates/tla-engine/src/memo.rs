@@ -64,6 +64,7 @@ fn wide_home(keys: &[Id]) -> usize {
 }
 
 /// A table of the values of one expression, keyed by the ids it reads.
+#[derive(Clone)]
 pub struct MemoTable {
     width: usize,
     // A table of width 1 is keyed by one id, so while its keys are dense enough its values are an
@@ -215,6 +216,43 @@ impl MemoTable {
         }
         self.size += 1;
         true
+    }
+
+    /// Forgets every entry that reads or holds an id from `bound` on, ids a store has let go of.
+    pub fn forget_from(&mut self, bound: Id) {
+        if self.is_direct {
+            self.direct.truncate(bound as usize);
+            for value in self.direct.iter_mut().filter(|value| **value >= bound) {
+                *value = EMPTY;
+            }
+            self.size = self.direct.iter().filter(|&&value| value != EMPTY).count();
+            return;
+        }
+        let capacity = self.capacity();
+        self.size = 0;
+        if self.width <= 2 {
+            let old = std::mem::replace(&mut self.packed, vec![EMPTY_PACKED; capacity]);
+            for entry in old {
+                if entry.value < bound
+                    && (entry.key as Id) < bound
+                    && ((entry.key >> 32) as Id) < bound
+                {
+                    let slot = self.free_packed(entry.key);
+                    self.packed[slot] = entry;
+                    self.size += 1;
+                }
+            }
+            return;
+        }
+        let stride = self.width + 1;
+        let old = std::mem::replace(&mut self.wide, vec![EMPTY; capacity * stride]);
+        for row in old.chunks_exact(stride) {
+            if row.iter().all(|&id| id < bound) {
+                let slot = self.free_wide(&row[1..]);
+                self.wide[slot * stride..(slot + 1) * stride].copy_from_slice(row);
+                self.size += 1;
+            }
+        }
     }
 
     /// The value stored for the keys, or [`EMPTY`].
@@ -421,6 +459,27 @@ mod tests {
         }
         assert!(!table.is_enabled());
         assert_eq!(table.get(&[0, 0]), EMPTY);
+    }
+
+    #[test]
+    fn forgets_only_the_entries_that_read_or_hold_forgotten_ids() {
+        for width in 1..=6 {
+            let mut table = MemoTable::new(width);
+            let keys = |key: u32| vec![key; width];
+            for key in 0..100u32 {
+                table.set(&keys(key), 99 - key);
+            }
+            table.forget_from(60);
+            for key in 0..100u32 {
+                let expected = if key < 60 && 99 - key < 60 {
+                    99 - key
+                } else {
+                    EMPTY
+                };
+                assert_eq!(table.get(&keys(key)), expected, "width {width}, key {key}");
+            }
+            assert_eq!(table.size(), 20);
+        }
     }
 
     #[test]
