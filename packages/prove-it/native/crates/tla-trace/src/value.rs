@@ -334,6 +334,8 @@ pub fn elements(value: &Value) -> Evaluated<Rc<Vec<Value>>> {
     match value {
         Value::Set(elements) => Ok(Rc::clone(elements)),
         Value::Interval(low, high) => Ok(Rc::new((*low..=*high).map(Value::Int).collect())),
+        // TLC finds a set its parts empty to be empty before it enumerates any of them.
+        Value::Lazy(_) if crate::sets::is_empty_by_argument(value) => Ok(Rc::new(Vec::new())),
         Value::Lazy(lazy) => crate::sets::enumerate(lazy).map(Rc::new),
         _ => fail(format!("expected a set, not a {}", value.kind_name())),
     }

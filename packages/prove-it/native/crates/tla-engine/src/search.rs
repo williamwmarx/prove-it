@@ -1870,7 +1870,8 @@ struct Started {
     /// The configuration error a constant definition's value gave, which ends the startup.
     config_error: Option<String>,
     /// The assumption the engine left to its caller, by its position.
-    delegated: Option<u32>,
+    // The assumption left to the caller, and why the engine didn't evaluate it.
+    delegated: Option<(u32, Bail)>,
 }
 
 // TLC's startup: it evaluates the substitutes and the constant definitions, then the assumptions
@@ -1962,7 +1963,8 @@ fn run_startup(machine: &mut Machine<'_>, startup: &Startup, is_native: bool) ->
 struct Assumed {
     violated: Option<String>,
     failed: Option<(u32, Bail)>,
-    delegated: Option<u32>,
+    // The assumption left to the caller, and why the engine didn't evaluate it.
+    delegated: Option<(u32, Bail)>,
 }
 
 // The assumptions from `from` on, until one is false, fails, or is left to the caller.
@@ -1984,8 +1986,10 @@ fn check_assumptions(
                 assumed.violated = Some(name.clone());
                 break;
             }
-            Err(Bail(DELEGATED_ASSUMPTION)) if is_native => {
-                assumed.delegated = Some(position as u32);
+            // One the engine stops at a limit of is the caller's too, whose evaluator follows
+            // TLC further, as where TLC compares two sets it can't enumerate part by part.
+            Err(bail) if is_native && is_engine_limit(bail.0) => {
+                assumed.delegated = Some((position as u32, bail));
                 break;
             }
             Err(bail) if is_engine_limit(bail.0) && !is_native => return Err(bail),
@@ -2147,10 +2151,22 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             };
             // The caller checks each assumption the engine leaves to it, and the engine goes on
             // from the generator's state it leaves.
-            while let Some(position) = assumed.delegated {
+            while let Some((position, bail)) = assumed.delegated {
                 let delegated = match reporter.check_assumption(position) {
                     Ok(delegated) => delegated,
-                    Err(reason) => return SearchOutcome::Declined(reason),
+                    Err(reason) if bail.0 == DELEGATED_ASSUMPTION => {
+                        return SearchOutcome::Declined(reason);
+                    }
+                    // Where the caller can't check one the engine stopped at a limit of, TLC may
+                    // fail there, which the caller reports as it does any that fails.
+                    Err(_) => {
+                        assumed = Assumed {
+                            violated: None,
+                            failed: Some((position, bail)),
+                            delegated: None,
+                        };
+                        break;
+                    }
                 };
                 if !delegated.holds {
                     let name = context.startup.assumptions[position as usize].1.clone();

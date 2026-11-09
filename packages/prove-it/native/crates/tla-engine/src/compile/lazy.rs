@@ -20,7 +20,7 @@ const MAXIMUM_SUBSET_BASE: usize = 20;
 /// this many elements or more (`SubsetValue.size`).
 pub(crate) const OVERFLOWING_SUBSET_BASE: usize = 31;
 pub(crate) const SUBSET_OVERFLOW: &str = "an overflow counting the elements of a power set";
-const MAXIMUM_ELEMENTS: f64 = (1u64 << 24) as f64;
+pub(crate) const MAXIMUM_ELEMENTS: f64 = (1u64 << 24) as f64;
 
 /// What a set expression's value is, as the interpreter builds it.
 pub(crate) type Reference = Arc<dyn Fn(&mut Machine<'_>) -> Outcome<Lazy> + Send + Sync>;
@@ -340,10 +340,72 @@ impl Lazy {
                 }
                 false
             }
+            // `UnionValue.isEmpty`: each set of the union is.
+            Lazy::Union(base) if base.is_enumerable() => {
+                for set in base.enumerate(machine)? {
+                    let set = Self::set(machine, set)?;
+                    if machine.store.size_of(set) != 0 {
+                        return Ok(false);
+                    }
+                }
+                true
+            }
             Lazy::Filtered(..) | Lazy::Operation(..) | Lazy::Union(_) => {
                 self.enumerate(machine)?.is_empty()
             }
         })
+    }
+
+    /// TLC's `size` of the set, which sets of functions, records and tuples answer from their
+    /// parts: an empty part decides before one TLC can't enumerate, or one too large to, is
+    /// asked, and a range of one element makes one function whatever the domain
+    /// (`SetOfFcnsValue.size`, `SetOfRcdsValue.size`, `SetOfTuplesValue.size`).
+    pub(crate) fn size(&self, machine: &mut Machine<'_>) -> Outcome<u64> {
+        const OVERFLOW: Bail = Bail("a lazy set too large to count");
+        let bounded = |size: u64| {
+            if size > i32::MAX as u64 {
+                Err(OVERFLOW)
+            } else {
+                Ok(size)
+            }
+        };
+        match self {
+            Lazy::Set(set) => Ok(u64::from(machine.store.size_of(Self::set(machine, *set)?))),
+            Lazy::Infinite(_) => Err(Bail("counted the elements of an infinite set")),
+            Lazy::Subset(base) => {
+                let size = base.size(machine)?;
+                if size >= 31 {
+                    return Err(Bail(SUBSET_OVERFLOW));
+                }
+                Ok(1 << size)
+            }
+            Lazy::FunctionSet(domain, range) => {
+                if domain.is_empty(machine)? {
+                    return Ok(1);
+                }
+                if range.is_empty(machine)? {
+                    return Ok(0);
+                }
+                let range = range.size(machine)?;
+                if range == 1 {
+                    return Ok(1);
+                }
+                let domain = domain.size(machine)?;
+                (0..domain).try_fold(1u64, |size, _| bounded(size * range))
+            }
+            Lazy::RecordSet(_, sets) | Lazy::Product(sets) => {
+                if self.is_empty(machine)? {
+                    return Ok(0);
+                }
+                sets.iter()
+                    .try_fold(1u64, |size, set| bounded(size * set.size(machine)?))
+            }
+            Lazy::Filtered(..) | Lazy::Operation(..) | Lazy::Union(_) => {
+                let elements = self.enumerate(machine)?;
+                let set = machine.store.set_of(&elements)?;
+                Ok(u64::from(machine.store.size_of(set)))
+            }
+        }
     }
 
     /// Membership as the interpreter tests it (`isElementOf`), failing where it fails.
