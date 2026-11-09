@@ -98,6 +98,8 @@ const GOLDEN_MODELS = [
   "tlc/tlatools/org.lamport.tlatools/test-model/Github1389Counting.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/Github710b.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/Github710d.cfg",
+  "tlc/tlatools/org.lamport.tlatools/test-model/Github607.cfg",
+  "tla-rs/test_cases/should_error/liveness_error.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/examples/FiniteMonotonic/MCDistributedReplicatedLog.cfg",
   "mongodb-txns/MultiShardTxn/Storage.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/examples/ewd998/AsyncTerminationDetection.cfg",

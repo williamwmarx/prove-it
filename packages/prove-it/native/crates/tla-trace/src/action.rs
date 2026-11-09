@@ -9,9 +9,9 @@ use std::collections::HashSet;
 
 use tla_ir::{Bound, Definition, DefinitionForm, Name, NodeId, NodeKind, PathStep, Resolution};
 
-use crate::eval::{Context, Evaluator, StackFrame, bound_expression};
+use crate::eval::{Context, Evaluator, PRIMED_UNASSIGNED, StackFrame, bound_expression};
 use crate::sets::is_member;
-use crate::value::{Evaluated, Value, elements, equals, fail, is_same};
+use crate::value::{Evaluated, TlcMessage, Value, elements, equals, fail, fail_with, is_same};
 
 /// What a walk calls for each state it completes; it returns false to stop the walk.
 pub type Visit<'v, 'ir> = dyn FnMut(&mut Evaluator<'ir>) -> Evaluated<bool> + 'v;
@@ -478,7 +478,27 @@ impl<'ir> Evaluator<'ir> {
                 let subscript = *subscript;
                 self.walk(*action, context, is_init, &mut |evaluator| {
                     let now = evaluator.evaluate(subscript, context)?;
-                    let after = evaluator.evaluate(subscript, &context.primed(true))?;
+                    // TLC's `Tool#enabled` names the fairness condition where A leaves a variable
+                    // of v unassigned (`toUnspecifiedSubscriptError`), unlike TLC 1.7.4.
+                    let after = evaluator
+                        .evaluate(subscript, &context.primed(true))
+                        .or_else(|error| {
+                            match error.reason.strip_prefix(PRIMED_UNASSIGNED) {
+                                Some(variable) if evaluator.is_enabling && !evaluator.is_174() => {
+                                    fail_with(
+                                        error.reason.clone(),
+                                        TlcMessage {
+                                            text: format!(
+                                            "The action formula A appearing in a WF_v(A) or SF_v(A) operator does not specify the primed value of the variable {variable} occurring in the state formula v.\n"
+                                        ),
+                                            code: Some(2148),
+                                            is_eval_exception: false,
+                                        },
+                                    )
+                                }
+                                _ => Err(error),
+                            }
+                        })?;
                     if equals(&now, &after)? {
                         Ok(true)
                     } else {

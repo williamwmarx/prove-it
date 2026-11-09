@@ -228,6 +228,9 @@ pub enum StackFrame {
     Prefix(NodeId, usize),
 }
 
+/// The reason for a primed variable a state doesn't assign, before the variable's name.
+pub(crate) const PRIMED_UNASSIGNED: &str = "primed variable not assigned: ";
+
 pub struct Evaluator<'ir> {
     pub ir: &'ir Ir,
     texts: Vec<Option<Rc<Text>>>,
@@ -247,6 +250,8 @@ pub struct Evaluator<'ir> {
     /// The state a walk looks for, where a value that differs from it can't lead to it: a walk
     /// then drops an assignment of another value, as nothing else follows from it.
     pub target: Option<Vec<Value>>,
+    /// Whether a walk is ENABLED's, which TLC's `Tool#enabled` runs.
+    pub(crate) is_enabling: bool,
     /// Where a replay of a failure is, as TLC's `CallStackTool` records it: each node the walks and
     /// the evaluation are in, outermost first, frozen once an evaluation fails.
     pub call_stack: Option<CallStack>,
@@ -380,6 +385,7 @@ impl<'ir> Evaluator<'ir> {
             level: 0,
             printed: Vec::new(),
             target: None,
+            is_enabling: false,
             call_stack: None,
             choices: Vec::new(),
             random: None,
@@ -515,9 +521,9 @@ impl<'ir> Evaluator<'ir> {
             // (`createUnassignedError` in `evaluate.ts`).
             Some(None) => fail_with(
                 if context.is_primed {
-                    "primed variable not assigned"
+                    format!("{PRIMED_UNASSIGNED}{}", self.name(name.text))
                 } else {
-                    "variable not assigned"
+                    "variable not assigned".into()
                 },
                 TlcMessage {
                     text: format!(
@@ -668,6 +674,7 @@ impl<'ir> Evaluator<'ir> {
         let width = self.next.len();
         let next = std::mem::replace(&mut self.next, vec![None; width]);
         let target = self.target.take();
+        let is_enabling = std::mem::replace(&mut self.is_enabling, true);
         let mut is_enabled = false;
         let walked = self.walk(action, context, false, &mut |_| {
             is_enabled = true;
@@ -675,6 +682,7 @@ impl<'ir> Evaluator<'ir> {
         });
         self.next = next;
         self.target = target;
+        self.is_enabling = is_enabling;
         walked?;
         Ok(Value::Bool(is_enabled))
     }
