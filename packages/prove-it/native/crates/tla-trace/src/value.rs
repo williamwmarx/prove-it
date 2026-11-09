@@ -386,10 +386,19 @@ pub(crate) fn normalize(value: &Value) {
 }
 
 /// The elements of a set TLC can enumerate, in TLC's order.
+/// The most elements of an interval the evaluator builds.
+const MAXIMUM_INTERVAL: usize = 1 << 24;
+
 pub fn elements(value: &Value) -> Evaluated<Rc<Vec<Value>>> {
     normalize(value);
     match value {
         Value::Set(elements) => Ok(Rc::clone(elements)),
+        // An interval TLC walks without building it, which the evaluator builds, up to a size.
+        Value::Interval(low, high)
+            if i64::from(*high) - i64::from(*low) >= MAXIMUM_INTERVAL as i64 =>
+        {
+            fail("an interval too large to build")
+        }
         Value::Interval(low, high) => Ok(Rc::new((*low..=*high).map(Value::Int).collect())),
         Value::Lazy(lazy) => crate::sets::enumerate(lazy).map(Rc::new),
         _ => fail(format!("expected a set, not a {}", value.kind_name())),
