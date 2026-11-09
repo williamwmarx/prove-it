@@ -3,9 +3,6 @@
 
 mod args;
 mod check;
-// HACK: the search reports a run-time error stop to print (`ViolationKind::Error`) once the
-// gaps session lands it; until then nothing calls the module.
-#[allow(dead_code)]
 mod failure;
 mod files;
 mod front;

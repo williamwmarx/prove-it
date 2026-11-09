@@ -82,6 +82,7 @@ const GOLDEN_MODELS = [
   "tlc/tlatools/org.lamport.tlatools/test-model/RandomElementXandY.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/RandomSubset.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/RandomSubsetNextTuples.cfg",
+  "tlc/tlatools/org.lamport.tlatools/test-model/coverage/I.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/Github1389Counting.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/Github710b.cfg",
 ];
