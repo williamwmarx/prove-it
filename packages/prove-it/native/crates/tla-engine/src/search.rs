@@ -1545,7 +1545,8 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 });
                 let work = per_state.map_or(Duration::ZERO, |per_state| per_state * states as u32);
                 // A thread takes at least half the fewest states a level shares, or at least
-                // THREAD_WORK of its predicted work, whichever gives more threads.
+                // THREAD_WORK of its predicted work, whichever gives more threads, and at least
+                // one state.
                 let by_count = if states >= settings.minimum_shared_level {
                     states / settings.minimum_shared_level.div_ceil(2).max(1)
                 } else {
@@ -1556,7 +1557,8 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 } else {
                     1
                 };
-                let threads = thread_count.min(by_count.max(by_work));
+                // A thread claims whole states, so no more threads than states.
+                let threads = thread_count.min(by_count.max(by_work)).min(states);
                 level_start = (
                     expanding,
                     Instant::now(),
