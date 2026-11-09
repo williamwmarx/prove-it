@@ -595,7 +595,7 @@ fn least_in_orbit(
     Ok(least)
 }
 
-fn is_same(store: &Store, target: &[Id], state: &[Value]) -> bool {
+pub(crate) fn is_same(store: &Store, target: &[Id], state: &[Value]) -> bool {
     state
         .iter()
         .zip(target)

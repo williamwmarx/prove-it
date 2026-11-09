@@ -191,7 +191,18 @@ fn evaluate(ir: &Ir, stop: &ErrorStop<'_>) -> Result<Report, String> {
             Site::Invariant(_) => Ending::Violation,
             _ => Ending::Kept,
         };
-        let trace = rebuilder.rebuild(stop.store, &stop.states, &stop.actions, ending)?;
+        // TLC prints no trace for a check of an initial state that fails.
+        let trace = if matches!(
+            stop.site,
+            Site::InitialConstraint(_) | Site::InitialInvariant(_)
+        ) {
+            Trace {
+                states: Vec::new(),
+                trace_output: Vec::new(),
+            }
+        } else {
+            rebuilder.rebuild(stop.store, &stop.states, &stop.actions, ending)?
+        };
         // TLC rebuilds the trace once more after it prints it, then replays the failure.
         let after = trace
             .trace_output
