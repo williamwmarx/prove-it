@@ -13,13 +13,14 @@
 // --native names the native prove-it binary (native/DESIGN.md 13), which then runs on each model
 // too, with the front the first backend's run recorded, and is compared with TLC as tlc/native.
 // That pair fails nothing yet: the run reports how many runs it matches and why the others differ.
-// --native-only runs the native binary alone, with no recorded front, as it will run once the
-// TypeScript CLI is retired: tla-front lowers each model and the binary prints all of TLC's output.
+// With --native-front, the binary runs with no recorded front, as tla-front is its whole front end.
+// --native-only runs the native binary alone that way, without the TypeScript runs, so a pass over
+// the whole corpus takes minutes.
 // A run without a TLC recording fails the check, since nothing compared it with TLC. --timeout-ms
 // stops a checker that runs longer, and without it nothing does.
 // Usage: bun scripts/run.ts differential [--max-tlc-ms 20000] [--filter text] [--concurrency 3]
 //        [--modes default,tool] [--stop-at] [--timeout-ms ms] [--update] [--out path]
-//        [--backend ts | --compare-backends] [--native path [--native-only]]
+//        [--backend ts | --compare-backends] [--native path [--native-front | --native-only]]
 
 import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -97,6 +98,7 @@ const backends = getBackends();
 // Resolved here, since each checker runs from its model's directory.
 const nativeOption = getOption("--native");
 const nativeBinary = nativeOption && resolve(nativeOption);
+const isNativeFront = process.argv.includes("--native-front");
 const isNativeOnly = process.argv.includes("--native-only");
 if (isNativeOnly && !nativeBinary) throw new Error("--native-only needs --native");
 // The native binary reads the IR the Rust engine reads, so the run on that backend records its
@@ -185,10 +187,13 @@ const runNative = async (
   const stem = basename(model.specPath, ".tla");
   const front = getFront(recorded.stdout);
   if (front !== undefined) writeFileSync(join(directory, `${stem}.front`), front);
-  const native = await runChecker(binary, [], model, mode, {
-    ...process.env,
-    PROVE_IT_FRONT: directory,
-  });
+  const native = await runChecker(
+    binary,
+    [],
+    model,
+    mode,
+    isNativeFront ? process.env : { ...process.env, PROVE_IT_FRONT: directory },
+  );
   rmSync(directory, { recursive: true, force: true });
   return native;
 };

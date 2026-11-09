@@ -1063,3 +1063,85 @@ fn reports_a_fingerprint_failure_tlcs_replay_throws() {
     assert!(text.contains(include_str!("empty-subset-eq.txt")), "{text}");
     std::fs::remove_dir_all(directory).expect("removed");
 }
+
+// Runs the binary on a spec of its own with tla-front as its whole front end.
+fn run_front(test: &str, spec: &str, config: &str, args: &[&str]) -> (Output, PathBuf) {
+    let directory =
+        std::env::temp_dir().join(format!("prove-it-cli-{test}-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    let name = spec
+        .split_whitespace()
+        .nth(2)
+        .expect("the module's name")
+        .to_string();
+    std::fs::write(directory.join(format!("{name}.tla")), spec).expect("the spec");
+    std::fs::write(directory.join(format!("{name}.cfg")), config).expect("the configuration");
+    let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
+        .args(["-noTE"].iter().chain(args).chain([&name.as_str()]))
+        .current_dir(&directory)
+        .env_remove("PROVE_IT_FRONT")
+        .output()
+        .expect("the binary runs");
+    (output, directory)
+}
+
+// What a run printed from `Starting...` to computing the initial states.
+fn get_startup(text: &str) -> &str {
+    let start = text.find("Starting... (").expect("the start");
+    let start = start + text[start..].find('\n').expect("a line") + 1;
+    let end = text
+        .find("Computing initial states...")
+        .unwrap_or(text.len());
+    &text[start..end]
+}
+
+#[test]
+fn prints_what_tlc_prints_as_it_starts_without_a_recorded_front() {
+    let (output, directory) = run_front(
+        "startup",
+        "---- MODULE Sym ----\nEXTENDS TLC, Naturals\nCONSTANTS A, B\nVARIABLE x\nPerms == Permutations(A) \\cup Permutations(B)\nShown == Print(\"startup\", TRUE)\nInit == x \\in A /\\ Shown\nNext == x' \\in A\n====\n",
+        "CONSTANTS A = {a1} B = {b1, b2}\nINIT Init\nNEXT Next\nSYMMETRY Perms\n",
+        &[],
+    );
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(0), "{text}");
+    assert!(
+        text.contains("Semantic processing of module Sym\n"),
+        "{text}"
+    );
+    assert_eq!(
+        get_startup(&text),
+        "\"startup\"  TRUE\nWarning: The set A has been defined to be a symmetry set but contains less than two elements.\n(Use the -nowarning option to disable this warning.)\n",
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn compares_tlcs_message_in_an_assert_error_assumption() {
+    let spec = "---- MODULE AE ----\nEXTENDS TLC, TLCExt, Naturals\nVARIABLE x\nASSUME Print(\"before\", TRUE)\nASSUME AssertError(\"Attempted to check if the value:\\n\\\"d1\\\"\\nis an element of Nat.\", \"d1\" \\in Nat)\nASSUME RandomElement(1..100) \\in 1..100\nASSUME Print(\"after\", TRUE)\nInit == x = 1\nNext == UNCHANGED x\n====\n";
+    let (output, directory) = run_front("assert-error", spec, "INIT Init\nNEXT Next\n", &[]);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(0), "{text}");
+    assert_eq!(
+        get_startup(&text),
+        "\"before\"  TRUE\n\"after\"  TRUE\n",
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+    // Under -tool, the message TLC raises with a code holds the code's markers, so the
+    // assumption is false.
+    let (output, directory) = run_front(
+        "assert-error-tool",
+        spec,
+        "INIT Init\nNEXT Next\n",
+        &["-tool"],
+    );
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(10), "{text}");
+    assert!(
+        text.contains("\"before\"  TRUE\n@!@!@STARTMSG 2104:1 @!@!@\nAssumption line 5, col 8 to line 5, col 99 of module AE is false.\n"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}

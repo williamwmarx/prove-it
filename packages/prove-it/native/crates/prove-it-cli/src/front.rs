@@ -2,13 +2,13 @@
 //! output and the warnings. The binary reads a recorded front, which the differential makes with
 //! the TypeScript CLI, from the directory `PROVE_IT_FRONT` names: `<Spec>.front`, and `<Spec>.ir`
 //! when the TypeScript CLI lowered the model. Without a recorded IR, `tla-front` lowers the model
-//! itself (native/DESIGN.md 13.2); the text it prints will come from `tla-front` too.
+//! itself (native/DESIGN.md 13.2). Without `PROVE_IT_FRONT`, `tla-front` is the whole front end.
 
 use std::path::Path;
 
 use tla_front::TlcVersion;
 use tla_front::errors::FrontError;
-use tla_front::model::{ModelOptions, StartupMessage, lower_front};
+use tla_front::model::{LoweredModel, ModelOptions, StartupMessage, lower_front};
 use tla_front::report::{ReportOptions, SanyText, get_sany_text};
 use tla_front::tlc_messages::CodedError;
 
@@ -29,23 +29,20 @@ pub struct Failure {
 
 pub struct Front {
     pub ir: Vec<u8>,
-    /// What TLC prints after the banner and before it computes the initial states.
-    pub text: FrontText,
+    pub output: Output,
 }
 
-/// What TLC prints of the front: recorded by the differential, or written by tla-front.
-pub enum FrontText {
-    /// What TLC printed from the banner to "Computing initial states...", as the TypeScript CLI
-    /// printed it; the engine's startup hooks stay silent, since it holds what they report.
+/// What TLC prints after the banner and before it computes the initial states.
+pub enum Output {
+    /// As the differential recorded it.
     Recorded(Vec<u8>),
-    /// What tla-front writes, printed as TLC prints it: SANY's report, framed by 2220
-    /// "Starting SANY..." and 2219 "SANY finished." under -tool, then 2185 `Starting... (…)`, then
-    /// the search's startup, whose Print and PrintT output and symmetry warnings the engine's
-    /// hooks report, with `startup_messages` printed at `startup_done`, before the assumptions.
-    // HACK: read once the CLI wires the engine's startup hooks; until then check.rs declines it.
-    #[allow(dead_code)]
+    /// SANY's report as tla-front writes it. The rest, what TLC prints as it starts, comes from
+    /// the engine's startup, with `startup_messages` what TLC prints itself after the constant
+    /// definitions and before the assumptions (the engine's `startup_done`).
     Native {
         sany: String,
+        // HACK: unread until check.rs prints the messages at `startup_done`, which the CLI wires.
+        #[allow(dead_code)]
         startup_messages: Vec<StartupMessage>,
     },
 }
@@ -59,6 +56,9 @@ pub fn read_front(
     is_tool: bool,
     seed: i64,
 ) -> Result<Read, String> {
+    let name = Path::new(spec_path)
+        .file_stem()
+        .map_or_else(String::new, |stem| stem.to_string_lossy().into_owned());
     let lowering = Lowering {
         spec_path,
         config_text,
@@ -67,25 +67,24 @@ pub fn read_front(
         // TLC's seed as the generator's 64 bits.
         random_seed: seed as u64,
     };
-    let name = Path::new(spec_path)
-        .file_stem()
-        .map_or_else(String::new, |stem| stem.to_string_lossy().into_owned());
-    let directory = std::env::var_os("PROVE_IT_FRONT");
-    let directory = directory.as_deref().map(Path::new);
-    let read = |extension: &str| match directory {
-        Some(directory) => std::fs::read(directory.join(format!("{name}.{extension}"))),
-        None => Err(std::io::ErrorKind::NotFound.into()),
+    // Without recordings, tla-front is the whole front end.
+    let Some(directory) = std::env::var_os("PROVE_IT_FRONT") else {
+        return native_front(&lowering, describer, libraries);
     };
-    let no_front = || match directory {
-        Some(directory) => format!("no recorded front of {name} in {}", directory.display()),
-        None => "the front a search prints, which tla-front doesn't write".to_owned(),
-    };
-    // Without a recorded front, as where TLC prints nothing past its startup for the differential
-    // to record, tla-front writes the front, or finds that SANY rejects the spec or TLC reports an
-    // error before the search.
+    let directory = Path::new(&directory);
+    let read = |extension: &str| std::fs::read(directory.join(format!("{name}.{extension}")));
+    let no_front = || format!("no recorded front of {name} in {}", directory.display());
+    // Where TLC prints nothing past its startup for the differential to record, tla-front finds
+    // whether SANY rejects the spec or TLC reports an error before the search.
     let Ok(recorded) = read("front") else {
-        return native_front(&lowering, describer, libraries)
-            .map_err(|reason| format!("{}: {reason}", no_front()));
+        return match native_front(&lowering, describer, libraries) {
+            Ok(Read::Model(_)) => Err(format!(
+                "{}: an error TLC reports as it starts, which tla-front doesn't raise",
+                no_front()
+            )),
+            Ok(failed) => Ok(failed),
+            Err(reason) => Err(format!("{}: {reason}", no_front())),
+        };
     };
     // PROVE_IT_NATIVE_FRONT=1 prints SANY's report as tla-front writes it in place of the recorded
     // one, which the rest of the front still follows until tla-front writes it too.
@@ -108,15 +107,12 @@ pub fn read_front(
     };
     Ok(Read::Model(Front {
         ir,
-        text: FrontText::Recorded(output),
+        output: Output::Recorded(output),
     }))
 }
 
 // The model as tla-front lowers it.
-fn lower(
-    lowering: &Lowering<'_>,
-    libraries: &[String],
-) -> Result<tla_front::model::LoweredModel, FrontError> {
+fn lower(lowering: &Lowering<'_>, libraries: &[String]) -> Result<LoweredModel, FrontError> {
     let spec_path = lowering.spec_path;
     let path = if spec_path.ends_with(".tla") {
         spec_path.to_string()
@@ -143,9 +139,9 @@ struct Lowering<'a> {
     random_seed: u64,
 }
 
-// The front as tla-front writes it: the model with what TLC prints as it starts, or where TLC
-// stops before the search, as SANY rejects the spec or lowering the model raises an error TLC
-// reports with a code. Otherwise why tla-front doesn't write it.
+// The front as tla-front finds it: the model it lowers, or where TLC stops before the search,
+// as SANY rejects the spec or lowering the model raises an error TLC reports with a code.
+// Otherwise why tla-front doesn't find either.
 fn native_front(
     lowering: &Lowering<'_>,
     describer: &FileDescriber,
@@ -163,7 +159,7 @@ fn native_front(
         Ok(lowered) => {
             return Ok(Read::Model(Front {
                 ir: lowered.ir,
-                text: FrontText::Native {
+                output: Output::Native {
                     sany: sany.text,
                     startup_messages: lowered.startup_messages?,
                 },

@@ -16,6 +16,7 @@ use tla_ir::{
 
 use tla_values::{Id, Store};
 
+use crate::failure::nested;
 use crate::print::{format_pretty, format_printed, format_value};
 use crate::random::{random_element, random_subset};
 use crate::sets::{as_tuple, cardinality, difference, intersection, is_member, is_subset, union};
@@ -265,6 +266,12 @@ pub struct Evaluator<'ir> {
     pub runtime: Option<Runtime>,
     /// TLC's registers, which TLCSet sets and TLCGet reads, as the search left them.
     pub registers: Registers,
+    /// How many times TLCSet set a register.
+    pub register_writes: usize,
+    /// Whether TLC runs with -tool, under which the message of an error TLC raises with a code
+    /// holds the code's markers, which AssertError compares with. `None` where the caller doesn't
+    /// say, and AssertError isn't followed.
+    pub is_tool: Option<bool>,
 }
 
 /// TLC's registers (`IdThread`'s local values and named registers): the value TLCSet stored under
@@ -365,6 +372,7 @@ fn as_java_failure<T>(signature: &str, result: Evaluated<T>) -> Evaluated<T> {
 fn is_text(text: &Text, word: &str) -> bool {
     text.units.iter().copied().eq(word.encode_utf16())
 }
+const CARDINALITY: &str = "public static tlc2.value.impl.IntValue tlc2.module.FiniteSets.Cardinality(tlc2.value.impl.Value)";
 const TEXT_SERIALIZE: &str = "public static synchronized tlc2.value.impl.Value tlc2.module.Json.textSerialize(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel)";
 
 impl<'ir> Evaluator<'ir> {
@@ -391,6 +399,8 @@ impl<'ir> Evaluator<'ir> {
             random: None,
             runtime: None,
             registers: Registers::default(),
+            register_writes: 0,
+            is_tool: None,
         }
     }
 
@@ -941,6 +951,18 @@ impl<'ir> Evaluator<'ir> {
                     ),
                 )
             }
+            // `OPCODE_uc`: TLC evaluates no CHOOSE without a bound. Where it computes ENABLED of
+            // one as an action, it words the failure apart.
+            NodeKind::Choose { set: None, .. } if self.is_enabling => {
+                fail("an unbounded CHOOSE in ENABLED")
+            }
+            NodeKind::Choose { set: None, .. } => fail_runtime(
+                "an unbounded CHOOSE",
+                format!(
+                    "TLC attempted to evaluate an unbounded CHOOSE.\nMake sure that the expression is of form CHOOSE x \\in S: P(x).\n{}",
+                    self.describe_range(node)
+                ),
+            ),
             NodeKind::SetEnumeration(items) => {
                 let values = items
                     .iter()
@@ -1172,6 +1194,13 @@ impl<'ir> Evaluator<'ir> {
     /// Computes the model's startup definitions as TLC does when it starts, after the
     /// substitutes, drawing from the generator TLC seeds then, and keeps them as their values.
     pub(crate) fn compute_startup(&mut self) -> Evaluated<()> {
+        self.compute_startup_drawing()?;
+        self.random = None;
+        Ok(())
+    }
+
+    /// The startup, with the generator left where its draws left it, for the assumptions.
+    pub(crate) fn compute_startup_drawing(&mut self) -> Evaluated<()> {
         let ir = self.ir;
         self.random = Some(JavaRandom::seeded(ir.model.random_seed));
         let substitutes = ir.model.startup.substitutes.iter().map(|&(_, index)| index);
@@ -1188,7 +1217,6 @@ impl<'ir> Evaluator<'ir> {
                 self.cache.insert((node, true), value);
             }
         }
-        self.random = None;
         Ok(())
     }
 
@@ -1204,6 +1232,7 @@ impl<'ir> Evaluator<'ir> {
     // TLCSet (`TLCGetSet.TLCSet`): a register's value, set; TLCSet("exit", FALSE) and
     // TLCSet("pause", FALSE) do nothing.
     fn set_register(&mut self, key: Value, value: Value) -> Evaluated<()> {
+        self.register_writes += 1;
         if let Value::Int(index) = key
             && index >= 0
         {
@@ -2421,10 +2450,56 @@ impl<'ir> Evaluator<'ir> {
                 arity(1)?;
                 int(-self.operand_int(&operands[0])?)?
             }
+            // `TLCExt.assertError`: whether evaluating the expression fails with this message.
+            "AssertError" => {
+                arity(2)?;
+                let Some(is_tool) = self.is_tool else {
+                    return fail("AssertError, whose messages depend on -tool");
+                };
+                let is_literal = match &operands[0] {
+                    Operand::Node(node, _) => {
+                        matches!(
+                            self.ir.nodes.arena[*node as usize].kind,
+                            NodeKind::String(_)
+                        )
+                    }
+                    Operand::Value(_) => false,
+                };
+                if !is_literal {
+                    return fail("AssertError of a message that isn't a string");
+                }
+                let message = match self.operand(&operands[1]) {
+                    Ok(_) => return Ok(Value::Bool(false)),
+                    Err(EvalError {
+                        message: Some(message),
+                        ..
+                    }) => message,
+                    Err(error) => return Err(error),
+                };
+                let Value::Str(expected) = self.operand(&operands[0])? else {
+                    return fail("AssertError of a message that isn't a string");
+                };
+                let text = if is_tool {
+                    nested(&message)
+                } else {
+                    message.text
+                };
+                Value::Bool(text.encode_utf16().eq(expected.units.iter().copied()))
+            }
+            // TLC reports what fails as it counts, but an EvalException, as the failure of the Java
+            // method `FiniteSets.Cardinality` (`MethodValue.eval`).
             "Cardinality" => {
                 arity(1)?;
                 let set = self.operand(&operands[0])?;
-                int(cardinality(&set)? as i64)?
+                let counted = cardinality(&set);
+                let counted = match &counted {
+                    Err(EvalError {
+                        message: Some(message),
+                        ..
+                    }) if !message.is_eval_exception => as_java_failure(CARDINALITY, counted),
+                    _ => counted,
+                };
+                int(counted? as i64)?
             }
             "IsFiniteSet" => {
                 arity(1)?;
@@ -3058,7 +3133,6 @@ fn describe(kind: &NodeKind) -> &'static str {
         NodeKind::Lambda { .. } => "LAMBDA",
         NodeKind::OperatorReference(_) => "an operator reference",
         NodeKind::UnboundedQuantifier { .. } => "an unbounded quantifier",
-        NodeKind::Choose { .. } => "an unbounded CHOOSE",
         NodeKind::FunctionConstruction { .. } => "a recursive function",
         NodeKind::Always(_) | NodeKind::Eventually(_) => "a temporal formula",
         NodeKind::WeakFairness { .. } | NodeKind::StrongFairness { .. } => "a fairness",
