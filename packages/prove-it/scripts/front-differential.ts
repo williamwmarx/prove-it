@@ -41,6 +41,7 @@ import {
 import { type Builtin, describeRange, type Environment } from "../src/evaluate";
 import { tokenize } from "../src/lexer";
 import { getLevel } from "../src/liveness";
+import { createLivenessChecker } from "../src/liveness-checker";
 import { parseModule, parseSanyModule } from "../src/parser";
 import { createPcalParams } from "../src/pcal/ast";
 import { createPcalSession } from "../src/pcal/parse";
@@ -221,7 +222,8 @@ const lowerFullModel = (source: string, _path: string, spec: string) => {
     isSanyAccepted: true,
   }).environment;
   const specification = getSpecification(config, environment);
-  const properties = toEngineProperties(getProperties(config, environment, () => {}));
+  const search = getProperties(config, environment, () => {});
+  const properties = toEngineProperties(search);
   if (!specification.init || !specification.next) return { reason: "no Init or Next" };
   if (!properties) return { reason: "a property read in a scope" };
   const variableOrder = order.getDeclarationOrder("variable");
@@ -229,6 +231,11 @@ const lowerFullModel = (source: string, _path: string, spec: string) => {
     const position = variableOrder.indexOf(environment.variables[index]);
     return position === -1 ? environment.variables.length : position;
   };
+  // The checker's formula and atoms, which need no graph before it checks.
+  const liveness = createLivenessChecker(search.liveness, specification.temporals, environment, {
+    getFingerprint: () => 0,
+    getSuccessors: () => [],
+  });
   const outcome = lowerToIr({
     config,
     environment,
@@ -239,11 +246,12 @@ const lowerFullModel = (source: string, _path: string, spec: string) => {
       .map((_, index) => index)
       .sort((left, right) => getPosition(left) - getPosition(right)),
     properties,
-    isRecordingGraph: false,
+    isRecordingGraph: liveness !== undefined,
     version: undefined,
-    atoms: [],
-    liveFormula: undefined,
-    liveProperties: [],
+    // Without TLC's actions, which ENABLED's split into.
+    atoms: (liveness?.atoms ?? []).map((atom) => ({ atom, actions: undefined })),
+    liveFormula: liveness?.formula,
+    liveProperties: liveness?.properties ?? [],
     // The startup section, which tla-front doesn't write yet.
     startup: { substitutes: [], definitions: [], symmetry: undefined, assumptions: [] },
   });
