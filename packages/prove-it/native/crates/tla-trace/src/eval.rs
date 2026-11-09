@@ -908,11 +908,9 @@ impl<'ir> Evaluator<'ir> {
                 }
             }
             NodeKind::Let {
-                instances,
-                definitions,
-                body,
+                definitions, body, ..
             } => {
-                let inner = self.bind_let(*instances, definitions, context)?;
+                let inner = self.bind_let(definitions, context)?;
                 self.evaluate(*body, &inner)
             }
             NodeKind::Forall { bounds, body } => {
@@ -1320,13 +1318,9 @@ impl<'ir> Evaluator<'ir> {
 
     pub(crate) fn bind_let(
         &mut self,
-        instances: u32,
         definitions: &[NodeId],
         context: &Context,
     ) -> Evaluated<Context> {
-        if instances > 0 {
-            return fail("INSTANCE in LET");
-        }
         let mut inner = context.clone();
         for &node in definitions {
             let definition = self.definition(node);
