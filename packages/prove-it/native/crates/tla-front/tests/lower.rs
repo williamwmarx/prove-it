@@ -15,6 +15,7 @@ fn lower(source: &str, name: &str) -> Ir {
         config: &config,
         is_unconfigured: true,
         version: TlcVersion::Master,
+        is_level_checked: false,
     })
     .expect("an environment");
     let mut lowering = Lowering::new(
@@ -42,6 +43,7 @@ fn lower(source: &str, name: &str) -> Ir {
             initial_predicates: Vec::new(),
             view: None,
             alias: None,
+            postconditions: Vec::new(),
             symmetry: None,
             check_deadlock: true,
             is_warning_enabled: true,

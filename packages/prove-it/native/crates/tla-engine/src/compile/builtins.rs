@@ -155,6 +155,9 @@ fn comparison(left: &Compiled, right: &Compiled, operation: fn(i64, i64) -> bool
 
 fn power_set(machine: &mut Machine<'_>, set: Id) -> Outcome<Id> {
     let size = machine.store.size_of(set);
+    if size as usize >= super::lazy::OVERFLOWING_SUBSET_BASE {
+        return Err(Bail(super::lazy::SUBSET_OVERFLOW));
+    }
     if size > MAXIMUM_POWER_SET {
         return Err(Bail("a power set too large to build"));
     }
@@ -679,8 +682,17 @@ impl Compiler<'_> {
                     // It streams in its order, and its elements are set enumerations.
                     is_in_order: true,
                     are_elements_in_order: true,
+                    // TLC enumerates SUBSET S in the normalized order of S's elements, whatever S's
+                    // own order (SubsetValue.elementsNormalized), so S's value does where S has no
+                    // reference.
                     reference: combine_references(&[&base], |_, mut bases| {
                         Ok(Lazy::Subset(Box::new(bases.remove(0))))
+                    })
+                    .or_else(|| {
+                        let evaluate = base.eval.clone();
+                        Some(Arc::new(move |machine| {
+                            Ok(Lazy::Subset(Box::new(Lazy::Set(evaluate(machine)?))))
+                        }))
                     }),
                     parts: Some(base_parts.clone()),
                     member: Some(member(move |machine, element| {

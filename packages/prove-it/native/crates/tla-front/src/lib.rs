@@ -10,6 +10,7 @@ pub mod errors;
 pub mod hash;
 pub mod instances;
 pub mod json;
+pub mod levels;
 pub mod lexer;
 pub mod lower;
 pub mod model;
@@ -17,6 +18,7 @@ pub mod order;
 pub mod ordered_map;
 pub mod parser;
 pub mod pcal;
+pub mod report;
 pub mod resolve;
 pub mod spec;
 #[rustfmt::skip]

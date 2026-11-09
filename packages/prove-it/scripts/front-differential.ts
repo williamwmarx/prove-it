@@ -45,6 +45,7 @@ import { parseModule, parseSanyModule } from "../src/parser";
 import { createPcalParams } from "../src/pcal/ast";
 import { createPcalSession } from "../src/pcal/parse";
 import { validatePcalModule } from "../src/pcal/validate";
+import { getSanyReport } from "../src/sany/report";
 import { getProperties, getSpecification } from "../src/search";
 import { createTlcOrder } from "../src/tlc/order";
 import type { TlcVersion } from "../src/tlc/version";
@@ -116,7 +117,7 @@ const readOrders = (source: string, _path: string, spec: string) => {
   };
 };
 
-const linkSpec = (source: string, path: string, config?: ModelConfig) => {
+const linkSpec = (source: string, path: string, config?: ModelConfig, isSanyAccepted = true) => {
   const loadModule = createLoader(path);
   const printed: string[] = [];
   const specification = createEnvironment(config ?? parseConfig(""), {
@@ -126,7 +127,7 @@ const linkSpec = (source: string, path: string, config?: ModelConfig) => {
     print: (text) => printed.push(text),
     files: { readFile: () => undefined, writeFile: () => {} },
     isUnconfigured: config === undefined,
-    isSanyAccepted: true,
+    isSanyAccepted,
   });
   return { specification, printed };
 };
@@ -296,6 +297,11 @@ const MODES: Record<string, (source: string, path: string, spec: string) => stri
   ast: writeResult(parseModule),
   "sany-ast": writeResult((source) => parseSanyModule(source)),
   resolve: writeResult((source, path) => readEnvironment(source, path)),
+  // Whether linking with SANY's level checks passes, or its error.
+  levels: writeResult((source, path) => {
+    linkSpec(source, path, undefined, false);
+    return { isLevelChecked: true };
+  }),
   ir: writeResult(lowerDefinitions),
   "model-ir": writeResult(lowerModel),
   "model-full": writeResult(lowerFullModel),
@@ -345,6 +351,15 @@ const MODES: Record<string, (source: string, path: string, spec: string) => stri
       stateLevel,
     };
   }),
+  // What SANY prints, with each file described by its module's name and origin, as front-dump
+  // describes it.
+  "sany-text": (_source, path) =>
+    JSON.stringify({
+      text: getSanyReport(path, createLoader(path), {
+        describeFile: (name, origin) =>
+          `${name}|${{ file: "File", "root file": "RootFile", standard: "Standard" }[origin]}`,
+      }).text,
+    }),
   model: writeResult((source, _path, spec) =>
     readEnvironment(readFileSync(spec, "utf8"), spec, parseConfig(source)),
   ),
@@ -455,6 +470,8 @@ const isLinked = [
   "model-full",
   "spec",
   "properties",
+  "sany-text",
+  "levels",
 ].includes(mode);
 if (isLinked) linkLibraryModules();
 

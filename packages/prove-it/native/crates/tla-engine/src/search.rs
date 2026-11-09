@@ -238,6 +238,53 @@ pub enum ViolationKind {
         loop_start: usize,
         loop_label: Option<u32>,
     },
+    /// Evaluating the model failed where TLC fails (an assertion, a value of the wrong kind, a
+    /// function applied outside its domain): the states lead to where, as `ErrorSite` says.
+    Error { site: ErrorSite },
+}
+
+/// Where a search failed evaluating the model, as `tla_trace::Site` names it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ErrorSite {
+    /// Computing the initial states; the violation's states are empty.
+    Init,
+    /// Computing the successors of the trace's last state.
+    Next,
+    /// Evaluating the invariant at this position of the model's invariants on the trace's last
+    /// state, a successor of the state before it.
+    Invariant(u32),
+}
+
+// The stops that are the engine's own limits, not a failure TLC reports: what it doesn't
+// support, what it won't build, and what its search and printing can't reproduce.
+fn is_engine_limit(reason: &str) -> bool {
+    reason.starts_with("unsupported: ")
+        || reason.starts_with("printing where ")
+        || reason.contains("too large")
+        || [
+            "stopped where PROVE_IT_STOP_AT asked",
+            "recursion too deep",
+            "an action quantified over more bindings than the engine counts",
+            "drew from a set whose shape the engine forgets",
+            "ToString of a text the engine made unranked",
+            "a lazy set inside a value",
+            "an unknown lazy set",
+            "an unknown token",
+            "an integer token",
+            "a request too short",
+            "a step to a state the search didn't find",
+            "an order of strings the search ranked",
+            "an order of model values the search ranked",
+            "deadlock",
+            "an invariant violated",
+            "an invariant violated in an initial state",
+            "a property violated in an initial state",
+            "an action property violated",
+            OTHER_STEPS,
+            PERIODIC_LASSO,
+            crate::live::ENABLED_DIFFERS,
+        ]
+        .contains(&reason)
 }
 
 /// The counts of a search that stopped, as TLC reports them.
@@ -884,7 +931,31 @@ impl<'r, T: Reached> Search<'r, T> {
                     });
                     Some(Bail("an invariant violated"))
                 }
-                Err(bail) => Some(bail),
+                Err((failing, bail)) => {
+                    if !is_engine_limit(bail.0) {
+                        let count = self.states.count() as u64;
+                        self.violation = Some(Found {
+                            kind: ViolationKind::Error {
+                                site: ErrorSite::Invariant(
+                                    context.invariant_owners[failing] as u32,
+                                ),
+                            },
+                            parent: Some(self.expanding),
+                            last: Some(self.successor.clone()),
+                            counts: StopCounts {
+                                generated: self.generated,
+                                distinct: count + u64::from(is_new),
+                                queued: count - self.expanding as u64 - 1,
+                                depth: if is_new {
+                                    self.depth.max(self.level + 1)
+                                } else {
+                                    self.depth
+                                },
+                            },
+                        });
+                    }
+                    Some(bail)
+                }
             };
             if let Some(bail) = failed {
                 let is_deferred = is_new
@@ -971,7 +1042,7 @@ impl<T: Reached> Search<'_, T> {
                     self.visit_successor(machine, context)
                 });
                 self.check_pending(machine, context)?;
-                walked?;
+                walked.map_err(|bail| self.note_next_error(bail))?;
             }
             Some(actions) => {
                 if is_live_checked {
@@ -988,7 +1059,7 @@ impl<T: Reached> Search<'_, T> {
                         self.visit_successor(machine, context)
                     });
                     self.check_pending(machine, context)?;
-                    walked?;
+                    walked.map_err(|bail| self.note_next_error(bail))?;
                 }
                 if let Some(checked) = self.checked.take()
                     && checked.len() as u64 != self.successors
@@ -1013,6 +1084,30 @@ impl<T: Reached> Search<'_, T> {
             return Err(Bail("deadlock"));
         }
         Ok(())
+    }
+}
+
+impl<T: Reached> Search<'_, T> {
+    // A failure computing the successors of the state being expanded, which TLC reports with the
+    // path to that state, unless the search already found what stopped it.
+    fn note_next_error(&mut self, bail: Bail) -> Bail {
+        if self.violation.is_none() && !is_engine_limit(bail.0) {
+            let count = self.states.count() as u64;
+            self.violation = Some(Found {
+                kind: ViolationKind::Error {
+                    site: ErrorSite::Next,
+                },
+                parent: Some(self.expanding),
+                last: None,
+                counts: StopCounts {
+                    generated: self.generated,
+                    distinct: count,
+                    queued: count - self.expanding as u64 - 1,
+                    depth: self.depth.max(1),
+                },
+            });
+        }
+        bail
     }
 }
 
@@ -2179,6 +2274,22 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             }
         }
         Err(bail) if !is_past_initial => {
+            if search.violation.is_none() && !is_engine_limit(bail.0) {
+                let count = search.states.count() as u64;
+                search.violation = Some(Found {
+                    kind: ViolationKind::Error {
+                        site: ErrorSite::Init,
+                    },
+                    parent: None,
+                    last: None,
+                    counts: StopCounts {
+                        generated: search.generated,
+                        distinct: count,
+                        queued: count,
+                        depth: 0,
+                    },
+                });
+            }
             let violation = search
                 .violation
                 .take()
@@ -2549,14 +2660,20 @@ fn to_violation(
             found.last.as_deref(),
             false,
         )
-        .map_or(unlabelled, |mut labels| {
-            labels.remove(0);
-            labels
-        })
+        .ok()
+        .filter(|labels| !labels.is_empty())
+        .map_or(unlabelled, |labels| labels.into_iter().skip(1).collect())
     };
     // The store goes with the violation, so whether the search, or finding the actions, ranked
     // strings is read here, as for the search's outcome.
-    (labels.len() + 1 == states.len() && !machine.store.has_unordered_strings()).then(|| {
+    let is_shaped = labels.len() + 1 == states.len()
+        || matches!(
+            found.kind,
+            ViolationKind::Error {
+                site: ErrorSite::Init
+            }
+        ) && states.is_empty();
+    (is_shaped && !machine.store.has_unordered_strings()).then(|| {
         Box::new(Violation {
             kind: found.kind,
             states,

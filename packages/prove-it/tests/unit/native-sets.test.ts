@@ -12,6 +12,7 @@ import {
   COMPLETE,
   restoreSettings,
   run,
+  stopped,
   toModule,
 } from "./native-runs";
 
@@ -250,6 +251,20 @@ describe.if(ADDON !== undefined)("the native engine's lazy sets", () => {
         expect.stringMatching(/^\[engine\] native: declined: unsupported: enumerating a set TLC /),
         expect.stringMatching(/^\[engine\] handed over after \d+ ms: unsupported: enumerating /),
       ]);
+    }
+  });
+
+  // From TLC's FingerprintExceptionInit and FingerprintExceptionNext: SubsetValue.size counts the
+  // elements in an int, so SUBSET S fails where S has 31 elements or more, which TLC reports.
+  it("fails counting a power set whose base has 31 elements, as TLC does", async () => {
+    for (const [init, next] of [
+      ["x = SUBSET SUBSET (1..31)", "UNCHANGED x"],
+      ["x = 0", "x' = SUBSET SUBSET (1..32)"],
+    ]) {
+      const body = ["EXTENDS Integers", "VARIABLE x", `Init == ${init}`, `Next == ${next}`];
+      expect(await compareWithInterpreter(body, CONFIG)).toContainEqual(
+        expect.stringMatching(stopped("an overflow counting the elements of a power set")),
+      );
     }
   });
 
