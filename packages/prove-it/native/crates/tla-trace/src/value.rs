@@ -6,6 +6,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::cmp::Ordering;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use tla_values::Store;
@@ -326,8 +327,51 @@ fn typed_model_failure<T>(left: &Value, right: &Value, is_equality: bool) -> Eva
     fail_runtime(reason, text)
 }
 
+thread_local! {
+    // The sets a replay built that TLC holds unnormalized still, by address, each with its
+    // elements in the order TLC built it.
+    static UNNORMALIZED: RefCell<HashMap<usize, Vec<Value>>> = RefCell::new(HashMap::new());
+}
+
+/// Records a set a replay built as TLC holds it unnormalized (`SetEnumValue` with `isNorm`
+/// false), with its elements as TLC built it.
+pub(crate) fn mark_unnormalized(set: &Value, written: Vec<Value>) {
+    if let Value::Set(elements) = set {
+        UNNORMALIZED.with(|sets| {
+            sets.borrow_mut()
+                .insert(Rc::as_ptr(elements) as usize, written)
+        });
+    }
+}
+
+/// The elements of a set TLC holds unnormalized, as TLC built it.
+pub(crate) fn unnormalized(set: &Value) -> Option<Vec<Value>> {
+    let Value::Set(elements) = set else {
+        return None;
+    };
+    UNNORMALIZED.with(|sets| sets.borrow().get(&(Rc::as_ptr(elements) as usize)).cloned())
+}
+
+/// Forgets the sets the last replay built.
+pub(crate) fn clear_unnormalized() {
+    UNNORMALIZED.with(|sets| sets.borrow_mut().clear());
+}
+
+// TLC normalizes a set to enumerate or compare it.
+fn normalize(value: &Value) {
+    if let Value::Set(elements) = value {
+        UNNORMALIZED.with(|sets| {
+            let mut sets = sets.borrow_mut();
+            if !sets.is_empty() {
+                sets.remove(&(Rc::as_ptr(elements) as usize));
+            }
+        });
+    }
+}
+
 /// The elements of a set TLC can enumerate, in TLC's order.
 pub fn elements(value: &Value) -> Evaluated<Rc<Vec<Value>>> {
+    normalize(value);
     match value {
         Value::Set(elements) => Ok(Rc::clone(elements)),
         Value::Interval(low, high) => Ok(Rc::new((*low..=*high).map(Value::Int).collect())),
@@ -350,6 +394,8 @@ fn sort(function: &Function) {
 
 /// TLC's `compareTo`, as the store's `compare`: an error where TLC can't compare the two.
 pub fn compare(left: &Value, right: &Value) -> Evaluated<Ordering> {
+    normalize(left);
+    normalize(right);
     match (left, right) {
         (Value::Int(left), Value::Int(right)) => Ok(left.cmp(right)),
         (Value::Bool(left), Value::Bool(right)) => Ok(left.cmp(right)),
@@ -418,6 +464,8 @@ fn compare_functions(left: &Rc<Function>, right: &Rc<Function>) -> Evaluated<Ord
 /// TLC's `equals`, as the store's: values of kinds TLC can't compare fail, but a model value
 /// without a type is unequal to anything else.
 pub fn equals(left: &Value, right: &Value) -> Evaluated<bool> {
+    normalize(left);
+    normalize(right);
     match (left, right) {
         (Value::Int(left), Value::Int(right)) => Ok(left == right),
         (Value::Bool(left), Value::Bool(right)) => Ok(left == right),

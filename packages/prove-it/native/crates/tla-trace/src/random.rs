@@ -70,6 +70,9 @@ pub fn random_element(random: &mut JavaRandom, set: &Value) -> Evaluated<Value> 
 /// from an interval by its bounds, a product of sets component by component, and otherwise the
 /// normalized set.
 pub fn random_subset(random: &mut JavaRandom, count: u64, set: &Value) -> Evaluated<Value> {
+    if crate::sets::is_empty_by_argument(set) {
+        return set_of(Vec::new());
+    }
     if let Value::Interval(low, high) = set {
         let size = (i64::from(*high) - i64::from(*low) + 1).max(0) as u64;
         let drawn = get_subset_indices(count, size, random, false)
