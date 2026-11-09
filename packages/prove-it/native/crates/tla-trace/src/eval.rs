@@ -1413,14 +1413,13 @@ impl<'ir> Evaluator<'ir> {
             "IsFiniteSet" => {
                 arity(1)?;
                 let set = self.operand(&operands[0])?;
-                Value::Bool(match &set {
-                    Value::Lazy(lazy) => match &**lazy {
-                        Lazy::Nat | Lazy::Int | Lazy::Real | Lazy::Strings | Lazy::Seq(_) => false,
-                        _ => elements(&set).is_ok(),
-                    },
-                    _ if set.is_set() => true,
-                    _ => return fail("IsFiniteSet of a non-set"),
-                })
+                if matches!(
+                    set,
+                    Value::Bool(_) | Value::Int(_) | Value::Str(_) | Value::Model(_)
+                ) {
+                    return fail("IsFiniteSet of a non-set");
+                }
+                Value::Bool(is_finite(&set))
             }
             "Seq" => {
                 arity(1)?;
@@ -1653,6 +1652,21 @@ fn permute(
 enum Operand {
     Node(NodeId, Context),
     Value(Value),
+}
+
+// Whether a set (or a function, which the engine counts as a finite set) is finite, without
+// enumerating it: a lazy set is when its parts are.
+fn is_finite(value: &Value) -> bool {
+    match value {
+        Value::Lazy(lazy) => match &**lazy {
+            Lazy::Nat | Lazy::Int | Lazy::Real | Lazy::Strings | Lazy::Seq(_) => false,
+            Lazy::Subset(base) => is_finite(base),
+            Lazy::FunctionSet(domain, range) => is_finite(domain) && is_finite(range),
+            Lazy::RecordSet(fields, _) => fields.iter().all(|(_, set)| is_finite(set)),
+            Lazy::Product(factors) => factors.iter().all(is_finite),
+        },
+        _ => true,
+    }
 }
 
 fn sequence_of(value: &Value) -> Evaluated<&[Value]> {
