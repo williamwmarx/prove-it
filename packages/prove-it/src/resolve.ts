@@ -750,8 +750,7 @@ const getSymbolArity = (
     if (expression.kind === "Identifier") {
       writtenNames.set(expression, name);
       expression.name = symbol.key;
-    }
-    else expression.operator = symbol.key;
+    } else expression.operator = symbol.key;
     renamedArities.set(expression, symbol.arity);
     return symbol.arity;
   }
