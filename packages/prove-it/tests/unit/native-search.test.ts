@@ -1273,6 +1273,25 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
   // From tla-rs's function_syntax: TLC applies a recursive function of several bounds to tuples
   // of its product, and keeps a recursive function lazy where a spec passes it or takes its
   // domain.
+  // From mongodb-txns' Storage.cfg, which substitutes FALSE for actions with parameters: TLC
+  // takes the value and leaves the arguments unevaluated.
+  it("takes a value a configuration substitutes for an operator with parameters", async () => {
+    const body = [
+      "EXTENDS Naturals",
+      "VARIABLE x",
+      "A(n) == x' = n",
+      "Init == x = 0",
+      "Next == \\/ x < 3 /\\ x' = x + 1",
+      "        \\/ \\E n \\in {0} : A(1 \\div n)",
+    ];
+    expect(
+      await compareWithInterpreter(
+        body,
+        "INIT Init\nNEXT Next\nCONSTANT A <- FALSE\nCHECK_DEADLOCK FALSE",
+      ),
+    ).toContainEqual(expect.stringMatching(COMPLETE));
+  });
+
   it("applies recursive functions as TLC keeps them lazy", async () => {
     const body = [
       "EXTENDS Naturals, FiniteSets",

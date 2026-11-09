@@ -117,6 +117,24 @@ describe("the engine", () => {
     expect(lines).toEqual([expect.stringMatching(/^\[engine\] checked 1 states/)]);
   });
 
+  it("takes a value a configuration substitutes for an operator with parameters", async () => {
+    // As mongodb-txns' Storage.cfg substitutes FALSE for its actions: TLC takes the value and
+    // leaves the arguments unevaluated (Tool.evalAppl).
+    const { result, lines } = await checkInEngine(
+      [
+        "EXTENDS Naturals",
+        "VARIABLE x",
+        "A(n) == x' = n",
+        "Init == x = 0",
+        "Next == \\/ x < 3 /\\ x' = x + 1",
+        "        \\/ \\E n \\in {0} : A(1 \\div n)",
+      ].join("\n"),
+      "INIT Init\nNEXT Next\nCONSTANT A <- FALSE\nCHECK_DEADLOCK FALSE",
+    );
+    expect([result.status, result.distinctStates]).toEqual(["success", 4]);
+    expect(lines).toEqual([expect.stringMatching(/^\[engine\] checked 4 states/)]);
+  });
+
   it("keeps the names a recursive function binds apart in each call", async () => {
     const { result, lines } = await checkInEngine(
       [

@@ -1605,6 +1605,9 @@ export const createCompiler = (environment: Environment): Compiler => {
     }
     if (definition) return unsupported("applying a function definition as an operator");
     const builtin = environment.builtins.get(target);
+    // A configuration may substitute a value such as FALSE for an operator with parameters, and
+    // TLC then takes the value, without evaluating the arguments (Tool.evalAppl).
+    if (builtin?.arity === 0) return compileNullaryBuiltin(target, builtin);
     if (builtin) return compileBuiltin(target, builtin, expression, context);
     const binding = lookup(context.scope, name);
     if (binding?.kind === "operator")

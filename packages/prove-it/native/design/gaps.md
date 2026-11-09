@@ -188,3 +188,12 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   up, and stopped on one too large to build, such as RandomSubset's invariant
   `x \in 1..100000000`. Elsewhere the interval is as before, so a set operation or a set of
   functions over one still evaluates it, and its bounds, as TLC does.
+
+## A value substituted for an operator with parameters
+
+- A configuration may substitute a value for an operator with parameters, as mongodb-txns'
+  Storage.cfg substitutes FALSE for its actions. TLC applies the operator by taking the value,
+  without evaluating the arguments (`Tool.evalAppl`), so `A(1 \div 0)` under `A <- FALSE` is FALSE
+  (checked with TLC 1.8.0). The interpreter evaluated the arguments and failed on them, and both
+  engines declined the builtin applied to arguments. All three now take the value. Storage
+  (mongodb-txns), declined before, now searches in Rust, and the TypeScript engine searches it too.
