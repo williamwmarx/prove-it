@@ -5,6 +5,8 @@
 //!   endColumn]`, or the syntax error the lexer raises;
 //! - `front-dump ast` writes the module `parseModule` reads, as canonical JSON, or its error;
 //! - `front-dump sany-ast` does the same for `parseSanyModule`;
+//! - `front-dump config` writes the model configuration `parseConfig` reads from each file, for
+//!   TLC master and 1.7.4, or the error it raises;
 //! - `front-dump time` writes the best of five times to tokenize and parse each module, in
 //!   milliseconds.
 
@@ -13,6 +15,7 @@ use std::io::{BufRead, Write, stdin, stdout};
 use std::process::ExitCode;
 
 use tla_front::TlcVersion;
+use tla_front::config::parse_config;
 use tla_front::dump;
 use tla_front::json::write_js_string;
 use tla_front::lexer::tokenize;
@@ -77,8 +80,15 @@ fn main() -> ExitCode {
         "ast" => |out, source| write_module(out, source, false),
         "sany-ast" => |out, source| write_module(out, source, true),
         "time" => write_time,
+        "config" => |out, source| {
+            out.push_str("{\"master\":");
+            dump::config(&parse_config(source, TlcVersion::Master)).write(out);
+            out.push_str(",\"v174\":");
+            dump::config(&parse_config(source, TlcVersion::V1_7_4)).write(out);
+            out.push('}');
+        },
         _ => {
-            eprintln!("usage: front-dump tokens|ast|sany-ast|time < paths");
+            eprintln!("usage: front-dump tokens|ast|sany-ast|config|time < paths");
             return ExitCode::from(2);
         }
     };

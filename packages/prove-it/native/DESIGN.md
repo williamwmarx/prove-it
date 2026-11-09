@@ -2601,3 +2601,14 @@ the TypeScript front end in Bun.
   set by the qualified `Apply`'s ranges; boxing them is the next step if parsing shows up in a
   whole front end's profile.
 
+#### F6 as built
+
+- `config` ports `parseConfig`: TLC's `ModelConfig.parse` over the tokens TLC reads with SANY's
+  lexer, for TLC master and 1.7.4 (TYPE and TYPE_CONSTRAINT, none of the later keywords), and
+  JavaCC's lexical errors (`formatLexicalError`, `escapeLexeme`), whose columns and escapes count
+  UTF-16 code units. `ModelConfig` keeps `config.ts`'s fields; `ConfigError` is `TlaConfigError`.
+- `front-differential.ts config` runs over every `.cfg` of the corpora and fixtures, writing each
+  file's configuration (or error) for both versions on one line: 1,425 of 1,425 match, and so do
+  5,700 variants from `--mutate`, and 3,324 more variants made to hit the lexer (unterminated
+  strings and comments, characters outside the BMP), of which 2,620 are errors (10 kinds of message, counting the keyword named as one).
+
