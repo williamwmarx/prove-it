@@ -333,6 +333,21 @@ impl<'a> Lowering<'a> {
         })
     }
 
+    /// A name nothing global resolves is one a scope binds, as a definition an INSTANCE in a LET
+    /// copies in under a key the resolver leaves alone, so `ir.ts` writes it as local.
+    fn write_bound_name(
+        &mut self,
+        name: &Name,
+        is_operator: bool,
+        is_local: bool,
+    ) -> Result<IrName> {
+        let name = self.write_name(name, is_operator, is_local)?;
+        Ok(IrName {
+            is_local: name.is_local || name.resolution == Resolution::None,
+            ..name
+        })
+    }
+
     fn write_texts(&mut self, texts: &[Name]) -> Vec<TextId> {
         texts.iter().map(|text| self.get_text(text)).collect()
     }
@@ -475,11 +490,11 @@ impl<'a> Lowering<'a> {
             ExpressionKind::String { value } => NodeKind::String(self.get_text(value)),
             ExpressionKind::Identifier { .. } => {
                 let name = expression.reference().unwrap_or_default();
-                NodeKind::Identifier(self.write_name(&name, false, is_local)?)
+                NodeKind::Identifier(self.write_bound_name(&name, false, is_local)?)
             }
             ExpressionKind::Apply { args, .. } => {
                 let name = expression.reference().unwrap_or_default();
-                let name = self.write_name(&name, true, is_local)?;
+                let name = self.write_bound_name(&name, true, is_local)?;
                 NodeKind::Apply {
                     name,
                     args: self.write_nodes(args)?,
