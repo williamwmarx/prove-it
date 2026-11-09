@@ -3,7 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
-use tla_ir::{AtomKind, Ir, NodeKind, Resolution, decode, encode};
+use tla_ir::{AtomKind, Ir, Junction, NodeKind, Resolution, decode, encode};
 
 fn golden_directory() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../tests/conformance/ir")
@@ -165,6 +165,54 @@ fn holds_where_each_expression_is_written() {
             range.end_column
         ),
         (41, 11, 41, 50)
+    );
+}
+
+#[test]
+fn holds_how_each_junction_is_written() {
+    let (_, ir) = read_golden("examples/specifications/transaction_commit/TCommit.ir");
+    let body = |name: &str| {
+        ir.definitions
+            .iter()
+            .find_map(|&id| match &ir.nodes.arena[id as usize].kind {
+                NodeKind::Definition(definition) if text(&ir, definition.name) == name => {
+                    Some(definition.body)
+                }
+                _ => None,
+            })
+            .expect("a definition")
+    };
+    // A node met again is a reference to the first, which holds the junction.
+    let junction = |id: u32| {
+        let id = match ir.nodes.arena[id as usize].kind {
+            NodeKind::Reference(target) => target,
+            _ => id,
+        };
+        ir.nodes.junctions.get(&id).cloned().unwrap_or_default()
+    };
+    // Decide is a bulleted disjunction of bulleted conjunctions.
+    let NodeKind::Or(disjuncts) = &ir.nodes.arena[body("Decide") as usize].kind else {
+        panic!("Decide as a disjunction");
+    };
+    assert_eq!(
+        junction(body("Decide")),
+        Junction {
+            is_bulleted: true,
+            prefix_ends: Vec::new()
+        }
+    );
+    assert!(junction(disjuncts[0]).is_bulleted);
+    // TCNext's body, Prepare(rm) \/ Decide(rm), is an infix junction, whose one prefix ends where
+    // it does.
+    let NodeKind::Exists { body: inner, .. } = &ir.nodes.arena[body("TCNext") as usize].kind else {
+        panic!("TCNext as \\E");
+    };
+    assert_eq!(
+        junction(*inner),
+        Junction {
+            is_bulleted: false,
+            prefix_ends: vec![(41, 50)]
+        }
     );
 }
 

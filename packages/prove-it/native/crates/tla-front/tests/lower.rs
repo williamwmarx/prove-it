@@ -5,13 +5,12 @@ use tla_front::TlcVersion;
 use tla_front::config::parse_config;
 use tla_front::environment::{EnvironmentOptions, create_environment};
 use tla_front::lower::{Lowering, RankedTexts};
-use tla_ir::{Model, NodeKind, Resolution};
+use tla_ir::{Ir, Junction, Model, NodeKind, Resolution};
 
-#[test]
-fn lowers_the_definitions_a_configuration_names() {
+fn lower(source: &str, name: &str) -> Ir {
     let config = parse_config("", TlcVersion::Master).expect("a configuration");
     let environment = create_environment(&EnvironmentOptions {
-        source: "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInc == x' = x + 1\n====",
+        source,
         load_module: &|_| None,
         config: &config,
         is_unconfigured: true,
@@ -25,8 +24,8 @@ fn lowers_the_definitions_a_configuration_names() {
             ranks: Default::default(),
         },
     );
-    let invariant = lowering.config_name("Inc");
-    let ir = lowering
+    let invariant = lowering.config_name(name);
+    lowering
         .finish(Model {
             init: 0,
             next: 0,
@@ -51,7 +50,15 @@ fn lowers_the_definitions_a_configuration_names() {
             live_formula: Vec::new(),
             live_properties: Vec::new(),
         })
-        .expect("an IR");
+        .expect("an IR")
+}
+
+#[test]
+fn lowers_the_definitions_a_configuration_names() {
+    let ir = lower(
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInc == x' = x + 1\n====",
+        "Inc",
+    );
     assert_eq!(ir.definitions.len(), 1);
     let NodeKind::Definition(definition) = &ir.nodes.arena[ir.definitions[0] as usize].kind else {
         panic!("a definition");
@@ -68,4 +75,32 @@ fn lowers_the_definitions_a_configuration_names() {
         panic!("x");
     };
     assert_eq!(variable.resolution, Resolution::Variable(0));
+}
+
+#[test]
+fn records_how_each_junction_is_written() {
+    let ir = lower(
+        "---- MODULE M ----\nVARIABLE x\nInv ==\n  /\\ x\n  /\\ x \\/ x \\/ x\n====",
+        "Inv",
+    );
+    let NodeKind::Definition(definition) = &ir.nodes.arena[ir.definitions[0] as usize].kind else {
+        panic!("a definition");
+    };
+    let NodeKind::And(operands) = &ir.nodes.arena[definition.body as usize].kind else {
+        panic!("the bulleted list");
+    };
+    assert_eq!(
+        ir.nodes.junctions[&definition.body],
+        Junction {
+            is_bulleted: true,
+            prefix_ends: Vec::new(),
+        }
+    );
+    assert_eq!(
+        ir.nodes.junctions[&operands[1]],
+        Junction {
+            is_bulleted: false,
+            prefix_ends: vec![(5, 11), (5, 16)],
+        }
+    );
 }
