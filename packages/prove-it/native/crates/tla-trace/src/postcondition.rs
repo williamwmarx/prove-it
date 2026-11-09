@@ -271,6 +271,7 @@ impl Rebuilder<'_> {
             named,
             stats,
             counter_example,
+            registers: HashMap::new(),
         });
         let result = evaluator.evaluate(body, &Context::default());
         evaluator.runtime = None;

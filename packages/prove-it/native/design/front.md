@@ -358,3 +358,18 @@ initial predicate and the next-state relation, no properties, no liveness and an
 but with the startup section, so the binary still evaluates its assumptions and finds no initial
 state. `lower_model` does the same; the configuration errors of such a spec stay not yet. The
 TS side is `lowerConstantSpec`, which both the dump path and the model-full gate call.
+
+## Substitutes TLC evaluates at startup
+
+TLC evaluates a parameterless substitute for a declared constant at startup and rejects it only
+when that fails and the level bound `createLevelAnalyzer` computes is above constant, with TLCGet,
+Trace and CounterExample read as variables. `create_environment` runs the same analyzer from
+`levels.rs`, and evaluates such a substitute with the constant evaluator before TLC starts
+(`is_started: false`, with no string ranks). Two failures are TLC's:
+
+- a variable, which no state assigns: TLC's "is either undefined or not an operator";
+- TLCGet of a key TLC's model checker holds (diameter, generated, distinct, queue, stats, config),
+  which `TLCGetSet.TLCGetEval` reports as its own failure on master.
+
+Either becomes TLC's configuration error "substitutes constant C with non-constant D -
+specifically: …". Anything else the evaluator can't compute is still `NotYet`.
