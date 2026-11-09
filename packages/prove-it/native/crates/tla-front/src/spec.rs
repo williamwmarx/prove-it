@@ -273,7 +273,7 @@ impl Expansion<'_> {
                 let bound = bind_definitions(definitions, scope)?;
                 return self.expand(body, bound.as_ref(), expanding, is_substituted, name);
             }
-            ExpressionKind::Identifier { .. } => {
+            ExpressionKind::Identifier { name: written, .. } => {
                 let reference = expression.reference().unwrap_or_default();
                 let binding = if expression.is_locally_resolved() {
                     lookup_scope(scope, &reference)
@@ -311,7 +311,8 @@ impl Expansion<'_> {
                         None,
                         &expanding,
                         is_substituted || self.is_substituted(definition),
-                        Some(definition.name.clone()),
+                        // `opNode.getName()`: the name as written, `A!Safe` for an instance's.
+                        Some(written.clone()),
                     );
                 }
             }
