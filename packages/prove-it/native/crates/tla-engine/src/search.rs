@@ -400,7 +400,6 @@ const TLC_FAILURES: &[&str] = &[
     "CHOOSE from a non-set",
     "DOMAIN of a non-function",
     "EXCEPT on a non-function",
-    "EXCEPT outside the domain",
     "Head of an empty sequence",
     "IsFiniteSet of a non-set",
     "RandomElement of the empty set",

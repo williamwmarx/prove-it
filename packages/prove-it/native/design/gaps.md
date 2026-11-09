@@ -611,6 +611,8 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
 - A record set or a product an empty part empties is empty before its parts are combined, and one
   of more than 2^24 combinations stops at a limit, where it exhausted memory.
 - `Seq(S)` has a lazy value (never empty, not enumerable), so `[Seq(S) -> {}]` is empty.
+- A set of functions with a part TLC keeps lazy, as `[{} -> SUBSET (1..40)]`, is enumerated the
+  same way, so its one function of an empty domain doesn't build the range.
 - A function that isn't a tuple, with integers for its domain, is in no set of tuples
   (`SetOfTuplesValue.member`), where the engine failed.
 - An assumption the engine stops at a limit of goes to the trace evaluator's `check_assumption`,
@@ -648,13 +650,10 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
     and fails comparing an integer with a string, where TLC keeps a `UnionValue` and its `size`
     never asks the domain. It needs a lazy UNION value, as the engine's `Lazy::Union`. More may
     follow it.
-  - In the engine, `ToString([{} -> (SUBSET (1..40))])` (assumption 379) overflows counting the
-    power set: the set of functions' own value evaluates its range, where TLC's enumeration of
-    an empty domain doesn't ask it. Its `eval` goes through the lazy enumeration only where a
-    part may be infinite.
-- **ValueSemanticsAssume** declines: not surveyed again since `tla-trace` took TLCFP, which its
-  fifteenth assumption reads. Five assumptions fail in the engine with "EXCEPT outside the
-  domain", not looked at.
+- **ValueSemanticsAssume** declines in `tla-trace` only. The engine stopped five assumptions
+  with "EXCEPT outside the domain" as a failure of TLC's, where TLC leaves the function as it is
+  (`FcnRcdValue.takeExcept`; a record or a tuple with a warning). The reason is now a limit, so
+  such an assumption goes to the trace evaluator.
 - **MCEWD687a** (both copies) stops on "enumerated a filter of an infinite set", which is TLC's
   own failure (`SetPredValue.elements`: "Attempted to enumerate { x \in S : p(x) } when S: ...
   is not enumerable") evaluating the property TreeWithRoot as an invariant. Counting the reason
