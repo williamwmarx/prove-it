@@ -3,7 +3,7 @@
 
 use std::sync::OnceLock;
 
-use tla_values::store::{KIND_SET, Outcome};
+use tla_values::store::{KIND_SET, Outcome, is_function_kind};
 use tla_values::{Bail, Id};
 
 use super::lazy::Lazy;
@@ -83,6 +83,18 @@ fn normalized(machine: &mut Machine<'_>, set: &Lazy) -> Outcome<Vec<Id>> {
         return Err(Bail("drew from a value that isn't a set"));
     }
     Ok(machine.store.set_elements(set).to_vec())
+}
+
+/// Whether a set the engine holds as its elements may be one TLC keeps as a set of functions,
+/// records or tuples, which it draws from component by component.
+pub(crate) fn is_shape_forgotten(machine: &Machine<'_>, set: Id) -> bool {
+    machine.store.kind_of(set) == KIND_SET && {
+        let elements = machine.store.set_elements(set);
+        !elements.is_empty()
+            && elements
+                .iter()
+                .all(|&element| is_function_kind(machine.store.kind_of(element)))
+    }
 }
 
 /// TLC!RandomElement: each component of a set of functions, records or tuples in turn, and
@@ -248,6 +260,10 @@ pub(crate) fn random_subset(
     let set = match source {
         Source::Interval(low, high) => {
             let size = (high - low + 1).max(0) as u64;
+            // TLC draws the first index with nextInt(size), whose bound is an int.
+            if size > i32::MAX as u64 {
+                return Err(Bail("RandomSubset of an interval too large to draw from"));
+            }
             let indices = get_subset_indices(count, size, &mut machine.random, is_174);
             return indices
                 .into_iter()

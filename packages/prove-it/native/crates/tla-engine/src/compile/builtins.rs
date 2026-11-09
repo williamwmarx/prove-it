@@ -332,6 +332,7 @@ impl Compiler<'_> {
         let interval = set.interval.clone();
         let reference = set.reference.clone();
         let evaluate_members = set.eval.clone();
+        let is_enumerated = set.is_enumerated;
         let evaluate_count = (!is_element).then(|| compiled[0].eval.clone());
         Ok(leaf(
             eval(move |machine| {
@@ -356,7 +357,15 @@ impl Compiler<'_> {
                         random::Source::Interval(low, high)
                     }
                     (None, Some(reference)) => random::Source::Set(reference(machine)?),
-                    (None, None) => random::Source::Set(Lazy::Set(evaluate_members(machine)?)),
+                    (None, None) => {
+                        // A set of functions, records or tuples held as its elements, as a
+                        // variable holds one, may be one TLC draws component by component.
+                        let set = evaluate_members(machine)?;
+                        if !is_enumerated && random::is_shape_forgotten(machine, set) {
+                            return Err(Bail("drew from a set whose shape the engine forgets"));
+                        }
+                        random::Source::Set(Lazy::Set(set))
+                    }
                 };
                 match (count, source) {
                     (None, random::Source::Interval(low, high)) => {

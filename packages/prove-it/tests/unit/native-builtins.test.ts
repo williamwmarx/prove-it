@@ -351,6 +351,34 @@ describe.if(ADDON !== undefined)("the native engine's bridged builtins", () => {
     expect(await compareWithInterpreter(body, CONFIG)).toContainEqual(
       expect.stringMatching(stopped("RandomSubset of a product too large to index")),
     );
+    // TLC draws the first index of an interval with nextInt, whose bound is an int.
+    const interval = [
+      "EXTENDS Integers, Randomization",
+      "VARIABLE x",
+      "Init == x \\in RandomSubset(1, (-2147483647 - 1)..2147483647)",
+      "Next == UNCHANGED x",
+      "Inv == x # -1870019805",
+    ];
+    expect(await compareWithInterpreter(interval, `${CONFIG}\nINVARIANT Inv`)).toContainEqual(
+      expect.stringMatching(stopped("RandomSubset of an interval too large to draw from")),
+    );
+  });
+
+  // A variable holds a set of functions as its elements, which TLC may keep lazy and draw from
+  // component by component.
+  it("stops drawing from a set of functions a variable holds", async () => {
+    const body = [
+      "EXTENDS Integers, TLC",
+      "VARIABLES s, x, y",
+      "Init == s = [1..3 -> 1..5] /\\ x = 0 /\\ y = 0",
+      "Next == y = 0 /\\ x' = RandomElement(s) /\\ y' = y + 1 /\\ UNCHANGED s",
+      "Inv == y = 0 \\/ x[3] # 2",
+    ];
+    expect(
+      await compareWithInterpreter(body, `${CONFIG}\nINVARIANT Inv\nCHECK_DEADLOCK FALSE`),
+    ).toContainEqual(
+      expect.stringMatching(stopped("drew from a set whose shape the engine forgets")),
+    );
   });
 
   // The interpreter rebuilds the trace from the initial predicate, as TLC does, so it draws again.
