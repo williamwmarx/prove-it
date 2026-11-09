@@ -54,6 +54,7 @@ fn lower(property: &str) -> FrontError {
         libraries: &[],
         version: None,
         is_warning_enabled: true,
+        is_spec_described: false,
     };
     let config = format!("SPECIFICATION Spec\nPROPERTY {property}\n");
     let lowered = lower_model(&path, &config, &options);
