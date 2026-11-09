@@ -439,9 +439,10 @@ fn check_spec(spec_path: &str, args: &Parsed, printer: &mut Printer) -> i32 {
     }
     let start = Instant::now();
     // The front end reports a configuration it can't read; the binary reads what it prints by.
-    let Some(config) = config_path
-        .and_then(|path| std::fs::read_to_string(path).ok())
-        .and_then(|text| parse_config(&text, TlcVersion::Master).ok())
+    let config_text = config_path.and_then(|path| std::fs::read_to_string(path).ok());
+    let Some(config) = config_text
+        .as_deref()
+        .and_then(|text| parse_config(text, TlcVersion::Master).ok())
     else {
         return report_not_native(printer, "a configuration file the front end rejects");
     };
@@ -451,7 +452,11 @@ fn check_spec(spec_path: &str, args: &Parsed, printer: &mut Printer) -> i32 {
     if args.has("-continue") {
         return report_not_native(printer, "-continue");
     }
-    let front = match read_front(spec_path) {
+    let front = match read_front(
+        spec_path,
+        config_text.as_deref().unwrap_or_default(),
+        !args.has("-nowarning"),
+    ) {
         Ok(front) => front,
         Err(reason) => return report_not_native(printer, &reason),
     };
