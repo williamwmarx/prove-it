@@ -1378,6 +1378,8 @@ impl Compiler<'_> {
                 Compiled {
                     is_normalized: false,
                     infinite: Some("Seq"),
+                    // Seq(S) is never empty, and TLC can't enumerate it.
+                    reference: Some(Arc::new(|_| Ok(Lazy::Infinite("Seq")))),
                     parts: Some(base_parts.clone()),
                     member: Some(member(move |machine, element| {
                         machine.run_parts(&base_parts)?;
@@ -1488,27 +1490,24 @@ impl Compiler<'_> {
                         fused::cardinality_filter(Arc::clone(filter)),
                         set.footprint.clone(),
                     ),
-                    // TLC sizes a set of functions, records or tuples by its parts, and finds
-                    // one that an empty part empties before it asks anything of a part it can't
-                    // enumerate, as `[Nat -> {}]` (`SetOfFcnsValue.size`).
-                    None if set.reference.is_some() && set.may_be_infinite() => {
+                    // TLC sizes a set of functions, records or tuples by its parts
+                    // (`Lazy::size`): an empty part empties it before TLC asks anything of a part
+                    // it can't enumerate, as in `[Nat -> {}]`, or of one too large to.
+                    // A power set of a set the engine holds is counted as it was, by building it.
+                    None if set.reference.is_some()
+                        && !set.is_normalized
+                        && !set
+                            .subset_base
+                            .as_ref()
+                            .is_some_and(|base| base.is_normalized) =>
+                    {
                         let reference = set.reference.clone().expect("a reference");
-                        let evaluate = set.eval.clone();
                         Compiled {
                             is_costly: true,
                             ..leaf(
                                 eval(move |machine| {
-                                    let lazy = reference(machine)?;
-                                    if lazy.is_empty(machine)? {
-                                        return machine.store.int(0);
-                                    }
-                                    let set = evaluate(machine)?;
-                                    let size = machine.store.size_of(expect_set(
-                                        machine,
-                                        set,
-                                        "expected a set",
-                                    )?);
-                                    machine.store.int(i64::from(size))
+                                    let size = reference(machine)?.size(machine)?;
+                                    machine.store.int(size as i64)
                                 }),
                                 set.footprint.clone(),
                             )

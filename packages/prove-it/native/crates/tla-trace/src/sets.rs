@@ -42,6 +42,11 @@ pub fn enumerate(lazy: &Lazy) -> Evaluated<Vec<Value>> {
             sorted(subsets)
         }
         Lazy::FunctionSet(domain_set, range) => {
+            // A domain its own parts empty holds nothing to enumerate, whatever they are, so the
+            // set holds the empty function alone.
+            if is_empty_by_argument(domain_set) {
+                return Ok(vec![Value::function(Vec::new(), Vec::new(), Class::Plain)]);
+            }
             if is_infinite(domain_set) {
                 return fail_runtime(
                     "enumerated an infinite set",
@@ -176,8 +181,14 @@ fn component_elements<'a>(
     sets: impl Iterator<Item = &'a Value>,
     describe: impl Fn(usize, &Value) -> String,
 ) -> Evaluated<Vec<Rc<Vec<Value>>>> {
+    // TLC finds the set empty by a component that is, before it enumerates any
+    // (`SetOfRcdsValue.elements`, `SetOfTuplesValue.elements`).
+    let sets: Vec<&Value> = sets.collect();
+    if sets.iter().any(|set| is_empty(set)) {
+        return Ok(vec![Rc::new(Vec::new())]);
+    }
     let mut lists = Vec::new();
-    for (index, set) in sets.enumerate() {
+    for (index, set) in sets.into_iter().enumerate() {
         if is_infinite(set) {
             return fail_runtime("enumerated an infinite set", describe(index, set));
         }
@@ -590,7 +601,18 @@ pub(crate) fn is_empty_by_argument(set: &Value) -> bool {
     let is_nonempty = |value: &Value| match value {
         Value::Set(elements) => !elements.is_empty(),
         Value::Interval(low, high) => low <= high,
-        Value::Lazy(lazy) => matches!(**lazy, Lazy::Nat | Lazy::Int | Lazy::Real | Lazy::Strings),
+        // A set of functions, records or tuples is nonempty unless its parts empty it
+        // (`SetOfFcnsValue.isEmpty`), and SUBSET S and Seq(S) always are.
+        Value::Lazy(lazy) => match **lazy {
+            Lazy::Nat | Lazy::Int | Lazy::Real | Lazy::Strings | Lazy::Subset(_) | Lazy::Seq(_) => {
+                true
+            }
+            Lazy::FunctionSet(..) | Lazy::RecordSet(..) | Lazy::Product(_) => {
+                !is_empty_by_argument(value)
+            }
+            // TLC can't tell without enumerating it.
+            Lazy::Cap(..) | Lazy::Cup(..) | Lazy::Diff(..) => false,
+        },
         _ => false,
     };
     let Value::Lazy(lazy) = set else {
@@ -604,44 +626,49 @@ pub(crate) fn is_empty_by_argument(set: &Value) -> bool {
     }
 }
 
-/// The number of elements of a set TLC can count.
+/// The number of elements of a set TLC can count (`size` of its values).
 pub fn cardinality(set: &Value) -> Evaluated<usize> {
     if is_empty_by_argument(set) {
         return Ok(0);
     }
     match set {
-        Value::Interval(low, high) => Ok((i64::from(*high) - i64::from(*low) + 1).max(0) as usize),
+        Value::Interval(low, high) => crate::value::interval_size(*low, *high),
         Value::Lazy(lazy) => match &**lazy {
-            Lazy::FunctionSet(domain, range) => match function_set_size(set, domain, range)? {
-                Some(size) => Ok(size),
-                None => Ok(elements(set)?.len()),
-            },
+            Lazy::FunctionSet(domain, range) => function_set_size(set, domain, range),
             _ => Ok(elements(set)?.len()),
         },
         _ => Ok(elements(set)?.len()),
     }
 }
 
-// `SetOfFcnsValue.size`: the number of functions from a domain to a range, both enumerated or
-// intervals, which fails where it overflows an int. None for other domains and ranges.
-fn function_set_size(set: &Value, domain: &Value, range: &Value) -> Evaluated<Option<usize>> {
-    let size = |set: &Value| match set {
-        Value::Set(elements) => Some(elements.len() as i64),
-        Value::Interval(low, high) => Some((i64::from(*high) - i64::from(*low) + 1).max(0)),
-        _ => None,
-    };
-    let (Some(domain), Some(range)) = (size(domain), size(range)) else {
-        return Ok(None);
-    };
-    if domain == 0 {
-        return Ok(Some(1));
+// Whether a set is empty, as TLC's `isEmpty` finds without enumerating it: an enumeration or an
+// interval by itself, a set of functions, records or tuples by its parts.
+fn is_empty(set: &Value) -> bool {
+    match set {
+        Value::Set(elements) => elements.is_empty(),
+        Value::Interval(low, high) => low > high,
+        _ => is_empty_by_argument(set),
     }
-    if range <= 1 {
-        return Ok(Some(range as usize));
+}
+
+// `SetOfFcnsValue.size`: one function over an empty domain, none into an empty range, one into a
+// range of one element whatever the domain, and otherwise the range's size to the power of the
+// domain's, which fails where it overflows an int.
+fn function_set_size(set: &Value, domain: &Value, range: &Value) -> Evaluated<usize> {
+    if is_empty(domain) {
+        return Ok(1);
     }
+    if is_empty(range) {
+        return Ok(0);
+    }
+    let range = cardinality(range)?;
+    if range == 1 {
+        return Ok(1);
+    }
+    let domain = cardinality(domain)?;
     let mut count: i64 = 1;
     for _ in 0..domain {
-        count = count.saturating_mul(range);
+        count = count.saturating_mul(range as i64);
         if count > i64::from(i32::MAX) {
             return fail_runtime(
                 "a function set too large to count",
@@ -652,7 +679,7 @@ fn function_set_size(set: &Value, domain: &Value, range: &Value) -> Evaluated<Op
             );
         }
     }
-    Ok(Some(count as usize))
+    Ok(count as usize)
 }
 
 #[cfg(test)]
@@ -706,6 +733,18 @@ mod tests {
     }
 
     #[test]
+    fn sizes_an_interval_as_tlc_does() {
+        assert_eq!(
+            cardinality(&Value::Interval(0, i32::MAX - 1)).expect("a size"),
+            i32::MAX as usize
+        );
+        assert_eq!(
+            message(cardinality(&Value::Interval(0, i32::MAX)).map(|_| true)),
+            "Size of interval value exceeds the maximum representable size (32bits): 0..2147483647."
+        );
+    }
+
+    #[test]
     fn counts_a_function_set_as_tlc_does() {
         let set = |domain, range| Value::Lazy(Rc::new(Lazy::FunctionSet(domain, range)));
         let count = cardinality(&set(Value::Interval(1, 3), Value::Interval(1, 4)));
@@ -718,6 +757,21 @@ mod tests {
                 .text,
             "Overflow when computing the number of elements in:\n[0..2 -> 1..2000]"
         );
+        // An empty part decides before TLC asks anything of Nat, and a range of one element
+        // makes one function whatever the domain.
+        let nat = || Value::Lazy(Rc::new(Lazy::Nat));
+        let count = |domain, range| cardinality(&set(domain, range)).expect("a count");
+        assert_eq!(count(nat(), Value::empty_set()), 0);
+        assert_eq!(count(Value::empty_set(), nat()), 1);
+        assert_eq!(count(nat(), Value::Interval(1, 1)), 1);
+        let large = Value::Lazy(Rc::new(Lazy::Subset(Value::Interval(1, 40))));
+        assert_eq!(count(large, Value::Interval(1, 1)), 1);
+        assert!(cardinality(&set(nat(), Value::Interval(1, 2))).is_err());
+        // A set its parts empty enumerates to nothing, and an empty domain to one function.
+        let emptied = set(nat(), Value::empty_set());
+        assert!(elements(&emptied).expect("no elements").is_empty());
+        let unit = set(emptied, Value::Interval(1, 2));
+        assert_eq!(elements(&unit).expect("one function").len(), 1);
     }
 
     #[test]

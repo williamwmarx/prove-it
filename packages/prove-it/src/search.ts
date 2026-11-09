@@ -327,7 +327,16 @@ export const getSpecification = (config: ModelConfig, environment: Environment):
       `The value of ${config.specification} is equal to ${formatValue(value)}`,
     );
   }
-  expandTemporal(definition.body, undefined, environment, false).forEach((item) => {
+  expandTemporal(
+    definition.body,
+    undefined,
+    environment,
+    false,
+    undefined,
+    false,
+    undefined,
+    true,
+  ).forEach((item) => {
     const conjunct = item.expression;
     if (isConstantTrue(item, environment, "spec")) return;
     if (conjunct.kind === "UnboundedQuantifier" && conjunct.isTemporal) {

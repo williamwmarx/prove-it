@@ -266,7 +266,7 @@ const NATURALS_OPERATORS = [
   defineComparison("<=", (left, right) => left <= right),
   // tlc2.module.Naturals#GEQ names itself > in its errors. Only a spec that extends Integers gets
   // the GEQ of tlc2.module.Integers, not one that loads Integers for its trace exploration spec.
-  defineComparison(">=", (left, right) => left >= right, ">"),
+  { ...defineComparison(">=", (left, right) => left >= right, ">"), isNaturalsGeq: true },
 ];
 
 const INTEGERS_OPERATORS = [

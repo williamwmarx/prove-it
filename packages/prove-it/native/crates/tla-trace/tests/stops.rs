@@ -197,6 +197,46 @@ fn reports_a_failing_invariant_with_the_initial_state_it_evaluates() {
         ),
         (1, 1, 1, 1)
     );
+    // TLC's call stack has Init's body as it keeps it, a bulleted list from its first bullet,
+    // then the conjuncts it was in and the invariant.
+    let bytes = std::fs::read(ir_directory().join(format!(
+        "{MODELS}/DoInitFunctor/DoInitFunctorMinimalErrorStack.ir"
+    )))
+    .expect("an IR");
+    let ir = tla_ir::decode(&bytes).expect("an IR that decodes");
+    let failure = tla_values::on_nesting_stack(|| {
+        let states: Vec<&[Id]> = violation.states.iter().map(Vec::as_slice).collect();
+        Rebuilder::new(&ir)
+            .and_then(|mut rebuilder| {
+                rebuilder.evaluate_failure(
+                    &violation.store,
+                    &states,
+                    &violation.labels,
+                    Site::InitialInvariant(0),
+                )
+            })
+            .unwrap_or_else(|unsupported| panic!("{}", unsupported.0))
+    });
+    assert_eq!(
+        failure.message,
+        "The first argument of > should be an integer, but instead it is:\n<<1, 1>>"
+    );
+    let frames: Vec<_> = failure
+        .call_stack
+        .iter()
+        .map(|range| {
+            (
+                range.start_line,
+                range.start_column,
+                range.end_line,
+                range.end_column,
+            )
+        })
+        .collect();
+    assert_eq!(
+        frames,
+        [(8, 3, 9, 13), (8, 6, 8, 25), (9, 6, 9, 13), (14, 8, 14, 13)]
+    );
 }
 
 #[test]

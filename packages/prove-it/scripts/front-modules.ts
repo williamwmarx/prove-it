@@ -74,7 +74,10 @@ files.set(
 );
 
 const getFlags = (builtin: Builtin) =>
-  (builtin.isStateLevel ? 1 : 0) | (builtin.isLevelConstant ? 2 : 0) | (builtin.isLazy ? 4 : 0);
+  (builtin.isStateLevel ? 1 : 0) |
+  (builtin.isLevelConstant ? 2 : 0) |
+  (builtin.isLazy ? 4 : 0) |
+  (builtin.isNaturalsGeq ? 16 : 0);
 
 const writeRange = (range: ReturnType<typeof getStandardRange>) =>
   range
@@ -114,7 +117,7 @@ files.set(
     "//! parameters and their ranges from `src/standard-definitions.ts`. `scripts/front-modules.ts`",
     "//! writes this file; don't edit it by hand.",
     "",
-    "/// A builtin's flags: state-level, level-constant, lazy, as the IR writes them.",
+    "/// A builtin's flags: state-level, level-constant, lazy, Naturals' >=, as the IR writes them.",
     "pub struct StandardOperator {",
     "    pub name: &'static str,",
     "    pub arity: usize,",

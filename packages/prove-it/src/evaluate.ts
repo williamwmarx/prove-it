@@ -102,6 +102,8 @@ export interface Builtin {
   // Whether TLC takes an application for a constant one although its value depends on the state.
   isLevelConstant?: boolean;
   isLazy?: boolean;
+  // Whether it is the >= of tlc2.module.Naturals, which names itself > in its errors.
+  isNaturalsGeq?: boolean;
   // A configuration's definition of a constant operator by its values, F(0) = 1: each row's
   // arguments and value.
   table?: [Value[], Value][];
