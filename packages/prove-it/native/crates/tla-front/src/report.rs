@@ -13,7 +13,27 @@ use crate::get_standard_module;
 use crate::hash::{FastMap, FastSet};
 use crate::parser::{extract_module, parse_sany_module};
 
-type Result<T> = std::result::Result<T, FrontError>;
+type Result<T> = std::result::Result<T, Stop>;
+
+/// Why SANY stops: a fatal error of its parsing phase, which it prints, or what the front end
+/// doesn't cover yet.
+enum Stop {
+    Fatal {
+        location: Option<Rc<str>>,
+        message: String,
+    },
+    Front(FrontError),
+}
+
+impl From<FrontError> for Stop {
+    fn from(error: FrontError) -> Stop {
+        Stop::Front(error)
+    }
+}
+
+fn not_yet(reason: &str) -> Stop {
+    Stop::Front(FrontError::NotYet(reason.to_owned()))
+}
 
 /// Where SANY reads a module from, as `SanyModuleOrigin`: a file of its own, the file of the root
 /// module, or the files of its standard modules.
@@ -27,6 +47,9 @@ pub enum ModuleOrigin {
 /// How the run reads and names the spec's modules.
 pub struct ReportOptions<'a> {
     pub version: TlcVersion,
+    /// The file name TLC gives SANY, which SANY prints in its fatal errors, or else the root
+    /// module's name.
+    pub file_name: Option<&'a str>,
     /// A module's text from a file of its own, beside the spec or in the library.
     pub load_module: &'a dyn Fn(&str) -> Option<String>,
     /// The file TLC prints that it parses a module from, as `createFileDescriber` names it.
@@ -219,12 +242,23 @@ impl Loader<'_> {
 
     /// `loadSource` in `getSanyReport` and in the generator: TLC prints the file of a module
     /// before SANY parses it.
-    fn load(&mut self, name: &Rc<str>, text: Option<String>, origin: ModuleOrigin) -> Result<()> {
+    fn load(
+        &mut self,
+        name: &Rc<str>,
+        text: Option<String>,
+        origin: ModuleOrigin,
+        importer: &Rc<str>,
+    ) -> Result<()> {
         if self.modules.contains_key(name) {
             return Ok(());
         }
         let Some(text) = text else {
-            return Err(FrontError::NotYet(format!("a missing module {name}")));
+            return Err(Stop::Fatal {
+                location: Some(importer.clone()),
+                message: format!(
+                    "Cannot find source file for module {name} imported in module {importer}."
+                ),
+            });
         };
         self.lines.push(format!(
             "Parsing file {}\n",
@@ -232,14 +266,18 @@ impl Loader<'_> {
         ));
         // SANY validates the PlusCal of each module it loads.
         if text.contains("--algorithm") || text.contains("--fair") {
-            return Err(FrontError::NotYet("PlusCal".to_owned()));
+            return Err(not_yet("PlusCal"));
         }
         let module = parse_sany_module(&text, None, self.options.version)
-            .map_err(|_| FrontError::NotYet("SANY's parse errors".to_owned()))?;
+            .map_err(|_| not_yet("SANY's parse errors"))?;
         if module.name != *name {
-            return Err(FrontError::NotYet(
-                "a file named apart from its module".to_owned(),
-            ));
+            return Err(Stop::Fatal {
+                location: None,
+                message: format!(
+                    "File name '{name}' does not match the name '{}' of the top level module it contains.",
+                    module.name
+                ),
+            });
         }
         let module = Rc::new(module);
         let dependencies = Rc::new(get_dependencies(&module));
@@ -319,8 +357,19 @@ impl Loader<'_> {
         visiting: &mut FastSet<Rc<str>>,
         order: &mut Vec<Rc<str>>,
     ) -> Result<()> {
-        if path.contains(name) {
-            return Err(FrontError::NotYet("a circular dependency".to_owned()));
+        if let Some(start) = path.iter().position(|item| item == name) {
+            let cycle: Vec<String> = path[start..]
+                .iter()
+                .chain([name])
+                .map(|item| format!("{item}.tla"))
+                .collect();
+            return Err(Stop::Fatal {
+                location: None,
+                message: format!(
+                    "Circular dependency among .tla files; dependency cycle is:\n\n  {}",
+                    cycle.join(" --> ")
+                ),
+            });
         }
         if !visiting.insert(name.clone()) {
             return Ok(());
@@ -412,10 +461,13 @@ fn collect_module_names(
     }
 }
 
-/// What SANY prints for the spec at `spec_path` while TLC runs it, when SANY accepts the spec
-/// without a message, or `NotYet` for SANY's messages, PlusCal and what SANY's linter could warn
-/// about.
-pub fn get_sany_text(spec_path: &Path, options: &ReportOptions) -> Result<String> {
+/// What SANY prints for the spec at `spec_path` while TLC runs it: when SANY accepts the spec
+/// without a message, or stops at a fatal error other than a parse error. `NotYet` for SANY's
+/// other messages, PlusCal and what SANY's linter could warn about.
+pub fn get_sany_text(
+    spec_path: &Path,
+    options: &ReportOptions,
+) -> std::result::Result<String, FrontError> {
     let root: Rc<str> = Rc::from(
         spec_path
             .file_stem()
@@ -430,38 +482,66 @@ pub fn get_sany_text(spec_path: &Path, options: &ReportOptions) -> Result<String
         modules: FastMap::default(),
         lines: Vec::new(),
     };
-    loader.load(&root, Some(source.clone()), ModuleOrigin::File)?;
+    match write_sany_text(&mut loader, &root) {
+        Ok(()) => Ok(loader.lines.concat()),
+        Err(Stop::Front(error)) => Err(error),
+        // TLC 1.7.4's SANY aborts with an AbortException instead.
+        Err(Stop::Fatal { .. }) if options.version == TlcVersion::V1_7_4 => {
+            Err(FrontError::NotYet("TLC 1.7.4's fatal errors".to_owned()))
+        }
+        Err(Stop::Fatal { location, message }) => {
+            let fatal = format!(
+                "{}\n\n{message}",
+                location.map_or_else(
+                    || "Unknown location".to_owned(),
+                    |module| format!("In module {module}")
+                )
+            );
+            let name = options.file_name.unwrap_or(&root);
+            Ok(format!(
+                "{}\nFatal errors while parsing TLA+ spec in file {name}\n\n{fatal}\n*** Errors: 1\n\n{fatal}\n\n\n\n",
+                loader.lines.concat()
+            ))
+        }
+    }
+}
+
+fn write_sany_text(loader: &mut Loader, root: &Rc<str>) -> Result<()> {
+    let options = loader.options;
+    let source = loader.source;
+    let root = root.clone();
+    loader.load(&root, Some(source.to_owned()), ModuleOrigin::File, &root)?;
     let mut resolutions: FastSet<(Rc<str>, Rc<str>)> = FastSet::default();
     loop {
         let next = [true, false].into_iter().find_map(|is_extension| {
             loader.find_unresolved(&root, is_extension, &mut FastSet::default(), &resolutions)
         });
-        let Some((name, importer, _)) = next else {
+        let Some((name, importer, naming_module)) = next else {
             break;
         };
         if !loader.modules.contains_key(&name) {
             let (text, origin) = loader.read(&name);
-            loader.load(&name, text, origin)?;
+            loader.load(&name, text, origin, &naming_module)?;
         }
         resolutions.insert((importer, name));
     }
+    let mut order = Vec::new();
+    loader.get_analysis_order(&root, &mut Vec::new(), &mut FastSet::default(), &mut order)?;
     // SANY's messages come from linking, which reports what SANY's semantic analysis does.
     let config =
         parse_config("", options.version).map_err(|error| FrontError::Config(error.message))?;
     let environment = create_environment(&EnvironmentOptions {
-        source: &source,
+        source,
         load_module: &|name| loader.read(name).0,
         config: &config,
         is_unconfigured: true,
         version: options.version,
         is_level_checked: true,
     })
-    .map_err(|_| FrontError::NotYet("SANY's semantic errors".to_owned()))?;
+    .map_err(|_| not_yet("SANY's semantic errors"))?;
     if !environment.printed.is_empty() {
-        return Err(FrontError::NotYet("SANY's warnings".to_owned()));
+        return Err(not_yet("SANY's warnings"));
     }
-    let mut order = Vec::new();
-    loader.get_analysis_order(&root, &mut Vec::new(), &mut FastSet::default(), &mut order)?;
     for name in &order {
         loader
             .lines
@@ -487,13 +567,13 @@ pub fn get_sany_text(spec_path: &Path, options: &ReportOptions) -> Result<String
             );
         }
         if fields.iter().any(|field| names.contains(field)) {
-            return Err(FrontError::NotYet(
-                "a record field named like a definition, which SANY's linter checks".to_owned(),
+            return Err(not_yet(
+                "a record field named like a definition, which SANY's linter checks",
             ));
         }
         for name in linted {
             loader.lines.push(format!("Linting of module {name}\n"));
         }
     }
-    Ok(loader.lines.concat())
+    Ok(())
 }

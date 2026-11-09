@@ -567,13 +567,17 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                 );
             }
             if let Some(liveness) = liveness {
-                if let (Some(violation), Verdict::Lasso { .. }) = (violation, &liveness.verdict) {
+                // TLC stops at a node that accepts every behavior as it searches, so it checks
+                // nothing once the search is done.
+                let is_lasso = matches!(liveness.verdict, Verdict::Lasso { .. });
+                let is_accepted = matches!(liveness.verdict, Verdict::Accepted { .. });
+                if let Some(violation) = violation.filter(|_| is_lasso || is_accepted) {
                     return print_violation(
                         printer,
                         &ir,
                         &config,
                         &violation,
-                        Some(&liveness),
+                        is_lasso.then_some(&liveness),
                         start,
                     )
                     .unwrap_or_else(|why| {
@@ -798,7 +802,18 @@ fn print_violation(
             temporal_headline(ir, liveness.ok_or(NOT_IN_IR)?).ok_or(NOT_IN_IR)?,
             LIVENESS_VIOLATION,
         ),
+        // A tableau node that accepts every behavior: TLC reports it as it does a safety
+        // violation.
+        ViolationKind::Accepted { ref violated } => (
+            code::TEMPORAL_PROPERTY_VIOLATED,
+            properties_headline(ir, violated).ok_or(NOT_IN_IR)?,
+            SAFETY_VIOLATION,
+        ),
     };
+    let is_counterexample = matches!(
+        violation.kind,
+        ViolationKind::Lasso { .. } | ViolationKind::Accepted { .. }
+    );
     let lasso = match violation.kind {
         ViolationKind::Lasso {
             loop_start,
@@ -870,7 +885,7 @@ fn print_violation(
     // later state's before it, and the rebuild after the trace. TLC rebuilds a counterexample
     // before it reports it, all of it as it recovers the first state (`printViolation`).
     let first_output = trace.states[0].output.iter();
-    let (heading_code, heading) = if lasso.is_some() {
+    let (heading_code, heading) = if is_counterexample {
         for line in first_output.clone().chain(&trace.trace_output) {
             printer.line(line);
         }
@@ -903,6 +918,7 @@ fn print_violation(
         );
     }
     match lasso {
+        None if is_counterexample => {}
         None => {
             for line in &trace.trace_output {
                 printer.line(line);
@@ -950,6 +966,11 @@ fn temporal_headline(ir: &tla_ir::Ir, liveness: &Liveness) -> Option<String> {
     let Verdict::Lasso { violated, .. } = &liveness.verdict else {
         return None;
     };
+    properties_headline(ir, violated)
+}
+
+// The headline that names the temporal properties at `violated` in the model's properties.
+fn properties_headline(ir: &tla_ir::Ir, violated: &[usize]) -> Option<String> {
     let mut names: Vec<&str> = Vec::new();
     for &position in violated {
         let name = &*ir.texts[ir.model.live_properties.get(position)?.name as usize];
