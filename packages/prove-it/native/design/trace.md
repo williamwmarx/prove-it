@@ -303,7 +303,9 @@ An error has TLC's message only where its kind is ported. So far:
   the name read.
 
 A lambda has no message yet: TLC keeps a function constructor lazy only where it evaluates it so
-(`EvalControl.KeepLazy`), which the evaluator doesn't follow. TLC 1.7.4's wording isn't ported.
+(`EvalControl.KeepLazy`), which the evaluator doesn't follow. A model for TLC 1.7.4 returns
+`Unsupported`: that version streams a quantifier's lazy bounds rather than enumerating them in order,
+and words some messages apart.
 
 TLC reports a failure in a method of a value with a source (a set, tuple, record or function set
 the replay built, or a `\cup`, `\cap` or `\`) as a FingerprintException, with the values'

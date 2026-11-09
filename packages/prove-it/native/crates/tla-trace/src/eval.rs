@@ -481,7 +481,7 @@ impl<'ir> Evaluator<'ir> {
     }
 
     // TLC 1.7.4, which words some messages apart.
-    fn is_174(&self) -> bool {
+    pub(crate) fn is_174(&self) -> bool {
         self.ir
             .model
             .version
