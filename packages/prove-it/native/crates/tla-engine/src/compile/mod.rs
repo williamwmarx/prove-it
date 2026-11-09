@@ -51,7 +51,15 @@ pub const LEVEL_SLOT: u32 = 0;
 pub const NEXT_LEVEL_SLOT: u32 = 1;
 pub const DISTINCT_SLOT: u32 = 2;
 const PRINT_SLOT: u32 = 3;
-const SEARCH_SLOTS: [u32; 4] = [LEVEL_SLOT, NEXT_LEVEL_SLOT, DISTINCT_SLOT, PRINT_SLOT];
+/// TLCGet("diameter"), which only the liveness checker's atoms read.
+pub const DIAMETER_SLOT: u32 = 4;
+const SEARCH_SLOTS: [u32; 5] = [
+    LEVEL_SLOT,
+    NEXT_LEVEL_SLOT,
+    DISTINCT_SLOT,
+    PRINT_SLOT,
+    DIAMETER_SLOT,
+];
 
 const MAXIMUM_MEMO_WIDTH: usize = 6;
 const MAXIMUM_EXPANSION: u32 = 2000;
@@ -215,12 +223,18 @@ impl Compiled {
             .any(|slot| SEARCH_SLOTS.contains(slot))
     }
 
-    /// Whether the expression reads what TLCGet reads, which only the search keeps.
+    /// Whether the expression reads TLCGet("level") or TLCGet("distinct"), which only the search
+    /// keeps.
     pub fn reads_tlc_get(&self) -> bool {
         self.footprint
             .slots
             .iter()
-            .any(|&slot| slot != PRINT_SLOT && SEARCH_SLOTS.contains(&slot))
+            .any(|&slot| slot == LEVEL_SLOT || slot == NEXT_LEVEL_SLOT || slot == DISTINCT_SLOT)
+    }
+
+    /// Whether the expression reads TLCGet("diameter").
+    pub fn reads_diameter(&self) -> bool {
+        self.footprint.slots.contains(&DIAMETER_SLOT)
     }
 
     pub(crate) fn is_printing(&self) -> bool {
@@ -615,6 +629,8 @@ pub struct Compiler<'a> {
     specialisations: usize,
     /// Whether an expression reads TLCGet("distinct"), whose slot the search must then set.
     pub is_distinct_read: bool,
+    /// Whether an expression reads TLCGet("diameter"), which only the liveness checker sets.
+    pub is_diameter_read: bool,
     /// Whether anything compiled may print, and whether it uses ToString, which ranks strings.
     pub is_printing: bool,
     pub is_ranking: bool,
@@ -674,6 +690,7 @@ impl<'a> Compiler<'a> {
             entry_count: 0,
             specialisations: 0,
             is_distinct_read: false,
+            is_diameter_read: false,
             is_printing: false,
             is_ranking: false,
             scope_contexts: HashMap::new(),

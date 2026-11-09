@@ -12,6 +12,8 @@
 //!   directory and then the library directory, and writes the environment as canonical JSON;
 //! - `front-dump model [--library <directory>]` reads lines of a configuration's path, a tab and
 //!   its spec's path, and writes the environment of each model as `resolve` does;
+//! - `front-dump ir [--library <directory>]` links each file as `resolve` does and writes, in
+//!   hex, the IR of a model whose configuration names every definition as an invariant;
 //! - `front-dump time` writes the best of five times to tokenize and parse each module, in
 //!   milliseconds.
 
@@ -20,14 +22,19 @@ use std::io::{BufRead, Write, stdin, stdout};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use std::rc::Rc;
 use tla_front::TlcVersion;
 use tla_front::config::parse_config;
 use tla_front::dump;
-use tla_front::environment::{EnvironmentOptions, create_environment};
+
+use tla_front::ast::{Expression, ExpressionKind, Location};
+use tla_front::environment::{Environment, EnvironmentOptions, create_environment};
 use tla_front::errors::FrontError;
 use tla_front::json::write_js_string;
 use tla_front::lexer::tokenize;
+use tla_front::lower::{Lowering, RankedTexts};
 use tla_front::parser::{parse_module, parse_sany_module};
+use tla_ir::Model;
 
 fn write_tokens(out: &mut String, source: &str) {
     match tokenize(source) {
@@ -71,13 +78,12 @@ fn write_module(out: &mut String, source: &str, is_sany: bool) {
 }
 
 /// Links the spec at `path` with the configuration `config`, or as SANY does without one.
-fn write_environment(
-    out: &mut String,
+fn link(
     source: &str,
     path: &Path,
     library: Option<&Path>,
     config: Option<&str>,
-) {
+) -> Result<Environment, FrontError> {
     let directory = path.parent().unwrap_or(Path::new("."));
     let load_module = |name: &str| {
         let file = format!("{name}.tla");
@@ -91,7 +97,7 @@ fn write_environment(
         None => parse_config("", TlcVersion::Master),
         Some(text) => parse_config(text, TlcVersion::Master),
     };
-    let environment = parsed
+    parsed
         .map_err(|error| FrontError::Config(error.message))
         .and_then(|model| {
             create_environment(&EnvironmentOptions {
@@ -101,8 +107,91 @@ fn write_environment(
                 is_unconfigured: config.is_none(),
                 version: TlcVersion::Master,
             })
-        });
-    dump::environment(&environment).write(out);
+        })
+}
+
+fn write_environment(
+    out: &mut String,
+    source: &str,
+    path: &Path,
+    library: Option<&Path>,
+    config: Option<&str>,
+) {
+    dump::environment(&link(source, path, library, config)).write(out);
+}
+
+/// The IR of a model whose Init and Next are a placeholder and whose configuration names each
+/// definition of the environment, by key, as an invariant, so it holds every definition.
+fn lower_definitions(environment: &Environment) -> Result<Vec<u8>, FrontError> {
+    let mut lowering = Lowering::new(
+        environment,
+        RankedTexts {
+            texts: &[],
+            ranks: Default::default(),
+        },
+    );
+    let root = Rc::new(Expression::new(
+        ExpressionKind::Number {
+            value: 0.0,
+            text: Rc::from("0"),
+        },
+        Location {
+            line: 0,
+            column: 0,
+            range: None,
+        },
+    ));
+    let init = lowering.write_root(&root)?;
+    let next = lowering.write_root(&root)?;
+    let invariants = environment
+        .definitions
+        .keys()
+        .map(|key| lowering.config_name(key))
+        .collect();
+    let model = Model {
+        init,
+        next,
+        scope: None,
+        actions: Vec::new(),
+        is_labelled: false,
+        invariants,
+        property_invariants: Vec::new(),
+        property_invariant_names: Vec::new(),
+        constraints: Vec::new(),
+        action_constraints: Vec::new(),
+        possible: Vec::new(),
+        action_properties: Vec::new(),
+        initial_predicates: Vec::new(),
+        view: None,
+        symmetry: None,
+        check_deadlock: true,
+        is_warning_enabled: true,
+        is_recording_graph: false,
+        version: None,
+        // TLC's default seed, 0, and java.util.Random seeded with it, which no assumption has drawn
+        // from: the model `ir.ts` writes for an environment that evaluated nothing at startup.
+        random_seed: 0,
+        startup_random: 0x5_DEEC_E66D,
+        atoms: Vec::new(),
+        live_formula: Vec::new(),
+        live_properties: Vec::new(),
+    };
+    Ok(tla_ir::encode(&lowering.finish(model)?))
+}
+
+fn write_lowered(out: &mut String, source: &str, path: &Path, library: Option<&Path>) {
+    let lowered =
+        link(source, path, library, None).and_then(|environment| lower_definitions(&environment));
+    match lowered {
+        Ok(bytes) => {
+            out.push_str("{\"ir\":\"");
+            for byte in bytes {
+                let _ = write!(out, "{byte:02x}");
+            }
+            out.push_str("\"}");
+        }
+        Err(error) => dump::environment(&Err(error)).write(out),
+    }
 }
 
 fn write_time(out: &mut String, source: &str) {
@@ -125,7 +214,7 @@ fn main() -> ExitCode {
         .and_then(|index| arguments.get(index + 1))
         .map(PathBuf::from);
     let write: fn(&mut String, &str) = match mode.as_str() {
-        "resolve" | "model" => |_, _| {},
+        "resolve" | "model" | "ir" => |_, _| {},
         "tokens" => write_tokens,
         "ast" => |out, source| write_module(out, source, false),
         "sany-ast" => |out, source| write_module(out, source, true),
@@ -138,7 +227,7 @@ fn main() -> ExitCode {
             out.push('}');
         },
         _ => {
-            eprintln!("usage: front-dump tokens|ast|sany-ast|config|resolve|model|time < paths");
+            eprintln!("usage: front-dump tokens|ast|sany-ast|config|resolve|model|ir|time < paths");
             return ExitCode::from(2);
         }
     };
@@ -153,7 +242,9 @@ fn main() -> ExitCode {
             }
         };
         let mut line = String::new();
-        if mode == "resolve" {
+        if mode == "ir" {
+            write_lowered(&mut line, &source, Path::new(&path), library.as_deref());
+        } else if mode == "resolve" {
             write_environment(
                 &mut line,
                 &source,
