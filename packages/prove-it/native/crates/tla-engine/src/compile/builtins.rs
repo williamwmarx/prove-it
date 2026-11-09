@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use tla_ir::{Builtin, Index, NodeKind};
 use tla_values::fingerprint::{Fingerprints, INITIAL};
+use tla_values::json;
 use tla_values::print::{is_printable, write_value};
 use tla_values::store::{
     EMPTY_SET, EMPTY_TUPLE, FALSE, KIND_INT, KIND_SET, KIND_STRING, KIND_TUPLE, Outcome, TRUE,
@@ -256,6 +257,13 @@ impl Compiler<'_> {
         if name == "RandomElement" || name == "RandomSubset" {
             return self.compile_random(name, operands, context);
         }
+        if matches!(
+            name,
+            "JsonSerialize" | "ndJsonSerialize" | "JsonDeserialize" | "ndJsonDeserialize"
+        ) && self.is_native
+        {
+            return self.compile_json_file(name, operands);
+        }
         if builtin.flags & Builtin::TABLE != 0 {
             return self.compile_table(index, operands);
         }
@@ -483,6 +491,85 @@ impl Compiler<'_> {
                     Ok(result)
                 }),
                 footprint,
+            )
+        })
+    }
+
+    // The Json module's operators that write a value to the file a string names, as JSON or one
+    // element of a sequence per line, or read one, as TLC's Json class does (`src/json.ts`). Only
+    // the native checker reads and writes the files: the interpreter does beside the addon.
+    // Writing prints in TLC's order, as Print does; reading ranks the strings it reads.
+    fn compile_json_file(&mut self, name: &str, operands: &[Operand]) -> Compiling<Compiled> {
+        let is_written = name.ends_with("Serialize");
+        if operands.len() != if is_written { 2 } else { 1 } {
+            return unsupported("an operator applied to the wrong number of arguments");
+        }
+        let compiled = operands
+            .iter()
+            .map(|operand| self.operand(operand))
+            .collect::<Compiling<Vec<Compiled>>>()?;
+        let footprint = Footprint::merge_all(compiled.iter().map(|operand| &operand.footprint));
+        let evaluators: Vec<Eval> = compiled.into_iter().map(|operand| operand.eval).collect();
+        let is_lines = name.starts_with("nd");
+        let read_path = move |machine: &mut Machine<'_>, evaluate: &Eval| -> Outcome<String> {
+            let path = evaluate(machine)?;
+            if machine.store.kind_of(path) != KIND_STRING {
+                return Err(Bail("a Json operator's file that isn't a string"));
+            }
+            Ok(String::from_utf16_lossy(machine.store.text_of(path)))
+        };
+        if !is_written {
+            self.is_ranking = true;
+            return Ok(leaf(
+                eval(move |machine| {
+                    let path = read_path(machine, &evaluators[0])?;
+                    let text: Vec<u16> = std::fs::read(&path)
+                        .map_err(|_| Bail("a Json operator's file that can't be read"))
+                        .map(|bytes| String::from_utf8_lossy(&bytes).encode_utf16().collect())?;
+                    if is_lines {
+                        json::read_nd_json(&mut machine.store, &text)
+                    } else {
+                        json::read_json(&mut machine.store, &text)
+                    }
+                }),
+                footprint,
+            ));
+        }
+        self.is_printing = true;
+        Ok(Compiled {
+            is_boolean: true,
+            ..leaf(
+                eval(move |machine| {
+                    let path = read_path(machine, &evaluators[0])?;
+                    let value = evaluators[1](machine)?;
+                    let store = &machine.store;
+                    let mut text = Vec::new();
+                    if is_lines {
+                        if store.kind_of(value) != KIND_TUPLE {
+                            return Err(Bail("ndJsonSerialize of a value that isn't a sequence"));
+                        }
+                        for index in 0..store.size_of(value) {
+                            json::write_json(
+                                store,
+                                store.get_range_value(value, index),
+                                &mut text,
+                            )?;
+                            text.push(u16::from(b'\n'));
+                        }
+                    } else {
+                        if store.kind_of(value) != KIND_TUPLE && !json::is_json_record(store, value)
+                        {
+                            return Err(Bail(
+                                "JsonSerialize of a value that isn't a sequence or a record",
+                            ));
+                        }
+                        json::write_json(store, value, &mut text)?;
+                    }
+                    std::fs::write(&path, String::from_utf16_lossy(&text))
+                        .map_err(|_| Bail("a Json operator's file that can't be written"))?;
+                    Ok(TRUE)
+                }),
+                footprint.merge(&Footprint::slot(super::PRINT_SLOT)),
             )
         })
     }
