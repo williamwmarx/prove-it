@@ -2337,7 +2337,7 @@ impl<'a> Compiler<'a> {
         action: NodeId,
         context: &Context,
     ) -> Compiling<Compiled> {
-        if context.is_primed || context.is_init {
+        if context.is_primed {
             return unsupported("expression Enabled");
         }
         self.enabled_depth += 1;
