@@ -570,6 +570,31 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     await compareWithInterpreter(body, config, { PROVE_IT_LIVE_CHECK: "1" });
   });
 
+  it("takes the steps from a state a step reached but the search didn't store", async () => {
+    // TLC's ChooseTableauSymmetry: a late node of the tableau is of a state the search told apart
+    // from the one stored for it only under SYMMETRY, so TLC runs Next from that state.
+    const body = [
+      "EXTENDS TLC",
+      "CONSTANTS a, b",
+      "VARIABLE arr",
+      "Val == {a, b}",
+      'Init == arr = [v \\in Val |-> "ready"]',
+      `Ready(v) == arr[v] = "ready" /\\ arr' = [arr EXCEPT ![v] = "busy"]`,
+      `Busy(v) == arr[v] = "busy" /\\ arr' = [arr EXCEPT ![v] = "done"]`,
+      `Done(v) == arr[v] = "done" /\\ arr' = [arr EXCEPT ![v] = "ready"]`,
+      "Next == \\E v \\in Val : Ready(v) \\/ Busy(v) \\/ Done(v)",
+      "Spec == Init /\\ [][Next]_<<arr>> /\\ WF_<<arr>>(Next)",
+      "Symmetry == Permutations(Val)",
+      'Liveness == LET v == CHOOSE e \\in Val : TRUE IN (arr[v] = "busy") ~> (arr[v] = "ready")',
+      "Negated == ~Liveness",
+    ];
+    const config =
+      "CONSTANTS a = a\nb = b\nSYMMETRY Symmetry\nSPECIFICATION Spec\nPROPERTY Negated";
+    const lines = await compareWithInterpreter(body, config);
+    expect(lines).toContain("[engine] native: liveness: lasso");
+    await compareWithInterpreter(body, config, { PROVE_IT_LIVE_CHECK: "1" });
+  });
+
   it("reports a tableau node that accepts every behavior as TLC finds it", async () => {
     // TLC's test model Github1389Counting: x becomes TRUE at most twice.
     const body = [
