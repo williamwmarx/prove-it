@@ -479,3 +479,48 @@ Test2's output differs. The liveness session's design, open for whoever owns it 
 - Evaluate each atom every time TLC does. The `effects` log and the `known` short-circuit assume
   one evaluation per check, so don't cache across checks when an atom has effects
   (`is_effectful` already turns caching off).
+
+## Handoff (gaps session, 2026-11-09)
+
+Done this session (each in a section above): run-time error stops (ErrorSite Init, Next,
+Invariant with out-degrees, InitialConstraint, InitialInvariant, InitialPredicate, and
+AssumptionFailed); `TLC_FAILURES`, the list of the reasons that are TLC's failures, every other
+reason a limit; operator tables; recursive functions from instances and operators; lazy element
+application (test45); the run-time walk of a recursive function (VoteProof); walking a function a
+definition gives (coverage/I); `\A` that assigns in Init (AssignmentInit); UNCHANGED element by
+element (Github702); Len and Tail of a string (test60); INSTANCE in LET (test59,
+CyclicRedefineInstance, EWD998Chan).
+
+Open, with what is known:
+
+- **Github649, a recursive operator's walk.** The walker declines ("walking a recursive
+  operator") where TLC walks the body. It needs the run-time recursion `WalkedFunction` has
+  (`walk_recursive_application` in `walker.rs`), keyed by the operator and what the walk knows,
+  with the arguments that name a variable kept as the compile-time binding, since they decide
+  what the body assigns, and the others bound to slots at run time.
+- **Enabled (EWD840/MC02, suite/test216), Print (test11, test20), PrintT (Stones).** Not started.
+  test20 prints inside ENABLED and in actions TLC walks differently; start from the decline
+  reasons `engine-coverage --backend rust --filter <model>` prints.
+- **spectacle Elevator, a lazy function of several arguments.** `resolve_lazy_application`
+  declines more than one bound; bind each name to its element of the tuple argument as
+  `bind_parameters` in `compile/mod.rs` does.
+- **Github696, AssertError.** Not started; the startup AssertError items went to the platform
+  session.
+- **spectacle Bakery** stops on "enumerated an infinite set", now a limit; the speed session's
+  lazy functions (f443fab1) may cover it.
+- **tla-rs model_values_distinct** falls back: "record compared with a function" is a limit
+  because the store, merging equal values, can't tell a RecordValue from a function over strings.
+  Following it natively needs the store to keep how TLC built a value.
+- **spectacle bfs_anim** ("equality of values TLC can't compare") and **cdot/ChainedCdots**
+  (action composition with a postcondition): not looked at.
+- **RandomSubsetEmpty** still reports AssumptionFailed (trace session, 20:04). Find the bail
+  reason (bac5cb17 now lowers a model without a next-state relation, so engine-ir gives its IR);
+  it should be a limit if TLC's assumption holds.
+- **FingerprintExceptionHang, for the trace session.** After an invariant fails to evaluate, TLC
+  replays the expansion and skips each successor already in its fingerprint set. The engine
+  never generates the successors after the failing one, so the stop should carry the
+  fingerprints found when it stopped (`states.fingerprints`, sorted), and tla-trace, which has
+  `tla_values::fingerprint::Fingerprints`, tests each replayed successor against them.
+- The addon suite's "leaves a model it can't search to the TypeScript engine" still expects a
+  decline on `x' \subseteq S`, which d1fa0dd8 made native; it needs another construct the engine
+  declines.
