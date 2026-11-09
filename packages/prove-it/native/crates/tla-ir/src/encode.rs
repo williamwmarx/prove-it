@@ -2,9 +2,9 @@
 //! the same bytes.
 
 use crate::{
-    AtomKind, Bound, ConfigName, DefinitionForm, EnabledActions, IR_VERSION, Ir, LiveTerm, MAGIC,
-    Name, NodeId, NodeKind, Param, PathStep, Pattern, Resolution, ScopeBinding, Selector, Startup,
-    Value, code, tag,
+    AtomKind, Bound, ConfigName, DefinitionForm, EnabledActions, IR_VERSION, Ir, Junction,
+    LiveTerm, MAGIC, Name, NodeId, NodeKind, Param, PathStep, Pattern, Resolution, ScopeBinding,
+    Selector, Startup, Value, code, tag,
 };
 
 /// Encodes an IR.
@@ -150,6 +150,9 @@ fn encode_here(ir: &Ir) -> Vec<u8> {
         model.is_recording_graph as i32,
         optional(model.version),
     ]);
+    for long in [model.random_seed, model.startup_random] {
+        words.extend([long as u32 as i32, (long >> 32) as u32 as i32]);
+    }
     words.push(model.atoms.len() as i32);
     for atom in &model.atoms {
         let (kind, unchanged, actions) = match &atom.kind {
@@ -244,7 +247,7 @@ struct NodeWriter<'a> {
     offsets: Vec<i32>,
 }
 
-impl NodeWriter<'_> {
+impl<'a> NodeWriter<'a> {
     fn node(&mut self, id: NodeId) {
         let node = &self.ir.nodes.arena[id as usize];
         self.offsets[id as usize] = self.words.len() as i32;
@@ -263,8 +266,8 @@ impl NodeWriter<'_> {
             NodeKind::Apply { name, .. } => tag::APPLY | flag(name.is_local),
             NodeKind::OperatorReference(_) => tag::OPERATOR_REFERENCE,
             NodeKind::Lambda { .. } => tag::LAMBDA,
-            NodeKind::And(_) => tag::AND,
-            NodeKind::Or(_) => tag::OR,
+            NodeKind::And(_) => tag::AND | flag(self.junction(id).is_bulleted),
+            NodeKind::Or(_) => tag::OR | flag(self.junction(id).is_bulleted),
             NodeKind::Prime(_) => tag::PRIME,
             NodeKind::Unchanged(_) => tag::UNCHANGED,
             NodeKind::Enabled(_) => tag::ENABLED,
@@ -331,9 +334,15 @@ impl NodeWriter<'_> {
                 self.texts(params);
                 self.node(*body);
             }
-            NodeKind::And(children)
-            | NodeKind::Or(children)
-            | NodeKind::SetEnumeration(children)
+            NodeKind::And(children) | NodeKind::Or(children) => {
+                let prefix_ends = &self.junction(id).prefix_ends;
+                self.words.push(prefix_ends.len() as i32);
+                for &(line, column) in prefix_ends {
+                    self.words.extend([line, column]);
+                }
+                self.children(children);
+            }
+            NodeKind::SetEnumeration(children)
             | NodeKind::Tuple(children)
             | NodeKind::Bracket(children)
             | NodeKind::Product(children) => self.children(children),
@@ -517,6 +526,14 @@ impl NodeWriter<'_> {
     fn texts(&mut self, texts: &[u32]) {
         self.words.push(texts.len() as i32);
         self.words.extend(texts.iter().map(|&text| text as i32));
+    }
+
+    fn junction(&self, id: NodeId) -> &'a Junction {
+        static PLAIN: Junction = Junction {
+            is_bulleted: false,
+            prefix_ends: Vec::new(),
+        };
+        self.ir.nodes.junctions.get(&id).unwrap_or(&PLAIN)
     }
 
     fn children(&mut self, children: &[NodeId]) {

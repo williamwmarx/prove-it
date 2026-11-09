@@ -23,7 +23,9 @@
 // - the nodes: expressions and definitions in prefix order, each its tag, its line and column, its
 //   source range (the module's name, or -1 for none, then the start's and the end's line and
 //   column, which TLC's messages print), then its fields and children. A node met again is a
-//   reference to its first offset.
+//   reference to its first offset. A junction is flagged when it is a bulleted list, and its fields
+//   are where each prefix of an infix chain such as A /\ B /\ C ends, which SANY parses as nested
+//   junctions whose ranges TLC prints.
 
 import type {
   Bound,
@@ -46,12 +48,18 @@ import { getLevel } from "../liveness";
 import type { LiveExpression } from "../tableau";
 import type { TlcVersion } from "../tlc/version";
 import { createStateEncoder } from "../transfer";
-import { findStringRank, getRankedStringCount, getStringOrder, type Value } from "../values";
+import {
+  findStringRank,
+  getRankedStringCount,
+  getStringOrder,
+  isSettledValue,
+  type Value,
+} from "../values";
 import type { EngineProperties, EngineSpec } from "./context";
 import type { NamedPermutation } from "./symmetry";
 
 // The version of the layout below, which the decoder checks. Any change to it changes this.
-export const IR_VERSION = 8;
+export const IR_VERSION = 10;
 
 // "PIIR" read as a little-endian word.
 const MAGIC = 0x52494950;
@@ -110,6 +118,7 @@ const WIDE_NUMBER_FLAG = 1 << 8;
 const FORALL_FLAG = 1 << 8;
 const RECURSIVE_FLAG = 1 << 8;
 const HAS_OTHER_FLAG = 1 << 8;
+const BULLETED_FLAG = 1 << 8;
 
 // Flags of a definition record.
 const DEFINITION_RECURSIVE = 1 << 8;
@@ -127,8 +136,8 @@ const BUILTIN_RESOLUTION = 4;
 const RESOLUTION_BITS = 3;
 const RESOLUTION_MASK = (1 << RESOLUTION_BITS) - 1;
 
-// A definition's startup value: none, one that isn't a string, number or boolean, which the engine
-// doesn't read, or the ordinal of a value.
+// A definition's startup value: none, one the engine can't read, which TLC may keep lazy or the
+// encoding can't hold, or the ordinal of a value.
 const NO_STARTUP_VALUE = -1;
 const OBJECT_STARTUP_VALUE = -2;
 
@@ -406,6 +415,7 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
   const writeDefinition = (definition: Definition) => {
     const isRepeated = isImpureDefinition(definition, environment, "repeated");
     const startup = isRepeated ? getStartupValue(definition, environment) : undefined;
+    const startupIndex = startup !== undefined && isSettledValue(startup) ? getValue(startup) : -1;
     push(
       nodes,
       DEFINITION_TAG |
@@ -427,9 +437,9 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
       nodes,
       startup === undefined
         ? NO_STARTUP_VALUE
-        : typeof startup === "object"
+        : startupIndex < 0
           ? OBJECT_STARTUP_VALUE
-          : getValue(startup),
+          : startupIndex,
     );
     if (definition.kind === "Operator") {
       push(nodes, 0);
@@ -489,6 +499,12 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
         return;
       case "And":
       case "Or":
+        if (expression.isBulleted) nodes.data[at] |= BULLETED_FLAG;
+        push(nodes, expression.prefixEnds?.length ?? 0);
+        for (const end of expression.prefixEnds ?? []) {
+          push(nodes, end.line);
+          push(nodes, end.column);
+        }
         writeNodes(expression.operands);
         return;
       case "Prime":
@@ -755,6 +771,14 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
   push(model, input.isWarningEnabled ? 1 : 0);
   push(model, input.isRecordingGraph ? 1 : 0);
   push(model, input.version === undefined ? -1 : getText(input.version));
+  // The seed TLC reseeds its generator with for each state it expands, and the state of the
+  // generator the initial states draw from, which the assumptions drew from before them.
+  const runtime = environment.runtime;
+  for (const word of [runtime.seed, runtime.evaluateAtStartup(runtime.getRandom).getState()]) {
+    const unsigned = BigInt.asUintN(64, word);
+    push(model, Number(BigInt.asIntN(32, unsigned)));
+    push(model, Number(BigInt.asIntN(32, unsigned >> 32n)));
+  }
   push(model, input.atoms.length);
   const atomPositions = new Map(input.atoms.map((entry, position) => [entry.atom, position]));
   for (const entry of input.atoms) {

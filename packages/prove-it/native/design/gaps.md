@@ -91,6 +91,67 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   tests), which stopped building `SUBSET (1..42)`, now completes in Rust. The interpreter doesn't
   recurse into power sets of power sets, so the unit test leaves that case out.
 
+## Wide strings
+
+- TLC fingerprints a string by the low byte of each character and tells states apart by their
+  fingerprints alone, so states whose strings differ only above U+00FF are one state. The native
+  engine does both already (`fingerprint.rs`, `States::find`). Only the TypeScript engine tells
+  states apart by their values, so a model whose strings may be wide (`hasWideString`) goes to the
+  native engine, or to the interpreter where it doesn't take the model, never to the TypeScript
+  engine. Resuming from a checkpoint, the interpreter then takes every state over at once, since it
+  tells them apart by fingerprint and the checkpoint looks a state up by its key.
+
+## TLCModelValue
+
+- **TLCModelValue(s)** gives the model value named s, which TLC makes once per name and ranks
+  the name as it makes it (`TLCExt.tlcModelValue`, `ModelValue.add`). So it ranks as ToString
+  does: the search stays on one thread, one that ranked a name hands over none of its states, and
+  comparing a model value whose name it ranked stops, as comparing such a string does. It stops
+  where s isn't a string, which TLC reports. Github696 and Github696b (TLC's tests),
+  declined before, now search in Rust until the comparison of differently typed model values
+  TLC reports.
+
+## Values computed at startup
+
+- TLC computes each constant definition once when it starts (`SpecProcessor.processConstantDefns`),
+  one with effects such as RandomElement included, and reads that value from then on. The IR
+  carried the value for a definition with effects only when it was a string, number or boolean,
+  and the native engine declined any other. It now carries any value the interpreter holds settled
+  (`isSettledValue`), which TLC doesn't keep lazy, so the search reads it in place of the
+  definition. One TLC may keep lazy, such as SUBSET or `\cup`, still declines. Github648 (TLC's
+  tests) now completes in Rust.
+
+## RandomElement and RandomSubset
+
+- TLC draws from one java.util.Random per thread (`RandomEnumerableValues`): the main thread's
+  for the assumptions and the initial states, and in a worker one it reseeds with the fingerprint
+  of each state it expands, xored with the seed. So a state's successors draw the same whatever
+  thread expands it. The IR (version 10) carries the seed and the state the assumptions left the
+  generator in. The search draws from that for the initial states and reseeds for each expansion
+  with the fingerprint it found the state by (`Machine::seed_random`). `compile/random.rs` ports
+  java.util.Random and the draws of `tlc/random.ts`: RandomElement draws each component of a set
+  of functions, records or tuples in turn, and RandomSubset draws indices from TLC's linear
+  congruential generator, of an interval by its bounds and of a product by its index, as TLC 1.7.4
+  or master does.
+- Both compile where Print may print, since a draw depends on how many draws came before it, so
+  the search stays on one thread and evaluates them as TLC does. Elsewhere they decline: as an
+  operand of `\subseteq`, as in RandomSubsetNext, and where a liveness graph evaluates actions
+  again.
+- A trace the interpreter rebuilds after a hand-over now draws as TLC's does (`TLCTrace#getTrace`):
+  each initial state from the generator the search started with, and each successor from one
+  seeded with its predecessor.
+- RandomElement, RandomElementXandY, RandomSubsetNextTuples and RandomSubsetSetOfFcns (TLC's
+  tests), declined before, now search in Rust, and RandomSubset until its invariant builds
+  `1..100000000`.
+
+## Parked: TLC registers
+
+- The branch tlc-registers has TLCSet and TLCGet in the Rust search: IR and ABI 9 carry the
+  registers, startup registers included, and the search hands them back with a checkpoint or
+  when it completes. It gains no model: Test2, TLCGetNonDeterminism and NQSpec check a property,
+  and under a liveness graph TLC evaluates the actions again. ConstantContextTLCCache would also
+  need TLCCache's cache, which the interpreter fills while it evaluates the assumptions.
+
 ## Functions of several bounds, and recursive functions TLC keeps lazy
 
 - **A recursive function of several bounds**, such as `add[a \in A, b \in B]`, is TLC's function
