@@ -490,7 +490,11 @@ export const lowerUnsearchedSpec = (
     instanceActions: specification.instanceActions,
   });
 
-const NO_BEHAVIOR: Expression = { kind: "Identifier", name: "FALSE", location: { line: 0, column: 0 } };
+const NO_BEHAVIOR: Expression = {
+  kind: "Identifier",
+  name: "FALSE",
+  location: { line: 0, column: 0 },
+};
 
 export const lowerConstantSpec = (
   config: ModelConfig,
@@ -1886,6 +1890,7 @@ const searchStates = (
             label,
             name: action.name,
             range: action.location.range,
+            operator: action.operator,
           };
         }),
         isWarningEnabled: runtime.isWarningEnabled,

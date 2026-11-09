@@ -28,6 +28,8 @@ struct SplitAction {
     /// The operator the action is the body of, or none: TLC's `UnnamedAction`.
     name: Option<TextId>,
     location: Located,
+    /// The definition TLC splits the action from (`Action.getOpDef`), by index.
+    definition: Option<Index>,
     /// The values of the operator's parameters, which the label prints.
     parameters: Vec<Value>,
 }
@@ -39,6 +41,7 @@ struct Labelled {
     label: String,
     name: String,
     location: Option<SourceRange>,
+    definition: Option<Index>,
 }
 
 /// Where TLC says an action is written: at an expression, or at an INSTANCE it comes through.
@@ -60,6 +63,7 @@ struct Place {
 #[derive(Clone)]
 struct Closure {
     name: TextId,
+    definition: Index,
     parameters: Vec<Value>,
 }
 
@@ -124,6 +128,7 @@ pub fn add_actions(ir: &Ir) -> Result<Ir, Unsupported> {
                 place,
                 name: None,
                 location: Located::Instance(Some(range)),
+                definition: None,
                 parameters: Vec::new(),
             }],
             None => splitter.split(next, &place, None)?,
@@ -146,6 +151,7 @@ pub fn add_actions(ir: &Ir) -> Result<Ir, Unsupported> {
                     label: splitter.label(action),
                     name: name.to_owned(),
                     location,
+                    definition: action.definition,
                 }
             })
             .collect();
@@ -173,6 +179,7 @@ pub fn add_actions(ir: &Ir) -> Result<Ir, Unsupported> {
             label: writer.text(&action.label),
             name: writer.text(&action.name),
             location: action.location,
+            definition: action.definition,
         })
         .collect();
     let first = ir.nodes.arena.len() as NodeId;
@@ -195,6 +202,7 @@ impl Splitter<'_, '_> {
             place: place.clone(),
             name: closure.map(|closure| closure.name),
             location: Located::Node(expression),
+            definition: closure.map(|closure| closure.definition),
             parameters: closure.map_or_else(Vec::new, |closure| closure.parameters.clone()),
         };
         let ir = self.evaluator.ir;
@@ -263,6 +271,7 @@ impl Splitter<'_, '_> {
             place: place.clone(),
             name: Some(called),
             location: Located::Node(expression),
+            definition: Some(index),
             parameters: Vec::new(),
         };
         if self.is_constant_definition(definition)?
@@ -290,6 +299,7 @@ impl Splitter<'_, '_> {
         }
         let closure = Closure {
             name: called,
+            definition: index,
             parameters: values,
         };
         let body = definition.body;
@@ -311,6 +321,7 @@ impl Splitter<'_, '_> {
             place: place.clone(),
             name: Some(instance.name),
             location: Located::Instance(instance.location),
+            definition: Some(instance.definition),
             parameters,
         };
         let call = SplitAction {

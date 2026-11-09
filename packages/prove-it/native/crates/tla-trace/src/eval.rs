@@ -628,8 +628,8 @@ impl<'ir> Evaluator<'ir> {
     }
 
     // ENABLED A: whether A takes the current state anywhere, as `Tool.enabled` finds with a next
-    // state of its own, a successor whether or not it assigns every variable. A failure inside it
-    // is one the replay doesn't follow, since `enabled` evaluates apart from the walk.
+    // state of its own, a successor whether or not it assigns every variable, in the frames of the
+    // call stack as `CallStackTool` keeps them.
     pub(crate) fn enabled(&mut self, action: NodeId, context: &Context) -> Evaluated<Value> {
         let width = self.next.len();
         let next = std::mem::replace(&mut self.next, vec![None; width]);
@@ -641,11 +641,6 @@ impl<'ir> Evaluator<'ir> {
         });
         self.next = next;
         self.target = target;
-        if walked.is_err()
-            && let Some(stack) = &mut self.call_stack
-        {
-            stack.unfollowed.get_or_insert("a failure inside ENABLED");
-        }
         walked?;
         Ok(Value::Bool(is_enabled))
     }

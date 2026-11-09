@@ -191,6 +191,10 @@ pub struct Action {
     /// `UnnamedAction` for an action of no operator.
     pub name: TextId,
     pub location: Option<SourceRange>,
+    /// The definition TLC split the action from (`Action.getOpDef`), whose parameters
+    /// CounterExample binds, by index; none for an action of no operator, or of one a LET
+    /// defines.
+    pub definition: Option<Index>,
 }
 
 /// A definition an INSTANCE with substitutions copies, and the name and location TLC gives an
@@ -312,6 +316,9 @@ pub struct Model {
     pub initial_predicates: Vec<NodeId>,
     /// The scope of the instance each of `initial_predicates` comes from, which it is read in.
     pub initial_predicate_scopes: Vec<Option<Index>>,
+    /// The name TLC gives each of `initial_predicates` when an initial state violates it: the
+    /// property's.
+    pub initial_predicate_names: Vec<TextId>,
     pub view: Option<ConfigName>,
     /// The configuration's ALIAS, which TLC prints each state of a trace through.
     pub alias: Option<ConfigName>,

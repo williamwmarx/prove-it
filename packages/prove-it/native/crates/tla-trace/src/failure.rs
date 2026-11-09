@@ -29,6 +29,9 @@ pub enum Site {
     /// Evaluating the invariant at this position of the model's invariants on the initial state
     /// the path holds.
     InitialInvariant(u32),
+    /// Evaluating the implied init, a property's initial predicate, at this position of the
+    /// model's initial predicates on the initial state the path holds.
+    InitialPredicate(u32),
 }
 
 /// Where TLC fails to fingerprint a state: the ranges of the expressions that built the values it
@@ -187,7 +190,10 @@ impl<'ir> Rebuilder<'ir> {
             Site::Invariant(_) => Ending::Violation,
             _ => Ending::Kept,
         };
-        let is_initial = matches!(site, Site::InitialConstraint(_) | Site::InitialInvariant(_));
+        let is_initial = matches!(
+            site,
+            Site::InitialConstraint(_) | Site::InitialInvariant(_) | Site::InitialPredicate(_)
+        );
         if is_initial && states.len() != 1 {
             return Err(Unsupported(
                 "evaluating the failure again: an initial state's check past the initial states"
@@ -215,16 +221,25 @@ impl<'ir> Rebuilder<'ir> {
         // The initial state TLC failed to check, as the replay found it.
         let mut checked: Option<Vec<Value>> = None;
         let result = match site {
-            Site::InitialConstraint(position) | Site::InitialInvariant(position) => {
+            Site::InitialConstraint(position)
+            | Site::InitialInvariant(position)
+            | Site::InitialPredicate(position) => {
                 let body = |name: &tla_ir::ConfigName| {
                     name.definition
                         .map(|index| evaluator.definition(ir.definitions[index as usize]).body)
                 };
-                // TLC checks the constraints, then the invariants (`DoInitFunctor`), up to the one
-                // that failed.
-                let (constraint_count, invariant_count) = match site {
-                    Site::InitialConstraint(_) => (position as usize + 1, 0),
-                    _ => (ir.model.constraints.len(), position as usize + 1),
+                // TLC checks the constraints, then the invariants, then the implied inits
+                // (`DoInitFunctor`), up to the one that failed.
+                let (constraint_count, invariant_count, predicate_count) = match site {
+                    Site::InitialConstraint(_) => (position as usize + 1, 0, 0),
+                    Site::InitialInvariant(_) => {
+                        (ir.model.constraints.len(), position as usize + 1, 0)
+                    }
+                    _ => (
+                        ir.model.constraints.len(),
+                        ir.model.invariants.len(),
+                        position as usize + 1,
+                    ),
                 };
                 let checks: Option<Vec<NodeId>> = ir
                     .model
@@ -239,15 +254,29 @@ impl<'ir> Rebuilder<'ir> {
                             .take(invariant_count)
                             .map(|invariant| body(&invariant.root)),
                     )
+                    .chain(
+                        ir.model
+                            .initial_predicates
+                            .iter()
+                            .take(predicate_count)
+                            .map(|&predicate| Some(predicate)),
+                    )
                     .collect();
+                if predicate_count > ir.model.initial_predicates.len() {
+                    return Err(Unsupported(
+                        "evaluating the failure again: an implied init the model doesn't have"
+                            .into(),
+                    ));
+                }
                 let Some(checks) = checks else {
                     return Err(Unsupported(
                         "evaluating the failure again: a check the model doesn't define".into(),
                     ));
                 };
-                // TLC evaluates a failing invariant with its call stack, on the frames of the
-                // initial predicate that found the state, and the constraints without it.
-                let is_traced = matches!(site, Site::InitialInvariant(_));
+                // TLC evaluates a failing invariant or implied init with its call stack, on the
+                // frames of the initial predicate that found the state, and the constraints
+                // without it.
+                let is_traced = !matches!(site, Site::InitialConstraint(_));
                 let target = states[0];
                 evaluator.current = vec![None; width];
                 evaluator.level = 0;
@@ -530,7 +559,7 @@ fn ranges(evaluator: &Evaluator<'_>, call_stack: &CallStack) -> Vec<SourceRange>
         }
         previous = Some(frame);
         let range = match frame {
-            StackFrame::Node(node) => evaluator.ir.nodes.arena[node as usize].range,
+            StackFrame::Node(node) => node_range(evaluator, node),
             StackFrame::Prefix(node, count) => prefix_range(evaluator, node, count),
         };
         ranges.extend(range);
@@ -538,10 +567,45 @@ fn ranges(evaluator: &Evaluator<'_>, call_stack: &CallStack) -> Vec<SourceRange>
     ranges
 }
 
+// A node's range, or for an infix junction the IR keeps none of, SANY's: from its first operand's
+// start to its last's end.
+fn node_range(evaluator: &Evaluator<'_>, node: NodeId) -> Option<SourceRange> {
+    let arena = &evaluator.ir.nodes.arena;
+    if let Some(range) = arena[node as usize].range {
+        return Some(range);
+    }
+    let (NodeKind::And(operands) | NodeKind::Or(operands)) = &arena[node as usize].kind else {
+        return None;
+    };
+    // An infix junction has two operands or more; a lone one wraps an expression SANY has no
+    // node for.
+    if operands.len() < 2 {
+        return None;
+    }
+    // A bulleted list starts at its first bullet, which the IR doesn't hold apart; the IR keeps a
+    // junction for each, and for an infix chain of more than two operands.
+    if evaluator
+        .ir
+        .nodes
+        .junctions
+        .get(&node)
+        .is_some_and(|junction| junction.is_bulleted)
+    {
+        return None;
+    }
+    let first = node_range(evaluator, *operands.first()?)?;
+    let last = node_range(evaluator, *operands.last()?)?;
+    Some(SourceRange {
+        end_line: last.end_line,
+        end_column: last.end_column,
+        ..first
+    })
+}
+
 // The range of SANY's node of the first `count` operands of an infix chain: from the chain's
 // start to the end of its last operand there, as `getPrefix` in `tlc/replay.ts` takes it.
 fn prefix_range(evaluator: &Evaluator<'_>, node: NodeId, count: usize) -> Option<SourceRange> {
-    let range = evaluator.ir.nodes.arena[node as usize].range?;
+    let range = node_range(evaluator, node)?;
     let junction = evaluator.ir.nodes.junctions.get(&node)?;
     let &(end_line, end_column) = junction.prefix_ends.get(count.checked_sub(2)?)?;
     debug_assert!(matches!(
