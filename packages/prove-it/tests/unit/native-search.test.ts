@@ -1444,6 +1444,31 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     ).toContainEqual(expect.stringMatching(COMPLETE));
   });
 
+  it("compares a function that is no record with a record as TLC's function does", async () => {
+    // FcnRcdValue.equals takes any function, where RecordValue.equals fails on one that is no
+    // record: the left side of = decides (tla-rs model_values_distinct).
+    const body = [
+      "EXTENDS Naturals",
+      "CONSTANT Node",
+      "VARIABLE x",
+      "ByNode == [n \\in Node |-> 1]",
+      'ByName == [n \\in {"n1", "n2"} |-> 1]',
+      "Init == x = 0",
+      "Next == x' = 1 - x",
+      "Inv == ByNode # ByName /\\ ByNode # [n1 |-> 1, n2 |-> 1] /\\ ~(ByNode = [n1 |-> 1])",
+    ];
+    const config = "CONSTANT Node = {n1, n2}\nINIT Init\nNEXT Next\nINVARIANT Inv";
+    expect(await compareWithInterpreter(body, config)).toContainEqual(
+      expect.stringMatching(COMPLETE),
+    );
+    // The store can't tell a record from a function over strings, so it stops where the one
+    // asked may be a record.
+    const asked = body.map((line) => line.replace(/^Inv == .*/, "Inv == ByName # ByNode"));
+    expect(await compareWithInterpreter(asked, config)).toContainEqual(
+      expect.stringMatching(/record compared with a function/),
+    );
+  });
+
   it("counts the _POSSIBLE predicates as TLC does, and hands the counts over", async () => {
     // TLC counts the states in the model and the steps each predicate holds of, duplicates and
     // all, and reports one that never held with the counts.

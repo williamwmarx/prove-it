@@ -199,6 +199,30 @@ fn orders_strings_by_rank_ranked_before_unranked_and_unranked_by_text() {
 }
 
 #[test]
+fn asks_a_function_that_is_no_record_whether_it_equals_a_record() {
+    // FcnRcdValue.equals takes any function; RecordValue.equals fails on one that is no record.
+    let mut store = Store::new();
+    let keys = [str(&mut store, "a"), str(&mut store, "b")];
+    let ones = ints(&mut store, &[1, 1]);
+    let shape = store.create_record_shape(&keys);
+    let record = store.record_of(&shape, &ones);
+    let nodes = [store.model(&utf16("m")), store.model(&utf16("n"))];
+    let by_node = store.function_of_sorted(&nodes, &ones);
+    let tuple = store.tuple_of(&ones);
+    assert_eq!(store.equals_asked(by_node, record), Ok(false));
+    assert_eq!(
+        store.equals_asked(record, by_node),
+        Err(Bail("record compared with a function"))
+    );
+    // A tuple asks the record's keys whether they equal its positions, which fails.
+    assert_eq!(
+        store.equals_asked(tuple, record),
+        Err(Bail("equality of values TLC can't compare"))
+    );
+    assert_eq!(store.equals_asked(record, record), Ok(true));
+}
+
+#[test]
 fn stops_where_tlc_fails_to_compare_for_the_typescript_stores_reasons() {
     let mut store = Store::new();
     let key = str(&mut store, "a");
