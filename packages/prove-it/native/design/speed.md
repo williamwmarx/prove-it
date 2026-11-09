@@ -80,6 +80,10 @@ came of it:
 Tried and dropped:
 - **Not memoizing trivial arithmetic.** Arithmetic is never marked costly, so it was never memoized. Philosophers' memo tables hold set and function constructions at about 99% hits.
 - **Extending the switch to `f[i][j]` and `#`.** It fires on MCLamportMutex's three receive actions, which lead with `network[q][p] # << >>`. But the search went only from 16.77B to 16.75B instructions. The channels are usually non-empty, so all three actions still run.
+- **Shifting fingerprints by a carry-less multiply.** Shifting by L zero bytes is multiplying by x^(8L) mod the polynomial. With PCLMULQDQ or PMULL, that is three carry-less multiplies and a Barrett reduction, with 8 bytes per length instead of a 16 KB table.
+  - It is bit for bit the same as the tables, but slower in wall time: MCbtree went from 0.68 to 0.81 s, and MCBakery from 0.65 to 0.70 s.
+  - The suite's models meet few lengths, so their tables stay in cache. Eight independent loads from L1 beat a chain of three dependent multiplies behind a call that can't be inlined, since the multiply needs its own target feature.
+  - It could only win where the tables miss the cache. The branch is `fingerprint-multiply`.
 
 ## Where the suite's instructions go
 
