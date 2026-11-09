@@ -588,6 +588,20 @@ impl<'ir> Evaluator<'ir> {
         }
     }
 
+    // The positions of a record's fields in TLC's order of their names, which `compileRecord`
+    // evaluates them in.
+    fn field_order(&mut self, fields: &[(TextId, NodeId)]) -> Vec<usize> {
+        let names: Vec<Value> = fields
+            .iter()
+            .map(|&(name, _)| Value::Str(self.text(name)))
+            .collect();
+        let mut order: Vec<usize> = (0..fields.len()).collect();
+        order.sort_by(|&left, &right| {
+            compare(&names[left], &names[right]).unwrap_or(std::cmp::Ordering::Equal)
+        });
+        order
+    }
+
     /// The resolved node of a reference.
     pub fn resolved(&self, node: NodeId) -> NodeId {
         self.node(node).0
@@ -783,22 +797,21 @@ impl<'ir> Evaluator<'ir> {
                 Ok(Value::Lazy(Rc::new(Lazy::FunctionSet(domain, range))))
             }
             NodeKind::Record(fields) => {
-                let values = fields
-                    .iter()
-                    .map(|&(name, value)| Ok((self.text(name), self.evaluate(value, context)?)))
-                    .collect::<Evaluated<Vec<_>>>()?;
+                let mut values = vec![None; fields.len()];
+                for index in self.field_order(fields) {
+                    let (name, value) = fields[index];
+                    values[index] = Some((self.text(name), self.evaluate(value, context)?));
+                }
                 self.check_fields(fields.iter().map(|field| field.0))?;
-                Value::record(values)
+                Value::record(values.into_iter().flatten().collect())
             }
             NodeKind::RecordSet(fields) => {
                 self.check_fields(fields.iter().map(|field| field.0))?;
-                let mut sets = fields
-                    .iter()
-                    .enumerate()
-                    .map(|(index, &(name, set))| {
-                        Ok((self.text(name), self.evaluate(set, context)?, index as u32))
-                    })
-                    .collect::<Evaluated<Vec<_>>>()?;
+                let mut sets = Vec::with_capacity(fields.len());
+                for index in self.field_order(fields) {
+                    let (name, set) = fields[index];
+                    sets.push((self.text(name), self.evaluate(set, context)?, index as u32));
+                }
                 sets.sort_by(|left, right| {
                     compare(
                         &Value::Str(Rc::clone(&left.0)),
