@@ -7,8 +7,8 @@
 //
 // --stop-at also runs the engine stopped by PROVE_IT_STOP_AT before a state picked at random
 // from those it found, and its output must not differ from the engine's. --backend picks the
-// engine's backend, and --compare-backends runs every one: the first is compared with TLC and the
-// interpreter, and each other with the first (ts/rust). --update rewrites
+// engine's backend, and --compare-backends runs every one: each is compared with TLC and the
+// interpreter (tlc/rust, rust/interpreter), and each other with the first (ts/rust). --update rewrites
 // known-differences.json from the run, keeping the reasons it gives.
 // --native names the native prove-it binary (native/DESIGN.md 13), which then runs on each model
 // too, with the front the first backend's run recorded, and is compared with TLC as tlc/native.
@@ -283,19 +283,18 @@ const work = async (queue: { model: CorpusModel; mode: OutputMode }[], total: nu
             engine.transcript,
           ),
         );
-      } else {
-        if (tlc)
-          modelComparisons.push(compare(model.id, mode, `tlc/${backend}`, tlc, engine.transcript));
-        modelComparisons.push(
-          compare(
-            model.id,
-            mode,
-            `${backend}/interpreter`,
-            engine.transcript,
-            interpreter.transcript,
-          ),
-        );
       }
+      if (tlc)
+        modelComparisons.push(compare(model.id, mode, `tlc/${backend}`, tlc, engine.transcript));
+      modelComparisons.push(
+        compare(
+          model.id,
+          mode,
+          `${backend}/interpreter`,
+          engine.transcript,
+          interpreter.transcript,
+        ),
+      );
       // A stop needs a search to stop: an engine that skipped the spec would only run the
       // interpreter again.
       const isSearched = ["completed", "handed over"].includes(
