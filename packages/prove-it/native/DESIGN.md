@@ -2326,8 +2326,8 @@ plan for now.
 One Rust binary, `prove-it`, runs `prove-it <spec>` as the TS CLI does (`src/cli.ts`,
 `src/cli/`) and prints exactly what TLC prints: every message, the progress lines, `-tool`'s
 markers, violation and error traces, and TLC's exit codes. It is std only, as every crate here,
-and starts in about 1.5 ms (10.5). It is section 12's CLI workstream, and replaces 8.4's plan of a front door that falls
-back to a JS process: nothing it meets is handed to JavaScript.
+and starts in about 1.5 ms (10.5). It is section 12's CLI workstream, and replaces 8.4's plan of a
+front door that falls back to a JS process: nothing it meets is handed to JavaScript.
 
 ### 13.1 What the TypeScript CLI prints, and where
 
