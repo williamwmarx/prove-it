@@ -614,6 +614,8 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
             true
         }
     };
+    // TLC seeds its generator with -seed, which an IR tla-front lowers doesn't hold.
+    ir.model.random_seed = seed as u64;
     if args.has("-deadlock") {
         ir.model.check_deadlock = false;
     }
