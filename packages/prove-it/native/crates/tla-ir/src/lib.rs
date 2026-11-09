@@ -32,7 +32,7 @@ pub use decode::{DecodeError, decode};
 pub use encode::encode;
 
 /// The version of the layout, `IR_VERSION` in `ir.ts`.
-pub const IR_VERSION: u32 = 8;
+pub const IR_VERSION: u32 = 9;
 
 /// "PIIR" as a little-endian word.
 pub const MAGIC: u32 = 0x5249_4950;
@@ -268,6 +268,9 @@ pub struct Model {
     pub live_formula: Vec<LiveTerm>,
     /// Each property, whose violation a counterexample's checks find, in the configuration's order.
     pub live_properties: Vec<LiveProperty>,
+    /// TLC's registers as the search starts (TLCSet), each its index and value, or `None` for a
+    /// value the transfer encoding can't hold.
+    pub registers: Vec<(u32, Option<u32>)>,
 }
 
 /// The nodes, in the order of the blob, and which of them are written at the top level.

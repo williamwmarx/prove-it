@@ -121,6 +121,8 @@ export interface EngineCheckpoint {
   // From the native engine, what each _POSSIBLE predicate counted before the expansion the
   // interpreter goes on from, or -1 where it wasn't evaluated.
   possible?: number[];
+  // From the native engine, TLC's registers before that expansion.
+  registers?: Map<number, Value>;
   states: Int32Array;
   parents: Int32Array;
   width: number;
@@ -137,6 +139,8 @@ export interface EngineResult {
   threads: number;
   // From the native engine, what each _POSSIBLE predicate counted, or -1 where it wasn't evaluated.
   possible?: number[];
+  // From the native engine, TLC's registers once the search completes.
+  registers?: Map<number, Value>;
   // A complete search the interpreter is to replay, when it checks temporal properties.
   checkpoint: EngineCheckpoint | undefined;
 }

@@ -239,6 +239,9 @@ impl Compiler<'_> {
         if name == "TLCGet" {
             return self.compile_tlc_get(operands, context);
         }
+        if name == "TLCSet" {
+            return self.compile_register(name, operands, context);
+        }
         if builtin.flags & Builtin::STATE_LEVEL != 0 || IMPURE_BUILTINS.contains(&name) {
             if name == "TLCEval" && operands.len() == 1 {
                 return self.operand(&operands[0]);
@@ -355,6 +358,9 @@ impl Compiler<'_> {
             },
             _ => None,
         };
+        if key.is_none() {
+            return self.compile_register("TLCGet", operands, context);
+        }
         if key != Some("level") && key != Some("distinct") {
             return unsupported("TLCGet");
         }
@@ -374,6 +380,64 @@ impl Compiler<'_> {
             ..leaf(
                 eval(move |machine| Ok(machine.locals[slot as usize])),
                 Footprint::slot(slot),
+            )
+        })
+    }
+
+    // TLCGet(i) and TLCSet(i, v) of a register, a number, as TLC does with one worker: they read
+    // and write in the order TLC evaluates them, so they compile only where the engine evaluates as
+    // TLC does, and like Print nothing caches them. A key that isn't a number, such as "exit",
+    // stops the search, and the interpreter goes on.
+    fn compile_register(
+        &mut self,
+        name: &str,
+        operands: &[Operand],
+        context: &Context,
+    ) -> Compiling<Compiled> {
+        let is_set = name == "TLCSet";
+        if !context.can_print {
+            return unsupported(name);
+        }
+        if operands.len() != if is_set { 2 } else { 1 } {
+            return unsupported("an operator applied to the wrong number of arguments");
+        }
+        self.is_printing = true;
+        let compiled = operands
+            .iter()
+            .map(|operand| self.compile(operand.node, &operand.context.without_print()))
+            .collect::<Compiling<Vec<Compiled>>>()?;
+        let footprint = Footprint::merge_all(compiled.iter().map(|operand| &operand.footprint))
+            .merge(&Footprint::slot(super::PRINT_SLOT));
+        let mut evaluators = compiled.into_iter().map(|operand| operand.eval);
+        let key = evaluators.next().expect("a key");
+        let value = evaluators.next();
+        Ok(Compiled {
+            is_boolean: is_set,
+            ..leaf(
+                eval(move |machine| {
+                    let key = key(machine)?;
+                    let value = value.as_ref().map(|value| value(machine)).transpose()?;
+                    if machine.store.kind_of(key) != KIND_INT || machine.store.int_of(key) < 0 {
+                        return Err(Bail("a register that isn't a number"));
+                    }
+                    let index = machine.store.int_of(key) as usize;
+                    match value {
+                        Some(value) => {
+                            if machine.registers.len() <= index {
+                                machine.registers.resize(index + 1, None);
+                            }
+                            machine.registers[index] = Some(value);
+                            Ok(TRUE)
+                        }
+                        None => machine
+                            .registers
+                            .get(index)
+                            .copied()
+                            .flatten()
+                            .ok_or(Bail("TLCGet of a register TLC hasn't set")),
+                    }
+                }),
+                footprint,
             )
         })
     }

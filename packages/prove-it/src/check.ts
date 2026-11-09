@@ -1567,6 +1567,12 @@ const searchStates = (
     counts?.forEach((count, index) => {
       if (count >= 0) runtime.possibleCounts.set(config.possible[index], count);
     });
+  // TLC's registers as the native engine left them.
+  const takeRegisters = (registers: Map<number, Value> | undefined) => {
+    if (!registers) return;
+    runtime.registers.clear();
+    registers.forEach((value, index) => runtime.registers.set(index, value));
+  };
   const resumeFromEngine = (checkpoint: EngineCheckpoint) => {
     // Without a graph, the interpreter takes over only the states up to the one it expands again,
     // which is all it reads of them when it finds what the engine stopped at, and asks the engine
@@ -1631,6 +1637,7 @@ const searchStates = (
     runtime.generatedStates = checkpoint.generated;
     runtime.initialStates = checkpoint.initialGenerated;
     takePossibleCounts(checkpoint.possible);
+    takeRegisters(checkpoint.registers);
     runtime.distinctStates = checkpoint.graph ? replayed.discovered : states.length;
     checkpoint.outDegrees.forEach((count, degree) => {
       outDegrees[degree] = count;
@@ -1900,6 +1907,7 @@ const searchStates = (
         options.onProgress?.({ kind: "liveness-finished" });
       }
       takePossibleCounts(result.possible);
+      takeRegisters(result.registers);
       const postconditionResult = checkPostconditions();
       if (postconditionResult) return postconditionResult;
       return {

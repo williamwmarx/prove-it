@@ -113,6 +113,28 @@ pub struct Checkpoint {
     /// What each `_POSSIBLE` predicate counted before the expansion the interpreter goes on
     /// from, or -1 where it wasn't evaluated.
     pub possible: Vec<i64>,
+    /// TLC's registers before that expansion.
+    pub registers: Registers,
+}
+
+/// TLC's registers (TLCSet): the indices of those set, and their values, as one row.
+pub struct Registers {
+    pub indices: Vec<i32>,
+    pub values: EncodedStates,
+}
+
+fn encode_registers(store: &Store, registers: &[Option<Id>]) -> Registers {
+    let (indices, values): (Vec<i32>, Vec<Id>) = registers
+        .iter()
+        .enumerate()
+        .filter_map(|(index, value)| value.map(|value| (index as i32, value)))
+        .unzip();
+    let mut encoder = StateEncoder::new();
+    encoder.encode(store, &values);
+    Registers {
+        indices,
+        values: encoder.finish(),
+    }
 }
 
 /// The steps of a search (`EngineGraph`): for each of the first `expanded` states, how many
@@ -154,6 +176,8 @@ pub enum SearchOutcome {
         collisions: u64,
         /// What each `_POSSIBLE` predicate counted, or -1 where it wasn't evaluated.
         possible: Vec<i64>,
+        /// TLC's registers once the search completes, which a postcondition may read.
+        registers: Registers,
     },
     /// The search stopped, with a checkpoint unless it stopped computing the initial states, as
     /// the TypeScript engine computes them before the part of its search that hands over a
@@ -1430,8 +1454,23 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         && !model.is_recording_graph
         && !settings.is_live_checked
         && context.possible.is_empty();
+    let mut registers = Vec::new();
+    for &(index, value) in &model.registers {
+        let Some(value) = value else {
+            return SearchOutcome::Declined("a register the IR can't hold".into());
+        };
+        let value = match compiler.intern_value(value) {
+            Ok(value) => value,
+            Err(error) => return SearchOutcome::Declined(describe(error)),
+        };
+        if registers.len() <= index as usize {
+            registers.resize(index as usize + 1, None);
+        }
+        registers[index as usize] = Some(value);
+    }
     let program = compiler.finish();
     let mut machine = Machine::new(&program, store);
+    machine.registers = registers;
     let canonicalizer = model.symmetry.as_ref().map(|group| {
         let units = |text: u32| ir.texts[text as usize].encode_utf16().collect::<Vec<u16>>();
         let group: Vec<Vec<(Vec<u16>, Vec<u16>)>> = group
@@ -1490,6 +1529,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     let mut checkpoint_count = 0usize;
     let mut checkpoint_generated = 0u64;
     let mut checkpoint_possible = search.possible.clone();
+    let mut checkpoint_registers = machine.registers.clone();
     let mut initial_states = (0, 0);
     let mut is_past_initial = false;
     let mut workers: Vec<Worker<'_>> = Vec::new();
@@ -1592,6 +1632,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             checkpoint_count = search.states.count();
             checkpoint_generated = search.generated;
             checkpoint_possible.clone_from(&search.possible);
+            checkpoint_registers.clone_from(&machine.registers);
             if Some(expanding) == settings.stop_at {
                 return Err(Bail("stopped where PROVE_IT_STOP_AT asked"));
             }
@@ -1668,7 +1709,8 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                             count: usize,
                             expanding: usize,
                             tables: Vec<Table>,
-                            possible: Vec<i64>|
+                            possible: Vec<i64>,
+                            registers: &[Option<Id>]|
      -> Checkpoint {
         let graph = search.graph.as_ref().expect("a graph");
         let states = &search.states;
@@ -1697,6 +1739,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 tables,
             }),
             possible,
+            registers: encode_registers(&machine.store, registers),
         }
     };
     let outcome = match result {
@@ -1727,6 +1770,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                         Err(reason) => return SearchOutcome::Invariant(reason.into()),
                     };
                     let liveness = check_liveness(model, &search, &tables);
+                    let registers = machine.registers.clone();
                     let checkpoint = (liveness.verdict != Verdict::Holds
                         || settings.is_live_checked)
                         .then(|| {
@@ -1738,6 +1782,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                                 0,
                                 tables,
                                 search.possible.clone(),
+                                &registers,
                             ))
                         });
                     let lasso_actions = match &liveness.verdict {
@@ -1771,6 +1816,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 value_count: machine.store.value_count(),
                 collisions,
                 possible: search.possible.clone(),
+                registers: encode_registers(&machine.store, &machine.registers),
                 fingerprints: search.states.fingerprints,
             }
         }
@@ -1827,6 +1873,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     }),
                     graph: None,
                     possible: checkpoint_possible.clone(),
+                    registers: encode_registers(store, &checkpoint_registers),
                 }))
             } else if !is_kept {
                 // The interpreter searches a graph too large to keep from the start, since its
@@ -1844,6 +1891,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                         expanding,
                         tables,
                         checkpoint_possible.clone(),
+                        &checkpoint_registers,
                     ))),
                     Err(reason) => return SearchOutcome::Invariant(reason.into()),
                 }

@@ -107,6 +107,8 @@ pub struct Machine<'p> {
     pub(crate) spare_states: Vec<Vec<Id>>,
     /// What was printed since the search last handed it on (`tlc.output`).
     pub output: Vec<Printed>,
+    /// TLC's registers (TLCSet and TLCGet of a number), by index, `None` where none is set.
+    pub registers: Vec<Option<Id>>,
 }
 
 impl<'p> Machine<'p> {
@@ -137,6 +139,7 @@ impl<'p> Machine<'p> {
             is_past_walk: false,
             spare_states: Vec::new(),
             output: Vec::new(),
+            registers: Vec::new(),
         }
     }
 

@@ -35,7 +35,7 @@ use std::ptr::null_mut;
 
 use crate::{Event, MINIMUM_SHARED_LEVEL, SearchOutcome, Settings, check_on_thread};
 use tla_engine::Options;
-use tla_engine::search::{Checkpoint, GraphCheckpoint};
+use tla_engine::search::{Checkpoint, GraphCheckpoint, Registers};
 use tla_live::{Liveness, Verdict};
 use tla_values::transfer::{EncodedStates, SharedStates};
 
@@ -115,6 +115,29 @@ unsafe fn set_encoded(
     }
 }
 
+// TLC's registers: the indices of those set, and their values as one row of the transfer encoding.
+unsafe fn set_registers(
+    env: napi_env,
+    object: napi_value,
+    registers: &Registers,
+) -> Result<(), Thrown> {
+    unsafe {
+        set(
+            env,
+            object,
+            c"registerIndices",
+            create_int32s(env, &registers.indices)?,
+        )?;
+        set_encoded(
+            env,
+            object,
+            c"registerWords",
+            c"registerStrings",
+            &registers.values,
+        )
+    }
+}
+
 // What each _POSSIBLE predicate counted, or -1 where it wasn't evaluated.
 unsafe fn create_possible(env: napi_env, counts: &[i64]) -> Result<napi_value, Thrown> {
     let numbers: Vec<f64> = counts.iter().map(|&count| count as f64).collect();
@@ -164,6 +187,7 @@ unsafe fn set_checkpoint(
             c"possible",
             create_possible(env, &checkpoint.possible)?,
         )?;
+        set_registers(env, object, &checkpoint.registers)?;
         set(
             env,
             object,
@@ -443,8 +467,10 @@ pub(super) unsafe extern "C" fn check_model(env: napi_env, info: napi_callback_i
                     value_count,
                     collisions,
                     possible,
+                    registers,
                 } => {
                     set(env, result, c"possible", create_possible(env, &possible)?)?;
+                    set_registers(env, result, &registers)?;
                     if let Some(verdict) = &liveness {
                         set(env, result, c"liveness", create_verdict(env, verdict)?)?;
                     }

@@ -771,7 +771,7 @@ impl<'a> Compiler<'a> {
         })
     }
 
-    fn intern_value(&mut self, index: u32) -> Compiling<Id> {
+    pub(crate) fn intern_value(&mut self, index: u32) -> Compiling<Id> {
         let ir = self.ir;
         self.intern(&ir.values.list[index as usize])
     }

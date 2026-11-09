@@ -662,6 +662,10 @@ impl Decoder<'_> {
                 })
             })
             .collect::<Decoded<_>>()?;
+        let count = self.count()?;
+        let registers = (0..count)
+            .map(|_| Ok((self.count()? as u32, self.value_ordinal()?)))
+            .collect::<Decoded<_>>()?;
         Ok(Model {
             init,
             next,
@@ -685,6 +689,7 @@ impl Decoder<'_> {
             atoms,
             live_formula,
             live_properties,
+            registers,
         })
     }
 

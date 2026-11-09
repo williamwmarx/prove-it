@@ -107,6 +107,10 @@ interface NativeCheckpoint {
   // What each _POSSIBLE predicate counted before the expansion the interpreter goes on from, or -1
   // where it wasn't evaluated.
   possible?: Float64Array;
+  // TLC's registers before that expansion: the indices of those set, and their values as one row.
+  registerIndices?: Int32Array;
+  registerWords?: Int32Array;
+  registerStrings?: string[];
   outDegrees?: Float64Array;
   parents?: Int32Array;
   // The values of the states, each once, and each state's values by position among them.
@@ -147,6 +151,10 @@ export type NativeOutcome =
       counts: Float64Array;
       // What each _POSSIBLE predicate counted, or -1 where it wasn't evaluated.
       possible: Float64Array;
+      // TLC's registers once the search completes, as a checkpoint holds them.
+      registerIndices: Int32Array;
+      registerWords: Int32Array;
+      registerStrings: string[];
       outDegrees: Float64Array;
       fingerprints: BigInt64Array;
       liveness?: NativeLiveness;
@@ -157,7 +165,7 @@ export type NativeOutcome =
   | ({ status: "stopped"; reason: string } & NativeCheckpoint);
 
 // The contract between this loader and the addon, ABI_VERSION in its lib.rs.
-const ABI_VERSION = 8;
+const ABI_VERSION = 9;
 
 export const ADDON_FILE = "prove-it-engine.node";
 
@@ -271,6 +279,13 @@ export const checkNatively = (
       callbacks.onPrint(values.map(formatPrinted).join("  "));
     },
   );
+};
+
+// TLC's registers, by index, as the interpreter holds them.
+const toRegisters = (indices: Int32Array, words: Int32Array, strings: string[]) => {
+  const values =
+    indices.length === 0 ? [] : createStateDecoder(indices.length)({ words, strings, count: 1 })[0];
+  return new Map(Array.from(indices, (index, position): [number, Value] => [index, values[position]]));
 };
 
 // The states the native engine found, as ids of this process's engine store, which the
@@ -411,6 +426,9 @@ const toCheckpoint = (
     initialGenerated: counts[3],
     outDegrees: Array.from(native.outDegrees),
     possible: Array.from(native.possible ?? []),
+    registers:
+      native.registerIndices &&
+      toRegisters(native.registerIndices, native.registerWords!, native.registerStrings!),
     states,
     parents: native.parents,
     width,
@@ -515,6 +533,7 @@ export const toEngineResult = (
     valueCount: counts[5],
     outDegrees: Array.from(outcome.outDegrees),
     possible: Array.from(outcome.possible),
+    registers: toRegisters(outcome.registerIndices, outcome.registerWords, outcome.registerStrings),
     getFingerprints: () => outcome.fingerprints,
     threads: 1,
     checkpoint: outcome.checkpoint && toCheckpoint(outcome.checkpoint, width, atoms),

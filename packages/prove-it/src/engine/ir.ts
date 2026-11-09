@@ -51,7 +51,7 @@ import type { EngineProperties, EngineSpec } from "./context";
 import type { NamedPermutation } from "./symmetry";
 
 // The version of the layout below, which the decoder checks. Any change to it changes this.
-export const IR_VERSION = 8;
+export const IR_VERSION = 9;
 
 // "PIIR" read as a little-endian word.
 const MAGIC = 0x52494950;
@@ -833,6 +833,13 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
   for (const property of input.liveProperties) {
     push(model, getText(property.name));
     pushLive(property.formula);
+  }
+  // TLC's registers as the search starts, which an assumption may have set (TLCSet).
+  const registers = environment.runtime.registers;
+  push(model, registers.size);
+  for (const [index, value] of registers) {
+    push(model, index);
+    push(model, getValue(value));
   }
 
   // Definitions and scopes reach more of each, in the order they are first met.

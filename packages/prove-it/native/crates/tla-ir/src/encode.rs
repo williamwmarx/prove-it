@@ -183,6 +183,10 @@ fn encode_here(ir: &Ir) -> Vec<u8> {
         words.push(property.name as i32);
         push_live(&mut words, &property.formula);
     }
+    words.push(model.registers.len() as i32);
+    for &(index, value) in &model.registers {
+        words.extend([index as i32, optional(value)]);
+    }
     words.push(ir.definitions.len() as i32);
     words.extend(ir.definitions.iter().map(|&id| offset(id)));
     words.push(nodes.words.len() as i32);
