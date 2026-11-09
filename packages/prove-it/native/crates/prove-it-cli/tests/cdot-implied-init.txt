@@ -1,0 +1,25 @@
+Error: The current version of TLC does not support action composition.  An incomplete implementation can be enabled via the tlc2.tool.impl.Tool.cdot=true java property.
+While working on the initial state:
+/\ S = {1, 2}
+/\ x = 0
+
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 7, column 5 to line 7, column 22 in CdotWithContextB
+1. Line 7, column 5 to line 7, column 9 in CdotWithContextB
+2. Line 7, column 14 to line 7, column 22 in CdotWithContextB
+3. Line 29, column 9 to line 29, column 20 in CdotWithContextB
+4. Line 29, column 17 to line 29, column 20 in CdotWithContextB
+5. Line 16, column 9 to line 20, column 28 in CdotWithContextB
+6. Line 16, column 9 to line 17, column 22 in CdotWithContextB
+7. Line 16, column 12 to line 16, column 16 in CdotWithContextB
+8. Line 17, column 12 to line 17, column 22 in CdotWithContextB
+9. Line 17, column 22 to line 17, column 22 in CdotWithContextB
+10. Line 18, column 8 to line 20, column 28 in CdotWithContextB
+11. Line 19, column 11 to line 20, column 28 in CdotWithContextB
+12. Line 19, column 14 to line 19, column 20 in CdotWithContextB
+13. Line 20, column 14 to line 20, column 28 in CdotWithContextB
+
+
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
