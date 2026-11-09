@@ -488,7 +488,8 @@ impl Store {
             hash,
         });
         self.table[slot] = [hash, id];
-        if self.meta.len() * 2 > self.table.len() {
+        // The table holds only the store's own values, an overlay's past its copy of the base's.
+        if (self.meta.len() - self.id_base as usize) * 2 > self.table.len() {
             self.grow_table();
         }
         id
@@ -1762,4 +1763,23 @@ fn is_same(left: &[u32], right: &[u32]) -> bool {
 
 pub fn is_function_kind(kind: u8) -> bool {
     kind == KIND_FUNCTION || kind == KIND_TUPLE
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // An overlay's intern table holds only its own values, so a large base doesn't make it grow.
+    #[test]
+    fn an_overlays_table_grows_with_its_own_values() {
+        let mut base = Store::new();
+        let held: Vec<Id> = (10_000..60_000)
+            .map(|value| base.int(value).unwrap())
+            .collect();
+        let mut overlay = Store::overlay(Arc::new(base));
+        let own = overlay.int(70_000).unwrap();
+        assert_eq!(overlay.int(10_000).unwrap(), held[0]);
+        assert_eq!(overlay.int(70_000).unwrap(), own);
+        assert_eq!(overlay.table.len(), INITIAL_CAPACITY * 2);
+    }
 }
