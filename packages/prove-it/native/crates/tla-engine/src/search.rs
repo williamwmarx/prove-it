@@ -352,9 +352,10 @@ trait Reached {
     fn add(&mut self, state: &[Id], key: &[Id], fingerprint: u64, slot: usize, parent: i32);
     // The index of the state in a slot, for an edge of the graph.
     fn index(&self, slot: usize) -> u32;
-    // Whether an invariant that fails of a new state waits to stop the search until it is known
-    // that no other thread found another state with its key first, which it records.
-    fn defers_violation(&mut self, _parent: usize, _fingerprint: u64) -> bool {
+    // Whether an invariant that fails of a new state, false or failing to evaluate, waits to stop
+    // the search until it is known that no other thread found another state with its key first,
+    // which it records with the reason it stops for.
+    fn defers_violation(&mut self, _parent: usize, _fingerprint: u64, _bail: Bail) -> bool {
         false
     }
 }
@@ -698,14 +699,20 @@ impl<'r, T: Reached> Search<'r, T> {
             let holds =
                 holds_all_changed(machine, &context.invariants, &self.successor, &self.current);
             self.swap_successor(machine, self.expansion_epoch, self.level_id);
-            let is_deferred = |states: &mut T| {
-                is_new
-                    && fingerprint.is_some_and(|fingerprint| {
-                        states.defers_violation(self.expanding, fingerprint)
-                    })
+            let failed = match holds {
+                Ok(true) => None,
+                Ok(false) => Some(Bail("an invariant violated")),
+                Err(bail) => Some(bail),
             };
-            if !holds? && !is_deferred(&mut self.states) {
-                return Err(Bail("an invariant violated"));
+            if let Some(bail) = failed {
+                let is_deferred = is_new
+                    && fingerprint.is_some_and(|fingerprint| {
+                        self.states
+                            .defers_violation(self.expanding, fingerprint, bail)
+                    });
+                if !is_deferred {
+                    return Err(bail);
+                }
             }
         }
         if let Some(graph) = &mut self.graph
@@ -835,7 +842,7 @@ struct Candidates<'b> {
     keys: Vec<Id>,
     fingerprints: Vec<u64>,
     parents: Vec<u32>,
-    deferred: Vec<(u32, u64)>,
+    deferred: Vec<(u32, u64, Bail)>,
     collisions: u64,
 }
 
@@ -903,11 +910,11 @@ impl Reached for Candidates<'_> {
 
     // Where the key isn't the state, a thread that takes a state for new may have missed another
     // with the same key that another thread found first, whose invariant TLC checks instead.
-    fn defers_violation(&mut self, parent: usize, fingerprint: u64) -> bool {
+    fn defers_violation(&mut self, parent: usize, fingerprint: u64, bail: Bail) -> bool {
         if self.before.key_width.is_none() {
             return false;
         }
-        self.deferred.push((parent as u32, fingerprint));
+        self.deferred.push((parent as u32, fingerprint, bail));
         true
     }
 }
@@ -958,7 +965,7 @@ struct Expanded {
     parents: Vec<u32>,
     // Each state, by its parent, whose invariant failed but which another thread may have found
     // first under a VIEW or symmetry, as another state with the same key.
-    deferred: Vec<(u32, u64)>,
+    deferred: Vec<(u32, u64, Bail)>,
     collisions: u64,
     stop: Option<(usize, Bail)>,
     is_past_walk: bool,
@@ -1153,19 +1160,19 @@ impl Search<'_, States> {
             let mut candidate = claimed.candidates;
             let mut deferred = found
                 .deferred
-                .partition_point(|&(parent, _)| (parent as usize) < claimed.start);
+                .partition_point(|&(parent, _, _)| (parent as usize) < claimed.start);
             for (offset, parent) in
                 (claimed.start..(claimed.start + level.chunk).min(level.end)).enumerate()
             {
                 if parent > stop {
                     break 'states;
                 }
-                while let Some(&(at, fingerprint)) = found.deferred.get(deferred)
+                while let Some(&(at, fingerprint, bail)) = found.deferred.get(deferred)
                     && at as usize == parent
                 {
                     if self.states.set.find(fingerprint).is_err() {
                         stop = parent;
-                        violated = Some(Bail("an invariant violated"));
+                        violated = Some(bail);
                         break 'states;
                     }
                     deferred += 1;
