@@ -525,9 +525,13 @@ fn find_global_name(name: &str, environment: &Environment) -> Result<Option<Glob
         return Ok(Some(GlobalName::Other));
     }
     match environment.builtins.get(name) {
-        Some(builtin) if builtin.arity == 0 && builtin.flags & 1 == 0 => Err(not_yet(
-            "a builtin's value as an argument to a temporal formula",
-        )),
+        Some(builtin) if builtin.arity == 0 && builtin.flags & 1 == 0 => match name {
+            "TRUE" => Ok(Some(GlobalName::Value(ConfigValue::Boolean(true)))),
+            "FALSE" => Ok(Some(GlobalName::Value(ConfigValue::Boolean(false)))),
+            _ => Err(not_yet(
+                "a builtin's value as an argument to a temporal formula",
+            )),
+        },
         _ => Ok(None),
     }
 }
@@ -591,6 +595,27 @@ fn format_config_value(value: &ConfigValue) -> Result<String> {
         ConfigValue::Boolean(value) => Ok(if *value { "TRUE" } else { "FALSE" }.to_owned()),
         ConfigValue::Number(number) if number.fract() == 0.0 => Ok(format!("{number}")),
         _ => Err(not_yet("a configuration error that shows a value")),
+    }
+}
+
+/// `isConstantTrue`, for a conjunct that is a constant name: TLC drops one that is TRUE, and
+/// rejects the spec for any other value.
+fn is_constant_true(
+    name: &str,
+    item: &Expanded,
+    usage: &str,
+    evaluator: Option<&Evaluator>,
+) -> Result<bool> {
+    let evaluator = evaluator.ok_or_else(|| not_yet("a constant conjunct of the specification"))?;
+    match evaluator.evaluate(&item.expression, item.scope.as_ref())? {
+        ConfigValue::Boolean(true) => Ok(true),
+        ConfigValue::Boolean(false) => Err(FrontError::Config(format!(
+            "The spec is trivially false because {name} is false."
+        ))),
+        value => Err(FrontError::Config(format!(
+            "The operator {name}, which equals {},\ncannot be used as a {usage}",
+            format_config_value(&value)?
+        ))),
     }
 }
 
@@ -783,6 +808,7 @@ pub fn get_specification(
     environment: &Environment,
     facts: &DefinitionFacts,
     version: TlcVersion,
+    evaluator: Option<&Evaluator>,
 ) -> Result<Specification> {
     let Some(specification) = &config.specification else {
         let operator = |name: &Option<String>, description: &str| {
@@ -807,7 +833,9 @@ pub fn get_specification(
         ));
     }
     let definition = get_config_operator("name", specification, environment)?;
-    if let Some(value) = get_constant_value(specification, definition, environment, facts, None)? {
+    if let Some(value) =
+        get_constant_value(specification, definition, environment, facts, evaluator)?
+    {
         return Err(FrontError::Config(format!(
             "The value of {specification} is equal to {}",
             format_config_value(&value)?
@@ -834,8 +862,11 @@ pub fn get_specification(
             )
         };
         match &item.expression.kind {
-            ExpressionKind::Identifier { .. } if level() == Level::Constant => {
-                return Err(not_yet("a constant conjunct of the specification"));
+            ExpressionKind::Identifier { name, .. }
+                if level() == Level::Constant
+                    && is_constant_true(name, &item, "spec", evaluator)? =>
+            {
+                continue;
             }
             ExpressionKind::UnboundedQuantifier {
                 is_temporal: true, ..
@@ -852,7 +883,12 @@ pub fn get_specification(
                 _ if get_level(inner, item.scope.as_ref(), environment, facts, &[])
                     < Level::Action =>
                 {
-                    return Err(not_yet("a temporal formula TLC cannot handle"));
+                    // TLC accepts the spec and fails when it builds the tableau of the temporal
+                    // formulas.
+                    return Err(FrontError::Evaluation(format!(
+                        "TLC cannot handle the temporal formula {}",
+                        describe_range(inner)
+                    )));
                 }
                 _ => {}
             },
@@ -977,6 +1013,28 @@ fn get_config_predicate<'a>(
     }
 }
 
+const BOOK: &str = "https://lamport.azurewebsites.net/tla/book.html";
+
+/// `getActionPropertyMessage`: TLC's error for a property that is an action, which says how to
+/// make `[A]_v`, `<<A>>_v` or another action a temporal formula.
+fn get_action_property_message(name: &str, conjunct: &Expr) -> String {
+    let at = describe_range(conjunct);
+    let advice = match conjunct.kind {
+        ExpressionKind::Action { is_box: true, .. } => format!(
+            "To check that action {name} holds in *every* step of the behavior, define a temporal property by applying the \"always\" temporal operator ([]) to the formula at {at} (compare page 90 of Specifying Systems at {BOOK})."
+        ),
+        ExpressionKind::Action { is_box: false, .. } => format!(
+            "To check that infinitely many {name} steps occur, define a temporal property by applying the \"always eventually\" temporal operator combination ([]<>) to the formula at {at} (compare page 91 of Specifying Systems at {BOOK})."
+        ),
+        _ => format!(
+            "To check that action {name} holds in *every* step of the behavior, define a temporal property: Let A be the formula at {at}; rewrite A as [][A]_v, where v is a state function (typically the tuple of variables) (compare page 90 of Specifying Systems at {BOOK})."
+        ),
+    };
+    format!(
+        "The formula {name} at {at} is an action-level formula (i.e., it contains no temporal operators). Only temporal-level (or state-level) formulas are allowed under PROPERTY or PROPERTIES. {advice}"
+    )
+}
+
 pub fn get_properties(
     config: &crate::config::ModelConfig,
     environment: &Environment,
@@ -1007,10 +1065,11 @@ pub fn get_properties(
                 get_level(expression, item.scope.as_ref(), environment, facts, &[])
             };
             let conjunct = &item.expression;
-            if matches!(conjunct.kind, ExpressionKind::Identifier { .. })
+            if let ExpressionKind::Identifier { name, .. } = &conjunct.kind
                 && level(conjunct) == Level::Constant
+                && is_constant_true(name, &item, "property", evaluator)?
             {
-                return Err(not_yet("a constant conjunct of a property"));
+                continue;
             }
             let part_name = item.name.clone().unwrap_or_else(|| name.clone());
             if let ExpressionKind::Always(body) = &conjunct.kind {
@@ -1060,8 +1119,8 @@ pub fn get_properties(
                     scope: item.scope,
                 }),
                 Level::Action => {
-                    return Err(FrontError::Config(format!(
-                        "The property {name} is an action-level formula"
+                    return Err(FrontError::Config(get_action_property_message(
+                        &part_name, conjunct,
                     )));
                 }
                 Level::Temporal => properties.liveness.push(Property {

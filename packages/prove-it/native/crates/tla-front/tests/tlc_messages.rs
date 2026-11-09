@@ -46,3 +46,13 @@ fn leaves_other_errors_uncoded() {
         Some((1000, 75))
     );
 }
+
+#[test]
+fn exits_as_for_a_general_error_after_an_unexpected_exception() {
+    let error = FrontError::Evaluation(format!(
+        "{}The symmetry function Proc must specify a set of permutations.",
+        tla_front::errors::UNEXPECTED_EXCEPTION
+    ));
+    let printed = coded(error, false).expect("a coded error");
+    assert_eq!((printed.code, printed.exit_code), (1000, 255));
+}

@@ -387,3 +387,14 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   the operator's body is one the walk would go into, it now declines ("walking a recursive
   operator"). Walking it needs the run-time recursion a recursive function's walk has, with the
   arguments that name a variable kept as they are.
+
+## UNCHANGED of a tuple that isn't all variables
+
+- TLC goes through UNCHANGED of a tuple element by element (`processUnchanged`): it assigns a
+  variable and compares anything else's values in the two states. Github702's instance
+  substitutes a constant for x in `UNCHANGED <<x, z>>`. The engine walked UNCHANGED only of a
+  tuple of variables, and evaluated any other whole as a guard, where z' had no value: it stopped
+  on "primed variable not assigned". It now walks such a tuple element by element, and follows
+  an operator's argument, as the interpreter does; a global definition is still evaluated whole,
+  as the interpreter evaluates it. Github702 (TLC's tests) now completes in Rust: 36 states
+  generated, 30 distinct, as TLC.

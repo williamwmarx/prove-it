@@ -302,7 +302,7 @@ fn write_sany_text(out: &mut String, path: &Path, library: Option<&Path>) {
 
 fn write_model_full(out: &mut String, config: &str, spec_path: &Path, library: Option<&Path>) {
     let options = ModelOptions {
-        library,
+        libraries: library.as_slice(),
         version: None,
         is_warning_enabled: true,
     };
@@ -524,7 +524,7 @@ fn main() -> ExitCode {
                 let config = parse_config(&source, TlcVersion::Master)
                     .map_err(|error| FrontError::Config(error.message))?;
                 let facts = create_definition_facts(&environment);
-                get_specification(&config, &environment, &facts, TlcVersion::Master)
+                get_specification(&config, &environment, &facts, TlcVersion::Master, None)
             });
             dump::specification(&specification).write(&mut line);
         } else if mode == "model" {

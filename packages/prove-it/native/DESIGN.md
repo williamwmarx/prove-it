@@ -1583,9 +1583,10 @@ this design change, the code wins, and this records how:
   that ran before. `PROVE_IT_ENGINE=debug` reports `[engine] native: ir: <n> bytes in <ms> ms` or
   `native: ir: declined: <reason>`, after the file is written.
 - **Layout** (`ir.ts`'s header comment is the reference). Little-endian 32-bit words, then the
-  texts as one UTF-8 string, padded to a word. Each text's end is a count of UTF-16 code units, so
-  JavaScript encodes every text in one `TextEncoder` call; a text with a lone surrogate, which UTF-8
-  can't hold, declines the IR. Text `i` below the ranked count is the string of rank `i`; the texts
+  texts as one WTF-8 string, padded to a word: UTF-8, which also encodes a lone surrogate, since
+  a string TLC computes at startup can hold one, as `Tail("😀a")` does. Each text's end is a count
+  of UTF-16 code units, so JavaScript encodes every well-formed text in one `TextEncoder` call, and
+  `Ir::wide_texts` keeps the units of a text with a lone surrogate. Text `i` below the ranked count is the string of rank `i`; the texts
   TLC doesn't rank, such as names and the TLC version, follow. Sections: texts, variables in the
   engine's order and TLC's order of them, the builtins named (name, arity, state-level, level-
   constant and lazy flags), the constants named, the instance scopes read (a value, a thunk, a

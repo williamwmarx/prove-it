@@ -74,9 +74,11 @@ pub fn read_front(
     let ir = match read("ir") {
         Ok(ir) => ir,
         Err(_) => {
-            lower(spec_path, config_text, is_warning_enabled).map_err(|error| match error {
-                FrontError::NotYet(reason) => format!("{}: {reason}", no_front()),
-                _ => no_front(),
+            lower(spec_path, config_text, is_warning_enabled, libraries).map_err(|error| {
+                match error {
+                    FrontError::NotYet(reason) => format!("{}: {reason}", no_front()),
+                    _ => no_front(),
+                }
             })?
         }
     };
@@ -88,14 +90,16 @@ fn lower(
     spec_path: &str,
     config_text: &str,
     is_warning_enabled: bool,
+    libraries: &[String],
 ) -> Result<Vec<u8>, FrontError> {
     let path = if spec_path.ends_with(".tla") {
         spec_path.to_string()
     } else {
         format!("{spec_path}.tla")
     };
+    let libraries: Vec<&Path> = libraries.iter().map(Path::new).collect();
     let options = ModelOptions {
-        library: None,
+        libraries: &libraries,
         version: None,
         is_warning_enabled,
     };
@@ -128,6 +132,7 @@ fn native_failure(
         lowering.spec_path,
         lowering.config_text,
         lowering.is_warning_enabled,
+        libraries,
     )
     .err()?;
     Some(Failure {

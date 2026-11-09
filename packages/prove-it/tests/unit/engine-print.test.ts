@@ -5,8 +5,13 @@
 import { afterEach, describe, expect, it, spyOn } from "bun:test";
 
 import { check } from "../../src";
+import { getNativeAddon } from "../../src/engine/native";
+import { getEngineBackend } from "../../src/engine/settings";
 
 const setting = process.env.PROVE_IT_ENGINE;
+
+// Whether the native engine checks first, which it does wherever its addon loads.
+const isNative = getEngineBackend() !== "ts" && typeof getNativeAddon() !== "string";
 
 afterEach(() => {
   if (setting === undefined) delete process.env.PROVE_IT_ENGINE;
@@ -17,7 +22,7 @@ const run = async (body: string, config: string, engine: string) => {
   process.env.PROVE_IT_ENGINE = engine;
   const printed: string[] = [];
   const lines: string[] = [];
-  // The TypeScript engine's lines. The native engine's, with PROVE_IT_ENGINE_BACKEND=rust, come
+  // The TypeScript engine's lines. The native engine's, where it checks first, come
   // first.
   const spy = spyOn(console, "error").mockImplementation((message: unknown) => {
     if (
@@ -232,7 +237,7 @@ describe("the engine's Print, PrintT and TLCGet", () => {
     const mapped = `EXTENDS Naturals, TLC\nVARIABLE x\nP == {Print(z, z) : z \\in {x, 5}} # {}\nInit == x = 0\nNext == x < 2 /\\ P /\\ x' = x + 1`;
     const { lines } = await checkBoth(mapped, "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE");
     expect(lines).toEqual([
-      process.env.PROVE_IT_ENGINE_BACKEND === "rust"
+      isNative
         ? expect.stringMatching(CHECKED)
         : expect.stringMatching(/handed over .*: unsupported: Print/),
     ]);
@@ -269,7 +274,7 @@ describe("the engine's Print, PrintT and TLCGet", () => {
       "INIT Init\nNEXT Next\nPROPERTY Live\nCHECK_DEADLOCK FALSE",
     );
     expect(lines).toEqual([
-      process.env.PROVE_IT_ENGINE_BACKEND === "rust"
+      isNative
         ? expect.stringMatching(/the interpreter prints the counterexample/)
         : expect.stringMatching(/handed over .*: unsupported: Print/),
     ]);

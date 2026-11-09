@@ -1606,6 +1606,20 @@ impl<'a> Compiler<'a> {
             }]);
             return self.conjunction(&items, context, options, 0, 0, known.clone(), then);
         }
+        // TLC goes through a tuple element by element (processUnchanged), assigning a variable
+        // and comparing anything else's values in the two states, and through an operator's
+        // argument, as the interpreter does.
+        match self.node(expression).1 {
+            NodeKind::Tuple(elements) => {
+                return self.walk_unchanged_elements(elements, context, options, known, then);
+            }
+            NodeKind::Identifier(name) if name.is_local => {
+                if let Some((body, inner)) = self.resolve_action(expression, context)? {
+                    return self.walk_unchanged(body, &inner, options, known, then);
+                }
+            }
+            _ => {}
+        }
         let evaluate = self
             .wrap_compile(|compiler| {
                 compiler.compile_unchanged(expression, &context.without_print())
@@ -1622,6 +1636,22 @@ impl<'a> Compiler<'a> {
                 Err(Bail("a guard that isn't a boolean"))
             }
         })))
+    }
+
+    fn walk_unchanged_elements(
+        &mut self,
+        elements: &[NodeId],
+        context: &Context,
+        options: WalkOptions,
+        known: &Known,
+        then: &mut Then<'_, 'a>,
+    ) -> Compiling<Rest> {
+        let [first, rest @ ..] = elements else {
+            return then(self, known);
+        };
+        self.walk_unchanged(*first, context, options, known, &mut |compiler, known| {
+            compiler.walk_unchanged_elements(rest, context, options, known, then)
+        })
     }
 
     fn shape_of(

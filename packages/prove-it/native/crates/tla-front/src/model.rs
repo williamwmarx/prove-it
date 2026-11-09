@@ -21,22 +21,22 @@ use crate::values::ValueOrder;
 
 /// What the model is checked with besides its files.
 pub struct ModelOptions<'a> {
-    /// The directory of the modules a spec reads that aren't beside it, such as the community
-    /// modules.
-    pub library: Option<&'a Path>,
+    /// The directories of the modules a spec reads that aren't beside it, such as the community
+    /// modules, in the order TLC searches them (`-DTLA-Library`).
+    pub libraries: &'a [&'a Path],
     /// The TLC version the run asks for, or none for the default, master's.
     pub version: Option<TlcVersion>,
     /// Whether TLC prints its warnings, which `-nowarning` turns off.
     pub is_warning_enabled: bool,
 }
 
-/// A module's text from the spec's directory, or else the library's.
-pub fn load_module(spec_path: &Path, library: Option<&Path>, name: &str) -> Option<String> {
+/// A module's text from the spec's directory, or else the first library's that has it.
+pub fn load_module(spec_path: &Path, libraries: &[&Path], name: &str) -> Option<String> {
     let directory = spec_path.parent().unwrap_or(Path::new("."));
     let file = format!("{name}.tla");
-    std::fs::read_to_string(directory.join(&file))
-        .ok()
-        .or_else(|| library.and_then(|library| std::fs::read_to_string(library.join(&file)).ok()))
+    std::iter::once(directory)
+        .chain(libraries.iter().copied())
+        .find_map(|directory| std::fs::read_to_string(directory.join(&file)).ok())
 }
 
 /// The encoded IR of the model the configuration describes, without TLC's actions, which the
@@ -49,7 +49,7 @@ pub fn lower_model(
     let version = options.version.unwrap_or(TlcVersion::Master);
     let source = std::fs::read_to_string(spec_path)
         .map_err(|error| FrontError::Config(format!("{}: {error}", spec_path.display())))?;
-    let load = |name: &str| load_module(spec_path, options.library, name);
+    let load = |name: &str| load_module(spec_path, options.libraries, name);
     let config =
         parse_config(config_text, version).map_err(|error| FrontError::Config(error.message))?;
     // SANY's errors come from linking, before TLC's orders parse the modules again.
@@ -76,7 +76,8 @@ pub fn lower_model(
         .collect();
     let evaluator = Evaluator::new(&environment, ValueOrder { ranks: &ranks }, version, true);
     check_invariants(&config, &environment, &facts, &evaluator)?;
-    let specification = get_specification(&config, &environment, &facts, version)?;
+    let specification =
+        get_specification(&config, &environment, &facts, version, Some(&evaluator))?;
     let properties = get_properties(&config, &environment, &facts, version, Some(&evaluator))?;
     // `getTlcOrder`: the variables in TLC's order of declarations.
     let position = |index: &i32| {
