@@ -655,9 +655,10 @@ impl<'ir> Evaluator<'ir> {
                 if context.is_primed {
                     return fail("UNCHANGED under a prime");
                 }
-                let now = self.evaluate(*inner, context)?;
+                // The primed expression first, as TLC evaluates `e' = e`.
                 let then = self.evaluate(*inner, &context.primed(true))?;
-                Ok(Value::Bool(equals(&now, &then)?))
+                let now = self.evaluate(*inner, context)?;
+                Ok(Value::Bool(equals(&then, &now)?))
             }
             NodeKind::If {
                 condition,
