@@ -482,7 +482,10 @@ impl Linker<'_> {
                 Vec::new(),
             ));
         }
-        reject_module_literals(&module)?;
+        // SANY accepts the literals TLC can't evaluate.
+        if !self.is_collecting.get() {
+            reject_module_literals(&module)?;
+        }
         Ok(module)
     }
 
@@ -1816,7 +1819,6 @@ pub fn get_sany_messages(
     let linker = create_linker(options, &root);
     linker.is_collecting.set(true);
     linker.tables.is_collecting.set(true);
-    reject_module_literals(&root)?;
     if let Err(error) = linker.link_top_level(&root) {
         // An error of the root module that stops linking is one SANY reports with the module's
         // other messages, after the modules before it.
