@@ -598,31 +598,9 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
 - RandomSubsetEmpty now prints what TLC prints. A nonempty set with a part TLC can't enumerate
   still stops, where TLC answers some (`[Nat -> {1}]` has one element).
 
-## Open: Test2, liveness atoms answered as the search goes
+## Test2, liveness atoms answered as the search goes (as built)
 
-TLC evaluates the liveness checker's atoms as it finds states, so atoms that print or set
-registers do it in TLC's order. The engine answers them in tables after the search, which is why
-Test2's output differs. The liveness session's design, open for whoever owns it next:
-
-- `add_states` (tla-live `checker.rs`) is already incremental. It calls `add_initial_state` for
-  each initial state, then `add_state(i)` for each state in order. `add_state` reads only what is
-  known once i is expanded: its edges, `parents` and `fingerprints`, and `diameters[i]`. Late
-  nodes and `Verdict::Unexpanded` come only with SYMMETRY or VIEW (`reals`), which this path can
-  decline.
-- The obstacle is ownership. `Checker<'c>` borrows the graph and tables for its whole life, so
-  the search can't grow them. Preferred fix: pass the graph into each call
-  (`add_state(&mut self, graph: &Graph, state)`) and build it once for `check`, `find_accepted` and
-  `add_states`, which then keep their signatures.
-- Answers move behind an `Answers` trait in tla-live (std only), with the table-backed answers as
-  the default implementation. That implementation keeps `position()` and its diameter offset.
-  Action answers are indexed by edge position, with stuttering at `edges.len() + state`, and that
-  offset shifts as edges grow. So an online provider takes (atom, state, step), or the trait gives
-  stuttering steps their own index (`Slot { State, Step, Stutter }`).
-- `Liveness::unanswered` must keep working; it gives `ErrorSite::Atom` for Github607. An online
-  provider can return the evaluation failure itself instead.
-- Evaluate each atom every time TLC does. The `effects` log and the `known` short-circuit assume
-  one evaluation per check, so don't cache across checks when an atom has effects
-  (`is_effectful` already turns caching off).
+Built by the liveness session: see "Atoms that use TLC's registers" in `liveness.md`.
 
 ## Handoff (gaps session, 2026-11-09)
 
