@@ -1,0 +1,102 @@
+//! A model's IR from its spec and configuration, as the native binary reads it in place of the
+//! TypeScript front end's.
+
+use std::path::Path;
+use std::rc::Rc;
+
+use crate::TlcVersion;
+use crate::config::parse_config;
+use crate::dependencies::create_definition_facts;
+use crate::environment::{EnvironmentOptions, create_environment};
+use crate::errors::FrontError;
+use crate::lower::{Lowering, RankedTexts};
+use crate::order::TlcOrder;
+use crate::spec::{get_properties, get_specification};
+
+/// What the model is checked with besides its files.
+pub struct ModelOptions<'a> {
+    /// The directory of the modules a spec reads that aren't beside it, such as the community
+    /// modules.
+    pub library: Option<&'a Path>,
+    /// The TLC version the run asks for, or none for the default, master's.
+    pub version: Option<TlcVersion>,
+    /// Whether TLC prints its warnings, which `-nowarning` turns off.
+    pub is_warning_enabled: bool,
+}
+
+/// A module's text from the spec's directory, or else the library's.
+pub fn load_module(spec_path: &Path, library: Option<&Path>, name: &str) -> Option<String> {
+    let directory = spec_path.parent().unwrap_or(Path::new("."));
+    let file = format!("{name}.tla");
+    std::fs::read_to_string(directory.join(&file))
+        .ok()
+        .or_else(|| library.and_then(|library| std::fs::read_to_string(library.join(&file)).ok()))
+}
+
+/// The encoded IR of the model the configuration describes, without TLC's actions, which the
+/// engine splits, or `NotYet` for what the front end doesn't lower yet.
+pub fn lower_model(
+    spec_path: &Path,
+    config_text: &str,
+    options: &ModelOptions,
+) -> Result<Vec<u8>, FrontError> {
+    let version = options.version.unwrap_or(TlcVersion::Master);
+    let source = std::fs::read_to_string(spec_path)
+        .map_err(|error| FrontError::Config(format!("{}: {error}", spec_path.display())))?;
+    let load = |name: &str| load_module(spec_path, options.library, name);
+    let config =
+        parse_config(config_text, version).map_err(|error| FrontError::Config(error.message))?;
+    // SANY's errors come from linking, before TLC's orders parse the modules again.
+    let environment = create_environment(&EnvironmentOptions {
+        source: &source,
+        load_module: &load,
+        config: &config,
+        is_unconfigured: false,
+        version,
+    })?;
+    let order = TlcOrder::new(&source, &load, version)?;
+    let texts: Vec<Rc<str>> = order
+        .get_string_order(&config)?
+        .iter()
+        .map(|text| Rc::from(text.as_str()))
+        .collect();
+    let variable_order = order.get_declaration_order(true)?;
+    let facts = create_definition_facts(&environment);
+    let specification = get_specification(&config, &environment, &facts, version)?;
+    let properties = get_properties(&config, &environment, &facts, version)?;
+    // `getTlcOrder`: the variables in TLC's order of declarations.
+    let position = |index: &i32| {
+        let variable = &environment.variables[*index as usize];
+        variable_order
+            .iter()
+            .position(|name| name == variable)
+            .unwrap_or(environment.variables.len())
+    };
+    let mut tlc_order: Vec<i32> = (0..environment.variables.len() as i32).collect();
+    tlc_order.sort_by_key(position);
+    let ranks = texts
+        .iter()
+        .enumerate()
+        .map(|(rank, text)| (text.clone(), rank as u32))
+        .collect();
+    let mut lowering = Lowering::new(
+        &environment,
+        RankedTexts {
+            texts: &texts,
+            ranks,
+        },
+    );
+    let version_text = options.version.map(|version| match version {
+        TlcVersion::V1_7_4 => "1.7.4",
+        TlcVersion::Master => "master",
+    });
+    let model = lowering.write_model(
+        &config,
+        &specification,
+        &properties,
+        options.is_warning_enabled,
+        version_text,
+        tlc_order,
+    )?;
+    Ok(tla_ir::encode(&lowering.finish(model)?))
+}

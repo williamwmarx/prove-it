@@ -168,3 +168,18 @@ the implementing PR, with the front end's review.
   as for the TypeScript CLI, so a test can reach one on a small model.
 - A counterexample a check part way through finds stays not native: the interpreter prints it with
   the counts so far.
+
+## Step labels from the rebuilt trace
+
+- The binary labels each step of a trace with the action `tla-trace` finds as it rebuilds the
+  trace (`TraceState.action`, #139), as TLC's `Tool.getState` does, not with the search's own labels.
+- So the search hands over a violation's trace wherever the caller reports it:
+  - under VIEW or SYMMETRY, whose stored states aren't the ones TLC prints;
+  - in specs that print, where finding the actions would print again;
+  - where the search can't find a step's action.
+  In those cases each step's label is `None` and the rebuild tries TLC's actions in turn.
+- Still not native:
+  - a step whose action the rebuilt trace lacks, as in a model whose IR has no actions (etest3), whose
+    label is the whole next-state relation's range;
+  - a trace the rebuild declines, such as RandomElement and RandomSubset, or the several states
+    one symmetry orbit may give TLC.
