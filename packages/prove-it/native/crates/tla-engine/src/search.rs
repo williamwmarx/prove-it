@@ -1700,7 +1700,6 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         .map(|&text| &*ir.texts[text as usize])
         .collect();
     let collisions = search.states.collisions;
-    let is_enabled_exact = !machine.is_past_walk;
     // The answers to the liveness checker's atoms about the first `count` states and the steps of
     // the first `expanded`.
     let graph_tables = |machine: &mut Machine<'_>,
@@ -1711,6 +1710,9 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
      -> Result<Vec<Table>, &'static str> {
         let graph = search.graph.as_ref().expect("a graph");
         let edge_count = graph.edge_offsets[expanded] as usize;
+        // Read as the tables are answered, since taking the steps from the states the search
+        // didn't store may take a shortcut past a walk too.
+        let is_enabled_exact = !machine.is_past_walk;
         let live = match reals {
             Some(reals) => LiveGraph {
                 states: &reals.states,
@@ -1774,7 +1776,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     .as_ref()
                     .map(|labels| labels[..edge_count].to_vec()),
                 initial_counts: graph.initial_counts.clone(),
-                is_enabled_exact,
+                is_enabled_exact: !machine.is_past_walk,
                 tables,
             }),
             possible,

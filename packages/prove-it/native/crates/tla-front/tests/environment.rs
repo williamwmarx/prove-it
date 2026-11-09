@@ -3,10 +3,20 @@
 
 use tla_front::TlcVersion;
 use tla_front::ast::{DefinitionKind, Expression, ExpressionKind};
+use tla_front::config::parse_config;
 use tla_front::environment::{Environment, EnvironmentOptions, create_environment};
 use tla_front::errors::FrontError;
 
 fn link(source: &str, modules: &[(&str, &str)]) -> Result<Environment, FrontError> {
+    link_model(source, modules, None)
+}
+
+fn link_model(
+    source: &str,
+    modules: &[(&str, &str)],
+    config: Option<&str>,
+) -> Result<Environment, FrontError> {
+    let model = parse_config(config.unwrap_or(""), TlcVersion::Master).expect("a configuration");
     let load_module = |name: &str| {
         modules
             .iter()
@@ -16,6 +26,8 @@ fn link(source: &str, modules: &[(&str, &str)]) -> Result<Environment, FrontErro
     create_environment(&EnvironmentOptions {
         source,
         load_module: &load_module,
+        config: &model,
+        is_unconfigured: config.is_none(),
         version: TlcVersion::Master,
     })
 }
@@ -158,4 +170,29 @@ fn selects_the_labeled_part_of_a_definition() {
     };
     assert_eq!(args.len(), 2);
     assert_eq!(part.body.reference().as_deref(), Some("+"));
+}
+
+#[test]
+fn assigns_and_substitutes_the_constants_of_the_configuration() {
+    let source = "---- MODULE Main ----\nEXTENDS Naturals\nCONSTANTS N, Op(_)\nM == 3\nDouble(x) == 2 * x\n====";
+    let environment =
+        link_model(source, &[], Some("CONSTANT N <- M\nOp <- Double")).expect("an environment");
+    assert_eq!(
+        environment
+            .substitutions
+            .iter()
+            .map(|(key, target)| format!("{key} <- {target}"))
+            .collect::<Vec<_>>(),
+        ["N <- M", "Op <- Double"]
+    );
+    let error = link_model(source, &[], Some("CONSTANT N = 1"))
+        .err()
+        .expect("an error");
+    assert_eq!(
+        error,
+        FrontError::Config(
+            "The constant parameter Op is not assigned a value by the configuration file."
+                .to_owned()
+        )
+    );
 }
