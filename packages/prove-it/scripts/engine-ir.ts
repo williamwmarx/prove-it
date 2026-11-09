@@ -31,8 +31,8 @@ import {
 // initial predicates, invariants that print, recursion, LAMBDA, function definitions, values
 // TLC computes at startup, invariants an initial state violates, the run-time errors whose
 // messages and call stacks tla-trace's evaluate_failure gives, tableau nodes that accept every
-// behavior, assumptions that print, and the records TLC sorts as it permutes a state under
-// SYMMETRY.
+// behavior, assumptions that print, the records TLC sorts as it permutes a state under
+// SYMMETRY, and a lasso under a VIEW.
 const GOLDEN_MODELS = [
   "examples/specifications/btree/MCbtree.cfg",
   "examples/specifications/TeachingConcurrency/SimpleRegular.cfg",
@@ -93,6 +93,7 @@ const GOLDEN_MODELS = [
   "spectacle/specs/with_state_graphs/Elevator.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/Github1389Counting.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/Github710b.cfg",
+  "tlc/tlatools/org.lamport.tlatools/test-model/examples/FiniteMonotonic/MCDistributedReplicatedLog.cfg",
   "mongodb-txns/MultiShardTxn/Storage.cfg",
 ];
 

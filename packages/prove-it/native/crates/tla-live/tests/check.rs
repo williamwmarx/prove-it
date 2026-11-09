@@ -1,6 +1,8 @@
 //! The native liveness checker on small graphs: two states that step to each other, from state 0.
 
-use tla_live::{Declined, Graph, Term, Verdict, atom_order, check, find_accepted};
+use tla_live::{
+    Declined, Graph, Term, Verdict, atom_order, check, find_accepted, violated_on_lasso,
+};
 
 const PARENTS: [i32; 2] = [-1, 0];
 const OFFSETS: [u32; 3] = [0, 1, 2];
@@ -159,4 +161,23 @@ fn orders_the_atoms_as_the_checker_asks_about_them() {
         atom_order(&[Term::Boolean(false)]),
         Err(Declined::from("a tautology"))
     );
+}
+
+#[test]
+fn names_the_properties_a_lasso_violates() {
+    // A lasso of three states, whose cycle is the last two, with P true in the first only: <>P
+    // holds, []<>P doesn't, nor does []P.
+    let answers = [true, false, false];
+    let eventually = [Term::Eventually, Term::State(0)];
+    let always = [Term::Always, Term::State(0)];
+    let violated = violated_on_lasso(
+        &[&eventually, &INFINITELY_OFTEN, &always],
+        3,
+        1,
+        &mut |term, position, _| match term {
+            Term::State(0) => Ok(answers[position]),
+            _ => Err(Declined::from("another atom")),
+        },
+    );
+    assert_eq!(violated, Ok(vec![1, 2]));
 }
