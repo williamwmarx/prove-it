@@ -138,12 +138,14 @@ export type NativeOutcome =
       outDegrees: Float64Array;
       fingerprints: BigInt64Array;
       liveness?: NativeLiveness;
+      // The position among TLC's actions of the action of each step of a lasso, or -1.
+      lassoActions: Int32Array;
       checkpoint?: NativeCheckpoint;
     }
   | ({ status: "stopped"; reason: string } & NativeCheckpoint);
 
 // The contract between this loader and the addon, ABI_VERSION in its lib.rs.
-const ABI_VERSION = 6;
+const ABI_VERSION = 7;
 
 export const ADDON_FILE = "prove-it-engine.node";
 

@@ -205,6 +205,7 @@ impl Compiler<'_> {
             is_costly: true,
             // TLC enumerates [S -> T] in its own order, which the reference gives.
             is_normalized: false,
+            is_in_order: range.is_in_order,
             reference: combine_references(&[&domain, &range], |_, mut sets| {
                 let range = sets.pop().expect("a range");
                 let domain = sets.pop().expect("a domain");
@@ -288,6 +289,7 @@ impl Compiler<'_> {
         Ok(Compiled {
             is_costly: true,
             is_normalized: false,
+            is_in_order: fields.iter().all(|field| field.is_in_order),
             reference: combine_references(&fields, move |_, sets| {
                 Ok(Lazy::RecordSet(reference_keys.clone(), sets))
             }),
@@ -351,6 +353,7 @@ impl Compiler<'_> {
         Ok(Compiled {
             is_costly: true,
             is_normalized: false,
+            is_in_order: factors.iter().all(|factor| factor.is_in_order),
             reference: combine_references(&components, |_, sets| Ok(Lazy::Product(sets))),
             parts: Some(set_parts),
             member: Some(member(move |machine, element| {

@@ -419,6 +419,7 @@ pub(super) unsafe extern "C" fn check_model(env: napi_env, info: napi_callback_i
                     counts,
                     checkpoint,
                     liveness,
+                    lasso_actions,
                     fingerprints,
                     value_count,
                     collisions,
@@ -426,6 +427,11 @@ pub(super) unsafe extern "C" fn check_model(env: napi_env, info: napi_callback_i
                     if let Some(verdict) = &liveness {
                         set(env, result, c"liveness", create_verdict(env, verdict)?)?;
                     }
+                    let actions: Vec<i32> = lasso_actions
+                        .iter()
+                        .map(|action| action.map_or(-1, |position| position as i32))
+                        .collect();
+                    set(env, result, c"lassoActions", create_int32s(env, &actions)?)?;
                     if let Some(checkpoint) = &checkpoint {
                         let mut object = null_mut();
                         status(napi_create_object(env, &mut object))?;
