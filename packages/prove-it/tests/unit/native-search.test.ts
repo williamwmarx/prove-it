@@ -1372,6 +1372,75 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     expect(lines).toContainEqual(expect.stringMatching(/^\[engine\] checked 12 states /));
   });
 
+  it("evaluates ENABLED in the initial predicate", async () => {
+    // TLC's EWD840/MC02 conjoins ENABLED Next to its specification, so the initial predicate
+    // evaluates it once every variable has a value.
+    const body = [
+      "EXTENDS Naturals",
+      "VARIABLES x, y",
+      "Step == x < 2 /\\ x' = x + 1 /\\ y' = y",
+      "Init == x \\in 0..3 /\\ y = 0 /\\ ENABLED Step",
+      "Next == Step \\/ (x = 2 /\\ x' = 0 /\\ y' = 1 - y)",
+    ];
+    const lines = await compareWithInterpreter(body, "INIT Init\nNEXT Next");
+    expect(lines).toContainEqual(expect.stringMatching(COMPLETE));
+    expect(lines).toContainEqual(expect.stringMatching(/^\[engine\] checked 6 states /));
+  });
+
+  it("walks a function of several arguments an action applies", async () => {
+    // TLC keeps the function lazy and walks its body with each name bound to its argument, as
+    // spectacle's Elevator applies CanServiceCall[e, call] (checked with TLC: 10 states generated,
+    // 3 distinct).
+    const body = [
+      "EXTENDS Naturals",
+      "VARIABLE x",
+      "Move[a \\in 0..2, b \\in 0..1] == x' = (a + b) % 3 \\/ (b = 1 /\\ x' = a)",
+      "Init == x = 0",
+      "Next == \\E b \\in 0..1 : Move[x, b]",
+    ];
+    const lines = await compareWithInterpreter(body, "INIT Init\nNEXT Next");
+    expect(lines).toContainEqual(expect.stringMatching(COMPLETE));
+    expect(lines).toContainEqual(expect.stringMatching(/^\[engine\] checked 3 states /));
+    const outside = body.map((line) => line.replace("Move[x, b]", "Move[x + 1, b]"));
+    expect(await compareWithInterpreter(outside, "INIT Init\nNEXT Next")).toContainEqual(
+      expect.stringMatching(stopped("applied a function outside its domain")),
+    );
+  });
+
+  it("stops where an action quantifies over a set TLC can't enumerate", async () => {
+    // TLC fails on \E k \in Nat in an action, as spectacle's Bakery does.
+    const body = [
+      "EXTENDS Naturals",
+      "VARIABLE x",
+      "Init == x = 0",
+      "Next == (x < 2 /\\ x' = x + 1) \\/ (x = 2 /\\ \\E k \\in Nat : x' = k)",
+    ];
+    expect(await compareWithInterpreter(body, "INIT Init\nNEXT Next")).toContainEqual(
+      expect.stringMatching(stopped("enumerated a set TLC can't enumerate")),
+    );
+  });
+
+  it("tests membership in the domain of a function TLC keeps lazy", async () => {
+    // FcnLambdaValue.getDomain gives the bound's set, or the tuples of the bounds' sets, which
+    // TLC only tests (suite/test11).
+    const body = [
+      "EXTENDS Integers",
+      "VARIABLE x",
+      "Shift[i \\in Int] == i + 3",
+      "Init == x = 0",
+      "Next == x' = (x + 1) % 3",
+      "Inv == /\\ x \\in DOMAIN Shift",
+      "       /\\ {x, -1} \\in DOMAIN [s \\in SUBSET Int |-> s \\cup {1}]",
+      "       /\\ <<x, -2>> \\in DOMAIN [i \\in Nat, j \\in Int |-> i + j]",
+      "       /\\ <<-1, x>> \\notin DOMAIN [i \\in Nat, j \\in Int |-> i + j]",
+      "       /\\ <<x>> \\notin DOMAIN [i \\in Nat, j \\in Int |-> i + j]",
+      "       /\\ x \\in DOMAIN [i \\in 0..2 |-> i]",
+    ];
+    expect(await compareWithInterpreter(body, "INIT Init\nNEXT Next\nINVARIANT Inv")).toContainEqual(
+      expect.stringMatching(COMPLETE),
+    );
+  });
+
   it("counts the _POSSIBLE predicates as TLC does, and hands the counts over", async () => {
     // TLC counts the states in the model and the steps each predicate holds of, duplicates and
     // all, and reports one that never held with the counts.
