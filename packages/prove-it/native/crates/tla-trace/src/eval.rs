@@ -1618,6 +1618,23 @@ impl<'ir> Evaluator<'ir> {
                     bound.primed(context.is_primed || bound.is_primed),
                 )
             }
+            // A function a definition defines, which TLC holds as a FcnLambdaValue unless it
+            // computed it at startup.
+            NodeKind::Identifier(name) => {
+                let Resolution::Definition(index) = name.resolution else {
+                    return Ok(None);
+                };
+                let definition = self.definition(self.ir.definitions[index as usize]);
+                let DefinitionForm::Function(bounds) = &definition.form else {
+                    return Ok(None);
+                };
+                if definition.flags & (Definition::RECURSIVE | Definition::SELF_REFERENTIAL) != 0
+                    || !matches!(definition.startup, Startup::None)
+                {
+                    return Ok(None);
+                }
+                (bounds, definition.body, context.global())
+            }
             _ => return Ok(None),
         };
         match &bounds[..] {

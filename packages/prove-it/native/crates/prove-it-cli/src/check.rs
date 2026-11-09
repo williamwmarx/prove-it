@@ -5,12 +5,15 @@ use std::path::Path;
 use std::sync::mpsc;
 use std::time::{Instant, SystemTime};
 
-use tla_engine::search::{Reporter, SearchOutcome, Settings, Violation, ViolationKind, search};
+use tla_engine::search::{
+    ErrorSite, Reporter, SearchOutcome, Settings, Violation, ViolationKind, search,
+};
 use tla_live::{Liveness, Verdict};
 use tla_values::print::{is_printable, write_value};
 use tla_values::{Id, Store};
 
 use crate::args::{Java, Parsed, USAGE, get_java_launch};
+use crate::failure::{ErrorStop, print_failure};
 use crate::files::FileDescriber;
 use crate::front::read_front;
 use crate::messages::{self as code, Level, Printer};
@@ -22,7 +25,7 @@ use crate::time::{format_date, format_duration};
 use crate::trace::rebuild_trace;
 use tla_front::TlcVersion;
 use tla_front::config::{ModelConfig, parse_config};
-use tla_trace::pretty_print;
+use tla_trace::{Site, pretty_print};
 
 // TLC's exit statuses, from EC.ExitStatus.
 const SUCCESS: i32 = 0;
@@ -627,15 +630,48 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
         SearchOutcome::Declined(reason) => {
             return report_not_native(printer, &format!("the engine declined: {reason}"));
         }
-        // TLC's report of a failure evaluating the model is the trace session's to print.
         SearchOutcome::Stopped {
             violation: Some(violation),
             reason,
             ..
-        } if !matches!(violation.kind, ViolationKind::Error { .. }) => {
-            return print_violation(printer, &ir, &config, &violation, None, start).unwrap_or_else(
-                |why| report_not_native(printer, &format!("the engine stopped: {reason}: {why}")),
-            );
+        } => {
+            let printed = match violation.kind {
+                // TLC's report of a failure evaluating the model, which it replays.
+                // TLC prints the trace through the ALIAS and checks the postconditions after it,
+                // which the printing doesn't follow yet.
+                ViolationKind::Error { .. }
+                    if config.alias.is_some()
+                        || !config.postconditions.is_empty()
+                        || !config.possible.is_empty() =>
+                {
+                    Err("a failure with an ALIAS, POSTCONDITION or _POSSIBLE".to_string())
+                }
+                ViolationKind::Error { site } => {
+                    let counts = &violation.counts;
+                    let stop = ErrorStop {
+                        store: &violation.store,
+                        states: violation.states.iter().map(Vec::as_slice).collect(),
+                        actions: violation.labels.clone(),
+                        site: match site {
+                            ErrorSite::Init => Site::Init,
+                            ErrorSite::Next => Site::Next,
+                            ErrorSite::Invariant(position) => Site::Invariant(position),
+                        },
+                        statistics: Statistics {
+                            generated: counts.generated,
+                            distinct: counts.distinct,
+                            queued: counts.queued,
+                            depth: counts.depth,
+                        },
+                    };
+                    print_failure(printer, &ir, &stop, start)
+                }
+                _ => print_violation(printer, &ir, &config, &violation, None, start)
+                    .map_err(str::to_string),
+            };
+            return printed.unwrap_or_else(|why| {
+                report_not_native(printer, &format!("the engine stopped: {reason}: {why}"))
+            });
         }
         SearchOutcome::Stopped { reason, .. } => {
             return report_not_native(printer, &format!("the engine stopped: {reason}"));
