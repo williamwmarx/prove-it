@@ -276,6 +276,9 @@ pub struct Evaluator<'ir> {
     /// holds the code's markers, which AssertError compares with. `None` where the caller doesn't
     /// say, and AssertError isn't followed.
     pub is_tool: Option<bool>,
+    /// How many workers TLC runs, which TLCGet("config") reads. `None` where the caller doesn't
+    /// say, and TLCGet("config") isn't followed.
+    pub workers: Option<usize>,
 }
 
 /// TLC's registers (`IdThread`'s local values and named registers): the value TLCSet stored under
@@ -405,6 +408,7 @@ impl<'ir> Evaluator<'ir> {
             registers: Registers::default(),
             register_writes: 0,
             is_tool: None,
+            workers: None,
         }
     }
 
@@ -801,7 +805,7 @@ impl<'ir> Evaluator<'ir> {
                     "selected a field a record lacks",
                     format!(
                         "Attempted to select nonexistent field \"{name}\" from the record\n{}\n{}",
-                        format_value(record),
+                        format_pretty(record),
                         self.describe_range(node)
                     ),
                 ),
@@ -2538,7 +2542,7 @@ impl<'ir> Evaluator<'ir> {
                 ) {
                     return fail("IsFiniteSet of a non-set");
                 }
-                Value::Bool(is_finite(&set))
+                Value::Bool(is_finite(&set)?)
             }
             "Seq" => {
                 arity(1)?;
@@ -2911,6 +2915,21 @@ impl<'ir> Evaluator<'ir> {
                 self.set_register(key, value)?;
                 Value::Bool(true)
             }
+            // `TLCExt.tlcFingerprint`: TLC's fingerprint of the value, as an int.
+            "TLCFP" => {
+                arity(1)?;
+                let value = self.operand(&operands[0])?;
+                let mut fingerprints = tla_values::fingerprint::Fingerprints::new();
+                match crate::fingerprint::state_fingerprint(&mut fingerprints, &[&value]) {
+                    Some(fingerprint) => Value::Int(fingerprint as i32),
+                    None => return fail("TLCFP of a value the evaluator doesn't fingerprint"),
+                }
+            }
+            // `TLCExt.tlcDefer`: TLC's breadth-first search never runs the deferred expression.
+            "TLCDefer" => {
+                arity(1)?;
+                Value::Bool(true)
+            }
             "TLCGet" => {
                 arity(1)?;
                 match self.operand(&operands[0])? {
@@ -2952,6 +2971,32 @@ impl<'ir> Evaluator<'ir> {
                             Some(index) => self.convert(&ir.values.list[index as usize])?,
                             None => return fail("TLCGet(\"spec\") the IR doesn't hold"),
                         }
+                    }
+                    // `AbstractChecker.createConfig`, as the engine words it: TLC's install is
+                    // where its jar is, which the native checker has none of.
+                    Value::Str(key)
+                        if *key.units == *"config".encode_utf16().collect::<Vec<_>>() =>
+                    {
+                        let Some(workers) = self.workers else {
+                            return fail("TLCGet(\"config\") without the run's workers");
+                        };
+                        let model = &self.ir.model;
+                        let text = |text: &str| self.text_of(text.encode_utf16().collect());
+                        let string = |value: &str| Value::Str(text(value));
+                        Value::record(vec![
+                            (text("mode"), string("bfs")),
+                            (text("deadlock"), Value::Bool(model.check_deadlock)),
+                            (text("worker"), Value::Int(workers as i32)),
+                            (
+                                text("seed"),
+                                string(&(model.random_seed as i64).to_string()),
+                            ),
+                            (
+                                text("fingerprint"),
+                                string(&(tla_values::fingerprint::INITIAL as i64).to_string()),
+                            ),
+                            (text("install"), string("unknown")),
+                        ])?
                     }
                     Value::Str(key)
                         if *key.units == *"level".encode_utf16().collect::<Vec<_>>() =>
@@ -3080,16 +3125,60 @@ enum Operand {
 
 // Whether a set (or a function, which the engine counts as a finite set) is finite, without
 // enumerating it: a lazy set is when its parts are.
-fn is_finite(value: &Value) -> bool {
-    match value {
+// `isFinite` of TLC's set values: a set of functions, records or tuples is finite where one of
+// its finite parts is empty, and `Seq(S)` where S is.
+fn is_finite(value: &Value) -> Evaluated<bool> {
+    Ok(match value {
         Value::Lazy(lazy) => match &**lazy {
-            Lazy::Nat | Lazy::Int | Lazy::Real | Lazy::Strings | Lazy::Seq(_) => false,
-            Lazy::Subset(base) => is_finite(base),
-            Lazy::FunctionSet(domain, range) => is_finite(domain) && is_finite(range),
-            Lazy::RecordSet(fields, _) => fields.iter().all(|(_, set)| is_finite(set)),
-            Lazy::Product(factors) => factors.iter().all(is_finite),
+            Lazy::Nat | Lazy::Int | Lazy::Real | Lazy::Strings => false,
+            Lazy::Seq(range) => is_finite(range)? && is_empty(range),
+            Lazy::Subset(base) => is_finite(base)?,
+            Lazy::FunctionSet(domain, range) => {
+                let is_domain_finite = is_finite(domain)?;
+                if is_domain_finite && is_empty(domain) {
+                    return Ok(true);
+                }
+                let is_range_finite = is_finite(range)?;
+                (is_range_finite && is_empty(range))
+                    || (is_domain_finite && is_range_finite)
+                    || (is_range_finite && cardinality(range)? == 1)
+            }
+            Lazy::RecordSet(fields, _) => is_all_finite(fields.iter().map(|(_, set)| set))?,
+            Lazy::Product(factors) => is_all_finite(factors.iter())?,
         },
         _ => true,
+    })
+}
+
+// `SetOfRcdsValue.isFinite` and `SetOfTuplesValue.isFinite`: finite where a finite part is empty,
+// or every part is finite.
+fn is_all_finite<'v>(parts: impl Iterator<Item = &'v Value>) -> Evaluated<bool> {
+    let mut is_all_finite = true;
+    for part in parts {
+        if !is_finite(part)? {
+            is_all_finite = false;
+        } else if is_empty(part) {
+            return Ok(true);
+        }
+    }
+    Ok(is_all_finite)
+}
+
+// `Value.isEmpty` of a set whose finiteness TLC checks first, so it never enumerates an infinite
+// one.
+fn is_empty(value: &Value) -> bool {
+    match value {
+        Value::Set(elements) => elements.is_empty(),
+        Value::Interval(low, high) => low > high,
+        Value::Lazy(lazy) => match &**lazy {
+            Lazy::Nat | Lazy::Int | Lazy::Real | Lazy::Strings | Lazy::Seq(_) | Lazy::Subset(_) => {
+                false
+            }
+            Lazy::FunctionSet(domain, range) => !is_empty(domain) && is_empty(range),
+            Lazy::RecordSet(fields, _) => fields.iter().any(|(_, set)| is_empty(set)),
+            Lazy::Product(factors) => factors.iter().any(is_empty),
+        },
+        _ => false,
     }
 }
 
@@ -3184,4 +3273,30 @@ fn bag_counts(bag: &Value) -> Evaluated<Vec<(Value, i32)>> {
             _ => fail("a bag whose count isn't an integer"),
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn lazy(lazy: Lazy) -> Value {
+        Value::Lazy(Rc::new(lazy))
+    }
+
+    #[test]
+    fn finds_a_set_finite_as_tlc_does() {
+        let nat = || lazy(Lazy::Nat);
+        let empty = || Value::Set(Rc::new(Vec::new()));
+        let one = || Value::Interval(0, 0);
+        // [Nat -> {}] and [Nat -> {0}] are finite, [Nat -> 0..1] isn't.
+        assert!(is_finite(&lazy(Lazy::FunctionSet(nat(), empty()))).expect("finite"));
+        assert!(is_finite(&lazy(Lazy::FunctionSet(nat(), one()))).expect("finite"));
+        assert!(
+            !is_finite(&lazy(Lazy::FunctionSet(nat(), Value::Interval(0, 1)))).expect("infinite")
+        );
+        // Nat \X {} and Seq({}) are finite, Seq({1}) isn't.
+        assert!(is_finite(&lazy(Lazy::Product(vec![nat(), empty()]))).expect("finite"));
+        assert!(is_finite(&lazy(Lazy::Seq(empty()))).expect("finite"));
+        assert!(!is_finite(&lazy(Lazy::Seq(one()))).expect("infinite"));
+    }
 }

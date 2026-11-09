@@ -310,6 +310,7 @@ fn write_model_full(out: &mut String, config: &str, spec_path: &Path, library: O
         version: None,
         is_warning_enabled: true,
         is_spec_described: false,
+        random_seed: 0,
     };
     write_ir(out, lower_model(spec_path, config, &options));
 }

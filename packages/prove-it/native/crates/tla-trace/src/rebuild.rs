@@ -134,6 +134,11 @@ impl<'ir> Rebuilder<'ir> {
         }
     }
 
+    /// Takes how many workers TLC runs, which TLCGet("config") reads.
+    pub fn set_workers(&mut self, workers: usize) {
+        self.evaluator.workers = Some(workers);
+    }
+
     /// Takes the symmetry group the search reduced by, each permutation as the names of the model
     /// values it moves, each with its image's.
     pub fn set_symmetry(&mut self, group: &[Vec<(Vec<u16>, Vec<u16>)>]) {

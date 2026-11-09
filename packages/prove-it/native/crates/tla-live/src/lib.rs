@@ -485,6 +485,14 @@ impl Lasso<'_> {
     }
 }
 
+/// How many solutions of a formula TLC checks, which it calls branches and reports as it builds
+/// its liveness checker ("Implied-temporal checking--satisfiability problem has N branches.").
+pub fn count_branches(formula: &[Term]) -> Result<usize, Declined> {
+    let mut terms = Terms::default();
+    let root = read_formula(&mut terms, formula)?;
+    Ok(terms.solutions(root)?.len())
+}
+
 /// The atoms of a formula, in the order TLC's liveness checker asks about them (`atoms` of
 /// `createLivenessChecker`): the state and ENABLED atoms of each solution's checks and then of its
 /// tableau's nodes, as `collectAtoms` meets them, then the rest the checks ask of, as

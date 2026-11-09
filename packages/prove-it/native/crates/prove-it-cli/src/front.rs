@@ -8,7 +8,7 @@ use std::path::Path;
 
 use tla_front::TlcVersion;
 use tla_front::errors::FrontError;
-use tla_front::model::{ModelOptions, lower_model};
+use tla_front::model::{LoweredModel, ModelOptions, StartupMessage, lower_front};
 use tla_front::report::{ReportOptions, SanyText, get_sany_text};
 use tla_front::tlc_messages::CodedError;
 
@@ -37,8 +37,12 @@ pub enum Output {
     /// As the differential recorded it.
     Recorded(Vec<u8>),
     /// SANY's report as tla-front writes it. The rest, what TLC prints as it starts, comes from
-    /// the engine's startup.
-    Native { sany: String },
+    /// the engine's startup, with `startup_messages` what TLC prints itself after the constant
+    /// definitions and before the assumptions (the engine's `startup_done`).
+    Native {
+        sany: String,
+        startup_messages: Vec<StartupMessage>,
+    },
 }
 
 pub fn read_front(
@@ -48,6 +52,7 @@ pub fn read_front(
     describer: &FileDescriber,
     libraries: &[String],
     is_tool: bool,
+    seed: i64,
 ) -> Result<Read, String> {
     let name = Path::new(spec_path)
         .file_stem()
@@ -57,6 +62,8 @@ pub fn read_front(
         config_text,
         is_warning_enabled,
         is_tool,
+        // TLC's seed as the generator's 64 bits.
+        random_seed: seed as u64,
     };
     // Without recordings, tla-front is the whole front end.
     let Some(directory) = std::env::var_os("PROVE_IT_FRONT") else {
@@ -88,12 +95,12 @@ pub fn read_front(
     let ir = match read("ir") {
         Ok(ir) => ir,
         Err(_) => {
-            lower(spec_path, config_text, is_warning_enabled, libraries).map_err(|error| {
-                match error {
+            lower(&lowering, libraries)
+                .map_err(|error| match error {
                     FrontError::NotYet(reason) => format!("{}: {reason}", no_front()),
                     _ => no_front(),
-                }
-            })?
+                })?
+                .ir
         }
     };
     Ok(Read::Model(Front {
@@ -102,13 +109,9 @@ pub fn read_front(
     }))
 }
 
-// The model's IR as tla-front lowers it.
-fn lower(
-    spec_path: &str,
-    config_text: &str,
-    is_warning_enabled: bool,
-    libraries: &[String],
-) -> Result<Vec<u8>, FrontError> {
+// The model as tla-front lowers it.
+fn lower(lowering: &Lowering<'_>, libraries: &[String]) -> Result<LoweredModel, FrontError> {
+    let spec_path = lowering.spec_path;
     let path = if spec_path.ends_with(".tla") {
         spec_path.to_string()
     } else {
@@ -118,10 +121,11 @@ fn lower(
     let options = ModelOptions {
         libraries: &libraries,
         version: None,
-        is_warning_enabled,
+        is_warning_enabled: lowering.is_warning_enabled,
         is_spec_described: true,
+        random_seed: lowering.random_seed,
     };
-    lower_model(Path::new(&path), config_text, &options)
+    lower_front(Path::new(&path), lowering.config_text, &options)
 }
 
 /// What tla-front lowers a run's model from.
@@ -130,6 +134,7 @@ struct Lowering<'a> {
     config_text: &'a str,
     is_warning_enabled: bool,
     is_tool: bool,
+    random_seed: u64,
 }
 
 // The front as tla-front finds it: the model it lowers, or where TLC stops before the search,
@@ -148,16 +153,14 @@ fn native_front(
             error: None,
         }));
     }
-    let error = match lower(
-        lowering.spec_path,
-        lowering.config_text,
-        lowering.is_warning_enabled,
-        libraries,
-    ) {
-        Ok(ir) => {
+    let error = match lower(lowering, libraries) {
+        Ok(lowered) => {
             return Ok(Read::Model(Front {
-                ir,
-                output: Output::Native { sany: sany.text },
+                ir: lowered.ir,
+                output: Output::Native {
+                    sany: sany.text,
+                    startup_messages: lowered.startup_messages?,
+                },
             }));
         }
         Err(FrontError::NotYet(reason)) => return Err(reason),

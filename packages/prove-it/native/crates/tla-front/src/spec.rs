@@ -273,7 +273,7 @@ impl Expansion<'_> {
                 let bound = bind_definitions(definitions, scope)?;
                 return self.expand(body, bound.as_ref(), expanding, is_substituted, name);
             }
-            ExpressionKind::Identifier { .. } => {
+            ExpressionKind::Identifier { name: written, .. } => {
                 let reference = expression.reference().unwrap_or_default();
                 let binding = if expression.is_locally_resolved() {
                     lookup_scope(scope, &reference)
@@ -311,7 +311,8 @@ impl Expansion<'_> {
                         None,
                         &expanding,
                         is_substituted || self.is_substituted(definition),
-                        Some(definition.name.clone()),
+                        // `opNode.getName()`: the name as written, `A!Safe` for an instance's.
+                        Some(written.clone()),
                     );
                 }
             }
@@ -844,18 +845,21 @@ fn find_next(
 }
 
 /// `getInvariants` (`search.ts`): TLC's checks of the invariants the configuration names, which
-/// it makes before it reads the specification.
+/// it makes before it reads the specification. It returns the invariants that are constants equal
+/// to TRUE, which TLC warns about, or none where the engine checks one the evaluator can't compute.
 pub fn check_invariants(
     config: &crate::config::ModelConfig,
     environment: &Environment,
     facts: &DefinitionFacts,
     evaluator: &Evaluator,
-) -> Result<()> {
+) -> Result<Option<Vec<Name>>> {
     let analyzer = environment.create_level_analyzer(&[]);
+    let mut constant_true = Vec::new();
     for name in &config.invariants {
         let Some(definition) =
             get_config_predicate("invariant", name, environment, facts, Some(evaluator))?
         else {
+            constant_true.push(Rc::from(name.as_str()));
             continue;
         };
         let levels = analyzer.analyze_definition(definition, &levels::Scope::default())?;
@@ -872,7 +876,7 @@ pub fn check_invariants(
             )));
         }
     }
-    Ok(())
+    Ok((!evaluator.is_deferring()).then_some(constant_true))
 }
 
 /// `getSpecification` (`search.ts`).
