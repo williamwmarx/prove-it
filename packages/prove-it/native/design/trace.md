@@ -156,9 +156,10 @@ pub struct TraceState {
     pub printed: Vec<Vec<String>>,
 }
 
-/// Where the search failed: computing the initial states, or the successors of the path's last
-/// state.
-pub enum Site { Init, Next }
+/// Where the search failed: computing the initial states, the successors of the path's last
+/// state, or the invariant at a position on the path's last state, a successor past the initial
+/// states (which the caller appends, as the search doesn't keep it).
+pub enum Site { Init, Next, Invariant(u32) }
 
 /// TLC's report of the error: the code of its message, the message and its -tool text, and the
 /// nested expressions it was in, which the caller prints with `format_call_stack` as message 2103.
@@ -284,15 +285,18 @@ decides which frames a stack keeps. The report follows `getFailureMessage`:
 - an EvalException that escapes the next-state computation keeps its own code;
 - any other error there is TLC's unexpected RuntimeException;
 - in the initial predicate the code is the general one, and the -tool text marks the coded message
-  inside it.
+  inside it;
+- an invariant that fails to evaluate past the initial states has the headline "Evaluating
+  invariant Inv failed." (2111) and no call stack. Its successor is held as found, as a violating
+  one is. On an initial state TLC reports it otherwise, which returns `Unsupported` so far.
 
 An error has TLC's message only where its kind is ported: so far a mistyped membership in Nat, Int
 or STRING (2158) and Assert (2132). Every other failure returns `Unsupported`. The pretty printer
 moved here from the CLI, since the messages need it.
 
 Tests: `tests/failure.rs` runs the engine's search on golden IRs of TLC's own tests (etest9, 10 and
-11, AssertExpressionStack and Github461) until it stops, and compares the message and the call
-stack with TLC's text.
+11, AssertExpressionStack, Github461 and EvaluatingValueTest) until it stops, and compares the
+message and the call stack with TLC's text.
 
 ### Parity
 
