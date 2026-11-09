@@ -206,7 +206,7 @@ fn leaves_a_postcondition_to_the_front_end() {
 }
 
 #[test]
-fn leaves_a_state_an_alias_prints_to_the_front_end() {
+fn prints_a_state_through_the_alias() {
     let ir = include_bytes!(
         "../../../../tests/conformance/ir/tlc/tlatools/org.lamport.tlatools/test-model/Github746.ir"
     );
@@ -217,9 +217,15 @@ fn leaves_a_state_an_alias_prints_to_the_front_end() {
         "SPECIFICATION Spec\nINVARIANT Inv\nALIAS Alias\n",
         &[],
     );
-    assert_eq!(output.status.code(), Some(1));
-    assert!(!stdout(&output).contains("violated"));
-    assert!(String::from_utf8_lossy(&output.stderr).contains("not native yet"));
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(12), "{text}");
+    // TLC prints the record the alias gives in place of the state's variables.
+    assert!(
+        text.contains(
+            "Error: Invariant Inv is violated by the initial state:\n/\\ i = 1\n/\\ foo = \"bar\"\n/\\ j = TRUE\n"
+        ),
+        "{text}"
+    );
     std::fs::remove_dir_all(directory).expect("removed");
 }
 
