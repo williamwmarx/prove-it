@@ -138,7 +138,7 @@ impl Converter<'_> {
         match self.get_evaluator(reason)?.evaluate(expression, scope) {
             Ok(ConfigValue::Boolean(value)) => Ok(Some(value)),
             Ok(_) => Ok(None),
-            Err(FrontError::Evaluation(_)) => Err(not_yet(reason)),
+            // TLC's own failure, which `toAtom` and the IF's guard raise as it is.
             Err(error) => Err(error),
         }
     }

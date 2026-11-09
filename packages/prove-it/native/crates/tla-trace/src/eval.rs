@@ -328,8 +328,34 @@ fn undefined_register<T>(key: &Value) -> Evaluated<T> {
 }
 
 const LAZY_FILTER: &str = "a filter TLC keeps lazy";
+/// The reasons the replay can't follow TLC's frames to a failure, which change no message: TLC
+/// prints no frames where an assumption fails to evaluate.
+pub(crate) const UNFOLLOWED_FRAMES: [&str; 2] = [LAZY_DOMAIN, BUILT_FUNCTION];
+const LAZY_DOMAIN: &str = "the domain of a function TLC keeps lazy";
+const BUILT_FUNCTION: &str = "building a function a definition defines";
 /// `EC.TLC_MODULE_VALUE_JAVA_METHOD_OVERRIDE`.
 const JAVA_METHOD_FAILED: u32 = 2154;
+
+const TLC_EVAL: &str = "public static tlc2.value.impl.Value tlc2.module.TLCEval.tlcEval(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel)";
+
+// `reportAsJavaFailure`: a failure with TLC's message, reported as the failure of the Java method
+// that TLC overrides an operator with.
+fn as_java_failure<T>(signature: &str, result: Evaluated<T>) -> Evaluated<T> {
+    result.map_err(|error| match error.message {
+        Some(message) => EvalError {
+            message: Some(TlcMessage {
+                text: format!(
+                    "Attempted to apply the operator overridden by the Java method\n{signature},\nbut it produced the following error:\n{}",
+                    message.text
+                ),
+                code: Some(JAVA_METHOD_FAILED),
+                is_eval_exception: false,
+            }),
+            ..error
+        },
+        None => error,
+    })
+}
 
 fn is_text(text: &Text, word: &str) -> bool {
     text.units.iter().copied().eq(word.encode_utf16())
@@ -1143,7 +1169,12 @@ impl<'ir> Evaluator<'ir> {
         let substitutes = ir.model.startup.substitutes.iter().map(|&(_, index)| index);
         for index in substitutes.chain(ir.model.startup.definitions.iter().copied()) {
             let node = ir.definitions[index as usize];
-            let value = self.evaluate(self.definition(node).body, &Context::default())?;
+            // `processConstantDefns`: TLC swallows whatever a constant definition throws and keeps
+            // it as an operator, evaluated again, and failing again, where it is used. The front
+            // end has rejected a substitute TLC checks and finds failing.
+            let Ok(value) = self.evaluate(self.definition(node).body, &Context::default()) else {
+                continue;
+            };
             if ir.model.startup.definitions.contains(&index) {
                 self.cache.insert((node, false), value.clone());
                 self.cache.insert((node, true), value);
@@ -1610,20 +1641,7 @@ impl<'ir> Evaluator<'ir> {
                 _ => fail("IOUtils's Serialize with a format that isn't a string"),
             }
         })();
-        result.map_err(|error| match error.message {
-            Some(message) => EvalError {
-                message: Some(TlcMessage {
-                    text: format!(
-                        "Attempted to apply the operator overridden by the Java method\n{TEXT_SERIALIZE},\nbut it produced the following error:\n{}",
-                        message.text
-                    ),
-                    code: Some(JAVA_METHOD_FAILED),
-                    is_eval_exception: false,
-                }),
-                ..error
-            },
-            None => error,
-        })
+        as_java_failure(TEXT_SERIALIZE, result)
     }
 
     fn call_operator(
@@ -1765,9 +1783,7 @@ impl<'ir> Evaluator<'ir> {
         if result.is_err()
             && let Some(stack) = &mut self.call_stack
         {
-            stack
-                .unfollowed
-                .get_or_insert("building a function a definition defines");
+            stack.unfollowed.get_or_insert(BUILT_FUNCTION);
         }
         result
     }
@@ -1886,9 +1902,7 @@ impl<'ir> Evaluator<'ir> {
             if set.is_err()
                 && let Some(stack) = &mut self.call_stack
             {
-                stack
-                    .unfollowed
-                    .get_or_insert("the domain of a function TLC keeps lazy");
+                stack.unfollowed.get_or_insert(LAZY_DOMAIN);
             }
             let set = set?;
             let argument = argument(self)?;
@@ -2677,9 +2691,27 @@ impl<'ir> Evaluator<'ir> {
                     None => return fail("ToTrace of a trace missing a state"),
                 }
             }
+            // The Json module's Java methods, whose arguments TLC evaluates first, as their failure
+            // shows; reading and writing the files is the engine's, not the replay's.
+            "JsonSerialize" | "ndJsonSerialize" | "JsonDeserialize" | "ndJsonDeserialize" => {
+                arity(if name.ends_with("Serialize") { 2 } else { 1 })?;
+                for operand in operands {
+                    self.operand(operand)?;
+                }
+                return fail(format!(
+                    "{name}, whose file the replay doesn't read or write"
+                ));
+            }
+            // TLC's TLCEval is an @Evaluation method that evaluates its argument itself, and
+            // reports its failure as its own, which TLC 1.7.4's Java override didn't.
             "TLCEval" => {
                 arity(1)?;
-                self.operand(&operands[0])?
+                let value = self.operand(&operands[0]);
+                if self.is_174() {
+                    value?
+                } else {
+                    as_java_failure(TLC_EVAL, value)?
+                }
             }
             "ToString" => {
                 arity(1)?;

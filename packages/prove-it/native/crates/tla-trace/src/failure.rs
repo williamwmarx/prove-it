@@ -6,7 +6,7 @@
 use tla_ir::{NodeId, NodeKind, SourceRange};
 use tla_values::{Id, Store};
 
-use crate::eval::{CallStack, Context, Evaluator, StackFrame};
+use crate::eval::{CallStack, Context, Evaluator, StackFrame, UNFOLLOWED_FRAMES};
 use crate::fingerprint::fingerprint_failure;
 use crate::print::format_value;
 use crate::rebuild::{Rebuilder, is_same, run};
@@ -84,14 +84,41 @@ const FAILURE_ERROR: i32 = 255;
 
 const UNEXPECTED_EXCEPTION: &str = "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: ";
 
-/// A coded message in -tool output, which TLC marks inside the message that holds it.
+/// A coded message in -tool output, which TLC marks inside the message that holds it, as it marks
+/// the failure of a Java method that one reports (`formatNestedMessage`).
 pub(crate) fn nested(message: &TlcMessage) -> String {
     match message.code {
         Some(code) => format!(
             "@!@!@STARTMSG {code}:0 @!@!@\n{}\n@!@!@ENDMSG {code} @!@!@",
-            message.text
+            nested_java_failure(&message.text)
         ),
         None => message.text.clone(),
+    }
+}
+
+const JAVA_METHOD_FAILED: u32 = 2154;
+const JAVA_FAILURE: &str = "Attempted to apply the operator overridden by the Java method\n";
+const JAVA_FAILURE_INNER: &str = "but it produced the following error:\n";
+
+// The text of a Java method's failure with the failure it reports marked, where that is another
+// Java method's.
+fn nested_java_failure(text: &str) -> String {
+    let inner = text
+        .starts_with(JAVA_FAILURE)
+        .then(|| text.find(JAVA_FAILURE_INNER))
+        .flatten()
+        .map(|at| at + JAVA_FAILURE_INNER.len());
+    match inner {
+        Some(at) if text[at..].starts_with(JAVA_FAILURE) => format!(
+            "{}{}",
+            &text[..at],
+            nested(&TlcMessage {
+                text: text[at..].to_owned(),
+                code: Some(JAVA_METHOD_FAILED),
+                is_eval_exception: false,
+            })
+        ),
+        _ => text.to_owned(),
     }
 }
 
@@ -140,7 +167,10 @@ impl<'ir> Rebuilder<'ir> {
                 "evaluating the assumption again: it didn't fail".into(),
             ));
         };
-        if let Some(reason) = call_stack.unfollowed {
+        if let Some(reason) = call_stack
+            .unfollowed
+            .filter(|reason| !UNFOLLOWED_FRAMES.contains(reason))
+        {
             return Err(Unsupported(format!(
                 "evaluating the assumption again: {reason}"
             )));
@@ -846,5 +876,28 @@ fn constraint_holds(evaluator: &mut Evaluator<'_>, body: NodeId) -> Evaluated<bo
             },
         ),
         _ => fail("a constraint that isn't a boolean, without a range"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn marks_each_java_failure_that_one_reports_under_tool() {
+        let method = "public static tlc2.value.impl.Value tlc2.module.TLCEval.tlcEval()";
+        let inner =
+            format!("{JAVA_FAILURE}{method},\n{JAVA_FAILURE_INNER}Attempted to enumerate STRING.");
+        let outer = TlcMessage {
+            text: format!("{JAVA_FAILURE}{method},\n{JAVA_FAILURE_INNER}{inner}"),
+            code: Some(JAVA_METHOD_FAILED),
+            is_eval_exception: false,
+        };
+        assert_eq!(
+            nested(&outer),
+            format!(
+                "@!@!@STARTMSG 2154:0 @!@!@\n{JAVA_FAILURE}{method},\n{JAVA_FAILURE_INNER}@!@!@STARTMSG 2154:0 @!@!@\n{inner}\n@!@!@ENDMSG 2154 @!@!@\n@!@!@ENDMSG 2154 @!@!@"
+            )
+        );
     }
 }

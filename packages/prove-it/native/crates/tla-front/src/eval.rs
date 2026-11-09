@@ -162,6 +162,24 @@ impl Evaluator<'_> {
         if self.version == TlcVersion::V1_7_4 {
             return Err(not_yet("TLC 1.7.4's streamed sets"));
         }
+        // `enumerateSet`: TLC can't list the functions of a domain it knows only by name.
+        if let ExpressionKind::FunctionSet { domain, range } = &expression.kind
+            && let Some(infinite) = self.get_infinite(domain)
+        {
+            let is_empty = self.get_infinite(range).is_none()
+                && get_elements(self.evaluate(range, scope)?)?.is_empty();
+            if is_empty {
+                return Ok(Vec::new());
+            }
+            let name = match infinite {
+                Infinite::Nat => "Nat",
+                Infinite::Int => "Int",
+                Infinite::String => "STRING",
+            };
+            return Err(FrontError::Evaluation(format!(
+                "Attempted to enumerate a set of the form [D -> R],but the domain D:\n{name}\ncannot be enumerated."
+            )));
+        }
         get_elements(self.evaluate(expression, scope)?)
     }
 
@@ -334,6 +352,11 @@ impl Evaluator<'_> {
                 to_integer(left * right)?
             }
             ("-.", 1) => to_integer(-get_integer(&value(0)?)?)?,
+            // The evaluator holds no functions, but TLC computes the argument first.
+            ("DOMAIN", 1) => {
+                value(0)?;
+                return Err(not_yet("DOMAIN"));
+            }
             ("^", 2) => {
                 let (base, exponent) = integers()?;
                 if exponent < 0 || (base == 0 && exponent == 0) {
@@ -581,6 +604,39 @@ impl Evaluator<'_> {
             } => {
                 let bound = bind_definitions(definitions, scope)?;
                 self.evaluate(body, bound.as_ref())
+            }
+            // The evaluator holds no records, but TLC computes the record first.
+            ExpressionKind::FieldAccess { record, .. } => {
+                self.evaluate(record, scope)?;
+                Err(not_yet("a record's field"))
+            }
+            ExpressionKind::Case { arms, other } => {
+                for arm in arms {
+                    if self.is_true(&arm.condition, scope)? {
+                        return self.evaluate(&arm.body, scope);
+                    }
+                }
+                match other {
+                    Some(other) => self.evaluate(other, scope),
+                    None => Err(not_yet("a CASE none of whose arms holds")),
+                }
+            }
+            ExpressionKind::Choose {
+                pattern: BoundPattern::Name { name, .. },
+                set: Some(set),
+                body,
+            } => {
+                for element in self.get_set_elements(set, scope)? {
+                    let bound = Rc::new(Scope {
+                        name: name.clone(),
+                        binding: Binding::Value(element.clone()),
+                        parent: scope.cloned(),
+                    });
+                    if self.is_true(body, Some(&bound))? {
+                        return Ok(element);
+                    }
+                }
+                Err(not_yet("a CHOOSE no element of which satisfies"))
             }
             ExpressionKind::SetEnumeration(elements) => {
                 let elements = elements

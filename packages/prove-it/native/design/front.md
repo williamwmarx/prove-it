@@ -456,3 +456,12 @@ it comes from (`property_invariant_scopes`, `ActionProperty::scope`,
 decline one until they read it there. An operator argument to a temporal formula binds a closure as
 `evaluateOperatorArgument` does: a LAMBDA, a local operator, or a definition, and an application of
 an instance's operator is named by its key, as TLC names the property it checks.
+
+## TLC's failures the evaluator raises as they are
+
+The evaluator computes CASE, CHOOSE over a set it lists, and, for what it can't hold (DOMAIN, a
+record's field), the argument first, as TLC does, so a failure there comes out as TLC's. A
+quantifier or CHOOSE over `[D -> R]` with D a set TLC knows only by name (Nat, Int, STRING) fails
+as `enumerateSet` does, which IOUtils' `IOEnv` meets without its Java override. `live.rs` raises
+such a failure of a constant part as `toAtom` does, and `expandCall` still re-reports one inside an
+operator's expansion as "cannot handle".

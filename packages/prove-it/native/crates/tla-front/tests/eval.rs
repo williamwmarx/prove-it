@@ -6,12 +6,13 @@ use std::rc::Rc;
 use tla_front::TlcVersion;
 use tla_front::config::{ConfigValue, parse_config};
 use tla_front::environment::{EnvironmentOptions, create_environment};
+use tla_front::errors::FrontError;
 use tla_front::eval::Evaluator;
 use tla_front::hash::FastMap;
 use tla_front::spec::create_identifier;
 use tla_front::values::ValueOrder;
 
-fn evaluate(definitions: &str, name: &str) -> ConfigValue {
+fn try_evaluate(definitions: &str, name: &str) -> Result<ConfigValue, FrontError> {
     let source =
         format!("---- MODULE Main ----\nEXTENDS Naturals, FiniteSets\n{definitions}\n====");
     let config = parse_config("", TlcVersion::Master).expect("a configuration");
@@ -31,9 +32,11 @@ fn evaluate(definitions: &str, name: &str) -> ConfigValue {
         TlcVersion::Master,
         true,
     );
-    evaluator
-        .evaluate(&create_identifier(name), None)
-        .unwrap_or_else(|error| panic!("{error:?}"))
+    evaluator.evaluate(&create_identifier(name), None)
+}
+
+fn evaluate(definitions: &str, name: &str) -> ConfigValue {
+    try_evaluate(definitions, name).unwrap_or_else(|error| panic!("{error:?}"))
 }
 
 fn numbers(values: &[f64]) -> ConfigValue {
@@ -80,4 +83,20 @@ fn computes_constant_formulas() {
 fn computes_powers() {
     assert_eq!(evaluate("N == 2^3 - 1", "N"), ConfigValue::Number(7.0));
     assert_eq!(evaluate("N == 1^40 + 0^2", "N"), ConfigValue::Number(1.0));
+}
+
+#[test]
+fn fails_as_tlc_does_to_enumerate_functions_of_a_named_set() {
+    // IOUtils' IOEnv, which TLC can't compute without its Java override.
+    let definitions = "Env == CHOOSE r \\in [STRING -> STRING] : TRUE\nName == CASE \"G\" \\in DOMAIN Env -> 1 [] OTHER -> 2";
+    assert_eq!(
+        try_evaluate(definitions, "Name"),
+        Err(FrontError::Evaluation(
+            "Attempted to enumerate a set of the form [D -> R],but the domain D:\nSTRING\ncannot be enumerated.".to_owned()
+        ))
+    );
+    assert_eq!(
+        evaluate("Pick == CHOOSE x \\in 1..5 : x > 3", "Pick"),
+        ConfigValue::Number(4.0)
+    );
 }
