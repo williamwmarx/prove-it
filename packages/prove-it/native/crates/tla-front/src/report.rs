@@ -16,6 +16,7 @@ use crate::hash::{FastMap, FastSet};
 use crate::linter::Linter;
 use crate::parser::{extract_module, parse_sany_module};
 use crate::pcal::{PcalFatal, PcalSession, ValidationResult};
+use crate::sany_parse_error::{get_sany_174_lexical_error, get_sany_parse_error};
 
 type Result<T> = std::result::Result<T, Stop>;
 
@@ -25,6 +26,8 @@ enum Stop {
     Fatal {
         location: Option<Rc<str>>,
         message: String,
+        /// The report of SANY's parser, which SANY prints before the fatal error.
+        parse_error: Option<String>,
     },
     /// A Java exception of SANY's validation of PlusCal, which it prints with its parse
     /// messages so far.
@@ -323,6 +326,7 @@ impl Loader<'_> {
                 message: format!(
                     "Cannot find source file for module {name} imported in module {importer}."
                 ),
+                parse_error: None,
             });
         };
         let parsed = parse_sany_module(&text, None, self.options.version);
@@ -330,8 +334,28 @@ impl Loader<'_> {
             "Parsing file {}\n",
             (self.options.describe_file)(name, origin)
         );
-        let Ok(module) = parsed else {
+        // `parseSource` in the generator: TLC 1.7.4's lexer first, then SANY's parser, whose
+        // report replaces the front end's own where SANY's parser would accept the module.
+        let lexical_error = (self.options.version == TlcVersion::V1_7_4)
+            .then(|| get_sany_174_lexical_error(&text))
+            .flatten();
+        let parse_error = match (lexical_error, &parsed) {
+            (Some(lexical_error), _) => Some(lexical_error),
+            (None, Err(error)) => Some(
+                get_sany_parse_error(&text, self.options.version)
+                    .unwrap_or_else(|| format!("***Parse Error***\n{}", error.message)),
+            ),
+            (None, Ok(_)) => None,
+        };
+        if let Some(parse_error) = parse_error {
             self.lines.push(parsing_line);
+            return Err(Stop::Fatal {
+                location: Some(name.clone()),
+                message: format!("Could not parse module {name} from file {name}.tla"),
+                parse_error: Some(parse_error),
+            });
+        }
+        let Ok(module) = parsed else {
             return Err(not_yet("SANY's parse errors"));
         };
         if module.name != *name {
@@ -342,6 +366,7 @@ impl Loader<'_> {
                     "File name '{name}' does not match the name '{}' of the top level module it contains.",
                     module.name
                 ),
+                parse_error: None,
             });
         }
         if has_mismatched_recursion(&module) {
@@ -587,6 +612,7 @@ impl Loader<'_> {
                     "Circular dependency among .tla files; dependency cycle is:\n\n  {}",
                     cycle.join(" --> ")
                 ),
+                parse_error: None,
             });
         }
         if !visiting.insert(name.clone()) {
@@ -654,7 +680,11 @@ pub fn get_sany_text(
         Err(Stop::Fatal { .. }) if options.version == TlcVersion::V1_7_4 => {
             Err(FrontError::NotYet("TLC 1.7.4's fatal errors".to_owned()))
         }
-        Err(Stop::Fatal { location, message }) => {
+        Err(Stop::Fatal {
+            location,
+            message,
+            parse_error,
+        }) => {
             let fatal = format!(
                 "{}\n\n{message}",
                 location.map_or_else(
@@ -662,8 +692,9 @@ pub fn get_sany_text(
                     |module| format!("In module {module}")
                 )
             );
+            let parse_error = parse_error.map_or_else(String::new, |text| format!("{text}\n"));
             Ok(format!(
-                "{}\nFatal errors while parsing TLA+ spec in file {name}\n\n{fatal}\n*** Errors: 1\n\n{fatal}\n\n\n\n",
+                "{}{parse_error}\nFatal errors while parsing TLA+ spec in file {name}\n\n{fatal}\n*** Errors: 1\n\n{fatal}\n\n\n\n",
                 loader.lines.concat()
             ))
         }

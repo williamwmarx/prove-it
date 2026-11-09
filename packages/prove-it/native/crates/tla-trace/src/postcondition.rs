@@ -71,6 +71,12 @@ impl Rebuilder<'_> {
         else {
             return unsupported("the IR doesn't define");
         };
+        // The module the postcondition is defined in, the spec's.
+        let module = ir.nodes.arena[evaluator
+            .definition(ir.definitions[definition as usize])
+            .body as usize]
+            .range
+            .map(|range| range.module);
         let text = |name: &str| Value::Str(evaluator.text_of(name.encode_utf16().collect()));
         let record = |fields: Vec<(&str, Value)>| {
             Value::record(
@@ -184,6 +190,12 @@ impl Rebuilder<'_> {
                     let Some(range) = ir.nodes.arena[action.expression as usize].range else {
                         return unsupported("of an action without a range");
                     };
+                    // TLC records an action another module defines, as through an INSTANCE, as
+                    // the unnamed action of the statement that brings it in, which the IR
+                    // doesn't carry.
+                    if Some(range.module) != module {
+                        return unsupported("of an action another module defines");
+                    }
                     let location = run(record(vec![
                         ("beginLine", Value::Int(range.start_line)),
                         ("beginColumn", Value::Int(range.start_column)),
