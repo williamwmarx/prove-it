@@ -2,8 +2,12 @@
 // the fetched corpora and the test fixtures, as text: each side writes one JSON line per module.
 // Usage: bun scripts/front-differential.ts <mode> [--fixtures] [--filter text] [--mutate count]
 //   [--rust <front-dump>]
-// The modes are tokens, ast, sany-ast and config (over the .cfg files), and time, which compares how long each side takes to
-// parse each module instead. --fixtures reads only the fixtures, so it runs without the corpora.
+// The modes are tokens, ast, sany-ast, config (over the .cfg files), resolve, and time, which
+// compares how long each side takes to parse each module instead. resolve links each module as the
+// root of a spec without a model, reading the modules it imports beside it and from the corpora's
+// library, and compares the environment: each definition by key, with every name resolved, the
+// builtins, the variables, and SANY's errors and warnings. A module the Rust front end doesn't
+// link yet is counted, not compared. --fixtures reads only the fixtures, so it runs without the corpora.
 // --mutate adds four variants of each of the first count modules, with syntax inserted and text
 // deleted at places a fixed seed picks, so the two sides' errors are compared too. Without --rust,
 // it builds front-dump with cargo first.
@@ -11,13 +15,24 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, relative } from "node:path";
+import { dirname, join, relative } from "node:path";
 
+import type { Definition } from "../src/ast";
 import { parseConfig } from "../src/config";
-import { TlaConfigError, TlaSyntaxError } from "../src/errors";
+import { createEnvironment } from "../src/environment";
+import { TlaConfigError, TlaEvaluationError, TlaSyntaxError } from "../src/errors";
+import type { Builtin } from "../src/evaluate";
 import { tokenize } from "../src/lexer";
 import { parseModule, parseSanyModule } from "../src/parser";
-import { CORPORA_DIRECTORY, getCorpora, getOption, listFiles } from "./corpora";
+import { createTlcOrder } from "../src/tlc/order";
+import {
+  CORPORA_DIRECTORY,
+  getCorpora,
+  getOption,
+  LIBRARY_PATH,
+  linkLibraryModules,
+  listFiles,
+} from "./corpora";
 
 const PACKAGE_DIRECTORY = join(import.meta.dirname, "..");
 const NATIVE_DIRECTORY = join(PACKAGE_DIRECTORY, "native");
@@ -26,7 +41,9 @@ const BATCH = 50;
 const TIMED_RUNS = 5;
 
 const describe = (error: unknown) => {
-  if (error instanceof TlaConfigError) return { error: error.message };
+  if (error instanceof TlaConfigError || error instanceof TlaEvaluationError) {
+    return { error: error.message };
+  }
   if (!(error instanceof TlaSyntaxError)) throw error;
   return { error: error.message, failure: error.failure, sany: error.sany };
 };
@@ -37,15 +54,62 @@ const sortKeys = (_key: string, value: unknown) =>
     ? value
     : Object.fromEntries(Object.entries(value).sort(([left], [right]) => (left < right ? -1 : 1)));
 
-const writeResult = (read: (source: string) => unknown) => (source: string) => {
-  try {
-    return JSON.stringify(read(source), sortKeys);
-  } catch (error) {
-    return JSON.stringify(describe(error), sortKeys);
-  }
+const writeResult =
+  (read: (source: string, path: string) => unknown) =>
+  (source: string, path = "") => {
+    try {
+      return JSON.stringify(read(source, path), sortKeys);
+    } catch (error) {
+      return JSON.stringify(describe(error), sortKeys);
+    }
+  };
+
+const getBuiltinFlags = (builtin: Builtin) =>
+  (builtin.isStateLevel ? 1 : 0) | (builtin.isLevelConstant ? 2 : 0) | (builtin.isLazy ? 4 : 0);
+
+// The environment of a spec whose root module is the file, linked without a model.
+const readEnvironment = (source: string, path: string) => {
+  const loadModule = (name: string) =>
+    [dirname(path), LIBRARY_PATH]
+      .map((directory) => join(directory, `${name}.tla`))
+      .filter((file) => existsSync(file))
+      .map((file) => readFileSync(file, "utf8"))[0];
+  const printed: string[] = [];
+  const specification = createEnvironment(parseConfig(""), {
+    source,
+    loadModule,
+    order: createTlcOrder(source, loadModule),
+    print: (text) => printed.push(text),
+    files: { readFile: () => undefined, writeFile: () => {} },
+    isUnconfigured: true,
+    isSanyAccepted: true,
+  });
+  const environment = specification.environment;
+  const keys = new Map<Definition, string>();
+  return {
+    definitions: [...environment.definitions].map(([key, definition]) => {
+      const first = keys.get(definition);
+      if (first === undefined) keys.set(definition, key);
+      return [key, first === undefined ? definition : { same: first }];
+    }),
+    builtins: [...environment.builtins].map(([key, builtin]) => [
+      key,
+      builtin.name,
+      builtin.arity,
+      getBuiltinFlags(builtin),
+    ]),
+    substituted: [...environment.definitions]
+      .filter((entry) => environment.substitutedDefinitions.has(entry[1]))
+      .map((entry) => entry[0]),
+    facts: { words: environment.facts.words, rows: [...environment.facts.rows] },
+    variables: environment.variables,
+    variableIndex: [...environment.variableIndex],
+    constants: specification.rootConstants.map((constant) => constant.name),
+    printed,
+  };
 };
 
-const MODES: Record<string, (source: string) => string> = {
+const MODES: Record<string, (source: string, path: string) => string> = {
   tokens: writeResult((source) =>
     tokenize(source).map((token) => [
       token.kind,
@@ -58,6 +122,7 @@ const MODES: Record<string, (source: string) => string> = {
   ),
   ast: writeResult(parseModule),
   "sany-ast": writeResult((source) => parseSanyModule(source)),
+  resolve: writeResult(readEnvironment),
   config: (source) =>
     `{"master":${writeResult((text) => parseConfig(text, "master"))(source)},"v174":${writeResult((text) => parseConfig(text, "1.7.4"))(source)}}`,
 };
@@ -141,8 +206,10 @@ const getRustBinary = () => {
 };
 const rust = getRustBinary();
 
+if (mode === "resolve") linkLibraryModules();
+
 const runRust = (batch: typeof modules) => {
-  const run = spawnSync(rust, [mode], {
+  const run = spawnSync(rust, mode === "resolve" ? [mode, "--library", LIBRARY_PATH] : [mode], {
     input: batch.map((module) => module.path).join("\n"),
     maxBuffer: 2 ** 31 - 1,
     encoding: "utf8",
@@ -183,14 +250,20 @@ const time = () => {
   );
 };
 
-const compare = (write: (source: string) => string) => {
+const compare = (write: (source: string, path: string) => string) => {
   const rustLines: string[] = [];
+  const unported = new Map<string, number>();
   const differences = modules.filter((module, index) => {
     if (index % BATCH === 0) {
       rustLines.splice(0, Infinity, ...runRust(modules.slice(index, index + BATCH)));
     }
-    const expected = write(readFileSync(module.path, "utf8"));
     const actual = rustLines[index % BATCH];
+    const notYet = actual?.startsWith('{"notYet":') ? JSON.parse(actual).notYet : undefined;
+    if (notYet !== undefined) {
+      unported.set(notYet, (unported.get(notYet) ?? 0) + 1);
+      return false;
+    }
+    const expected = write(readFileSync(module.path, "utf8"), module.path);
     if (expected === actual) return false;
     const start = Array.from(expected).findIndex(
       (_, position) => actual?.[position] !== expected[position],
@@ -200,7 +273,11 @@ const compare = (write: (source: string) => string) => {
     console.log(`  rust: ${actual?.slice(Math.max(0, start - 80), start + 120)}`);
     return true;
   });
-  console.log(`${mode}: ${modules.length - differences.length} of ${modules.length} modules match`);
+  const unportedCount = [...unported.values()].reduce((sum, count) => sum + count, 0);
+  unported.forEach((count, reason) => console.log(`not linked yet: ${count} with ${reason}`));
+  console.log(
+    `${mode}: ${modules.length - differences.length - unportedCount} of ${modules.length} modules match${unportedCount > 0 ? `, ${unportedCount} not compared yet` : ""}`,
+  );
   return differences.length === 0;
 };
 

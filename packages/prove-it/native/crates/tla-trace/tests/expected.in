@@ -1,0 +1,98 @@
+// TLC's deadlock trace of kafka/transactions/diary/01_InitPidRequest (default mode).
+const KAFKA_TRACE: &str = r#"State 1: <Initial predicate>
+/\ pid_source = 0
+/\ tc_txn_transition = (b1 :> (tid1 :> None) @@ b2 :> (tid1 :> None))
+/\ tc_txn_metadata = (b1 :> (tid1 :> None) @@ b2 :> (tid1 :> None))
+/\ client = (c1 :> [state |-> Ready, tid |-> None, pid |-> -1, epoch |-> -1, last_state |-> None, last_error |-> None])
+/\ messages_discard = {}
+/\ txn_log = (p1 :> <<>>)
+/\ tc_part_metadata = (b1 :> <<>> @@ b2 :> (p1 :> [cepoch |-> 1]))
+/\ txn_log_hwm = (p1 :> 0)
+/\ t_to_p_mapping = (tid1 :> p1)
+/\ messages = {}
+
+State 2: <SendInitPidRequest(c1,b2) line 139, col 5 to line 149, col 50 of module kafka_transactions>
+/\ pid_source = 0
+/\ tc_txn_transition = (b1 :> (tid1 :> None) @@ b2 :> (tid1 :> None))
+/\ tc_txn_metadata = (b1 :> (tid1 :> None) @@ b2 :> (tid1 :> None))
+/\ client = (c1 :> [state |-> SentInitPidRequest, tid |-> tid1, pid |-> -1, epoch |-> -1, last_state |-> None, last_error |-> None])
+/\ messages_discard = {}
+/\ txn_log = (p1 :> <<>>)
+/\ tc_part_metadata = (b1 :> <<>> @@ b2 :> (p1 :> [cepoch |-> 1]))
+/\ txn_log_hwm = (p1 :> 0)
+/\ t_to_p_mapping = (tid1 :> p1)
+/\ messages = {[type |-> InitPidRequest, tid |-> tid1, dest |-> b2, source |-> c1]}
+
+State 3: <ReceiveInitPidRequest(b2,c1) line 276, col 5 to line 309, col 80 of module kafka_transactions>
+/\ pid_source = 1
+/\ tc_txn_transition = (b1 :> (tid1 :> None) @@ b2 :> (tid1 :> [state |-> Empty, pid |-> 1, pepoch |-> 0, last_pid |-> 1, last_pepoch |-> -1, partitions |-> {}]))
+/\ tc_txn_metadata = (b1 :> (tid1 :> None) @@ b2 :> (tid1 :> [state |-> Empty, pid |-> 1, pepoch |-> -1, last_pid |-> -1, last_pepoch |-> -1, partitions |-> {}]))
+/\ client = (c1 :> [state |-> SentInitPidRequest, tid |-> tid1, pid |-> -1, epoch |-> -1, last_state |-> None, last_error |-> None])
+/\ messages_discard = {[type |-> InitPidRequest, tid |-> tid1, dest |-> b2, source |-> c1]}
+/\ txn_log = (p1 :> <<[tid |-> tid1, transition |-> [state |-> Empty, pid |-> 1, pepoch |-> 0, last_pid |-> 1, last_pepoch |-> -1, partitions |-> {}], client_id |-> c1]>>)
+/\ tc_part_metadata = (b1 :> <<>> @@ b2 :> (p1 :> [cepoch |-> 1]))
+/\ txn_log_hwm = (p1 :> 0)
+/\ t_to_p_mapping = (tid1 :> p1)
+/\ messages = {}
+
+State 4: <CompleteInitPidRequest(b2,p1) line 320, col 5 to line 331, col 70 of module kafka_transactions>
+/\ pid_source = 1
+/\ tc_txn_transition = (b1 :> (tid1 :> None) @@ b2 :> (tid1 :> None))
+/\ tc_txn_metadata = (b1 :> (tid1 :> None) @@ b2 :> (tid1 :> [state |-> Empty, pid |-> 1, pepoch |-> 0, last_pid |-> 1, last_pepoch |-> -1, partitions |-> {}]))
+/\ client = (c1 :> [state |-> SentInitPidRequest, tid |-> tid1, pid |-> -1, epoch |-> -1, last_state |-> None, last_error |-> None])
+/\ messages_discard = {[type |-> InitPidRequest, tid |-> tid1, dest |-> b2, source |-> c1]}
+/\ txn_log = (p1 :> <<[tid |-> tid1, transition |-> [state |-> Empty, pid |-> 1, pepoch |-> 0, last_pid |-> 1, last_pepoch |-> -1, partitions |-> {}], client_id |-> c1]>>)
+/\ tc_part_metadata = (b1 :> <<>> @@ b2 :> (p1 :> [cepoch |-> 1]))
+/\ txn_log_hwm = (p1 :> 1)
+/\ t_to_p_mapping = (tid1 :> p1)
+/\ messages = { [ type |-> InitPidResponse,
+    dest |-> c1,
+    source |-> b2,
+    code |-> OK,
+    pid |-> 1,
+    pepoch |-> 0 ] }
+
+State 5: <ReceiveInitPidResponse(c1) line 165, col 5 to line 177, col 50 of module kafka_transactions>
+/\ pid_source = 1
+/\ tc_txn_transition = (b1 :> (tid1 :> None) @@ b2 :> (tid1 :> None))
+/\ tc_txn_metadata = (b1 :> (tid1 :> None) @@ b2 :> (tid1 :> [state |-> Empty, pid |-> 1, pepoch |-> 0, last_pid |-> 1, last_pepoch |-> -1, partitions |-> {}]))
+/\ client = (c1 :> [state |-> HasPid, tid |-> tid1, pid |-> 1, epoch |-> 0, last_state |-> None, last_error |-> None])
+/\ messages_discard = { [type |-> InitPidRequest, tid |-> tid1, dest |-> b2, source |-> c1],
+  [ type |-> InitPidResponse,
+    dest |-> c1,
+    source |-> b2,
+    code |-> OK,
+    pid |-> 1,
+    pepoch |-> 0 ] }
+/\ txn_log = (p1 :> <<[tid |-> tid1, transition |-> [state |-> Empty, pid |-> 1, pepoch |-> 0, last_pid |-> 1, last_pepoch |-> -1, partitions |-> {}], client_id |-> c1]>>)
+/\ tc_part_metadata = (b1 :> <<>> @@ b2 :> (p1 :> [cepoch |-> 1]))
+/\ txn_log_hwm = (p1 :> 1)
+/\ t_to_p_mapping = (tid1 :> p1)
+/\ messages = {}
+"#;
+
+// TLC's deadlock trace of test-model/TLCGetLevel (default mode).
+const TLC_GET_LEVEL_TRACE: &str = r#"State 1: <Initial predicate>
+/\ yb = 0
+/\ x = 0
+/\ y = 0
+/\ z = 1
+
+State 2: <Next line 16, col 4 to line 23, col 79 of module TLCGetLevel>
+/\ yb = 1
+/\ x = 1
+/\ y = 1
+/\ z = 2
+
+State 3: <Next line 16, col 4 to line 23, col 79 of module TLCGetLevel>
+/\ yb = 2
+/\ x = 2
+/\ y = 2
+/\ z = 3
+
+State 4: <Next line 16, col 4 to line 23, col 79 of module TLCGetLevel>
+/\ yb = 3
+/\ x = 3
+/\ y = 3
+/\ z = 4
+"#;

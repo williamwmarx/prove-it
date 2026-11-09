@@ -16,7 +16,6 @@ import {
 import {
   getEngineBackend,
   getEngineSetting,
-  getEngineThreads,
   getEnvironmentFlag,
   isIrDumped,
   reportEngine,
@@ -28,7 +27,6 @@ import {
   EngineInvariantError,
   getErrorExitCode,
   isStackOverflow,
-  MissingBuildFileError,
   TlaConfigError,
   TlaError,
   TlaEvaluationError,
@@ -450,19 +448,12 @@ const searchStates = (
       capturedOutput.lines = outer;
     }
   };
-  // The modules the spec loads, which the engine's workers build the spec from.
-  const loadedModules = new Map<string, string | undefined>();
-  const loadModule = (name: string) => {
-    const source = options.loadModule?.(name);
-    loadedModules.set(name, source);
-    return source;
-  };
-  const order = createTlcOrder(options.source, loadModule, readings, options.version);
+  const order = createTlcOrder(options.source, options.loadModule, readings, options.version);
   setStringOrder(order.getStringOrder(config));
   setValueVersion(options.version);
   const specification = createEnvironment(config, {
     source: options.source,
-    loadModule,
+    loadModule: options.loadModule,
     order,
     loadClass: options.loadClass,
     print,
@@ -1443,6 +1434,8 @@ const searchStates = (
     lassoActions: undefined as Int32Array | undefined,
     actionLabels: [] as string[],
     lasso: undefined as Lasso | undefined,
+    // A path to a tableau node that accepts every behavior, which TLC reports as it adds the state.
+    accepted: undefined as { state: number; path: number[] } | undefined,
     result: undefined as EngineResult | undefined,
   };
   // Under PROVE_IT_LIVE_CHECK the interpreter checks the temporal properties on the engine's graph
@@ -1500,7 +1493,8 @@ const searchStates = (
     return state;
   };
   const toEngineKey = (checkpoint: EngineCheckpoint, index: number, state: Value[]) => {
-    const keys = checkpoint.keys;
+    // With wide strings the interpreter's key is TLC's fingerprint, whatever the engine's key.
+    const keys = search.isFingerprintedLikeTlc ? undefined : checkpoint.keys;
     const keyWidth = checkpoint.keyWidth ?? checkpoint.width;
     return keys
       ? Array.from({ length: keyWidth }, (_, position) =>
@@ -1541,7 +1535,8 @@ const searchStates = (
     current.candidateLevel = 1;
     unstoredState.fingerprint = taken.fingerprintState;
     try {
-      if (!engineReport.lasso) liveness?.addInitialState(index, taken.state);
+      if (!engineReport.lasso && !engineReport.accepted)
+        liveness?.addInitialState(index, taken.state);
       return undefined;
     } catch (error) {
       return reportInitialFailure(error, taken.state);
@@ -1571,7 +1566,10 @@ const searchStates = (
     // Without a graph, the interpreter takes over only the states up to the one it expands again,
     // which is all it reads of them when it finds what the engine stopped at, and asks the engine
     // whether a successor is among the others.
-    const findState = checkpoint.graph ? undefined : checkpoint.findState;
+    // With wide strings the interpreter tells states apart by TLC's fingerprints of them, which the
+    // engine's lookup by key doesn't take, so it takes every state over at once.
+    const findState =
+      checkpoint.graph || search.isFingerprintedLikeTlc ? undefined : checkpoint.findState;
     const onPath = new Set<number>();
     for (
       let position = findState ? checkpoint.expanding : -1;
@@ -1820,11 +1818,12 @@ const searchStates = (
         reportEngine(`native: fingerprint collisions: ${native.counts[native.counts.length - 1]}`);
       }
     }
+    const nativeOnlyReason = getNativeOnlyReason();
     if (
-      config.possible.length > 0 &&
+      nativeOnlyReason &&
       (native === undefined || native.status === "declined" || native.status === "unavailable")
     ) {
-      reportEngine("skipped: _POSSIBLE predicates");
+      reportEngine(`skipped: ${nativeOnlyReason}`);
       return undefined;
     }
     try {
@@ -1846,10 +1845,6 @@ const searchStates = (
               properties: engineProperties,
               isRecordingGraph: liveness !== undefined,
               symmetry,
-              workers: getEngineThreads(),
-              source: options.source,
-              modules: [...loadedModules],
-              version: options.version,
               ...callbacks,
             });
       // Under SYMMETRY or a VIEW, a replay of the graph would give the interpreter's liveness
@@ -1871,6 +1866,9 @@ const searchStates = (
           tlcFingerprints[index] = Number(BigInt.asIntN(32, fingerprint));
         });
         const isLasso = verdict?.status === "lasso" && !isLiveChecked;
+        if (verdict?.status === "accepted" && !isLiveChecked) {
+          engineReport.accepted = { state: verdict.state, path: Array.from(verdict.path) };
+        }
         if (verdict && isLasso) {
           const loopStart = verdict.loopStart;
           const path = Array.from(verdict.path);
@@ -1882,7 +1880,7 @@ const searchStates = (
           engineReport.result = result;
         }
         reportEngine(
-          `found ${result.distinctStates} states in ${(performance.now() - startedAt).toFixed(0)} ms; the interpreter ${isLasso ? "prints the counterexample" : "checks the temporal properties"}`,
+          `found ${result.distinctStates} states in ${(performance.now() - startedAt).toFixed(0)} ms; the interpreter ${isLasso || engineReport.accepted ? "prints the counterexample" : "checks the temporal properties"}`,
         );
         return undefined;
       }
@@ -1929,8 +1927,6 @@ const searchStates = (
         ),
       };
     } catch (error) {
-      // A build without the engine's workers fails, rather than leave the search to one thread.
-      if (error instanceof MissingBuildFileError) throw error;
       // A search that stopped part way hands over the graph it found, when it recorded one for the
       // temporal properties, and the interpreter goes on from the state it stopped at.
       if (isBailout(error) && error.checkpoint) {
@@ -1944,18 +1940,24 @@ const searchStates = (
       return undefined;
     }
   };
-  // The native search runs on one thread, so auto leaves a search on more to the TypeScript engine.
   const isNativeBackend = () => {
     const backend = getEngineBackend();
-    return backend === "rust" || (backend === "auto" && getEngineThreads() === 1);
+    return backend === "rust" || backend === "auto";
+  };
+  // What only the native engine searches as TLC does: it fingerprints a string by the low byte of
+  // each character, as TLC does, and tells states apart by their fingerprints alone, and it counts
+  // the _POSSIBLE predicates.
+  const getNativeOnlyReason = () => {
+    if (search.isFingerprintedLikeTlc) return "wide strings";
+    if (config.possible.length > 0) return "_POSSIBLE predicates";
+    return undefined;
   };
   const getEngineIneligibility = () => {
     if (getEngineSetting() === "0") return "disabled";
     if (stateWriter) return "-dump";
     if (options.isContinued) return "-continue";
-    if (search.isFingerprintedLikeTlc) return "wide strings";
-    // Only the native engine counts the _POSSIBLE predicates.
-    if (config.possible.length > 0 && !isNativeBackend()) return "_POSSIBLE predicates";
+    const nativeOnlyReason = getNativeOnlyReason();
+    if (nativeOnlyReason && !isNativeBackend()) return nativeOnlyReason;
     if (config.periodic !== undefined) return "periodic";
     if (is174) return "TLC 1.7.4";
     if (!toEngineProperties(search.properties)) return "properties in an instance";
@@ -2210,7 +2212,13 @@ const searchStates = (
     if (result) return result;
     const addLiveState = () => {
       if (liveness && source && is174) stateWriter?.writeStuttering(source);
-      const accepted = liveness?.addState(index, state, liveSuccessors);
+      // The native checker found the node; the replay only counts up to the state it reports at.
+      const native = engineReport.accepted;
+      const accepted = native
+        ? index === native.state
+          ? native.path
+          : undefined
+        : liveness?.addState(index, state, liveSuccessors);
       if (!liveness || !accepted) return undefined;
       checkLiveVerdict({
         status: "accepted",
