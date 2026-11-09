@@ -14,7 +14,8 @@ use crate::hash::FastMap;
 use crate::lower::{Lowering, RankedTexts};
 use crate::order::TlcOrder;
 use crate::spec::{
-    Properties, Specification, create_identifier, get_properties, get_specification,
+    Properties, Specification, check_invariants, check_search_config, create_identifier,
+    get_properties, get_specification,
 };
 use crate::values::ValueOrder;
 
@@ -68,18 +69,14 @@ pub fn lower_model(
         .collect();
     let variable_order = order.get_declaration_order(true)?;
     let facts = create_definition_facts(&environment);
-    let specification = get_specification(&config, &environment, &facts, version)?;
     let ranks: FastMap<Rc<str>, u32> = texts
         .iter()
         .enumerate()
         .map(|(rank, text)| (text.clone(), rank as u32))
         .collect();
-    let evaluator = Evaluator {
-        environment: &environment,
-        order: ValueOrder { ranks: &ranks },
-        version,
-        is_started: true,
-    };
+    let evaluator = Evaluator::new(&environment, ValueOrder { ranks: &ranks }, version, true);
+    check_invariants(&config, &environment, &facts, &evaluator)?;
+    let specification = get_specification(&config, &environment, &facts, version)?;
     let properties = get_properties(&config, &environment, &facts, version, Some(&evaluator))?;
     // `getTlcOrder`: the variables in TLC's order of declarations.
     let position = |index: &i32| {
@@ -103,20 +100,32 @@ pub fn lower_model(
         TlcVersion::V1_7_4 => "1.7.4",
         TlcVersion::Master => "master",
     });
+    // `createSearch`'s checks of the configuration.
+    let is_checking_behaviors = !config.invariants.is_empty()
+        || !properties.invariants.is_empty()
+        || !properties.action_properties.is_empty()
+        || !properties.liveness.is_empty();
+    if specification.init.is_none()
+        && (is_checking_behaviors
+            || !properties.initial_predicates.is_empty()
+            || !environment.variables.is_empty())
+    {
+        return Err(match version {
+            TlcVersion::V1_7_4 => FrontError::NotYet("TLC 1.7.4's missing Init".to_owned()),
+            TlcVersion::Master => FrontError::Config(
+                "The configuration file did not specify the initial state predicate.".to_owned(),
+            ),
+        });
+    }
+    if specification.next.is_none() && is_checking_behaviors {
+        return Err(FrontError::Config(
+            "The configuration file did not specify the next state predicate.".to_owned(),
+        ));
+    }
+    check_search_config(&config, &environment, &facts, &evaluator)?;
     // TLC searches no states of a spec without variables, which `check.ts` lowers with FALSE for
-    // Init and Next, once `createSearch`'s checks of the configuration pass.
+    // Init and Next.
     let model = if environment.variables.is_empty() {
-        let is_checking_behaviors = !config.invariants.is_empty()
-            || !properties.invariants.is_empty()
-            || !properties.action_properties.is_empty()
-            || !properties.liveness.is_empty();
-        let is_missing_init = specification.init.is_none()
-            && (is_checking_behaviors || !properties.initial_predicates.is_empty());
-        if is_missing_init || (specification.next.is_none() && is_checking_behaviors) {
-            return Err(FrontError::NotYet(
-                "a configuration error of a spec without variables".to_owned(),
-            ));
-        }
         let no_behavior = Some(create_identifier("FALSE"));
         let constant = Specification {
             init: no_behavior.clone(),

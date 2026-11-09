@@ -386,3 +386,28 @@ specifically: …". Anything else the evaluator can't compute is still `NotYet`.
 
 Where the evaluator fails, TLC's handling (an atom, or "cannot handle" with the failure's message)
 isn't followed yet, so it stays `NotYet`, as does a constant atom that isn't a boolean.
+
+## The configuration checks of `createSearch`
+
+`lower_model` makes `createSearch`'s checks in its order:
+
+1. Each invariant is a state predicate by SANY's level analysis (`check_invariants`, before the
+   specification). `Environment` keeps the resolution tables, and `create_level_analyzer` builds
+   the analyzer the startup substitutes use too.
+2. The specification and its properties.
+3. A missing initial predicate, then a missing next-state relation.
+4. `check_search_config`: the constraints, action constraints, RL reward, periodic and possible
+   operators, and, with variables, the SYMMETRY's definition and the VIEW.
+
+`getConstantValue` evaluates a constant definition the configuration names with the constant
+evaluator. A value other than TRUE is TLC's configuration error, and a definition that fails to
+evaluate stays an operator, as in TLC. A definition the evaluator can't compute yet is taken
+the same way. That is the one place the front end assumes rather than computes: a constant
+invariant whose value TLC finds isn't TRUE, written with operators the evaluator lacks
+(functions, sequences, bags), is lowered, where TLC stops on the configuration. The model-full
+gate, which runs `createSearch` first as check.ts does, finds no such model. The evaluator reads
+the builtins the configuration substitutes (`Nat <- Int`), and stops as `NotYet` past 400 nested
+evaluations rather than overflow on a recursion.
+
+A text with a lone surrogate, which TLC's strings hold, makes the TypeScript IR decline the
+model; model-full lists such a model as not compared.

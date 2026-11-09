@@ -372,6 +372,8 @@ pub(super) unsafe extern "C" fn check_model(env: napi_env, info: napi_callback_i
                 state_log: (!state_log.is_empty()).then_some(state_log),
                 is_live_checked: live_checked != 0,
                 threads: usize::try_from(threads).unwrap_or(1).max(1),
+                // The engine declines TLCGet("config") here.
+                workers: 1,
                 minimum_shared_level: usize::try_from(minimum_shared_level)
                     .unwrap_or(MINIMUM_SHARED_LEVEL),
                 // The interpreter reports a violation itself.
@@ -470,6 +472,7 @@ pub(super) unsafe extern "C" fn check_model(env: napi_env, info: napi_callback_i
                     possible,
                     // The interpreter prints a lasso.
                     violation: _,
+                    registers: _,
                 } => {
                     set(env, result, c"possible", create_possible(env, &possible)?)?;
                     if let Some(verdict) = &liveness {
