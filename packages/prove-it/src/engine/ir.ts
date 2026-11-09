@@ -845,8 +845,8 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
   push(model, input.properties.initialPredicates.length);
   for (const predicate of input.properties.initialPredicates) {
     push(model, writeRoot(predicate.expression));
-    push(model, getScopeIndex(predicate.scope));
     push(model, getText(predicate.name));
+    push(model, getScopeIndex(predicate.scope));
   }
   writeConfigNames(config.view === undefined ? [] : [config.view]);
   writeConfigNames(config.alias === undefined ? [] : [config.alias]);
