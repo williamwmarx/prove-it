@@ -291,7 +291,7 @@ impl<'ir> Evaluator<'ir> {
                     && sets
                         .into_iter()
                         .chain([definition.body])
-                        .any(|inner| self.can_read_state(inner, &Context::default(), visited))
+                        .any(|inner| self.can_read_state(inner, context, visited))
             }
             _ => true,
         }
@@ -307,7 +307,9 @@ impl<'ir> Evaluator<'ir> {
     ) -> bool {
         if name.is_local {
             return bound_expression(context, name.text).is_some_and(|(node, inner)| {
-                visited.insert(node) && self.can_read_state(node, &inner, visited)
+                // A definition checks its own visit, in the Definition arm.
+                (matches!(self.kind(node), NodeKind::Definition(_)) || visited.insert(node))
+                    && self.can_read_state(node, &inner, visited)
             });
         }
         match name.resolution {
