@@ -343,6 +343,11 @@ impl Compiler<'_> {
             .iter()
             .map(|&factor| self.compile(factor, context))
             .collect::<Compiling<Vec<Compiled>>>()?;
+        Ok(self.product_of(&factors))
+    }
+
+    // The product of compiled sets, `\X`'s value and a function's domain of several bounds.
+    pub(crate) fn product_of(&mut self, factors: &[Compiled]) -> Compiled {
         let members: Vec<Member> = factors
             .iter()
             .map(|factor| self.member_test(factor))
@@ -351,7 +356,7 @@ impl Compiler<'_> {
         let sets: Vec<Eval> = factors.iter().map(|factor| factor.eval.clone()).collect();
         let member_parts = set_parts.clone();
         let components: Vec<&Compiled> = factors.iter().collect();
-        Ok(Compiled {
+        Compiled {
             is_costly: true,
             is_normalized: false,
             is_in_order: factors.iter().all(|factor| factor.is_in_order),
@@ -390,6 +395,6 @@ impl Compiler<'_> {
                 }),
                 Footprint::merge_all(factors.iter().map(|factor| &factor.footprint)),
             )
-        })
+        }
     }
 }
