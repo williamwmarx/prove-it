@@ -351,9 +351,9 @@ Done on native-parity:
   `tla-trace` follows a filter TLC kept lazy into the comparison that enumerates it
   (`follow_lazy_filter`); the binary reports a failure among the initial states of a model with
   temporal properties, which the search hands over only where the atoms of the initial states
-  evaluate; and both front ends keep the list a definition wrote as the specification's
-  initial predicate where its conjuncts are that list's, so the call stack's first frame is the
-  list's, as TLC keeps the body of a definition the specification names whole.
+  evaluate; and the call stack's first frame is the list a definition wrote, as both front ends
+  keep a definition that is a state predicate whole as one of the specification's initial
+  predicates (`gaps.md`, "The specification's initial predicates, as TLC keeps them").
 
 Open, with what is known:
 - The front names a property an instance exports by the definition's own name (`Safe`) where
