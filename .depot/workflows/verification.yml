@@ -84,14 +84,15 @@ jobs:
               PROVE_IT_ENGINE_BACKEND=rust PROVE_IT_ENGINE_ADDON="$PWD/native/npm/linux-x64-gnu/prove-it-engine.node" bun test tests/unit
           # The Rust front end against the TypeScript one, on every module of the corpora and the
           # fixtures (native/DESIGN.md section 14). resolve links each module as a spec's root, and
-          # model links each corpus model with its configuration, and ir lowers each environment.
+          # model links each corpus model with its configuration, ir lowers each environment, and
+          # order compares TLC's string, declaration and definition orders of each model.
           - task: Front End
             command: |
               cd packages/prove-it
               bun scripts/front-modules.ts --check
               bun scripts/fetch-corpora.ts
               cd native && cargo build --release --locked -p tla-front --bin front-dump && cd ..
-              for mode in tokens ast sany-ast config resolve model ir; do
+              for mode in tokens ast sany-ast config resolve model ir order; do
                 bun scripts/front-differential.ts "$mode" --mutate 400 --rust native/target/release/front-dump
               done
           # Every corpus model lowered to the engine IR, which round-trips through Rust, and the

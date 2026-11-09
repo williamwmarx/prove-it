@@ -170,3 +170,21 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
 - With them, function_syntax (tla-rs), declined before, now completes in Rust. test45 (TLC's
   tests) now searches in Rust until a function construction in a recursive body applies the
   function to itself, which needs the construction to stay lazy as TLC keeps it.
+
+## Filters of infinite sets
+
+- TLC tests membership in `{x \in S : p}` for a set S it can't enumerate, such as Nat or
+  `Seq(S)`, by S's membership and then p (`SetPredValue.member`), and fails where something
+  enumerates it. The engine declined any such filter. It now compiles one to that membership test,
+  marked infinite as S is, and stops where it is enumerated, which the interpreter reports.
+  Community Graphs' `Path(G) == {p \in Seq(G.node) : ...}` is one. MCEWD687a (Examples) and
+  Bakery (spectacle), declined before, now search in Rust until the enumeration TLC reports.
+
+## Membership in an interval
+
+- TLC tests `x \in a..b` by comparing an integer with the bounds (`IntervalValue.member`), and
+  fails on any other value but an untyped model value, which isn't a member. Membership in
+  `..` (`member_test`) now does the same, where the engine built the interval to look the element
+  up, and stopped on one too large to build, such as RandomSubset's invariant
+  `x \in 1..100000000`. Elsewhere the interval is as before, so a set operation or a set of
+  functions over one still evaluates it, and its bounds, as TLC does.

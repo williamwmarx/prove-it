@@ -198,7 +198,22 @@ fn rebuilt_state(ir: &tla_ir::Ir, values: &[tla_trace::Value]) -> String {
         .collect()
 }
 
-fn deadlock_trace(path: &str) -> Vec<String> {
+// The label of each state of TLC's text of a trace: what is between `<` and `>`.
+fn tlc_labels(trace: &str) -> Vec<String> {
+    trace
+        .split("\n\n")
+        .filter(|block| !block.trim().is_empty())
+        .filter_map(|block| {
+            let line = block.lines().next()?;
+            let start = line.find('<')?;
+            Some(line[start + 1..line.rfind('>')?].to_string())
+        })
+        .collect()
+}
+
+// A rebuilt trace's states, without whitespace, and, where the IR carries TLC's actions, the label
+// of each, from the action the evaluator found for its step.
+fn deadlock_trace(path: &str) -> (Vec<String>, Option<Vec<String>>) {
     let bytes = std::fs::read(ir_directory().join(format!("{path}.ir"))).expect("a golden IR");
     let ir = tla_ir::decode(&bytes).expect("an IR that decodes");
     tla_values::on_nesting_stack(|| {
@@ -220,22 +235,45 @@ fn deadlock_trace(path: &str) -> Vec<String> {
                 )
             })
             .expect("a trace the evaluator rebuilds");
-        trace
+        let labels = (!ir.model.actions.is_empty()).then(|| {
+            trace
+                .states
+                .iter()
+                .map(|state| match state.action {
+                    Some(action) => {
+                        ir.texts[ir.model.actions[action as usize].label as usize].to_string()
+                    }
+                    None => "Initial predicate".to_string(),
+                })
+                .collect()
+        });
+        let states = trace
             .states
             .iter()
             .map(|state| rebuilt_state(&ir, &state.values))
-            .collect()
+            .collect();
+        (states, labels)
     })
 }
 
 #[test]
 fn rebuilds_deadlock_traces_as_tlc_prints_them() {
-    assert_eq!(
-        deadlock_trace("kafka/transactions/diary/01_InitPidRequest/tlaplus/kafka_transactions"),
-        tlc_states(KAFKA_TRACE)
-    );
-    assert_eq!(
-        deadlock_trace("tlc/tlatools/org.lamport.tlatools/test-model/TLCGetLevel"),
-        tlc_states(TLC_GET_LEVEL_TRACE)
-    );
+    for (path, expected) in [
+        (
+            "kafka/transactions/diary/01_InitPidRequest/tlaplus/kafka_transactions",
+            KAFKA_TRACE,
+        ),
+        (
+            "tlc/tlatools/org.lamport.tlatools/test-model/TLCGetLevel",
+            TLC_GET_LEVEL_TRACE,
+        ),
+    ] {
+        // The IR carries TLC's actions only where nothing the spec evaluates has an effect, which
+        // TLCGet has, so TLCGetLevel's trace is checked without its labels.
+        let (states, labels) = deadlock_trace(path);
+        assert_eq!(states, tlc_states(expected), "{path}");
+        if let Some(labels) = labels {
+            assert_eq!(labels, tlc_labels(expected), "{path}");
+        }
+    }
 }
