@@ -244,7 +244,14 @@ pub fn is_member(value: &Value, set: &Value) -> Evaluated<bool> {
             }
             Lazy::FunctionSet(domain, range) => {
                 let Value::Function(function) = value else {
-                    return fail("a mistyped membership in a set of functions");
+                    return fail_runtime(
+                        "a mistyped membership in a set of functions",
+                        format!(
+                            "Attempted to check if \n{}\nwhich is not a TLC function value, is in the set of functions:\n{}",
+                            format_value(value),
+                            format_pretty(set)
+                        ),
+                    );
                 };
                 if !equals(&Value::Set(Rc::new(function.domain.clone())), domain)? {
                     return Ok(false);
@@ -379,8 +386,39 @@ pub fn is_subset(left: &Value, right: &Value) -> Evaluated<bool> {
     Ok(true)
 }
 
+/// Whether a set of functions, records or tuples is empty by an empty argument, which TLC decides
+/// without enumerating the others (`isEmpty` of `SetOfFcnsValue`, `SetOfRcdsValue` and
+/// `SetOfTuplesValue`): `[S -> T]` where S isn't empty and T is, and a set of records or tuples one
+/// of whose sets is.
+pub(crate) fn is_empty_by_argument(set: &Value) -> bool {
+    let is_empty = |value: &Value| match value {
+        Value::Set(elements) => elements.is_empty(),
+        Value::Interval(low, high) => low > high,
+        Value::Lazy(_) => is_empty_by_argument(value),
+        _ => false,
+    };
+    let is_nonempty = |value: &Value| match value {
+        Value::Set(elements) => !elements.is_empty(),
+        Value::Interval(low, high) => low <= high,
+        Value::Lazy(lazy) => matches!(**lazy, Lazy::Nat | Lazy::Int | Lazy::Real | Lazy::Strings),
+        _ => false,
+    };
+    let Value::Lazy(lazy) = set else {
+        return false;
+    };
+    match &**lazy {
+        Lazy::FunctionSet(domain, range) => is_nonempty(domain) && is_empty(range),
+        Lazy::RecordSet(fields, _) => fields.iter().any(|(_, set)| is_empty(set)),
+        Lazy::Product(factors) => factors.iter().any(is_empty),
+        _ => false,
+    }
+}
+
 /// The number of elements of a set TLC can count.
 pub fn cardinality(set: &Value) -> Evaluated<usize> {
+    if is_empty_by_argument(set) {
+        return Ok(0);
+    }
     match set {
         Value::Interval(low, high) => Ok((i64::from(*high) - i64::from(*low) + 1).max(0) as usize),
         _ => Ok(elements(set)?.len()),
