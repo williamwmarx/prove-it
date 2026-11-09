@@ -200,6 +200,9 @@ impl Tables {
 #[derive(Clone)]
 struct Unit<'a> {
     imported: Rc<Symbols>,
+    /// Where the module declares each of its constants and variables, which a unit sees only
+    /// after.
+    declared: Rc<FastMap<Name, Position>>,
     get_instance: GetInstance<'a>,
     definitions: Rc<OrderedMap<Name, Rc<Definition>>>,
     get_key: GetKey,
@@ -478,7 +481,16 @@ fn find_symbol(name: &str, unit: &Unit) -> Option<ModuleSymbol> {
             params: Some(get_param_arities(&definition)),
             range: None,
         }),
-        None => unit.imported.get(name).cloned(),
+        None => {
+            let is_declared_later = unit
+                .declared
+                .get(name)
+                .is_some_and(|declared| !is_before(*declared, unit.location));
+            if is_declared_later {
+                return None;
+            }
+            unit.imported.get(name).cloned()
+        }
     }
 }
 
@@ -2381,6 +2393,17 @@ pub fn is_theorem_definition(module: &Module, definition: &Definition) -> bool {
         })
 }
 
+fn get_declared(module: &Module) -> Rc<FastMap<Name, Position>> {
+    Rc::new(
+        module
+            .constants
+            .iter()
+            .chain(&module.variables)
+            .map(|declaration| (declaration.name.clone(), declaration.location.position()))
+            .collect(),
+    )
+}
+
 fn create_symbols(module: &Module, imported: &Symbols) -> Symbols {
     let mut symbols: Symbols = core_symbols().into_iter().collect();
     for (name, symbol) in imported.iter() {
@@ -2566,6 +2589,7 @@ pub fn resolve_substitutions(
         &None,
         &Unit {
             imported: Rc::new(imported),
+            declared: get_declared(module),
             get_instance: unit.get_instance.clone(),
             definitions: unit.definitions.clone(),
             get_key: unit.get_key.clone(),
@@ -2704,12 +2728,14 @@ pub fn resolve_module(module: &Module, unit: &ModuleContext) -> Result<Vec<SanyE
     ));
     let recursive: Rc<RefCell<Vec<Rc<Local>>>> = Rc::default();
     let declarations: Rc<RefCell<Vec<RecursiveDeclaration>>> = Rc::default();
+    let declared = get_declared(module);
     let create_unit = |location: Position,
                        self_definition: Option<Rc<Definition>>,
                        errors: &ErrorList,
                        warnings: &ErrorList,
                        has_label_scope: bool| Unit {
         imported: symbols.clone(),
+        declared: declared.clone(),
         get_instance: unit.get_instance.clone(),
         definitions: unit.definitions.clone(),
         get_key: unit.get_key.clone(),
