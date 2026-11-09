@@ -1,0 +1,77 @@
+# Builds and tests the native engine on the systems Depot has no runners for: macOS on arm64 and
+# x64, where the addon is built, the native tests run with it, and its platform package is packed
+# for release.yml to publish, and Windows x64, where the crates' own tests run. It publishes nothing
+# and holds no credential.
+name: Platforms
+"on":
+  pull_request: null
+  push:
+    branches:
+      - main
+  workflow_dispatch: null
+permissions:
+  contents: read
+# A push to main is never cancelled: release.yml takes the macOS packages from the run of the commit
+# it releases.
+concurrency:
+  group: platforms-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  macos:
+    name: macOS ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-15
+          - arch: x64
+            runner: macos-15-intel
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Build the addon and run the native tests with it
+        run: |
+          set -euo pipefail
+          npm install --global --no-audit --no-fund bun@1.4.4
+          cd packages/prove-it/native
+          rustup toolchain install
+          cargo test --locked
+          cd ..
+          bun install --frozen-lockfile --ignore-scripts
+          bun scripts/platform-packages.ts build
+          bun run build
+          addon="$PWD/native/npm/darwin-${{ matrix.arch }}/prove-it-engine.node"
+          PROVE_IT_ENGINE_ADDON="$addon" bun test tests/unit/native.test.ts tests/unit/native-search.test.ts \
+            tests/unit/engine-store.test.ts tests/unit/engine-fingerprints.test.ts
+          PROVE_IT_ENGINE_BACKEND=rust PROVE_IT_ENGINE_ADDON="$addon" bun test tests/unit
+          bun scripts/platform-packages.ts pack "$RUNNER_TEMP/platform-packages"
+      - name: Keep the platform package for release.yml
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: darwin-${{ matrix.arch }}
+          path: ${{ runner.temp }}/platform-packages/
+          if-no-files-found: error
+          retention-days: 30
+  windows:
+    name: Windows x64
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      # The N-API addon needs an import library for the host's N-API symbols on Windows, which
+      # isn't set up yet, so only the crates it is made of are tested here.
+      - name: Run the crates' tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd packages/prove-it/native
+          rustup toolchain install
+          cargo test --locked --workspace --exclude prove-it-napi

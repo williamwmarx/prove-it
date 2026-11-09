@@ -85,7 +85,7 @@ describe("normalizeOutput", () => {
       .replace(/with \d+MB heap and \d+MB offheap/, "with 1MB heap and 2MB offheap")
       .replace(/on \d+ cores/, "on 64 cores")
       .replace(/\d\d:\d\d:\d\d/g, "23:59:59")
-      .replace(/\/tmp\/tlc-\d+\//g, "/tmp/tlc-1/")
+      .replace(/\/tmp\/tlc-\d+\//g, "/var/folders/xy/abc/T/tlc-1/")
       .replace(/Parsing file \/\S+\/Success.tla/, "Parsing file /elsewhere/Success.tla")
       .replace(/Finished in \d+ms/, "Finished in 61001ms")
       .replace(/TLC2 Version .*/, "TLC2 Version 2.20 of Day Month 20?? (rev: abcdef0)");
