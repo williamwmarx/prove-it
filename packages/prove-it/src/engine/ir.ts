@@ -318,6 +318,14 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
   const valueCount = { encoded: 0 };
 
   const getValue = (value: Value) => (valueEncoder.encode([value]) ? valueCount.encoded++ : -1);
+  // Whether a node reads TLCGet("spec"), whose record the IR then holds.
+  const specificationRead = { isRead: false };
+  const isSpecificationRead = (expression: Expression & { kind: "Apply" }) =>
+    expression.operator === "TLCGet" &&
+    expression.args[0]?.kind === "String" &&
+    expression.args[0].value === "spec" &&
+    expression.resolution?.kind !== "Local" &&
+    (resolveOperator(expression.operator) & RESOLUTION_MASK) === BUILTIN_RESOLUTION;
 
   const getDefinitionIndex = (definition: Definition) => {
     const known = definitionIndices.get(definition);
@@ -523,6 +531,7 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
         return;
       case "Apply":
         if (expression.resolution?.kind === "Local") nodes.data[at] |= LOCAL_FLAG;
+        if (isSpecificationRead(expression)) specificationRead.isRead = true;
         writeName(expression.operator, true);
         writeNodes(expression.args);
         return;
@@ -951,6 +960,8 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
     push(model, index);
     push(model, getText(name));
   }
+  // TLCGet("spec"), where a node reads it, as the interpreter computes it.
+  push(model, specificationRead.isRead ? getValue(environment.runtime.getSpecification()) : -1);
 
   // --- the blob ---
 

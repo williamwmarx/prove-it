@@ -761,6 +761,11 @@ impl Decoder<'_> {
         let instance_names = (0..count)
             .map(|_| Ok((self.index()?, self.text()?)))
             .collect::<Decoded<_>>()?;
+        let tlc_spec = match self.next()? {
+            -1 => None,
+            value if value >= 0 => Some(value as u32),
+            other => return self.error(format!("TLCGet(\"spec\") value {other}")),
+        };
         Ok(Model {
             init,
             next,
@@ -796,6 +801,7 @@ impl Decoder<'_> {
             next_substitution,
             instance_actions,
             instance_names,
+            tlc_spec,
         })
     }
 

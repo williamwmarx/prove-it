@@ -23,6 +23,9 @@ pub struct Predicate {
 
 pub struct EngineContext {
     pub width: usize,
+    /// Whether the search reads TLC's diameter, which the native checker doesn't follow: it
+    /// stops once TLC has started, as an assumption may stop TLC first.
+    pub is_diameter_searched: bool,
     pub init: Step,
     pub next: Step,
     /// A walk of each of TLC's actions, which together take the steps of `next` in its order, or
@@ -433,12 +436,15 @@ impl EngineContext {
             HashSet::new()
         };
         // TLC checks each step against the action properties as it finds the step, after the
-        // invariants (`doNextCheckImplied`), as the search does, so they may print.
+        // invariants (`doNextCheckImplied`), as the search does, so they may print where the
+        // native checker reports what the search finds.
         let mut action_properties = Vec::new();
+        let is_native = compiler.is_native;
         for property in &model.action_properties {
-            let action = compiler.compile_root_printing(Root::Expression(property.action), true)?;
+            let action =
+                compiler.compile_root_printing(Root::Expression(property.action), is_native)?;
             let unchanged =
-                compiler.compile_root_printing(Root::Unchanged(property.subscript), true)?;
+                compiler.compile_root_printing(Root::Unchanged(property.subscript), is_native)?;
             action_properties.push((action.eval, unchanged.eval));
         }
         let initial_predicates = model
@@ -545,10 +551,9 @@ impl EngineContext {
             }
         };
         // TLC's diameter grows as the search goes, which only the liveness checker's atoms follow.
-        if compiler.is_diameter_read {
-            return Err(CompileError::Bail(
-                "unsupported: TLCGet(\"diameter\") in the search".into(),
-            ));
+        let is_diameter_searched = compiler.is_diameter_read;
+        if is_diameter_searched && !compiler.is_native {
+            return Err(CompileError::Bail(DIAMETER_SEARCHED.into()));
         }
         let compiled: Vec<CompiledAtom> = if model.is_recording_graph {
             model
@@ -589,6 +594,7 @@ impl EngineContext {
             action_constraints,
             possible,
             action_properties,
+            is_diameter_searched,
             initial_predicates,
             view,
             atoms,
@@ -609,6 +615,9 @@ fn resolve(ir: &Ir, node: NodeId) -> &NodeKind {
         }
     }
 }
+
+/// Why the engine doesn't search a model that reads TLC's diameter.
+pub const DIAMETER_SEARCHED: &str = "unsupported: TLCGet(\"diameter\") in the search";
 
 fn describe(error: CompileError) -> String {
     match error {

@@ -207,6 +207,7 @@ fn lower_definitions(
         next_substitution: None,
         instance_actions: Vec::new(),
         instance_names: Vec::new(),
+        tlc_spec: None,
     };
     Ok(tla_ir::encode(&lowering.finish(model)?))
 }

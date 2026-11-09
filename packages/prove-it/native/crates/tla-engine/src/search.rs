@@ -1878,6 +1878,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     store.freeze_string_order();
     let mut compiler = Compiler::new(ir, &mut store, settings.compile);
     compiler.workers = settings.workers;
+    compiler.is_native = settings.is_violation_reported;
     let context = match EngineContext::build(&mut compiler, ir) {
         Ok(context) => context,
         Err(error) => return SearchOutcome::Declined(describe(error)),
@@ -1886,14 +1887,6 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     // what the search printed.
     if compiler.is_printing && compiler.is_ranking {
         return SearchOutcome::Declined("unsupported: Print with ToString".into());
-    }
-    // The interpreter takes a search over without what only the native checker follows, which a
-    // caller that reports the violation itself doesn't hand over.
-    if let Some(reason) = compiler
-        .native_only
-        .filter(|_| !settings.is_violation_reported)
-    {
-        return SearchOutcome::Declined(format!("unsupported: {reason}"));
     }
     let is_distinct_read = compiler.is_distinct_read;
     let is_printing = compiler.is_printing;
@@ -1952,6 +1945,14 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             }
             if let Some((position, _)) = started.failed {
                 return SearchOutcome::AssumptionFailed { position };
+            }
+            if context.is_diameter_searched {
+                return SearchOutcome::Stopped {
+                    reason: crate::context::DIAMETER_SEARCHED.into(),
+                    checkpoint: None,
+                    collisions: 0,
+                    violation: None,
+                };
             }
             started.group
         }

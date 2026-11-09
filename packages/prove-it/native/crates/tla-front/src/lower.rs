@@ -945,6 +945,7 @@ impl<'a> Lowering<'a> {
             next_substitution: None,
             instance_actions: Vec::new(),
             instance_names: Vec::new(),
+            tlc_spec: None,
         })
     }
 

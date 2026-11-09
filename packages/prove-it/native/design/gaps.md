@@ -160,13 +160,17 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
 - TLCCache evaluates its expression once for each key where the expression reads no variable
   (`TLCExt.tlcEval2`), by the expression's node, and TLCFP is the low 32 bits of the fingerprint
   of a state of its value alone. TLCGet("config") is the record `AbstractChecker.createConfig`
-  makes.
+  makes, TLCGet("spec") the record the interpreter computes, which the IR holds where an
+  expression reads it (tla-front leaves it out, and the engine stops where it is read), and
+  TLCGet of a Java property its key. The other keys of TLC's run, and the diameter outside the
+  liveness checker, stop the search where TLC would read them, once TLC has started, as an
+  assumption may stop TLC first.
 - Only the native binary takes them: the interpreter would take a search over without the
   registers, so the engine declines them under the TypeScript engine.
 - Still declined: an atom of the liveness checker that sets or reads a register, since TLC
-  evaluates the atoms as it adds each state to the behavior graphs (TLC's Test2 counts them), the
-  keys that stop, pause or configure TLC, and TLCGet("spec"). TLCFP and TLCCache don't evaluate in
-  `tla-trace` yet.
+  evaluates the atoms as it adds each state to the behavior graphs (TLC's Test2 counts them), and
+  the keys that stop, pause or configure TLC. TLCFP and TLCCache don't evaluate in `tla-trace`
+  yet.
 
 ## Functions of several bounds, and recursive functions TLC keeps lazy
 

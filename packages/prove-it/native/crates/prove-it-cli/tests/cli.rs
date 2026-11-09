@@ -629,9 +629,9 @@ fn run_lowered(test: &str, spec: &str, config: &str) -> (Output, PathBuf) {
 
 #[test]
 fn reads_and_sets_tlcs_registers() {
-    // TLCCache evaluates Counted once, and TLCFP is TLC's fingerprint under -fp 0, which the
-    // interpreter and TLC print the same.
-    let spec = "---- MODULE Stop ----\nEXTENDS Integers, TLC, TLCExt\nVARIABLE x\nASSUME TLCSet(1, 0)\nCounted(v) == CASE TLCSet(1, TLCGet(1) + 1) -> v\nCached == TLCCache(Counted(7), {1})\nInit == x = 0 /\\ TLCSet(\"s:steps\", 0)\nNext == x < 3 /\\ x' = x + 1 /\\ Cached = 7 /\\ TLCSet(\"s:steps\", TLCGet(\"s:steps\") + 1)\nCounts == PrintT(<<TLCGet(1), TLCGet(\"s:steps\"), TLCGet(\"all\"), TLCGet(\"all:named\")>>)\nFingerprints == TLCFP(1) = -1504394061 /\\ TLCFP(\"a\") = -1022804895\n====\n";
+    // TLCCache evaluates Counted once, TLCFP is TLC's fingerprint under -fp 0, which the
+    // interpreter and TLC print the same, and a Java property TLC hasn't set is its key.
+    let spec = "---- MODULE Stop ----\nEXTENDS Integers, TLC, TLCExt\nVARIABLE x\nASSUME TLCSet(1, 0)\nCounted(v) == CASE TLCSet(1, TLCGet(1) + 1) -> v\nCached == TLCCache(Counted(7), {1})\nInit == x = 0 /\\ TLCSet(\"s:steps\", 0)\nNext == x < 3 /\\ x' = x + 1 /\\ Cached = 7 /\\ TLCSet(\"s:steps\", TLCGet(\"s:steps\") + 1)\nCounts == PrintT(<<TLCGet(1), TLCGet(\"s:steps\"), TLCGet(\"all\"), TLCGet(\"all:named\")>>)\nFingerprints == TLCFP(1) = -1504394061 /\\ TLCFP(\"a\") = -1022804895 /\\ TLCGet(\"-Dfoo\") = \"-Dfoo\"\n====\n";
     let (output, directory) = run_lowered(
         "registers",
         spec,
