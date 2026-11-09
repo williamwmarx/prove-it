@@ -940,11 +940,9 @@ impl<'ir> Evaluator<'ir> {
                 }
             }
             NodeKind::Let {
-                instances,
-                definitions,
-                body,
+                definitions, body, ..
             } => {
-                let inner = self.bind_let(*instances, definitions, context)?;
+                let inner = self.bind_let(definitions, context)?;
                 self.evaluate(*body, &inner)
             }
             NodeKind::Forall { bounds, body } => {
@@ -1352,13 +1350,9 @@ impl<'ir> Evaluator<'ir> {
 
     pub(crate) fn bind_let(
         &mut self,
-        instances: u32,
         definitions: &[NodeId],
         context: &Context,
     ) -> Evaluated<Context> {
-        if instances > 0 {
-            return fail("INSTANCE in LET");
-        }
         let mut inner = context.clone();
         for &node in definitions {
             let definition = self.definition(node);
@@ -1808,6 +1802,7 @@ impl<'ir> Evaluator<'ir> {
         let mut sets = Vec::with_capacity(bounds.len());
         for bound in bounds {
             let set = self.evaluate(bound.set, context)?;
+            self.check_enumerable(&set, bound.set)?;
             sets.push(elements(&set)?);
         }
         if sets.iter().any(|set| set.is_empty()) {
@@ -1836,6 +1831,39 @@ impl<'ir> Evaluator<'ir> {
                 return Ok(true);
             }
         }
+    }
+
+    // TLC's failure quantifying over a set it implements in Java and can't enumerate
+    // (`Tool.contexts`), which it explains for all but STRING since 1.7.4.
+    fn check_enumerable(&self, set: &Value, node: NodeId) -> Evaluated<()> {
+        let Value::Lazy(lazy) = set else {
+            return Ok(());
+        };
+        let text = format_value(set);
+        let quantified = format!(
+            "universally (\\A) or existentially (\\E) quantify over {text}, because this would require checking an\ninfinite number of cases."
+        );
+        let explanation = match **lazy {
+            Lazy::Nat | Lazy::Int | Lazy::Real => format!(
+                "The set {text} contains infinitely many elements. As a result, TLC cannot evaluate expressions that\n{quantified} Note that TLC handles set membership like T \\subseteq {text} for any finite set T."
+            ),
+            Lazy::Seq(_) => format!(
+                "In TLA+, Seq(S) represents the set of all finite sequences whose elements come from the set S. Even when S\nis a finite set, the number of possible sequences in Seq(S) is unbounded because sequences can have any\nfinite length (e.g., length 0, 1, 2, and so on). As a result, TLC cannot evaluate expressions that\n{quantified} Note that for a finite set of sequences s, TLC handles s \\subseteq Seq(S).\nSee https://explain.tlapl.us/seq-unenumerable for additional details."
+            ),
+            Lazy::Strings => String::new(),
+            _ => return Ok(()),
+        };
+        let range = self.describe_range(node);
+        fail_runtime(
+            "enumerated an infinite set",
+            if explanation.is_empty() || self.is_174() {
+                format!("TLC encountered a non-enumerable quantifier bound\n{text}.\n{range}")
+            } else {
+                format!(
+                    "TLC encountered the non-enumerable quantifier bound\n{text}\n{range}\n{explanation}"
+                )
+            },
+        )
     }
 
     // --- functions ---

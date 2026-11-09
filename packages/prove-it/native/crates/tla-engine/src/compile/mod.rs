@@ -28,6 +28,7 @@ mod sets;
 mod walker;
 
 pub use walker::ActionOptions;
+pub(crate) use walker::INFINITE_BOUND;
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
@@ -672,6 +673,8 @@ pub struct Compiler<'a> {
     /// How many ENABLED actions the compiler is inside, whose private next state also holds the
     /// variables ENABLED's rewrite of an instance names (`x@ENABLED`), at slots past the state's.
     enabled_depth: u32,
+    /// How many of them are where the engine doesn't evaluate as TLC does, so don't print.
+    silent_enabled_depth: u32,
     /// The variables an ENABLED's next state holds: the state's and those past it.
     variable_extent: usize,
     /// The name EXCEPT binds `@` to: its text, or one no text has if the IR holds none.
@@ -759,6 +762,7 @@ impl<'a> Compiler<'a> {
             global_function_scopes: HashMap::new(),
             int_slots: HashSet::new(),
             enabled_depth: 0,
+            silent_enabled_depth: 0,
             variable_extent: ir.variables.len(),
             at: ir
                 .texts
@@ -1123,7 +1127,7 @@ impl<'a> Compiler<'a> {
                 // A definition compiled where it may print may be cached, then named where it
                 // may not.
                 if !context.can_print && compiled.is_printing() {
-                    return unsupported("Print where TLC evaluates it otherwise");
+                    return self.decline_print("Print where TLC evaluates it otherwise");
                 }
                 Ok(if compiled.is_costly || compiled.footprint.width() == 0 {
                     self.cached(compiled)
@@ -1134,6 +1138,19 @@ impl<'a> Compiler<'a> {
         };
         self.depth -= 1;
         result
+    }
+
+    // A Print where the engine doesn't evaluate as TLC does. ENABLED evaluates its action until
+    // the first successor, which often passes no Print: one inside an ENABLED that doesn't print
+    // stops the search only where it is evaluated.
+    fn decline_print(&self, what: &str) -> Compiling<Compiled> {
+        if self.silent_enabled_depth == 0 {
+            return unsupported(what);
+        }
+        Ok(leaf(
+            eval(|_| Err(Bail("Print inside ENABLED"))),
+            Footprint::default(),
+        ))
     }
 
     // Whether the engine evaluates the operands of an expression exactly when TLC does, as long
@@ -1159,6 +1176,9 @@ impl<'a> Compiler<'a> {
             NodeKind::SetMap { bounds, .. } => {
                 matches!(&bounds[..], [bound] if !self.may_be_lazy(bound.set, &mut HashSet::new()))
             }
+            // TLC evaluates the body for each element in the order it enumerates the set, until
+            // one decides the quantifier, as the engine does for one bound where the body prints.
+            NodeKind::Forall { bounds, .. } | NodeKind::Exists { bounds, .. } => bounds.len() == 1,
             NodeKind::Apply { name, args } => {
                 if name.is_local
                     && let Some(found) = lookup(&context.scope, name.text)

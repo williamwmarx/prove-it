@@ -597,6 +597,34 @@ impl Compiler<'_> {
         let body = self.compile(body, &inner)?;
         let footprint = Footprint::merge_all(levels.iter().map(|level| &level.set.footprint))
             .merge(&body.footprint.without_slots(&bound));
+        // A body that prints is evaluated for each element in the order TLC enumerates the set
+        // (`Tool.contexts`), until one decides the quantifier.
+        if body.is_printing() {
+            let [level] = &levels[..] else {
+                return unsupported("Print under a quantifier of several bounds");
+            };
+            let ordered = self.order(level.set.clone(), bounds[0].set, context, false)?;
+            let (slots, tuple, body) = (level.slots.clone(), level.tuple, body.eval);
+            return Ok(Compiled {
+                is_costly: true,
+                is_boolean: true,
+                ..leaf(
+                    eval(move |machine| {
+                        let id = (ordered.eval)(machine)?;
+                        for position in 0..ordered.size(machine, id)? {
+                            let element = machine.store.element_at(id, position);
+                            assign_bound(machine, &slots, tuple, element)?;
+                            let value = super::check_boolean(body(machine)?)?;
+                            if (value == TRUE) != is_forall {
+                                return Ok(bool_id(!is_forall));
+                            }
+                        }
+                        Ok(bool_id(is_forall))
+                    }),
+                    footprint,
+                )
+            });
+        }
         let predicate = Predicate::of(&body);
         // ForallInterval and ExistsInterval: a name over a..b at each level counts through the
         // interval without building it.

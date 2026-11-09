@@ -465,6 +465,111 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   and level sharing, since only the machine that built a function can apply it.
 - suite/test3, test5, test10, test12, test17 and test202 now print what TLC prints.
 
+## ENABLED in the initial predicate
+
+- TLC evaluates ENABLED A in the initial predicate against the state the predicate has built so
+  far (`Tool.eval`, OPCODE_enabled, with the partial state as the current one), as EWD840/MC02
+  does, whose specification conjoins `ENABLED Next`, and suite/test216's
+  `Thm1 /\ ENABLED Thm1Prime!:`. The engine declined it. It now walks A there as anywhere else:
+  the walk reads the variables the predicate has assigned, and stops on its limit ("variable not
+  assigned") where A reads one it hasn't. EWD840/MC02 and suite/test216 now print what TLC
+  prints.
+
+## A function of several arguments an action applies
+
+- TLC walks the body of a function it keeps lazy where an action applies it, with each name
+  bound to its argument once every argument is in its bound's set (`getFcnContext`). The walker
+  took only a function of one name. It now binds one slot for each bound, as spectacle
+  Elevator's `CanServiceCall[e, call]` needs, and declines only a tuple pattern, an application
+  to one tuple (`f[<<a, b>>]`), and a recursive function of several bounds. The decline also no
+  longer comes before the check of whether the body is walked at all, so a guard such as
+  Elevator's compiles as a guard. Elevator now prints what TLC prints.
+
+## Print under a quantifier
+
+- TLC evaluates the body of `\A` or `\E` for each element in the order it enumerates the set
+  (`Tool.contexts`), until one decides the quantifier. The engine now does so for a quantifier
+  of one bound whose body prints (`compile_quantifier`): it takes the elements in TLC's order
+  (`order`, as the walk of `\E` in an action does), so a set TLC keeps lazy, such as
+  suite/test11's `[{1+1, 2} -> {3-1, 2, 1+1}]`, needs a reference, and declines without one.
+  Several bounds still decline. Stones (Examples), whose assumption prints the solution under
+  `\E`, now prints what TLC prints.
+
+## Print inside ENABLED
+
+- An ENABLED in an expression isn't evaluated as TLC evaluates it (its value is cached by what
+  the action reads), so a Print inside it declined the model. ENABLED stops at its action's
+  first successor, which often passes no Print: suite/test20's `ENABLED ((x = 1) /\ Next)` finds
+  one in Next's first disjunct. A Print inside such an ENABLED now compiles to a stop ("Print
+  inside ENABLED", one of the engine's limits) that only evaluating it reaches
+  (`decline_print`, `silent_enabled_depth`). The liveness checker's ENABLED atoms, which print
+  as TLC does, are as before. suite/test20 now prints what TLC prints.
+
+## A quantifier over a set TLC can't enumerate
+
+- TLC fails where an action quantifies over Nat, or assigns a variable from it ("TLC
+  encountered the non-enumerable quantifier bound"). The engine stopped on "enumerated an
+  infinite set", which is one of its limits because it enumerates some sets elsewhere that TLC
+  doesn't. Where the walk, or a quantifier that prints, takes a set's elements in TLC's order
+  (`order`) TLC enumerates the set too, so a set known to be infinite as it compiles now stops
+  there with a reason of its own (`INFINITE_BOUND`), which is among TLC's failures. The replay
+  (`tla-trace`'s `check_enumerable`) words TLC's message, with its explanation for Nat, Int,
+  Real and Seq(S) since 1.7.4. Bakery (spectacle) now prints what TLC prints.
+
+## DOMAIN of a function TLC keeps lazy
+
+- `DOMAIN f` of a `FcnLambdaValue` is its bound's set, or the tuples of its bounds' sets
+  (`getDomain`), which TLC only tests. The engine has no value for such a set, so DOMAIN still
+  stops as a value, but `x \in DOMAIN f` now asks the function's bounds (`is_in_domain`).
+  suite/test11, whose tests ask `5 \notin DOMAIN f1` for `f1[i \in Int]`, now prints what TLC
+  prints.
+
+## INSTANCE in a LET, in the replay
+
+- The replay (`tla-trace`) declined any LET with an INSTANCE ("rebuilding a trace: INSTANCE in
+  LET"), as the engines did before they took the definitions the INSTANCE copies into the LET.
+  It now binds them as the LET's other definitions (`bind_let`). EWD998_anim,
+  CabbageGoatWolf_anim and AwsDNSRace_anim (spectacle) now print what TLC prints.
+
+## A failure's trace with an ALIAS
+
+- TLC prints the trace to the state it was expanding through the ALIAS, each state with the one
+  after it as its next state and the last with itself, but an initial state it was expanding,
+  which is the whole trace, as it is (`TLCTrace.printTrace`). The CLI declined any failure with
+  an ALIAS. It now prints one in the next-state relation or an invariant (`failure.rs`), with
+  the startup values and registers the alias may read, and still declines the other sites, a
+  state TLC fails to fingerprint, an incomplete successor, and any failure with a `_POSSIBLE`
+  predicate. bfs_anim (spectacle) now prints what TLC prints.
+- A deadlocked initial state is such a trace of one state too: the CLI printed it through the
+  ALIAS, where TLC prints the state. It now prints the state.
+
+## A failure with a POSTCONDITION
+
+- After a failure TLC checks no postcondition once the search is over. But its worker goes on
+  from the failed next-state relation to check the state for deadlock, and where the expansion
+  generated no successor that check (`Worker.run`, `doNextSetErr`, `doPostCondition`) evaluates
+  the postconditions on the trace to the state, reporting no deadlock since the error is set.
+  So TLC prints a postcondition that is false between the trace and the call stack, with the
+  registers and counts as the failure left them. The CLI declined any failure with a
+  POSTCONDITION. It now follows three cases (checked with TLC): a failure in the next-state
+  relation without the deadlock check, and one in an invariant, which TLC evaluates on a
+  successor it has generated, check nothing; a failure expanding the first state, where the
+  counts say nothing was generated, checks them. It declines the rest: a later state, whose
+  expansion may have generated successors before it failed, which the search doesn't count
+  apart, a spec that prints, and a postcondition TLC computes as it starts. cdot/ChainedCdots
+  now prints what TLC prints.
+
+## A function TLC asks whether it equals a record
+
+- `left = right` is `left.equals(right)` in TLC. A RecordValue fails on a function that is no
+  record, but a function with a key that isn't a string is a FcnRcdValue or a tuple, which
+  takes any function and compares keys and values (`FcnRcdValue.equals`). The store, which
+  can't tell a record from a function over strings, stopped on either order. `=` and `#` now
+  ask as TLC does (`Store::equals_asked`): where the left side has a key that isn't a string
+  and the right side's are all strings, the keys in order decide, or fail as TLC's do
+  (`<<1, 1>> = [a |-> 1, b |-> 1]` compares 1 with "a"). The other order still stops, since the
+  left side may be a record. tla-rs model_values_distinct now prints what TLC prints.
+
 ## Nat, Int and STRING as values
 
 - TLC holds Nat, Int and STRING as values (`UserValue`): an element of a set, such as `{Nat}`, is
@@ -499,7 +604,16 @@ Built by the liveness session: see "Atoms that use TLC's registers" in `liveness
 
 ## Handoff (gaps session, 2026-11-09)
 
-Done this session (each in a section above): run-time error stops (ErrorSite Init, Next,
+Done since by the engine-gaps session (each in a section above): the run-time walk of a
+recursive operator (Github649), ENABLED in the initial predicate (EWD840/MC02, test216), a lazy
+function of several arguments in an action (Elevator), Print under a quantifier (Stones, test11)
+and inside ENABLED (test20), a quantifier over Nat as TLC's failure (Bakery), and membership in
+DOMAIN of a lazy function (test11), INSTANCE in a LET in the replay (the `_anim` models), a
+failure's trace through the ALIAS (bfs_anim) and its postconditions (ChainedCdots), and a
+function compared with a record (model_values_distinct). The addon suite's "leaves a model it can't search to the TypeScript
+engine" already declines on UNCHANGED in the initial predicate.
+
+Done before that (each in a section above): run-time error stops (ErrorSite Init, Next,
 Invariant with out-degrees, InitialConstraint, InitialInvariant, InitialPredicate, and
 AssumptionFailed); `TLC_FAILURES`, the list of the reasons that are TLC's failures, every other
 reason a limit; operator tables; recursive functions from instances and operators; lazy element
@@ -510,24 +624,13 @@ CyclicRedefineInstance, EWD998Chan).
 
 Open, with what is known:
 
-- **Enabled (EWD840/MC02, suite/test216), Print (test11, test20), PrintT (Stones).** Not started.
-  test20 prints inside ENABLED and in actions TLC walks differently; start from the decline
-  reasons `engine-coverage --backend rust --filter <model>` prints.
-- **spectacle Elevator, a lazy function of several arguments.** `resolve_lazy_application`
-  declines more than one bound; bind each name to its element of the tuple argument as
-  `bind_parameters` in `compile/mod.rs` does.
-- **Github696, AssertError.** Not started; the startup AssertError items went to the platform
-  session.
-- **spectacle Bakery** stops on "enumerated an infinite set", now a limit; the speed session's
-  lazy functions (f443fab1) may cover it.
-- **tla-rs model_values_distinct** falls back: "record compared with a function" is a limit
-  because the store, merging equal values, can't tell a RecordValue from a function over strings.
-  Following it natively needs the store to keep how TLC built a value.
-- **spectacle bfs_anim** ("equality of values TLC can't compare") and **cdot/ChainedCdots**
-  (action composition with a postcondition): not looked at.
-- **RandomSubsetEmpty** still reports AssumptionFailed (trace session, 20:04). Find the bail
-  reason (bac5cb17 now lowers a model without a next-state relation, so engine-ir gives its IR);
-  it should be a limit if TLC's assumption holds.
-- The addon suite's "leaves a model it can't search to the TypeScript engine" still expects a
-  decline on `x' \subseteq S`, which d1fa0dd8 made native; it needs another construct the engine
-  declines.
+- **Github696, AssertError.** The startup follows AssertError assumptions now (the platform
+  session's), and Github696 declines on "checking an assumption again: ... applied a function
+  outside its domain": the replay has no message for a function TLC still keeps lazy
+  (`describe_missing`, `Class::Lambda`). TLC's `FcnLambdaValue.apply` says "In applying the
+  function\n<the function, printed as a FcnRcdValue>,\nthe first argument is:\n<the
+  argument>\nwhich is not in its domain.\n", which holds where the function is applied under
+  `EvalControl.KeepLazy` with no earlier evaluation that built it, as a LET's `f[-33]` is.
+- **A failure with a POSTCONDITION past the first state expanded.** The CLI declines it: TLC
+  checks the postconditions only where the failed expansion had generated no successor, so the
+  stop needs to say how many the expansion generated before it failed.
