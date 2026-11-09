@@ -382,7 +382,7 @@ impl Definition {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Startup {
     None,
-    /// A value that isn't a string, number or boolean, which the engine doesn't read.
+    /// A value the engine can't read: one TLC may keep lazy, or one the encoding can't hold.
     Object,
     /// A value, or `None` for one the transfer encoding can't hold.
     Value(Option<u32>),

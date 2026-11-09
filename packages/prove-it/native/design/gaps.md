@@ -110,3 +110,13 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   where s isn't a string, which TLC reports. Github696 and Github696b (TLC's tests),
   declined before, now search in Rust until the comparison of differently typed model values
   TLC reports.
+
+## Values computed at startup
+
+- TLC computes each constant definition once when it starts (`SpecProcessor.processConstantDefns`),
+  one with effects such as RandomElement included, and reads that value from then on. The IR
+  carried the value for a definition with effects only when it was a string, number or boolean,
+  and the native engine declined any other. It now carries any value the interpreter holds settled
+  (`isSettledValue`), which TLC doesn't keep lazy, so the search reads it in place of the
+  definition. One TLC may keep lazy, such as SUBSET or `\cup`, still declines. Github648 (TLC's
+  tests) now completes in Rust.
