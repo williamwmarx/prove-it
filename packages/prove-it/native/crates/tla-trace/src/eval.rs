@@ -135,6 +135,22 @@ fn own_context(context: &Context, frame: &Rc<Frame>, is_self: bool) -> Context {
 type KeyedVisit<'v, 'ir> = dyn FnMut(&mut Evaluator<'ir>, &Context, &[Value]) -> Evaluated<()> + 'v;
 
 /// The evaluator: the IR, the texts as values, the state it evaluates in, and what it printed.
+/// TLC's `CallStack`: the nodes a replay is in, which stop being popped once it fails.
+#[derive(Debug, Default)]
+pub struct CallStack {
+    pub frames: Vec<StackFrame>,
+    pub is_frozen: bool,
+}
+
+/// A node TLC's call stack holds: a node of the IR, or the prefix of an infix chain of junctions,
+/// such as A /\ B of A /\ B /\ C, which SANY parses as a node of its own.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StackFrame {
+    Node(NodeId),
+    /// The first `count` operands of a junction.
+    Prefix(NodeId, usize),
+}
+
 pub struct Evaluator<'ir> {
     pub ir: &'ir Ir,
     texts: Vec<Option<Rc<Text>>>,
@@ -154,6 +170,9 @@ pub struct Evaluator<'ir> {
     /// The state a walk looks for, where a value that differs from it can't lead to it: a walk
     /// then drops an assignment of another value, as nothing else follows from it.
     pub target: Option<Vec<Value>>,
+    /// Where a replay of a failure is, as TLC's `CallStackTool` records it: each node the walks and
+    /// the evaluation are in, outermost first, frozen once an evaluation fails.
+    pub call_stack: Option<CallStack>,
     /// The choices the walk made to reach where it is: at each disjunction or enumeration, the
     /// position of the branch or element it took, and whether TLC takes them in the same order.
     pub choices: Vec<(u32, bool)>,
@@ -181,6 +200,7 @@ impl<'ir> Evaluator<'ir> {
             level: 0,
             printed: Vec::new(),
             target: None,
+            call_stack: None,
             choices: Vec::new(),
         }
     }
@@ -321,6 +341,41 @@ impl<'ir> Evaluator<'ir> {
     }
 
     pub fn evaluate(&mut self, node: NodeId, context: &Context) -> Evaluated<Value> {
+        if self.call_stack.is_none() {
+            return self.evaluate_node(node, context);
+        }
+        let frame = StackFrame::Node(self.node(node).0);
+        self.in_frame(frame, &mut |evaluator| {
+            evaluator.evaluate_node(node, context)
+        })
+    }
+
+    /// Runs `run` in a frame of the call stack, which a failure freezes, as `CallStack.push` and
+    /// `pop` do around each node TLC's `CallStackTool` visits.
+    pub fn in_frame<T>(
+        &mut self,
+        frame: StackFrame,
+        run: &mut dyn FnMut(&mut Self) -> Evaluated<T>,
+    ) -> Evaluated<T> {
+        if let Some(stack) = &mut self.call_stack {
+            stack.frames.push(frame);
+        }
+        let result = run(self);
+        if let Some(stack) = &mut self.call_stack {
+            stack.is_frozen |= result.is_err();
+            if !stack.is_frozen {
+                stack.frames.pop();
+            }
+        }
+        result
+    }
+
+    /// The resolved node of a reference.
+    pub fn resolved(&self, node: NodeId) -> NodeId {
+        self.node(node).0
+    }
+
+    fn evaluate_node(&mut self, node: NodeId, context: &Context) -> Evaluated<Value> {
         let kind = self.kind(node);
         match kind {
             NodeKind::Number(int) => Ok(Value::Int(*int)),

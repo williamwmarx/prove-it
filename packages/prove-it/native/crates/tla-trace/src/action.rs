@@ -7,7 +7,7 @@
 
 use tla_ir::{NodeId, NodeKind, Resolution, Startup};
 
-use crate::eval::{Context, Evaluator};
+use crate::eval::{Context, Evaluator, StackFrame};
 use crate::sets::is_member;
 use crate::value::{Evaluated, Value, elements, equals, fail, is_same};
 
@@ -107,42 +107,6 @@ impl<'ir> Evaluator<'ir> {
         }
     }
 
-    // The variables UNCHANGED e names, following names to what they're bound to.
-    fn unchanged_variables(
-        &mut self,
-        node: NodeId,
-        context: &Context,
-        depth: u32,
-    ) -> Evaluated<Option<Vec<u32>>> {
-        if depth > MAXIMUM_DEPTH {
-            return Ok(None);
-        }
-        match self.kind(node) {
-            NodeKind::Tuple(items) => {
-                let mut variables = Vec::new();
-                for &item in items {
-                    match self.unchanged_variables(item, context, depth + 1)? {
-                        Some(found) => variables.extend(found),
-                        None => return Ok(None),
-                    }
-                }
-                Ok(Some(variables))
-            }
-            NodeKind::Identifier(name) => {
-                if !name.is_local
-                    && let Resolution::Variable(index) = name.resolution
-                {
-                    return Ok(Some(vec![index]));
-                }
-                match self.resolve_action(node, context)? {
-                    Some((body, inner)) => self.unchanged_variables(body, &inner, depth + 1),
-                    None => Ok(None),
-                }
-            }
-            _ => Ok(None),
-        }
-    }
-
     fn guard(
         &mut self,
         node: NodeId,
@@ -156,6 +120,7 @@ impl<'ir> Evaluator<'ir> {
         }
     }
 
+    // Walks a node in its frame of the call stack, as `visit` in `tlc/replay.ts` does.
     fn walk(
         &mut self,
         node: NodeId,
@@ -163,9 +128,93 @@ impl<'ir> Evaluator<'ir> {
         is_init: bool,
         then: &mut Visit<'_, 'ir>,
     ) -> Evaluated<bool> {
+        if self.call_stack.is_none() {
+            return self.walk_node(node, context, is_init, then);
+        }
+        let frame = StackFrame::Node(self.resolved(node));
+        self.in_frame(frame, &mut |evaluator| {
+            evaluator.walk_node(node, context, is_init, then)
+        })
+    }
+
+    // The operands of a junction TLC walks as one: all of a bulleted list or a junction of two, or
+    // otherwise a prefix of an infix chain, then its last operand, as SANY nests the chain.
+    fn is_walked_whole(&self, node: NodeId, count: usize) -> bool {
+        count <= 2
+            || self
+                .ir
+                .nodes
+                .junctions
+                .get(&self.resolved(node))
+                .is_some_and(|junction| junction.is_bulleted)
+    }
+
+    // The first `count` operands of an infix conjunction, as SANY's node of that prefix: the
+    // prefix of one fewer, then the last.
+    fn conjunction_prefix(
+        &mut self,
+        node: NodeId,
+        operands: &[NodeId],
+        count: usize,
+        context: &Context,
+        is_init: bool,
+        then: &mut Visit<'_, 'ir>,
+    ) -> Evaluated<bool> {
+        if self.is_walked_whole(node, count) {
+            return self.conjunction(&operands[..count], true, context, is_init, then);
+        }
+        let last = operands[count - 1];
+        let frame = StackFrame::Prefix(self.resolved(node), count - 1);
+        self.in_frame(frame, &mut |evaluator| {
+            evaluator.conjunction_prefix(
+                node,
+                operands,
+                count - 1,
+                context,
+                is_init,
+                &mut |evaluator| evaluator.conjunction(&[last], false, context, is_init, then),
+            )
+        })
+    }
+
+    // The first `count` operands of an infix disjunction, as `conjunction_prefix` nests them.
+    fn disjunction_prefix(
+        &mut self,
+        node: NodeId,
+        operands: &[NodeId],
+        count: usize,
+        context: &Context,
+        is_init: bool,
+        then: &mut Visit<'_, 'ir>,
+    ) -> Evaluated<bool> {
+        if self.is_walked_whole(node, count) {
+            return self.disjunction(&operands[..count], context, is_init, then);
+        }
+        let frame = StackFrame::Prefix(self.resolved(node), count - 1);
+        if !self.in_frame(frame, &mut |evaluator| {
+            evaluator.disjunction_prefix(node, operands, count - 1, context, is_init, then)
+        })? {
+            return Ok(false);
+        }
+        self.choose(count as u32 - 1, true, &mut |evaluator| {
+            evaluator.walk(operands[count - 1], context, is_init, then)
+        })
+    }
+
+    fn walk_node(
+        &mut self,
+        node: NodeId,
+        context: &Context,
+        is_init: bool,
+        then: &mut Visit<'_, 'ir>,
+    ) -> Evaluated<bool> {
         match self.kind(node) {
-            NodeKind::And(operands) => self.conjunction(operands, true, context, is_init, then),
-            NodeKind::Or(operands) => self.disjunction(operands, context, is_init, then),
+            NodeKind::And(operands) => {
+                self.conjunction_prefix(node, operands, operands.len(), context, is_init, then)
+            }
+            NodeKind::Or(operands) => {
+                self.disjunction_prefix(node, operands, operands.len(), context, is_init, then)
+            }
             NodeKind::Exists { bounds, body } => {
                 let mut is_in_order = true;
                 for bound in bounds {
@@ -284,8 +333,9 @@ impl<'ir> Evaluator<'ir> {
                     None
                 };
                 if let Some(variable) = variable {
-                    // A variable assigned already is tested, as the conjunct's value.
-                    if self.targets(is_init)[variable as usize].is_some() {
+                    // A variable assigned already is tested: against the value of x' = e, as
+                    // `proceedWithValue` does, and otherwise as the conjunct's value.
+                    if operator != "=" && self.targets(is_init)[variable as usize].is_some() {
                         return self.guard(node, context, then);
                     }
                     return match operator {
@@ -442,34 +492,69 @@ impl<'ir> Evaluator<'ir> {
         })
     }
 
-    // UNCHANGED e: each variable of e assigned its current value or tested, or e' = e as a guard.
+    // UNCHANGED e, as TLC's `processUnchanged` takes it, each part in its frame: a variable assigned
+    // its current value or tested, a tuple element by element, a name through what it's bound to,
+    // and anything else compared with its value in the next state.
     fn walk_unchanged(
         &mut self,
         expression: NodeId,
         context: &Context,
         then: &mut Visit<'_, 'ir>,
     ) -> Evaluated<bool> {
-        let Some(variables) = self.unchanged_variables(expression, context, 0)? else {
-            let now = self.evaluate(expression, context)?;
-            let after = self.evaluate(expression, &context.primed(true))?;
-            return if equals(&now, &after)? {
-                then(self)
-            } else {
-                Ok(true)
-            };
-        };
-        self.unchanged_from(&variables, then)
+        let frame = StackFrame::Node(self.resolved(expression));
+        self.in_frame(frame, &mut |evaluator| {
+            evaluator.unchanged_node(expression, context, then)
+        })
     }
 
-    fn unchanged_from(&mut self, variables: &[u32], then: &mut Visit<'_, 'ir>) -> Evaluated<bool> {
-        let Some((&first, rest)) = variables.split_first() else {
+    fn unchanged_node(
+        &mut self,
+        expression: NodeId,
+        context: &Context,
+        then: &mut Visit<'_, 'ir>,
+    ) -> Evaluated<bool> {
+        if let Some(variable) = self.assignable(expression, context, false, 0)? {
+            let Some(value) = self.current[variable as usize].clone() else {
+                return fail("variable not assigned");
+            };
+            return self.assign(variable, value, false, then);
+        }
+        match self.kind(expression) {
+            NodeKind::Tuple(items) => self.unchanged_items(items, context, then),
+            NodeKind::Identifier(_) => match self.resolve_action(expression, context)? {
+                Some((body, inner)) => self.walk_unchanged(body, &inner, then),
+                None => self.unchanged_value(expression, context, then),
+            },
+            _ => self.unchanged_value(expression, context, then),
+        }
+    }
+
+    fn unchanged_items(
+        &mut self,
+        items: &[NodeId],
+        context: &Context,
+        then: &mut Visit<'_, 'ir>,
+    ) -> Evaluated<bool> {
+        let Some((&first, rest)) = items.split_first() else {
             return then(self);
         };
-        let Some(value) = self.current[first as usize].clone() else {
-            return fail("variable not assigned");
-        };
-        self.assign(first, value, false, &mut |evaluator| {
-            evaluator.unchanged_from(rest, then)
+        self.walk_unchanged(first, context, &mut |evaluator| {
+            evaluator.unchanged_items(rest, context, then)
         })
+    }
+
+    fn unchanged_value(
+        &mut self,
+        expression: NodeId,
+        context: &Context,
+        then: &mut Visit<'_, 'ir>,
+    ) -> Evaluated<bool> {
+        let now = self.evaluate(expression, context)?;
+        let after = self.evaluate(expression, &context.primed(true))?;
+        if equals(&now, &after)? {
+            then(self)
+        } else {
+            Ok(true)
+        }
     }
 }
