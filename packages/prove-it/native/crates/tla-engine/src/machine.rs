@@ -140,6 +140,20 @@ impl<'p> Machine<'p> {
         }
     }
 
+    /// Forgets what the caches hold of ids from `bound` on, which the store has let go of.
+    pub fn forget_from(&mut self, bound: Id) {
+        for table in &mut self.tables {
+            table.forget_from(bound);
+        }
+        for cache in &mut self.epochs {
+            *cache = EpochCache::default();
+        }
+        for once in self.onces.iter_mut().filter(|once| **once >= bound) {
+            *once = EMPTY;
+        }
+        self.spare_states.clear();
+    }
+
     /// A number no current state has had, for the caches of expressions that read many
     /// variables: a state keeps its epoch while it is current and unchanged, and 0 marks one
     /// nothing may cache by.
@@ -231,21 +245,24 @@ impl<'p> Machine<'p> {
 
     // Evaluates through a memo table, the keys read before the inner evaluation and the value
     // stored after it, so a bailout stores nothing.
-    pub(crate) fn lookup(&mut self, table: usize, keys: &[Key], inner: &Eval) -> Outcome<Id> {
+    // The number of keys is the closure's own, so their reads unroll.
+    #[inline(always)]
+    pub(crate) fn lookup<const WIDTH: usize>(
+        &mut self,
+        table: usize,
+        keys: &[Key; WIDTH],
+        inner: &Eval,
+    ) -> Outcome<Id> {
         if !self.tables[table].is_enabled() {
             return inner(self);
         }
-        let mut read = [0; 6];
-        for (index, &key) in keys.iter().enumerate() {
-            read[index] = self.read_key(key);
-        }
-        let read = &read[..keys.len()];
-        let known = self.tables[table].get(read);
+        let read = keys.map(|key| self.read_key(key));
+        let known = self.tables[table].get(&read);
         if known != EMPTY {
             return Ok(known);
         }
         let value = inner(self)?;
-        self.tables[table].set(read, value);
+        self.tables[table].set(&read, value);
         Ok(value)
     }
 

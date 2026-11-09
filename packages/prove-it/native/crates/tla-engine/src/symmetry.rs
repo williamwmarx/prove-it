@@ -77,6 +77,33 @@ impl Canonicalizer {
         }
     }
 
+    /// A canonicalizer for the same group that has permuted nothing yet, for another thread.
+    pub fn fresh(&self) -> Canonicalizer {
+        Canonicalizer {
+            permutations: self.permutations.clone(),
+            is_type_preserving: self.is_type_preserving,
+            images: vec![Vec::new(); self.permutations.len()],
+            larger_than: vec![Vec::new(); self.permutations.len()],
+            order: self.order.clone(),
+            parts: Vec::new(),
+            marks: Vec::new(),
+            positions: Vec::new(),
+            stamp: 0,
+            smallest: vec![NONE; self.order.len()],
+        }
+    }
+
+    /// Forgets the images of ids from `bound` on, and the images that are such ids, which the
+    /// store has let go of.
+    pub fn forget_from(&mut self, bound: Id) {
+        for table in self.images.iter_mut().chain(&mut self.larger_than) {
+            table.truncate(bound as usize);
+            for image in table.iter_mut().filter(|image| **image >= bound) {
+                *image = NONE;
+            }
+        }
+    }
+
     fn remember(&mut self, store: &Store, id: Id, index: usize, image: Id) {
         put(&mut self.images[index], id, image, store.value_count());
     }
