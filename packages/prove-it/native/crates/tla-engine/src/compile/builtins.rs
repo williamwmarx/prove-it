@@ -730,6 +730,7 @@ impl Compiler<'_> {
             }
             "ToString" => {
                 arity(1)?;
+                self.is_ranking = true;
                 let value = self.operand(&operands[0])?;
                 unary(&value, to_string, true)
             }

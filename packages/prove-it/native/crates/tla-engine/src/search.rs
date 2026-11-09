@@ -657,9 +657,11 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     };
     let is_distinct_read = compiler.is_distinct_read;
     // Checking a successor once the walk reaches the next reorders nothing anyone can see where
-    // nothing prints, reads the count of distinct states, or fingerprints a VIEW or symmetry's
-    // representative, which the walk would then interleave with.
+    // nothing prints, ranks the strings it makes, reads the count of distinct states, or
+    // fingerprints a VIEW or symmetry's representative, which the walk would then interleave
+    // with.
     let is_pipelined = !compiler.is_printing
+        && !compiler.is_ranking
         && !is_distinct_read
         && context.view.is_none()
         && model.symmetry.is_none()

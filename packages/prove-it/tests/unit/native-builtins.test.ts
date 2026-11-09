@@ -226,6 +226,23 @@ describe.if(ADDON !== undefined)("the native engine's bridged builtins", () => {
     }
   });
 
+  // The first successor's invariant ranks "151" before the second successor ranks "102", so the
+  // search checks each successor before it generates the next, as TLC does.
+  it("ranks ToString's strings in the order TLC evaluates them across successors", async () => {
+    const body = [
+      "EXTENDS Integers, TLC",
+      "VARIABLES n, s",
+      "Init == n = 0 /\\ s = {}",
+      "Next == n = 0 /\\ \\E i \\in 1..2 : n' = i /\\ s' = {ToString(100 + i), ToString(149 + i)}",
+      'Inv == n = 0 \\/ ToString(150 + n) # "q"',
+      "First == n # 2 \\/ (CHOOSE x \\in s : TRUE) = ToString(150 + 1)",
+    ];
+    const config = "INIT Init\nNEXT Next\nINVARIANT Inv\nINVARIANT First\nCHECK_DEADLOCK FALSE";
+    expect(await compareWithInterpreter(body, config)).toContainEqual(
+      expect.stringMatching(COMPLETE),
+    );
+  });
+
   // The strings ToString makes rank in the order made: "2006", made in the guard, before "2007",
   // which s holds first. CHOOSE takes the string of the lowest rank once the interpreter takes
   // over.
