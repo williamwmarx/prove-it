@@ -63,57 +63,60 @@ finding them would change what the run does.
 - Measured on Depot: 650 of 1466 runs print what TLC prints, up from 600. Nothing new differs.
   Most remaining deadlocks and invariant violations print records, which wait for #74.
 
-## The startup phase (planned, DESIGN 14.3)
+## The startup phase (DESIGN 14.3)
 
-Today the IR holds values that the TypeScript environment computes by evaluating TLA+ before the
-search. To lower IR without an evaluator, the front end leaves them out, and the engine computes
-them in a startup phase that runs on the IR before the search. The front-end session (F8) agreed
-the boundary: `tla-front` evaluates nothing and returns `NotYet` for a model that needs any of
-the items below until this lands. The IR version bump and the matching `ir.ts` change land in one
-PR, and `tla-front` then writes the same fields.
+The engine runs TLC's startup on the IR before its search (`run_startup`, `search.rs`). Until
+then, the TypeScript environment evaluated TLA+ before the search and wrote the values into the
+IR. The front end evaluates nothing (F8 agreed the boundary), and `tla-front` returns `NotYet` for
+a model that needs an item below that the engine doesn't take yet.
 
-What moves, where TypeScript does it today, and what the IR carries instead:
+IR 11 carries `model.startup`, which `ir.ts` writes from `check.ts` and `tla-front` will write the
+same way:
+- **substitutes**: each a declared constant's name and the 0-ary definition the configuration puts
+  in its place, where that definition isn't of constant level. TLC evaluates it at startup
+  (`SpecProcessor.processConstantDefns`), and reports 2281 only where that fails and the level is
+  above constant. The engine declines a model whose substitute fails, for now.
+- **definitions**: the constant definitions TLC evaluates at startup that have effects (`Print`,
+  `RandomElement`, `TLCSet` and the like), in the order TLC evaluates them. A definition without
+  effects is the same wherever it is first evaluated, so the engine computes it there. Each is
+  compiled once with an empty footprint. The engine declines one TLC may keep lazy (`may_be_lazy`),
+  as TLC then evaluates it again where it is used.
+- **assumptions**: each one's expression and the name TLC reports it by (`describeRange`).
+- The settings carry TLC's seed, from which the engine draws what the startup draws
+  (`JavaRandom::seeded`), and then reseeds for each state as before. `TLCGet("level")` is 0 at
+  startup.
 
-| Item | TypeScript today | IR instead | Engine reports |
-| --- | --- | --- | --- |
-| Startup values | `evaluateStartupDefinitions` (`evaluate.ts`) over `specification.startupDefinitions`, from `reportStartup` (`search.ts`); each definition node carries the value, or `NO_STARTUP_VALUE` | `startup_definitions: Vec<Index>`, the definitions in that list's order, already filtered as the TS filter does where the filter is static (parameters, a constant or substitution replacing it, constant level); no value in the definition node | each `Print` in order; an error is swallowed, as TLC does, and the definition is evaluated where it's used |
-| Substitute checks | `getEvaluationError` (`environment.ts`, after the level analyzer): a substitute TLC evaluates at startup, rejected only when that fails and its level bound is above constant | the substitutes to check, each its definition and its level bound | the error TLC reports |
-| Assumptions | `findAssumptionViolation` (`search.ts`), called from `check.ts` after `reportStartup` | `assumptions: Vec<(NodeId, TextId)>` in module order with each one's name | 2104 (false), 2105 (failed to evaluate), with the exit codes |
-| SYMMETRY | `getSymmetryGroup` (`symmetry.ts`) evaluates the definition to a set of permutations | the SYMMETRY definition's name (a `ConfigName`), in place of the permutations | the configuration errors `getSymmetryGroup` throws, word for word |
-| TLC's actions | `getNextActions` (`spec-description.ts`) splits Next, enumerating the constant sets of its `\E`; `getActionLabel` names each | nothing beyond Next and the IR's version: the engine splits Next itself | the actions and labels, as `Model.actions` holds them now |
+What the engine reports (`Reporter`):
+- `startup_print`: each `Print` and `PrintT` of the substitutes and definitions, then
+  `startup_done`, then what the assumptions print. The front prints TLC's own text between them:
+  TLC prints what it prints itself after the constant definitions and before it checks the
+  assumptions (`ModelChecker`, then `checkAssumptions`).
+- `SearchOutcome::AssumptionViolated { name }`: the first false assumption (2104, exit code 10).
+- An assumption that fails to evaluate (2105), and any other `Bail` at startup, declines the model
+  before anything is reported, so the interpreter that takes the model over prints it all once.
+- Through the addon, the interpreter has already run the startup, printed what it printed and
+  checked the assumptions before it hands the search over. The addon's reporter keeps the default
+  `startup_print` and `startup_done`, which do nothing, and declines an assumption the engine finds
+  false. The binary (`prove-it-cli`) declines it too, until it prints the startup itself.
+- `Checkpoint.startup` and `Violation.startup` carry the definitions' values, so the interpreter
+  and `tla-trace` (`Rebuilder::set_startup`) read the values the search read rather than draw again.
 
-Two consequences:
-- Once the engine splits Next, the effect guard on TLC's actions (#72: none when evaluating them
-  has an effect) goes away, since the engine captures what it prints. That unblocks native traces
-  for specs that print (etest3, etest8).
+Still to do:
+- **Multi-module order.** TLC runs `processConstantDefns` per module, in its module table's order:
+  each module's substitutes, then that module's constant definitions, then its inner modules. The
+  IR lists all the substitutes and then all the definitions, as `evaluate.ts` evaluates them. The
+  two differ only where printing or drawing definitions sit in more than one module along with
+  substitutes. No corpus model has been found that shows the difference; one that does is a
+  TypeScript bug to fix on both sides, not a design choice.
+- SYMMETRY (`getSymmetryGroup`, `symmetry.ts`): the IR is to carry the SYMMETRY definition's name,
+  and the engine evaluates it to its permutations and raises its configuration errors word for
+  word.
+- TLC's actions (`getNextActions`, `spec-description.ts`): the engine is to split Next itself and
+  label each action. Then the effect guard on TLC's actions (#72) goes away, which unblocks native
+  traces for specs that print (etest3, etest8).
 - A configuration constant with arguments (`createOperatorTable` in `environment.ts`) needs no
-  evaluation: its rows are the configuration's literals (`toValue`). So the front end writes the
-  table itself, in a section `operator_tables` of the values: per builtin, its rows of arguments
-  and value in `transfer.ts`'s encoding. The engine formats the table and the arguments with TLC's
-  printer for the two errors it raises, so no formatted text is carried.
-
-Agreed with the front-end session in review:
-- Substitute checks need no level analyzer on either side. The IR lists every substitute of a
-  declared constant by a 0-ary operator definition, with the `dependencies.ts` facts' NONCONSTANT
-  bit as its level bound. The engine evaluates each at startup and reports a failure only where
-  the bound is above constant. The front-end differential checks that the bit agrees with the
-  level analyzer (2,711 configurations, no mismatch so far).
-- Action labels read `specification.instanceActions`: the name and location of an instance an
-  action was copied through. The IR carries, per definition key an instance copied, the instance's
-  name and location. `tla-front` fills it from linking.
-- Scope bindings: an IR scope holds a `Value` binding only from the action split
-  (`getActions` evaluating an action's constant arguments, `spec-description.ts`), which moves to
-  the engine. `Model.scope`, from SPECIFICATION resolved through an instance, holds thunks and
-  closures over the AST, which the front end writes without evaluating.
-
-Open before the layout is final:
-- Startup definitions whose level depends on a substitution: is the TS level filter static
-  everywhere, or does it read values?
-- The order TLC reports these in. Substitute checks run while the environment is built, so they
-  come first. Then come the startup values, before the constant-level invariant warnings
-  (`reportStartup`), and then the assumptions. That still needs checking against TLC's `Tool` and
-  `ModelChecker` startup.
+  evaluation: the front end can write its rows of literals in a section `operator_tables`, and
+  the engine formats them with TLC's printer for the two errors it raises.
+- Action labels read `specification.instanceActions`, which `tla-front` fills from linking. A scope
+  binding holds a `Value` only from the action split, which moves to the engine.
 - `getActionLabel` depends on the TLC version (1.7.4 or later); the IR already carries the version.
-
-The front-end session reviewed this layout (points above). The IR fields' exact order is fixed in
-the implementing PR, with the front end's review.
