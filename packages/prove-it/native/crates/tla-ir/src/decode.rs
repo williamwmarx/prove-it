@@ -699,6 +699,7 @@ impl Decoder<'_> {
                 })
             })
             .collect::<Decoded<_>>()?;
+        let specification = self.range()?;
         let count = self.count()?;
         let substitutes = (0..count)
             .map(|_| Ok((self.text()?, self.index()?)))
@@ -756,6 +757,7 @@ impl Decoder<'_> {
             atoms,
             live_formula,
             live_properties,
+            specification,
             startup: Startup {
                 substitutes,
                 definitions,

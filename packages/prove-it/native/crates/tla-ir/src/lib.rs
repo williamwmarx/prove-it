@@ -279,6 +279,9 @@ pub struct Model {
     pub live_formula: Vec<LiveTerm>,
     /// Each property, whose violation a counterexample's checks find, in the configuration's order.
     pub live_properties: Vec<LiveProperty>,
+    /// The source range of the definition the configuration's SPECIFICATION names, which TLC's
+    /// warning of a stuttering counterexample prints.
+    pub specification: Option<SourceRange>,
     /// What TLC evaluates when it starts, before the search.
     pub startup: Startup,
 }

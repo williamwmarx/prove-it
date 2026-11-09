@@ -200,6 +200,7 @@ fn lower_definitions(
         atoms: Vec::new(),
         live_formula: Vec::new(),
         live_properties: Vec::new(),
+        specification: None,
         startup: Startup::default(),
     };
     Ok(tla_ir::encode(&lowering.finish(model)?))

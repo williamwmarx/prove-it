@@ -879,6 +879,7 @@ pub(crate) fn print_statistics(printer: &mut Printer, statistics: &Statistics, s
     );
 }
 
+const BOOK: &str = "(compare Chapter 8, page 87ff of Specifying Systems at https://lamport.azurewebsites.net/tla/book.html).";
 const NO_SPECIFICATION_WARNING: &str = "The stuttering counterexample above may be caused by the absence of a behavior specification (SPECIFICATION). Only INIT and NEXT have been provided, so TLC permits infinite stuttering. To rule out such counterexamples, use SPECIFICATION Spec, with Spec asserting a suitable fairness constraint (compare Chapter 8, page 87ff of Specifying Systems at https://lamport.azurewebsites.net/tla/book.html).";
 
 /// Why `print_violation` can't print a violation yet, where the IR doesn't name what it reports.
@@ -985,12 +986,7 @@ fn print_violation(
                 .builtins
                 .iter()
                 .any(|builtin| matches!(&*ir.texts[builtin.name as usize], "Print" | "PrintT"));
-            // Without a SPECIFICATION the warning names none; with one, it names where it's
-            // defined, which the IR doesn't carry yet.
             let is_warned = is_stuttering && is_cycle_constrained;
-            if is_warned && config.specification.is_some() {
-                return Err("a stuttering counterexample TLC warns of");
-            }
             if !is_stuttering && is_printing {
                 return Err("a step back into the cycle of a spec that prints");
             }
@@ -1099,13 +1095,37 @@ fn print_violation(
             }
         }
     }
-    // TLC's Liveness#printStutteringCounterExampleWarning.
+    // TLC's Liveness#printStutteringCounterExampleWarning: without a SPECIFICATION, a warning
+    // that names none; with one whose definition has no temporal conjunct, where the formula the
+    // checker solves is the negated properties alone, one that names where it's defined.
     if lasso.is_some_and(|lasso| lasso.3) {
-        printer.print(
-            code::NO_SPECIFICATION_BUT_PROPERTY,
-            Level::Warning,
-            NO_SPECIFICATION_WARNING,
-        );
+        match &config.specification {
+            None => printer.print(
+                code::NO_SPECIFICATION_BUT_PROPERTY,
+                Level::Warning,
+                NO_SPECIFICATION_WARNING,
+            ),
+            Some(name) => {
+                let is_fair = matches!(model.live_formula.first(), Some(tla_ir::LiveTerm::And(_)));
+                if let Some(range) = model.specification.filter(|_| !is_fair) {
+                    let range = format!(
+                        "line {}, col {} to line {}, col {} of module {}",
+                        range.start_line,
+                        range.start_column,
+                        range.end_line,
+                        range.end_column,
+                        ir.texts[range.module as usize]
+                    );
+                    printer.print(
+                        code::NO_FAIRNESS_BUT_PROPERTY,
+                        Level::Warning,
+                        &format!(
+                            "The stuttering counterexample above may be caused by the absence of a fairness constraint in the behavior specification {name} defined at {range}. To rule out such counterexamples, conjoin a suitable fairness constraint to {name} {BOOK}"
+                        ),
+                    );
+                }
+            }
+        }
     }
     print_postcondition_failure(printer, ir, trace.postconditions.as_ref());
     if let Some(checking) = checking {
