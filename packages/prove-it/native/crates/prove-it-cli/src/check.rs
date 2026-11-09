@@ -259,6 +259,10 @@ enum Event {
     InitialStatesProgress(u64),
     InitialStates(u64, u64),
     Progress(u64, u64, u64, u64),
+    /// TLC checks the temporal properties part way through the search: of how many branches, on
+    /// the graph of how many states.
+    LivenessStarted(u64, u64),
+    LivenessFinished,
     /// What Print or PrintT printed, or nothing when TLC's text isn't known.
     Print(Option<String>),
 }
@@ -282,6 +286,14 @@ impl Reporter for Relay {
         let _ = self
             .0
             .send(Event::Progress(generated, distinct, queued, depth));
+    }
+
+    fn liveness_started(&mut self, branches: u64, expanded: u64, _counts: [u64; 3]) {
+        let _ = self.0.send(Event::LivenessStarted(branches, expanded));
+    }
+
+    fn liveness_finished(&mut self) {
+        let _ = self.0.send(Event::LivenessFinished);
     }
 
     // Print and PrintT print each value as TLC's normalized text, pretty printed, two spaces
@@ -453,22 +465,27 @@ fn check_spec(spec_path: &str, args: &Parsed, printer: &mut Printer) -> i32 {
     if args.has("-deadlock") {
         ir.model.check_deadlock = false;
     }
+    // TLC checks the temporal properties as the search goes, unless -lncheck asks for one check at
+    // the end.
+    let is_liveness_periodic = !args
+        .first("-lncheck")
+        .is_some_and(|check| ["final", "seqfinal", "off"].contains(&check.to_lowercase().as_str()));
+    let settings = Settings {
+        is_violation_reported: true,
+        is_liveness_periodic,
+        test_live_check_at: std::env::var("PROVE_IT_TEST_LIVE_CHECK_AT")
+            .ok()
+            .and_then(|at| at.parse().ok()),
+        ..Settings::default()
+    };
     let (sender, receiver) = mpsc::channel();
     let outcome = std::thread::scope(|scope| {
         let ir = &ir;
         let searching = std::thread::Builder::new()
             .stack_size(SEARCH_STACK_BYTES)
-            .spawn_scoped(scope, move || {
-                search(
-                    ir,
-                    &Settings {
-                        is_violation_reported: true,
-                        ..Settings::default()
-                    },
-                    &mut Relay(sender),
-                )
-            })
+            .spawn_scoped(scope, move || search(ir, &settings, &mut Relay(sender)))
             .expect("a thread for the search");
+        let mut checking = None;
         for event in receiver {
             match event {
                 Event::InitialStatesStarted => printer.print(
@@ -493,6 +510,14 @@ fn check_spec(spec_path: &str, args: &Parsed, printer: &mut Printer) -> i32 {
                     };
                     print_progress(printer, &statistics, Some(start));
                     printer.flush();
+                }
+                Event::LivenessStarted(branches, expanded) => {
+                    checking = Some(print_liveness_check(printer, branches, expanded, "current"));
+                }
+                Event::LivenessFinished => {
+                    if let Some(checking) = checking.take() {
+                        print_liveness_finished(printer, checking);
+                    }
                 }
                 Event::Print(Some(text)) => printer.line(&text),
                 // Nothing more this run prints can be right, so it ends here rather than search
@@ -626,9 +651,15 @@ fn print_liveness_started(
     statistics: &Statistics,
     branches: Option<usize>,
 ) -> Instant {
-    let checking = Instant::now();
-    let branches = branches.unwrap_or(1);
     print_progress(printer, statistics, None);
+    let branches = branches.unwrap_or(1) as u64;
+    print_liveness_check(printer, branches, statistics.distinct, "complete")
+}
+
+/// TLC checks the temporal properties of its branches on the graph of `states` states, of the
+/// complete or the current state space: returns when it started.
+fn print_liveness_check(printer: &mut Printer, branches: u64, states: u64, space: &str) -> Instant {
+    let checking = Instant::now();
     let branch_text = if branches > 1 {
         format!("{branches} branches of ")
     } else {
@@ -638,8 +669,8 @@ fn print_liveness_started(
         code::CHECKING_TEMPORAL,
         Level::None,
         &format!(
-            "Checking {branch_text}temporal properties for the complete state space with {} total distinct states at ({})",
-            branches as u64 * statistics.distinct,
+            "Checking {branch_text}temporal properties for the {space} state space with {} total distinct states at ({})",
+            branches * states,
             format_date(SystemTime::now())
         ),
     );

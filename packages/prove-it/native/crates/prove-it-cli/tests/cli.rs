@@ -267,3 +267,32 @@ fn prints_a_temporal_propertys_lasso() {
     );
     std::fs::remove_dir_all(directory).expect("removed");
 }
+
+#[test]
+fn checks_temporal_properties_part_way_through_the_search() {
+    let ir = include_bytes!(
+        "../../../../tests/conformance/ir/examples/specifications/glowingRaccoon/stages.ir"
+    );
+    let config = "CONSTANTS\n  DNA = 5\n  PRIMER = 5\nINVARIANT TypeOK\nSPECIFICATION Spec\nPROPERTIES cleanSpec primerDepleted\nCHECK_DEADLOCK FALSE\n";
+    let (output, directory) = run_golden("periodic", ir, "stages", config, &["-lncheck", "final"]);
+    assert_eq!(output.status.code(), Some(0));
+    let current = "Checking temporal properties for the current state space with 10 total distinct states at (";
+    // PROVE_IT_TEST_LIVE_CHECK_AT has the first check made after 10 states are expanded, which
+    // -lncheck final leaves to the end.
+    let periodic = Command::new(env!("CARGO_BIN_EXE_prove-it"))
+        .arg("stages")
+        .current_dir(&directory)
+        .env("PROVE_IT_FRONT", &directory)
+        .env("PROVE_IT_TEST_LIVE_CHECK_AT", "10")
+        .output()
+        .expect("the binary runs");
+    let text = stdout(&periodic);
+    assert_eq!(periodic.status.code(), Some(0), "{text}");
+    assert!(text.contains(current), "{text}");
+    assert!(
+        text.contains("Finished checking temporal properties in 00s at "),
+        "{text}"
+    );
+    assert!(!stdout(&output).contains("current state space"));
+    std::fs::remove_dir_all(directory).expect("removed");
+}

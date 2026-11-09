@@ -154,3 +154,16 @@ the implementing PR, with the front end's review.
   - a lasso whose cycle steps back to an earlier state in a spec that prints, since TLC prints as it
     finds that step's action;
   - an accepting node, which TLC reports as it builds the behavior graph.
+
+## Temporal checks part way through the search
+
+- As TLC does unless `-lncheck final` (or `seqfinal`, `off`), the binary asks the engine to check the
+  temporal properties as the search goes (`is_liveness_periodic`, #148). For each check it prints
+  2192 `Checking [N branches of ]temporal properties for the current state space with
+  branches × expanded total distinct states at (…)`, with no Progress line before it, and 2267 once
+  the check finds that the properties hold so far, as check.ts does for the engine's
+  `liveness-started` and `liveness-finished`.
+- PROVE_IT_TEST_LIVE_CHECK_AT sets the number of expanded states after which the first check comes,
+  as for the TypeScript CLI, so a test can reach one on a small model.
+- A counterexample a check part way through finds stays not native: the interpreter prints it with
+  the counts so far.
