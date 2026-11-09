@@ -525,7 +525,7 @@ impl Compiler<'_> {
         context: &Context,
     ) -> Compiling<Compiled> {
         if !context.can_print {
-            return unsupported(name);
+            return self.decline_print(name);
         }
         let is_print = name == "Print";
         if operands.len() != if is_print { 2 } else { 1 } {
@@ -1146,7 +1146,7 @@ impl Compiler<'_> {
                     return Ok(Some(recursive.domain.clone()));
                 }
                 let function = self.operand(operand)?;
-                unary(
+                let domain = unary(
                     &function,
                     |machine, function| {
                         if lazy_function::is_lazy(machine, function) {
@@ -1158,7 +1158,24 @@ impl Compiler<'_> {
                         Ok(machine.store.domain_of(function))
                     },
                     true,
-                )
+                );
+                // The domain of a function TLC keeps lazy is its bound's set
+                // (`FcnLambdaValue.getDomain`), which the engine has no value for but can test.
+                let function = function.eval;
+                Compiled {
+                    member: Some(super::member(move |machine, element| {
+                        let function = function(machine)?;
+                        if lazy_function::is_lazy(machine, function) {
+                            return lazy_function::is_in_domain(machine, function, element);
+                        }
+                        if !is_function_kind(machine.store.kind_of(function)) {
+                            return Err(Bail("DOMAIN of a non-function"));
+                        }
+                        let domain = machine.store.domain_of(function);
+                        machine.store.is_member(element, domain)
+                    })),
+                    ..domain
+                }
             }
             "+" | "-" | "*" | "\\div" | "%" | "^" => {
                 arity(2)?;

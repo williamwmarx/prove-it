@@ -140,11 +140,9 @@ impl<'ir> Evaluator<'ir> {
                 return Ok(());
             }
             NodeKind::Let {
-                instances,
-                definitions,
-                body,
+                definitions, body, ..
             } => {
-                let inner = self.bind_let(*instances, definitions, context)?;
+                let inner = self.bind_let(definitions, context)?;
                 return self.split_actions(*body, &inner, actions);
             }
             NodeKind::Label { body, .. } => return self.split_actions(*body, context, actions),
@@ -461,11 +459,9 @@ impl<'ir> Evaluator<'ir> {
                 }
             }
             NodeKind::Let {
-                instances,
-                definitions,
-                body,
+                definitions, body, ..
             } => {
-                let inner = self.bind_let(*instances, definitions, context)?;
+                let inner = self.bind_let(definitions, context)?;
                 self.walk(*body, &inner, is_init, then)
             }
             NodeKind::Unchanged(expression) => {

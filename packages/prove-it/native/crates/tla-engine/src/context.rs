@@ -64,6 +64,9 @@ pub struct EngineContext {
     pub atoms: Vec<Atom>,
     /// Whether evaluating an atom may print.
     pub is_live_printing: bool,
+    /// Whether an atom sets or reads TLC's registers, which the search then answers as TLC
+    /// evaluates it.
+    pub is_live_registered: bool,
     /// Whether each atom reads TLCGet("diameter").
     pub diameter_atoms: Vec<bool>,
     /// Whether an invariant may print, which the search prints among Next's prints.
@@ -639,6 +642,7 @@ impl EngineContext {
             Vec::new()
         };
         let is_live_printing = compiled.iter().any(|atom| atom.is_printing);
+        let is_live_registered = compiled.iter().any(|atom| atom.uses_registers);
         let diameter_atoms = compiled.iter().map(|atom| atom.reads_diameter).collect();
         let atoms = compiled.into_iter().map(|atom| atom.atom).collect();
         let (initial_invariants, initial_invariant_owners) = invariants
@@ -674,6 +678,7 @@ impl EngineContext {
             view,
             atoms,
             is_live_printing,
+            is_live_registered,
             diameter_atoms,
             is_invariant_printing,
             startup,
@@ -714,7 +719,7 @@ fn compile_live(
         }
         // TLC evaluates the atoms as it adds each state to the behavior graphs, in an order
         // the registers would tell.
-        Ok(Some(compiled)) if compiled.uses_registers() => {
+        Ok(Some(compiled)) if compiled.uses_registers() && !compiler.is_native => {
             Err("unsupported: TLC's registers in the liveness checker's atoms".into())
         }
         Ok(Some(compiled)) => Ok(compiled),
@@ -741,16 +746,19 @@ struct CompiledAtom {
     atom: Atom,
     is_printing: bool,
     reads_diameter: bool,
+    uses_registers: bool,
 }
 
 fn compile_atom(compiler: &mut Compiler<'_>, ir: &Ir, atom: &tla_ir::Atom) -> CompiledAtom {
     let scope = atom.scope;
     let mut is_printing = false;
     let mut reads_diameter = false;
+    let mut uses_registers = false;
     let compiled = match &atom.kind {
         AtomKind::State => compile_live(compiler, atom.expression, scope).map(|compiled| {
             is_printing = compiled.is_printing();
             reads_diameter = compiled.reads_diameter();
+            uses_registers = compiled.uses_registers();
             Atom::State(compiled.eval)
         }),
         AtomKind::Action { unchanged, enabled } => (|| {
@@ -765,6 +773,8 @@ fn compile_atom(compiler: &mut Compiler<'_>, ir: &Ir, atom: &tla_ir::Atom) -> Co
             is_printing = action.is_printing();
             reads_diameter =
                 action.reads_diameter() || subscript.as_ref().is_some_and(Compiled::reads_diameter);
+            uses_registers =
+                action.uses_registers() || subscript.as_ref().is_some_and(Compiled::uses_registers);
             Ok(Atom::Action {
                 action: action.eval,
                 subscript: subscript.map(|subscript| subscript.eval),
@@ -775,6 +785,7 @@ fn compile_atom(compiler: &mut Compiler<'_>, ir: &Ir, atom: &tla_ir::Atom) -> Co
             let run = match compiler.compile_enabled_in_scope(atom.expression, scope) {
                 Ok(Some(compiled)) => {
                     is_printing = compiled.is_printing();
+                    uses_registers = compiled.uses_registers();
                     Ok(compiled.eval)
                 }
                 Ok(None) => Err("a scope the engine can't translate".to_string()),
@@ -813,5 +824,6 @@ fn compile_atom(compiler: &mut Compiler<'_>, ir: &Ir, atom: &tla_ir::Atom) -> Co
         atom: compiled.unwrap_or_else(Atom::Unknown),
         is_printing,
         reads_diameter,
+        uses_registers,
     }
 }
