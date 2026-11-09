@@ -544,6 +544,7 @@ impl<'a> Lexer<'a> {
                 column,
                 is_end: self.index >= self.source.len(),
             }),
+            sany: None,
         }
     }
 
@@ -747,6 +748,7 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, SyntaxError> {
     let header = find_module_header(source).ok_or_else(|| SyntaxError {
         message: "Expected a module header such as ---- MODULE Name ----".to_string(),
         failure: None,
+        sany: None,
     })?;
     let prefix = &source[..header];
     let line_start = prefix.rfind('\n').map_or(0, |newline| newline + 1);

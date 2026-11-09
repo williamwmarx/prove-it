@@ -2,34 +2,25 @@
 //! for `scripts/front-differential.ts` to compare with the TypeScript front end:
 //!
 //! - `front-dump tokens` writes each module's tokens as `[kind, text, spelling, line, column,
-//!   endColumn]`, or the syntax error the lexer raises.
+//!   endColumn]`, or the syntax error the lexer raises;
+//! - `front-dump ast` writes the module `parseModule` reads, as canonical JSON, or its error;
+//! - `front-dump sany-ast` does the same for `parseSanyModule`;
+//! - `front-dump time` writes the best of five times to tokenize and parse each module, in
+//!   milliseconds.
 
 use std::fmt::Write as _;
 use std::io::{BufRead, Write, stdin, stdout};
 use std::process::ExitCode;
 
-use tla_front::errors::SyntaxError;
+use tla_front::TlcVersion;
+use tla_front::dump;
 use tla_front::json::write_js_string;
 use tla_front::lexer::tokenize;
-
-fn write_error(out: &mut String, error: &SyntaxError) {
-    out.push_str("{\"error\":");
-    write_js_string(out, &error.message);
-    if let Some(failure) = &error.failure {
-        out.push_str(",\"failure\":{\"reason\":");
-        write_js_string(out, &failure.reason);
-        let _ = write!(
-            out,
-            ",\"line\":{},\"column\":{},\"isEnd\":{}}}",
-            failure.line, failure.column, failure.is_end
-        );
-    }
-    out.push('}');
-}
+use tla_front::parser::{parse_module, parse_sany_module};
 
 fn write_tokens(out: &mut String, source: &str) {
     match tokenize(source) {
-        Err(error) => write_error(out, &error),
+        Err(error) => dump::syntax_error(&error).write(out),
         Ok(tokens) => {
             out.push('[');
             for (index, token) in tokens.iter().enumerate() {
@@ -56,12 +47,41 @@ fn write_tokens(out: &mut String, source: &str) {
     }
 }
 
+fn write_module(out: &mut String, source: &str, is_sany: bool) {
+    let parsed = if is_sany {
+        parse_sany_module(source, None, TlcVersion::Master)
+    } else {
+        parse_module(source)
+    };
+    match parsed {
+        Ok(module) => dump::module(&module).write(out),
+        Err(error) => dump::syntax_error(&error).write(out),
+    }
+}
+
+fn write_time(out: &mut String, source: &str) {
+    let best = (0..5)
+        .map(|_| {
+            let start = std::time::Instant::now();
+            std::hint::black_box(parse_module(source)).ok();
+            start.elapsed().as_secs_f64() * 1000.0
+        })
+        .fold(f64::INFINITY, f64::min);
+    let _ = write!(out, "{best:.4}");
+}
+
 fn main() -> ExitCode {
     let mode = std::env::args().nth(1).unwrap_or_default();
-    if mode != "tokens" {
-        eprintln!("usage: front-dump tokens < paths");
-        return ExitCode::from(2);
-    }
+    let write: fn(&mut String, &str) = match mode.as_str() {
+        "tokens" => write_tokens,
+        "ast" => |out, source| write_module(out, source, false),
+        "sany-ast" => |out, source| write_module(out, source, true),
+        "time" => write_time,
+        _ => {
+            eprintln!("usage: front-dump tokens|ast|sany-ast|time < paths");
+            return ExitCode::from(2);
+        }
+    };
     let mut output = stdout().lock();
     for path in stdin().lock().lines().map_while(Result::ok) {
         let source = match std::fs::read(&path) {
@@ -72,7 +92,7 @@ fn main() -> ExitCode {
             }
         };
         let mut line = String::new();
-        write_tokens(&mut line, &source);
+        write(&mut line, &source);
         line.push('\n');
         if output.write_all(line.as_bytes()).is_err() {
             return ExitCode::FAILURE;

@@ -2572,3 +2572,32 @@ the TypeScript front end in Bun.
 - Speed, best of five in process, on this 4-core machine: `TE.tla` (2.9 MB) 50 ms against
   95 ms for `lexer.ts` in Bun; `tcp_proof.tla` (259 KB) 3.2 ms against 12.6 ms; `LevelSpec.tla`
   (132 KB) 0.45 ms against 5.6 ms.
+
+#### F2 as built
+
+- `ast` mirrors `ast.ts` type for type. A node TypeScript reaches from two places is one `Rc`:
+  the set of `\A x, y \in S` in both bounds, a theorem's or assumption's statement and the
+  definition its name makes, a module's definitions and its units. Later stages that key on
+  identity, as the IR lowering does, see the same sharing. Ranges are values, not `Rc`s.
+- `parser` ports the `tlc` and `sany` modes of `parser.ts` (`parse_module`,
+  `parse_module_tokens`, `parse_sany_module`) and `extractModule`. The `tlapm` mode, which reads
+  proof obligations as tlapm does, is left out: the checker never uses it. A module named by a
+  keyword makes `parser.ts` run SANY's own parser (`getSanyParseError`), which F5 ports; until then
+  the Rust parser returns an `unsupported:` error there, and no corpus module reaches it.
+- `dump` writes the AST and errors as canonical JSON: keys sorted, `undefined` fields left out, so
+  the harness compares the two ASTs as text without either side building objects in the other's
+  order. `scripts/front-differential.ts` gains the modes `ast` and `sany-ast`, `--mutate <n>`
+  (four variants of each of the first n modules, inserting TLA+ syntax and deleting text at places
+  a fixed seed picks, so errors and their positions are compared too), and `time`.
+- **Parity.** `ast` and `sany-ast`: 2,356 of 2,356 modules match, and so do 6,000 variants of
+  1,500 randomly chosen corpus modules (1,488 of the first 2,000 rejected), with every error's
+  message, reason and position, and the SANY errors of `HIDE`. Verification's Front End job runs
+  all three modes with `--mutate 400`.
+- **Speed** (`front-differential.ts time`, best of five, tokens and AST, this 4-core machine):
+  all 2,356 modules 996 ms in TypeScript against 397 ms in Rust; `TE.tla` 337 against 216 ms,
+  `tcp_proof.tla` 39 against 12.6 ms, `FindOp.tla` 10.9 against 2.7 ms. Under callgrind, about
+  a third of Rust's time is the allocator (an `Rc` per node, a `Vec` per argument list) and a
+  sixth is dropping the AST, which the binary can skip at exit. An `ExpressionKind` is 160 bytes,
+  set by the qualified `Apply`'s ranges; boxing them is the next step if parsing shows up in a
+  whole front end's profile.
+

@@ -88,7 +88,10 @@ jobs:
             command: |
               cd packages/prove-it
               bun scripts/fetch-corpora.ts
-              bun scripts/front-differential.ts tokens
+              cd native && cargo build --release --locked -p tla-front --bin front-dump && cd ..
+              for mode in tokens ast sany-ast; do
+                bun scripts/front-differential.ts "$mode" --mutate 400 --rust native/target/release/front-dump
+              done
           - task: Cargo Test
             command: cd packages/prove-it/native && cargo test --locked
           - task: Cargo Clippy
