@@ -138,12 +138,16 @@ pub fn is_member(value: &Value, set: &Value) -> Evaluated<bool> {
             _ => fail("a mistyped membership in an interval"),
         },
         Value::Lazy(lazy) => match &**lazy {
+            // An untyped model value is in no set of the standard modules
+            // (`ModelValue.modelValueMember`).
             Lazy::Nat => match value {
                 Value::Int(int) => Ok(*int >= 0),
+                Value::Model(model) if model.model_type() == 0 => Ok(false),
                 _ => fail("a mistyped membership in Nat"),
             },
             Lazy::Int => match value {
                 Value::Int(_) => Ok(true),
+                Value::Model(model) if model.model_type() == 0 => Ok(false),
                 _ => fail("a mistyped membership in Int"),
             },
             Lazy::Real => fail("a membership in Real"),
