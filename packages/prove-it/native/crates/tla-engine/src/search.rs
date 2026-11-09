@@ -1685,8 +1685,8 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 let liveness =
                     check_liveness(model, search, &tables, None, false, &context.diameter_atoms);
                 periodic_time += at.elapsed();
-                // Whatever the checker leaves undecided, the check of the complete graph decides, and the
-                // graph is bounded again for the interpreter, which may decide it as the graph grows.
+                // Whatever the checker leaves undecided, the check of the complete graph decides,
+                // and the graph is bounded again for the interpreter, which checks as it grows.
                 let (Some(branches), Verdict::Holds | Verdict::Lasso { .. }) =
                     (liveness.branches, &liveness.verdict)
                 else {
