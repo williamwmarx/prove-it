@@ -1853,7 +1853,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                                     &held,
                                     &tables,
                                     &liveness,
-                                    context.is_invariant_printing,
+                                    context.is_invariant_printing || is_distinct_read,
                                 )
                             })
                             .flatten();
@@ -2372,7 +2372,7 @@ fn order_printed<'p>(
     held: &'p [Vec<Printed>],
     tables: &'p [Table],
     liveness: &Liveness,
-    is_invariant_printing: bool,
+    is_replay_inexact: bool,
 ) -> Option<Vec<Out<'p>>> {
     let is_printed = held.iter().any(|printed| !printed.is_empty())
         || tables.iter().any(|table| !table.prints.is_empty());
@@ -2403,11 +2403,12 @@ fn order_printed<'p>(
             }
             // TLC runs Next again from a stored state it adds a node of late, and prints what
             // the search printed expanding it.
-            // TLC checks no invariant then, so where one may print among Next's prints, the
+            // TLC checks no invariant then, and the count of distinct states has grown since, so
+            // where an invariant may print among Next's prints or anything reads that count, the
             // interpreter checks from the start.
             Event::Late(state) => {
                 if let Some(printed) = expansions.get(state as usize) {
-                    if is_invariant_printing && !printed.is_empty() {
+                    if is_replay_inexact && !printed.is_empty() {
                         return None;
                     }
                     order.extend(printed.iter().map(Out::Printed));

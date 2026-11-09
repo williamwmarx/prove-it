@@ -123,7 +123,12 @@ comes from the checker instead:
   and logs each atom it evaluates after the state it starts to add (`Event`).
 - The engine then reports, in order: the initial states' prints, the count of initial states, and
   for each state its expansion's prints followed by those of the atoms the checker evaluated as it
-  added the state, up to the state whose accepting node ends TLC's search.
+  added the state, up to the state whose accepting node ends TLC's search. Where TLC runs Next
+  again for a late node of a stored state, the engine repeats that state's expansion prints.
+
+Where an invariant may print, or anything reads `TLCGet("distinct")`, that repeat would differ from
+TLC's: TLC checks no invariant for a late node, and the count of distinct states has grown since.
+So where a late node would repeat prints there, the engine hands over as below.
 
 Where the check isn't decided natively, under `PROVE_IT_LIVE_CHECK=1`, where an atom prints as TLC
 adds an initial state, or where the steps from a state the search didn't store print, the engine

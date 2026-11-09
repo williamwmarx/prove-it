@@ -678,6 +678,22 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     ).toContainEqual(
       expect.stringMatching(/native: stopped: printing where .*: prints it doesn't/),
     );
+    // Nor does Next print the same again where it prints the count of distinct states, which
+    // has grown since.
+    const counted = [
+      "EXTENDS Naturals, TLC",
+      "VARIABLE x",
+      "Init == x = 0",
+      "A == x' = (x + 1) % 3",
+      'Next == PrintT(<<x, TLCGet("distinct")>>) /\\ A',
+      "Fair == Init /\\ [][Next]_x /\\ WF_x(A)",
+      "Leads == [](x = 0 => <>(x = 2))",
+    ];
+    expect(
+      await compareWithInterpreter(counted, "SPECIFICATION Fair\nPROPERTY Leads"),
+    ).toContainEqual(
+      expect.stringMatching(/native: stopped: printing where .*: prints it doesn't/),
+    );
   });
 
   it("hands over a violated invariant, deadlock and a failed action property", async () => {
