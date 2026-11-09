@@ -701,6 +701,8 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
       "Reaches == <>(x = 9)",
       "Returns == []<>(x = 0)",
     ];
+    const directory = mkdtempSync(join(tmpdir(), "prove-it-native-periodic-"));
+    const log = join(directory, "log.jsonl");
     for (const [spec, property, status] of [
       ["Unfair", "Reaches", "liveness-violation"],
       ["Fair", "Returns", "success"],
@@ -713,6 +715,7 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
         PROVE_IT_ENGINE: "debug",
         PROVE_IT_ENGINE_BACKEND: "rust",
         PROVE_IT_TEST_LIVE_CHECK_AT: "2",
+        PROVE_IT_STATE_LOG: log,
       });
       const interpreter = await run(options, {
         PROVE_IT_ENGINE: "0",
@@ -725,7 +728,15 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
       expect(native.progress).toContainEqual(
         expect.stringMatching(/"isComplete":false,"states":2,/),
       );
+      // The log holds the states the search found when the check found the counterexample.
+      const header = JSON.parse(readLogLines(log)[0]);
+      expect([header.count, header.expanding, header.stopped]).toEqual(
+        status === "success"
+          ? [10, 10, null]
+          : [3, 2, "a counterexample part way through the search"],
+      );
     }
+    rmSync(directory, { recursive: true, force: true });
   });
 
   it("keeps the graph past four million states where it checks the properties as it goes", async () => {
