@@ -236,7 +236,8 @@ Still to do:
   is reported after the step back into a lasso's cycle. The violation's exit code stands.
 - Still not native:
   - a postcondition TLC computes as it starts, which it rejects;
-  - an unwitnessed `_POSSIBLE` predicate, and `_POSSIBLE` counts after a search that stopped;
+  - an unwitnessed `_POSSIBLE` predicate after a violation (the violation carries the counts as
+    the search left them, `Violation::possible`, which a witnessed one checks with);
   - what `Rebuilder::postcondition` declines, such as CounterExample's actions with parameters.
 
 ## Specs TLC stops at before the search
@@ -247,9 +248,27 @@ Still to do:
   - 2185 `Starting... (…)`;
   - SANY's rejection of the spec (3002, exit 150), or the error tla-front's lowering raises with
     TLC's code and exit code (`FrontError::get_coded`: configuration errors with 151, evaluation
-    errors with 75, a stack overflow with 255);
+    errors with 75, a stack overflow with 255, and TLC's `errorConstantToExitStatus` by code:
+    2146 with 76, 2253 with 77, 2213 and 2214 and an unexpected exception with 255);
   - then 2186.
 - A configuration file `parse_config` rejects is reported the same way, right after the banner, as
   TLC reads it before it parses the spec.
-- Until tla-front checks that an invariant is a state predicate (2146), which TLC does before it
-  looks up the properties, a property "not defined" (2229) stays not native.
+- Lowering reads modules beside the spec, then from each `-DTLA-Library` directory in order.
+- Where tla-front doesn't find where TLC stops, the not-native reason says why.
+
+## Handoff
+
+- Two paths feed the search. With a recorded front (`PROVE_IT_FRONT/<spec>.front`, what TLC
+  printed from the banner to "Computing initial states", which the differential records), the
+  binary prints that text and lowers the IR itself where no `.ir` is recorded. Without one it only
+  reports where TLC stops before the search (above); every run that searches has a recorded front.
+- Open: the engine's startup hooks `startup_print`, `symmetry_sets_too_small` and `startup_done`
+  are not wired in the CLI, since the recorded front holds that output. The tla-front path needs
+  them to print what TLC prints as it starts. `startup_print` must check `is_printable` as
+  `Relay::print` does and stop the run as not native otherwise: under `compiler.is_native` the
+  Print builtin no longer declines a value whose text depends on how TLC built it.
+- Sweep for wrong output after a big push: list the corpus models whose configuration uses
+  SYMMETRY, VIEW, ALIAS, POSTCONDITION(S) or `_POSSIBLE`, and run
+  `bun scripts/run.ts differential --compare-backends --filter <id> --native
+  native/target/release/prove-it` for each, on freshly built `dist/`, addon and binary. Any native
+  "differs" is a blocker: fix it or decline the run as not native.
