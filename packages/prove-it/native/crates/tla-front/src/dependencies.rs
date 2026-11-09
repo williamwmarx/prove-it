@@ -456,6 +456,15 @@ impl DefinitionFacts {
         self.get_row(definition, environment)[0] & REPEATED_EFFECT != 0
     }
 
+    /// `isConstantLevel`.
+    pub fn is_constant_level(
+        &self,
+        definition: &Rc<Definition>,
+        environment: &Environment,
+    ) -> bool {
+        self.get_row(definition, environment)[0] & NONCONSTANT == 0
+    }
+
     /// `hasRepeatedEffect`.
     pub fn has_repeated_effect(&self, expression: &Expr, environment: &Environment) -> bool {
         self.get_expressions_row(std::slice::from_ref(expression), environment)[0] & REPEATED_EFFECT
