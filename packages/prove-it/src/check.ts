@@ -1930,11 +1930,13 @@ const searchStates = (
       };
     } catch (error) {
       // A search that stopped part way hands over the graph it found, when it recorded one for the
-      // temporal properties, and the interpreter goes on from the state it stopped at.
+      // temporal properties, and the interpreter goes on from the state it stopped at. Under
+      // SYMMETRY or a VIEW that graph holds the states stored rather than those each step reached,
+      // so the interpreter searches again.
       if (isBailout(error) && error.checkpoint) {
         const checkpoint = error.checkpoint as EngineCheckpoint;
         if (!liveness) engineReport.checkpoint = checkpoint;
-        else if (checkpoint.graph) takeGraph(checkpoint);
+        else if (checkpoint.graph && !isReducing) takeGraph(checkpoint);
       }
       reportEngine(
         `handed over after ${(performance.now() - startedAt).toFixed(0)} ms: ${isBailout(error) ? error.message : String(error instanceof Error ? (error.stack ?? error.message) : error)}`,
