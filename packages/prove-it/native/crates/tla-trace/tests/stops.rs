@@ -6,14 +6,16 @@
 mod common;
 
 use common::{Quiet, ir_directory, path_to, stop_search};
-use tla_engine::search::{ErrorSite, SearchOutcome, Settings, ViolationKind, search};
+use tla_engine::search::{
+    ErrorSite, OUT_DEGREE_BUCKETS, SearchOutcome, Settings, ViolationKind, search,
+};
 use tla_trace::{Rebuilder, Site};
 use tla_values::Id;
 
 const MODELS: &str = "tlc/tlatools/org.lamport.tlatools/test-model";
 
 // The search's report of where it stopped, and TLC's message code for it from the rebuilder.
-fn stop(path: &str) -> (ErrorSite, usize, u32, String) {
+fn stop(path: &str) -> (ErrorSite, usize, u32, String, [u64; OUT_DEGREE_BUCKETS]) {
     let bytes = std::fs::read(ir_directory().join(format!("{MODELS}/{path}.ir"))).expect("an IR");
     let ir = tla_ir::decode(&bytes).expect("an IR that decodes");
     tla_values::on_nesting_stack(|| {
@@ -47,13 +49,19 @@ fn stop(path: &str) -> (ErrorSite, usize, u32, String) {
                 )
             })
             .unwrap_or_else(|unsupported| panic!("{path}: {}", unsupported.0));
-        (site, states.len(), failure.code, failure.message)
+        (
+            site,
+            states.len(),
+            failure.code,
+            failure.message,
+            violation.counts.out_degrees,
+        )
     })
 }
 
 #[test]
 fn reports_a_failure_in_the_initial_predicate_with_no_states() {
-    let (site, count, code, message) = stop("suite/etest9");
+    let (site, count, code, message, _) = stop("suite/etest9");
     assert_eq!((site, count, code), (ErrorSite::Init, 0, 1000));
     assert_eq!(
         message,
@@ -63,7 +71,7 @@ fn reports_a_failure_in_the_initial_predicate_with_no_states() {
 
 #[test]
 fn reports_a_failure_in_an_action_with_the_path_to_the_state_it_expands() {
-    let (site, count, code, message) = stop("AssertExpressionStack");
+    let (site, count, code, message, _) = stop("AssertExpressionStack");
     // The path the search kept to the state it was expanding.
     let bytes = std::fs::read(ir_directory().join(format!("{MODELS}/AssertExpressionStack.ir")))
         .expect("an IR");
@@ -81,8 +89,13 @@ fn reports_a_failure_in_an_action_with_the_path_to_the_state_it_expands() {
 
 #[test]
 fn reports_a_failing_invariant_with_the_successor_that_fails_it() {
-    let (site, count, code, message) = stop("EvaluatingValueTest");
+    let (site, count, code, message, out_degrees) = stop("EvaluatingValueTest");
     assert_eq!((site, code), (ErrorSite::Invariant(0), 2111));
     assert!(count >= 2, "the path and the successor");
     assert!(message.starts_with("Evaluating invariant Inv failed."));
+    // TLC counts the initial state it was expanding, with the new state that fails the invariant:
+    // "The average outdegree ... is 1 (minimum is 1, the maximum 1 ...)".
+    let mut expected = [0; OUT_DEGREE_BUCKETS];
+    expected[1] = 1;
+    assert_eq!(out_degrees, expected);
 }
