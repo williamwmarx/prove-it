@@ -117,6 +117,9 @@ export interface EngineResult {
   threads: number;
   // From the native engine, what each _POSSIBLE predicate counted, or -1 where it wasn't evaluated.
   possible?: number[];
+  // From the native engine, the states left to expand where a check of the temporal properties
+  // part way through the search found a counterexample.
+  queuedStates?: number;
   // A complete search the interpreter is to replay, when it checks temporal properties.
   checkpoint: EngineCheckpoint | undefined;
 }
