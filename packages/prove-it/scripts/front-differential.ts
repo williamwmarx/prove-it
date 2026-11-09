@@ -55,6 +55,7 @@ import { getSanyParseError } from "../src/sany/parse-error";
 import { getSanyReport } from "../src/sany/report";
 import { createSearch, getProperties, getSpecification } from "../src/search";
 import { getNextSubstitution } from "../src/spec-description";
+import { withUnexpectedException } from "../src/tlc/messages";
 import { createTlcOrder } from "../src/tlc/order";
 import type { TlcVersion } from "../src/tlc/version";
 import { setStringOrder } from "../src/values";
@@ -283,11 +284,14 @@ const lowerLinkedModel = (
     );
     return "ir" in unsearched ? { ir: Buffer.from(unsearched.ir).toString("hex") } : unsearched;
   }
-  // The checker's formula and atoms, which need no graph before it checks.
-  const liveness = createLivenessChecker(search.liveness, specification.temporals, environment, {
-    getFingerprint: () => 0,
-    getSuccessors: () => [],
-  });
+  // The checker's formula and atoms, which need no graph before it checks. check.ts builds it
+  // inside withUnexpectedException, as TLC reports a RuntimeException it raises.
+  const liveness = withUnexpectedException(() =>
+    createLivenessChecker(search.liveness, specification.temporals, environment, {
+      getFingerprint: () => 0,
+      getSuccessors: () => [],
+    }),
+  );
   const outcome = lowerToIr({
     config,
     environment,

@@ -540,3 +540,14 @@ After the overrides and the assumptions' prints: 1,400 of 1,466 runs in no-recor
 differing, against 1,402 with recordings. The 2 runs only a recording gives are
 test-model/CyclicRedefineInstance, whose Next `tla_trace::add_actions` can't split through an
 INSTANCE in a LET; the recorded IR holds the TypeScript front end's actions.
+
+## SANY's check of a recursive operator's arguments
+
+`levels.rs` ports `src/levels.ts`, which lacks the check `ModuleNode.levelCheck` makes of each
+recursive section (`src/sany/levels.ts`, which the TypeScript CLI's report runs): a RECURSIVE
+operator, of the module or of a LET, whose body takes an argument below action level, as a primed
+parameter, is "Argument i of recursive operator Op is primed" at the definition. A unit at the
+module's start reports it, before the module's other units, as SANY checks the recursive sections
+first. `NotYet`: a recursive operator that applies another (SANY's first pass reads the section's
+operators with action-level arguments), one whose levels fail to analyze, and errors of both a
+module's and a LET's operators, whose order isn't checked.
