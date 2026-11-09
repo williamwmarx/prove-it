@@ -785,6 +785,34 @@ fn rebuilds_a_trace_under_symmetry_through_sets_tlc_streams_in_order() {
 }
 
 #[test]
+fn checks_the_possible_counts_after_a_deadlock() {
+    // TLC's PostConditionsTest: TLC checks the postconditions after the deadlock, with each
+    // _POSSIBLE predicate's count as the search left it, so PossibleCounts holds.
+    let spec = "---- MODULE Stop ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 3 /\\ x' = x + 1\nSpec == Init /\\ [][Next]_x\nAtTwo == x = 2\nLastStep == x = 2 /\\ x' = 3\nPossibleCounts ==\n    LET p == TLCGet(\"all:named\")[\"s:_possible\"][1]\n    IN /\\ p[\"AtTwo\"] = 1\n       /\\ p[\"LastStep\"] = 1\n====\n";
+    let directory =
+        std::env::temp_dir().join(format!("prove-it-cli-possible-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    for (extension, contents) in [
+        ("tla", spec),
+        (
+            "cfg",
+            "SPECIFICATION Spec\nPOSTCONDITIONS PossibleCounts\n_POSSIBLE AtTwo LastStep\n",
+        ),
+        ("front", ""),
+    ] {
+        std::fs::write(directory.join(format!("Stop.{extension}")), contents).expect("a file");
+    }
+    let output = run(&directory, &["Stop"]);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(11), "{text}");
+    assert!(
+        text.contains("x = 3\n\n4 states generated, 4 distinct states found, 0 states left on queue.\nThe depth of the complete state graph search is 4.\nFinished in "),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
 fn reports_a_division_by_zero_after_what_the_expansion_printed() {
     let directory =
         std::env::temp_dir().join(format!("prove-it-cli-divide-{}", std::process::id()));
@@ -834,5 +862,27 @@ fn reports_a_property_an_initial_state_violates() {
         ),
         "{text}"
     );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+const LIVE_WRITE_THROUGH_CACHE_IR: &[u8] = include_bytes!(
+    "../../../../tests/conformance/ir/tlc/tlatools/org.lamport.tlatools/test-model/examples/SpecifyingSystems/Liveness/MCLiveWriteThroughCache.ir"
+);
+
+#[test]
+fn checks_a_postcondition_on_a_lasso_stuttering_at_its_initial_state() {
+    let (output, directory) = run_golden(
+        "stutter-postcondition",
+        LIVE_WRITE_THROUGH_CACHE_IR,
+        "MCLiveWriteThroughCache",
+        "",
+        &[],
+    );
+    let text = stdout(&output);
+    // The postcondition is TLC's CounterExample, whose step back into the cycle TLC holds no
+    // action for: Action.UNKNOWN, unnamed, at the TLA+ builtins' null location.
+    assert_eq!(output.status.code(), Some(13), "{text}");
+    assert!(text.contains("State 2: Stuttering\n"), "{text}");
+    assert!(!text.contains("Postcondition"), "{text}");
     std::fs::remove_dir_all(directory).expect("removed");
 }

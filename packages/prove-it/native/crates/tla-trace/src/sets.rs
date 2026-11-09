@@ -42,7 +42,25 @@ pub fn enumerate(lazy: &Lazy) -> Evaluated<Vec<Value>> {
             sorted(subsets)
         }
         Lazy::FunctionSet(domain_set, range) => {
+            if is_infinite(domain_set) {
+                return fail_runtime(
+                    "enumerated an infinite set",
+                    format!(
+                        "Attempted to enumerate a set of the form [D -> R],but the domain D:\n{}\ncannot be enumerated.",
+                        format_value(domain_set)
+                    ),
+                );
+            }
             let domain = elements(domain_set)?;
+            if !domain.is_empty() && is_infinite(range) {
+                return fail_runtime(
+                    "enumerated an infinite set",
+                    format!(
+                        "Attempted to enumerate a set of the form [D -> R],but the range R:\n{}\ncannot be enumerated.",
+                        format_value(range)
+                    ),
+                );
+            }
             // Over an empty domain the set holds the empty function alone, whatever the range.
             let range = if domain.is_empty() {
                 Rc::new(Vec::new())
@@ -58,10 +76,13 @@ pub fn enumerate(lazy: &Lazy) -> Evaluated<Vec<Value>> {
             sorted(tuples.into_iter().map(build).collect())
         }
         Lazy::RecordSet(fields, _) => {
-            let sets = fields
-                .iter()
-                .map(|(_, set)| elements(set))
-                .collect::<Evaluated<Vec<_>>>()?;
+            let sets = component_elements(fields.iter().map(|(_, set)| set), |index, set| {
+                format!(
+                    "Attempted to enumerate a set of the form [l1 : v1, ..., ln : vn],\nbut can't enumerate the value of the `{}' field:\n{}",
+                    String::from_utf16_lossy(&fields[index].0.units),
+                    format_value(set)
+                )
+            })?;
             let domain: Vec<Value> = fields
                 .iter()
                 .map(|(name, _)| Value::Str(Rc::clone(name)))
@@ -74,13 +95,40 @@ pub fn enumerate(lazy: &Lazy) -> Evaluated<Vec<Value>> {
             )
         }
         Lazy::Product(factors) => {
-            let sets = factors
-                .iter()
-                .map(elements)
-                .collect::<Evaluated<Vec<_>>>()?;
+            let sets = component_elements(factors.iter(), |index, factor| {
+                format!(
+                    "Attempted to enumerate a set of the form s1 \\X s2 ... \\X sn,\nbut can't enumerate s{index}:\n{}",
+                    format_value(factor)
+                )
+            })?;
             sorted(product(&sets)?.into_iter().map(Value::tuple).collect())
         }
     }
+}
+
+// The sets TLC overrides with Java classes it can't enumerate: Nat, Int, Real and STRING.
+fn is_infinite(set: &Value) -> bool {
+    matches!(set, Value::Lazy(lazy) if matches!(**lazy, Lazy::Nat | Lazy::Int | Lazy::Real | Lazy::Strings))
+}
+
+// The elements of each set a set of records or tuples combines, as `getComponentElements` reads
+// them: TLC's message for the first it can't enumerate, and no combinations past an empty one.
+fn component_elements<'a>(
+    sets: impl Iterator<Item = &'a Value>,
+    describe: impl Fn(usize, &Value) -> String,
+) -> Evaluated<Vec<Rc<Vec<Value>>>> {
+    let mut lists = Vec::new();
+    for (index, set) in sets.enumerate() {
+        if is_infinite(set) {
+            return fail_runtime("enumerated an infinite set", describe(index, set));
+        }
+        let elements = elements(set)?;
+        if elements.is_empty() {
+            return Ok(vec![elements]);
+        }
+        lists.push(elements);
+    }
+    Ok(lists)
 }
 
 fn sorted(values: Vec<Value>) -> Evaluated<Vec<Value>> {
@@ -372,6 +420,59 @@ mod tests {
         assert_eq!(
             message(compare(&Value::Interval(1, 2), &Value::Int(1)).map(|_| true)),
             "Attempted to compare the set {1, 2} with the value:\n1"
+        );
+    }
+}
+
+#[cfg(test)]
+mod enumeration_tests {
+    use super::*;
+    use crate::value::Text;
+
+    fn text(name: &str) -> Rc<Text> {
+        Rc::new(Text {
+            units: name.encode_utf16().collect(),
+            rank: -1,
+        })
+    }
+
+    fn message(lazy: Lazy) -> Option<String> {
+        enumerate(&lazy)
+            .err()
+            .and_then(|error| error.message)
+            .map(|message| message.text)
+    }
+
+    #[test]
+    fn names_what_tlc_cant_enumerate_in_a_set_it_combines() {
+        let int = Value::Lazy(Rc::new(Lazy::Int));
+        // IOUtils's Serialize: CHOOSE r \in [exitValue : Int, stdout : STRING, ...] : TRUE.
+        let records = Lazy::RecordSet(
+            vec![
+                (text("exitValue"), int.clone()),
+                (text("stdout"), Value::Lazy(Rc::new(Lazy::Strings))),
+            ],
+            vec![0, 1],
+        );
+        assert_eq!(
+            message(records).as_deref(),
+            Some(
+                "Attempted to enumerate a set of the form [l1 : v1, ..., ln : vn],\nbut can't enumerate the value of the `exitValue' field:\nInt"
+            )
+        );
+        let functions = Lazy::FunctionSet(Value::Lazy(Rc::new(Lazy::Strings)), int.clone());
+        assert_eq!(
+            message(functions).as_deref(),
+            Some(
+                "Attempted to enumerate a set of the form [D -> R],but the domain D:\nSTRING\ncannot be enumerated."
+            )
+        );
+        let product = Lazy::Product(vec![Value::Interval(1, 2), int]);
+        assert_eq!(
+            message(product).as_deref(),
+            Some(
+                "Attempted to enumerate a set of the form s1 \\X s2 ... \\X sn,\nbut can't enumerate s1:\nInt"
+            )
         );
     }
 }

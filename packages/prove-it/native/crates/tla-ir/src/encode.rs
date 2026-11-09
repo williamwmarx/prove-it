@@ -206,6 +206,15 @@ fn encode_here(ir: &Ir) -> Vec<u8> {
             .iter()
             .map(|&definition| definition as i32),
     );
+    words.push(startup.predicates.len() as i32);
+    for predicate in &startup.predicates {
+        words.extend([
+            predicate.form as i32,
+            predicate.kind as i32,
+            predicate.name as i32,
+            predicate.definition as i32,
+        ]);
+    }
     match &startup.symmetry {
         None => words.push(-1),
         Some(symmetry) => {

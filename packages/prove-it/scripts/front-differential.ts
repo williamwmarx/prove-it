@@ -32,7 +32,7 @@ import { getIrStartup, lowerConstantSpec } from "../src/check";
 import { type ModelConfig, parseConfig } from "../src/config";
 import { toEngineProperties } from "../src/engine/context";
 import { lowerToIr } from "../src/engine/ir";
-import { createEnvironment, type InstanceAction } from "../src/environment";
+import { createEnvironment } from "../src/environment";
 import {
   isStackOverflow,
   PcalBugError,
@@ -43,7 +43,7 @@ import {
   TlaModuleError,
   TlaSyntaxError,
 } from "../src/errors";
-import { type Builtin, describeRange, type Environment } from "../src/evaluate";
+import { type Builtin, describeRange } from "../src/evaluate";
 import { tokenize } from "../src/lexer";
 import { getLevel } from "../src/liveness";
 import { createLivenessChecker } from "../src/liveness-checker";
@@ -194,8 +194,7 @@ const readEnvironment = (source: string, path: string, config?: ModelConfig) => 
 // ranked, so the texts follow their first use.
 const lowerDefinitions = (source: string, path: string) => {
   setStringOrder([]);
-  const specification = linkSpec(source, path).specification;
-  return lowerEnvironment(specification.environment, specification.instanceActions);
+  return lowerEnvironment(undefined, linkSpec(source, path).specification);
 };
 
 // The IR of a model's environment, with the texts ranked in TLC's string order as check.ts ranks
@@ -214,7 +213,7 @@ const lowerModel = (source: string, _path: string, spec: string) => {
     files: { readFile: () => undefined, writeFile: () => {} },
     isSanyAccepted: true,
   });
-  return lowerEnvironment(specification.environment, specification.instanceActions);
+  return lowerEnvironment(config, specification);
 };
 
 // A model as check.ts lowers it, without TLC's actions, which the engine splits.
@@ -297,9 +296,10 @@ const lowerLinkedModel = (
 };
 
 const lowerEnvironment = (
-  environment: Environment,
-  instanceActions: Map<string, InstanceAction>,
+  config: ModelConfig | undefined,
+  specification: ReturnType<typeof createEnvironment>,
 ) => {
+  const environment = specification.environment;
   const root: Expression = { kind: "Number", value: 0, location: { line: 0, column: 0 } };
   const outcome = lowerToIr({
     config: { ...parseConfig(""), invariants: [...environment.definitions.keys()] },
@@ -320,9 +320,17 @@ const lowerEnvironment = (
     atoms: [],
     liveFormula: undefined,
     liveProperties: [],
-    startup: { substitutes: [], definitions: [], symmetry: undefined, assumptions: [] },
+    startup: {
+      substitutes: [],
+      definitions: [],
+      // Without a configuration, TLC computes no definition at startup.
+      normalized: config ? getIrStartup(config, specification).normalized : new Set(),
+      predicates: [],
+      symmetry: undefined,
+      assumptions: [],
+    },
     nextSubstitution: undefined,
-    instanceActions,
+    instanceActions: specification.instanceActions,
   });
   return "ir" in outcome ? { ir: Buffer.from(outcome.ir).toString("hex") } : outcome;
 };

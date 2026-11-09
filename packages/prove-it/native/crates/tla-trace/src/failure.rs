@@ -78,8 +78,8 @@ const FAILURE_ERROR: i32 = 255;
 
 const UNEXPECTED_EXCEPTION: &str = "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: ";
 
-// A coded message in -tool output, which TLC marks inside the message that holds it.
-fn nested(message: &TlcMessage) -> String {
+/// A coded message in -tool output, which TLC marks inside the message that holds it.
+pub(crate) fn nested(message: &TlcMessage) -> String {
     match message.code {
         Some(code) => format!(
             "@!@!@STARTMSG {code}:0 @!@!@\n{}\n@!@!@ENDMSG {code} @!@!@",
