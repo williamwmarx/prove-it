@@ -249,7 +249,7 @@ fn aliased_trace(path: &str) -> Result<Vec<String>, Unsupported> {
             ViolationKind::Lasso { loop_start, .. } => (Ending::Lasso, Some(loop_start)),
         };
         let states: Vec<&[Id]> = violation.states.iter().map(Vec::as_slice).collect();
-        let actions: Vec<Option<u32>> = violation.labels.iter().copied().map(Some).collect();
+        let actions = violation.labels.clone();
         let mut rebuilder = Rebuilder::new(&ir)?;
         let trace = rebuilder.rebuild(&violation.store, &states, &actions, ending)?;
         let aliases = rebuilder
