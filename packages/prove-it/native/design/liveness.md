@@ -85,6 +85,20 @@ TLC can't stop this way and the checker evaluates nothing. It still hands over w
 evaluating an atom the engine couldn't answer, a state predicate on any state or ENABLED on an
 expanded one, as on InitialLivenessEvaluationError.
 
+## An atom that fails to evaluate (as built)
+
+TLC evaluates the atoms as it adds each state to the behavior graphs, and stops at the first that
+fails, reporting it as an error in the next states, with the call stack first
+(`Worker#doNextCheckLiveness`): Github607, tla-rs liveness_error. The engine answers an atom it
+can't evaluate as UNKNOWN, so the checker records the first unanswered atom it reads as it adds
+an expanded state (`Liveness::unanswered`), in TLC's order. The engine reports it as
+`ErrorSite::Atom`: the path to the state being added, then the successor or the step's next state
+the atom reads, with the counts and out-degrees the graph holds up to that state. The binary
+evaluates the atom again with `tla-trace`, and prints TLC's report where it fails as TLC does, or
+isn't native where it holds. TLC's call stack records no node for the `<<A>>_v` of `WF_v(A)`,
+which the front writes at A, and ENABLED names the fairness condition where A leaves a variable of
+v unassigned (2148).
+
 ## Temporal formulas inside a predicate (as built)
 
 A liveness atom can be an operator whose body holds a temporal formula in a branch the run never

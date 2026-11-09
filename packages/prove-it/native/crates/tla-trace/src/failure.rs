@@ -3,7 +3,7 @@
 //! tracing evaluator of `evaluate.ts` record them and `getFailureMessage` and `formatCallStack` in
 //! TypeScript print them.
 
-use tla_ir::{NodeId, NodeKind, SourceRange};
+use tla_ir::{AtomKind, NodeId, NodeKind, SourceRange};
 use tla_values::{Id, Store};
 
 use crate::eval::{CallStack, Context, Evaluator, StackFrame};
@@ -32,6 +32,10 @@ pub enum Site {
     /// Evaluating the implied init, a property's initial predicate, at this position of the
     /// model's initial predicates on the initial state the path holds.
     InitialPredicate(u32),
+    /// Evaluating the atom at this position of the model's atoms as TLC adds the path's last state
+    /// to the behavior graphs: on that state, or, `is_extra`, on a state past the path, the
+    /// states' last: a successor's state predicate, or an action on a step to it.
+    Atom { atom: u32, is_extra: bool },
 }
 
 /// Where TLC fails to fingerprint a state: the ranges of the expressions that built the values it
@@ -185,6 +189,20 @@ impl<'ir> Rebuilder<'ir> {
                 "evaluating the failure again: an invariant of an initial state".into(),
             ));
         }
+        // The state an atom reads past the path, which TLC rebuilds no trace to.
+        let (states, actions, extra) = match site {
+            Site::Atom { is_extra: true, .. } => {
+                let (extra, path) = states.split_last().ok_or_else(|| {
+                    Unsupported("evaluating the failure again: an atom without a state".into())
+                })?;
+                let extra: Vec<Option<Value>> = extra
+                    .iter()
+                    .map(|&id| Some(crate::value::from_store(store, id)))
+                    .collect();
+                (path, &actions[..path.len().saturating_sub(1)], Some(extra))
+            }
+            _ => (states, actions, None),
+        };
         // A successor that fails an invariant is held as TLC found it, as a violating one is.
         let ending = match site {
             Site::Invariant(_) => Ending::Violation,
@@ -369,6 +387,39 @@ impl<'ir> Rebuilder<'ir> {
                         .map(|()| true)
                 })
             }
+            // TLC evaluates the atom as it adds the state, on the state, the successor whose
+            // state predicate it checks, or the step to it.
+            Site::Atom { atom, .. } => {
+                let Some(atom) = ir.model.atoms.get(atom as usize) else {
+                    return Err(Unsupported("an atom the model doesn't have".into()));
+                };
+                evaluator.level = level;
+                evaluator.next = vec![None; width];
+                evaluator.current = current;
+                let context = evaluator.scope_context(atom.scope);
+                context.and_then(|context| match &atom.kind {
+                    AtomKind::State => {
+                        if let Some(extra) = extra {
+                            evaluator.current = extra;
+                        }
+                        evaluator.boolean(atom.expression, &context)
+                    }
+                    AtomKind::Enabled { .. } => evaluator
+                        .enabled(atom.expression, &context)
+                        .map(|value| matches!(value, Value::Bool(true))),
+                    AtomKind::Action { unchanged, .. } => {
+                        if let Some(extra) = extra {
+                            evaluator.next = extra;
+                        }
+                        match unchanged {
+                            Some(unchanged) if evaluator.boolean(*unchanged, &context)? => {
+                                Ok(false)
+                            }
+                            _ => evaluator.boolean(atom.expression, &context),
+                        }
+                    }
+                })
+            }
             Site::Invariant(position) => {
                 evaluator.current = current;
                 evaluator.level = level;
@@ -398,6 +449,18 @@ impl<'ir> Rebuilder<'ir> {
             }
         };
         let call_stack = evaluator.call_stack.take().unwrap_or_default();
+        // The front writes <<A>>_v of WF_v(A) and SF_v(A) at A, where TLC records no node.
+        let mut call_stack = call_stack;
+        if let Site::Atom { atom, .. } = site
+            && let Some(atom) = ir.model.atoms.get(atom as usize)
+            && let NodeKind::AngleAction { action, .. } =
+                &ir.nodes.arena[atom.expression as usize].kind
+            && ir.nodes.arena[atom.expression as usize].range
+                == ir.nodes.arena[*action as usize].range
+            && call_stack.frames.first() == Some(&StackFrame::Node(atom.expression))
+        {
+            call_stack.frames.remove(0);
+        }
         let printed = std::mem::take(&mut evaluator.printed);
         let Err(error) = result else {
             return Err(Unsupported(
@@ -527,7 +590,10 @@ impl<'ir> Rebuilder<'ir> {
                 state: None,
             });
         }
-        let (code, text, tool_text) = report(&message, site == Site::Next);
+        // TLC reports an error adding a state to the behavior graphs as one in the next states
+        // (`Worker#doNextCheckLiveness`), and exits on an exception it didn't expect as for any.
+        let is_atom = matches!(site, Site::Atom { .. });
+        let (code, text, tool_text) = report(&message, site == Site::Next || is_atom);
         Ok(Failure {
             code,
             message: text,
@@ -537,6 +603,7 @@ impl<'ir> Rebuilder<'ir> {
             // in the initial predicate, as the failure of the replay (`getFailureExitCode`).
             exit_code: match (site, message.code) {
                 (Site::Next, Some(ASSERT_FAILED)) => VIOLATION_ASSERT,
+                _ if is_atom && !message.is_eval_exception => FAILURE_ERROR,
                 _ => FAILURE_SPEC_EVAL,
             },
             printed,

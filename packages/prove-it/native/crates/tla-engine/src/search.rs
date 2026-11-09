@@ -344,6 +344,11 @@ pub enum ErrorSite {
     /// TLC checks of an initial state after the invariants (its implied inits), on the
     /// violation's one state.
     InitialPredicate(u32),
+    /// Evaluating the atom at this position of the IR's `model.atoms` as TLC adds the trace's
+    /// last state to the behavior graphs: on that state, or, `is_extra`, on the state after it in
+    /// the violation's states, which isn't the trace's: a state predicate's state, or an action's
+    /// step's next state.
+    Atom { atom: u32, is_extra: bool },
 }
 
 // The stops that are the engine's own limits, not a failure TLC reports: what it doesn't
@@ -461,6 +466,9 @@ struct Found {
 }
 
 const GRAPH_TOO_LARGE: &str = "a state graph too large to keep";
+
+/// Where TLC may fail evaluating an atom of the temporal properties as it adds a state.
+const ATOM_FAILED: &str = "an atom of the temporal properties that may fail to evaluate";
 
 /// What PROVE_IT_LIVE_CHECK finds when TLC's actions take other steps than the next-state relation.
 const OTHER_STEPS: &str = "the actions took other steps than the next-state relation";
@@ -2592,6 +2600,34 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                             }
                         }
                     };
+                    // An atom TLC evaluates as it adds a state, which the engine didn't answer:
+                    // where TLC fails evaluating it, it stops there.
+                    if let Some(unanswered) = liveness.unanswered.filter(|_| {
+                        settings.is_violation_reported
+                            && reals.is_none()
+                            && !is_late_printed
+                            && !context.diameter_atoms.contains(&true)
+                            && search
+                                .held
+                                .as_ref()
+                                .is_none_or(|held| held.iter().all(|printed| printed.is_empty()))
+                            && tables.iter().all(|table| table.prints.is_empty())
+                    }) && let Some(found) =
+                        to_atom_failure(&context, &search, initial_states, unanswered)
+                    {
+                        return SearchOutcome::Stopped {
+                            reason: ATOM_FAILED.into(),
+                            checkpoint: None,
+                            collisions,
+                            violation: to_violation(
+                                found,
+                                &mut machine,
+                                &context,
+                                &mut search,
+                                false,
+                            ),
+                        };
+                    }
                     if let Some(held) = search.held.take() {
                         let order = (!is_late_printed && !settings.is_live_checked)
                             .then(|| {
@@ -3328,6 +3364,77 @@ fn accepted_at(
         &answers,
     )
     .ok()
+}
+
+// Where TLC evaluates an atom the engine didn't answer as it adds a state to the behavior graphs,
+// the failure the caller evaluates again, with the counts of TLC's search then: what it generated
+// and found up to that state, and the out-degrees of the states it expanded.
+fn to_atom_failure(
+    context: &EngineContext,
+    search: &Search<'_, States>,
+    initial_states: (u64, u64),
+    unanswered: tla_live::Unanswered,
+) -> Option<Found> {
+    let graph = search.graph.as_ref()?;
+    let state = unanswered.state as usize;
+    let slot = unanswered.slot;
+    // The state the atom reads besides the one TLC adds: a successor's state predicate, or the
+    // next state of one of the added state's steps.
+    let extra = match context.atoms.get(unanswered.atom as usize)? {
+        Atom::State(_) => (slot != state).then_some(slot),
+        Atom::Enabled { .. } => {
+            if slot != state {
+                return None;
+            }
+            None
+        }
+        Atom::Action { .. } => {
+            let edges = graph.edges.len();
+            let next = if slot < edges {
+                let range =
+                    graph.edge_offsets[state] as usize..graph.edge_offsets[state + 1] as usize;
+                if !range.contains(&slot) {
+                    return None;
+                }
+                graph.edges[slot] as usize
+            } else if slot - edges == state {
+                state
+            } else {
+                return None;
+            };
+            Some(next)
+        }
+        Atom::Unknown(_) => return None,
+    };
+    let sum = |counts: &[u32]| {
+        counts[..=state]
+            .iter()
+            .map(|&count| u64::from(count))
+            .sum::<u64>()
+    };
+    let distinct = initial_states.1 + sum(&graph.new_counts);
+    let mut out_degrees = [0u64; OUT_DEGREE_BUCKETS];
+    for &count in &graph.new_counts[..=state] {
+        out_degrees[(count as usize).min(OUT_DEGREE_BUCKETS - 1)] += 1;
+    }
+    Some(Found {
+        kind: ViolationKind::Error {
+            site: ErrorSite::Atom {
+                atom: unanswered.atom,
+                is_extra: extra.is_some(),
+            },
+        },
+        parent: Some(state),
+        last: extra.map(|extra| search.states.state(extra as u32).to_vec()),
+        counts: StopCounts {
+            generated: initial_states.0 + sum(&graph.successor_counts),
+            distinct,
+            queued: distinct - state as u64 - 1,
+            depth: u64::from(graph.diameters[state]),
+            out_degrees,
+            ..StopCounts::default()
+        },
+    })
 }
 
 // A path to a node that accepts every behavior as a violation the caller prints, with the counts of

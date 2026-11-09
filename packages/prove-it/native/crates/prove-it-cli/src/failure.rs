@@ -4,7 +4,7 @@
 
 use std::time::Instant;
 
-use tla_ir::Ir;
+use tla_ir::{Ir, SourceRange};
 use tla_trace::{Ending, Failure, Rebuilder, Site, Trace, Unsupported, format_call_stack};
 use tla_values::{Id, Store};
 
@@ -59,7 +59,8 @@ pub fn print_failure(
 ) -> Result<i32, String> {
     // TLC's worker adds the state to the behavior graph before it replays a failure in its next
     // states, which can fail or print in turn.
-    if !ir.model.live_properties.is_empty() {
+    let is_atom = matches!(stop.site, Site::Atom { .. });
+    if !ir.model.live_properties.is_empty() && !is_atom {
         return Err("a failure in a model with temporal properties".into());
     }
     if stop.site == Site::Next && stop.reason == "a successor that isn't complete" {
@@ -67,6 +68,14 @@ pub fn print_failure(
     }
     let report = evaluate(ir, stop)?;
     let failure = &report.failure;
+    if is_atom && failure.fingerprint.is_some() {
+        return Err("a state TLC fails to fingerprint as it adds it to the behavior graphs".into());
+    }
+    // TLC prints the call stack of an error adding a state to the behavior graphs before the
+    // error (`Worker#doNextCheckLiveness`).
+    if is_atom {
+        print_call_stack(printer, ir, &failure.call_stack);
+    }
     let message = if printer.is_tool {
         &failure.tool_message
     } else {
@@ -84,8 +93,9 @@ pub fn print_failure(
         ),
         None => printer.print(failure.code, Level::Error, message),
     }
-    // TLC reports an exception it didn't expect without the call stack or statistics.
-    if failure.exit_code == ERROR {
+    // TLC reports an exception it didn't expect without the call stack or statistics, but for one
+    // adding a state to the behavior graphs.
+    if failure.exit_code == ERROR && !is_atom {
         print_finished(printer, start);
         return Ok(ERROR);
     }
@@ -154,15 +164,8 @@ pub fn print_failure(
             );
         }
         // TLC reports an invariant that fails to evaluate without its call stack.
-        None if matches!(stop.site, Site::Invariant(_)) => {}
-        None => printer.print(
-            code::NESTED_EXPRESSION,
-            Level::Error,
-            &format!(
-                "The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n{}",
-                format_call_stack(ir, &failure.call_stack)
-            ),
-        ),
+        None if matches!(stop.site, Site::Invariant(_)) || is_atom => {}
+        None => print_call_stack(printer, ir, &failure.call_stack),
     }
     // TLC counts the state it failed to fingerprint as generated, which the search stopped before
     // counting, and an initial state as at depth 1.
@@ -178,13 +181,24 @@ pub fn print_failure(
         (None, _) => stop.statistics,
     };
     print_statistics(printer, &statistics, start);
-    if matches!(stop.site, Site::Invariant(_))
+    if (matches!(stop.site, Site::Invariant(_)) || is_atom)
         && let Some(summary) = out_degree_summary(stop.out_degrees)
     {
         printer.print(code::STATE_GRAPH_OUTDEGREE, Level::None, &summary);
     }
     print_finished(printer, start);
     Ok(failure.exit_code)
+}
+
+fn print_call_stack(printer: &mut Printer, ir: &Ir, call_stack: &[SourceRange]) {
+    printer.print(
+        code::NESTED_EXPRESSION,
+        Level::Error,
+        &format!(
+            "The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n{}",
+            format_call_stack(ir, call_stack)
+        ),
+    );
 }
 
 /// Prints TLC's report of the assumption at `position` that failed to evaluate as TLC started,
@@ -231,7 +245,15 @@ fn evaluate(ir: &Ir, stop: &ErrorStop<'_>) -> Result<Report, String> {
                 trace_output: Vec::new(),
             }
         } else {
-            rebuilder.rebuild(stop.store, &stop.states, &stop.actions, ending)?
+            // An atom's state past the path is no state of the trace.
+            let (states, actions) = match stop.site {
+                Site::Atom { is_extra: true, .. } => {
+                    let states = &stop.states[..stop.states.len().saturating_sub(1)];
+                    (states, &stop.actions[..states.len().saturating_sub(1)])
+                }
+                _ => (&stop.states[..], &stop.actions[..]),
+            };
+            rebuilder.rebuild(stop.store, states, actions, ending)?
         };
         // TLC rebuilds the trace once more after it prints it, then replays the failure.
         let after = trace

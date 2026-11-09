@@ -1,7 +1,7 @@
 //! The native liveness checker on small graphs: two states that step to each other, from state 0.
 
 use tla_live::{
-    Declined, Graph, Term, Verdict, atom_order, check, find_accepted, violated_on_lasso,
+    Declined, Graph, Term, Unanswered, Verdict, atom_order, check, find_accepted, violated_on_lasso,
 };
 
 const PARENTS: [i32; 2] = [-1, 0];
@@ -180,4 +180,28 @@ fn names_the_properties_a_lasso_violates() {
         },
     );
     assert_eq!(violated, Ok(vec![1, 2]));
+}
+
+#[test]
+fn names_the_first_atom_it_leaves_unanswered_as_it_adds_the_states() {
+    let unanswered = |answers: &[u8]| {
+        check(
+            &NOT_INFINITELY_OFTEN,
+            &[&INFINITELY_OFTEN],
+            &graph(),
+            &[Some(answers)],
+            false,
+        )
+        .unanswered
+    };
+    assert_eq!(unanswered(&[1, 0]), None);
+    // State 1's predicate, which TLC evaluates as it adds state 1.
+    assert_eq!(
+        unanswered(&[1, 2]),
+        Some(Unanswered {
+            state: 1,
+            atom: 0,
+            slot: 1,
+        })
+    );
 }
