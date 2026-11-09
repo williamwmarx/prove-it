@@ -205,6 +205,14 @@ describe("check matches TLC", () => {
     expect((await checkModule("ASSUME ~(SUBSET (1..42) \\subseteq SUBSET (2..42))")).status).toBe(
       "success",
     );
+    // TLC's SubsetValue.isSubsetEq compares the bases of power sets of power sets in turn.
+    expect(
+      (await checkModule("ASSUME SUBSET SUBSET (1..30) \\subseteq SUBSET SUBSET (0..30)")).status,
+    ).toBe("success");
+    expect(
+      (await checkModule("ASSUME ~(SUBSET SUBSET (0..30) \\subseteq SUBSET SUBSET (1..30))"))
+        .status,
+    ).toBe("success");
   });
 
   // TLC checks this module without an error.

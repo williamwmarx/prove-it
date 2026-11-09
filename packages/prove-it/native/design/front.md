@@ -71,6 +71,40 @@ what each milestone built and measured, in the order they landed.
   directory, the root file's extracted modules, the user's copies of standard modules TLC reads
   first) and the tables that go with the texts (`STANDARD_LEVELS`, `USER_STANDARD_MODULES`).
 
+## F8 (the lowering): the slices, and where each starts
+
+`ir.ts` (IR 8 at 148cdae) reads, for every node it writes, the resolved environment: so the
+lowering lands after the part of resolution it reads, in four slices, each one PR gated on the
+corpus (the 641 IRs `bun scripts/run.ts engine-ir` writes, and the 30 goldens in `cargo test`):
+
+1. **Environment, the subset the IR reads.** What `lowerToIr` calls: `environment.variableIndex`,
+   `constants` (names), `substitutions`, `definitions` (by key, instance copies included, as
+   `environment.ts` builds them in `createEnvironment` with `linkModule`, `createLocalFunction`,
+   `getVariableIndex`), `builtins` (name, arity, `isStateLevel`, `isLevelConstant`, `isLazy`:
+   `standard-modules.ts`, `CORE_OPERATORS`), `substitutedDefinitions`, and each node's
+   `resolution` (`resolve.ts` `resolveModule`, which sets `LOCAL_RESOLUTION` at line 735, and
+   `subexpressions.ts`), plus `isImpureDefinition` and `hasRepeatedEffect` (`dependencies.ts`)
+   for the definition flags. Gate: `front-differential resolve`, each model's definition keys,
+   substitutions, builtins and every node's resolution as canonical JSON, run by Verification's
+   Front End job as a permanent gate. `resolve.ts` also
+   reports SANY's semantic errors; the subset ports them as it meets them, F5 finishes them.
+2. **Nodes and definitions.** `writeNode`, `writeDefinition` and the reach order (the model's
+   roots, then breadth-first through definitions and scopes), into `tla_ir`'s structures, encoded
+   by `tla_ir::encode`. A node met again is a reference, which the AST's `Rc` sharing gives
+   (`Rc::ptr_eq` where `ir.ts` keys a `Map` on the object). Gate: decode both IRs with `tla-ir` and
+   compare their definitions and nodes.
+3. **Texts, variables, builtins, constants, scopes.** The text table is `createTlcOrder`'s ranked
+   strings (`tlc/order.ts`), then the rest in first use; constants from the configuration in
+   `transfer.ts`'s encoding (`createStateEncoder`), which needs no evaluator. Gate: those
+   sections equal.
+4. **The model.** Init, Next, the configuration's names, invariants and property invariants with
+   their names (IR 6), constraints, VIEW, settings, and TLC's actions with their labels (IR 5).
+   Gate: whole IRs byte-equal. Four inputs are evaluated in TypeScript today: SYMMETRY's
+   permutations, the action split over constant `\E` bounds, startup values, and the liveness
+   atoms and formula; a model that needs one gets `NotYet` until the engine's startup phase
+   (DESIGN section 14, which the CLI session owns) and `tla-live` compute them in Rust, with no
+   TypeScript involved, and the harness counts those.
+
 ## F8 slice 1a as built (linking and resolution, without instances)
 
 - `resolve` ports `resolve.ts` whole: binding, `isBindable`'s errors and warnings, labels,
@@ -133,13 +167,14 @@ what each milestone built and measured, in the order they landed.
 
 - `lower` ports the core of `lowerToIr` into `tla_ir`'s structures: each node in prefix order as
   the blob holds it, a node met again as a reference, LET definitions inline and the others in
-  the order the model reaches them, names with their resolutions and caches, builtins, and texts
-  in the order of their first use after the ranked ones. A constant's value (slice 3) and a
+  the order the model reaches them, names with their resolutions and caches, builtins, texts in
+  the order of their first use after the ranked ones, and how each junction is written (IR 9: a
+  bulleted list, or where each prefix of an infix chain ends). A constant's value (slice 3) and a
   startup value (the startup phase) aren't written yet.
 - `front-differential.ts ir` lowers each module's environment, on both sides, as a model whose
   Init and Next are a placeholder and whose configuration names every definition by key as an
-  invariant, with no text ranked, and compares the IRs byte for byte: 2,331 of 2,356 modules
-  match and none differ; with `--mutate 400`, 3,931 of 3,956. Verification's Front End job runs
+  invariant, with no text ranked, and compares the IRs byte for byte: 2,332 of 2,357 modules
+  match and none differ; with `--mutate 400`, 3,932 of 3,957. Verification's Front End job runs
   it. Slices 3 and 4 add TLC's string order, the values and the model's own roots.
 
 ## F8 slice 3a as built (TLC's orders)

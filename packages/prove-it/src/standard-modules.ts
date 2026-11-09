@@ -65,8 +65,17 @@ interface StandardModule {
   operators: Builtin[];
 }
 
-const isSubsetOf = (left: Value[], right: Value) =>
-  left.every((element) => isElementOf(element, right));
+// TLC's isSubsetEq: SubsetValue compares SUBSET A \subseteq SUBSET B as A \subseteq B where it
+// can enumerate A, so power sets of power sets compare their bases in turn; otherwise each element
+// of the left set must be a member of the right value.
+const isSubsetEq = (left: Value, right: Value): boolean =>
+  typeof left === "object" &&
+  left.kind === "Subset" &&
+  typeof right === "object" &&
+  right.kind === "Subset" &&
+  isEnumerable(left.base)
+    ? isSubsetEq(left.base, right.base)
+    : toFiniteSet(left).elements.every((element) => isElementOf(element, right));
 
 const BOOLEAN_SET = createSet([false, true]);
 
@@ -128,16 +137,7 @@ export const CORE_OPERATORS: Builtin[] = [
   ),
   defineOperator("\\subseteq", 2, (args) => {
     const left = getSet(args, 0, "\\subseteq");
-    // TLC tests each element of the left set for membership in the right value.
-    const right = getValue(args, 1, "\\subseteq");
-    const isPowerSets =
-      typeof left === "object" &&
-      left.kind === "Subset" &&
-      typeof right === "object" &&
-      right.kind === "Subset" &&
-      isEnumerable(left.base);
-    if (isPowerSets) return isSubsetOf(toFiniteSet(left.base).elements, right.base);
-    return isSubsetOf(toFiniteSet(left).elements, right);
+    return isSubsetEq(left, getValue(args, 1, "\\subseteq"));
   }),
   // TLC defers the set operations of values that aren't sets to the enumeration or the membership
   // tests of the result.

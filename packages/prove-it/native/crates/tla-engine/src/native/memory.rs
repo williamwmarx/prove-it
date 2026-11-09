@@ -108,6 +108,7 @@ mod system {
 #[cfg(all(test, target_os = "linux", target_arch = "x86_64"))]
 mod tests {
     use super::Code;
+    use crate::native::x86_64::{Assembler, Condition, Gpr, Memory, Scale, Width};
 
     #[test]
     fn runs_code_once_sealed() {
@@ -144,6 +145,55 @@ mod tests {
             std::os::unix::process::ExitStatusExt::signal(&status),
             Some(11)
         );
+    }
+
+    // The encoder's forms, run: a loop with both kinds of jump, indexed loads and a call out.
+    #[test]
+    fn runs_assembled_code() {
+        // How many of `length` u32s at `values` equal `value`.
+        let mut assembler = Assembler::new();
+        let (top, skip, end) = (assembler.label(), assembler.label(), assembler.label());
+        assembler.mov_immediate(Gpr::Rax, 0);
+        assembler.mov_immediate(Gpr::Rcx, 0);
+        assembler.bind(top);
+        assembler.cmp(Width::W64, Gpr::Rcx, Gpr::Rsi);
+        assembler.jump_if(Condition::AboveOrEqual, end);
+        let element = Memory::indexed(Gpr::Rdi, Gpr::Rcx, Scale::Four, 0);
+        assembler.cmp_memory(Width::W32, Gpr::Rdx, element);
+        assembler.jump_if(Condition::NotEqual, skip);
+        assembler.add_immediate(Width::W64, Gpr::Rax, 1);
+        assembler.bind(skip);
+        assembler.add_immediate(Width::W64, Gpr::Rcx, 1);
+        assembler.jump(top);
+        assembler.bind(end);
+        assembler.ret();
+        let code = Code::new(&assembler.finish()).expect("executable memory");
+        // SAFETY: the bytes are a complete System V function of a pointer, a length and a u32,
+        // which reads only the `length` u32s the pointer points at.
+        let count: extern "C" fn(*const u32, u64, u32) -> u64 =
+            unsafe { std::mem::transmute(code.entry()) };
+        let values = [3, 1, 3, 3, 2];
+        assert_eq!(count(values.as_ptr(), values.len() as u64, 3), 3);
+        assert_eq!(count(values.as_ptr(), 0, 3), 0);
+
+        // `callee(41) + 1`, keeping the stack 16-byte aligned across the call.
+        extern "C" fn double(value: u64) -> u64 {
+            value * 2
+        }
+        let mut assembler = Assembler::new();
+        assembler.push(Gpr::Rbx);
+        assembler.mov(Width::W64, Gpr::Rax, Gpr::Rdi);
+        assembler.mov_immediate(Gpr::Rdi, 41);
+        assembler.call(Gpr::Rax);
+        assembler.lea(Gpr::Rax, Memory::at(Gpr::Rax, 1));
+        assembler.pop(Gpr::Rbx);
+        assembler.ret();
+        let code = Code::new(&assembler.finish()).expect("executable memory");
+        // SAFETY: the bytes are a complete System V function of one function pointer, which it
+        // calls with one integer argument.
+        let call: extern "C" fn(extern "C" fn(u64) -> u64) -> u64 =
+            unsafe { std::mem::transmute(code.entry()) };
+        assert_eq!(call(double), 83);
     }
 
     #[test]
