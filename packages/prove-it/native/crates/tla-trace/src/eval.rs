@@ -276,6 +276,9 @@ pub struct Evaluator<'ir> {
     /// holds the code's markers, which AssertError compares with. `None` where the caller doesn't
     /// say, and AssertError isn't followed.
     pub is_tool: Option<bool>,
+    /// How many workers TLC runs, which TLCGet("config") reads. `None` where the caller doesn't
+    /// say, and TLCGet("config") isn't followed.
+    pub workers: Option<usize>,
 }
 
 /// TLC's registers (`IdThread`'s local values and named registers): the value TLCSet stored under
@@ -405,6 +408,7 @@ impl<'ir> Evaluator<'ir> {
             registers: Registers::default(),
             register_writes: 0,
             is_tool: None,
+            workers: None,
         }
     }
 
@@ -801,7 +805,7 @@ impl<'ir> Evaluator<'ir> {
                     "selected a field a record lacks",
                     format!(
                         "Attempted to select nonexistent field \"{name}\" from the record\n{}\n{}",
-                        format_value(record),
+                        format_pretty(record),
                         self.describe_range(node)
                     ),
                 ),
@@ -2911,6 +2915,11 @@ impl<'ir> Evaluator<'ir> {
                 self.set_register(key, value)?;
                 Value::Bool(true)
             }
+            // `TLCExt.tlcDefer`: TLC's breadth-first search never runs the deferred expression.
+            "TLCDefer" => {
+                arity(1)?;
+                Value::Bool(true)
+            }
             "TLCGet" => {
                 arity(1)?;
                 match self.operand(&operands[0])? {
@@ -2952,6 +2961,32 @@ impl<'ir> Evaluator<'ir> {
                             Some(index) => self.convert(&ir.values.list[index as usize])?,
                             None => return fail("TLCGet(\"spec\") the IR doesn't hold"),
                         }
+                    }
+                    // `AbstractChecker.createConfig`, as the engine words it: TLC's install is
+                    // where its jar is, which the native checker has none of.
+                    Value::Str(key)
+                        if *key.units == *"config".encode_utf16().collect::<Vec<_>>() =>
+                    {
+                        let Some(workers) = self.workers else {
+                            return fail("TLCGet(\"config\") without the run's workers");
+                        };
+                        let model = &self.ir.model;
+                        let text = |text: &str| self.text_of(text.encode_utf16().collect());
+                        let string = |value: &str| Value::Str(text(value));
+                        Value::record(vec![
+                            (text("mode"), string("bfs")),
+                            (text("deadlock"), Value::Bool(model.check_deadlock)),
+                            (text("worker"), Value::Int(workers as i32)),
+                            (
+                                text("seed"),
+                                string(&(model.random_seed as i64).to_string()),
+                            ),
+                            (
+                                text("fingerprint"),
+                                string(&(tla_values::fingerprint::INITIAL as i64).to_string()),
+                            ),
+                            (text("install"), string("unknown")),
+                        ])?
                     }
                     Value::Str(key)
                         if *key.units == *"level".encode_utf16().collect::<Vec<_>>() =>
