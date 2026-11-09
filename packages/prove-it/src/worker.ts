@@ -33,7 +33,7 @@ export const isWorkerSupported = () =>
 // load, which a search that runs on meanwhile never sees, so a build that left the entry out, or put
 // it elsewhere, fails here rather than checking with fewer threads than it was asked for. Bun runs
 // the entry's TypeScript from the sources, where the build puts its JavaScript.
-export const assertWorkerFile = (url: URL) => {
+const assertWorkerFile = (url: URL) => {
   const fs =
     url.protocol === "file:" && typeof process !== "undefined"
       ? process.getBuiltinModule?.("node:fs")

@@ -435,6 +435,16 @@ impl Compiler<'_> {
             }
             NodeKind::Enabled(action) => self.compile_enabled(*action, context),
             NodeKind::Label { body, .. } => self.compile(*body, context),
+            // TLC can't evaluate a temporal formula in a state, but a predicate may hold one in a
+            // branch it never takes, such as a recursive operator's: the interpreter reports where
+            // a run reaches one.
+            NodeKind::Always(_)
+            | NodeKind::Eventually(_)
+            | NodeKind::WeakFairness { .. }
+            | NodeKind::StrongFairness { .. } => Ok(leaf(
+                eval(|_| Err(Bail("a temporal formula in a state"))),
+                Footprint::default(),
+            )),
             kind => unsupported(format!("expression {}", kind_name(kind))),
         }
     }
@@ -753,22 +763,18 @@ impl Compiler<'_> {
         let footprint = Footprint::merge_all(levels.iter().map(|level| &level.set.footprint))
             .merge(&body.footprint.without_slots(&bound));
         let body = body.eval;
-        let evaluate = if let [
-            Level {
-                set,
-                slots,
-                tuple: false,
-            },
-        ] = &levels[..]
-        {
-            let (set, slot) = (set.eval.clone(), slots[0]);
+        // A function of one bound, a tuple pattern included, takes each element of its set.
+        let evaluate = if let [Level { set, slots, tuple }] = &levels[..] {
+            let (set, slots, tuple) = (set.eval.clone(), slots.clone(), *tuple);
             eval(move |machine| {
                 let set = evaluate_set(machine, &set, "a function over a non-set")?;
                 let size = machine.store.size_of(set);
                 let at = machine.stack.len();
                 for index in 0..size {
-                    machine.locals[slot as usize] = machine.store.element_at(set, index);
-                    match body(machine) {
+                    let element = machine.store.element_at(set, index);
+                    let bound =
+                        assign_bound(machine, &slots, tuple, element).and_then(|()| body(machine));
+                    match bound {
                         Ok(value) => machine.stack.push(value),
                         Err(bail) => {
                             machine.stack.truncate(at);
