@@ -308,7 +308,7 @@ fn find(
         _ => None,
     };
     let is_reducing = !matches!(key, Key::State);
-    let mut found: Option<Vec<Value>> = None;
+    let mut found = None;
     let mut is_ambiguous = false;
     run(
         evaluator.walk_action(expression, context, is_init, &mut |evaluator| {
@@ -349,25 +349,35 @@ fn find(
             };
             if is_match {
                 match &found {
-                    None => found = Some(state),
-                    Some(first) => {
-                        is_ambiguous |= !first
+                    None => found = Some((state, evaluator.choices.clone())),
+                    Some((first, choices)) => {
+                        // TLC takes the first too where the walk first chose between them in
+                        // TLC's order.
+                        let is_same_state = first
                             .iter()
                             .zip(&state)
                             .all(|(left, right)| crate::value::is_same(left, right));
+                        let is_in_order = choices
+                            .iter()
+                            .zip(&evaluator.choices)
+                            .find(|(left, right)| left != right)
+                            .is_some_and(|(left, _)| left.1);
+                        is_ambiguous |= !is_same_state && !is_in_order;
                     }
                 }
             }
-            Ok(is_exhaustive || !is_reducing || !is_match)
+            // A state matched by its value is the search's; one matched by its view or orbit is
+            // walked past, for the ambiguity check.
+            Ok(is_exhaustive || is_reducing || !is_match)
         }),
     )?;
     // Under VIEW or SYMMETRY, TLC takes the first of the states its view or orbit matches, in the
     // order it streams them, which the evaluator doesn't follow for every set yet; it takes the
-    // state only where every candidate is the same.
+    // first state only where the walk reached the others through a choice in TLC's order.
     if is_ambiguous {
         return unsupported("several states TLC may take for the search's under VIEW or SYMMETRY");
     }
-    Ok(found)
+    Ok(found.map(|(state, _)| state))
 }
 
 // The VIEW of a state, evaluated with the state as the current one.

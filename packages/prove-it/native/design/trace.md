@@ -229,8 +229,13 @@ after each pull request.
 - **Enumeration order.** The walks enumerate every set in TLC's normalized order. TLC streams a
   `\cup`, a UNION, SUBSET and the sets of functions, records and tuples in orders of its own
   (`compile/lazy.rs` in the engine). The state the evaluator finds doesn't depend on that order
-  without VIEW or SYMMETRY, since it equals the search's. Under VIEW or SYMMETRY, `rebuild` returns
-  `Unsupported` when two different candidates match, rather than guess TLC's first. What a spec
+  without VIEW or SYMMETRY, since it equals the search's. Under VIEW or SYMMETRY, the walk goes
+  on past the first candidate that matches. Each walk records the choices it made: the branch of
+  each disjunction and the element of each enumeration, and whether TLC takes that enumeration in
+  normalized order too (a set enumeration, an interval, a current variable, a constant or a value
+  computed at startup). Where two different candidates match, the first is TLC's when their
+  choices first part at such an enumeration; otherwise `rebuild` returns `Unsupported` rather than
+  guess. What a spec
   prints while TLC enumerates such a set may come in another order; porting the streaming orders
   is left.
 - **Print.** Where the spec prints, each walk runs to its end, and each step tries TLC's actions in

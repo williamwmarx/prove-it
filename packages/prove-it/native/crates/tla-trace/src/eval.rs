@@ -154,6 +154,9 @@ pub struct Evaluator<'ir> {
     /// The state a walk looks for, where a value that differs from it can't lead to it: a walk
     /// then drops an assignment of another value, as nothing else follows from it.
     pub target: Option<Vec<Value>>,
+    /// The choices the walk made to reach where it is: at each disjunction or enumeration, the
+    /// position of the branch or element it took, and whether TLC takes them in the same order.
+    pub choices: Vec<(u32, bool)>,
 }
 
 const MAXIMUM_DEPTH: u32 = 10_000;
@@ -178,6 +181,7 @@ impl<'ir> Evaluator<'ir> {
             level: 0,
             printed: Vec::new(),
             target: None,
+            choices: Vec::new(),
         }
     }
 
