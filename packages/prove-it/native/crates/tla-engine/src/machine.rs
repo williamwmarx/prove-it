@@ -140,6 +140,20 @@ impl<'p> Machine<'p> {
         }
     }
 
+    /// Forgets what the caches hold of ids from `bound` on, which the store has let go of.
+    pub fn forget_from(&mut self, bound: Id) {
+        for table in &mut self.tables {
+            table.forget_from(bound);
+        }
+        for cache in &mut self.epochs {
+            *cache = EpochCache::default();
+        }
+        for once in self.onces.iter_mut().filter(|once| **once >= bound) {
+            *once = EMPTY;
+        }
+        self.spare_states.clear();
+    }
+
     /// A number no current state has had, for the caches of expressions that read many
     /// variables: a state keeps its epoch while it is current and unchanged, and 0 marks one
     /// nothing may cache by.
