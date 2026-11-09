@@ -110,3 +110,66 @@ how.
   SimpleRegular. It is within noise of one thread on the models whose levels are short or whose
   states are all initial (MCBakery, test19, TokenRing). It is faster than the TypeScript parallel
   search on every one of the 18 models, at 4 and at 16 threads. Every verdict agrees with TLC.
+
+## Handoff: retiring the TypeScript engine's parallel search
+
+Since #85 (0.2.3), `auto` sends every search the Rust engine accepts to Rust at any thread count.
+The TypeScript engine's own threads now run only when `PROVE_IT_WORKERS>1` and Rust does not take
+the search:
+
+- `PROVE_IT_ENGINE_BACKEND=ts`;
+- no addon for the platform, or an ABI mismatch;
+- `getEngineIneligibility` in `src/check.ts`, a bailout, or a hand-over from the native engine.
+
+In each of these cases, the TypeScript engine then runs on one thread. That is correct and only
+slower, which is what replaces the TypeScript engine's threads.
+
+### Code to remove
+
+- `src/engine/parallel.ts`: the shared state table, `runLevel` and `serveLevels`.
+- `src/engine-worker.ts`: the worker thread.
+- `src/engine/workers.ts`: `spawnEngineWorkers`.
+- In `src/engine/search.ts`, the `parallel` record, `searchInParallel`, `canShare`,
+  `WORKER_SPAWN_MS`, `MINIMUM_SHARED_LEVEL`, `seeded`, `tlc.isShared`, and the
+  `parallel.workers?.terminate()` call. `threads` in the result becomes 1, so check whether
+  `EngineResult.threads` is still needed.
+- In `src/engine/store.ts`, shared mode, which is everything below `// --- shared mode ---`:
+  - `SharedStore`, `shareStore`, `attachViews`, `internShared`;
+  - every `if (shared)` branch, `freezeTexts`, and the `isTextFrozen` bail.
+  - The Rust overlay does not depend on any of it. Keep `transfer.ts`: the native IR and the state
+    log use it.
+- In `src/engine/context.ts` and `src/engine/settings.ts`, whatever only the workers used. Check
+  each export with a grep once the files above are gone.
+- In `scripts/build.ts`, `scripts/build-binary.ts` and `scripts/run.ts`, the
+  `"src/engine-worker.ts"` entry.
+- In `src/check.ts`:
+  - `workers: getEngineThreads()` in the `runEngine` call;
+  - the `MissingBuildFileError` rethrow in the catch at the end of the engine's run. Keep it if the
+    interpreter's workers (below) still raise it through this path.
+
+### Keep, out of scope
+
+These are the interpreter's parallel search, not the engine's:
+
+- `src/parallel.ts` (`check` and `checkParsed`, public through `index.ts` and `cli/tlc.ts`);
+- `src/parallel-worker.ts`;
+- the shared fingerprints in `src/fingerprints.ts`;
+- `src/worker.ts`, which the prover's workers also use.
+
+The interpreter's parallel search runs only with `PROVE_IT_ENGINE=0`. Retiring it would change
+the public `check` and is a separate decision for the owner.
+
+### Tests
+
+| Test | After retiring |
+| --- | --- |
+| `tests/unit/state-log.test.ts`, "writes the same states with 1 and 4 threads when the workers take levels" (pins `ts`) | Delete it. The Rust state-log determinism at 1/2/4/16 in `tla-engine/tests/search.rs` and `native-search.test.ts` replaces it. Keep the one-thread `ts` runs. |
+| `tests/unit/parallel.test.ts`, "the shared state table" | Delete it: it tests `engine/parallel.ts` directly. |
+| `tests/unit/parallel.test.ts`, "check with workers matches TLC" | Keep it: it tests `check` with workers. With the addon, it now runs the Rust search. Check that every case still passes without the addon (one TypeScript thread) and with `PROVE_IT_ENGINE=0` (the interpreter's workers). The workers case for "grows the fingerprint table that workers share" is the interpreter's; leave it. |
+| `tests/unit/state-graph.test.ts`, "writes the graph of a single TLC worker when several are asked for" (`workers: 2`) | Keep it: `-dump` is ineligible for the engine and goes to the interpreter on one worker. |
+| `tests/unit/store-trace.test.ts`, `engine.test.ts`, `native-runs.ts` | Grep for `PROVE_IT_WORKERS`, `shareStore` and `isShared`. Drop the `ts`-backend multi-thread cases. Keep the Rust ones. |
+
+Check-ins: the macOS Rosetta step runs `native.test.ts` and `native-search.test.ts`. The exit-255
+crash came from the TypeScript workers under Rosetta, so watch whether it stops after this change.
+The speed session owns the overlay's cross-level caching in `tla-values/src/store.rs`, `memo.rs`,
+`Worker::attach` and `forget_from`. None of this change touches them.
