@@ -171,6 +171,69 @@ describe.if(ADDON !== undefined)("the native engine's lazy sets", () => {
     }
   });
 
+  // TLC tests membership in a filter of a set it can't enumerate by the set's membership and the
+  // predicate (SetPredValue.member), as community Graphs' Path does, and fails enumerating it.
+  it("tests membership in a filter of an infinite set, and stops enumerating it", async () => {
+    const body = [
+      "EXTENDS Naturals, Sequences",
+      "VARIABLE x",
+      "Even == {n \\in Nat : n % 2 = 0}",
+      "Paths == {p \\in Seq({1, 2}) : p # <<>> /\\ p[1] = 1}",
+      "Init == x = 0",
+      "Next == x < 6 /\\ x' = x + 1",
+      "Inv == /\\ (x \\in Even) = (x % 2 = 0) /\\ <<1, 2>> \\in Paths /\\ <<2>> \\notin Paths",
+    ];
+    expect(
+      await compareWithInterpreter(body, `${CONFIG}\nINVARIANT Inv\nCHECK_DEADLOCK FALSE`),
+    ).toContainEqual(expect.stringMatching(COMPLETE));
+    // An enclosing set evaluates the filter's base, as TLC does, whether or not it tests it.
+    const divided = [
+      "EXTENDS Naturals, Sequences",
+      "VARIABLE x",
+      "Init == x = 0",
+      "Next == UNCHANGED x",
+      "Inv == <<>> \\in Seq({p \\in Seq({1 \\div x}) : TRUE})",
+    ];
+    expect(await compareWithInterpreter(divided, `${CONFIG}\nINVARIANT Inv`)).toContainEqual(
+      expect.stringMatching(/^\[engine\] native: stopped: /),
+    );
+    const enumerated = [
+      "EXTENDS Naturals",
+      "VARIABLE x",
+      "Init == x \\in {n \\in Nat : n > 2}",
+      "Next == UNCHANGED x",
+    ];
+    expect(await compareWithInterpreter(enumerated, CONFIG)).toContainEqual(
+      expect.stringMatching(/^\[engine\] native: stopped: /),
+    );
+  });
+
+  // From TLC's RandomSubset, whose invariant tests x \in 1..100000000: IntervalValue.member
+  // compares an integer with the bounds.
+  it("tests membership in an interval without building it", async () => {
+    const body = [
+      "EXTENDS Integers",
+      "VARIABLE x",
+      "Init == x \\in {0, 7}",
+      "Next == x < 9 /\\ x' = x + 1",
+      "Inv == x \\in 0..100000000 /\\ x \\notin -5..-1 /\\ (x \\in 3..8) = (x >= 3 /\\ x <= 8)",
+    ];
+    expect(
+      await compareWithInterpreter(body, `${CONFIG}\nINVARIANT Inv\nCHECK_DEADLOCK FALSE`),
+    ).toContainEqual(expect.stringMatching(COMPLETE));
+    // A set holding the interval evaluates its bounds, as TLC builds it, where it tests nothing.
+    const divided = [
+      "EXTENDS Integers",
+      "VARIABLE x",
+      "Init == x = 0",
+      "Next == UNCHANGED x",
+      "Inv == <<>> \\in [{} -> 1..(1 \\div x)] /\\ 0 \\in ({0} \\cup (1..(1 \\div x)))",
+    ];
+    expect(await compareWithInterpreter(divided, `${CONFIG}\nINVARIANT Inv`)).toContainEqual(
+      expect.stringMatching(/^\[engine\] native: stopped: /),
+    );
+  });
+
   it("leaves a set it has no order for, as the TypeScript engine does", async () => {
     // TLC streams the union in the UNION, duplicates and all, which neither engine follows once it
     // holds the union as an id, nor where a bound name may hold it.
