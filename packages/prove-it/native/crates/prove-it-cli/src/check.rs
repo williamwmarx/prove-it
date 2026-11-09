@@ -617,7 +617,10 @@ fn print_violation(
         // statistics, since it checks the initial states before it searches.
         ViolationKind::InitialInvariant(owner) => {
             let name = invariant_name(owner)?;
-            let state = format_state(ir, &violation.store, violation.states.first()?)?;
+            let state = match rebuild(ir, violation)? {
+                Some(rebuilt) => rebuilt[0].clone(),
+                None => format_state(ir, &violation.store, violation.states.first()?)?,
+            };
             printer.print(
                 code::INVARIANT_VIOLATED_INITIAL,
                 Level::Error,
@@ -633,6 +636,7 @@ fn print_violation(
         ),
         ViolationKind::Deadlock => (code::DEADLOCK_REACHED, "Deadlock reached.".into(), DEADLOCK),
     };
+    let rebuilt = rebuild(ir, violation)?;
     // TLC prints nothing of the trace until it has rebuilt all of it.
     let mut steps = Vec::with_capacity(violation.states.len());
     for (position, state) in violation.states.iter().enumerate() {
@@ -646,7 +650,10 @@ fn print_violation(
                 &ir.texts[action.label as usize]
             }
         };
-        let state = format_state(ir, &violation.store, state)?;
+        let state = match &rebuilt {
+            Some(rebuilt) => rebuilt[position].clone(),
+            None => format_state(ir, &violation.store, state)?,
+        };
         steps.push(format!("{}: <{label}>\n{state}", position + 1));
     }
     printer.print(code, Level::Error, &text);
@@ -668,6 +675,33 @@ fn print_violation(
     print_statistics(printer, &statistics, start);
     print_finished(printer, start);
     Some(exit_code)
+}
+
+// Under PROVE_IT_TRACE_EVALUATOR=1, the trace's states as tla-trace rebuilds them.
+fn rebuild(ir: &tla_ir::Ir, violation: &Violation) -> Option<Option<Vec<String>>> {
+    if std::env::var("PROVE_IT_TRACE_EVALUATOR").as_deref() != Ok("1") {
+        return Some(None);
+    }
+    let result = tla_trace::Rebuilder::new(ir).and_then(|mut rebuilder| {
+        let states: Vec<&[tla_values::Id]> = violation.states.iter().map(Vec::as_slice).collect();
+        let labels: Vec<Option<u32>> = violation.labels.iter().copied().map(Some).collect();
+        rebuilder
+            .rebuild(&violation.store, &states, &labels)
+            .map(|trace| {
+                trace
+                    .states
+                    .iter()
+                    .map(|state| crate::trace::format_values(ir, &state.values))
+                    .collect()
+            })
+    });
+    match result {
+        Ok(states) => Some(Some(states)),
+        Err(tla_trace::Unsupported(reason)) => {
+            eprintln!("prove-it: not native yet: {reason}");
+            None
+        }
+    }
 }
 
 /// Without -tool, TLC prints how long it ran for a person to read.

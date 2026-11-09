@@ -196,7 +196,9 @@ const expectedResults: ExpectedResult[] = JSON.parse(readFileSync(EXPECTED_PATH,
 const expectedById = new Map(expectedResults.map((result) => [result.id, result]));
 const isSelected = (expected: ExpectedResult) =>
   expected.tlcMilliseconds <= maximumTlcMilliseconds &&
-  (filter === undefined || expected.id.includes(filter));
+  (filter === undefined || expected.id.includes(filter)) &&
+  (process.env.PROVE_IT_DIFF_IDS === undefined ||
+    readFileSync(process.env.PROVE_IT_DIFF_IDS, "utf8").split("\n").includes(expected.id));
 const models = findModels()
   .filter((model) => {
     const expected = expectedById.get(model.id);

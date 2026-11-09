@@ -26,3 +26,18 @@ pub fn format_state(ir: &Ir, store: &Store, state: &[Id]) -> Option<String> {
     }
     Some(text)
 }
+
+/// A state tla-trace rebuilt, as `format_state` writes one.
+pub fn format_values(ir: &Ir, values: &[tla_trace::Value]) -> String {
+    let is_conjunction = ir.tlc_order.len() > 1;
+    let mut text = String::new();
+    for &position in &ir.tlc_order {
+        let value: Vec<u16> = tla_trace::format_value(&values[position as usize])
+            .encode_utf16()
+            .collect();
+        let name = &ir.texts[ir.variables[position as usize] as usize];
+        let conjunct = if is_conjunction { "/\\ " } else { "" };
+        text.push_str(&format!("{conjunct}{name} = {}\n", pretty_print(&value)));
+    }
+    text
+}
