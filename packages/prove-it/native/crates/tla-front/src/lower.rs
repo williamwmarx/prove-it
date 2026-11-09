@@ -913,8 +913,8 @@ impl<'a> Lowering<'a> {
         let mut initial_predicate_names = Vec::new();
         for predicate in &properties.initial_predicates {
             initial_predicates.push(self.write_root(&predicate.expression)?);
-            initial_predicate_scopes.push(self.get_scope_index(predicate.scope.as_ref()));
             initial_predicate_names.push(self.get_text(&predicate.name));
+            initial_predicate_scopes.push(self.get_scope_index(predicate.scope.as_ref()));
         }
         let view = config
             .view
