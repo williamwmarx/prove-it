@@ -192,6 +192,20 @@ pub fn get_coded_message(text: &str) -> Option<CodedMessage> {
         })
 }
 
+/// `withUnexpectedException`: TLC reports an EvalException, or a RuntimeException without a
+/// message of its own, as an exception it didn't expect.
+pub fn with_unexpected_exception(error: FrontError) -> FrontError {
+    let FrontError::Evaluation(message) = error else {
+        return error;
+    };
+    let prefix = match get_coded_message(&message) {
+        Some(coded) if coded.is_eval_exception => crate::errors::UNEXPECTED_EVAL_EXCEPTION,
+        Some(_) => return FrontError::Evaluation(message),
+        None => crate::errors::UNEXPECTED_EXCEPTION,
+    };
+    FrontError::Evaluation(format!("{prefix}{message}"))
+}
+
 /// The messages that end with the message of the error they report, after this text.
 fn get_inner_message_prefix(code: u32) -> Option<&'static str> {
     match code {

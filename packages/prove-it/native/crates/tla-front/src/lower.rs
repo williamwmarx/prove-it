@@ -878,7 +878,9 @@ impl<'a> Lowering<'a> {
             } else {
                 crate::TlcVersion::Master
             },
-        )?;
+        )
+        // `createLivenessChecker` runs inside `withUnexpectedException`.
+        .map_err(crate::tlc_messages::with_unexpected_exception)?;
         let init = self.write_root(init)?;
         let next = match &specification.next {
             Some(next) => Some(self.write_root(next)?),
