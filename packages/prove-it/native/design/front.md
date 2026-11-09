@@ -85,7 +85,8 @@ corpus (the 641 IRs `bun scripts/run.ts engine-ir` writes, and the 30 goldens in
    `resolution` (`resolve.ts` `resolveModule`, which sets `LOCAL_RESOLUTION` at line 735, and
    `subexpressions.ts`), plus `isImpureDefinition` and `hasRepeatedEffect` (`dependencies.ts`)
    for the definition flags. Gate: `front-differential resolve`, each model's definition keys,
-   substitutions, builtins and every node's resolution as canonical JSON. `resolve.ts` also
+   substitutions, builtins and every node's resolution as canonical JSON, run by Verification's
+   Front End job as a permanent gate. `resolve.ts` also
    reports SANY's semantic errors; the subset ports them as it meets them, F5 finishes them.
 2. **Nodes and definitions.** `writeNode`, `writeDefinition` and the reach order (the model's
    roots, then breadth-first through definitions and scopes), into `tla_ir`'s structures, encoded
@@ -101,4 +102,5 @@ corpus (the 641 IRs `bun scripts/run.ts engine-ir` writes, and the 30 goldens in
    Gate: whole IRs byte-equal. Four inputs are evaluated in TypeScript today: SYMMETRY's
    permutations, the action split over constant `\E` bounds, startup values, and the liveness
    atoms and formula; a model that needs one gets `NotYet` until the engine's startup phase
-   (DESIGN section 14) and `tla-live` give them, and the harness counts those.
+   (DESIGN section 14, which the CLI session owns) and `tla-live` compute them in Rust, with no
+   TypeScript involved, and the harness counts those.
