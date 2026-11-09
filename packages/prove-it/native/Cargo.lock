@@ -40,6 +40,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "tla-front"
+version = "0.1.0"
+
+[[package]]
 name = "tla-ir"
 version = "0.1.0"
 

@@ -55,6 +55,32 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     );
   });
 
+  it("tests guards fused in place: f[k] = c, f[k] = j, x = c and membership", async () => {
+    const body = [
+      "CONSTANT P",
+      "VARIABLES f, x, s",
+      'Init == f = [p \\in P |-> "a"] /\\ x = "go" /\\ s = {}',
+      "Next ==",
+      "  \\E p, q \\in P :",
+      '    \\/ f[p] = "a" /\\ x = "go" /\\ f\' = [f EXCEPT ![p] = "b"] /\\ UNCHANGED <<x, s>>',
+      '    \\/ f[p] # "a" /\\ f[p] \\in {"b", "c"} /\\ f\' = [f EXCEPT ![p] = "c"] /\\ UNCHANGED <<x, s>>',
+      "    \\/ p \\notin s /\\ f[p] = f[q] /\\ s' = s \\cup {p} /\\ UNCHANGED <<f, x>>",
+      '    \\/ x # "stop" /\\ s = P /\\ x\' = "stop" /\\ UNCHANGED <<f, s>>',
+    ];
+    const config = "CONSTANT P = {p1, p2, p3}\nINIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE";
+    expect(await compareStateLogs(body, config, false)).toContainEqual(
+      expect.stringMatching(COMPLETE),
+    );
+    expect(await compareWithInterpreter(body, config)).toContainEqual(
+      expect.stringMatching(COMPLETE),
+    );
+    // TLC can't compare a string with the integers it searches.
+    const mistyped = ["VARIABLE x", 'Init == x = "a"', "Next == x \\in {1, 2} /\\ x' = x"];
+    expect(await compareWithInterpreter(mistyped, "INIT Init\nNEXT Next")).toContainEqual(
+      expect.stringMatching(stopped("values TLC can't compare")),
+    );
+  });
+
   it("takes TLC's shortcut past a walk once every variable is assigned, with warnings on", async () => {
     // With warnings on, the disjunction after y' = 1 is a guard once x and y are assigned, so it
     // gives one successor rather than two.

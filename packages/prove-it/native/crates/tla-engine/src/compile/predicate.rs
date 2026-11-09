@@ -7,7 +7,7 @@
 //! the nodes it replaces evaluate, in the same order and with the same short circuits, and checks
 //! a boolean where `compileBoolean` does.
 
-use tla_values::store::{FALSE, KIND_INT, KIND_STRING, KIND_TUPLE, Outcome, TRUE};
+use tla_values::store::{FALSE, KIND_INT, KIND_SET, KIND_STRING, KIND_TUPLE, Outcome, TRUE};
 use tla_values::{Bail, Id};
 
 use super::{Compiled, Shape, bool_id, eval};
@@ -43,6 +43,12 @@ pub(crate) enum Predicate {
         left: Leaf,
         right: Leaf,
         is_equal: bool,
+    },
+    /// `e \in S` and `e \notin S` of a set the engine builds.
+    Member {
+        element: Leaf,
+        set: Leaf,
+        is_in: bool,
     },
     Not(Box<Predicate>),
     And(Vec<Predicate>),
@@ -145,6 +151,21 @@ impl Predicate {
                 right,
                 is_equal,
             } => build_equal(left, right, *is_equal),
+            Predicate::Member {
+                element,
+                set,
+                is_in,
+            } => {
+                let (element, set, is_in) = (element.clone(), set.clone(), *is_in);
+                test(move |machine| {
+                    let element = element.read(machine)?;
+                    let set = set.read(machine)?;
+                    if machine.store.kind_of(set) != KIND_SET {
+                        return Err(Bail("membership in a non-set"));
+                    }
+                    Ok(machine.store.is_member(element, set)? == is_in)
+                })
+            }
             // NotAnd: ~(A /\ B) in one closure.
             Predicate::Not(operand) => match &**operand {
                 Predicate::And(operands) => {
@@ -251,6 +272,32 @@ fn build_equal(left: &Leaf, right: &Leaf, is_equal: bool) -> Test {
                 } else {
                     machine.store.apply(function, key)?
                 };
+                Ok(equals(machine, value, constant)? == is_equal)
+            })
+        }
+        // f[k] = c and f[k] = j, with k and j bound names.
+        (
+            Leaf::ApplyVar { variable, slot, .. },
+            Leaf::Constant(_) | Leaf::Slot(_) | Leaf::IntSlot(_),
+        ) => {
+            let (variable, slot, right) = (*variable, *slot as usize, right.clone());
+            test(move |machine| {
+                let function = machine.read_current(variable)?;
+                let key = machine.locals[slot];
+                let value = apply(machine, function, key)?;
+                let other = match right {
+                    Leaf::Constant(constant) => constant,
+                    Leaf::Slot(other) | Leaf::IntSlot(other) => machine.locals[other as usize],
+                    _ => unreachable!("a constant or a bound name"),
+                };
+                Ok(equals(machine, value, other)? == is_equal)
+            })
+        }
+        // VarEqConst: x = c.
+        (Leaf::Current(variable), Leaf::Constant(constant)) => {
+            let (variable, constant) = (*variable, *constant);
+            test(move |machine| {
+                let value = machine.read_current(variable)?;
                 Ok(equals(machine, value, constant)? == is_equal)
             })
         }

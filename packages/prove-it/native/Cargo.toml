@@ -3,6 +3,7 @@ members = [
   "crates/prove-it-cli",
   "crates/prove-it-napi",
   "crates/tla-engine",
+  "crates/tla-front",
   "crates/tla-ir",
   "crates/tla-live",
   "crates/tla-values",
