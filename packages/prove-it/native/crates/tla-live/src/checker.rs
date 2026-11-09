@@ -81,6 +81,8 @@ struct Behavior {
     last_nodes: Vec<u32>,
     next_siblings: Vec<u32>,
     node_ids: IntegerMap<(u32, u32), u32>,
+    /// The state each late node reached, where it isn't the state stored for the node.
+    node_reals: IntegerMap<u32, u32>,
     is_done: Vec<bool>,
     error_node: Option<u32>,
 }
@@ -188,6 +190,7 @@ impl<'c> Checker<'c> {
                 last_nodes: Vec::new(),
                 next_siblings: Vec::new(),
                 node_ids: IntegerMap::default(),
+                node_reals: IntegerMap::default(),
                 is_done: vec![false; graph.count()],
                 error_node: None,
             });
@@ -281,11 +284,11 @@ impl<'c> Checker<'c> {
         }
     }
 
-    fn self_step(&self, state: u32) -> Step {
+    fn self_step(&self, state: u32, real: u32) -> Step {
         Step {
             target: state,
-            real: state,
-            answer: self.graph.edges.len() + state as usize,
+            real,
+            answer: self.graph.edges.len() + real as usize,
         }
     }
 
@@ -293,7 +296,7 @@ impl<'c> Checker<'c> {
         let target = self.graph.edges[edge];
         let real = self.graph.reals.map_or(target, |reals| reals[edge]);
         if target == state && real == state {
-            self.self_step(state)
+            self.self_step(state, state)
         } else {
             Step {
                 target,
@@ -334,11 +337,11 @@ impl<'c> Checker<'c> {
         Ok(row as u32)
     }
 
-    // The state checks of a state, on the state the step reached, kept for every node of the state.
-    fn check_state(&mut self, behavior: usize, state: u32, real: u32) -> Result<(), Declined> {
+    // The state checks of a state the search reached, kept for the nodes of the state it reached.
+    fn check_state(&mut self, behavior: usize, real: u32) -> Result<(), Declined> {
         let solution = &self.solutions[self.behaviors[behavior].solution];
         let count = solution.state_checks.len();
-        let offset = state as usize * count;
+        let offset = real as usize * count;
         let results: Vec<u8> = solution
             .state_checks
             .iter()
@@ -427,7 +430,7 @@ impl<'c> Checker<'c> {
         let mut entries: Vec<Step> = (start..end)
             .map(|edge| self.edge_step(state, edge))
             .collect();
-        entries.push(self.self_step(state));
+        entries.push(self.self_step(state, state));
         let fingerprint =
             |step: &Step| (graph.fingerprints[step.target as usize] as u32 & 0x7fff_ffff) as usize;
         let insert = |slots: &mut [u32], position: usize| {
@@ -509,7 +512,7 @@ impl<'c> Checker<'c> {
                     self.check_step(behavior, state, step, first_step + position)?;
                 }
             }
-            self.check_state(behavior, state, state)?;
+            self.check_state(behavior, state)?;
             if self.tableau(behavior).is_none() {
                 self.add_plain_state(behavior, &set, first_step, state);
                 continue;
@@ -618,7 +621,7 @@ impl<'c> Checker<'c> {
     }
 
     /// TLC's TableauLiveChecker#addNextState for a node it finds after it expanded the node's
-    /// state.
+    /// state: it checks the state the step reached, `real`, and runs Next from it.
     fn expand_late(
         &mut self,
         behavior: usize,
@@ -626,24 +629,23 @@ impl<'c> Checker<'c> {
         real: u32,
         node: u32,
     ) -> Result<(), Declined> {
-        // TLC runs Next from the state the step reached, which the search expanded only if it is
-        // the state stored.
-        if real != state {
-            return Err(Declined::from(
-                "a late node of a state the search didn't store",
-            ));
+        if real as usize + 1 >= self.graph.edge_offsets.len() {
+            return Err(Declined::from(crate::UNEXPANDED));
         }
-        self.check_state(behavior, state, state)?;
+        if real != state {
+            self.behaviors[behavior].node_reals.insert(node, real);
+        }
+        self.check_state(behavior, real)?;
         let tableau_successors = self.tableau_successors(behavior, node);
         let mut targets = Vec::new();
         let mut steps = Vec::new();
         let self_step = if tableau_successors.is_empty() {
             u32::MAX
         } else {
-            self.check_action(behavior, state, self.self_step(state))?
+            self.check_action(behavior, real, self.self_step(state, real))?
         };
         for &next in &tableau_successors {
-            if !self.is_consistent(behavior, next, state)? {
+            if !self.is_consistent(behavior, next, real)? {
                 continue;
             }
             if self.is_accepting(behavior, next)
@@ -664,14 +666,14 @@ impl<'c> Checker<'c> {
             targets.push(target);
             steps.push(self_step);
             if existing.is_none() {
-                self.expand_late(behavior, state, state, target)?;
+                self.expand_late(behavior, state, real, target)?;
             }
         }
-        let start = self.graph.edge_offsets[state as usize] as usize;
-        let end = self.graph.edge_offsets[state as usize + 1] as usize;
+        let start = self.graph.edge_offsets[real as usize] as usize;
+        let end = self.graph.edge_offsets[real as usize + 1] as usize;
         for edge in start..end {
-            let step = self.edge_step(state, edge);
-            let successor_step = self.check_action(behavior, state, step)?;
+            let step = self.edge_step(real, edge);
+            let successor_step = self.check_action(behavior, real, step)?;
             let is_done = self.behaviors[behavior].is_done[step.target as usize];
             for &next in &tableau_successors {
                 if !self.is_consistent(behavior, next, step.real)? {
@@ -752,7 +754,7 @@ impl<'c> Checker<'c> {
     // The step from one state to another, as the first of the search's steps between them.
     fn step_to(&self, state: u32, target: u32) -> Result<Step, Declined> {
         if state == target {
-            return Ok(self.self_step(state));
+            return Ok(self.self_step(state, state));
         }
         let start = self.graph.edge_offsets[state as usize] as usize;
         let end = self.graph.edge_offsets[state as usize + 1] as usize;
@@ -949,9 +951,9 @@ impl<'s, 'c> Search<'s, 'c> {
 
     fn state_result(&self, node: u32, position: usize) -> bool {
         let count = self.solution.state_checks.len();
-        self.behavior.state_results
-            [self.behavior.node_states[node as usize] as usize * count + position]
-            == 1
+        let real = self.behavior.node_reals.get(&node).copied();
+        let state = real.unwrap_or(self.behavior.node_states[node as usize]);
+        self.behavior.state_results[state as usize * count + position] == 1
     }
 
     fn is_fulfilled(&self, node: u32, promise: usize) -> bool {
