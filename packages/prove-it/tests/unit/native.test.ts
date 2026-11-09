@@ -37,6 +37,9 @@ describe("the native engine", () => {
       PROVE_IT_ENGINE_ADDON: ADDON,
     });
     expect(lines).toContainEqual(expect.stringMatching(/^\[engine\] native: complete: /));
+    expect(lines).toContainEqual(
+      expect.stringMatching(/^\[engine\] checked 251 states on 2 threads /),
+    );
   });
 
   it.each([undefined, "rust", "auto"])(
