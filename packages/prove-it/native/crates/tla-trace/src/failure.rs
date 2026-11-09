@@ -80,6 +80,13 @@ impl<'ir> Rebuilder<'ir> {
         actions: &[Option<u32>],
         site: Site,
     ) -> Result<Failure, Unsupported> {
+        // TLC 1.7.4 streams the lazy bounds of a quantifier rather than enumerating them in order,
+        // and words some messages apart, neither of which is ported.
+        if self.evaluator().is_174() {
+            return Err(Unsupported(
+                "evaluating the failure again: TLC 1.7.4".into(),
+            ));
+        }
         // TLC reports an invariant that fails on an initial state otherwise, which isn't ported.
         if matches!(site, Site::Invariant(_)) && states.len() < 2 {
             return Err(Unsupported(

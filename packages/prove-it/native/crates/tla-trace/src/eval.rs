@@ -481,7 +481,7 @@ impl<'ir> Evaluator<'ir> {
     }
 
     // TLC 1.7.4, which words some messages apart.
-    fn is_174(&self) -> bool {
+    pub(crate) fn is_174(&self) -> bool {
         self.ir
             .model
             .version
@@ -1441,20 +1441,22 @@ impl<'ir> Evaluator<'ir> {
         args: &[NodeId],
         context: &Context,
     ) -> Evaluated<Value> {
-        let argument = if args.len() == 1 {
-            self.evaluate(args[0], context)?
-        } else {
-            Value::tuple(
+        let argument = |evaluator: &mut Self| {
+            if args.len() == 1 {
+                return evaluator.evaluate(args[0], context);
+            }
+            Ok(Value::tuple(
                 args.iter()
-                    .map(|&arg| self.evaluate(arg, context))
+                    .map(|&arg| evaluator.evaluate(arg, context))
                     .collect::<Evaluated<_>>()?,
-            )
+            ))
         };
         // A function TLC keeps lazy, a definition's or a LET's, is applied without being built.
         if let NodeKind::Identifier(name) = self.kind(function)
             && let Some((bounds, body, inner)) = self.lazy_function(name, context)?
             && let [bound] = bounds
         {
+            let argument = argument(self)?;
             let set = self.evaluate(bound.set, &inner)?;
             if !is_member(&argument, &set)? {
                 return fail("applied a function outside its domain");
@@ -1462,7 +1464,9 @@ impl<'ir> Evaluator<'ir> {
             let bound_context = self.bind_pattern(&bound.pattern, &argument, &inner)?;
             return self.nested(|evaluator| evaluator.evaluate(body, &bound_context));
         }
+        // `evalAppl` evaluates the function before the argument.
         let function = self.evaluate(function, context)?;
+        let argument = argument(self)?;
         self.apply_checked(&function, &argument)
     }
 
