@@ -275,6 +275,9 @@ fn on_helpers(
                 std::thread::Builder::new()
                     .stack_size(NESTING_STACK_BYTES)
                     .spawn_scoped(scope, move || {
+                        // What the helper cached in an earlier run may name values of the
+                        // overlay it lays again, or ids the store has given since.
+                        helper.forget_from(0);
                         helper.store.attach(store.clone());
                         let mut run = Run {
                             machine: helper,
