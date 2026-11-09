@@ -14,6 +14,9 @@
 //!   its spec's path, and writes the environment of each model as `resolve` does;
 //! - `front-dump ir [--library <directory>]` links each file as `resolve` does and writes, in
 //!   hex, the IR of a model whose configuration names every definition as an invariant;
+//! - `front-dump order [--library <directory>]` reads lines as `model` does and writes TLC's
+//!   string order for each model, the root module's variables and constants in SANY's order, and
+//!   its definitions in the order TLC computes them;
 //! - `front-dump time` writes the best of five times to tokenize and parse each module, in
 //!   milliseconds.
 
@@ -33,6 +36,7 @@ use tla_front::errors::FrontError;
 use tla_front::json::write_js_string;
 use tla_front::lexer::tokenize;
 use tla_front::lower::{Lowering, RankedTexts};
+use tla_front::order::TlcOrder;
 use tla_front::parser::{parse_module, parse_sany_module};
 use tla_ir::Model;
 
@@ -77,6 +81,15 @@ fn write_module(out: &mut String, source: &str, is_sany: bool) {
     }
 }
 
+/// A module's text from the spec's directory, or else the library's.
+fn load(path: &Path, library: Option<&Path>, name: &str) -> Option<String> {
+    let directory = path.parent().unwrap_or(Path::new("."));
+    let file = format!("{name}.tla");
+    std::fs::read_to_string(directory.join(&file))
+        .ok()
+        .or_else(|| library.and_then(|library| std::fs::read_to_string(library.join(&file)).ok()))
+}
+
 /// Links the spec at `path` with the configuration `config`, or as SANY does without one.
 fn link(
     source: &str,
@@ -84,15 +97,7 @@ fn link(
     library: Option<&Path>,
     config: Option<&str>,
 ) -> Result<Environment, FrontError> {
-    let directory = path.parent().unwrap_or(Path::new("."));
-    let load_module = |name: &str| {
-        let file = format!("{name}.tla");
-        std::fs::read_to_string(directory.join(&file))
-            .ok()
-            .or_else(|| {
-                library.and_then(|library| std::fs::read_to_string(library.join(&file)).ok())
-            })
-    };
+    let load_module = |name: &str| load(path, library, name);
     let parsed = match config {
         None => parse_config("", TlcVersion::Master),
         Some(text) => parse_config(text, TlcVersion::Master),
@@ -190,6 +195,49 @@ fn write_lowered(out: &mut String, source: &str, path: &Path, library: Option<&P
     }
 }
 
+/// TLC's orders of a model: its string order, the root module's variables and constants, and the
+/// root module's definitions in the order TLC computes them.
+fn write_order(out: &mut String, config: &str, spec_path: &Path, library: Option<&Path>) {
+    let source = std::fs::read_to_string(spec_path).unwrap_or_default();
+    let load_module = |name: &str| load(spec_path, library, name);
+    let orders = parse_config(config, TlcVersion::Master)
+        .map_err(|error| FrontError::Config(error.message))
+        .and_then(|model| {
+            let order = TlcOrder::new(&source, &load_module, TlcVersion::Master)?;
+            let strings = order.get_string_order(&model)?;
+            let variables = order.get_declaration_order(true)?;
+            let constants = order.get_declaration_order(false)?;
+            let definitions = order.get_definition_order(None)?;
+            Ok((strings, variables, constants, definitions))
+        });
+    let names = |items: &[Rc<str>]| {
+        let mut written = String::from("[");
+        for (index, item) in items.iter().enumerate() {
+            if index > 0 {
+                written.push(',');
+            }
+            write_js_string(&mut written, item);
+        }
+        written.push(']');
+        written
+    };
+    match orders {
+        Ok((strings, variables, constants, definitions)) => {
+            let strings: Vec<Rc<str>> =
+                strings.iter().map(|text| Rc::from(text.as_str())).collect();
+            let _ = write!(
+                out,
+                "{{\"constants\":{},\"definitions\":{},\"strings\":{},\"variables\":{}}}",
+                names(&constants),
+                names(&definitions),
+                names(&strings),
+                names(&variables)
+            );
+        }
+        Err(error) => dump::environment(&Err(error)).write(out),
+    }
+}
+
 fn write_time(out: &mut String, source: &str) {
     let best = (0..5)
         .map(|_| {
@@ -210,7 +258,7 @@ fn main() -> ExitCode {
         .and_then(|index| arguments.get(index + 1))
         .map(PathBuf::from);
     let write: fn(&mut String, &str) = match mode.as_str() {
-        "resolve" | "model" | "ir" => |_, _| {},
+        "resolve" | "model" | "ir" | "order" => |_, _| {},
         "tokens" => write_tokens,
         "ast" => |out, source| write_module(out, source, false),
         "sany-ast" => |out, source| write_module(out, source, true),
@@ -223,7 +271,9 @@ fn main() -> ExitCode {
             out.push('}');
         },
         _ => {
-            eprintln!("usage: front-dump tokens|ast|sany-ast|config|resolve|model|ir|time < paths");
+            eprintln!(
+                "usage: front-dump tokens|ast|sany-ast|config|resolve|model|ir|order|time < paths"
+            );
             return ExitCode::from(2);
         }
     };
@@ -238,7 +288,9 @@ fn main() -> ExitCode {
             }
         };
         let mut line = String::new();
-        if mode == "ir" {
+        if mode == "order" {
+            write_order(&mut line, &source, Path::new(spec_path), library.as_deref());
+        } else if mode == "ir" {
             write_lowered(&mut line, &source, Path::new(&path), library.as_deref());
         } else if mode == "resolve" {
             write_environment(
