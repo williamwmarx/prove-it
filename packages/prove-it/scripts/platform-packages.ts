@@ -1,15 +1,18 @@
 // The optional npm packages that carry the native engine, one per platform, each holding only
-// prove-it-engine.node: no JavaScript and no install scripts. Each has the os, cpu and libc fields
-// that make a package manager install only the one for its platform, and the main package's
-// version. src/engine/native.ts finds the installed one.
+// prove-it-engine.node and the native prove-it binary (native/DESIGN.md 13), bin/prove-it: no
+// JavaScript and no install scripts. Each has the os, cpu and libc fields that make a package
+// manager install only the one for its platform, and the main package's version.
+// src/engine/native.ts finds the installed one. The package declares no bin, so it never shadows
+// the main package's.
 // Usage: bun scripts/platform-packages.ts build [--target <Rust target>]
 //        bun scripts/platform-packages.ts pack <destination>
-// build compiles the addon with cargo, for the host or a Rust target whose standard library and
+// build compiles the addon and the binary with cargo, for the host or a Rust target whose standard library and
 // linker are installed, and writes its package to native/npm/<platform>. pack packs every package
 // built there into the destination.
 
 import { spawnSync } from "node:child_process";
 import {
+  chmodSync,
   copyFileSync,
   existsSync,
   mkdirSync,
@@ -18,7 +21,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 
 import { ADDON_FILE } from "../src/engine/native";
 
@@ -128,6 +131,8 @@ const build = (requested: string | undefined) => {
       "--locked",
       "--package",
       "prove-it-napi",
+      "--package",
+      "prove-it-cli",
       ...(requested ? ["--target", requested] : []),
     ],
     NATIVE_DIRECTORY,
@@ -136,27 +141,23 @@ const build = (requested: string | undefined) => {
   const directory = join(NPM_DIRECTORY, platform.name);
   rmSync(directory, { recursive: true, force: true });
   mkdirSync(directory, { recursive: true });
-  copyFileSync(
-    join(
-      NATIVE_DIRECTORY,
-      "target",
-      ...(requested ? [requested] : []),
-      "release",
-      platform.library,
-    ),
-    join(directory, ADDON_FILE),
-  );
+  const release = join(NATIVE_DIRECTORY, "target", ...(requested ? [requested] : []), "release");
+  copyFileSync(join(release, platform.library), join(directory, ADDON_FILE));
+  const binary = `bin/prove-it${platform.os === "win32" ? ".exe" : ""}`;
+  mkdirSync(join(directory, "bin"));
+  copyFileSync(join(release, basename(binary)), join(directory, binary));
+  chmodSync(join(directory, binary), 0o755);
   copyFileSync(join(PACKAGE_DIRECTORY, "../../LICENSE"), join(directory, "LICENSE"));
   const manifest = {
     name: `${main.name}-${platform.name}`,
     version: main.version,
-    description: `The native engine of ${main.name} for ${platform.description}`,
+    description: `The native engine and prove-it binary of ${main.name} for ${platform.description}`,
     license: "MIT",
     repository: main.repository,
     os: [platform.os],
     cpu: [platform.cpu],
     ...(platform.libc && { libc: [platform.libc] }),
-    files: [ADDON_FILE],
+    files: [ADDON_FILE, binary],
     publishConfig: main.publishConfig,
   };
   writeFileSync(join(directory, "package.json"), `${JSON.stringify(manifest, null, 2)}\n`);

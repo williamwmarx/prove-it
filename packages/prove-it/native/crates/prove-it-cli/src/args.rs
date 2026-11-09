@@ -139,12 +139,9 @@ mod tests {
 
     #[test]
     fn reads_a_java_launch() {
+        let libraries = format!("-DTLA-Library=/a{PATH_DELIMITER}/b");
         let launch = get_java_launch(&strings(&[
-            "-DTLA-Library=/a:/b",
-            "-Xmx4g",
-            "tlc2.TLC",
-            "-tool",
-            "Spec",
+            &libraries, "-Xmx4g", "tlc2.TLC", "-tool", "Spec",
         ]))
         .expect("a launch");
         assert_eq!(launch.main_class, "tlc2.TLC");
