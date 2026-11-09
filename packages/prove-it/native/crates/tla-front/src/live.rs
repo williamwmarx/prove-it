@@ -10,7 +10,7 @@ use crate::ast::*;
 use crate::config::ConfigValue;
 use crate::dependencies::{DefinitionFacts, Level};
 use crate::environment::Environment;
-use crate::errors::FrontError;
+use crate::errors::{FrontError, describe_range};
 use crate::eval::Evaluator;
 use crate::resolve::Result;
 use crate::spec::{
@@ -59,6 +59,14 @@ pub struct Liveness {
 
 fn not_yet(reason: &str) -> FrontError {
     FrontError::NotYet(reason.to_owned())
+}
+
+/// `createCannotHandleError`, without the message of an error TLC adds.
+fn cannot_handle(expression: &Expr) -> FrontError {
+    FrontError::Evaluation(format!(
+        "TLC cannot handle the temporal formula {}",
+        describe_range(expression)
+    ))
 }
 
 /// `createJunction`: the operands, those of the same junction in their place.
@@ -188,8 +196,10 @@ impl Converter<'_> {
         expression: &Expr,
         scope: Option<&Rc<Scope>>,
     ) -> Result<Rc<Live>> {
+        // TLC's translation of the formula recurses until it overflows its stack, as on its
+        // Github1389Loops and Github1389StateGuard (`createStackOverflowError`).
         if self.depth >= MAXIMUM_EXPANSION_DEPTH {
-            return Err(not_yet("a temporal formula expanded too deep"));
+            return Err(FrontError::StackOverflow);
         }
         self.depth += 1;
         let result = self.convert(body, body_scope);
@@ -215,21 +225,38 @@ impl Converter<'_> {
         )) = binding
         {
             let body_scope = definition_scope.resolve(node);
-            return self.expand(body, body_scope.as_ref(), expression, scope);
+            let expanded = self.expand(body, body_scope.as_ref(), expression, scope);
+            return Self::expanded_call(expression, expanded, false);
         }
-        let cannot_handle = || not_yet("a temporal formula TLC can't handle");
         if binding.is_some_and(|(_, binding)| !matches!(binding, Binding::Closure { .. })) {
-            return Err(cannot_handle());
+            return Err(cannot_handle(expression));
         }
         let (params, body, closure_scope) =
             resolve_apply_operator(expression, scope, self.environment)
-                .ok_or_else(cannot_handle)?;
+                .ok_or_else(|| cannot_handle(expression))?;
         let args = match &expression.kind {
             ExpressionKind::Apply { args, .. } => &args[..],
             _ => &[],
         };
+        let is_recursive = !is_local
+            && get_definition(&name, self.environment)
+                .is_some_and(|definition| definition.is_recursive);
         let bound = bind_operator_arguments(&params, args, closure_scope, scope, self.environment)?;
-        self.expand(&body, bound.as_ref(), expression, scope)
+        let expanded = self.expand(&body, bound.as_ref(), expression, scope);
+        Self::expanded_call(expression, expanded, is_recursive)
+    }
+
+    /// `expandCall`: TLC takes an application whose expansion fails for a formula it can't
+    /// handle, except that a recursive operator's fails as its expansion does.
+    fn expanded_call(
+        expression: &Expr,
+        expanded: Result<Rc<Live>>,
+        is_recursive: bool,
+    ) -> Result<Rc<Live>> {
+        match expanded {
+            Err(FrontError::Evaluation(_)) if !is_recursive => Err(cannot_handle(expression)),
+            expanded => expanded,
+        }
     }
 
     // The formulas below temporal level whose parts TLC's Liveness.astToLive translates, as one
@@ -306,7 +333,7 @@ impl Converter<'_> {
                     return if level <= Level::Action {
                         self.atom(expression, scope, level)
                     } else {
-                        Err(not_yet("a temporal formula TLC can't handle"))
+                        Err(cannot_handle(expression))
                     };
                 }
                 let reason = "a temporal quantifier over a set TLC fails to list";
@@ -314,10 +341,24 @@ impl Converter<'_> {
                     Err(FrontError::Evaluation(_)) => return Err(not_yet(reason)),
                     bindings => bindings?,
                 };
-                let operands = bindings
+                // TLC takes a quantified formula whose body fails for one it can't handle, and
+                // under \A it adds the message of a failure that isn't an EvalException.
+                let operands = match bindings
                     .iter()
                     .map(|bound| self.convert(body, bound.as_ref()))
-                    .collect::<Result<Vec<_>>>()?;
+                    .collect::<Result<Vec<_>>>()
+                {
+                    Err(FrontError::Evaluation(_)) if level <= Level::Action => {
+                        return self.atom(expression, scope, level);
+                    }
+                    Err(FrontError::Evaluation(_)) if !is_forall => {
+                        return Err(cannot_handle(expression));
+                    }
+                    Err(FrontError::Evaluation(_)) => {
+                        return Err(not_yet("a temporal \\A whose body TLC can't handle"));
+                    }
+                    operands => operands?,
+                };
                 if operands.is_empty() {
                     return Ok(Rc::new(Live::Boolean(is_forall)));
                 }
@@ -389,7 +430,7 @@ impl Converter<'_> {
                     )))))
                 })
             }
-            _ => Err(not_yet("a temporal formula TLC can't handle")),
+            _ => Err(cannot_handle(expression)),
         }
     }
 }
@@ -452,7 +493,15 @@ fn order_atoms(formula: &Rc<Live>) -> Result<Vec<Rc<Live>>> {
     let mut terms = Vec::new();
     write_terms(formula, &mut atoms, &mut ids, &mut terms);
     let order = tla_live::atom_order(&terms).map_err(|declined| match &*declined.0 {
-        "a tautology" => not_yet("a temporal property that is a tautology"),
+        "a tautology" => FrontError::Evaluation(
+            "Temporal formula is a tautology (its negation is unsatisfiable).".to_owned(),
+        ),
+        "a temporal formula too large in disjunctive normal form" => FrontError::Evaluation(
+            "TLC cannot handle the temporal formula because it exceeds the maximum supported size in disjunctive normal form.".to_owned(),
+        ),
+        "a temporal formula with actions not of the forms <>[]A or []<>A" => FrontError::Evaluation(
+            "Temporal formulas containing actions must be of forms <>[]A or []<>A.".to_owned(),
+        ),
         _ => not_yet("a temporal formula the tableau declines"),
     })?;
     Ok(order
