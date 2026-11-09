@@ -108,7 +108,7 @@
     "directory": "tests/conformance/.corpora/examples/specifications/ewd426",
     "spec": "TokenRing.tla",
     "config": "benchmarks/liveness/TokenRing.cfg",
-    "style": "Dijkstra token ring, N = M = 7",
+    "style": "Dijkstra token ring, N = 8, M = 7",
     "isUsingLibrary": true
   },
   {
@@ -117,14 +117,6 @@
     "spec": "StarkMutex.tla",
     "config": "benchmarks/liveness/StarkMutex.cfg",
     "style": "mutual exclusion, N = 4",
-    "isUsingLibrary": true
-  },
-  {
-    "id": "benchmarks/liveness/bcastByz.cfg",
-    "directory": "tests/conformance/.corpora/examples/specifications/bcastByz",
-    "spec": "bcastByz.tla",
-    "config": "benchmarks/liveness/bcastByz.cfg",
-    "style": "Byzantine reliable broadcast, N = 5",
     "isUsingLibrary": true
   },
   {
