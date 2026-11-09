@@ -4,7 +4,7 @@
 use crate::{
     AtomKind, Bound, Builtin, ConfigName, DefinitionForm, EnabledActions, IR_VERSION, Ir, Junction,
     LiveTerm, MAGIC, Name, NodeId, NodeKind, Param, PathStep, Pattern, Resolution, ScopeBinding,
-    Selector, Value, code, tag,
+    Selector, SourceRange, Value, code, tag,
 };
 
 /// Encodes an IR.
@@ -100,7 +100,9 @@ fn encode_here(ir: &Ir) -> Vec<u8> {
             offset(action.expression),
             optional(action.scope),
             action.label as i32,
+            action.name as i32,
         ]);
+        words.extend(range_words(action.location));
     }
     words.push(model.is_labelled as i32);
     let config_name = |name: &ConfigName| [name.name as i32, optional(name.definition)].into_iter();
@@ -211,6 +213,16 @@ fn encode_here(ir: &Ir) -> Vec<u8> {
     for &(assumption, name) in &startup.assumptions {
         words.extend([offset(assumption), name as i32]);
     }
+    words.extend(range_words(model.next_substitution));
+    words.push(model.instance_actions.len() as i32);
+    for action in &model.instance_actions {
+        words.extend([action.definition as i32, action.name as i32]);
+        words.extend(range_words(action.location));
+    }
+    words.push(model.instance_names.len() as i32);
+    for &(definition, name) in &model.instance_names {
+        words.extend([definition as i32, name as i32]);
+    }
     words.push(ir.definitions.len() as i32);
     words.extend(ir.definitions.iter().map(|&id| offset(id)));
     words.push(nodes.words.len() as i32);
@@ -225,6 +237,20 @@ fn encode_here(ir: &Ir) -> Vec<u8> {
     bytes.extend_from_slice(&text);
     bytes.resize(bytes.len().next_multiple_of(4), 0);
     bytes
+}
+
+// A source range: its module's text and its positions, or -1 and zeros for none.
+fn range_words(range: Option<SourceRange>) -> [i32; 5] {
+    match range {
+        Some(range) => [
+            range.module as i32,
+            range.start_line,
+            range.start_column,
+            range.end_line,
+            range.end_column,
+        ],
+        None => [-1, 0, 0, 0, 0],
+    }
 }
 
 fn write_params(words: &mut Vec<i32>, params: &[Param]) {
@@ -335,16 +361,7 @@ impl<'a> NodeWriter<'a> {
             NodeKind::Reference(_) => unreachable!("written above"),
         };
         self.words.extend([tag_word, node.line, node.column]);
-        match node.range {
-            Some(range) => self.words.extend([
-                range.module as i32,
-                range.start_line,
-                range.start_column,
-                range.end_line,
-                range.end_column,
-            ]),
-            None => self.words.extend([-1, 0, 0, 0, 0]),
-        }
+        self.words.extend(range_words(node.range));
         match &node.kind {
             NodeKind::Number(value) => self.words.push(*value),
             NodeKind::WideNumber(text) | NodeKind::Decimal(text) | NodeKind::String(text) => {

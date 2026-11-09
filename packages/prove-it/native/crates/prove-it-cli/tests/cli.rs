@@ -484,3 +484,44 @@ fn prints_an_assumption_that_fails_to_evaluate() {
         std::fs::remove_dir_all(directory).expect("removed");
     }
 }
+
+// Runs the binary on a spec of the test's own, with no recorded front.
+fn run_unrecorded(test: &str, spec: &str, config: &str) -> (Output, PathBuf) {
+    let directory =
+        std::env::temp_dir().join(format!("prove-it-cli-{test}-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    std::fs::write(directory.join("Stop.tla"), spec).expect("a spec");
+    std::fs::write(directory.join("Stop.cfg"), config).expect("a configuration");
+    (run(&directory, &["Stop"]), directory)
+}
+
+#[test]
+fn reports_a_constant_the_configuration_leaves_unassigned() {
+    let spec =
+        "---- MODULE Stop ----\nCONSTANT N\nVARIABLE x\nInit == x = N\nNext == x' = x\n====\n";
+    let (output, directory) = run_unrecorded("unassigned", spec, "INIT Init\nNEXT Next\n");
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(151), "{text}");
+    assert!(
+        text.contains("Linting of module Stop\nStarting... ("),
+        "{text}"
+    );
+    assert!(
+        text.contains(")\nError: The constant parameter N is not assigned a value by the configuration file.\nFinished in "),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn reports_a_spec_sany_rejects() {
+    let spec = "---- MODULE Stop ----\nVARIABLE x\nInit == x =\n====\n";
+    let (output, directory) = run_unrecorded("rejected", spec, "INIT Init\n");
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(150), "{text}");
+    assert!(
+        text.contains(")\nError: Parsing or semantic analysis failed.\nFinished in "),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
