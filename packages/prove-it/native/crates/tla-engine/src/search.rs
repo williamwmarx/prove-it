@@ -150,6 +150,8 @@ pub enum SearchOutcome {
         /// TLC's fingerprint of each state's key, in the order found.
         fingerprints: Vec<u64>,
         value_count: usize,
+        /// The most threads a level was shared between, 1 where none was.
+        threads: usize,
         /// Under PROVE_IT_FP_VERIFY, how many fingerprints two different keys shared.
         collisions: u64,
         /// What each `_POSSIBLE` predicate counted, or -1 where it wasn't evaluated.
@@ -1504,6 +1506,8 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     let mut initial_states = (0, 0);
     let mut is_past_initial = false;
     let mut workers: Vec<Worker<'_>> = Vec::new();
+    // The most threads a level was shared between.
+    let mut threads_used = 1;
     let result = (|| -> Outcome<()> {
         // --- initial states ---
         let unassigned = vec![UNASSIGNED; width];
@@ -1547,6 +1551,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     && level_end - expanding >= settings.minimum_shared_level
                     && threads > 1
                 {
+                    threads_used = threads_used.max(threads);
                     if workers.is_empty() {
                         workers = (0..thread_count)
                             .map(|_| Worker {
@@ -1780,6 +1785,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 liveness,
                 lasso_actions,
                 value_count: machine.store.value_count(),
+                threads: threads_used,
                 collisions,
                 possible: search.possible.clone(),
                 fingerprints: search.states.fingerprints,
