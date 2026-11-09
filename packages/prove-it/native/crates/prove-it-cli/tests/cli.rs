@@ -312,6 +312,32 @@ fn prints_a_lasso_it_rebuilds_under_a_view() {
 }
 
 #[test]
+fn warns_of_a_stuttering_counterexample_without_fairness() {
+    // No recorded IR, so tla-front lowers the model, and TLC prints its warnings.
+    let directory =
+        std::env::temp_dir().join(format!("prove-it-cli-stuttering-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    for (file, contents) in [
+        (
+            "Stutter.tla",
+            "---- MODULE Stutter ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = 1 - x\nSpec == Init /\\ [][Next]_x\nLive == []<>(x = 1)\n====\n",
+        ),
+        ("Stutter.cfg", "SPECIFICATION Spec\nPROPERTY Live\n"),
+        ("Stutter.front", ""),
+    ] {
+        std::fs::write(directory.join(file), contents).expect("a file");
+    }
+    let output = run(&directory, &["Stutter"]);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(13), "{text}");
+    assert!(
+        text.contains("State 2: Stuttering\nWarning: The stuttering counterexample above may be caused by the absence of a fairness constraint in the behavior specification Spec defined at line 6, col 1 to line 6, col 26 of module Stutter. To rule out such counterexamples, conjoin a suitable fairness constraint to Spec (compare Chapter 8, page 87ff of Specifying Systems at https://lamport.azurewebsites.net/tla/book.html).\n"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
 fn prints_a_temporal_propertys_lasso() {
     let ir = include_bytes!(
         "../../../../tests/conformance/ir/tlc/tlatools/org.lamport.tlatools/test-model/Github1389ViolatedB.ir"
@@ -556,6 +582,31 @@ fn reports_a_spec_sany_rejects() {
     assert_eq!(output.status.code(), Some(150), "{text}");
     assert!(
         text.contains(")\nError: Parsing or semantic analysis failed.\nFinished in "),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn reports_an_initial_state_tlc_fails_to_print() {
+    // TLC's Github696b: TLC keeps the set as written, then fails to compare its model values as it
+    // fingerprints the state and again as it prints it.
+    let spec = "---- MODULE Stop ----\nEXTENDS Integers, TLCExt\nVARIABLE v\nInit == v = {TLCModelValue(\"A_a\"), TLCModelValue(\"B_a\")}\nNext == UNCHANGED v\nInv == TLCModelValue(\"B_a\") \\in v\n====\n";
+    let directory =
+        std::env::temp_dir().join(format!("prove-it-cli-unprintable-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    for (extension, contents) in [
+        ("tla", spec),
+        ("cfg", "INIT Init\nNEXT Next\nINVARIANT Inv\n"),
+        ("front", ""),
+    ] {
+        std::fs::write(directory.join(format!("Stop.{extension}")), contents).expect("a file");
+    }
+    let output = run(&directory, &["Stop"]);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(255), "{text}");
+    assert!(
+        text.contains("Computing initial states...\nError: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: Attempted to compare the differently-typed model values B_a and A_a\nFinished in "),
         "{text}"
     );
     std::fs::remove_dir_all(directory).expect("removed");
