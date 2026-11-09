@@ -402,9 +402,10 @@ isn't followed yet, so it stays `NotYet`, as does a constant atom that isn't a b
 `getConstantValue` evaluates a constant definition the configuration names with the constant
 evaluator. A value other than TRUE is TLC's configuration error, and a definition that fails to
 evaluate stays an operator, as in TLC. The engine checks the same definitions again at startup
-(`Startup::predicates`, below), so one the evaluator can't compute yet is left to it: the
-evaluator records the deferral, and any error the front end would report after it becomes
-`NotYet`, since TLC stops on the predicate first. The evaluator reads
+(`Startup::predicates`, below), so a predicate the evaluator can't compute yet is left to it:
+the evaluator records the deferral, and any error the front end would report after it becomes
+`NotYet`, since TLC stops on the predicate first. TLC rejects any value of an INIT, NEXT, possible
+or SPECIFICATION definition, so one of those the evaluator can't compute stays `NotYet`. The evaluator reads
 the builtins the configuration substitutes (`Nat <- Int`), and stops as `NotYet` past 400 nested
 evaluations rather than overflow on a recursion.
 
@@ -442,3 +443,16 @@ assumptions, and swallows a failure to evaluate, as `getConstantValue` does.
 `Definition::NORMALIZED` marks each definition TLC computes and deep-normalizes in
 `processConstantDefns`: `isStartupDefinition` over the startup definitions, which skip the
 modules an INSTANCE gives parameters to.
+
+## Models without a next-state relation, and properties in a scope
+
+`Model::next` is optional: TLC computes the initial states of a model whose configuration names
+no next-state relation (and checks nothing of behaviors), then stops. `check.ts` lowers it, and a
+spec without variables, through `lowerUnsearchedSpec`.
+
+Each property invariant, action property and initial predicate carries the scope of the instance
+it comes from (`property_invariant_scopes`, `ActionProperty::scope`,
+`initial_predicate_scopes`), which `Model::has_scoped_property` tells; the engine and tla-trace
+decline one until they read it there. An operator argument to a temporal formula binds a closure as
+`evaluateOperatorArgument` does: a LAMBDA, a local operator, or a definition, and an application of
+an instance's operator is named by its key, as TLC names the property it checks.

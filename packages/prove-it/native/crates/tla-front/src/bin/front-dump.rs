@@ -178,18 +178,20 @@ fn lower_definitions(
         .collect();
     let model = Model {
         init,
-        next,
+        next: Some(next),
         scope: None,
         actions: Vec::new(),
         is_labelled: false,
         invariants,
         property_invariants: Vec::new(),
         property_invariant_names: Vec::new(),
+        property_invariant_scopes: Vec::new(),
         constraints: Vec::new(),
         action_constraints: Vec::new(),
         possible: Vec::new(),
         action_properties: Vec::new(),
         initial_predicates: Vec::new(),
+        initial_predicate_scopes: Vec::new(),
         initial_predicate_names: Vec::new(),
         view: None,
         alias: None,
@@ -307,6 +309,7 @@ fn write_model_full(out: &mut String, config: &str, spec_path: &Path, library: O
         libraries: library.as_slice(),
         version: None,
         is_warning_enabled: true,
+        is_spec_described: false,
     };
     write_ir(out, lower_model(spec_path, config, &options));
 }
