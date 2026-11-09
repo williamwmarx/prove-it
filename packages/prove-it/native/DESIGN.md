@@ -2402,6 +2402,13 @@ As run, on the 4-core cloud machine (Depot's CLI wasn't available to this sessio
   374/450; StarkMutex 981/2,460, 805/1,330, 396/520; MacroQuicksort 672/2,240, 443/910, 268/380;
   nbacg_guer01 707/1,640, 508/1,070, 282/390; MCDisruptor_SPMC 543/1,740, 321/630, 269/390;
   OneBitMutexNoSymmetryMC (a lasso) 311/800, 253/610, 227/510.
+- **What the CLI reads (follow-up).** IR version 4 carries each property, its name and its formula,
+  after the joined formula, and `SearchOutcome::Complete::liveness` is a `Liveness { branches,
+  verdict }`: `branches` is the number of solutions TLC prints in 2192 and 2212 (`None` when the
+  check declined before it solved the formula), and a `Lasso` carries `violated`, the positions of
+  the properties `evaluateOnLasso` finds false on it, which TLC names in 2116. Under
+  `PROVE_IT_LIVE_CHECK=1` the interpreter compares both. On the 222 PROPERTY models with that flag,
+  no difference in verdict, lasso, branches or names.
 - **Left.** Printing an accepted path natively; the engine's last declines above; lifting
   `MAXIMUM_GRAPH_STATES`, which exists for the interpreter's periodic checks; and deleting the
   TypeScript checker once nothing but the oracle calls it.

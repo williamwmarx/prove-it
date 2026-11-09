@@ -14,7 +14,7 @@
 //!   `counts` a Float64Array of the generated, distinct and initial counts, the depth, the values
 //!   and the collisions, and with temporal properties what checking them found, `{ status:
 //!   "holds" | "lasso" | "accepted" | "declined", reason, path, loopStart, state,
-//!   isCycleConstrained }`, and the checkpoint of the whole search unless they hold;
+//!   isCycleConstrained, violated, branches }`, and the checkpoint of the whole search unless they hold;
 //! - `{ status: "stopped", reason, counts, outDegrees, parents, words, strings, states[,
 //!   keyWords, keyStrings, keyStates, keyWidth] }`, with `counts` the state being expanded, the
 //!   states before it, the generated and initial generated counts and the collisions, and the
@@ -36,7 +36,7 @@ use std::ptr::null_mut;
 use crate::{Event, SearchOutcome, Settings, check_on_thread};
 use tla_engine::Options;
 use tla_engine::search::{Checkpoint, GraphCheckpoint};
-use tla_live::Verdict;
+use tla_live::{Liveness, Verdict};
 use tla_values::transfer::{EncodedStates, SharedStates};
 
 use super::store::{
@@ -192,14 +192,22 @@ unsafe fn set_checkpoint(
 }
 
 // What checking the temporal properties found: `{ status, reason, path, loopStart, state,
-// isCycleConstrained }`.
-unsafe fn create_verdict(env: napi_env, verdict: &Verdict) -> Result<napi_value, Thrown> {
-    let (kind, reason, path, loop_start, state, is_cycle_constrained) = match verdict {
+// isCycleConstrained, violated, branches }`, `branches` -1 where the check declined before it
+// knew them.
+unsafe fn create_verdict(env: napi_env, liveness: &Liveness) -> Result<napi_value, Thrown> {
+    let violated = match &liveness.verdict {
+        Verdict::Lasso { violated, .. } => {
+            violated.iter().map(|&position| position as i32).collect()
+        }
+        _ => Vec::new(),
+    };
+    let (kind, reason, path, loop_start, state, is_cycle_constrained) = match &liveness.verdict {
         Verdict::Holds => ("holds", "", &[][..], 0, 0, false),
         Verdict::Lasso {
             path,
             loop_start,
             is_cycle_constrained,
+            ..
         } => (
             "lasso",
             "",
@@ -224,6 +232,16 @@ unsafe fn create_verdict(env: napi_env, verdict: &Verdict) -> Result<napi_value,
             create_number(env, loop_start as f64)?,
         )?;
         set(env, object, c"state", create_number(env, f64::from(state))?)?;
+        set(env, object, c"violated", create_int32s(env, &violated)?)?;
+        set(
+            env,
+            object,
+            c"branches",
+            create_number(
+                env,
+                liveness.branches.map_or(-1.0, |branches| branches as f64),
+            )?,
+        )?;
         set(
             env,
             object,
