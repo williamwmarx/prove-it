@@ -41,6 +41,9 @@ pub struct EngineContext {
     pub initial_invariant_owners: Vec<usize>,
     pub constraints: Vec<Predicate>,
     pub action_constraints: Vec<Eval>,
+    /// The `_POSSIBLE` predicates, each with whether it is of a step: TLC counts the states in the
+    /// model, or the steps, each holds of.
+    pub possible: Vec<(Eval, bool)>,
     /// Each holds of a step unless the action and the subscript's UNCHANGED are both false.
     pub action_properties: Vec<(Eval, Eval)>,
     pub initial_predicates: Vec<Eval>,
@@ -105,6 +108,22 @@ pub fn holds_all(machine: &mut Machine<'_>, predicates: &[Eval]) -> Outcome<bool
         }
     }
     Ok(true)
+}
+
+/// Counts each `_POSSIBLE` predicate of a state, or with `is_action` of a step, that holds, as
+/// `trackPossible` does.
+pub fn count_possible(
+    machine: &mut Machine<'_>,
+    possible: &[(Eval, bool)],
+    is_action: bool,
+    counts: &mut [i64],
+) -> Outcome<()> {
+    for ((predicate, is_of_step), count) in possible.iter().zip(counts) {
+        if *is_of_step == is_action {
+            *count = (*count).max(0) + i64::from(holds(machine, predicate)?);
+        }
+    }
+    Ok(())
 }
 
 /// Whether every predicate holds of the successor that is current, given that each held of its
@@ -377,6 +396,16 @@ impl EngineContext {
                     .map(|compiled| compiled.eval)
             })
             .collect::<Result<Vec<Eval>, CompileError>>()?;
+        let possible = model
+            .possible
+            .iter()
+            .map(|possible| {
+                let index = named("possible", ir, &possible.name)?;
+                compiler
+                    .compile_root(Root::Definition(index))
+                    .map(|compiled| (compiled.eval, possible.is_action))
+            })
+            .collect::<Result<Vec<_>, CompileError>>()?;
         let init = compiler.compile_action(
             model.init,
             model.scope,
@@ -458,6 +487,7 @@ impl EngineContext {
             initial_invariant_owners,
             constraints,
             action_constraints,
+            possible,
             action_properties,
             initial_predicates,
             view,

@@ -41,6 +41,8 @@ import {
   getDefinition,
   getStartupValue,
 } from "../evaluate";
+import { ACTION_LEVEL } from "../levels";
+import { getLevel } from "../liveness";
 import type { LiveExpression } from "../tableau";
 import type { TlcVersion } from "../tlc/version";
 import { createStateEncoder } from "../transfer";
@@ -49,7 +51,7 @@ import type { EngineProperties, EngineSpec } from "./context";
 import type { NamedPermutation } from "./symmetry";
 
 // The version of the layout below, which the decoder checks. Any change to it changes this.
-export const IR_VERSION = 7;
+export const IR_VERSION = 8;
 
 // "PIIR" read as a little-endian word.
 const MAGIC = 0x52494950;
@@ -724,6 +726,15 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
   });
   writeConfigNames(config.constraints);
   writeConfigNames(config.actionConstraints);
+  // Each _POSSIBLE predicate, and whether it is of a step rather than a state.
+  push(model, config.possible.length);
+  for (const name of config.possible) {
+    const definition = getDefinition(name, environment);
+    push(model, getText(name));
+    push(model, definition ? getDefinitionIndex(definition) : -1);
+    const identifier = { kind: "Identifier" as const, name, location: { line: 0, column: 0 } };
+    push(model, getLevel(identifier, undefined, environment) >= ACTION_LEVEL ? 1 : 0);
+  }
   push(model, input.properties.actionProperties.length);
   for (const property of input.properties.actionProperties) {
     push(model, writeRoot(property.action));
