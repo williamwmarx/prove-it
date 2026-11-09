@@ -1,0 +1,26 @@
+Error: Temporal property PermanentAllocation was violated.
+
+Error: The following behavior constitutes a counter-example:
+
+State 1: <Initial predicate>
+/\ alloc = (c1 :> {} @@ c2 :> {} @@ c3 :> {})
+/\ sched = <<>>
+/\ unsat = (c1 :> {} @@ c2 :> {} @@ c3 :> {})
+
+State 2: <Request(c1,{r2}) line 70, col 3 to line 72, col 30 of module SchedulingAllocator>
+/\ alloc = (c1 :> {} @@ c2 :> {} @@ c3 :> {})
+/\ sched = <<>>
+/\ unsat = (c1 :> {r2} @@ c2 :> {} @@ c3 :> {})
+
+State 3: <Schedule line 97, col 3 to line 99, col 30 of module SchedulingAllocator>
+/\ alloc = (c1 :> {} @@ c2 :> {} @@ c3 :> {})
+/\ sched = <<c1>>
+/\ unsat = (c1 :> {r2} @@ c2 :> {} @@ c3 :> {})
+
+State 4: <Allocate(c1,{r2}) line 79, col 3 to line 85, col 41 of module SchedulingAllocator>
+/\ alloc = (c1 :> {r2} @@ c2 :> {} @@ c3 :> {})
+/\ sched = <<>>
+/\ unsat = (c1 :> {} @@ c2 :> {} @@ c3 :> {})
+
+Back to state 1: <Return(c1,{r2}) line 90, col 3 to line 92, col 30 of module SchedulingAllocator>
+
