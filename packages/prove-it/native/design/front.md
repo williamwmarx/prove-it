@@ -318,3 +318,11 @@ What's left `NotYet`:
 | 89 | SANY's parse errors (`src/sany/parse-error.ts`) |
 | 10 | Errors that stop linking |
 | 1 | RECURSIVE arity |
+
+## The startup section and operator tables as built
+
+- `lower.rs` writes `model.startup` in the speed session's layout: the substitutes TLC checks, the constant definitions with effects in TLC's order, and the assumptions that aren't axioms with their names. This is `getIrStartup`, which `check.ts` now exports, so the model-full gate's TypeScript side writes the same section.
+- SYMMETRY stays `NotYet` until its permuted sets are lowered.
+- `create_environment` still returns `NotYet` for a substitute that isn't of constant level. The TypeScript environment evaluates it while linking, where the engine evaluates it at startup, so the two would differ on a substitute that fails (etest7, TLCGetNamedUndefined).
+- A configuration's operator table (`F(0) = 1`) gives the environment's builtin its rows. `lower.rs` writes them with `Builtin::TABLE`, each row's arguments as a tuple.
+- model-full: 831 of 1,111 with 0 differing, and 2,336 of 2,711 with `--mutate 400`.

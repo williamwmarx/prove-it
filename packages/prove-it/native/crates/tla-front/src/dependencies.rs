@@ -465,6 +465,16 @@ impl DefinitionFacts {
         self.get_row(definition, environment)[0] & REPEATED_EFFECT != 0
     }
 
+    /// `isImpureDefinition`: evaluating the definition can print, assert, read the clock or
+    /// choose at random.
+    pub fn is_impure_definition(
+        &self,
+        definition: &Rc<Definition>,
+        environment: &Environment,
+    ) -> bool {
+        self.get_row(definition, environment)[0] & IMPURE != 0
+    }
+
     /// `isConstantLevel`.
     pub fn is_constant_level(
         &self,
