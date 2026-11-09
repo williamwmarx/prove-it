@@ -1,7 +1,7 @@
 # Builds and tests the native engine on the systems Depot has no runners for: macOS, where one Apple
 # silicon runner builds the arm64 and x64 packages, tests arm64 natively and x64 under Rosetta, and
-# packs both for release.yml to publish, and Windows x64, where the crates' own tests run. It
-# publishes nothing and holds no credential.
+# packs both for release.yml to publish, and Windows x64, which builds, tests and packs its package
+# the same way. It publishes nothing and holds no credential.
 name: Platforms
 "on":
   pull_request: null
@@ -11,8 +11,8 @@ name: Platforms
   workflow_dispatch: null
 permissions:
   contents: read
-# A push to main is never cancelled: release.yml takes the macOS packages from the run of the commit
-# it releases.
+# A push to main is never cancelled: release.yml takes the macOS and Windows packages from the run of
+# the commit it releases.
 concurrency:
   group: platforms-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -91,12 +91,29 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      # The N-API addon needs an import library for the host's N-API symbols on Windows, which
-      # isn't set up yet, so only the crates it is made of are tested here.
-      - name: Run the crates' tests
+      # The addon finds the N-API functions in the host executable at run time, so it needs no
+      # import library and loads into node.exe and bun.exe alike.
+      - name: Build, test and install the package
         shell: bash
         run: |
           set -euo pipefail
+          npm install --global --no-audit --no-fund bun@1.4.4
           cd packages/prove-it/native
           rustup toolchain install
-          cargo test --locked --workspace --exclude prove-it-napi
+          cargo test --locked
+          cd ..
+          bun install --frozen-lockfile --ignore-scripts
+          bun scripts/platform-packages.ts build
+          bun run build
+          addon="$PWD/native/npm/win32-x64-msvc/prove-it-engine.node"
+          PROVE_IT_ENGINE_ADDON="$addon" bun test tests/unit/native.test.ts tests/unit/native-search.test.ts \
+            tests/unit/engine-store.test.ts tests/unit/engine-fingerprints.test.ts
+          bun scripts/platform-packages.ts install-test
+          bun scripts/platform-packages.ts pack "$RUNNER_TEMP/platform-packages"
+      - name: Keep the platform package for release.yml
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: win32-x64-msvc
+          path: ${{ runner.temp }}/platform-packages/*-win32-x64-msvc-*.tgz
+          if-no-files-found: error
+          retention-days: 30

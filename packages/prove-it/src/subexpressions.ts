@@ -495,8 +495,12 @@ export const resolveModuleSubexpressions = (module: Module, available: Definitio
     uses: module.uses.map((use) => ({ ...use, facts: resolveFacts(use.facts) })),
   };
   const hasReferences =
-    module.definitions.some((definition) => containsReference(definition.body)) ||
-    module.assumptions.some((assumption) => containsReference(assumption.expression));
+    module.definitions.some(
+      (definition) =>
+        containsReference(definition.body) ||
+        (definition.kind === "Function" &&
+          definition.bounds.some((bound) => containsReference(bound.set))),
+    ) || module.assumptions.some((assumption) => containsReference(assumption.expression));
   if (!hasReferences) return resolved;
   return {
     ...resolved,
