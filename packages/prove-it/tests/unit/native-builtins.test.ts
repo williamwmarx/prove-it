@@ -301,6 +301,18 @@ describe.if(ADDON !== undefined)("the native engine's bridged builtins", () => {
     }
   });
 
+  it("stops drawing from a product too large to index", async () => {
+    const body = [
+      "EXTENDS Integers, Randomization",
+      "VARIABLE x",
+      "Init == x \\in RandomSubset(1, [1..128 -> BOOLEAN])",
+      "Next == UNCHANGED x",
+    ];
+    expect(await compareWithInterpreter(body, CONFIG)).toContainEqual(
+      expect.stringMatching(stopped("RandomSubset of a product too large to index")),
+    );
+  });
+
   // The interpreter rebuilds the trace from the initial predicate, as TLC does, so it draws again.
   it("hands over a violation whose trace drew at random", async () => {
     const body = [

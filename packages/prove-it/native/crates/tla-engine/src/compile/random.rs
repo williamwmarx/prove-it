@@ -263,7 +263,7 @@ pub(crate) fn random_subset(
         Lazy::Product(factors) if is_174 => {
             let mut size = 1u128;
             for factor in factors {
-                size *= normalized(machine, factor)?.len() as u128;
+                size = size.saturating_mul(normalized(machine, factor)?.len() as u128);
             }
             if size > SET_BOUND_174 {
                 return Err(Bail("a set with too many elements for TLC 1.7.4"));
@@ -296,10 +296,12 @@ pub(crate) fn random_subset(
             .map(|index| elements[index as usize])
             .collect());
     };
+    // TLC indexes a product with a BigInteger, which i128 holds exactly up to its maximum.
     let size = lists
         .iter()
-        .map(|list| list.len() as u128)
-        .product::<u128>();
+        .try_fold(1u128, |size, list| size.checked_mul(list.len() as u128))
+        .filter(|&size| size <= i128::MAX as u128)
+        .ok_or(Bail("RandomSubset of a product too large to index"))?;
     let indices = if size > i32::MAX as u128 {
         get_large_subset_indices(count, size, &mut machine.random)
     } else {
