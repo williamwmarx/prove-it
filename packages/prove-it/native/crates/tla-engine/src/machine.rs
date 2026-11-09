@@ -11,6 +11,7 @@ use tla_ir::NodeId;
 use tla_values::store::Outcome;
 use tla_values::{Bail, Id, Store};
 
+use crate::compile::Lambda;
 use crate::memo::{EMPTY, EPOCH_KEYS, EpochCache, MemoTable};
 use tla_values::random::JavaRandom;
 
@@ -123,6 +124,8 @@ pub struct Machine<'p> {
     /// TLCCache's values of each expression it caches, by the expression's node: each key with
     /// the value cached for it (`tlcEval2`).
     pub(crate) tlc_caches: HashMap<NodeId, Vec<(Id, Id)>>,
+    /// The functions TLC keeps lazy that the machine built, which the store's ids of them number.
+    pub(crate) lazy_functions: Vec<Lambda>,
 }
 
 /// TLC's registers (`IdThread`'s local values and named registers): the value TLCSet stored under
@@ -171,6 +174,7 @@ impl<'p> Machine<'p> {
             startup_random: 0,
             registers: Registers::default(),
             tlc_caches: HashMap::new(),
+            lazy_functions: Vec::new(),
         }
     }
 
