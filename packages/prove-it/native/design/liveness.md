@@ -172,22 +172,24 @@ undecided, the check of the complete graph decides. `PROVE_IT_TEST_LIVE_CHECK_AT
 check after `n` states for the engine and the interpreter alike, for the tests, since the time a
 check happens at isn't deterministic.
 
-Where it checks this way, or under `-lncheck final`, the search keeps its graph however large it
-grows: the 4 million states past which it handed the graph over (`MAXIMUM_GRAPH_STATES`) were for
-the interpreter to check as the graph grows, which only the searches the engine doesn't check this
-way still need, and those where a check part way through couldn't decide, say on an atom the engine
-doesn't answer. TokenRing at N = 8, M = 7 (5.8 million states, 41 million steps) then checks in 92 s
-at 2.6 GB peak on 4 cores, where the interpreter took 135 s and 9.1 GB on Depot's 16 and TLC 149 s
-and 2.75 GB; 49 s of it answers WF_vars(Next)'s action on each step, as TLC does.
+Where it checks this way, the search keeps its graph however large it grows. Past 4 million states
+(`MAXIMUM_GRAPH_STATES`) the engine still hands the graph over where it doesn't check this way, or
+where a check part way through couldn't decide, say on an atom the engine doesn't answer: the
+interpreter checks as the graph grows, and even under `-lncheck final` TLC stops at the first state
+whose tableau node accepts every behavior (TLC's Github710b, whose x grows without bound, stops at
+its third state), which the engine finds only once the search is done. TokenRing at N = 8, M = 7
+(5.8 million states, 41 million steps) checks natively in 91 s at 2.6 GB peak on 4 cores, where the
+interpreter took 135 s and 9.1 GB on Depot's 16 and TLC 149 s and 2.75 GB; 49 s of it answers
+WF_vars(Next)'s action on each step, as TLC does. Under `-lncheck final` the engine hands it over.
 
 With PROVE_IT_WORKERS above one, `answer_atoms` answers the state and action atoms on that many
 threads, each a run of the states over the search's store, as a parallel search's threads expand a
 level: an evaluation that neither prints, draws nor reads TLC's diameter is the same on any thread.
 Each extra thread's overlay copies the store's values, as the search's do, so each costs about the
-store's size in memory. TokenRing at N = 8 on 4 threads checks in 51 s rather than 81 s, its atoms in
-about 19 s rather than 49, at 5.0 GB peak rather than 2.6. Sharing the store instead slows a search
-on one thread by 9 to 18 %, so the parallel atoms stay opt-in: the engine answers them on one thread
-unless PROVE_IT_WORKERS asks for more.
+store's size in memory. TokenRing at N = 8, its graph kept, checks on 4 threads in 51 s rather than
+81 s, its atoms in about 19 s rather than 49, at 5.0 GB peak rather than 2.6. Sharing the store
+instead slows a search on one thread by 9 to 18 %, so the parallel atoms stay opt-in: the engine
+answers them on one thread unless PROVE_IT_WORKERS asks for more.
 
 ## Speed against TLC (measured)
 
