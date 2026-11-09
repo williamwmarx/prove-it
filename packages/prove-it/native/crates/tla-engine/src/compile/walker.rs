@@ -934,6 +934,7 @@ impl<'a> Compiler<'a> {
         node: NodeId,
         context: &Context,
         is_assigning: bool,
+        is_init: bool,
         depth: u32,
     ) -> Compiling<bool> {
         if depth > 30 {
@@ -948,20 +949,33 @@ impl<'a> Compiler<'a> {
         if is_found {
             return Ok(true);
         }
-        if matches!(kind, NodeKind::Apply { .. } | NodeKind::Identifier(_))
-            && let Some((body, inner)) = self.resolve_action(node, context)?
-            && self.has_walk(body, &inner, is_assigning, depth + 1)?
+        // The initial predicate assigns a variable unprimed, by x = e or x \in S.
+        if is_assigning
+            && is_init
+            && let NodeKind::Apply { name, args } = kind
+            && !name.is_local
+            && matches!(self.text(name.text), "=" | "\\in")
+            && self.get_assignable_index(args[0], context, true)?.is_some()
         {
             return Ok(true);
         }
+        if matches!(kind, NodeKind::Apply { .. } | NodeKind::Identifier(_))
+            && let Some((body, inner)) = self.resolve_action(node, context)?
+            && self.has_walk(body, &inner, is_assigning, is_init, depth + 1)?
+        {
+            return Ok(true);
+        }
+        // TLC computes the initial states building a function at once, but a recursive one, so it
+        // walks only a recursive function's body there.
         if matches!(kind, NodeKind::FunctionApplication { .. })
             && let Some(lazy) = self.resolve_lazy_application(node, context)?
-            && self.has_walk(lazy.body, &lazy.base, is_assigning, depth + 1)?
+            && (!is_init || lazy.is_recursive)
+            && self.has_walk(lazy.body, &lazy.base, is_assigning, is_init, depth + 1)?
         {
             return Ok(true);
         }
         for child in self.children(node) {
-            if self.has_walk(child, context, is_assigning, depth + 1)? {
+            if self.has_walk(child, context, is_assigning, is_init, depth + 1)? {
                 return Ok(true);
             }
         }
@@ -1072,8 +1086,14 @@ impl<'a> Compiler<'a> {
         })))
     }
 
-    fn is_walked_body(&mut self, node: NodeId, context: &Context) -> Compiling<bool> {
-        Ok(self.has_walk(node, context, true, 0)? || self.has_walk(node, context, false, 0)?)
+    fn is_walked_body(
+        &mut self,
+        node: NodeId,
+        context: &Context,
+        is_init: bool,
+    ) -> Compiling<bool> {
+        Ok(self.has_walk(node, context, true, is_init, 0)?
+            || self.has_walk(node, context, false, is_init, 0)?)
     }
 
     // The elements of a set in the order TLC enumerates them where an action quantifies over the
@@ -1246,7 +1266,7 @@ impl<'a> Compiler<'a> {
                 Ok(Some(exists_step(levels, body)))
             }
             NodeKind::Forall { bounds, body } => {
-                if !self.is_walked_body(*body, context)? {
+                if !self.is_walked_body(*body, context, is_init)? {
                     return self.guard_step(node, context, known, then);
                 }
                 let mut inner = context.clone();
@@ -1390,7 +1410,12 @@ impl<'a> Compiler<'a> {
                 let Some(lazy) = self.resolve_lazy_application(node, context)? else {
                     return self.guard_step(node, context, known, then);
                 };
-                if !self.is_walked_body(lazy.body, &lazy.base)? {
+                // TLC computes the initial states building a function at once
+                // (`EvalControl.Init`), but a recursive one, and applies its value.
+                if is_init && !lazy.is_recursive {
+                    return self.guard_step(node, context, known, then);
+                }
+                if !self.is_walked_body(lazy.body, &lazy.base, is_init)? {
                     return self.guard_step(node, context, known, then);
                 }
                 if lazy.is_recursive {

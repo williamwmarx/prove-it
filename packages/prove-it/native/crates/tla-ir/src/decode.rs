@@ -4,10 +4,10 @@ use std::fmt;
 
 use crate::{
     Action, ActionProperty, Atom, AtomKind, Bound, Builtin, ConfigName, Constant, Definition,
-    DefinitionForm, EnabledActions, IR_VERSION, Index, Ir, Junction, LiveProperty, LiveTerm, MAGIC,
-    Model, Name, Node, NodeId, NodeKind, Nodes, Param, PathStep, Pattern, PermutedSet, Possible,
-    Printed, Resolution, Scope, ScopeBinding, Selector, SourceRange, Startup, Symmetry, TextId,
-    Update, Value, Values, code, tag,
+    DefinitionForm, EnabledActions, IR_VERSION, Index, InstanceAction, Ir, Junction, LiveProperty,
+    LiveTerm, MAGIC, Model, Name, Node, NodeId, NodeKind, Nodes, Param, PathStep, Pattern,
+    PermutedSet, Possible, Printed, Resolution, Scope, ScopeBinding, Selector, SourceRange,
+    Startup, Symmetry, TextId, Update, Value, Values, code, tag,
 };
 
 /// Why a blob isn't an IR this decoder reads: where it stopped, in words, and what it found.
@@ -423,6 +423,13 @@ impl Decoder<'_> {
                     .iter()
                     .map(|symmetry| &symmetry.definition),
             )
+            .chain(
+                model
+                    .instance_actions
+                    .iter()
+                    .map(|action| &action.definition),
+            )
+            .chain(model.instance_names.iter().map(|(index, _)| index))
             .find(|&&index| index as usize >= definition_count)
         {
             return self.error(format!("definition {index} of {definition_count}"));
@@ -592,6 +599,8 @@ impl Decoder<'_> {
                     expression: node(self)?,
                     scope: self.optional_below(scope_count, "scope")?,
                     label: self.text()?,
+                    name: self.text()?,
+                    location: self.range()?,
                 })
             })
             .collect::<Decoded<_>>()?;
@@ -732,6 +741,21 @@ impl Decoder<'_> {
         let assumptions = (0..count)
             .map(|_| Ok((node(self)?, self.text()?)))
             .collect::<Decoded<_>>()?;
+        let next_substitution = self.range()?;
+        let count = self.count()?;
+        let instance_actions = (0..count)
+            .map(|_| {
+                Ok(InstanceAction {
+                    definition: self.index()?,
+                    name: self.text()?,
+                    location: self.range()?,
+                })
+            })
+            .collect::<Decoded<_>>()?;
+        let count = self.count()?;
+        let instance_names = (0..count)
+            .map(|_| Ok((self.index()?, self.text()?)))
+            .collect::<Decoded<_>>()?;
         Ok(Model {
             init,
             next,
@@ -764,6 +788,9 @@ impl Decoder<'_> {
                 symmetry,
                 assumptions,
             },
+            next_substitution,
+            instance_actions,
+            instance_names,
         })
     }
 

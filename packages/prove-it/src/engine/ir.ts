@@ -45,6 +45,7 @@ import type {
 } from "../ast";
 import type { ModelConfig } from "../config";
 import { hasRepeatedEffect, isImpureDefinition } from "../dependencies";
+import type { InstanceAction } from "../environment";
 import { type Environment, type EvaluationScope, getDefinition } from "../evaluate";
 import { ACTION_LEVEL } from "../levels";
 import { getLevel } from "../liveness";
@@ -174,6 +175,9 @@ export interface TraceAction {
   expression: Expression;
   scope: EvaluationScope | undefined;
   label: string;
+  // The name and location TLC's Action holds, which TLCExt's CounterExample records.
+  name: string;
+  range: SourceRange | undefined;
 }
 
 export interface IrInput {
@@ -193,6 +197,10 @@ export interface IrInput {
   liveFormula: LiveExpression | undefined;
   liveProperties: { name: string; formula: LiveExpression }[];
   startup: IrStartup;
+  // Where the specification reaches the next-state relation through an INSTANCE with
+  // substitutions, the first such INSTANCE (getNextSubstitution).
+  nextSubstitution: SourceRange | undefined;
+  instanceActions: Map<string, InstanceAction>;
 }
 
 // What TLC evaluates when it starts, which the engine evaluates before its search.
@@ -419,16 +427,16 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
     }
   };
 
-  const writeRange = (range: SourceRange | undefined) => {
+  const writeRange = (words: Words, range: SourceRange | undefined) => {
     if (!range) {
-      for (const word of [-1, 0, 0, 0, 0]) push(nodes, word);
+      for (const word of [-1, 0, 0, 0, 0]) push(words, word);
       return;
     }
-    push(nodes, getText(range.module));
-    push(nodes, range.start.line);
-    push(nodes, range.start.column);
-    push(nodes, range.end.line);
-    push(nodes, range.end.column);
+    push(words, getText(range.module));
+    push(words, range.start.line);
+    push(words, range.start.column);
+    push(words, range.end.line);
+    push(words, range.end.column);
   };
 
   const writeDefinition = (definition: Definition) => {
@@ -446,7 +454,7 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
     );
     push(nodes, definition.location.line);
     push(nodes, definition.location.column);
-    writeRange(definition.location.range);
+    writeRange(nodes, definition.location.range);
     push(nodes, getText(definition.name));
     if (definition.kind === "Operator") {
       push(nodes, 0);
@@ -473,7 +481,7 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
     nodes.data[at + 1] = location.line;
     nodes.data[at + 2] = location.column;
     nodes.length = at + 3;
-    writeRange(location.range);
+    writeRange(nodes, location.range);
     switch (expression.kind) {
       case "Number": {
         if (isWide(expression.value)) {
@@ -738,6 +746,8 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
     push(model, writeRoot(action.expression));
     push(model, getScopeIndex(action.scope));
     push(model, getText(action.label));
+    push(model, getText(action.name));
+    writeRange(model, action.range);
   }
   push(model, spec.actions ? 1 : 0);
   writeConfigNames(config.invariants, true);
@@ -861,14 +871,7 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
     input.config.specification === undefined
       ? undefined
       : getDefinition(input.config.specification, environment)?.location.range;
-  if (!specification) for (const word of [-1, 0, 0, 0, 0]) push(model, word);
-  if (specification) {
-    push(model, getText(specification.module));
-    push(model, specification.start.line);
-    push(model, specification.start.column);
-    push(model, specification.end.line);
-    push(model, specification.end.column);
-  }
+  writeRange(model, specification);
   const startup = input.startup;
   push(model, startup.substitutes.length);
   for (const substitute of startup.substitutes) {
@@ -899,6 +902,33 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
       definitionOffsets.push(nodes.length);
       writeDefinition(definitionQueue[definition++]);
     } else break;
+  }
+
+  // Where the specification reaches the next-state relation through an INSTANCE, and what TLC
+  // names the actions of the definitions INSTANCEs copy, of the definitions the IR holds, by index.
+  writeRange(model, input.nextSubstitution);
+  const getIndexed = <Item>(entries: Iterable<[string, Item]>) =>
+    [
+      ...new Map(
+        [...entries].flatMap(([key, item]): [number, Item][] => {
+          const definition = environment.definitions.get(key);
+          const index = definition && definitionIndices.get(definition);
+          return index === undefined ? [] : [[index, item]];
+        }),
+      ),
+    ].sort(([left], [right]) => left - right);
+  const instanceActions = getIndexed(input.instanceActions);
+  push(model, instanceActions.length);
+  for (const [index, action] of instanceActions) {
+    push(model, index);
+    push(model, getText(action.name));
+    writeRange(model, action.location.range);
+  }
+  const instanceNames = getIndexed(environment.instanceNames);
+  push(model, instanceNames.length);
+  for (const [index, name] of instanceNames) {
+    push(model, index);
+    push(model, getText(name));
   }
 
   // --- the blob ---

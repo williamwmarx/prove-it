@@ -67,6 +67,9 @@ pub struct Lowering<'a> {
     definition_queue: Vec<Rc<Definition>>,
     builtins: Vec<IrBuiltin>,
     builtin_ids: FastMap<Name, Index>,
+    /// Where the specification reaches the next-state relation through an INSTANCE with
+    /// substitutions, which `finish` writes after the definitions, as `lowerToIr` does.
+    next_substitution: Option<Location>,
     constants: Vec<Constant>,
     constant_ids: FastMap<Name, Index>,
     values: Vec<Value>,
@@ -101,6 +104,7 @@ impl<'a> Lowering<'a> {
             values: Vec::new(),
             scope_ids: FastMap::default(),
             tlc_order: Vec::new(),
+            next_substitution: None,
             scope_queue: Vec::new(),
             scopes: Vec::new(),
             value_strings: Vec::new(),
@@ -793,6 +797,8 @@ impl<'a> Lowering<'a> {
         tlc_order: Vec<i32>,
     ) -> Result<Model> {
         self.tlc_order = tlc_order;
+        self.next_substitution =
+            crate::spec::get_next_substitution(config, self.environment, &self.facts)?;
         let not_yet = |reason: &str| FrontError::NotYet(reason.to_owned());
         let (Some(init), Some(next)) = (&specification.init, &specification.next) else {
             return Err(not_yet("a model without Init or Next"));
@@ -931,6 +937,9 @@ impl<'a> Lowering<'a> {
             live_properties,
             specification,
             startup,
+            next_substitution: None,
+            instance_actions: Vec::new(),
+            instance_names: Vec::new(),
         })
     }
 
@@ -1201,7 +1210,7 @@ impl<'a> Lowering<'a> {
         })
     }
 
-    pub fn finish(mut self, model: Model) -> Result<Ir> {
+    pub fn finish(mut self, mut model: Model) -> Result<Ir> {
         let mut definitions = Vec::new();
         let (mut next, mut next_scope) = (0, 0);
         loop {
@@ -1218,6 +1227,52 @@ impl<'a> Lowering<'a> {
                 definitions.push(id);
             } else {
                 break;
+            }
+        }
+        // Where the specification reaches the next-state relation through an INSTANCE, and what TLC
+        // names the actions of the definitions INSTANCEs copy, of the definitions the IR holds, by
+        // index.
+        let next_substitution = self.next_substitution.take();
+        model.next_substitution = self.write_range(
+            next_substitution
+                .as_ref()
+                .and_then(|location| location.range.as_ref()),
+        );
+        let environment = self.environment;
+        let indexed = |keys: &mut dyn Iterator<Item = &Name>, ids: &FastMap<usize, Index>| {
+            let mut indexed: Vec<(Index, Name)> = keys
+                .filter_map(|key| {
+                    let definition = environment.definitions.get(key)?;
+                    let index = ids.get(&(Rc::as_ptr(definition) as usize))?;
+                    Some((*index, key.clone()))
+                })
+                .collect();
+            // As a JavaScript Map of them, the last key of a definition named by several.
+            indexed.sort_by_key(|(index, _)| *index);
+            indexed.reverse();
+            indexed.dedup_by_key(|(index, _)| *index);
+            indexed.reverse();
+            indexed
+        };
+        for (index, key) in indexed(
+            &mut environment.instance_actions.keys(),
+            &self.definition_ids,
+        ) {
+            let Some(action) = environment.instance_actions.get(&key) else {
+                continue;
+            };
+            let name = self.get_text(&action.name);
+            let location = self.write_range(action.location.range.as_ref());
+            model.instance_actions.push(tla_ir::InstanceAction {
+                definition: index,
+                name,
+                location,
+            });
+        }
+        for (index, key) in indexed(&mut environment.instance_names.keys(), &self.definition_ids) {
+            if let Some(name) = environment.instance_names.get(&key) {
+                let name = self.get_text(name);
+                model.instance_names.push((index, name));
             }
         }
         let value_strings = std::mem::take(&mut self.value_strings)

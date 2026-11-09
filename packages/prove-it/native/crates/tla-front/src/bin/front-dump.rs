@@ -204,6 +204,9 @@ fn lower_definitions(
         live_properties: Vec::new(),
         specification: None,
         startup: Startup::default(),
+        next_substitution: None,
+        instance_actions: Vec::new(),
+        instance_names: Vec::new(),
     };
     Ok(tla_ir::encode(&lowering.finish(model)?))
 }

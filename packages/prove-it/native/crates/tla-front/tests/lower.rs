@@ -56,6 +56,9 @@ fn lower(source: &str, name: &str) -> Ir {
             live_properties: Vec::new(),
             specification: None,
             startup: Startup::default(),
+            next_substitution: None,
+            instance_actions: Vec::new(),
+            instance_names: Vec::new(),
         })
         .expect("an IR")
 }

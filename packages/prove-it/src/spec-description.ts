@@ -376,6 +376,68 @@ const describeSpecification = (
   }
 };
 
+// Where the configuration's SPECIFICATION reaches its next-state relation through a definition an
+// INSTANCE with substitutions copies, the first such INSTANCE on the way to [][Next]_v, at which
+// TLC takes the relation as one unnamed action: describeSpecification's search for it, without
+// evaluating anything, since a definition of constant level holds no next-state relation.
+export const getNextSubstitution = (
+  config: ModelConfig,
+  environment: Environment,
+  instanceActions: Map<string, InstanceAction>,
+) => {
+  const find = (
+    expression: Expression,
+    scope: Scope | undefined,
+    substitution: SourceLocation | undefined,
+  ): { substitution: SourceLocation | undefined } | undefined => {
+    if (expression.kind === "Let") {
+      return find(
+        expression.body,
+        bindDefinitions(expression.definitions, getConstantContext(environment, scope)),
+        substitution,
+      );
+    }
+    if (expression.kind === "Label") return find(expression.body, scope, substitution);
+    if (expression.kind === "And") {
+      for (const operand of expression.operands) {
+        const found = find(operand, scope, substitution);
+        if (found) return found;
+      }
+      return undefined;
+    }
+    if (expression.kind === "Always") {
+      return expression.expression.kind === "BoxAction" ? { substitution } : undefined;
+    }
+    const thunk = getThunk(expression, scope);
+    if (thunk) return find(thunk.expression, thunk.scope, substitution);
+    const called = resolveClosure(expression, scope, environment);
+    if (!called) return undefined;
+    if (called.params.length === 0) {
+      if (getLevel(called.body, called.scope, environment) <= VARIABLE_LEVEL) return undefined;
+      const instanceAction = isLocallyResolved(expression)
+        ? undefined
+        : instanceActions.get(getOperatorName(expression) ?? "");
+      return find(called.body, called.scope, substitution ?? instanceAction?.location);
+    }
+    if (expression.kind !== "Apply" || called.params.length !== expression.args.length) {
+      return undefined;
+    }
+    return find(
+      called.body,
+      bindOperatorArguments(called, expression.args, getConstantContext(environment, scope)),
+      substitution,
+    );
+  };
+  const specification =
+    config.specification === undefined
+      ? undefined
+      : getOperatorDefinition(config.specification, environment);
+  return specification
+    ? find(specification.body, undefined, instanceActions.get(config.specification ?? "")?.location)
+        ?.substitution?.range
+    : undefined;
+};
+
 const describeProperty = (
   configName: string,
   expression: Expression,

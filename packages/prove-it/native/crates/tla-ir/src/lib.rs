@@ -173,6 +173,19 @@ pub struct Action {
     pub scope: Option<Index>,
     /// How TLC names the action in a trace: `Inc line 5, col 8 to line 5, col 41 of module D`.
     pub label: TextId,
+    /// The name and location TLC's `Action` holds, which TLCExt's CounterExample records:
+    /// `UnnamedAction` for an action of no operator.
+    pub name: TextId,
+    pub location: Option<SourceRange>,
+}
+
+/// A definition an INSTANCE with substitutions copies, and the name and location TLC gives an
+/// action that applies it: the name the instance exports it by, at the INSTANCE.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InstanceAction {
+    pub definition: Index,
+    pub name: TextId,
+    pub location: Option<SourceRange>,
 }
 
 /// A `_POSSIBLE` predicate, which TLC counts the states, or with `is_action` the steps, it holds of.
@@ -282,6 +295,16 @@ pub struct Model {
     /// The source range of the definition the configuration's SPECIFICATION names, which TLC's
     /// warning of a stuttering counterexample prints.
     pub specification: Option<SourceRange>,
+    /// Where the SPECIFICATION reaches the next-state relation through a definition an INSTANCE
+    /// with substitutions copies, the first such INSTANCE, at which TLC takes the relation as one
+    /// unnamed action (`describeSpecification`).
+    pub next_substitution: Option<SourceRange>,
+    /// The definitions of the IR an INSTANCE with substitutions copies (`instanceActions`), by
+    /// index.
+    pub instance_actions: Vec<InstanceAction>,
+    /// The name TLC gives each definition of the IR a named INSTANCE copies, such as `I!Foo`
+    /// (`instanceNames`), by index.
+    pub instance_names: Vec<(Index, TextId)>,
     /// What TLC evaluates when it starts, before the search.
     pub startup: Startup,
 }
