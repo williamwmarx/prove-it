@@ -144,9 +144,23 @@ safe code:
   under one documented invariant (the code is only ever called from `call.rs`, on the thread that
   owns the `Machine`), and calls the existing safe Rust.
 
-The NIR lowering, the register allocator and both encoders are safe code that only produces
-`Vec<u8>`, so a bug there can make wrong code but not unsound Rust. That's what the parity checks
-are for:
+The NIR lowering, the register allocator and both encoders are written in safe Rust, but they sit
+inside the trust boundary all the same. Once `call.rs` runs their bytes, a wrong register or a
+misencoded load is a memory-safety bug, not just a wrong answer, and the address check in
+`call.rs` doesn't prevent it. So the generated code has invariants of its own, which `call.rs`'s
+`SAFETY` note states and the emitters keep:
+- it reads and writes only through `Machine`'s `cur`, `next` and `locals` and the store's `meta`
+  and `heap`, at indices it has bounds-checked against their current lengths, plus its own stack
+  frame; everything else goes through a helper;
+- it reloads every base after a call (§4) and keeps no pointer across one;
+- it calls only the helpers and the eval trampoline, with the platform ABI's alignment and its
+  callee-saved registers preserved;
+- every path returns through the unassigns of the segments it entered.
+
+Lowering and emitting stay small enough to review line by line, with each instruction form tested
+alone (§4). Bounds checks are emitted, never elided, until a later stage proves an elision. The
+parity checks below catch wrong code, but they can't show the absence of undefined behaviour, so
+they back the invariants up rather than replace them:
 - **Off by default, behind a setting.** `PROVE_IT_NATIVE_CODE=on|off|verify`, default `off` until
   stage N6. `verify` runs each compiled predicate and the closure it replaces on every state, and
   panics on any difference in value or bail, as `PROVE_IT_FP_VERIFY` does for fingerprints.
