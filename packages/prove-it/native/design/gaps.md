@@ -504,6 +504,38 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   suite/test11, whose tests ask `5 \notin DOMAIN f1` for `f1[i \in Int]`, now prints what TLC
   prints.
 
+## INSTANCE in a LET, in the replay
+
+- The replay (`tla-trace`) declined any LET with an INSTANCE ("rebuilding a trace: INSTANCE in
+  LET"), as the engines did before they took the definitions the INSTANCE copies into the LET.
+  It now binds them as the LET's other definitions (`bind_let`). EWD998_anim,
+  CabbageGoatWolf_anim and AwsDNSRace_anim (spectacle) now print what TLC prints.
+
+## A failure's trace with an ALIAS
+
+- TLC prints the trace to the state it was expanding through the ALIAS, each state with the one
+  after it as its next state and the last with itself, but an initial state it was expanding,
+  which is the whole trace, as it is (`TLCTrace.printTrace`). The CLI declined any failure with
+  an ALIAS. It now prints one in the next-state relation or an invariant (`failure.rs`), with
+  the startup values and registers the alias may read, and still declines the other sites, a
+  state TLC fails to fingerprint, an incomplete successor, and any failure with a POSTCONDITION
+  or `_POSSIBLE` (cdot/ChainedCdots: TLC checks the postcondition between the trace and the
+  call stack, with TLCGet("generated") and the registers as the failure left them). bfs_anim
+  (spectacle) now prints what TLC prints.
+- A deadlocked initial state is such a trace of one state too: the CLI printed it through the
+  ALIAS, where TLC prints the state. It now prints the state.
+
+## A function TLC asks whether it equals a record
+
+- `left = right` is `left.equals(right)` in TLC. A RecordValue fails on a function that is no
+  record, but a function with a key that isn't a string is a FcnRcdValue or a tuple, which
+  takes any function and compares keys and values (`FcnRcdValue.equals`). The store, which
+  can't tell a record from a function over strings, stopped on either order. `=` and `#` now
+  ask as TLC does (`Store::equals_asked`): where the left side has a key that isn't a string
+  and the right side's are all strings, the keys in order decide, or fail as TLC's do
+  (`<<1, 1>> = [a |-> 1, b |-> 1]` compares 1 with "a"). The other order still stops, since the
+  left side may be a record. tla-rs model_values_distinct now prints what TLC prints.
+
 ## Open: infinite sets as values
 
 These three are declined, and lazy functions don't fix them:
@@ -558,7 +590,10 @@ Done since by the engine-gaps session (each in a section above): the run-time wa
 recursive operator (Github649), ENABLED in the initial predicate (EWD840/MC02, test216), a lazy
 function of several arguments in an action (Elevator), Print under a quantifier (Stones, test11)
 and inside ENABLED (test20), a quantifier over Nat as TLC's failure (Bakery), and membership in
-DOMAIN of a lazy function (test11).
+DOMAIN of a lazy function (test11), INSTANCE in a LET in the replay (the `_anim` models), a
+failure's trace through the ALIAS (bfs_anim), and a function compared with a record
+(model_values_distinct). The addon suite's "leaves a model it can't search to the TypeScript
+engine" already declines on UNCHANGED in the initial predicate.
 
 Done before that (each in a section above): run-time error stops (ErrorSite Init, Next,
 Invariant with out-degrees, InitialConstraint, InitialInvariant, InitialPredicate, and
@@ -573,11 +608,9 @@ Open, with what is known:
 
 - **Github696, AssertError.** Not started; the startup AssertError items went to the platform
   session.
-- **tla-rs model_values_distinct** falls back: "record compared with a function" is a limit
-  because the store, merging equal values, can't tell a RecordValue from a function over strings.
-  Following it natively needs the store to keep how TLC built a value.
-- **spectacle bfs_anim** ("equality of values TLC can't compare") and **cdot/ChainedCdots**
-  (action composition with a postcondition): not looked at.
+- **cdot/ChainedCdots** (a failure with a POSTCONDITION): the CLI declines it. TLC checks the
+  postcondition after the trace and before the call stack (`Worker.doPostCondition`), with the
+  registers and counts as the failure left them.
 - **RandomSubsetEmpty** still reports AssumptionFailed (trace session, 20:04). Find the bail
   reason (bac5cb17 now lowers a model without a next-state relation, so engine-ir gives its IR);
   it should be a limit if TLC's assumption holds.
@@ -586,6 +619,3 @@ Open, with what is known:
   never generates the successors after the failing one, so the stop should carry the
   fingerprints found when it stopped (`states.fingerprints`, sorted), and tla-trace, which has
   `tla_values::fingerprint::Fingerprints`, tests each replayed successor against them.
-- The addon suite's "leaves a model it can't search to the TypeScript engine" still expects a
-  decline on `x' \subseteq S`, which d1fa0dd8 made native; it needs another construct the engine
-  declines.
