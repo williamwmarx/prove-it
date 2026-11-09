@@ -80,7 +80,18 @@ pub fn print_failure(
     // states, which can fail or print in turn.
     let is_atom = matches!(stop.site, Site::Atom { .. });
     let is_initial_atom = matches!(stop.site, Site::InitialAtom(_));
-    if !ir.model.live_properties.is_empty() && !is_atom && !is_initial_atom {
+    // A failure among the initial states comes before TLC has taken a step, and the search
+    // hands one over only where the atoms TLC evaluated of the initial states before it
+    // evaluate.
+    let is_initial = matches!(
+        stop.site,
+        Site::Init
+            | Site::InitialConstraint(_)
+            | Site::InitialInvariant(_)
+            | Site::InitialPredicate(_)
+            | Site::InitialAtom(_)
+    );
+    if !ir.model.live_properties.is_empty() && !is_atom && !is_initial {
         return Err("a failure in a model with temporal properties".into());
     }
     if stop.site == Site::Next && stop.reason == "a successor that isn't complete" {

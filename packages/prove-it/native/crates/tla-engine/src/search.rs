@@ -3107,7 +3107,8 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                         generated: search.generated,
                         distinct: count,
                         queued: count,
-                        depth: 0,
+                        // TLC's depth is 1 once it has written a state.
+                        depth: u64::from(count > 0),
                         ..StopCounts::default()
                     },
                 });
