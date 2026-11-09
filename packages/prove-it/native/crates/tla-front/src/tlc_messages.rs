@@ -263,8 +263,11 @@ impl FrontError {
         Some(CodedError {
             code,
             text: format_inner_message(code, message, is_tool),
+            // TLC exits as for any general error after an exception it didn't expect.
             exit_code: if code == INVARIANT_VIOLATED_LEVEL {
                 SAFETY_EVALUATION_FAILURE
+            } else if message.starts_with(crate::errors::UNEXPECTED_EXCEPTION) {
+                GENERAL_ERROR
             } else {
                 exit_code
             },
