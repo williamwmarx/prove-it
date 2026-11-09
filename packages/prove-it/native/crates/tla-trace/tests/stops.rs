@@ -48,7 +48,9 @@ fn stop(path: &str) -> (ErrorSite, usize, u32, String, [u64; OUT_DEGREE_BUCKETS]
             ErrorSite::Init => Site::Init,
             ErrorSite::Next => Site::Next,
             ErrorSite::Invariant(position) => Site::Invariant(position),
-            ErrorSite::InitialConstraint(_) | ErrorSite::InitialInvariant(_) => {
+            ErrorSite::InitialConstraint(_)
+            | ErrorSite::InitialInvariant(_)
+            | ErrorSite::InitialPredicate(_) => {
                 panic!("{path}: a failure on an initial state, which the rebuilder doesn't take")
             }
         };
@@ -171,4 +173,25 @@ fn reports_an_assumption_that_fails_to_evaluate_where_it_reports_failures() {
         SearchOutcome::AssumptionFailed { position: 0 }
     ));
     assert!(matches!(outcome(false), SearchOutcome::Declined(_)));
+}
+
+#[test]
+fn reports_a_failing_implied_init_with_the_initial_state_it_evaluates() {
+    // TLC checks Prop2 == ENABLED Next of the initial state after the invariants, and fails where
+    // ENABLED reaches A(n) \cdot B(n): "1 states generated, 1 distinct states found, 1 states
+    // left on queue", depth 1.
+    let (site, violation) = error_stop("cdot/CdotWithContextB");
+    // Prop is temporal, so Prop2 is the model's first initial predicate.
+    assert_eq!(site, ErrorSite::InitialPredicate(0));
+    assert_eq!(violation.states.len(), 1);
+    let counts = violation.counts;
+    assert_eq!(
+        (
+            counts.generated,
+            counts.distinct,
+            counts.queued,
+            counts.depth
+        ),
+        (1, 1, 1, 1)
+    );
 }

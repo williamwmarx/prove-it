@@ -324,6 +324,10 @@ pub enum ErrorSite {
     /// Evaluating the invariant at this position of the model's invariants on an initial state,
     /// the violation's one state.
     InitialInvariant(u32),
+    /// Evaluating the predicate at this position of the IR's `model.initial_predicates`, which
+    /// TLC checks of an initial state after the invariants (its implied inits), on the
+    /// violation's one state.
+    InitialPredicate(u32),
 }
 
 // The stops that are the engine's own limits, not a failure TLC reports: what it doesn't
@@ -934,8 +938,16 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
                 });
                 return Err(Bail("an invariant violated in an initial state"));
             }
-            if !holds_all(machine, &context.initial_predicates)? {
-                return Err(Bail("a property violated in an initial state"));
+            for (position, predicate) in context.initial_predicates.iter().enumerate() {
+                match crate::context::holds(machine, predicate) {
+                    Ok(true) => {}
+                    Ok(false) => return Err(Bail("a property violated in an initial state")),
+                    Err(bail) => {
+                        let distinct = (self.states.count() + usize::from(is_in_model)) as u64;
+                        let site = ErrorSite::InitialPredicate(position as u32);
+                        return Err(self.note_initial_error(machine, site, distinct, bail));
+                    }
+                }
             }
             if let Some((fingerprint, Err(slot))) = found {
                 self.states
