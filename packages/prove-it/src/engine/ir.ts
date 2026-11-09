@@ -46,7 +46,7 @@ import type {
 import type { ModelConfig } from "../config";
 import { hasRepeatedEffect, isImpureDefinition } from "../dependencies";
 import type { InstanceAction } from "../environment";
-import { type Environment, type EvaluationScope, getDefinition } from "../evaluate";
+import { type Closure, type Environment, type EvaluationScope, getDefinition } from "../evaluate";
 import { ACTION_LEVEL } from "../levels";
 import { getLevel } from "../liveness";
 import type { getConstantPredicates } from "../search";
@@ -180,6 +180,8 @@ export interface TraceAction {
   // The name and location TLC's Action holds, which TLCExt's CounterExample records.
   name: string;
   range: SourceRange | undefined;
+  // The operator TLC split the action from (Action.getOpDef), if any.
+  operator: Closure | undefined;
 }
 
 export interface IrInput {
@@ -334,6 +336,17 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
     expression.args[0].value === "spec" &&
     expression.resolution?.kind !== "Local" &&
     (resolveOperator(expression.operator) & RESOLUTION_MASK) === BUILTIN_RESOLUTION;
+
+  // The definition of the module an operator is, by its body, or -1 for one a LET defines.
+  const definitionsByBody = new Map(
+    [...environment.definitions.values()]
+      .reverse()
+      .map((definition) => [definition.body, definition]),
+  );
+  const getOperatorDefinitionIndex = (operator: Closure | undefined) => {
+    const definition = operator && definitionsByBody.get(operator.body);
+    return definition ? getDefinitionIndex(definition) : -1;
+  };
 
   const getDefinitionIndex = (definition: Definition) => {
     const known = definitionIndices.get(definition);
@@ -771,11 +784,6 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
   };
   const hasRepeatedEffectOfName = (name: string) =>
     hasRepeatedEffect({ kind: "Identifier", name, location: { line: 0, column: 0 } }, environment);
-  const writeRoots = (expressions: readonly Expression[]) => {
-    push(model, expressions.length);
-    for (const expression of expressions) push(model, writeRoot(expression));
-  };
-
   const spec = input.spec;
   push(model, writeRoot(spec.init));
   push(model, writeRoot(spec.next));
@@ -787,6 +795,7 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
     push(model, getText(action.label));
     push(model, getText(action.name));
     writeRange(model, action.range);
+    push(model, getOperatorDefinitionIndex(action.operator));
   }
   push(model, spec.actions ? 1 : 0);
   writeConfigNames(config.invariants, true);
@@ -812,7 +821,11 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
     push(model, writeRoot(property.action));
     push(model, writeRoot(property.subscript));
   }
-  writeRoots(input.properties.initialPredicates);
+  push(model, input.properties.initialPredicates.length);
+  input.properties.initialPredicates.forEach((predicate, index) => {
+    push(model, writeRoot(predicate));
+    push(model, getText(input.properties.initialPredicateNames[index]));
+  });
   writeConfigNames(config.view === undefined ? [] : [config.view]);
   writeConfigNames(config.alias === undefined ? [] : [config.alias]);
   writeConfigNames(config.postconditions);

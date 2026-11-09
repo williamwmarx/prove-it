@@ -284,9 +284,9 @@ fn rebuild_violation<T: Send>(
         };
         let (ending, cycle_start) = match violation.kind {
             ViolationKind::Deadlock { .. } => (Ending::Kept, None),
-            ViolationKind::Invariant(_) | ViolationKind::InitialInvariant(_) => {
-                (Ending::Violation, None)
-            }
+            ViolationKind::Invariant(_)
+            | ViolationKind::InitialInvariant(_)
+            | ViolationKind::InitialPredicate(_) => (Ending::Violation, None),
             ViolationKind::Lasso { loop_start, .. } => (Ending::Lasso, Some(loop_start)),
             ViolationKind::Accepted { .. } => (Ending::Lasso, None),
             ViolationKind::Error { .. } => panic!("{path}: a failure evaluating the model"),

@@ -441,6 +441,12 @@ impl Decoder<'_> {
                     .map(|action| &action.definition),
             )
             .chain(model.instance_names.iter().map(|(index, _)| index))
+            .chain(
+                model
+                    .actions
+                    .iter()
+                    .filter_map(|action| action.definition.as_ref()),
+            )
             .find(|&&index| index as usize >= definition_count)
         {
             return self.error(format!("definition {index} of {definition_count}"));
@@ -613,6 +619,11 @@ impl Decoder<'_> {
                     label: self.text()?,
                     name: self.text()?,
                     location: self.range()?,
+                    definition: match self.next()? {
+                        -1 => None,
+                        index if index >= 0 => Some(index as Index),
+                        other => return self.error(format!("action definition {other}")),
+                    },
                 })
             })
             .collect::<Decoded<_>>()?;
@@ -652,7 +663,11 @@ impl Decoder<'_> {
             })
             .collect::<Decoded<_>>()?;
         let count = self.count()?;
-        let initial_predicates = (0..count).map(|_| node(self)).collect::<Decoded<_>>()?;
+        let (initial_predicates, initial_predicate_names) = (0..count)
+            .map(|_| Ok((node(self)?, self.text()?)))
+            .collect::<Decoded<Vec<_>>>()?
+            .into_iter()
+            .unzip();
         let mut views = self.unprinted()?;
         if views.len() > 1 {
             return self.error(format!("{} views", views.len()));
@@ -804,6 +819,7 @@ impl Decoder<'_> {
             possible,
             action_properties,
             initial_predicates,
+            initial_predicate_names,
             view,
             alias,
             postconditions,

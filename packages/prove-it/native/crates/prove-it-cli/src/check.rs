@@ -721,6 +721,14 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                 )
             });
         }
+        // TLC rejects the value of a constant definition the configuration names as it reads
+        // the configuration.
+        SearchOutcome::ConfigError { message } => {
+            return match FrontError::Config(message).get_coded(printer.is_tool) {
+                Some(coded) => print_coded_failure(printer, &coded, start),
+                None => report_not_native(printer, "a configuration error without TLC's code"),
+            };
+        }
         // TLC reports a false assumption with no statistics, since it hasn't searched.
         SearchOutcome::AssumptionViolated { name } => {
             printer.print(
@@ -747,9 +755,6 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                 {
                     Err("a failure with an ALIAS, POSTCONDITION or _POSSIBLE".to_string())
                 }
-                ViolationKind::Error {
-                    site: ErrorSite::InitialPredicate(_),
-                } => Err("a failure in an initial state's implied init, which the printing doesn't follow yet".to_string()),
                 ViolationKind::Error { site } => {
                     let counts = &violation.counts;
                     let stop = ErrorStop {
@@ -767,8 +772,8 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                             ErrorSite::InitialInvariant(position) => {
                                 Site::InitialInvariant(position)
                             }
-                            ErrorSite::InitialPredicate(_) => {
-                                unreachable!("an implied init's failure, which the arm above leaves")
+                            ErrorSite::InitialPredicate(position) => {
+                                Site::InitialPredicate(position)
                             }
                         },
                         statistics: Statistics {
@@ -987,6 +992,17 @@ fn print_violation(
             ),
             SAFETY_VIOLATION,
         ),
+        ViolationKind::InitialPredicate(position) => (
+            code::PROPERTY_VIOLATED_INITIAL,
+            format!(
+                "Property {} is violated by the initial state:",
+                ir.texts[*model
+                    .initial_predicate_names
+                    .get(position)
+                    .ok_or(NOT_IN_IR)? as usize]
+            ),
+            LIVENESS_VIOLATION,
+        ),
         ViolationKind::Invariant(owner) => (
             code::INVARIANT_VIOLATED_BEHAVIOR,
             format!("Invariant {} is violated.", invariant_name(owner)?),
@@ -1075,9 +1091,10 @@ fn print_violation(
         queued: counts.queued,
         depth: counts.depth,
     };
-    // TLC prints the initial state that violates an invariant in the same message, and no
-    // statistics, since it checks the initial states before it searches.
-    if let ViolationKind::InitialInvariant(_) = violation.kind {
+    // TLC prints the initial state that violates an invariant or a property in the same message,
+    // and no statistics, since it checks the initial states before it searches.
+    if let ViolationKind::InitialInvariant(_) | ViolationKind::InitialPredicate(_) = violation.kind
+    {
         let state = &trace.states.first().ok_or(NOT_IN_IR)?.text;
         printer.print(code, Level::Error, &format!("{text}\n{state}"));
         print_postcondition_failure(printer, ir, trace.postconditions.as_ref());

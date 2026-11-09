@@ -38,6 +38,8 @@ export interface EngineProperties {
   invariantNames: string[];
   actionProperties: { action: Expression; subscript: Expression }[];
   initialPredicates: Expression[];
+  // The name TLC gives each initial predicate when an initial state violates it.
+  initialPredicateNames: string[];
 }
 
 interface ScopedExpression {
@@ -52,7 +54,7 @@ export const toEngineProperties = (properties: {
   actionProperties:
     | (ScopedExpression & { action: Expression; subscript: Expression })[]
     | { action: Expression; subscript: Expression; scope: unknown }[];
-  initialPredicates: ScopedExpression[];
+  initialPredicates: (ScopedExpression & { name: string })[];
 }): EngineProperties | undefined => {
   const all = [
     ...properties.invariants,
@@ -68,6 +70,7 @@ export const toEngineProperties = (properties: {
       subscript: property.subscript,
     })),
     initialPredicates: properties.initialPredicates.map((property) => property.expression),
+    initialPredicateNames: properties.initialPredicates.map((property) => property.name),
   };
 };
 

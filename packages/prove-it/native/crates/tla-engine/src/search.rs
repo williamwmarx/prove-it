@@ -12,10 +12,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use tla_ir::{Ir, LiveTerm, Model};
+use tla_ir::{Ir, LiveTerm, Model, PredicateForm};
 use tla_live::{Event, Liveness, Term, Verdict};
 use tla_values::fingerprint::{Dense, Entries, Fingerprints, Overlaid, Parent, SharedFingerprints};
-use tla_values::store::{KIND_SET, Outcome};
+use tla_values::store::{KIND_SET, Outcome, TRUE};
 use tla_values::transfer::{EncodedStates, SharedEncoder, SharedStates, StateEncoder};
 use tla_values::{Bail, Id, NESTING_STACK_BYTES, Store};
 
@@ -212,6 +212,9 @@ pub enum SearchOutcome {
     Declined(String),
     /// The assumption TLC reports by this name is false (2104).
     AssumptionViolated { name: String },
+    /// A constant definition the configuration names has a value TLC rejects, with TLC's
+    /// configuration error, after the startup reported what the constant definitions printed.
+    ConfigError { message: String },
     /// The assumption at this position of the IR's assumptions failed to evaluate (2105), after
     /// the startup reported what it printed, the assumptions before it included. Only where
     /// `Settings::is_violation_reported`; elsewhere the engine declines.
@@ -295,6 +298,9 @@ pub enum ViolationKind {
     /// An initial state violates an invariant: its position in the model's invariants, then
     /// past them in its properties checked as invariants.
     InitialInvariant(usize),
+    /// An initial state violates the state predicate of a property at this position in the
+    /// model's initial predicates.
+    InitialPredicate(usize),
     /// The last state of the trace violates an invariant, as an `InitialInvariant` names it.
     Invariant(usize),
     /// The last state of the trace has no successors. TLC adds it to the behavior graphs after it
@@ -951,7 +957,15 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
             for (position, predicate) in context.initial_predicates.iter().enumerate() {
                 match crate::context::holds(machine, predicate) {
                     Ok(true) => {}
-                    Ok(false) => return Err(Bail("a property violated in an initial state")),
+                    Ok(false) => {
+                        self.violation = Some(Found {
+                            kind: ViolationKind::InitialPredicate(position),
+                            parent: None,
+                            last: Some(machine.current().to_vec()),
+                            counts: StopCounts::default(),
+                        });
+                        return Err(Bail("a property violated in an initial state"));
+                    }
                     Err(bail) => {
                         let distinct = (self.states.count() + usize::from(is_in_model)) as u64;
                         let site = ErrorSite::InitialPredicate(position as u32);
@@ -1789,6 +1803,8 @@ struct Started {
     violated: Option<String>,
     /// The assumption that failed to evaluate, by its position, and why.
     failed: Option<(u32, Bail)>,
+    /// The configuration error a constant definition's value gave, which ends the startup.
+    config_error: Option<String>,
 }
 
 // TLC's startup: it evaluates the substitutes and the constant definitions, then the assumptions
@@ -1806,6 +1822,34 @@ fn run_startup(machine: &mut Machine<'_>, startup: &Startup) -> Outcome<Started>
     };
     for evaluate in startup.substitutes.iter().chain(&startup.definitions) {
         evaluate(machine)?;
+    }
+    // `getConstantValue`: TLC keeps a definition that fails to evaluate as an operator.
+    for (evaluate, form, kind, name) in &startup.predicates {
+        let value = match evaluate(machine) {
+            Ok(value) => value,
+            Err(bail) if is_engine_limit(bail.0) => return Err(bail),
+            Err(_) => continue,
+        };
+        let format = |machine: &Machine<'_>| tla_values::print::format_value(&machine.store, value);
+        let message = match form {
+            PredicateForm::Predicate if value == TRUE => continue,
+            PredicateForm::Predicate => {
+                format!("The {kind} of {name} is equal to {}", format(machine))
+            }
+            PredicateForm::Definition => format!("The {kind} {name} cannot be a constant."),
+            PredicateForm::Specification => {
+                format!("The value of {name} is equal to {}", format(machine))
+            }
+        };
+        return Ok(Started {
+            printed: take(machine),
+            small_sets: Vec::new(),
+            group: None,
+            assumed: Vec::new(),
+            violated: None,
+            failed: None,
+            config_error: Some(message),
+        });
     }
     let (group, small_sets) = match &startup.symmetry {
         Some(symmetry) => symmetry_group(machine, symmetry)?,
@@ -1835,6 +1879,7 @@ fn run_startup(machine: &mut Machine<'_>, startup: &Startup) -> Outcome<Started>
         assumed: take(machine),
         violated,
         failed,
+        config_error: None,
     })
 }
 
@@ -1961,6 +2006,9 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     .for_each(|values| reporter.startup_print(&machine.store, values));
             };
             report(reporter, &started.printed);
+            if let Some(message) = started.config_error {
+                return SearchOutcome::ConfigError { message };
+            }
             if !started.small_sets.is_empty() {
                 reporter.symmetry_sets_too_small(&started.small_sets);
             }

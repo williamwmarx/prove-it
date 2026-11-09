@@ -105,6 +105,7 @@ fn encode_here(ir: &Ir) -> Vec<u8> {
             action.name as i32,
         ]);
         words.extend(range_words(action.location));
+        words.push(optional(action.definition));
     }
     words.push(model.is_labelled as i32);
     let config_name = |name: &ConfigName| [name.name as i32, optional(name.definition)].into_iter();
@@ -139,7 +140,13 @@ fn encode_here(ir: &Ir) -> Vec<u8> {
         words.extend([offset(property.action), offset(property.subscript)]);
     }
     words.push(model.initial_predicates.len() as i32);
-    words.extend(model.initial_predicates.iter().map(|&id| offset(id)));
+    for (&predicate, &name) in model
+        .initial_predicates
+        .iter()
+        .zip(&model.initial_predicate_names)
+    {
+        words.extend([offset(predicate), name as i32]);
+    }
     words.push(model.view.is_some() as i32);
     words.extend(model.view.iter().flat_map(config_name));
     words.push(model.alias.is_some() as i32);

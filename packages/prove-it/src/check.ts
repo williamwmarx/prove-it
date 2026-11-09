@@ -474,7 +474,13 @@ export const lowerConstantSpec = (
     traceActions: [],
     isWarningEnabled: environment.runtime.isWarningEnabled,
     tlcOrder: [],
-    properties: { invariants: [], invariantNames: [], actionProperties: [], initialPredicates: [] },
+    properties: {
+      invariants: [],
+      invariantNames: [],
+      actionProperties: [],
+      initialPredicates: [],
+      initialPredicateNames: [],
+    },
     isRecordingGraph: false,
     version,
     atoms: [],
@@ -1849,6 +1855,7 @@ const searchStates = (
             label,
             name: action.name,
             range: action.location.range,
+            operator: action.operator,
           };
         }),
         isWarningEnabled: runtime.isWarningEnabled,

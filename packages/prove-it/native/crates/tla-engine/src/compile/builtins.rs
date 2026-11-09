@@ -207,6 +207,51 @@ impl Compiler<'_> {
         })
     }
 
+    /// `SUBSET S` of a compiled S, which TLC enumerates in the normalized order of S's elements.
+    pub(crate) fn compile_subset(&mut self, base: &Compiled) -> Compiled {
+        let base_member = self.member_test(base);
+        let base_parts = Self::parts_of(base);
+        Compiled {
+            is_normalized: false,
+            subset_base: Some(Box::new(base.clone())),
+            // It streams in its order, and its elements are set enumerations.
+            is_in_order: true,
+            are_elements_in_order: true,
+            // TLC enumerates SUBSET S in the normalized order of S's elements, whatever S's
+            // own order (SubsetValue.elementsNormalized), so S's value does where S has no
+            // reference.
+            reference: combine_references(&[base], |_, mut bases| {
+                Ok(Lazy::Subset(Box::new(bases.remove(0))))
+            })
+            .or_else(|| {
+                let evaluate = base.eval.clone();
+                Some(Arc::new(move |machine| {
+                    Ok(Lazy::Subset(Box::new(Lazy::Set(evaluate(machine)?))))
+                }))
+            }),
+            parts: Some(base_parts.clone()),
+            member: Some(member(move |machine, element| {
+                machine.run_parts(&base_parts)?;
+                // TLC fails on anything it can't enumerate, untyped model values included.
+                if machine.store.kind_of(element) != KIND_SET {
+                    return Err(Bail("a membership in SUBSET of a non-set"));
+                }
+                for index in 0..machine.store.size_of(element) {
+                    let value = machine.store.element_at(element, index);
+                    if !base_member(machine, value)? {
+                        return Ok(false);
+                    }
+                }
+                Ok(true)
+            })),
+            ..unary(
+                base,
+                |machine, set| power_set(machine, expect_set(machine, set, "expected a set")?),
+                true,
+            )
+        }
+    }
+
     // Nat, Int and STRING, which the engine only tests for membership.
     fn infinite_set(name: &'static str, reason: &'static str) -> Compiled {
         Compiled {
@@ -999,49 +1044,7 @@ impl Compiler<'_> {
             "SUBSET" => {
                 arity(1)?;
                 let base = self.operand(&operands[0])?;
-                let base_member = self.member_test(&base);
-                let base_parts = Self::parts_of(&base);
-                Compiled {
-                    is_normalized: false,
-                    subset_base: Some(Box::new(base.clone())),
-                    // It streams in its order, and its elements are set enumerations.
-                    is_in_order: true,
-                    are_elements_in_order: true,
-                    // TLC enumerates SUBSET S in the normalized order of S's elements, whatever S's
-                    // own order (SubsetValue.elementsNormalized), so S's value does where S has no
-                    // reference.
-                    reference: combine_references(&[&base], |_, mut bases| {
-                        Ok(Lazy::Subset(Box::new(bases.remove(0))))
-                    })
-                    .or_else(|| {
-                        let evaluate = base.eval.clone();
-                        Some(Arc::new(move |machine| {
-                            Ok(Lazy::Subset(Box::new(Lazy::Set(evaluate(machine)?))))
-                        }))
-                    }),
-                    parts: Some(base_parts.clone()),
-                    member: Some(member(move |machine, element| {
-                        machine.run_parts(&base_parts)?;
-                        // TLC fails on anything it can't enumerate, untyped model values included.
-                        if machine.store.kind_of(element) != KIND_SET {
-                            return Err(Bail("a membership in SUBSET of a non-set"));
-                        }
-                        for index in 0..machine.store.size_of(element) {
-                            let value = machine.store.element_at(element, index);
-                            if !base_member(machine, value)? {
-                                return Ok(false);
-                            }
-                        }
-                        Ok(true)
-                    })),
-                    ..unary(
-                        &base,
-                        |machine, set| {
-                            power_set(machine, expect_set(machine, set, "expected a set")?)
-                        },
-                        true,
-                    )
-                }
+                self.compile_subset(&base)
             }
             "UNION" => {
                 arity(1)?;
@@ -1528,14 +1531,39 @@ impl Compiler<'_> {
         } else {
             None
         };
+        // TLC enumerates the left set of an intersection or a difference where it can, testing
+        // each element for membership in the right one (SetCapValue.elements and
+        // SetDiffValue.elements), so a set enumeration it keeps in order keeps that order.
+        if name != "\\cup"
+            && left.infinite.is_none()
+            && right.infinite.is_some()
+            && left.is_normalized
+        {
+            let right_member = self.member_test(right);
+            let left_eval = left.eval.clone();
+            let is_kept_in_right = name == "\\cap";
+            return Ok(Some(Compiled {
+                is_costly: true,
+                member: lazy_member,
+                ..leaf(
+                    eval(move |machine| {
+                        let left = left_eval(machine)?;
+                        let set = expect_set(machine, left, "expected a set")?;
+                        let mut kept = Vec::new();
+                        for index in 0..machine.store.size_of(set) {
+                            let element = machine.store.element_at(set, index);
+                            if right_member(machine, element)? == is_kept_in_right {
+                                kept.push(element);
+                            }
+                        }
+                        Ok(machine.store.set_of_sorted(&kept))
+                    }),
+                    left.footprint.merge(&right.footprint),
+                )
+            }));
+        }
         if left.infinite.is_some() || right.infinite.is_some() {
-            if if name == "\\" {
-                right.infinite.is_some()
-            } else {
-                name != "\\cup"
-            } {
-                return Ok(None);
-            }
+            // A combination of sets TLC can't enumerate is one it only tests for membership.
             return Ok(Some(Compiled {
                 is_normalized: false,
                 infinite: Some("Combined"),
