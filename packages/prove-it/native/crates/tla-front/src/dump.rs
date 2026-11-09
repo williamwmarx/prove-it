@@ -1177,5 +1177,22 @@ pub fn environment(
             "printed",
             Some(list(&environment.printed, |printed| text(printed))),
         ),
+        (
+            "assumptions",
+            Some(Json::Array(
+                environment
+                    .assumptions
+                    .iter()
+                    .filter(|assumption| !assumption.is_axiom)
+                    .map(|assumption| text(&crate::errors::describe_range(&assumption.expression)))
+                    .collect(),
+            )),
+        ),
+        (
+            "startup",
+            Some(list(&environment.startup_definitions, |definition| {
+                name(&keys[&Rc::as_ptr(definition)])
+            })),
+        ),
     ])
 }

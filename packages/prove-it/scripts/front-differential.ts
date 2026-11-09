@@ -28,7 +28,7 @@ import { type ModelConfig, parseConfig } from "../src/config";
 import { lowerToIr } from "../src/engine/ir";
 import { createEnvironment } from "../src/environment";
 import { TlaConfigError, TlaEvaluationError, TlaModuleError, TlaSyntaxError } from "../src/errors";
-import type { Builtin, Environment } from "../src/evaluate";
+import { type Builtin, describeRange, type Environment } from "../src/evaluate";
 import { tokenize } from "../src/lexer";
 import { parseModule, parseSanyModule } from "../src/parser";
 import { createTlcOrder } from "../src/tlc/order";
@@ -144,6 +144,10 @@ const readEnvironment = (source: string, path: string, config?: ModelConfig) => 
     variableIndex: [...environment.variableIndex],
     constants: specification.rootConstants.map((constant) => constant.name),
     printed,
+    assumptions: specification.assumptions
+      .filter((assumption) => !assumption.isAxiom)
+      .map((assumption) => describeRange(assumption.expression)),
+    startup: config ? specification.startupDefinitions.map((definition) => keys.get(definition)) : [],
   };
 };
 
