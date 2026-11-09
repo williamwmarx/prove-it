@@ -885,6 +885,35 @@ impl Store {
         self.equals_other(left, right)
     }
 
+    /// TLC's `left.equals(right)` where `left` is the value TLC asks: a function with a key that
+    /// isn't a string is no record, so it compares with any function by its keys and values
+    /// (`FcnRcdValue.equals`), where `equals`, which doesn't know which of the two TLC asks,
+    /// stops in case the record is the one asked.
+    pub fn equals_asked(&mut self, left: Id, right: Id) -> Outcome<bool> {
+        let (left_meta, right_meta) = (*self.meta(left), *self.meta(right));
+        let is_record_asked_by_function = is_function_kind(left_meta.kind)
+            && is_function_kind(right_meta.kind)
+            && left_meta.size > 0
+            && right_meta.size > 0
+            && !self.is_record(left)
+            && self.is_record(right);
+        if !is_record_asked_by_function {
+            return self.equals(left, right);
+        }
+        if left_meta.size != right_meta.size {
+            return Ok(false);
+        }
+        // The keys in order, up to the first pair that differs: one of the left's isn't a string.
+        for index in 0..left_meta.size {
+            let left_key = self.key_of(&left_meta, index);
+            let right_key = self.key_of(&right_meta, index);
+            if left_key != right_key && !self.equals(left_key, right_key)? {
+                return Ok(false);
+            }
+        }
+        Ok(false)
+    }
+
     #[inline(never)]
     fn equals_other(&mut self, left: Id, right: Id) -> Outcome<bool> {
         let (left_kind, right_kind) = (self.kind_of(left), self.kind_of(right));
