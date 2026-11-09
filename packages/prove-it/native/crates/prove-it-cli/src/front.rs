@@ -41,8 +41,6 @@ pub enum Output {
     /// definitions and before the assumptions (the engine's `startup_done`).
     Native {
         sany: String,
-        // HACK: unread until check.rs prints the messages at `startup_done`, which the CLI wires.
-        #[allow(dead_code)]
         startup_messages: Vec<StartupMessage>,
     },
 }

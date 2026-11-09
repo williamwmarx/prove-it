@@ -7,6 +7,7 @@ import {
   type Expression,
   type Fact,
   getChildren,
+  type IdentifierExpression,
   type Instance,
   isLocallyResolved,
   type LabelExpression,
@@ -122,6 +123,12 @@ export const selections = new WeakSet<Expression>();
 export const selectionErrors = new WeakMap<Expression, SelectionError>();
 
 const renamedArities = new WeakMap<Expression, number>();
+
+// The name an identifier the resolver renamed to its key was written as, such as A!Safe, by which
+// TLC names a property (`opNode.getName()`). A copy an INSTANCE makes of a resolved node has none.
+const writtenNames = new WeakMap<IdentifierExpression, string>();
+
+export const getWrittenName = (expression: IdentifierExpression) => writtenNames.get(expression);
 
 export const KEY_SEPARATOR = "@";
 
@@ -740,8 +747,10 @@ const getSymbolArity = (
   if (local) return local.arity;
   const symbol = findSymbol(name, unit);
   if (symbol) {
-    if (expression.kind === "Identifier") expression.name = symbol.key;
-    else expression.operator = symbol.key;
+    if (expression.kind === "Identifier") {
+      writtenNames.set(expression, name);
+      expression.name = symbol.key;
+    } else expression.operator = symbol.key;
     renamedArities.set(expression, symbol.arity);
     return symbol.arity;
   }

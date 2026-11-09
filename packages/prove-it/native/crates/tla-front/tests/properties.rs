@@ -1,6 +1,8 @@
 //! TLC's errors for a property that is an action, from its test-model/ActionLevelProp.tla and the
 //! ActionLevelProp*Test cases.
 
+use std::path::Path;
+
 use tla_front::errors::FrontError;
 use tla_front::model::{ModelOptions, lower_model};
 
@@ -116,4 +118,32 @@ fn applies_always_to_a_box_action_and_always_eventually_to_an_angle_action() {
         )
     );
     assert_eq!(coded("ActionLivePropC").0, 2272);
+}
+
+// The names of the invariants a property asserts, as the model holds them for TLC's reports.
+fn get_property_invariant_names(config: &str) -> Vec<String> {
+    let fixtures =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../tests/fixtures/instance-property");
+    let options = ModelOptions {
+        libraries: &[],
+        version: None,
+        is_warning_enabled: true,
+        is_spec_described: false,
+        random_seed: 0,
+    };
+    let config = std::fs::read_to_string(fixtures.join(config)).expect("the configuration");
+    let ir = lower_model(&fixtures.join("Main.tla"), &config, &options).expect("the model");
+    let ir = tla_ir::decode(&ir).expect("an IR that decodes");
+    ir.model
+        .property_invariant_names
+        .iter()
+        .map(|&name| ir.texts[name as usize].to_string())
+        .collect()
+}
+
+#[test]
+fn names_a_property_an_instance_exports_as_written() {
+    // `opNode.getName()`: PSafe == A!Safe names A!Safe, but A!Safe2 == Safe names Safe.
+    assert_eq!(get_property_invariant_names("Main.cfg"), ["A!Safe"]);
+    assert_eq!(get_property_invariant_names("Inner.cfg"), ["Safe"]);
 }
