@@ -742,6 +742,34 @@ fn rebuilds_a_trace_through_a_recursive_function_tlc_keeps_lazy() {
     std::fs::remove_dir_all(directory).expect("removed");
 }
 
+#[test]
+fn prints_a_deadlock_then_the_property_the_deadlocked_state_violates() {
+    let ir = include_bytes!(
+        "../../../../tests/conformance/ir/tlc/tlatools/org.lamport.tlatools/test-model/Github710d.ir"
+    );
+    let config = "SPECIFICATION Spec\nPROPERTY NeverThree\nPROPERTY Tautology\n";
+    let (output, directory) = run_golden("deadlock-accepted", ir, "Github710d", config, &[]);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(11), "{text}");
+    // TLC adds the deadlocked state to the behavior graphs after it reports the deadlock, and
+    // reports the node that accepts every behavior it reaches there.
+    let label = "Step line 7, col 9 to line 7, col 27 of module Github710d";
+    let mut trace = String::from("State 1: <Initial predicate>\nx = 0\n\n");
+    for position in 2..=4 {
+        trace.push_str(&format!(
+            "State {position}: <{label}>\nx = {}\n\n",
+            position - 1
+        ));
+    }
+    assert!(
+        text.contains(&format!(
+            "Error: Deadlock reached.\nError: The behavior up to this point is:\n{trace}Error: Temporal property NeverThree was violated.\n\nError: The following behavior constitutes a counter-example:\n\n{trace}4 states generated, 4 distinct states found, 0 states left on queue.\n"
+        )),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
 const PULL_RAFT_IR: &[u8] =
     include_bytes!("../../../../tests/conformance/ir/raft/specifications/pull-raft/PullRaft.ir");
 

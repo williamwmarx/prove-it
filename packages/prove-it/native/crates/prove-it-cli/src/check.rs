@@ -22,7 +22,10 @@ use crate::summary::{
     optimistic_probability, out_degree_summary,
 };
 use crate::time::{format_date, format_duration};
-use crate::trace::{PostconditionRun, Postconditions, check_postconditions, rebuild_trace};
+use crate::trace::{
+    PostconditionRun, Postconditions, PrintedTrace, check_postconditions, rebuild_accepted,
+    rebuild_trace,
+};
 use tla_front::TlcVersion;
 use tla_front::config::{ModelConfig, parse_config};
 use tla_front::errors::FrontError;
@@ -937,6 +940,22 @@ fn print_violation(
         Ok(trace) => trace,
         Err(reason) => return Ok(report_not_native(printer, &reason)),
     };
+    // TLC adds a deadlocked state to the behavior graphs after it reports the deadlock, and
+    // reports the tableau node that accepts every behavior it reaches next.
+    let accepted = match &violation.kind {
+        ViolationKind::Deadlock {
+            accepted: Some(accepted),
+        } => {
+            if checked.is_some() {
+                return Err("a postcondition after a deadlock that violates a temporal property");
+            }
+            match rebuild_accepted(ir, violation, accepted) {
+                Ok(trace) => Some((trace, properties_headline(ir, &accepted.violated))),
+                Err(reason) => return Ok(report_not_native(printer, &reason)),
+            }
+        }
+        _ => None,
+    };
     // An owner past the configuration's invariants is a property checked as one.
     let model = &ir.model;
     let invariant_name = |owner: usize| {
@@ -967,7 +986,9 @@ fn print_violation(
             format!("Invariant {} is violated.", invariant_name(owner)?),
             SAFETY_VIOLATION,
         ),
-        ViolationKind::Deadlock => (code::DEADLOCK_REACHED, "Deadlock reached.".into(), DEADLOCK),
+        ViolationKind::Deadlock { .. } => {
+            (code::DEADLOCK_REACHED, "Deadlock reached.".into(), DEADLOCK)
+        }
         ViolationKind::Error { .. } => return Err(NOT_IN_IR),
         // Under SYMMETRY or a VIEW, TLC names the properties the lasso it rebuilt violates.
         ViolationKind::Lasso { .. } => (
@@ -1023,13 +1044,24 @@ fn print_violation(
         _ => None,
     };
     // TLC labels each step with the action it finds taking it as it rebuilds the trace.
-    let mut labels = vec!["Initial predicate"];
-    for state in trace.states.iter().skip(1) {
-        let action = state
-            .action
-            .ok_or("a step whose action the rebuilt trace lacks")?;
-        labels.push(action_label(action)?);
-    }
+    let get_labels = |trace: &PrintedTrace| {
+        let mut labels = vec!["Initial predicate"];
+        for state in trace.states.iter().skip(1) {
+            let action = state
+                .action
+                .ok_or("a step whose action the rebuilt trace lacks")?;
+            labels.push(action_label(action)?);
+        }
+        Ok::<_, &'static str>(labels)
+    };
+    let labels = get_labels(&trace)?;
+    let accepted = match accepted {
+        Some((accepted, headline)) => {
+            let labels = get_labels(&accepted)?;
+            Some((accepted, headline.ok_or(NOT_IN_IR)?, labels))
+        }
+        None => None,
+    };
     let counts = &violation.counts;
     let statistics = Statistics {
         generated: counts.generated,
@@ -1072,18 +1104,7 @@ fn print_violation(
         )
     };
     printer.print(heading_code, Level::Error, heading);
-    for (position, (state, label)) in trace.states.iter().zip(labels).enumerate() {
-        if position > 0 {
-            for line in &state.output {
-                printer.line(line);
-            }
-        }
-        printer.print(
-            code::STATE_PRINT_2,
-            Level::State,
-            &format!("{}: <{label}>\n{}", position + 1, state.text),
-        );
-    }
+    print_states(printer, &trace, &labels);
     // What the postconditions printed follows the trace (`traceOutput`).
     for line in trace
         .postconditions
@@ -1151,6 +1172,22 @@ fn print_violation(
             }
         }
     }
+    if let Some((accepted, headline, labels)) = accepted {
+        for line in accepted.states[0]
+            .output
+            .iter()
+            .chain(&accepted.trace_output)
+        {
+            printer.line(line);
+        }
+        printer.print(code::TEMPORAL_PROPERTY_VIOLATED, Level::Error, &headline);
+        printer.print(
+            code::COUNTER_EXAMPLE,
+            Level::Error,
+            "The following behavior constitutes a counter-example:\n",
+        );
+        print_states(printer, &accepted, &labels);
+    }
     print_postcondition_failure(printer, ir, trace.postconditions.as_ref());
     if let Some(checking) = checking {
         print_liveness_finished(printer, checking);
@@ -1158,6 +1195,22 @@ fn print_violation(
     print_statistics(printer, &statistics, start);
     print_finished(printer, start);
     Ok(exit_code)
+}
+
+// A trace's states, each after what the spec printed as TLC rebuilt it.
+fn print_states(printer: &mut Printer, trace: &PrintedTrace, labels: &[&str]) {
+    for (position, (state, label)) in trace.states.iter().zip(labels).enumerate() {
+        if position > 0 {
+            for line in &state.output {
+                printer.line(line);
+            }
+        }
+        printer.print(
+            code::STATE_PRINT_2,
+            Level::State,
+            &format!("{}: <{label}>\n{}", position + 1, state.text),
+        );
+    }
 }
 
 // TLC names the properties the lasso violates, or none when it can't tell which
