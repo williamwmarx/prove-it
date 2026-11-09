@@ -133,11 +133,12 @@ in wall time (geometric mean).
 | Barriers, N = 8 | 536,319 | 44.5 s, 1701 MB | 6.18 s, 508 MB |
 | TokenRing, N = 8, M = 7 | 5,764,801 | 149 s, 2750 MB | 135 s, 9098 MB (interpreter) |
 
-The scaled models check in time and memory proportional to their states, but for TokenRing at
-N = 8. There the engine handed over at the start, and the interpreter checked the model. The
-initial predicate draws from a set of 5.8 million functions, past the 1e6 bound the engine had
-copied from the TypeScript engine, and past 4 million states (`MAXIMUM_GRAPH_STATES`) the engine
-hands its graph over anyway, so that the interpreter checks the properties as the graph grows, as
-TLC does. bcastByz at N = 5 (1.07 million states) is out of the suite: TLC didn't finish it in
-1500 s, and Rust took 284 s, nearly all of it on one action atom, Receive's `\E` over
-`SUBSET sent`, evaluated on each of 38 million steps.
+The scaled models check in time and memory proportional to their states, but for TokenRing at N = 8.
+There the engine handed over at the start, and the interpreter checked the model. The initial
+predicate draws from a set of 5.8 million functions, past the 1e6 bound the engine had copied from
+the TypeScript engine, and past 4 million states (`MAXIMUM_GRAPH_STATES`) the engine hands its graph
+over anyway, so that the interpreter checks the properties as the graph grows, as TLC does. The
+suite now scales TokenRing to N = 7, M = 8 (2.1 million states) instead, which the engine checks
+itself with its bound on enumerated sets at 2^24. bcastByz at N = 5 (1.07 million states) is out of
+the suite: TLC didn't finish it in 1500 s, and Rust took 284 s, nearly all of it on one action atom,
+Receive's `\E` over `SUBSET sent`, evaluated on each of 38 million steps.

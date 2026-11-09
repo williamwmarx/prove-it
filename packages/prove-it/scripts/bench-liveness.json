@@ -108,7 +108,7 @@
     "directory": "tests/conformance/.corpora/examples/specifications/ewd426",
     "spec": "TokenRing.tla",
     "config": "benchmarks/liveness/TokenRing.cfg",
-    "style": "Dijkstra token ring, N = 8, M = 7",
+    "style": "Dijkstra token ring, N = 7, M = 8",
     "isUsingLibrary": true
   },
   {
