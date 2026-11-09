@@ -188,3 +188,14 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   up, and stopped on one too large to build, such as RandomSubset's invariant
   `x \in 1..100000000`. Elsewhere the interval is as before, so a set operation or a set of
   functions over one still evaluates it, and its bounds, as TLC does.
+
+## Definitions reached again through an argument
+
+- Both engines took a definition they reached again while expanding it for recursion, and declined
+  it as "a recursive higher-order operator". A definition is also reached again through an
+  argument, as mongodb-txns' ClientCentric folds in the operator it passes to Community Modules'
+  FoldFunction, which is no recursion: SANY rejects a definition that calls itself without
+  RECURSIVE. The definitions being expanded now travel with the context (`expanding`), so an
+  argument compiles with those of the place it is written, and only a cycle through definitions
+  is taken for recursion. ClientCentricTests and MCMultiShardTxn (mongodb-txns), declined before,
+  now search in Rust, and the TypeScript engine searches them too.

@@ -362,6 +362,15 @@ pub(crate) struct Context {
     is_init: bool,
     /// Whether the engine evaluates the expression exactly when TLC does, so that it may print.
     can_print: bool,
+    /// The definitions whose bodies the expression is written in, innermost first. An argument
+    /// keeps its caller's, so a definition reached again through an argument isn't taken for
+    /// recursion.
+    expanding: Option<Rc<Expansion>>,
+}
+
+struct Expansion {
+    node: NodeId,
+    outer: Option<Rc<Expansion>>,
 }
 
 impl Context {
@@ -370,7 +379,27 @@ impl Context {
         is_primed: false,
         is_init: false,
         can_print: false,
+        expanding: None,
     };
+
+    fn is_expanding(&self, node: NodeId) -> bool {
+        let mut expansion = &self.expanding;
+        while let Some(current) = expansion {
+            if current.node == node {
+                return true;
+            }
+            expansion = &current.outer;
+        }
+        false
+    }
+
+    // The definitions the body of `node` is written in: the caller's and `node`.
+    fn expanding_with(&self, node: NodeId) -> Option<Rc<Expansion>> {
+        Some(Rc::new(Expansion {
+            node,
+            outer: self.expanding.clone(),
+        }))
+    }
 
     fn primed(&self, is_primed: bool) -> Context {
         Context {
@@ -397,9 +426,8 @@ impl Context {
     fn global(&self, can_print: bool) -> Context {
         Context {
             scope: None,
-            is_primed: self.is_primed,
-            is_init: self.is_init,
             can_print,
+            ..self.clone()
         }
     }
 }
@@ -606,7 +634,6 @@ pub struct Compiler<'a> {
     definition_cache: HashMap<NodeId, [Option<(u64, Compiled)>; 4]>,
     recursive_operators: HashMap<usize, OperatorEntries>,
     recursive_functions: HashMap<(NodeId, usize), FunctionEntries>,
-    expanding: HashSet<NodeId>,
     /// The slots of names bound over intervals, whose values are integers.
     int_slots: HashSet<u32>,
     /// How many ENABLED actions the compiler is inside, whose private next state also holds the
@@ -674,7 +701,6 @@ impl<'a> Compiler<'a> {
             definition_cache: HashMap::new(),
             recursive_operators: HashMap::new(),
             recursive_functions: HashMap::new(),
-            expanding: HashSet::new(),
             int_slots: HashSet::new(),
             enabled_depth: 0,
             variable_extent: ir.variables.len(),
@@ -1077,7 +1103,7 @@ impl<'a> Compiler<'a> {
                         let definition = self.definition(node);
                         matches!(definition.form, DefinitionForm::Operator(_))
                             && definition.flags & Definition::RECURSIVE == 0
-                            && !self.expanding.contains(&node)
+                            && !context.is_expanding(node)
                     }
                     Resolution::Builtin(index) => matches!(
                         self.builtin_name(index),
@@ -1239,18 +1265,19 @@ impl<'a> Compiler<'a> {
             self.note_cached_read(entry);
             return Ok(known);
         }
-        if self.expanding.contains(&node) {
+        if context.is_expanding(node) {
             return unsupported("a recursive zero-arity definition");
         }
-        self.expanding.insert(node);
         let body = definition.body;
-        let body_context = context.global(context.can_print);
+        let body_context = Context {
+            expanding: context.expanding_with(node),
+            ..context.global(context.can_print)
+        };
         let mut read = Vec::new();
         let result = self.tracking(&mut read, |compiler| {
             let compiled = compiler.compile(body, &body_context)?;
             Ok(compiler.cached(Self::mark_costly(compiled)))
         });
-        self.expanding.remove(&node);
         let compiled = result?;
         self.cache_definition(node, index, compiled.clone(), &read);
         Ok(compiled)
@@ -1512,19 +1539,20 @@ impl<'a> Compiler<'a> {
                 let DefinitionForm::Operator(params) = &definition.form else {
                     return unsupported("applying a function definition as an operator");
                 };
-                if definition.flags & Definition::RECURSIVE != 0 || self.expanding.contains(&node) {
+                if definition.flags & Definition::RECURSIVE != 0 || context.is_expanding(node) {
                     return self.compile_recursive_call(
                         RecursiveTarget::Global(node),
                         args,
                         context,
                     );
                 }
-                self.expanding.insert(node);
-                let result = self
-                    .bind_arguments(params, args, context, context.global(context.can_print))
-                    .and_then(|callee| self.compile(definition.body, &callee));
-                self.expanding.remove(&node);
-                return result.map(|compiled| self.cached(compiled));
+                let base = Context {
+                    expanding: context.expanding_with(node),
+                    ..context.global(context.can_print)
+                };
+                let callee = self.bind_arguments(params, args, context, base)?;
+                let compiled = self.compile(definition.body, &callee)?;
+                return Ok(self.cached(compiled));
             }
             Resolution::Builtin(index) => {
                 let operands: Vec<Operand> = args
@@ -1748,24 +1776,23 @@ impl<'a> Compiler<'a> {
             .entry(key)
             .or_insert_with(|| (local, [None, None]))
             .1[index] = Some(Rc::clone(&created));
+        let expanding = match (global, &local_context) {
+            (Some(node), _) => context.expanding_with(node),
+            (None, local) => local.as_ref().and_then(|local| local.expanding.clone()),
+        };
         let mut scope = local_context.and_then(|local| local.scope);
         for (param, &slot) in params.iter().zip(&slots) {
             scope = bind(&scope, param.name, Binding::Slot(slot));
-        }
-        if let Some(node) = global {
-            self.expanding.insert(node);
         }
         let body_context = Context {
             scope,
             is_primed,
             is_init: context.is_init,
             can_print: false,
+            expanding,
         };
         let mut read = Vec::new();
         let settled = self.settle_operator(&created, body, &body_context, &mut read);
-        if let Some(node) = global {
-            self.expanding.remove(&node);
-        }
         let (compiled_body, slot_start, slot_end) = match settled {
             Ok(settled) => settled,
             Err(error) => {
@@ -1900,12 +1927,7 @@ impl<'a> Compiler<'a> {
         let DefinitionForm::Function(bounds) = &definition.form else {
             unreachable!("a function definition that isn't one");
         };
-        let body_context = Context {
-            scope: None,
-            is_primed: context.is_primed,
-            is_init: context.is_init,
-            can_print: false,
-        };
+        let body_context = context.global(false);
         let mut read = Vec::new();
         let compiled = self.tracking(&mut read, |compiler| {
             let construction =
@@ -1987,9 +2009,8 @@ impl<'a> Compiler<'a> {
         }
         let outer = Context {
             scope: base_scope.clone(),
-            is_primed: context.is_primed,
-            is_init: context.is_init,
             can_print: false,
+            ..context.clone()
         };
         let slot = self.allocate_slot();
         let mut read = Vec::new();
