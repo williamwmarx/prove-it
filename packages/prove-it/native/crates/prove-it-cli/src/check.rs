@@ -13,7 +13,7 @@ use tla_values::print::{is_printable, write_value};
 use tla_values::{Id, Store};
 
 use crate::args::{Java, Parsed, USAGE, get_java_launch};
-use crate::failure::{ErrorStop, print_failure};
+use crate::failure::{ErrorStop, print_assumption_failure, print_failure};
 use crate::files::FileDescriber;
 use crate::front::read_front;
 use crate::messages::{self as code, Level, Printer};
@@ -695,8 +695,13 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
         SearchOutcome::Declined(reason) => {
             return report_not_native(printer, &format!("the engine declined: {reason}"));
         }
-        SearchOutcome::AssumptionFailed { .. } => {
-            return report_not_native(printer, "an assumption that fails to evaluate");
+        SearchOutcome::AssumptionFailed { position } => {
+            return print_assumption_failure(printer, &ir, position, start).unwrap_or_else(|why| {
+                report_not_native(
+                    printer,
+                    &format!("an assumption that fails to evaluate: {why}"),
+                )
+            });
         }
         // TLC reports a false assumption with no statistics, since it hasn't searched.
         SearchOutcome::AssumptionViolated { name } => {
@@ -724,12 +729,6 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                 {
                     Err("a failure with an ALIAS, POSTCONDITION or _POSSIBLE".to_string())
                 }
-                ViolationKind::Error {
-                    site: ErrorSite::InitialConstraint(_) | ErrorSite::InitialInvariant(_),
-                } => Err(
-                    "a failure on an initial state, which the printing doesn't follow yet"
-                        .to_string(),
-                ),
                 ViolationKind::Error { site } => {
                     let counts = &violation.counts;
                     let stop = ErrorStop {
@@ -741,10 +740,11 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                             ErrorSite::Init => Site::Init,
                             ErrorSite::Next => Site::Next,
                             ErrorSite::Invariant(position) => Site::Invariant(position),
-                            ErrorSite::InitialConstraint(_) | ErrorSite::InitialInvariant(_) => {
-                                unreachable!(
-                                    "a failure on an initial state, which the arm above leaves"
-                                )
+                            ErrorSite::InitialConstraint(position) => {
+                                Site::InitialConstraint(position)
+                            }
+                            ErrorSite::InitialInvariant(position) => {
+                                Site::InitialInvariant(position)
                             }
                         },
                         statistics: Statistics {

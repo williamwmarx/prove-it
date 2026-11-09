@@ -180,6 +180,29 @@ pub fn print_failure(
     Ok(failure.exit_code)
 }
 
+/// Prints TLC's report of the assumption at `position` that failed to evaluate as TLC started,
+/// after what it printed before it failed, and returns the status TLC exits with, or why the run
+/// isn't native yet. TLC prints no statistics, since it hasn't searched.
+pub fn print_assumption_failure(
+    printer: &mut Printer,
+    ir: &Ir,
+    position: u32,
+    start: Instant,
+) -> Result<i32, String> {
+    let failure = on_search_stack(|| Rebuilder::new(ir)?.evaluate_assumption(position))?;
+    for print in &failure.printed {
+        printer.line(&format_print(print));
+    }
+    let message = if printer.is_tool {
+        &failure.tool_message
+    } else {
+        &failure.message
+    };
+    printer.print(failure.code, Level::Error, message);
+    print_finished(printer, start);
+    Ok(failure.exit_code)
+}
+
 // Evaluates the failure again and rebuilds the trace.
 fn evaluate(ir: &Ir, stop: &ErrorStop<'_>) -> Result<Report, String> {
     on_search_stack(|| {
@@ -191,7 +214,18 @@ fn evaluate(ir: &Ir, stop: &ErrorStop<'_>) -> Result<Report, String> {
             Site::Invariant(_) => Ending::Violation,
             _ => Ending::Kept,
         };
-        let trace = rebuilder.rebuild(stop.store, &stop.states, &stop.actions, ending)?;
+        // TLC prints no trace for a check of an initial state that fails.
+        let trace = if matches!(
+            stop.site,
+            Site::InitialConstraint(_) | Site::InitialInvariant(_)
+        ) {
+            Trace {
+                states: Vec::new(),
+                trace_output: Vec::new(),
+            }
+        } else {
+            rebuilder.rebuild(stop.store, &stop.states, &stop.actions, ending)?
+        };
         // TLC rebuilds the trace once more after it prints it, then replays the failure.
         let after = trace
             .trace_output

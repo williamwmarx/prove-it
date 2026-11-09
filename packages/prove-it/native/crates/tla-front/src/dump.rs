@@ -1092,6 +1092,12 @@ pub fn environment(
         Err(FrontError::Evaluation(message) | FrontError::Config(message)) => {
             return object(vec![("error", Some(text(message)))]);
         }
+        Err(FrontError::StackOverflow) => {
+            return object(vec![(
+                "error",
+                Some(text(crate::tlc_messages::STACK_OVERFLOW_MESSAGE)),
+            )]);
+        }
         Err(FrontError::NotYet(reason)) => return object(vec![("notYet", Some(text(reason)))]),
     };
     let mut keys: crate::hash::FastMap<*const Definition, Name> = Default::default();
@@ -1232,6 +1238,12 @@ pub fn specification(
         Err(FrontError::Evaluation(message) | FrontError::Config(message)) => {
             return object(vec![("error", Some(text(message)))]);
         }
+        Err(FrontError::StackOverflow) => {
+            return object(vec![(
+                "error",
+                Some(text(crate::tlc_messages::STACK_OVERFLOW_MESSAGE)),
+            )]);
+        }
         Err(FrontError::NotYet(reason)) => return object(vec![("notYet", Some(text(reason)))]),
     };
     let describe = |expression: &Expr| {
@@ -1288,6 +1300,12 @@ pub fn properties(value: &Result<crate::spec::Properties, crate::errors::FrontEr
         Err(FrontError::Syntax(error)) => return syntax_error(error),
         Err(FrontError::Evaluation(message) | FrontError::Config(message)) => {
             return object(vec![("error", Some(text(message)))]);
+        }
+        Err(FrontError::StackOverflow) => {
+            return object(vec![(
+                "error",
+                Some(text(crate::tlc_messages::STACK_OVERFLOW_MESSAGE)),
+            )]);
         }
         Err(FrontError::NotYet(reason)) => return object(vec![("notYet", Some(text(reason)))]),
     };
