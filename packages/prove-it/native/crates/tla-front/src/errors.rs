@@ -52,3 +52,42 @@ impl SyntaxError {
         }
     }
 }
+
+/// `formatRange`.
+pub fn format_range(range: &crate::ast::SourceRange) -> String {
+    format!(
+        "line {}, col {} to line {}, col {} of module {}",
+        range.start.line, range.start.column, range.end.line, range.end.column, range.module
+    )
+}
+
+/// What stops the front end: an error of `errors.ts` it raises as TypeScript does, or a construct
+/// it doesn't cover yet.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FrontError {
+    /// `TlaSyntaxError`.
+    Syntax(SyntaxError),
+    /// `TlaEvaluationError`, which the front end raises for a literal TLC can't hold.
+    Evaluation(String),
+    /// `TlaConfigError`.
+    Config(String),
+    /// What the Rust front end doesn't cover yet.
+    NotYet(String),
+}
+
+impl From<SyntaxError> for FrontError {
+    fn from(error: SyntaxError) -> FrontError {
+        FrontError::Syntax(error)
+    }
+}
+
+impl SyntaxError {
+    /// A `TlaSyntaxError` with a message alone.
+    pub fn new(message: impl Into<String>) -> SyntaxError {
+        SyntaxError {
+            message: message.into(),
+            failure: None,
+            sany: None,
+        }
+    }
+}
