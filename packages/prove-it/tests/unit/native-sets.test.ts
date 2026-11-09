@@ -158,6 +158,21 @@ describe.if(ADDON !== undefined)("the native engine's lazy sets", () => {
     }
   });
 
+  // From TLC's RandomSubset, whose invariant tests x \in 1..100000000: IntervalValue.member
+  // compares an integer with the bounds.
+  it("tests membership in an interval without building it", async () => {
+    const body = [
+      "EXTENDS Integers",
+      "VARIABLE x",
+      "Init == x \\in {0, 7}",
+      "Next == x < 9 /\\ x' = x + 1",
+      "Inv == x \\in 0..100000000 /\\ x \\notin -5..-1 /\\ (x \\in 3..8) = (x >= 3 /\\ x <= 8)",
+    ];
+    expect(
+      await compareWithInterpreter(body, `${CONFIG}\nINVARIANT Inv\nCHECK_DEADLOCK FALSE`),
+    ).toContainEqual(expect.stringMatching(COMPLETE));
+  });
+
   it("leaves a set it has no order for, as the TypeScript engine does", async () => {
     // TLC streams the union in the UNION, duplicates and all, which neither engine follows once it
     // holds the union as an id, nor where a bound name may hold it.

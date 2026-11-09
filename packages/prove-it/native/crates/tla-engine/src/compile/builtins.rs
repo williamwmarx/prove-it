@@ -759,9 +759,21 @@ impl Compiler<'_> {
                 let right = self.operand(&operands[1])?;
                 let (low, high) = (left.eval.clone(), right.eval.clone());
                 let bounds = (low.clone(), high.clone());
+                // IntervalValue.member compares an integer with the bounds, building nothing.
+                let (member_low, member_high) = bounds.clone();
+                let is_member = member(move |machine, element| {
+                    let (low, high) = (member_low(machine)?, member_high(machine)?);
+                    let (low, high) = (expect_int(machine, low)?, expect_int(machine, high)?);
+                    if machine.store.kind_of(element) != KIND_INT {
+                        return not_in(machine, element, "a mistyped membership in an interval");
+                    }
+                    let value = i64::from(machine.store.int_of(element));
+                    Ok(low <= value && value <= high)
+                });
                 Compiled {
                     is_costly: true,
                     is_in_order: true,
+                    member: Some(is_member),
                     interval: Some(bounds),
                     ..leaf(
                         eval(move |machine| fused::interval(machine, &low, &high)),

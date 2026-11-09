@@ -641,7 +641,9 @@ describe("the engine", () => {
       const body = `EXTENDS Naturals\nCONSTANT M\nVARIABLE x\nInit == x = 0\nNext == x < 3 /\\ x' = x + 1\nInv == ~("a" \\in ({M} \\cup (1..${size})))`;
       const config = "CONSTANT M = M\nINIT Init\nNEXT Next\nINVARIANT Inv";
       const { result, lines } = await checkInEngine(body, config);
-      expect(lines).toEqual([expect.stringMatching(/handed over .*: values TLC can't compare$/)]);
+      expect(lines).toEqual([
+        expect.stringMatching(/handed over .*: a mistyped membership in an interval$/),
+      ]);
       process.env.PROVE_IT_ENGINE = "0";
       const reference = await check({ source: `---- MODULE M ----\n${body}\n====`, config });
       expect(result.status).toBe("error");
@@ -1116,7 +1118,7 @@ describe("the engine's hand-over to the interpreter part way through a search", 
   // A counter and a bit that flips below 3, so each level holds states the search hasn't expanded
   // when it stops.
   const counter = (move: string, extra: string[] = []) => [
-    "EXTENDS Naturals",
+    "EXTENDS Naturals, FiniteSets",
     "VARIABLES x, y",
     "vars == <<x, y>>",
     "Init == x = 0 /\\ y = 0",
@@ -1147,9 +1149,9 @@ describe("the engine's hand-over to the interpreter part way through a search", 
   });
 
   it("goes on from the graph found when the engine stops for what it doesn't build", async () => {
-    // The engine doesn't build an interval of more than 10^7 integers, which TLC tests membership
-    // in without building, so it stops once x = 1.
-    const move = "x' = (x + 1) % 4 /\\ 5 \\in 0..(x * 10000000 + 5)";
+    // The engine doesn't build a power set of more than 2^20 sets, which TLC counts without
+    // building, so it stops once x = 1.
+    const move = "x' = (x + 1) % 4 /\\ Cardinality(SUBSET (0..((x % 2) * 25))) > 0";
     for (const [live, status] of [
       ["[]<>(x = 0)", "success"],
       ["<>[](y = 0)", "liveness-violation"],
@@ -1159,7 +1161,7 @@ describe("the engine's hand-over to the interpreter part way through a search", 
         counter(move, [`Live == ${live}`]),
         LIVE_CONFIG,
       );
-      expect(handedOver).toMatch(/: an interval too large to build$/);
+      expect(handedOver).toMatch(/: a power set too large to build$/);
       expect([live, result.status]).toEqual([live, status]);
     }
   });
@@ -1282,10 +1284,10 @@ describe("the engine's hand-over to the interpreter part way through a search", 
 
   it("takes over the engine's states once it goes past the one the engine stopped in", async () => {
     const { result, handedOver } = await checkBoth(
-      counter("x' = (x + 1) % 4 /\\ 5 \\in 0..(x * 10000000 + 5)", ["Inv == x < 4"]),
+      counter("x' = (x + 1) % 4 /\\ Cardinality(SUBSET (0..((x % 2) * 25))) > 0", ["Inv == x < 4"]),
       "INIT Init\nNEXT Next\nINVARIANT Inv",
     );
-    expect(handedOver).toMatch(/: an interval too large to build$/);
+    expect(handedOver).toMatch(/: a power set too large to build$/);
     expect(result.status).toBe("success");
   });
 });

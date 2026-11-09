@@ -90,3 +90,10 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   its base (`Compiled::subset_base`) for `\subseteq` to compare in its place. SubsetEq (TLC's
   tests), which stopped building `SUBSET (1..42)`, now completes in Rust. The interpreter doesn't
   recurse into power sets of power sets, so the unit test leaves that case out.
+
+## Membership in an interval
+
+- TLC tests `x \in a..b` by comparing an integer with the bounds (`IntervalValue.member`), and
+  fails on any other value but an untyped model value, which isn't a member. `..` now has that
+  membership test, where the engine built the interval to look the element up, and stopped on one
+  too large to build, such as RandomSubset's invariant `x \in 1..100000000`.
