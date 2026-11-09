@@ -4,7 +4,7 @@ import { hasEffect, isConstantLevel, isImpureDefinition } from "./dependencies";
 import { getMemoStatistics } from "./engine/compile";
 import { toEngineProperties } from "./engine/context";
 import { toValue as toEngineValue } from "./engine/convert";
-import { type IrOutcome, lowerToIr } from "./engine/ir";
+import { type IrOutcome, type IrStartup, lowerToIr } from "./engine/ir";
 import { checkNatively, type NativeLiveness, toEngineResult, toStop } from "./engine/native";
 import {
   type EngineCheckpoint,
@@ -544,6 +544,44 @@ const searchStates = (
     ),
   });
 
+  // What TLC evaluates when it starts, for the engine IR: the substitutes it checks, the constant
+  // definitions with effects (one without computes the same wherever it is first used), the
+  // SYMMETRY definition, which the search found to be an operator without parameters, and the
+  // assumptions.
+  const getIrStartup = (): IrStartup => {
+    const symmetry =
+      config.symmetry === undefined ? undefined : environment.definitions.get(config.symmetry);
+    return {
+      substitutes: [...environment.substitutions].flatMap(([name, target]) => {
+        const definition = environment.definitions.get(target);
+        const isChecked =
+          specification.rootConstants.some((constant) => constant.name === name) &&
+          definition?.kind === "Operator" &&
+          definition.params.length === 0 &&
+          !isConstantLevel(definition, environment);
+        return isChecked ? [{ name, definition }] : [];
+      }),
+      definitions: [
+        ...new Set(
+          specification.startupDefinitions.filter(
+            (definition) =>
+              isStartupDefinition(definition, environment) &&
+              isImpureDefinition(definition, environment),
+          ),
+        ),
+      ],
+      symmetry:
+        symmetry?.kind === "Operator"
+          ? { definition: symmetry, permutedSets: getPermutedSets(symmetry, config.substitutions) }
+          : undefined,
+      assumptions: specification.assumptions
+        .filter((assumption) => !assumption.isAxiom)
+        .map((assumption) => ({
+          expression: assumption.expression,
+          name: describeRange(assumption.expression),
+        })),
+    };
+  };
   const search = createSearch(
     config,
     environment,
@@ -554,6 +592,36 @@ const searchStates = (
     findAssumptionViolation(specification.assumptions, environment);
   if (!search) {
     runtime.isStarted = true;
+    // The engine IR of a spec without variables, for the native binary: its initial predicate and
+    // next-state relation are FALSE, so it finds no state, as TLC does.
+    if (isIrDumped()) {
+      const noBehavior: Expression = {
+        kind: "Identifier",
+        name: "FALSE",
+        location: { line: 0, column: 0 },
+      };
+      const outcome = lowerToIr({
+        config,
+        environment,
+        spec: { init: noBehavior, next: noBehavior, scope: undefined },
+        traceActions: [],
+        isWarningEnabled: environment.runtime.isWarningEnabled,
+        tlcOrder: [],
+        properties: {
+          invariants: [],
+          invariantNames: [],
+          actionProperties: [],
+          initialPredicates: [],
+        },
+        isRecordingGraph: false,
+        version: options.version,
+        atoms: [],
+        liveFormula: undefined,
+        liveProperties: [],
+        startup: getIrStartup(),
+      });
+      if ("ir" in outcome) writeDebugBytes("PROVE_IT_IR_DUMP", outcome.ir);
+    }
     const assumptionViolation = findViolatedAssumption();
     if (assumptionViolation) return createResult("assumption-violation", assumptionViolation);
     // TLC computes the initial states of a spec without variables, of which there are none.
@@ -1719,15 +1787,6 @@ const searchStates = (
     const symmetry = search.symmetryGroup?.map((images) =>
       [...images].map(([name, image]): [string, string] => [name, image.name]),
     );
-    // The search found the SYMMETRY definition, if the configuration names one, to be an operator
-    // without parameters.
-    const getStartupSymmetry = () => {
-      const definition =
-        config.symmetry === undefined ? undefined : environment.definitions.get(config.symmetry);
-      return definition?.kind === "Operator"
-        ? { definition, permutedSets: getPermutedSets(definition, config.substitutions) }
-        : undefined;
-    };
     // TLC's actions for the IR, when the search doesn't take its steps through them already.
     // Finding them describes the spec, which evaluates parts of what the configuration names (an
     // action's arguments, a constant conjunct of the specification or invariant), so it happens
@@ -1774,34 +1833,7 @@ const searchStates = (
         })),
         liveFormula: liveness?.formula,
         liveProperties: liveness?.properties ?? [],
-        startup: {
-          substitutes: [...environment.substitutions].flatMap(([name, target]) => {
-            const definition = environment.definitions.get(target);
-            const isChecked =
-              specification.rootConstants.some((constant) => constant.name === name) &&
-              definition?.kind === "Operator" &&
-              definition.params.length === 0 &&
-              !isConstantLevel(definition, environment);
-            return isChecked ? [{ name, definition }] : [];
-          }),
-          // A definition without effects computes the same wherever it is first used.
-          definitions: [
-            ...new Set(
-              specification.startupDefinitions.filter(
-                (definition) =>
-                  isStartupDefinition(definition, environment) &&
-                  isImpureDefinition(definition, environment),
-              ),
-            ),
-          ],
-          symmetry: getStartupSymmetry(),
-          assumptions: specification.assumptions
-            .filter((assumption) => !assumption.isAxiom)
-            .map((assumption) => ({
-              expression: assumption.expression,
-              name: describeRange(assumption.expression),
-            })),
-        },
+        startup: getIrStartup(),
       });
       const milliseconds = performance.now() - loweredAt;
       if ("ir" in outcome) writeDebugBytes("PROVE_IT_IR_DUMP", outcome.ir);

@@ -197,3 +197,13 @@ Still to do:
     label is the whole next-state relation's range;
   - a trace the rebuild declines, such as RandomElement and RandomSubset, or the several states
     one symmetry orbit may give TLC.
+
+## ALIAS
+
+- With an ALIAS, the binary prints each state of a trace through it, as TLC does. `tla-trace`'s
+  `Rebuilder::alias` evaluates it on the rebuilt trace, with the next state TLC gives it: the
+  following state, or for a lasso's last state the state its cycle starts at. The binary prints the
+  record's fields in the order TLC prints them, a line each, as a conjunction when there are
+  several.
+- An alias whose value isn't a record leaves the state printed as it is. What the rebuild can't
+  follow, such as an alias that fails or prints, stays not native.
