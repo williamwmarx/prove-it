@@ -31,15 +31,22 @@ What follows for the engine and `tla-live`:
   and under SYMMETRY whenever the stored state isn't that very successor). The engine records
   that successor's ids per step, only under SYMMETRY or a VIEW, and answers the state atoms on
   it as well as on each stored state; an action atom's step is `(stored s0, real s1)`.
-- A successor set dedups entries by the real state, not by index, and keeps the order by
+- A successor set dedups entries by index and real state, as `put0` does, and keeps the order by
   fingerprint, the key's. Late expansion runs Next from the real successor, which the search may
   never have expanded (it expanded the stored state with the same fingerprint), so the engine
   expands those real states too, after the search, for the late nodes that need them.
 - The violated properties come from the rebuilt trace, which the CLI's trace printer builds; Rust
   returns the lasso as indices and leaves `violated` empty there.
-- The interpreter, today's oracle, canonicalizes a successor before its liveness checks see it
-  (`isCanonicalizedFirst` in `check.ts`), which is not what TLC does. Where it and TLC differ on
-  the corpus, TLC's recordings decide, and the interpreter is fixed to match.
+- The interpreter, today's oracle, already does what TLC does. `canonicalizeState` in `check.ts`
+  only shares equal values between states; it picks no representative. The interpreter stores
+  each successor as first generated, tells states apart by the representative's fingerprint
+  (`getFingerprintState`), and gives its liveness checker each step's real successor (`state:
+  isStored ? stored : successor.state` in `visitSuccessor`), and late expansion runs Next from
+  that real state. Measured on main at 148cdae, with the engine handing over its keys (the
+  representatives) in place of the stored states: the interpreter's checker then finds other
+  lassos on OneBitMutexMC and NQ/MC, because the engine's representative of a state is not the
+  state the interpreter stored. So the native checker must see what TLC sees: the stored state
+  for a state's own checks and the real successor for each step.
 
 ## Labels of a lasso's steps (as built)
 
