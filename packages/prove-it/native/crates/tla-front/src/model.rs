@@ -75,82 +75,93 @@ pub fn lower_model(
         .map(|(rank, text)| (text.clone(), rank as u32))
         .collect();
     let evaluator = Evaluator::new(&environment, ValueOrder { ranks: &ranks }, version, true);
-    check_invariants(&config, &environment, &facts, &evaluator)?;
-    let specification =
-        get_specification(&config, &environment, &facts, version, Some(&evaluator))?;
-    let properties = get_properties(&config, &environment, &facts, version, Some(&evaluator))?;
-    // `getTlcOrder`: the variables in TLC's order of declarations.
-    let position = |index: &i32| {
-        let variable = &environment.variables[*index as usize];
-        variable_order
-            .iter()
-            .position(|name| name == variable)
-            .unwrap_or(environment.variables.len())
-    };
-    let mut tlc_order: Vec<i32> = (0..environment.variables.len() as i32).collect();
-    tlc_order.sort_by_key(position);
-    let mut lowering = Lowering::new(
-        &environment,
-        RankedTexts {
-            texts: &texts,
-            ranks: ranks.clone(),
-        },
-    );
-    lowering.evaluator = Some(&evaluator);
-    let version_text = options.version.map(|version| match version {
-        TlcVersion::V1_7_4 => "1.7.4",
-        TlcVersion::Master => "master",
-    });
-    // `createSearch`'s checks of the configuration.
-    let is_checking_behaviors = !config.invariants.is_empty()
-        || !properties.invariants.is_empty()
-        || !properties.action_properties.is_empty()
-        || !properties.liveness.is_empty();
-    if specification.init.is_none()
-        && (is_checking_behaviors
-            || !properties.initial_predicates.is_empty()
-            || !environment.variables.is_empty())
-    {
-        return Err(match version {
-            TlcVersion::V1_7_4 => FrontError::NotYet("TLC 1.7.4's missing Init".to_owned()),
-            TlcVersion::Master => FrontError::Config(
-                "The configuration file did not specify the initial state predicate.".to_owned(),
-            ),
-        });
-    }
-    if specification.next.is_none() && is_checking_behaviors {
-        return Err(FrontError::Config(
-            "The configuration file did not specify the next state predicate.".to_owned(),
-        ));
-    }
-    check_search_config(&config, &environment, &facts, &evaluator)?;
-    // TLC searches no states of a spec without variables, which `check.ts` lowers with FALSE for
-    // Init and Next.
-    let model = if environment.variables.is_empty() {
-        let no_behavior = Some(create_identifier("FALSE"));
-        let constant = Specification {
-            init: no_behavior.clone(),
-            next: no_behavior,
-            scope: None,
-            temporals: Vec::new(),
+    let lowered = (|| {
+        check_invariants(&config, &environment, &facts, &evaluator)?;
+        let specification =
+            get_specification(&config, &environment, &facts, version, Some(&evaluator))?;
+        let properties = get_properties(&config, &environment, &facts, version, Some(&evaluator))?;
+        // `getTlcOrder`: the variables in TLC's order of declarations.
+        let position = |index: &i32| {
+            let variable = &environment.variables[*index as usize];
+            variable_order
+                .iter()
+                .position(|name| name == variable)
+                .unwrap_or(environment.variables.len())
         };
-        lowering.write_model(
-            &config,
-            &constant,
-            &Properties::default(),
-            options.is_warning_enabled,
-            version_text,
-            Vec::new(),
-        )?
-    } else {
-        lowering.write_model(
-            &config,
-            &specification,
-            &properties,
-            options.is_warning_enabled,
-            version_text,
-            tlc_order,
-        )?
-    };
-    Ok(tla_ir::encode(&lowering.finish(model)?))
+        let mut tlc_order: Vec<i32> = (0..environment.variables.len() as i32).collect();
+        tlc_order.sort_by_key(position);
+        let mut lowering = Lowering::new(
+            &environment,
+            RankedTexts {
+                texts: &texts,
+                ranks: ranks.clone(),
+            },
+        );
+        lowering.evaluator = Some(&evaluator);
+        let version_text = options.version.map(|version| match version {
+            TlcVersion::V1_7_4 => "1.7.4",
+            TlcVersion::Master => "master",
+        });
+        // `createSearch`'s checks of the configuration.
+        let is_checking_behaviors = !config.invariants.is_empty()
+            || !properties.invariants.is_empty()
+            || !properties.action_properties.is_empty()
+            || !properties.liveness.is_empty();
+        if specification.init.is_none()
+            && (is_checking_behaviors
+                || !properties.initial_predicates.is_empty()
+                || !environment.variables.is_empty())
+        {
+            return Err(match version {
+                TlcVersion::V1_7_4 => FrontError::NotYet("TLC 1.7.4's missing Init".to_owned()),
+                TlcVersion::Master => FrontError::Config(
+                    "The configuration file did not specify the initial state predicate."
+                        .to_owned(),
+                ),
+            });
+        }
+        if specification.next.is_none() && is_checking_behaviors {
+            return Err(FrontError::Config(
+                "The configuration file did not specify the next state predicate.".to_owned(),
+            ));
+        }
+        check_search_config(&config, &environment, &facts, &evaluator)?;
+        // TLC searches no states of a spec without variables, which `check.ts` lowers with FALSE for
+        // Init and Next.
+        let model = if environment.variables.is_empty() {
+            let no_behavior = Some(create_identifier("FALSE"));
+            let constant = Specification {
+                init: no_behavior.clone(),
+                next: no_behavior,
+                scope: None,
+                temporals: Vec::new(),
+            };
+            lowering.write_model(
+                &config,
+                &constant,
+                &Properties::default(),
+                options.is_warning_enabled,
+                version_text,
+                Vec::new(),
+            )?
+        } else {
+            lowering.write_model(
+                &config,
+                &specification,
+                &properties,
+                options.is_warning_enabled,
+                version_text,
+                tlc_order,
+            )?
+        };
+        Ok(tla_ir::encode(&lowering.finish(model)?))
+    })();
+    // TLC stops on a constant predicate the engine checks at startup before what follows it, so
+    // the front end can't report what follows.
+    match lowered {
+        Err(error) if evaluator.is_deferring() && !matches!(error, FrontError::NotYet(_)) => Err(
+            FrontError::NotYet("an error after a constant predicate the engine checks".to_owned()),
+        ),
+        lowered => lowered,
+    }
 }
