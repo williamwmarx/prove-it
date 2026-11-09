@@ -132,6 +132,8 @@ fn encode_here(ir: &Ir) -> Vec<u8> {
     words.extend(model.initial_predicates.iter().map(|&id| offset(id)));
     words.push(model.view.is_some() as i32);
     words.extend(model.view.iter().flat_map(config_name));
+    words.push(model.alias.is_some() as i32);
+    words.extend(model.alias.iter().flat_map(config_name));
     match &model.symmetry {
         None => words.push(-1),
         Some(permutations) => {
