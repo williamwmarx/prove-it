@@ -4,12 +4,13 @@
 //! TypeScript print them.
 
 use tla_ir::{AtomKind, NodeId, NodeKind, SourceRange};
+use tla_values::fingerprint::Fingerprints;
 use tla_values::{Id, Store};
 
 use crate::eval::{CallStack, Context, Evaluator, StackFrame, UNFOLLOWED_FRAMES};
-use crate::fingerprint::fingerprint_failure;
+use crate::fingerprint::{fingerprint_failure, state_fingerprint};
 use crate::print::format_value;
-use crate::rebuild::{Rebuilder, is_same, run};
+use crate::rebuild::{Rebuilder, is_in_model, is_same, run};
 use crate::value::{Evaluated, TlcMessage, Value, fail, fail_with, normalize_failure};
 use crate::{Ending, Trace, Unsupported};
 
@@ -70,6 +71,22 @@ pub struct Failure {
     /// The initial state TLC was working on, where it failed to fingerprint one: each variable's
     /// value as TLC prints it, in the IR's order of the variables.
     pub state: Option<Vec<String>>,
+    /// What TLC's replay of the expansion did after an invariant failed to evaluate.
+    pub replay: Replay,
+}
+
+/// TLC's replay of an expansion after an invariant failed to evaluate
+/// (`doNext(cTool, predErrState)`), which goes on past the successor that failed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Replay {
+    /// The successors the replay found that TLC's set of fingerprints lacked, which it adds to
+    /// the count of distinct states.
+    pub found: u64,
+    /// Those of them that passed TLC's checks, which it adds to its queue.
+    pub queued: u64,
+    /// Whether the replay failed in turn, with the call stack or the FingerprintException the
+    /// failure holds: TLC then leaves the state graph's out-degrees out.
+    pub is_failed: bool,
 }
 
 const GENERAL: u32 = 1000;
@@ -195,6 +212,7 @@ impl<'ir> Rebuilder<'ir> {
             printed,
             fingerprint: None,
             state: None,
+            replay: Replay::default(),
         })
     }
 
@@ -259,14 +277,22 @@ impl<'ir> Rebuilder<'ir> {
                     .states,
             ),
         };
+        let known = self.fingerprints.take();
+        let is_keyed_by_state = self.is_keyed_by_state();
         let evaluator = self.evaluator();
         let ir = evaluator.ir;
         evaluator.printed.clear();
         evaluator.call_stack = Some(CallStack::default());
         let width = ir.variables.len();
         let level = states.len() as i32;
-        let current: Vec<Option<_>> = last
-            .and_then(|states| states.last().map(|state| state.values.clone()))
+        let path: Vec<Vec<Value>> = last
+            .iter()
+            .flatten()
+            .map(|state| state.values.clone())
+            .collect();
+        let current: Vec<Option<_>> = path
+            .last()
+            .cloned()
             .map(|values| values.into_iter().map(Some).collect())
             .unwrap_or_else(|| vec![None; width]);
         // The initial state TLC failed to check, as the replay found it.
@@ -376,36 +402,7 @@ impl<'ir> Rebuilder<'ir> {
                 })
             }
             Site::Next => {
-                // TLC's actions: the IR's, or, where it has none, the next-state relation split
-                // as TLC splits it.
-                let actions = if ir.model.actions.is_empty() {
-                    // TLC splits the relation at startup, without a state and outside the call
-                    // stack, as `getActions` does.
-                    evaluator.current = vec![None; width];
-                    evaluator.next = vec![None; width];
-                    let call_stack = evaluator.call_stack.take();
-                    let mut actions = Vec::new();
-                    let split = evaluator
-                        .scope_context(ir.model.scope)
-                        .and_then(|context| {
-                            // A failure computing successors comes from a next-state relation.
-                            let next = ir.model.next.expect("a next-state relation");
-                            evaluator.split_actions(next, &context, &mut actions)
-                        })
-                        .map(|()| actions);
-                    evaluator.call_stack = call_stack;
-                    split
-                } else {
-                    ir.model
-                        .actions
-                        .iter()
-                        .map(|action| {
-                            evaluator
-                                .scope_context(action.scope)
-                                .map(|context| (action.expression, context))
-                        })
-                        .collect()
-                };
+                let actions = evaluator.tlc_actions();
                 evaluator.current = current;
                 evaluator.level = level;
                 actions.and_then(|actions| {
@@ -520,6 +517,7 @@ impl<'ir> Rebuilder<'ir> {
                         printed,
                         fingerprint: None,
                         state: None,
+                        replay: Replay::default(),
                     })
                 }
                 _ => Err(Unsupported(
@@ -571,6 +569,7 @@ impl<'ir> Rebuilder<'ir> {
                 printed,
                 fingerprint: Some(fingerprint),
                 state,
+                replay: Replay::default(),
             });
         }
         // A failure in the next states whose receiver the replay gave a source TLC reports as it
@@ -579,15 +578,10 @@ impl<'ir> Rebuilder<'ir> {
         if call_stack.is_fingerprinted
             && site == Site::Next
             && let Some(message) = &error.message
-            && let Some(source) = call_stack.fingerprinted_source
+            && !call_stack.fingerprinted_sources.is_empty()
         {
             let (code, text, tool_text) = report(message, true);
-            let mut sources = ranges(evaluator, &call_stack);
-            if let Some(range) = node_range(evaluator, source)
-                && sources.last() != Some(&range)
-            {
-                sources.push(range);
-            }
+            let sources = fingerprint_ranges(evaluator, &call_stack);
             return Ok(Failure {
                 code,
                 message: text,
@@ -602,9 +596,14 @@ impl<'ir> Rebuilder<'ir> {
                     is_replayed: true,
                 }),
                 state: None,
+                replay: Replay::default(),
             });
         }
-        if call_stack.is_fingerprinted {
+        // TLC's search evaluates an invariant without the `CallStackTool`, whose values have no
+        // source, so the failure is the one the evaluator gives where it follows it.
+        if call_stack.is_fingerprinted
+            && !(matches!(site, Site::Invariant(_)) && call_stack.is_member_followed)
+        {
             return Err(Unsupported(
                 "evaluating the failure again: a failure TLC reports as a FingerprintException"
                     .into(),
@@ -639,6 +638,7 @@ impl<'ir> Rebuilder<'ir> {
                 printed,
                 fingerprint: None,
                 state,
+                replay: Replay::default(),
             });
         }
         // TLC reports an invariant that fails to evaluate with a headline of its own, and no call
@@ -646,15 +646,36 @@ impl<'ir> Rebuilder<'ir> {
         if let Site::Invariant(position) = site {
             let name = &ir.texts[ir.model.invariants[position as usize].root.name as usize];
             let headline = format!("Evaluating invariant {name} failed.");
+            if !is_keyed_by_state {
+                return Err(Unsupported(
+                    "replaying the expansion under a VIEW or SYMMETRY".into(),
+                ));
+            }
+            let Some(known) = known else {
+                return Err(Unsupported(
+                    "replaying the expansion without the fingerprints the search found".into(),
+                ));
+            };
+            let replayed = replay_expansion(evaluator, path, &known)?;
+            let mut printed = printed;
+            printed.append(&mut evaluator.printed);
+            let (call_stack, fingerprint, exit_code) = match replayed.failure {
+                None => (Vec::new(), None, FAILURE_SAFETY_EVAL),
+                Some(ReplayFailure::Fingerprint(fingerprint)) => {
+                    (Vec::new(), Some(fingerprint), FAILURE_SPEC_EVAL)
+                }
+                Some(ReplayFailure::Nested(call_stack, exit_code)) => (call_stack, None, exit_code),
+            };
             return Ok(Failure {
                 code: INVARIANT_EVALUATION_FAILED,
                 message: format!("{headline}\n{}", message.text),
                 tool_message: format!("{headline}\n{}", nested(&message)),
-                call_stack: Vec::new(),
-                exit_code: FAILURE_SAFETY_EVAL,
+                call_stack,
+                exit_code,
                 printed,
-                fingerprint: None,
+                fingerprint,
                 state: None,
+                replay: replayed.replay,
             });
         }
         // TLC reports an error adding a state to the behavior graphs as one in the next states
@@ -676,8 +697,184 @@ impl<'ir> Rebuilder<'ir> {
             printed,
             fingerprint: None,
             state: None,
+            replay: Replay::default(),
         })
     }
+}
+
+// The call stack TLC prints with a FingerprintException its replay threw: the nodes it was in,
+// then the sources of the values whose methods the failure passed through, outermost first
+// (`CallStack.freeze`), a node that repeats the one before it once.
+fn fingerprint_ranges(evaluator: &Evaluator<'_>, call_stack: &CallStack) -> Vec<SourceRange> {
+    let mut sources = ranges(evaluator, call_stack);
+    for &source in &call_stack.fingerprinted_sources {
+        if let Some(range) = node_range(evaluator, source)
+            && sources.last() != Some(&range)
+        {
+            sources.push(range);
+        }
+    }
+    sources
+}
+
+// What TLC's replay of an expansion found, and how it failed where it did: as a
+// FingerprintException, or with the nested expressions and the status TLC exits with.
+struct Replayed {
+    replay: Replay,
+    failure: Option<ReplayFailure>,
+}
+
+enum ReplayFailure {
+    Fingerprint(FingerprintFailure),
+    Nested(Vec<SourceRange>, i32),
+}
+
+// TLC's replay of the expansion of the state before the path's last, after an invariant failed to
+// evaluate on the last (`ModelChecker.doNext` with the `CallStackTool`): each action's successors
+// in turn, each in the model fingerprinted and skipped where TLC's set of fingerprints has it,
+// and the invariants checked of each it lacks. TLC's error is already set, so a violation ends
+// the replay quietly, and only an evaluation that fails is reported.
+fn replay_expansion(
+    evaluator: &mut Evaluator<'_>,
+    mut path: Vec<Vec<Value>>,
+    known: &[u64],
+) -> Result<Replayed, Unsupported> {
+    let ir = evaluator.ir;
+    let unsupported = |reason: &str| Err(Unsupported(format!("replaying the expansion: {reason}")));
+    if !ir.model.action_properties.is_empty() || !ir.model.property_invariants.is_empty() {
+        return unsupported("a property TLC checks of each step");
+    }
+    path.pop();
+    let Some(predecessor) = path.last() else {
+        return unsupported("no state to expand");
+    };
+    let predecessor: Vec<Option<Value>> = predecessor.iter().cloned().map(Some).collect();
+    let level = path.len() as i32;
+    let mut invariants = Vec::new();
+    for invariant in &ir.model.invariants {
+        let Some(index) = invariant.root.definition else {
+            return unsupported("an invariant the model doesn't define");
+        };
+        invariants.push(evaluator.definition(ir.definitions[index as usize]).body);
+    }
+    evaluator.call_stack = Some(CallStack::default());
+    let Ok(actions) = evaluator.tlc_actions() else {
+        return unsupported("the next-state relation doesn't split");
+    };
+    let width = ir.variables.len();
+    let mut fingerprints = Fingerprints::new();
+    let mut found: Vec<u64> = Vec::new();
+    let mut replay = Replay::default();
+    for (expression, context) in actions {
+        // TLC computes every successor by the action before it checks the first.
+        evaluator.current = predecessor.clone();
+        evaluator.next = vec![None; width];
+        evaluator.level = level;
+        let mut successors = Vec::new();
+        let walked = evaluator.walk_action(expression, &context, false, &mut |evaluator| {
+            successors.push(evaluator.next.clone());
+            Ok(true)
+        });
+        if walked.is_err() {
+            return unsupported("the next states fail");
+        }
+        for successor in successors {
+            let Some(successor) = successor.into_iter().collect::<Option<Vec<Value>>>() else {
+                return unsupported("a successor that isn't complete");
+            };
+            path.push(successor);
+            let is_in_model = is_in_model(evaluator, &path)?;
+            let successor = path.pop().expect("the successor");
+            let is_unseen = if is_in_model {
+                if successor
+                    .iter()
+                    .any(|value| !matches!(fingerprint_failure(value), Ok(None)))
+                {
+                    return unsupported("a successor TLC fails to fingerprint");
+                }
+                let ordered: Vec<&Value> = ir
+                    .tlc_order
+                    .iter()
+                    .map(|&position| &successor[position as usize])
+                    .collect();
+                let Some(fingerprint) = state_fingerprint(&mut fingerprints, &ordered) else {
+                    return unsupported("a successor whose fingerprint the evaluator can't tell");
+                };
+                let is_unseen =
+                    known.binary_search(&fingerprint).is_err() && !found.contains(&fingerprint);
+                if is_unseen {
+                    found.push(fingerprint);
+                    replay.found += 1;
+                }
+                is_unseen
+            } else {
+                true
+            };
+            if !is_unseen {
+                continue;
+            }
+            evaluator.current = successor.into_iter().map(Some).collect();
+            evaluator.next = vec![None; width];
+            evaluator.level = level + 1;
+            for &invariant in &invariants {
+                match evaluator.boolean(invariant, &Context::default()) {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        return Ok(Replayed {
+                            replay,
+                            failure: None,
+                        });
+                    }
+                    Err(error) => {
+                        let call_stack = evaluator.call_stack.take().unwrap_or_default();
+                        if let Some(reason) = call_stack.unfollowed {
+                            return unsupported(reason);
+                        }
+                        if call_stack.is_unsorted || call_stack.fingerprint.is_some() {
+                            return unsupported("a set TLC leaves unnormalized");
+                        }
+                        let Some(message) = error.message else {
+                            return unsupported(&error.reason);
+                        };
+                        replay.is_failed = true;
+                        let failure = if call_stack.is_fingerprinted {
+                            if !call_stack.is_member_followed {
+                                return unsupported("a FingerprintException the replay throws");
+                            }
+                            ReplayFailure::Fingerprint(FingerprintFailure {
+                                sources: fingerprint_ranges(evaluator, &call_stack),
+                                reason: message.text.clone(),
+                                tool_reason: nested(&message),
+                                is_replayed: true,
+                            })
+                        } else {
+                            // TLC exits by the code of an EvalException, and by that of the
+                            // nested expressions it prints for any other error.
+                            ReplayFailure::Nested(
+                                ranges(evaluator, &call_stack),
+                                match message.code {
+                                    Some(ASSERT_FAILED) => VIOLATION_ASSERT,
+                                    _ if message.is_eval_exception => FAILURE_ERROR,
+                                    _ => FAILURE_SPEC_EVAL,
+                                },
+                            )
+                        };
+                        return Ok(Replayed {
+                            replay,
+                            failure: Some(failure),
+                        });
+                    }
+                }
+            }
+            if is_in_model {
+                replay.queued += 1;
+            }
+        }
+    }
+    Ok(Replayed {
+        replay,
+        failure: None,
+    })
 }
 
 // The ranges of the call stack's nodes, as `CallStack.toString` prints them: a node TLC evaluates
@@ -843,7 +1040,41 @@ impl Rebuilder<'_> {
     }
 }
 
-impl Evaluator<'_> {
+impl<'ir> Evaluator<'ir> {
+    // TLC's actions: the IR's, or, where it has none, the next-state relation split as TLC splits
+    // it.
+    fn tlc_actions(&mut self) -> Evaluated<Vec<(NodeId, Context)>> {
+        let ir = self.ir;
+        if !ir.model.actions.is_empty() {
+            return ir
+                .model
+                .actions
+                .iter()
+                .map(|action| {
+                    self.scope_context(action.scope)
+                        .map(|context| (action.expression, context))
+                })
+                .collect();
+        }
+        // TLC splits the relation at startup, without a state and outside the call stack, as
+        // `getActions` does.
+        let width = ir.variables.len();
+        self.current = vec![None; width];
+        self.next = vec![None; width];
+        let call_stack = self.call_stack.take();
+        let mut actions = Vec::new();
+        let split = self
+            .scope_context(ir.model.scope)
+            .and_then(|context| {
+                // A failure computing successors comes from a next-state relation.
+                let next = ir.model.next.expect("a next-state relation");
+                self.split_actions(next, &context, &mut actions)
+            })
+            .map(|()| actions);
+        self.call_stack = call_stack;
+        split
+    }
+
     // TLC fingerprints each state its replay finds (`fingerprintReplayed`), outside any
     // evaluation: where that fails, the failure is the FingerprintException of the values it
     // fails in. A state whose fingerprint the evaluator can't tell stops the replay.

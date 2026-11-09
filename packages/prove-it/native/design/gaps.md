@@ -321,6 +321,17 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   stop (`ViolationKind::Error` at `ErrorSite::Invariant`) now carries them in
   `StopCounts::out_degrees`; other stops leave them empty.
 
+## The expansion TLC replays after an invariant fails to evaluate
+
+- After an invariant fails to evaluate past the initial states, TLC replays the expansion with
+  its `CallStackTool` (`ModelChecker.doNext(cTool, predErrState)`) and skips each successor in
+  its set of fingerprints. The search stops at the failing successor, so it never generates the
+  ones after it. The stop now carries TLC's set when it stopped: `Violation::fingerprints`,
+  sorted, the failing successor's among them where TLC had added it (a new state in the model).
+  Other stops leave it empty.
+- `tla-trace` replays the expansion against the set (`replay_expansion`, design/trace.md). TLC's
+  FingerprintExceptionHang and TSnapShot now print what TLC prints.
+
 ## A failure on an initial state
 
 - TLC evaluates the constraints and the invariants on each initial state as it computes the
@@ -516,11 +527,6 @@ Open, with what is known:
 - **RandomSubsetEmpty** still reports AssumptionFailed (trace session, 20:04). Find the bail
   reason (bac5cb17 now lowers a model without a next-state relation, so engine-ir gives its IR);
   it should be a limit if TLC's assumption holds.
-- **FingerprintExceptionHang, for the trace session.** After an invariant fails to evaluate, TLC
-  replays the expansion and skips each successor already in its fingerprint set. The engine
-  never generates the successors after the failing one, so the stop should carry the
-  fingerprints found when it stopped (`states.fingerprints`, sorted), and tla-trace, which has
-  `tla_values::fingerprint::Fingerprints`, tests each replayed successor against them.
 - The addon suite's "leaves a model it can't search to the TypeScript engine" still expects a
   decline on `x' \subseteq S`, which d1fa0dd8 made native; it needs another construct the engine
   declines.
