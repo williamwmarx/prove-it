@@ -67,6 +67,12 @@ struct Meta {
     hash: u32,
 }
 
+/// The layout of the metadata [`Store::meta_base`] points at, for native code to read in place.
+pub const META_STRIDE: usize = std::mem::size_of::<Meta>();
+pub const META_KIND: usize = std::mem::offset_of!(Meta, kind);
+pub const META_SIZE: usize = std::mem::offset_of!(Meta, size);
+pub const META_PAYLOAD: usize = std::mem::offset_of!(Meta, payload);
+
 struct Text {
     units: Box<[u16]>,
     // TLC's rank of the text when it was interned, or -1.
@@ -394,6 +400,18 @@ impl Store {
 
     pub fn offset_of(&self, id: Id) -> u32 {
         self.meta(id).payload as u32
+    }
+
+    /// The base of each id's metadata, [`META_STRIDE`] bytes apart, which native code reads in
+    /// place (native/design/native-backend.md 4); it moves when the store next interns a value.
+    pub fn meta_base(&self) -> *const u8 {
+        self.meta.as_ptr().cast()
+    }
+
+    /// The base of the heap, where a composite value's block starts at its payload; it moves when
+    /// the store next interns a value.
+    pub fn heap_base(&self) -> *const u32 {
+        self.heap.as_ptr()
     }
 
     pub fn hash_of(&self, id: Id) -> u32 {

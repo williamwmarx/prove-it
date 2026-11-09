@@ -54,13 +54,6 @@ impl Memory {
         }
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "N2's segments, bounds checks and memo probes use it"
-        )
-    )]
     pub(crate) fn indexed(base: Gpr, index: Gpr, scale: Scale, displacement: i32) -> Memory {
         assert_ne!(index, Gpr::Rsp, "rsp can't be an index");
         Memory {
@@ -99,6 +92,7 @@ pub(crate) enum Condition {
     AboveOrEqual = 0x3,
     Equal = 0x4,
     NotEqual = 0x5,
+    Above = 0x7,
     Less = 0xc,
 }
 
@@ -177,6 +171,13 @@ impl Assembler {
         self.memory_operand(to, memory);
     }
 
+    /// `movzx to, byte [memory]`: a byte, zero-extended.
+    pub(crate) fn load_byte(&mut self, to: Gpr, memory: Memory) {
+        self.rex_memory(Width::W32, to, memory);
+        self.bytes.extend_from_slice(&[0x0f, 0xb6]);
+        self.memory_operand(to, memory);
+    }
+
     /// `mov [memory], from`.
     pub(crate) fn store(&mut self, width: Width, memory: Memory, from: Gpr) {
         self.rex_memory(width, from, memory);
@@ -185,13 +186,6 @@ impl Assembler {
     }
 
     /// `lea to, [memory]`.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "N2's segments, bounds checks and memo probes use it"
-        )
-    )]
     pub(crate) fn lea(&mut self, to: Gpr, memory: Memory) {
         self.rex_memory(Width::W64, to, memory);
         self.bytes.push(0x8d);
@@ -225,19 +219,19 @@ impl Assembler {
         self.group1(width, 5, to, immediate);
     }
 
+    /// `shl to, count`.
+    pub(crate) fn shl_immediate(&mut self, width: Width, to: Gpr, count: u8) {
+        self.rex(width == Width::W64, false, false, to.is_extended());
+        self.bytes
+            .extend_from_slice(&[0xc1, 0xc0 | 4 << 3 | to.low(), count]);
+    }
+
     /// `cmp left, immediate`.
     pub(crate) fn cmp_immediate(&mut self, width: Width, left: Gpr, immediate: i32) {
         self.group1(width, 7, left, immediate);
     }
 
     /// `cmp left, right`.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "N2's segments, bounds checks and memo probes use it"
-        )
-    )]
     pub(crate) fn cmp(&mut self, width: Width, left: Gpr, right: Gpr) {
         self.rex_registers(width, right, left);
         self.bytes.push(0x39);
@@ -542,6 +536,31 @@ mod tests {
             |a| a.cmp(Width::W32, Gpr::Rax, Gpr::Rcx),
             &[0x39, 0xc8],
             "cmp eax,ecx",
+        ),
+        (
+            |a| a.load_byte(Gpr::Rsi, Memory::indexed(Gpr::Rdx, Gpr::Rsi, Scale::One, 0)),
+            &[0x0f, 0xb6, 0x34, 0x32],
+            "movzx esi,BYTE PTR [rdx+rsi*1]",
+        ),
+        (
+            |a| a.load_byte(Gpr::R9, Memory::at(Gpr::R10, 8)),
+            &[0x45, 0x0f, 0xb6, 0x4a, 0x08],
+            "movzx r9d,BYTE PTR [r10+0x8]",
+        ),
+        (
+            |a| a.shl_immediate(Width::W64, Gpr::Rsi, 4),
+            &[0x48, 0xc1, 0xe6, 0x04],
+            "shl rsi,0x4",
+        ),
+        (
+            |a| a.shl_immediate(Width::W64, Gpr::R11, 4),
+            &[0x49, 0xc1, 0xe3, 0x04],
+            "shl r11,0x4",
+        ),
+        (
+            |a| a.cmov(Width::W32, Condition::Above, Gpr::Rax, Gpr::Rcx),
+            &[0x0f, 0x47, 0xc1],
+            "cmova eax,ecx",
         ),
         (
             |a| a.cmp(Width::W64, Gpr::R8, Gpr::Rdx),

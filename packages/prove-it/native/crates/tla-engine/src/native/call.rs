@@ -18,6 +18,8 @@ use crate::machine::{Eval, Machine};
 pub(crate) struct Bases {
     pub(crate) locals: *const Id,
     pub(crate) current: *const Id,
+    pub(crate) meta: *const u8,
+    pub(crate) heap: *const u32,
 }
 
 impl Bases {
@@ -25,6 +27,8 @@ impl Bases {
         Bases {
             locals: machine.locals.as_ptr(),
             current: machine.cur.as_ptr(),
+            meta: machine.store.meta_base(),
+            heap: machine.store.heap_base(),
         }
     }
 }
@@ -44,6 +48,8 @@ pub(crate) struct Context {
 
 pub(crate) const LOCALS: i32 = (offset_of!(Context, bases) + offset_of!(Bases, locals)) as i32;
 pub(crate) const CURRENT: i32 = (offset_of!(Context, bases) + offset_of!(Bases, current)) as i32;
+pub(crate) const META: i32 = (offset_of!(Context, bases) + offset_of!(Bases, meta)) as i32;
+pub(crate) const HEAP: i32 = (offset_of!(Context, bases) + offset_of!(Bases, heap)) as i32;
 
 /// What emitted code returns.
 pub(crate) const FAILS: u32 = 0;

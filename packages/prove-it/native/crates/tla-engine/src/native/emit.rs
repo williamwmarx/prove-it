@@ -1,14 +1,17 @@
 //! Emits a function of the IR as x86-64 (native/design/native-backend.md 4), as `call.rs` calls it:
 //! `extern "sysv64" fn(*mut Context) -> u32`. The context stays in rbx and each register has a
-//! stack slot of its own. Reads of a bound name or a variable are inline, as is equality of equal
-//! ids; the rest calls a helper, after which every base is read again from the context.
+//! stack slot of its own. Reads of a bound name or a variable are inline, as are equality where
+//! ids or scalar kinds decide it and a tuple's application to an integer; the rest calls a helper,
+//! after which every base is read again from the context.
 
-use tla_values::store::TRUE;
+use tla_values::store::{
+    FALSE, KIND_INT, KIND_STRING, KIND_TUPLE, META_KIND, META_PAYLOAD, META_SIZE, META_STRIDE, TRUE,
+};
 
-use super::call::{BAILED, CURRENT, FAILS, HOLDS, LOCALS};
+use super::call::{BAILED, CURRENT, FAILS, HEAP, HOLDS, LOCALS, META};
 use super::helpers::{self, NOT_BOOLEAN, UNASSIGNED};
 use super::ir::{End, Function, Instruction, Register};
-use super::x86_64::{Assembler, Condition, Gpr, Label, Memory, Width};
+use super::x86_64::{Assembler, Condition, Gpr, Label, Memory, Scale, Width};
 
 enum Argument {
     Register(Register),
@@ -77,6 +80,13 @@ struct Emitter {
     not_boolean: Label,
 }
 
+// A field of the metadata at rdx + `meta`.
+fn field(meta: Gpr, offset: usize) -> Memory {
+    Memory::indexed(Gpr::Rdx, meta, Scale::One, offset as i32)
+}
+
+const _: () = assert!(META_STRIDE.is_power_of_two());
+
 fn slot(register: Register) -> Memory {
     Memory::at(Gpr::Rsp, register.0 as i32 * 8)
 }
@@ -109,18 +119,77 @@ impl Emitter {
                 function,
                 key,
             } => {
+                // A tuple applied to an integer in its domain reads the element in place, as
+                // `predicate::apply_tuple` does; anything else calls the helper.
+                let (slow, done) = (self.assembler.label(), self.assembler.label());
+                self.read(Gpr::Rax, function);
+                self.read(Gpr::Rcx, key);
+                self.assembler
+                    .load(Width::W64, Gpr::Rdx, Memory::at(Gpr::Rbx, META));
+                self.meta_of(Gpr::Rsi, Gpr::Rax);
+                self.meta_of(Gpr::R8, Gpr::Rcx);
+                self.kind_of(Gpr::Rdi, Gpr::Rsi);
+                self.assembler
+                    .cmp_immediate(Width::W32, Gpr::Rdi, i32::from(KIND_TUPLE));
+                self.assembler.jump_if(Condition::NotEqual, slow);
+                self.kind_of(Gpr::Rdi, Gpr::R8);
+                self.assembler
+                    .cmp_immediate(Width::W32, Gpr::Rdi, i32::from(KIND_INT));
+                self.assembler.jump_if(Condition::NotEqual, slow);
+                // The position, from 0; below 0 it wraps past any size.
+                self.assembler
+                    .load(Width::W32, Gpr::Rdi, field(Gpr::R8, META_PAYLOAD));
+                self.assembler.sub_immediate(Width::W32, Gpr::Rdi, 1);
+                self.assembler
+                    .cmp_memory(Width::W32, Gpr::Rdi, field(Gpr::Rsi, META_SIZE));
+                self.assembler.jump_if(Condition::AboveOrEqual, slow);
+                self.assembler
+                    .load(Width::W32, Gpr::R9, field(Gpr::Rsi, META_PAYLOAD));
+                self.assembler
+                    .load(Width::W64, Gpr::R10, Memory::at(Gpr::Rbx, HEAP));
+                self.assembler
+                    .lea(Gpr::R10, Memory::indexed(Gpr::R10, Gpr::R9, Scale::Four, 0));
+                self.assembler.load(
+                    Width::W32,
+                    Gpr::Rax,
+                    Memory::indexed(Gpr::R10, Gpr::Rdi, Scale::Four, 0),
+                );
+                self.assembler.jump(done);
+                self.assembler.bind(slow);
                 self.call(
                     helpers::apply as *const () as usize,
                     &[Argument::Register(function), Argument::Register(key)],
                 );
+                self.assembler.bind(done);
                 self.write(into);
             }
             Instruction::Equal { into, left, right } => {
-                let (slow, done) = (self.assembler.label(), self.assembler.label());
+                // Equal ids are equal values, and two scalars of one kind with different ids
+                // differ, as `predicate::equals` decides; anything else calls the helper.
+                let (differ, slow, done) = (
+                    self.assembler.label(),
+                    self.assembler.label(),
+                    self.assembler.label(),
+                );
                 self.read(Gpr::Rax, left);
-                self.assembler.cmp_memory(Width::W32, Gpr::Rax, slot(right));
-                self.assembler.jump_if(Condition::NotEqual, slow);
+                self.read(Gpr::Rcx, right);
+                self.assembler.cmp(Width::W32, Gpr::Rax, Gpr::Rcx);
+                self.assembler.jump_if(Condition::NotEqual, differ);
                 self.assembler.mov_immediate(Gpr::Rax, u64::from(TRUE));
+                self.assembler.jump(done);
+                self.assembler.bind(differ);
+                self.assembler
+                    .load(Width::W64, Gpr::Rdx, Memory::at(Gpr::Rbx, META));
+                self.meta_of(Gpr::Rsi, Gpr::Rax);
+                self.meta_of(Gpr::R8, Gpr::Rcx);
+                self.kind_of(Gpr::Rsi, Gpr::Rsi);
+                self.kind_of(Gpr::R8, Gpr::R8);
+                self.assembler.cmp(Width::W32, Gpr::Rsi, Gpr::R8);
+                self.assembler.jump_if(Condition::NotEqual, slow);
+                self.assembler
+                    .cmp_immediate(Width::W32, Gpr::Rsi, i32::from(KIND_STRING));
+                self.assembler.jump_if(Condition::Above, slow);
+                self.assembler.mov_immediate(Gpr::Rax, u64::from(FALSE));
                 self.assembler.jump(done);
                 self.assembler.bind(slow);
                 self.call(
@@ -152,6 +221,18 @@ impl Emitter {
                     .jump_if(Condition::AboveOrEqual, self.not_boolean);
             }
         }
+    }
+
+    // `to` = the offset of an id's metadata from the base in rdx.
+    fn meta_of(&mut self, to: Gpr, id: Gpr) {
+        self.assembler.mov(Width::W32, to, id);
+        self.assembler
+            .shl_immediate(Width::W64, to, META_STRIDE.trailing_zeros() as u8);
+    }
+
+    // `to` = the kind in the metadata at rdx + `meta`.
+    fn kind_of(&mut self, to: Gpr, meta: Gpr) {
+        self.assembler.load_byte(to, field(meta, META_KIND));
     }
 
     // eax = the id at `index` of the vector whose base is at `base` in the context.
