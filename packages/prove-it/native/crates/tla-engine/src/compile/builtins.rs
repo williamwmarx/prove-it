@@ -20,7 +20,7 @@ use super::sets::not_in;
 use super::{
     Binding, Compiled, Compiler, Compiling, Context, DISTINCT_SLOT, LEVEL_SLOT, NEXT_LEVEL_SLOT,
     Operand, OperatorBody, Shape, bind, bool_id, combine_references, decline, eval, leaf, lookup,
-    member, operator_context, predicate_node, reference_of, unsupported,
+    member, operator_context, parts, predicate_node, reference_of, unsupported,
 };
 use crate::footprint::Footprint;
 use crate::machine::{Eval, Machine, Printed};
@@ -765,15 +765,24 @@ impl Compiler<'_> {
                     let (low, high) = (member_low(machine)?, member_high(machine)?);
                     let (low, high) = (expect_int(machine, low)?, expect_int(machine, high)?);
                     if machine.store.kind_of(element) != KIND_INT {
-                        return not_in(machine, element, "a mistyped membership in an interval");
+                        return not_in(machine, element, "values TLC can't compare");
                     }
                     let value = i64::from(machine.store.int_of(element));
                     Ok(low <= value && value <= high)
+                });
+                // Building the interval evaluates both bounds, which a set holding it does even
+                // where it tests none of its elements.
+                let (parts_low, parts_high) = bounds.clone();
+                let bound_parts = parts(move |machine| {
+                    let (low, high) = (parts_low(machine)?, parts_high(machine)?);
+                    expect_int(machine, low).and_then(|_| expect_int(machine, high))?;
+                    Ok(())
                 });
                 Compiled {
                     is_costly: true,
                     is_in_order: true,
                     member: Some(is_member),
+                    parts: Some(bound_parts),
                     interval: Some(bounds),
                     ..leaf(
                         eval(move |machine| fused::interval(machine, &low, &high)),

@@ -171,6 +171,17 @@ describe.if(ADDON !== undefined)("the native engine's lazy sets", () => {
     expect(
       await compareWithInterpreter(body, `${CONFIG}\nINVARIANT Inv\nCHECK_DEADLOCK FALSE`),
     ).toContainEqual(expect.stringMatching(COMPLETE));
+    // A set holding the interval evaluates its bounds, as TLC builds it, where it tests nothing.
+    const divided = [
+      "EXTENDS Integers",
+      "VARIABLE x",
+      "Init == x = 0",
+      "Next == UNCHANGED x",
+      "Inv == <<>> \\in [{} -> 1..(1 \\div x)]",
+    ];
+    expect(await compareWithInterpreter(divided, `${CONFIG}\nINVARIANT Inv`)).toContainEqual(
+      expect.stringMatching(/^\[engine\] native: stopped: /),
+    );
   });
 
   it("leaves a set it has no order for, as the TypeScript engine does", async () => {

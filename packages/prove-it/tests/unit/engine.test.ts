@@ -641,9 +641,7 @@ describe("the engine", () => {
       const body = `EXTENDS Naturals\nCONSTANT M\nVARIABLE x\nInit == x = 0\nNext == x < 3 /\\ x' = x + 1\nInv == ~("a" \\in ({M} \\cup (1..${size})))`;
       const config = "CONSTANT M = M\nINIT Init\nNEXT Next\nINVARIANT Inv";
       const { result, lines } = await checkInEngine(body, config);
-      expect(lines).toEqual([
-        expect.stringMatching(/handed over .*: a mistyped membership in an interval$/),
-      ]);
+      expect(lines).toEqual([expect.stringMatching(/handed over .*: values TLC can't compare$/)]);
       process.env.PROVE_IT_ENGINE = "0";
       const reference = await check({ source: `---- MODULE M ----\n${body}\n====`, config });
       expect(result.status).toBe("error");
