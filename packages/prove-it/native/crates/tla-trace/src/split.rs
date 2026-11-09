@@ -10,8 +10,8 @@
 use std::collections::{HashMap, HashSet};
 
 use tla_ir::{
-    Action, Bound, Builtin, Definition, DefinitionForm, Index, Ir, Name, Node, NodeId, NodeKind,
-    Pattern, Resolution, Scope, ScopeBinding, TextId,
+    Action, Bound, Builtin, Definition, DefinitionForm, Index, InstanceAction, Ir, Name, Node,
+    NodeId, NodeKind, Pattern, Resolution, Scope, ScopeBinding, SourceRange, TextId,
 };
 
 use crate::Unsupported;
@@ -25,10 +25,27 @@ use crate::value::{Class, Evaluated, Value, elements};
 struct SplitAction {
     expression: NodeId,
     place: Place,
-    /// The operator the action is the body of, or none.
+    /// The operator the action is the body of, or none: TLC's `UnnamedAction`.
     name: Option<TextId>,
+    location: Located,
     /// The values of the operator's parameters, which the label prints.
     parameters: Vec<Value>,
+}
+
+/// An action as the IR holds it, before its texts are added.
+struct Labelled {
+    expression: NodeId,
+    scope: Option<Index>,
+    label: String,
+    name: String,
+    location: Option<SourceRange>,
+}
+
+/// Where TLC says an action is written: at an expression, or at an INSTANCE it comes through.
+#[derive(Clone, Copy)]
+enum Located {
+    Node(NodeId),
+    Instance(Option<SourceRange>),
 }
 
 /// Where an expression of the split is evaluated: its bindings for the evaluator, and the same
@@ -73,11 +90,6 @@ pub fn add_actions(ir: &Ir) -> Result<Ir, Unsupported> {
     if !ir.model.actions.is_empty() || ir.model.is_labelled || ir.variables.is_empty() {
         return Ok(ir);
     }
-    if ir.model.scope.is_some() {
-        return Err(Unsupported(
-            "TLC's actions of a next-state relation in an instance's scope".into(),
-        ));
-    }
     let (actions, scopes, nodes) = {
         let mut evaluator = Evaluator::new(&ir);
         // The actions read what TLC computed when it started, as the search does.
@@ -92,19 +104,46 @@ pub fn add_actions(ir: &Ir) -> Result<Ir, Unsupported> {
             scopes: Vec::new(),
             nodes: Vec::new(),
         };
-        let place = Place {
-            context: Context::default(),
-            scope: None,
+        let (next, scope) = next_state_relation(&ir);
+        let context = splitter.evaluator.scope_context(scope).map_err(|error| {
+            Unsupported(format!(
+                "TLC's actions of a next-state relation in a scope: {}",
+                error.reason
+            ))
+        })?;
+        let place = Place { context, scope };
+        // A next-state relation that comes through an INSTANCE with substitutions is one action,
+        // named at the INSTANCE.
+        let actions = match ir.model.next_substitution {
+            Some(range) => vec![SplitAction {
+                expression: next,
+                place,
+                name: None,
+                location: Located::Instance(Some(range)),
+                parameters: Vec::new(),
+            }],
+            None => splitter.split(next, &place, None)?,
         };
-        let actions = splitter.split(ir.model.next, &place, None)?;
-        let labels: Vec<String> = actions
+        let actions: Vec<Labelled> = actions
             .iter()
-            .map(|action| splitter.label(action))
-            .collect();
-        let actions: Vec<(NodeId, Option<Index>, String)> = actions
-            .into_iter()
-            .zip(labels)
-            .map(|(action, label)| (action.expression, action.place.scope, label))
+            .map(|action| {
+                let name = action
+                    .name
+                    .map_or(UNNAMED_ACTION, |name| splitter.evaluator.name(name));
+                let location = match action.location {
+                    Located::Node(node) => {
+                        ir.nodes.arena[splitter.evaluator.resolved(node) as usize].range
+                    }
+                    Located::Instance(range) => range,
+                };
+                Labelled {
+                    expression: action.expression,
+                    scope: action.place.scope,
+                    label: splitter.label(action),
+                    name: name.to_owned(),
+                    location,
+                }
+            })
             .collect();
         (actions, splitter.scopes, splitter.nodes)
     };
@@ -124,10 +163,12 @@ pub fn add_actions(ir: &Ir) -> Result<Ir, Unsupported> {
         .collect::<Result<_, Unsupported>>()?;
     let actions = actions
         .into_iter()
-        .map(|(expression, scope, label)| Action {
-            expression,
-            scope,
-            label: writer.text(&label),
+        .map(|action| Action {
+            expression: action.expression,
+            scope: action.scope,
+            label: writer.text(&action.label),
+            name: writer.text(&action.name),
+            location: action.location,
         })
         .collect();
     let first = ir.nodes.arena.len() as NodeId;
@@ -149,6 +190,7 @@ impl Splitter<'_, '_> {
             expression,
             place: place.clone(),
             name: closure.map(|closure| closure.name),
+            location: Located::Node(expression),
             parameters: closure.map_or_else(Vec::new, |closure| closure.parameters.clone()),
         };
         let ir = self.evaluator.ir;
@@ -191,25 +233,32 @@ impl Splitter<'_, '_> {
         };
         let node = ir.definitions[index as usize];
         let definition = self.evaluator.definition(node);
-        // TLC names an action of an instance's operator by the instance (`instanceActions`),
-        // which the IR doesn't carry yet.
-        if self.evaluator.name(name.text).contains('!')
-            || definition.flags & Definition::SUBSTITUTED != 0
-        {
-            return Err(Unsupported(
-                "TLC's actions through an instance's operator".into(),
-            ));
-        }
         let DefinitionForm::Operator(params) = &definition.form else {
             return Ok(vec![whole()]);
         };
+        if let Some(instance) = ir
+            .model
+            .instance_actions
+            .iter()
+            .find(|instance| instance.definition == index)
+        {
+            return self.split_instance(expression, args, place, instance);
+        }
         if params.len() != args.len() {
             return Ok(vec![whole()]);
         }
+        // TLC names an action after the operator it applies, as SANY names it in the spec.
+        let called = ir
+            .model
+            .instance_names
+            .iter()
+            .find(|&&(named, _)| named == index)
+            .map_or(definition.name, |&(_, name)| name);
         let call = SplitAction {
             expression,
             place: place.clone(),
-            name: Some(definition.name),
+            name: Some(called),
+            location: Located::Node(expression),
             parameters: Vec::new(),
         };
         if self.is_constant_definition(definition)?
@@ -236,11 +285,48 @@ impl Splitter<'_, '_> {
             bound = self.bind(&bound, param.name, value.clone());
         }
         let closure = Closure {
-            name: definition.name,
+            name: called,
             parameters: values,
         };
         let body = definition.body;
         self.split(body, &bound, Some(&closure))
+    }
+
+    // `getInstanceActions`: an operator an INSTANCE with substitutions copies is one action, named
+    // as the instance exports it, at the INSTANCE, and with the values of constant arguments; or
+    // at the application, where an argument isn't constant.
+    fn split_instance(
+        &mut self,
+        expression: NodeId,
+        args: &[NodeId],
+        place: &Place,
+        instance: &InstanceAction,
+    ) -> Result<Vec<SplitAction>, Unsupported> {
+        let at_instance = |parameters| SplitAction {
+            expression,
+            place: place.clone(),
+            name: Some(instance.name),
+            location: Located::Instance(instance.location),
+            parameters,
+        };
+        let call = SplitAction {
+            location: Located::Node(expression),
+            ..at_instance(Vec::new())
+        };
+        if args
+            .iter()
+            .any(|&arg| self.evaluator.can_read(arg, &place.context))
+        {
+            return Ok(vec![call]);
+        }
+        let mut values = Vec::with_capacity(args.len());
+        for &arg in args {
+            match self.evaluate(arg, &place.context)? {
+                Ok(value) => values.push(value),
+                Err(_) => return Ok(vec![call]),
+            }
+        }
+        Ok(vec![at_instance(values)])
     }
 
     // The actions of `\E` over constant sets: one set of actions for each binding, in TLC's order,
@@ -417,11 +503,52 @@ impl Splitter<'_, '_> {
             let values: Vec<String> = action.parameters.iter().map(format_value).collect();
             format!("({})", values.join(","))
         };
-        format!(
-            "{name}{parameters} {}",
-            self.evaluator.describe_range(action.expression)
-        )
+        let location = match action.location {
+            Located::Node(node) => self.evaluator.describe_range(node),
+            Located::Instance(range) => describe_instance(self.evaluator, range),
+        };
+        format!("{name}{parameters} {location}")
     }
+}
+
+const UNNAMED_ACTION: &str = "UnnamedAction";
+
+// Where an INSTANCE is written, as TLC's messages say it, or TLC's built-in range for one the IR
+// has none of.
+fn describe_instance(evaluator: &Evaluator<'_>, range: Option<SourceRange>) -> String {
+    match range {
+        Some(range) => format!(
+            "line {}, col {} to line {}, col {} of module {}",
+            range.start_line,
+            range.start_column,
+            range.end_line,
+            range.end_column,
+            evaluator.name(range.module)
+        ),
+        None => "line 0, col 0 to line 0, col 0 of module --TLA+ BUILTINS--".to_owned(),
+    }
+}
+
+// The next-state relation and the scope it is read in: where the IR names it by a binding of the
+// specification's scope, as `getSpecification` does for one read in an instance's scope, the
+// expression bound.
+fn next_state_relation(ir: &Ir) -> (NodeId, Option<Index>) {
+    let model = &ir.model;
+    let NodeKind::Identifier(name) = &ir.nodes.arena[model.next as usize].kind else {
+        return (model.next, model.scope);
+    };
+    let mut scope = model.scope;
+    while let Some(index) = scope.filter(|_| name.is_local) {
+        let entry = &ir.scopes[index as usize];
+        if entry.name == name.text {
+            return match entry.binding {
+                ScopeBinding::Thunk { expression, scope } => (expression, scope),
+                _ => (model.next, model.scope),
+            };
+        }
+        scope = entry.parent;
+    }
+    (model.next, model.scope)
 }
 
 // Whether evaluating an expression can change what a run does (`hasEffect`): draw a random value,
