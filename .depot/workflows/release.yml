@@ -1,8 +1,9 @@
 # Publishes packages/prove-it to npm when a commit on main changes its version, then tags the
 # commit v<version>. A push that changes package.json but not the version publishes nothing. Run
-# it by hand for a first release or to retry one that failed. The native engine's Linux x64 platform
-# package goes first, and the main package lists it as an optionalDependency, added when it is
-# packed; other platforms get the TypeScript engine.
+# it by hand for a first release or to retry one that failed. The native engine's platform packages
+# for Linux x64 and arm64 go first, each built and tested on its own architecture, and the main
+# package lists them as optionalDependencies, added when it is packed; other platforms get the
+# TypeScript engine.
 #
 # The npm token is NPM_TOKEN in the 1Password Environment prove-it-release, whose ID is below.
 # ONEPASSWORD_PROVE_IT_RELEASE_TOKEN, a Depot CI secret scoped to this repository, main and this
@@ -26,8 +27,41 @@ env:
   # An identifier, not a secret: reading the Environment takes the service account's token.
   ONEPASSWORD_ENVIRONMENT_ID: tt44zeqhf5ciy4i4jorhug2d6i # gitleaks:allow
 jobs:
+  # Builds the Linux arm64 engine's platform package on arm64, runs the unit tests with it searching,
+  # and hands the packed tarball to the publish job. It holds no credential.
+  arm64:
+    name: Build the Linux arm64 engine
+    if: github.ref == 'refs/heads/main'
+    runs-on: depot-ubuntu-24.04-arm
+    timeout-minutes: 30
+    steps:
+      - name: Check out exactly the pushed main commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Build, test and pack
+        run: |
+          set -euo pipefail
+          PATH="$(scripts/ci/bootstrap.sh bun node rust):$PATH"
+          bun install --frozen-lockfile --ignore-scripts
+          cd packages/prove-it
+          bun scripts/platform-packages.ts build
+          bun run build
+          PROVE_IT_ENGINE_BACKEND=rust PROVE_IT_ENGINE_ADDON="$PWD/native/npm/linux-arm64-gnu/prove-it-engine.node" \
+            bun test tests/unit
+          platform=$(bun scripts/platform-packages.ts pack "$RUNNER_TEMP/platform-packages")
+          echo "Packed $(basename "$platform"), sha256 $(sha256sum "$platform" | cut -d' ' -f1)" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Hand the tarball to the publish job
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: linux-arm64-gnu
+          path: ${{ runner.temp }}/platform-packages/
+          if-no-files-found: error
+          retention-days: 7
   release:
     name: Publish to npm
+    needs: arm64
     if: github.ref == 'refs/heads/main'
     runs-on: depot-ubuntu-24.04
     timeout-minutes: 30
@@ -83,8 +117,14 @@ jobs:
           bun run format:check
           bun run test
           test -z "$(git status --porcelain)"
-      # Builds the Linux x64 engine's platform package, then lists it in the main package's
-      # optionalDependencies, at its own version, as the main package is packed.
+      - name: Fetch the Linux arm64 engine
+        if: steps.plan.outputs.publish == 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: linux-arm64-gnu
+          path: ${{ runner.temp }}/arm64
+      # Builds the Linux x64 engine's platform package, then lists both Linux platform packages in
+      # the main package's optionalDependencies, at its own version, as the main package is packed.
       - name: Pack
         id: pack
         if: steps.plan.outputs.publish == 'true'
@@ -94,13 +134,16 @@ jobs:
           cd packages/prove-it
           bun scripts/platform-packages.ts build
           platform=$(bun scripts/platform-packages.ts pack "$RUNNER_TEMP/platform-packages")
+          arm64=$(ls "$RUNNER_TEMP"/arm64/*-linux-arm64-gnu-*.tgz)
           echo "platform=$platform" >> "$GITHUB_OUTPUT"
+          echo "arm64=$arm64" >> "$GITHUB_OUTPUT"
           echo "Packed $(basename "$platform"), sha256 $(sha256sum "$platform" | cut -d' ' -f1)" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "Fetched $(basename "$arm64"), sha256 $(sha256sum "$arm64" | cut -d' ' -f1)" | tee -a "$GITHUB_STEP_SUMMARY"
           node -e '
             const fs = require("fs");
             const main = JSON.parse(fs.readFileSync("package.json", "utf8"));
             main.optionalDependencies = Object.fromEntries(
-              ["linux-x64-gnu"].map((name) => [`${main.name}-${name}`, main.version]),
+              ["linux-x64-gnu", "linux-arm64-gnu"].map((name) => [`${main.name}-${name}`, main.version]),
             );
             fs.writeFileSync("package.json", `${JSON.stringify(main, null, 2)}\n`);
           '
@@ -116,6 +159,7 @@ jobs:
           OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.ONEPASSWORD_PROVE_IT_RELEASE_TOKEN }}
           TARBALL: ${{ steps.pack.outputs.tarball }}
           PLATFORM: ${{ steps.pack.outputs.platform }}
+          ARM64: ${{ steps.pack.outputs.arm64 }}
         run: |
           set -euo pipefail
           [[ -n "$ONEPASSWORD_ENVIRONMENT_ID" ]] || { echo "set ONEPASSWORD_ENVIRONMENT_ID in this workflow" >&2; exit 1; }
@@ -125,7 +169,7 @@ jobs:
           # shellcheck disable=SC2016 # npm expands ${NPM_TOKEN} itself, so the shell must not.
           printf '//registry.npmjs.org/:_authToken=${NPM_TOKEN}\n' > "$npmrc"
           # A retry skips a package an earlier attempt published.
-          for tarball in "$PLATFORM" "$TARBALL"; do
+          for tarball in "$PLATFORM" "$ARM64" "$TARBALL"; do
             spec=$(tar -xOzf "$tarball" package/package.json | node -p 'const p = JSON.parse(require("fs").readFileSync(0, "utf8")); `${p.name}@${p.version}`')
             if [[ "$(npm view "$spec" version 2>/dev/null)" != "" ]]; then
               echo "$spec is already on npm" >> "$GITHUB_STEP_SUMMARY"
@@ -135,7 +179,7 @@ jobs:
               npm publish "$tarball" --access public --ignore-scripts
           done
           rm -f "$npmrc"
-          echo "Published $PACKAGE@${{ steps.plan.outputs.version }} and its Linux x64 engine" >> "$GITHUB_STEP_SUMMARY"
+          echo "Published $PACKAGE@${{ steps.plan.outputs.version }} and its Linux x64 and arm64 engines" >> "$GITHUB_STEP_SUMMARY"
       - name: Tag the release
         env:
           GH_TOKEN: ${{ github.token }}
