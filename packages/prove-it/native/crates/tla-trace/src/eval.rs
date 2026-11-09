@@ -2576,7 +2576,7 @@ impl<'ir> Evaluator<'ir> {
                 ) {
                     return fail("IsFiniteSet of a non-set");
                 }
-                Value::Bool(is_finite(&set))
+                Value::Bool(is_finite(&set)?)
             }
             "Seq" => {
                 arity(1)?;
@@ -3149,16 +3149,60 @@ enum Operand {
 
 // Whether a set (or a function, which the engine counts as a finite set) is finite, without
 // enumerating it: a lazy set is when its parts are.
-fn is_finite(value: &Value) -> bool {
-    match value {
+// `isFinite` of TLC's set values: a set of functions, records or tuples is finite where one of
+// its finite parts is empty, and `Seq(S)` where S is.
+fn is_finite(value: &Value) -> Evaluated<bool> {
+    Ok(match value {
         Value::Lazy(lazy) => match &**lazy {
-            Lazy::Nat | Lazy::Int | Lazy::Real | Lazy::Strings | Lazy::Seq(_) => false,
-            Lazy::Subset(base) => is_finite(base),
-            Lazy::FunctionSet(domain, range) => is_finite(domain) && is_finite(range),
-            Lazy::RecordSet(fields, _) => fields.iter().all(|(_, set)| is_finite(set)),
-            Lazy::Product(factors) => factors.iter().all(is_finite),
+            Lazy::Nat | Lazy::Int | Lazy::Real | Lazy::Strings => false,
+            Lazy::Seq(range) => is_finite(range)? && is_empty(range),
+            Lazy::Subset(base) => is_finite(base)?,
+            Lazy::FunctionSet(domain, range) => {
+                let is_domain_finite = is_finite(domain)?;
+                if is_domain_finite && is_empty(domain) {
+                    return Ok(true);
+                }
+                let is_range_finite = is_finite(range)?;
+                (is_range_finite && is_empty(range))
+                    || (is_domain_finite && is_range_finite)
+                    || (is_range_finite && cardinality(range)? == 1)
+            }
+            Lazy::RecordSet(fields, _) => is_all_finite(fields.iter().map(|(_, set)| set))?,
+            Lazy::Product(factors) => is_all_finite(factors.iter())?,
         },
         _ => true,
+    })
+}
+
+// `SetOfRcdsValue.isFinite` and `SetOfTuplesValue.isFinite`: finite where a finite part is empty,
+// or every part is finite.
+fn is_all_finite<'v>(parts: impl Iterator<Item = &'v Value>) -> Evaluated<bool> {
+    let mut is_all_finite = true;
+    for part in parts {
+        if !is_finite(part)? {
+            is_all_finite = false;
+        } else if is_empty(part) {
+            return Ok(true);
+        }
+    }
+    Ok(is_all_finite)
+}
+
+// `Value.isEmpty` of a set whose finiteness TLC checks first, so it never enumerates an infinite
+// one.
+fn is_empty(value: &Value) -> bool {
+    match value {
+        Value::Set(elements) => elements.is_empty(),
+        Value::Interval(low, high) => low > high,
+        Value::Lazy(lazy) => match &**lazy {
+            Lazy::Nat | Lazy::Int | Lazy::Real | Lazy::Strings | Lazy::Seq(_) | Lazy::Subset(_) => {
+                false
+            }
+            Lazy::FunctionSet(domain, range) => !is_empty(domain) && is_empty(range),
+            Lazy::RecordSet(fields, _) => fields.iter().any(|(_, set)| is_empty(set)),
+            Lazy::Product(factors) => factors.iter().any(is_empty),
+        },
+        _ => false,
     }
 }
 
@@ -3253,4 +3297,30 @@ fn bag_counts(bag: &Value) -> Evaluated<Vec<(Value, i32)>> {
             _ => fail("a bag whose count isn't an integer"),
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn lazy(lazy: Lazy) -> Value {
+        Value::Lazy(Rc::new(lazy))
+    }
+
+    #[test]
+    fn finds_a_set_finite_as_tlc_does() {
+        let nat = || lazy(Lazy::Nat);
+        let empty = || Value::Set(Rc::new(Vec::new()));
+        let one = || Value::Interval(0, 0);
+        // [Nat -> {}] and [Nat -> {0}] are finite, [Nat -> 0..1] isn't.
+        assert!(is_finite(&lazy(Lazy::FunctionSet(nat(), empty()))).expect("finite"));
+        assert!(is_finite(&lazy(Lazy::FunctionSet(nat(), one()))).expect("finite"));
+        assert!(
+            !is_finite(&lazy(Lazy::FunctionSet(nat(), Value::Interval(0, 1)))).expect("infinite")
+        );
+        // Nat \X {} and Seq({}) are finite, Seq({1}) isn't.
+        assert!(is_finite(&lazy(Lazy::Product(vec![nat(), empty()]))).expect("finite"));
+        assert!(is_finite(&lazy(Lazy::Seq(empty()))).expect("finite"));
+        assert!(!is_finite(&lazy(Lazy::Seq(one()))).expect("infinite"));
+    }
 }
