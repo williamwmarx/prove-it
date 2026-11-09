@@ -21,7 +21,7 @@ fn get_text(name: &str, source: &str) -> String {
         },
     );
     std::fs::remove_dir_all(&directory).expect("a removed directory");
-    text.expect("a text")
+    text.expect("a text").text
 }
 
 #[test]

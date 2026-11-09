@@ -31,6 +31,7 @@ pub mod standard_modules;
 pub mod subexpressions;
 #[rustfmt::skip]
 pub mod tlc_data;
+pub mod tlc_messages;
 pub mod values;
 
 /// The version of TLC whose behaviour the front end reproduces, as `TlcVersion` in
