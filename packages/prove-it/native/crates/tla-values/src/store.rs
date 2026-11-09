@@ -10,6 +10,7 @@
 use std::collections::HashMap;
 use std::mem::take;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// The name of an interned value.
 pub type Id = u32;
@@ -40,6 +41,8 @@ pub type Outcome<T> = Result<T, Bail>;
 const SMALL_INT_MIN: i32 = -256;
 pub(crate) const SMALL_INT_MAX: i32 = 4096;
 const INITIAL_CAPACITY: usize = 1 << 12;
+// Each store's number, which an overlay keeps of the store it copied.
+static STORES: AtomicU64 = AtomicU64::new(0);
 const EMPTY_SLOT: Id = Id::MAX;
 // A short sort runs by insertion, in place; longer ones are merged from such runs.
 const INSERTION_LENGTH: usize = 16;
@@ -137,6 +140,9 @@ pub struct Store {
     id_base: u32,
     heap_base: usize,
     text_base: usize,
+    serial: u64,
+    // The number and generation of the store whose values the overlay copied.
+    copied: Option<(u64, u32)>,
     meta: Vec<Meta>,
     heap: Vec<u32>,
     // The intern table: a hash and an id per slot, an id of EMPTY_SLOT marking an empty one.
@@ -176,6 +182,8 @@ impl Store {
             id_base: 0,
             heap_base: 0,
             text_base: 0,
+            serial: STORES.fetch_add(1, Ordering::Relaxed),
+            copied: None,
             meta: Vec::with_capacity(INITIAL_CAPACITY),
             heap: Vec::with_capacity(1 << 16),
             table: vec![[0, EMPTY_SLOT]; INITIAL_CAPACITY * 2],
@@ -207,11 +215,7 @@ impl Store {
     /// the store it was last laid on copies only what the store added since.
     pub fn attach(&mut self, base: Arc<Store>) {
         assert!(base.base.is_none(), "an overlay laid on an overlay");
-        let is_copied = self.generation == base.generation
-            && self.id_base as usize <= base.meta.len()
-            && self.heap_base <= base.heap.len()
-            && self.text_base <= base.texts.len();
-        let (values, words, texts) = if is_copied {
+        let (values, words, texts) = if self.copied == Some((base.serial, base.generation)) {
             (self.id_base as usize, self.heap_base, self.text_base)
         } else {
             (0, 0, 0)
@@ -231,6 +235,7 @@ impl Store {
         self.heap_base = base.heap.len();
         self.text_base = base.texts.len();
         self.generation = base.generation;
+        self.copied = Some((base.serial, base.generation));
         self.small_ints.clone_from(&base.small_ints);
         self.table.fill([0, EMPTY_SLOT]);
         self.string_ids.clear();
@@ -280,6 +285,11 @@ impl Store {
     pub fn reset<'a>(&mut self, order: impl IntoIterator<Item = &'a [u16]>) {
         assert!(self.base.is_none(), "an overlay reset");
         self.generation = self.generation.wrapping_add(1);
+        // A store that was an overlay is a store of its own again.
+        self.id_base = 0;
+        self.heap_base = 0;
+        self.text_base = 0;
+        self.copied = None;
         self.order.ranks.clear();
         for text in order {
             self.order.rank(text);

@@ -579,3 +579,22 @@ fn imports_an_overlays_values_with_the_ids_the_store_then_gives_them() {
     assert_eq!(build_on(&mut overlay), ids);
     assert_eq!(overlay.value_count(), base.value_count());
 }
+
+// An overlay laid on another store copies that store's values whole, though both stores are of
+// one generation, and a store that was an overlay is reset to one of its own.
+#[test]
+fn an_overlay_laid_on_another_store_copies_it_whole() {
+    let mut first = Store::new();
+    let held = first.int(10_000).unwrap();
+    let mut second = Store::new();
+    assert_eq!(second.int(20_000).unwrap(), held);
+    assert_eq!(first.generation(), second.generation());
+    let mut overlay = Store::overlay(std::sync::Arc::new(first));
+    overlay.detach();
+    overlay.attach(std::sync::Arc::new(second));
+    assert_eq!(overlay.int_of(held), 20_000);
+    overlay.detach();
+    overlay.reset(std::iter::empty::<&[u16]>());
+    assert_eq!(overlay.value_count(), Store::new().value_count());
+    assert_eq!(overlay.int(20_000).unwrap(), held);
+}
