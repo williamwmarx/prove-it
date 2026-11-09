@@ -7,7 +7,7 @@
 //! the nodes it replaces evaluate, in the same order and with the same short circuits, and checks
 //! a boolean where `compileBoolean` does.
 
-use tla_values::store::{FALSE, KIND_SET, Outcome, TRUE};
+use tla_values::store::{FALSE, Outcome, TRUE, is_tested_set_kind};
 use tla_values::{Bail, Id};
 
 use super::{Compiled, Shape, bool_id, eval};
@@ -160,7 +160,7 @@ impl Predicate {
                 test(move |machine| {
                     let element = element.read(machine)?;
                     let set = set.read(machine)?;
-                    if machine.store.kind_of(set) != KIND_SET {
+                    if !is_tested_set_kind(machine.store.kind_of(set)) {
                         return Err(Bail("membership in a non-set"));
                     }
                     Ok(machine.store.is_member(element, set)? == is_in)

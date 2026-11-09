@@ -181,9 +181,13 @@ pub struct CallStack {
     /// Whether the failure was in a method of a value with a source, which TLC reports as a
     /// FingerprintException rather than with the nested expressions.
     pub is_fingerprinted: bool,
-    /// The source of the value whose method failed, where the failure is fingerprinted: the last
-    /// frame of the call stack TLC's replay prints with the FingerprintException.
-    pub fingerprinted_source: Option<NodeId>,
+    /// Whether the fingerprinted failure is of a membership followed to the set whose own test
+    /// fails, through no set TLC searches otherwise than the evaluator does.
+    pub is_member_followed: bool,
+    /// The sources of the values whose methods the failure passed through, outermost first, where
+    /// the failure is fingerprinted: the last frames of the call stack TLC's replay prints with
+    /// the FingerprintException.
+    pub fingerprinted_sources: Vec<NodeId>,
     /// Why the replay can't follow TLC to the failure, where it can't: through an assignment
     /// `x' \in S` whose set TLC streams in an order of its own, or through a filter TLC keeps lazy.
     pub unfollowed: Option<&'static str>,
@@ -638,19 +642,43 @@ impl<'ir> Evaluator<'ir> {
             return;
         };
         let receiver = self.receiver(node).map(|receiver| self.resolved(receiver));
+        // The element a membership tests, whose failure passes through the sets nested in the
+        // receiver that test their own members.
+        let element = match self.kind(node) {
+            NodeKind::Apply { name, args }
+                if !name.is_local && matches!(self.name(name.text), "\\in" | "\\notin") =>
+            {
+                Some(self.resolved(args[0]))
+            }
+            _ => None,
+        };
         let Some(stack) = &mut self.call_stack else {
             return;
         };
-        let source = receiver
-            .and_then(|receiver| stack.values.get(&receiver))
-            .and_then(address)
-            .and_then(|address| stack.sourced.get(&address).copied());
-        if let Some(source) = source
-            && !stack.is_fingerprinted
-        {
-            stack.is_fingerprinted = true;
-            stack.fingerprinted_source = Some(source);
+        let Some(received) = receiver.and_then(|receiver| stack.values.get(&receiver)) else {
+            return;
+        };
+        let Some(source) = stack.source(received) else {
+            return;
+        };
+        if stack.is_fingerprinted {
+            return;
         }
+        let nested = element
+            .and_then(|element| stack.values.get(&element))
+            .and_then(|element| crate::sets::failing_sets(element, received));
+        // TLC searches a set enumeration it hasn't normalized, as one an evaluation just built,
+        // element by element with `equals`, which fails otherwise than the search of a sorted one.
+        let is_followed = nested.as_ref().is_some_and(|nested| {
+            std::iter::once(received).chain(nested).all(|set| {
+                !matches!(set, Value::Set(_) | Value::Unsorted(_)) || stack.source(set).is_none()
+            })
+        });
+        let sources = nested.iter().flatten().filter_map(|set| stack.source(set));
+        let sources: Vec<NodeId> = std::iter::once(source).chain(sources).collect();
+        stack.is_fingerprinted = true;
+        stack.is_member_followed = is_followed;
+        stack.fingerprinted_sources = sources;
     }
 
     /// Runs `run` in a frame of the call stack, which a failure freezes, as `CallStack.push` and

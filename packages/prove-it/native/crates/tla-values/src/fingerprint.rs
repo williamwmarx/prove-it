@@ -502,26 +502,10 @@ impl<E: Entries> Fingerprints<E> {
 
     fn compute_one(&mut self, store: &Store, id: Id) -> ValueFingerprint {
         let (fingerprint, length) = match store.kind_of(id) {
-            KIND_BOOL => (
-                extend_byte(
-                    extend_byte(0, BOOL_VALUE),
-                    if id == TRUE { b't' } else { b'f' },
-                ),
-                2,
-            ),
-            KIND_INT => (get_int(store.int_of(id)), 5),
-            KIND_STRING => {
-                let text = store.text_of(id);
-                let start = extend_int(extend_byte(0, STRING_VALUE), text.len() as i32);
-                let fingerprint = text.iter().fold(start, |fingerprint, &unit| {
-                    extend_byte(fingerprint, unit as u8)
-                });
-                (fingerprint, 5 + text.len() as u64)
-            }
-            KIND_MODEL => (
-                extend_int(extend_byte(0, MODEL_VALUE), store.text_rank_of(id) + 1),
-                5,
-            ),
+            KIND_BOOL => of_bool(id == TRUE),
+            KIND_INT => of_int(store.int_of(id)),
+            KIND_STRING => of_string(store.text_of(id)),
+            KIND_MODEL => of_model(store.text_rank_of(id)),
             kind => {
                 let tag = if kind == KIND_SET {
                     SET_ENUM_VALUE
@@ -553,6 +537,35 @@ impl<E: Entries> Fingerprints<E> {
             table: UNKNOWN_TABLE,
             is_computed: true,
         }
+    }
+
+    /// F and length of a set outside a store, from those of its elements in TLC's order, or of a
+    /// function, from those of each key and its value in turn.
+    pub fn of_parts(&mut self, is_set: bool, parts: &[(u64, u64)]) -> (u64, u64) {
+        let (tag, size) = if is_set {
+            (SET_ENUM_VALUE, parts.len())
+        } else {
+            (FCN_RCD_VALUE, parts.len() / 2)
+        };
+        let start = (extend_int(extend_byte(0, tag), size as i32), 5);
+        parts
+            .iter()
+            .fold(start, |(fingerprint, length), &(part, part_length)| {
+                (
+                    self.shift(fingerprint, part_length) ^ part,
+                    length + part_length,
+                )
+            })
+    }
+
+    /// TLC's fingerprint of a state outside a store, from F and length of its values in TLC's
+    /// order.
+    pub fn of_state(&mut self, values: &[(u64, u64)]) -> u64 {
+        values
+            .iter()
+            .fold(INITIAL, |fingerprint, &(value, length)| {
+                self.shift(fingerprint, length) ^ value
+            })
     }
 
     /// TLC's fingerprint of one state, its values read in `order`.
@@ -759,4 +772,29 @@ impl<E: Entries> Fingerprints<E> {
 // F of an integer.
 fn get_int(value: i32) -> u64 {
     extend_int(extend_byte(0, INT_VALUE), value)
+}
+
+/// F and length of a boolean, as of a store's.
+pub fn of_bool(value: bool) -> (u64, u64) {
+    let byte = if value { b't' } else { b'f' };
+    (extend_byte(extend_byte(0, BOOL_VALUE), byte), 2)
+}
+
+/// F and length of an integer.
+pub fn of_int(value: i32) -> (u64, u64) {
+    (get_int(value), 5)
+}
+
+/// F and length of a string.
+pub fn of_string(text: &[u16]) -> (u64, u64) {
+    let start = extend_int(extend_byte(0, STRING_VALUE), text.len() as i32);
+    let fingerprint = text.iter().fold(start, |fingerprint, &unit| {
+        extend_byte(fingerprint, unit as u8)
+    });
+    (fingerprint, 5 + text.len() as u64)
+}
+
+/// F and length of a model value, by the rank of its name.
+pub fn of_model(rank: i32) -> (u64, u64) {
+    (extend_int(extend_byte(0, MODEL_VALUE), rank + 1), 5)
 }

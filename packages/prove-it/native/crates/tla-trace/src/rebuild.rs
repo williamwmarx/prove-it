@@ -25,6 +25,8 @@ pub struct Rebuilder<'ir> {
     key: Key,
     /// The state of the generator TLC's startup left, which the initial predicate draws from.
     startup_random: u64,
+    /// TLC's set of fingerprints when the search stopped, sorted, where the caller gave it.
+    pub(crate) fingerprints: Option<Vec<u64>>,
 }
 
 /// How TLC tells a candidate is the state it looks for: by its fingerprint, which is of the state,
@@ -66,7 +68,20 @@ impl<'ir> Rebuilder<'ir> {
             evaluator,
             key,
             startup_random: JavaRandom::seeded(ir.model.random_seed).state(),
+            fingerprints: None,
         })
+    }
+
+    /// Takes TLC's set of fingerprints when the search stopped at an invariant that fails to
+    /// evaluate, sorted (`Violation::fingerprints`), which TLC's replay of the expansion tests
+    /// each successor against.
+    pub fn set_fingerprints(&mut self, fingerprints: &[u64]) {
+        self.fingerprints = Some(fingerprints.to_vec());
+    }
+
+    /// Whether TLC fingerprints the state itself, with no VIEW or SYMMETRY.
+    pub(crate) fn is_keyed_by_state(&self) -> bool {
+        matches!(self.key, Key::State)
     }
 
     /// Takes the values the search computed at startup, ids of `store`, which TLC's trace reads
@@ -618,7 +633,10 @@ pub(crate) fn is_same(store: &Store, target: &[Id], state: &[Value]) -> bool {
 
 // Whether the last state satisfies the model's constraints and, if a step reached it, its action
 // constraints, as TLC's `isInModel` and `isInActions` find before it fingerprints a state.
-fn is_in_model(evaluator: &mut Evaluator<'_>, rebuilt: &[Vec<Value>]) -> Result<bool, Unsupported> {
+pub(crate) fn is_in_model(
+    evaluator: &mut Evaluator<'_>,
+    rebuilt: &[Vec<Value>],
+) -> Result<bool, Unsupported> {
     let ir = evaluator.ir;
     let state = |values: &[Value]| values.iter().cloned().map(Some).collect();
     let last = rebuilt.len() - 1;

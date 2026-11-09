@@ -9,7 +9,7 @@ use common::{Quiet, ir_directory, path_to, stop_search};
 use tla_engine::search::{
     ErrorSite, OUT_DEGREE_BUCKETS, SearchOutcome, Settings, Violation, ViolationKind, search,
 };
-use tla_trace::{Rebuilder, Site};
+use tla_trace::{Failure, Rebuilder, Replay, Site};
 use tla_values::Id;
 
 const MODELS: &str = "tlc/tlatools/org.lamport.tlatools/test-model";
@@ -37,8 +37,8 @@ fn error_stop(path: &str) -> (ErrorSite, Box<Violation>) {
     (site, violation)
 }
 
-// The search's report of where it stopped, and TLC's message code for it from the rebuilder.
-fn stop(path: &str) -> (ErrorSite, usize, u32, String, [u64; OUT_DEGREE_BUCKETS]) {
+// The search's report of where it stopped, and TLC's report of the failure from the rebuilder.
+fn stop(path: &str) -> (ErrorSite, usize, Failure, [u64; OUT_DEGREE_BUCKETS]) {
     let (site, violation) = error_stop(path);
     let bytes = std::fs::read(ir_directory().join(format!("{MODELS}/{path}.ir"))).expect("an IR");
     let ir = tla_ir::decode(&bytes).expect("an IR that decodes");
@@ -58,6 +58,7 @@ fn stop(path: &str) -> (ErrorSite, usize, u32, String, [u64; OUT_DEGREE_BUCKETS]
         };
         let failure = Rebuilder::new(&ir)
             .and_then(|mut rebuilder| {
+                rebuilder.set_fingerprints(&violation.fingerprints);
                 rebuilder.evaluate_failure(
                     &violation.store,
                     &states,
@@ -66,29 +67,23 @@ fn stop(path: &str) -> (ErrorSite, usize, u32, String, [u64; OUT_DEGREE_BUCKETS]
                 )
             })
             .unwrap_or_else(|unsupported| panic!("{path}: {}", unsupported.0));
-        (
-            site,
-            states.len(),
-            failure.code,
-            failure.message,
-            violation.counts.out_degrees,
-        )
+        (site, states.len(), failure, violation.counts.out_degrees)
     })
 }
 
 #[test]
 fn reports_a_failure_in_the_initial_predicate_with_no_states() {
-    let (site, count, code, message, _) = stop("suite/etest9");
-    assert_eq!((site, count, code), (ErrorSite::Init, 0, 1000));
+    let (site, count, failure, _) = stop("suite/etest9");
+    assert_eq!((site, count, failure.code), (ErrorSite::Init, 0, 1000));
     assert_eq!(
-        message,
+        failure.message,
         "Attempted to check if the value:\n\"a\"\nis an element of Nat."
     );
 }
 
 #[test]
 fn reports_a_failure_in_an_action_with_the_path_to_the_state_it_expands() {
-    let (site, count, code, message, _) = stop("AssertExpressionStack");
+    let (site, count, failure, _) = stop("AssertExpressionStack");
     // The path the search kept to the state it was expanding.
     let bytes = std::fs::read(ir_directory().join(format!("{MODELS}/AssertExpressionStack.ir")))
         .expect("an IR");
@@ -97,24 +92,73 @@ fn reports_a_failure_in_an_action_with_the_path_to_the_state_it_expands() {
         tla_engine::on_nesting_stack(|| stop_search(&ir, None)).expect("a search that stops")
     });
     let kept = path_to(&stopped.parents, stopped.expanding).len();
-    assert_eq!((site, count, code), (ErrorSite::Next, kept, 2132));
+    assert_eq!((site, count, failure.code), (ErrorSite::Next, kept, 2132));
     assert_eq!(
-        message,
+        failure.message,
         "The first argument of Assert evaluated to FALSE; the second argument was:\n\"Fails after initial state\""
     );
 }
 
 #[test]
 fn reports_a_failing_invariant_with_the_successor_that_fails_it() {
-    let (site, count, code, message, out_degrees) = stop("EvaluatingValueTest");
-    assert_eq!((site, code), (ErrorSite::Invariant(0), 2111));
+    let (site, count, failure, out_degrees) = stop("EvaluatingValueTest");
+    assert_eq!((site, failure.code), (ErrorSite::Invariant(0), 2111));
     assert!(count >= 2, "the path and the successor");
-    assert!(message.starts_with("Evaluating invariant Inv failed."));
+    let text = "Attempted to check if the value:\nFALSE\nis an element of Nat.";
+    assert_eq!(
+        failure.message,
+        format!("Evaluating invariant Inv failed.\n{text}")
+    );
+    assert_eq!(
+        failure.tool_message,
+        format!(
+            "Evaluating invariant Inv failed.\n@!@!@STARTMSG 2158:0 @!@!@\n{text}\n@!@!@ENDMSG 2158 @!@!@"
+        )
+    );
+    // TLC's replay of the expansion finds the successor in its set, and nothing else.
+    assert_eq!(failure.exit_code, 76);
+    assert!(failure.call_stack.is_empty());
+    assert_eq!(failure.replay, Replay::default());
     // TLC counts the initial state it was expanding, with the new state that fails the invariant:
     // "The average outdegree ... is 1 (minimum is 1, the maximum 1 ...)".
     let mut expected = [0; OUT_DEGREE_BUCKETS];
     expected[1] = 1;
     assert_eq!(out_degrees, expected);
+}
+
+#[test]
+fn replays_the_expansion_past_the_successor_that_fails_an_invariant() {
+    // TLC's set holds the successor that failed TypeOK, of node A. Its replay finds node B's,
+    // which the search never reached, and TypeOK fails of it in the methods of the sets of
+    // functions and of records the replay built.
+    let (site, count, failure, _) = stop("FingerprintExceptionHang");
+    assert_eq!(
+        (site, count, failure.code),
+        (ErrorSite::Invariant(0), 2, 2111)
+    );
+    let reason = "Attempted to compare integer 1 with non-integer:\n{}";
+    assert_eq!(
+        failure.message,
+        format!("Evaluating invariant TypeOK failed.\n{reason}")
+    );
+    assert_eq!(
+        failure.replay,
+        Replay {
+            found: 1,
+            queued: 0,
+            is_failed: true
+        }
+    );
+    assert_eq!(failure.exit_code, 75);
+    let fingerprint = failure.fingerprint.expect("a FingerprintException");
+    assert!(fingerprint.is_replayed);
+    assert_eq!(fingerprint.reason, reason);
+    let columns: Vec<_> = fingerprint
+        .sources
+        .iter()
+        .map(|range| (range.start_line, range.start_column, range.end_column))
+        .collect();
+    assert_eq!(columns, [(16, 5, 46), (16, 20, 46), (16, 30, 45)]);
 }
 
 #[test]
