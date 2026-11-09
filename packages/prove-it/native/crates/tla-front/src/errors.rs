@@ -56,6 +56,9 @@ impl SyntaxError {
 /// How TLC begins its report of a RuntimeException it didn't expect (`UNEXPECTED_EXCEPTION`).
 pub const UNEXPECTED_EXCEPTION: &str = "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: ";
 
+/// How TLC begins its report of an EvalException it didn't expect (`UNEXPECTED_EVAL_EXCEPTION`).
+pub const UNEXPECTED_EVAL_EXCEPTION: &str = "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a tlc2.tool.EvalException\n: ";
+
 /// `formatRange`.
 pub fn format_range(range: &crate::ast::SourceRange) -> String {
     format!(
