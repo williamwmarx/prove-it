@@ -276,6 +276,11 @@ impl Store {
         &self.texts[self.meta(id).payload as usize].units
     }
 
+    /// The string of a text, if the store holds one, without interning it.
+    pub fn find_str(&self, units: &[u16]) -> Option<Id> {
+        self.string_ids.get(units).copied()
+    }
+
     /// The rank a string or a model value's text had when the store interned it, or -1.
     pub fn text_rank_of(&self, id: Id) -> i32 {
         self.texts[self.meta(id).payload as usize].rank

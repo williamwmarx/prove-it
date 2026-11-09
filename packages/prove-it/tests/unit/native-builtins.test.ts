@@ -250,7 +250,13 @@ describe.if(ADDON !== undefined)("the native engine's bridged builtins", () => {
     ]) {
       expect(
         await compareWithInterpreter(["EXTENDS Integers, Sequences, TLC", ...body], config),
-      ).toContainEqual(expect.stringMatching(stopped("an order of strings the search ranked")));
+      ).toContainEqual(
+        expect.stringMatching(
+          stopped(
+            "(an order of strings the search ranked|ToString of a text the engine made unranked)",
+          ),
+        ),
+      );
     }
   });
 
@@ -296,5 +302,19 @@ describe.if(ADDON !== undefined)("the native engine's bridged builtins", () => {
     expect(await compareWithInterpreter(body, config, { PROVE_IT_STOP_AT: "1" })).toContainEqual(
       expect.stringMatching(declined("unsupported: Print with ToString")),
     );
+  });
+  // The engine builds every entry of the function, making "12" and "13" with \o before
+  // ToString does, where the interpreter makes neither.
+  it("stops on ToString of a text the engine made unranked", async () => {
+    const body = [
+      "EXTENDS Integers, Sequences, TLC",
+      "VARIABLES n, s",
+      'Init == n = 0 /\\ s = [i \\in 1..3 |-> IF i = 3 THEN "q" ELSE "1" \\o ToString(n + i + 1)][3]',
+      "Next == UNCHANGED <<n, s>>",
+      "First == (CHOOSE x \\in {ToString(6 + 7 + n), ToString(6 + 6 + n)} : TRUE) = ToString(6 + 6 + n)",
+    ];
+    expect(
+      await compareWithInterpreter(body, "INIT Init\nNEXT Next\nINVARIANT First"),
+    ).toContainEqual(expect.stringMatching(stopped("ToString of a text the engine made unranked")));
   });
 });

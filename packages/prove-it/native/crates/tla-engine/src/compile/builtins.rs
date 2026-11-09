@@ -1121,6 +1121,13 @@ fn to_string(machine: &mut Machine<'_>, value: Id) -> Outcome<Id> {
     }
     let mut text = Vec::new();
     write_value(&machine.store, value, &mut text);
+    // A text the engine made before, such as by \o, keeps the rank it had then, -1, which the
+    // store's guard on unordered strings doesn't see.
+    if let Some(string) = machine.store.find_str(&text)
+        && machine.store.text_rank_of(string) < 0
+    {
+        return Err(Bail("ToString of a text the engine made unranked"));
+    }
     machine.store.get_string_rank(&text);
     Ok(machine.store.str(&text))
 }
