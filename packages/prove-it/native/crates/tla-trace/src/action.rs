@@ -9,7 +9,7 @@ use std::collections::HashSet;
 
 use tla_ir::{Bound, Name, NodeId, NodeKind, PathStep, Resolution, Startup};
 
-use crate::eval::{Context, Evaluator, StackFrame};
+use crate::eval::{Context, Evaluator, StackFrame, bound_expression};
 use crate::sets::is_member;
 use crate::value::{Evaluated, Value, elements, equals, fail, is_same};
 
@@ -123,7 +123,7 @@ impl<'ir> Evaluator<'ir> {
     }
 
     /// TLC's actions of a next-state relation, as `Tool.getActions` splits it: each disjunct, the
-    /// body of an operator whose arguments are constant, a LET's body, and `\\E` at each of its
+    /// body of an operator whose arguments are constant, a LET's or a label's body, and `\\E` at each of its
     /// bindings; anything else, and an `\\E` of no bindings or one TLC fails to enumerate, is an
     /// action.
     pub fn split_actions(
@@ -147,6 +147,7 @@ impl<'ir> Evaluator<'ir> {
                 let inner = self.bind_let(*instances, definitions, context)?;
                 return self.split_actions(*body, &inner, actions);
             }
+            NodeKind::Label { body, .. } => return self.split_actions(*body, context, actions),
             NodeKind::Exists { bounds, body } => {
                 let mut contexts = Vec::new();
                 let enumerated = self.for_each_binding(bounds, context, &mut |_, inner| {
@@ -185,7 +186,7 @@ impl<'ir> Evaluator<'ir> {
         let mut visited = HashSet::new();
         if args
             .iter()
-            .any(|&argument| self.can_read_state(argument, &mut visited))
+            .any(|&argument| self.can_read_state(argument, context, &mut visited))
         {
             return false;
         }
@@ -203,11 +204,16 @@ impl<'ir> Evaluator<'ir> {
     // Whether an expression may read the state, as an expression above constant level, which
     // `getLevel` finds: a variable, a prime, UNCHANGED or ENABLED in it or in a definition it names.
     // A form the check doesn't follow counts as one that may.
-    fn can_read_state(&self, node: NodeId, visited: &mut HashSet<NodeId>) -> bool {
+    fn can_read_state(
+        &self,
+        node: NodeId,
+        context: &Context,
+        visited: &mut HashSet<NodeId>,
+    ) -> bool {
         let any = |nodes: &[NodeId], visited: &mut HashSet<NodeId>| {
             nodes
                 .iter()
-                .any(|&inner| self.can_read_state(inner, visited))
+                .any(|&inner| self.can_read_state(inner, context, visited))
         };
         let bounds = |bounds: &[Bound]| bounds.iter().map(|bound| bound.set).collect::<Vec<_>>();
         match self.kind(node) {
@@ -217,14 +223,14 @@ impl<'ir> Evaluator<'ir> {
             | NodeKind::String(_)
             | NodeKind::ExceptAt => false,
             NodeKind::Identifier(name) | NodeKind::OperatorReference(name) => {
-                self.can_name_read_state(name, visited)
+                self.can_name_read_state(name, context, visited)
             }
             NodeKind::Apply { name, args } => {
-                self.can_name_read_state(name, visited) || any(args, visited)
+                self.can_name_read_state(name, context, visited) || any(args, visited)
             }
             NodeKind::Lambda { body, .. }
             | NodeKind::UnboundedQuantifier { body, .. }
-            | NodeKind::Label { body, .. } => self.can_read_state(*body, visited),
+            | NodeKind::Label { body, .. } => self.can_read_state(*body, context, visited),
             NodeKind::And(nodes)
             | NodeKind::Or(nodes)
             | NodeKind::SetEnumeration(nodes)
@@ -239,33 +245,33 @@ impl<'ir> Evaluator<'ir> {
             NodeKind::Case { arms, other } => {
                 arms.iter()
                     .any(|&(condition, body)| any(&[condition, body], visited))
-                    || other.is_some_and(|other| self.can_read_state(other, visited))
+                    || other.is_some_and(|other| self.can_read_state(other, context, visited))
             }
             NodeKind::Let {
                 definitions, body, ..
-            } => any(definitions, visited) || self.can_read_state(*body, visited),
+            } => any(definitions, visited) || self.can_read_state(*body, context, visited),
             NodeKind::Forall { bounds: list, body }
             | NodeKind::Exists { bounds: list, body }
             | NodeKind::FunctionConstruction {
                 bounds: list, body, ..
-            } => any(&bounds(list), visited) || self.can_read_state(*body, visited),
+            } => any(&bounds(list), visited) || self.can_read_state(*body, context, visited),
             NodeKind::SetMap {
                 expression,
                 bounds: list,
-            } => any(&bounds(list), visited) || self.can_read_state(*expression, visited),
+            } => any(&bounds(list), visited) || self.can_read_state(*expression, context, visited),
             NodeKind::Choose { set, body, .. } => {
-                set.is_some_and(|set| self.can_read_state(set, visited))
-                    || self.can_read_state(*body, visited)
+                set.is_some_and(|set| self.can_read_state(set, context, visited))
+                    || self.can_read_state(*body, context, visited)
             }
             NodeKind::SetFilter { bound, predicate } => any(&[bound.set, *predicate], visited),
             NodeKind::FunctionSet { domain, range } => any(&[*domain, *range], visited),
             NodeKind::Record(fields) | NodeKind::RecordSet(fields) => fields
                 .iter()
-                .any(|&(_, value)| self.can_read_state(value, visited)),
+                .any(|&(_, value)| self.can_read_state(value, context, visited)),
             NodeKind::Except { function, updates } => {
-                self.can_read_state(*function, visited)
+                self.can_read_state(*function, context, visited)
                     || updates.iter().any(|update| {
-                        self.can_read_state(update.value, visited)
+                        self.can_read_state(update.value, context, visited)
                             || update.path.iter().any(|step| match step {
                                 PathStep::Field(_) => false,
                                 PathStep::Index(indices) => any(indices, visited),
@@ -273,23 +279,37 @@ impl<'ir> Evaluator<'ir> {
                     })
             }
             NodeKind::FunctionApplication { function, args } => {
-                self.can_read_state(*function, visited) || any(args, visited)
+                self.can_read_state(*function, context, visited) || any(args, visited)
             }
-            NodeKind::FieldAccess { record, .. } => self.can_read_state(*record, visited),
+            NodeKind::FieldAccess { record, .. } => self.can_read_state(*record, context, visited),
             NodeKind::Definition(definition) => {
-                visited.insert(node) && self.can_read_state(definition.body, visited)
+                visited.insert(node)
+                    && self.can_read_state(definition.body, &Context::default(), visited)
             }
             _ => true,
         }
     }
 
-    // Whether a name may read the state: a variable, or a definition whose body may.
-    fn can_name_read_state(&self, name: &Name, visited: &mut HashSet<NodeId>) -> bool {
+    // Whether a name may read the state: a variable, a definition whose body may, or a LET
+    // definition or operator argument whose expression may in the scope that binds it.
+    fn can_name_read_state(
+        &self,
+        name: &Name,
+        context: &Context,
+        visited: &mut HashSet<NodeId>,
+    ) -> bool {
+        if name.is_local {
+            return bound_expression(context, name.text).is_some_and(|(node, inner)| {
+                visited.insert(node) && self.can_read_state(node, &inner, visited)
+            });
+        }
         match name.resolution {
             Resolution::Variable(_) => true,
-            Resolution::Definition(index) if !name.is_local => {
-                self.can_read_state(self.ir.definitions[index as usize], visited)
-            }
+            Resolution::Definition(index) => self.can_read_state(
+                self.ir.definitions[index as usize],
+                &Context::default(),
+                visited,
+            ),
             _ => false,
         }
     }

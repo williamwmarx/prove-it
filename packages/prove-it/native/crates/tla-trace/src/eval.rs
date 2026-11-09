@@ -122,6 +122,32 @@ fn lookup(env: &Env, name: TextId) -> Option<Rc<Frame>> {
     None
 }
 
+/// The expression a local name binds and the scope it is evaluated in, to find its level: a LET
+/// definition's body or an operator argument. A value, a builtin or an unbound name has none.
+pub(crate) fn bound_expression(context: &Context, name: TextId) -> Option<(NodeId, Context)> {
+    let frame = lookup(&context.env, name)?;
+    match &frame.binding {
+        Binding::Value(_) => None,
+        Binding::Thunk {
+            node,
+            context: inner,
+            is_self,
+        } => Some((*node, own_context(inner, &frame, *is_self))),
+        Binding::Operator(operator) => match operator.body {
+            Body::Node(node) => Some((
+                node,
+                own_context(&operator.context, &frame, operator.is_self),
+            )),
+            Body::Builtin(_) => None,
+        },
+        Binding::Function {
+            definition,
+            context: inner,
+            is_self,
+        } => Some((*definition, own_context(inner, &frame, *is_self))),
+    }
+}
+
 // The context a self-closing binding's body sees: the scope that binds it.
 fn own_context(context: &Context, frame: &Rc<Frame>, is_self: bool) -> Context {
     if is_self {
