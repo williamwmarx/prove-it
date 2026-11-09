@@ -432,6 +432,17 @@ impl<'ir> Evaluator<'ir> {
                 match self.name(name.text) {
                     "\\in" | "\\notin" => Some(args[1]),
                     "\\subseteq" | "=" | "#" | "\\" => Some(args[0]),
+                    // TLC calls the method of the operand it can enumerate, or else the right one.
+                    "\\cap" | "\\cup" => {
+                        let left = self.resolved(args[0]);
+                        let is_reducible = self.call_stack.as_ref().is_some_and(|stack| {
+                            matches!(
+                                stack.values.get(&left),
+                                Some(Value::Set(_) | Value::Interval(..))
+                            )
+                        });
+                        Some(if is_reducible { args[0] } else { args[1] })
+                    }
                     _ => None,
                 }
             }
