@@ -303,7 +303,9 @@ const work = async (queue: { model: CorpusModel; mode: OutputMode }[], total: nu
       if (tlc) compareNative(model.id, mode, tlc, native);
       results.push({ id: model.id, mode, tlc, outputs: { native } });
       const isSame = native.transcript === tlc;
-      console.log(`[${results.length}/${total}] ${isSame ? "same" : "native"}  ${mode.padEnd(7)} ${model.id}`);
+      console.log(
+        `[${results.length}/${total}] ${isSame ? "same" : "native"}  ${mode.padEnd(7)} ${model.id}`,
+      );
       continue;
     }
     const interpreter = await runCli(model, mode, { ...process.env, PROVE_IT_ENGINE: "0" });
