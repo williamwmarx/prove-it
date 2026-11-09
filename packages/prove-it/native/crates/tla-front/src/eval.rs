@@ -2,8 +2,8 @@
 //! search, as `evaluate` in `src/evaluate.ts` computes them: the sets TLC unrolls a property's or
 //! a temporal formula's quantifier over, the constant parts of a temporal formula, and the
 //! substitutes for constants TLC evaluates at startup, whose failures it reports. It knows
-//! booleans, integers, strings, model values and finite sets of them, and returns `NotYet` for
-//! anything else, which TLC's own evaluation at startup handles.
+//! booleans, integers, strings, model values, records and finite sets of them, and returns `NotYet`
+//! for anything else, which TLC's own evaluation at startup handles.
 
 use std::cell::Cell;
 use std::cmp::Ordering;
@@ -141,7 +141,8 @@ impl Evaluator<'_> {
             | (ConfigValue::String(_), ConfigValue::String(_))
             | (ConfigValue::Boolean(_), ConfigValue::Boolean(_))
             | (ConfigValue::ModelValue(_), ConfigValue::ModelValue(_))
-            | (ConfigValue::Set(_), ConfigValue::Set(_)) => {
+            | (ConfigValue::Set(_), ConfigValue::Set(_))
+            | (ConfigValue::Record(_), ConfigValue::Record(_)) => {
                 Ok(self.order.compare(left, right)? == Ordering::Equal)
             }
             _ => Err(not_yet("values TLC can't compare")),
@@ -150,6 +151,66 @@ impl Evaluator<'_> {
 
     fn create_set(&self, elements: Vec<ConfigValue>) -> Result<ConfigValue> {
         self.order.normalize(&ConfigValue::Set(elements))
+    }
+
+    /// A record's or a set of records' fields in TLC's order of their names, as `getSortedFields`
+    /// sorts them.
+    fn get_sorted_fields<'b>(&self, fields: &'b [RecordField]) -> Result<Vec<&'b RecordField>> {
+        let mut sorted: Vec<&RecordField> = fields.iter().collect();
+        let mut failure = None;
+        sorted.sort_by(|left, right| {
+            self.order
+                .compare_strings(&left.name, &right.name)
+                .unwrap_or_else(|error| {
+                    failure.get_or_insert(error);
+                    Ordering::Equal
+                })
+        });
+        if let Some(error) = failure {
+            return Err(error);
+        }
+        if sorted.windows(2).any(|pair| pair[0].name == pair[1].name) {
+            return Err(not_yet("a record with a repeated field"));
+        }
+        Ok(sorted)
+    }
+
+    /// The records of `[f1 : S1, ..., fn : Sn]`, the last field varying fastest, as
+    /// `getCartesianProduct` lists them, sorted into a set.
+    fn get_records(
+        &self,
+        fields: &[RecordField],
+        scope: Option<&Rc<Scope>>,
+    ) -> Result<ConfigValue> {
+        if self.version == TlcVersion::V1_7_4 {
+            return Err(not_yet("TLC 1.7.4's sets of records"));
+        }
+        let fields = self.get_sorted_fields(fields)?;
+        let mut sets = Vec::new();
+        for field in &fields {
+            sets.push(get_elements(self.evaluate(&field.value, scope)?)?);
+        }
+        let total = sets
+            .iter()
+            .try_fold(1_i64, |product, set| product.checked_mul(set.len() as i64))
+            .filter(|total| *total <= MAXIMUM_ELEMENTS)
+            .ok_or_else(|| not_yet("a set of records too large to list"))?;
+        let mut records = Vec::with_capacity(total as usize);
+        for mut count in 0..total as usize {
+            let mut values = vec![ConfigValue::Boolean(false); sets.len()];
+            for (index, set) in sets.iter().enumerate().rev() {
+                values[index] = set[count % set.len()].clone();
+                count /= set.len();
+            }
+            records.push(ConfigValue::Record(
+                fields
+                    .iter()
+                    .map(|field| field.name.to_string())
+                    .zip(values)
+                    .collect(),
+            ));
+        }
+        self.create_set(records)
     }
 
     /// The elements of a set in the order TLC's quantifiers visit them: the normalized set's,
@@ -605,11 +666,28 @@ impl Evaluator<'_> {
                 let bound = bind_definitions(definitions, scope)?;
                 self.evaluate(body, bound.as_ref())
             }
-            // The evaluator holds no records, but TLC computes the record first.
-            ExpressionKind::FieldAccess { record, .. } => {
-                self.evaluate(record, scope)?;
-                Err(not_yet("a record's field"))
+            ExpressionKind::Record {
+                is_set: false,
+                fields,
+            } => {
+                let mut values = Vec::new();
+                for field in self.get_sorted_fields(fields)? {
+                    values.push((field.name.to_string(), self.evaluate(&field.value, scope)?));
+                }
+                Ok(ConfigValue::Record(values))
             }
+            ExpressionKind::Record {
+                is_set: true,
+                fields,
+            } => self.get_records(fields, scope),
+            ExpressionKind::FieldAccess { record, field } => match self.evaluate(record, scope)? {
+                ConfigValue::Record(fields) => fields
+                    .into_iter()
+                    .find(|(name, _)| **name == **field)
+                    .map(|(_, value)| value)
+                    .ok_or_else(|| not_yet("a record's missing field")),
+                _ => Err(not_yet("a field of a value that isn't a record")),
+            },
             ExpressionKind::Case { arms, other } => {
                 for arm in arms {
                     if self.is_true(&arm.condition, scope)? {
