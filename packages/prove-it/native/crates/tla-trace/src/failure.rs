@@ -45,6 +45,9 @@ pub struct FingerprintFailure {
     pub sources: Vec<SourceRange>,
     pub reason: String,
     pub tool_reason: String,
+    /// Whether the ranges are the call stack of TLC's replay with its `CallStackTool`, which
+    /// throws the FingerprintException after the run reported the error as it is.
+    pub is_replayed: bool,
 }
 
 /// TLC's report of an error: the code of the message, its text and its text in -tool output, and
@@ -543,6 +546,7 @@ impl<'ir> Rebuilder<'ir> {
                     .collect(),
                 reason: message.text.clone(),
                 tool_reason: nested(&message),
+                is_replayed: false,
             };
             // TLC reports a state it fails to fingerprint as it works on an initial state, or as
             // an exception it didn't expect in the next states, and exits as for the replay.
@@ -567,6 +571,37 @@ impl<'ir> Rebuilder<'ir> {
                 printed,
                 fingerprint: Some(fingerprint),
                 state,
+            });
+        }
+        // A failure in the next states whose receiver the replay gave a source TLC reports as it
+        // is, then fails again as a FingerprintException as it replays the expansion with its
+        // `CallStackTool`, which gives values their sources, and prints that call stack.
+        if call_stack.is_fingerprinted
+            && site == Site::Next
+            && let Some(message) = &error.message
+            && let Some(source) = call_stack.fingerprinted_source
+        {
+            let (code, text, tool_text) = report(message, true);
+            let mut sources = ranges(evaluator, &call_stack);
+            if let Some(range) = node_range(evaluator, source)
+                && sources.last() != Some(&range)
+            {
+                sources.push(range);
+            }
+            return Ok(Failure {
+                code,
+                message: text,
+                tool_message: tool_text,
+                call_stack: Vec::new(),
+                exit_code: FAILURE_SPEC_EVAL,
+                printed,
+                fingerprint: Some(FingerprintFailure {
+                    sources,
+                    reason: message.text.clone(),
+                    tool_reason: nested(message),
+                    is_replayed: true,
+                }),
+                state: None,
             });
         }
         if call_stack.is_fingerprinted {

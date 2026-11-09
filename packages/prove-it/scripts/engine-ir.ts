@@ -109,6 +109,7 @@ const GOLDEN_MODELS = [
   "etcd-raft/tla/etcdraft.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/examples/allocator/SchedulingAllocator.cfg",
   "raft/specifications/pull-raft/PullRaft.cfg",
+  "tlc/tlatools/org.lamport.tlatools/test-model/EmptySubsetEq.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/examples/SpecifyingSystems/Liveness/MCLiveWriteThroughCache.cfg",
 ];
 

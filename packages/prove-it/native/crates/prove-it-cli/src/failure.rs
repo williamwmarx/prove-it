@@ -125,7 +125,11 @@ pub fn print_failure(
         }
     }
     // A successor TLC can't fingerprint fails again as TLC prints it with the trace.
-    if failure.fingerprint.is_some() && !report.states.is_empty() {
+    let is_replayed = failure
+        .fingerprint
+        .as_ref()
+        .is_some_and(|fingerprint| fingerprint.is_replayed);
+    if failure.fingerprint.is_some() && !is_replayed && !report.states.is_empty() {
         printer.print(failure.code, Level::Error, message);
     }
     for line in &report.after {
@@ -133,6 +137,22 @@ pub fn print_failure(
     }
     match &failure.fingerprint {
         // TLC reports where it failed to fingerprint in place of the call stack, innermost first.
+        // TLC prints the call stack of its replay where the replay threw the FingerprintException.
+        Some(fingerprint) if fingerprint.is_replayed => {
+            let reason = if printer.is_tool {
+                &fingerprint.tool_reason
+            } else {
+                &fingerprint.reason
+            };
+            printer.print(
+                code::FINGERPRINT_FAILED,
+                Level::Error,
+                &format!(
+                    "TLC was unable to fingerprint.\n\nFingerprint Stack Trace:\n{}\nReason:\n{reason}",
+                    format_call_stack(ir, &fingerprint.sources)
+                ),
+            );
+        }
         Some(fingerprint) => {
             let trace: String = fingerprint
                 .sources
@@ -170,6 +190,7 @@ pub fn print_failure(
     // TLC counts the state it failed to fingerprint as generated, which the search stopped before
     // counting, and an initial state as at depth 1.
     let statistics = match (&failure.fingerprint, stop.site) {
+        (Some(fingerprint), _) if fingerprint.is_replayed => stop.statistics,
         (Some(_), site) => Statistics {
             generated: stop.statistics.generated + 1,
             depth: match site {

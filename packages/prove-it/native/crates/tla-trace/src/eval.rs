@@ -180,6 +180,9 @@ pub struct CallStack {
     /// Whether the failure was in a method of a value with a source, which TLC reports as a
     /// FingerprintException rather than with the nested expressions.
     pub is_fingerprinted: bool,
+    /// The source of the value whose method failed, where the failure is fingerprinted: the last
+    /// frame of the call stack TLC's replay prints with the FingerprintException.
+    pub fingerprinted_source: Option<NodeId>,
     /// Why the replay can't follow TLC to the failure, where it can't: through an assignment
     /// `x' \in S` whose set TLC streams in an order of its own, or through a filter TLC keeps lazy.
     pub unfollowed: Option<&'static str>,
@@ -624,11 +627,16 @@ impl<'ir> Evaluator<'ir> {
         let Some(stack) = &mut self.call_stack else {
             return;
         };
-        let is_sourced = receiver
+        let source = receiver
             .and_then(|receiver| stack.values.get(&receiver))
             .and_then(address)
-            .is_some_and(|address| stack.sourced.contains_key(&address));
-        stack.is_fingerprinted |= is_sourced;
+            .and_then(|address| stack.sourced.get(&address).copied());
+        if let Some(source) = source
+            && !stack.is_fingerprinted
+        {
+            stack.is_fingerprinted = true;
+            stack.fingerprinted_source = Some(source);
+        }
     }
 
     /// Runs `run` in a frame of the call stack, which a failure freezes, as `CallStack.push` and
