@@ -3,7 +3,7 @@
 //! of the search with each state's successors in the order of TLC's `SetOfStates`, then TLC's
 //! `LiveWorker#checkSccs` and `printTrace` on each.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::hash::{BuildHasherDefault, Hasher};
 
@@ -151,6 +151,8 @@ pub struct Checker<'c> {
     /// Where an atom's evaluation has effects, which TLC has each time it evaluates the atom: the
     /// checks keep no results across evaluations and log each evaluation of an atom.
     effects: RefCell<Option<Effects>>,
+    /// TLC's diameter as it evaluates, for the atoms that read it.
+    diameter: Cell<u32>,
 }
 
 /// The evaluations of atoms so far, and the atoms' answers within the evaluation of one check, as
@@ -234,12 +236,26 @@ impl<'c> Checker<'c> {
             slots: Vec::new(),
             is_cycle_constrained,
             effects: RefCell::new(None),
+            diameter: Cell::new(1),
         })
     }
 
     // --- evaluation: `evaluateLive` over the engine's tables ---
 
+    // The position in an atom's table of its answer on the state or step at the position, which
+    // for an atom that reads TLCGet("diameter") is among the answers for TLC's diameter now.
+    fn position(&self, atom: u32, position: usize) -> usize {
+        match &self.graph.diameters {
+            Some(diameters) if diameters.atoms.get(atom as usize) == Some(&true) => {
+                let length = self.tables[atom as usize].map_or(0, <[u8]>::len);
+                length / diameters.last as usize * (self.diameter.get() as usize - 1) + position
+            }
+            _ => position,
+        }
+    }
+
     fn answer(&self, atom: u32, position: usize) -> Result<bool, Declined> {
+        let position = self.position(atom, position);
         let table = self
             .tables
             .get(atom as usize)
@@ -269,7 +285,7 @@ impl<'c> Checker<'c> {
                 let answer = self.answer(atom, state as usize)?;
                 effects.events.push(Event::Atom {
                     atom,
-                    slot: state as usize,
+                    slot: self.position(atom, state as usize),
                 });
                 effects.known.push((atom, answer));
                 Ok(answer)
@@ -284,7 +300,7 @@ impl<'c> Checker<'c> {
                 let answer = self.answer(atom, step.answer)?;
                 effects.events.push(Event::Atom {
                     atom,
-                    slot: step.answer,
+                    slot: self.position(atom, step.answer),
                 });
                 Ok(answer)
             }
@@ -575,6 +591,7 @@ impl<'c> Checker<'c> {
 
     fn add_initial_state(&mut self, state: u32) -> Result<(), Declined> {
         self.log(Event::Initial(state));
+        self.diameter.set(1);
         for behavior in 0..self.behaviors.len() {
             let Some(initial_count) = self.tableau(behavior).map(|tableau| tableau.initial_count)
             else {
@@ -599,6 +616,9 @@ impl<'c> Checker<'c> {
     /// tableau that accepts every behavior, when TLC finds one.
     fn add_state(&mut self, state: u32) -> Result<Option<Vec<u32>>, Declined> {
         self.log(Event::Expanded(state));
+        if let Some(diameters) = &self.graph.diameters {
+            self.diameter.set(diameters.states[state as usize]);
+        }
         let set = self.successor_set(state);
         // With effects, each behavior checks its actions on each step anew, as TLC does.
         let is_effectful = self.is_effectful();
@@ -1382,6 +1402,9 @@ pub fn check(
         }
     }
     *events = checker.take_events();
+    if let Some(diameters) = &graph.diameters {
+        checker.diameter.set(diameters.last);
+    }
     Ok(match checker.find_violation()? {
         Some((path, loop_start, is_cycle_constrained)) => Verdict::Lasso {
             violated: checker.violated(properties, &path, loop_start)?,

@@ -599,6 +599,28 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     }
   });
 
+  it('reads TLCGet("diameter") in a temporal property as TLC\'s search goes', async () => {
+    // TLC's diameter is the deepest level its search has found when it adds a state to the
+    // behavior graphs, after it expanded the state: 2, 3, 4 and 4 for x = 0 to 3.
+    const body = [
+      "EXTENDS Naturals, TLC",
+      "VARIABLE x",
+      "Spec == x = 0 /\\ [][x' = (x + 1) % 4]_x /\\ WF_x(x' = (x + 1) % 4)",
+      'Below == <>[](x < TLCGet("diameter"))',
+      'Past == <>[](TLCGet("diameter") > x + 1)',
+      // Holds only where the diameter is read as each state is added, not as the search ends.
+      'Early == <>[](TLCGet("diameter") < 4 + x)',
+    ];
+    for (const [property, verdict] of [
+      ["Below", "holds"],
+      ["Past", "lasso"],
+      ["Early", "holds"],
+    ] as const) {
+      const lines = await compareWithInterpreter(body, `SPECIFICATION Spec\nPROPERTY ${property}`);
+      expect(lines).toContain(`[engine] native: liveness: ${verdict}`);
+    }
+  });
+
   it("hands over a violated invariant, deadlock and a failed action property", async () => {
     const cases: [string[], string, string][] = [
       [

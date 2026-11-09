@@ -48,6 +48,17 @@ pub struct Graph<'g> {
     /// it, by its index, or a state past them that the search told apart from it by its key. The
     /// tables of state predicates have an answer for each.
     pub reals: Option<&'g [u32]>,
+    /// Where an atom reads TLCGet("diameter"), what TLC's diameter is as it adds each state.
+    pub diameters: Option<Diameters<'g>>,
+}
+
+/// TLC's diameter, the deepest level its search has found so far, as it adds each state to the
+/// behavior graphs, after the search expanded it, and once the search is done; and the atoms that
+/// read it, whose tables hold the answers for each diameter from 1 to the last, one after another.
+pub struct Diameters<'g> {
+    pub states: &'g [u32],
+    pub last: u32,
+    pub atoms: &'g [bool],
 }
 
 impl Graph<'_> {

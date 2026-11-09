@@ -106,6 +106,21 @@ Where the check isn't decided natively, under `PROVE_IT_LIVE_CHECK=1`, where an 
 adds an initial state, or where the steps from a state the search didn't store print, the engine
 hands over with no checkpoint and nothing printed, and the interpreter checks from the start.
 
-`TLCGet("diameter")` in an atom, as in UserModuleOverride and its Annotation variant, is still the
-interpreter's: TLC reads it as the search goes, so its value depends on when TLC evaluates the atom,
-not only on the state.
+## TLCGet("diameter") in the temporal properties (as built)
+
+TLC's `TLCGet("diameter")` is `ModelChecker#getProgress`, `TLCTrace#getLevelForReporting`: the
+deepest level of the states the search has written so far, which only grows. The liveness checker
+reads it as it adds each state: 1 as it adds an initial state, and as it adds an expanded state the
+depth the search reached once it expanded the state. So an atom that reads it has an answer per
+state and diameter, not per state.
+
+- The compiler gives the diameter a slot, and the engine declines a model whose search reads it
+  (`TLCGet("diameter") in the search`), whose value grows within an expansion.
+- The search keeps its depth after each expansion (`Graph::diameters`).
+- `answer_atoms` answers an atom that reads the diameter once for each diameter from 1 to the last,
+  the tables one after another, and leaves it to the interpreter in a checkpoint.
+- `tla-live` (`Graph::diameters`) sets the diameter as it adds each state and once the search is
+  done, and reads such an atom's answer for the diameter then.
+
+UserModuleOverride and its Annotation variant, whose property prints and reads the diameter, are
+checked natively and match TLC.
