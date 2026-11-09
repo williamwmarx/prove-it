@@ -647,6 +647,7 @@ impl Compiler<'_> {
             return Ok(Compiled {
                 is_costly: true,
                 infinite: set.infinite,
+                parts: Some(Self::parts_of(&set)),
                 member: Some(member(move |machine, element| {
                     Ok(base(machine, element)? && test_element(machine, &tested, element)?)
                 })),

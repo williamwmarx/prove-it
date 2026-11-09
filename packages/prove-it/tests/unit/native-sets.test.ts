@@ -173,6 +173,17 @@ describe.if(ADDON !== undefined)("the native engine's lazy sets", () => {
     expect(
       await compareWithInterpreter(body, `${CONFIG}\nINVARIANT Inv\nCHECK_DEADLOCK FALSE`),
     ).toContainEqual(expect.stringMatching(COMPLETE));
+    // An enclosing set evaluates the filter's base, as TLC does, whether or not it tests it.
+    const divided = [
+      "EXTENDS Naturals, Sequences",
+      "VARIABLE x",
+      "Init == x = 0",
+      "Next == UNCHANGED x",
+      "Inv == <<>> \\in Seq({p \\in Seq({1 \\div x}) : TRUE})",
+    ];
+    expect(await compareWithInterpreter(divided, `${CONFIG}\nINVARIANT Inv`)).toContainEqual(
+      expect.stringMatching(/^\[engine\] native: stopped: /),
+    );
     const enumerated = [
       "EXTENDS Naturals",
       "VARIABLE x",
