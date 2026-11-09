@@ -3,7 +3,7 @@
 // Usage: bun scripts/front-differential.ts <mode> [--fixtures] [--filter text] [--mutate count]
 //   [--rust <front-dump>]
 // The modes are tokens, ast, sany-ast, config (over the .cfg files), resolve, model, ir, order,
-// and time, which
+// model-ir, and time, which
 // compares how long each side takes to parse each module instead. resolve links each module as the
 // root of a spec without a model, reading the modules it imports beside it and from the corpora's
 // library, and compares the environment: each definition by key, with every name resolved, the
@@ -11,7 +11,9 @@
 // link yet is counted, not compared. model does the same for each corpus model, a .cfg file and
 // the spec beside it, with the model's constants and substitutions. ir lowers each module's
 // environment to the engine IR, with every definition in it, and compares the bytes. order compares
-// TLC's string order of each model and the root module's orders of declarations and definitions. --fixtures reads only the fixtures, so it runs without the corpora.
+// TLC's string order of each model and the root module's orders of declarations and definitions.
+// model-ir lowers each model's environment as ir does, with its constants' values and the texts
+// ranked in TLC's string order. --fixtures reads only the fixtures, so it runs without the corpora.
 // --mutate adds four variants of each of the first count modules, with syntax inserted and text
 // deleted at places a fixed seed picks, so the two sides' errors are compared too. Without --rust,
 // it builds front-dump with cargo first.
@@ -26,7 +28,7 @@ import { type ModelConfig, parseConfig } from "../src/config";
 import { lowerToIr } from "../src/engine/ir";
 import { createEnvironment } from "../src/environment";
 import { TlaConfigError, TlaEvaluationError, TlaModuleError, TlaSyntaxError } from "../src/errors";
-import type { Builtin } from "../src/evaluate";
+import type { Builtin, Environment } from "../src/evaluate";
 import { tokenize } from "../src/lexer";
 import { parseModule, parseSanyModule } from "../src/parser";
 import { createTlcOrder } from "../src/tlc/order";
@@ -149,9 +151,31 @@ const readEnvironment = (source: string, path: string, config?: ModelConfig) => 
 // definition of the environment, by key, as an invariant, so it holds every definition. No text is
 // ranked, so the texts follow their first use.
 const lowerDefinitions = (source: string, path: string) => {
-  const environment = linkSpec(source, path).specification.environment;
-  const root: Expression = { kind: "Number", value: 0, location: { line: 0, column: 0 } };
   setStringOrder([]);
+  return lowerEnvironment(linkSpec(source, path).specification.environment);
+};
+
+// The IR of a model's environment, with the texts ranked in TLC's string order as check.ts ranks
+// them before it links the spec.
+const lowerModel = (source: string, _path: string, spec: string) => {
+  const config = parseConfig(source);
+  const specSource = readFileSync(spec, "utf8");
+  const loadModule = createLoader(spec);
+  const order = createTlcOrder(specSource, loadModule);
+  setStringOrder(order.getStringOrder(config));
+  const specification = createEnvironment(config, {
+    source: specSource,
+    loadModule,
+    order,
+    print: () => {},
+    files: { readFile: () => undefined, writeFile: () => {} },
+    isSanyAccepted: true,
+  });
+  return lowerEnvironment(specification.environment);
+};
+
+const lowerEnvironment = (environment: Environment) => {
+  const root: Expression = { kind: "Number", value: 0, location: { line: 0, column: 0 } };
   const outcome = lowerToIr({
     config: { ...parseConfig(""), invariants: [...environment.definitions.keys()] },
     environment,
@@ -185,6 +209,7 @@ const MODES: Record<string, (source: string, path: string, spec: string) => stri
   "sany-ast": writeResult((source) => parseSanyModule(source)),
   resolve: writeResult((source, path) => readEnvironment(source, path)),
   ir: writeResult(lowerDefinitions),
+  "model-ir": writeResult(lowerModel),
   order: writeResult(readOrders),
   model: writeResult((source, _path, spec) =>
     readEnvironment(readFileSync(spec, "utf8"), spec, parseConfig(source)),
@@ -230,7 +255,7 @@ if (mode !== "time" && MODES[mode] === undefined) {
   throw new Error(`front-differential takes a mode: ${[...Object.keys(MODES), "time"].join(", ")}`);
 }
 const filter = getOption("--filter");
-const isModel = mode === "model" || mode === "order";
+const isModel = ["model", "order", "model-ir"].includes(mode);
 const extension = mode === "config" || isModel ? ".cfg" : ".tla";
 // A model is a configuration and the spec of the same name beside it.
 const getSpec = (path: string) => {
@@ -279,7 +304,7 @@ const getRustBinary = () => {
 };
 const rust = getRustBinary();
 
-const isLinked = ["resolve", "model", "ir", "order"].includes(mode);
+const isLinked = ["resolve", "model", "ir", "order", "model-ir"].includes(mode);
 if (isLinked) linkLibraryModules();
 
 const runRust = (batch: typeof modules) => {

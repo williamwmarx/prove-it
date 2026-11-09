@@ -112,6 +112,19 @@ describe.if(ADDON !== undefined)("the native engine's lazy sets", () => {
     });
   }
 
+  it("enumerates a set of more than a million functions", async () => {
+    const body = [
+      "EXTENDS Naturals, FiniteSets",
+      "VARIABLES x, y",
+      "Init == /\\ x = Cardinality({f \\in [1..20 -> BOOLEAN] : f[1]})",
+      "        /\\ y \\in {f \\in [1..20 -> BOOLEAN] : \\A k \\in 1..19 : ~f[k]}",
+      "Next == UNCHANGED <<x, y>>",
+    ];
+    expect(await compareWithInterpreter(body, CONFIG)).toContainEqual(
+      expect.stringMatching(COMPLETE),
+    );
+  });
+
   it("streams each set of a UNION in turn, as TLC counts it", async () => {
     const body = [
       "VARIABLE x",
