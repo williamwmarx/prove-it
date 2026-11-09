@@ -21,9 +21,9 @@ use crate::print::{format_pretty, format_printed, format_value};
 use crate::random::{random_element, random_subset};
 use crate::sets::{as_tuple, cardinality, difference, intersection, is_member, is_subset, union};
 use crate::value::{
-    Class, EvalError, Evaluated, Function, Lazy, Text, TlcMessage, Value, compare, elements,
-    equals, fail, fail_coded, fail_runtime, fail_with, find_key, from_store, set_of,
-    sorted_function, written_function,
+    Class, EvalError, Evaluated, Function, Lazy, Search, Text, TlcMessage, Value, compare,
+    elements, equals, fail, fail_coded, fail_runtime, fail_with, find_key, from_store, note_sorted,
+    set_of, sorted_function, written_function,
 };
 
 /// The bindings an expression sees, innermost first.
@@ -1350,6 +1350,11 @@ impl<'ir> Evaluator<'ir> {
             DefinitionForm::Operator(_) => return fail("an operator used as a value"),
         };
         if self.reads == reads && self.printed.len() == printed {
+            // TLC computed the value of a definition that reads no state as it started, and
+            // sorted it.
+            if matches!(&definition.form, DefinitionForm::Operator(_)) {
+                note_sorted(&value);
+            }
             self.cache.insert(key, value.clone());
         }
         Ok(value)
@@ -1918,7 +1923,15 @@ impl<'ir> Evaluator<'ir> {
                 keys.push(element.clone());
                 values.push(self.function_body(body, &context.bind_value(name, element.clone()))?);
             }
-            return sorted_function(keys, values, Class::Lambda);
+            let function = sorted_function(keys, values, Class::Lambda)?;
+            // Applied while TLC keeps it lazy, the function asks its bound's set for the
+            // argument, which TLC has sorted where a definition that reads no state names it.
+            if let Value::Function(inner) = &function
+                && self.is_sorted_constant(bound.set)
+            {
+                inner.search.set(Search::SortedDomain);
+            }
+            return Ok(function);
         }
         // TLC evaluates every domain before it enumerates any (`Tool.evalAppl`'s
         // `OPCODE_fc`), so a later domain fails even when an earlier one is empty.
@@ -1941,7 +1954,28 @@ impl<'ir> Evaluator<'ir> {
                 Ok(())
             },
         )?;
-        sorted_function(keys, values, Class::Lambda)
+        let function = sorted_function(keys, values, Class::Lambda)?;
+        if let ([bound], Value::Function(inner)) = (bounds, &function)
+            && self.is_sorted_constant(bound.set)
+        {
+            inner.search.set(Search::SortedDomain);
+        }
+        Ok(function)
+    }
+
+    // Whether an expression names a definition whose value TLC computed and sorted as it
+    // started, which the evaluator has found to read no state.
+    fn is_sorted_constant(&self, node: NodeId) -> bool {
+        let NodeKind::Identifier(name) = self.kind(node) else {
+            return false;
+        };
+        let Resolution::Definition(index) = name.resolution else {
+            return false;
+        };
+        let definition = self.ir.definitions[index as usize];
+        !name.is_local
+            && matches!(&self.definition(definition).form, DefinitionForm::Operator(params) if params.is_empty())
+            && self.cache.contains_key(&(definition, false))
     }
 
     // A function's value at one key. TLC builds the function in a method of the FcnLambdaValue
@@ -2307,6 +2341,7 @@ impl<'ir> Evaluator<'ir> {
             range,
             class: function.class.clone(),
             written: function.written.clone(),
+            search: function.search.clone(),
             interval: function.interval,
         })))
     }
