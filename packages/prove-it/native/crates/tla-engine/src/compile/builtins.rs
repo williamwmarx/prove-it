@@ -493,6 +493,16 @@ impl Compiler<'_> {
                 let set = self.operand(&operands[1])?;
                 let is_in = name == "\\in";
                 let footprint = element.footprint.merge(&set.footprint);
+                if set.member.is_none() && set.infinite.is_none() && set.footprint.width() == 0 {
+                    return Ok(Some(predicate_node(
+                        Predicate::Member {
+                            element: Leaf::of(&element),
+                            set: Leaf::of(&set),
+                            is_in,
+                        },
+                        footprint,
+                    )));
+                }
                 let evaluate = fused::member_const(&element, &set, is_in).unwrap_or_else(|| {
                     let test = self.member_test(&set);
                     let element = element.eval.clone();
