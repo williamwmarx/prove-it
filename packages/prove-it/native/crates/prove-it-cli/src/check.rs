@@ -15,7 +15,7 @@ use tla_values::{Id, Store};
 use crate::args::{Java, Parsed, USAGE, get_java_launch};
 use crate::failure::{ErrorStop, print_assumption_failure, print_failure};
 use crate::files::FileDescriber;
-use crate::front::read_front;
+use crate::front::{Failure, Read, read_front};
 use crate::messages::{self as code, Level, Printer};
 use crate::summary::{
     actual_probability, fingerprint_distance, format_count, format_probability,
@@ -25,6 +25,8 @@ use crate::time::{format_date, format_duration};
 use crate::trace::{PostconditionRun, Postconditions, check_postconditions, rebuild_trace};
 use tla_front::TlcVersion;
 use tla_front::config::{ModelConfig, parse_config};
+use tla_front::errors::FrontError;
+use tla_front::tlc_messages::CodedError;
 use tla_trace::{Site, pretty_print};
 use tla_trace::{Stats, Verdict as PostconditionVerdict};
 
@@ -34,6 +36,7 @@ const DEADLOCK: i32 = 11;
 const ASSUMPTION_VIOLATION: i32 = 10;
 const SAFETY_VIOLATION: i32 = 12;
 const LIVENESS_VIOLATION: i32 = 13;
+const SPEC_PARSE_ERROR: i32 = 150;
 const CONFIG_PARSE_ERROR: i32 = 151;
 
 /// The exit code of a run that needs something the binary doesn't do natively yet.
@@ -445,13 +448,21 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
         return CONFIG_PARSE_ERROR;
     }
     let start = Instant::now();
-    // The front end reports a configuration it can't read; the binary reads what it prints by.
+    // TLC reads the configuration file before it parses the spec, and reports one it can't parse
+    // as it reports a TlaConfigError (`printFailure`).
     let config_text = config_path.and_then(|path| std::fs::read_to_string(path).ok());
-    let Some(config) = config_text
+    let parsed = config_text
         .as_deref()
-        .and_then(|text| parse_config(text, TlcVersion::Master).ok())
-    else {
-        return report_not_native(printer, "a configuration file the front end rejects");
+        .map(|text| parse_config(text, TlcVersion::Master));
+    let config = match parsed {
+        Some(Ok(config)) => config,
+        Some(Err(error)) => {
+            let Some(coded) = FrontError::Config(error.message).get_coded(printer.is_tool) else {
+                return report_not_native(printer, "a configuration file the front end rejects");
+            };
+            return print_coded_failure(printer, &coded, start);
+        }
+        None => return report_not_native(printer, "a configuration file the front end rejects"),
     };
     if dump.is_some() {
         return report_not_native(printer, "-dump");
@@ -471,8 +482,10 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
             false,
         ),
         &java.libraries,
+        printer.is_tool,
     ) {
-        Ok(front) => front,
+        Ok(Read::Model(front)) => front,
+        Ok(Read::Failed(failure)) => return print_failed_front(printer, &failure, start),
         Err(reason) => return report_not_native(printer, &reason),
     };
     printer.raw(&front.output);
@@ -1236,6 +1249,42 @@ fn print_postcondition_failure(
         ),
     };
     printer.print(code, Level::Error, &text);
+}
+
+/// A spec TLC stops at before it searches: SANY's report, framed by SANY's start and finish under
+/// -tool, then Starting..., then SANY's rejection of the spec or the error TLC reports.
+fn print_failed_front(printer: &mut Printer, failure: &Failure, start: Instant) -> i32 {
+    if printer.is_tool {
+        printer.print(code::STARTING_SANY, Level::None, "Starting SANY...");
+    }
+    printer.raw(failure.sany.as_bytes());
+    if printer.is_tool {
+        printer.print(code::SANY_FINISHED, Level::None, "SANY finished.");
+    }
+    printer.print(
+        code::STARTING,
+        Level::None,
+        &format!("Starting... ({})", format_date(SystemTime::now())),
+    );
+    match &failure.error {
+        Some(coded) => print_coded_failure(printer, coded, start),
+        None => {
+            printer.print(
+                code::PARSING_FAILED,
+                Level::Error,
+                "Parsing or semantic analysis failed.",
+            );
+            print_finished(printer, start);
+            SPEC_PARSE_ERROR
+        }
+    }
+}
+
+/// An error TLC reports with its code, then how long it ran (`printFailure`).
+fn print_coded_failure(printer: &mut Printer, coded: &CodedError, start: Instant) -> i32 {
+    printer.print(coded.code, Level::Error, &coded.text);
+    print_finished(printer, start);
+    coded.exit_code
 }
 
 /// Without -tool, TLC prints how long it ran for a person to read.

@@ -519,3 +519,44 @@ fn rebuilds_a_trace_through_an_operator_the_configuration_defines() {
     assert!(text.contains("Error: Invariant Inv is violated.\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nState 2: <Next line 7, col 9 to line 7, col 17 of module ConstantOperatorConfiguration>\nx = 1\n\nState 3: <Next line 7, col 9 to line 7, col 17 of module ConstantOperatorConfiguration>\nx = 2\n\n3 states generated, 3 distinct states found, 0 states left on queue.\nThe depth of the complete state graph search is 3.\n"), "{text}");
     std::fs::remove_dir_all(directory).expect("removed");
 }
+
+// Runs the binary on a spec of the test's own, with no recorded front.
+fn run_unrecorded(test: &str, spec: &str, config: &str) -> (Output, PathBuf) {
+    let directory =
+        std::env::temp_dir().join(format!("prove-it-cli-{test}-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    std::fs::write(directory.join("Stop.tla"), spec).expect("a spec");
+    std::fs::write(directory.join("Stop.cfg"), config).expect("a configuration");
+    (run(&directory, &["Stop"]), directory)
+}
+
+#[test]
+fn reports_a_constant_the_configuration_leaves_unassigned() {
+    let spec =
+        "---- MODULE Stop ----\nCONSTANT N\nVARIABLE x\nInit == x = N\nNext == x' = x\n====\n";
+    let (output, directory) = run_unrecorded("unassigned", spec, "INIT Init\nNEXT Next\n");
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(151), "{text}");
+    assert!(
+        text.contains("Linting of module Stop\nStarting... ("),
+        "{text}"
+    );
+    assert!(
+        text.contains(")\nError: The constant parameter N is not assigned a value by the configuration file.\nFinished in "),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn reports_a_spec_sany_rejects() {
+    let spec = "---- MODULE Stop ----\nVARIABLE x\nInit == x =\n====\n";
+    let (output, directory) = run_unrecorded("rejected", spec, "INIT Init\n");
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(150), "{text}");
+    assert!(
+        text.contains(")\nError: Parsing or semantic analysis failed.\nFinished in "),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}

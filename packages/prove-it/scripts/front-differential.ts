@@ -28,11 +28,11 @@ import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 
 import type { Definition, Expression } from "../src/ast";
-import { getIrStartup } from "../src/check";
+import { getIrStartup, lowerConstantSpec } from "../src/check";
 import { type ModelConfig, parseConfig } from "../src/config";
 import { toEngineProperties } from "../src/engine/context";
 import { lowerToIr } from "../src/engine/ir";
-import { createEnvironment } from "../src/environment";
+import { createEnvironment, type InstanceAction } from "../src/environment";
 import {
   isStackOverflow,
   PcalBugError,
@@ -54,7 +54,8 @@ import { validatePcalModule } from "../src/pcal/validate";
 import { getSany174LexicalError } from "../src/sany/lexer";
 import { getSanyParseError } from "../src/sany/parse-error";
 import { getSanyReport } from "../src/sany/report";
-import { getProperties, getSpecification } from "../src/search";
+import { createSearch, getProperties, getSpecification } from "../src/search";
+import { getNextSubstitution } from "../src/spec-description";
 import { createTlcOrder } from "../src/tlc/order";
 import type { TlcVersion } from "../src/tlc/version";
 import { setStringOrder } from "../src/values";
@@ -193,7 +194,8 @@ const readEnvironment = (source: string, path: string, config?: ModelConfig) => 
 // ranked, so the texts follow their first use.
 const lowerDefinitions = (source: string, path: string) => {
   setStringOrder([]);
-  return lowerEnvironment(linkSpec(source, path).specification.environment);
+  const specification = linkSpec(source, path).specification;
+  return lowerEnvironment(specification.environment, specification.instanceActions);
 };
 
 // The IR of a model's environment, with the texts ranked in TLC's string order as check.ts ranks
@@ -212,7 +214,7 @@ const lowerModel = (source: string, _path: string, spec: string) => {
     files: { readFile: () => undefined, writeFile: () => {} },
     isSanyAccepted: true,
   });
-  return lowerEnvironment(specification.environment);
+  return lowerEnvironment(specification.environment, specification.instanceActions);
 };
 
 // A model as check.ts lowers it, without TLC's actions, which the engine splits.
@@ -234,6 +236,13 @@ const lowerFullModel = (source: string, _path: string, spec: string) => {
   const specification = getSpecification(config, environment);
   const search = getProperties(config, environment, () => {});
   const properties = toEngineProperties(search);
+  // createSearch checks the configuration, and gives no search for a spec without variables,
+  // whose IR check.ts lowers with FALSE for Init and Next.
+  if (environment.variables.length === 0) {
+    createSearch(config, environment, () => [], undefined);
+    const constant = lowerConstantSpec(config, linked, undefined);
+    return "ir" in constant ? { ir: Buffer.from(constant.ir).toString("hex") } : constant;
+  }
   if (!specification.init || !specification.next) return { reason: "no Init or Next" };
   if (!properties) return { reason: "a property read in a scope" };
   const variableOrder = order.getDeclarationOrder("variable");
@@ -263,11 +272,16 @@ const lowerFullModel = (source: string, _path: string, spec: string) => {
     liveFormula: liveness?.formula,
     liveProperties: liveness?.properties ?? [],
     startup: getIrStartup(config, linked),
+    nextSubstitution: getNextSubstitution(config, environment, linked.instanceActions),
+    instanceActions: linked.instanceActions,
   });
   return "ir" in outcome ? { ir: Buffer.from(outcome.ir).toString("hex") } : outcome;
 };
 
-const lowerEnvironment = (environment: Environment) => {
+const lowerEnvironment = (
+  environment: Environment,
+  instanceActions: Map<string, InstanceAction>,
+) => {
   const root: Expression = { kind: "Number", value: 0, location: { line: 0, column: 0 } };
   const outcome = lowerToIr({
     config: { ...parseConfig(""), invariants: [...environment.definitions.keys()] },
@@ -283,6 +297,8 @@ const lowerEnvironment = (environment: Environment) => {
     liveFormula: undefined,
     liveProperties: [],
     startup: { substitutes: [], definitions: [], symmetry: undefined, assumptions: [] },
+    nextSubstitution: undefined,
+    instanceActions,
   });
   return "ir" in outcome ? { ir: Buffer.from(outcome.ir).toString("hex") } : outcome;
 };

@@ -238,3 +238,18 @@ Still to do:
   - a postcondition TLC computes as it starts, which it rejects;
   - an unwitnessed `_POSSIBLE` predicate, and `_POSSIBLE` counts after a search that stopped;
   - what `Rebuilder::postcondition` declines, such as CounterExample's actions with parameters.
+
+## Specs TLC stops at before the search
+
+- Where the differential records no front, the binary asks tla-front whether TLC stops before it
+  searches, and prints what TLC prints then:
+  - SANY's report, framed by 2220 "Starting SANY..." and 2219 "SANY finished." under -tool;
+  - 2185 `Starting... (…)`;
+  - SANY's rejection of the spec (3002, exit 150), or the error tla-front's lowering raises with
+    TLC's code and exit code (`FrontError::get_coded`: configuration errors with 151, evaluation
+    errors with 75, a stack overflow with 255);
+  - then 2186.
+- A configuration file `parse_config` rejects is reported the same way, right after the banner, as
+  TLC reads it before it parses the spec.
+- Until tla-front checks that an invariant is a state predicate (2146), which TLC does before it
+  looks up the properties, a property "not defined" (2229) stays not native.
