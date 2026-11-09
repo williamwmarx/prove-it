@@ -239,11 +239,23 @@ const installTest = () => {
       ? []
       : [`${runtime} exited ${result.status}:\n${result.stdout}\n${result.stderr}`];
   });
+  // The native CLI checks few models yet and stops on the others, but it starts and prints TLC's
+  // banner first.
+  const binary = join(
+    project,
+    `node_modules/@atemp/prove-it-${built[0].name}/bin/prove-it${process.platform === "win32" ? ".exe" : ""}`,
+  );
+  const native = spawnSync(binary, ["Commit.tla"], {
+    cwd: join(PACKAGE_DIRECTORY, "tests/fixtures/commit"),
+    encoding: "utf8",
+  });
+  const isStarted = native.stdout.startsWith("TLC2 Version ");
+  console.log(`bin/prove-it: ${isStarted ? "started" : "didn't start"}`);
+  if (!isStarted)
+    failures.push(`bin/prove-it exited ${native.status}:\n${native.stdout}\n${native.stderr}`);
   rmSync(project, { recursive: true, force: true });
   if (failures.length > 0) {
-    console.error(
-      `The installed ${built[0].name} package didn't search natively:\n${failures.join("\n")}`,
-    );
+    console.error(`The installed ${built[0].name} package failed:\n${failures.join("\n")}`);
     process.exit(1);
   }
 };

@@ -12,13 +12,16 @@ use crate::ABI_VERSION;
 
 // Declares N-API functions. Linux and macOS leave them to the loader, which finds them in the host
 // process. Windows has no such lookup, and the host may be node.exe or bun.exe, so each is resolved
-// in the host's executable the first time it is called.
+// in the host's executable the first time it is called, and the module's NAPI_NAMES lists them for
+// the check as the addon loads.
 macro_rules! napi_functions {
     ($($vis:vis fn $name:ident($($argument:ident: $type:ty),* $(,)?) -> $result:ty;)*) => {
         #[cfg(not(windows))]
         unsafe extern "C" {
             $($vis fn $name($($argument: $type),*) -> $result;)*
         }
+        #[cfg(windows)]
+        pub(super) const NAPI_NAMES: &[&str] = &[$(concat!(stringify!($name), "\0")),*];
         $(
             #[cfg(windows)]
             $vis unsafe fn $name($($argument: $type),*) -> $result {
@@ -35,21 +38,35 @@ macro_rules! napi_functions {
     };
 }
 
-// The address of a function the host's executable exports.
+// The address of a function the host's executable exports, or null, given its name and a NUL.
 #[cfg(windows)]
-fn get_host_function(name: &'static str) -> usize {
+fn find_host_function(name: &str) -> *mut c_void {
     #[link(name = "kernel32")]
     unsafe extern "system" {
         fn GetModuleHandleW(name: *const u16) -> *mut c_void;
         fn GetProcAddress(module: *mut c_void, name: *const c_char) -> *mut c_void;
     }
-    let address = unsafe { GetProcAddress(GetModuleHandleW(null()), name.as_ptr().cast()) };
-    assert!(
-        !address.is_null(),
-        "the host doesn't export {}",
-        name.trim_end_matches('\0')
-    );
+    unsafe { GetProcAddress(GetModuleHandleW(null()), name.as_ptr().cast()) }
+}
+
+// The address of an N-API function, which the check as the addon loads found.
+#[cfg(windows)]
+fn get_host_function(name: &str) -> usize {
+    let address = find_host_function(name);
+    assert!(!address.is_null(), "the host doesn't export {name}");
     address as usize
+}
+
+// The first N-API function the addon calls that the host doesn't export, as an older Node or Bun
+// may not, so the addon fails to load, naming it, and the TypeScript engine searches instead.
+#[cfg(windows)]
+fn find_missing_host_function() -> Option<&'static str> {
+    NAPI_NAMES
+        .iter()
+        .chain(store::NAPI_NAMES)
+        .chain(check::NAPI_NAMES)
+        .find(|name| find_host_function(name).is_null())
+        .map(|name| name.trim_end_matches('\0'))
 }
 
 mod check;
@@ -232,6 +249,15 @@ unsafe fn export(
 /// Only Node or Bun calls it, with the environment and the exports object they made.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn napi_register_module_v1(env: napi_env, exports: napi_value) -> napi_value {
+    #[cfg(windows)]
+    if let Some(name) = find_missing_host_function() {
+        let message = std::ffi::CString::new(format!(
+            "the host doesn't export {name}, which the native engine needs"
+        ))
+        .unwrap_or_default();
+        unsafe { napi_throw_error(env, null(), message.as_ptr()) };
+        return null_mut();
+    }
     unsafe {
         guard(env, || {
             export(env, exports, c"abiVersion", abi_version)?;
@@ -246,4 +272,16 @@ pub unsafe extern "C" fn napi_register_module_v1(env: napi_env, exports: napi_va
 #[unsafe(no_mangle)]
 pub extern "C" fn node_api_module_get_api_version_v1() -> i32 {
     NAPI_VERSION
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    // A test executable exports no N-API functions, so the check names the first the addon needs.
+    #[test]
+    fn a_host_without_n_api_names_the_first_function_missing() {
+        assert_eq!(
+            super::find_missing_host_function(),
+            Some("napi_create_function")
+        );
+    }
 }
