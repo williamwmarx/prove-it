@@ -941,6 +941,18 @@ impl<'ir> Evaluator<'ir> {
                     ),
                 )
             }
+            // `OPCODE_uc`: TLC evaluates no CHOOSE without a bound. Where it computes ENABLED of
+            // one as an action, it words the failure apart.
+            NodeKind::Choose { set: None, .. } if self.is_enabling => {
+                fail("an unbounded CHOOSE in ENABLED")
+            }
+            NodeKind::Choose { set: None, .. } => fail_runtime(
+                "an unbounded CHOOSE",
+                format!(
+                    "TLC attempted to evaluate an unbounded CHOOSE.\nMake sure that the expression is of form CHOOSE x \\in S: P(x).\n{}",
+                    self.describe_range(node)
+                ),
+            ),
             NodeKind::SetEnumeration(items) => {
                 let values = items
                     .iter()
@@ -3058,7 +3070,6 @@ fn describe(kind: &NodeKind) -> &'static str {
         NodeKind::Lambda { .. } => "LAMBDA",
         NodeKind::OperatorReference(_) => "an operator reference",
         NodeKind::UnboundedQuantifier { .. } => "an unbounded quantifier",
-        NodeKind::Choose { .. } => "an unbounded CHOOSE",
         NodeKind::FunctionConstruction { .. } => "a recursive function",
         NodeKind::Always(_) | NodeKind::Eventually(_) => "a temporal formula",
         NodeKind::WeakFairness { .. } | NodeKind::StrongFairness { .. } => "a fairness",
