@@ -231,6 +231,21 @@ impl<'a> Lowering<'a> {
                     .map(|element| self.write_value(element))
                     .collect(),
             ),
+            // A record is TLC's RecordValue, class 3, its names before its values.
+            ConfigValue::Record(fields) => {
+                let domain = fields
+                    .iter()
+                    .map(|(name, _)| Value::String(self.get_value_string(name)))
+                    .collect();
+                Value::Function {
+                    class: 3,
+                    domain,
+                    range: fields
+                        .iter()
+                        .map(|(_, value)| self.write_value(value))
+                        .collect(),
+                }
+            }
         }
     }
 
@@ -330,6 +345,21 @@ impl<'a> Lowering<'a> {
             text,
             resolution,
             is_local,
+        })
+    }
+
+    /// A name nothing global resolves is one a scope binds, as a definition an INSTANCE in a LET
+    /// copies in under a key the resolver leaves alone, so `ir.ts` writes it as local.
+    fn write_bound_name(
+        &mut self,
+        name: &Name,
+        is_operator: bool,
+        is_local: bool,
+    ) -> Result<IrName> {
+        let name = self.write_name(name, is_operator, is_local)?;
+        Ok(IrName {
+            is_local: name.is_local || name.resolution == Resolution::None,
+            ..name
         })
     }
 
@@ -475,11 +505,11 @@ impl<'a> Lowering<'a> {
             ExpressionKind::String { value } => NodeKind::String(self.get_text(value)),
             ExpressionKind::Identifier { .. } => {
                 let name = expression.reference().unwrap_or_default();
-                NodeKind::Identifier(self.write_name(&name, false, is_local)?)
+                NodeKind::Identifier(self.write_bound_name(&name, false, is_local)?)
             }
             ExpressionKind::Apply { args, .. } => {
                 let name = expression.reference().unwrap_or_default();
-                let name = self.write_name(&name, true, is_local)?;
+                let name = self.write_bound_name(&name, true, is_local)?;
                 NodeKind::Apply {
                     name,
                     args: self.write_nodes(args)?,
@@ -848,7 +878,9 @@ impl<'a> Lowering<'a> {
             } else {
                 crate::TlcVersion::Master
             },
-        )?;
+        )
+        // `createLivenessChecker` runs inside `withUnexpectedException`.
+        .map_err(crate::tlc_messages::with_unexpected_exception)?;
         let init = self.write_root(init)?;
         let next = match &specification.next {
             Some(next) => Some(self.write_root(next)?),

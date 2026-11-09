@@ -1009,6 +1009,18 @@ fn config_value(value: &crate::config::ConfigValue) -> Json {
             kind("Set"),
             ("elements", Some(list(elements, config_value))),
         ]),
+        ConfigValue::Record(fields) => object(vec![
+            kind("Record"),
+            (
+                "fields",
+                Some(list(fields, |(name, value)| {
+                    object(vec![
+                        ("name", Some(text(name))),
+                        ("value", Some(config_value(value))),
+                    ])
+                })),
+            ),
+        ]),
     }
 }
 

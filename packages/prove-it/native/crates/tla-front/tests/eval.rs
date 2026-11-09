@@ -13,6 +13,15 @@ use tla_front::spec::create_identifier;
 use tla_front::values::ValueOrder;
 
 fn try_evaluate(definitions: &str, name: &str) -> Result<ConfigValue, FrontError> {
+    try_evaluate_ranked(definitions, name, &[])
+}
+
+/// Evaluates with TLC's string order ranking `texts` in turn.
+fn try_evaluate_ranked(
+    definitions: &str,
+    name: &str,
+    texts: &[&str],
+) -> Result<ConfigValue, FrontError> {
     let source =
         format!("---- MODULE Main ----\nEXTENDS Naturals, FiniteSets\n{definitions}\n====");
     let config = parse_config("", TlcVersion::Master).expect("a configuration");
@@ -25,7 +34,11 @@ fn try_evaluate(definitions: &str, name: &str) -> Result<ConfigValue, FrontError
         is_level_checked: false,
     })
     .expect("an environment");
-    let ranks: FastMap<Rc<str>, u32> = FastMap::default();
+    let ranks: FastMap<Rc<str>, u32> = texts
+        .iter()
+        .zip(0..)
+        .map(|(text, rank)| (Rc::from(*text), rank))
+        .collect();
     let evaluator = Evaluator::new(
         &environment,
         ValueOrder { ranks: &ranks },
@@ -98,5 +111,55 @@ fn fails_as_tlc_does_to_enumerate_functions_of_a_named_set() {
     assert_eq!(
         evaluate("Pick == CHOOSE x \\in 1..5 : x > 3", "Pick"),
         ConfigValue::Number(4.0)
+    );
+}
+
+fn record(fields: &[(&str, ConfigValue)]) -> ConfigValue {
+    ConfigValue::Record(
+        fields
+            .iter()
+            .map(|(name, value)| (name.to_string(), value.clone()))
+            .collect(),
+    )
+}
+
+#[test]
+fn orders_records_by_size_then_names_then_values() {
+    // TLC orders field names by when it interned them: here `b` before `a`.
+    let ranked = |definitions: &str| {
+        try_evaluate_ranked(definitions, "S", &["b", "a"])
+            .unwrap_or_else(|error| panic!("{error:?}"))
+    };
+    assert_eq!(
+        ranked("S == {[a |-> 1, b |-> 2], [b |-> 1, a |-> 2], [a |-> 0]}"),
+        ConfigValue::Set(vec![
+            record(&[("a", ConfigValue::Number(0.0))]),
+            record(&[
+                ("b", ConfigValue::Number(1.0)),
+                ("a", ConfigValue::Number(2.0))
+            ]),
+            record(&[
+                ("b", ConfigValue::Number(2.0)),
+                ("a", ConfigValue::Number(1.0))
+            ]),
+        ])
+    );
+    let records = ranked("S == [a : {1, 2}, b : {0}]");
+    assert_eq!(
+        records,
+        ConfigValue::Set(vec![
+            record(&[
+                ("b", ConfigValue::Number(0.0)),
+                ("a", ConfigValue::Number(1.0))
+            ]),
+            record(&[
+                ("b", ConfigValue::Number(0.0)),
+                ("a", ConfigValue::Number(2.0))
+            ]),
+        ])
+    );
+    assert_eq!(
+        ranked("S == {r.a : r \\in [a : {1, 2}, b : {0}]}"),
+        numbers(&[1.0, 2.0])
     );
 }
