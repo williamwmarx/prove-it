@@ -822,7 +822,7 @@ impl<'a> Compiler<'a> {
     fn units(&mut self, text: TextId) -> Vec<u16> {
         let ir = self.ir;
         self.texts[text as usize]
-            .get_or_insert_with(|| ir.texts[text as usize].encode_utf16().collect())
+            .get_or_insert_with(|| ir.get_text_units(text))
             .clone()
     }
 

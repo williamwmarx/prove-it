@@ -21,9 +21,8 @@ fn main() {
         .find_map(|argument| argument.parse().ok())
         .unwrap_or(15);
     let ir = tla_ir::decode(include_bytes!("mutual-exclusion.ir")).expect("the bench's IR");
-    let ranked: Vec<Vec<u16>> = ir.texts[..ir.ranked_count as usize]
-        .iter()
-        .map(|text| text.encode_utf16().collect())
+    let ranked: Vec<Vec<u16>> = (0..ir.ranked_count)
+        .map(|text| ir.get_text_units(text))
         .collect();
     let mut store = Store::new();
     store.reset(ranked.iter().map(Vec::as_slice));
