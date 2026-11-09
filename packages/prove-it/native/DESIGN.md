@@ -4,7 +4,9 @@ A design for a Rust model checker that is faster than today's Prove It and print
 TLC prints, staged so that every step ships on its own, is measurably faster, and is proven
 identical to TLC and to the TypeScript checker before it is switched on.
 
-Status: proposal, with M1 to M6 built (their outcomes are in section 11). Every number marked *measured*
+Status: M1 to M7 built (their outcomes are in section 11). Section 12 supersedes the fallback
+chain described in sections 0, 1 and 8.4: the target is now an all-Rust checker, with no
+TypeScript fallback. Every number marked *measured*
 comes from the prototypes that were under `native/prototypes/` until 1916b69 (section 10) on a
 local 4-core cloud machine (Rust 1.97.0, Bun 1.4.4, Node 22.23.4). Those timings vary by about 10%
 between runs. Depot numbers come from the benchmark of `main` at f284739 (run cb7zd2w63s), as
@@ -38,8 +40,8 @@ compiled predicates. The staged path takes these one at a time.
 | 1 | The engine core as an N-API addon: store, FP64, compiler, Init/Next walker, invariants, constraints, VIEW, symmetry, single-thread BFS, checkpoints. The TS front end, interpreter and CLI stay. | Large engine models 1.3–2× (store, probe, invariants, no JIT). Makes the AOT binary (16 ms start) as fast as the JIT one. | ≈8.7× (7.7–9.8×) |
 | 2 | A deterministic multi-threaded search, batched liveness answers, parallel symmetry and VIEW | 2–3× on models over 0.5 s on 4 cores | ≈11.3× (10.3–12.3×) |
 | 3 | Liveness on the engine's graph: tableau, SCCs, choosing the counterexample | ReadersWriters 0.38 → ≈0.10 s, TokenRing 0.54 → ≈0.16 s | ≈12.9× (11.6–14.3×) |
-| 4 | A native binary (12) with the lexer, parser, resolver, level checker and SANY. It hands nothing to JavaScript. | Small models from 50–150 ms down to 10–20 ms | ≈20× (17.6–24×) |
-| 5 | The interpreter's slow paths: traces, errors, Print, TLCGet, `-continue`, `-dump`, and all of TLC's output (12). TypeScript then stays only as the oracle. | Little speed. Removes the JS process from violation runs. | ≈ stage 4 |
+| 4 | A native binary (13) with the lexer, parser, resolver, level checker and SANY. It hands nothing to JavaScript. | Small models from 50–150 ms down to 10–20 ms | ≈20× (17.6–24×) |
+| 5 | The interpreter's slow paths: traces, errors, Print, TLCGet, `-continue`, `-dump`, and all of TLC's output (13). TypeScript then stays only as the oracle. | Little speed. Removes the JS process from violation runs. | ≈ stage 4 |
 
 **Parity harness.** Section 6 has the details. It has eleven layers, and the strongest four are new:
 1. A **state-log differential**: each engine writes, for every state in BFS order, its parent,
@@ -75,6 +77,11 @@ interpreter, is left optional (stage 5). The reason is structural. A violation, 
 `("a" :> 1)` is rare and short. It is also exactly where hash-consing loses information (section
 2.8). The interpreter already handles all of it by replaying the path (`check.ts`
 `resumeFromEngine`). Porting it buys parity risk, not speed.
+
+**Revised (section 12): C, all of it.** The parity harness has since made porting exact semantics
+routine, and a checker that needs no JavaScript runtime at all is worth more than the startup it
+saves: one native binary, no dependencies, threads everywhere. Stage 5 is no longer optional, and
+the native binary has no JS process to fall back to.
 
 ### 1.2 The boundary in stage 1
 
@@ -1013,7 +1020,7 @@ packages/prove-it/native/           Cargo workspace; rust-toolchain.toml pins 1.
   crates/tla-live        stage 3: tableau, SCCs, counterexamples
   crates/tla-front       stage 4: lexer, parser, resolver, levels, SANY success path, config, TLC order
   crates/prove-it-napi   cdylib: the N-API binding
-  crates/prove-it-cli    stages 4–5: the native binary (12)
+  crates/prove-it-cli    stages 4–5: the native binary (13)
   oracle/ValueOracle.java, tools/replay, fuzz/
 ```
 `Cargo.lock` is committed and builds use `--locked`, with no network in `build.rs`. Release
@@ -1032,8 +1039,8 @@ boundary. CPU baseline is `x86-64-v2` (no AVX2 assumption) and the default for a
   only because it cannot run generated code. With the Rust engine it does not need to: Init, Next
   and invariants run natively. Its 16 ms start (against 36 ms) then comes free for small models. M7
   measures this; it depends on Bun's AOT compiler loading N-API addons.
-- **Stages 4–5:** the native `prove-it` binary (12) is one file with no runtime beside it, and
-  npm ships it in the per-platform packages (12.6).
+- **Stages 4–5:** the native `prove-it` binary (13) is one file with no runtime beside it, and
+  npm ships it in the per-platform packages (13.6).
 - **Platforms and CI:** Linux builds and smoke tests run on Depot (`depot-ubuntu-24.04`, plus an
   arm64 runner). macOS and Windows build and run the 20-model differential smoke on hosted runners
   of those systems. A platform that cannot be tested is not published, and its users get the TS
@@ -1109,11 +1116,11 @@ boundary. CPU baseline is `x86-64-v2` (no AVX2 assumption) and the default for a
 
 ### 8.4 The native binary's process model (stages 4–5, as planned)
 
-Superseded: the native binary no longer falls back to a JS process. Section 12 plans
+Superseded: the native binary no longer falls back to a JS process. Section 13 plans
 `prove-it-cli`, one Rust binary that parses the arguments, runs the front end (`tla-front`), checks
 the model with the engine, and prints everything TLC prints. It never `exec`s `prove-it-js` and
 never hands a checkpoint to the interpreter. Until a path is native, the JS CLI stays the shipped
-one (12.6), and the TypeScript checker remains the oracle it is compared with (12.5).
+one (13.6), and the TypeScript checker remains the oracle it is compared with (13.5).
 
 ---
 
@@ -2281,15 +2288,48 @@ On the 4-core cloud machine, with `main` at a0f66ec before the merge of #31 and 
 
 ---
 
-## 12. The native binary (`prove-it-cli`), stages 4–5
+## 12. Rust end to end
+
+The target is one Rust implementation of the checker: front end, engine, liveness, and TLC's output,
+shipped as a native binary and as the N-API addon, with **no third-party crates** (the standard
+library only) and no TypeScript at run time. Output stays byte-identical to TLC.
+
+**Fallbacks go away.** Today a model can decline to the TypeScript engine, stop and hand over to
+the interpreter, or leave liveness and printing to TypeScript. Each of those paths is closed by
+covering it in Rust, then removing the TypeScript path once the gates below hold on it:
+- a Rust decline or run-time stop (other than a violation or deadlock, which Rust then prints) is a
+  coverage regression, gated by `engine-coverage`;
+- the TypeScript checker remains, for a while, the oracle that the differential and state-log
+  harnesses compare Rust with; it is deleted area by area when Rust has matched it on the whole
+  corpus and TLC's recordings carry the comparison alone.
+
+**Workstreams.** Each lands as small PRs that keep Parity at no new differences:
+
+| Workstream | Replaces | Gate |
+|---|---|---|
+| Engine coverage: TLC operators (Print, PrintT, TLCGet, TLCSet, RandomElement, Any, JavaTime, ToString), lazy sets, every run-time stop | the TypeScript engine as fallback | no decline, no stop on the corpus |
+| TLC's value printer in Rust | `values.ts` printing | ToString and traces identical to TLC |
+| Parallel search (section 4) | the TypeScript parallel search | state logs identical at 1 to 16 threads |
+| Speed: compiled guards and invariants (3.1's later tier) | — | the 1.3× per-model gate |
+| Liveness (stage 3) | `tableau.ts`, `liveness-checker.ts`, `liveness.ts` | same verdicts and counterexamples |
+| Front end (stage 4, `tla-front`) | lexer, parser, resolver, levels, SANY, config, TLC order, IR lowering | IR byte-equal to the TypeScript lowering; SANY's messages |
+| CLI and TLC's output (stage 5, `prove-it-cli`) | `cli/`, `check.ts`, `tlc/messages.ts`, traces | the full-stdout differential against TLC |
+
+**Distribution.** The binary ships per platform; the npm package becomes a thin launcher for it and
+then carries the binary alone. The proof checker (`src/prover`, `src/obligations`) is outside this
+plan for now.
+
+---
+
+## 13. The native binary (`prove-it-cli`), stages 4–5
 
 One Rust binary, `prove-it`, runs `prove-it <spec>` as the TS CLI does (`src/cli.ts`,
 `src/cli/`) and prints exactly what TLC prints: every message, the progress lines, `-tool`'s
 markers, violation and error traces, and TLC's exit codes. It is std only, as every crate here,
-and starts in about 1.5 ms (10.5). It replaces 8.4's plan of a front door that falls back to a JS
-process: nothing it meets is handed to JavaScript.
+and starts in about 1.5 ms (10.5). It is section 12's CLI workstream, and replaces 8.4's plan of a front door that falls
+back to a JS process: nothing it meets is handed to JavaScript.
 
-### 12.1 What the TypeScript CLI prints, and where
+### 13.1 What the TypeScript CLI prints, and where
 
 | Output | TypeScript today | Rust |
 |---|---|---|
@@ -2309,14 +2349,14 @@ process: nothing it meets is handed to JavaScript.
 | Several specs in one run (`Checking X.tla with X.cfg`), the first non-zero exit code | `checkSpecs` | `prove-it-cli` |
 | `tlapm`, `tla2sany.xml.XMLExporter` | `cli/tlapm.ts`, `cli/xml-exporter.ts` | out of scope: the JS CLI keeps them until they have their own plan |
 
-### 12.2 Seams to the other stages
+### 13.2 Seams to the other stages
 
 - **Front end.** The binary calls one function, `front(spec, config, options) -> Front`, which
   returns the IR (1.3) and what TLC prints before the search, as events: SANY's lines, the
   warnings, the liveness preamble (2212), or SANY's diagnostics and exit code. `tla-front`
   implements it. Until it lands, the binary reads a recorded front instead: the IR that
   `PROVE_IT_IR_DUMP` writes and the stdout the TS CLI printed after its banner and before the
-  search, from the directory `PROVE_IT_FRONT` names (12.5 makes them). This is a test seam, not a
+  search, from the directory `PROVE_IT_FRONT` names (13.5 makes them). This is a test seam, not a
   shipped path: with neither, the binary says which spec it can't parse yet and exits.
 - **Values.** The binary prints values only through a trait, `ValuePrinter`, with one method that
   formats a value of the engine's store as TLC's `Value.toString` does (records, functions built
@@ -2331,7 +2371,7 @@ process: nothing it meets is handed to JavaScript.
   a gap the binary reports on stderr (`prove-it: not native yet: <reason>`, exit 1), never a
   fallback; it closes as the engine stops stopping.
 
-### 12.3 Pull requests, each small and on its own
+### 13.3 Pull requests, each small and on its own
 
 1. `docs(native)`: this plan.
 2. `feat(native)`: the `prove-it-cli` crate and binary: arguments, command-line errors, the
@@ -2348,17 +2388,17 @@ process: nothing it meets is handed to JavaScript.
 7. `feat(native)`: the front end in place of the recorded one, once `tla-front` lands: SANY's
    output and diagnostics, warnings, assumptions.
 8. `feat(release)`: the per-platform packages carry the binary, and the JS `prove-it` launches it
-   (12.6), proposed to the coordinator, who owns `release.yml`.
+   (13.6), proposed to the coordinator, who owns `release.yml`.
 
-### 12.4 Parity, and the number to track
+### 13.4 Parity, and the number to track
 
 `scripts/differential.ts --native <path>` runs the binary on each of the 1466 runs (733 models in
 the default and `-tool` modes) with the same command line as the TS CLI, and compares its
 normalised transcript with TLC's recording. The count of runs where the two are equal is the
-binary's coverage; §12.7 records it as it grows. A run the binary can't do yet differs, so the
+binary's coverage; §13.7 records it as it grows. A run the binary can't do yet differs, so the
 count measures exactly what users would see.
 
-### 12.5 The recorded front (until `tla-front` lands)
+### 13.5 The recorded front (until `tla-front` lands)
 
 For each run, the differential first runs the TS CLI with `PROVE_IT_ENGINE_BACKEND=rust`,
 `PROVE_IT_ENGINE=debug` and `PROVE_IT_IR_DUMP`, and keeps the IR and the TS stdout between the
@@ -2368,7 +2408,7 @@ reached) has no front, and the binary can't do it yet. The binary prints its own
 banner, then the recorded front, then everything after it. So the recorded part is exactly what
 `tla-front` will produce, and nothing the binary owns is borrowed from TypeScript.
 
-### 12.6 Distribution
+### 13.6 Distribution
 
 - The binary ships in the per-platform packages that already carry the addon
   (`@atemp/prove-it-linux-x64-gnu`, `-linux-arm64-gnu`, …) as `bin/prove-it`, built by
@@ -2386,6 +2426,6 @@ banner, then the recorded front, then everything after it. So the recorded part 
   add it to each platform package, smoke-test it on x64 and arm64 without node or bun on the PATH)
   are the coordinator's, proposed rather than made here.
 
-### 12.7 As built
+### 13.7 As built
 
 Nothing yet.
