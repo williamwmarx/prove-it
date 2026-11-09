@@ -41,7 +41,7 @@ use tla_front::lexer::tokenize;
 use tla_front::lower::{Lowering, RankedTexts};
 use tla_front::order::TlcOrder;
 use tla_front::parser::{parse_module, parse_sany_module};
-use tla_front::spec::get_specification;
+use tla_front::spec::{get_properties, get_specification};
 use tla_ir::Model;
 
 fn write_tokens(out: &mut String, source: &str) {
@@ -308,7 +308,7 @@ fn main() -> ExitCode {
         .and_then(|index| arguments.get(index + 1))
         .map(PathBuf::from);
     let write: fn(&mut String, &str) = match mode.as_str() {
-        "resolve" | "model" | "ir" | "order" | "model-ir" | "spec" => |_, _| {},
+        "resolve" | "model" | "ir" | "order" | "model-ir" | "spec" | "properties" => |_, _| {},
         "tokens" => write_tokens,
         "ast" => |out, source| write_module(out, source, false),
         "sany-ast" => |out, source| write_module(out, source, true),
@@ -322,7 +322,7 @@ fn main() -> ExitCode {
         },
         _ => {
             eprintln!(
-                "usage: front-dump tokens|ast|sany-ast|config|resolve|model|ir|order|model-ir|spec|time < paths"
+                "usage: front-dump tokens|ast|sany-ast|config|resolve|model|ir|order|model-ir|spec|properties|time < paths"
             );
             return ExitCode::from(2);
         }
@@ -352,6 +352,21 @@ fn main() -> ExitCode {
                 library.as_deref(),
                 None,
             );
+        } else if mode == "properties" {
+            let spec = std::fs::read_to_string(spec_path).unwrap_or_default();
+            let properties = link(
+                &spec,
+                Path::new(spec_path),
+                library.as_deref(),
+                Some(&source),
+            )
+            .and_then(|environment| {
+                let config = parse_config(&source, TlcVersion::Master)
+                    .map_err(|error| FrontError::Config(error.message))?;
+                let facts = create_definition_facts(&environment);
+                get_properties(&config, &environment, &facts, TlcVersion::Master)
+            });
+            dump::properties(&properties).write(&mut line);
         } else if mode == "spec" {
             let spec = std::fs::read_to_string(spec_path).unwrap_or_default();
             let specification = link(

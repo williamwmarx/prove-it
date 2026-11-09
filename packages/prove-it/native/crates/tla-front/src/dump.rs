@@ -1278,3 +1278,44 @@ pub fn specification(
         ),
     ])
 }
+
+/// What `front-differential properties` compares of `getProperties`: each conjunct's name, where
+/// it is written, and whether it reads a scope.
+pub fn properties(value: &Result<crate::spec::Properties, crate::errors::FrontError>) -> Json {
+    use crate::errors::{FrontError, describe_range};
+    let properties = match value {
+        Ok(properties) => properties,
+        Err(FrontError::Syntax(error)) => return syntax_error(error),
+        Err(FrontError::Evaluation(message) | FrontError::Config(message)) => {
+            return object(vec![("error", Some(text(message)))]);
+        }
+        Err(FrontError::NotYet(reason)) => return object(vec![("notYet", Some(text(reason)))]),
+    };
+    let describe = |property: &crate::spec::Property| {
+        Json::Array(vec![
+            name(&property.name),
+            text(&describe_range(&property.expression)),
+            Json::Bool(property.scope.is_some()),
+        ])
+    };
+    object(vec![
+        ("invariants", Some(list(&properties.invariants, describe))),
+        (
+            "actionProperties",
+            Some(list(&properties.action_properties, |property| {
+                Json::Array(vec![
+                    name(&property.name),
+                    text(&describe_range(&property.action)),
+                    text(&describe_range(&property.subscript)),
+                    Json::Bool(property.scope.is_some()),
+                ])
+            })),
+        ),
+        (
+            "initialPredicates",
+            Some(list(&properties.initial_predicates, describe)),
+        ),
+        ("liveness", Some(list(&properties.liveness, describe))),
+        ("stateLevel", Some(list(&properties.state_level, name))),
+    ])
+}

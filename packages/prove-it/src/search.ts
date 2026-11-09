@@ -372,7 +372,7 @@ export const getSpecification = (config: ModelConfig, environment: Environment):
   };
 };
 
-const getProperties = (
+export const getProperties = (
   config: ModelConfig,
   environment: Environment,
   onProgress: CheckOptions["onProgress"],
