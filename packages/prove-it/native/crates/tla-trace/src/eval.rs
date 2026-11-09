@@ -381,6 +381,8 @@ fn as_java_failure<T>(signature: &str, result: Evaluated<T>) -> Evaluated<T> {
 fn is_text(text: &Text, word: &str) -> bool {
     text.units.iter().copied().eq(word.encode_utf16())
 }
+const IS_FINITE_SET: &str =
+    "public static tlc2.value.IBoolValue tlc2.module.FiniteSets.IsFiniteSet(tlc2.value.impl.Value)";
 const CARDINALITY: &str = "public static tlc2.value.impl.IntValue tlc2.module.FiniteSets.Cardinality(tlc2.value.impl.Value)";
 const TEXT_SERIALIZE: &str = "public static synchronized tlc2.value.impl.Value tlc2.module.Json.textSerialize(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel)";
 
@@ -2417,10 +2419,6 @@ impl<'ir> Evaluator<'ir> {
                 match name {
                     "\\cup" => union(&left, &right)?,
                     "\\cap" => intersection(&left, &right)?,
-                    // TLC keeps the difference of a set it can't enumerate, and tests it.
-                    _ if matches!(left, Value::Lazy(ref lazy) if matches!(**lazy, Lazy::Nat | Lazy::Int | Lazy::Real | Lazy::Strings | Lazy::Seq(_) | Lazy::Difference(..))) => {
-                        Value::Lazy(Rc::new(Lazy::Difference(left, right)))
-                    }
                     _ => difference(&left, &right)?,
                 }
             }
@@ -2600,16 +2598,20 @@ impl<'ir> Evaluator<'ir> {
                 };
                 int(counted? as i64)?
             }
+            // TLC reports what fails, but an EvalException, as the failure of the Java method
+            // `FiniteSets.IsFiniteSet` (`MethodValue.eval`).
             "IsFiniteSet" => {
                 arity(1)?;
                 let set = self.operand(&operands[0])?;
-                if matches!(
-                    set,
-                    Value::Bool(_) | Value::Int(_) | Value::Str(_) | Value::Model(_)
-                ) {
-                    return fail("IsFiniteSet of a non-set");
-                }
-                Value::Bool(is_finite(&set)?)
+                let checked = is_finite(&set);
+                let checked = match &checked {
+                    Err(EvalError {
+                        message: Some(message),
+                        ..
+                    }) if !message.is_eval_exception => as_java_failure(IS_FINITE_SET, checked),
+                    _ => checked,
+                };
+                Value::Bool(checked?)
             }
             "Seq" => {
                 arity(1)?;
@@ -3198,24 +3200,75 @@ fn is_finite(value: &Value) -> Evaluated<bool> {
     Ok(match value {
         Value::Lazy(lazy) => match &**lazy {
             Lazy::Nat | Lazy::Int | Lazy::Real | Lazy::Strings => false,
-            Lazy::Seq(range) => is_finite(range)? && is_empty(range),
-            Lazy::Difference(left, _) => is_finite(left)?,
+            Lazy::Seq(range) => is_finite(range)? && is_empty(range)?,
             Lazy::Subset(base) => is_finite(base)?,
             Lazy::FunctionSet(domain, range) => {
                 let is_domain_finite = is_finite(domain)?;
-                if is_domain_finite && is_empty(domain) {
+                if is_domain_finite && is_empty(domain)? {
                     return Ok(true);
                 }
                 let is_range_finite = is_finite(range)?;
-                (is_range_finite && is_empty(range))
+                (is_range_finite && is_empty(range)?)
                     || (is_domain_finite && is_range_finite)
                     || (is_range_finite && cardinality(range)? == 1)
             }
             Lazy::RecordSet(fields, _) => is_all_finite(fields.iter().map(|(_, set)| set))?,
             Lazy::Product(factors) => is_all_finite(factors.iter())?,
+            // `SetCapValue.isFinite`, `SetCupValue.isFinite` and `SetDiffValue.isFinite`.
+            Lazy::Cap(left, right) => {
+                if !is_finite(left)? && !is_finite(right)? {
+                    return finiteness_failure(value);
+                }
+                true
+            }
+            Lazy::Cup(left, right) => is_finite(left)? && is_finite(right)?,
+            Lazy::Diff(left, right) => {
+                if is_finite(left)? {
+                    return Ok(true);
+                }
+                if !is_finite(right)? {
+                    return finiteness_failure(value);
+                }
+                false
+            }
         },
+        // `isFinite` of a value that isn't a set.
+        Value::Bool(_) | Value::Int(_) | Value::Str(_) | Value::Model(_) => {
+            let kind = match value {
+                Value::Bool(_) => "boolean",
+                Value::Int(_) => "integer",
+                Value::Str(_) => "string",
+                _ => "model value",
+            };
+            return fail_runtime(
+                "IsFiniteSet of a non-set",
+                format!(
+                    "Attempted to check if the {kind} {} is a finite set.",
+                    format_pretty(value)
+                ),
+            );
+        }
+        Value::Function(function) if function.class.get() == Class::Lambda => {
+            return fail_runtime(
+                "IsFiniteSet of a function",
+                format!(
+                    "Attempted to check if the function:\n{}\nis a finite set.",
+                    format_pretty(value)
+                ),
+            );
+        }
         _ => true,
     })
+}
+
+fn finiteness_failure(set: &Value) -> Evaluated<bool> {
+    fail_runtime(
+        "checked whether a lazy set of infinite operands is finite",
+        format!(
+            "Attempted to check if the set {}is finite.",
+            format_pretty(set)
+        ),
+    )
 }
 
 // `SetOfRcdsValue.isFinite` and `SetOfTuplesValue.isFinite`: finite where a finite part is empty,
@@ -3225,7 +3278,7 @@ fn is_all_finite<'v>(parts: impl Iterator<Item = &'v Value>) -> Evaluated<bool> 
     for part in parts {
         if !is_finite(part)? {
             is_all_finite = false;
-        } else if is_empty(part) {
+        } else if is_empty(part)? {
             return Ok(true);
         }
     }
@@ -3234,24 +3287,42 @@ fn is_all_finite<'v>(parts: impl Iterator<Item = &'v Value>) -> Evaluated<bool> 
 
 // `Value.isEmpty` of a set whose finiteness TLC checks first, so it never enumerates an infinite
 // one.
-fn is_empty(value: &Value) -> bool {
-    match value {
+pub(crate) fn is_empty(value: &Value) -> Evaluated<bool> {
+    Ok(match value {
         Value::Set(elements) => elements.is_empty(),
         Value::Interval(low, high) => low > high,
         Value::Lazy(lazy) => match &**lazy {
-            Lazy::Nat
-            | Lazy::Int
-            | Lazy::Real
-            | Lazy::Strings
-            | Lazy::Seq(_)
-            | Lazy::Subset(_)
-            | Lazy::Difference(..) => false,
-            Lazy::FunctionSet(domain, range) => !is_empty(domain) && is_empty(range),
-            Lazy::RecordSet(fields, _) => fields.iter().any(|(_, set)| is_empty(set)),
-            Lazy::Product(factors) => factors.iter().any(is_empty),
+            Lazy::Nat | Lazy::Int | Lazy::Real | Lazy::Strings | Lazy::Seq(_) | Lazy::Subset(_) => {
+                false
+            }
+            Lazy::FunctionSet(domain, range) => !is_empty(domain)? && is_empty(range)?,
+            Lazy::RecordSet(fields, _) => {
+                for (_, set) in fields {
+                    if is_empty(set)? {
+                        return Ok(true);
+                    }
+                }
+                false
+            }
+            Lazy::Product(factors) => {
+                for factor in factors {
+                    if is_empty(factor)? {
+                        return Ok(true);
+                    }
+                }
+                false
+            }
+            // TLC enumerates them for a first element.
+            Lazy::Cap(..) | Lazy::Cup(..) | Lazy::Diff(..) => elements(value)?.is_empty(),
         },
-        _ => false,
-    }
+        Value::Unsorted(elements) => elements.is_empty(),
+        _ => {
+            return fail_runtime(
+                "isEmpty of a non-set",
+                format!("Shouldn't call isEmpty() on value {}", format_pretty(value)),
+            );
+        }
+    })
 }
 
 // TLC's `getKindString` of a value that isn't a set or a function, whose class the evaluator

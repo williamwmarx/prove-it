@@ -619,9 +619,8 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
 - In `tla-trace`: a set its parts empty enumerates to nothing before any part is enumerated; a
   domain its parts empty gives the one empty function; a nested set of functions, records or
   tuples is nonempty unless its parts empty it, and SUBSET S and Seq(S) always are.
-  `S \ T` of a set TLC can't enumerate is a value (`Lazy::Difference`), tested for membership
-  only, as TLC's `SetDiffValue`. TLCFP is the low 32 bits of the value's fingerprint
-  (`state_fingerprint`).
+  TLCFP is the low 32 bits of the value's fingerprint (`state_fingerprint`). The lazy `\cap`,
+  `\cup` and `\` values are the CLI session's port (`Lazy::Cap`, `Cup`, `Diff`).
 
 ## The specification's initial predicates, as TLC keeps them
 

@@ -95,13 +95,11 @@ fn write_value(value: &Value, is_strict: bool, is_normalized: bool, out: &mut St
 // The set TLC expands a lazy one into to print it, if any (`getExpandedLazySet`).
 fn expand(lazy: &Lazy) -> Option<Vec<Value>> {
     let size = match lazy {
-        Lazy::Nat
-        | Lazy::Int
-        | Lazy::Real
-        | Lazy::Strings
-        | Lazy::Seq(_)
-        | Lazy::Difference(..) => {
-            return None;
+        Lazy::Nat | Lazy::Int | Lazy::Real | Lazy::Strings | Lazy::Seq(_) => return None,
+        // TLC prints the set it enumerates, and the operation where it can't (`toString` with
+        // `TLCGlobals.expand`, swallowing the failure).
+        Lazy::Cap(..) | Lazy::Cup(..) | Lazy::Diff(..) => {
+            return crate::sets::enumerate(lazy).ok();
         }
         Lazy::Subset(base) => {
             return (cardinality(base).ok()? <= MAXIMUM_EXPANDED_SUBSET_BASE)
@@ -156,25 +154,16 @@ fn write_lazy(lazy: &Lazy, is_strict: bool, is_normalized: bool, out: &mut Strin
             format(base, out);
             out.push(')');
         }
-        // `SetDiffValue.toString`, an operand that is a difference in parentheses.
-        Lazy::Difference(left, right) => {
-            let operand = |value: &Value, out: &mut String| {
-                let is_nested =
-                    matches!(value, Value::Lazy(lazy) if matches!(**lazy, Lazy::Difference(..)));
-                if is_nested {
-                    out.push('(');
-                }
-                format(value, out);
-                if is_nested {
-                    out.push(')');
-                }
-            };
-            operand(left, out);
-            out.push_str(" \\ ");
-            operand(right, out);
-        }
         Lazy::Subset(base) => {
-            if matches!(base, Value::Interval(..)) {
+            // A `ParenthesizedSubset` operand, whatever its text.
+            let is_parenthesized = match base {
+                Value::Interval(..) => true,
+                Value::Lazy(lazy) => {
+                    matches!(**lazy, Lazy::Cap(..) | Lazy::Cup(..) | Lazy::Diff(..))
+                }
+                _ => false,
+            };
+            if is_parenthesized {
                 out.push_str("SUBSET (");
                 format(base, out);
                 out.push(')');
@@ -212,6 +201,26 @@ fn write_lazy(lazy: &Lazy, is_strict: bool, is_normalized: bool, out: &mut Strin
                 format(factor, out);
             }
             out.push(')');
+        }
+        Lazy::Cap(left, right) | Lazy::Cup(left, right) | Lazy::Diff(left, right) => {
+            let operator = match lazy {
+                Lazy::Cap(..) => " \\cap ",
+                Lazy::Cup(..) => " \\cup ",
+                _ => " \\ ",
+            };
+            // `toStringForCupCapDiff`: an `EnumerableValue` operand in parentheses.
+            let operand = |value: &Value, out: &mut String| {
+                if crate::value::is_enumerable(value) {
+                    out.push('(');
+                    format(value, out);
+                    out.push(')');
+                } else {
+                    format(value, out);
+                }
+            };
+            operand(left, out);
+            out.push_str(operator);
+            operand(right, out);
         }
     }
 }
