@@ -163,7 +163,14 @@ fn rebuild(
                         }
                         None => None,
                     };
-                    let aliases = rebuilder.alias(&trace, cycle_start, is_tool)?;
+                    // TLC prints a deadlocked initial state as it is (`TLCTrace.printTrace`).
+                    let is_alone =
+                        matches!(kind, ViolationKind::Deadlock { .. }) && trace.states.len() == 1;
+                    let aliases = if is_alone {
+                        None
+                    } else {
+                        rebuilder.alias(&trace, cycle_start, is_tool)?
+                    };
                     // CounterExample closes a lasso with its step back into the cycle, which a
                     // stuttering one doesn't take.
                     let cycle = match *kind {
