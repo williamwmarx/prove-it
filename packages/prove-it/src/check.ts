@@ -851,6 +851,7 @@ const searchStates = (
     Object.assign(current, { index, isExpanding: true, candidate: undefined });
     const getKey = isHeld ? (values: Value[]) => values : getFingerprintState;
     const key = getKey(state);
+    runtime.resetRandom();
     const action = withRebuiltLevel(previous, depths[index], () =>
       actions.find((item) =>
         getSuccessors(item.expression, previous, environment, item.scope).some((successor) =>

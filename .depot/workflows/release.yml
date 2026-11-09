@@ -1,9 +1,9 @@
 # Publishes packages/prove-it to npm when a commit on main changes its version, then tags the
 # commit v<version>. A push that changes package.json but not the version publishes nothing. Run
 # it by hand for a first release or to retry one that failed. The native engine's platform packages
-# for Linux x64 and arm64 and macOS arm64 and x64 go first, each built and tested on its own system
-# (macOS on GitHub's runners, by platforms.yml), and the main package lists them as
-# optionalDependencies, added when it is packed; other platforms get the TypeScript engine.
+# for Linux x64 and arm64, macOS arm64 and x64 and Windows x64 go first, each built and tested on its
+# own system (macOS and Windows on GitHub's runners, by platforms.yml), and the main package lists
+# them as optionalDependencies, added when it is packed; other platforms get the TypeScript engine.
 #
 # The npm token is NPM_TOKEN in the 1Password Environment prove-it-release, whose ID is below.
 # ONEPASSWORD_PROVE_IT_RELEASE_TOKEN, a Depot CI secret scoped to this repository, main and this
@@ -71,7 +71,7 @@ jobs:
     permissions:
       # To push the v<version> tag.
       contents: write
-      # To take the macOS packages from platforms.yml's run.
+      # To take the macOS and Windows packages from platforms.yml's run.
       actions: read
     steps:
       - name: Check out exactly the pushed main commit
@@ -126,10 +126,10 @@ jobs:
         with:
           name: linux-arm64-gnu
           path: ${{ runner.temp }}/fetched
-      # platforms.yml builds, tests and packs the macOS engines on GitHub's macOS runners, on the push
-      # of this same commit. This waits for that run, which the job's timeout bounds, fails unless it
-      # passed, and takes the packages it packed.
-      - name: Fetch the macOS engines
+      # platforms.yml builds, tests and packs the macOS and Windows engines on GitHub's runners, on the
+      # push of this same commit. This waits for that run, which the job's timeout bounds, fails unless
+      # it passed, and takes the packages it packed.
+      - name: Fetch the macOS and Windows engines
         if: steps.plan.outputs.publish == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -151,7 +151,7 @@ jobs:
             sleep 30
           done
           [[ "$conclusion" == success ]] || { echo "platforms.yml run $id of $GITHUB_SHA ended $conclusion" >&2; exit 1; }
-          for name in darwin-arm64 darwin-x64; do
+          for name in darwin-arm64 darwin-x64 win32-x64-msvc; do
             url=$(api "https://api.github.com/repos/$REPOSITORY/actions/runs/$id/artifacts?name=$name" |
               node -p 'JSON.parse(require("fs").readFileSync(0, "utf8")).artifacts[0].archive_download_url')
             api "$url" > "$RUNNER_TEMP/$name.zip"
@@ -170,7 +170,7 @@ jobs:
           platform=$(bun scripts/platform-packages.ts pack "$RUNNER_TEMP/platform-packages")
           echo "platform=$platform" >> "$GITHUB_OUTPUT"
           echo "Packed $(basename "$platform"), sha256 $(sha256sum "$platform" | cut -d' ' -f1)" | tee -a "$GITHUB_STEP_SUMMARY"
-          for name in linux-arm64-gnu darwin-arm64 darwin-x64; do
+          for name in linux-arm64-gnu darwin-arm64 darwin-x64 win32-x64-msvc; do
             fetched=$(ls "$RUNNER_TEMP"/fetched/*-"$name"-*.tgz)
             echo "Fetched $(basename "$fetched"), sha256 $(sha256sum "$fetched" | cut -d' ' -f1)" | tee -a "$GITHUB_STEP_SUMMARY"
           done
@@ -178,7 +178,7 @@ jobs:
             const fs = require("fs");
             const main = JSON.parse(fs.readFileSync("package.json", "utf8"));
             main.optionalDependencies = Object.fromEntries(
-              ["linux-x64-gnu", "linux-arm64-gnu", "darwin-arm64", "darwin-x64"].map((name) => [
+              ["linux-x64-gnu", "linux-arm64-gnu", "darwin-arm64", "darwin-x64", "win32-x64-msvc"].map((name) => [
                 `${main.name}-${name}`,
                 main.version,
               ]),
@@ -216,7 +216,7 @@ jobs:
               npm publish "$tarball" --access public --ignore-scripts
           done
           rm -f "$npmrc"
-          echo "Published $PACKAGE@${{ steps.plan.outputs.version }} and its Linux and macOS engines" >> "$GITHUB_STEP_SUMMARY"
+          echo "Published $PACKAGE@${{ steps.plan.outputs.version }} and its Linux, macOS and Windows engines" >> "$GITHUB_STEP_SUMMARY"
       - name: Tag the release
         env:
           GH_TOKEN: ${{ github.token }}
