@@ -41,8 +41,9 @@ every thread count. The five slowest relative to TLC at 16 threads, and why:
    thread. The Rust lowering (F8) removes it.
 3. **MCDisruptor_MPMC**: levels of about 1,400 cheap states, so sharing doesn't pay, plus the same
    front-end start-up. Also for F8.
-4. **TokenRing** (and **ReadersWriters**): Rust finds the states in about 100 ms, then hands their
-   temporal properties to the TypeScript interpreter, on one thread. For the liveness workstream.
+4. **TokenRing** (and **ReadersWriters**): short runs, about 1 s, mostly start-up, which threads
+   don't help. The whole check, temporal properties included, runs natively; F8 shortens the
+   start-up.
 5. **MCLamportMutex** scales 3.3× on 16 threads, but its CPU time grows from 2.1 to 4.8 s, so
    each state costs more on many threads. Not yet profiled.
 
