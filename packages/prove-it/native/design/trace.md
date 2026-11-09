@@ -290,8 +290,20 @@ decides which frames a stack keeps. The report follows `getFailureMessage`:
   invariant Inv failed." (2111) and no call stack. Its successor is held as found, as a violating
   one is. On an initial state TLC reports it otherwise, which returns `Unsupported` so far.
 
-An error has TLC's message only where its kind is ported: so far a mistyped membership in Nat, Int
-or STRING (2158) and Assert (2132). Every other failure returns `Unsupported`. The pretty printer
+An error has TLC's message only where its kind is ported. So far:
+- a mistyped membership in Nat, Int or STRING (2158);
+- Assert (2132);
+- a field selected from a record that lacks it, from a tuple or from a value that isn't a
+  function, worded as `getFieldSelector` words it;
+- a function applied outside its domain, worded by its class (`describeMissingArgument`).
+
+A lambda has no message yet: TLC keeps a function constructor lazy only where it evaluates it so
+(`EvalControl.KeepLazy`), which the evaluator doesn't follow. TLC 1.7.4's wording isn't ported.
+
+TLC reports a failure in a method of a value with a source (a set, tuple, record or function set
+the replay built, or a `\cup`, `\cap` or `\`) as a FingerprintException, with the values'
+sources. The replay marks it, as `freezeCallStack` finds it, and returns `Unsupported` for it so
+far. Every other failure returns `Unsupported` too. The pretty printer
 moved here from the CLI, since the messages need it.
 
 Tests: `tests/failure.rs` runs the engine's search on golden IRs of TLC's own tests (etest9, 10 and

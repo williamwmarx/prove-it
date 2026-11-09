@@ -162,6 +162,12 @@ impl<'ir> Rebuilder<'ir> {
                 "evaluating the failure again: it didn't fail".into(),
             ));
         };
+        if call_stack.is_fingerprinted {
+            return Err(Unsupported(
+                "evaluating the failure again: a failure TLC reports as a FingerprintException"
+                    .into(),
+            ));
+        }
         let Some(message) = error.message else {
             return Err(Unsupported(format!(
                 "evaluating the failure again: {}",
