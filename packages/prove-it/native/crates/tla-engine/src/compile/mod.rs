@@ -168,6 +168,11 @@ pub struct Compiled {
     /// For a set: whether TLC's value is a set enumeration, and whether each element's is.
     pub(crate) is_enumerated: bool,
     pub(crate) are_elements_enumerated: bool,
+    /// For a set: whether TLC's value streams its elements in another order than its normalized
+    /// set (`isStreamedApart`), as a UNION or `\cup` TLC keeps lazy does, and whether one of its
+    /// elements may.
+    pub(crate) is_streamed_apart: bool,
+    pub(crate) are_elements_streamed_apart: bool,
     /// Whether the value is always TRUE or FALSE.
     pub(crate) is_boolean: bool,
     pub(crate) is_constant: bool,
@@ -230,6 +235,8 @@ pub(crate) fn leaf(eval: Eval, footprint: Footprint) -> Compiled {
         is_normalized: true,
         is_enumerated: false,
         are_elements_enumerated: false,
+        is_streamed_apart: false,
+        are_elements_streamed_apart: false,
         is_boolean: false,
         is_constant: false,
         infinite: None,

@@ -624,9 +624,26 @@ impl Compiler<'_> {
                     },
                     true,
                 );
+                // TLC keeps UNION S lazy unless S and its elements are set enumerations, and then
+                // streams each element of S in turn (`UnionValue.Enumerator`). An element streams
+                // as its normalized set does unless it streams apart itself, which the engine,
+                // holding it as an id, can't follow.
+                let reference = (!is_enumerated && !outer.are_elements_streamed_apart)
+                    .then(|| reference_of(&outer))
+                    .flatten()
+                    .map(|base| {
+                        Arc::new(move |machine: &mut Machine<'_>| {
+                            Ok(Lazy::Union(Box::new(base(machine)?)))
+                        }) as Reference
+                    });
                 Compiled {
                     is_normalized: is_enumerated,
                     is_enumerated,
+                    is_streamed_apart: !is_enumerated,
+                    // Its elements are those of the sets it combines, which the engine doesn't
+                    // follow.
+                    are_elements_streamed_apart: true,
+                    reference,
                     member: only.as_ref().map(|only| self.member_test(only)),
                     parts: only.as_ref().map(Self::parts_of),
                     ..compiled
@@ -1089,6 +1106,10 @@ impl Compiler<'_> {
         };
         Ok(Some(Compiled {
             is_normalized,
+            is_streamed_apart: !is_normalized
+                && (name == "\\cup" || left.is_streamed_apart || right.is_streamed_apart),
+            are_elements_streamed_apart: left.are_elements_streamed_apart
+                || right.are_elements_streamed_apart,
             member: lazy_member,
             reference,
             ..binary(left, right, operation, true, false)
