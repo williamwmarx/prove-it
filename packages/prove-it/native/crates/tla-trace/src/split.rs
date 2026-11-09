@@ -380,11 +380,9 @@ impl Splitter<'_, '_> {
         match &ir.nodes.arena[expression as usize].kind {
             NodeKind::Reference(target) => return self.split(*target, place, closure),
             NodeKind::Let {
-                instances,
-                definitions,
-                body,
+                definitions, body, ..
             } => {
-                let bound = self.bind_let(*instances, definitions, place)?;
+                let bound = self.bind_let(definitions, place)?;
                 return self.split(*body, &bound, closure);
             }
             NodeKind::Label { body, .. } => return self.split(*body, place, closure),
@@ -590,15 +588,10 @@ impl Splitter<'_, '_> {
     // A place with a LET's definitions bound as `bindDefinitions` binds them, each seeing itself
     // and those before it: a function as the function construction it stands for, an operator
     // with parameters as a closure, and anything else as an expression evaluated where used.
-    fn bind_let(
-        &mut self,
-        instances: u32,
-        definitions: &[NodeId],
-        place: &Place,
-    ) -> Result<Place, Unsupported> {
+    fn bind_let(&mut self, definitions: &[NodeId], place: &Place) -> Result<Place, Unsupported> {
         let context = self
             .evaluator
-            .bind_let(instances, definitions, &place.context)
+            .bind_let(definitions, &place.context)
             .map_err(|error| {
                 Unsupported(format!("TLC's actions through a LET: {}", error.reason))
             })?;

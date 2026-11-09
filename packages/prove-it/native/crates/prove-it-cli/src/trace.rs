@@ -163,7 +163,14 @@ fn rebuild(
                         }
                         None => None,
                     };
-                    let aliases = rebuilder.alias(&trace, cycle_start, is_tool)?;
+                    // TLC prints a deadlocked initial state as it is (`TLCTrace.printTrace`).
+                    let is_alone =
+                        matches!(kind, ViolationKind::Deadlock { .. }) && trace.states.len() == 1;
+                    let aliases = if is_alone {
+                        None
+                    } else {
+                        rebuilder.alias(&trace, cycle_start, is_tool)?
+                    };
                     // CounterExample closes a lasso with its step back into the cycle, which a
                     // stuttering one doesn't take.
                     let cycle = match *kind {
@@ -331,7 +338,7 @@ pub fn check_postconditions(
 }
 
 // Each postcondition in turn, up to the first that doesn't hold.
-fn check(
+pub(crate) fn check(
     rebuilder: &mut Rebuilder<'_>,
     ir: &Ir,
     run: &PostconditionRun,
@@ -407,7 +414,7 @@ pub(crate) fn format_texts(ir: &Ir, texts: &[String]) -> String {
 
 /// Named values as TLC prints a state (`TLCStateMut.toString`): a line each, as a conjunction when
 /// there are several.
-fn format_fields<'v>(
+pub(crate) fn format_fields<'v>(
     fields: impl ExactSizeIterator<Item = (&'v str, Option<&'v Value>)>,
 ) -> String {
     let is_conjunction = fields.len() > 1;
