@@ -789,6 +789,23 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     ]);
   });
 
+  it("stops where TLC fails on action composition, with the states before", async () => {
+    const body = [
+      "EXTENDS Naturals",
+      "VARIABLE x",
+      "Init == x = 0",
+      "A == x' = x + 1",
+      "Next == \\/ x < 2 /\\ A",
+      "        \\/ x = 2 /\\ A \\cdot A",
+    ];
+    const lines = await compareWithInterpreter(body, "INIT Init\nNEXT Next");
+    expect(lines).toEqual([
+      expect.stringMatching(/^\[engine\] native: ir: /),
+      expect.stringMatching(stopped("action composition")),
+      expect.stringMatching(/^\[engine\] handed over after \d+ ms: action composition$/),
+    ]);
+  });
+
   it("gives ENABLED's rewrite of an instance's variables a next state of their own", async () => {
     // Under ENABLED, TLC takes the instance's primed variable u for one apart from x, so H holds
     // and K, which asks u' for two values, doesn't.

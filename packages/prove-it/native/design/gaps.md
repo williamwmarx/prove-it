@@ -58,3 +58,11 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   simple_strings and UnicodeStringDiskStateQueue, the two it declined for ToString, now search in
   Rust until the stop the TypeScript engine reaches. The other 49 it declines (TLC under 20 s) the
   TypeScript engine refuses too, for the same reason.
+
+## Action composition
+
+- TLC fails on `A \cdot B` wherever it reaches it, in the next-state relation, an expression or
+  ENABLED (`Tool.java`), unless a Java property enables its incomplete implementation. The
+  engine compiles it to an expression that stops the search when evaluated, with the states
+  found before it, and the interpreter reports TLC's error from there. Both engines declined
+  the five cdot models in TLC's tests before; the native engine now searches them until the stop.

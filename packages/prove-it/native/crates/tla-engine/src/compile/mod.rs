@@ -1508,6 +1508,14 @@ impl<'a> Compiler<'a> {
             let operator = Rc::clone(operator);
             return self.compile_operator_call(&operator, args, context);
         }
+        // TLC fails on action composition wherever it reaches it, unless a Java property enables
+        // its incomplete implementation.
+        if self.text(name.text) == "\\cdot" && args.len() == 2 {
+            return Ok(leaf(
+                eval(|_| Err(Bail("action composition"))),
+                Footprint::default(),
+            ));
+        }
         unsupported(format!("the operator {}", self.text(name.text)))
     }
 
