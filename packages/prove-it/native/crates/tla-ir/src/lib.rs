@@ -34,7 +34,7 @@ pub use decode::{DecodeError, decode};
 pub use encode::encode;
 
 /// The version of the layout, `IR_VERSION` in `ir.ts`.
-pub const IR_VERSION: u32 = 10;
+pub const IR_VERSION: u32 = 11;
 
 /// "PIIR" as a little-endian word.
 pub const MAGIC: u32 = 0x5249_4950;
@@ -259,6 +259,8 @@ pub struct Model {
     pub action_properties: Vec<ActionProperty>,
     pub initial_predicates: Vec<NodeId>,
     pub view: Option<ConfigName>,
+    /// The configuration's ALIAS, which TLC prints each state of a trace through.
+    pub alias: Option<ConfigName>,
     /// The symmetry group: each permutation as the model values it moves, by text.
     pub symmetry: Option<Vec<Vec<(TextId, TextId)>>>,
     pub check_deadlock: bool,
