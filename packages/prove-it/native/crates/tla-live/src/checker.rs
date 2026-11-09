@@ -52,11 +52,13 @@ type Lasso = (Vec<u32>, Vec<u32>);
 
 type IntegerMap<Key, Value> = HashMap<Key, Value, BuildHasherDefault<IntegerHasher>>;
 
-/// A step of the search: a successor of a state, with the position of the step's answers in the
-/// engine's tables of actions.
+/// A step of the search: a successor of a state, the state the step reached (the successor itself
+/// unless SYMMETRY or a VIEW told it apart from the state stored for it), and the position of the
+/// step's answers in the engine's tables of actions.
 #[derive(Clone, Copy)]
 struct Step {
     target: u32,
+    real: u32,
     answer: usize,
 }
 
@@ -270,7 +272,7 @@ impl<'c> Checker<'c> {
             }
             Kind::Next => self.evaluate(
                 self.terms.body(term),
-                step.map_or(state, |step| step.target),
+                step.map_or(state, |step| step.real),
                 None,
             ),
             Kind::Always | Kind::Eventually => {
@@ -282,17 +284,20 @@ impl<'c> Checker<'c> {
     fn self_step(&self, state: u32) -> Step {
         Step {
             target: state,
+            real: state,
             answer: self.graph.edges.len() + state as usize,
         }
     }
 
     fn edge_step(&self, state: u32, edge: usize) -> Step {
         let target = self.graph.edges[edge];
-        if target == state {
+        let real = self.graph.reals.map_or(target, |reals| reals[edge]);
+        if target == state && real == state {
             self.self_step(state)
         } else {
             Step {
                 target,
+                real,
                 answer: edge,
             }
         }
@@ -329,14 +334,15 @@ impl<'c> Checker<'c> {
         Ok(row as u32)
     }
 
-    fn check_state(&mut self, behavior: usize, state: u32) -> Result<(), Declined> {
+    // The state checks of a state, on the state the step reached, kept for every node of the state.
+    fn check_state(&mut self, behavior: usize, state: u32, real: u32) -> Result<(), Declined> {
         let solution = &self.solutions[self.behaviors[behavior].solution];
         let count = solution.state_checks.len();
         let offset = state as usize * count;
         let results: Vec<u8> = solution
             .state_checks
             .iter()
-            .map(|&check| self.evaluate(check, state, None).map(u8::from))
+            .map(|&check| self.evaluate(check, real, None).map(u8::from))
             .collect::<Result<_, _>>()?;
         let stored = &mut self.behaviors[behavior].state_results;
         if stored.len() < offset + count {
@@ -352,6 +358,7 @@ impl<'c> Checker<'c> {
             .as_ref()
     }
 
+    // Whether a reached state is consistent with a tableau node.
     fn is_consistent(&mut self, behavior: usize, node: u32, state: u32) -> Result<bool, Declined> {
         let Some(tableau) = self.tableau(behavior) else {
             return Ok(true);
@@ -433,7 +440,12 @@ impl<'c> Checker<'c> {
                         slots[slot] = position as u32 + 1;
                         return true;
                     }
-                    stored if entries[stored as usize - 1].target == entry.target => return false,
+                    stored
+                        if entries[stored as usize - 1].target == entry.target
+                            && entries[stored as usize - 1].real == entry.real =>
+                    {
+                        return false;
+                    }
                     _ => slot = (slot + 1) % size,
                 }
             }
@@ -497,7 +509,7 @@ impl<'c> Checker<'c> {
                     self.check_step(behavior, state, step, first_step + position)?;
                 }
             }
-            self.check_state(behavior, state)?;
+            self.check_state(behavior, state, state)?;
             if self.tableau(behavior).is_none() {
                 self.add_plain_state(behavior, &set, first_step, state);
                 continue;
@@ -546,7 +558,7 @@ impl<'c> Checker<'c> {
         for node in 0..node_count {
             for (position, step) in set.iter().enumerate() {
                 consistency[node * set.len() + position] =
-                    self.is_consistent(behavior, node as u32, step.target)?;
+                    self.is_consistent(behavior, node as u32, step.real)?;
             }
         }
         self.behaviors[behavior].is_done[state as usize] = true;
@@ -582,7 +594,7 @@ impl<'c> Checker<'c> {
                     targets.push(target);
                     steps.push((first_step + position) as u32);
                     if existing.is_none() && is_done {
-                        self.expand_late(behavior, step.target, target)?;
+                        self.expand_late(behavior, step.target, step.real, target)?;
                     }
                 }
             }
@@ -607,8 +619,21 @@ impl<'c> Checker<'c> {
 
     /// TLC's TableauLiveChecker#addNextState for a node it finds after it expanded the node's
     /// state.
-    fn expand_late(&mut self, behavior: usize, state: u32, node: u32) -> Result<(), Declined> {
-        self.check_state(behavior, state)?;
+    fn expand_late(
+        &mut self,
+        behavior: usize,
+        state: u32,
+        real: u32,
+        node: u32,
+    ) -> Result<(), Declined> {
+        // TLC runs Next from the state the step reached, which the search expanded only if it is
+        // the state stored.
+        if real != state {
+            return Err(Declined::from(
+                "a late node of a state the search didn't store",
+            ));
+        }
+        self.check_state(behavior, state, state)?;
         let tableau_successors = self.tableau_successors(behavior, node);
         let mut targets = Vec::new();
         let mut steps = Vec::new();
@@ -639,7 +664,7 @@ impl<'c> Checker<'c> {
             targets.push(target);
             steps.push(self_step);
             if existing.is_none() {
-                self.expand_late(behavior, state, target)?;
+                self.expand_late(behavior, state, state, target)?;
             }
         }
         let start = self.graph.edge_offsets[state as usize] as usize;
@@ -649,7 +674,7 @@ impl<'c> Checker<'c> {
             let successor_step = self.check_action(behavior, state, step)?;
             let is_done = self.behaviors[behavior].is_done[step.target as usize];
             for &next in &tableau_successors {
-                if !self.is_consistent(behavior, next, step.target)? {
+                if !self.is_consistent(behavior, next, step.real)? {
                     continue;
                 }
                 let existing = self.node_id(behavior, step.target, next);
@@ -663,7 +688,7 @@ impl<'c> Checker<'c> {
                 targets.push(target);
                 steps.push(successor_step);
                 if existing.is_none() && is_done {
-                    self.expand_late(behavior, step.target, target)?;
+                    self.expand_late(behavior, step.target, step.real, target)?;
                 }
             }
         }
