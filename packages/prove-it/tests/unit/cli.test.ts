@@ -1642,6 +1642,16 @@ describe("the CLI prints messages for a program to read like TLC", () => {
     );
   });
 
+  it("names a property an instance exports as written, as TLC does", () => {
+    const getViolation = (config: string) =>
+      runCliWith("instance-property", ["-nowarning", "-config", config, "Main.tla"])
+        .stdout.split("\n")
+        .find((line) => line.endsWith(" is violated."));
+    // PSafe == A!Safe names A!Safe, but A!Safe2 == Safe names Safe inside the instance.
+    expect(getViolation("Main.cfg")).toBe("Error: Invariant A!Safe is violated.");
+    expect(getViolation("Inner.cfg")).toBe("Error: Invariant Safe is violated.");
+  });
+
   it("warns about a state-level property and names an invariant that a property asserts", () => {
     const result = runTool("Always");
     expect(result.status).toBe(12);
