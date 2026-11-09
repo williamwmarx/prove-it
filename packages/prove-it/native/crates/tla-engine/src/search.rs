@@ -1949,6 +1949,8 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 checkpoint: Some(Box::new(checkpoint)),
                 liveness: Some(liveness),
                 lasso_actions,
+                // The interpreter prints a counterexample found part way through the search.
+                violation: None,
                 value_count: machine.store.value_count(),
                 threads: threads_used,
                 collisions,
@@ -2573,7 +2575,7 @@ fn to_lasso(
             counts: StopCounts {
                 generated: counts.generated,
                 distinct: counts.distinct,
-                queued: 0,
+                queued: counts.queued,
                 depth: counts.depth,
             },
             store: std::mem::replace(&mut machine.store, Store::new()),
