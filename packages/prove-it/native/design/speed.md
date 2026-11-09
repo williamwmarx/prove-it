@@ -87,6 +87,9 @@ Tried and dropped:
 - **Fingerprinting a successor from the variables its action assigned.** The walker kept a list of the variables assigned a value other than UNCHANGED's, and `get_child` compared only those slots.
   - It cost more instructions than it saved: MCLamportMutex went from 16.77B to 17.05B, MCBakery from 9.05B to 9.11B, and SimpleRegular from 3.67B to 3.75B.
   - Most suite states have only a few variables, and comparing ids is cheap. A push and a truncate on every assignment outweigh skipping the comparison. The branch is `changed-slots`.
+- **A 16-byte fingerprint entry per value.** A value's cached F, length and table took 24 bytes. A 32-bit length, with "not computed" folded into the table number, fits them in 16.
+  - Two wall-time Compares found no difference: every model was within 0.01 s in the quieter run.
+  - The entries the search reads are those of recent values, which stay in cache at either size. The branch is `value-entry`.
 
 ## Where the suite's instructions go
 
