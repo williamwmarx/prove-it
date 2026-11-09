@@ -1932,10 +1932,9 @@ const searchStates = (
       return undefined;
     }
   };
-  // The native search runs on one thread, so auto leaves a search on more to the TypeScript engine.
   const isNativeBackend = () => {
     const backend = getEngineBackend();
-    return backend === "rust" || (backend === "auto" && getEngineThreads() === 1);
+    return backend === "rust" || backend === "auto";
   };
   // What only the native engine searches as TLC does: it fingerprints a string by the low byte of
   // each character, as TLC does, and tells states apart by their fingerprints alone, and it counts

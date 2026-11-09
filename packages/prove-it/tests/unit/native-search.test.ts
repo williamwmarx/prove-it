@@ -750,6 +750,29 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     );
   });
 
+  it("builds a function over a tuple pattern as TLC does", async () => {
+    // TLC binds each element's components and keeps the element as the key.
+    const body = [
+      "EXTENDS Naturals",
+      "VARIABLE f",
+      "Init == f = [<<i, j>> \\in {<<1, 2>>, <<3, 4>>} |-> i + j]",
+      "Next == f' = [<<i, j>> \\in DOMAIN f |-> f[<<i, j>>] + i * j]",
+      "Small == \\A key \\in DOMAIN f : f[key] < 40",
+    ];
+    expect(
+      await compareWithInterpreter(body, "INIT Init\nNEXT Next\nINVARIANT Small"),
+    ).toContainEqual(expect.stringMatching(stopped("an invariant violated")));
+    // A tuple of another length fails in TLC, which the interpreter then reports.
+    const mismatched = [
+      "VARIABLE f",
+      "Init == f = [<<i, j>> \\in {<<1>>} |-> i]",
+      "Next == UNCHANGED f",
+    ];
+    expect(await compareWithInterpreter(mismatched, "INIT Init\nNEXT Next")).toContainEqual(
+      expect.stringMatching(stopped("a tuple pattern that doesn't match")),
+    );
+  });
+
   it("binds a tuple pattern in an action's \\E as TLC does", async () => {
     // TLC's ContextEnumerator varies the first bound fastest, a tuple bound as a name bound.
     const body = [
