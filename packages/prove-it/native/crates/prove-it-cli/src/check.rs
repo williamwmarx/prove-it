@@ -398,6 +398,14 @@ impl Reporter for Relay<'_> {
                 let _ = self.sender.send(Event::Print(Some(format_print(print))));
             }
         }
+        // The replay doesn't yet word every failure as TLC does, and a message worded apart makes
+        // AssertError false where TLC finds it true, so a false one stays not native.
+        if !checked.holds {
+            return Err(
+                "an AssertError assumption the replay finds false, whose message it may word apart from TLC's"
+                    .into(),
+            );
+        }
         Ok(Delegated {
             holds: checked.holds,
             random: checked.random,
