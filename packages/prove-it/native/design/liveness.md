@@ -74,7 +74,11 @@ and its depth then. TLC adds the states to the behavior graphs as it searches ev
   without bound, stops at its third state, which the binary now reports.
 - At a deadlock or an invariant violation, the deadlocked state included, which TLC adds after it
   reports the deadlock. Where no state reaches an accepting node, TLC reports the violation, which
-  the binary prints; where one does (Github710d), it hands over.
+  the binary prints. Where the deadlocked state reaches one (Github710d), TLC reports the deadlock
+  and then the node's counterexample, with the deadlock's counts: the deadlock carries the path
+  (`AcceptedTrace`), which the binary rebuilds from the same store and prints after the
+  deadlock's trace. It hands over where a postcondition would check the traces, and where an
+  invariant violation's state reaches one.
 
 Where no tableau node of a model with no PEM conditions accepts every behavior (`hasEmptyPEM`),
 TLC can't stop this way and the checker evaluates nothing. It still hands over where TLC would fail

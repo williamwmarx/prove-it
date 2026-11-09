@@ -33,10 +33,11 @@ pub struct Stats {
 }
 
 /// A violation's trace: its states with the actions of their steps, and for a lasso the state its
-/// cycle starts at with the position in the model's actions of the step back to it.
+/// cycle starts at with the position in the model's actions of the step back to it, or none where
+/// TLC holds no action for it, as for a lasso that stutters at its initial state.
 pub struct CounterExample<'a> {
     pub trace: &'a Trace,
-    pub cycle: Option<(usize, u32)>,
+    pub cycle: Option<(usize, Option<u32>)>,
 }
 
 /// What TLC finds of a postcondition, and what it printed as TLC evaluated it.
@@ -84,7 +85,7 @@ impl Rebuilder<'_> {
                 .iter()
                 .skip(1)
                 .map(|state| state.action)
-                .chain(counter_example.cycle.map(|(_, closing)| Some(closing)));
+                .chain(counter_example.cycle.map(|(_, closing)| closing));
             for position in positions.flatten() {
                 if let (Some(action), None) = (
                     ir.model.actions.get(position as usize),
@@ -239,11 +240,25 @@ impl Rebuilder<'_> {
                     let (Some(last), Some(first)) = (states.last(), states.get(start)) else {
                         return unsupported("of a lasso outside its trace");
                     };
-                    steps.push(Value::tuple(vec![
-                        last.clone(),
-                        action(Some(closing))?,
-                        first.clone(),
-                    ]));
+                    // TLC records a step it holds no action for as `Action.UNKNOWN`'s: unnamed, at
+                    // the null location.
+                    let closing = match closing {
+                        Some(closing) => action(Some(closing))?,
+                        None => {
+                            let location = run(record(vec![
+                                ("beginLine", Value::Int(0)),
+                                ("beginColumn", Value::Int(0)),
+                                ("endLine", Value::Int(0)),
+                                ("endColumn", Value::Int(0)),
+                                ("module", text("--TLA+ BUILTINS--")),
+                            ]))?;
+                            run(record(vec![
+                                ("name", text("UnnamedAction")),
+                                ("location", location),
+                            ]))?
+                        }
+                    };
+                    steps.push(Value::tuple(vec![last.clone(), closing, first.clone()]));
                 }
                 run(record(vec![
                     ("action", run(set_of(steps))?),
