@@ -6,6 +6,7 @@ use crate::errors::FrontError;
 /// EXIT_STATUS in `src/exit-codes.ts`.
 const SPEC_EVALUATION_FAILURE: i32 = 75;
 const SAFETY_EVALUATION_FAILURE: i32 = 76;
+const LIVENESS_EVALUATION_FAILURE: i32 = 77;
 const CONFIG_PARSE_ERROR: i32 = 151;
 const GENERAL_ERROR: i32 = 255;
 
@@ -16,6 +17,12 @@ pub const STACK_OVERFLOW_MESSAGE: &str = "This was a Java StackOverflowError. It
 /// EC.TLC_INVARIANT_VIOLATED_LEVEL, which `errorConstantToExitStatus` exits with as a failure to
 /// evaluate an invariant.
 const INVARIANT_VIOLATED_LEVEL: u32 = 2146;
+/// EC.TLC_LIVE_FORMULA_TAUTOLOGY, which it exits with as a failure to evaluate a liveness property.
+const LIVE_FORMULA_TAUTOLOGY: u32 = 2253;
+/// EC.TLC_LIVE_CANNOT_HANDLE_FORMULA and EC.TLC_LIVE_WRONG_FORMULA_FORMAT, which it exits with as
+/// any general error.
+const LIVE_CANNOT_HANDLE_FORMULA: u32 = 2213;
+const LIVE_WRONG_FORMULA_FORMAT: u32 = 2214;
 
 /// MESSAGE_CODE.general, the code of a message TLC builds from no template.
 pub const GENERAL: u32 = 1000;
@@ -264,12 +271,12 @@ impl FrontError {
             code,
             text: format_inner_message(code, message, is_tool),
             // TLC exits as for any general error after an exception it didn't expect.
-            exit_code: if code == INVARIANT_VIOLATED_LEVEL {
-                SAFETY_EVALUATION_FAILURE
-            } else if message.starts_with(crate::errors::UNEXPECTED_EXCEPTION) {
-                GENERAL_ERROR
-            } else {
-                exit_code
+            exit_code: match code {
+                INVARIANT_VIOLATED_LEVEL => SAFETY_EVALUATION_FAILURE,
+                LIVE_FORMULA_TAUTOLOGY => LIVENESS_EVALUATION_FAILURE,
+                LIVE_CANNOT_HANDLE_FORMULA | LIVE_WRONG_FORMULA_FORMAT => GENERAL_ERROR,
+                _ if message.starts_with(crate::errors::UNEXPECTED_EXCEPTION) => GENERAL_ERROR,
+                _ => exit_code,
             },
         })
     }
