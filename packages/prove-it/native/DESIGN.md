@@ -4,7 +4,9 @@ A design for a Rust model checker that is faster than today's Prove It and print
 TLC prints, staged so that every step ships on its own, is measurably faster, and is proven
 identical to TLC and to the TypeScript checker before it is switched on.
 
-Status: proposal, with M1 to M6 built (their outcomes are in section 11). Every number marked *measured*
+Status: M1 to M7 built (their outcomes are in section 11). Section 12 supersedes the fallback
+chain described in sections 0, 1 and 8.4: the target is now an all-Rust checker, with no
+TypeScript fallback. Every number marked *measured*
 comes from the prototypes that were under `native/prototypes/` until 1916b69 (section 10) on a
 local 4-core cloud machine (Rust 1.97.0, Bun 1.4.4, Node 22.23.4). Those timings vary by about 10%
 between runs. Depot numbers come from the benchmark of `main` at f284739 (run cb7zd2w63s), as
@@ -75,6 +77,11 @@ interpreter, is left optional (stage 5). The reason is structural. A violation, 
 `("a" :> 1)` is rare and short. It is also exactly where hash-consing loses information (section
 2.8). The interpreter already handles all of it by replaying the path (`check.ts`
 `resumeFromEngine`). Porting it buys parity risk, not speed.
+
+**Revised (section 12): C, all of it.** The parity harness has since made porting exact semantics
+routine, and a checker that needs no JavaScript runtime at all is worth more than the startup it
+saves: one native binary, no dependencies, threads everywhere. Stage 5 is no longer optional, and
+the native binary has no JS process to fall back to.
 
 ### 1.2 The boundary in stage 1
 
@@ -2288,3 +2295,36 @@ On the 4-core cloud machine, with `main` at a0f66ec before the merge of #31 and 
   about 40% under memo lookups, a third of that in the lookups themselves. The next step that
   could close the 1.3× gate is compiling guards and invariants to code rather than closure trees
   (3.1's later tier), not more tuning of the closures.
+
+---
+
+## 12. Rust end to end
+
+The target is one Rust implementation of the checker: front end, engine, liveness, and TLC's output,
+shipped as a native binary and as the N-API addon, with **no third-party crates** (the standard
+library only) and no TypeScript at run time. Output stays byte-identical to TLC.
+
+**Fallbacks go away.** Today a model can decline to the TypeScript engine, stop and hand over to
+the interpreter, or leave liveness and printing to TypeScript. Each of those paths is closed by
+covering it in Rust, then removing the TypeScript path once the gates below hold on it:
+- a Rust decline or run-time stop (other than a violation or deadlock, which Rust then prints) is a
+  coverage regression, gated by `engine-coverage`;
+- the TypeScript checker remains, for a while, the oracle that the differential and state-log
+  harnesses compare Rust with; it is deleted area by area when Rust has matched it on the whole
+  corpus and TLC's recordings carry the comparison alone.
+
+**Workstreams.** Each lands as small PRs that keep Parity at no new differences:
+
+| Workstream | Replaces | Gate |
+|---|---|---|
+| Engine coverage: TLC operators (Print, PrintT, TLCGet, TLCSet, RandomElement, Any, JavaTime, ToString), lazy sets, every run-time stop | the TypeScript engine as fallback | no decline, no stop on the corpus |
+| TLC's value printer in Rust | `values.ts` printing | ToString and traces identical to TLC |
+| Parallel search (section 4) | the TypeScript parallel search | state logs identical at 1 to 16 threads |
+| Speed: compiled guards and invariants (3.1's later tier) | — | the 1.3× per-model gate |
+| Liveness (stage 3) | `tableau.ts`, `liveness-checker.ts`, `liveness.ts` | same verdicts and counterexamples |
+| Front end (stage 4, `tla-front`) | lexer, parser, resolver, levels, SANY, config, TLC order, IR lowering | IR byte-equal to the TypeScript lowering; SANY's messages |
+| CLI and TLC's output (stage 5, `prove-it-cli`) | `cli/`, `check.ts`, `tlc/messages.ts`, traces | the full-stdout differential against TLC |
+
+**Distribution.** The binary ships per platform; the npm package becomes a thin launcher for it and
+then carries the binary alone. The proof checker (`src/prover`, `src/obligations`) is outside this
+plan for now.
