@@ -80,6 +80,7 @@ const GOLDEN_MODELS = [
   "tlc/tlatools/org.lamport.tlatools/test-model/EvaluatingValueTest.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/DoInitFunctor/DoInitFunctorEvalException.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/DoInitFunctor/DoInitFunctorMinimalErrorStack.cfg",
+  "tlc/tlatools/org.lamport.tlatools/test-model/cdot/CdotWithContextB.cfg",
   "spectacle/specs/bfs_anim.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/suite/etest4.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/suite/etest6.cfg",
@@ -104,6 +105,7 @@ const GOLDEN_MODELS = [
   "tlc/tlatools/org.lamport.tlatools/test-model/PossibleCountsTest.cfg",
   "etcd-raft/tla/etcdraft.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/examples/allocator/SchedulingAllocator.cfg",
+  "raft/specifications/pull-raft/PullRaft.cfg",
 ];
 
 const GOLDEN_DIRECTORY = join(CONFORMANCE_DIRECTORY, "ir");

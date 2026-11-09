@@ -747,6 +747,9 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                 {
                     Err("a failure with an ALIAS, POSTCONDITION or _POSSIBLE".to_string())
                 }
+                ViolationKind::Error {
+                    site: ErrorSite::InitialPredicate(_),
+                } => Err("a failure in an initial state's implied init, which the printing doesn't follow yet".to_string()),
                 ViolationKind::Error { site } => {
                     let counts = &violation.counts;
                     let stop = ErrorStop {
@@ -763,6 +766,9 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                             }
                             ErrorSite::InitialInvariant(position) => {
                                 Site::InitialInvariant(position)
+                            }
+                            ErrorSite::InitialPredicate(_) => {
+                                unreachable!("an implied init's failure, which the arm above leaves")
                             }
                         },
                         statistics: Statistics {

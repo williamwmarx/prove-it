@@ -681,9 +681,11 @@ pub struct Compiler<'a> {
     /// Whether anything compiled may print, and whether it uses ToString, which ranks strings.
     pub is_printing: bool,
     pub is_ranking: bool,
-    /// What an expression uses that only the native checker follows, such as TLC's registers,
-    /// which the interpreter wouldn't take over.
-    pub native_only: Option<&'static str>,
+    /// Whether the caller reports what the search finds itself (`Settings::is_violation_reported`),
+    /// as the native checker does: only then does the engine follow what the interpreter wouldn't
+    /// take a search over with, such as TLC's registers, and otherwise declines it as the
+    /// TypeScript engine does.
+    pub is_native: bool,
     /// How many workers TLC runs with (`-workers`), which TLCGet("config") reports.
     pub workers: usize,
     // The contexts of the instance scopes translated so far.
@@ -752,7 +754,7 @@ impl<'a> Compiler<'a> {
             is_diameter_read: false,
             is_printing: false,
             is_ranking: false,
-            native_only: None,
+            is_native: false,
             workers: 1,
             scope_contexts: HashMap::new(),
         }

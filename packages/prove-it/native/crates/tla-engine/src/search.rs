@@ -331,6 +331,10 @@ pub enum ErrorSite {
     /// Evaluating the invariant at this position of the model's invariants on an initial state,
     /// the violation's one state.
     InitialInvariant(u32),
+    /// Evaluating the predicate at this position of the IR's `model.initial_predicates`, which
+    /// TLC checks of an initial state after the invariants (its implied inits), on the
+    /// violation's one state.
+    InitialPredicate(u32),
 }
 
 // The stops that are the engine's own limits, not a failure TLC reports: what it doesn't
@@ -941,8 +945,16 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
                 });
                 return Err(Bail("an invariant violated in an initial state"));
             }
-            if !holds_all(machine, &context.initial_predicates)? {
-                return Err(Bail("a property violated in an initial state"));
+            for (position, predicate) in context.initial_predicates.iter().enumerate() {
+                match crate::context::holds(machine, predicate) {
+                    Ok(true) => {}
+                    Ok(false) => return Err(Bail("a property violated in an initial state")),
+                    Err(bail) => {
+                        let distinct = (self.states.count() + usize::from(is_in_model)) as u64;
+                        let site = ErrorSite::InitialPredicate(position as u32);
+                        return Err(self.note_initial_error(machine, site, distinct, bail));
+                    }
+                }
             }
             if let Some((fingerprint, Err(slot))) = found {
                 self.states
@@ -1889,6 +1901,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     store.freeze_string_order();
     let mut compiler = Compiler::new(ir, &mut store, settings.compile);
     compiler.workers = settings.workers;
+    compiler.is_native = settings.is_violation_reported;
     let context = match EngineContext::build(&mut compiler, ir) {
         Ok(context) => context,
         Err(error) => return SearchOutcome::Declined(describe(error)),
@@ -1897,14 +1910,6 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     // what the search printed.
     if compiler.is_printing && compiler.is_ranking {
         return SearchOutcome::Declined("unsupported: Print with ToString".into());
-    }
-    // The interpreter takes a search over without what only the native checker follows, which a
-    // caller that reports the violation itself doesn't hand over.
-    if let Some(reason) = compiler
-        .native_only
-        .filter(|_| !settings.is_violation_reported)
-    {
-        return SearchOutcome::Declined(format!("unsupported: {reason}"));
     }
     let is_distinct_read = compiler.is_distinct_read;
     let is_printing = compiler.is_printing;
@@ -1963,6 +1968,14 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             }
             if let Some((position, _)) = started.failed {
                 return SearchOutcome::AssumptionFailed { position };
+            }
+            if context.is_diameter_searched {
+                return SearchOutcome::Stopped {
+                    reason: crate::context::DIAMETER_SEARCHED.into(),
+                    checkpoint: None,
+                    collisions: 0,
+                    violation: None,
+                };
             }
             started.group
         }
