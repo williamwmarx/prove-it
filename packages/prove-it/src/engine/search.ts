@@ -118,6 +118,9 @@ export interface EngineCheckpoint {
   generated: number;
   initialGenerated: number;
   outDegrees: number[];
+  // From the native engine, what each _POSSIBLE predicate counted before the expansion the
+  // interpreter goes on from, or -1 where it wasn't evaluated.
+  possible?: number[];
   states: Int32Array;
   parents: Int32Array;
   width: number;
@@ -132,6 +135,8 @@ export interface EngineResult {
   getFingerprints: () => BigInt64Array;
   valueCount: number;
   threads: number;
+  // From the native engine, what each _POSSIBLE predicate counted, or -1 where it wasn't evaluated.
+  possible?: number[];
   // A complete search the interpreter is to replay, when it checks temporal properties.
   checkpoint: EngineCheckpoint | undefined;
 }

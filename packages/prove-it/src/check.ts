@@ -1562,6 +1562,11 @@ const searchStates = (
       fingerprintStates[index] = taken.fingerprintState;
     }
   };
+  // What the native engine counted of each _POSSIBLE predicate it evaluated.
+  const takePossibleCounts = (counts: number[] | undefined) =>
+    counts?.forEach((count, index) => {
+      if (count >= 0) runtime.possibleCounts.set(config.possible[index], count);
+    });
   const resumeFromEngine = (checkpoint: EngineCheckpoint) => {
     // Without a graph, the interpreter takes over only the states up to the one it expands again,
     // which is all it reads of them when it finds what the engine stopped at, and asks the engine
@@ -1625,6 +1630,7 @@ const searchStates = (
     }
     runtime.generatedStates = checkpoint.generated;
     runtime.initialStates = checkpoint.initialGenerated;
+    takePossibleCounts(checkpoint.possible);
     runtime.distinctStates = checkpoint.graph ? replayed.discovered : states.length;
     checkpoint.outDegrees.forEach((count, degree) => {
       outDegrees[degree] = count;
@@ -1782,9 +1788,7 @@ const searchStates = (
       onPrint: print,
     };
     const startedAt = performance.now();
-    const backend = getEngineBackend();
-    const isNative = backend === "rust" || backend === "auto";
-    const native = isNative ? checkNatively(lowerModel, callbacks) : undefined;
+    const native = isNativeBackend() ? checkNatively(lowerModel, callbacks) : undefined;
     const verdict = native?.status === "complete" ? native.liveness : undefined;
     engineReport.liveness = verdict;
     engineReport.lassoActions = native?.status === "complete" ? native.lassoActions : undefined;
@@ -1807,6 +1811,13 @@ const searchStates = (
       if ("counts" in native && getEnvironmentFlag("PROVE_IT_FP_VERIFY")) {
         reportEngine(`native: fingerprint collisions: ${native.counts[native.counts.length - 1]}`);
       }
+    }
+    if (
+      config.possible.length > 0 &&
+      (native === undefined || native.status === "declined" || native.status === "unavailable")
+    ) {
+      reportEngine("skipped: _POSSIBLE predicates");
+      return undefined;
     }
     try {
       const width = environment.variables.length;
@@ -1888,6 +1899,7 @@ const searchStates = (
         });
         options.onProgress?.({ kind: "liveness-finished" });
       }
+      takePossibleCounts(result.possible);
       const postconditionResult = checkPostconditions();
       if (postconditionResult) return postconditionResult;
       return {
@@ -1915,6 +1927,10 @@ const searchStates = (
       return undefined;
     }
   };
+  const isNativeBackend = () => {
+    const backend = getEngineBackend();
+    return backend === "rust" || backend === "auto";
+  };
   const getEngineIneligibility = () => {
     if (getEngineSetting() === "0") return "disabled";
     if (liveness && (search.isSymmetric || config.view !== undefined)) {
@@ -1923,7 +1939,8 @@ const searchStates = (
     if (stateWriter) return "-dump";
     if (options.isContinued) return "-continue";
     if (search.isFingerprintedLikeTlc) return "wide strings";
-    if (config.possible.length > 0) return "_POSSIBLE predicates";
+    // Only the native engine counts the _POSSIBLE predicates.
+    if (config.possible.length > 0 && !isNativeBackend()) return "_POSSIBLE predicates";
     if (config.periodic !== undefined) return "periodic";
     if (is174) return "TLC 1.7.4";
     if (!toEngineProperties(search.properties)) return "properties in an instance";

@@ -119,6 +119,11 @@ fn encode_here(ir: &Ir) -> Vec<u8> {
         words.push(names.len() as i32);
         words.extend(names.iter().flat_map(config_name));
     }
+    words.push(model.possible.len() as i32);
+    for possible in &model.possible {
+        words.extend(config_name(&possible.name));
+        words.push(possible.is_action as i32);
+    }
     words.push(model.action_properties.len() as i32);
     for property in &model.action_properties {
         words.extend([offset(property.action), offset(property.subscript)]);
@@ -302,6 +307,16 @@ impl NodeWriter<'_> {
             NodeKind::Reference(_) => unreachable!("written above"),
         };
         self.words.extend([tag_word, node.line, node.column]);
+        match node.range {
+            Some(range) => self.words.extend([
+                range.module as i32,
+                range.start_line,
+                range.start_column,
+                range.end_line,
+                range.end_column,
+            ]),
+            None => self.words.extend([-1, 0, 0, 0, 0]),
+        }
         match &node.kind {
             NodeKind::Number(value) => self.words.push(*value),
             NodeKind::WideNumber(text) | NodeKind::Decimal(text) | NodeKind::String(text) => {
