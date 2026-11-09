@@ -113,6 +113,30 @@ pub(crate) fn except(machine: &mut Machine<'_>, function: Id, key: Id, value: Id
     Ok(add(machine, function))
 }
 
+/// Whether a value is in DOMAIN f of a function TLC keeps lazy: its bound's set, or the tuples
+/// of its bounds' sets (`FcnLambdaValue.getDomain`).
+pub(crate) fn is_in_domain(machine: &mut Machine<'_>, function: Id, element: Id) -> Outcome<bool> {
+    let index = machine.store.lazy_index_of(function) as usize;
+    let domains = Arc::clone(&machine.lazy_functions[index].domains);
+    if let [domain] = &domains[..] {
+        return domain.contains(machine, element);
+    }
+    // TLC fails asking a set of tuples for a value that isn't a tuple.
+    if machine.store.kind_of(element) != KIND_TUPLE {
+        return Err(DOMAIN);
+    }
+    if machine.store.size_of(element) as usize != domains.len() {
+        return Ok(false);
+    }
+    for (position, domain) in domains.iter().enumerate() {
+        let component = machine.store.get_range_value(element, position as u32);
+        if !domain.contains(machine, component)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 /// Whether a value is a function TLC keeps lazy.
 pub(crate) fn is_lazy(machine: &Machine<'_>, value: Id) -> bool {
     machine.store.kind_of(value) == KIND_LAZY_FUNCTION
