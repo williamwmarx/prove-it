@@ -33,7 +33,8 @@ import {
 // messages and call stacks tla-trace's evaluate_failure gives, tableau nodes that accept every
 // behavior, assumptions that print, the records TLC sorts as it permutes a state under
 // SYMMETRY, a lasso under a VIEW, action composition, an operator the configuration defines
-// by its values, and a postcondition that reads the _POSSIBLE counts.
+// by its values, a postcondition that reads the _POSSIBLE counts, and one that reads a lasso
+// stuttering at its initial state.
 const GOLDEN_MODELS = [
   "examples/specifications/btree/MCbtree.cfg",
   "examples/specifications/TeachingConcurrency/SimpleRegular.cfg",
@@ -105,6 +106,7 @@ const GOLDEN_MODELS = [
   "etcd-raft/tla/etcdraft.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/examples/allocator/SchedulingAllocator.cfg",
   "raft/specifications/pull-raft/PullRaft.cfg",
+  "tlc/tlatools/org.lamport.tlatools/test-model/examples/SpecifyingSystems/Liveness/MCLiveWriteThroughCache.cfg",
 ];
 
 const GOLDEN_DIRECTORY = join(CONFORMANCE_DIRECTORY, "ir");
