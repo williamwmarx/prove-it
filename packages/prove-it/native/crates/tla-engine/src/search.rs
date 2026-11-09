@@ -41,7 +41,8 @@ pub struct Settings {
     /// through TLC's actions, and run each ENABLED answered from the steps, and fail where the two
     /// differ.
     pub is_live_checked: bool,
-    /// PROVE_IT_WORKERS: how many threads expand a level of states.
+    /// PROVE_IT_WORKERS: how many threads expand a level of states, at most as many as the
+    /// machine runs at once.
     pub threads: usize,
     /// PROVE_IT_SHARED_LEVEL: the fewest states a level shares between the threads, below which
     /// one thread expands it, since a short level isn't worth the threads' start.
@@ -1223,7 +1224,11 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     // A level's states are shared between threads where the order of the steps across states
     // shows nowhere but in the states found: nothing prints or reads the count of distinct states,
     // and no graph records the steps.
-    let is_shared = settings.threads > 1
+    // More threads than the machine runs at once would only take turns.
+    let thread_count = settings
+        .threads
+        .min(std::thread::available_parallelism().map_or(1, std::num::NonZero::get));
+    let is_shared = thread_count > 1
         && !compiler.is_printing
         && !is_distinct_read
         && !model.is_recording_graph
@@ -1318,7 +1323,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 search.level += 1;
                 level_end = search.states.count();
                 // A thread takes at least half the fewest states a level shares.
-                let threads = settings.threads.min(
+                let threads = thread_count.min(
                     (level_end - expanding) / settings.minimum_shared_level.div_ceil(2).max(1),
                 );
                 if is_shared
@@ -1326,7 +1331,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     && threads > 1
                 {
                     if workers.is_empty() {
-                        workers = (0..settings.threads)
+                        workers = (0..thread_count)
                             .map(|_| Worker {
                                 machine: Machine::new(&program, Store::new()),
                                 fingerprints: Fingerprints::new(),
