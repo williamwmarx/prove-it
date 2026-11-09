@@ -17,6 +17,7 @@ use crate::instances::{
     local_identifier, operator_definition, param, rename_locals, with_let_instances,
 };
 use crate::lexer::tokenize;
+use crate::order::TlcOrder;
 use crate::ordered_map::OrderedMap;
 use crate::parser::{extract_module, parse_module_tokens};
 use crate::resolve::{
@@ -1849,16 +1850,15 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
         })
         .collect();
     if !unassigned.is_empty() && !options.is_unconfigured {
-        // TLC reports the first constant it finds unassigned in SANY's order of declarations,
-        // which F7 ports.
-        if unassigned.len() > 1 {
-            return Err(FrontError::NotYet(
-                "constants that TLC reports in SANY's order".to_owned(),
-            ));
-        }
+        // TLC reports the first constant it finds unassigned in SANY's order of declarations.
+        let order = TlcOrder::new(options.source, options.load_module, options.version)?
+            .get_declaration_order(false)?;
+        let name = order
+            .iter()
+            .find(|constant| unassigned.contains(constant))
+            .unwrap_or(unassigned[0]);
         return Err(FrontError::Config(format!(
-            "The constant parameter {} is not assigned a value by the configuration file.",
-            unassigned[0]
+            "The constant parameter {name} is not assigned a value by the configuration file."
         )));
     }
     let mut variable_index: OrderedMap<Name, usize> = variables

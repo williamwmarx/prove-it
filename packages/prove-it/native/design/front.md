@@ -165,3 +165,6 @@ what each milestone built and measured, in the order they landed.
 - `front-differential.ts model-ir` ranks the texts in TLC's string order, as `check.ts` does, links
   each corpus model with its configuration, and lowers its environment as `ir` does: 1,092 of
   1,111 models give byte-identical IR and none differ; with `--mutate 400`, 2,682 of 2,711.
+- With TLC's orders in, a configuration that leaves several constants unassigned is reported as
+  TLC reports it, by the first in SANY's order of declarations: `model` now matches 2,694 of
+  2,711 with `--mutate 400`, up from 2,682.
