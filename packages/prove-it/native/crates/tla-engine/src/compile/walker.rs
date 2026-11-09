@@ -288,23 +288,24 @@ enum Op {
     PastWalk,
 }
 
-/// A run of conjuncts, then the rest of the walk. Its assignments are undone in reverse once the
-/// rest returns, as each conjunction of `action.ts` unassigns its own.
-struct Segment {
-    ops: Vec<Op>,
-    rest: Rest,
-    is_init: bool,
+#[inline(always)]
+fn read_source(machine: &mut Machine<'_>, source: &Source, variable: u32) -> Outcome<Id> {
+    match source {
+        Source::Value(value) => value(machine),
+        Source::Current => Ok(machine.cur[variable as usize]),
+    }
 }
 
-impl Segment {
-    #[inline(always)]
-    fn source(machine: &mut Machine<'_>, source: &Source, variable: u32) -> Outcome<Id> {
-        match source {
-            Source::Value(value) => value(machine),
-            Source::Current => Ok(machine.cur[variable as usize]),
-        }
-    }
+/// A run of conjuncts, then the rest of the walk. Its assignments are undone in reverse once the
+/// rest returns, or once a conjunct stops it, as each conjunction of `action.ts` unassigns its own.
+struct Segment<const IS_INIT: bool> {
+    ops: Box<[Op]>,
+    // The variables the ops assign, in order, for the undo.
+    assigns: Box<[u32]>,
+    rest: Rest,
+}
 
+impl<const IS_INIT: bool> Segment<IS_INIT> {
     // Applies one conjunct: whether the walk goes on past it.
     #[inline(always)]
     fn apply(&self, machine: &mut Machine<'_>, op: &Op) -> Outcome<bool> {
@@ -316,14 +317,14 @@ impl Segment {
             },
             Op::Holds(test) => test(machine),
             Op::Assign(variable, source) => {
-                let value = Self::source(machine, source, *variable)?;
-                target(machine, self.is_init)[*variable as usize] = value;
+                let value = read_source(machine, source, *variable)?;
+                target(machine, IS_INIT)[*variable as usize] = value;
                 machine.assigned += 1;
                 Ok(true)
             }
             Op::Test(variable, source) => {
-                let value = Self::source(machine, source, *variable)?;
-                let current = target(machine, self.is_init)[*variable as usize];
+                let value = read_source(machine, source, *variable)?;
+                let current = target(machine, IS_INIT)[*variable as usize];
                 Ok(current == value || machine.store.equals(current, value)?)
             }
             Op::PastWalk => {
@@ -334,31 +335,21 @@ impl Segment {
     }
 
     fn run(&self, machine: &mut Machine<'_>, on_complete: &mut Continue<'_>) -> Outcome<()> {
-        let mut reached = self.ops.len();
-        let mut result = Ok(());
-        for (index, op) in self.ops.iter().enumerate() {
-            match self.apply(machine, op) {
-                Ok(true) => {}
-                Ok(false) => {
-                    reached = index;
-                    break;
-                }
-                Err(bail) => {
-                    reached = index;
-                    result = Err(bail);
-                    break;
+        let mut count = 0;
+        let result = 'walk: {
+            for op in &self.ops {
+                match self.apply(machine, op) {
+                    Ok(true) => count += usize::from(matches!(op, Op::Assign(..))),
+                    Ok(false) => break 'walk Ok(()),
+                    Err(bail) => break 'walk Err(bail),
                 }
             }
+            run_rest(&self.rest, machine, on_complete)
+        };
+        for &variable in self.assigns[..count].iter().rev() {
+            target(machine, IS_INIT)[variable as usize] = UNASSIGNED;
         }
-        if reached == self.ops.len() {
-            result = run_rest(&self.rest, machine, on_complete);
-        }
-        for op in self.ops[..reached].iter().rev() {
-            if let Op::Assign(variable, _) = op {
-                target(machine, self.is_init)[*variable as usize] = UNASSIGNED;
-                machine.assigned -= 1;
-            }
-        }
+        machine.assigned -= count as u32;
         result
     }
 }
@@ -376,10 +367,21 @@ fn segment(ops: Vec<Op>, rest: Rest, is_init: bool) -> Rest {
     if ops.is_empty() {
         return rest;
     }
-    let segment = Segment { ops, rest, is_init };
-    Some(step(move |machine, on_complete| {
-        segment.run(machine, on_complete)
-    }))
+    let assigns = ops
+        .iter()
+        .filter_map(|op| match op {
+            Op::Assign(variable, _) => Some(*variable),
+            _ => None,
+        })
+        .collect();
+    let ops = ops.into_boxed_slice();
+    Some(if is_init {
+        let segment = Segment::<true> { ops, assigns, rest };
+        step(move |machine, on_complete| segment.run(machine, on_complete))
+    } else {
+        let segment = Segment::<false> { ops, assigns, rest };
+        step(move |machine, on_complete| segment.run(machine, on_complete))
+    })
 }
 
 // An assignment of a variable that may or may not be assigned on the path: it assigns or tests,
@@ -387,7 +389,7 @@ fn segment(ops: Vec<Op>, rest: Rest, is_init: bool) -> Rest {
 fn either_step(variable: u32, source: Source, rest: Rest, is_init: bool) -> Step {
     let index = variable as usize;
     step(move |machine, on_complete| {
-        let value = Segment::source(machine, &source, variable)?;
+        let value = read_source(machine, &source, variable)?;
         let current = target(machine, is_init)[index];
         if current == UNASSIGNED {
             target(machine, is_init)[index] = value;
