@@ -608,7 +608,12 @@ impl Decoder<'_> {
             Ok(0)
         };
         let init = node(self)?;
-        let next = node(self)?;
+        let next = if self.words.get(self.at) == Some(&-1) {
+            self.at += 1;
+            None
+        } else {
+            Some(node(self)?)
+        };
         let scope = self.optional_below(scope_count, "scope")?;
         let count = self.count()?;
         let actions = (0..count)
@@ -630,19 +635,18 @@ impl Decoder<'_> {
         let is_labelled = self.flag()?;
         let invariants = self.config_names(true)?;
         let count = self.count()?;
-        let (property_invariants, property_invariant_names) = (0..count)
-            .map(|_| {
-                Ok((
-                    Printed {
-                        root: node(self)?,
-                        has_repeated_effect: self.flag()?,
-                    },
-                    self.text()?,
-                ))
-            })
-            .collect::<Decoded<Vec<_>>>()?
-            .into_iter()
-            .unzip();
+        let mut property_invariants = Vec::with_capacity(count);
+        let mut property_invariant_scopes = Vec::with_capacity(count);
+        let mut property_invariant_names = Vec::with_capacity(count);
+        for _ in 0..count {
+            let root = node(self)?;
+            property_invariant_scopes.push(self.optional_below(scope_count, "scope")?);
+            property_invariants.push(Printed {
+                root,
+                has_repeated_effect: self.flag()?,
+            });
+            property_invariant_names.push(self.text()?);
+        }
         let constraints = self.unprinted()?;
         let action_constraints = self.unprinted()?;
         let possible = self
@@ -659,15 +663,19 @@ impl Decoder<'_> {
                 Ok(ActionProperty {
                     action: node(self)?,
                     subscript: node(self)?,
+                    scope: self.optional_below(scope_count, "scope")?,
                 })
             })
             .collect::<Decoded<_>>()?;
         let count = self.count()?;
-        let (initial_predicates, initial_predicate_names) = (0..count)
-            .map(|_| Ok((node(self)?, self.text()?)))
-            .collect::<Decoded<Vec<_>>>()?
-            .into_iter()
-            .unzip();
+        let mut initial_predicates = Vec::with_capacity(count);
+        let mut initial_predicate_scopes = Vec::with_capacity(count);
+        let mut initial_predicate_names = Vec::with_capacity(count);
+        for _ in 0..count {
+            initial_predicates.push(node(self)?);
+            initial_predicate_scopes.push(self.optional_below(scope_count, "scope")?);
+            initial_predicate_names.push(self.text()?);
+        }
         let mut views = self.unprinted()?;
         if views.len() > 1 {
             return self.error(format!("{} views", views.len()));
@@ -814,11 +822,13 @@ impl Decoder<'_> {
             invariants,
             property_invariants,
             property_invariant_names,
+            property_invariant_scopes,
             constraints,
             action_constraints,
             possible,
             action_properties,
             initial_predicates,
+            initial_predicate_scopes,
             initial_predicate_names,
             view,
             alias,
@@ -1235,7 +1245,9 @@ impl Model {
         visit: &mut impl FnMut(&mut NodeId) -> Decoded<()>,
     ) -> Decoded<()> {
         visit(&mut self.init)?;
-        visit(&mut self.next)?;
+        if let Some(next) = &mut self.next {
+            visit(next)?;
+        }
         for action in &mut self.actions {
             visit(&mut action.expression)?;
         }

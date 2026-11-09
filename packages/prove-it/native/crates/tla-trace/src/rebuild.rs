@@ -236,8 +236,11 @@ impl<'ir> Rebuilder<'ir> {
         rebuilt.push(initial);
         // Each candidate action, with its position in the model's actions: the next-state
         // relation, which is none of them, when the IR has none.
+        let Some(next) = ir.model.next else {
+            return unsupported("a trace of a model without a next-state relation");
+        };
         let all_actions: Vec<(NodeId, Option<u32>, Option<u32>)> = if ir.model.actions.is_empty() {
-            vec![(ir.model.next, ir.model.scope, None)]
+            vec![(next, ir.model.scope, None)]
         } else {
             ir.model
                 .actions
@@ -649,6 +652,9 @@ fn check_violation(
     rebuilt: &[Vec<Value>],
 ) -> Result<(), Unsupported> {
     let ir = evaluator.ir;
+    if ir.model.has_scoped_property() {
+        return unsupported("a property read in an instance's scope");
+    }
     let state = |values: &[Value]| values.iter().cloned().map(Some).collect();
     let last = rebuilt.len() - 1;
     evaluator.current = state(&rebuilt[last]);

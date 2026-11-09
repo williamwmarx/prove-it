@@ -337,7 +337,9 @@ impl<'ir> Rebuilder<'ir> {
                     let split = evaluator
                         .scope_context(ir.model.scope)
                         .and_then(|context| {
-                            evaluator.split_actions(ir.model.next, &context, &mut actions)
+                            // A failure computing successors comes from a next-state relation.
+                            let next = ir.model.next.expect("a next-state relation");
+                            evaluator.split_actions(next, &context, &mut actions)
                         })
                         .map(|()| actions);
                     evaluator.call_stack = call_stack;
@@ -659,8 +661,13 @@ impl Rebuilder<'_> {
         evaluator.current = last.values.iter().cloned().map(Some).collect();
         evaluator.level = trace.states.len() as i32;
         evaluator.printed.clear();
+        let Some(next) = ir.model.next else {
+            return Err(Unsupported(
+                "a successor of a model without a next-state relation".into(),
+            ));
+        };
         let candidates: Vec<(NodeId, Option<u32>, Option<u32>)> = if ir.model.actions.is_empty() {
-            vec![(ir.model.next, ir.model.scope, None)]
+            vec![(next, ir.model.scope, None)]
         } else {
             ir.model
                 .actions
