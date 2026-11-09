@@ -1065,6 +1065,18 @@ pub fn config(value: &Result<crate::config::ModelConfig, crate::config::ConfigEr
     ])
 }
 
+/// The facts of the environment's definitions, as `createDefinitionFacts` writes their rows.
+fn facts(environment: &crate::environment::Environment) -> Json {
+    let facts = crate::dependencies::create_definition_facts(environment);
+    object(vec![
+        ("words", Some(number(facts.words()))),
+        (
+            "rows",
+            Some(list(facts.rows(), |word| Json::Number(f64::from(*word)))),
+        ),
+    ])
+}
+
 /// What linking makes of a spec, for `front-differential.ts resolve`: each definition by key, in
 /// the environment's order, written the first time the environment holds it and named by that
 /// key after; the builtins by key, with name, arity and flags; the variables and their indices;
@@ -1127,6 +1139,7 @@ pub fn environment(
                     .collect(),
             )),
         ),
+        ("facts", Some(facts(environment))),
         ("variables", Some(names(&environment.variables))),
         (
             "variableIndex",
