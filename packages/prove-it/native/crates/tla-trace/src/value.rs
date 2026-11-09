@@ -133,6 +133,8 @@ pub enum Lazy {
     RecordSet(Vec<(Rc<Text>, Value)>, Vec<u32>),
     Product(Vec<Value>),
     Seq(Value),
+    /// `S \ T` where TLC can't enumerate S (`SetDiffValue`): tested for membership only.
+    Difference(Value, Value),
 }
 
 #[derive(Clone, Debug)]
@@ -599,7 +601,7 @@ pub fn settle(value: &Value) {
         // A lazy set enumerates into its parts' values, so fingerprinting it settles them.
         Value::Lazy(lazy) => match &**lazy {
             Lazy::Subset(base) | Lazy::Seq(base) => settle(base),
-            Lazy::FunctionSet(domain, range) => {
+            Lazy::FunctionSet(domain, range) | Lazy::Difference(domain, range) => {
                 settle(domain);
                 settle(range);
             }

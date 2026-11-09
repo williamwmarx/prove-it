@@ -514,18 +514,34 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
 - In `tla-trace`: a set its parts empty enumerates to nothing before any part is enumerated; a
   domain its parts empty gives the one empty function; a nested set of functions, records or
   tuples is nonempty unless its parts empty it, and SUBSET S and Seq(S) always are.
+  `S \ T` of a set TLC can't enumerate is a value (`Lazy::Difference`), tested for membership
+  only, as TLC's `SetDiffValue`. TLCFP is the low 32 bits of the value's fingerprint
+  (`state_fingerprint`).
 
 ## Open: what the infinite-sets session left (2026-11-09)
 
-- **EmptySetEqAssume** still declines. What is left, in the order met:
-  - `tla-trace` has no value for `S \ T`, `S \cup T` or `S \cap T` with an operand TLC can't
-    enumerate (`[ref : {}] = [n1 : {}, n2 : (Nat \ {0})]`, assumption 102 of 443). It has
-    `Combined` for a membership only (`combined_set`). Every delegated assumption re-evaluates the
-    ones before it (`check_assumption`), so one the evaluator can't follow stops them all; more
-    may follow that one.
-- **ValueSemanticsAssume** declines: its fifteenth assumption reads TLCFP, which `tla-trace`
-  doesn't evaluate, and every delegated assumption after it re-evaluates that one. Five
-  assumptions fail in the engine with "EXCEPT outside the domain", not looked at.
+- **EmptySetEqAssume** still declines. Every delegated assumption re-evaluates the ones before
+  it in `tla-trace` (`check_assumption`), so one the evaluator can't follow stops them all. The
+  first it can't, of 443, has moved from 26 to 217:
+  - 217, `1 = Cardinality([(UNION {1..2000000, {"a"}}) -> {"d1"}])`: `tla-trace` builds the UNION
+    and fails comparing an integer with a string, where TLC keeps a `UnionValue` and its `size`
+    never asks the domain. It needs a lazy UNION value, as the engine's `Lazy::Union`. More may
+    follow it.
+  - In the engine, `ToString([{} -> (SUBSET (1..40))])` (assumption 379) overflows counting the
+    power set: the set of functions' own value evaluates its range, where TLC's enumeration of
+    an empty domain doesn't ask it. Its `eval` goes through the lazy enumeration only where a
+    part may be infinite.
+- **ValueSemanticsAssume** declines: not surveyed again since `tla-trace` took TLCFP, which its
+  fifteenth assumption reads. Five assumptions fail in the engine with "EXCEPT outside the
+  domain", not looked at.
+- **MCEWD687a** (both copies) stops on "enumerated a filter of an infinite set", which is TLC's
+  own failure (`SetPredValue.elements`: "Attempted to enumerate { x \in S : p(x) } when S: ...
+  is not enumerable") evaluating the property TreeWithRoot as an invariant. Counting the reason
+  among `TLC_FAILURES` isn't enough: the CLI declines a failure in a model with temporal
+  properties (one copy) or with an ALIAS or POSTCONDITION (the other). Past those,
+  `Site::Invariant` reads only the model's invariants, not the properties checked as
+  invariants, in an instance's scope here; the replay of the expansion declines them too; and
+  `tla-trace` builds a filter where TLC keeps it lazy, with no message for this failure.
 - **DoInitFunctorMinimalErrorStack** declines. `tla-trace` has no message yet for a comparison's
   argument that isn't an integer (2266); `tlc2.module.Naturals#GEQ` names itself `>` there, and
   the IR doesn't say which module's `>=` a spec has (a flag on the builtin was written, held

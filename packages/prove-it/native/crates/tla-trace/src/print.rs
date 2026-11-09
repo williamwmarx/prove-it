@@ -95,7 +95,14 @@ fn write_value(value: &Value, is_strict: bool, is_normalized: bool, out: &mut St
 // The set TLC expands a lazy one into to print it, if any (`getExpandedLazySet`).
 fn expand(lazy: &Lazy) -> Option<Vec<Value>> {
     let size = match lazy {
-        Lazy::Nat | Lazy::Int | Lazy::Real | Lazy::Strings | Lazy::Seq(_) => return None,
+        Lazy::Nat
+        | Lazy::Int
+        | Lazy::Real
+        | Lazy::Strings
+        | Lazy::Seq(_)
+        | Lazy::Difference(..) => {
+            return None;
+        }
         Lazy::Subset(base) => {
             return (cardinality(base).ok()? <= MAXIMUM_EXPANDED_SUBSET_BASE)
                 .then(|| crate::sets::enumerate(lazy).ok())
@@ -148,6 +155,23 @@ fn write_lazy(lazy: &Lazy, is_strict: bool, is_normalized: bool, out: &mut Strin
             out.push_str("Seq(");
             format(base, out);
             out.push(')');
+        }
+        // `SetDiffValue.toString`, an operand that is a difference in parentheses.
+        Lazy::Difference(left, right) => {
+            let operand = |value: &Value, out: &mut String| {
+                let is_nested =
+                    matches!(value, Value::Lazy(lazy) if matches!(**lazy, Lazy::Difference(..)));
+                if is_nested {
+                    out.push('(');
+                }
+                format(value, out);
+                if is_nested {
+                    out.push(')');
+                }
+            };
+            operand(left, out);
+            out.push_str(" \\ ");
+            operand(right, out);
         }
         Lazy::Subset(base) => {
             if matches!(base, Value::Interval(..)) {

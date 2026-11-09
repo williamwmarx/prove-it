@@ -17,6 +17,7 @@ use tla_ir::{
 use tla_values::{Id, Store};
 
 use crate::failure::nested;
+use crate::fingerprint::state_fingerprint;
 use crate::print::{format_pretty, format_printed, format_value};
 use crate::random::{random_element, random_subset};
 use crate::sets::{as_tuple, cardinality, difference, intersection, is_member, is_subset, union};
@@ -25,6 +26,7 @@ use crate::value::{
     equals, fail, fail_coded, fail_runtime, fail_with, find_key, from_store, set_of,
     sorted_function, written_function,
 };
+use tla_values::fingerprint::Fingerprints;
 
 /// The bindings an expression sees, innermost first.
 #[derive(Clone, Default)]
@@ -2383,6 +2385,12 @@ impl<'ir> Evaluator<'ir> {
                 match name {
                     "\\cup" => union(&left, &right)?,
                     "\\cap" => intersection(&left, &right)?,
+                    // TLC keeps the difference of a set it can't enumerate, and tests it.
+                    _ if !is_finite(&left)
+                        && !matches!(left, Value::Lazy(ref lazy) if matches!(**lazy, Lazy::Subset(_) | Lazy::FunctionSet(..) | Lazy::RecordSet(..) | Lazy::Product(_))) =>
+                    {
+                        Value::Lazy(Rc::new(Lazy::Difference(left, right)))
+                    }
                     _ => difference(&left, &right)?,
                 }
             }
@@ -2815,6 +2823,16 @@ impl<'ir> Evaluator<'ir> {
             }
             // TLC's TLCEval is an @Evaluation method that evaluates its argument itself, and
             // reports its failure as its own, which TLC 1.7.4's Java override didn't.
+            // `TLC.TLCFP`: the low 32 bits of TLC's fingerprint of the value.
+            "TLCFP" => {
+                arity(1)?;
+                let value = self.operand(&operands[0])?;
+                let Some(fingerprint) = state_fingerprint(&mut Fingerprints::new(), &[&value])
+                else {
+                    return fail("TLCFP of a value the evaluator doesn't fingerprint");
+                };
+                Value::Int(fingerprint as i32)
+            }
             "TLCEval" => {
                 arity(1)?;
                 let value = self.operand(&operands[0]);
@@ -3084,6 +3102,7 @@ fn is_finite(value: &Value) -> bool {
     match value {
         Value::Lazy(lazy) => match &**lazy {
             Lazy::Nat | Lazy::Int | Lazy::Real | Lazy::Strings | Lazy::Seq(_) => false,
+            Lazy::Difference(left, _) => is_finite(left),
             Lazy::Subset(base) => is_finite(base),
             Lazy::FunctionSet(domain, range) => is_finite(domain) && is_finite(range),
             Lazy::RecordSet(fields, _) => fields.iter().all(|(_, set)| is_finite(set)),
