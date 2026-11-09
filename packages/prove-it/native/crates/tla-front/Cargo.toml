@@ -1,0 +1,8 @@
+[package]
+name = "tla-front"
+description = "Prove It's TLA+ front end: lexer, parser, resolver, levels, SANY, config and TLC order to the engine IR"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true

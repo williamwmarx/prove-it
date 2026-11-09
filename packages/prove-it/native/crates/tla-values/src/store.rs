@@ -1006,11 +1006,21 @@ impl Store {
         if self.find_in_block(set, element)? != -1 {
             return Ok(true);
         }
+        let size = self.size_of(set) as usize;
+        let offset = self.offset_of(set) as usize;
+        // A boolean, integer or string compares with one of its own kind without failing, so a
+        // miss in a set of that kind alone, its first and last element, is a miss.
+        let kind = self.kind_of(element);
+        if size > 0
+            && kind <= KIND_STRING
+            && self.kind_of(self.word(offset)) == kind
+            && self.kind_of(self.word(offset + size - 1)) == kind
+        {
+            return Ok(false);
+        }
         // SetEnumValue.member binary-searches a set TLC has normalized with the element's
         // compareTo, which fails for values TLC can't compare, so a miss makes the same
         // comparisons, in the same order.
-        let size = self.size_of(set) as usize;
-        let offset = self.offset_of(set) as usize;
         let (mut low, mut high) = (0, size);
         while low < high {
             let middle = low + ((high - low) >> 1);

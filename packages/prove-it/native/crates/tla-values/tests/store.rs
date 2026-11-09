@@ -329,6 +329,32 @@ fn stops_a_membership_tlcs_search_passes_but_its_equals_of_a_set_enumeration_fai
     assert_eq!(store.is_member(other, set), Ok(false));
 }
 
+#[test]
+fn misses_a_scalar_in_a_set_of_its_own_kind() {
+    let mut store = Store::new();
+    let words = ["ncs", "e1", "exit", "cs"].map(|word| store.str(&utf16(word)));
+    let strings = store.set_of(&words[..3]).unwrap();
+    assert_eq!(store.is_member(words[3], strings), Ok(false));
+    assert_eq!(store.is_member(words[1], strings), Ok(true));
+    let numbers = (0..20)
+        .map(|value| store.int(value * 2).unwrap())
+        .collect::<Vec<_>>();
+    let evens = store.set_of(&numbers).unwrap();
+    for value in -3..43 {
+        let element = store.int(value).unwrap();
+        assert_eq!(
+            store.is_member(element, evens),
+            Ok((0..40).contains(&value) && value % 2 == 0)
+        );
+    }
+    let booleans = store.set_of(&[TRUE]).unwrap();
+    assert_eq!(store.is_member(FALSE, booleans), Ok(false));
+    assert_eq!(
+        store.is_member(words[3], evens),
+        Err(Bail("values TLC can't compare"))
+    );
+}
+
 // A deterministic generator, so that a failure names its seed.
 struct Random(u64);
 
