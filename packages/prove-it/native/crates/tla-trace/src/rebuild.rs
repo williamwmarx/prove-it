@@ -12,8 +12,8 @@ use crate::eval::{Context, Evaluator};
 use std::rc::Rc;
 
 use crate::value::{
-    Evaluated, Text, Value, compare, equals, from_store, matches, permute, settle, settle_deep,
-    settle_normalized,
+    Evaluated, Text, Value, compare, equals, from_store, matches, permute, settle, settle_built,
+    settle_deep, settle_normalized,
 };
 use crate::{Ending, Trace, TraceState, Unsupported};
 
@@ -234,7 +234,14 @@ fn settle_recovered(
 ) -> Result<(), Unsupported> {
     match key {
         Key::State => state.iter().for_each(settle),
-        Key::Symmetry(_) | Key::ViewOfSymmetry(..) => state.iter().for_each(settle_deep),
+        Key::Symmetry(_) => state.iter().for_each(settle_deep),
+        // TLC permutes every value, which builds each lambda into the function it enumerates,
+        // and then deep-normalizes the state and fingerprints the view of the least state.
+        Key::ViewOfSymmetry(view, group) => {
+            state.iter().for_each(settle_built);
+            let least = run(least_in_orbit(evaluator.ir, group, state))?;
+            settle_deep(&run(view_of(evaluator, *view, &least))?);
+        }
         Key::View(view) => {
             state.iter().for_each(settle_normalized);
             settle_deep(&run(view_of(evaluator, *view, state))?);

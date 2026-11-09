@@ -62,6 +62,7 @@ const GOLDEN_MODELS = [
   "tlc/tlatools/org.lamport.tlatools/test-model/suite/test37.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/Github648.cfg",
   "spectacle/specs/with_state_graphs/simple_folds.cfg",
+  "raft/specifications/standard-raft/RaftWithReconfigJointConsensus.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/Github746.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/suite/test57.cfg",
   "examples/specifications/acp/ACP_NB_WRONG_TLC.cfg",

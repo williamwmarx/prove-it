@@ -211,3 +211,12 @@ fn rebuilds_deadlock_traces_as_tlc_prints_them() {
         }
     }
 }
+
+#[test]
+fn sorts_the_records_of_built_lambdas_under_view_and_symmetry() {
+    // TLC permutes the state under SYMMETRY, which builds each lambda into the function it
+    // enumerates, and deep-normalizes it under the VIEW, so the records within print sorted.
+    let (states, _) =
+        deadlock_trace("raft/specifications/standard-raft/RaftWithReconfigJointConsensus");
+    assert_eq!(states[0], tlc_states(RAFT_RECONFIG_INITIAL_STATE)[0]);
+}
