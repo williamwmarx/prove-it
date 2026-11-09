@@ -283,10 +283,10 @@ fn rebuild_violation<T: Send>(
             panic!("{path}: a search that stops at a violation");
         };
         let (ending, cycle_start) = match violation.kind {
-            ViolationKind::Deadlock => (Ending::Kept, None),
-            ViolationKind::Invariant(_) | ViolationKind::InitialInvariant(_) => {
-                (Ending::Violation, None)
-            }
+            ViolationKind::Deadlock { .. } => (Ending::Kept, None),
+            ViolationKind::Invariant(_)
+            | ViolationKind::InitialInvariant(_)
+            | ViolationKind::InitialPredicate(_) => (Ending::Violation, None),
             ViolationKind::Lasso { loop_start, .. } => (Ending::Lasso, Some(loop_start)),
             ViolationKind::Accepted { .. } => (Ending::Lasso, None),
             ViolationKind::Error { .. } => panic!("{path}: a failure evaluating the model"),
@@ -332,7 +332,7 @@ fn draws_random_elements_and_subsets_as_tlc_does() {
 fn aliased_trace(path: &str) -> Result<Vec<String>, Unsupported> {
     rebuild_violation(path, |ir, rebuilder, trace, cycle_start| {
         let aliases = rebuilder
-            .alias(trace, cycle_start)?
+            .alias(trace, cycle_start, false)?
             .expect("a model with an ALIAS");
         let text = |fields: Vec<(String, String)>| {
             fields
@@ -495,7 +495,7 @@ fn records_the_parameters_of_the_counter_examples_actions() {
                         },
                         counter_example: Some(CounterExample {
                             trace: &trace,
-                            cycle: Some((0, closing)),
+                            cycle: Some((0, Some(closing))),
                         }),
                     },
                 )

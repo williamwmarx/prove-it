@@ -742,6 +742,34 @@ fn rebuilds_a_trace_through_a_recursive_function_tlc_keeps_lazy() {
     std::fs::remove_dir_all(directory).expect("removed");
 }
 
+#[test]
+fn prints_a_deadlock_then_the_property_the_deadlocked_state_violates() {
+    let ir = include_bytes!(
+        "../../../../tests/conformance/ir/tlc/tlatools/org.lamport.tlatools/test-model/Github710d.ir"
+    );
+    let config = "SPECIFICATION Spec\nPROPERTY NeverThree\nPROPERTY Tautology\n";
+    let (output, directory) = run_golden("deadlock-accepted", ir, "Github710d", config, &[]);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(11), "{text}");
+    // TLC adds the deadlocked state to the behavior graphs after it reports the deadlock, and
+    // reports the node that accepts every behavior it reaches there.
+    let label = "Step line 7, col 9 to line 7, col 27 of module Github710d";
+    let mut trace = String::from("State 1: <Initial predicate>\nx = 0\n\n");
+    for position in 2..=4 {
+        trace.push_str(&format!(
+            "State {position}: <{label}>\nx = {}\n\n",
+            position - 1
+        ));
+    }
+    assert!(
+        text.contains(&format!(
+            "Error: Deadlock reached.\nError: The behavior up to this point is:\n{trace}Error: Temporal property NeverThree was violated.\n\nError: The following behavior constitutes a counter-example:\n\n{trace}4 states generated, 4 distinct states found, 0 states left on queue.\n"
+        )),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
 const PULL_RAFT_IR: &[u8] =
     include_bytes!("../../../../tests/conformance/ir/raft/specifications/pull-raft/PullRaft.ir");
 
@@ -753,6 +781,34 @@ fn rebuilds_a_trace_under_symmetry_through_sets_tlc_streams_in_order() {
     // streams \E m \in DOMAIN messages, a variable's domain it normalized.
     assert_eq!(output.status.code(), Some(11), "{text}");
     assert!(text.contains(include_str!("pull-raft.txt")), "{text}");
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn checks_the_possible_counts_after_a_deadlock() {
+    // TLC's PostConditionsTest: TLC checks the postconditions after the deadlock, with each
+    // _POSSIBLE predicate's count as the search left it, so PossibleCounts holds.
+    let spec = "---- MODULE Stop ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 3 /\\ x' = x + 1\nSpec == Init /\\ [][Next]_x\nAtTwo == x = 2\nLastStep == x = 2 /\\ x' = 3\nPossibleCounts ==\n    LET p == TLCGet(\"all:named\")[\"s:_possible\"][1]\n    IN /\\ p[\"AtTwo\"] = 1\n       /\\ p[\"LastStep\"] = 1\n====\n";
+    let directory =
+        std::env::temp_dir().join(format!("prove-it-cli-possible-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    for (extension, contents) in [
+        ("tla", spec),
+        (
+            "cfg",
+            "SPECIFICATION Spec\nPOSTCONDITIONS PossibleCounts\n_POSSIBLE AtTwo LastStep\n",
+        ),
+        ("front", ""),
+    ] {
+        std::fs::write(directory.join(format!("Stop.{extension}")), contents).expect("a file");
+    }
+    let output = run(&directory, &["Stop"]);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(11), "{text}");
+    assert!(
+        text.contains("x = 3\n\n4 states generated, 4 distinct states found, 0 states left on queue.\nThe depth of the complete state graph search is 4.\nFinished in "),
+        "{text}"
+    );
     std::fs::remove_dir_all(directory).expect("removed");
 }
 
@@ -778,5 +834,145 @@ fn reports_a_division_by_zero_after_what_the_expansion_printed() {
         text.contains("\"step\"\nError: The second argument of \\div is 0.\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 1\n\n\"step\"\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 42 in D\n1. Line 5, column 12 to line 5, column 42 in D\n2. Line 5, column 12 to line 5, column 25 in D\n3. Line 5, column 30 to line 5, column 42 in D\n4. Line 5, column 35 to line 5, column 42 in D\n\n\n1 states generated, 1 distinct states found, 0 states left on queue.\n"),
         "{text}"
     );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn reports_a_property_an_initial_state_violates() {
+    let directory = std::env::temp_dir().join(format!(
+        "prove-it-cli-initial-property-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    let spec = "---- MODULE P ----\nEXTENDS Integers\nVARIABLE x\nInit == x \\in 1..10\nNext == x' = 0\nSpec == Init /\\ [][Next]_x\nNotNine == x # 9\n====\n";
+    for (file, contents) in [
+        ("P.tla", spec),
+        ("P.cfg", "SPECIFICATION Spec\nPROPERTY NotNine\n"),
+        ("P.front", ""),
+    ] {
+        std::fs::write(directory.join(file), contents).expect("a file");
+    }
+    let output = run(&directory, &["-workers", "1", "P"]);
+    let text = stdout(&output);
+    // As TLC's DoInitFunctorProperty: the state in the message, and no statistics.
+    assert_eq!(output.status.code(), Some(13), "{text}");
+    assert!(
+        text.contains(
+            "Computed 8 initial states...\nError: Property NotNine is violated by the initial state:\nx = 9\n\nFinished in "
+        ),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+const LIVE_WRITE_THROUGH_CACHE_IR: &[u8] = include_bytes!(
+    "../../../../tests/conformance/ir/tlc/tlatools/org.lamport.tlatools/test-model/examples/SpecifyingSystems/Liveness/MCLiveWriteThroughCache.ir"
+);
+
+#[test]
+fn checks_a_postcondition_on_a_lasso_stuttering_at_its_initial_state() {
+    let (output, directory) = run_golden(
+        "stutter-postcondition",
+        LIVE_WRITE_THROUGH_CACHE_IR,
+        "MCLiveWriteThroughCache",
+        "",
+        &[],
+    );
+    let text = stdout(&output);
+    // The postcondition is TLC's CounterExample, whose step back into the cycle TLC holds no
+    // action for: Action.UNKNOWN, unnamed, at the TLA+ builtins' null location.
+    assert_eq!(output.status.code(), Some(13), "{text}");
+    assert!(text.contains("State 2: Stuttering\n"), "{text}");
+    assert!(!text.contains("Postcondition"), "{text}");
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn checks_a_model_whose_assumption_prints_a_record() {
+    // TLC's Github726: TLC prints a record's fields in the order it built them, which the store
+    // forgets, but TLC prints the assumption's text in the front the binary records.
+    let spec = "---- MODULE Stop ----\nEXTENDS TLC\nVARIABLE x\nASSUME PrintT([dst |-> \"a\"] @@ [data |-> 15])\nInit == x = 0\nNext == x' = x\n====\n";
+    let directory =
+        std::env::temp_dir().join(format!("prove-it-cli-printed-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    for (extension, contents) in [
+        ("tla", spec),
+        ("cfg", "INIT Init\nNEXT Next\n"),
+        ("front", ""),
+    ] {
+        std::fs::write(directory.join(format!("Stop.{extension}")), contents).expect("a file");
+    }
+    let output = run(&directory, &["Stop"]);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(0), "{text}");
+    assert!(
+        text.contains("Model checking completed. No error has been found."),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+const CDOT_IMPLIED_INIT_IR: &[u8] = include_bytes!(
+    "../../../../tests/conformance/ir/tlc/tlatools/org.lamport.tlatools/test-model/cdot/CdotWithContextB.ir"
+);
+
+#[test]
+fn reports_an_implied_init_that_fails_on_an_initial_state() {
+    let (output, directory) = run_golden(
+        "implied-init",
+        CDOT_IMPLIED_INIT_IR,
+        "CdotWithContextB",
+        "",
+        &[],
+    );
+    let text = stdout(&output);
+    // ENABLED Next, a property's initial predicate, reaches A(n) \cdot B(n): TLC reports the
+    // state, and the call stack from the initial predicate's infix conjunction through ENABLED.
+    assert_eq!(output.status.code(), Some(75), "{text}");
+    assert!(
+        text.contains(include_str!("cdot-implied-init.txt")),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn rejects_a_constant_invariant_the_front_end_leaves_to_the_startup() {
+    // tla-front's evaluator computes no records, so the engine evaluates Bad as TLC starts.
+    let source = "---- MODULE Bad ----\nVARIABLE x\nInit == x = 0\nNext == x' = x\nBad == [a |-> 1].a = 2\n====\n";
+    let config = "INIT Init\nNEXT Next\nINVARIANT Bad\n";
+    let spec = std::env::temp_dir().join(format!("prove-it-cli-bad-{}.tla", std::process::id()));
+    std::fs::write(&spec, source).expect("the spec");
+    let options = tla_front::model::ModelOptions {
+        libraries: &[],
+        version: None,
+        is_warning_enabled: true,
+        is_spec_described: false,
+    };
+    let ir = tla_front::model::lower_model(&spec, config, &options).expect("an IR");
+    std::fs::remove_file(&spec).expect("removed");
+    let (output, directory) = run_golden("constant-invariant", &ir, "Bad", config, &[]);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(151), "{text}");
+    assert!(
+        text.contains("Error: The invariant of Bad is equal to FALSE\nFinished in "),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn records_the_specification_as_the_interpreter_does() {
+    // TLCGet("spec"), which tla-front describes and the split gives the actions of, as the
+    // interpreter prints it for this spec.
+    let spec = "---- MODULE Stop ----\nEXTENDS Integers, TLC\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nStep(d) == x < 3 /\\ x' = x + d /\\ y' = y\nReset == x >= 3 /\\ x' = 0 /\\ UNCHANGED y\nNext == (\\E d \\in {1, 2} : Step(d)) \\/ Reset\nSpec == Init /\\ [][Next]_<<x, y>> /\\ WF_<<x, y>>(Next)\nSmall == x < 10\nProp == [][x' # x]_<<x, y>> /\\ []<>(x = 0)\nBound == y < 5\nMoves == x' # x \\/ y' = y\nRecorded == PrintT(TLCGet(\"spec\"))\n====\n";
+    let (output, directory) = run_lowered(
+        "spec",
+        spec,
+        "SPECIFICATION Spec\nINVARIANT Small\nPROPERTY Prop\nCONSTRAINT Bound\nACTION_CONSTRAINT Moves\nPOSTCONDITION Recorded\n",
+    );
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(0), "{text}");
+    assert!(text.contains(include_str!("spec-record.txt")), "{text}");
     std::fs::remove_dir_all(directory).expect("removed");
 }

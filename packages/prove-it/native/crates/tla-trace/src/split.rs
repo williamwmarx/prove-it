@@ -17,8 +17,9 @@ use tla_ir::{
 use crate::Unsupported;
 use crate::eval::{Context, Evaluator};
 use crate::print::format_value;
+use crate::rebuild::run;
 use crate::sets::as_tuple;
-use crate::value::{Class, Evaluated, Value, elements};
+use crate::value::{Class, Evaluated, Value, elements, set_of};
 
 /// One of TLC's actions: the expression it walks, with the values of the names the split bound,
 /// and what a trace calls it.
@@ -28,6 +29,8 @@ struct SplitAction {
     /// The operator the action is the body of, or none: TLC's `UnnamedAction`.
     name: Option<TextId>,
     location: Located,
+    /// The definition TLC splits the action from (`Action.getOpDef`), by index.
+    definition: Option<Index>,
     /// The values of the operator's parameters, which the label prints.
     parameters: Vec<Value>,
 }
@@ -39,6 +42,7 @@ struct Labelled {
     label: String,
     name: String,
     location: Option<SourceRange>,
+    definition: Option<Index>,
 }
 
 /// Where TLC says an action is written: at an expression, or at an INSTANCE it comes through.
@@ -60,6 +64,7 @@ struct Place {
 #[derive(Clone)]
 struct Closure {
     name: TextId,
+    definition: Index,
     parameters: Vec<Value>,
 }
 
@@ -104,26 +109,7 @@ pub fn add_actions(ir: &Ir) -> Result<Ir, Unsupported> {
             scopes: Vec::new(),
             nodes: Vec::new(),
         };
-        let (next, scope) = next_state_relation(&ir);
-        let context = splitter.evaluator.scope_context(scope).map_err(|error| {
-            Unsupported(format!(
-                "TLC's actions of a next-state relation in a scope: {}",
-                error.reason
-            ))
-        })?;
-        let place = Place { context, scope };
-        // A next-state relation that comes through an INSTANCE with substitutions is one action,
-        // named at the INSTANCE.
-        let actions = match ir.model.next_substitution {
-            Some(range) => vec![SplitAction {
-                expression: next,
-                place,
-                name: None,
-                location: Located::Instance(Some(range)),
-                parameters: Vec::new(),
-            }],
-            None => splitter.split(next, &place, None)?,
-        };
+        let actions = splitter.split_next()?;
         let actions: Vec<Labelled> = actions
             .iter()
             .map(|action| {
@@ -142,6 +128,7 @@ pub fn add_actions(ir: &Ir) -> Result<Ir, Unsupported> {
                     label: splitter.label(action),
                     name: name.to_owned(),
                     location,
+                    definition: action.definition,
                 }
             })
             .collect();
@@ -169,6 +156,7 @@ pub fn add_actions(ir: &Ir) -> Result<Ir, Unsupported> {
             label: writer.text(&action.label),
             name: writer.text(&action.name),
             location: action.location,
+            definition: action.definition,
         })
         .collect();
     let first = ir.nodes.arena.len() as NodeId;
@@ -179,7 +167,197 @@ pub fn add_actions(ir: &Ir) -> Result<Ir, Unsupported> {
     Ok(ir)
 }
 
+/// A part of the specification as TLC processed it, which TLCGet("spec") records: its name and
+/// where it is written, or none for TLC's built-in range.
+pub struct Described {
+    pub name: String,
+    pub range: Option<SourceRange>,
+}
+
+/// What TLCGet("spec") records of a specification besides its actions, which [`add_spec`]
+/// splits, as `getSpecificationValue` in `spec-description.ts` describes it.
+#[derive(Default)]
+pub struct SpecDescription {
+    pub inits: Vec<Described>,
+    pub temporals: Vec<Described>,
+    pub invariants: Vec<Described>,
+    pub implied_inits: Vec<Described>,
+    pub implied_actions: Vec<Described>,
+    pub implied_temporals: Vec<Described>,
+    pub variables: Vec<Described>,
+    pub action_constraints: Vec<Described>,
+    pub constraints: Vec<Described>,
+}
+
+/// The IR with TLCGet("spec"), the record of the specification as TLC processed it
+/// (`TLCGetSet.TLCGetStringValue`), of the description and TLC's actions, split as
+/// [`add_actions`] splits them.
+pub fn add_spec(ir: &Ir, description: &SpecDescription) -> Result<Ir, Unsupported> {
+    let mut ir = ir.clone();
+    let record = {
+        let mut evaluator = Evaluator::new(&ir);
+        if let Err(error) = evaluator.compute_startup() {
+            return Err(Unsupported(format!(
+                "TLCGet(\"spec\") of a model whose startup fails: {}",
+                error.reason
+            )));
+        }
+        let mut splitter = Splitter {
+            evaluator: &mut evaluator,
+            scopes: Vec::new(),
+            nodes: Vec::new(),
+        };
+        let actions = splitter.split_next()?;
+        let actions = actions
+            .iter()
+            .map(|action| splitter.action_record(action))
+            .collect::<Result<Vec<_>, _>>()?;
+        let evaluator = &*splitter.evaluator;
+        let field = |name: &str| evaluator.text_of(name.encode_utf16().collect());
+        let fields = [
+            ("inits", &description.inits),
+            ("temporals", &description.temporals),
+            ("invariants", &description.invariants),
+            ("impliedinits", &description.implied_inits),
+            ("impliedactions", &description.implied_actions),
+            ("impliedtemporals", &description.implied_temporals),
+            ("variables", &description.variables),
+            ("actionconstraints", &description.action_constraints),
+            ("constraints", &description.constraints),
+        ];
+        let mut record = vec![(field("actions"), run(set_of(actions))?)];
+        for (name, described) in fields {
+            let entries = described
+                .iter()
+                .map(|described| {
+                    let name = text_value(evaluator, &described.name);
+                    let location = location_record(evaluator, described.range)?;
+                    run(Value::record(vec![
+                        (field("name"), name),
+                        (field("location"), location),
+                    ]))
+                })
+                .collect::<Result<Vec<_>, Unsupported>>()?;
+            record.push((field(name), run(set_of(entries))?));
+        }
+        run(Value::record(record))?
+    };
+    let mut writer = Writer::new(&mut ir);
+    let value = writer.value(&record)?;
+    ir.model.tlc_spec = Some(value);
+    Ok(ir)
+}
+
+fn text_value(evaluator: &Evaluator<'_>, text: &str) -> Value {
+    Value::Str(evaluator.text_of(text.encode_utf16().collect()))
+}
+
+// TLC's record of where something is written (`RecordValue(Location)`), its built-in range for
+// what has none.
+fn location_record(
+    evaluator: &Evaluator<'_>,
+    range: Option<SourceRange>,
+) -> Result<Value, Unsupported> {
+    let ir = evaluator.ir;
+    let (module, start_line, start_column, end_line, end_column) = match range {
+        Some(range) => (
+            &*ir.texts[range.module as usize],
+            range.start_line,
+            range.start_column,
+            range.end_line,
+            range.end_column,
+        ),
+        None => ("--TLA+ BUILTINS--", 0, 0, 0, 0),
+    };
+    let field = |name: &str| evaluator.text_of(name.encode_utf16().collect());
+    run(Value::record(vec![
+        (field("beginLine"), Value::Int(start_line)),
+        (field("beginColumn"), Value::Int(start_column)),
+        (field("endLine"), Value::Int(end_line)),
+        (field("endColumn"), Value::Int(end_column)),
+        (field("module"), text_value(evaluator, module)),
+    ]))
+}
+
 impl Splitter<'_, '_> {
+    // TLC's record of an action (`RecordValue(Action)`): its name and location, and the values of
+    // its operator's parameters, by name and in order.
+    fn action_record(&mut self, action: &SplitAction) -> Result<Value, Unsupported> {
+        let ir = self.evaluator.ir;
+        let name = action
+            .name
+            .map_or(UNNAMED_ACTION, |name| self.evaluator.name(name))
+            .to_owned();
+        let range = match action.location {
+            Located::Node(node) => ir.nodes.arena[self.evaluator.resolved(node) as usize].range,
+            Located::Instance(range) => range,
+        };
+        let evaluator = &*self.evaluator;
+        let field = |name: &str| evaluator.text_of(name.encode_utf16().collect());
+        let mut fields = vec![
+            (field("name"), text_value(evaluator, &name)),
+            (field("location"), location_record(evaluator, range)?),
+        ];
+        if !action.parameters.is_empty() {
+            let params = action
+                .definition
+                .map(|index| &evaluator.definition(ir.definitions[index as usize]).form);
+            let Some(DefinitionForm::Operator(params)) = params else {
+                return Err(Unsupported("an action's parameters of no operator".into()));
+            };
+            // An INSTANCE's copy of a parameter keeps its name.
+            let names: Vec<Value> = params
+                .iter()
+                .map(|param| {
+                    let name = evaluator.name(param.name);
+                    let name = name.rsplit_once('#').filter(|(_, suffix)| {
+                        !suffix.is_empty() && suffix.chars().all(|digit| digit.is_ascii_digit())
+                    });
+                    text_value(
+                        evaluator,
+                        name.map_or(evaluator.name(param.name), |(name, _)| name),
+                    )
+                })
+                .collect();
+            let context = names
+                .iter()
+                .zip(&action.parameters)
+                .map(|(name, value)| match name {
+                    Value::Str(text) => (text.clone(), value.clone()),
+                    _ => unreachable!("a parameter's name"),
+                })
+                .collect();
+            fields.push((field("context"), run(Value::record(context))?));
+            fields.push((field("parameters"), Value::tuple(names)));
+        }
+        run(Value::record(fields))
+    }
+
+    // The next-state relation split into TLC's actions. One that comes through an INSTANCE with
+    // substitutions is one action, named at the INSTANCE.
+    fn split_next(&mut self) -> Result<Vec<SplitAction>, Unsupported> {
+        let ir = self.evaluator.ir;
+        let (next, scope) = next_state_relation(ir);
+        let context = self.evaluator.scope_context(scope).map_err(|error| {
+            Unsupported(format!(
+                "TLC's actions of a next-state relation in a scope: {}",
+                error.reason
+            ))
+        })?;
+        let place = Place { context, scope };
+        match ir.model.next_substitution {
+            Some(range) => Ok(vec![SplitAction {
+                expression: next,
+                place,
+                name: None,
+                location: Located::Instance(Some(range)),
+                definition: None,
+                parameters: Vec::new(),
+            }]),
+            None => self.split(next, &place, None),
+        }
+    }
+
     fn split(
         &mut self,
         expression: NodeId,
@@ -191,6 +369,7 @@ impl Splitter<'_, '_> {
             place: place.clone(),
             name: closure.map(|closure| closure.name),
             location: Located::Node(expression),
+            definition: closure.map(|closure| closure.definition),
             parameters: closure.map_or_else(Vec::new, |closure| closure.parameters.clone()),
         };
         let ir = self.evaluator.ir;
@@ -259,6 +438,7 @@ impl Splitter<'_, '_> {
             place: place.clone(),
             name: Some(called),
             location: Located::Node(expression),
+            definition: Some(index),
             parameters: Vec::new(),
         };
         if self.is_constant_definition(definition)?
@@ -286,6 +466,7 @@ impl Splitter<'_, '_> {
         }
         let closure = Closure {
             name: called,
+            definition: index,
             parameters: values,
         };
         let body = definition.body;
@@ -307,6 +488,7 @@ impl Splitter<'_, '_> {
             place: place.clone(),
             name: Some(instance.name),
             location: Located::Instance(instance.location),
+            definition: Some(instance.definition),
             parameters,
         };
         let call = SplitAction {

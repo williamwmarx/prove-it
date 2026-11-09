@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use tla_ir::{Builtin, Index, NodeKind};
 use tla_values::fingerprint::{Fingerprints, INITIAL};
+use tla_values::json;
 use tla_values::print::{is_printable, write_value};
 use tla_values::store::{
     EMPTY_SET, EMPTY_TUPLE, FALSE, KIND_INT, KIND_SET, KIND_STRING, KIND_TUPLE, Outcome, TRUE,
@@ -187,6 +188,15 @@ impl Compiler<'_> {
     pub(crate) fn compile_nullary_builtin(&mut self, index: Index) -> Compiling<Compiled> {
         let builtin = &self.ir.builtins[index as usize];
         let name = self.text(builtin.name);
+        // TLCExt's Trace, the behavior up to the state, which the engine doesn't keep: a spec that
+        // never evaluates it, such as one that serializes it only once an invariant fails, still
+        // searches here, and one that does hands over then.
+        if name == "Trace" {
+            return Ok(leaf(
+                eval(|_| Err(Bail("TLCExt's Trace, the behavior the engine doesn't keep"))),
+                Footprint::default(),
+            ));
+        }
         if builtin.flags & Builtin::STATE_LEVEL != 0 || IMPURE_BUILTINS.contains(&name) {
             return unsupported(name);
         }
@@ -204,6 +214,51 @@ impl Compiler<'_> {
                 ));
             }
         })
+    }
+
+    /// `SUBSET S` of a compiled S, which TLC enumerates in the normalized order of S's elements.
+    pub(crate) fn compile_subset(&mut self, base: &Compiled) -> Compiled {
+        let base_member = self.member_test(base);
+        let base_parts = Self::parts_of(base);
+        Compiled {
+            is_normalized: false,
+            subset_base: Some(Box::new(base.clone())),
+            // It streams in its order, and its elements are set enumerations.
+            is_in_order: true,
+            are_elements_in_order: true,
+            // TLC enumerates SUBSET S in the normalized order of S's elements, whatever S's
+            // own order (SubsetValue.elementsNormalized), so S's value does where S has no
+            // reference.
+            reference: combine_references(&[base], |_, mut bases| {
+                Ok(Lazy::Subset(Box::new(bases.remove(0))))
+            })
+            .or_else(|| {
+                let evaluate = base.eval.clone();
+                Some(Arc::new(move |machine| {
+                    Ok(Lazy::Subset(Box::new(Lazy::Set(evaluate(machine)?))))
+                }))
+            }),
+            parts: Some(base_parts.clone()),
+            member: Some(member(move |machine, element| {
+                machine.run_parts(&base_parts)?;
+                // TLC fails on anything it can't enumerate, untyped model values included.
+                if machine.store.kind_of(element) != KIND_SET {
+                    return Err(Bail("a membership in SUBSET of a non-set"));
+                }
+                for index in 0..machine.store.size_of(element) {
+                    let value = machine.store.element_at(element, index);
+                    if !base_member(machine, value)? {
+                        return Ok(false);
+                    }
+                }
+                Ok(true)
+            })),
+            ..unary(
+                base,
+                |machine, set| power_set(machine, expect_set(machine, set, "expected a set")?),
+                true,
+            )
+        }
     }
 
     // Nat, Int and STRING, which the engine only tests for membership.
@@ -255,6 +310,13 @@ impl Compiler<'_> {
         }
         if name == "RandomElement" || name == "RandomSubset" {
             return self.compile_random(name, operands, context);
+        }
+        if matches!(
+            name,
+            "JsonSerialize" | "ndJsonSerialize" | "JsonDeserialize" | "ndJsonDeserialize"
+        ) && self.is_native
+        {
+            return self.compile_json_file(name, operands);
         }
         if builtin.flags & Builtin::TABLE != 0 {
             return self.compile_table(index, operands);
@@ -463,6 +525,9 @@ impl Compiler<'_> {
             .merge(&Footprint::slot(super::PRINT_SLOT));
         let is_boolean = !is_print || compiled[1].is_boolean;
         let evaluators: Vec<Eval> = compiled.into_iter().map(|operand| operand.eval).collect();
+        // The native binary's reporter finds what it can't print itself: TLC prints the startup's
+        // in the front the binary records, and the binary stops at any later one.
+        let is_native = self.is_native;
         Ok(Compiled {
             is_boolean,
             ..leaf(
@@ -472,7 +537,7 @@ impl Compiler<'_> {
                         values.push(evaluate(machine)?);
                     }
                     for &value in &values {
-                        if !is_printable(&machine.store, value) {
+                        if !is_native && !is_printable(&machine.store, value) {
                             return Err(Bail(
                                 "printing a value whose text depends on how TLC built it",
                             ));
@@ -483,6 +548,85 @@ impl Compiler<'_> {
                     Ok(result)
                 }),
                 footprint,
+            )
+        })
+    }
+
+    // The Json module's operators that write a value to the file a string names, as JSON or one
+    // element of a sequence per line, or read one, as TLC's Json class does (`src/json.ts`). Only
+    // the native checker reads and writes the files: the interpreter does beside the addon.
+    // Writing prints in TLC's order, as Print does; reading ranks the strings it reads.
+    fn compile_json_file(&mut self, name: &str, operands: &[Operand]) -> Compiling<Compiled> {
+        let is_written = name.ends_with("Serialize");
+        if operands.len() != if is_written { 2 } else { 1 } {
+            return unsupported("an operator applied to the wrong number of arguments");
+        }
+        let compiled = operands
+            .iter()
+            .map(|operand| self.operand(operand))
+            .collect::<Compiling<Vec<Compiled>>>()?;
+        let footprint = Footprint::merge_all(compiled.iter().map(|operand| &operand.footprint));
+        let evaluators: Vec<Eval> = compiled.into_iter().map(|operand| operand.eval).collect();
+        let is_lines = name.starts_with("nd");
+        let read_path = move |machine: &mut Machine<'_>, evaluate: &Eval| -> Outcome<String> {
+            let path = evaluate(machine)?;
+            if machine.store.kind_of(path) != KIND_STRING {
+                return Err(Bail("a Json operator's file that isn't a string"));
+            }
+            Ok(String::from_utf16_lossy(machine.store.text_of(path)))
+        };
+        if !is_written {
+            self.is_ranking = true;
+            return Ok(leaf(
+                eval(move |machine| {
+                    let path = read_path(machine, &evaluators[0])?;
+                    let text: Vec<u16> = std::fs::read(&path)
+                        .map_err(|_| Bail("a Json operator's file that can't be read"))
+                        .map(|bytes| String::from_utf8_lossy(&bytes).encode_utf16().collect())?;
+                    if is_lines {
+                        json::read_nd_json(&mut machine.store, &text)
+                    } else {
+                        json::read_json(&mut machine.store, &text)
+                    }
+                }),
+                footprint,
+            ));
+        }
+        self.is_printing = true;
+        Ok(Compiled {
+            is_boolean: true,
+            ..leaf(
+                eval(move |machine| {
+                    let path = read_path(machine, &evaluators[0])?;
+                    let value = evaluators[1](machine)?;
+                    let store = &machine.store;
+                    let mut text = Vec::new();
+                    if is_lines {
+                        if store.kind_of(value) != KIND_TUPLE {
+                            return Err(Bail("ndJsonSerialize of a value that isn't a sequence"));
+                        }
+                        for index in 0..store.size_of(value) {
+                            json::write_json(
+                                store,
+                                store.get_range_value(value, index),
+                                &mut text,
+                            )?;
+                            text.push(u16::from(b'\n'));
+                        }
+                    } else {
+                        if store.kind_of(value) != KIND_TUPLE && !json::is_json_record(store, value)
+                        {
+                            return Err(Bail(
+                                "JsonSerialize of a value that isn't a sequence or a record",
+                            ));
+                        }
+                        json::write_json(store, value, &mut text)?;
+                    }
+                    std::fs::write(&path, String::from_utf16_lossy(&text))
+                        .map_err(|_| Bail("a Json operator's file that can't be written"))?;
+                    Ok(TRUE)
+                }),
+                footprint.merge(&Footprint::slot(super::PRINT_SLOT)),
             )
         })
     }
@@ -909,49 +1053,7 @@ impl Compiler<'_> {
             "SUBSET" => {
                 arity(1)?;
                 let base = self.operand(&operands[0])?;
-                let base_member = self.member_test(&base);
-                let base_parts = Self::parts_of(&base);
-                Compiled {
-                    is_normalized: false,
-                    subset_base: Some(Box::new(base.clone())),
-                    // It streams in its order, and its elements are set enumerations.
-                    is_in_order: true,
-                    are_elements_in_order: true,
-                    // TLC enumerates SUBSET S in the normalized order of S's elements, whatever S's
-                    // own order (SubsetValue.elementsNormalized), so S's value does where S has no
-                    // reference.
-                    reference: combine_references(&[&base], |_, mut bases| {
-                        Ok(Lazy::Subset(Box::new(bases.remove(0))))
-                    })
-                    .or_else(|| {
-                        let evaluate = base.eval.clone();
-                        Some(Arc::new(move |machine| {
-                            Ok(Lazy::Subset(Box::new(Lazy::Set(evaluate(machine)?))))
-                        }))
-                    }),
-                    parts: Some(base_parts.clone()),
-                    member: Some(member(move |machine, element| {
-                        machine.run_parts(&base_parts)?;
-                        // TLC fails on anything it can't enumerate, untyped model values included.
-                        if machine.store.kind_of(element) != KIND_SET {
-                            return Err(Bail("a membership in SUBSET of a non-set"));
-                        }
-                        for index in 0..machine.store.size_of(element) {
-                            let value = machine.store.element_at(element, index);
-                            if !base_member(machine, value)? {
-                                return Ok(false);
-                            }
-                        }
-                        Ok(true)
-                    })),
-                    ..unary(
-                        &base,
-                        |machine, set| {
-                            power_set(machine, expect_set(machine, set, "expected a set")?)
-                        },
-                        true,
-                    )
-                }
+                self.compile_subset(&base)
             }
             "UNION" => {
                 arity(1)?;
@@ -1438,14 +1540,39 @@ impl Compiler<'_> {
         } else {
             None
         };
+        // TLC enumerates the left set of an intersection or a difference where it can, testing
+        // each element for membership in the right one (SetCapValue.elements and
+        // SetDiffValue.elements), so a set enumeration it keeps in order keeps that order.
+        if name != "\\cup"
+            && left.infinite.is_none()
+            && right.infinite.is_some()
+            && left.is_normalized
+        {
+            let right_member = self.member_test(right);
+            let left_eval = left.eval.clone();
+            let is_kept_in_right = name == "\\cap";
+            return Ok(Some(Compiled {
+                is_costly: true,
+                member: lazy_member,
+                ..leaf(
+                    eval(move |machine| {
+                        let left = left_eval(machine)?;
+                        let set = expect_set(machine, left, "expected a set")?;
+                        let mut kept = Vec::new();
+                        for index in 0..machine.store.size_of(set) {
+                            let element = machine.store.element_at(set, index);
+                            if right_member(machine, element)? == is_kept_in_right {
+                                kept.push(element);
+                            }
+                        }
+                        Ok(machine.store.set_of_sorted(&kept))
+                    }),
+                    left.footprint.merge(&right.footprint),
+                )
+            }));
+        }
         if left.infinite.is_some() || right.infinite.is_some() {
-            if if name == "\\" {
-                right.infinite.is_some()
-            } else {
-                name != "\\cup"
-            } {
-                return Ok(None);
-            }
+            // A combination of sets TLC can't enumerate is one it only tests for membership.
             return Ok(Some(Compiled {
                 is_normalized: false,
                 infinite: Some("Combined"),

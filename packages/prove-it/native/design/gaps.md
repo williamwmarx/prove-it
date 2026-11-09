@@ -161,7 +161,9 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   (`TLCExt.tlcEval2`), by the expression's node, and TLCFP is the low 32 bits of the fingerprint
   of a state of its value alone. TLCGet("config") is the record `AbstractChecker.createConfig`
   makes, TLCGet("spec") the record the interpreter computes, which the IR holds where an
-  expression reads it (tla-front leaves it out, and the engine stops where it is read), and
+  expression reads it: tla-front describes the specification as `getSpecDescription` does
+  (`describe.rs`), and `tla-trace`'s split gives its actions (`add_spec`), as the native binary
+  lowers the model; the TypeScript front end's model, as `model-full` compares it, has neither. And
   TLCGet of a Java property its key. The other keys of TLC's run, and the diameter outside the
   liveness checker, stop the search where TLC would read them, once TLC has started, as an
   assumption may stop TLC first.

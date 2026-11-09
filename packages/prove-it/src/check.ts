@@ -65,6 +65,7 @@ import {
   createSearch,
   findAssumptionViolation,
   getConfigDefinition,
+  getConstantPredicates,
   getContext,
   reportInitialStatesProgress,
   reportStartup,
@@ -434,6 +435,12 @@ export const getIrStartup = (
         ),
       ),
     ],
+    normalized: new Set(
+      specification.startupDefinitions.filter((definition) =>
+        isStartupDefinition(definition, environment),
+      ),
+    ),
+    predicates: getConstantPredicates(config, environment),
     symmetry:
       symmetry?.kind === "Operator"
         ? { definition: symmetry, permutedSets: getPermutedSets(symmetry, config.substitutions) }
@@ -467,7 +474,13 @@ export const lowerConstantSpec = (
     traceActions: [],
     isWarningEnabled: environment.runtime.isWarningEnabled,
     tlcOrder: [],
-    properties: { invariants: [], invariantNames: [], actionProperties: [], initialPredicates: [] },
+    properties: {
+      invariants: [],
+      invariantNames: [],
+      actionProperties: [],
+      initialPredicates: [],
+      initialPredicateNames: [],
+    },
     isRecordingGraph: false,
     version,
     atoms: [],
@@ -476,6 +489,7 @@ export const lowerConstantSpec = (
     startup: getIrStartup(config, specification),
     // A spec without variables has no next-state relation to name actions of.
     nextSubstitution: undefined,
+    getSpecification: undefined,
     instanceActions: specification.instanceActions,
   });
 };
@@ -1842,6 +1856,7 @@ const searchStates = (
             label,
             name: action.name,
             range: action.location.range,
+            operator: action.operator,
           };
         }),
         isWarningEnabled: runtime.isWarningEnabled,
@@ -1858,6 +1873,7 @@ const searchStates = (
         startup: getIrStartup(config, specification),
         nextSubstitution: getNextSubstitution(config, environment, specification.instanceActions),
         instanceActions: specification.instanceActions,
+        getSpecification: runtime.getSpecification,
       });
       const milliseconds = performance.now() - loweredAt;
       if ("ir" in outcome) writeDebugBytes("PROVE_IT_IR_DUMP", outcome.ir);

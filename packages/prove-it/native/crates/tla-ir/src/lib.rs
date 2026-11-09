@@ -191,6 +191,10 @@ pub struct Action {
     /// `UnnamedAction` for an action of no operator.
     pub name: TextId,
     pub location: Option<SourceRange>,
+    /// The definition TLC split the action from (`Action.getOpDef`), whose parameters
+    /// CounterExample binds, by index; none for an action of no operator, or of one a LET
+    /// defines.
+    pub definition: Option<Index>,
 }
 
 /// A definition an INSTANCE with substitutions copies, and the name and location TLC gives an
@@ -289,6 +293,9 @@ pub struct Model {
     pub possible: Vec<Possible>,
     pub action_properties: Vec<ActionProperty>,
     pub initial_predicates: Vec<NodeId>,
+    /// The name TLC gives each of `initial_predicates` when an initial state violates it: the
+    /// property's.
+    pub initial_predicate_names: Vec<TextId>,
     pub view: Option<ConfigName>,
     /// The configuration's ALIAS, which TLC prints each state of a trace through.
     pub alias: Option<ConfigName>,
@@ -337,10 +344,35 @@ pub struct Startup {
     /// The constant definitions with effects that TLC evaluates once, in TLC's order. Each keeps
     /// the value it computes.
     pub definitions: Vec<Index>,
+    /// The constant definitions the configuration names, which TLC evaluates as it reads the
+    /// configuration (`getConstantValue`) and rejects for their value, in TLC's order.
+    pub predicates: Vec<StartupPredicate>,
     /// The SYMMETRY definition, which TLC evaluates to its group as it builds its `Tool`.
     pub symmetry: Option<Symmetry>,
     /// The assumptions that aren't axioms, each with the name TLC reports it by.
     pub assumptions: Vec<(NodeId, TextId)>,
+}
+
+/// A constant definition the configuration names, which TLC rejects for its value. A definition
+/// that fails to evaluate is no error: TLC keeps it as an operator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StartupPredicate {
+    pub form: PredicateForm,
+    /// What the configuration names it as, such as `invariant`.
+    pub kind: TextId,
+    pub name: TextId,
+    pub definition: Index,
+}
+
+/// How TLC rejects a constant definition the configuration names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PredicateForm {
+    /// `getConfigPredicate`: any value but TRUE, as "The {kind} of {name} is equal to {value}".
+    Predicate = 0,
+    /// `getConfigDefinition`: any value, as "The {kind} {name} cannot be a constant.".
+    Definition = 1,
+    /// The SPECIFICATION: any value, as "The value of {name} is equal to {value}".
+    Specification = 2,
 }
 
 /// The configuration's SYMMETRY: a 0-ary definition whose value is a set of permutations of
@@ -478,6 +510,8 @@ impl Definition {
     pub const SELF_REFERENTIAL: i32 = 4;
     pub const REPEATED_EFFECT: i32 = 8;
     pub const SUBSTITUTED: i32 = 16;
+    /// A constant definition TLC computes and deep-normalizes at startup (`processConstantDefns`).
+    pub const NORMALIZED: i32 = 32;
 }
 
 #[derive(Debug, Clone, PartialEq)]

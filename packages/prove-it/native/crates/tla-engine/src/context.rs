@@ -6,7 +6,7 @@ use std::collections::HashSet;
 
 use tla_ir::{
     AtomKind, ConfigName, Definition, DefinitionForm, EnabledActions, Index, Ir, NodeId, NodeKind,
-    Resolution,
+    PredicateForm, Resolution,
 };
 use tla_values::Bail;
 use tla_values::store::{FALSE, Outcome, TRUE};
@@ -72,6 +72,9 @@ pub struct EngineContext {
 pub struct Startup {
     pub substitutes: Vec<Eval>,
     pub definitions: Vec<Eval>,
+    /// The constant definitions the configuration names, with how TLC rejects each one's value
+    /// and the configuration error's words for it.
+    pub predicates: Vec<(Eval, PredicateForm, String, String)>,
     pub symmetry: Option<StartupSymmetry>,
     pub assumptions: Vec<(Eval, String)>,
 }
@@ -344,6 +347,23 @@ impl EngineContext {
                     compiler
                         .compile_root_printing(Root::Definition(index), true)
                         .map(|compiled| compiled.eval)
+                })
+                .collect::<Result<_, CompileError>>()?,
+            predicates: model
+                .startup
+                .predicates
+                .iter()
+                .map(|predicate| {
+                    compiler
+                        .compile_root_printing(Root::Definition(predicate.definition), true)
+                        .map(|compiled| {
+                            (
+                                compiled.eval,
+                                predicate.form,
+                                ir.texts[predicate.kind as usize].to_string(),
+                                ir.texts[predicate.name as usize].to_string(),
+                            )
+                        })
                 })
                 .collect::<Result<_, CompileError>>()?,
             symmetry: model

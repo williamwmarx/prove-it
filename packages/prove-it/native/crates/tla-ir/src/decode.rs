@@ -7,8 +7,8 @@ use crate::{
     Action, ActionProperty, Atom, AtomKind, Bound, Builtin, ConfigName, Constant, Definition,
     DefinitionForm, EnabledActions, IR_VERSION, Index, InstanceAction, Ir, Junction, LiveProperty,
     LiveTerm, MAGIC, Model, Name, Node, NodeId, NodeKind, Nodes, Param, PathStep, Pattern,
-    PermutedSet, Possible, Printed, Resolution, Scope, ScopeBinding, Selector, SourceRange,
-    Startup, Symmetry, TextId, Update, Value, Values, code, tag,
+    PermutedSet, Possible, PredicateForm, Printed, Resolution, Scope, ScopeBinding, Selector,
+    SourceRange, Startup, StartupPredicate, Symmetry, TextId, Update, Value, Values, code, tag,
 };
 
 /// Why a blob isn't an IR this decoder reads: where it stopped, in words, and what it found.
@@ -423,6 +423,13 @@ impl Decoder<'_> {
             .chain(
                 model
                     .startup
+                    .predicates
+                    .iter()
+                    .map(|predicate| &predicate.definition),
+            )
+            .chain(
+                model
+                    .startup
                     .symmetry
                     .iter()
                     .map(|symmetry| &symmetry.definition),
@@ -434,6 +441,12 @@ impl Decoder<'_> {
                     .map(|action| &action.definition),
             )
             .chain(model.instance_names.iter().map(|(index, _)| index))
+            .chain(
+                model
+                    .actions
+                    .iter()
+                    .filter_map(|action| action.definition.as_ref()),
+            )
             .find(|&&index| index as usize >= definition_count)
         {
             return self.error(format!("definition {index} of {definition_count}"));
@@ -606,6 +619,11 @@ impl Decoder<'_> {
                     label: self.text()?,
                     name: self.text()?,
                     location: self.range()?,
+                    definition: match self.next()? {
+                        -1 => None,
+                        index if index >= 0 => Some(index as Index),
+                        other => return self.error(format!("action definition {other}")),
+                    },
                 })
             })
             .collect::<Decoded<_>>()?;
@@ -645,7 +663,11 @@ impl Decoder<'_> {
             })
             .collect::<Decoded<_>>()?;
         let count = self.count()?;
-        let initial_predicates = (0..count).map(|_| node(self)).collect::<Decoded<_>>()?;
+        let (initial_predicates, initial_predicate_names) = (0..count)
+            .map(|_| Ok((node(self)?, self.text()?)))
+            .collect::<Decoded<Vec<_>>>()?
+            .into_iter()
+            .unzip();
         let mut views = self.unprinted()?;
         if views.len() > 1 {
             return self.error(format!("{} views", views.len()));
@@ -720,6 +742,23 @@ impl Decoder<'_> {
             .collect::<Decoded<_>>()?;
         let count = self.count()?;
         let definitions = (0..count).map(|_| self.index()).collect::<Decoded<_>>()?;
+        let count = self.count()?;
+        let predicates = (0..count)
+            .map(|_| {
+                let form = match self.next()? {
+                    0 => PredicateForm::Predicate,
+                    1 => PredicateForm::Definition,
+                    2 => PredicateForm::Specification,
+                    other => return self.error(format!("predicate form {other}")),
+                };
+                Ok(StartupPredicate {
+                    form,
+                    kind: self.text()?,
+                    name: self.text()?,
+                    definition: self.index()?,
+                })
+            })
+            .collect::<Decoded<_>>()?;
         let symmetry = match self.next()? {
             -1 => None,
             definition if definition >= 0 => {
@@ -780,6 +819,7 @@ impl Decoder<'_> {
             possible,
             action_properties,
             initial_predicates,
+            initial_predicate_names,
             view,
             alias,
             postconditions,
@@ -795,6 +835,7 @@ impl Decoder<'_> {
             startup: Startup {
                 substitutes,
                 definitions,
+                predicates,
                 symmetry,
                 assumptions,
             },
@@ -1059,7 +1100,7 @@ impl Decoder<'_> {
                 NodeKind::Subexpression(selectors)
             }
             tag::DEFINITION => {
-                if flags & !0x1f != 0 {
+                if flags & !0x3f != 0 {
                     return self.error(format!("definition flags {flags}"));
                 }
                 let name = self.text()?;

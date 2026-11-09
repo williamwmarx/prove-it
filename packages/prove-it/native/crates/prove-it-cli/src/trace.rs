@@ -3,7 +3,7 @@
 //! (`formatState` in `values.ts`) writes them, a line per variable in TLC's order, as a conjunction
 //! when there are several. What the spec printed as TLC rebuilt the trace comes with it.
 
-use tla_engine::search::{FinalRegisters, Violation, ViolationKind};
+use tla_engine::search::{AcceptedTrace, FinalRegisters, Violation, ViolationKind};
 use tla_ir::Ir;
 use tla_trace::{
     Alias, CounterExample, Ending, PostconditionInputs, Rebuilder, Registers, Stats, Unsupported,
@@ -56,18 +56,58 @@ pub fn rebuild_trace(
     ir: &Ir,
     violation: &Violation,
     postconditions: Option<&PostconditionRun>,
+    is_tool: bool,
+) -> Result<PrintedTrace, String> {
+    rebuild(
+        ir,
+        violation,
+        &violation.kind,
+        &violation.states,
+        violation.labels.clone(),
+        postconditions,
+        is_tool,
+    )
+}
+
+/// The trace of the tableau node a deadlocked state reaches, from the deadlock's store.
+pub fn rebuild_accepted(
+    ir: &Ir,
+    violation: &Violation,
+    accepted: &AcceptedTrace,
+    is_tool: bool,
+) -> Result<PrintedTrace, String> {
+    rebuild(
+        ir,
+        violation,
+        &ViolationKind::Accepted {
+            violated: accepted.violated.clone(),
+        },
+        &accepted.states,
+        vec![None; accepted.states.len().saturating_sub(1)],
+        None,
+        is_tool,
+    )
+}
+
+fn rebuild(
+    ir: &Ir,
+    violation: &Violation,
+    kind: &ViolationKind,
+    states: &[Vec<Id>],
+    mut labels: Vec<Option<u32>>,
+    postconditions: Option<&PostconditionRun>,
+    is_tool: bool,
 ) -> Result<PrintedTrace, String> {
     std::thread::scope(|scope| {
         std::thread::Builder::new()
             .stack_size(SEARCH_STACK_BYTES)
             .spawn_scoped(scope, || {
-                let mut states: Vec<&[Id]> = violation.states.iter().map(Vec::as_slice).collect();
-                let mut labels = violation.labels.clone();
+                let mut states: Vec<&[Id]> = states.iter().map(Vec::as_slice).collect();
                 // Under SYMMETRY or a VIEW the lasso's states are the stored ones: TLC rebuilds
                 // the states it prints, the step back into the cycle with them, to a state whose
                 // key is the stored first state of the cycle's.
                 let is_reduced = violation.symmetry.is_some() || ir.model.view.is_some();
-                let reduced_cycle = match violation.kind {
+                let reduced_cycle = match *kind {
                     ViolationKind::Lasso { loop_start, .. } if is_reduced => Some(loop_start),
                     _ => None,
                 };
@@ -77,17 +117,17 @@ pub fn rebuild_trace(
                     labels.push(None);
                 }
                 // TLC holds a violating state as it found it, and recovers a deadlocked one.
-                let ending = match violation.kind {
-                    ViolationKind::Deadlock => Ending::Kept,
-                    ViolationKind::Invariant(_) | ViolationKind::InitialInvariant(_) => {
-                        Ending::Violation
-                    }
+                let ending = match *kind {
+                    ViolationKind::Deadlock { .. } => Ending::Kept,
+                    ViolationKind::Invariant(_)
+                    | ViolationKind::InitialInvariant(_)
+                    | ViolationKind::InitialPredicate(_) => Ending::Violation,
                     ViolationKind::Lasso { .. } | ViolationKind::Accepted { .. } => Ending::Lasso,
                     ViolationKind::Error { .. } => {
                         return Err("a failure evaluating the model".into());
                     }
                 };
-                let cycle_start = match violation.kind {
+                let cycle_start = match *kind {
                     ViolationKind::Lasso { loop_start, .. } => Some(loop_start),
                     _ => None,
                 };
@@ -123,10 +163,10 @@ pub fn rebuild_trace(
                         }
                         None => None,
                     };
-                    let aliases = rebuilder.alias(&trace, cycle_start)?;
+                    let aliases = rebuilder.alias(&trace, cycle_start, is_tool)?;
                     // CounterExample closes a lasso with its step back into the cycle, which a
                     // stuttering one doesn't take.
-                    let cycle = match violation.kind {
+                    let cycle = match *kind {
                         ViolationKind::Lasso {
                             loop_start,
                             loop_label,
@@ -139,19 +179,14 @@ pub fn rebuild_trace(
                                     .then(|| trace.states.last().and_then(|state| state.action))
                                     .flatten()
                             })
-                            .map(|label| (loop_start, label)),
+                            .map(|label| (loop_start, Some(label)))
+                            // TLC holds no action for a lasso that stutters at its initial
+                            // state, whose TLCStateInfo it rebuilt from the initial predicate.
+                            .or_else(|| {
+                                (loop_start == 0 && trace.states.len() == 1).then_some((0, None))
+                            }),
                         _ => None,
                     };
-                    // TLC's record of a lasso that stutters at its first state closes it by an
-                    // unnamed action, which CounterExample doesn't take yet.
-                    let is_unnamed_cycle =
-                        matches!(violation.kind, ViolationKind::Lasso { loop_start: 0, .. })
-                            && trace.states.len() == 1;
-                    if postconditions.is_some() && is_unnamed_cycle {
-                        return Err(Unsupported(
-                            "a postcondition of a lasso that stutters at its first state".into(),
-                        ));
-                    }
                     let checked = postconditions
                         .map(|run| {
                             check(

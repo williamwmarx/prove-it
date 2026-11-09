@@ -22,7 +22,10 @@ use crate::summary::{
     optimistic_probability, out_degree_summary,
 };
 use crate::time::{format_date, format_duration};
-use crate::trace::{PostconditionRun, Postconditions, check_postconditions, rebuild_trace};
+use crate::trace::{
+    PostconditionRun, Postconditions, PrintedTrace, check_postconditions, rebuild_accepted,
+    rebuild_trace,
+};
 use tla_front::TlcVersion;
 use tla_front::config::{ModelConfig, parse_config};
 use tla_front::errors::FrontError;
@@ -718,6 +721,14 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                 )
             });
         }
+        // TLC rejects the value of a constant definition the configuration names as it reads
+        // the configuration.
+        SearchOutcome::ConfigError { message } => {
+            return match FrontError::Config(message).get_coded(printer.is_tool) {
+                Some(coded) => print_coded_failure(printer, &coded, start),
+                None => report_not_native(printer, "a configuration error without TLC's code"),
+            };
+        }
         // TLC reports a false assumption with no statistics, since it hasn't searched.
         SearchOutcome::AssumptionViolated { name } => {
             printer.print(
@@ -744,9 +755,6 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                 {
                     Err("a failure with an ALIAS, POSTCONDITION or _POSSIBLE".to_string())
                 }
-                ViolationKind::Error {
-                    site: ErrorSite::InitialPredicate(_),
-                } => Err("a failure in an initial state's implied init, which the printing doesn't follow yet".to_string()),
                 ViolationKind::Error { site } => {
                     let counts = &violation.counts;
                     let stop = ErrorStop {
@@ -764,8 +772,8 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                             ErrorSite::InitialInvariant(position) => {
                                 Site::InitialInvariant(position)
                             }
-                            ErrorSite::InitialPredicate(_) => {
-                                unreachable!("an implied init's failure, which the arm above leaves")
+                            ErrorSite::InitialPredicate(position) => {
+                                Site::InitialPredicate(position)
                             }
                         },
                         statistics: Statistics {
@@ -786,7 +794,13 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                         queued: counts.queued,
                         depth: counts.depth,
                     };
-                    let run = postcondition_run(&ir, None, &statistics, initial_generated, start);
+                    let run = postcondition_run(
+                        &ir,
+                        Some(&violation.possible),
+                        &statistics,
+                        initial_generated,
+                        start,
+                    );
                     print_violation(printer, &ir, &config, &violation, None, Some(&run), start)
                         .map_err(str::to_string)
                 }
@@ -921,8 +935,8 @@ fn print_violation(
     postconditions: Option<&PostconditionRun>,
     start: Instant,
 ) -> Result<i32, &'static str> {
-    // TLC reports a _POSSIBLE predicate the search never witnessed, which a search that stopped
-    // doesn't count yet, before it checks the postconditions on the trace.
+    // TLC reports a _POSSIBLE predicate the search didn't witness before it stopped, which the
+    // printing doesn't follow yet, before it checks the postconditions on the trace.
     let possible = postconditions.map_or(&[][..], |run| &run.possible[..]);
     if possible.len() != ir.model.possible.len() || possible.iter().any(|(_, count)| *count <= 0) {
         return Err("a _POSSIBLE predicate");
@@ -933,9 +947,25 @@ fn print_violation(
     // starts.
     let checked = postconditions
         .filter(|_| !ir.model.postconditions.is_empty() && !has_constant_postcondition(ir));
-    let trace = match rebuild_trace(ir, violation, checked) {
+    let trace = match rebuild_trace(ir, violation, checked, printer.is_tool) {
         Ok(trace) => trace,
         Err(reason) => return Ok(report_not_native(printer, &reason)),
+    };
+    // TLC adds a deadlocked state to the behavior graphs after it reports the deadlock, and
+    // reports the tableau node that accepts every behavior it reaches next.
+    let accepted = match &violation.kind {
+        ViolationKind::Deadlock {
+            accepted: Some(accepted),
+        } => {
+            if checked.is_some() {
+                return Err("a postcondition after a deadlock that violates a temporal property");
+            }
+            match rebuild_accepted(ir, violation, accepted, printer.is_tool) {
+                Ok(trace) => Some((trace, properties_headline(ir, &accepted.violated))),
+                Err(reason) => return Ok(report_not_native(printer, &reason)),
+            }
+        }
+        _ => None,
     };
     // An owner past the configuration's invariants is a property checked as one.
     let model = &ir.model;
@@ -962,12 +992,25 @@ fn print_violation(
             ),
             SAFETY_VIOLATION,
         ),
+        ViolationKind::InitialPredicate(position) => (
+            code::PROPERTY_VIOLATED_INITIAL,
+            format!(
+                "Property {} is violated by the initial state:",
+                ir.texts[*model
+                    .initial_predicate_names
+                    .get(position)
+                    .ok_or(NOT_IN_IR)? as usize]
+            ),
+            LIVENESS_VIOLATION,
+        ),
         ViolationKind::Invariant(owner) => (
             code::INVARIANT_VIOLATED_BEHAVIOR,
             format!("Invariant {} is violated.", invariant_name(owner)?),
             SAFETY_VIOLATION,
         ),
-        ViolationKind::Deadlock => (code::DEADLOCK_REACHED, "Deadlock reached.".into(), DEADLOCK),
+        ViolationKind::Deadlock { .. } => {
+            (code::DEADLOCK_REACHED, "Deadlock reached.".into(), DEADLOCK)
+        }
         ViolationKind::Error { .. } => return Err(NOT_IN_IR),
         // Under SYMMETRY or a VIEW, TLC names the properties the lasso it rebuilt violates.
         ViolationKind::Lasso { .. } => (
@@ -1023,13 +1066,24 @@ fn print_violation(
         _ => None,
     };
     // TLC labels each step with the action it finds taking it as it rebuilds the trace.
-    let mut labels = vec!["Initial predicate"];
-    for state in trace.states.iter().skip(1) {
-        let action = state
-            .action
-            .ok_or("a step whose action the rebuilt trace lacks")?;
-        labels.push(action_label(action)?);
-    }
+    let get_labels = |trace: &PrintedTrace| {
+        let mut labels = vec!["Initial predicate"];
+        for state in trace.states.iter().skip(1) {
+            let action = state
+                .action
+                .ok_or("a step whose action the rebuilt trace lacks")?;
+            labels.push(action_label(action)?);
+        }
+        Ok::<_, &'static str>(labels)
+    };
+    let labels = get_labels(&trace)?;
+    let accepted = match accepted {
+        Some((accepted, headline)) => {
+            let labels = get_labels(&accepted)?;
+            Some((accepted, headline.ok_or(NOT_IN_IR)?, labels))
+        }
+        None => None,
+    };
     let counts = &violation.counts;
     let statistics = Statistics {
         generated: counts.generated,
@@ -1037,9 +1091,10 @@ fn print_violation(
         queued: counts.queued,
         depth: counts.depth,
     };
-    // TLC prints the initial state that violates an invariant in the same message, and no
-    // statistics, since it checks the initial states before it searches.
-    if let ViolationKind::InitialInvariant(_) = violation.kind {
+    // TLC prints the initial state that violates an invariant or a property in the same message,
+    // and no statistics, since it checks the initial states before it searches.
+    if let ViolationKind::InitialInvariant(_) | ViolationKind::InitialPredicate(_) = violation.kind
+    {
         let state = &trace.states.first().ok_or(NOT_IN_IR)?.text;
         printer.print(code, Level::Error, &format!("{text}\n{state}"));
         print_postcondition_failure(printer, ir, trace.postconditions.as_ref());
@@ -1072,18 +1127,7 @@ fn print_violation(
         )
     };
     printer.print(heading_code, Level::Error, heading);
-    for (position, (state, label)) in trace.states.iter().zip(labels).enumerate() {
-        if position > 0 {
-            for line in &state.output {
-                printer.line(line);
-            }
-        }
-        printer.print(
-            code::STATE_PRINT_2,
-            Level::State,
-            &format!("{}: <{label}>\n{}", position + 1, state.text),
-        );
-    }
+    print_states(printer, &trace, &labels);
     // What the postconditions printed follows the trace (`traceOutput`).
     for line in trace
         .postconditions
@@ -1151,6 +1195,22 @@ fn print_violation(
             }
         }
     }
+    if let Some((accepted, headline, labels)) = accepted {
+        for line in accepted.states[0]
+            .output
+            .iter()
+            .chain(&accepted.trace_output)
+        {
+            printer.line(line);
+        }
+        printer.print(code::TEMPORAL_PROPERTY_VIOLATED, Level::Error, &headline);
+        printer.print(
+            code::COUNTER_EXAMPLE,
+            Level::Error,
+            "The following behavior constitutes a counter-example:\n",
+        );
+        print_states(printer, &accepted, &labels);
+    }
     print_postcondition_failure(printer, ir, trace.postconditions.as_ref());
     if let Some(checking) = checking {
         print_liveness_finished(printer, checking);
@@ -1158,6 +1218,22 @@ fn print_violation(
     print_statistics(printer, &statistics, start);
     print_finished(printer, start);
     Ok(exit_code)
+}
+
+// A trace's states, each after what the spec printed as TLC rebuilt it.
+fn print_states(printer: &mut Printer, trace: &PrintedTrace, labels: &[&str]) {
+    for (position, (state, label)) in trace.states.iter().zip(labels).enumerate() {
+        if position > 0 {
+            for line in &state.output {
+                printer.line(line);
+            }
+        }
+        printer.print(
+            code::STATE_PRINT_2,
+            Level::State,
+            &format!("{}: <{label}>\n{}", position + 1, state.text),
+        );
+    }
 }
 
 // TLC names the properties the lasso violates, or none when it can't tell which

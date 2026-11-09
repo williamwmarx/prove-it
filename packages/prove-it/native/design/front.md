@@ -401,11 +401,10 @@ isn't followed yet, so it stays `NotYet`, as does a constant atom that isn't a b
 
 `getConstantValue` evaluates a constant definition the configuration names with the constant
 evaluator. A value other than TRUE is TLC's configuration error, and a definition that fails to
-evaluate stays an operator, as in TLC. A definition the evaluator can't compute yet is taken
-the same way. That is the one place the front end assumes rather than computes: a constant
-invariant whose value TLC finds isn't TRUE, written with operators the evaluator lacks
-(functions, sequences, bags), is lowered, where TLC stops on the configuration. The model-full
-gate, which runs `createSearch` first as check.ts does, finds no such model. The evaluator reads
+evaluate stays an operator, as in TLC. The engine checks the same definitions again at startup
+(`Startup::predicates`, below), so one the evaluator can't compute yet is left to it: the
+evaluator records the deferral, and any error the front end would report after it becomes
+`NotYet`, since TLC stops on the predicate first. The evaluator reads
 the builtins the configuration substitutes (`Nat <- Int`), and stops as `NotYet` past 400 nested
 evaluations rather than overflow on a recursion.
 
@@ -429,3 +428,17 @@ specification is "TLC cannot handle the temporal formula" at P.
 
 `tla_live::atom_order`'s refusals become TLC's errors: the tautology, the formula too large in
 disjunctive normal form, and actions outside `<>[]A` and `[]<>A`.
+
+## Startup predicates and normalized definitions
+
+`Startup::predicates` lists each constant-level definition the configuration names, unless it is a
+literal number or string or a constant the configuration assigns, in TLC's order:
+invariants, the SPECIFICATION or INIT and NEXT, properties, constraints, action constraints,
+then possible (`getConstantPredicates` in `search.ts`). Each entry carries how TLC rejects the
+value: a predicate for any value but TRUE, a definition and the SPECIFICATION for any value. The
+engine evaluates them after the constant definitions and before the SYMMETRY and the
+assumptions, and swallows a failure to evaluate, as `getConstantValue` does.
+
+`Definition::NORMALIZED` marks each definition TLC computes and deep-normalizes in
+`processConstantDefns`: `isStartupDefinition` over the startup definitions, which skip the
+modules an INSTANCE gives parameters to.

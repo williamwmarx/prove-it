@@ -46,9 +46,10 @@ import type {
 import type { ModelConfig } from "../config";
 import { hasRepeatedEffect, isImpureDefinition } from "../dependencies";
 import type { InstanceAction } from "../environment";
-import { type Environment, type EvaluationScope, getDefinition } from "../evaluate";
+import { type Closure, type Environment, type EvaluationScope, getDefinition } from "../evaluate";
 import { ACTION_LEVEL } from "../levels";
 import { getLevel } from "../liveness";
+import type { getConstantPredicates } from "../search";
 import type { PermutedSet } from "../symmetry";
 import type { LiveExpression } from "../tableau";
 import type { TlcVersion } from "../tlc/version";
@@ -130,6 +131,7 @@ const DEFINITION_LOCAL = 1 << 9;
 const DEFINITION_SELF_REFERENTIAL = 1 << 10;
 const DEFINITION_REPEATED_EFFECT = 1 << 11;
 const DEFINITION_SUBSTITUTED = 1 << 12;
+const DEFINITION_NORMALIZED = 1 << 13;
 
 // What a name refers to outside any binding of it, in the order the compiler looks.
 const NO_RESOLUTION = 0;
@@ -178,6 +180,8 @@ export interface TraceAction {
   // The name and location TLC's Action holds, which TLCExt's CounterExample records.
   name: string;
   range: SourceRange | undefined;
+  // The operator TLC split the action from (Action.getOpDef), if any.
+  operator: Closure | undefined;
 }
 
 export interface IrInput {
@@ -201,6 +205,9 @@ export interface IrInput {
   // substitutions, the first such INSTANCE (getNextSubstitution).
   nextSubstitution: SourceRange | undefined;
   instanceActions: Map<string, InstanceAction>;
+  // TLCGet("spec") as the interpreter computes it, which the IR holds where an expression reads
+  // it, as TLC's actions; the front end's model has neither.
+  getSpecification: (() => Value) | undefined;
 }
 
 // What TLC evaluates when it starts, which the engine evaluates before its search.
@@ -209,11 +216,17 @@ export interface IrStartup {
   substitutes: { name: string; definition: Definition }[];
   // The constant definitions with effects, in the order TLC evaluates them.
   definitions: Definition[];
+  // The constant definitions TLC computes and deep-normalizes at startup (processConstantDefns).
+  normalized: ReadonlySet<Definition>;
+  // The constant definitions the configuration names, which TLC rejects for their value.
+  predicates: ReturnType<typeof getConstantPredicates>;
   // The SYMMETRY definition, which TLC evaluates to its group, and the sets it permutes.
   symmetry: { definition: Definition; permutedSets: PermutedSet[] } | undefined;
   // The assumptions that aren't axioms, each with the name TLC reports it by.
   assumptions: { expression: Expression; name: string }[];
 }
+
+const PREDICATE_FORMS = { predicate: 0, definition: 1, specification: 2 };
 
 export type IrOutcome = { ir: Uint8Array } | { reason: string };
 
@@ -326,6 +339,17 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
     expression.args[0].value === "spec" &&
     expression.resolution?.kind !== "Local" &&
     (resolveOperator(expression.operator) & RESOLUTION_MASK) === BUILTIN_RESOLUTION;
+
+  // The definition of the module an operator is, by its body, or -1 for one a LET defines.
+  const definitionsByBody = new Map(
+    [...environment.definitions.values()]
+      .reverse()
+      .map((definition) => [definition.body, definition]),
+  );
+  const getOperatorDefinitionIndex = (operator: Closure | undefined) => {
+    const definition = operator && definitionsByBody.get(operator.body);
+    return definition ? getDefinitionIndex(definition) : -1;
+  };
 
   const getDefinitionIndex = (definition: Definition) => {
     const known = definitionIndices.get(definition);
@@ -482,7 +506,8 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
           ? DEFINITION_SELF_REFERENTIAL
           : 0) |
         (isRepeated ? DEFINITION_REPEATED_EFFECT : 0) |
-        (environment.substitutedDefinitions.has(definition) ? DEFINITION_SUBSTITUTED : 0),
+        (environment.substitutedDefinitions.has(definition) ? DEFINITION_SUBSTITUTED : 0) |
+        (input.startup.normalized.has(definition) ? DEFINITION_NORMALIZED : 0),
     );
     push(nodes, definition.location.line);
     push(nodes, definition.location.column);
@@ -765,11 +790,6 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
   };
   const hasRepeatedEffectOfName = (name: string) =>
     hasRepeatedEffect({ kind: "Identifier", name, location: { line: 0, column: 0 } }, environment);
-  const writeRoots = (expressions: readonly Expression[]) => {
-    push(model, expressions.length);
-    for (const expression of expressions) push(model, writeRoot(expression));
-  };
-
   const spec = input.spec;
   push(model, writeRoot(spec.init));
   push(model, writeRoot(spec.next));
@@ -781,6 +801,7 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
     push(model, getText(action.label));
     push(model, getText(action.name));
     writeRange(model, action.range);
+    push(model, getOperatorDefinitionIndex(action.operator));
   }
   push(model, spec.actions ? 1 : 0);
   writeConfigNames(config.invariants, true);
@@ -806,7 +827,11 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
     push(model, writeRoot(property.action));
     push(model, writeRoot(property.subscript));
   }
-  writeRoots(input.properties.initialPredicates);
+  push(model, input.properties.initialPredicates.length);
+  input.properties.initialPredicates.forEach((predicate, index) => {
+    push(model, writeRoot(predicate));
+    push(model, getText(input.properties.initialPredicateNames[index]));
+  });
   writeConfigNames(config.view === undefined ? [] : [config.view]);
   writeConfigNames(config.alias === undefined ? [] : [config.alias]);
   writeConfigNames(config.postconditions);
@@ -913,6 +938,13 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
   }
   push(model, startup.definitions.length);
   for (const definition of startup.definitions) push(model, getDefinitionIndex(definition));
+  push(model, startup.predicates.length);
+  for (const predicate of startup.predicates) {
+    push(model, PREDICATE_FORMS[predicate.form]);
+    push(model, getText(predicate.kind));
+    push(model, getText(predicate.name));
+    push(model, getDefinitionIndex(predicate.definition));
+  }
   if (startup.symmetry === undefined) push(model, -1);
   if (startup.symmetry !== undefined) {
     push(model, getDefinitionIndex(startup.symmetry.definition));
@@ -964,7 +996,10 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
     push(model, getText(name));
   }
   // TLCGet("spec"), where a node reads it, as the interpreter computes it.
-  push(model, specificationRead.isRead ? getValue(environment.runtime.getSpecification()) : -1);
+  push(
+    model,
+    specificationRead.isRead && input.getSpecification ? getValue(input.getSpecification()) : -1,
+  );
 
   // --- the blob ---
 

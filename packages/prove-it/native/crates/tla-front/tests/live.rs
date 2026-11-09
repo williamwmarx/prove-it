@@ -26,6 +26,7 @@ fn lower(test: &str, config: &str) -> tla_ir::Model {
         libraries: &[],
         version: None,
         is_warning_enabled: true,
+        is_spec_described: false,
     };
     let bytes = lower_model(&path, config, &options).expect("a model the front end lowers");
     std::fs::remove_dir_all(&directory).expect("removed");
