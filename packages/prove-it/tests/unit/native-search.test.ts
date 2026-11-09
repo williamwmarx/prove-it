@@ -631,6 +631,14 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     const lines = await compareWithInterpreter(body, config);
     expect(lines).toContain("[engine] native: liveness: lasso");
     await compareWithInterpreter(body, config, { PROVE_IT_LIVE_CHECK: "1" });
+    // TLC prints what Next prints from that state where the engine doesn't follow, so the
+    // interpreter checks from the start.
+    const printing = body.map((line) => line.replace("Next == ", "Next == PrintT(arr) /\\ "));
+    expect(await compareWithInterpreter(printing, config)).toContainEqual(
+      expect.stringMatching(
+        /native: stopped: printing where .*: steps from states it didn't store/,
+      ),
+    );
   });
 
   it("searches again where a search under SYMMETRY with temporal properties stops part way", async () => {
@@ -680,6 +688,57 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     }
   });
 
+  it("checks the temporal properties part way through the search, as TLC does", async () => {
+    // Without fairness x stutters at 0, which a check after two states finds with states left to
+    // expand; with it, x returns to 0 forever, so the check finds nothing and the search goes on.
+    const body = [
+      "EXTENDS Naturals",
+      "VARIABLE x",
+      "Init == x = 0",
+      "Next == x' = (x + 1) % 10",
+      "Fair == Init /\\ [][Next]_x /\\ WF_x(Next)",
+      "Unfair == Init /\\ [][Next]_x",
+      "Reaches == <>(x = 9)",
+      "Returns == []<>(x = 0)",
+    ];
+    const directory = mkdtempSync(join(tmpdir(), "prove-it-native-periodic-"));
+    const log = join(directory, "log.jsonl");
+    for (const [spec, property, status] of [
+      ["Unfair", "Reaches", "liveness-violation"],
+      ["Fair", "Returns", "success"],
+    ] as const) {
+      const options = {
+        source: toModule(body),
+        config: `SPECIFICATION ${spec}\nPROPERTY ${property}`,
+      };
+      const native = await run(options, {
+        PROVE_IT_ENGINE: "debug",
+        PROVE_IT_ENGINE_BACKEND: "rust",
+        PROVE_IT_TEST_LIVE_CHECK_AT: "2",
+        PROVE_IT_STATE_LOG: log,
+      });
+      const interpreter = await run(options, {
+        PROVE_IT_ENGINE: "0",
+        PROVE_IT_TEST_LIVE_CHECK_AT: "2",
+      });
+      expect(native.lines).toContainEqual(expect.stringMatching(COMPLETE));
+      expect(native.result.status).toBe(status);
+      expect(native.result).toEqual(interpreter.result);
+      expect(native.progress).toEqual(interpreter.progress);
+      expect(native.progress).toContainEqual(
+        expect.stringMatching(/"isComplete":false,"states":2,/),
+      );
+      // The log holds the states the search found when the check found the counterexample.
+      const header = JSON.parse(readLogLines(log)[0]);
+      expect([header.count, header.expanding, header.stopped]).toEqual(
+        status === "success"
+          ? [10, 10, null]
+          : [3, 2, "a counterexample part way through the search"],
+      );
+    }
+    rmSync(directory, { recursive: true, force: true });
+  });
+
   it("reports a tableau node that accepts every behavior as TLC finds it", async () => {
     // TLC's test model Github1389Counting: x becomes TRUE at most twice.
     const body = [
@@ -700,6 +759,106 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
       expect.stringMatching(/^\[engine\] found 2 states in \d+ ms; the interpreter prints/),
     );
     await compareWithInterpreter(body, config, { PROVE_IT_LIVE_CHECK: "1" });
+  });
+
+  it("prints what the search and the temporal properties print in TLC's order", async () => {
+    // TLC prints PrintT in Next as the search takes each step, and again each time its liveness
+    // checks evaluate Next: ENABLED of the fairness and the action on each step.
+    const body = [
+      "EXTENDS Naturals, TLC",
+      "VARIABLE x",
+      "Next == \\/ x < 3 /\\ PrintT(x) /\\ x' = x + 1",
+      "        \\/ x = 3 /\\ UNCHANGED x",
+      "Spec == x = 0 /\\ [][Next]_x /\\ WF_x(Next)",
+      "Ends == <>(x = 3)",
+      'Shown == []<>(PrintT(<<"at", x>>) /\\ x = 3)',
+      "Stays == <>[](x = 0)",
+    ];
+    for (const [property, verdict] of [
+      ["Ends", "holds"],
+      ["Shown", "holds"],
+      ["Stays", "lasso"],
+    ] as const) {
+      const lines = await compareWithInterpreter(body, `SPECIFICATION Spec\nPROPERTY ${property}`);
+      expect(lines).toContain(`[engine] native: liveness: ${verdict}`);
+    }
+    // Where only the search prints: again as TLC runs Next from a state it adds a node of late; and
+    // where a node accepts every behavior, the interpreter checks from the start.
+    const cycling = [
+      "EXTENDS Naturals, TLC",
+      "VARIABLE x",
+      "Init == x = 0",
+      "Next == PrintT(x) /\\ x' = (x + 1) % 3",
+      "Fair == Init /\\ [][Next]_x /\\ WF_x(Next)",
+      "Unfair == Init /\\ [][Next]_x",
+      "Never == ~(<>(x = 2))",
+      "Leads == [](x = 0 => <>(x = 2))",
+    ];
+    for (const [spec, property, verdict] of [
+      ["Unfair", "Never", /native: stopped: printing where .*: a node that accepts/],
+      ["Fair", "Leads", /native: liveness: holds/],
+    ] as const) {
+      const lines = await compareWithInterpreter(
+        cycling,
+        `SPECIFICATION ${spec}\nPROPERTY ${property}`,
+      );
+      expect(lines).toContainEqual(expect.stringMatching(verdict));
+    }
+    // TLC checks no invariant as it runs Next again for a late node, so where an invariant prints
+    // the interpreter checks from the start.
+    const checked = [...cycling, 'Shown == PrintT(<<"inv", x>>)'].map((line) =>
+      line.replace("Next == PrintT(x) /\\ ", "Next == "),
+    );
+    expect(
+      await compareWithInterpreter(checked, "SPECIFICATION Fair\nINVARIANT Shown\nPROPERTY Leads"),
+    ).toContainEqual(
+      expect.stringMatching(/native: stopped: printing where .*: prints it doesn't/),
+    );
+    // Nor does Next print the same again where it prints the count of distinct states, which
+    // has grown since.
+    const counted = [
+      "EXTENDS Naturals, TLC",
+      "VARIABLE x",
+      "Init == x = 0",
+      "A == x' = (x + 1) % 3",
+      'Next == PrintT(<<x, TLCGet("distinct")>>) /\\ A',
+      "Fair == Init /\\ [][Next]_x /\\ WF_x(A)",
+      "Leads == [](x = 0 => <>(x = 2))",
+    ];
+    expect(
+      await compareWithInterpreter(counted, "SPECIFICATION Fair\nPROPERTY Leads"),
+    ).toContainEqual(
+      expect.stringMatching(/native: stopped: printing where .*: prints it doesn't/),
+    );
+  });
+
+  it('reads TLCGet("diameter") in a temporal property as TLC\'s search goes', async () => {
+    // TLC's diameter is the deepest level its search has found when it adds a state to the
+    // behavior graphs, after it expanded the state: 2, 3, 4 and 4 for x = 0 to 3.
+    const body = [
+      "EXTENDS Naturals, TLC",
+      "VARIABLE x",
+      "Spec == x = 0 /\\ [][x' = (x + 1) % 4]_x /\\ WF_x(x' = (x + 1) % 4)",
+      'Below == <>[](x < TLCGet("diameter"))',
+      'Past == <>[](TLCGet("diameter") > x + 1)',
+      // Holds only where the diameter is read as each state is added, not as the search ends.
+      'Early == <>[](TLCGet("diameter") < 4 + x)',
+      // The tableau's predicates and a fairness's subscript, read at the diameter TLC has then.
+      'Nested == []<>(TLCGet("diameter") < 4 /\\ <>(x = 2))',
+      'Sub == IF TLCGet("diameter") < 4 THEN x ELSE 0',
+      'Fairly == []<>(x < TLCGet("diameter")) /\\ SF_Sub(x\' = (x + 1) % 4)',
+    ];
+    for (const [property, verdict] of [
+      ["Below", "holds"],
+      ["Past", "lasso"],
+      ["Early", "holds"],
+      // A late node at another diameter, which the interpreter checks.
+      ["Nested", "declined: a late node TLC adds at another diameter"],
+    ] as const) {
+      const lines = await compareWithInterpreter(body, `SPECIFICATION Spec\nPROPERTY ${property}`);
+      expect(lines).toContain(`[engine] native: liveness: ${verdict}`);
+    }
+    await compareWithInterpreter(body, "SPECIFICATION Spec\nPROPERTY Fairly");
   });
 
   it("hands over a violated invariant, deadlock and a failed action property", async () => {
@@ -898,7 +1057,6 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
       [[`Next == ${next}`, `Constraint == ${prints}`], "\nCONSTRAINT Constraint"],
       [[`Next == ${next}`, "Constraint == Print(x', TRUE)"], "\nACTION_CONSTRAINT Constraint"],
       [[`Next == ${next}`, "View == Print(x, x)"], "\nVIEW View"],
-      [[`Next == ${prints} /\\ ${next}`, "Live == <>(x = 2)"], "\nPROPERTY Live"],
     ];
     for (const [actions, config, where = ""] of cases) {
       const body = ["EXTENDS Naturals, TLC", "VARIABLE x", "Init == x = 0", ...actions];

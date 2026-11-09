@@ -14,6 +14,7 @@ fn graph() -> Graph<'static> {
         edges: &EDGES,
         fingerprints: &FINGERPRINTS,
         reals: None,
+        diameters: None,
     }
 }
 
@@ -27,6 +28,7 @@ fn verdict(answers: Option<&[u8]>) -> Verdict {
         &[&INFINITELY_OFTEN],
         &graph(),
         &[answers],
+        false,
     );
     if let Verdict::Declined(_) = liveness.verdict {
     } else {
@@ -75,4 +77,21 @@ fn declines_what_the_engine_leaves_to_the_interpreter() {
         ))
     );
     assert!(matches!(verdict(None), Verdict::Declined(_)));
+}
+
+#[test]
+fn passes_by_the_states_a_check_part_way_hasnt_expanded() {
+    // Only state 0 is expanded: state 1, where the predicate fails as it stutters, is undone.
+    let graph = Graph {
+        edge_offsets: &OFFSETS[..2],
+        ..graph()
+    };
+    let liveness = check(
+        &NOT_INFINITELY_OFTEN,
+        &[&INFINITELY_OFTEN],
+        &graph,
+        &[Some(&[1, 0])],
+        false,
+    );
+    assert_eq!(liveness.verdict, Verdict::Holds);
 }

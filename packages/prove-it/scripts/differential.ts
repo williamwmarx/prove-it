@@ -399,7 +399,7 @@ if (nativeBinary) {
   const reasons = new Map<string, number>();
   for (const comparison of nativeComparisons) {
     if (comparison.diff.length === 0) continue;
-    const reason = comparison.reason ?? "differs";
+    const reason = comparison.reason ?? (comparison.isKnown ? "known" : "differs");
     reasons.set(reason, (reasons.get(reason) ?? 0) + 1);
   }
   for (const [reason, count] of [...reasons].sort((left, right) => right[1] - left[1])) {

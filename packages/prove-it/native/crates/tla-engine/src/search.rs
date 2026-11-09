@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use tla_ir::{Ir, LiveTerm, Model};
-use tla_live::{Liveness, Term, Verdict};
+use tla_live::{Event, Liveness, Term, Verdict};
 use tla_values::fingerprint::{Carried, Fingerprints, Parent};
 use tla_values::store::Outcome;
 use tla_values::transfer::{EncodedStates, SharedEncoder, SharedStates, StateEncoder};
@@ -30,6 +30,13 @@ use crate::symmetry::Canonicalizer;
 pub const OUT_DEGREE_BUCKETS: usize = 32;
 const PROGRESS_INTERVAL: Duration = Duration::from_secs(60);
 const FIRST_PROGRESS: Duration = Duration::from_secs(3);
+// TLC checks the temporal properties part way through the search once the graph grew by more than
+// a tenth since the last check (TLCGlobals.livenessThreshold), unless the checks took a fifth of
+// the time so far (livenessRatio).
+const LIVENESS_GROWTH: f64 = 0.1;
+const LIVENESS_RATIO: f64 = 0.2;
+// The search stops where a check part way through it finds a counterexample.
+const PERIODIC_LASSO: &str = "a counterexample part way through the search";
 
 /// What the caller asks of a search besides the model.
 #[derive(Clone, Debug)]
@@ -54,6 +61,12 @@ pub struct Settings {
     /// PROVE_IT_SHARED_LEVEL: the fewest states a level shares between the threads, below which
     /// one thread expands it, since a short level isn't worth the threads' start.
     pub minimum_shared_level: usize,
+    /// Whether the temporal properties are checked as the search goes, as TLC does unless
+    /// `-lncheck final`.
+    pub is_liveness_periodic: bool,
+    /// PROVE_IT_TEST_LIVE_CHECK_AT, for tests: the number of expanded states after which the
+    /// search checks the temporal properties the first time, rather than after FIRST_PROGRESS.
+    pub test_live_check_at: Option<usize>,
 }
 
 /// A level of fewer states runs on one thread, as `MINIMUM_SHARED_LEVEL` in `search.ts`, unless
@@ -77,6 +90,8 @@ impl Default for Settings {
             is_violation_reported: false,
             threads: 1,
             minimum_shared_level: MINIMUM_SHARED_LEVEL,
+            is_liveness_periodic: false,
+            test_live_check_at: None,
         }
     }
 }
@@ -87,6 +102,12 @@ pub trait Reporter {
     fn initial_states_progress(&mut self, count: u64);
     fn initial_states(&mut self, generated: u64, distinct: u64);
     fn progress(&mut self, generated: u64, distinct: u64, queued: u64, depth: u64);
+    /// TLC starts to check the temporal properties of its `branches` on the graph of the first
+    /// `expanded` states, part way through the search: `counts` are the states generated, the
+    /// states found and the depth so far.
+    fn liveness_started(&mut self, _branches: u64, _expanded: u64, _counts: [u64; 3]) {}
+    /// The check part way through the search found the properties hold so far.
+    fn liveness_finished(&mut self) {}
     /// What Print or PrintT printed: the values, as ids of the search's store.
     fn print(&mut self, store: &Store, values: &[Id]);
 }
@@ -96,6 +117,9 @@ pub trait Reporter {
 pub struct Counts {
     pub generated: u64,
     pub distinct: u64,
+    /// The states found and not yet expanded: none for a search that completed, and those left
+    /// where a check part way through it found a counterexample.
+    pub queued: u64,
     pub depth: u64,
     pub initial_generated: u64,
     pub initial_distinct: u64,
@@ -242,6 +266,9 @@ struct Graph {
     /// Under SYMMETRY or a VIEW, the state each step reached, `width` ids each, which the liveness
     /// checker checks rather than the state stored for it.
     reals: Option<Vec<Id>>,
+    /// The search's depth once it expanded each state, TLC's diameter as it adds the state to the
+    /// behavior graphs.
+    diameters: Vec<u32>,
 }
 
 /// The fingerprints found, each with the index of its state: open addressing with linear probing,
@@ -522,6 +549,9 @@ struct Search<'r, T> {
     // For each _POSSIBLE predicate, how many states or steps it has held of, or -1 before TLC has
     // evaluated it.
     possible: Vec<i64>,
+    // With temporal properties, what the search printed computing the initial states and then
+    // expanding each state, held until the liveness checker's atoms have printed between them.
+    held: Option<Vec<Vec<Printed>>>,
 }
 
 impl<'r, T: Reached> Search<'r, T> {
@@ -561,17 +591,20 @@ impl<'r, T: Reached> Search<'r, T> {
             violation: None,
             pending_fingerprint: None,
             possible: Vec::new(),
+            held: None,
         }
     }
 
     // What the spec printed while the engine computed the initial states or expanded a state goes
     // out once that's done: if the engine hands over, the interpreter does it again.
     fn flush(&mut self, machine: &mut Machine<'_>) {
-        for printed in std::mem::take(&mut machine.output) {
-            match printed {
-                Printed::Values(values) => self.reporter.print(&machine.store, &values),
-                Printed::InitialStates(count) => self.reporter.initial_states_progress(count),
-            }
+        let output = std::mem::take(&mut machine.output);
+        if let Some(held) = &mut self.held {
+            held.push(output);
+            return;
+        }
+        for printed in &output {
+            report_printed(self.reporter, &machine.store, printed);
         }
     }
 
@@ -1499,6 +1532,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     let mut search = Search::new(states, reporter, is_distinct_read, is_pipelined);
     search.possible = vec![-1; context.possible.len()];
     search.canonicalizer = canonicalizer;
+    search.held = (model.is_recording_graph && is_printing).then(Vec::new);
     search.graph = model.is_recording_graph.then(|| Graph {
         edge_offsets: vec![0],
         labels: context
@@ -1522,8 +1556,70 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     let mut initial_states = (0, 0);
     let mut is_past_initial = false;
     let mut workers: Vec<Worker<'_>> = Vec::new();
+    // The answers to the liveness checker's atoms about the first `count` states and the steps of
+    // the first `expanded`.
+    let graph_tables = |machine: &mut Machine<'_>,
+                        search: &Search<'_, States>,
+                        expanded: usize,
+                        count: usize,
+                        reals: Option<&Reals>,
+                        last_diameter: Option<u32>|
+     -> Result<Vec<Table>, &'static str> {
+        let graph = search.graph.as_ref().expect("a graph");
+        let edge_count = graph.edge_offsets[expanded] as usize;
+        // Read as the tables are answered, since taking the steps from the states the search
+        // didn't store may take a shortcut past a walk too.
+        let is_enabled_exact = !machine.is_past_walk;
+        let live = match reals {
+            Some(reals) => LiveGraph {
+                states: &reals.states,
+                width,
+                count: reals.states.len() / width,
+                expanded: reals.expanded(),
+                edge_offsets: &reals.offsets,
+                edges: &reals.edges,
+                labels: reals.labels.as_deref(),
+                is_enabled_exact,
+            },
+            None => LiveGraph {
+                states: &search.states.ids[..count * width],
+                width,
+                count,
+                expanded,
+                edge_offsets: &graph.edge_offsets[..=expanded],
+                edges: &graph.edges[..edge_count],
+                labels: graph.labels.as_ref().map(|labels| &labels[..edge_count]),
+                is_enabled_exact,
+            },
+        };
+        answer_atoms(
+            machine,
+            &live,
+            &context.atoms,
+            settings.is_live_checked,
+            context.is_live_printing,
+            &context.diameter_atoms,
+            last_diameter,
+        )
+    };
     // The most threads a level was shared between.
     let mut threads_used = 1;
+    // TLC checks the temporal properties part way through the search as well (ModelChecker's
+    // doPeriodicWork), which the engine does where the checker takes the graph so far as TLC does:
+    // without the states the search reached but didn't store, prints or TLC's diameter.
+    let is_periodic = settings.is_liveness_periodic
+        && model.is_recording_graph
+        && search.states.key_width.is_none()
+        && search.held.is_none()
+        && !context.is_live_printing
+        && !settings.is_live_checked
+        && !context.diameter_atoms.contains(&true);
+    // The graph's size at the last check, from 1 as TLC's, and the time the checks took.
+    let mut periodic_size = 1usize;
+    let mut periodic_time = Duration::ZERO;
+    let mut test_live_check_at = settings.test_live_check_at.filter(|_| is_periodic);
+    // What the check that found a counterexample answered and found, and the states it took.
+    let mut periodic_lasso: Option<(Vec<Table>, Liveness, usize)> = None;
     let result = (|| -> Outcome<()> {
         // --- initial states ---
         let unassigned = vec![UNASSIGNED; width];
@@ -1541,9 +1637,11 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         })?;
         search.flush(&mut machine);
         initial_states = (search.initial_generated, search.states.count() as u64);
-        search
-            .reporter
-            .initial_states(initial_states.0, initial_states.1);
+        if search.held.is_none() {
+            search
+                .reporter
+                .initial_states(initial_states.0, initial_states.1);
+        }
         is_past_initial = true;
 
         // --- next states ---
@@ -1556,6 +1654,49 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         let mut level_start = (0, Instant::now(), 1);
         let started_at = Instant::now();
         let mut progress_at = started_at + FIRST_PROGRESS;
+        // TLC's check of the temporal properties on the graph of the states expanded so far, where
+        // it grew enough and the checks took little enough of the time: it skips the nodes of the
+        // states not yet expanded, and the search stops where it finds a counterexample.
+        let mut check_periodically =
+            |machine: &mut Machine<'_>, search: &mut Search<'_, States>| -> Outcome<()> {
+                let expanded = search
+                    .graph
+                    .as_ref()
+                    .map_or(0, |graph| graph.edge_offsets.len() - 1);
+                let count = search.states.count();
+                let at = Instant::now();
+                let growth = expanded.saturating_sub(periodic_size) as f64 / periodic_size as f64;
+                let budget = (at - started_at).as_secs_f64() * LIVENESS_RATIO;
+                if expanded == count
+                    || growth <= LIVENESS_GROWTH
+                    || periodic_time.as_secs_f64() > budget
+                {
+                    return Ok(());
+                }
+                periodic_size = expanded;
+                let tables =
+                    graph_tables(machine, search, expanded, count, None, None).map_err(Bail)?;
+                let liveness =
+                    check_liveness(model, search, &tables, None, false, &context.diameter_atoms);
+                periodic_time += at.elapsed();
+                // Whatever the checker leaves undecided, the check of the complete graph decides.
+                let (Some(branches), Verdict::Holds | Verdict::Lasso { .. }) =
+                    (liveness.branches, &liveness.verdict)
+                else {
+                    return Ok(());
+                };
+                search.reporter.liveness_started(
+                    branches as u64,
+                    expanded as u64,
+                    [search.generated, count as u64, search.depth.max(1)],
+                );
+                if liveness.verdict == Verdict::Holds {
+                    search.reporter.liveness_finished();
+                    return Ok(());
+                }
+                periodic_lasso = Some((tables, liveness, expanded));
+                Err(Bail(PERIODIC_LASSO))
+            };
         search.expanding = 0;
         while search.expanding < search.states.count() {
             let expanding = search.expanding;
@@ -1630,8 +1771,15 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     checkpoint_count = search.states.count();
                     checkpoint_generated = search.generated;
                     expanded?;
+                    if test_live_check_at.is_some_and(|at| search.expanding >= at) {
+                        test_live_check_at = None;
+                        check_periodically(&mut machine, &mut search)?;
+                    }
                     if Instant::now() >= progress_at {
                         progress_at = Instant::now() + PROGRESS_INTERVAL;
+                        if is_periodic {
+                            check_periodically(&mut machine, &mut search)?;
+                        }
                         let count = search.states.count() as u64;
                         search.reporter.progress(
                             search.generated,
@@ -1669,11 +1817,19 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 graph.successor_counts.push(search.successors as u32);
                 graph.new_counts.push(search.new_states as u32);
                 graph.edge_offsets.push(graph.edges.len() as u32);
+                graph.diameters.push(search.depth.max(1) as u32);
             }
             out_degrees[(search.new_states as usize).min(OUT_DEGREE_BUCKETS - 1)] += 1;
             search.flush(&mut machine);
+            if test_live_check_at.is_some_and(|at| expanding + 1 >= at) {
+                test_live_check_at = None;
+                check_periodically(&mut machine, &mut search)?;
+            }
             if expanding & 0xff == 0 && Instant::now() >= progress_at {
                 progress_at = Instant::now() + PROGRESS_INTERVAL;
+                if is_periodic {
+                    check_periodically(&mut machine, &mut search)?;
+                }
                 let count = search.states.count() as u64;
                 search.reporter.progress(
                     search.generated,
@@ -1692,43 +1848,6 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         .map(|&text| &*ir.texts[text as usize])
         .collect();
     let collisions = search.states.collisions;
-    // The answers to the liveness checker's atoms about the first `count` states and the steps of
-    // the first `expanded`.
-    let graph_tables = |machine: &mut Machine<'_>,
-                        search: &Search<'_, States>,
-                        expanded: usize,
-                        count: usize,
-                        reals: Option<&Reals>|
-     -> Result<Vec<Table>, &'static str> {
-        let graph = search.graph.as_ref().expect("a graph");
-        let edge_count = graph.edge_offsets[expanded] as usize;
-        // Read as the tables are answered, since taking the steps from the states the search
-        // didn't store may take a shortcut past a walk too.
-        let is_enabled_exact = !machine.is_past_walk;
-        let live = match reals {
-            Some(reals) => LiveGraph {
-                states: &reals.states,
-                width,
-                count: reals.states.len() / width,
-                expanded: reals.expanded(),
-                edge_offsets: &reals.offsets,
-                edges: &reals.edges,
-                labels: reals.labels.as_deref(),
-                is_enabled_exact,
-            },
-            None => LiveGraph {
-                states: &search.states.ids[..count * width],
-                width,
-                count,
-                expanded,
-                edge_offsets: &graph.edge_offsets[..=expanded],
-                edges: &graph.edges[..edge_count],
-                labels: graph.labels.as_ref().map(|labels| &labels[..edge_count]),
-                is_enabled_exact,
-            },
-        };
-        answer_atoms(machine, &live, &context.atoms, settings.is_live_checked)
-    };
     // The first `count` states and the steps of the first `expanded`, for the interpreter to
     // replay from the initial states on, with the answers to the liveness checker's atoms.
     let graph_checkpoint = |machine: &mut Machine<'_>,
@@ -1770,6 +1889,63 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     };
     let outcome = match result {
         Err(bail) if bail.0 == OTHER_STEPS => SearchOutcome::Invariant(OTHER_STEPS.into()),
+        // The interpreter prints the counterexample with the counts so far, as TLC does.
+        Err(bail) if bail.0 == PERIODIC_LASSO => {
+            let (tables, liveness, expanded) = periodic_lasso
+                .take()
+                .expect("the counterexample a check found");
+            let count = search.states.count();
+            if let Some(path) = &settings.state_log {
+                write_state_log(
+                    path,
+                    &variables,
+                    &search.states,
+                    &machine.store,
+                    &Logged {
+                        count,
+                        stopped: Some(PERIODIC_LASSO),
+                        expanding: expanded,
+                        graph: search.graph.as_ref(),
+                    },
+                );
+            }
+            let lasso_actions = match &liveness.verdict {
+                Verdict::Lasso {
+                    path, loop_start, ..
+                } => label_lasso(&mut machine, &context, &mut search, path, *loop_start)
+                    .unwrap_or_default(),
+                _ => Vec::new(),
+            };
+            let checkpoint = graph_checkpoint(
+                &mut machine,
+                &search,
+                expanded,
+                count,
+                0,
+                tables,
+                search.possible.clone(),
+            );
+            let counts = Counts {
+                generated: search.generated,
+                distinct: count as u64,
+                queued: (count - expanded) as u64,
+                depth: search.depth.max(1),
+                initial_generated: initial_states.0,
+                initial_distinct: initial_states.1,
+                out_degrees,
+            };
+            SearchOutcome::Complete {
+                counts: Box::new(counts),
+                checkpoint: Some(Box::new(checkpoint)),
+                liveness: Some(liveness),
+                lasso_actions,
+                value_count: machine.store.value_count(),
+                threads: threads_used,
+                collisions,
+                possible: search.possible.clone(),
+                fingerprints: search.states.fingerprints,
+            }
+        }
         Ok(()) => {
             let count = search.states.count();
             if let Some(path) = &settings.state_log {
@@ -1794,14 +1970,36 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     // Under SYMMETRY or a VIEW, the checker may ask about the steps from states the
                     // search reached but didn't store, which the engine takes and checks again.
                     let mut reals = real_states(&search, width);
+                    // The checker logs the states it adds and the atoms it evaluates where the
+                    // atoms print or the search printed, whose prints it then places.
+                    let is_effectful = context.is_live_printing
+                        || search
+                            .held
+                            .as_ref()
+                            .is_some_and(|held| held.iter().any(|printed| !printed.is_empty()));
+                    // Whatever the steps from the states the search didn't store printed, TLC prints
+                    // where the engine doesn't follow.
+                    let mut is_late_printed = false;
                     let (tables, liveness) = loop {
-                        let tables =
-                            match graph_tables(&mut machine, &search, count, count, reals.as_ref())
-                            {
-                                Ok(tables) => tables,
-                                Err(reason) => return SearchOutcome::Invariant(reason.into()),
-                            };
-                        let mut liveness = check_liveness(model, &search, &tables, reals.as_ref());
+                        let tables = match graph_tables(
+                            &mut machine,
+                            &search,
+                            count,
+                            count,
+                            reals.as_ref(),
+                            Some(search.depth.max(1) as u32),
+                        ) {
+                            Ok(tables) => tables,
+                            Err(reason) => return SearchOutcome::Invariant(reason.into()),
+                        };
+                        let mut liveness = check_liveness(
+                            model,
+                            &search,
+                            &tables,
+                            reals.as_ref(),
+                            is_effectful,
+                            &context.diameter_atoms,
+                        );
                         if liveness.verdict != Verdict::Unexpanded {
                             break (tables, liveness);
                         }
@@ -1809,6 +2007,8 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                             Some(reals) => expand_reals(&mut machine, &context, &mut search, reals),
                             None => Ok(false),
                         };
+                        is_late_printed |= !machine.output.is_empty();
+                        machine.output.clear();
                         match expanded {
                             Ok(true) => {}
                             Ok(false) => {
@@ -1821,6 +2021,48 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                             }
                         }
                     };
+                    if let Some(held) = search.held.take() {
+                        let order = (!is_late_printed && !settings.is_live_checked)
+                            .then(|| {
+                                order_printed(
+                                    &held,
+                                    &tables,
+                                    &liveness,
+                                    context.is_invariant_printing || is_distinct_read,
+                                )
+                            })
+                            .flatten();
+                        let Some(order) = order else {
+                            // The interpreter checks the properties from the start, printing all
+                            // of it in its order.
+                            let why = match &liveness.verdict {
+                                Verdict::Declined(declined) => declined.0.as_str(),
+                                Verdict::Accepted { .. } => "a node that accepts every behavior",
+                                _ if is_late_printed => "steps from states it didn't store",
+                                _ if settings.is_live_checked => "PROVE_IT_LIVE_CHECK",
+                                _ => "prints it doesn't place in TLC's order",
+                            };
+                            return SearchOutcome::Stopped {
+                                reason: format!(
+                                    "printing where the native checker doesn't check the \
+                                     temporal properties: {why}"
+                                ),
+                                checkpoint: None,
+                                collisions,
+                                violation: None,
+                            };
+                        };
+                        for out in order {
+                            match out {
+                                Out::Printed(printed) => {
+                                    report_printed(search.reporter, &machine.store, printed);
+                                }
+                                Out::InitialStates => search
+                                    .reporter
+                                    .initial_states(initial_states.0, initial_states.1),
+                            }
+                        }
+                    }
                     let checkpoint = (liveness.verdict != Verdict::Holds
                         || settings.is_live_checked)
                         .then(|| {
@@ -1830,7 +2072,22 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                                 count,
                                 count,
                                 0,
-                                tables,
+                                // The interpreter answers TLCGet("diameter") as the search goes.
+                                tables
+                                    .into_iter()
+                                    .zip(&context.diameter_atoms)
+                                    .map(|(table, &is_diameter_read)| {
+                                        if !is_diameter_read {
+                                            return table;
+                                        }
+                                        Table {
+                                            answers: Vec::new(),
+                                            is_from_steps: false,
+                                            unknown: Some("TLCGet(\"diameter\")".into()),
+                                            prints: Vec::new(),
+                                        }
+                                    })
+                                    .collect(),
                                 search.possible.clone(),
                             ))
                         });
@@ -1848,6 +2105,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             let counts = Counts {
                 generated: search.generated,
                 distinct: count as u64,
+                queued: 0,
                 depth: if search.generated == 0 {
                     0
                 } else {
@@ -1876,6 +2134,9 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 .filter(|_| settings.is_violation_reported);
             // Otherwise the interpreter starts from scratch and prints it all again.
             if violation.is_some() {
+                for printed in search.held.take().iter().flatten().flatten() {
+                    report_printed(search.reporter, &machine.store, printed);
+                }
                 search.flush(&mut machine);
             }
             SearchOutcome::Stopped {
@@ -1923,15 +2184,16 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     graph: None,
                     possible: checkpoint_possible.clone(),
                 }))
-            } else if !is_kept || search.states.key_width.is_some() {
+            } else if !is_kept || search.states.key_width.is_some() || search.held.is_some() {
                 // The interpreter searches a graph too large to keep from the start, since its
                 // liveness checker may stop in the first states, before it has taken all of them
-                // over; and under SYMMETRY or a VIEW, since its replay of the graph would give its
-                // liveness checker the states stored rather than the states each step reached.
+                // over; under SYMMETRY or a VIEW, since its replay of the graph would give its
+                // liveness checker the states stored rather than the states each step reached; and
+                // where the search held what it printed, which the interpreter prints in its order.
                 None
             } else {
                 let expanding = search.expanding;
-                match graph_tables(&mut machine, &search, expanding, count, None) {
+                match graph_tables(&mut machine, &search, expanding, count, None, None) {
                     Ok(tables) => Some(Box::new(graph_checkpoint(
                         &mut machine,
                         &search,
@@ -2277,6 +2539,87 @@ fn label_lasso(
     Ok(labels)
 }
 
+fn report_printed(reporter: &mut dyn Reporter, store: &Store, printed: &Printed) {
+    match printed {
+        Printed::Values(values) => reporter.print(store, values),
+        Printed::InitialStates(count) => reporter.initial_states_progress(*count),
+    }
+}
+
+/// What the search reports, held until the liveness checker has checked the properties.
+enum Out<'p> {
+    Printed(&'p Printed),
+    /// The count of initial states.
+    InitialStates,
+}
+
+// What the search and the atoms printed, in TLC's order: the initial states' prints, then each
+// expanded state's, followed by those of the atoms TLC evaluates as it adds the state to the
+// behavior graphs, and again where TLC runs Next from a state it adds a node of late. Nothing where
+// anything printed and the native checker leaves the properties to the interpreter or finds a node
+// that accepts every behavior, or where an atom printed as TLC adds an initial state, which the
+// engine doesn't follow.
+fn order_printed<'p>(
+    held: &'p [Vec<Printed>],
+    tables: &'p [Table],
+    liveness: &Liveness,
+    is_replay_inexact: bool,
+) -> Option<Vec<Out<'p>>> {
+    let is_printed = held.iter().any(|printed| !printed.is_empty())
+        || tables.iter().any(|table| !table.prints.is_empty());
+    // The interpreter replays the search to a state whose node accepts every behavior, printing
+    // as it goes, so there it checks from the start.
+    let is_decided = !matches!(
+        liveness.verdict,
+        Verdict::Declined(_) | Verdict::Unexpanded | Verdict::Accepted { .. }
+    );
+    if is_printed && !is_decided {
+        return None;
+    }
+    let (initial, expansions) = held.split_first()?;
+    let mut order: Vec<Out<'p>> = initial.iter().map(Out::Printed).collect();
+    order.push(Out::InitialStates);
+    let mut next = 0;
+    let mut is_initial = false;
+    for event in &liveness.events {
+        match *event {
+            Event::Initial(_) => is_initial = true,
+            Event::Expanded(state) => {
+                is_initial = false;
+                let end = (state as usize + 1).min(expansions.len());
+                for printed in &expansions[next.min(end)..end] {
+                    order.extend(printed.iter().map(Out::Printed));
+                }
+                next = next.max(end);
+            }
+            // TLC runs Next again from a stored state it adds a node of late, and prints what
+            // the search printed expanding it.
+            // TLC checks no invariant then, and the count of distinct states has grown since, so
+            // where an invariant may print among Next's prints or anything reads that count, the
+            // interpreter checks from the start.
+            Event::Late(state) => {
+                if let Some(printed) = expansions.get(state as usize) {
+                    if is_replay_inexact && !printed.is_empty() {
+                        return None;
+                    }
+                    order.extend(printed.iter().map(Out::Printed));
+                }
+            }
+            Event::Atom { atom, slot } => {
+                let printed = tables[atom as usize].printed(slot);
+                if is_initial && !printed.is_empty() {
+                    return None;
+                }
+                order.extend(printed.iter().map(Out::Printed));
+            }
+        }
+    }
+    for printed in &expansions[next.min(expansions.len())..] {
+        order.extend(printed.iter().map(Out::Printed));
+    }
+    Some(order)
+}
+
 /// Under SYMMETRY or a VIEW, the states the steps reached: the states stored, then each other state
 /// a step reached, once, with its level. The steps are the search's, then those from the states
 /// past the stored ones that the liveness checker asked about, each with the stored state with its
@@ -2434,6 +2777,8 @@ fn check_liveness(
     search: &Search<'_, States>,
     tables: &[Table],
     reals: Option<&Reals>,
+    is_effectful: bool,
+    diameter_atoms: &[bool],
 ) -> Liveness {
     let graph = search.graph.as_ref().expect("a graph");
     let to_terms = |terms: &[LiveTerm]| -> Vec<Term> {
@@ -2475,8 +2820,14 @@ fn check_liveness(
             edges: reals.map_or(&graph.edges, |reals| &reals.targets),
             fingerprints: &search.states.fingerprints,
             reals: reals.map(|reals| &reals.edges[..]),
+            diameters: diameter_atoms.contains(&true).then(|| tla_live::Diameters {
+                states: &graph.diameters,
+                last: search.depth.max(1) as u32,
+                atoms: diameter_atoms,
+            }),
         },
         &answers,
+        is_effectful,
     )
 }
 

@@ -17,6 +17,7 @@ import {
   getEngineBackend,
   getEngineSetting,
   getEnvironmentFlag,
+  getTestLiveCheckAt,
   isIrDumped,
   reportEngine,
   writeDebugBytes,
@@ -851,6 +852,7 @@ const searchStates = (
     Object.assign(current, { index, isExpanding: true, candidate: undefined });
     const getKey = isHeld ? (values: Value[]) => values : getFingerprintState;
     const key = getKey(state);
+    runtime.resetRandom();
     const action = withRebuiltLevel(previous, depths[index], () =>
       actions.find((item) =>
         getSuccessors(item.expression, previous, environment, item.scope).some((successor) =>
@@ -1783,7 +1785,14 @@ const searchStates = (
         }
         releaseInitialProgress(Infinity);
         reportComputed();
-        options.onProgress?.(progress);
+        if (progress.kind !== "liveness-started") {
+          options.onProgress?.(progress);
+          return;
+        }
+        // The native engine's check part way through the search reports the counts so far.
+        const counts = createResult("success");
+        counts.initialStates = computed.initialStates;
+        options.onProgress?.({ ...progress, statistics: { ...counts, ...progress.statistics } });
       },
       onInitialStatesStarted: () => {
         engineReport.isReported = true;
@@ -1793,10 +1802,20 @@ const searchStates = (
         computed.initialStates = { generated, distinct };
         if (!liveness) reportComputed();
       },
-      onPrint: print,
+      // With temporal properties, the engine prints once it has checked them, after it reports the
+      // initial states, which TLC reports before anything the search prints.
+      onPrint: (text: string) => {
+        if (liveness) {
+          releaseInitialProgress(Infinity);
+          reportComputed();
+        }
+        print(text);
+      },
     };
     const startedAt = performance.now();
-    const native = isNativeBackend() ? checkNatively(lowerModel, callbacks) : undefined;
+    const native = isNativeBackend()
+      ? checkNatively(lowerModel, callbacks, options.livenessCheck !== "final")
+      : undefined;
     const verdict = native?.status === "complete" ? native.liveness : undefined;
     engineReport.liveness = verdict;
     engineReport.lassoActions = native?.status === "complete" ? native.lassoActions : undefined;
@@ -2406,25 +2425,30 @@ const searchStates = (
   };
   // The native checker found a counterexample on the engine's complete search, which the
   // interpreter prints with the search's counts.
+  // A check part way through the search found it with states left to expand, and reported its
+  // start as it began.
   const decided = engineReport.result;
   if (liveness && engineReport.lasso && decided) {
     runtime.generatedStates = decided.generatedStates;
     runtime.distinctStates = decided.distinctStates;
-    runtime.queueSize = 0;
+    runtime.queueSize = decided.queuedStates ?? 0;
     statistics.depth = decided.depth;
     runtime.diameter = decided.depth;
     decided.outDegrees.forEach((count, degree) => {
       outDegrees[degree] = count;
     });
-    options.onProgress?.({
-      kind: "liveness-started",
-      branches: liveness.branches,
-      isComplete: true,
-      states: runtime.distinctStates,
-      statistics: createResult("success"),
-    });
+    if (runtime.queueSize === 0) {
+      options.onProgress?.({
+        kind: "liveness-started",
+        branches: liveness.branches,
+        isComplete: true,
+        states: runtime.distinctStates,
+        statistics: createResult("success"),
+      });
+    }
     return reportLasso(liveness, engineReport.lasso);
   }
+  const testLiveCheckAt = getTestLiveCheckAt();
   for (let index = resumeAt; index < states.length && !runtime.isStopped; index++) {
     if (index > resumeAt) takePendingStates();
     current.index = index;
@@ -2445,6 +2469,10 @@ const searchStates = (
     expansion.newStates = 0;
     // TLC's AbstractChecker#runTLC checks the liveness properties on the state graph so far, then
     // reports how far the search got.
+    if (isPeriodic && index + 1 === testLiveCheckAt) {
+      const lasso = findPeriodicViolation(index + 1);
+      if (liveness && lasso) return reportLasso(liveness, lasso);
+    }
     if ((isPeriodic || options.onProgress) && performance.now() >= periodic.at) {
       periodic.at = performance.now() + PROGRESS_INTERVAL;
       const lasso = isPeriodic ? findPeriodicViolation(index + 1) : undefined;

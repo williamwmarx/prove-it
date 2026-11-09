@@ -103,6 +103,75 @@ On the 26 corpus models with temporal properties under SYMMETRY or a VIEW, all 2
 natively (23 lassos, 3 hold); their outputs match TLC's recordings, and under
 `PROVE_IT_LIVE_CHECK=1` the verdicts, lassos, branches and labels match the interpreter's.
 
+## Print while checking the temporal properties (as built)
+
+TLC prints what Print and PrintT print each time it evaluates them, and its liveness checker
+evaluates as it adds each state to the behavior graphs, right after the search expands the state:
+ENABLED of the fairness runs Next, and so does each action check on each step. The interpreter's
+checker, with nothing shared where the spec has repeated effects, evaluates as often as TLC, which
+is how it matches TLC's output on Euclid3 and ULEvenOdd, whose Next prints four times per state.
+
+The native engine evaluates every atom on every state and step before the check, so the order
+comes from the checker instead:
+- With temporal properties and a spec that may print, the search holds what it prints, the initial
+  states' and each expansion's, and the count of initial states, rather than reporting them.
+- `answer_atoms` keeps what each evaluation of an atom printed, by its position in the table, runs
+  ENABLED on each state rather than answering it from the steps, and evaluates an action on every
+  step.
+- `tla-live`, told the atoms have effects, keeps no result across evaluations, as the interpreter's
+  checker does then (no shared rows, no consistency kept, `evaluateLive`'s cache within one check),
+  and logs each atom it evaluates after the state it starts to add (`Event`).
+- The engine then reports, in order: the initial states' prints, the count of initial states, and
+  for each state its expansion's prints followed by those of the atoms the checker evaluated as it
+  added the state, up to the state whose accepting node ends TLC's search. Where TLC runs Next
+  again for a late node of a stored state, the engine repeats that state's expansion prints.
+
+Where an invariant may print, or anything reads `TLCGet("distinct")`, that repeat would differ from
+TLC's: TLC checks no invariant for a late node, and the count of distinct states has grown since.
+So where a late node would repeat prints there, the engine hands over as below.
+
+Where the check isn't decided natively, under `PROVE_IT_LIVE_CHECK=1`, where an atom prints as TLC
+adds an initial state, or where the steps from a state the search didn't store print, the engine
+hands over with no checkpoint and nothing printed, and the interpreter checks from the start.
+
+## TLCGet("diameter") in the temporal properties (as built)
+
+TLC's `TLCGet("diameter")` is `ModelChecker#getProgress`, `TLCTrace#getLevelForReporting`: the
+deepest level of the states the search has written so far, which only grows. The liveness checker
+reads it as it adds each state: 1 as it adds an initial state, and as it adds an expanded state the
+depth the search reached once it expanded the state. So an atom that reads it has an answer per
+state and diameter, not per state.
+
+- The compiler gives the diameter a slot, and the engine declines a model whose search reads it
+  (`TLCGet("diameter") in the search`), whose value grows within an expansion.
+- The search keeps its depth after each expansion (`Graph::diameters`).
+- `answer_atoms` answers an atom that reads the diameter once for each diameter from 1 to the last,
+  the tables one after another, and leaves it to the interpreter in a checkpoint.
+- `tla-live` (`Graph::diameters`) sets the diameter as it adds each state and once the search is
+  done, and reads such an atom's answer for the diameter then.
+
+UserModuleOverride and its Annotation variant, whose property prints and reads the diameter, are
+checked natively and match TLC.
+
+## Checks part way through the search (as built)
+
+TLC checks the temporal properties as the search goes too (`ModelChecker#doPeriodicWork`): about
+three seconds in and then after each progress report, where the behavior graph grew by more than a
+tenth since the last check (`livenessThreshold`) and the checks took less than a fifth of the time
+(`livenessRatio`), unless `-lncheck final`. It checks the whole graph each time, but the search for
+a cycle passes by the nodes of states not yet expanded (`LiveWorker#checkSccs`), and on a
+counterexample it stops at once with the counts so far, states left on the queue and all.
+
+The engine does the same at its progress points: `tla-live` checks the graph of the states expanded
+so far, its successors' nodes undone, which is the graph TLC built in the same order. The engine
+reports the check's start and end, as the interpreter does, and where it finds a lasso the search
+stops and the interpreter prints it with the search's counts and queue. It checks this way where the
+checker takes the graph so far as TLC does: not under SYMMETRY or a VIEW, where anything prints,
+under `PROVE_IT_LIVE_CHECK=1`, or where an atom reads TLC's diameter. Whatever a check leaves
+undecided, the check of the complete graph decides. `PROVE_IT_TEST_LIVE_CHECK_AT=n` makes the first
+check after `n` states for the engine and the interpreter alike, for the tests, since the time a
+check happens at isn't deterministic.
+
 ## Speed against TLC (measured)
 
 `scripts/bench-liveness.json` lists the liveness models: the 13 corpus models with temporal

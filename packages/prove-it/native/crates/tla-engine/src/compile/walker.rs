@@ -19,7 +19,7 @@ use tla_values::store::{FALSE, KIND_SET, KIND_TUPLE, Outcome, TRUE};
 use tla_values::{Bail, Id};
 
 use super::nodes::assign_bound;
-use super::predicate::{self, Leaf, Predicate, Test};
+use super::predicate::{Leaf, Predicate, Test};
 use super::{
     Binding, CompileError, Compiled, Compiler, Compiling, Context, Definition, DefinitionForm,
     OperatorBody, SEARCH_SLOTS, Scope, decline, eval, leaf, lookup, unsupported,
@@ -1489,7 +1489,7 @@ impl<'a> Compiler<'a> {
                 .store
                 .apply(function, machine.locals[slot as usize])?;
             for (constant, walk) in walks.iter() {
-                if predicate::equals(machine, value, *constant)? {
+                if machine.store.equals(value, *constant)? {
                     walk(machine, on_complete)?;
                 }
             }
@@ -2120,8 +2120,8 @@ impl<'a> Compiler<'a> {
         )
     }
 
-    /// Compiles an expression in the scope of an instance, or `None` when the engine can't
-    /// translate the scope.
+    /// Compiles an expression of a liveness atom in the scope of an instance, where what it prints
+    /// is printed, or `None` when the engine can't translate the scope.
     pub fn compile_in_scope(
         &mut self,
         node: NodeId,
@@ -2129,6 +2129,10 @@ impl<'a> Compiler<'a> {
     ) -> Result<Option<Compiled>, CompileError> {
         let Some(context) = self.context_from_scope(scope)? else {
             return Ok(None);
+        };
+        let context = Context {
+            can_print: true,
+            ..context
         };
         self.compile(node, &context).map(Some)
     }
@@ -2144,6 +2148,10 @@ impl<'a> Compiler<'a> {
     ) -> Result<Option<Compiled>, CompileError> {
         let Some(context) = self.context_from_scope(scope)? else {
             return Ok(None);
+        };
+        let context = Context {
+            can_print: true,
+            ..context
         };
         self.compile_enabled(action, &context).map(Some)
     }

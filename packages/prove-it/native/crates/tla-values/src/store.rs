@@ -858,10 +858,25 @@ impl Store {
     /// TLC's equality. Equal values have equal ids, so two distinct ids are unequal, but TLC
     /// compares composite values element by element up to the first difference, which fails where
     /// those elements are values TLC can't compare. The store bails wherever TLC would fail.
+    /// Equal ids, two booleans, integers or strings, and two tuples of different lengths are told
+    /// apart in place; the rest goes through `equals_other`.
+    #[inline(always)]
     pub fn equals(&mut self, left: Id, right: Id) -> Outcome<bool> {
         if left == right {
             return Ok(true);
         }
+        let (left_meta, right_meta) = (self.meta(left), self.meta(right));
+        if left_meta.kind == right_meta.kind
+            && (left_meta.kind <= KIND_STRING
+                || left_meta.kind == KIND_TUPLE && left_meta.size != right_meta.size)
+        {
+            return Ok(false);
+        }
+        self.equals_other(left, right)
+    }
+
+    #[inline(never)]
+    fn equals_other(&mut self, left: Id, right: Id) -> Outcome<bool> {
         let (left_kind, right_kind) = (self.kind_of(left), self.kind_of(right));
         if left_kind == right_kind {
             return match left_kind {
