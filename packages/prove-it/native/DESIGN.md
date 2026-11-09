@@ -686,6 +686,9 @@ code wins, and this records how:
   - `PROVE_IT_STOP_AT` inside a shared level is a stop at that state.
   - The invariant a thread checks of a successor it takes for new, but that another thread found
     first, can't stop the search early, for the same reason: the earlier parent stops it first.
+- **How many threads.** `PROVE_IT_WORKERS`, at most `available_parallelism`, since more threads
+  than the machine runs at once only take turns. The coordinator waits on the threads it spawned,
+  and no thread spins.
 - **Where it runs on one thread.** A level runs on one thread when:
   - it has fewer than `PROVE_IT_SHARED_LEVEL` states (default 2,048, `MINIMUM_SHARED_LEVEL` as
     in `search.ts`), or too few for two threads of half that each;
@@ -707,7 +710,8 @@ code wins, and this records how:
 #### Acceptance, as run
 
 - **State logs: met.** `tla-engine/tests/search.rs` compares the outcome, counts, checkpoint and
-  state log with `PROVE_IT_FP_VERIFY` at 1, 2, 4 and 16 threads, sharing every level, on:
+  state log with `PROVE_IT_FP_VERIFY` at 1, 2, 4 and 16 threads (as many as the machine runs),
+  sharing every level, on:
   - 2PCwithBTM, VoucherRedeem, SyncCons and MCEcho;
   - TLCGetLevel (deadlock) and test216;
   - view_symmetry (VIEW and SYMMETRY);
