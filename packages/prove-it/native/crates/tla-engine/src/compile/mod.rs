@@ -1175,7 +1175,17 @@ impl<'a> Compiler<'a> {
             .and_then(|entries| entries[index].clone())
         {
             self.note_cached_read(entry);
-            return Ok(known);
+            // The cache doesn't key on the initial predicate, where a variable's value isn't yet
+            // known to stream in order.
+            return Ok(if context.is_init {
+                Compiled {
+                    is_in_order: false,
+                    are_elements_in_order: false,
+                    ..known
+                }
+            } else {
+                known
+            });
         }
         if self.expanding.contains(&node) {
             return unsupported("a recursive zero-arity definition");
