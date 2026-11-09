@@ -215,10 +215,7 @@ impl Selector<'_> {
     /// The definition the next parts of the name select. While collecting SANY's messages, a
     /// name that selects nothing is SANY's error at the parts that are names, which
     /// `Generator.selectorToNode` reports after it skips the parts that aren't.
-    fn find_definition(
-        &mut self,
-        local: Option<&[Rc<Definition>]>,
-    ) -> Result<Option<Selected>> {
+    fn find_definition(&mut self, local: Option<&[Rc<Definition>]>) -> Result<Option<Selected>> {
         let mut names: Vec<Name> = Vec::new();
         let mut args: Vec<Expr> = Vec::new();
         let mut name_ranges: Vec<Range> = Vec::new();
