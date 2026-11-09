@@ -9,7 +9,6 @@ pub mod footprint;
 pub mod live;
 pub mod machine;
 pub mod memo;
-pub mod native;
 pub mod oracle;
 pub mod search;
 pub mod symmetry;

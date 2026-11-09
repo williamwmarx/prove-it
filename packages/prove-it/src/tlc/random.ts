@@ -12,6 +12,9 @@ import type { TlcVersion } from "./version";
 
 export interface JavaRandom {
   setSeed: (seed: bigint) => void;
+  // The generator's 48 bits, which the native engine draws on from and a rebuilt trace restores.
+  getState: () => bigint;
+  setState: (state: bigint) => void;
   nextInt: (bound: number) => number;
   nextLong: () => bigint;
   nextDouble: () => number;
@@ -31,6 +34,10 @@ export const createJavaRandom = (seed: bigint): JavaRandom => {
   return {
     setSeed: (value) => {
       state.value = (BigInt.asUintN(64, value) ^ MULTIPLIER) & SEED_MASK;
+    },
+    getState: () => state.value,
+    setState: (value) => {
+      state.value = value;
     },
     nextInt: (bound) => {
       const first = next(31);
