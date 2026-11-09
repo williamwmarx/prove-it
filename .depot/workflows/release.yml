@@ -1,9 +1,9 @@
 # Publishes packages/prove-it to npm when a commit on main changes its version, then tags the
 # commit v<version>. A push that changes package.json but not the version publishes nothing. Run
 # it by hand for a first release or to retry one that failed. The native engine's platform packages
-# for Linux x64 and arm64 go first, each built and tested on its own architecture, and the main
-# package lists them as optionalDependencies, added when it is packed; other platforms get the
-# TypeScript engine.
+# for Linux x64 and arm64 and macOS arm64 and x64 go first, each built and tested on its own system
+# (macOS on GitHub's runners, by platforms.yml), and the main package lists them as
+# optionalDependencies, added when it is packed; other platforms get the TypeScript engine.
 #
 # The npm token is NPM_TOKEN in the 1Password Environment prove-it-release, whose ID is below.
 # ONEPASSWORD_PROVE_IT_RELEASE_TOKEN, a Depot CI secret scoped to this repository, main and this
@@ -27,8 +27,8 @@ env:
   # An identifier, not a secret: reading the Environment takes the service account's token.
   ONEPASSWORD_ENVIRONMENT_ID: tt44zeqhf5ciy4i4jorhug2d6i # gitleaks:allow
 jobs:
-  # Builds the Linux arm64 engine's platform package on arm64, runs the unit tests with it searching,
-  # and hands the packed tarball to the publish job. It holds no credential.
+  # Builds the Linux arm64 engine's platform package on arm64, runs the crates' tests and the unit
+  # tests with it searching, and hands the packed tarball to the publish job. It holds no credential.
   arm64:
     name: Build the Linux arm64 engine
     if: github.ref == 'refs/heads/main'
@@ -46,6 +46,7 @@ jobs:
           PATH="$(scripts/ci/bootstrap.sh bun node rust):$PATH"
           bun install --frozen-lockfile --ignore-scripts
           cd packages/prove-it
+          (cd native && cargo test --locked)
           bun scripts/platform-packages.ts build
           bun run build
           PROVE_IT_ENGINE_BACKEND=rust PROVE_IT_ENGINE_ADDON="$PWD/native/npm/linux-arm64-gnu/prove-it-engine.node" \
@@ -70,6 +71,8 @@ jobs:
     permissions:
       # To push the v<version> tag.
       contents: write
+      # To take the macOS packages from platforms.yml's run.
+      actions: read
     steps:
       - name: Check out exactly the pushed main commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -122,9 +125,40 @@ jobs:
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: linux-arm64-gnu
-          path: ${{ runner.temp }}/arm64
-      # Builds the Linux x64 engine's platform package, then lists both Linux platform packages in
-      # the main package's optionalDependencies, at its own version, as the main package is packed.
+          path: ${{ runner.temp }}/fetched
+      # platforms.yml builds, tests and packs the macOS engines on GitHub's macOS runners, on the push
+      # of this same commit. This waits for that run, which the job's timeout bounds, fails unless it
+      # passed, and takes the packages it packed.
+      - name: Fetch the macOS engines
+        if: steps.plan.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          PATH="$(scripts/ci/bootstrap.sh node):$PATH"
+          api() {
+            curl --fail --silent --show-error --location --retry 5 \
+              -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "$1"
+          }
+          runs="https://api.github.com/repos/$REPOSITORY/actions/workflows/platforms.yml/runs?head_sha=$GITHUB_SHA&per_page=1"
+          while :; do
+            run=$(api "$runs" | node -p '
+              const run = JSON.parse(require("fs").readFileSync(0, "utf8")).workflow_runs[0];
+              run ? `${run.id} ${run.status} ${run.conclusion}` : "none pending none"') || run="none pending none"
+            read -r id status conclusion <<< "$run"
+            [[ "$status" == completed ]] && break
+            sleep 30
+          done
+          [[ "$conclusion" == success ]] || { echo "platforms.yml run $id of $GITHUB_SHA ended $conclusion" >&2; exit 1; }
+          for name in darwin-arm64 darwin-x64; do
+            url=$(api "https://api.github.com/repos/$REPOSITORY/actions/runs/$id/artifacts?name=$name" |
+              node -p 'JSON.parse(require("fs").readFileSync(0, "utf8")).artifacts[0].archive_download_url')
+            api "$url" > "$RUNNER_TEMP/$name.zip"
+            unzip -o -q "$RUNNER_TEMP/$name.zip" -d "$RUNNER_TEMP/fetched"
+          done
+      # Builds the Linux x64 engine's platform package, then lists every platform package in the main
+      # package's optionalDependencies, at its own version, as the main package is packed.
       - name: Pack
         id: pack
         if: steps.plan.outputs.publish == 'true'
@@ -134,16 +168,20 @@ jobs:
           cd packages/prove-it
           bun scripts/platform-packages.ts build
           platform=$(bun scripts/platform-packages.ts pack "$RUNNER_TEMP/platform-packages")
-          arm64=$(ls "$RUNNER_TEMP"/arm64/*-linux-arm64-gnu-*.tgz)
           echo "platform=$platform" >> "$GITHUB_OUTPUT"
-          echo "arm64=$arm64" >> "$GITHUB_OUTPUT"
           echo "Packed $(basename "$platform"), sha256 $(sha256sum "$platform" | cut -d' ' -f1)" | tee -a "$GITHUB_STEP_SUMMARY"
-          echo "Fetched $(basename "$arm64"), sha256 $(sha256sum "$arm64" | cut -d' ' -f1)" | tee -a "$GITHUB_STEP_SUMMARY"
+          for name in linux-arm64-gnu darwin-arm64 darwin-x64; do
+            fetched=$(ls "$RUNNER_TEMP"/fetched/*-"$name"-*.tgz)
+            echo "Fetched $(basename "$fetched"), sha256 $(sha256sum "$fetched" | cut -d' ' -f1)" | tee -a "$GITHUB_STEP_SUMMARY"
+          done
           node -e '
             const fs = require("fs");
             const main = JSON.parse(fs.readFileSync("package.json", "utf8"));
             main.optionalDependencies = Object.fromEntries(
-              ["linux-x64-gnu", "linux-arm64-gnu"].map((name) => [`${main.name}-${name}`, main.version]),
+              ["linux-x64-gnu", "linux-arm64-gnu", "darwin-arm64", "darwin-x64"].map((name) => [
+                `${main.name}-${name}`,
+                main.version,
+              ]),
             );
             fs.writeFileSync("package.json", `${JSON.stringify(main, null, 2)}\n`);
           '
@@ -159,7 +197,6 @@ jobs:
           OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.ONEPASSWORD_PROVE_IT_RELEASE_TOKEN }}
           TARBALL: ${{ steps.pack.outputs.tarball }}
           PLATFORM: ${{ steps.pack.outputs.platform }}
-          ARM64: ${{ steps.pack.outputs.arm64 }}
         run: |
           set -euo pipefail
           [[ -n "$ONEPASSWORD_ENVIRONMENT_ID" ]] || { echo "set ONEPASSWORD_ENVIRONMENT_ID in this workflow" >&2; exit 1; }
@@ -169,7 +206,7 @@ jobs:
           # shellcheck disable=SC2016 # npm expands ${NPM_TOKEN} itself, so the shell must not.
           printf '//registry.npmjs.org/:_authToken=${NPM_TOKEN}\n' > "$npmrc"
           # A retry skips a package an earlier attempt published.
-          for tarball in "$PLATFORM" "$ARM64" "$TARBALL"; do
+          for tarball in "$PLATFORM" "$RUNNER_TEMP"/fetched/*.tgz "$TARBALL"; do
             spec=$(tar -xOzf "$tarball" package/package.json | node -p 'const p = JSON.parse(require("fs").readFileSync(0, "utf8")); `${p.name}@${p.version}`')
             if [[ "$(npm view "$spec" version 2>/dev/null)" != "" ]]; then
               echo "$spec is already on npm" >> "$GITHUB_STEP_SUMMARY"
@@ -179,7 +216,7 @@ jobs:
               npm publish "$tarball" --access public --ignore-scripts
           done
           rm -f "$npmrc"
-          echo "Published $PACKAGE@${{ steps.plan.outputs.version }} and its Linux x64 and arm64 engines" >> "$GITHUB_STEP_SUMMARY"
+          echo "Published $PACKAGE@${{ steps.plan.outputs.version }} and its Linux and macOS engines" >> "$GITHUB_STEP_SUMMARY"
       - name: Tag the release
         env:
           GH_TOKEN: ${{ github.token }}

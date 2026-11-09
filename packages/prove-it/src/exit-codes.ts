@@ -41,6 +41,7 @@ export const withLivenessExitCode = (
   const checker = withErrorExitCode(create);
   return (
     checker && {
+      formula: checker.formula,
       branches: checker.branches,
       atoms: checker.atoms,
       enabledAtoms: checker.enabledAtoms,

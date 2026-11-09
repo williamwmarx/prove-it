@@ -19,6 +19,7 @@ use tla_values::store::{FALSE, KIND_SET, KIND_TUPLE, Outcome, TRUE};
 use tla_values::{Bail, Id};
 
 use super::nodes::assign_bound;
+use super::predicate::Test;
 use super::{
     Binding, CompileError, Compiled, Compiler, Compiling, Context, Definition, DefinitionForm,
     OperatorBody, SEARCH_SLOTS, Scope, decline, eval, leaf, lookup, unsupported,
@@ -278,6 +279,8 @@ enum Source {
 enum Op {
     /// A guard, or one conjunct of the rest TLC's shortcut evaluates, failing with its reason.
     Check(Eval, &'static str),
+    /// A guard whose value is a fused predicate's, which is always a boolean.
+    Holds(Test),
     /// An assignment of a variable unassigned on the path.
     Assign(u32, Source),
     /// An assignment of a variable assigned on the path: an equality test.
@@ -312,6 +315,7 @@ impl Segment {
                 FALSE => Ok(false),
                 _ => Err(Bail(reason)),
             },
+            Op::Holds(test) => test(machine),
             Op::Assign(variable, source) => {
                 let value = Self::source(machine, source, *variable)?;
                 target(machine, self.is_init)[*variable as usize] = value;
@@ -357,6 +361,14 @@ impl Segment {
             }
         }
         result
+    }
+}
+
+// A guard, tested in place where it compiled to a fused predicate.
+fn guard(compiled: Compiled) -> Op {
+    match &compiled.predicate {
+        Some(predicate) => Op::Holds(predicate.build()),
+        None => Op::Check(compiled.eval, "a conjunct that isn't a boolean"),
     }
 }
 
@@ -1530,10 +1542,7 @@ impl<'a> Compiler<'a> {
             }
             let item = &items[index];
             match &item.shape {
-                Shape::Guard => {
-                    let evaluate = self.compile(item.node, context)?.eval;
-                    ops.push(Op::Check(evaluate, "a conjunct that isn't a boolean"));
-                }
+                Shape::Guard => ops.push(guard(self.compile(item.node, context)?)),
                 Shape::Assign(variable, value) => {
                     let variable = *variable;
                     let value = Source::Value(self.compile(*value, context)?.eval);
@@ -1693,11 +1702,13 @@ impl<'a> Compiler<'a> {
                 }
                 Shape::Guard | Shape::Unchanged(_) => {}
             }
-            let evaluate = match &item.shape {
-                Shape::Guard => self.compile(item.node, context)?.eval,
-                _ => deferred_eval(deferred(self.compile(item.node, context))),
-            };
-            guards.push(Op::Check(evaluate, "a conjunct that isn't a boolean"));
+            guards.push(match &item.shape {
+                Shape::Guard => guard(self.compile(item.node, context)?),
+                _ => Op::Check(
+                    deferred_eval(deferred(self.compile(item.node, context))),
+                    "a conjunct that isn't a boolean",
+                ),
+            });
         }
         Ok(guards)
     }
