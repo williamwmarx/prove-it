@@ -61,6 +61,9 @@ pub struct Function {
     pub range: Vec<Value>,
     pub class: Cell<Class>,
     pub written: RefCell<Option<Vec<u32>>>,
+    /// The interval the function was built over, which DOMAIN gives back, as TLC keeps a
+    /// tuple's or a function's over `a..b` (`getDomainInterval`); `None` for any other domain.
+    pub interval: Option<(i32, i32)>,
 }
 
 /// The sets TLC keeps lazily, and the infinite ones.
@@ -103,12 +106,24 @@ impl Value {
             range,
             class: Cell::new(class),
             written: RefCell::new(None),
+            interval: None,
+        }))
+    }
+
+    /// A function over `low..low + range.len() - 1`, built over that interval.
+    pub fn over_interval(low: i32, range: Vec<Value>, class: Class) -> Value {
+        let high = low + range.len() as i32 - 1;
+        Value::Function(Rc::new(Function {
+            domain: (low..=high).map(Value::Int).collect(),
+            range,
+            class: Cell::new(class),
+            written: RefCell::new(None),
+            interval: Some((low, high)),
         }))
     }
 
     pub fn tuple(elements: Vec<Value>) -> Value {
-        let domain = (1..=elements.len() as i32).map(Value::Int).collect();
-        Value::function(domain, elements, Class::Tuple)
+        Value::over_interval(1, elements, Class::Tuple)
     }
 
     /// A record of fields as written: sorted into TLC's order, keeping the written order where it
@@ -183,6 +198,7 @@ pub fn written_function(keys: Vec<Value>, values: Vec<Value>, class: Class) -> E
         range,
         class: Cell::new(class),
         written: RefCell::new(written),
+        interval: None,
     })))
 }
 
@@ -570,6 +586,19 @@ pub fn permute(value: &Value, permutation: &[(Rc<Text>, Rc<Text>)]) -> Evaluated
                 .map(|element| permute(element, permutation))
                 .collect::<Evaluated<_>>()?,
         )?,
+        Value::Function(function) if function.interval.is_some() => {
+            Value::Function(Rc::new(Function {
+                domain: function.domain.clone(),
+                range: function
+                    .range
+                    .iter()
+                    .map(|value| permute(value, permutation))
+                    .collect::<Evaluated<_>>()?,
+                class: function.class.clone(),
+                written: RefCell::new(None),
+                interval: function.interval,
+            }))
+        }
         Value::Function(function) => {
             let keys = function
                 .domain
