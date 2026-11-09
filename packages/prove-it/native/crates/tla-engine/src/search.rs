@@ -1848,7 +1848,14 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     };
                     if let Some(held) = search.held.take() {
                         let order = (!is_late_printed && !settings.is_live_checked)
-                            .then(|| order_printed(&held, &tables, &liveness))
+                            .then(|| {
+                                order_printed(
+                                    &held,
+                                    &tables,
+                                    &liveness,
+                                    context.is_invariant_printing,
+                                )
+                            })
                             .flatten();
                         let Some(order) = order else {
                             // The interpreter checks the properties from the start, printing all
@@ -1857,7 +1864,8 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                                 Verdict::Declined(declined) => declined.0.as_str(),
                                 Verdict::Accepted { .. } => "a node that accepts every behavior",
                                 _ if is_late_printed => "steps from states it didn't store",
-                                _ => "PROVE_IT_LIVE_CHECK",
+                                _ if settings.is_live_checked => "PROVE_IT_LIVE_CHECK",
+                                _ => "prints it doesn't place in TLC's order",
                             };
                             return SearchOutcome::Stopped {
                                 reason: format!(
@@ -2364,6 +2372,7 @@ fn order_printed<'p>(
     held: &'p [Vec<Printed>],
     tables: &'p [Table],
     liveness: &Liveness,
+    is_invariant_printing: bool,
 ) -> Option<Vec<Out<'p>>> {
     let is_printed = held.iter().any(|printed| !printed.is_empty())
         || tables.iter().any(|table| !table.prints.is_empty());
@@ -2394,8 +2403,13 @@ fn order_printed<'p>(
             }
             // TLC runs Next again from a stored state it adds a node of late, and prints what
             // the search printed expanding it.
+            // TLC checks no invariant then, so where one may print among Next's prints, the
+            // interpreter checks from the start.
             Event::Late(state) => {
                 if let Some(printed) = expansions.get(state as usize) {
+                    if is_invariant_printing && !printed.is_empty() {
+                        return None;
+                    }
                     order.extend(printed.iter().map(Out::Printed));
                 }
             }

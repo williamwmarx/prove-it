@@ -668,6 +668,16 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
       );
       expect(lines).toContainEqual(expect.stringMatching(verdict));
     }
+    // TLC checks no invariant as it runs Next again for a late node, so where an invariant prints
+    // the interpreter checks from the start.
+    const checked = [...cycling, 'Shown == PrintT(<<"inv", x>>)'].map((line) =>
+      line.replace("Next == PrintT(x) /\\ ", "Next == "),
+    );
+    expect(
+      await compareWithInterpreter(checked, "SPECIFICATION Fair\nINVARIANT Shown\nPROPERTY Leads"),
+    ).toContainEqual(
+      expect.stringMatching(/native: stopped: printing where .*: prints it doesn't/),
+    );
   });
 
   it("hands over a violated invariant, deadlock and a failed action property", async () => {
