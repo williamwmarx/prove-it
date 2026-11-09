@@ -16,7 +16,7 @@ use tla_values::transfer::{EncodedStates, SharedEncoder, SharedStates, StateEnco
 use tla_values::{Bail, Id, Store};
 
 use crate::compile::{CompileError, Compiler, DISTINCT_SLOT, LEVEL_SLOT, NEXT_LEVEL_SLOT, Options};
-use crate::context::{EngineContext, holds_all, holds_all_changed};
+use crate::context::{EngineContext, first_failing, holds_all, holds_all_changed};
 use crate::live::{LiveGraph, Table, answer_atoms};
 use crate::machine::{Machine, Printed, UNASSIGNED};
 use crate::symmetry::Canonicalizer;
@@ -39,6 +39,9 @@ pub struct Settings {
     /// through TLC's actions, and run each ENABLED answered from the steps, and fail where the two
     /// differ.
     pub is_live_checked: bool,
+    /// Whether the caller reports a violation the search stops at itself, once the search has
+    /// passed on what the spec printed before it.
+    pub is_violation_reported: bool,
 }
 
 /// What a search tells its caller as it runs, as `runEngine`'s callbacks.
@@ -125,10 +128,32 @@ pub enum SearchOutcome {
         reason: String,
         checkpoint: Option<Box<Checkpoint>>,
         collisions: u64,
+        /// What TLC reports for the stop, when the engine knows it.
+        violation: Option<Box<Violation>>,
     },
     /// The engine broke one of its own invariants, or a self-check failed
     /// (`EngineInvariantError`).
     Invariant(String),
+}
+
+/// A violation the search stopped at, with the states TLC prints for it.
+pub struct Violation {
+    pub kind: ViolationKind,
+    /// The states, each as its variables' values in the engine's order, ids of `store`.
+    pub states: Vec<Vec<Id>>,
+    pub store: Store,
+}
+
+pub enum ViolationKind {
+    /// An initial state violates an invariant: its position in the model's invariants, then
+    /// past them in its properties checked as invariants.
+    InitialInvariant(usize),
+}
+
+// What a search found stopping it, before it hands over the store.
+struct Found {
+    kind: ViolationKind,
+    states: Vec<Vec<Id>>,
 }
 
 /// What PROVE_IT_LIVE_CHECK finds when TLC's actions take other steps than the next-state relation.
@@ -350,6 +375,8 @@ struct Search<'r> {
     // Whether a successor is checked once the walk reaches the next, when nothing the search
     // evaluates can tell: then the probe of its fingerprint, read ahead, doesn't wait on memory.
     is_pipelined: bool,
+    // The violation the search stops at, when it knows what TLC reports for it.
+    violation: Option<Found>,
     // The successor waiting to be checked, and its fingerprint.
     pending: Vec<Id>,
     pending_fingerprint: Option<u64>,
@@ -455,7 +482,13 @@ impl Search<'_> {
             if is_in_model {
                 self.set_distinct(machine, self.states.count() + 1)?;
             }
-            if !holds_all(machine, &context.initial_invariants)? {
+            if let Some(failing) = first_failing(machine, &context.initial_invariants)? {
+                self.violation = Some(Found {
+                    kind: ViolationKind::InitialInvariant(
+                        context.initial_invariant_owners[failing],
+                    ),
+                    states: vec![machine.current().to_vec()],
+                });
                 return Err(Bail("an invariant violated in an initial state"));
             }
             if !holds_all(machine, &context.initial_predicates)? {
@@ -649,11 +682,17 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         .collect();
     let mut store = Store::new();
     store.reset(ranked.iter().map(Vec::as_slice));
+    store.freeze_string_order();
     let mut compiler = Compiler::new(ir, &mut store, settings.compile);
     let context = match EngineContext::build(&mut compiler, ir) {
         Ok(context) => context,
         Err(error) => return SearchOutcome::Declined(describe(error)),
     };
+    // A search that ranked strings may start over in the interpreter, which would print again
+    // what the search printed.
+    if compiler.is_printing && compiler.is_ranking {
+        return SearchOutcome::Declined("unsupported: Print with ToString".into());
+    }
     let is_distinct_read = compiler.is_distinct_read;
     // Checking a successor once the walk reaches the next reorders nothing anyone can see where
     // nothing prints, reads the count of distinct states, or fingerprints a VIEW or symmetry's
@@ -732,6 +771,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         action: 0,
         checked: None,
         is_pipelined,
+        violation: None,
         pending: Vec::with_capacity(width),
         pending_fingerprint: None,
     };
@@ -930,7 +970,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             }),
         }
     };
-    match result {
+    let outcome = match result {
         Err(bail) if bail.0 == OTHER_STEPS => SearchOutcome::Invariant(OTHER_STEPS.into()),
         Ok(()) => {
             let count = search.states.count();
@@ -1003,11 +1043,29 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 fingerprints: search.states.fingerprints,
             }
         }
-        Err(bail) if !is_past_initial => SearchOutcome::Stopped {
-            reason: bail.0.to_string(),
-            checkpoint: None,
-            collisions,
-        },
+        Err(bail) if !is_past_initial => {
+            // The store goes with the violation, so whether the search ranked strings is read
+            // here, as below.
+            let violation = search.violation.take().filter(|_| {
+                settings.is_violation_reported && !machine.store.has_unordered_strings()
+            });
+            // Otherwise the interpreter starts from scratch and prints it all again.
+            if violation.is_some() {
+                search.flush(&mut machine);
+            }
+            SearchOutcome::Stopped {
+                reason: bail.0.to_string(),
+                checkpoint: None,
+                collisions,
+                violation: violation.map(|found| {
+                    Box::new(Violation {
+                        kind: found.kind,
+                        states: found.states,
+                        store: std::mem::replace(&mut machine.store, Store::new()),
+                    })
+                }),
+            }
+        }
         Err(bail) => {
             let count = checkpoint_count;
             let is_kept = search.graph.is_none() || count <= MAXIMUM_GRAPH_STATES;
@@ -1067,8 +1125,36 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 reason: bail.0.to_string(),
                 checkpoint,
                 collisions,
+                violation: None,
             }
         }
+    };
+    // The strings the search ranked, such as ToString's, the temporal atoms' included, may rank
+    // otherwise in TLC, so the interpreter makes them again from the start rather than taking
+    // over the search.
+    let is_unordered = machine.store.has_unordered_strings();
+    match outcome {
+        // TLC orders a violation's sets of strings by its own ranking, which the search's may not
+        // be, so the interpreter reports it.
+        SearchOutcome::Stopped {
+            reason, collisions, ..
+        } if is_unordered => SearchOutcome::Stopped {
+            reason,
+            checkpoint: None,
+            collisions,
+            violation: None,
+        },
+        SearchOutcome::Complete {
+            checkpoint: Some(_),
+            collisions,
+            ..
+        } if is_unordered => SearchOutcome::Stopped {
+            reason: "a graph with strings the search ranked".into(),
+            checkpoint: None,
+            collisions,
+            violation: None,
+        },
+        outcome => outcome,
     }
 }
 

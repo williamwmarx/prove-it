@@ -9,6 +9,7 @@ pub const COMMAND_LINE_ERROR: u32 = 1102;
 pub const FINISHED: u32 = 2186;
 pub const MODEL_CHECKING: u32 = 2187;
 pub const COMPUTING_INIT: u32 = 2189;
+pub const INVARIANT_VIOLATED_INITIAL: u32 = 2107;
 pub const INIT_GENERATED_1: u32 = 2190;
 pub const INIT_GENERATED_2: u32 = 2191;
 pub const SUCCESS: u32 = 2193;

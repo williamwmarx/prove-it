@@ -502,6 +502,26 @@ fn builds_one_set_from_any_order_of_its_elements() {
     }
 }
 
+// A string ranked after the order is frozen, as ToString ranks one in a search, compares only
+// with itself; a reset orders all strings again.
+#[test]
+fn bails_on_ordering_a_string_ranked_after_the_order_is_frozen() {
+    let mut store = Store::new();
+    store.reset([&utf16("a")[..]]);
+    store.freeze_string_order();
+    assert!(!store.has_unordered_strings());
+    let a = str(&mut store, "a");
+    store.get_string_rank(&utf16("12"));
+    let twelve = str(&mut store, "12");
+    assert!(store.has_unordered_strings());
+    assert_eq!(store.compare(twelve, twelve), Ok(0));
+    assert!(store.compare(a, twelve).is_err());
+    assert!(store.set_of(&[a, twelve]).is_err());
+    store.reset([&utf16("a")[..]]);
+    let (a, twelve) = (str(&mut store, "a"), str(&mut store, "12"));
+    assert!(store.compare(a, twelve).is_ok());
+}
+
 // Values built from a store's: some it holds, and some it doesn't, made every way the store makes
 // a block, from blocks of the store and from blocks of their own.
 fn build_on(store: &mut Store) -> Vec<Id> {
