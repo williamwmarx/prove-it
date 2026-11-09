@@ -2,6 +2,7 @@
 //! messages SANY and TLC print, as the TypeScript front end does. DESIGN.md section 14 plans it.
 
 pub mod ast;
+pub mod config;
 pub mod dump;
 pub mod errors;
 pub mod hash;

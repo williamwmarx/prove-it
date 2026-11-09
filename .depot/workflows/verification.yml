@@ -89,7 +89,7 @@ jobs:
               cd packages/prove-it
               bun scripts/fetch-corpora.ts
               cd native && cargo build --release --locked -p tla-front --bin front-dump && cd ..
-              for mode in tokens ast sany-ast; do
+              for mode in tokens ast sany-ast config; do
                 bun scripts/front-differential.ts "$mode" --mutate 400 --rust native/target/release/front-dump
               done
           - task: Cargo Test

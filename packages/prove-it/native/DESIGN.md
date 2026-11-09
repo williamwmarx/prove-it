@@ -2555,6 +2555,28 @@ them).
 - **F8. IR lowering** (`lower`): the IR of every corpus model. Mode `ir`: the bytes, equal to
   what `PROVE_IT_IR_DUMP` writes (section 6.10's first check), and the same decline reasons.
 
+What F7 and F8 need is evaluation, not only analysis. Today the IR holds values that the
+TypeScript environment computes by evaluating TLA+ before the search: the constants a
+configuration assigns (`toValue`, and an operator table for a constant with arguments), the
+startup values of definitions with repeated effects (TLC evaluates constant definitions at
+startup, printing what they `Print`), the check of a substitute TLC evaluates at startup, the
+SYMMETRY permutations, and TLC's split of Next into actions, which enumerates the constant sets
+of its `\E`. Assumptions are evaluated there too (2104, 2105). The front end has no evaluator,
+and should not grow a second one beside the engine's. So the plan for F7 and F8:
+- the configuration's constants need no evaluator: the front end writes them in `transfer.ts`'s
+  encoding directly;
+- everything else that TLC evaluates at startup moves into the engine, as a startup phase that
+  runs on the IR before the search: the IR names the startup definitions in TLC's order, the
+  substitutes to check, the assumptions, the SYMMETRY definition and Next, and the engine
+  evaluates them, reporting `Print` output and errors as events, as 13.2 already plans for ASSUME;
+- the TypeScript lowering changes the same way in the same PR (an IR version bump), so
+  byte-equality holds on IR whose content is what the front end alone determines. The liveness
+  atoms and the tableau come from `tla-live`, which the liveness session ports, once the IR
+  carries the formula (#46).
+This needs the engine sessions' agreement on the startup phase; until it lands, F7 and F8 cover
+the models whose startup evaluates nothing beyond the configuration's constants, and give up
+(`NotYet`) on the rest.
+
 Speed is measured at F2, F4 and F8 on the largest corpus modules (`TE.tla`, 2.9 MB;
 `tcp_proof.tla`; `LevelSpec.tla`; btree's and 2PCwithBTM's models), parse plus analysis, against
 the TypeScript front end in Bun.
@@ -2600,4 +2622,16 @@ the TypeScript front end in Bun.
   sixth is dropping the AST, which the binary can skip at exit. An `ExpressionKind` is 160 bytes,
   set by the qualified `Apply`'s ranges; boxing them is the next step if parsing shows up in a
   whole front end's profile.
+
+#### F6 as built
+
+- `config` ports `parseConfig`: TLC's `ModelConfig.parse` over the tokens TLC reads with SANY's
+  lexer, for TLC master and 1.7.4 (TYPE and TYPE_CONSTRAINT, none of the later keywords), and
+  JavaCC's lexical errors (`formatLexicalError`, `escapeLexeme`), whose columns and escapes count
+  UTF-16 code units. `ModelConfig` keeps `config.ts`'s fields; `ConfigError` is `TlaConfigError`.
+- `front-differential.ts config` runs over every `.cfg` of the corpora and fixtures, writing each
+  file's configuration (or error) for both versions on one line: 1,425 of 1,425 match, and so do
+  5,700 variants from `--mutate`, and 3,324 more variants made to hit the lexer (unterminated
+  strings and comments, characters outside the BMP), of which 2,620 are errors (10 kinds of
+  message, counting the keyword named as one).
 

@@ -957,3 +957,77 @@ pub fn syntax_error(value: &SyntaxError) -> Json {
         ),
     ])
 }
+
+fn config_value(value: &crate::config::ConfigValue) -> Json {
+    use crate::config::ConfigValue;
+    let kind = |name: &str| ("kind", Some(text(name)));
+    match value {
+        ConfigValue::Number(number) => {
+            object(vec![kind("Number"), ("value", Some(Json::Number(*number)))])
+        }
+        ConfigValue::String(string) => object(vec![kind("String"), ("value", Some(text(string)))]),
+        ConfigValue::Boolean(boolean) => {
+            object(vec![kind("Boolean"), ("value", Some(Json::Bool(*boolean)))])
+        }
+        ConfigValue::ModelValue(model) => {
+            object(vec![kind("ModelValue"), ("name", Some(text(model)))])
+        }
+        ConfigValue::Set(elements) => object(vec![
+            kind("Set"),
+            ("elements", Some(list(elements, config_value))),
+        ]),
+    }
+}
+
+pub fn config(value: &Result<crate::config::ModelConfig, crate::config::ConfigError>) -> Json {
+    let config = match value {
+        Ok(config) => config,
+        Err(error) => return object(vec![("error", Some(text(&error.message)))]),
+    };
+    let optional = |value: &Option<String>| value.as_deref().map(text);
+    let words = |values: &[String]| Some(list(values, |value| text(value)));
+    object(vec![
+        ("init", optional(&config.init)),
+        ("next", optional(&config.next)),
+        ("specification", optional(&config.specification)),
+        ("invariants", words(&config.invariants)),
+        ("properties", words(&config.properties)),
+        ("constraints", words(&config.constraints)),
+        ("actionConstraints", words(&config.action_constraints)),
+        (
+            "constants",
+            Some(list(&config.constants, |constant| {
+                object(vec![
+                    ("name", Some(text(&constant.name))),
+                    ("value", Some(config_value(&constant.value))),
+                    (
+                        "args",
+                        constant
+                            .args
+                            .as_deref()
+                            .map(|args| list(args, config_value)),
+                    ),
+                    ("module", optional(&constant.module)),
+                ])
+            })),
+        ),
+        (
+            "substitutions",
+            Some(list(&config.substitutions, |substitution| {
+                object(vec![
+                    ("name", Some(text(&substitution.name))),
+                    ("target", Some(text(&substitution.target))),
+                    ("module", optional(&substitution.module)),
+                ])
+            })),
+        ),
+        ("checkDeadlock", Some(Json::Bool(config.check_deadlock))),
+        ("symmetry", optional(&config.symmetry)),
+        ("view", optional(&config.view)),
+        ("alias", optional(&config.alias)),
+        ("postconditions", words(&config.postconditions)),
+        ("possible", words(&config.possible)),
+        ("periodic", optional(&config.periodic)),
+        ("rlReward", optional(&config.rl_reward)),
+    ])
+}
