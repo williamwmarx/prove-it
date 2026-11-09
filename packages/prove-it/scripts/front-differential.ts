@@ -232,10 +232,28 @@ const lowerFullModel = (source: string, _path: string, spec: string) => {
     files: { readFile: () => undefined, writeFile: () => {} },
     isSanyAccepted: true,
   });
+  // createSearch checks the configuration, as check.ts does first, so its error comes first, and
+  // gives no search for a spec without variables, whose IR check.ts lowers with FALSE for Init and
+  // Next. Its checks evaluate the invariants, which ranks the strings TLC computes at startup,
+  // which this mode leaves out, so it runs after the model is lowered.
+  const lowered = (() => {
+    try {
+      return { outcome: lowerLinkedModel(config, linked, order) };
+    } catch (error) {
+      return { error };
+    }
+  })();
+  createSearch(config, linked.environment, () => [], undefined);
+  if ("error" in lowered) throw lowered.error;
+  return lowered.outcome;
+};
+
+const lowerLinkedModel = (
+  config: ModelConfig,
+  linked: ReturnType<typeof createEnvironment>,
+  order: ReturnType<typeof createTlcOrder>,
+) => {
   const environment = linked.environment;
-  // createSearch checks the configuration, as check.ts does first, and gives no search for a spec
-  // without variables, whose IR check.ts lowers with FALSE for Init and Next.
-  createSearch(config, environment, () => [], undefined);
   const specification = getSpecification(config, environment);
   const search = getProperties(config, environment, () => {});
   const properties = toEngineProperties(search);

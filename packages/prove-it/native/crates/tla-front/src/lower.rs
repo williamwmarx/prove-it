@@ -1300,6 +1300,7 @@ impl<'a> Lowering<'a> {
         Ok(Ir {
             ranked_count: self.ranked.texts.len() as u32,
             texts,
+            wide_texts: std::collections::BTreeMap::new(),
             variables,
             tlc_order: self.tlc_order,
             builtins: self.builtins,

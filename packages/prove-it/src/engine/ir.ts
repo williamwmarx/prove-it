@@ -3,10 +3,10 @@
 // out what it holds, and native/crates/tla-ir decodes it and encodes it again byte for byte.
 //
 // The blob is little-endian 32-bit words. A header gives the magic, IR_VERSION, the number of
-// words and the number of bytes of UTF-8 text after them. The words hold, in order:
+// words and the number of bytes of WTF-8 text after them. The words hold, in order:
 // - the texts: how many TLC ranks, how many there are, and where each ends in the text, in UTF-16
 //   code units. Text i below the ranked count is the string of rank i in createTlcOrder's order.
-//   The texts themselves are one UTF-8 string after the words;
+//   The texts themselves are one WTF-8 string after the words;
 // - the variables, by name, in the engine's order, and TLC's order of them;
 // - the builtins the model names: name, arity and flags, then for a configuration's table of an
 //   operator's values its number of rows, and each row's arguments as a tuple and its value;
@@ -247,18 +247,39 @@ const pushWords = (words: Words, from: Words) => {
   words.length += from.length;
 };
 
-// The texts in UTF-8, in one call, and where each ends in UTF-16 code units, or undefined if one
-// has a lone surrogate, which UTF-8 can't hold.
+// A string in WTF-8: UTF-8 that also encodes a lone surrogate as a code point of three bytes, as
+// tla-ir's wtf8.rs reads it, since a string TLC computes can hold one, as Tail("😀a") does.
+const encodeWtf8 = (text: string) => {
+  if (text.isWellFormed()) return new TextEncoder().encode(text);
+  const bytes: number[] = [];
+  for (const character of text) {
+    const point = character.codePointAt(0) ?? 0;
+    if (point < 0x80) bytes.push(point);
+    else if (point < 0x800) bytes.push(0xc0 | (point >> 6), 0x80 | (point & 0x3f));
+    else if (point < 0x10000) {
+      bytes.push(0xe0 | (point >> 12), 0x80 | ((point >> 6) & 0x3f), 0x80 | (point & 0x3f));
+    } else {
+      bytes.push(
+        0xf0 | (point >> 18),
+        0x80 | ((point >> 12) & 0x3f),
+        0x80 | ((point >> 6) & 0x3f),
+        0x80 | (point & 0x3f),
+      );
+    }
+  }
+  return Uint8Array.from(bytes);
+};
+
+// The texts in WTF-8, in one call, and where each ends in UTF-16 code units.
 const encodeTexts = (ranked: readonly string[], rankedCount: number, extra: string[]) => {
   const joined = ranked.slice(0, rankedCount).join("") + extra.join("");
-  if (!joined.isWellFormed()) return undefined;
   const ends = new Int32Array(rankedCount + extra.length);
   let end = 0;
   for (let index = 0; index < rankedCount; index++) ends[index] = end += ranked[index].length;
   for (let index = 0; index < extra.length; index++) {
     ends[rankedCount + index] = end += extra[index].length;
   }
-  return { bytes: new TextEncoder().encode(joined), ends };
+  return { bytes: encodeWtf8(joined), ends };
 };
 
 const isWide = (value: number) => (value | 0) !== value;
@@ -937,7 +958,6 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
   const valueStrings = encodedValues.strings.map(getText);
   const variables = environment.variables.map(getText);
   const texts = encodeTexts(rankedTexts, rankedCount, extraTexts);
-  if (!texts) return { reason: "a text with a lone surrogate" };
   const words = createWords();
   reserve(words, 64 + texts.ends.length + model.length + nodes.length + encodedValues.words.length);
   pushAll(words, [MAGIC, IR_VERSION, 0, texts.bytes.length, rankedCount, texts.ends.length]);

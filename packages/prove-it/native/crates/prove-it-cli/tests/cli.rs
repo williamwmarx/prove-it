@@ -338,6 +338,36 @@ fn warns_of_a_stuttering_counterexample_without_fairness() {
 }
 
 #[test]
+fn overflows_translating_a_temporal_operator_that_recurses_forever() {
+    // TLC's Github1389StateGuard: the guard reads x, so the translation of op(x) never ends,
+    // and TLC overflows its stack before it computes the initial states.
+    let directory =
+        std::env::temp_dir().join(format!("prove-it-cli-recursion-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    for (file, contents) in [
+        (
+            "Guard.tla",
+            "---- MODULE Guard ----\nEXTENDS Naturals\nVARIABLE x\nRECURSIVE op(_)\nop(n) == IF n = 0 THEN <>(x = 0) ELSE op(n - 1)\nInit == x = 0\nNext == x' \\in 0..3\nSpec == Init /\\ [][Next]_x\nProp == op(x)\n====\n",
+        ),
+        (
+            "Guard.cfg",
+            "SPECIFICATION Spec\nCHECK_DEADLOCK FALSE\nPROPERTY Prop\n",
+        ),
+    ] {
+        std::fs::write(directory.join(file), contents).expect("a file");
+    }
+    let output = run(&directory, &["Guard"]);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(255), "{text}");
+    assert!(
+        text.contains("\nError: This was a Java StackOverflowError. It was probably the result\n"),
+        "{text}"
+    );
+    assert!(!text.contains("Computing initial states"), "{text}");
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
 fn prints_a_temporal_propertys_lasso() {
     let ir = include_bytes!(
         "../../../../tests/conformance/ir/tlc/tlatools/org.lamport.tlatools/test-model/Github1389ViolatedB.ir"
@@ -668,6 +698,45 @@ fn rebuilds_a_trace_of_bags_as_tlc_builds_them() {
     assert_eq!(output.status.code(), Some(75), "{text}");
     assert!(
         text.contains(include_str!("etcdraft-failure.txt")),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn prints_what_the_expansion_printed_before_its_violation() {
+    // TLC checks each successor as it finds it, so it prints what finding the violating one
+    // printed before it reports the violation, as TLC 1.8 prints this spec's 1.
+    let spec = "---- MODULE Stop ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0\nNext == x' \\in {x + 1, x + 2} /\\ PrintT(x')\nInv == x # 1\n====\n";
+    let (output, directory) = run_lowered("printed", spec, "INIT Init\nNEXT Next\nINVARIANT Inv\n");
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(12), "{text}");
+    assert!(
+        text.contains(".\n1\nError: Invariant Inv is violated.\n"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+const SCHEDULING_ALLOCATOR_IR: &[u8] = include_bytes!(
+    "../../../../tests/conformance/ir/tlc/tlatools/org.lamport.tlatools/test-model/examples/allocator/SchedulingAllocator.ir"
+);
+
+#[test]
+fn rebuilds_a_trace_through_a_recursive_function_tlc_keeps_lazy() {
+    let (output, directory) = run_golden(
+        "recursive-function",
+        SCHEDULING_ALLOCATOR_IR,
+        "SchedulingAllocator",
+        "",
+        &[],
+    );
+    let text = stdout(&output);
+    // The schedule's permutations come from the recursive LET function perms over SUBSET S,
+    // which TLC applies to an argument without building it.
+    assert_eq!(output.status.code(), Some(13), "{text}");
+    assert!(
+        text.contains(include_str!("scheduling-allocator.txt")),
         "{text}"
     );
     std::fs::remove_dir_all(directory).expect("removed");

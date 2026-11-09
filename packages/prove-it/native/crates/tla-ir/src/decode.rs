@@ -1,5 +1,6 @@
 //! Reads the blob `src/engine/ir.ts` writes, checking every count, index and offset as it goes.
 
+use std::collections::BTreeMap;
 use std::fmt;
 
 use crate::{
@@ -270,33 +271,36 @@ impl Decoder<'_> {
         if ranked_count < 0 || ranked_count as usize > text_count {
             return self.error(format!("{ranked_count} ranked of {text_count} texts"));
         }
-        let text = match std::str::from_utf8(text) {
-            Ok(text) => text,
-            Err(error) => return self.error(format!("text that isn't UTF-8: {error}")),
+        let Ok(units) = crate::wtf8::decode(text) else {
+            return self.error("text that isn't WTF-8".to_owned());
         };
-        // Each text ends at a count of UTF-16 code units, as JavaScript measures it.
+        // Each text ends at a count of UTF-16 code units, as JavaScript measures it. A text with a
+        // lone surrogate keeps its units in `wide_texts`, and its text has U+FFFD in their place.
         let mut texts = Vec::with_capacity(text_count);
-        let mut characters = text.char_indices().peekable();
-        let (mut start, mut units) = (0, 0);
-        for _ in 0..text_count {
+        let mut wide_texts = BTreeMap::new();
+        let mut start = 0;
+        for id in 0..text_count {
             let end = self.next()?;
-            while units < end {
-                let Some((_, character)) = characters.next() else {
-                    return self.error(format!("a text ending at {end}, past the text"));
-                };
-                units += character.len_utf16() as i32;
-            }
-            if units != end {
-                return self.error(format!("a text ending at {end}, within a character"));
-            }
-            let byte = characters.peek().map_or(text.len(), |&(byte, _)| byte);
-            texts.push(Box::from(&text[start..byte]));
-            start = byte;
+            let Some(entry) = usize::try_from(end)
+                .ok()
+                .filter(|&end| end >= start)
+                .and_then(|end| units.get(start..end))
+            else {
+                return self.error(format!("a text ending at {end}, past the text"));
+            };
+            texts.push(match String::from_utf16(entry) {
+                Ok(text) => text.into_boxed_str(),
+                Err(_) => {
+                    wide_texts.insert(id as TextId, Box::from(entry));
+                    String::from_utf16_lossy(entry).into_boxed_str()
+                }
+            });
+            start += entry.len();
         }
-        if start != text.len() {
+        if start != units.len() {
             return self.error(format!(
-                "{} bytes of text after the last",
-                text.len() - start
+                "{} units of text after the last",
+                units.len() - start
             ));
         }
         self.text_count = text_count as u32;
@@ -480,6 +484,7 @@ impl Decoder<'_> {
         Ok(Ir {
             ranked_count: ranked_count as u32,
             texts,
+            wide_texts,
             variables,
             tlc_order,
             builtins,
