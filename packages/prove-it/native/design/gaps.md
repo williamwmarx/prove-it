@@ -518,12 +518,26 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   which is the whole trace, as it is (`TLCTrace.printTrace`). The CLI declined any failure with
   an ALIAS. It now prints one in the next-state relation or an invariant (`failure.rs`), with
   the startup values and registers the alias may read, and still declines the other sites, a
-  state TLC fails to fingerprint, an incomplete successor, and any failure with a POSTCONDITION
-  or `_POSSIBLE` (cdot/ChainedCdots: TLC checks the postcondition between the trace and the
-  call stack, with TLCGet("generated") and the registers as the failure left them). bfs_anim
-  (spectacle) now prints what TLC prints.
+  state TLC fails to fingerprint, an incomplete successor, and any failure with a `_POSSIBLE`
+  predicate. bfs_anim (spectacle) now prints what TLC prints.
 - A deadlocked initial state is such a trace of one state too: the CLI printed it through the
   ALIAS, where TLC prints the state. It now prints the state.
+
+## A failure with a POSTCONDITION
+
+- After a failure TLC checks no postcondition once the search is over. But its worker goes on
+  from the failed next-state relation to check the state for deadlock, and where the expansion
+  generated no successor that check (`Worker.run`, `doNextSetErr`, `doPostCondition`) evaluates
+  the postconditions on the trace to the state, reporting no deadlock since the error is set.
+  So TLC prints a postcondition that is false between the trace and the call stack, with the
+  registers and counts as the failure left them. The CLI declined any failure with a
+  POSTCONDITION. It now follows three cases (checked with TLC): a failure in the next-state
+  relation without the deadlock check, and one in an invariant, which TLC evaluates on a
+  successor it has generated, check nothing; a failure expanding the first state, where the
+  counts say nothing was generated, checks them. It declines the rest: a later state, whose
+  expansion may have generated successors before it failed, which the search doesn't count
+  apart, a spec that prints, and a postcondition TLC computes as it starts. cdot/ChainedCdots
+  now prints what TLC prints.
 
 ## A function TLC asks whether it equals a record
 
@@ -591,8 +605,8 @@ recursive operator (Github649), ENABLED in the initial predicate (EWD840/MC02, t
 function of several arguments in an action (Elevator), Print under a quantifier (Stones, test11)
 and inside ENABLED (test20), a quantifier over Nat as TLC's failure (Bakery), and membership in
 DOMAIN of a lazy function (test11), INSTANCE in a LET in the replay (the `_anim` models), a
-failure's trace through the ALIAS (bfs_anim), and a function compared with a record
-(model_values_distinct). The addon suite's "leaves a model it can't search to the TypeScript
+failure's trace through the ALIAS (bfs_anim) and its postconditions (ChainedCdots), and a
+function compared with a record (model_values_distinct). The addon suite's "leaves a model it can't search to the TypeScript
 engine" already declines on UNCHANGED in the initial predicate.
 
 Done before that (each in a section above): run-time error stops (ErrorSite Init, Next,
@@ -608,9 +622,9 @@ Open, with what is known:
 
 - **Github696, AssertError.** Not started; the startup AssertError items went to the platform
   session.
-- **cdot/ChainedCdots** (a failure with a POSTCONDITION): the CLI declines it. TLC checks the
-  postcondition after the trace and before the call stack (`Worker.doPostCondition`), with the
-  registers and counts as the failure left them.
+- **A failure with a POSTCONDITION past the first state expanded.** The CLI declines it: TLC
+  checks the postconditions only where the failed expansion had generated no successor, so the
+  stop needs to say how many the expansion generated before it failed.
 - **RandomSubsetEmpty** still reports AssumptionFailed (trace session, 20:04). Find the bail
   reason (bac5cb17 now lowers a model without a next-state relation, so engine-ir gives its IR);
   it should be a limit if TLC's assumption holds.
