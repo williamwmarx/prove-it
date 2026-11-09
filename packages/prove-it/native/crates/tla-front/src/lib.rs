@@ -12,6 +12,7 @@ pub mod instances;
 pub mod json;
 pub mod levels;
 pub mod lexer;
+pub mod linter;
 pub mod live;
 pub mod lower;
 pub mod model;

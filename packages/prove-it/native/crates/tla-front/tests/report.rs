@@ -44,6 +44,17 @@ fn reprints_every_error_so_far_after_each_module() {
 }
 
 #[test]
+fn warns_of_a_field_named_like_a_declaration_unless_a_field_is_built_from_one() {
+    assert_eq!(
+        get_text(
+            "lint",
+            "---- MODULE Main ----\nVARIABLE x, y\nA == [x |-> 1]\nB == [y |-> y, z |-> 2]\n====\n"
+        ),
+        "Parsing file Main File\nSemantic processing of module Main\nLinting of module Main\nline 3, col 7 to line 3, col 7 of module Main\n\nThe field name \"x\" in the record constructor is identical to the existing definition or declaration\nnamed x, located at line 2, col 10 to line 2, col 10 of module Main.\nThe field in the record will not take the value of the x definition or declaration.\nIn TLA+, field names in records are strings, regardless of any similarly named declarations or definitions.\nTherefore, DOMAIN [x |-> ...] = {\"x\"} holds true.\n\n\n\n"
+    );
+}
+
+#[test]
 fn names_each_module_sany_parses_analyzes_and_lints() {
     assert_eq!(
         get_text(
