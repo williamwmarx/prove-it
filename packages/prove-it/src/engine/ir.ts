@@ -46,7 +46,13 @@ import { getLevel } from "../liveness";
 import type { LiveExpression } from "../tableau";
 import type { TlcVersion } from "../tlc/version";
 import { createStateEncoder } from "../transfer";
-import { findStringRank, getRankedStringCount, getStringOrder, type Value } from "../values";
+import {
+  findStringRank,
+  getRankedStringCount,
+  getStringOrder,
+  isSettledValue,
+  type Value,
+} from "../values";
 import type { EngineProperties, EngineSpec } from "./context";
 import type { NamedPermutation } from "./symmetry";
 
@@ -127,8 +133,8 @@ const BUILTIN_RESOLUTION = 4;
 const RESOLUTION_BITS = 3;
 const RESOLUTION_MASK = (1 << RESOLUTION_BITS) - 1;
 
-// A definition's startup value: none, one that isn't a string, number or boolean, which the engine
-// doesn't read, or the ordinal of a value.
+// A definition's startup value: none, one the engine can't read, which TLC may keep lazy or the
+// encoding can't hold, or the ordinal of a value.
 const NO_STARTUP_VALUE = -1;
 const OBJECT_STARTUP_VALUE = -2;
 
@@ -406,6 +412,7 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
   const writeDefinition = (definition: Definition) => {
     const isRepeated = isImpureDefinition(definition, environment, "repeated");
     const startup = isRepeated ? getStartupValue(definition, environment) : undefined;
+    const startupIndex = startup !== undefined && isSettledValue(startup) ? getValue(startup) : -1;
     push(
       nodes,
       DEFINITION_TAG |
@@ -427,9 +434,9 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
       nodes,
       startup === undefined
         ? NO_STARTUP_VALUE
-        : typeof startup === "object"
+        : startupIndex < 0
           ? OBJECT_STARTUP_VALUE
-          : getValue(startup),
+          : startupIndex,
     );
     if (definition.kind === "Operator") {
       push(nodes, 0);

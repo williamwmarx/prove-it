@@ -260,6 +260,46 @@ describe.if(ADDON !== undefined)("the native engine's bridged builtins", () => {
     }
   });
 
+  // From TLC's Github696: TLCModelValue makes the model value of a name once, ranking the name.
+  // The literal "A_7" ranks before the names the spec builds, so it comes first.
+  it("makes the model values TLCModelValue names, as TLC does", async () => {
+    const body = [
+      "EXTENDS Integers, Sequences, TLC, TLCExt",
+      "VARIABLE v",
+      'MVS == {TLCModelValue("A_" \\o ToString(n)) : n \\in 0..12}',
+      "Init == v = [mv \\in MVS |-> ToString(mv)]",
+      "Next == UNCHANGED v",
+      'Inv == /\\ v[TLCModelValue("A_7")] = "A_7"',
+      '       /\\ (CHOOSE mv \\in MVS : TRUE) = TLCModelValue("A_7")',
+    ];
+    expect(await compareWithInterpreter(body, `${CONFIG}\nINVARIANT Inv`)).toContainEqual(
+      expect.stringMatching(COMPLETE),
+    );
+    // The search may rank names in another order than TLC's, so it stops where it would order
+    // them: here it builds both entries of the function, where TLC applies it lazily.
+    const ranked = [
+      "EXTENDS Integers, Sequences, TLC, TLCExt",
+      "VARIABLE n",
+      'MV(i) == TLCModelValue("A_" \\o ToString(100 + i + n))',
+      "Init == n = 0",
+      "Next == UNCHANGED n",
+      "First == (CHOOSE x \\in {[i \\in 1..2 |-> MV(i)][2], MV(1)} : TRUE) = MV(1)",
+    ];
+    expect(await compareWithInterpreter(ranked, `${CONFIG}\nINVARIANT First`)).toContainEqual(
+      expect.stringMatching(stopped("an order of model values the search ranked")),
+    );
+    for (const [init, reason] of [
+      ['v = {TLCModelValue("A_a"), TLCModelValue("B_a")}', "differently typed model values"],
+      ["v = TLCModelValue(1)", "TLCModelValue of a value that isn't a string"],
+    ]) {
+      const lines = await compareWithInterpreter(
+        ["EXTENDS TLCExt", "VARIABLE v", `Init == ${init}`, "Next == UNCHANGED v"],
+        CONFIG,
+      );
+      expect(lines).toContainEqual(expect.stringMatching(stopped(reason)));
+    }
+  });
+
   // From TLC's RandomElement: the initial states draw from the generator the assumptions drew
   // from, and each expansion from one seeded with the fingerprint of the state it expands.
   it("draws RandomElement and RandomSubset as TLC does", async () => {

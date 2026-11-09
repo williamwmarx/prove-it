@@ -19,7 +19,7 @@ mod builtins;
 mod fused;
 pub(crate) mod lazy;
 mod nodes;
-mod predicate;
+pub(crate) mod predicate;
 pub(crate) mod random;
 mod sets;
 mod walker;

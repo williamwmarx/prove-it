@@ -853,6 +853,12 @@ impl Compiler<'_> {
                 let value = self.operand(&operands[0])?;
                 unary(&value, to_string, true)
             }
+            "TLCModelValue" => {
+                arity(1)?;
+                self.is_ranking = true;
+                let name = self.operand(&operands[0])?;
+                unary(&name, model_value, false)
+            }
             "Len" => {
                 arity(1)?;
                 let sequence = self.operand(&operands[0])?;
@@ -1243,6 +1249,17 @@ fn to_string(machine: &mut Machine<'_>, value: Id) -> Outcome<Id> {
     }
     machine.store.get_string_rank(&text);
     Ok(machine.store.str(&text))
+}
+
+// The model value of a name, which TLC makes once, ranking the name as it does
+// (`TLCExt.tlcModelValue`).
+fn model_value(machine: &mut Machine<'_>, name: Id) -> Outcome<Id> {
+    if machine.store.kind_of(name) != KIND_STRING {
+        return Err(Bail("TLCModelValue of a value that isn't a string"));
+    }
+    let text = machine.store.text_of(name).to_vec();
+    machine.store.get_string_rank(&text);
+    Ok(machine.store.model(&text))
 }
 
 #[cfg(test)]

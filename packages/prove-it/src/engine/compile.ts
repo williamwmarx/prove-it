@@ -159,10 +159,6 @@ export const tlc = {
   // The number of distinct states, which the distinct slot holds once an expression reads it.
   distinct: 0,
   isDistinctRead: false,
-  // Whether an expression reads TLCGet or prints, which only a search on one thread keeps up.
-  isUsed: false,
-  // Whether threads share the search, while which nothing may start to.
-  isShared: false,
   // The lines printed since the search last passed them on, and between them each count of initial
   // states the search reports once the initial predicate has printed.
   output: [] as (string | number)[],
@@ -603,8 +599,6 @@ export const resetCompileState = () => {
   memoTables.length = 0;
   tlc.distinct = 0;
   tlc.isDistinctRead = false;
-  tlc.isUsed = false;
-  tlc.isShared = false;
   tlc.output = [];
   if (STACK.length > INITIAL_STACK) STACK = new Int32Array(INITIAL_STACK);
   stackTop = 0;
@@ -2795,10 +2789,9 @@ export const createCompiler = (environment: Environment): Compiler => {
   // Print(a, b) and PrintT(a) print as TLC does where the engine evaluates them as TLC does, and
   // only a value whose text doesn't depend on how it was built, which the engine forgets.
   const compilePrint = (name: string, args: Expression[], context: Context): Compiled => {
-    if (!context.canPrint || tlc.isShared) return unsupported(name);
+    if (!context.canPrint) return unsupported(name);
     if (args.length !== (name === "Print" ? 2 : 1))
       return unsupported("an operator applied to the wrong number of arguments");
-    tlc.isUsed = true;
     const operands = args.map((argument) => compile(argument, { ...context, canPrint: false }));
     const first = operands[0].evaluate;
     const second = operands[1]?.evaluate;
@@ -2828,9 +2821,8 @@ export const createCompiler = (environment: Environment): Compiler => {
   // TLCGet("level") and TLCGet("distinct") read the slots the search sets.
   const compileTlcGet = (args: Expression[], context: Context): Compiled => {
     const key = args.length === 1 && args[0].kind === "String" ? args[0].value : undefined;
-    if ((key !== "level" && key !== "distinct") || tlc.isShared) return unsupported("TLCGet");
+    if (key !== "level" && key !== "distinct") return unsupported("TLCGet");
     if (context.isInit && context.isPrimed) return unsupported("TLCGet");
-    tlc.isUsed = true;
     if (key === "distinct" && !tlc.isDistinctRead) {
       tlc.isDistinctRead = true;
       LOC[DISTINCT_SLOT] = int(tlc.distinct);
