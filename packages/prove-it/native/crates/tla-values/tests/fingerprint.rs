@@ -181,8 +181,10 @@ fn are_the_same_from_a_parent_from_the_state_before_and_from_scratch() {
         scratch
     );
     // As the search fingerprints a successor, from the parent being expanded, whether or not the
-    // values that changed keep their lengths, on fingerprints that start out knowing no value.
+    // values that changed keep their lengths, on fingerprints that start out knowing no value,
+    // given every position as one that may have changed.
     let mut from_parents = Fingerprints::new();
+    let every: Vec<u32> = (0..width as u32).collect();
     let mut parent = Parent::default();
     for (state, row) in states.chunks_exact(width).enumerate() {
         let Ok(index) = usize::try_from(parents[state]) else {
@@ -191,7 +193,7 @@ fn are_the_same_from_a_parent_from_the_state_before_and_from_scratch() {
         let parent_row = &states[index * width..][..width];
         from_parents.set_parent(&store, parent_row, &order, scratch[index], &mut parent);
         assert_eq!(
-            from_parents.get_child(&store, &mut parent, parent_row, row, &order),
+            from_parents.get_child(&store, &mut parent, parent_row, row, &every, &order),
             scratch[state]
         );
     }
@@ -233,7 +235,7 @@ fn are_the_same_from_a_parent_past_the_tables_for_tails() {
         let expected = Fingerprints::new().get_state(&store, &parent_row, &order);
         fingerprints.set_parent(&store, &parent_row, &order, expected, &mut parent);
         assert_eq!(
-            fingerprints.get_child(&store, &mut parent, &parent_row, &row, &order),
+            fingerprints.get_child(&store, &mut parent, &parent_row, &row, &[0], &order),
             Fingerprints::new().get_state(&store, &row, &order)
         );
     }

@@ -569,21 +569,35 @@ impl Fingerprints {
     /// The fingerprint of a successor of the parent [`Fingerprints::set_parent`] last set, from
     /// the parent's: for each value that changed, one shift by the length of the values after it
     /// where every changed value keeps its length and that length has a table (as
-    /// [`Fingerprints::get_states`] computes it), and otherwise the parent's fingerprint before the first value that changed, extended by
-    /// the successor's values from there.
+    /// [`Fingerprints::get_states`] computes it), and otherwise the parent's fingerprint before the
+    /// first value that changed, extended by the successor's values from there. `changed` holds
+    /// the positions in the state of every value that may differ from the parent's.
     pub fn get_child(
         &mut self,
         store: &Store,
         parent: &mut Parent,
         parent_state: &[Id],
         state: &[Id],
+        changed: &[u32],
         order: &[usize],
     ) -> u64 {
+        debug_assert!(
+            state
+                .iter()
+                .zip(parent_state)
+                .enumerate()
+                .all(
+                    |(index, (id, parent_id))| id == parent_id || changed.contains(&(index as u32))
+                ),
+            "a successor differs from its parent in a value not among the changed"
+        );
         self.check_generation(store);
         let mut fingerprint = parent.fingerprint;
         let mut first = order.len();
         let mut is_in_place = true;
-        for (index, (&id, &parent_id)) in state.iter().zip(parent_state).enumerate() {
+        for &index in changed {
+            let index = index as usize;
+            let (id, parent_id) = (state[index], parent_state[index]);
             if id == parent_id {
                 continue;
             }

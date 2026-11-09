@@ -601,6 +601,7 @@ impl<'r, T: Reached> Search<'r, T> {
                     &mut self.parent,
                     &self.current,
                     &self.successor,
+                    &machine.changed,
                     order,
                 )
             } else {
@@ -726,6 +727,7 @@ impl<'r, T: Reached> Search<'r, T> {
             &mut self.parent,
             &self.current,
             machine.next(),
+            &machine.changed,
             self.states.order(),
         );
         self.states.touch(fingerprint);

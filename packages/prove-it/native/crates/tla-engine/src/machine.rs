@@ -105,6 +105,9 @@ pub struct Machine<'p> {
     depth: u32,
     /// How many variables the walk has assigned (`registers.assigned`).
     pub(crate) assigned: u32,
+    /// The variables the walk assigned a value of their own on its path, rather than the current
+    /// state's as UNCHANGED does: the only ones a successor can differ from its parent in.
+    pub(crate) changed: Vec<u32>,
     /// Whether a step took TLC's shortcut past a conjunct it would otherwise walk
     /// (`shortcuts.isPastWalk`).
     pub is_past_walk: bool,
@@ -142,6 +145,7 @@ impl<'p> Machine<'p> {
             parts_rounds: 0,
             depth: 0,
             assigned: 0,
+            changed: Vec::new(),
             is_past_walk: false,
             spare_states: Vec::new(),
             output: Vec::new(),
@@ -208,6 +212,7 @@ impl<'p> Machine<'p> {
     /// Forgets the walk's assignments, as `resetAssigned` does before a state is expanded.
     pub fn reset_assigned(&mut self) {
         self.assigned = 0;
+        self.changed.clear();
     }
 
     /// Sets a slot that no bound name takes, such as the level TLCGet reads.

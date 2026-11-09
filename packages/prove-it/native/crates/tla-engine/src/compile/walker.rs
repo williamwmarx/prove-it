@@ -321,6 +321,9 @@ impl<const IS_INIT: bool> Segment<IS_INIT> {
                 let value = read_source(machine, source, *variable)?;
                 target(machine, IS_INIT)[*variable as usize] = value;
                 machine.assigned += 1;
+                if let Source::Value(_) = source {
+                    machine.changed.push(*variable);
+                }
                 Ok(true)
             }
             Op::Test(variable, source) => {
@@ -336,7 +339,7 @@ impl<const IS_INIT: bool> Segment<IS_INIT> {
     }
 
     fn run(&self, machine: &mut Machine<'_>, on_complete: &mut Continue<'_>) -> Outcome<()> {
-        let mut count = 0;
+        let (mut count, changed) = (0, machine.changed.len());
         let result = 'walk: {
             for op in &self.ops {
                 match self.apply(machine, op) {
@@ -351,6 +354,7 @@ impl<const IS_INIT: bool> Segment<IS_INIT> {
             target(machine, IS_INIT)[variable as usize] = UNASSIGNED;
         }
         machine.assigned -= count as u32;
+        machine.changed.truncate(changed);
         result
     }
 }
@@ -424,9 +428,11 @@ fn either_step(variable: u32, source: Source, rest: Rest, is_init: bool) -> Step
         if current == UNASSIGNED {
             target(machine, is_init)[index] = value;
             machine.assigned += 1;
+            machine.changed.push(variable);
             let result = run_rest(&rest, machine, on_complete);
             target(machine, is_init)[index] = UNASSIGNED;
             machine.assigned -= 1;
+            machine.changed.pop();
             return result;
         }
         if current == value || machine.store.equals(current, value)? {
@@ -1854,14 +1860,16 @@ impl<'a> Compiler<'a> {
             let id = (set.eval)(machine)?;
             let size = set.size(machine, id)?;
             machine.assigned += 1;
-            for position in 0..size {
+            machine.changed.push(variable);
+            let result = (0..size).try_for_each(|position| {
                 let element = machine.store.element_at(id, position);
                 target(machine, is_init)[index] = element;
-                run_rest(&assigned, machine, on_complete)?;
-            }
+                run_rest(&assigned, machine, on_complete)
+            });
             target(machine, is_init)[index] = UNASSIGNED;
             machine.assigned -= 1;
-            Ok(())
+            machine.changed.pop();
+            result
         })))
     }
 
@@ -1933,10 +1941,12 @@ impl<'a> Compiler<'a> {
                     next.resize(width, UNASSIGNED);
                     let outer = std::mem::replace(&mut machine.next, next);
                     let assigned = std::mem::replace(&mut machine.assigned, 0);
+                    let changed = machine.changed.len();
                     let result = walk(machine, &mut |_: &mut Machine<'_>| Err(Bail(FOUND)));
                     let inner = std::mem::replace(&mut machine.next, outer);
                     machine.spare_states.push(inner);
                     machine.assigned = assigned;
+                    machine.changed.truncate(changed);
                     match result {
                         Ok(()) => Ok(FALSE),
                         Err(bail) if is_found(&bail) => Ok(TRUE),
