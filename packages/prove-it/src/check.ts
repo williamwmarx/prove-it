@@ -872,11 +872,16 @@ const searchStates = (
   ): Result => {
     if (transferred.count === 0) return evaluate();
     const saved = { ...rebuilding };
+    // TLC rebuilds a trace with the generator the initial states drew from, then draws each
+    // successor from one seeded with its predecessor (TLCTrace#getTrace).
+    const startupRandom = runtime.evaluateAtStartup(runtime.getRandom);
+    const randomState = startupRandom.getState();
     Object.assign(rebuilding, { isActive: true, state, depth });
     try {
       return evaluate();
     } finally {
       Object.assign(rebuilding, saved);
+      startupRandom.setState(randomState);
     }
   };
   // Before TLC prints a trace, it rebuilds from the initial predicate the states it does not keep,
@@ -1230,7 +1235,12 @@ const searchStates = (
     const index = state === current.candidate ? -1 : states.indexOf(state);
     return index === -1 ? [...getPath(current.index), state] : getPath(index);
   };
-  runtime.getCurrentState = () => (current.index === -1 ? undefined : states[current.index]);
+  runtime.getCurrentState = () =>
+    rebuilding.isActive
+      ? rebuilding.state
+      : current.index === -1
+        ? undefined
+        : states[current.index];
   runtime.setLivenessSource = (index) => {
     current.livenessSource = index ?? -1;
   };
