@@ -625,6 +625,28 @@ impl Compiler<'_> {
                 )
             });
         }
+        // TLC takes an enumerator of each bound's set before it binds any (`Tool.contexts`), and
+        // fails at the first it only tests for membership, such as Nat or Seq(S), whatever the
+        // sets before it hold.
+        if let Some(first) = levels.iter().position(|level| level.set.infinite.is_some()) {
+            let before: Vec<Eval> = levels[..first]
+                .iter()
+                .map(|level| level.set.eval.clone())
+                .collect();
+            return Ok(Compiled {
+                is_costly: true,
+                is_boolean: true,
+                ..leaf(
+                    eval(move |machine| {
+                        for set in &before {
+                            set(machine)?;
+                        }
+                        Err(Bail(super::INFINITE_BOUND))
+                    }),
+                    footprint,
+                )
+            });
+        }
         let predicate = Predicate::of(&body);
         // ForallInterval and ExistsInterval: a name over a..b at each level counts through the
         // interval without building it.

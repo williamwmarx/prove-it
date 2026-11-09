@@ -345,24 +345,24 @@ Done on native-parity:
   `to_lasso` and the counts so far, and the binary prints it after the check's start, which the
   search reported as the check began.
 - Test2: atoms that use TLC's registers are answered as the search goes (the section above).
+- YoYoAllGraphs: without the community modules' Java overrides TLC fails computing the initial
+  states, quantifying over Seq(S). A quantifier fails at the first bound TLC only tests for
+  membership (`INFINITE_BOUND`, as `Tool.contexts` takes every bound's enumerator first);
+  `tla-trace` follows a filter TLC kept lazy into the comparison that enumerates it
+  (`follow_lazy_filter`); the binary reports a failure among the initial states of a model with
+  temporal properties, which the search hands over only where the atoms of the initial states
+  evaluate; and both front ends keep the list a definition wrote as the specification's
+  initial predicate where its conjuncts are that list's, so the call stack's first frame is the
+  list's, as TLC keeps the body of a definition the specification names whole.
 
 Open, with what is known:
 - The front names a property an instance exports by the definition's own name (`Safe`) where
   TLC names it as the configuration's property refers to it (`A!Safe`, `opNode.getName()` in
   `SpecProcessor#processConfigProps`), in both front ends, scoped or not. No corpus model
   reports such an invariant violated. Reported to the coordinator for the front's owner.
-- YoYoAllGraphs isn't a liveness gap: without the community modules' Java overrides TLC fails
-  computing the initial states ("TLC encountered the non-enumerable quantifier bound Seq({1})",
-  with the call stack). It needs the engine to report "enumerated Seq(S)" at a quantifier's bound
-  as TLC's failure, `tla-trace` to give that message, and `print_failure` to take a failure
-  computing the initial states of a model with temporal properties. Handed to the coordinator.
 - MCEWD687a gets past the scoped properties and stops on "enumerated a filter of an infinite
   set": the infinite-sets session's.
 - Where the atoms use TLC's registers, the cases the search declines (the section above): the
   next would be an atom TLC evaluates on an initial state, which needs the checker called from
   `visit_initial` with the machine's state kept around the atom, and a late node, where Next's
   walk from the state runs again for what it sets.
-- A POSTCONDITION that reads a register Next sets, after an invariant is violated, prints another
-  value than TLC's (TLC 9, the binary 6, for Next == x' = (x + 1) % 4 /\ TLCSet(2, TLCGet(2) + 1),
-  Inv == x < 3): TLC's rebuilds of the trace run Next again. No temporal property is involved;
-  reported to the coordinator for the trace's owner.
