@@ -1,4 +1,4 @@
-Prove It interprets and model checks TLA+ specs in TypeScript, without the JVM. It is derived from [tla-ts](https://github.com/aidenybai/tla-ts). `packages/prove-it` is the library. `packages/prove-it/tests/unit` holds its unit tests.
+Prove It interprets and model checks TLA+ specs in TypeScript and Rust, without the JVM. It is derived from [tla-ts](https://github.com/aidenybai/tla-ts). `packages/prove-it` is the library. `packages/prove-it/tests/unit` holds its unit tests. `packages/prove-it/native` is the Rust workspace: the engine, the front end and the native `prove-it` binary, which `native/DESIGN.md` plans.
 
 When implementing anything in this project, clone `tlaplus/tlaplus` locally and search TLC's source to understand the relevant TLA+ semantics. Do not rely on memory or assumptions.
 
@@ -8,7 +8,7 @@ When implementing anything in this project, clone `tlaplus/tlaplus` locally and 
 - Keep the public API small. Justify every new export.
 - Throw named errors from `src/errors.ts` and let them propagate. Do not wrap them in helpers such as `fail()`.
 - Do not add timeouts unless asked.
-- Keep the library free of runtime dependencies.
+- Keep the library free of runtime dependencies. The Rust crates use the standard library only: no third-party crates.
 
 ## Toolchain
 
@@ -19,11 +19,12 @@ The repository is a Bun 1.4.4 workspace. Use Bun for everything:
 - `bun run test` builds `dist/` and then runs `bun test`, since some tests run `dist/cli.js` and the workers. Import test APIs from `bun:test`.
 - `bun run typecheck` runs `bun check`.
 - `bun run lint` runs `bun lint` from a pinned Bun canary, because stable Bun 1.4.4 has no `bun lint` yet. `bun run format` runs `bun fmt`. Both read their settings from `bunfig.toml`.
+- The Rust workspace in `packages/prove-it/native` pins its toolchain in `rust-toolchain.toml`. `bun scripts/platform-packages.ts build` builds the addon and the binary into `native/npm/<platform>`.
 - The conformance and benchmark scripts run through `scripts/run.ts`, which bundles them with Bun and runs them under Node, whose V8 is much faster than JavaScriptCore on the SMT prover. Node 22 must be on the PATH.
 
 ## Verifying changes
 
-Run `bun run typecheck`, `bun run lint`, `bun run format:check`, and `bun run test` before you finish.
+Run `bun run typecheck`, `bun run lint`, `bun run format:check`, and `bun run test` before you finish. For Rust changes, also run `cargo fmt --check`, `cargo clippy --locked --all-targets -- -D warnings` and `cargo test --locked` in `packages/prove-it/native`.
 
 ## Branch names
 
@@ -45,7 +46,7 @@ Keep each commit and PR to one concern. Never merge with failing CI, and merge o
 
 - Keep code clean, elegant, and simple. YAGNI.
 - Remove unused code. Don't repeat yourself.
-- Use TypeScript for all project-authored code.
+- Use TypeScript for project-authored code outside `packages/prove-it/native`, which is Rust (`native/DESIGN.md` §12).
 - Prefer `const`. Use ternaries or early returns instead of reassignment and `else`.
 - Use arrow functions and kebab-case file names.
 - Avoid `any`. Avoid `as` unless necessary.
