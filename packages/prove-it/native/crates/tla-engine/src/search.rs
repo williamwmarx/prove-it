@@ -332,10 +332,16 @@ pub enum ViolationKind {
     Lasso {
         loop_start: usize,
         loop_label: Option<u32>,
+        /// What the atoms printed as TLC found the properties the lasso violates, once it had
+        /// rebuilt the lasso: each print's values, ids of the violation's store.
+        printed: Vec<Vec<Id>>,
     },
     /// The last state of the trace reaches a tableau node that accepts every behavior, which TLC
     /// stops at as it adds the state: the positions of the properties it names.
     Accepted { violated: Vec<usize> },
+    /// The model has initial states and no next-state relation to take their steps by; the
+    /// violation has no states.
+    NoNextState,
     /// Evaluating the model failed where TLC fails (an assertion, a value of the wrong kind, a
     /// function applied outside its domain): the states lead to where, as `ErrorSite` says.
     Error { site: ErrorSite },
@@ -366,6 +372,9 @@ pub enum ErrorSite {
     /// the violation's states, which isn't the trace's: a state predicate's state, or an action's
     /// step's next state.
     Atom { atom: u32, is_extra: bool },
+    /// Evaluating the atom at this position of the IR's `model.atoms` as TLC adds an initial
+    /// state, the violation's one state, to the behavior graphs, before it checks the state.
+    InitialAtom(u32),
 }
 
 // The stops that are the engine's own limits, not a failure TLC reports: what it doesn't
@@ -485,6 +494,7 @@ struct Found {
 }
 
 const LAZY_FUNCTION_HELD: Bail = Bail("unsupported: a state holding a function TLC keeps lazy");
+const NO_NEXT_STATE: &str = "initial states and no next-state relation";
 const GRAPH_TOO_LARGE: &str = "a state graph too large to keep";
 
 /// Where TLC may fail evaluating an atom of the temporal properties as it adds a state.
@@ -1286,7 +1296,8 @@ impl<T: Reached, E: Entries> Search<'_, T, E> {
         }
         match actions {
             None => {
-                let walked = (context.next)(machine, &mut |machine: &mut Machine<'_>| {
+                let next = context.next.as_ref().expect("a next-state relation");
+                let walked = next(machine, &mut |machine: &mut Machine<'_>| {
                     self.visit_successor(machine, context)
                 });
                 self.check_pending(machine, context)?;
@@ -1295,7 +1306,8 @@ impl<T: Reached, E: Entries> Search<'_, T, E> {
             Some(actions) => {
                 if is_live_checked {
                     let mut checked = Vec::new();
-                    (context.next)(machine, &mut |machine: &mut Machine<'_>| {
+                    let next = context.next.as_ref().expect("a next-state relation");
+                    next(machine, &mut |machine: &mut Machine<'_>| {
                         checked.push(machine.next().to_vec());
                         Ok(())
                     })?;
@@ -2329,12 +2341,52 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         })?;
         search.flush(&mut machine);
         initial_states = (search.initial_generated, search.states.count() as u64);
+        // TLC adds each initial state to the behavior graphs as it finds it, and stops where an
+        // atom fails to evaluate. It then replays the initial states, checking each again and
+        // adding those after the one it failed at, which the engine follows where there is but
+        // the one.
+        if settings.is_violation_reported
+            && search.graph.is_some()
+            && search.states.key_width.is_none()
+            && search.held.is_none()
+            && !context.is_live_printing
+            && !context.diameter_atoms.contains(&true)
+        {
+            let count = search.states.count();
+            let tables = graph_tables(&mut machine, &search, 0, count, None, None).map_err(Bail)?;
+            if let Some(unanswered) = unanswered_at(model, &search, &tables, 0, count) {
+                search.violation = (initial_states == (1, 1)).then(|| Found {
+                    kind: ViolationKind::Error {
+                        site: ErrorSite::InitialAtom(unanswered.atom),
+                    },
+                    parent: None,
+                    last: Some(search.states.state(unanswered.state).to_vec()),
+                    counts: StopCounts {
+                        generated: 1,
+                        distinct: 1,
+                        queued: 1,
+                        depth: 1,
+                        ..StopCounts::default()
+                    },
+                });
+                return Err(Bail(ATOM_FAILED));
+            }
+        }
         if search.held.is_none() {
             search
                 .reporter
                 .initial_states(initial_states.0, initial_states.1);
         }
         is_past_initial = true;
+        if context.next.is_none() && search.states.count() > 0 {
+            search.violation = Some(Found {
+                kind: ViolationKind::NoNextState,
+                parent: None,
+                last: None,
+                counts: StopCounts::default(),
+            });
+            return Err(Bail(NO_NEXT_STATE));
+        }
 
         // --- next states ---
         // The initial states are the first level, which starts as the loop does, so that it too
@@ -2647,13 +2699,26 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 initial_distinct: initial_states.1,
                 out_degrees,
             };
+            let violation = match &liveness.verdict {
+                Verdict::Lasso {
+                    path, loop_start, ..
+                } if settings.is_violation_reported => to_lasso(
+                    &mut machine,
+                    &context,
+                    &search,
+                    (path, *loop_start),
+                    &lasso_actions,
+                    Vec::new(),
+                    &counts,
+                ),
+                _ => None,
+            };
             SearchOutcome::Complete {
                 counts: Box::new(counts),
                 checkpoint: Some(Box::new(checkpoint)),
                 liveness: Some(liveness),
                 lasso_actions,
-                // The interpreter prints a counterexample found part way through the search.
-                violation: None,
+                violation,
                 value_count: machine.store.value_count(),
                 threads: threads_used,
                 collisions,
@@ -2681,7 +2746,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             // The temporal properties are checked here, and the interpreter takes the graph over
             // only to print a counterexample, to check them itself, or under PROVE_IT_LIVE_CHECK
             // to check them again.
-            let (checkpoint, liveness, lasso_actions) = match search.graph {
+            let (checkpoint, liveness, lasso_actions, lasso_printed) = match search.graph {
                 Some(_) => {
                     // Under SYMMETRY or a VIEW, the checker may ask about the steps from states the
                     // search reached but didn't store, which the engine takes and checks again.
@@ -2807,6 +2872,19 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                             }
                         }
                     }
+                    let lasso_printed: Vec<Vec<Id>> = liveness
+                        .events
+                        .iter()
+                        .skip_while(|&&event| event != Event::Lasso)
+                        .flat_map(|event| match *event {
+                            Event::Atom { atom, slot } => tables[atom as usize].printed(slot),
+                            _ => &[],
+                        })
+                        .filter_map(|printed| match printed {
+                            Printed::Values(values) => Some(values.clone()),
+                            Printed::InitialStates(_) => None,
+                        })
+                        .collect();
                     let checkpoint = (liveness.verdict != Verdict::Holds
                         || settings.is_live_checked)
                         .then(|| {
@@ -2842,9 +2920,9 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                             .unwrap_or_default(),
                         _ => Vec::new(),
                     };
-                    (checkpoint, Some(liveness), lasso_actions)
+                    (checkpoint, Some(liveness), lasso_actions, lasso_printed)
                 }
-                None => (None, None, Vec::new()),
+                None => (None, None, Vec::new(), Vec::new()),
             };
             let counts = Counts {
                 generated: search.generated,
@@ -2863,17 +2941,15 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             // Under SYMMETRY or a VIEW the lasso's states are the stored ones, from which the
             // caller rebuilds those TLC prints.
             let violation = match liveness.as_ref().map(|liveness| &liveness.verdict) {
-                // What the atoms print as TLC checks the properties prints among the check's
-                // lines, which the interpreter orders.
                 Some(Verdict::Lasso {
                     path, loop_start, ..
-                }) if settings.is_violation_reported && !context.is_live_printing => to_lasso(
+                }) if settings.is_violation_reported => to_lasso(
                     &mut machine,
                     &context,
                     &search,
-                    path,
-                    *loop_start,
+                    (path, *loop_start),
                     &lasso_actions,
+                    lasso_printed,
                     &counts,
                 ),
                 Some(Verdict::Accepted {
@@ -2928,10 +3004,22 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     },
                 });
             }
+            // TLC adds each initial state to the behavior graphs before it checks it, and fails
+            // where an atom fails to evaluate, which the engine leaves to the interpreter.
             let violation = search
                 .violation
                 .take()
-                .filter(|_| settings.is_violation_reported);
+                .filter(|_| settings.is_violation_reported)
+                .filter(|found| {
+                    search.graph.is_none()
+                        || matches!(
+                            found.kind,
+                            ViolationKind::Error {
+                                site: ErrorSite::InitialAtom(_)
+                            }
+                        )
+                        || answers_initial_atoms(&mut machine, &context, &search, found)
+                });
             // Otherwise the interpreter starts from scratch and prints it all again.
             if violation.is_some() {
                 for printed in search.held.take().iter().flatten().flatten() {
@@ -3027,12 +3115,32 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                         graph.edge_offsets.push(graph.edges.len() as u32);
                         expanded += 1;
                     }
-                    let verdict = graph_tables(&mut machine, &search, expanded, count, None, None)
-                        .ok()
-                        .and_then(|tables| {
-                            accepted_at(model, &context, &search, &tables, expanded, count)
+                    let tables =
+                        graph_tables(&mut machine, &search, expanded, count, None, None).ok();
+                    // TLC had added the initial states and each state before the one it was
+                    // expanding, and stopped at the first whose atom failed to evaluate.
+                    let unanswered = tables
+                        .as_ref()
+                        .filter(|tables| {
+                            search.states.key_width.is_none()
+                                && !is_symmetric
+                                && !context.diameter_atoms.contains(&true)
+                                && search.held.as_ref().is_none_or(|held| {
+                                    held.iter().all(|printed| printed.is_empty())
+                                })
+                                && tables.iter().all(|table| table.prints.is_empty())
+                        })
+                        .and_then(|tables| unanswered_at(model, &search, tables, expanded, count))
+                        .filter(|unanswered| {
+                            unanswered.is_initial || (unanswered.state as usize) < search.expanding
                         });
+                    let verdict = tables.and_then(|tables| {
+                        accepted_at(model, &context, &search, &tables, expanded, count)
+                    });
                     match verdict {
+                        _ if unanswered.is_some() => unanswered.and_then(|unanswered| {
+                            to_atom_failure(&context, &search, initial_states, unanswered)
+                        }),
                         Some(None) => Some(found),
                         Some(Some(Verdict::Accepted { path, violated, .. })) if is_deadlock => {
                             found.kind = ViolationKind::Deadlock {
@@ -3430,9 +3538,10 @@ fn to_violation(
     let is_shaped = labels.len() + 1 == states.len()
         || matches!(
             found.kind,
-            ViolationKind::Error {
-                site: ErrorSite::Init
-            }
+            ViolationKind::NoNextState
+                | ViolationKind::Error {
+                    site: ErrorSite::Init
+                }
         ) && states.is_empty();
     (is_shaped && !machine.store.has_unordered_strings()).then(|| {
         Box::new(Violation {
@@ -3503,6 +3612,60 @@ fn accepted_at(
     .ok()
 }
 
+// Whether every atom of a state evaluates on each initial state the search found before it
+// stopped among them, the one it stopped at included, and prints nothing.
+fn answers_initial_atoms(
+    machine: &mut Machine<'_>,
+    context: &EngineContext,
+    search: &Search<'_, States>,
+    found: &Found,
+) -> bool {
+    let unassigned = vec![UNASSIGNED; context.width];
+    let states: Vec<Vec<Id>> = (0..search.states.count() as u32)
+        .map(|index| search.states.state(index).to_vec())
+        .chain(found.last.clone())
+        .collect();
+    !context.is_live_printing
+        && states.iter().all(|state| {
+            let epoch = machine.next_epoch();
+            machine.set_current(state, epoch);
+            machine.set_next(&unassigned);
+            context.atoms.iter().all(|atom| match atom {
+                Atom::State(eval) | Atom::Enabled { run: Ok(eval), .. } => eval(machine).is_ok(),
+                Atom::Action { .. } => true,
+                Atom::Enabled { run: Err(_), .. } | Atom::Unknown(_) => false,
+            })
+        })
+}
+
+// The first atom the engine didn't answer that TLC evaluates as it adds the states the search
+// expanded to the behavior graphs.
+fn unanswered_at(
+    model: &Model,
+    search: &Search<'_, States>,
+    tables: &[Table],
+    expanded: usize,
+    count: usize,
+) -> Option<tla_live::Unanswered> {
+    let graph = search.graph.as_ref()?;
+    let answers: Vec<Option<&[u8]>> = tables
+        .iter()
+        .map(|table| table.unknown.is_none().then_some(&table.answers[..]))
+        .collect();
+    tla_live::find_unanswered(
+        &to_terms(&model.live_formula),
+        &tla_live::Graph {
+            parents: &search.states.parents[..count],
+            edge_offsets: &graph.edge_offsets[..=expanded],
+            edges: &graph.edges,
+            fingerprints: &search.states.fingerprints[..count],
+            reals: None,
+            diameters: None,
+        },
+        &answers,
+    )
+}
+
 // Where TLC evaluates an atom the engine didn't answer as it adds a state to the behavior graphs,
 // the failure the caller evaluates again, with the counts of TLC's search then: what it generated
 // and found up to that state, and the out-degrees of the states it expanded.
@@ -3515,6 +3678,11 @@ fn to_atom_failure(
     let graph = search.graph.as_ref()?;
     let state = unanswered.state as usize;
     let slot = unanswered.slot as usize;
+    // TLC fails adding an initial state before it reports the initial states, where the search
+    // looks for it.
+    if unanswered.is_initial {
+        return None;
+    }
     // The state the atom reads besides the one TLC adds: a successor's state predicate, or the
     // next state of one of the added state's steps.
     let extra = match context.atoms.get(unanswered.atom as usize)? {
@@ -3630,9 +3798,9 @@ fn to_lasso(
     machine: &mut Machine<'_>,
     context: &EngineContext,
     search: &Search<'_, States>,
-    path: &[u32],
-    loop_start: usize,
+    (path, loop_start): (&[u32], usize),
     actions: &[Option<u32>],
+    printed: Vec<Vec<Id>>,
     counts: &Counts,
 ) -> Option<Box<Violation>> {
     // Under SYMMETRY or a VIEW the stored states aren't those TLC prints, and the caller's rebuild
@@ -3659,6 +3827,7 @@ fn to_lasso(
             kind: ViolationKind::Lasso {
                 loop_start,
                 loop_label,
+                printed,
             },
             states: path
                 .iter()
@@ -3752,6 +3921,8 @@ fn order_printed<'p>(
     let mut is_initial = false;
     for event in &liveness.events {
         match *event {
+            // What TLC prints from here on follows the check's start.
+            Event::Lasso => break,
             Event::Initial(_) => is_initial = true,
             Event::Expanded(state) => {
                 is_initial = false;
@@ -3882,7 +4053,7 @@ fn expand_reals(
     let total = reals.states.len() / width;
     let walks: Vec<&Step> = match (&reals.labels, &context.actions) {
         (Some(_), Some(actions)) => actions.iter().collect(),
-        _ => vec![&context.next],
+        _ => context.next.iter().collect(),
     };
     let unassigned = vec![UNASSIGNED; width];
     for state in first..total {

@@ -123,8 +123,8 @@ fn rebuild(
                     | ViolationKind::InitialInvariant(_)
                     | ViolationKind::InitialPredicate(_) => Ending::Violation,
                     ViolationKind::Lasso { .. } | ViolationKind::Accepted { .. } => Ending::Lasso,
-                    ViolationKind::Error { .. } => {
-                        return Err("a failure evaluating the model".into());
+                    ViolationKind::NoNextState | ViolationKind::Error { .. } => {
+                        return Err("a stop with no trace".into());
                     }
                 };
                 let cycle_start = match *kind {
@@ -170,6 +170,7 @@ fn rebuild(
                         ViolationKind::Lasso {
                             loop_start,
                             loop_label,
+                            ..
                         } => loop_label
                             .or(loop_action)
                             // TLC's record of a stuttering lasso closes it by the action of its
