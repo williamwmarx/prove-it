@@ -54,6 +54,9 @@ pub struct RankedTexts<'a> {
 
 pub struct Lowering<'a> {
     environment: &'a Environment,
+    /// The evaluator of the constant parts of the liveness formula, without which they stay
+    /// `NotYet`.
+    pub evaluator: Option<&'a crate::eval::Evaluator<'a>>,
     facts: DefinitionFacts,
     ranked: RankedTexts<'a>,
     extra_texts: Vec<Name>,
@@ -88,6 +91,7 @@ impl<'a> Lowering<'a> {
         Lowering {
             facts: create_definition_facts(environment),
             environment,
+            evaluator: None,
             ranked,
             extra_texts: Vec::new(),
             extra_ids: FastMap::default(),
@@ -808,6 +812,7 @@ impl<'a> Lowering<'a> {
             &properties.liveness,
             self.environment,
             &self.facts,
+            self.evaluator,
             if version == Some("1.7.4") {
                 crate::TlcVersion::V1_7_4
             } else {

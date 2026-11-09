@@ -373,3 +373,16 @@ Trace and CounterExample read as variables. `create_environment` runs the same a
 
 Either becomes TLC's configuration error "substitutes constant C with non-constant D -
 specifically: …". Anything else the evaluator can't compute is still `NotYet`.
+
+## Constant parts of the liveness formula
+
+`live.rs` evaluates what `toLiveExpression` evaluates, with the constant evaluator:
+
+- a constant atom becomes TRUE or FALSE;
+- a quantifier whose bound sets are all constant is expanded over their bindings, in the order
+  `get_bindings` gives them, into a conjunction or disjunction of the body's conversions, or
+  TRUE or FALSE over no bindings;
+- an IF whose condition is a constant boolean converts only the branch it chooses.
+
+Where the evaluator fails, TLC's handling (an atom, or "cannot handle" with the failure's message)
+isn't followed yet, so it stays `NotYet`, as does a constant atom that isn't a boolean.
