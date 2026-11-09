@@ -29,6 +29,7 @@ fn describe(outcome: &SearchOutcome) -> String {
     match outcome {
         SearchOutcome::Declined(reason) => format!("declined: {reason}"),
         SearchOutcome::AssumptionViolated { name } => format!("assumption {name} is false"),
+        SearchOutcome::ConfigError { message } => format!("configuration error: {message}"),
         SearchOutcome::AssumptionFailed { position } => {
             format!("assumption {position} failed to evaluate")
         }
