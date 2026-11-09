@@ -191,21 +191,6 @@ fn marks_the_initial_violation_with_tool() {
 }
 
 #[test]
-fn leaves_a_postcondition_to_the_front_end() {
-    let (output, directory) = run_golden(
-        "postcondition",
-        TEST57_IR,
-        "test57",
-        "POSTCONDITION Never\n",
-        &[],
-    );
-    assert_eq!(output.status.code(), Some(1));
-    assert!(!stdout(&output).contains("violated"));
-    assert!(String::from_utf8_lossy(&output.stderr).contains("not native yet: the engine stopped"));
-    std::fs::remove_dir_all(directory).expect("removed");
-}
-
-#[test]
 fn prints_a_state_through_the_alias() {
     let ir = include_bytes!(
         "../../../../tests/conformance/ir/tlc/tlatools/org.lamport.tlatools/test-model/Github746.ir"
@@ -370,6 +355,33 @@ fn lowers_a_model_without_a_recorded_ir() {
     assert_eq!(output.status.code(), Some(0), "{text}");
     assert!(
         text.contains("4 states generated, 4 distinct states found, 0 states left on queue."),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn reports_a_postcondition_that_is_false() {
+    let directory = std::env::temp_dir().join(format!("prove-it-cli-post-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    let spec = "---- MODULE Post ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 3 /\\ x' = x + 1\nEnough == TLCGet(\"stats\").distinct = 5\n====\n";
+    for (file, contents) in [
+        ("Post.tla", spec),
+        (
+            "Post.cfg",
+            "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE\nPOSTCONDITION Enough\n",
+        ),
+        ("Post.front", ""),
+    ] {
+        std::fs::write(directory.join(file), contents).expect("a file");
+    }
+    let output = run(&directory, &["Post"]);
+    let text = stdout(&output);
+    // TLC reports the postcondition, named with where its body is written, in place of the
+    // success, and exits as for an assumption.
+    assert_eq!(output.status.code(), Some(10), "{text}");
+    assert!(
+        text.contains("Error: Postcondition Enough at line 6, col 11 to line 6, col 38 of module Post is false.\n4 states generated, 4 distinct states found, 0 states left on queue.\n"),
         "{text}"
     );
     std::fs::remove_dir_all(directory).expect("removed");

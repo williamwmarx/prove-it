@@ -218,3 +218,20 @@ Still to do:
 - With PROVE_IT_NATIVE_FRONT=1, and without -tool (which prints none of it), the binary prints
   SANY's report as `tla_front::report::get_sany_text` writes it, in place of the recorded one. The
   rest of the recorded front follows from `Starting...`, until tla-front writes that too.
+
+## POSTCONDITION
+
+- The IR carries the configuration's POSTCONDITIONs (`Model.postconditions`). `tla-trace`'s
+  `Rebuilder::postcondition` evaluates each one, with TLCGet("all:named")'s `_POSSIBLE` counts,
+  TLCGet("stats") and, after a violation, CounterExample built from the rebuilt trace.
+- After a search that completes, the binary prints what the postconditions printed as TLC
+  evaluates them, then the first that doesn't hold, in place of the success:
+  - 2404 `Postcondition X at <body range> is false.`, or
+  - 2405 `Evaluating postcondition X at <body range> failed.` with TLC's message;
+  then the statistics, and exit code 10.
+- After a violation, what the postconditions printed follows the trace, and a failing postcondition
+  is reported after the step back into a lasso's cycle. The violation's exit code stands.
+- Still not native:
+  - a postcondition TLC computes as it starts, which it rejects;
+  - an unwitnessed `_POSSIBLE` predicate, and `_POSSIBLE` counts after a search that stopped;
+  - what `Rebuilder::postcondition` declines, such as CounterExample's actions with parameters.
