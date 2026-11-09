@@ -32,7 +32,7 @@ pub use decode::{DecodeError, decode};
 pub use encode::encode;
 
 /// The version of the layout, `IR_VERSION` in `ir.ts`.
-pub const IR_VERSION: u32 = 6;
+pub const IR_VERSION: u32 = 7;
 
 /// "PIIR" as a little-endian word.
 pub const MAGIC: u32 = 0x5249_4950;
@@ -169,6 +169,13 @@ pub struct Action {
     pub label: TextId,
 }
 
+/// A `_POSSIBLE` predicate, which TLC counts the states, or with `is_action` the steps, it holds of.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Possible {
+    pub name: ConfigName,
+    pub is_action: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActionProperty {
     pub action: NodeId,
@@ -246,6 +253,7 @@ pub struct Model {
     pub property_invariant_names: Vec<TextId>,
     pub constraints: Vec<ConfigName>,
     pub action_constraints: Vec<ConfigName>,
+    pub possible: Vec<Possible>,
     pub action_properties: Vec<ActionProperty>,
     pub initial_predicates: Vec<NodeId>,
     pub view: Option<ConfigName>,
