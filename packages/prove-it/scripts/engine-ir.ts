@@ -63,6 +63,7 @@ const GOLDEN_MODELS = [
   "spectacle/specs/with_state_graphs/simple_folds.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/Github746.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/suite/test57.cfg",
+  "examples/specifications/acp/ACP_NB_WRONG_TLC.cfg",
 ];
 
 const GOLDEN_DIRECTORY = join(CONFORMANCE_DIRECTORY, "ir");

@@ -104,8 +104,16 @@ fn encode_here(ir: &Ir) -> Vec<u8> {
         words.push(invariant.has_repeated_effect as i32);
     }
     words.push(model.property_invariants.len() as i32);
-    for invariant in &model.property_invariants {
-        words.extend([offset(invariant.root), invariant.has_repeated_effect as i32]);
+    for (invariant, &name) in model
+        .property_invariants
+        .iter()
+        .zip(&model.property_invariant_names)
+    {
+        words.extend([
+            offset(invariant.root),
+            invariant.has_repeated_effect as i32,
+            name as i32,
+        ]);
     }
     for names in [&model.constraints, &model.action_constraints] {
         words.push(names.len() as i32);

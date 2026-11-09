@@ -72,7 +72,7 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
 - TLC counts each `_POSSIBLE` predicate on every state the state constraints keep, duplicates
   included, and each action-level one on every step the action constraints keep
   (`trackPossible`). It reports one that never held, with the counts, after the search. The IR
-  (version 6) carries the predicates, each with whether it is of a step. The search counts them
+  (version 7) carries the predicates, each with whether it is of a step. The search counts them
   where the interpreter does, -1 until one is evaluated. It hands the counts over with a
   checkpoint as they stood before the expansion the interpreter goes on from, or the final counts
   when it completes. The addon (ABI 8) passes them as `possible`.
