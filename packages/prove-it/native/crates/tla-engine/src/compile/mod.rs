@@ -20,6 +20,7 @@ mod fused;
 pub(crate) mod lazy;
 mod nodes;
 mod predicate;
+pub(crate) mod random;
 mod sets;
 mod walker;
 
@@ -635,6 +636,8 @@ impl<'a> Compiler<'a> {
                 width: ir.variables.len(),
                 slot_count: SEARCH_SLOTS.len(),
                 is_epoch_checked: options.is_epoch_checked,
+                random_seed: ir.model.random_seed,
+                startup_random: ir.model.startup_random,
                 ..Program::default()
             },
             texts: vec![None; ir.texts.len()],
@@ -1046,7 +1049,7 @@ impl<'a> Compiler<'a> {
                     }
                     Resolution::Builtin(index) => matches!(
                         self.builtin_name(index),
-                        "Print" | "PrintT" | "=" | "#" | "~"
+                        "Print" | "PrintT" | "RandomElement" | "RandomSubset" | "=" | "#" | "~"
                     ),
                     _ => false,
                 }

@@ -16,6 +16,7 @@ use super::fused;
 use super::lazy::{Lazy, Operator, Reference};
 use super::nodes::{evaluate_set, expect_set};
 use super::predicate::{Leaf, Predicate};
+use super::random;
 use super::sets::not_in;
 use super::{
     Binding, Compiled, Compiler, Compiling, Context, DISTINCT_SLOT, LEVEL_SLOT, NEXT_LEVEL_SLOT,
@@ -239,6 +240,9 @@ impl Compiler<'_> {
         if name == "TLCGet" {
             return self.compile_tlc_get(operands, context);
         }
+        if name == "RandomElement" || name == "RandomSubset" {
+            return self.compile_random(name, operands, context);
+        }
         if builtin.flags & Builtin::STATE_LEVEL != 0 || IMPURE_BUILTINS.contains(&name) {
             if name == "TLCEval" && operands.len() == 1 {
                 return self.operand(&operands[0]);
@@ -294,6 +298,89 @@ impl Compiler<'_> {
             is_costly: true,
             ..leaf(evaluate, footprint)
         }
+    }
+
+    // RandomElement(S) and RandomSubset(k, S) draw as TLC does where the engine evaluates them as
+    // TLC does, as Print prints: from the interpreter's generator for the initial states, and from
+    // one seeded with the fingerprint of each state the search expands.
+    fn compile_random(
+        &mut self,
+        name: &str,
+        operands: &[Operand],
+        context: &Context,
+    ) -> Compiling<Compiled> {
+        if !context.can_print {
+            return unsupported(name);
+        }
+        let is_element = name == "RandomElement";
+        if operands.len() != if is_element { 1 } else { 2 } {
+            return unsupported("an operator applied to the wrong number of arguments");
+        }
+        self.is_printing = true;
+        let compiled = operands
+            .iter()
+            .map(|operand| self.compile(operand.node, &operand.context.without_print()))
+            .collect::<Compiling<Vec<Compiled>>>()?;
+        let footprint = Footprint::merge_all(compiled.iter().map(|operand| &operand.footprint))
+            .merge(&Footprint::slot(super::PRINT_SLOT));
+        let is_174 = self
+            .ir
+            .model
+            .version
+            .is_some_and(|version| self.text(version) == "1.7.4");
+        let set = compiled.last().expect("an operand");
+        let interval = set.interval.clone();
+        let reference = set.reference.clone();
+        let evaluate_members = set.eval.clone();
+        let is_enumerated = set.is_enumerated;
+        let evaluate_count = (!is_element).then(|| compiled[0].eval.clone());
+        Ok(leaf(
+            eval(move |machine| {
+                let count = match &evaluate_count {
+                    None => None,
+                    Some(evaluate) => {
+                        let count = evaluate(machine)?;
+                        if machine.store.kind_of(count) != KIND_INT
+                            || machine.store.int_of(count) < 0
+                        {
+                            return Err(Bail(
+                                "RandomSubset of a count that isn't a natural number",
+                            ));
+                        }
+                        Some(machine.store.int_of(count) as u64)
+                    }
+                };
+                let source = match (&interval, &reference) {
+                    (Some((low, high)), _) => {
+                        let (low, high) = (low(machine)?, high(machine)?);
+                        let (low, high) = (expect_int(machine, low)?, expect_int(machine, high)?);
+                        random::Source::Interval(low, high)
+                    }
+                    (None, Some(reference)) => random::Source::Set(reference(machine)?),
+                    (None, None) => {
+                        // A set of functions, records or tuples held as its elements, as a
+                        // variable holds one, may be one TLC draws component by component.
+                        let set = evaluate_members(machine)?;
+                        if !is_enumerated && random::is_shape_forgotten(machine, set) {
+                            return Err(Bail("drew from a set whose shape the engine forgets"));
+                        }
+                        random::Source::Set(Lazy::Set(set))
+                    }
+                };
+                match (count, source) {
+                    (None, random::Source::Interval(low, high)) => {
+                        let offset = random::random_offset(machine, low, high)?;
+                        machine.store.int(offset)
+                    }
+                    (None, random::Source::Set(set)) => random::random_element(machine, &set),
+                    (Some(count), source) => {
+                        let drawn = random::random_subset(machine, count, &source, is_174)?;
+                        machine.store.set_of(&drawn)
+                    }
+                }
+            }),
+            footprint,
+        ))
     }
 
     // Print(a, b) and PrintT(a) print as TLC does where the engine evaluates them as TLC does, and

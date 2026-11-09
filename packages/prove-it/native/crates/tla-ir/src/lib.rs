@@ -34,7 +34,7 @@ pub use decode::{DecodeError, decode};
 pub use encode::encode;
 
 /// The version of the layout, `IR_VERSION` in `ir.ts`.
-pub const IR_VERSION: u32 = 9;
+pub const IR_VERSION: u32 = 10;
 
 /// "PIIR" as a little-endian word.
 pub const MAGIC: u32 = 0x5249_4950;
@@ -265,6 +265,11 @@ pub struct Model {
     pub is_warning_enabled: bool,
     pub is_recording_graph: bool,
     pub version: Option<TextId>,
+    /// The seed TLC reseeds its generator with for each state it expands, xored with the state's
+    /// fingerprint (`RandomEnumerableValues`).
+    pub random_seed: u64,
+    /// The 48 bits of the generator the initial states draw from, as the assumptions left it.
+    pub startup_random: u64,
     pub atoms: Vec<Atom>,
     /// The fairness and the negated properties as the liveness checker joins them, or no terms.
     pub live_formula: Vec<LiveTerm>,
