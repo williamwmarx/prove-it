@@ -1462,6 +1462,11 @@ impl<'ir> Evaluator<'ir> {
             }
             return sorted_function(keys, values, Class::Lambda);
         }
+        // TLC evaluates every domain before it enumerates any (`Tool.evalAppl`'s
+        // `OPCODE_fc`), so a later domain fails even when an earlier one is empty.
+        for bound in bounds {
+            self.evaluate(bound.set, context)?;
+        }
         let mut keys = Vec::new();
         let mut values = Vec::new();
         self.for_each_keyed(
