@@ -22,7 +22,7 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, join, resolve } from "node:path";
 
 import {
   CONFORMANCE_DIRECTORY,
@@ -92,7 +92,9 @@ const isStopping = process.argv.includes("--stop-at");
 const isUpdate = process.argv.includes("--update");
 const outPath = getOption("--out") ?? join(CONFORMANCE_DIRECTORY, ".differential.json");
 const backends = getBackends();
-const nativeBinary = getOption("--native");
+// Resolved here, since each checker runs from its model's directory.
+const nativeOption = getOption("--native");
+const nativeBinary = nativeOption && resolve(nativeOption);
 
 // Runs a checker with TLC's command line for the model, from the model's directory.
 const runChecker = (
