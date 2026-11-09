@@ -260,6 +260,33 @@ describe.if(ADDON !== undefined)("the native engine's bridged builtins", () => {
     }
   });
 
+  // From TLC's Github696: TLCModelValue makes the model value of a name once, ranking the name.
+  // The literal "A_7" ranks before the names the spec builds, so it comes first.
+  it("makes the model values TLCModelValue names, as TLC does", async () => {
+    const body = [
+      "EXTENDS Integers, Sequences, TLC, TLCExt",
+      "VARIABLE v",
+      'MVS == {TLCModelValue("A_" \\o ToString(n)) : n \\in 0..12}',
+      "Init == v = [mv \\in MVS |-> ToString(mv)]",
+      "Next == UNCHANGED v",
+      'Inv == /\\ v[TLCModelValue("A_7")] = "A_7"',
+      '       /\\ (CHOOSE mv \\in MVS : TRUE) = TLCModelValue("A_7")',
+    ];
+    expect(await compareWithInterpreter(body, `${CONFIG}\nINVARIANT Inv`)).toContainEqual(
+      expect.stringMatching(COMPLETE),
+    );
+    for (const [init, reason] of [
+      ['v = {TLCModelValue("A_a"), TLCModelValue("B_a")}', "differently typed model values"],
+      ["v = TLCModelValue(1)", "TLCModelValue of a value that isn't a string"],
+    ]) {
+      const lines = await compareWithInterpreter(
+        ["EXTENDS TLCExt", "VARIABLE v", `Init == ${init}`, "Next == UNCHANGED v"],
+        CONFIG,
+      );
+      expect(lines).toContainEqual(expect.stringMatching(stopped(reason)));
+    }
+  });
+
   // A search that ranked strings hands over none of its states, so the interpreter ranks them
   // again from the start.
   it("hands over a search that ranked strings from the start", async () => {
