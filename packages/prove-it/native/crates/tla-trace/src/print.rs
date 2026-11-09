@@ -334,6 +334,17 @@ mod tests {
     }
 
     #[test]
+    fn enumerates_the_functions_from_the_empty_set_without_their_range() {
+        let functions = Value::Lazy(Rc::new(Lazy::FunctionSet(
+            Value::empty_set(),
+            Value::Lazy(Rc::new(Lazy::Nat)),
+        )));
+        let elements = crate::value::elements(&functions).expect("an enumerable set");
+        assert_eq!(elements.len(), 1);
+        assert_eq!(format_value(&elements[0]), "<<>>");
+    }
+
+    #[test]
     fn keeps_the_other_operand_of_a_union_with_an_empty_set() {
         let union = |left: &Value, right: &Value| {
             format_value(&crate::sets::union(left, right).expect("a union"))

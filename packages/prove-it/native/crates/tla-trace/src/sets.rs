@@ -41,7 +41,12 @@ pub fn enumerate(lazy: &Lazy) -> Evaluated<Vec<Value>> {
         }
         Lazy::FunctionSet(domain_set, range) => {
             let domain = elements(domain_set)?;
-            let range = elements(range)?;
+            // Over an empty domain the set holds the empty function alone, whatever the range.
+            let range = if domain.is_empty() {
+                Rc::new(Vec::new())
+            } else {
+                elements(range)?
+            };
             let tuples = product(&vec![Rc::clone(&range); domain.len()])?;
             // A function over an interval keeps it as its domain.
             let build = |values: Vec<Value>| match domain_set {
@@ -132,9 +137,13 @@ pub fn is_member(value: &Value, set: &Value) -> Evaluated<bool> {
             }
             Ok(false)
         }
+        // An untyped model value is in no interval or lazy set: TLC's `member` of each hands it
+        // to `ModelValue.modelValueMember`, which says false.
+        Value::Interval(..) | Value::Lazy(_) if matches!(value, Value::Model(model) if model.model_type() == 0) => {
+            Ok(false)
+        }
         Value::Interval(low, high) => match value {
             Value::Int(int) => Ok(low <= int && int <= high),
-            Value::Model(model) if model.model_type() == 0 => Ok(false),
             _ => fail("a mistyped membership in an interval"),
         },
         Value::Lazy(lazy) => match &**lazy {
@@ -149,7 +158,6 @@ pub fn is_member(value: &Value, set: &Value) -> Evaluated<bool> {
             Lazy::Real => fail("a membership in Real"),
             Lazy::Strings => match value {
                 Value::Str(_) => Ok(true),
-                Value::Model(model) if model.model_type() == 0 => Ok(false),
                 _ => fail("a mistyped membership in STRING"),
             },
             Lazy::Subset(base) => {
