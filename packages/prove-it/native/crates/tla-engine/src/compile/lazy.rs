@@ -16,6 +16,10 @@ use crate::machine::Machine;
 
 // Beyond these the interpreter would list more elements than a search can use.
 const MAXIMUM_SUBSET_BASE: usize = 20;
+/// TLC counts a power set's elements in an int, and fails counting those of SUBSET S where S has
+/// this many elements or more (`SubsetValue.size`).
+pub(crate) const OVERFLOWING_SUBSET_BASE: usize = 31;
+pub(crate) const SUBSET_OVERFLOW: &str = "an overflow counting the elements of a power set";
 const MAXIMUM_ELEMENTS: f64 = (1u64 << 24) as f64;
 
 /// What a set expression's value is, as the interpreter builds it.
@@ -158,6 +162,9 @@ impl Lazy {
             Lazy::Subset(base) => {
                 // SubsetValue sizes and lists its base, never streaming it.
                 let base = base.elements(machine, false)?;
+                if base.len() >= OVERFLOWING_SUBSET_BASE {
+                    return Err(Bail(SUBSET_OVERFLOW));
+                }
                 if base.len() > MAXIMUM_SUBSET_BASE {
                     return Err(Bail("a power set too large to build"));
                 }
