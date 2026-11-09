@@ -40,7 +40,7 @@ import type { EngineProperties, EngineSpec } from "./context";
 import type { NamedPermutation } from "./symmetry";
 
 // The version of the layout below, which the decoder checks. Any change to it changes this.
-export const IR_VERSION = 4;
+export const IR_VERSION = 5;
 
 // "PIIR" read as a little-endian word.
 const MAGIC = 0x52494950;
@@ -151,10 +151,19 @@ export interface IrAtom {
   actions: readonly number[] | "all" | undefined;
 }
 
+export interface TraceAction {
+  expression: Expression;
+  scope: EvaluationScope | undefined;
+  label: string;
+}
+
 export interface IrInput {
   config: ModelConfig;
   environment: Environment;
   spec: EngineSpec;
+  // TLC's actions, with the label a trace gives each step one takes. The search takes its steps
+  // through them only when spec.actions is given.
+  traceActions: TraceAction[];
   isWarningEnabled: boolean;
   tlcOrder: number[];
   properties: EngineProperties;
@@ -679,12 +688,13 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
   push(model, writeRoot(spec.init));
   push(model, writeRoot(spec.next));
   push(model, getScopeIndex(spec.scope));
-  const actions = spec.actions;
-  push(model, actions ? actions.length : -1);
-  for (const action of actions ?? []) {
+  push(model, input.traceActions.length);
+  for (const action of input.traceActions) {
     push(model, writeRoot(action.expression));
     push(model, getScopeIndex(action.scope));
+    push(model, getText(action.label));
   }
+  push(model, spec.actions ? 1 : 0);
   writeConfigNames(config.invariants, true);
   writeRoots(input.properties.invariants, true);
   writeConfigNames(config.constraints);

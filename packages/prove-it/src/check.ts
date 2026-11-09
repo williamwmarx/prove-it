@@ -29,6 +29,7 @@ import {
   isStackOverflow,
   MissingBuildFileError,
   TlaConfigError,
+  TlaError,
   TlaEvaluationError,
   TlaIllegalStateError,
   TlaIncompleteSuccessorError,
@@ -1695,6 +1696,20 @@ const searchStates = (
     const symmetry = search.symmetryGroup?.map((images) =>
       [...images].map(([name, image]): [string, string] => [name, image.name]),
     );
+    // TLC's actions for the IR, found again with what they print discarded: TLC prints at startup
+    // once, and a trace prints again when it finds them. Finding them describes the whole spec,
+    // which can fail where the search doesn't, such as on an invariant that recurses forever: the
+    // IR then has none, and no trace is labelled natively.
+    const getTraceActions = () => {
+      try {
+        return captureOutput(() =>
+          getNextActions(config, environment, specification.instanceActions),
+        ).result;
+      } catch (error) {
+        if (isStackOverflow(error) || error instanceof TlaError) return [];
+        throw error;
+      }
+    };
     // The engine IR, lowered once if the native engine or PROVE_IT_IR_DUMP asks for it, and written
     // to the file PROVE_IT_IR_DUMP names before the line that reports it.
     const lowered: { outcome?: IrOutcome } = {};
@@ -1705,6 +1720,11 @@ const searchStates = (
         config,
         environment,
         spec: engineSpec,
+        traceActions: getTraceActions().map((action) => ({
+          expression: action.expression,
+          scope: action.scope,
+          label: getActionLabel(action, options.version),
+        })),
         isWarningEnabled: runtime.isWarningEnabled,
         tlcOrder,
         properties: engineProperties,
