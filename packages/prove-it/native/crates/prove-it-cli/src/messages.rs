@@ -10,6 +10,9 @@ pub const FINISHED: u32 = 2186;
 pub const MODEL_CHECKING: u32 = 2187;
 pub const COMPUTING_INIT: u32 = 2189;
 pub const INVARIANT_VIOLATED_INITIAL: u32 = 2107;
+pub const INVARIANT_VIOLATED_BEHAVIOR: u32 = 2110;
+pub const DEADLOCK_REACHED: u32 = 2114;
+pub const BEHAVIOR_UP_TO_THIS_POINT: u32 = 2121;
 pub const INIT_GENERATED_1: u32 = 2190;
 pub const INIT_GENERATED_2: u32 = 2191;
 pub const SUCCESS: u32 = 2193;
@@ -18,6 +21,7 @@ pub const STATS: u32 = 2199;
 pub const PROGRESS: u32 = 2200;
 pub const VERSION: u32 = 2262;
 pub const STATE_GRAPH_OUTDEGREE: u32 = 2268;
+pub const STATE_PRINT_2: u32 = 2217;
 pub const COMPUTING_INIT_PROGRESS: u32 = 2269;
 pub const CONFIG_FILE_ERROR: u32 = 5001;
 
@@ -26,6 +30,7 @@ pub enum Level {
     None = 0,
     Error = 1,
     Warning = 3,
+    State = 4,
 }
 
 /// Writes TLC's messages to stdout. MP.printWarning prints a warning once, which -nowarning drops,
@@ -62,6 +67,7 @@ impl Printer {
                 Level::None => "",
                 Level::Error => "Error: ",
                 Level::Warning => "Warning: ",
+                Level::State => "State ",
             };
             let hint = if is_warning && self.warnings.is_empty() {
                 "\n(Use the -nowarning option to disable this warning.)"
