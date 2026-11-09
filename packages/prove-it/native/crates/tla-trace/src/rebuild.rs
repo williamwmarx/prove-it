@@ -70,6 +70,12 @@ impl<'ir> Rebuilder<'ir> {
         Ok(Rebuilder { evaluator, key })
     }
 
+    /// Takes the values the search computed at startup, ids of `store`, which TLC's trace reads
+    /// as it computed them.
+    pub fn set_startup(&mut self, store: &Store, values: &[Id]) {
+        self.evaluator.set_startup(store, values);
+    }
+
     /// The states of a path the search found, as TLC prints them. `states` holds each state's
     /// values as ids of `store`, in the IR's order of the variables; `actions[i]` is the position
     /// in the model's actions of the step from `states[i]` to `states[i + 1]` (`label_path`), or

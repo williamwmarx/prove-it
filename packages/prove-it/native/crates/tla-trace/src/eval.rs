@@ -12,11 +12,13 @@ use tla_ir::{
     Resolution, ScopeBinding, TextId,
 };
 
+use tla_values::{Id, Store};
+
 use crate::print::{format_printed, format_value};
 use crate::sets::{as_tuple, cardinality, difference, intersection, is_member, is_subset, union};
 use crate::value::{
     Class, Evaluated, Function, Lazy, Text, Value, compare, elements, equals, fail, find_key,
-    set_of, sorted_function, written_function,
+    from_store, set_of, sorted_function, written_function,
 };
 
 /// The bindings an expression sees, innermost first.
@@ -621,9 +623,24 @@ impl<'ir> Evaluator<'ir> {
         }
     }
 
+    /// Takes the values the search computed at startup for the model's startup definitions,
+    /// ids of `store` in their order, as the values of those definitions.
+    pub fn set_startup(&mut self, store: &Store, values: &[Id]) {
+        for (&index, &id) in self.ir.model.startup.definitions.iter().zip(values) {
+            let node = self.ir.definitions[index as usize];
+            let value = from_store(store, id);
+            self.cache.insert((node, false), value.clone());
+            self.cache.insert((node, true), value);
+        }
+    }
+
     fn definition_value(&mut self, node: NodeId, context: &Context) -> Evaluated<Value> {
         let definition = self.definition(node);
-        // The value TLC computed at startup, which the engine's startup phase computes.
+        let key = (node, context.is_primed);
+        if let Some(value) = self.cache.get(&key) {
+            return Ok(value.clone());
+        }
+        // The value TLC computed at startup, which the search computed and hands on.
         if self
             .ir
             .model
@@ -633,10 +650,6 @@ impl<'ir> Evaluator<'ir> {
             .any(|&index| self.ir.definitions[index as usize] == node)
         {
             return fail("a value TLC computed at startup with effects");
-        }
-        let key = (node, context.is_primed);
-        if let Some(value) = self.cache.get(&key) {
-            return Ok(value.clone());
         }
         let reads = self.reads;
         let printed = self.printed.len();

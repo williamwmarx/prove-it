@@ -41,6 +41,7 @@ pub fn rebuild_trace(ir: &Ir, violation: &Violation) -> Result<PrintedTrace, Str
                     }
                 };
                 let trace = Rebuilder::new(ir).and_then(|mut rebuilder| {
+                    rebuilder.set_startup(&violation.store, &violation.startup);
                     rebuilder.rebuild(&violation.store, &states, &actions, ending)
                 });
                 trace

@@ -128,6 +128,8 @@ pub struct Checkpoint {
     /// What each `_POSSIBLE` predicate counted before the expansion the interpreter goes on
     /// from, or -1 where it wasn't evaluated.
     pub possible: Vec<i64>,
+    /// The value TLC computed at startup of each of the model's startup definitions, as one row.
+    pub startup: SharedStates,
 }
 
 /// The steps of a search (`EngineGraph`): for each of the first `expanded` states, how many
@@ -202,6 +204,9 @@ pub struct Violation {
     /// The counts TLC reports after the trace.
     pub counts: StopCounts,
     pub store: Store,
+    /// The value TLC computed at startup of each of the model's startup definitions, ids of
+    /// `store`.
+    pub startup: Vec<Id>,
 }
 
 pub enum ViolationKind {
@@ -1476,6 +1481,24 @@ fn run_startup(machine: &mut Machine<'_>, startup: &Startup) -> Outcome<Started>
     })
 }
 
+// The values the startup definitions computed, which reading them again gives without effects.
+fn startup_values(machine: &mut Machine<'_>, context: &EngineContext) -> Outcome<Vec<Id>> {
+    context
+        .startup
+        .definitions
+        .iter()
+        .map(|evaluate| evaluate(machine))
+        .collect()
+}
+
+// The startup definitions' values as one row of shared states.
+fn share_startup(machine: &mut Machine<'_>, context: &EngineContext) -> Outcome<SharedStates> {
+    let values = startup_values(machine, context)?;
+    let mut encoder = SharedEncoder::new(&machine.store);
+    encoder.encode(&machine.store, &values);
+    Ok(encoder.finish())
+}
+
 pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> SearchOutcome {
     let model = &ir.model;
     let ranked: Vec<Vec<u16>> = ir.texts[..ir.ranked_count as usize]
@@ -1862,6 +1885,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 tables,
             }),
             possible,
+            startup: share_startup(machine, &context).expect("values computed at startup"),
         }
     };
     let outcome = match result {
@@ -2102,6 +2126,8 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     }),
                     graph: None,
                     possible: checkpoint_possible.clone(),
+                    startup: share_startup(&mut machine, &context)
+                        .expect("values computed at startup"),
                 }))
             } else if !is_kept || search.states.key_width.is_some() || search.held.is_some() {
                 // The interpreter searches a graph too large to keep from the start, since its
@@ -2419,6 +2445,7 @@ fn to_violation(
         .skip(1)
         .collect::<Option<Vec<u32>>>()?
     };
+    let startup = startup_values(machine, context).ok()?;
     // The store goes with the violation, so whether the search, or finding the actions, ranked
     // strings is read here, as for the search's outcome.
     (labels.len() + 1 == states.len() && !machine.store.has_unordered_strings()).then(|| {
@@ -2428,6 +2455,7 @@ fn to_violation(
             labels,
             counts: found.counts,
             store: std::mem::replace(&mut machine.store, Store::new()),
+            startup,
         })
     })
 }

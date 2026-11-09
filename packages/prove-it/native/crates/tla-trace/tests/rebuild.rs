@@ -41,6 +41,8 @@ fn golden_irs(directory: &std::path::Path, found: &mut Vec<std::path::PathBuf>) 
 struct Stopped {
     store: Store,
     states: Vec<Vec<Id>>,
+    /// The values the search computed at startup, ids of `store`.
+    startup: Vec<Id>,
     parents: Vec<i32>,
     reason: String,
     expanding: usize,
@@ -67,6 +69,12 @@ fn stop_search(ir: &tla_ir::Ir, stop_at: Option<usize>) -> Option<Stopped> {
         .collect();
     store.reset(ranked.iter().map(Vec::as_slice));
     let ids = decode_shared_states(&mut store, &checkpoint.states, width).ok()?;
+    let startup = decode_shared_states(
+        &mut store,
+        &checkpoint.startup,
+        ir.model.startup.definitions.len(),
+    )
+    .ok()?;
     let states = if width == 0 {
         Vec::new()
     } else {
@@ -75,6 +83,7 @@ fn stop_search(ir: &tla_ir::Ir, stop_at: Option<usize>) -> Option<Stopped> {
     Some(Stopped {
         store,
         states,
+        startup,
         parents: checkpoint.parents.clone(),
         reason,
         expanding: checkpoint.expanding as usize,
@@ -104,6 +113,7 @@ fn check(path: &std::path::Path) -> Result<usize, String> {
         Ok(rebuilder) => rebuilder,
         Err(Unsupported(reason)) => return Err(reason),
     };
+    rebuilder.set_startup(&stopped.store, &stopped.startup);
     let count = stopped.states.len();
     let mut rebuilt = 0;
     for index in count.saturating_sub(3)..count {
@@ -212,6 +222,7 @@ fn deadlock_trace(path: &str) -> Vec<String> {
             .collect();
         let trace = Rebuilder::new(&ir)
             .and_then(|mut rebuilder| {
+                rebuilder.set_startup(&stopped.store, &stopped.startup);
                 rebuilder.rebuild(
                     &stopped.store,
                     &states,
