@@ -468,6 +468,7 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
       ["SPECIFICATION Weak\nPROPERTY Settles", "lasso"],
       ["SPECIFICATION Strong\nPROPERTY Leads", "lasso"],
       ["SPECIFICATION Unfair\nPROPERTY Returns", "lasso"],
+      ["SPECIFICATION Weak\nPROPERTY Returns\nPROPERTY Settles\nPROPERTY Leads", "lasso"],
     ] as const) {
       const lines = await compareWithInterpreter(body, config);
       expect(lines).toContain(`[engine] native: liveness: ${verdict}`);

@@ -719,6 +719,103 @@ impl<'c> Checker<'c> {
 
     // --- the search: TLC's LiveWorker#checkSccs and printTrace ---
 
+    /// How many solutions TLC checks, which it calls branches.
+    pub fn branches(&self) -> usize {
+        self.solutions.len()
+    }
+
+    // The step from one state to another, as the first of the search's steps between them.
+    fn step_to(&self, state: u32, target: u32) -> Result<Step, Declined> {
+        if state == target {
+            return Ok(self.self_step(state));
+        }
+        let start = self.graph.edge_offsets[state as usize] as usize;
+        let end = self.graph.edge_offsets[state as usize + 1] as usize;
+        (start..end)
+            .find(|&edge| self.graph.edges[edge] == target)
+            .map(|edge| self.edge_step(state, edge))
+            .ok_or_else(|| Declined::from("a step the search didn't take"))
+    }
+
+    /// Whether a formula holds of the lasso from the position on, as `evaluateOnLasso` finds it.
+    fn evaluate_on_lasso(
+        &self,
+        term: TermId,
+        path: &[u32],
+        cycle_start: usize,
+        position: usize,
+    ) -> Result<bool, Declined> {
+        let next = |index: usize| {
+            if index + 1 < path.len() {
+                index + 1
+            } else {
+                cycle_start
+            }
+        };
+        let future = position.min(cycle_start)..path.len();
+        match self.terms.kind(term) {
+            Kind::Not => {
+                Ok(!self.evaluate_on_lasso(self.terms.body(term), path, cycle_start, position)?)
+            }
+            Kind::And => {
+                for &operand in self.terms.children(term) {
+                    if !self.evaluate_on_lasso(operand, path, cycle_start, position)? {
+                        return Ok(false);
+                    }
+                }
+                Ok(true)
+            }
+            Kind::Or => {
+                for &operand in self.terms.children(term) {
+                    if self.evaluate_on_lasso(operand, path, cycle_start, position)? {
+                        return Ok(true);
+                    }
+                }
+                Ok(false)
+            }
+            Kind::Next => {
+                self.evaluate_on_lasso(self.terms.body(term), path, cycle_start, next(position))
+            }
+            Kind::Always => {
+                for index in future {
+                    if !self.evaluate_on_lasso(self.terms.body(term), path, cycle_start, index)? {
+                        return Ok(false);
+                    }
+                }
+                Ok(true)
+            }
+            Kind::Eventually => {
+                for index in future {
+                    if self.evaluate_on_lasso(self.terms.body(term), path, cycle_start, index)? {
+                        return Ok(true);
+                    }
+                }
+                Ok(false)
+            }
+            _ => {
+                let state = path[position];
+                let step = self.step_to(state, path[next(position)])?;
+                self.evaluate(term, state, Some(step))
+            }
+        }
+    }
+
+    /// The positions of the properties the lasso violates, in order.
+    pub fn violated(
+        &self,
+        properties: &[TermId],
+        path: &[u32],
+        loop_start: usize,
+    ) -> Result<Vec<usize>, Declined> {
+        let mut violated = Vec::new();
+        for (position, &property) in properties.iter().enumerate() {
+            if !self.evaluate_on_lasso(property, path, loop_start, 0)? {
+                violated.push(position);
+            }
+        }
+        Ok(violated)
+    }
+
     pub fn find_violation(&self) -> Result<Option<(Vec<u32>, usize, bool)>, Declined> {
         for behavior in 0..self.behaviors.len() {
             let solution = &self.solutions[self.behaviors[behavior].solution];
@@ -1136,8 +1233,8 @@ impl<'s, 'c> Search<'s, 'c> {
     }
 }
 
-/// Checks the formula on the search's graph.
-pub fn check(checker: &mut Checker<'_>) -> Result<Verdict, Declined> {
+/// Checks the formula on the search's graph, and names the properties a lasso violates.
+pub fn check(checker: &mut Checker<'_>, properties: &[TermId]) -> Result<Verdict, Declined> {
     let graph = checker.graph;
     for (state, &parent) in graph.parents.iter().enumerate() {
         if parent == -1 {
@@ -1151,6 +1248,7 @@ pub fn check(checker: &mut Checker<'_>) -> Result<Verdict, Declined> {
     }
     Ok(match checker.find_violation()? {
         Some((path, loop_start, is_cycle_constrained)) => Verdict::Lasso {
+            violated: checker.violated(properties, &path, loop_start)?,
             path,
             loop_start,
             is_cycle_constrained,
