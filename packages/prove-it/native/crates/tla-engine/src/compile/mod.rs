@@ -18,6 +18,9 @@ mod bridged;
 mod builtins;
 mod fused;
 pub(crate) mod lazy;
+pub(crate) mod lazy_function;
+
+pub(crate) use lazy_function::Lambda;
 mod nodes;
 mod predicate;
 pub(crate) mod random;
@@ -196,6 +199,9 @@ pub struct Compiled {
     pub(crate) is_constant: bool,
     /// Nat, Int, STRING, Seq(S), or a union with one of them, which the engine only tests.
     pub(crate) infinite: Option<&'static str>,
+    /// For a set built from others, such as `SUBSET S` or `S \X T`: whether one of them may be
+    /// one the engine only tests, which would make it one TLC can't enumerate either.
+    pub(crate) has_infinite_part: bool,
     /// Membership, when the engine can test it without building the set.
     pub(crate) member: Option<Member>,
     /// What TLC evaluates to make the set's value, its parts in TLC's order.
@@ -214,6 +220,11 @@ pub struct Compiled {
 }
 
 impl Compiled {
+    /// Whether the set may be one TLC can't enumerate.
+    pub(crate) fn may_be_infinite(&self) -> bool {
+        self.infinite.is_some() || self.has_infinite_part
+    }
+
     pub fn eval(&self) -> &Eval {
         &self.eval
     }
@@ -279,6 +290,7 @@ pub(crate) fn leaf(eval: Eval, footprint: Footprint) -> Compiled {
         is_boolean: false,
         is_constant: false,
         infinite: None,
+        has_infinite_part: false,
         member: None,
         parts: None,
         shape: Shape::Other,
@@ -688,6 +700,9 @@ pub struct Compiler<'a> {
     pub is_native: bool,
     /// How many workers TLC runs with (`-workers`), which TLCGet("config") reports.
     pub workers: usize,
+    /// Whether anything compiled may build a function TLC keeps lazy, which only the machine that
+    /// built it can apply.
+    pub is_lambda_built: bool,
     // The contexts of the instance scopes translated so far.
     scope_contexts: HashMap<Index, Option<Context>>,
 }
@@ -756,6 +771,7 @@ impl<'a> Compiler<'a> {
             is_ranking: false,
             is_native: false,
             workers: 1,
+            is_lambda_built: false,
             scope_contexts: HashMap::new(),
         }
     }

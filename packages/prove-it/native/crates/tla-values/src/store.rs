@@ -25,6 +25,13 @@ pub const KIND_SET: u8 = 4;
 pub const KIND_FUNCTION: u8 = 5;
 /// A function with domain 1..n, the empty function included. Its block holds the range.
 pub const KIND_TUPLE: u8 = 6;
+/// A function TLC keeps lazy (`FcnLambdaValue`), over a domain it can't enumerate: its payload
+/// numbers it among those the machine that built it keeps, which apply it. The store can't
+/// compare, fingerprint or print one, as TLC can't without enumerating its domain.
+pub const KIND_LAZY_FUNCTION: u8 = 7;
+
+/// Why the store stops at a function TLC keeps lazy, an engine limit.
+pub const LAZY_FUNCTION: Bail = Bail("unsupported: comparing a function TLC keeps lazy");
 
 pub const FALSE: Id = 0;
 pub const TRUE: Id = 1;
@@ -721,6 +728,9 @@ impl Store {
             return Ok(0);
         }
         let (left_meta, right_meta) = (*self.meta(left), *self.meta(right));
+        if left_meta.kind == KIND_LAZY_FUNCTION || right_meta.kind == KIND_LAZY_FUNCTION {
+            return Err(LAZY_FUNCTION);
+        }
         if left_meta.kind == right_meta.kind {
             return match left_meta.kind {
                 KIND_INT => Ok(if left_meta.payload < right_meta.payload {
@@ -878,6 +888,9 @@ impl Store {
     #[inline(never)]
     fn equals_other(&mut self, left: Id, right: Id) -> Outcome<bool> {
         let (left_kind, right_kind) = (self.kind_of(left), self.kind_of(right));
+        if left_kind == KIND_LAZY_FUNCTION || right_kind == KIND_LAZY_FUNCTION {
+            return Err(LAZY_FUNCTION);
+        }
         if left_kind == right_kind {
             return match left_kind {
                 KIND_MODEL => self.check_model_types(left, right).map(|()| false),
@@ -1753,6 +1766,28 @@ impl Store {
         let id = self.intern_block(KIND_SET, &keys[..size as usize], size);
         self.scratch = keys;
         id
+    }
+
+    /// A function TLC keeps lazy, by its number among those a machine keeps.
+    pub fn lazy_function(&mut self, index: u32) -> Id {
+        self.intern_scalar(KIND_LAZY_FUNCTION, index as i32)
+    }
+
+    /// The number among those a machine keeps of a function TLC keeps lazy.
+    pub fn lazy_index_of(&self, id: Id) -> u32 {
+        self.meta(id).payload as u32
+    }
+
+    /// Whether a value holds a function TLC keeps lazy, at any depth.
+    pub fn holds_lazy_function(&self, id: Id) -> bool {
+        let meta = self.meta(id);
+        let length = match meta.kind {
+            KIND_LAZY_FUNCTION => return true,
+            KIND_SET | KIND_TUPLE => meta.size as usize,
+            KIND_FUNCTION => 2 * meta.size as usize,
+            _ => return false,
+        };
+        (0..length).any(|index| self.holds_lazy_function(self.word(meta.payload as usize + index)))
     }
 
     /// The elements of a tuple from position `from` up to `to`, as Tail takes them.

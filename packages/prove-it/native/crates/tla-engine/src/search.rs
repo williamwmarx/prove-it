@@ -460,6 +460,7 @@ struct Found {
     counts: StopCounts,
 }
 
+const LAZY_FUNCTION_HELD: Bail = Bail("unsupported: a state holding a function TLC keeps lazy");
 const GRAPH_TOO_LARGE: &str = "a state graph too large to keep";
 
 /// What PROVE_IT_LIVE_CHECK finds when TLC's actions take other steps than the next-state relation.
@@ -756,6 +757,9 @@ struct Search<'r, T, E = Dense> {
     // Whether a successor is checked once the walk reaches the next, when nothing the search
     // evaluates can tell: then the probe of its fingerprint, read ahead, doesn't wait on memory.
     is_pipelined: bool,
+    // Whether the spec may build a function TLC keeps lazy, which no state may hold: TLC can't
+    // fingerprint one.
+    is_lambda_built: bool,
     // The violation the search stops at, when it knows what TLC reports for it.
     violation: Option<Found>,
     // The successor waiting to be checked, and its fingerprint.
@@ -801,6 +805,7 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
             action: 0,
             checked: None,
             is_pipelined,
+            is_lambda_built: false,
             pending: Vec::with_capacity(width),
             violation: None,
             pending_fingerprint: None,
@@ -840,6 +845,14 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
         context: &EngineContext,
         is_successor: bool,
     ) -> Outcome<u64> {
+        if self.is_lambda_built
+            && machine
+                .current()
+                .iter()
+                .any(|&value| machine.store.holds_lazy_function(value))
+        {
+            return Err(LAZY_FUNCTION_HELD);
+        }
         if self.states.key_width().is_none() {
             let (store, order) = (&machine.store, self.states.order());
             return Ok(if is_successor {
@@ -1987,7 +2000,9 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     // Checking a successor once the walk reaches the next reorders nothing anyone can see where
     // nothing prints, reads the count of distinct states, or fingerprints a VIEW or symmetry's
     // representative, which the walk would then interleave with.
+    let is_lambda_built = compiler.is_lambda_built;
     let is_pipelined = !is_printing
+        && !is_lambda_built
         && !is_distinct_read
         && context.view.is_none()
         && model.startup.symmetry.is_none()
@@ -2003,12 +2018,17 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     let is_shared = thread_count > 1
         && !compiler.is_ranking
         && !compiler.is_printing
+        && !is_lambda_built
         && !is_distinct_read
         && !model.is_recording_graph
         && !settings.is_live_checked
         && context.possible.is_empty();
     // The liveness checker's atoms are answered on the threads too, unless ToString ranks strings.
-    let atom_threads = if compiler.is_ranking { 1 } else { thread_count };
+    let atom_threads = if compiler.is_ranking || is_lambda_built {
+        1
+    } else {
+        thread_count
+    };
     let program = compiler.finish();
     let mut machine = Machine::new(&program, store);
     // TLCGet("level") is 0 while TLC starts.
@@ -2101,6 +2121,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     let mut search = Search::new(states, reporter, is_distinct_read, is_pipelined);
     search.possible = vec![-1; context.possible.len()];
     search.canonicalizer = canonicalizer;
+    search.is_lambda_built = is_lambda_built;
     search.held = (model.is_recording_graph && is_printing).then(Vec::new);
     search.graph = model.is_recording_graph.then(|| Graph {
         edge_offsets: vec![0],
