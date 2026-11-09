@@ -83,3 +83,27 @@ fn accepts_a_box_action() {
         .is_empty()
     );
 }
+
+#[test]
+fn rejects_a_primed_argument_of_a_recursive_operator() {
+    // As TLC reports it, in a module and in a LET.
+    let module = "---- MODULE Rec ----\nEXTENDS Naturals\nVARIABLE x\nRECURSIVE Up(_, _)\nUp(v, n) == IF n = 0 THEN v' = v ELSE Up(v, n - 1)\n====";
+    assert_eq!(
+        get_level_errors(module, &[]),
+        [(
+            "line 5, col 1 to line 5, col 50 of module Rec".to_owned(),
+            "Argument 1 of recursive operator Up is primed".to_owned()
+        )]
+    );
+    let in_let = "---- MODULE InLet ----\nEXTENDS Naturals\nVARIABLE x\nOp == LET RECURSIVE Up(_, _)\n          Up(v, n) == IF n = 0 THEN v' = v ELSE Up(v, n - 1)\n      IN Up(x, 2)\n====";
+    assert_eq!(
+        get_level_errors(in_let, &[]),
+        [(
+            "line 5, col 11 to line 5, col 60 of module InLet".to_owned(),
+            "Argument 1 of recursive operator Up is primed".to_owned()
+        )]
+    );
+    // A recursion over a number takes its argument at any level.
+    let plain = "---- MODULE Plain ----\nEXTENDS Naturals\nRECURSIVE Sum(_)\nSum(n) == IF n = 0 THEN 0 ELSE n + Sum(n - 1)\n====";
+    assert!(get_level_errors(plain, &[]).is_empty());
+}
