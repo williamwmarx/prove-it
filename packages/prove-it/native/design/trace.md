@@ -454,6 +454,24 @@ Still apart from TLC (ValueSemanticsAssume: 48 of 510 assumptions, EmptySetEqAss
 - two integer overflows in ValueSemanticsAssume.
 An AssertError assumption the replay finds false stays not native until these match TLC.
 
+## The second rebuild of a violation's trace (as built)
+
+TLC rebuilds a violation's or a deadlock's trace as it prints it, and once more for the
+counterexample its postconditions read (`checkPostConditionWithCounterExample` takes the trace
+again), before it evaluates them. Each rebuild runs the initial predicate and Next again, so a
+spec that prints, or sets a register, does it both times: measured on TLC d8fb231, Next ==
+... /\ TLCSet(2, TLCGet(2) + 1) over a trace of three steps leaves the register at 9 for the
+postcondition, 3 from the search and 3 from each rebuild, and what Next prints in the second
+rebuild comes after the trace and before what the postconditions print. A lasso is rebuilt once.
+
+`Rebuilder::rebuild` therefore runs a second pass (`rebuild_pass`) where the spec prints or sets
+registers and the trace isn't a lasso's, and that pass's prints are the trace's `trace_output`;
+with TLCSet in the spec each walk runs to its end, as with Print. The binary prints
+`trace_output` before the postconditions' prints. TLC evaluates an ALIAS of each state as it
+prints the state, part way through its lazy first rebuild, so an ALIAS that uses the registers
+where a rebuild set one isn't native ("an ALIAS that uses registers the rebuild of the trace
+sets").
+
 ## Sets TLC holds unnormalized
 
 TLC builds a set enumeration as written (`SetEnumValue` with `isNorm` false) and normalizes it in

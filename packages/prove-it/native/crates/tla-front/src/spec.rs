@@ -1038,8 +1038,46 @@ pub fn get_specification(
         reference.resolved.is_local.set(true);
         Rc::new(reference)
     };
+    // TLC keeps the body of a definition the specification names as one initial predicate, so
+    // where the conjuncts are those of such a list, the list as written is the predicate.
+    let top_level = match &definition.body.kind {
+        ExpressionKind::Junction {
+            is_and: true,
+            operands,
+            ..
+        } => operands.clone(),
+        _ => vec![definition.body.clone()],
+    };
+    let written_init = top_level
+        .iter()
+        .filter_map(|conjunct| match &conjunct.kind {
+            ExpressionKind::Identifier { .. } => {
+                get_definition(&conjunct.reference()?, environment)
+                    .map(|definition| definition.body.clone())
+            }
+            _ => None,
+        })
+        .find(|body| match &body.kind {
+            ExpressionKind::Junction {
+                is_and: true,
+                operands,
+                ..
+            } => {
+                operands.len() == init_conjuncts.len()
+                    && operands
+                        .iter()
+                        .zip(&init_conjuncts)
+                        .all(|(operand, (expression, scope))| {
+                            Rc::ptr_eq(operand, expression) && scope.is_none()
+                        })
+            }
+            _ => false,
+        });
     Ok(Specification {
         init: (!init_conjuncts.is_empty()).then(|| {
+            if let Some(written) = written_init {
+                return written;
+            }
             Rc::new(Expression::new(
                 ExpressionKind::Junction {
                     is_and: true,
