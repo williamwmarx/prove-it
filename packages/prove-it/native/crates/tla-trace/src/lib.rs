@@ -18,6 +18,7 @@ mod print;
 mod random;
 mod rebuild;
 mod sets;
+mod split;
 mod value;
 
 pub use alias::Alias;
@@ -26,6 +27,7 @@ pub use postcondition::{Checked, CounterExample, PostconditionInputs, Stats, Ver
 pub use pretty::pretty_print;
 pub use print::{format_printed, format_value};
 pub use rebuild::Rebuilder;
+pub use split::add_actions;
 pub use value::Value;
 
 /// Where the evaluator can't follow TLC yet: the caller reports `not native yet: <reason>`.
