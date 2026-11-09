@@ -6,7 +6,7 @@
 use tla_ir::{NodeId, NodeKind, SourceRange};
 use tla_values::{Id, Store};
 
-use crate::eval::{CallStack, Evaluator, StackFrame};
+use crate::eval::{CallStack, Context, Evaluator, StackFrame};
 use crate::rebuild::Rebuilder;
 use crate::value::TlcMessage;
 use crate::{Ending, Unsupported};
@@ -18,6 +18,9 @@ pub enum Site {
     Init,
     /// Computing the successors of the path's last state.
     Next,
+    /// Evaluating the invariant at this position of the model's invariants on the path's last
+    /// state, a successor that failed it, past the initial states.
+    Invariant(u32),
 }
 
 /// TLC's report of an error: the code of the message, its text and its text in -tool output, and
@@ -31,6 +34,7 @@ pub struct Failure {
 }
 
 const GENERAL: u32 = 1000;
+const INVARIANT_EVALUATION_FAILED: u32 = 2111;
 
 const UNEXPECTED_EXCEPTION: &str = "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: ";
 
@@ -76,9 +80,23 @@ impl<'ir> Rebuilder<'ir> {
         actions: &[Option<u32>],
         site: Site,
     ) -> Result<Failure, Unsupported> {
+        // TLC reports an invariant that fails on an initial state otherwise, which isn't ported.
+        if matches!(site, Site::Invariant(_)) && states.len() < 2 {
+            return Err(Unsupported(
+                "evaluating the failure again: an invariant of an initial state".into(),
+            ));
+        }
+        // A successor that fails an invariant is held as TLC found it, as a violating one is.
+        let ending = match site {
+            Site::Invariant(_) => Ending::Violation,
+            _ => Ending::Kept,
+        };
         let last = match states {
             [] => None,
-            _ => Some(self.rebuild(store, states, actions, Ending::Kept)?.states),
+            _ => Some(
+                self.rebuild_checked(store, states, actions, ending, false)?
+                    .states,
+            ),
         };
         let evaluator = self.evaluator();
         let ir = evaluator.ir;
@@ -122,6 +140,20 @@ impl<'ir> Rebuilder<'ir> {
                     })
                     .map(|()| true)
             }
+            Site::Invariant(position) => {
+                evaluator.current = current;
+                evaluator.level = level;
+                let Some(index) = ir
+                    .model
+                    .invariants
+                    .get(position as usize)
+                    .and_then(|invariant| invariant.root.definition)
+                else {
+                    return Err(Unsupported("an invariant the model doesn't define".into()));
+                };
+                let body = evaluator.definition(ir.definitions[index as usize]).body;
+                evaluator.boolean(body, &Context::default())
+            }
         };
         let call_stack = evaluator.call_stack.take().unwrap_or_default();
         evaluator.printed.clear();
@@ -136,6 +168,18 @@ impl<'ir> Rebuilder<'ir> {
                 error.reason
             )));
         };
+        // TLC reports an invariant that fails to evaluate with a headline of its own, and no call
+        // stack (`doNextEvalFailed`).
+        if let Site::Invariant(position) = site {
+            let name = &ir.texts[ir.model.invariants[position as usize].root.name as usize];
+            let headline = format!("Evaluating invariant {name} failed.");
+            return Ok(Failure {
+                code: INVARIANT_EVALUATION_FAILED,
+                message: format!("{headline}\n{}", message.text),
+                tool_message: format!("{headline}\n{}", nested(&message)),
+                call_stack: Vec::new(),
+            });
+        }
         let (code, text, tool_text) = report(&message, site == Site::Next);
         Ok(Failure {
             code,

@@ -86,6 +86,19 @@ impl<'ir> Rebuilder<'ir> {
         actions: &[Option<u32>],
         ending: Ending,
     ) -> Result<Trace, Unsupported> {
+        self.rebuild_checked(store, states, actions, ending, true)
+    }
+
+    /// `rebuild`, with TLC's checks of a violating state outside the model replayed only when
+    /// `is_checked`: a failure replays the check that failed itself.
+    pub(crate) fn rebuild_checked(
+        &mut self,
+        store: &Store,
+        states: &[&[Id]],
+        actions: &[Option<u32>],
+        ending: Ending,
+        is_checked: bool,
+    ) -> Result<Trace, Unsupported> {
         let evaluator = &mut self.evaluator;
         let ir = evaluator.ir;
         let width = ir.variables.len();
@@ -193,7 +206,7 @@ impl<'ir> Rebuilder<'ir> {
             last.iter().for_each(settle_deep);
         } else if is_in_model(evaluator, &rebuilt)? {
             settle_recovered(evaluator, &self.key, &rebuilt[rebuilt.len() - 1])?;
-        } else if is_held {
+        } else if is_held && is_checked {
             // A violating state outside the model isn't fingerprinted, but TLC's checks of it
             // sort what their comparisons reach.
             check_violation(evaluator, &rebuilt)?;

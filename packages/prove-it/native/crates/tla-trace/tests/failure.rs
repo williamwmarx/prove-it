@@ -102,3 +102,40 @@ fn reports_a_failed_assertion_in_an_action() {
          1. Line 9, column 8 to line 9, column 65 in Github461\n\n"
     );
 }
+
+#[test]
+fn reports_an_invariant_that_fails_to_evaluate() {
+    let path = format!("{MODELS}/EvaluatingValueTest");
+    let bytes = std::fs::read(ir_directory().join(format!("{path}.ir"))).expect("a golden IR");
+    let ir = tla_ir::decode(&bytes).expect("an IR that decodes");
+    let failure = tla_values::on_nesting_stack(|| {
+        let stopped =
+            tla_engine::on_nesting_stack(|| stop_search(&ir, None)).expect("a search that stops");
+        // The successor that fails Inv, x = FALSE, which the search doesn't keep.
+        let successor = [stopped.store.bool(false)];
+        let mut states: Vec<&[Id]> = path_to(&stopped.parents, stopped.expanding)
+            .into_iter()
+            .map(|position| stopped.states[position].as_slice())
+            .collect();
+        states.push(&successor);
+        let actions = vec![None; states.len() - 1];
+        Rebuilder::new(&ir)
+            .and_then(|mut rebuilder| {
+                rebuilder.evaluate_failure(&stopped.store, &states, &actions, Site::Invariant(0))
+            })
+            .unwrap_or_else(|unsupported| panic!("{}", unsupported.0))
+    });
+    let text = "Attempted to check if the value:\nFALSE\nis an element of Nat.";
+    assert_eq!(failure.code, 2111);
+    assert_eq!(
+        failure.message,
+        format!("Evaluating invariant Inv failed.\n{text}")
+    );
+    assert_eq!(
+        failure.tool_message,
+        format!(
+            "Evaluating invariant Inv failed.\n@!@!@STARTMSG 2158:0 @!@!@\n{text}\n@!@!@ENDMSG 2158 @!@!@"
+        )
+    );
+    assert!(failure.call_stack.is_empty());
+}
