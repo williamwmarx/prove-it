@@ -7,7 +7,7 @@
 //! the nodes it replaces evaluate, in the same order and with the same short circuits, and checks
 //! a boolean where `compileBoolean` does.
 
-use tla_values::store::{FALSE, KIND_INT, KIND_SET, KIND_STRING, KIND_TUPLE, Outcome, TRUE};
+use tla_values::store::{FALSE, KIND_SET, KIND_STRING, Outcome, TRUE};
 use tla_values::{Bail, Id};
 
 use super::{Compiled, Shape, bool_id, eval};
@@ -66,16 +66,6 @@ pub(crate) enum Predicate {
     },
 }
 
-/// `f[k]`, with a tuple and an integer read in place, as the store's `apply` reads them.
-#[inline(always)]
-pub(crate) fn apply(machine: &mut Machine<'_>, function: Id, key: Id) -> Outcome<Id> {
-    let store = &machine.store;
-    if store.kind_of(function) == KIND_TUPLE && store.kind_of(key) == KIND_INT {
-        return apply_tuple(machine, function, key);
-    }
-    machine.store.apply(function, key)
-}
-
 /// `f[i][j]` of a variable and two bound names.
 #[inline(always)]
 pub(crate) fn apply_var2(
@@ -85,18 +75,10 @@ pub(crate) fn apply_var2(
     second: u32,
 ) -> Outcome<Id> {
     let function = machine.read_current(variable)?;
-    let inner = apply(machine, function, machine.locals[slot as usize])?;
-    apply(machine, inner, machine.locals[second as usize])
-}
-
-// A tuple applied to an integer.
-#[inline(always)]
-fn apply_tuple(machine: &Machine<'_>, tuple: Id, key: Id) -> Outcome<Id> {
-    let position = i64::from(machine.store.int_of(key)) - 1;
-    usize::try_from(position)
-        .ok()
-        .and_then(|position| machine.store.tuple_elements(tuple).get(position).copied())
-        .ok_or(Bail("applied a function outside its domain"))
+    let inner = machine
+        .store
+        .apply(function, machine.locals[slot as usize])?;
+    machine.store.apply(inner, machine.locals[second as usize])
 }
 
 /// TLC's equality, with two scalars of one kind told apart by their ids, as the store tells
@@ -151,7 +133,7 @@ impl Leaf {
             Leaf::ApplyVar { variable, slot, .. } => {
                 let function = machine.read_current(*variable)?;
                 let key = machine.locals[*slot as usize];
-                apply(machine, function, key)
+                machine.store.apply(function, key)
             }
             Leaf::ApplyVar2 {
                 variable,
@@ -299,11 +281,7 @@ fn build_equal(left: &Leaf, right: &Leaf, is_equal: bool) -> Test {
             test(move |machine| {
                 let function = machine.read_current(variable)?;
                 let key = machine.locals[slot];
-                let value = if machine.store.kind_of(function) == KIND_TUPLE {
-                    apply_tuple(machine, function, key)?
-                } else {
-                    machine.store.apply(function, key)?
-                };
+                let value = machine.store.apply(function, key)?;
                 Ok(equals(machine, value, constant)? == is_equal)
             })
         }
@@ -316,7 +294,7 @@ fn build_equal(left: &Leaf, right: &Leaf, is_equal: bool) -> Test {
             test(move |machine| {
                 let function = machine.read_current(variable)?;
                 let key = machine.locals[slot];
-                let value = apply(machine, function, key)?;
+                let value = machine.store.apply(function, key)?;
                 let other = match right {
                     Leaf::Constant(constant) => constant,
                     Leaf::Slot(other) | Leaf::IntSlot(other) => machine.locals[other as usize],

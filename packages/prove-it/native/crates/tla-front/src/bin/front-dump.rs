@@ -10,6 +10,8 @@
 //! - `front-dump resolve [--library <directory>]` links each file as the root module of a spec,
 //!   as `createEnvironment` does without a model, reading the modules it imports from the file's
 //!   directory and then the library directory, and writes the environment as canonical JSON;
+//! - `front-dump model [--library <directory>]` reads lines of a configuration's path, a tab and
+//!   its spec's path, and writes the environment of each model as `resolve` does;
 //! - `front-dump time` writes the best of five times to tokenize and parse each module, in
 //!   milliseconds.
 
@@ -22,6 +24,7 @@ use tla_front::TlcVersion;
 use tla_front::config::parse_config;
 use tla_front::dump;
 use tla_front::environment::{EnvironmentOptions, create_environment};
+use tla_front::errors::FrontError;
 use tla_front::json::write_js_string;
 use tla_front::lexer::tokenize;
 use tla_front::parser::{parse_module, parse_sany_module};
@@ -67,7 +70,14 @@ fn write_module(out: &mut String, source: &str, is_sany: bool) {
     }
 }
 
-fn write_environment(out: &mut String, source: &str, path: &Path, library: Option<&Path>) {
+/// Links the spec at `path` with the configuration `config`, or as SANY does without one.
+fn write_environment(
+    out: &mut String,
+    source: &str,
+    path: &Path,
+    library: Option<&Path>,
+    config: Option<&str>,
+) {
     let directory = path.parent().unwrap_or(Path::new("."));
     let load_module = |name: &str| {
         let file = format!("{name}.tla");
@@ -77,11 +87,21 @@ fn write_environment(out: &mut String, source: &str, path: &Path, library: Optio
                 library.and_then(|library| std::fs::read_to_string(library.join(&file)).ok())
             })
     };
-    let environment = create_environment(&EnvironmentOptions {
-        source,
-        load_module: &load_module,
-        version: TlcVersion::Master,
-    });
+    let parsed = match config {
+        None => parse_config("", TlcVersion::Master),
+        Some(text) => parse_config(text, TlcVersion::Master),
+    };
+    let environment = parsed
+        .map_err(|error| FrontError::Config(error.message))
+        .and_then(|model| {
+            create_environment(&EnvironmentOptions {
+                source,
+                load_module: &load_module,
+                config: &model,
+                is_unconfigured: config.is_none(),
+                version: TlcVersion::Master,
+            })
+        });
     dump::environment(&environment).write(out);
 }
 
@@ -105,7 +125,7 @@ fn main() -> ExitCode {
         .and_then(|index| arguments.get(index + 1))
         .map(PathBuf::from);
     let write: fn(&mut String, &str) = match mode.as_str() {
-        "resolve" => |_, _| {},
+        "resolve" | "model" => |_, _| {},
         "tokens" => write_tokens,
         "ast" => |out, source| write_module(out, source, false),
         "sany-ast" => |out, source| write_module(out, source, true),
@@ -118,13 +138,14 @@ fn main() -> ExitCode {
             out.push('}');
         },
         _ => {
-            eprintln!("usage: front-dump tokens|ast|sany-ast|config|resolve|time < paths");
+            eprintln!("usage: front-dump tokens|ast|sany-ast|config|resolve|model|time < paths");
             return ExitCode::from(2);
         }
     };
     let mut output = stdout().lock();
     for path in stdin().lock().lines().map_while(Result::ok) {
-        let source = match std::fs::read(&path) {
+        let (file, spec_path) = path.split_once('\t').unwrap_or((&path, ""));
+        let source = match std::fs::read(file) {
             Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
             Err(error) => {
                 eprintln!("{path}: {error}");
@@ -133,7 +154,23 @@ fn main() -> ExitCode {
         };
         let mut line = String::new();
         if mode == "resolve" {
-            write_environment(&mut line, &source, Path::new(&path), library.as_deref());
+            write_environment(
+                &mut line,
+                &source,
+                Path::new(&path),
+                library.as_deref(),
+                None,
+            );
+        } else if mode == "model" {
+            // The line names the configuration and then, after a tab, the spec.
+            let spec = std::fs::read_to_string(spec_path).unwrap_or_default();
+            write_environment(
+                &mut line,
+                &spec,
+                Path::new(spec_path),
+                library.as_deref(),
+                Some(&source),
+            );
         } else {
             write(&mut line, &source);
         }
