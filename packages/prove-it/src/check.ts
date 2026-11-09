@@ -1,6 +1,6 @@
 import type { Expression } from "./ast";
 import { type ModelConfig, parseConfig } from "./config";
-import { hasEffect } from "./dependencies";
+import { hasEffect, isConstantLevel, isImpureDefinition } from "./dependencies";
 import { getMemoStatistics } from "./engine/compile";
 import { toEngineProperties } from "./engine/context";
 import { toValue as toEngineValue } from "./engine/convert";
@@ -40,6 +40,7 @@ import {
 import {
   type CallStack,
   createTracingEnvironment,
+  describeRange,
   type Environment,
   evaluate,
   type FingerprintFailure,
@@ -47,6 +48,7 @@ import {
   getDefinition,
   hasRepeatedEffects,
   isImpure,
+  isStartupDefinition,
 } from "./evaluate";
 import { EXIT_STATUS, getExitCode, setExitCode, withLivenessExitCode } from "./exit-codes";
 import type { JavaOverride } from "./java-overrides";
@@ -1761,6 +1763,33 @@ const searchStates = (
         })),
         liveFormula: liveness?.formula,
         liveProperties: liveness?.properties ?? [],
+        startup: {
+          substitutes: [...environment.substitutions].flatMap(([name, target]) => {
+            const definition = environment.definitions.get(target);
+            const isChecked =
+              specification.rootConstants.some((constant) => constant.name === name) &&
+              definition?.kind === "Operator" &&
+              definition.params.length === 0 &&
+              !isConstantLevel(definition, environment);
+            return isChecked ? [{ name, definition }] : [];
+          }),
+          // A definition without effects computes the same wherever it is first used.
+          definitions: [
+            ...new Set(
+              specification.startupDefinitions.filter(
+                (definition) =>
+                  isStartupDefinition(definition, environment) &&
+                  isImpureDefinition(definition, environment),
+              ),
+            ),
+          ],
+          assumptions: specification.assumptions
+            .filter((assumption) => !assumption.isAxiom)
+            .map((assumption) => ({
+              expression: assumption.expression,
+              name: describeRange(assumption.expression),
+            })),
+        },
       });
       const milliseconds = performance.now() - loweredAt;
       if ("ir" in outcome) writeDebugBytes("PROVE_IT_IR_DUMP", outcome.ir);

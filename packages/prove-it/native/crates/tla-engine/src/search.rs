@@ -14,13 +14,13 @@ use std::time::{Duration, Instant};
 use tla_ir::{Ir, LiveTerm, Model};
 use tla_live::{Event, Liveness, Term, Verdict};
 use tla_values::fingerprint::{Carried, Fingerprints, Parent};
-use tla_values::store::Outcome;
+use tla_values::store::{FALSE, Outcome, TRUE};
 use tla_values::transfer::{EncodedStates, SharedEncoder, SharedStates, StateEncoder};
 use tla_values::{Bail, Id, NESTING_STACK_BYTES, Store};
 
 use crate::compile::{CompileError, Compiler, DISTINCT_SLOT, LEVEL_SLOT, NEXT_LEVEL_SLOT, Options};
 use crate::context::{
-    EngineContext, count_possible, first_failing, first_failing_changed, holds_all,
+    EngineContext, Startup, count_possible, first_failing, first_failing_changed, holds_all,
     holds_all_changed,
 };
 use crate::live::{LiveGraph, Table, answer_atoms};
@@ -89,6 +89,13 @@ pub trait Reporter {
     fn progress(&mut self, generated: u64, distinct: u64, queued: u64, depth: u64);
     /// What Print or PrintT printed: the values, as ids of the search's store.
     fn print(&mut self, store: &Store, values: &[Id]);
+    /// What Print or PrintT printed while TLC started: as the substitutes and constant
+    /// definitions were evaluated, before [`Reporter::startup_done`], then as the assumptions
+    /// were. The interpreter printed it already where it handed the search over.
+    fn startup_print(&mut self, _store: &Store, _values: &[Id]) {}
+    /// TLC has evaluated the substitutes and the constant definitions, and prints what it prints
+    /// itself before it checks the assumptions.
+    fn startup_done(&mut self) {}
 }
 
 /// The counts TLC reports of a search, so far or in all.
@@ -142,8 +149,11 @@ pub struct GraphCheckpoint {
 }
 
 pub enum SearchOutcome {
-    /// The engine doesn't take the model, for this reason, before producing any state.
+    /// The engine doesn't take the model, for this reason, before producing any state or
+    /// reporting anything.
     Declined(String),
+    /// The assumption TLC reports by this name is false (2104).
+    AssumptionViolated { name: String },
     Complete {
         counts: Box<Counts>,
         /// With temporal properties, the whole search for the interpreter to print a
@@ -1423,6 +1433,40 @@ fn describe(error: CompileError) -> String {
 
 /// Searches the model the IR describes. It runs compiled closures, which recurse with the
 /// expressions and values, so its caller runs it on a thread with a deep stack.
+// TLC's startup: it evaluates the substitutes and the constant definitions, then the assumptions
+// until one is false. What they print, before and from the assumptions, is kept until all of it
+// is evaluated, so a model the engine can't take prints nothing.
+fn run_startup(
+    machine: &mut Machine<'_>,
+    startup: &Startup,
+) -> Outcome<(Vec<Vec<Id>>, Vec<Vec<Id>>, Option<String>)> {
+    let take = |machine: &mut Machine<'_>| {
+        std::mem::take(&mut machine.output)
+            .into_iter()
+            .filter_map(|printed| match printed {
+                Printed::Values(values) => Some(values),
+                Printed::InitialStates(_) => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    for evaluate in startup.substitutes.iter().chain(&startup.definitions) {
+        evaluate(machine)?;
+    }
+    let printed = take(machine);
+    let mut violated = None;
+    for (evaluate, name) in &startup.assumptions {
+        match evaluate(machine)? {
+            TRUE => {}
+            FALSE => {
+                violated = Some(name.clone());
+                break;
+            }
+            _ => return Err(Bail("an assumption that isn't a boolean")),
+        }
+    }
+    Ok((printed, take(machine), violated))
+}
+
 pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> SearchOutcome {
     let model = &ir.model;
     let ranked: Vec<Vec<u16>> = ir.texts[..ir.ranked_count as usize]
@@ -1469,6 +1513,22 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         && context.possible.is_empty();
     let program = compiler.finish();
     let mut machine = Machine::new(&program, store);
+    match run_startup(&mut machine, &context.startup) {
+        Err(Bail(reason)) => return SearchOutcome::Declined(reason.into()),
+        Ok((startup, assumed, violated)) => {
+            let report = |reporter: &mut dyn Reporter, printed: &[Vec<Id>]| {
+                printed
+                    .iter()
+                    .for_each(|values| reporter.startup_print(&machine.store, values));
+            };
+            report(reporter, &startup);
+            reporter.startup_done();
+            report(reporter, &assumed);
+            if let Some(name) = violated {
+                return SearchOutcome::AssumptionViolated { name };
+            }
+        }
+    }
     let canonicalizer = model.symmetry.as_ref().map(|group| {
         let units = |text: u32| ir.texts[text as usize].encode_utf16().collect::<Vec<u16>>();
         let group: Vec<Vec<(Vec<u16>, Vec<u16>)>> = group

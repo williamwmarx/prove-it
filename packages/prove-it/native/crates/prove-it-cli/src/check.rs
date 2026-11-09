@@ -521,6 +521,9 @@ fn check_spec(spec_path: &str, args: &Parsed, printer: &mut Printer) -> i32 {
         SearchOutcome::Declined(reason) => {
             return report_not_native(printer, &format!("the engine declined: {reason}"));
         }
+        SearchOutcome::AssumptionViolated { .. } => {
+            return report_not_native(printer, "an assumption that is false");
+        }
         SearchOutcome::Stopped {
             violation: Some(violation),
             reason,

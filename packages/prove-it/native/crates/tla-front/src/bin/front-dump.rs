@@ -34,7 +34,7 @@ use tla_front::json::write_js_string;
 use tla_front::lexer::tokenize;
 use tla_front::lower::{Lowering, RankedTexts};
 use tla_front::parser::{parse_module, parse_sany_module};
-use tla_ir::Model;
+use tla_ir::{Model, Startup};
 
 fn write_tokens(out: &mut String, source: &str) {
     match tokenize(source) {
@@ -168,13 +168,12 @@ fn lower_definitions(environment: &Environment) -> Result<Vec<u8>, FrontError> {
         is_warning_enabled: true,
         is_recording_graph: false,
         version: None,
-        // TLC's default seed, 0, and java.util.Random seeded with it, which no assumption has drawn
-        // from: the model `ir.ts` writes for an environment that evaluated nothing at startup.
+        // TLC's default seed.
         random_seed: 0,
-        startup_random: 0x5_DEEC_E66D,
         atoms: Vec::new(),
         live_formula: Vec::new(),
         live_properties: Vec::new(),
+        startup: Startup::default(),
     };
     Ok(tla_ir::encode(&lowering.finish(model)?))
 }

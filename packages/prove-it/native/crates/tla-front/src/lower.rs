@@ -10,7 +10,7 @@ use tla_ir::{
     Bound as IrBound, Builtin as IrBuiltin, ConfigName, Constant, Definition as IrDefinition,
     DefinitionForm, Index, Ir, Junction, Model, Name as IrName, Node, NodeId, NodeKind, Nodes,
     Param, PathStep, Pattern, Printed, Resolution, Selector as IrSelector, SourceRange as IrRange,
-    Startup, TextId, Update, Values,
+    TextId, Update, Values,
 };
 
 use crate::ast::*;
@@ -260,8 +260,6 @@ impl<'a> Lowering<'a> {
         };
         let id = self.open(&definition.location);
         let name = self.get_text(&definition.name);
-        // TLC computes a startup value only when it starts, which the engine's startup phase will
-        // do; until then, linking alone holds none.
         let form = match &definition.kind {
             DefinitionKind::Operator { params, .. } => DefinitionForm::Operator(
                 params
@@ -280,7 +278,6 @@ impl<'a> Lowering<'a> {
         self.arena[id as usize].kind = NodeKind::Definition(IrDefinition {
             name,
             flags,
-            startup: Startup::None,
             form,
             body,
         });

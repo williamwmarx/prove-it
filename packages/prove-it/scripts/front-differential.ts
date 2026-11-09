@@ -149,6 +149,7 @@ const lowerDefinitions = (source: string, path: string) => {
     atoms: [],
     liveFormula: undefined,
     liveProperties: [],
+    startup: { substitutes: [], definitions: [], assumptions: [] },
   });
   return "ir" in outcome ? { ir: Buffer.from(outcome.ir).toString("hex") } : outcome;
 };

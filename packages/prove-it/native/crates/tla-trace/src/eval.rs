@@ -9,7 +9,7 @@ use std::rc::Rc;
 
 use tla_ir::{
     Bound, Definition, DefinitionForm, Index, Ir, Name, NodeId, NodeKind, Param, PathStep, Pattern,
-    Resolution, ScopeBinding, Startup, TextId,
+    Resolution, ScopeBinding, TextId,
 };
 
 use crate::print::{format_printed, format_value};
@@ -623,12 +623,16 @@ impl<'ir> Evaluator<'ir> {
 
     fn definition_value(&mut self, node: NodeId, context: &Context) -> Evaluated<Value> {
         let definition = self.definition(node);
-        match definition.startup {
-            Startup::Value(Some(value)) => return self.value(value),
-            Startup::Value(None) | Startup::Object => {
-                return fail("a value TLC computed at startup with effects");
-            }
-            Startup::None => {}
+        // The value TLC computed at startup, which the engine's startup phase computes.
+        if self
+            .ir
+            .model
+            .startup
+            .definitions
+            .iter()
+            .any(|&index| self.ir.definitions[index as usize] == node)
+        {
+            return fail("a value TLC computed at startup with effects");
         }
         let key = (node, context.is_primed);
         if let Some(value) = self.cache.get(&key) {
@@ -765,8 +769,9 @@ impl<'ir> Evaluator<'ir> {
                     return Ok(None);
                 };
                 let definition = self.definition(self.ir.definitions[index as usize]);
-                Ok(match (&definition.form, &definition.startup) {
-                    (DefinitionForm::Operator(params), Startup::None) if params.is_empty() => {
+                let is_startup = self.ir.model.startup.definitions.contains(&index);
+                Ok(match &definition.form {
+                    DefinitionForm::Operator(params) if params.is_empty() && !is_startup => {
                         Some((definition.body, context.global()))
                     }
                     _ => None,
@@ -1236,8 +1241,9 @@ impl<'ir> Evaluator<'ir> {
             return Ok(None);
         };
         let definition = self.definition(self.ir.definitions[index as usize]);
-        Ok(match (&definition.form, &definition.startup) {
-            (DefinitionForm::Function(bounds), Startup::None) => {
+        let is_startup = self.ir.model.startup.definitions.contains(&index);
+        Ok(match &definition.form {
+            DefinitionForm::Function(bounds) if !is_startup => {
                 Some((&bounds[..], definition.body, context.global()))
             }
             _ => None,

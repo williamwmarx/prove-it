@@ -4,7 +4,7 @@
 use crate::{
     AtomKind, Bound, ConfigName, DefinitionForm, EnabledActions, IR_VERSION, Ir, Junction,
     LiveTerm, MAGIC, Name, NodeId, NodeKind, Param, PathStep, Pattern, Resolution, ScopeBinding,
-    Selector, Startup, Value, code, tag,
+    Selector, Value, code, tag,
 };
 
 /// Encodes an IR.
@@ -150,9 +150,8 @@ fn encode_here(ir: &Ir) -> Vec<u8> {
         model.is_recording_graph as i32,
         optional(model.version),
     ]);
-    for long in [model.random_seed, model.startup_random] {
-        words.extend([long as u32 as i32, (long >> 32) as u32 as i32]);
-    }
+    let long = model.random_seed;
+    words.extend([long as u32 as i32, (long >> 32) as u32 as i32]);
     words.push(model.atoms.len() as i32);
     for atom in &model.atoms {
         let (kind, unchanged, actions) = match &atom.kind {
@@ -185,6 +184,22 @@ fn encode_here(ir: &Ir) -> Vec<u8> {
     for property in &model.live_properties {
         words.push(property.name as i32);
         push_live(&mut words, &property.formula);
+    }
+    let startup = &model.startup;
+    words.push(startup.substitutes.len() as i32);
+    for &(name, definition) in &startup.substitutes {
+        words.extend([name as i32, definition as i32]);
+    }
+    words.push(startup.definitions.len() as i32);
+    words.extend(
+        startup
+            .definitions
+            .iter()
+            .map(|&definition| definition as i32),
+    );
+    words.push(startup.assumptions.len() as i32);
+    for &(assumption, name) in &startup.assumptions {
+        words.extend([offset(assumption), name as i32]);
     }
     words.push(ir.definitions.len() as i32);
     words.extend(ir.definitions.iter().map(|&id| offset(id)));
@@ -491,11 +506,6 @@ impl<'a> NodeWriter<'a> {
             }
             NodeKind::Definition(definition) => {
                 self.words.push(definition.name as i32);
-                self.words.push(match definition.startup {
-                    Startup::None => code::NO_STARTUP_VALUE,
-                    Startup::Object => code::OBJECT_STARTUP_VALUE,
-                    Startup::Value(value) => value.map_or(-1, |value| value as i32),
-                });
                 match &definition.form {
                     DefinitionForm::Operator(params) => {
                         self.words.push(0);

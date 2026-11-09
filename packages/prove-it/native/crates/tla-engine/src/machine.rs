@@ -70,10 +70,9 @@ pub struct Program {
     pub(crate) round_count: usize,
     pub(crate) recursives: Vec<Option<Recursive>>,
     pub(crate) is_epoch_checked: bool,
-    /// What a state's fingerprint is xored with to seed the draws of its expansion.
+    /// What TLC seeds the generator its startup and initial states draw from with, and what a
+    /// state's fingerprint is xored with to seed the draws of its expansion.
     pub(crate) random_seed: u64,
-    /// The generator the initial states draw from, as the interpreter left it.
-    pub(crate) startup_random: u64,
 }
 
 /// The statistics of one memo table, as `getMemoStatistics` gives them.
@@ -145,7 +144,7 @@ impl<'p> Machine<'p> {
             is_past_walk: false,
             spare_states: Vec::new(),
             output: Vec::new(),
-            random: JavaRandom::from_state(program.startup_random),
+            random: JavaRandom::seeded(program.random_seed),
         }
     }
 

@@ -435,6 +435,12 @@ pub(super) unsafe extern "C" fn check_model(env: napi_env, info: napi_callback_i
                     set(env, result, c"status", create_string(env, "declined")?)?;
                     set(env, result, c"reason", create_string(env, &reason)?)?;
                 }
+                // The interpreter checks the assumptions before it hands the search over.
+                SearchOutcome::AssumptionViolated { name } => {
+                    set(env, result, c"status", create_string(env, "declined")?)?;
+                    let reason = format!("the assumption {name} is false");
+                    set(env, result, c"reason", create_string(env, &reason)?)?;
+                }
                 SearchOutcome::Complete {
                     counts,
                     checkpoint,

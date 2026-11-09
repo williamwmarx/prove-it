@@ -5,7 +5,7 @@ use tla_front::TlcVersion;
 use tla_front::config::parse_config;
 use tla_front::environment::{EnvironmentOptions, create_environment};
 use tla_front::lower::{Lowering, RankedTexts};
-use tla_ir::{Ir, Junction, Model, NodeKind, Resolution};
+use tla_ir::{Ir, Junction, Model, NodeKind, Resolution, Startup};
 
 fn lower(source: &str, name: &str) -> Ir {
     let config = parse_config("", TlcVersion::Master).expect("a configuration");
@@ -49,10 +49,10 @@ fn lower(source: &str, name: &str) -> Ir {
             // TLC's default seed, 0, and java.util.Random seeded with it, which no assumption has drawn
             // from: the model `ir.ts` writes for an environment that evaluated nothing at startup.
             random_seed: 0,
-            startup_random: 0x5_DEEC_E66D,
             atoms: Vec::new(),
             live_formula: Vec::new(),
             live_properties: Vec::new(),
+            startup: Startup::default(),
         })
         .expect("an IR")
 }

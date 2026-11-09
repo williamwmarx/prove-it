@@ -33,8 +33,7 @@ use std::rc::{Rc, Weak};
 use std::sync::Arc;
 
 use tla_ir::{
-    Definition, DefinitionForm, Index, Ir, Name, NodeId, NodeKind, Param, Resolution, Startup,
-    TextId, Value,
+    Definition, DefinitionForm, Index, Ir, Name, NodeId, NodeKind, Param, Resolution, TextId, Value,
 };
 use tla_values::store::{FALSE, Outcome, TRUE};
 use tla_values::{Bail, Id, Store};
@@ -604,6 +603,9 @@ pub struct Compiler<'a> {
     // A definition compiled unprimed or primed, outside the initial predicate or in it, where a
     // variable's value isn't yet known to stream in order (`is_in_order`).
     definition_cache: HashMap<NodeId, [Option<(u64, Compiled)>; 4]>,
+    // The definitions TLC evaluates once at startup, each compiled to read the value it computed
+    // then, once compiled.
+    startup_definitions: HashMap<NodeId, Option<Compiled>>,
     recursive_operators: HashMap<usize, OperatorEntries>,
     recursive_functions: HashMap<(NodeId, usize), FunctionEntries>,
     expanding: HashSet<NodeId>,
@@ -667,11 +669,17 @@ impl<'a> Compiler<'a> {
                 slot_count: SEARCH_SLOTS.len(),
                 is_epoch_checked: options.is_epoch_checked,
                 random_seed: ir.model.random_seed,
-                startup_random: ir.model.startup_random,
                 ..Program::default()
             },
             texts: vec![None; ir.texts.len()],
             definition_cache: HashMap::new(),
+            startup_definitions: ir
+                .model
+                .startup
+                .definitions
+                .iter()
+                .map(|&index| (ir.definitions[index as usize], None))
+                .collect(),
             recursive_operators: HashMap::new(),
             recursive_functions: HashMap::new(),
             expanding: HashSet::new(),
@@ -1216,12 +1224,11 @@ impl<'a> Compiler<'a> {
         context: &Context,
     ) -> Compiling<Compiled> {
         let definition = self.definition(node);
-        match definition.startup {
-            Startup::Value(Some(value)) => return Ok(constant(self.intern_value(value)?)),
-            Startup::Value(None) | Startup::Object => {
-                return unsupported("a value TLC computed at startup with effects");
-            }
-            Startup::None => {}
+        if let Some(startup) = self.startup_definitions.get(&node) {
+            return match startup {
+                Some(compiled) => Ok(compiled.clone()),
+                None => self.compile_startup_definition(node, context),
+            };
         }
         let params = match &definition.form {
             DefinitionForm::Function(_) => return self.compile_function_definition(node, context),
@@ -1253,6 +1260,37 @@ impl<'a> Compiler<'a> {
         self.expanding.remove(&node);
         let compiled = result?;
         self.cache_definition(node, index, compiled.clone(), &read);
+        Ok(compiled)
+    }
+
+    // A definition TLC evaluates once at startup: what it computes is its value from then on, so
+    // its effects aren't repeated. TLC keeps a function a definition constructs lazy, applying it
+    // anew each time, which the engine doesn't.
+    fn compile_startup_definition(
+        &mut self,
+        node: NodeId,
+        context: &Context,
+    ) -> Compiling<Compiled> {
+        let definition = self.definition(node);
+        if !matches!(&definition.form, DefinitionForm::Operator(params) if params.is_empty()) {
+            return unsupported("a function TLC computes at startup");
+        }
+        if self.expanding.contains(&node) {
+            return unsupported("a recursive zero-arity definition");
+        }
+        self.expanding.insert(node);
+        let compiled = self.compile(definition.body, &context.global(context.can_print));
+        self.expanding.remove(&node);
+        let compiled = compiled?;
+        let once = self.allocate_once();
+        let inner = compiled.eval.clone();
+        let compiled = Compiled {
+            is_costly: false,
+            is_constant: true,
+            ..compiled.with_eval(eval(move |machine| machine.once(once, &inner)))
+        };
+        self.startup_definitions
+            .insert(node, Some(compiled.clone()));
         Ok(compiled)
     }
 

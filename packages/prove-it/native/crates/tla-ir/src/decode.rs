@@ -163,6 +163,14 @@ impl Decoder<'_> {
     }
 
     // A 64-bit number as two words, the low first.
+    // A definition's index, which the definitions decoded after the model bound.
+    fn index(&mut self) -> Decoded<Index> {
+        match self.next()? {
+            index if index >= 0 => Ok(index as Index),
+            other => self.error(format!("definition {other}")),
+        }
+    }
+
     fn long(&mut self) -> Decoded<u64> {
         let low = self.next()? as u32;
         let high = self.next()? as u32;
@@ -390,11 +398,20 @@ impl Decoder<'_> {
                 self.words.len() - nodes_start
             ));
         }
+        if let Some(&index) = model
+            .startup
+            .substitutes
+            .iter()
+            .map(|(_, index)| index)
+            .chain(&model.startup.definitions)
+            .find(|&&index| index as usize >= definition_count)
+        {
+            return self.error(format!("definition {index} of {definition_count}"));
+        }
         let limits = Limits {
             constants: constant_count,
             definitions: definition_count,
             builtins: builtin_count,
-            values: values.list.len(),
         };
         let nodes = self.nodes(nodes_start, &limits)?;
 
@@ -620,7 +637,6 @@ impl Decoder<'_> {
         let is_recording_graph = self.flag()?;
         let version = self.optional_below(self.text_count as usize, "text")?;
         let random_seed = self.long()?;
-        let startup_random = self.long()?;
         let count = self.count()?;
         let mut atoms = Vec::with_capacity(count);
         for _ in 0..count {
@@ -672,6 +688,16 @@ impl Decoder<'_> {
                 })
             })
             .collect::<Decoded<_>>()?;
+        let count = self.count()?;
+        let substitutes = (0..count)
+            .map(|_| Ok((self.text()?, self.index()?)))
+            .collect::<Decoded<_>>()?;
+        let count = self.count()?;
+        let definitions = (0..count).map(|_| self.index()).collect::<Decoded<_>>()?;
+        let count = self.count()?;
+        let assumptions = (0..count)
+            .map(|_| Ok((node(self)?, self.text()?)))
+            .collect::<Decoded<_>>()?;
         Ok(Model {
             init,
             next,
@@ -693,10 +719,14 @@ impl Decoder<'_> {
             is_recording_graph,
             version,
             random_seed,
-            startup_random,
             atoms,
             live_formula,
             live_properties,
+            startup: Startup {
+                substitutes,
+                definitions,
+                assumptions,
+            },
         })
     }
 
@@ -958,14 +988,6 @@ impl Decoder<'_> {
                     return self.error(format!("definition flags {flags}"));
                 }
                 let name = self.text()?;
-                let startup = match self.next()? {
-                    code::NO_STARTUP_VALUE => Startup::None,
-                    code::OBJECT_STARTUP_VALUE => Startup::Object,
-                    ordinal if (ordinal as usize) < limits.values => {
-                        Startup::Value(Some(ordinal as u32))
-                    }
-                    other => return self.error(format!("startup value {other}")),
-                };
                 let form = match self.next()? {
                     0 => DefinitionForm::Operator(self.params()?),
                     1 => DefinitionForm::Function(self.bounds(&mut child)?),
@@ -974,7 +996,6 @@ impl Decoder<'_> {
                 NodeKind::Definition(Definition {
                     name,
                     flags,
-                    startup,
                     form,
                     body: child(self)?,
                 })
@@ -1089,7 +1110,6 @@ struct Limits {
     constants: usize,
     definitions: usize,
     builtins: usize,
-    values: usize,
 }
 
 impl Model {
@@ -1122,6 +1142,9 @@ impl Model {
             {
                 visit(unchanged)?;
             }
+        }
+        for (assumption, _) in &mut self.startup.assumptions {
+            visit(assumption)?;
         }
         Ok(())
     }

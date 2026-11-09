@@ -5,7 +5,7 @@
 //! has a value, TLC evaluates the rest of a conjunction as guards, in the initial predicate and,
 //! with warnings on, in an action.
 
-use tla_ir::{NodeId, NodeKind, Resolution, Startup};
+use tla_ir::{NodeId, NodeKind, Resolution};
 
 use crate::eval::{Context, Evaluator};
 use crate::sets::is_member;
@@ -410,11 +410,10 @@ impl<'ir> Evaluator<'ir> {
             NodeKind::Identifier(name) if !name.is_local => match name.resolution {
                 Resolution::Variable(_) => return Ok(!context.is_primed),
                 Resolution::Constant(_) => return Ok(true),
-                Resolution::Definition(index) => {
-                    let definition = self.definition(self.ir.definitions[index as usize]);
-                    if !matches!(definition.startup, Startup::None) {
-                        return Ok(true);
-                    }
+                Resolution::Definition(index)
+                    if self.ir.model.startup.definitions.contains(&index) =>
+                {
+                    return Ok(true);
                 }
                 _ => {}
             },
