@@ -13,6 +13,7 @@ use crate::environment::{EnvironmentOptions, get_sany_messages};
 use crate::errors::{FrontError, SanyError};
 use crate::get_standard_module;
 use crate::hash::{FastMap, FastSet};
+use crate::linter::Linter;
 use crate::parser::{extract_module, parse_sany_module};
 use crate::pcal::{PcalFatal, PcalSession, ValidationResult};
 
@@ -606,78 +607,6 @@ impl Loader<'_> {
     }
 }
 
-fn collect_field_names(expression: &Expr, names: &mut FastSet<Rc<str>>) {
-    if let ExpressionKind::Record {
-        is_set: false,
-        fields,
-    } = &expression.kind
-    {
-        names.extend(fields.iter().map(|field| field.name.clone()));
-    }
-    expression
-        .children()
-        .iter()
-        .for_each(|child| collect_field_names(child, names));
-}
-
-fn collect_module_names(
-    module: &Module,
-    names: &mut FastSet<Rc<str>>,
-    fields: &mut FastSet<Rc<str>>,
-) {
-    names.insert(module.name.clone());
-    names.extend(
-        module
-            .constants
-            .iter()
-            .map(|declaration| declaration.name.clone()),
-    );
-    names.extend(
-        module
-            .variables
-            .iter()
-            .map(|declaration| declaration.name.clone()),
-    );
-    names.extend(
-        module
-            .definitions
-            .iter()
-            .map(|definition| definition.name.clone()),
-    );
-    names.extend(
-        module
-            .instances
-            .iter()
-            .filter_map(|instance| instance.name.clone()),
-    );
-    names.extend(
-        module
-            .assumptions
-            .iter()
-            .filter_map(|assumption| assumption.name.clone()),
-    );
-    names.extend(
-        module
-            .theorems
-            .iter()
-            .filter_map(|theorem| theorem.name.clone()),
-    );
-    for definition in &module.definitions {
-        collect_field_names(&definition.body, fields);
-    }
-    for assumption in &module.assumptions {
-        collect_field_names(&assumption.expression, fields);
-    }
-    for instance in &module.instances {
-        for substitution in &instance.substitutions {
-            collect_field_names(&substitution.expression, fields);
-        }
-    }
-    for inner in &module.modules {
-        collect_module_names(inner, names, fields);
-    }
-}
-
 /// What SANY prints for the spec at `spec_path` while TLC runs it: when SANY accepts the spec
 /// without a message, or stops at a fatal error other than a parse error. `NotYet` for SANY's
 /// other messages, PlusCal and what SANY's linter could warn about.
@@ -828,26 +757,24 @@ fn write_sany_text(loader: &mut Loader, root: &Rc<str>) -> Result<()> {
             .iter()
             .filter(|name| !UNLINTED_MODULES.contains(&&***name))
             .collect();
-        let mut names: FastSet<Rc<str>> = FastSet::default();
-        let mut fields: FastSet<Rc<str>> = FastSet::default();
-        for loaded in loader.modules.values() {
-            let mut ignored = FastSet::default();
-            collect_module_names(&loaded.module, &mut names, &mut ignored);
-        }
+        let modules: FastMap<Rc<str>, Rc<Module>> = loader
+            .modules
+            .iter()
+            .map(|(name, loaded)| (name.clone(), loaded.module.clone()))
+            .collect();
+        let linter = Linter::new(&modules);
+        let mut warnings = Vec::new();
         for name in &linted {
-            collect_module_names(
-                &loader.modules[&***name].module,
-                &mut FastSet::default(),
-                &mut fields,
-            );
-        }
-        if fields.iter().any(|field| names.contains(field)) {
-            return Err(not_yet(
-                "a record field named like a definition, which SANY's linter checks",
-            ));
+            warnings.extend(linter.lint_module(name)?);
         }
         for name in linted {
             loader.lines.push(format!("Linting of module {name}\n"));
+        }
+        for warning in warnings {
+            loader.lines.push(format!(
+                "{}\n\n{}\n\n\n\n",
+                warning.location, warning.message
+            ));
         }
     }
     Ok(())

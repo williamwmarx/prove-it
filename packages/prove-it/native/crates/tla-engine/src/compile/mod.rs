@@ -636,6 +636,9 @@ pub struct Compiler<'a> {
     startup_definitions: HashMap<NodeId, Option<Compiled>>,
     recursive_operators: HashMap<usize, OperatorEntries>,
     recursive_functions: HashMap<(NodeId, usize), FunctionEntries>,
+    /// For each global recursive function, the scope that binds its name to it, so that a body
+    /// naming it locally, as an instance's copy of it does, reaches the same function.
+    global_function_scopes: HashMap<NodeId, Rc<Scope>>,
     /// The slots of names bound over intervals, whose values are integers.
     int_slots: HashSet<u32>,
     /// How many ENABLED actions the compiler is inside, whose private next state also holds the
@@ -709,6 +712,7 @@ impl<'a> Compiler<'a> {
                 .collect(),
             recursive_operators: HashMap::new(),
             recursive_functions: HashMap::new(),
+            global_function_scopes: HashMap::new(),
             int_slots: HashSet::new(),
             enabled_depth: 0,
             variable_extent: ir.variables.len(),
@@ -2155,7 +2159,8 @@ impl<'a> Compiler<'a> {
     ) -> Compiling<Compiled> {
         let definition = self.definition(node);
         if definition.flags & (Definition::RECURSIVE | Definition::SELF_REFERENTIAL) != 0 {
-            let recursive = self.get_recursive_function(node, context, None)?;
+            let scope = self.global_function_scope(node);
+            let recursive = self.get_recursive_function(node, context, Some(scope))?;
             return Ok(self.materialize_recursive(&recursive));
         }
         let index = definition_index(context);
@@ -2373,14 +2378,30 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    // The recursive function an application applies, when it names one directly.
+    // The recursive function an application applies, when it names one, or an operator or a LET
+    // gives one, which TLC keeps lazy.
     fn get_applied_recursive_function(
         &mut self,
         function: NodeId,
         context: &Context,
     ) -> Compiling<Option<Rc<RecursiveFunction>>> {
-        let NodeKind::Identifier(name) = self.node(function).1 else {
-            return Ok(None);
+        let name = match self.node(function).1 {
+            NodeKind::Identifier(name) => *name,
+            NodeKind::Let {
+                instances,
+                definitions,
+                body,
+            } => {
+                let inner = self.bind_let_definitions(*instances, definitions, *body, context)?;
+                return self.get_applied_recursive_function(*body, &inner);
+            }
+            NodeKind::Apply { .. } => {
+                return match self.resolve_action(function, context)? {
+                    Some((body, inner)) => self.get_applied_recursive_function(body, &inner),
+                    None => Ok(None),
+                };
+            }
+            _ => return Ok(None),
         };
         if let Some(found) = lookup(&context.scope, name.text) {
             return match &found.binding {
@@ -2403,12 +2424,34 @@ impl<'a> Compiler<'a> {
         };
         let node = self.ir.definitions[index as usize];
         let definition = self.definition(node);
-        if !matches!(definition.form, DefinitionForm::Function(_))
-            || definition.flags & (Definition::RECURSIVE | Definition::SELF_REFERENTIAL) == 0
-        {
+        if matches!(definition.form, DefinitionForm::Operator(_)) {
+            return match self.resolve_action(function, context)? {
+                Some((body, inner)) => self.get_applied_recursive_function(body, &inner),
+                None => Ok(None),
+            };
+        }
+        if definition.flags & (Definition::RECURSIVE | Definition::SELF_REFERENTIAL) == 0 {
             return Ok(None);
         }
-        self.get_recursive_function(node, context, None).map(Some)
+        let scope = self.global_function_scope(node);
+        self.get_recursive_function(node, context, Some(scope))
+            .map(Some)
+    }
+
+    // An instance copies a recursive function with its body naming it as the module did, which
+    // the interpreter binds when it builds the function, as LET binds its own.
+    fn global_function_scope(&mut self, node: NodeId) -> Rc<Scope> {
+        if let Some(scope) = self.global_function_scopes.get(&node) {
+            return Rc::clone(scope);
+        }
+        let name = self.definition(node).name;
+        let scope = Rc::new(Scope {
+            name,
+            binding: Binding::Recursive { definition: node },
+            parent: None,
+        });
+        self.global_function_scopes.insert(node, Rc::clone(&scope));
+        scope
     }
 }
 

@@ -22,14 +22,16 @@ use crate::summary::{
     optimistic_probability, out_degree_summary,
 };
 use crate::time::{format_date, format_duration};
-use crate::trace::rebuild_trace;
+use crate::trace::{PostconditionRun, Postconditions, check_postconditions, rebuild_trace};
 use tla_front::TlcVersion;
 use tla_front::config::{ModelConfig, parse_config};
 use tla_trace::{Site, pretty_print};
+use tla_trace::{Stats, Verdict as PostconditionVerdict};
 
 // TLC's exit statuses, from EC.ExitStatus.
 const SUCCESS: i32 = 0;
 const DEADLOCK: i32 = 11;
+const ASSUMPTION_VIOLATION: i32 = 10;
 const SAFETY_VIOLATION: i32 = 12;
 const LIVENESS_VIOLATION: i32 = 13;
 const CONFIG_PARSE_ERROR: i32 = 151;
@@ -513,6 +515,8 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
         ..Settings::default()
     };
     let (sender, receiver) = mpsc::channel();
+    // How many initial states TLC generated, which TLCGet("stats") reports.
+    let mut initial_generated = 0;
     let outcome = std::thread::scope(|scope| {
         let ir = &ir;
         let searching = std::thread::Builder::new()
@@ -533,6 +537,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                     &format!("Computed {count} initial states..."),
                 ),
                 Event::InitialStates(generated, distinct) => {
+                    initial_generated = generated;
                     print_initial_states(printer, generated, distinct)
                 }
                 Event::Progress(generated, distinct, queued, depth) => {
@@ -575,11 +580,8 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
             possible,
             ..
         } => {
-            // Once the search completes, TLC checks the postconditions, which the binary doesn't
-            // evaluate yet, and reports a _POSSIBLE predicate the search never witnessed.
-            if !config.postconditions.is_empty() {
-                return report_not_native(printer, "a POSTCONDITION");
-            }
+            // Once the search completes, TLC reports a _POSSIBLE predicate the search never
+            // witnessed, and then checks the postconditions.
             if possible.iter().any(|&count| count <= 0) {
                 return report_not_native(
                     printer,
@@ -592,12 +594,25 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                 let is_lasso = matches!(liveness.verdict, Verdict::Lasso { .. });
                 let is_accepted = matches!(liveness.verdict, Verdict::Accepted { .. });
                 if let Some(violation) = violation.filter(|_| is_lasso || is_accepted) {
+                    let run = postcondition_run(
+                        &ir,
+                        Some(&possible),
+                        &Statistics {
+                            generated: counts.generated,
+                            distinct: counts.distinct,
+                            queued: 0,
+                            depth: counts.depth,
+                        },
+                        counts.initial_generated,
+                        start,
+                    );
                     return print_violation(
                         printer,
                         &ir,
                         &config,
                         &violation,
                         is_lasso.then_some(&liveness),
+                        Some(&run),
                         start,
                     )
                     .unwrap_or_else(|why| {
@@ -641,6 +656,39 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                 };
                 let checking = print_liveness_started(printer, &statistics, liveness.branches);
                 print_liveness_finished(printer, checking);
+            }
+            if !ir.model.postconditions.is_empty() {
+                if has_constant_postcondition(&ir) {
+                    return report_not_native(printer, "a POSTCONDITION TLC computes as it starts");
+                }
+                let statistics = Statistics {
+                    generated: counts.generated,
+                    distinct: counts.distinct,
+                    queued: 0,
+                    depth: counts.depth,
+                };
+                let run = postcondition_run(
+                    &ir,
+                    Some(&possible),
+                    &statistics,
+                    counts.initial_generated,
+                    start,
+                );
+                let checked = match check_postconditions(&ir, &run) {
+                    Ok(checked) => checked,
+                    Err(reason) => return report_not_native(printer, &reason),
+                };
+                // What the postconditions print comes as TLC evaluates them; TLC reports one that
+                // doesn't hold in place of the success, with the statistics.
+                for line in &checked.printed {
+                    printer.line(line);
+                }
+                if checked.failure.is_some() {
+                    print_postcondition_failure(printer, &ir, Some(&checked));
+                    print_statistics(printer, &statistics, start);
+                    print_finished(printer, start);
+                    return ASSUMPTION_VIOLATION;
+                }
             }
             (counts, fingerprints)
         }
@@ -687,8 +735,18 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                     };
                     print_failure(printer, &ir, &stop, start)
                 }
-                _ => print_violation(printer, &ir, &config, &violation, None, start)
-                    .map_err(str::to_string),
+                _ => {
+                    let counts = &violation.counts;
+                    let statistics = Statistics {
+                        generated: counts.generated,
+                        distinct: counts.distinct,
+                        queued: counts.queued,
+                        depth: counts.depth,
+                    };
+                    let run = postcondition_run(&ir, None, &statistics, initial_generated, start);
+                    print_violation(printer, &ir, &config, &violation, None, Some(&run), start)
+                        .map_err(str::to_string)
+                }
             };
             return printed.unwrap_or_else(|why| {
                 report_not_native(printer, &format!("the engine stopped: {reason}: {why}"))
@@ -816,11 +874,14 @@ fn print_violation(
     config: &ModelConfig,
     violation: &Violation,
     liveness: Option<&Liveness>,
+    postconditions: Option<&PostconditionRun>,
     start: Instant,
 ) -> Result<i32, &'static str> {
-    // TLC checks the postconditions on the trace after it prints it.
-    if !config.postconditions.is_empty() || !config.possible.is_empty() {
-        return Err("POSTCONDITION or _POSSIBLE");
+    // TLC reports a _POSSIBLE predicate the search never witnessed, which a search that stopped
+    // doesn't count yet, before it checks the postconditions on the trace.
+    let possible = postconditions.map_or(&[][..], |run| &run.possible[..]);
+    if possible.len() != ir.model.possible.len() || possible.iter().any(|(_, count)| *count <= 0) {
+        return Err("a _POSSIBLE predicate");
     }
     // An owner past the configuration's invariants is a property checked as one.
     let model = &ir.model;
@@ -909,7 +970,11 @@ fn print_violation(
     };
     // TLC prints a trace once it has rebuilt all of it, and a state that the evaluator can't
     // rebuild as TLC built it keeps the run not native.
-    let trace = match rebuild_trace(ir, violation) {
+    // After a violation, TLC checks no postcondition where one is a value it computes as it
+    // starts.
+    let checked = postconditions
+        .filter(|_| !ir.model.postconditions.is_empty() && !has_constant_postcondition(ir));
+    let trace = match rebuild_trace(ir, violation, checked) {
         Ok(trace) => trace,
         Err(reason) => return Ok(report_not_native(printer, &reason)),
     };
@@ -933,6 +998,7 @@ fn print_violation(
     if let ViolationKind::InitialInvariant(_) = violation.kind {
         let state = &trace.states.first().ok_or(NOT_IN_IR)?.text;
         printer.print(code, Level::Error, &format!("{text}\n{state}"));
+        print_postcondition_failure(printer, ir, trace.postconditions.as_ref());
         print_finished(printer, start);
         return Ok(exit_code);
     }
@@ -974,6 +1040,14 @@ fn print_violation(
             &format!("{}: <{label}>\n{}", position + 1, state.text),
         );
     }
+    // What the postconditions printed follows the trace (`traceOutput`).
+    for line in trace
+        .postconditions
+        .iter()
+        .flat_map(|checked| &checked.printed)
+    {
+        printer.line(line);
+    }
     match lasso {
         None if is_counterexample => {}
         None => {
@@ -1009,6 +1083,7 @@ fn print_violation(
             NO_SPECIFICATION_WARNING,
         );
     }
+    print_postcondition_failure(printer, ir, trace.postconditions.as_ref());
     if let Some(checking) = checking {
         print_liveness_finished(printer, checking);
     }
@@ -1044,6 +1119,96 @@ fn properties_headline(ir: &tla_ir::Ir, violated: &[usize]) -> Option<String> {
             if rest.len() > 1 { "," } else { "" }
         ),
     })
+}
+
+/// What TLCGet reads once the search is over, for the postconditions: each `_POSSIBLE`
+/// predicate's count, where the search counted them, and TLCGet("stats").
+fn postcondition_run(
+    ir: &tla_ir::Ir,
+    possible: Option<&[i64]>,
+    statistics: &Statistics,
+    initial_generated: u64,
+    start: Instant,
+) -> PostconditionRun {
+    let counts = |count: u64| i64::try_from(count).unwrap_or(i64::MAX);
+    PostconditionRun {
+        possible: possible
+            .map(|possible| {
+                ir.model
+                    .possible
+                    .iter()
+                    .zip(possible)
+                    .map(|(predicate, &count)| {
+                        (ir.texts[predicate.name.name as usize].to_string(), count)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+        stats: Stats {
+            queue: counts(statistics.queued),
+            distinct: counts(statistics.distinct),
+            initial: counts(initial_generated),
+            generated: counts(statistics.generated),
+            diameter: counts(statistics.depth),
+            duration: counts(start.elapsed().as_secs()),
+        },
+    }
+}
+
+/// Whether a postcondition is a definition TLC computes as it starts, which it rejects.
+fn has_constant_postcondition(ir: &tla_ir::Ir) -> bool {
+    ir.model.postconditions.iter().any(|postcondition| {
+        postcondition
+            .definition
+            .is_some_and(|definition| ir.model.startup.definitions.contains(&definition))
+    })
+}
+
+/// TLC's report of the first postcondition that doesn't hold, named with where its definition's
+/// body is written (`findPostconditionViolation`).
+fn print_postcondition_failure(
+    printer: &mut Printer,
+    ir: &tla_ir::Ir,
+    postconditions: Option<&Postconditions>,
+) {
+    let Some((index, verdict)) = postconditions.and_then(|checked| checked.failure.as_ref()) else {
+        return;
+    };
+    let postcondition = &ir.model.postconditions[*index];
+    let name = &ir.texts[postcondition.name as usize];
+    let location = postcondition
+        .definition
+        .and_then(|definition| {
+            let node = ir.definitions[definition as usize];
+            match &ir.nodes.arena[node as usize].kind {
+                tla_ir::NodeKind::Definition(definition) => {
+                    ir.nodes.arena[definition.body as usize].range
+                }
+                _ => None,
+            }
+        })
+        .map(|range| {
+            format!(
+                " at line {}, col {} to line {}, col {} of module {}",
+                range.start_line,
+                range.start_column,
+                range.end_line,
+                range.end_column,
+                ir.texts[range.module as usize]
+            )
+        })
+        .unwrap_or_default();
+    let (code, text) = match verdict {
+        PostconditionVerdict::Failed(message) => (
+            code::POSTCONDITION_FAILED,
+            format!("Evaluating postcondition {name}{location} failed.\n{message}"),
+        ),
+        _ => (
+            code::POSTCONDITION_FALSE,
+            format!("Postcondition {name}{location} is false."),
+        ),
+    };
+    printer.print(code, Level::Error, &text);
 }
 
 /// Without -tool, TLC prints how long it ran for a person to read.

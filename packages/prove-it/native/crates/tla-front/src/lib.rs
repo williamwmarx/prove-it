@@ -12,6 +12,7 @@ pub mod instances;
 pub mod json;
 pub mod levels;
 pub mod lexer;
+pub mod linter;
 pub mod live;
 pub mod lower;
 pub mod model;
@@ -21,6 +22,7 @@ pub mod parser;
 pub mod pcal;
 pub mod report;
 pub mod resolve;
+pub mod sany_parse_error;
 pub mod spec;
 #[rustfmt::skip]
 pub mod standard_builtins;

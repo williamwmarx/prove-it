@@ -215,6 +215,26 @@ Still to do:
   splits Next.
 - `files.rs` names the files SANY parses as `createFileDescriber` does. The directory TLC copies
   a module into is named by TLC's fingerprint of a string, as `getTemporaryName` does it.
-- With PROVE_IT_NATIVE_FRONT=1, and without -tool (which prints none of it), the binary prints
-  SANY's report as `tla_front::report::get_sany_text` writes it, in place of the recorded one. The
-  rest of the recorded front follows from `Starting...`, until tla-front writes that too.
+- With PROVE_IT_NATIVE_FRONT=1 the binary prints SANY's report as
+  `tla_front::report::get_sany_text` writes it, in place of the recorded one. Under -tool it goes
+  between "Starting SANY..." (2220) and "SANY finished." (2219), and otherwise before `Starting...`.
+  The rest of the front stays recorded until tla-front writes it too.
+- The engine's startup hooks (`startup_print`, `symmetry_sets_too_small`, `startup_done`) stay
+  silent while the front is recorded, since the recorded text already holds what they report.
+
+## POSTCONDITION
+
+- The IR carries the configuration's POSTCONDITIONs (`Model.postconditions`). `tla-trace`'s
+  `Rebuilder::postcondition` evaluates each one, with TLCGet("all:named")'s `_POSSIBLE` counts,
+  TLCGet("stats") and, after a violation, CounterExample built from the rebuilt trace.
+- After a search that completes, the binary prints what the postconditions printed as TLC
+  evaluates them, then the first that doesn't hold, in place of the success:
+  - 2404 `Postcondition X at <body range> is false.`, or
+  - 2405 `Evaluating postcondition X at <body range> failed.` with TLC's message;
+  then the statistics, and exit code 10.
+- After a violation, what the postconditions printed follows the trace, and a failing postcondition
+  is reported after the step back into a lasso's cycle. The violation's exit code stands.
+- Still not native:
+  - a postcondition TLC computes as it starts, which it rejects;
+  - an unwitnessed `_POSSIBLE` predicate, and `_POSSIBLE` counts after a search that stopped;
+  - what `Rebuilder::postcondition` declines, such as CounterExample's actions with parameters.
