@@ -18,7 +18,7 @@ use crate::Unsupported;
 use crate::eval::{Context, Evaluator};
 use crate::print::format_value;
 use crate::sets::as_tuple;
-use crate::value::{Class, Value, elements};
+use crate::value::{Class, Evaluated, Value, elements};
 
 /// One of TLC's actions: the expression it walks, with the values of the names the split bound,
 /// and what a trace calls it.
@@ -62,10 +62,11 @@ enum Added {
     Binding(ScopeBinding),
 }
 
-/// The IR with TLC's actions, and the scopes, values and texts they need, where it has none:
-/// `check.ts`'s `getTraceActions`. As there, a model whose next-state relation or the definitions
-/// the configuration names may print, draw or set a register gets none, since finding them would
-/// evaluate those, and so does one the split can't follow.
+/// The IR with TLC's actions, and the scopes, values and texts they need, where it has none, as
+/// `check.ts`'s `getTraceActions` gives them. Where the split would evaluate an expression that may
+/// print, draw or set a register, or the split can't follow TLC, there are none. `check.ts` gives
+/// none to a model whose next-state relation has an effect anywhere, which the interpreter would
+/// evaluate; this split evaluates only the constants TLC evaluates, so it labels those too.
 pub fn add_actions(ir: &Ir) -> Result<Ir, Unsupported> {
     let mut ir = ir.clone();
     // A spec without variables has no behaviors, and the IR's next-state relation stands for none.
@@ -79,9 +80,6 @@ pub fn add_actions(ir: &Ir) -> Result<Ir, Unsupported> {
     }
     let (actions, scopes, nodes) = {
         let mut evaluator = Evaluator::new(&ir);
-        if has_effect(&evaluator) {
-            return Ok(ir);
-        }
         // The actions read what TLC computed when it started, as the search does.
         if let Err(error) = evaluator.compute_startup() {
             return Err(Unsupported(format!(
@@ -214,7 +212,7 @@ impl Splitter<'_, '_> {
             name: Some(definition.name),
             parameters: Vec::new(),
         };
-        if self.is_constant_definition(definition)
+        if self.is_constant_definition(definition)?
             || args
                 .iter()
                 .any(|&arg| self.evaluator.can_read(arg, &place.context))
@@ -225,7 +223,7 @@ impl Splitter<'_, '_> {
         // definition of the module.
         let mut values = Vec::with_capacity(args.len());
         for &arg in args {
-            match self.evaluator.evaluate(arg, &place.context) {
+            match self.evaluate(arg, &place.context)? {
                 Ok(value) => values.push(value),
                 Err(_) => return Ok(vec![call]),
             }
@@ -257,8 +255,7 @@ impl Splitter<'_, '_> {
         let mut sets = Vec::with_capacity(bounds.len());
         for bound in bounds {
             let Ok(set) = self
-                .evaluator
-                .evaluate(bound.set, &place.context)
+                .evaluate(bound.set, &place.context)?
                 .and_then(|set| elements(&set))
             else {
                 return Ok(None);
@@ -377,11 +374,11 @@ impl Splitter<'_, '_> {
 
     // `isConstantDefinition`: a definition of constant level without parameters whose body isn't a
     // literal and evaluates, which TLC computed when it started and takes as one action.
-    fn is_constant_definition(&mut self, definition: &Definition) -> bool {
+    fn is_constant_definition(&mut self, definition: &Definition) -> Result<bool, Unsupported> {
         let DefinitionForm::Operator(params) = &definition.form else {
-            return false;
+            return Ok(false);
         };
-        params.is_empty()
+        Ok(params.is_empty()
             && !matches!(
                 self.evaluator.ir.nodes.arena[definition.body as usize].kind,
                 NodeKind::Number(_) | NodeKind::String(_)
@@ -389,10 +386,22 @@ impl Splitter<'_, '_> {
             && !self
                 .evaluator
                 .can_read(definition.body, &Context::default())
-            && self
-                .evaluator
-                .evaluate(definition.body, &Context::default())
-                .is_ok()
+            && self.evaluate(definition.body, &Context::default())?.is_ok())
+    }
+
+    // An expression the split evaluates, as TLC does when it starts. One that may print, draw or
+    // set a register would change what TLC prints and draws then, which the split doesn't follow.
+    fn evaluate(
+        &mut self,
+        node: NodeId,
+        context: &Context,
+    ) -> Result<Evaluated<Value>, Unsupported> {
+        if may_have_effect(self.evaluator, node, &mut HashSet::new()) {
+            return Err(Unsupported(
+                "TLC's actions whose split prints, draws or sets a register".into(),
+            ));
+        }
+        Ok(self.evaluator.evaluate(node, context))
     }
 
     // `getActionLabel`: the action's name, the values of its parameters but in TLC 1.7.4, and its
@@ -415,42 +424,9 @@ impl Splitter<'_, '_> {
     }
 }
 
-// Whether evaluating the next-state relation, or a definition the configuration names, can change
-// what a run does (`hasEffect`): draw a random value, set or read a TLC register, assert or print,
-// itself or through a definition it names, but one TLC evaluates once, as it does a constant
-// definition without parameters.
-fn has_effect(evaluator: &Evaluator<'_>) -> bool {
-    let ir = evaluator.ir;
-    let model = &ir.model;
-    let definitions = model
-        .invariants
-        .iter()
-        .map(|invariant| &invariant.root)
-        .filter_map(|name| name.definition)
-        .map(|index| ir.definitions[index as usize]);
-    let roots = [model.init, model.next]
-        .into_iter()
-        .chain(definitions)
-        .chain(
-            model
-                .property_invariants
-                .iter()
-                .map(|invariant| invariant.root),
-        )
-        .chain(
-            model
-                .action_properties
-                .iter()
-                .flat_map(|property| [property.action, property.subscript]),
-        )
-        .chain(model.initial_predicates.iter().copied())
-        .chain(model.atoms.iter().map(|atom| atom.expression));
-    let mut seen = HashSet::new();
-    roots
-        .into_iter()
-        .any(|root| may_have_effect(evaluator, root, &mut seen))
-}
-
+// Whether evaluating an expression can change what a run does (`hasEffect`): draw a random value,
+// set or read a TLC register, assert or print, itself or through a definition it names, but one
+// TLC evaluates once, as it does a constant definition without parameters.
 fn may_have_effect(evaluator: &Evaluator<'_>, node: NodeId, seen: &mut HashSet<NodeId>) -> bool {
     if !seen.insert(node) {
         return false;
