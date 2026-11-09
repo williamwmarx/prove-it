@@ -21,6 +21,8 @@
 //!   of each model's environment as `ir` does, with the texts ranked in TLC's string order;
 //! - `front-dump pcal` writes SANY's validation of each module's PlusCal algorithm, for TLC
 //!   master and 1.7.4: its results, what the translator logs, and the exception it throws;
+//! - `front-dump sany-parse-error` writes SANY's report of a module its lexer or parser rejects,
+//!   for TLC master and 1.7.4, and TLC 1.7.4's lexical error, or null for each it accepts;
 //! - `front-dump time` writes the best of five times to tokenize and parse each module, in
 //!   milliseconds.
 
@@ -46,6 +48,7 @@ use tla_front::order::TlcOrder;
 use tla_front::parser::{parse_module, parse_sany_module};
 use tla_front::pcal::{PcalFatal, PcalSession};
 use tla_front::report::{ModuleOrigin, ReportOptions, get_sany_text};
+use tla_front::sany_parse_error::{get_sany_174_lexical_error, get_sany_parse_error};
 use tla_front::spec::{get_properties, get_specification};
 use tla_ir::{Model, Startup};
 
@@ -402,6 +405,19 @@ fn main() -> ExitCode {
         "ast" => |out, source| write_module(out, source, false),
         "sany-ast" => |out, source| write_module(out, source, true),
         "time" => write_time,
+        "sany-parse-error" => |out, source| {
+            let write = |out: &mut String, text: Option<String>| match text {
+                Some(text) => write_js_string(out, &text),
+                None => out.push_str("null"),
+            };
+            out.push_str("{\"master\":");
+            write(out, get_sany_parse_error(source, TlcVersion::Master));
+            out.push_str(",\"v174\":");
+            write(out, get_sany_parse_error(source, TlcVersion::V1_7_4));
+            out.push_str(",\"lexical174\":");
+            write(out, get_sany_174_lexical_error(source));
+            out.push('}');
+        },
         "pcal" => |out, source| {
             out.push_str("{\"master\":");
             write_pcal_validation(out, source, TlcVersion::Master);
@@ -418,7 +434,7 @@ fn main() -> ExitCode {
         },
         _ => {
             eprintln!(
-                "usage: front-dump tokens|ast|sany-ast|config|pcal|resolve|model|ir|order|model-ir|model-full|spec|properties|sany-text|levels|time < paths"
+                "usage: front-dump tokens|ast|sany-ast|config|pcal|sany-parse-error|resolve|model|ir|order|model-ir|model-full|spec|properties|sany-text|levels|time < paths"
             );
             return ExitCode::from(2);
         }
