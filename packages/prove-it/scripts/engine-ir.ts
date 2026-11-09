@@ -96,6 +96,7 @@ const GOLDEN_MODELS = [
   "spectacle/specs/with_state_graphs/Elevator.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/Github1389Counting.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/Github710b.cfg",
+  "tlc/tlatools/org.lamport.tlatools/test-model/Github710d.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/examples/FiniteMonotonic/MCDistributedReplicatedLog.cfg",
   "mongodb-txns/MultiShardTxn/Storage.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/examples/ewd998/AsyncTerminationDetection.cfg",
