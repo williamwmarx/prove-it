@@ -1894,7 +1894,7 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
     let startup_definitions = if options.is_unconfigured {
         Vec::new()
     } else {
-        get_startup_definitions(&linker, &linked_root, &definitions, &options)?
+        get_startup_definitions(&linker, &linked_root, &definitions, options)?
     };
     let mut assumptions = Vec::new();
     add_assumptions(&linked_root, &mut Vec::new(), &mut assumptions);

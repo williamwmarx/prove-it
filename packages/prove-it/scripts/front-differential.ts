@@ -147,7 +147,9 @@ const readEnvironment = (source: string, path: string, config?: ModelConfig) => 
     assumptions: specification.assumptions
       .filter((assumption) => !assumption.isAxiom)
       .map((assumption) => describeRange(assumption.expression)),
-    startup: config ? specification.startupDefinitions.map((definition) => keys.get(definition)) : [],
+    startup: config
+      ? specification.startupDefinitions.map((definition) => keys.get(definition))
+      : [],
   };
 };
 
