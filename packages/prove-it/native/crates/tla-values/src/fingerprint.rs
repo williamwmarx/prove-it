@@ -98,17 +98,25 @@ impl ShiftTable {
 // Tables for the lengths of values and of the tails of states, as far as the cap allows.
 const MAXIMUM_LENGTH_TABLES: usize = 1024;
 // A value's length table, before it is looked up.
-const UNKNOWN_TABLE: i32 = 0;
+const UNKNOWN_TABLE: i32 = -2;
+// A value whose fingerprint isn't computed yet.
+const NOT_COMPUTED: i32 = 0;
 // A length past the cap, shifted by powers of two.
 const NO_TABLE: i32 = -1;
 
 #[derive(Clone, Copy, Default)]
 struct ValueFingerprint {
     fingerprint: u64,
-    length: u64,
-    // The number of the value's length table, from 1, or UNKNOWN_TABLE or NO_TABLE.
+    length: u32,
+    // The number of the value's length table, from 1, or UNKNOWN_TABLE or NO_TABLE, or
+    // NOT_COMPUTED.
     table: i32,
-    is_computed: bool,
+}
+
+impl ValueFingerprint {
+    fn is_computed(&self) -> bool {
+        self.table != NOT_COMPUTED
+    }
 }
 
 /// What fingerprinting a state's successors from it needs: its fingerprint, and, by position in
@@ -180,7 +188,7 @@ impl Fingerprints {
         let bound = carried.bound;
         let own = self.values.get(bound as usize..).unwrap_or_default();
         for (&id, entry) in imported.iter().zip(own) {
-            if id == EMPTY_SLOT || id < bound || !entry.is_computed {
+            if id == EMPTY_SLOT || id < bound || !entry.is_computed() {
                 continue;
             }
             let index = (id - bound) as usize;
@@ -206,7 +214,7 @@ impl Fingerprints {
             return;
         }
         for (index, entry) in carried.values.iter().enumerate() {
-            if entry.is_computed {
+            if entry.is_computed() {
                 *self.get_entry(bound + index as Id) = *entry;
             }
         }
@@ -314,13 +322,13 @@ impl Fingerprints {
     fn extend_known(&mut self, fingerprint: u64, id: Id) -> u64 {
         let entry = self.values[id as usize];
         let number = if entry.table == UNKNOWN_TABLE {
-            let number = self.get_length_table(entry.length);
+            let number = self.get_length_table(u64::from(entry.length));
             self.values[id as usize].table = number;
             number
         } else {
             entry.table
         };
-        self.shift_by_table(number, fingerprint, entry.length) ^ entry.fingerprint
+        self.shift_by_table(number, fingerprint, u64::from(entry.length)) ^ entry.fingerprint
     }
 
     // The ids a value's fingerprint reads: a set's elements, a function's keys and values. A
@@ -345,7 +353,7 @@ impl Fingerprints {
         self.check_generation(store);
         self.compute(store, id);
         let entry = self.values[id as usize];
-        (entry.fingerprint, entry.length)
+        (entry.fingerprint, u64::from(entry.length))
     }
 
     // Computes a value's F and length, its parts' first, without recursing: a value is computed
@@ -356,7 +364,7 @@ impl Fingerprints {
         if !self
             .values
             .get(id as usize)
-            .is_some_and(|entry| entry.is_computed)
+            .is_some_and(|entry| entry.is_computed())
         {
             self.compute_new(store, id);
         }
@@ -366,7 +374,7 @@ impl Fingerprints {
     fn compute_new(&mut self, store: &Store, id: Id) {
         let mut pending = vec![(id, false)];
         while let Some((top, is_expanded)) = pending.pop() {
-            if self.get_entry(top).is_computed {
+            if self.get_entry(top).is_computed() {
                 continue;
             }
             if is_expanded {
@@ -419,7 +427,7 @@ impl Fingerprints {
                     match part {
                         Some(part) => {
                             fingerprint = self.extend_known(fingerprint, part);
-                            length += self.values[part as usize].length;
+                            length += u64::from(self.values[part as usize].length);
                         }
                         None => {
                             fingerprint = self.shift(fingerprint, 5) ^ get_int(index as i32 + 1);
@@ -432,9 +440,8 @@ impl Fingerprints {
         };
         ValueFingerprint {
             fingerprint,
-            length,
+            length: length as u32,
             table: UNKNOWN_TABLE,
-            is_computed: true,
         }
     }
 
@@ -526,7 +533,7 @@ impl Fingerprints {
                 let changed = value.fingerprint ^ earlier_value.fingerprint;
                 fingerprint ^= self.shift_by_table(tails[position].1, changed, tail);
             }
-            tail += self.values[id as usize].length;
+            tail += u64::from(self.values[id as usize].length);
         }
         Some(fingerprint)
     }
@@ -562,7 +569,7 @@ impl Fingerprints {
                 parent.tails[position] = (tail, table);
             }
             self.compute(store, state[index]);
-            tail += self.values[state[index] as usize].length;
+            tail += u64::from(self.values[state[index] as usize].length);
         }
     }
 
