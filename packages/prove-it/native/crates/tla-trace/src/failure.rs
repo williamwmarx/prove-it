@@ -6,7 +6,7 @@
 use tla_ir::{NodeId, NodeKind, SourceRange};
 use tla_values::{Id, Store};
 
-use crate::eval::{CallStack, Context, Evaluator, StackFrame};
+use crate::eval::{CallStack, Context, Evaluator, StackFrame, UNFOLLOWED_FRAMES};
 use crate::fingerprint::fingerprint_failure;
 use crate::print::format_value;
 use crate::rebuild::{Rebuilder, is_same, run};
@@ -41,6 +41,9 @@ pub struct FingerprintFailure {
     pub sources: Vec<SourceRange>,
     pub reason: String,
     pub tool_reason: String,
+    /// Whether the ranges are the call stack of TLC's replay with its `CallStackTool`, which
+    /// throws the FingerprintException after the run reported the error as it is.
+    pub is_replayed: bool,
 }
 
 /// TLC's report of an error: the code of the message, its text and its text in -tool output, and
@@ -81,14 +84,41 @@ const FAILURE_ERROR: i32 = 255;
 
 const UNEXPECTED_EXCEPTION: &str = "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: ";
 
-/// A coded message in -tool output, which TLC marks inside the message that holds it.
+/// A coded message in -tool output, which TLC marks inside the message that holds it, as it marks
+/// the failure of a Java method that one reports (`formatNestedMessage`).
 pub(crate) fn nested(message: &TlcMessage) -> String {
     match message.code {
         Some(code) => format!(
             "@!@!@STARTMSG {code}:0 @!@!@\n{}\n@!@!@ENDMSG {code} @!@!@",
-            message.text
+            nested_java_failure(&message.text)
         ),
         None => message.text.clone(),
+    }
+}
+
+const JAVA_METHOD_FAILED: u32 = 2154;
+const JAVA_FAILURE: &str = "Attempted to apply the operator overridden by the Java method\n";
+const JAVA_FAILURE_INNER: &str = "but it produced the following error:\n";
+
+// The text of a Java method's failure with the failure it reports marked, where that is another
+// Java method's.
+fn nested_java_failure(text: &str) -> String {
+    let inner = text
+        .starts_with(JAVA_FAILURE)
+        .then(|| text.find(JAVA_FAILURE_INNER))
+        .flatten()
+        .map(|at| at + JAVA_FAILURE_INNER.len());
+    match inner {
+        Some(at) if text[at..].starts_with(JAVA_FAILURE) => format!(
+            "{}{}",
+            &text[..at],
+            nested(&TlcMessage {
+                text: text[at..].to_owned(),
+                code: Some(JAVA_METHOD_FAILED),
+                is_eval_exception: false,
+            })
+        ),
+        _ => text.to_owned(),
     }
 }
 
@@ -137,7 +167,10 @@ impl<'ir> Rebuilder<'ir> {
                 "evaluating the assumption again: it didn't fail".into(),
             ));
         };
-        if let Some(reason) = call_stack.unfollowed {
+        if let Some(reason) = call_stack
+            .unfollowed
+            .filter(|reason| !UNFOLLOWED_FRAMES.contains(reason))
+        {
             return Err(Unsupported(format!(
                 "evaluating the assumption again: {reason}"
             )));
@@ -450,6 +483,7 @@ impl<'ir> Rebuilder<'ir> {
                     .collect(),
                 reason: message.text.clone(),
                 tool_reason: nested(&message),
+                is_replayed: false,
             };
             // TLC reports a state it fails to fingerprint as it works on an initial state, or as
             // an exception it didn't expect in the next states, and exits as for the replay.
@@ -474,6 +508,37 @@ impl<'ir> Rebuilder<'ir> {
                 printed,
                 fingerprint: Some(fingerprint),
                 state,
+            });
+        }
+        // A failure in the next states whose receiver the replay gave a source TLC reports as it
+        // is, then fails again as a FingerprintException as it replays the expansion with its
+        // `CallStackTool`, which gives values their sources, and prints that call stack.
+        if call_stack.is_fingerprinted
+            && site == Site::Next
+            && let Some(message) = &error.message
+            && let Some(source) = call_stack.fingerprinted_source
+        {
+            let (code, text, tool_text) = report(message, true);
+            let mut sources = ranges(evaluator, &call_stack);
+            if let Some(range) = node_range(evaluator, source)
+                && sources.last() != Some(&range)
+            {
+                sources.push(range);
+            }
+            return Ok(Failure {
+                code,
+                message: text,
+                tool_message: tool_text,
+                call_stack: Vec::new(),
+                exit_code: FAILURE_SPEC_EVAL,
+                printed,
+                fingerprint: Some(FingerprintFailure {
+                    sources,
+                    reason: message.text.clone(),
+                    tool_reason: nested(message),
+                    is_replayed: true,
+                }),
+                state: None,
             });
         }
         if call_stack.is_fingerprinted {
@@ -811,5 +876,28 @@ fn constraint_holds(evaluator: &mut Evaluator<'_>, body: NodeId) -> Evaluated<bo
             },
         ),
         _ => fail("a constraint that isn't a boolean, without a range"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn marks_each_java_failure_that_one_reports_under_tool() {
+        let method = "public static tlc2.value.impl.Value tlc2.module.TLCEval.tlcEval()";
+        let inner =
+            format!("{JAVA_FAILURE}{method},\n{JAVA_FAILURE_INNER}Attempted to enumerate STRING.");
+        let outer = TlcMessage {
+            text: format!("{JAVA_FAILURE}{method},\n{JAVA_FAILURE_INNER}{inner}"),
+            code: Some(JAVA_METHOD_FAILED),
+            is_eval_exception: false,
+        };
+        assert_eq!(
+            nested(&outer),
+            format!(
+                "@!@!@STARTMSG 2154:0 @!@!@\n{JAVA_FAILURE}{method},\n{JAVA_FAILURE_INNER}@!@!@STARTMSG 2154:0 @!@!@\n{inner}\n@!@!@ENDMSG 2154 @!@!@\n@!@!@ENDMSG 2154 @!@!@"
+            )
+        );
     }
 }

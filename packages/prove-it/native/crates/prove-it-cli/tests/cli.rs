@@ -1004,3 +1004,25 @@ fn records_the_specification_as_the_interpreter_does() {
     assert!(text.contains(include_str!("spec-record.txt")), "{text}");
     std::fs::remove_dir_all(directory).expect("removed");
 }
+
+const EMPTY_SUBSET_EQ_IR: &[u8] = include_bytes!(
+    "../../../../tests/conformance/ir/tlc/tlatools/org.lamport.tlatools/test-model/EmptySubsetEq.ir"
+);
+
+#[test]
+fn reports_a_fingerprint_failure_tlcs_replay_throws() {
+    let (output, directory) = run_golden(
+        "replayed-fingerprint",
+        EMPTY_SUBSET_EQ_IR,
+        "EmptySubsetEq",
+        "",
+        &[],
+    );
+    let text = stdout(&output);
+    // TLC reports the failure in the next states as it is, then its replay with the call stack,
+    // which gives SUBSET (1..3) its source, throws a FingerprintException: TLC prints that call
+    // stack, down to the value whose method failed.
+    assert_eq!(output.status.code(), Some(75), "{text}");
+    assert!(text.contains(include_str!("empty-subset-eq.txt")), "{text}");
+    std::fs::remove_dir_all(directory).expect("removed");
+}
