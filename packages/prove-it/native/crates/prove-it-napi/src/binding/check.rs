@@ -52,7 +52,7 @@ use super::{
 const NAPI_UINT8_ARRAY: i32 = 1;
 const NAPI_FLOAT64_ARRAY: i32 = 8;
 
-unsafe extern "C" {
+napi_functions! {
     fn napi_get_undefined(env: napi_env, result: *mut napi_value) -> napi_status;
     fn napi_call_function(
         env: napi_env,
@@ -230,6 +230,7 @@ unsafe fn create_verdict(env: napi_env, liveness: &Liveness) -> Result<napi_valu
         ),
         Verdict::Accepted { state, path } => ("accepted", "", &path[..], 0, *state, false),
         Verdict::Declined(declined) => ("declined", declined.0.as_str(), &[][..], 0, 0, false),
+        Verdict::Unexpanded => ("declined", tla_live::UNEXPANDED, &[][..], 0, 0, false),
     };
     unsafe {
         let mut object = null_mut();

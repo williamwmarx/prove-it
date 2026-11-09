@@ -1547,25 +1547,33 @@ impl Store {
         Ok(-1)
     }
 
+    /// `f[k]`. A tuple or a function over a run of integers, at an integer in its domain, finds
+    /// its value by subtraction in place; the rest goes through `apply_other`.
+    #[inline(always)]
     pub fn apply(&mut self, function: Id, key: Id) -> Outcome<Id> {
-        let meta = *self.meta(function);
-        let key_meta = *self.meta(key);
-        if key_meta.kind == KIND_INT {
-            let low = if meta.kind == KIND_TUPLE {
-                Some(1)
-            } else if meta.kind == KIND_FUNCTION && meta.flags & IS_INT_RUN != 0 {
-                Some(self.meta(self.word(meta.payload as usize)).payload)
-            } else {
-                None
-            };
-            if let Some(low) = low {
-                let position = i64::from(key_meta.payload) - i64::from(low);
-                if position < 0 || position >= i64::from(meta.size) {
-                    return Err(Bail("applied a function outside its domain"));
-                }
-                return Ok(self.get_range_value(function, position as u32));
+        let (meta, key_meta) = (self.meta(function), self.meta(key));
+        let run = match meta.kind {
+            _ if key_meta.kind != KIND_INT => None,
+            KIND_TUPLE => Some((1, 0)),
+            KIND_FUNCTION if meta.flags & IS_INT_RUN != 0 => Some((
+                self.meta(self.word(meta.payload as usize)).payload,
+                meta.size,
+            )),
+            _ => None,
+        };
+        if let Some((low, values)) = run {
+            let position = i64::from(key_meta.payload) - i64::from(low);
+            if position >= 0 && position < i64::from(meta.size) {
+                return Ok(self.word((meta.payload as u32 + values) as usize + position as usize));
             }
         }
+        self.apply_other(function, key)
+    }
+
+    // `f[k]` of any other function, or of a key outside a run's domain.
+    #[inline(never)]
+    fn apply_other(&mut self, function: Id, key: Id) -> Outcome<Id> {
+        let meta = *self.meta(function);
         if !is_function_kind(meta.kind) {
             return Err(Bail("applied a non-function"));
         }

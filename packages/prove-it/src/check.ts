@@ -872,11 +872,16 @@ const searchStates = (
   ): Result => {
     if (transferred.count === 0) return evaluate();
     const saved = { ...rebuilding };
+    // TLC rebuilds a trace with the generator the initial states drew from, then draws each
+    // successor from one seeded with its predecessor (TLCTrace#getTrace).
+    const startupRandom = runtime.evaluateAtStartup(runtime.getRandom);
+    const randomState = startupRandom.getState();
     Object.assign(rebuilding, { isActive: true, state, depth });
     try {
       return evaluate();
     } finally {
       Object.assign(rebuilding, saved);
+      startupRandom.setState(randomState);
     }
   };
   // Before TLC prints a trace, it rebuilds from the initial predicate the states it does not keep,
@@ -1230,7 +1235,12 @@ const searchStates = (
     const index = state === current.candidate ? -1 : states.indexOf(state);
     return index === -1 ? [...getPath(current.index), state] : getPath(index);
   };
-  runtime.getCurrentState = () => (current.index === -1 ? undefined : states[current.index]);
+  runtime.getCurrentState = () =>
+    rebuilding.isActive
+      ? rebuilding.state
+      : current.index === -1
+        ? undefined
+        : states[current.index];
   runtime.setLivenessSource = (index) => {
     current.livenessSource = index ?? -1;
   };
@@ -1839,6 +1849,15 @@ const searchStates = (
               symmetry,
               ...callbacks,
             });
+      // Under SYMMETRY or a VIEW, a replay of the graph would give the interpreter's liveness
+      // checker the states stored rather than the states each step reached, so it searches again.
+      const isReplayFaithful = !isReducing || (verdict?.status === "lasso" && !isLiveChecked);
+      if (result.checkpoint && !isReplayFaithful) {
+        reportEngine(
+          `found ${result.distinctStates} states in ${(performance.now() - startedAt).toFixed(0)} ms; the interpreter searches again to check the temporal properties`,
+        );
+        return undefined;
+      }
       if (result.checkpoint) {
         // The interpreter checks the temporal properties on the graph the engine found.
         takeGraph(result.checkpoint);
@@ -1911,11 +1930,13 @@ const searchStates = (
       };
     } catch (error) {
       // A search that stopped part way hands over the graph it found, when it recorded one for the
-      // temporal properties, and the interpreter goes on from the state it stopped at.
+      // temporal properties, and the interpreter goes on from the state it stopped at. Under
+      // SYMMETRY or a VIEW that graph holds the states stored rather than those each step reached,
+      // so the interpreter searches again.
       if (isBailout(error) && error.checkpoint) {
         const checkpoint = error.checkpoint as EngineCheckpoint;
         if (!liveness) engineReport.checkpoint = checkpoint;
-        else if (checkpoint.graph) takeGraph(checkpoint);
+        else if (checkpoint.graph && !isReducing) takeGraph(checkpoint);
       }
       reportEngine(
         `handed over after ${(performance.now() - startedAt).toFixed(0)} ms: ${isBailout(error) ? error.message : String(error instanceof Error ? (error.stack ?? error.message) : error)}`,
@@ -1937,9 +1958,6 @@ const searchStates = (
   };
   const getEngineIneligibility = () => {
     if (getEngineSetting() === "0") return "disabled";
-    if (liveness && (search.isSymmetric || config.view !== undefined)) {
-      return "liveness under symmetry or a view";
-    }
     if (stateWriter) return "-dump";
     if (options.isContinued) return "-continue";
     const nativeOnlyReason = getNativeOnlyReason();
@@ -2323,7 +2341,9 @@ const searchStates = (
       loopStart,
     );
     const verdict = engineReport.liveness;
-    if (isLiveChecked && verdict?.status === "lasso") {
+    // Under SYMMETRY or a VIEW, TLC names them from the states it rebuilds, which the native
+    // checker doesn't hold, so it names none.
+    if (isLiveChecked && verdict?.status === "lasso" && !isReducing) {
       const named = [
         ...new Set(Array.from(verdict.violated, (position) => checker.properties[position].name)),
       ];
