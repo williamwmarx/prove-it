@@ -1940,7 +1940,8 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
         location: expression.location,
       });
       const current = getChildEvaluator(expression.expression);
-      return (context) => valuesEqual(primed(context), current(context));
+      // TLC evaluates the current state's side first (Tool.evalAppl's OPCODE_unchanged).
+      return (context) => valuesEqual(current(context), primed(context));
     }
     case "If": {
       const condition = getChildEvaluator(expression.condition);

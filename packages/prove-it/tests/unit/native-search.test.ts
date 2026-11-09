@@ -1273,6 +1273,24 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
   // From tla-rs's function_syntax: TLC applies a recursive function of several bounds to tuples
   // of its product, and keeps a recursive function lazy where a spec passes it or takes its
   // domain.
+  // Tool.evalAppl evaluates UNCHANGED e, [A]_e and <<A>>_e in the current state first, so the
+  // search stops on the current state's failure.
+  it("evaluates UNCHANGED in the current state first like TLC", async () => {
+    const subscript = 'IF x = 0 THEN Assert(FALSE, "before") ELSE <<>>[1]';
+    for (const form of ["[FALSE]_(e)", "IF UNCHANGED (e) THEN TRUE ELSE TRUE", "<<TRUE>>_(e)"]) {
+      const body = [
+        "EXTENDS TLC",
+        "VARIABLE x",
+        "Init == x = 0",
+        `Next == x' = 1 /\\ ${form.replace("(e)", `(${subscript})`)}`,
+      ];
+      expect([form, await compareWithInterpreter(body, "INIT Init\nNEXT Next")]).toEqual([
+        form,
+        expect.arrayContaining([expect.stringMatching(/native: stopped: an assertion failed/)]),
+      ]);
+    }
+  });
+
   it("applies recursive functions as TLC keeps them lazy", async () => {
     const body = [
       "EXTENDS Naturals, FiniteSets",

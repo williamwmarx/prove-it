@@ -188,3 +188,11 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   up, and stopped on one too large to build, such as RandomSubset's invariant
   `x \in 1..100000000`. Elsewhere the interval is as before, so a set operation or a set of
   functions over one still evaluates it, and its bounds, as TLC does.
+
+## The order UNCHANGED evaluates in
+
+- TLC evaluates `UNCHANGED e`, `[A]_e` and `<<A>>_e` in the current state before the next one
+  (`Tool.evalAppl`, `verifyUnchanged`), so where both sides fail it reports the current state's
+  failure. The interpreter (`codegen.ts`, `evaluate.ts`) and both engines' UNCHANGED evaluated the
+  next state's side first; each now evaluates the current state's first. The engines' `[A]_e` and
+  `<<A>>_e` already did.
