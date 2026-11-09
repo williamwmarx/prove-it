@@ -1,5 +1,5 @@
 //! The front end's part of a run: the engine IR and what TLC prints before the search, SANY's
-//! output and the warnings. `tla-front` will compute it (native/DESIGN.md 12.2); until then the
+//! output and the warnings. `tla-front` will compute it (native/DESIGN.md 13.2); until then the
 //! binary reads a recorded front, which the differential makes with the TypeScript CLI, from the
 //! directory `PROVE_IT_FRONT` names: `<Spec>.ir` and `<Spec>.front`.
 
