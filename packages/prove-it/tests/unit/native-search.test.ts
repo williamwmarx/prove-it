@@ -640,15 +640,22 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
       'Past == <>[](TLCGet("diameter") > x + 1)',
       // Holds only where the diameter is read as each state is added, not as the search ends.
       'Early == <>[](TLCGet("diameter") < 4 + x)',
+      // The tableau's predicates and a fairness's subscript, read at the diameter TLC has then.
+      'Nested == []<>(TLCGet("diameter") < 4 /\\ <>(x = 2))',
+      'Sub == IF TLCGet("diameter") < 4 THEN x ELSE 0',
+      'Fairly == []<>(x < TLCGet("diameter")) /\\ SF_Sub(x\' = (x + 1) % 4)',
     ];
     for (const [property, verdict] of [
       ["Below", "holds"],
       ["Past", "lasso"],
       ["Early", "holds"],
+      // A late node at another diameter, which the interpreter checks.
+      ["Nested", "declined: a late node TLC adds at another diameter"],
     ] as const) {
       const lines = await compareWithInterpreter(body, `SPECIFICATION Spec\nPROPERTY ${property}`);
       expect(lines).toContain(`[engine] native: liveness: ${verdict}`);
     }
+    await compareWithInterpreter(body, "SPECIFICATION Spec\nPROPERTY Fairly");
   });
 
   it("hands over a violated invariant, deadlock and a failed action property", async () => {

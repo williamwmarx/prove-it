@@ -551,12 +551,12 @@ fn compile_subscript(
     compiler: &mut Compiler<'_>,
     node: NodeId,
     scope: Option<Index>,
-) -> Result<Eval, String> {
+) -> Result<Compiled, String> {
     let compiled = compile_live(compiler, node, scope)?;
     if !compiled.footprint.primes.is_empty() {
         return Err("unsupported: a subscript that reads a primed variable".into());
     }
-    Ok(compiled.eval)
+    Ok(compiled)
 }
 
 // An atom, compiled, with whether evaluating it may print and whether it reads TLCGet("diameter").
@@ -586,10 +586,11 @@ fn compile_atom(compiler: &mut Compiler<'_>, ir: &Ir, atom: &tla_ir::Atom) -> Co
             };
             let action = compile_live(compiler, atom.expression, scope)?;
             is_printing = action.is_printing();
-            reads_diameter = action.reads_diameter();
+            reads_diameter =
+                action.reads_diameter() || subscript.as_ref().is_some_and(Compiled::reads_diameter);
             Ok(Atom::Action {
                 action: action.eval,
-                subscript,
+                subscript: subscript.map(|subscript| subscript.eval),
                 enabled: enabled.map(|position| position as usize),
             })
         })(),
@@ -605,10 +606,13 @@ fn compile_atom(compiler: &mut Compiler<'_>, ir: &Ir, atom: &tla_ir::Atom) -> Co
             let steps = match (resolve(ir, atom.expression), actions) {
                 (_, EnabledActions::Unknown) => None,
                 (NodeKind::AngleAction { subscript, .. }, actions) => {
+                    // A subscript that reads TLC's diameter leaves ENABLED to its run, which
+                    // doesn't read it.
                     compile_subscript(compiler, *subscript, scope)
                         .ok()
+                        .filter(|subscript| !subscript.reads_diameter())
                         .map(|subscript| EnabledSteps {
-                            subscript,
+                            subscript: subscript.eval,
                             actions: match actions {
                                 EnabledActions::Some(positions) => {
                                     let length =

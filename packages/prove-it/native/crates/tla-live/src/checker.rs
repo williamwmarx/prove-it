@@ -470,7 +470,9 @@ impl<'c> Checker<'c> {
             return Ok(true);
         };
         let slot = state as usize * tableau.nodes.len() + node as usize;
-        let is_effectful = self.is_effectful();
+        // TLC evaluates each time, which keeping nothing matches where an atom has effects or
+        // reads TLC's diameter, which grows as the states are added.
+        let is_effectful = self.is_effectful() || self.graph.diameters.is_some();
         if !is_effectful
             && let Some(&known) = self.behaviors[behavior].consistency.get(slot)
             && known != UNKNOWN_RESULT
@@ -753,6 +755,13 @@ impl<'c> Checker<'c> {
     ) -> Result<(), Declined> {
         if real as usize + 1 >= self.graph.edge_offsets.len() {
             return Err(Declined::from(crate::UNEXPANDED));
+        }
+        // TLC checks a late node at the diameter then, which the checks kept for the state may
+        // not have read.
+        if let Some(diameters) = &self.graph.diameters
+            && diameters.states.get(real as usize) != Some(&self.diameter.get())
+        {
+            return Err(Declined::from("a late node TLC adds at another diameter"));
         }
         if real != state {
             self.behaviors[behavior].node_reals.insert(node, real);
