@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use tla_values::store::{EMPTY_SET, KIND_INT, KIND_SET, Outcome};
+use tla_values::store::{EMPTY_SET, KIND_INT, Outcome, is_tested_set_kind};
 use tla_values::{Bail, Id};
 
 use super::lazy_function;
@@ -162,7 +162,7 @@ pub(crate) fn member_const(element: &Compiled, set: &Compiled, is_in: bool) -> O
     Some(eval(move |machine| {
         let element = machine.locals[slot as usize];
         let set = set(machine)?;
-        if machine.store.kind_of(set) != KIND_SET {
+        if !is_tested_set_kind(machine.store.kind_of(set)) {
             return Err(Bail("membership in a non-set"));
         }
         Ok(bool_id(machine.store.is_member(element, set)? == is_in))

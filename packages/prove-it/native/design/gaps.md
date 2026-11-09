@@ -202,6 +202,15 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   Community Graphs' `Path(G) == {p \in Seq(G.node) : ...}` is one. MCEWD687a (Examples) and
   Bakery (spectacle), declined before, now search in Rust until the enumeration TLC reports.
 
+## Membership in a filter TLC keeps lazy
+
+- TLC builds `{x \in S : p}` only where S is a set enumeration or an interval (`Reducible`). For
+  any other S, such as `Int \X Int`, a UNION or a set of functions, it keeps a `SetPredValue`,
+  whose `member` is S's membership and then p of the one element. The engine enumerated such a
+  filter to look the element up, which stopped on `Int \X Int` and evaluated p on elements TLC
+  never tests. A filter of a set that isn't normalized now has that membership test beside its
+  enumeration. suite/test9 now prints what TLC prints.
+
 ## Membership in an interval
 
 - TLC tests `x \in a..b` by comparing an integer with the bounds (`IntervalValue.member`), and
@@ -320,6 +329,17 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   found, the failing one included (TLC counts a new state before it checks the invariants). The
   stop (`ViolationKind::Error` at `ErrorSite::Invariant`) now carries them in
   `StopCounts::out_degrees`; other stops leave them empty.
+
+## The expansion TLC replays after an invariant fails to evaluate
+
+- After an invariant fails to evaluate past the initial states, TLC replays the expansion with
+  its `CallStackTool` (`ModelChecker.doNext(cTool, predErrState)`) and skips each successor in
+  its set of fingerprints. The search stops at the failing successor, so it never generates the
+  ones after it. The stop now carries TLC's set when it stopped: `Violation::fingerprints`,
+  sorted, the failing successor's among them where TLC had added it (a new state in the model).
+  Other stops leave it empty.
+- `tla-trace` replays the expansion against the set (`replay_expansion`, design/trace.md). TLC's
+  FingerprintExceptionHang and TSnapShot now print what TLC prints.
 
 ## A failure on an initial state
 
@@ -445,27 +465,33 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   and level sharing, since only the machine that built a function can apply it.
 - suite/test3, test5, test10, test12, test17 and test202 now print what TLC prints.
 
-## Open: infinite sets as values
+## Nat, Int and STRING as values
 
-These three are declined, and lazy functions don't fix them:
+- TLC holds Nat, Int and STRING as values (`UserValue`): an element of a set, such as `{Nat}`, is
+  one. The engine only tested them, and declined ("enumerated Nat") where one was a value. The
+  store now has a kind for them (`KIND_INFINITE_SET`, its payload `NAT`, `INT` or `STRINGS`):
+  - membership in one is `Naturals.member`, `Integers.member` or `Strings.member`;
+  - Nat compares less than Int, and STRING compares with neither, as their `compareTo` have it,
+    which is how TLC orders `{{Nat}, {Int}}`;
+  - it prints by its name;
+  - a state can't hold one, as TLC can't fingerprint it: the search stops there as it does for a
+    function TLC keeps lazy.
+- Only a set enumeration's element takes the value (`Compiled::infinite_value`). Anywhere else
+  Nat, Int and STRING are tested as before, and enumerating one still stops.
+- suite/test7 now prints what TLC prints.
 
-- **suite/test7**, Test 14: `CHOOSE j \in {{Nat}, {Int}} : \E k \in j : -1 \in k` holds Nat and Int
-  as elements of a set. TLC keeps them as values and tests membership in them. The engine has no
-  store value for a set it only tests, so it declines with "enumerated Nat". This needs a store
-  kind like the lazy function's, an infinite set by name, with membership and the comparisons TLC
-  makes when it normalizes `{Nat}` and `{Int}`.
-- **suite/test9**: `2 \notin {i \in Int : i > 1}` and `<<3,4>> \notin {<<i,j>> \in Int \X Int : j > i}`
-  decline with "enumerated Int". A filter compiles to its membership test only where its set is
-  marked `infinite` (see "Filters of infinite sets"). `Int \X Int` is a product, marked only
-  `has_infinite_part`, so its filter compiles to the enumerating form. Find out whether the
-  constant `\notin` of the plain Int filter also goes that way. The likely fix is to key the
-  filter's membership form on `may_be_infinite` and use the product's own member test.
-- **RandomSubsetEmpty**: `Cardinality` and `RandomSubset` of `[Nat -> {}]`, `[n1 : Nat, n2 : {}]`,
-  `Nat \X {}` and the like decline with "enumerated Nat". TLC counts these sets without
-  enumerating them. A product or record set is empty when any factor is, and `[S -> {}]` is empty
-  for a nonempty S. RandomSubset then picks from none. The spec's comments name the order that
-  matters: the empty factor must be found before an infinite one is touched. Cardinality and
-  RandomSubset need a size for a lazy set that answers 0 in these cases before they enumerate.
+## Sizing a set an empty part empties
+
+- TLC sizes a set of functions, records or tuples by its parts (`SetOfFcnsValue.size` and the
+  like), and finds one that an empty part empties before it asks anything of a part it can't
+  enumerate: `Cardinality([Nat -> {}])`, `Cardinality([n1 : Nat, n2 : {}])` and
+  `Cardinality(Nat \X {})` are 0. Cardinality of a set with a part that may be infinite now asks
+  the lazy set whether it is empty (`Lazy::is_empty`, the parts in TLC's order) before it
+  enumerates it. RandomSubset already drew from the lazy set, and so picks from none.
+- `Nat \ {0}` and the other combinations with a set TLC can't enumerate now have a lazy value
+  too (`Lazy::Operation`), so a set of records can hold one after an empty field.
+- RandomSubsetEmpty now prints what TLC prints. A nonempty set with a part TLC can't enumerate
+  still stops, where TLC answers some (`[Nat -> {1}]` has one element).
 
 ## Test2, liveness atoms answered as the search goes (as built)
 
@@ -502,11 +528,6 @@ Open, with what is known:
 - **RandomSubsetEmpty** still reports AssumptionFailed (trace session, 20:04). Find the bail
   reason (bac5cb17 now lowers a model without a next-state relation, so engine-ir gives its IR);
   it should be a limit if TLC's assumption holds.
-- **FingerprintExceptionHang, for the trace session.** After an invariant fails to evaluate, TLC
-  replays the expansion and skips each successor already in its fingerprint set. The engine
-  never generates the successors after the failing one, so the stop should carry the
-  fingerprints found when it stopped (`states.fingerprints`, sorted), and tla-trace, which has
-  `tla_values::fingerprint::Fingerprints`, tests each replayed successor against them.
 - The addon suite's "leaves a model it can't search to the TypeScript engine" still expects a
   decline on `x' \subseteq S`, which d1fa0dd8 made native; it needs another construct the engine
   declines.

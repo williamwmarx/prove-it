@@ -30,6 +30,14 @@ pub const KIND_TUPLE: u8 = 6;
 /// compare, fingerprint or print one, as TLC can't without enumerating its domain.
 pub const KIND_LAZY_FUNCTION: u8 = 7;
 
+/// Nat, Int or STRING held as a value, as an element of a set is (TLC's `UserValue`): its payload
+/// is [`NAT`], [`INT`] or [`STRINGS`]. The store tests membership in one and compares two as TLC
+/// does. It can't fingerprint or print one, as TLC can't.
+pub const KIND_INFINITE_SET: u8 = 8;
+pub const NAT: i32 = 0;
+pub const INT: i32 = 1;
+pub const STRINGS: i32 = 2;
+
 /// Why the store stops at a function TLC keeps lazy, an engine limit.
 pub const LAZY_FUNCTION: Bail = Bail("unsupported: comparing a function TLC keeps lazy");
 
@@ -751,6 +759,12 @@ impl Store {
                     Ok(self.text(left).rank - self.text(right).rank)
                 }
                 KIND_SET => self.compare_sets(left, right),
+                // Nat is less than Int, and TLC compares STRING with neither
+                // (`Naturals.compareTo`, `Integers.compareTo`, `Strings.compareTo`).
+                KIND_INFINITE_SET if left_meta.payload.max(right_meta.payload) == STRINGS => {
+                    Err(Bail("values TLC can't compare"))
+                }
+                KIND_INFINITE_SET => Ok(left_meta.payload - right_meta.payload),
                 _ => self.compare_functions(left, right),
             };
         }
@@ -896,6 +910,8 @@ impl Store {
                 KIND_MODEL => self.check_model_types(left, right).map(|()| false),
                 KIND_SET => self.equals_sets(left, right),
                 KIND_FUNCTION | KIND_TUPLE => self.equals_functions(left, right),
+                // `UserValue.equals` compares.
+                KIND_INFINITE_SET => self.compare(left, right).map(|order| order == 0),
                 _ => Ok(false),
             };
         }
@@ -1088,6 +1104,9 @@ impl Store {
     }
 
     pub fn is_member(&mut self, element: Id, set: Id) -> Outcome<bool> {
+        if self.kind_of(set) == KIND_INFINITE_SET {
+            return self.is_member_of_infinite(element, set);
+        }
         if self.find_in_block(set, element)? != -1 {
             return Ok(true);
         }
@@ -1768,6 +1787,41 @@ impl Store {
         id
     }
 
+    /// Nat, Int or STRING as a value, by [`NAT`], [`INT`] or [`STRINGS`].
+    pub fn infinite_set(&mut self, name: i32) -> Id {
+        self.intern_scalar(KIND_INFINITE_SET, name)
+    }
+
+    /// Which of Nat, Int and STRING a value of that kind is: [`NAT`], [`INT`] or [`STRINGS`].
+    pub fn infinite_name_of(&self, id: Id) -> i32 {
+        self.meta(id).payload
+    }
+
+    // Membership in Nat, Int or STRING held as a value (`Naturals.member`, `Integers.member`,
+    // `Strings.member`): an untyped model value is in none, and any other value of another kind
+    // fails.
+    fn is_member_of_infinite(&self, element: Id, set: Id) -> Outcome<bool> {
+        let (name, kind) = (self.meta(set).payload, self.kind_of(element));
+        let (holds, reason) = match name {
+            NAT => (
+                kind == KIND_INT && self.int_of(element) >= 0,
+                "a mistyped membership in Nat",
+            ),
+            INT => (kind == KIND_INT, "a mistyped membership in Int"),
+            _ => (kind == KIND_STRING, "a mistyped membership in STRING"),
+        };
+        let is_typed = if name == STRINGS {
+            kind == KIND_STRING
+        } else {
+            kind == KIND_INT
+        };
+        if is_typed || kind == KIND_MODEL && self.get_model_type(element) == 0 {
+            Ok(holds)
+        } else {
+            Err(Bail(reason))
+        }
+    }
+
     /// A function TLC keeps lazy, by its number among those a machine keeps.
     pub fn lazy_function(&mut self, index: u32) -> Id {
         self.intern_scalar(KIND_LAZY_FUNCTION, index as i32)
@@ -1778,11 +1832,12 @@ impl Store {
         self.meta(id).payload as u32
     }
 
-    /// Whether a value holds a function TLC keeps lazy, at any depth.
+    /// Whether a value holds a function TLC keeps lazy, or Nat, Int or STRING as a value, at any
+    /// depth: what TLC can't fingerprint.
     pub fn holds_lazy_function(&self, id: Id) -> bool {
         let meta = self.meta(id);
         let length = match meta.kind {
-            KIND_LAZY_FUNCTION => return true,
+            KIND_LAZY_FUNCTION | KIND_INFINITE_SET => return true,
             KIND_SET | KIND_TUPLE => meta.size as usize,
             KIND_FUNCTION => 2 * meta.size as usize,
             _ => return false,
@@ -1870,6 +1925,20 @@ fn is_same(left: &[u32], right: &[u32]) -> bool {
     left.len() == right.len() && left.iter().zip(right).all(|(left, right)| left == right)
 }
 
+/// How TLC prints Nat, Int or STRING held as a value.
+pub fn infinite_set_name(name: i32) -> &'static str {
+    match name {
+        NAT => "Nat",
+        INT => "Int",
+        _ => "STRING",
+    }
+}
+
+/// Whether a value of this kind is a set the store tests membership in.
+pub fn is_tested_set_kind(kind: u8) -> bool {
+    kind == KIND_SET || kind == KIND_INFINITE_SET
+}
+
 pub fn is_function_kind(kind: u8) -> bool {
     kind == KIND_FUNCTION || kind == KIND_TUPLE
 }
@@ -1890,5 +1959,32 @@ mod tests {
         assert_eq!(overlay.int(10_000).unwrap(), held[0]);
         assert_eq!(overlay.int(70_000).unwrap(), own);
         assert_eq!(overlay.table.len(), INITIAL_CAPACITY * 2);
+    }
+
+    #[test]
+    fn holds_nat_and_int_as_elements_as_tlc_does() {
+        let mut store = Store::new();
+        let (nat, int, strings) = (
+            store.infinite_set(NAT),
+            store.infinite_set(INT),
+            store.infinite_set(STRINGS),
+        );
+        // Nat is less than Int, so {{Nat}, {Int}} holds {Nat} first.
+        assert_eq!(store.compare(nat, int), Ok(-1));
+        assert_eq!(store.equals(nat, int), Ok(false));
+        let (of_nat, of_int) = (store.set_of(&[nat]).unwrap(), store.set_of(&[int]).unwrap());
+        let both = store.set_of(&[of_int, of_nat]).unwrap();
+        assert_eq!(store.set_elements(both), [of_nat, of_int]);
+        assert!(store.compare(nat, strings).is_err());
+        let (minus_one, text) = (store.int(-1).unwrap(), store.str(&[97]));
+        assert_eq!(store.is_member(minus_one, nat), Ok(false));
+        assert_eq!(store.is_member(minus_one, int), Ok(true));
+        assert_eq!(store.is_member(text, strings), Ok(true));
+        assert_eq!(
+            store.is_member(text, nat),
+            Err(Bail("a mistyped membership in Nat"))
+        );
+        assert!(store.holds_lazy_function(both));
+        assert_eq!(crate::print::format_value(&store, both), "{{Nat}, {Int}}");
     }
 }
