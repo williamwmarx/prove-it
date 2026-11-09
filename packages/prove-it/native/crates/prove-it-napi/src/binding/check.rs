@@ -52,7 +52,7 @@ use super::{
 const NAPI_UINT8_ARRAY: i32 = 1;
 const NAPI_FLOAT64_ARRAY: i32 = 8;
 
-unsafe extern "C" {
+napi_functions! {
     fn napi_get_undefined(env: napi_env, result: *mut napi_value) -> napi_status;
     fn napi_call_function(
         env: napi_env,
