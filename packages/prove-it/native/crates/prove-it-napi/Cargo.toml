@@ -13,4 +13,5 @@ crate-type = ["cdylib"]
 [dependencies]
 tla-engine = { path = "../tla-engine" }
 tla-ir = { path = "../tla-ir" }
+tla-live = { path = "../tla-live" }
 tla-values = { path = "../tla-values" }

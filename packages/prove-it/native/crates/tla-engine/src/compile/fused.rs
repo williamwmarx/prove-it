@@ -114,6 +114,21 @@ pub(crate) fn apply(function: &Compiled, argument: &Compiled, footprint: Footpri
             )
         };
     }
+    if let (Shape::ApplyVar { variable, slot, .. }, Some((second, _))) =
+        (function.shape, argument.shape.slot())
+    {
+        return Compiled {
+            shape: Shape::ApplyVar2 {
+                variable,
+                slot,
+                second,
+            },
+            ..leaf(
+                eval(move |machine| predicate::apply_var2(machine, variable, slot, second)),
+                footprint,
+            )
+        };
+    }
     let (function, argument) = (function.eval.clone(), argument.eval.clone());
     leaf(
         eval(move |machine| {
