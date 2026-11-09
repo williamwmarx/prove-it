@@ -225,6 +225,11 @@ const lowerFullModel = (source: string, _path: string, spec: string) => {
   const linked = createEnvironment(config, {
     source: specSource,
     loadModule,
+    // TLC loads the class named after a module from the spec's directory, as the CLI does.
+    loadClass: (name) => {
+      const classPath = join(dirname(spec), `${name}.class`);
+      return existsSync(classPath) ? readFileSync(classPath) : undefined;
+    },
     order,
     print: () => {},
     files: { readFile: () => undefined, writeFile: () => {} },

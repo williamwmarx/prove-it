@@ -184,6 +184,9 @@ export const expandTemporal = (
   // longer expands an operator applied to arguments.
   isSubstituted = false,
   name?: string,
+  // Whether the formula is the specification's, of which TLC keeps a definition that is a state
+  // predicate whole, as one initial predicate (SpecProcessor.processConfigSpec).
+  isSpecification = false,
 ): ExpandedExpression[] => {
   const expand = (
     child: Expression,
@@ -201,6 +204,7 @@ export const expandTemporal = (
       isSubstituted ||
         (definition !== undefined && environment.substitutedDefinitions.has(definition)),
       childName,
+      isSpecification,
     );
   if (expression.kind === "And") {
     return expression.operands.flatMap((operand) => expand(operand, scope, describeRange(operand)));
@@ -228,10 +232,14 @@ export const expandTemporal = (
       }
       // TLC names a property by the operator as written (`opNode.getName()`), as A!Safe for an
       // instance's.
+      const writtenName = getWrittenName(expression) ?? definition.name;
+      if (isSpecification && getDefinitionLevel(definition, environment) === VARIABLE_LEVEL) {
+        return [{ expression: definition.body, scope: undefined, name: writtenName }];
+      }
       return expand(
         definition.body,
         undefined,
-        getWrittenName(expression) ?? definition.name,
+        writtenName,
         new Set([...expanding, definition]),
         definition,
       );

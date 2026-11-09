@@ -223,6 +223,9 @@ pub struct Expansion<'a> {
     pub version: TlcVersion,
     /// Whether TLC expands the formula as a property, which unrolls each \A over a constant set.
     pub is_property: bool,
+    /// Whether the formula is the specification's, of which TLC keeps a definition that is a
+    /// state predicate whole, as one initial predicate (`SpecProcessor.processConfigSpec`).
+    pub is_specification: bool,
     /// What computes the sets a property's \A ranges over, without which it is `NotYet`.
     pub evaluator: Option<&'a Evaluator<'a>>,
 }
@@ -304,6 +307,16 @@ impl Expansion<'_> {
                     if expanding.contains(&Rc::as_ptr(definition)) {
                         // TLC recurses until its stack overflows.
                         return Err(FrontError::StackOverflow);
+                    }
+                    if self.is_specification
+                        && self.facts.get_definition_level(definition, self.environment)
+                            == Level::Variable
+                    {
+                        return Ok(vec![Expanded {
+                            expression: definition.body.clone(),
+                            scope: None,
+                            name: Some(written.clone()),
+                        }]);
                     }
                     let expanding = [expanding, &[Rc::as_ptr(definition)]].concat();
                     return self.expand(
@@ -928,6 +941,7 @@ pub fn get_specification(
         facts,
         version,
         is_property: false,
+        is_specification: true,
         evaluator: None,
     };
     let mut init_conjuncts = Vec::new();
@@ -1168,6 +1182,7 @@ pub fn get_properties(
         facts,
         version,
         is_property: version != TlcVersion::V1_7_4,
+        is_specification: false,
         evaluator,
     };
     for name in &config.properties {

@@ -16,6 +16,7 @@ fn lower(source: &str, name: &str) -> Ir {
         is_unconfigured: true,
         version: TlcVersion::Master,
         is_level_checked: false,
+        load_class: None,
     })
     .expect("an environment");
     let mut lowering = Lowering::new(

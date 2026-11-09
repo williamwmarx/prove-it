@@ -721,6 +721,7 @@ fn write_sany_text(loader: &mut Loader, root: &Rc<str>) -> Result<()> {
             is_unconfigured: true,
             version: options.version,
             is_level_checked: true,
+            load_class: None,
         },
         &order,
     )
