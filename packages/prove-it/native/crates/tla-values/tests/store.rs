@@ -344,7 +344,7 @@ fn misses_a_scalar_in_a_set_of_its_own_kind() {
         let element = store.int(value).unwrap();
         assert_eq!(
             store.is_member(element, evens),
-            Ok(value >= 0 && value < 40 && value % 2 == 0)
+            Ok((0..40).contains(&value) && value % 2 == 0)
         );
     }
     let booleans = store.set_of(&[TRUE]).unwrap();
