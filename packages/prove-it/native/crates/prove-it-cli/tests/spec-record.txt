@@ -1,0 +1,98 @@
+[ impliedinits |-> {},
+  impliedactions |->
+      { [ location |->
+              [ beginColumn |-> 11,
+                beginLine |-> 10,
+                endColumn |-> 27,
+                endLine |-> 10,
+                module |-> "Stop" ],
+          name |-> "Prop" ] },
+  invariants |->
+      { [ location |->
+              [ beginColumn |-> 10,
+                beginLine |-> 9,
+                endColumn |-> 15,
+                endLine |-> 9,
+                module |-> "Stop" ],
+          name |-> "Small" ] },
+  impliedtemporals |->
+      { [ location |->
+              [ beginColumn |-> 32,
+                beginLine |-> 10,
+                endColumn |-> 42,
+                endLine |-> 10,
+                module |-> "Stop" ],
+          name |-> "Prop" ] },
+  temporals |->
+      { [ location |->
+              [ beginColumn |-> 38,
+                beginLine |-> 8,
+                endColumn |-> 54,
+                endLine |-> 8,
+                module |-> "Stop" ],
+          name |-> "UnnamedAction" ] },
+  actions |->
+      { [ location |->
+              [ beginColumn |-> 10,
+                beginLine |-> 6,
+                endColumn |-> 40,
+                endLine |-> 6,
+                module |-> "Stop" ],
+          name |-> "Reset" ],
+        [ context |-> [d |-> 1],
+          location |->
+              [ beginColumn |-> 12,
+                beginLine |-> 5,
+                endColumn |-> 40,
+                endLine |-> 5,
+                module |-> "Stop" ],
+          name |-> "Step",
+          parameters |-> <<"d">> ],
+        [ context |-> [d |-> 2],
+          location |->
+              [ beginColumn |-> 12,
+                beginLine |-> 5,
+                endColumn |-> 40,
+                endLine |-> 5,
+                module |-> "Stop" ],
+          name |-> "Step",
+          parameters |-> <<"d">> ] },
+  inits |->
+      { [ location |->
+              [ beginColumn |-> 9,
+                beginLine |-> 4,
+                endColumn |-> 22,
+                endLine |-> 4,
+                module |-> "Stop" ],
+          name |-> "Init" ] },
+  variables |->
+      { [ location |->
+              [ beginColumn |-> 11,
+                beginLine |-> 3,
+                endColumn |-> 11,
+                endLine |-> 3,
+                module |-> "Stop" ],
+          name |-> "x" ],
+        [ location |->
+              [ beginColumn |-> 14,
+                beginLine |-> 3,
+                endColumn |-> 14,
+                endLine |-> 3,
+                module |-> "Stop" ],
+          name |-> "y" ] },
+  actionconstraints |->
+      { [ location |->
+              [ beginColumn |-> 1,
+                beginLine |-> 12,
+                endColumn |-> 25,
+                endLine |-> 12,
+                module |-> "Stop" ],
+          name |-> "Moves" ] },
+  constraints |->
+      { [ location |->
+              [ beginColumn |-> 1,
+                beginLine |-> 11,
+                endColumn |-> 14,
+                endLine |-> 11,
+                module |-> "Stop" ],
+          name |-> "Bound" ] } ]

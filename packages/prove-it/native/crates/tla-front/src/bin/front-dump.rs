@@ -306,6 +306,7 @@ fn write_model_full(out: &mut String, config: &str, spec_path: &Path, library: O
         libraries: library.as_slice(),
         version: None,
         is_warning_enabled: true,
+        is_spec_described: false,
     };
     write_ir(out, lower_model(spec_path, config, &options));
 }

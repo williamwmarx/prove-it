@@ -63,6 +63,8 @@ pub struct Environment {
     /// The values the configuration assigns, by key.
     pub constants: OrderedMap<Name, ConfigValue>,
     pub variables: Vec<Name>,
+    /// Where the root module declares each of its variables (`variableLocations`).
+    pub variable_locations: Vec<Location>,
     pub variable_index: OrderedMap<Name, usize>,
     pub root_constants: Vec<Rc<Declaration>>,
     pub root_symbols: Rc<Symbols>,
@@ -2303,6 +2305,7 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
         substitutions,
         constants,
         variables,
+        variable_locations: linked_root.variable_locations.clone(),
         variable_index,
         root_constants: linked_root.constants.clone(),
         root_symbols: linked_root.visible.clone(),
