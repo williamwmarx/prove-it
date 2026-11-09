@@ -13,6 +13,9 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
 - **Permutations(S)** is normalized: `TLC.Permutations` makes a `SetEnumValue`, which TLC
   normalizes before it enumerates, so `\E p \in Permutations(S)` and `x' \in Permutations(S)`
   take the store's order (spectacle's quicksort).
+- A function of one bound takes a tuple pattern too (`[<<i, j>> \in S |-> e]`): it binds each
+  element's components and keeps the element as the key, as TLC does. AsyncGameOfLife_anim
+  (spectacle) now completes in Rust. A function of several bounds with a tuple pattern still stops.
 
 ## Lazy UNION
 
