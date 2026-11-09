@@ -95,6 +95,9 @@ const backends = getBackends();
 // Resolved here, since each checker runs from its model's directory.
 const nativeOption = getOption("--native");
 const nativeBinary = nativeOption && resolve(nativeOption);
+// The native binary reads the IR the Rust engine reads, so the run on that backend records its
+// front: the TypeScript engine skips models the Rust engine takes.
+const frontBackend = backends.includes("rust") ? "rust" : backends[0];
 
 // Runs a checker with TLC's command line for the model, from the model's directory.
 const runChecker = (
@@ -263,7 +266,7 @@ const work = async (queue: { model: CorpusModel; mode: OutputMode }[], total: nu
     const outputs: Record<string, Output> = { interpreter };
     const frontDirectory = nativeBinary && mkdtempSync(join(tmpdir(), "prove-it-front-"));
     for (const backend of backends) {
-      const isFrontRecorded = frontDirectory && backend === backends[0];
+      const isFrontRecorded = frontDirectory && backend === frontBackend;
       const engine = await runCli(model, mode, {
         ...getBackendEnvironment(backend),
         PROVE_IT_ENGINE: "debug",
@@ -326,7 +329,7 @@ const work = async (queue: { model: CorpusModel; mode: OutputMode }[], total: nu
         nativeBinary,
         model,
         mode,
-        outputs[backends[0]],
+        outputs[frontBackend],
         frontDirectory,
       );
       outputs.native = native;
