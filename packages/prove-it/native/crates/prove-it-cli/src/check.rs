@@ -942,7 +942,7 @@ fn print_violation(
     // starts.
     let checked = postconditions
         .filter(|_| !ir.model.postconditions.is_empty() && !has_constant_postcondition(ir));
-    let trace = match rebuild_trace(ir, violation, checked) {
+    let trace = match rebuild_trace(ir, violation, checked, printer.is_tool) {
         Ok(trace) => trace,
         Err(reason) => return Ok(report_not_native(printer, &reason)),
     };
@@ -955,7 +955,7 @@ fn print_violation(
             if checked.is_some() {
                 return Err("a postcondition after a deadlock that violates a temporal property");
             }
-            match rebuild_accepted(ir, violation, accepted) {
+            match rebuild_accepted(ir, violation, accepted, printer.is_tool) {
                 Ok(trace) => Some((trace, properties_headline(ir, &accepted.violated))),
                 Err(reason) => return Ok(report_not_native(printer, &reason)),
             }

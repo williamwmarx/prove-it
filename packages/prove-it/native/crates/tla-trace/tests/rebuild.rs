@@ -332,7 +332,7 @@ fn draws_random_elements_and_subsets_as_tlc_does() {
 fn aliased_trace(path: &str) -> Result<Vec<String>, Unsupported> {
     rebuild_violation(path, |ir, rebuilder, trace, cycle_start| {
         let aliases = rebuilder
-            .alias(trace, cycle_start)?
+            .alias(trace, cycle_start, false)?
             .expect("a model with an ALIAS");
         let text = |fields: Vec<(String, String)>| {
             fields

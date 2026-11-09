@@ -56,6 +56,7 @@ pub fn rebuild_trace(
     ir: &Ir,
     violation: &Violation,
     postconditions: Option<&PostconditionRun>,
+    is_tool: bool,
 ) -> Result<PrintedTrace, String> {
     rebuild(
         ir,
@@ -64,6 +65,7 @@ pub fn rebuild_trace(
         &violation.states,
         violation.labels.clone(),
         postconditions,
+        is_tool,
     )
 }
 
@@ -72,6 +74,7 @@ pub fn rebuild_accepted(
     ir: &Ir,
     violation: &Violation,
     accepted: &AcceptedTrace,
+    is_tool: bool,
 ) -> Result<PrintedTrace, String> {
     rebuild(
         ir,
@@ -82,6 +85,7 @@ pub fn rebuild_accepted(
         &accepted.states,
         vec![None; accepted.states.len().saturating_sub(1)],
         None,
+        is_tool,
     )
 }
 
@@ -92,6 +96,7 @@ fn rebuild(
     states: &[Vec<Id>],
     mut labels: Vec<Option<u32>>,
     postconditions: Option<&PostconditionRun>,
+    is_tool: bool,
 ) -> Result<PrintedTrace, String> {
     std::thread::scope(|scope| {
         std::thread::Builder::new()
@@ -158,7 +163,7 @@ fn rebuild(
                         }
                         None => None,
                     };
-                    let aliases = rebuilder.alias(&trace, cycle_start)?;
+                    let aliases = rebuilder.alias(&trace, cycle_start, is_tool)?;
                     // CounterExample closes a lasso with its step back into the cycle, which a
                     // stuttering one doesn't take.
                     let cycle = match *kind {

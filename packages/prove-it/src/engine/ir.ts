@@ -49,6 +49,7 @@ import type { InstanceAction } from "../environment";
 import { type Closure, type Environment, type EvaluationScope, getDefinition } from "../evaluate";
 import { ACTION_LEVEL } from "../levels";
 import { getLevel } from "../liveness";
+import type { getConstantPredicates } from "../search";
 import type { PermutedSet } from "../symmetry";
 import type { LiveExpression } from "../tableau";
 import type { TlcVersion } from "../tlc/version";
@@ -130,6 +131,7 @@ const DEFINITION_LOCAL = 1 << 9;
 const DEFINITION_SELF_REFERENTIAL = 1 << 10;
 const DEFINITION_REPEATED_EFFECT = 1 << 11;
 const DEFINITION_SUBSTITUTED = 1 << 12;
+const DEFINITION_NORMALIZED = 1 << 13;
 
 // What a name refers to outside any binding of it, in the order the compiler looks.
 const NO_RESOLUTION = 0;
@@ -211,11 +213,17 @@ export interface IrStartup {
   substitutes: { name: string; definition: Definition }[];
   // The constant definitions with effects, in the order TLC evaluates them.
   definitions: Definition[];
+  // The constant definitions TLC computes and deep-normalizes at startup (processConstantDefns).
+  normalized: ReadonlySet<Definition>;
+  // The constant definitions the configuration names, which TLC rejects for their value.
+  predicates: ReturnType<typeof getConstantPredicates>;
   // The SYMMETRY definition, which TLC evaluates to its group, and the sets it permutes.
   symmetry: { definition: Definition; permutedSets: PermutedSet[] } | undefined;
   // The assumptions that aren't axioms, each with the name TLC reports it by.
   assumptions: { expression: Expression; name: string }[];
 }
+
+const PREDICATE_FORMS = { predicate: 0, definition: 1, specification: 2 };
 
 export type IrOutcome = { ir: Uint8Array } | { reason: string };
 
@@ -492,7 +500,8 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
           ? DEFINITION_SELF_REFERENTIAL
           : 0) |
         (isRepeated ? DEFINITION_REPEATED_EFFECT : 0) |
-        (environment.substitutedDefinitions.has(definition) ? DEFINITION_SUBSTITUTED : 0),
+        (environment.substitutedDefinitions.has(definition) ? DEFINITION_SUBSTITUTED : 0) |
+        (input.startup.normalized.has(definition) ? DEFINITION_NORMALIZED : 0),
     );
     push(nodes, definition.location.line);
     push(nodes, definition.location.column);
@@ -924,6 +933,13 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
   }
   push(model, startup.definitions.length);
   for (const definition of startup.definitions) push(model, getDefinitionIndex(definition));
+  push(model, startup.predicates.length);
+  for (const predicate of startup.predicates) {
+    push(model, PREDICATE_FORMS[predicate.form]);
+    push(model, getText(predicate.kind));
+    push(model, getText(predicate.name));
+    push(model, getDefinitionIndex(predicate.definition));
+  }
   if (startup.symmetry === undefined) push(model, -1);
   if (startup.symmetry !== undefined) {
     push(model, getDefinitionIndex(startup.symmetry.definition));

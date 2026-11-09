@@ -93,6 +93,8 @@ pub struct Evaluator<'a> {
     /// Whether TLC has created its model checker, before which TLCGet reads none of its keys.
     pub is_started: bool,
     depth: Cell<usize>,
+    /// Whether a value it couldn't compute was left to the engine's startup.
+    is_deferring: Cell<bool>,
 }
 
 impl<'a> Evaluator<'a> {
@@ -108,7 +110,17 @@ impl<'a> Evaluator<'a> {
             version,
             is_started,
             depth: Cell::new(0),
+            is_deferring: Cell::new(false),
         }
+    }
+
+    /// Leaves a value it couldn't compute to the engine's startup, which checks it.
+    pub fn defer(&self) {
+        self.is_deferring.set(true);
+    }
+
+    pub fn is_deferring(&self) -> bool {
+        self.is_deferring.get()
     }
 }
 

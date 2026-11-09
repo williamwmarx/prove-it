@@ -65,6 +65,7 @@ import {
   createSearch,
   findAssumptionViolation,
   getConfigDefinition,
+  getConstantPredicates,
   getContext,
   reportInitialStatesProgress,
   reportStartup,
@@ -434,6 +435,12 @@ export const getIrStartup = (
         ),
       ),
     ],
+    normalized: new Set(
+      specification.startupDefinitions.filter((definition) =>
+        isStartupDefinition(definition, environment),
+      ),
+    ),
+    predicates: getConstantPredicates(config, environment),
     symmetry:
       symmetry?.kind === "Operator"
         ? { definition: symmetry, permutedSets: getPermutedSets(symmetry, config.substitutions) }
