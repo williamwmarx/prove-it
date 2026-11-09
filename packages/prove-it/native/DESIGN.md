@@ -2648,3 +2648,17 @@ the TypeScript front end in Bun.
   strings and comments, characters outside the BMP), of which 2,620 are errors (10 kinds of
   message, counting the keyword named as one).
 
+#### F3 as built (the texts)
+
+- The standard modules are the strings of `src/sany/modules.ts` (SANY's, for TLC master and
+  1.7.4) and `src/bundled-modules.ts` (the Reals, RealTime and Toolbox TLC bundles, which differ
+  from SANY's copies by a final newline). `scripts/front-modules.ts` writes each to
+  `crates/tla-front/modules/<set>/<Name>.tla`, with `src/standard_modules.rs` including them, and
+  `--check`, which Verification's Front End job runs, fails when a copy differs from the
+  TypeScript string. The copies are generated, so the TypeScript stays the one place to change a
+  text until it is retired, when the `.tla` files become the source.
+- `get_standard_module(name, version)` reads them; `cargo test` parses all 33 in SANY's mode.
+- Left for F4, with resolution: the module loader (`createTlcOrder`'s search of the spec's
+  directory, the root file's extracted modules, the user's copies of standard modules TLC reads
+  first) and the tables that go with the texts (`STANDARD_LEVELS`, `USER_STANDARD_MODULES`).
+
