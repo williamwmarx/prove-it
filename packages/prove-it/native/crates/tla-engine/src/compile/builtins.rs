@@ -323,6 +323,14 @@ impl Compiler<'_> {
         if builtin.flags & Builtin::TABLE != 0 {
             return self.compile_table(index, operands);
         }
+        // AssertError compares TLC's message for a failure, which the engine doesn't word, so
+        // the native checker leaves the assumption it is in to its caller.
+        if self.is_native && name == "AssertError" {
+            return Ok(leaf(
+                eval(|_| Err(Bail(crate::search::DELEGATED_ASSUMPTION))),
+                Footprint::default(),
+            ));
+        }
         if builtin.flags & Builtin::STATE_LEVEL != 0 || IMPURE_BUILTINS.contains(&name) {
             if name == "TLCEval" && operands.len() == 1 {
                 return self.operand(&operands[0]);

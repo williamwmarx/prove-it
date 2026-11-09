@@ -2706,6 +2706,10 @@ The milestones' as-built notes are in [design/front.md](design/front.md).
 - StringDeserialize: "TLC attempted to evaluate an unbounded CHOOSE", with IOUtils's location.
 - qlearning/Counter: a nonexistent field of `TLCGet("config")`.
 - ModuleSemanticsAssume and EmptySetEqAssume: their `AssertError` assumptions hold in TLC, which completes with no error.
+- Done since: suite/etest12 and etest13, and StringDeserialize, print what TLC prints. AssertError
+  assumptions go to the trace evaluator (`design/cli.md`), but each corpus model with them is
+  blocked elsewhere, as noted there. qlearning/Counter needs TLCDefer and TLCGet("config") in the
+  replay, and at best differs as known, since TLC's record holds its install path.
 - The replay doesn't read or write Json files. It evaluates their arguments, then gives up, since it can't rank the strings a file holds as TLC does.
 
 **engine-wasm (pushed at 58710d0, no PR).**
