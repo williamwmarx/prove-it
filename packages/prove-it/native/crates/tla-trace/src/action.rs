@@ -170,20 +170,22 @@ impl<'ir> Evaluator<'ir> {
                 for bound in bounds {
                     is_in_order &= self.is_in_normalized_order(bound.set, context, 0)?;
                 }
-                let body = *body;
-                for (position, inner) in self.bindings(bounds, context)?.iter().enumerate() {
-                    if !self.choose(position as u32, is_in_order, &mut |evaluator| {
-                        evaluator.walk(body, inner, is_init, then)
-                    })? {
-                        return Ok(false);
-                    }
-                }
-                Ok(true)
+                let mut position = 0;
+                self.for_each_binding(bounds, context, &mut |evaluator, inner| {
+                    position += 1;
+                    evaluator.choose(position, is_in_order, &mut |evaluator| {
+                        evaluator.walk(*body, inner, is_init, then)
+                    })
+                })
             }
             NodeKind::Forall { bounds, body } => {
                 // TLC walks the conjunction of the body over the bindings: the first, then the
                 // others in reverse, as `getNextStates` queues them.
-                let mut contexts = self.bindings(bounds, context)?;
+                let mut contexts = Vec::new();
+                self.for_each_binding(bounds, context, &mut |_, inner| {
+                    contexts.push(inner.clone());
+                    Ok(true)
+                })?;
                 if contexts.len() > 1 {
                     contexts[1..].reverse();
                 }

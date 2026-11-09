@@ -1013,18 +1013,22 @@ impl<'ir> Evaluator<'ir> {
 
     /// Calls `visit` with each binding of the bounds, the last bound varying fastest, until it
     /// returns false.
-    /// The contexts a walk binds the bounds of `\\E` or `\\A` to, in the order TLC's
-    /// `ContextEnumerator` gives them: each bound's set evaluated first, then the first bound
-    /// varying fastest.
-    pub fn bindings(&mut self, bounds: &[Bound], context: &Context) -> Evaluated<Vec<Context>> {
+    /// Visits the bindings of bounds in the order TLC's `ContextEnumerator` gives them, until
+    /// `visit` returns false: each bound's set evaluated first, then the first bound varying
+    /// fastest, each binding made as it is visited.
+    pub fn for_each_binding(
+        &mut self,
+        bounds: &[Bound],
+        context: &Context,
+        visit: &mut dyn FnMut(&mut Self, &Context) -> Evaluated<bool>,
+    ) -> Evaluated<bool> {
         let mut sets = Vec::with_capacity(bounds.len());
         for bound in bounds {
             let set = self.evaluate(bound.set, context)?;
             sets.push(elements(&set)?);
         }
-        let mut contexts = Vec::new();
         if sets.iter().any(|set| set.is_empty()) {
-            return Ok(contexts);
+            return Ok(true);
         }
         let mut positions = vec![0; bounds.len()];
         loop {
@@ -1033,7 +1037,9 @@ impl<'ir> Evaluator<'ir> {
                 inner =
                     self.bind_pattern(&bound.pattern, &sets[level][positions[level]], &inner)?;
             }
-            contexts.push(inner);
+            if !visit(self, &inner)? {
+                return Ok(false);
+            }
             let mut level = 0;
             while level < positions.len() {
                 positions[level] += 1;
@@ -1044,24 +1050,9 @@ impl<'ir> Evaluator<'ir> {
                 level += 1;
             }
             if level == positions.len() {
-                return Ok(contexts);
+                return Ok(true);
             }
         }
-    }
-
-    /// Visits the bindings of bounds in TLC's order, until `visit` returns false.
-    pub fn for_each_binding(
-        &mut self,
-        bounds: &[Bound],
-        context: &Context,
-        visit: &mut dyn FnMut(&mut Self, &Context) -> Evaluated<bool>,
-    ) -> Evaluated<bool> {
-        for inner in &self.bindings(bounds, context)? {
-            if !visit(self, inner)? {
-                return Ok(false);
-            }
-        }
-        Ok(true)
     }
 
     // --- functions ---
