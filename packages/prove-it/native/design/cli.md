@@ -215,9 +215,12 @@ Still to do:
   splits Next.
 - `files.rs` names the files SANY parses as `createFileDescriber` does. The directory TLC copies
   a module into is named by TLC's fingerprint of a string, as `getTemporaryName` does it.
-- With PROVE_IT_NATIVE_FRONT=1, and without -tool (which prints none of it), the binary prints
-  SANY's report as `tla_front::report::get_sany_text` writes it, in place of the recorded one. The
-  rest of the recorded front follows from `Starting...`, until tla-front writes that too.
+- With PROVE_IT_NATIVE_FRONT=1 the binary prints SANY's report as
+  `tla_front::report::get_sany_text` writes it, in place of the recorded one. Under -tool it goes
+  between "Starting SANY..." (2220) and "SANY finished." (2219), and otherwise before `Starting...`.
+  The rest of the front stays recorded until tla-front writes it too.
+- The engine's startup hooks (`startup_print`, `symmetry_sets_too_small`, `startup_done`) stay
+  silent while the front is recorded, since the recorded text already holds what they report.
 
 ## POSTCONDITION
 
