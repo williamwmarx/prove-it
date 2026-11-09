@@ -279,11 +279,6 @@ pub fn compare(left: &Value, right: &Value) -> Evaluated<Ordering> {
         }
         (Value::Function(left), Value::Function(right)) => compare_functions(left, right),
         _ if left.is_set() && right.is_set() => {
-            if let (Value::Set(left), Value::Set(right)) = (left, right)
-                && Rc::ptr_eq(left, right)
-            {
-                return Ok(Ordering::Equal);
-            }
             let (left, right) = (elements(left)?, elements(right)?);
             if left.len() != right.len() {
                 return Ok(left.len().cmp(&right.len()));
@@ -303,9 +298,6 @@ pub fn compare(left: &Value, right: &Value) -> Evaluated<Ordering> {
 fn compare_functions(left: &Rc<Function>, right: &Rc<Function>) -> Evaluated<Ordering> {
     sort(left);
     sort(right);
-    if Rc::ptr_eq(left, right) {
-        return Ok(Ordering::Equal);
-    }
     let size = left.domain.len();
     if size != right.domain.len() {
         if size > 0 && !right.domain.is_empty() && is_record(left) != is_record(right) {
@@ -349,9 +341,6 @@ pub fn equals(left: &Value, right: &Value) -> Evaluated<bool> {
         (Value::Function(left), Value::Function(right)) => {
             sort(left);
             sort(right);
-            if Rc::ptr_eq(left, right) {
-                return Ok(true);
-            }
             let size = left.domain.len();
             if size > 0 && !right.domain.is_empty() && is_record(left) != is_record(right) {
                 return fail("record compared with a function");
@@ -448,6 +437,17 @@ pub fn settle(value: &Value) {
             function.domain.iter().for_each(settle);
             function.range.iter().for_each(settle);
         }
+        // A lazy set enumerates into its parts' values, so fingerprinting it settles them.
+        Value::Lazy(lazy) => match &**lazy {
+            Lazy::Subset(base) | Lazy::Seq(base) => settle(base),
+            Lazy::FunctionSet(domain, range) => {
+                settle(domain);
+                settle(range);
+            }
+            Lazy::RecordSet(fields, _) => fields.iter().for_each(|(_, set)| settle(set)),
+            Lazy::Product(factors) => factors.iter().for_each(settle),
+            Lazy::Nat | Lazy::Int | Lazy::Real | Lazy::Strings => {}
+        },
         _ => {}
     }
 }
@@ -491,6 +491,44 @@ pub fn matches(store: &Store, id: u32, value: &Value) -> bool {
                     matches(store, store.element_at(id, index as u32), element)
                 })
         }
+    }
+}
+
+/// TLC's `deepNormalize` of a value it permutes or compares whole (`forgetDeepWrittenOrder`): it
+/// sorts each function it reaches, but a lambda it evaluates again to print.
+pub fn settle_deep(value: &Value) {
+    match value {
+        Value::Set(elements) => elements.iter().for_each(settle_deep),
+        Value::Function(function) if function.class.get() != Class::Lambda => {
+            sort(function);
+            function.domain.iter().for_each(settle_deep);
+            function.range.iter().for_each(settle_deep);
+        }
+        _ => {}
+    }
+}
+
+/// `IValue.deepNormalize` as TLCStateMut.fingerPrint applies it to a state under a VIEW
+/// (`forgetNormalizedWrittenOrder`): a set or a domain sorts its elements, comparing them, only when
+/// it has two or more.
+pub fn settle_normalized(value: &Value) {
+    let settle_sorted = |values: &[Value]| {
+        if values.len() > 1 {
+            values.iter().for_each(settle_deep);
+        } else {
+            values.iter().for_each(settle_normalized);
+        }
+    };
+    match value {
+        Value::Set(elements) => settle_sorted(elements),
+        Value::Function(function) if function.class.get() != Class::Lambda => {
+            sort(function);
+            if function.domain.len() > 1 {
+                settle_sorted(&function.domain);
+            }
+            function.range.iter().for_each(settle_normalized);
+        }
+        _ => {}
     }
 }
 

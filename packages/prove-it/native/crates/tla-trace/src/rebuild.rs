@@ -11,7 +11,10 @@ use tla_values::{Id, Store};
 use crate::eval::{Context, Evaluator};
 use std::rc::Rc;
 
-use crate::value::{Evaluated, Text, Value, compare, equals, from_store, matches, permute, settle};
+use crate::value::{
+    Evaluated, Text, Value, compare, equals, from_store, matches, permute, settle, settle_deep,
+    settle_normalized,
+};
 use crate::{Ending, Trace, TraceState, Unsupported};
 
 /// Rebuilds traces of one model.
@@ -142,7 +145,7 @@ impl<'ir> Rebuilder<'ir> {
         let mut steps: Vec<Option<u32>> = vec![None];
         for (position, pair) in states.windows(2).enumerate() {
             // TLC recovers a state, and so fingerprints it, before it takes its step.
-            rebuilt[position].iter().for_each(settle);
+            settle_recovered(evaluator, &self.key, &rebuilt[position])?;
             let previous = rebuilt[position].clone();
             if pair[0] == pair[1] {
                 rebuilt.push(previous);
@@ -187,12 +190,40 @@ impl<'ir> Rebuilder<'ir> {
             outputs.push(std::mem::take(&mut evaluator.printed));
             steps.push(step);
         }
-        if is_in_model(evaluator, &rebuilt)? {
-            rebuilt[rebuilt.len() - 1].iter().for_each(settle);
+        let last = &rebuilt[rebuilt.len() - 1];
+        let is_reducing = !matches!(self.key, Key::State);
+        if is_held && is_reducing {
+            // TLC finds the violating state among the successors by equality, which sorts it.
+            last.iter().for_each(settle_deep);
+        } else if is_in_model(evaluator, &rebuilt)? {
+            settle_recovered(evaluator, &self.key, &rebuilt[rebuilt.len() - 1])?;
+        } else if is_held {
+            // A violating state outside the model isn't fingerprinted, but TLC's checks of it
+            // sort what their comparisons reach.
+            check_violation(evaluator, &rebuilt)?;
         }
         evaluator.printed.clear();
         Ok(compose(rebuilt, steps, initial_output, outputs, ending))
     }
+}
+
+// What TLC's fingerprint of a recovered state sorts, as `settleRecoveredState` gives it: under
+// SYMMETRY each value deeply, but a lambda; under a VIEW the state as `deepNormalize` does and the
+// view deeply; otherwise each value, a lambda becoming the function it enumerates.
+fn settle_recovered(
+    evaluator: &mut Evaluator<'_>,
+    key: &Key,
+    state: &[Value],
+) -> Result<(), Unsupported> {
+    match key {
+        Key::State => state.iter().for_each(settle),
+        Key::Symmetry(_) | Key::ViewOfSymmetry(..) => state.iter().for_each(settle_deep),
+        Key::View(view) => {
+            state.iter().for_each(settle_normalized);
+            settle_deep(&run(view_of(evaluator, *view, state))?);
+        }
+    }
+    Ok(())
 }
 
 // What TLC prints with each state, as `toTrace` gives it. TLC rebuilds the states it doesn't keep
@@ -292,7 +323,9 @@ fn find(
         }
         _ => None,
     };
+    let is_reducing = !matches!(key, Key::State);
     let mut found = None;
+    let mut is_ambiguous = false;
     run(
         evaluator.walk_action(expression, context, is_init, &mut |evaluator| {
             let state: Vec<Value> = if is_init {
@@ -330,13 +363,37 @@ fn find(
                     }
                 }
             };
-            if is_match && found.is_none() {
-                found = Some(state);
+            if is_match {
+                match &found {
+                    None => found = Some((state, evaluator.choices.clone())),
+                    Some((first, choices)) => {
+                        // TLC takes the first too where the walk first chose between them in
+                        // TLC's order.
+                        let is_same_state = first
+                            .iter()
+                            .zip(&state)
+                            .all(|(left, right)| crate::value::is_same(left, right));
+                        let is_in_order = choices
+                            .iter()
+                            .zip(&evaluator.choices)
+                            .find(|(left, right)| left != right)
+                            .is_some_and(|(left, _)| left.1);
+                        is_ambiguous |= !is_same_state && !is_in_order;
+                    }
+                }
             }
-            Ok(is_exhaustive || !is_match)
+            // A state matched by its value is the search's; one matched by its view or orbit is
+            // walked past, for the ambiguity check.
+            Ok(is_exhaustive || is_reducing || !is_match)
         }),
     )?;
-    Ok(found)
+    // Under VIEW or SYMMETRY, TLC takes the first of the states its view or orbit matches, in the
+    // order it streams them, which the evaluator doesn't follow for every set yet; it takes the
+    // first state only where the walk reached the others through a choice in TLC's order.
+    if is_ambiguous {
+        return unsupported("several states TLC may take for the search's under VIEW or SYMMETRY");
+    }
+    Ok(found.map(|(state, _)| state))
 }
 
 // The VIEW of a state, evaluated with the state as the current one.
@@ -400,11 +457,15 @@ fn is_in_model(evaluator: &mut Evaluator<'_>, rebuilt: &[Vec<Value>]) -> Result<
         let Some(index) = name.definition else {
             return unsupported("a constraint without a definition");
         };
+        // TLCGet("level") reads the level of the state that is current: the predecessor's for an
+        // action constraint, and the last state's own, one past it, for a constraint.
         if is_action {
             evaluator.current = state(&rebuilt[last - 1]);
             evaluator.next = state(&rebuilt[last]);
+            evaluator.level = last as i32;
         } else {
             evaluator.current = state(&rebuilt[last]);
+            evaluator.level = last as i32 + 1;
         }
         let body = evaluator.definition(ir.definitions[index as usize]).body;
         if !run(evaluator.boolean(body, &Context::default()))? {
@@ -412,6 +473,57 @@ fn is_in_model(evaluator: &mut Evaluator<'_>, rebuilt: &[Vec<Value>]) -> Result<
         }
     }
     Ok(true)
+}
+
+// TLC's checks of a violating state, as `doNextCheckInvariants` and `doNextCheckImplied` make
+// them: the invariants in order until one fails, then, past an initial state, the action
+// properties in order until one fails.
+fn check_violation(
+    evaluator: &mut Evaluator<'_>,
+    rebuilt: &[Vec<Value>],
+) -> Result<(), Unsupported> {
+    let ir = evaluator.ir;
+    let state = |values: &[Value]| values.iter().cloned().map(Some).collect();
+    let last = rebuilt.len() - 1;
+    evaluator.current = state(&rebuilt[last]);
+    evaluator.level = last as i32 + 1;
+    let mut invariants = Vec::new();
+    for invariant in &ir.model.invariants {
+        let Some(index) = invariant.root.definition else {
+            return unsupported("an invariant without a definition");
+        };
+        invariants.push(evaluator.definition(ir.definitions[index as usize]).body);
+    }
+    invariants.extend(
+        ir.model
+            .property_invariants
+            .iter()
+            .map(|invariant| invariant.root),
+    );
+    for invariant in invariants {
+        if !run(evaluator.boolean(invariant, &Context::default()))? {
+            return Ok(());
+        }
+    }
+    if last == 0 {
+        return Ok(());
+    }
+    evaluator.current = state(&rebuilt[last - 1]);
+    evaluator.next = state(&rebuilt[last]);
+    evaluator.level = last as i32;
+    for property in &ir.model.action_properties {
+        // `[A]_v`: A, or else v unchanged.
+        let context = Context::default();
+        if run(evaluator.boolean(property.action, &context))? {
+            continue;
+        }
+        let now = run(evaluator.evaluate(property.subscript, &context))?;
+        let after = run(evaluator.evaluate(property.subscript, &context.primed(true)))?;
+        if !run(equals(&now, &after))? {
+            return Ok(());
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

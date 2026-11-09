@@ -5,8 +5,8 @@ use std::fmt;
 use crate::{
     Action, ActionProperty, Atom, AtomKind, Bound, Builtin, ConfigName, Constant, Definition,
     DefinitionForm, EnabledActions, IR_VERSION, Index, Ir, LiveProperty, LiveTerm, MAGIC, Model,
-    Name, Node, NodeId, NodeKind, Nodes, Param, PathStep, Pattern, Printed, Resolution, Scope,
-    ScopeBinding, Selector, Startup, TextId, Update, Value, Values, code, tag,
+    Name, Node, NodeId, NodeKind, Nodes, Param, PathStep, Pattern, Possible, Printed, Resolution,
+    Scope, ScopeBinding, Selector, SourceRange, Startup, TextId, Update, Value, Values, code, tag,
 };
 
 /// Why a blob isn't an IR this decoder reads: where it stopped, in words, and what it found.
@@ -187,6 +187,29 @@ impl Decoder<'_> {
 
     fn text(&mut self) -> Decoded<TextId> {
         self.below(self.text_count as usize, "text")
+    }
+
+    // A node's source range: its module's text, or -1 and zeros for none.
+    fn range(&mut self) -> Decoded<Option<SourceRange>> {
+        let module = self.next()?;
+        if module == -1 {
+            for _ in 0..4 {
+                if self.next()? != 0 {
+                    return self.error("a range without a module that has a position");
+                }
+            }
+            return Ok(None);
+        }
+        if module < 0 || module as usize >= self.text_count as usize {
+            return self.error(format!("the module text {module}"));
+        }
+        Ok(Some(SourceRange {
+            module: module as TextId,
+            start_line: self.next()?,
+            start_column: self.next()?,
+            end_line: self.next()?,
+            end_column: self.next()?,
+        }))
     }
 
     fn texts(&mut self) -> Decoded<Vec<TextId>> {
@@ -531,16 +554,29 @@ impl Decoder<'_> {
         let is_labelled = self.flag()?;
         let invariants = self.config_names(true)?;
         let count = self.count()?;
-        let property_invariants = (0..count)
+        let (property_invariants, property_invariant_names) = (0..count)
             .map(|_| {
-                Ok(Printed {
-                    root: node(self)?,
-                    has_repeated_effect: self.flag()?,
-                })
+                Ok((
+                    Printed {
+                        root: node(self)?,
+                        has_repeated_effect: self.flag()?,
+                    },
+                    self.text()?,
+                ))
             })
-            .collect::<Decoded<_>>()?;
+            .collect::<Decoded<Vec<_>>>()?
+            .into_iter()
+            .unzip();
         let constraints = self.unprinted()?;
         let action_constraints = self.unprinted()?;
+        let possible = self
+            .config_names(true)?
+            .into_iter()
+            .map(|named| Possible {
+                name: named.root,
+                is_action: named.has_repeated_effect,
+            })
+            .collect();
         let count = self.count()?;
         let action_properties = (0..count)
             .map(|_| {
@@ -634,8 +670,10 @@ impl Decoder<'_> {
             is_labelled,
             invariants,
             property_invariants,
+            property_invariant_names,
             constraints,
             action_constraints,
+            possible,
             action_properties,
             initial_predicates,
             view,
@@ -675,10 +713,11 @@ impl Decoder<'_> {
             }
             let id = self.resolve(&target)?;
             self.depth -= 1;
-            return Ok(self.push(nodes, offset, 0, 0, NodeKind::Reference(id)));
+            return Ok(self.push(nodes, offset, (0, 0, None), NodeKind::Reference(id)));
         }
         let line = self.next()?;
         let column = self.next()?;
+        let range = self.range()?;
         let is_flagged = match (tag, flags) {
             (tag::DEFINITION, _) | (_, 0) => false,
             (_, 1) => true,
@@ -698,7 +737,7 @@ impl Decoder<'_> {
             return self.error(format!("tag {tag} with a flag"));
         }
         // The node's id is taken before its children's, as its offset comes before theirs.
-        let id = self.push(nodes, offset, line, column, NodeKind::ExceptAt);
+        let id = self.push(nodes, offset, (line, column, range), NodeKind::ExceptAt);
         let mut child = |decoder: &mut Self| decoder.node(start, limits, nodes);
         let kind = match tag {
             tag::NUMBER if is_flagged => NodeKind::WideNumber(self.text()?),
@@ -927,14 +966,18 @@ impl Decoder<'_> {
         &mut self,
         nodes: &mut Nodes,
         offset: usize,
-        line: i32,
-        column: i32,
+        (line, column, range): (i32, i32, Option<SourceRange>),
         kind: NodeKind,
     ) -> NodeId {
         let id = self.node_count;
         self.node_count += 1;
         self.offsets[offset] = id;
-        nodes.arena.push(Node { line, column, kind });
+        nodes.arena.push(Node {
+            line,
+            column,
+            range,
+            kind,
+        });
         id
     }
 

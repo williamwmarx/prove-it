@@ -154,6 +154,9 @@ pub struct Evaluator<'ir> {
     /// The state a walk looks for, where a value that differs from it can't lead to it: a walk
     /// then drops an assignment of another value, as nothing else follows from it.
     pub target: Option<Vec<Value>>,
+    /// The choices the walk made to reach where it is: at each disjunction or enumeration, the
+    /// position of the branch or element it took, and whether TLC takes them in the same order.
+    pub choices: Vec<(u32, bool)>,
 }
 
 const MAXIMUM_DEPTH: u32 = 10_000;
@@ -178,6 +181,7 @@ impl<'ir> Evaluator<'ir> {
             level: 0,
             printed: Vec::new(),
             target: None,
+            choices: Vec::new(),
         }
     }
 
@@ -1009,19 +1013,51 @@ impl<'ir> Evaluator<'ir> {
 
     /// Calls `visit` with each binding of the bounds, the last bound varying fastest, until it
     /// returns false.
+    /// The contexts a walk binds the bounds of `\\E` or `\\A` to, in the order TLC's
+    /// `ContextEnumerator` gives them: each bound's set evaluated first, then the first bound
+    /// varying fastest.
+    pub fn bindings(&mut self, bounds: &[Bound], context: &Context) -> Evaluated<Vec<Context>> {
+        let mut sets = Vec::with_capacity(bounds.len());
+        for bound in bounds {
+            let set = self.evaluate(bound.set, context)?;
+            sets.push(elements(&set)?);
+        }
+        let mut contexts = Vec::new();
+        if sets.iter().any(|set| set.is_empty()) {
+            return Ok(contexts);
+        }
+        let mut positions = vec![0; bounds.len()];
+        loop {
+            let mut inner = context.clone();
+            for (level, bound) in bounds.iter().enumerate() {
+                inner =
+                    self.bind_pattern(&bound.pattern, &sets[level][positions[level]], &inner)?;
+            }
+            contexts.push(inner);
+            let mut level = 0;
+            while level < positions.len() {
+                positions[level] += 1;
+                if positions[level] < sets[level].len() {
+                    break;
+                }
+                positions[level] = 0;
+                level += 1;
+            }
+            if level == positions.len() {
+                return Ok(contexts);
+            }
+        }
+    }
+
+    /// Visits the bindings of bounds in TLC's order, until `visit` returns false.
     pub fn for_each_binding(
         &mut self,
         bounds: &[Bound],
         context: &Context,
         visit: &mut dyn FnMut(&mut Self, &Context) -> Evaluated<bool>,
     ) -> Evaluated<bool> {
-        let Some((first, rest)) = bounds.split_first() else {
-            return visit(self, context);
-        };
-        let set = self.evaluate(first.set, context)?;
-        for element in elements(&set)?.iter() {
-            let inner = self.bind_pattern(&first.pattern, element, context)?;
-            if !self.for_each_binding(rest, &inner, visit)? {
+        for inner in &self.bindings(bounds, context)? {
+            if !visit(self, inner)? {
                 return Ok(false);
             }
         }
@@ -1125,6 +1161,55 @@ impl<'ir> Evaluator<'ir> {
         }
         let function = self.evaluate(function, context)?;
         apply_value(&function, &argument)
+    }
+
+    /// For `f[e]` in an action where TLC keeps `f` lazy, a function constructor or a LET's
+    /// function: its bound, its body and the context the body is walked in, which the walk binds
+    /// to the argument (`resolve_lazy_application` in the engine's walker).
+    pub(crate) fn walked_function(
+        &mut self,
+        function: NodeId,
+        context: &Context,
+    ) -> Evaluated<Option<(&'ir Bound, NodeId, Context)>> {
+        let (bounds, body, base) = match self.kind(function) {
+            NodeKind::FunctionConstruction {
+                is_recursive: false,
+                bounds,
+                body,
+            } => (bounds, *body, context.clone()),
+            NodeKind::Identifier(name) if name.is_local => {
+                let Some(frame) = lookup(&context.env, name.text) else {
+                    return Ok(None);
+                };
+                let Binding::Function {
+                    definition,
+                    context: bound,
+                    is_self: false,
+                } = &frame.binding
+                else {
+                    return Ok(None);
+                };
+                let definition = self.definition(*definition);
+                let DefinitionForm::Function(bounds) = &definition.form else {
+                    return Ok(None);
+                };
+                (
+                    bounds,
+                    definition.body,
+                    bound.primed(context.is_primed || bound.is_primed),
+                )
+            }
+            _ => return Ok(None),
+        };
+        match &bounds[..] {
+            [
+                bound @ Bound {
+                    pattern: Pattern::Name(_),
+                    ..
+                },
+            ] => Ok(Some((bound, body, base))),
+            _ => fail("walking a lazy function of several arguments"),
+        }
     }
 
     // The bounds, body and context of a function definition or LET function a name refers to.
@@ -1243,6 +1328,40 @@ impl<'ir> Evaluator<'ir> {
         }
     }
 
+    // Membership in a set, through the operands of a `\\cup`, `\\cap` or `\\`, as TLC's lazy
+    // `SetCupValue`, `SetCapValue` and `SetDiffValue` test it, so that an infinite operand such as
+    // Nat isn't enumerated.
+    fn is_member_of(&mut self, element: &Value, set: &Operand) -> Evaluated<bool> {
+        self.combined_set(set)?.has(element)
+    }
+
+    // A set as TLC builds it, both operands of each `\\cup`, `\\cap` or `\\` evaluated.
+    fn combined_set(&mut self, set: &Operand) -> Evaluated<Combined> {
+        if let Operand::Node(node, context) = set
+            && let NodeKind::Apply { name, args } = self.kind(*node)
+            && let [left, right] = args[..]
+            && !name.is_local
+            && let Resolution::Builtin(index) = name.resolution
+        {
+            let operation = match self.name(self.ir.builtins[index as usize].name) {
+                "\\cup" => Some(SetOperation::Union),
+                "\\cap" => Some(SetOperation::Intersection),
+                "\\" => Some(SetOperation::Difference),
+                _ => None,
+            };
+            if let Some(operation) = operation {
+                let left = self.combined_set(&Operand::Node(left, context.clone()))?;
+                let right = self.combined_set(&Operand::Node(right, context.clone()))?;
+                return Ok(Combined::Operation(
+                    operation,
+                    Box::new(left),
+                    Box::new(right),
+                ));
+            }
+        }
+        Ok(Combined::Set(self.operand(set)?))
+    }
+
     fn builtin(
         &mut self,
         index: Index,
@@ -1310,8 +1429,7 @@ impl<'ir> Evaluator<'ir> {
             "\\in" | "\\notin" => {
                 arity(2)?;
                 let element = self.operand(&operands[0])?;
-                let set = self.operand(&operands[1])?;
-                Value::Bool(is_member(&element, &set)? == (name == "\\in"))
+                Value::Bool(self.is_member_of(&element, &operands[1])? == (name == "\\in"))
             }
             "\\subseteq" => {
                 arity(2)?;
@@ -1413,14 +1531,13 @@ impl<'ir> Evaluator<'ir> {
             "IsFiniteSet" => {
                 arity(1)?;
                 let set = self.operand(&operands[0])?;
-                Value::Bool(match &set {
-                    Value::Lazy(lazy) => match &**lazy {
-                        Lazy::Nat | Lazy::Int | Lazy::Real | Lazy::Strings | Lazy::Seq(_) => false,
-                        _ => elements(&set).is_ok(),
-                    },
-                    _ if set.is_set() => true,
-                    _ => return fail("IsFiniteSet of a non-set"),
-                })
+                if matches!(
+                    set,
+                    Value::Bool(_) | Value::Int(_) | Value::Str(_) | Value::Model(_)
+                ) {
+                    return fail("IsFiniteSet of a non-set");
+                }
+                Value::Bool(is_finite(&set))
             }
             "Seq" => {
                 arity(1)?;
@@ -1478,13 +1595,21 @@ impl<'ir> Evaluator<'ir> {
                 let sequence = self.operand(&operands[0])?;
                 let from = self.operand_int(&operands[1])?;
                 let to = self.operand_int(&operands[2])?;
-                let elements = sequence_of(&sequence)?;
-                if from > to {
-                    Value::tuple(Vec::new())
-                } else if from < 1 || to > elements.len() as i64 {
+                // A string slices as the sequence of its characters, and stays a string.
+                let length = match &sequence {
+                    Value::Str(text) => text.units.len(),
+                    _ => sequence_of(&sequence)?.len(),
+                };
+                let range = if from > to {
+                    0..0
+                } else if from < 1 || to > length as i64 {
                     return fail("SubSeq outside the sequence's domain");
                 } else {
-                    Value::tuple(elements[from as usize - 1..to as usize].to_vec())
+                    from as usize - 1..to as usize
+                };
+                match &sequence {
+                    Value::Str(text) => Value::Str(self.text_of(text.units[range].into())),
+                    _ => Value::tuple(sequence_of(&sequence)?[range].to_vec()),
                 }
             }
             "SelectSeq" => {
@@ -1642,9 +1767,49 @@ fn permute(
 
 /// An argument of a builtin: an expression as written, or a value an operator argument is
 /// applied to.
+enum SetOperation {
+    Union,
+    Intersection,
+    Difference,
+}
+
+enum Combined {
+    Set(Value),
+    Operation(SetOperation, Box<Combined>, Box<Combined>),
+}
+
+impl Combined {
+    // Membership, testing the right operand only where the left one doesn't decide it.
+    fn has(&self, element: &Value) -> Evaluated<bool> {
+        match self {
+            Combined::Set(set) => is_member(element, set),
+            Combined::Operation(operation, left, right) => Ok(match operation {
+                SetOperation::Union => left.has(element)? || right.has(element)?,
+                SetOperation::Intersection => left.has(element)? && right.has(element)?,
+                SetOperation::Difference => left.has(element)? && !right.has(element)?,
+            }),
+        }
+    }
+}
+
 enum Operand {
     Node(NodeId, Context),
     Value(Value),
+}
+
+// Whether a set (or a function, which the engine counts as a finite set) is finite, without
+// enumerating it: a lazy set is when its parts are.
+fn is_finite(value: &Value) -> bool {
+    match value {
+        Value::Lazy(lazy) => match &**lazy {
+            Lazy::Nat | Lazy::Int | Lazy::Real | Lazy::Strings | Lazy::Seq(_) => false,
+            Lazy::Subset(base) => is_finite(base),
+            Lazy::FunctionSet(domain, range) => is_finite(domain) && is_finite(range),
+            Lazy::RecordSet(fields, _) => fields.iter().all(|(_, set)| is_finite(set)),
+            Lazy::Product(factors) => factors.iter().all(is_finite),
+        },
+        _ => true,
+    }
 }
 
 fn sequence_of(value: &Value) -> Evaluated<&[Value]> {

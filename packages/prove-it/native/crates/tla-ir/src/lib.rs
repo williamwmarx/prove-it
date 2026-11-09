@@ -32,7 +32,7 @@ pub use decode::{DecodeError, decode};
 pub use encode::encode;
 
 /// The version of the layout, `IR_VERSION` in `ir.ts`.
-pub const IR_VERSION: u32 = 5;
+pub const IR_VERSION: u32 = 8;
 
 /// "PIIR" as a little-endian word.
 pub const MAGIC: u32 = 0x5249_4950;
@@ -169,6 +169,13 @@ pub struct Action {
     pub label: TextId,
 }
 
+/// A `_POSSIBLE` predicate, which TLC counts the states, or with `is_action` the steps, it holds of.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Possible {
+    pub name: ConfigName,
+    pub is_action: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActionProperty {
     pub action: NodeId,
@@ -241,8 +248,12 @@ pub struct Model {
     pub is_labelled: bool,
     pub invariants: Vec<Printed<ConfigName>>,
     pub property_invariants: Vec<Printed<NodeId>>,
+    /// The name TLC gives each of `property_invariants` when it reports it violated: the operator
+    /// the property asserts always holds, or the property's name.
+    pub property_invariant_names: Vec<TextId>,
     pub constraints: Vec<ConfigName>,
     pub action_constraints: Vec<ConfigName>,
+    pub possible: Vec<Possible>,
     pub action_properties: Vec<ActionProperty>,
     pub initial_predicates: Vec<NodeId>,
     pub view: Option<ConfigName>,
@@ -270,7 +281,20 @@ pub struct Nodes {
 pub struct Node {
     pub line: i32,
     pub column: i32,
+    /// Where the node is written, which TLC's messages print, if the front end knows.
+    pub range: Option<SourceRange>,
     pub kind: NodeKind,
+}
+
+/// A node's source range: its module and where it starts and ends, as TLC prints them in
+/// `line 2, col 3 to line 2, col 9 of module M`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SourceRange {
+    pub module: TextId,
+    pub start_line: i32,
+    pub start_column: i32,
+    pub end_line: i32,
+    pub end_column: i32,
 }
 
 /// What a name refers to outside any binding of it.

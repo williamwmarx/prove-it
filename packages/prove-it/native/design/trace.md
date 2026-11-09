@@ -219,16 +219,36 @@ after each pull request.
 - **Actions** (`action.rs`). The walk follows `walker.rs`. It assigns at the first `x' = e` or
   `x' \in S`, tests elsewhere, walks UNCHANGED variable by variable, treats `[A]_v` and `<<A>>_v`
   as TLC does, and evaluates the rest of a conjunction as guards once every variable is assigned.
+  It binds the bounds of a quantifier as TLC's `ContextEnumerator` does: every set first, then the
+  first bound varying fastest. It walks `\A` as the conjunction of its body over the bindings, the
+  first and then the others in reverse, as `getNextStates` queues them.
 - **Matching** (`rebuild.rs`). Without VIEW or SYMMETRY, a candidate is the state when it equals
   the search's state. Under VIEW, its view must equal the view of the search's state. Under
   SYMMETRY, some permutation of the group must map it to that state, so the two are in one orbit.
   Under both, the views of their least states in the orbit must be equal (`TLCStateMut.fingerPrint`).
   A violation's last state is matched by its value, as TLC holds it (`getTrace` with the last
-  successor). Every state but the last is settled as `settleRecoveredState` settles it. So is the last one if
+  successor). Every state but the last is settled as `settleRecoveredState` settles it: fingerprinted
+  without VIEW or SYMMETRY, deeply but for lambdas under SYMMETRY, and as `deepNormalize` with the
+  view deeply under a VIEW. So is the last one if
   it satisfies the CONSTRAINTs and ACTION_CONSTRAINTs, as TLC fingerprints only such a state.
+  A violating last state outside them goes through TLC's checks of it instead, which sort what
+  their comparisons reach: the invariants in order until one fails, then the action properties
+  (`doNextCheckInvariants`, `doNextCheckImplied`).
   For a plain match where nothing prints, the walk drops an assignment as soon as it differs from
   the search's state. The check sorts nothing, so it changes no value TLC prints, and a model such
   as MCBakery's ISpec doesn't enumerate its 1.7 million initial states again.
+- **Enumeration order.** The walks enumerate every set in TLC's normalized order. TLC streams a
+  `\cup`, a UNION, SUBSET and the sets of functions, records and tuples in orders of its own
+  (`compile/lazy.rs` in the engine). The state the evaluator finds doesn't depend on that order
+  without VIEW or SYMMETRY, since it equals the search's. Under VIEW or SYMMETRY, the walk goes
+  on past the first candidate that matches. Each walk records the choices it made: the branch of
+  each disjunction and the element of each enumeration, and whether TLC takes that enumeration in
+  normalized order too (a set enumeration, an interval, a current variable, a constant or a value
+  computed at startup). Where two different candidates match, the first is TLC's when their
+  choices first part at such an enumeration; otherwise `rebuild` returns `Unsupported` rather than
+  guess. What a spec
+  prints while TLC enumerates such a set may come in another order; porting the streaming orders
+  is left.
 - **Print.** Where the spec prints, each walk runs to its end, and each step tries TLC's actions in
   order, as `findStepAction` does. What the walks print is composed as `toTrace` composes it.
   Elsewhere a walk stops at the state it looks for.
