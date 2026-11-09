@@ -395,7 +395,9 @@ impl<'ir> Evaluator<'ir> {
         Ok(true)
     }
 
-    // Walks a body at each context in turn, as a conjunction.
+    // Walks a body at each context in turn, as a conjunction. In the initial predicate, once
+    // every variable has a value, the body at the contexts left is evaluated as a guard, as the
+    // engine's `WalkedForall` and `successors.ts` do.
     fn walk_each(
         &mut self,
         body: NodeId,
@@ -407,6 +409,14 @@ impl<'ir> Evaluator<'ir> {
             return then(self);
         };
         self.walk(body, first, is_init, &mut |evaluator| {
+            if is_init && !rest.is_empty() && evaluator.is_complete(true) {
+                for context in rest {
+                    if !evaluator.boolean(body, context)? {
+                        return Ok(true);
+                    }
+                }
+                return then(evaluator);
+            }
             evaluator.walk_each(body, rest, is_init, then)
         })
     }
