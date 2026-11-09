@@ -2,7 +2,7 @@
 //! them from `createLivenessChecker`.
 
 use tla_front::errors::{FrontError, UNEXPECTED_EXCEPTION};
-use tla_front::model::{ModelOptions, lower_model};
+use tla_front::model::{LoweredModel, ModelOptions, lower_front};
 use tla_ir::{AtomKind, EnabledActions, LiveTerm};
 
 const SPEC: &str = "---- MODULE Live ----
@@ -14,11 +14,21 @@ Spec == Init /\\ [][Next]_x /\\ WF_x(Next)
 Returns == []<>(x = 0)
 Visits == \\E v \\in {0, 1} : []<>(x = v)
 Chosen == IF 1 > 0 THEN []<>(x = 0) ELSE <>(x = 1)
+Constant == 1 + 1 = 2
+Zero == x = 0
 Enumerated == (CHOOSE f \\in [STRING -> {0}] : TRUE) = 0 => []<>(x = 0)
 ====
 ";
 
 fn try_lower(test: &str, config: &str) -> Result<Vec<u8>, FrontError> {
+    try_lower_front(test, config, true).map(|lowered| lowered.ir)
+}
+
+fn try_lower_front(
+    test: &str,
+    config: &str,
+    is_warning_enabled: bool,
+) -> Result<LoweredModel, FrontError> {
     let directory =
         std::env::temp_dir().join(format!("tla-front-live-{test}-{}", std::process::id()));
     std::fs::create_dir_all(&directory).expect("a directory");
@@ -27,10 +37,11 @@ fn try_lower(test: &str, config: &str) -> Result<Vec<u8>, FrontError> {
     let options = ModelOptions {
         libraries: &[],
         version: None,
-        is_warning_enabled: true,
+        is_warning_enabled,
         is_spec_described: false,
+        random_seed: 0,
     };
-    let lowered = lower_model(&path, config, &options);
+    let lowered = lower_front(&path, config, &options);
     std::fs::remove_dir_all(&directory).expect("removed");
     lowered
 }
@@ -127,4 +138,46 @@ fn expands_a_quantifier_over_a_constant_set_and_chooses_a_constant_branch() {
         model.live_properties[1].formula[..],
         [LiveTerm::Always, LiveTerm::Eventually, LiveTerm::State(_)]
     ));
+}
+
+fn startup_messages(config: &str, is_warning_enabled: bool) -> Vec<(u32, bool, String)> {
+    try_lower_front("startup", config, is_warning_enabled)
+        .expect("a model the front end lowers")
+        .startup_messages
+        .expect("the startup messages")
+        .into_iter()
+        .map(|message| (message.code, message.is_warning, message.text))
+        .collect()
+}
+
+#[test]
+fn writes_what_tlc_prints_as_it_starts() {
+    let config = "SPECIFICATION Spec\nINVARIANT Constant\nPROPERTY Zero Returns\n";
+    let messages = startup_messages(config, true);
+    let codes: Vec<(u32, bool)> = messages
+        .iter()
+        .map(|(code, is_warning, _)| (*code, *is_warning))
+        .collect();
+    assert_eq!(codes, [(2149, true), (2255, true), (2212, false)]);
+    assert!(
+        messages[0]
+            .2
+            .starts_with("The invariant Constant is a constant-level formula")
+    );
+    assert!(
+        messages[1]
+            .2
+            .starts_with("The formula Zero is a state-level formula")
+    );
+    assert_eq!(
+        messages[2].2,
+        "Implied-temporal checking--satisfiability problem has 1 branches."
+    );
+    // -nowarning drops TLC's warnings.
+    let codes: Vec<u32> = startup_messages(config, false)
+        .iter()
+        .map(|(code, _, _)| *code)
+        .collect();
+    assert_eq!(codes, [2212]);
+    assert!(startup_messages("SPECIFICATION Spec\n", true).is_empty());
 }

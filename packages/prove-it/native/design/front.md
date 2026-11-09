@@ -488,3 +488,39 @@ compared:
 |---|---|
 | 10 | SANY's parse errors: TLC itself fails to parse these specs ("Precedence conflict" in ccfraft, KVsnap, Linearizability, Bodega, NormalizationCases, and the two fixtures' `Base`), so no model is lowered. The native binary's SANY report owns their output. |
 | 1 | `tlc-174/Unhandled`, TLC 1.7.4 only. |
+
+## The end-state front (no recorded front)
+
+Without `PROVE_IT_FRONT`, `front.rs` reads the whole front from tla-front: `Output::Native` holds
+SANY's report and `LoweredModel::startup_messages`,
+what TLC prints itself after the constant definitions and before the assumptions, in its order:
+
+- 2149, each invariant that is a constant equal to TRUE (`check_invariants`), and 2255, each
+  property that is a state formula, both warnings, which `-nowarning` drops;
+- with liveness, 2279 under a SYMMETRY (a warning), then 2212 "Implied-temporal
+  checking--satisfiability problem has N branches.", N counted by `tla_live::count_branches`.
+
+The CLI prints SANY's report framed under -tool, then 2185 `Starting...`, and, through the engine's
+startup hooks, what Print and PrintT print as TLC starts and the symmetry's 2300, and
+`startup_messages` at `startup_done`. Not native yet in tla-front:
+a Java class beside the spec that overrides a module, TLC 1.7.4, an invariant the engine checks at
+startup with warnings on, and warnings about invariants or properties under a SYMMETRY (the order
+of 2300 among them isn't checked).
+
+`ModelOptions::random_seed` carries `-seed` into the model, as `runtime.seed` does.
+
+`bun scripts/run.ts differential --native native/target/release/prove-it --native-only` runs the
+binary alone this way (as `--native-front` does, without the TypeScript runs) on the whole corpus,
+against TLC's recordings, in minutes. Measured before the hooks were wired, with `check.rs` printing
+the messages after `Starting...` and no startup Prints: 1,298 of 1,466 runs printed what TLC prints,
+and the 80 that differed each lacked a startup Print, which the hooks now report.
+
+No-recording mode on the whole corpus (`--native-only`, after the messages landed): 1,392 of 1,466
+runs print what TLC prints and none differ. Of the 74 others, 4 are listed known differences
+(function_syntax, where TLC overflows its stack) and 2 decline for a Java class that overrides a
+module, the front end's one open case; the rest are the engine's and the trace evaluator's
+declines, as with a recorded front.
+
+A property is named by its operator as written (`opNode.getName()`): `PSafe == A!Safe` names
+"A!Safe", while `A!Safe2 == Safe` inside the instance names "Safe". `expand` takes the identifier's
+written name; the TypeScript resolver keeps it in `getWrittenName` (`tests/fixtures/instance-property`).

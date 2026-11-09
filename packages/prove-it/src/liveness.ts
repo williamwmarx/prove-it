@@ -29,6 +29,7 @@ import {
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import { mapChildren } from "./instances";
 import { ACTION_LEVEL, CONSTANT_LEVEL, TEMPORAL_LEVEL, VARIABLE_LEVEL } from "./levels";
+import { getWrittenName } from "./resolve";
 import { isEnabled } from "./successors";
 import {
   createBoolean,
@@ -229,13 +230,16 @@ export const expandTemporal = (
       if (expanding.has(definition)) {
         throw createStackOverflowError();
       }
+      // TLC names a property by the operator as written (`opNode.getName()`), as A!Safe for an
+      // instance's.
+      const writtenName = getWrittenName(expression) ?? definition.name;
       if (isSpecification && getDefinitionLevel(definition, environment) === VARIABLE_LEVEL) {
-        return [{ expression: definition.body, scope: undefined, name: definition.name }];
+        return [{ expression: definition.body, scope: undefined, name: writtenName }];
       }
       return expand(
         definition.body,
         undefined,
-        definition.name,
+        writtenName,
         new Set([...expanding, definition]),
         definition,
       );

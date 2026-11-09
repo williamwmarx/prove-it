@@ -332,9 +332,18 @@ fn typed_model_failure<T>(left: &Value, right: &Value, is_equality: bool) -> Eva
 }
 
 /// The elements of a set TLC can enumerate, in TLC's order.
+/// The most elements of an interval the evaluator builds.
+const MAXIMUM_INTERVAL: usize = 1 << 24;
+
 pub fn elements(value: &Value) -> Evaluated<Rc<Vec<Value>>> {
     match value {
         Value::Set(elements) => Ok(Rc::clone(elements)),
+        // An interval TLC walks without building it, which the evaluator builds, up to a size.
+        Value::Interval(low, high)
+            if i64::from(*high) - i64::from(*low) >= MAXIMUM_INTERVAL as i64 =>
+        {
+            fail("an interval too large to build")
+        }
         Value::Interval(low, high) => Ok(Rc::new((*low..=*high).map(Value::Int).collect())),
         // TLC finds a set its parts empty to be empty before it enumerates any of them.
         Value::Lazy(_) if crate::sets::is_empty_by_argument(value) => Ok(Rc::new(Vec::new())),
