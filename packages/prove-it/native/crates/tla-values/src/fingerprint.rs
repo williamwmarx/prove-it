@@ -61,7 +61,6 @@ pub fn extend_int(fingerprint: u64, word: i32) -> u64 {
 
 // A table that shifts a fingerprint by a fixed number of zero bytes: entry [k][b] holds the shift
 // of the fingerprint whose byte k is b and whose other bytes are zero.
-#[derive(Clone)]
 struct ShiftTable([[u64; 256]; 8]);
 
 impl ShiftTable {
@@ -125,7 +124,7 @@ pub struct Parent {
 
 /// F(v) and |v| of the store's values, computed as they are first asked for, and the tables that
 /// shift by their lengths.
-#[derive(Clone, Default)]
+#[derive(Default)]
 pub struct Fingerprints {
     generation: Option<u32>,
     values: Vec<ValueFingerprint>,

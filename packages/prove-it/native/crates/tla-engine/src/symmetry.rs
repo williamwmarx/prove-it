@@ -14,7 +14,6 @@ use tla_values::{Id, Store};
 
 const NONE: Id = u32::MAX;
 
-#[derive(Clone)]
 pub struct Canonicalizer {
     permutations: Vec<HashMap<Id, Id>>,
     // TLC sorts each image, which fails where it mixes model values of different types; the images
@@ -75,6 +74,22 @@ impl Canonicalizer {
             positions: Vec::new(),
             stamp: 0,
             smallest: vec![NONE; width],
+        }
+    }
+
+    /// A canonicalizer for the same group that has permuted nothing yet, for another thread.
+    pub fn fresh(&self) -> Canonicalizer {
+        Canonicalizer {
+            permutations: self.permutations.clone(),
+            is_type_preserving: self.is_type_preserving,
+            images: vec![Vec::new(); self.permutations.len()],
+            larger_than: vec![Vec::new(); self.permutations.len()],
+            order: self.order.clone(),
+            parts: Vec::new(),
+            marks: Vec::new(),
+            positions: Vec::new(),
+            stamp: 0,
+            smallest: vec![NONE; self.order.len()],
         }
     }
 

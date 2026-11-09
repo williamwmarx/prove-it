@@ -64,7 +64,6 @@ fn wide_home(keys: &[Id]) -> usize {
 }
 
 /// A table of the values of one expression, keyed by the ids it reads.
-#[derive(Clone)]
 pub struct MemoTable {
     width: usize,
     // A table of width 1 is keyed by one id, so while its keys are dense enough its values are an
@@ -80,6 +79,8 @@ pub struct MemoTable {
     hits: u64,
     is_enabled: bool,
     is_direct: bool,
+    // The largest id stored since the table last forgot, so that it forgets only if it must.
+    largest: Id,
 }
 
 const INITIAL_CAPACITY: usize = 64;
@@ -109,6 +110,7 @@ impl MemoTable {
             hits: 0,
             is_enabled: true,
             is_direct: width == 1,
+            largest: 0,
         }
     }
 
@@ -220,6 +222,10 @@ impl MemoTable {
 
     /// Forgets every entry that reads or holds an id from `bound` on, ids a store has let go of.
     pub fn forget_from(&mut self, bound: Id) {
+        if self.largest < bound {
+            return;
+        }
+        self.largest = 0;
         if self.is_direct {
             self.direct.truncate(bound as usize);
             for value in self.direct.iter_mut().filter(|value| **value >= bound) {
@@ -293,6 +299,9 @@ impl MemoTable {
 
     /// Stores a value for the keys, unless the table is off or full.
     pub fn set(&mut self, keys: &[Id], value: Id) {
+        self.largest = keys
+            .iter()
+            .fold(self.largest.max(value), |largest, &key| largest.max(key));
         if self.is_direct {
             if !self.is_enabled || self.size >= MAXIMUM_ENTRIES {
                 return;
