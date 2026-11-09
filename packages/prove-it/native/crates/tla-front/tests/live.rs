@@ -1,6 +1,7 @@
 //! The liveness checker's atoms, formula and properties in a model's IR, as `lowerToIr` writes
 //! them from `createLivenessChecker`.
 
+use tla_front::errors::{FrontError, UNEXPECTED_EXCEPTION};
 use tla_front::model::{ModelOptions, lower_model};
 use tla_ir::{AtomKind, EnabledActions, LiveTerm};
 
@@ -13,10 +14,11 @@ Spec == Init /\\ [][Next]_x /\\ WF_x(Next)
 Returns == []<>(x = 0)
 Visits == \\E v \\in {0, 1} : []<>(x = v)
 Chosen == IF 1 > 0 THEN []<>(x = 0) ELSE <>(x = 1)
+Enumerated == (CHOOSE f \\in [STRING -> {0}] : TRUE) = 0 => []<>(x = 0)
 ====
 ";
 
-fn lower(test: &str, config: &str) -> tla_ir::Model {
+fn try_lower(test: &str, config: &str) -> Result<Vec<u8>, FrontError> {
     let directory =
         std::env::temp_dir().join(format!("tla-front-live-{test}-{}", std::process::id()));
     std::fs::create_dir_all(&directory).expect("a directory");
@@ -28,9 +30,27 @@ fn lower(test: &str, config: &str) -> tla_ir::Model {
         is_warning_enabled: true,
         is_spec_described: false,
     };
-    let bytes = lower_model(&path, config, &options).expect("a model the front end lowers");
+    let lowered = lower_model(&path, config, &options);
     std::fs::remove_dir_all(&directory).expect("removed");
+    lowered
+}
+
+fn lower(test: &str, config: &str) -> tla_ir::Model {
+    let bytes = try_lower(test, config).expect("a model the front end lowers");
     tla_ir::decode(&bytes).expect("an IR that decodes").model
+}
+
+#[test]
+fn reports_a_constant_part_that_fails_as_an_exception_tlc_did_not_expect() {
+    // TLC's enumerateSet throws a RuntimeException, which the liveness checker doesn't catch.
+    let error = try_lower("enumerated", "SPECIFICATION Spec\nPROPERTY Enumerated\n")
+        .expect_err("a failure");
+    assert_eq!(
+        error,
+        FrontError::Evaluation(format!(
+            "{UNEXPECTED_EXCEPTION}Attempted to enumerate a set of the form [D -> R],but the domain D:\nSTRING\ncannot be enumerated."
+        ))
+    );
 }
 
 #[test]

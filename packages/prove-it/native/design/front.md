@@ -465,3 +465,26 @@ quantifier or CHOOSE over `[D -> R]` with D a set TLC knows only by name (Nat, I
 as `enumerateSet` does, which IOUtils' `IOEnv` meets without its Java override. `live.rs` raises
 such a failure of a constant part as `toAtom` does, and `expandCall` still re-reports one inside an
 operator's expansion as "cannot handle".
+
+## Records in the constant evaluator
+
+`ConfigValue::Record` holds a record the evaluator builds, its fields sorted by TLC's string order
+of their names (`getSortedFields`). The evaluator computes record constructors, sets of records
+(the last field varying fastest, as `getCartesianProduct` lists them, then sorted) and field
+selection. `ValueOrder::compare` orders two records as `compareFunctions` does: by size, then names
+by rank, then values. The lowering writes one as TLC's RecordValue (function class 3, the names
+before the values). A repeated field, a missing field, a field of another value, TLC 1.7.4's sets
+of records, and tuples and other functions stay `NotYet`.
+
+`ir.ts` writes a name that nothing global resolves (a definition an INSTANCE in a LET copies in)
+with the local flag; `lower.rs` does the same.
+
+## Handoff
+
+model-full: 1,100 of 1,111 with 0 differing, and 2,695 of 2,711 with `--mutate 400`. The 11 not
+compared:
+
+| Models | Cause |
+|---|---|
+| 10 | SANY's parse errors: TLC itself fails to parse these specs ("Precedence conflict" in ccfraft, KVsnap, Linearizability, Bodega, NormalizationCases, and the two fixtures' `Base`), so no model is lowered. The native binary's SANY report owns their output. |
+| 1 | `tlc-174/Unhandled`, TLC 1.7.4 only. |
