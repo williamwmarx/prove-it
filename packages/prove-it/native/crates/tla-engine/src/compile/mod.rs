@@ -28,6 +28,7 @@ mod sets;
 mod walker;
 
 pub use walker::ActionOptions;
+pub(crate) use walker::INFINITE_BOUND;
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};

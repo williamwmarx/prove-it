@@ -421,6 +421,7 @@ const TLC_FAILURES: &[&str] = &[
     "division by zero",
     "drew from a value that isn't a set",
     "enumerated a non-set",
+    crate::compile::INFINITE_BOUND,
     "equality of values TLC can't compare",
     "expected a bag",
     "expected a boolean",

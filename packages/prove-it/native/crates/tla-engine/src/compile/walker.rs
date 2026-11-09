@@ -31,6 +31,9 @@ use crate::machine::{Continue, Eval, Machine, Member, Step, UNASSIGNED};
 /// What ENABLED's walk stops with at its first successor (`FOUND` in `action.ts`).
 const FOUND: &str = "ENABLED found a successor";
 
+/// What a walk or a quantifier stops with where TLC enumerates a set it can't.
+pub(crate) const INFINITE_BOUND: &str = "enumerated a set TLC can't enumerate";
+
 fn is_found(bail: &Bail) -> bool {
     bail.0 == FOUND
 }
@@ -1418,6 +1421,14 @@ impl<'a> Compiler<'a> {
         context: &Context,
         is_streamed: bool,
     ) -> Compiling<Ordered> {
+        // TLC fails enumerating a set it only tests for membership, such as Nat, which the
+        // engine doesn't enumerate elsewhere without TLC doing so.
+        if set.infinite.is_some() {
+            return Ok(Ordered {
+                eval: eval(|_| Err(Bail(INFINITE_BOUND))),
+                is_ordered: false,
+            });
+        }
         if set.is_normalized {
             return Ok(Ordered {
                 eval: set.eval,
