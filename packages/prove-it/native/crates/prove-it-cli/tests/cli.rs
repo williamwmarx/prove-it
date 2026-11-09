@@ -755,3 +755,31 @@ fn rebuilds_a_trace_under_symmetry_through_sets_tlc_streams_in_order() {
     assert!(text.contains(include_str!("pull-raft.txt")), "{text}");
     std::fs::remove_dir_all(directory).expect("removed");
 }
+
+#[test]
+fn checks_the_possible_counts_after_a_deadlock() {
+    // TLC's PostConditionsTest: TLC checks the postconditions after the deadlock, with each
+    // _POSSIBLE predicate's count as the search left it, so PossibleCounts holds.
+    let spec = "---- MODULE Stop ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 3 /\\ x' = x + 1\nSpec == Init /\\ [][Next]_x\nAtTwo == x = 2\nLastStep == x = 2 /\\ x' = 3\nPossibleCounts ==\n    LET p == TLCGet(\"all:named\")[\"s:_possible\"][1]\n    IN /\\ p[\"AtTwo\"] = 1\n       /\\ p[\"LastStep\"] = 1\n====\n";
+    let directory =
+        std::env::temp_dir().join(format!("prove-it-cli-possible-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    for (extension, contents) in [
+        ("tla", spec),
+        (
+            "cfg",
+            "SPECIFICATION Spec\nPOSTCONDITIONS PossibleCounts\n_POSSIBLE AtTwo LastStep\n",
+        ),
+        ("front", ""),
+    ] {
+        std::fs::write(directory.join(format!("Stop.{extension}")), contents).expect("a file");
+    }
+    let output = run(&directory, &["Stop"]);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(11), "{text}");
+    assert!(
+        text.contains("x = 3\n\n4 states generated, 4 distinct states found, 0 states left on queue.\nThe depth of the complete state graph search is 4.\nFinished in "),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}

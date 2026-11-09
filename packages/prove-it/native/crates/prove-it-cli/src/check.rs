@@ -786,7 +786,13 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                         queued: counts.queued,
                         depth: counts.depth,
                     };
-                    let run = postcondition_run(&ir, None, &statistics, initial_generated, start);
+                    let run = postcondition_run(
+                        &ir,
+                        Some(&violation.possible),
+                        &statistics,
+                        initial_generated,
+                        start,
+                    );
                     print_violation(printer, &ir, &config, &violation, None, Some(&run), start)
                         .map_err(str::to_string)
                 }
@@ -921,8 +927,8 @@ fn print_violation(
     postconditions: Option<&PostconditionRun>,
     start: Instant,
 ) -> Result<i32, &'static str> {
-    // TLC reports a _POSSIBLE predicate the search never witnessed, which a search that stopped
-    // doesn't count yet, before it checks the postconditions on the trace.
+    // TLC reports a _POSSIBLE predicate the search didn't witness before it stopped, which the
+    // printing doesn't follow yet, before it checks the postconditions on the trace.
     let possible = postconditions.map_or(&[][..], |run| &run.possible[..]);
     if possible.len() != ir.model.possible.len() || possible.iter().any(|(_, count)| *count <= 0) {
         return Err("a _POSSIBLE predicate");

@@ -279,6 +279,9 @@ pub struct Violation {
     pub symmetry: Option<NamedGroup>,
     /// TLC's registers as the search left them, ids of `store`.
     pub registers: Registers,
+    /// Each `_POSSIBLE` predicate's count as the search left it, which TLC checks with the
+    /// postconditions after it reports the violation.
+    pub possible: Vec<i64>,
 }
 
 pub enum ViolationKind {
@@ -3193,6 +3196,7 @@ fn to_violation(
             startup_random: machine.startup_random,
             symmetry,
             registers: std::mem::take(&mut machine.registers),
+            possible: search.possible.clone(),
         })
     })
 }
@@ -3297,6 +3301,7 @@ fn to_accepted(
         startup_random: machine.startup_random,
         symmetry: None,
         registers: std::mem::take(&mut machine.registers),
+        possible: search.possible.clone(),
     }))
 }
 
@@ -3353,6 +3358,7 @@ fn to_lasso(
             startup_random: machine.startup_random,
             symmetry,
             registers: std::mem::take(&mut machine.registers),
+            possible: search.possible.clone(),
         })
     })
 }
