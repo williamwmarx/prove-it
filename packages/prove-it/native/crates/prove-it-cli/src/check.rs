@@ -898,11 +898,6 @@ fn print_violation(
 ) -> Result<i32, &'static str> {
     // TLC reports a _POSSIBLE predicate the search never witnessed, which a search that stopped
     // doesn't count yet, before it checks the postconditions on the trace.
-    // HACK: under SYMMETRY without a VIEW, the rebuilt trace sorts records TLC prints as they were
-    // built (mongodb-txns Storage), until tla-trace settles them as TLC does.
-    if ir.model.startup.symmetry.is_some() && ir.model.view.is_none() {
-        return Err("a trace under SYMMETRY, whose records TLC may print unsorted");
-    }
     let possible = postconditions.map_or(&[][..], |run| &run.possible[..]);
     if possible.len() != ir.model.possible.len() || possible.iter().any(|(_, count)| *count <= 0) {
         return Err("a _POSSIBLE predicate");
