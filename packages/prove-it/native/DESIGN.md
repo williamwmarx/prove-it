@@ -2413,44 +2413,6 @@ As run, on the 4-core cloud machine (Depot's CLI wasn't available to this sessio
   `MAXIMUM_GRAPH_STATES`, which exists for the interpreter's periodic checks; and deleting the
   TypeScript checker once nothing but the oracle calls it.
 
-### 12.2 Liveness under SYMMETRY and VIEW: what TLC does
-
-Thirty corpus models check temporal properties under SYMMETRY or a VIEW, and `check.ts` leaves
-them all to the interpreter ("liveness under symmetry or a view"). From TLC's source (`Worker`,
-`SetOfStates`, `LiveCheck`, `LiveWorker`, `Liveness` on tlaplus/tlaplus master, November 2026):
-- **Nothing is canonicalized.** Under SYMMETRY, `TLCStateMut#fingerPrint` is the smallest
-  fingerprint over the permutations and under a VIEW the fingerprint of the view, but the state
-  itself is never replaced: the queue holds the successor as first generated
-  (`Worker#addElement`), so a state's own checks (`OrderOfSolution#checkState`) run on that state.
-- **The checks see each step's real successor.** `Worker#isSeenState` puts each in-model
-  successor in the `SetOfStates` with its fingerprint, and the set keeps two successors with the
-  same fingerprint apart unless they are `equals` (`put0`). `LiveCheck#addNextState` evaluates the
-  action checks on `(s0, s1)` and the tableau's consistency on `s1` for every entry, before it
-  reduces each to its fingerprint: the behavior graph's nodes are `(fingerprint, tableau node)`,
-  and an edge is added once, by the first entry that reaches it (`transExists`).
-- **Late nodes** (`addNextState` for a node whose state is done) run Next again from the real
-  successor `s1`.
-- **The counterexample** is a path of fingerprints. `LiveWorker#printTrace` rebuilds real states
-  from them, `Tool#getState(fp, previous)` taking the first successor of the previous state with
-  that fingerprint, and `Liveness#findViolatedProperties` names the properties from those rebuilt
-  states, not from the graph's.
-
-What follows for the engine and `tla-live`:
-- The graph's nodes stay the engine's states, by index, but each step needs the successor the
-  search actually generated where it differs from the stored one (always possible under a VIEW,
-  and under SYMMETRY whenever the stored state isn't that very successor). The engine records
-  that successor's ids per step, only under SYMMETRY or a VIEW, and answers the state atoms on
-  it as well as on each stored state; an action atom's step is `(stored s0, real s1)`.
-- A successor set dedups entries by the real state, not by index, and keeps the order by
-  fingerprint, the key's. Late expansion runs Next from the real successor, which the search may
-  never have expanded (it expanded the stored state with the same fingerprint), so the engine
-  expands those real states too, after the search, for the late nodes that need them.
-- The violated properties come from the rebuilt trace, which the CLI's trace printer builds; Rust
-  returns the lasso as indices and leaves `violated` empty there.
-- The interpreter, today's oracle, canonicalizes a successor before its liveness checks see it
-  (`isCanonicalizedFirst` in `check.ts`), which is not what TLC does. Where it and TLC differ on
-  the corpus, TLC's recordings decide, and the interpreter is fixed to match.
-
 ---
 
 ## 13. The native binary (`prove-it-cli`), stages 4–5
