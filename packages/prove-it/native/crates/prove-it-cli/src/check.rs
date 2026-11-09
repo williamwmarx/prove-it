@@ -11,6 +11,7 @@ use tla_values::print::{is_printable, write_value};
 use tla_values::{Id, Store};
 
 use crate::args::{Java, Parsed, USAGE, get_java_launch};
+use crate::files::FileDescriber;
 use crate::front::read_front;
 use crate::messages::{self as code, Level, Printer};
 use crate::summary::{
@@ -137,7 +138,7 @@ fn check_specs(args: &[String], java: &Java) -> i32 {
             let stem = name.strip_suffix(".tla").unwrap_or(&name);
             printer.line(&format!("Checking {name} with {stem}.cfg"));
         }
-        exit_codes.push(check_spec(path, &parsed, &mut printer));
+        exit_codes.push(check_spec(path, &parsed, java, &mut printer));
     }
     exit_codes
         .into_iter()
@@ -373,7 +374,7 @@ fn print_initial_states(printer: &mut Printer, generated: u64, distinct: u64) {
     }
 }
 
-fn check_spec(spec_path: &str, args: &Parsed, printer: &mut Printer) -> i32 {
+fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer) -> i32 {
     // TLC.handleParameters: TLC reads its options before it says which version it is.
     let seed = if args.has("-seed") {
         args.first("-seed")
@@ -456,6 +457,14 @@ fn check_spec(spec_path: &str, args: &Parsed, printer: &mut Printer) -> i32 {
         spec_path,
         config_text.as_deref().unwrap_or_default(),
         !args.has("-nowarning"),
+        &FileDescriber::new(
+            Path::new(spec_path),
+            &java.libraries,
+            java.temporary_directory.as_deref(),
+            args.first("-metadir"),
+            false,
+        ),
+        &java.libraries,
     ) {
         Ok(front) => front,
         Err(reason) => return report_not_native(printer, &reason),
