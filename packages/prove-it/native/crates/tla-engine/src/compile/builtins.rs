@@ -245,13 +245,13 @@ impl Compiler<'_> {
         if name == "TLCGet" {
             return self.compile_tlc_get(operands, context);
         }
-        if name == "TLCSet" {
+        if self.is_native && name == "TLCSet" {
             return self.compile_register(operands, context, true);
         }
-        if name == "TLCFP" {
+        if self.is_native && name == "TLCFP" {
             return self.compile_tlc_fp(operands);
         }
-        if name == "TLCCache" {
+        if self.is_native && name == "TLCCache" {
             return self.compile_tlc_cache(operands, context);
         }
         if name == "RandomElement" || name == "RandomSubset" {
@@ -583,14 +583,39 @@ impl Compiler<'_> {
             },
             _ => None,
         };
+        // The interpreter would take a search over without TLC's registers, so under the
+        // TypeScript engine the engine declines all but the search's own keys, as it does.
+        if !self.is_native
+            && key.is_none_or(|key| !matches!(key, "level" | "distinct" | "diameter"))
+        {
+            return unsupported("TLCGet");
+        }
         if key.is_none_or(|key| key.starts_with(NAMED_REGISTER_PREFIX)) {
             return self.compile_register(operands, context, false);
         }
         if key == Some("config") {
             return self.compile_config();
         }
+        // A Java system property, which TLC's checker has none of but those its command line or
+        // TLCSet sets: the key itself.
+        if let Some(key) = key.filter(|key| key.starts_with(JAVA_PROPERTY_PREFIX)) {
+            let units: Vec<u16> = key.encode_utf16().collect();
+            return Ok(super::constant(self.store.str(&units)));
+        }
+        // The specification's record, which the IR holds as the interpreter computes it for TLC's.
+        if key == Some("spec")
+            && let Some(index) = self.ir.model.tlc_spec
+        {
+            return Ok(super::constant(self.intern_value(index)?));
+        }
+        // TLC reads the other keys of its run, which the search doesn't keep: the native checker
+        // stops where TLC would read one, which TLC may never do, as where an assumption before
+        // it is false.
         if key != Some("level") && key != Some("distinct") && key != Some("diameter") {
-            return unsupported("TLCGet");
+            return Ok(leaf(
+                eval(|_| Err(Bail("unsupported: TLCGet of a key the search doesn't keep"))),
+                Footprint::slot(super::REGISTER_SLOT),
+            ));
         }
         if context.is_init && context.is_primed {
             return unsupported("TLCGet");
@@ -619,7 +644,6 @@ impl Compiler<'_> {
     // (`AbstractChecker.createConfig`). TLC's install is where its jar is, which the native
     // checker has none of, so it is TLC's answer where it can't tell.
     fn compile_config(&mut self) -> Compiling<Compiled> {
-        self.native_only = Some("TLCGet(\"config\")");
         let model = &self.ir.model;
         let text = |text: &str| text.encode_utf16().collect::<Vec<u16>>();
         let fields = [
@@ -661,7 +685,6 @@ impl Compiler<'_> {
             return unsupported("an operator applied to the wrong number of arguments");
         }
         self.is_printing = true;
-        self.native_only = Some("TLC's registers");
         let compiled = operands
             .iter()
             .map(|operand| self.compile(operand.node, &operand.context))
@@ -1620,6 +1643,10 @@ fn model_value(machine: &mut Machine<'_>, name: Id) -> Outcome<Id> {
 /// The prefix of the names of TLC's named registers (`TLCGetSet.NAMED_REGISTER_PREFIX`).
 const NAMED_REGISTER_PREFIX: &str = "s:";
 
+/// The prefix of a key of TLCGet and TLCSet that names a Java system property, whose value
+/// `System.getProperty` gives with the key as the default.
+const JAVA_PROPERTY_PREFIX: &str = "-D";
+
 // Where TLC keeps a register's value: under a natural number, or under a name that starts with
 // "s:".
 enum RegisterKey {
@@ -1651,6 +1678,11 @@ fn get_register(machine: &mut Machine<'_>, key: Id) -> Outcome<Id> {
             .find(|&&(named, _)| named == name)
             .map(|&(_, value)| value),
         None if machine.store.kind_of(key) == KIND_STRING => {
+            if String::from_utf16_lossy(machine.store.text_of(key))
+                .starts_with(JAVA_PROPERTY_PREFIX)
+            {
+                return Ok(key);
+            }
             return Err(Bail("unsupported: TLCGet of a key the search doesn't keep"));
         }
         None => return Err(Bail("TLCGet of a key that isn't a natural number")),
