@@ -36,6 +36,9 @@ pub enum Site {
     /// to the behavior graphs: on that state, or, `is_extra`, on a state past the path, the
     /// states' last: a successor's state predicate, or an action on a step to it.
     Atom { atom: u32, is_extra: bool },
+    /// Evaluating the atom at this position of the model's atoms as TLC adds the initial state
+    /// the path holds to the behavior graphs, before it checks the state.
+    InitialAtom(u32),
 }
 
 /// Where TLC fails to fingerprint a state: the ranges of the expressions that built the values it
@@ -85,6 +88,9 @@ const VIOLATION_ASSERT: i32 = 14;
 const FAILURE_SPEC_EVAL: i32 = 75;
 const FAILURE_SAFETY_EVAL: i32 = 76;
 const FAILURE_ERROR: i32 = 255;
+const ERROR_CONFIG_PARSE: i32 = 151;
+/// `EC.TLC_CONFIG_UNDEFINED_OR_NO_OPERATOR`.
+const UNDEFINED_IDENTIFIER: u32 = 2280;
 
 const UNEXPECTED_EXCEPTION: &str = "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: ";
 
@@ -408,6 +414,18 @@ impl<'ir> Rebuilder<'ir> {
                             .map(|&predicate| Some(predicate)),
                     )
                     .collect();
+                if ir
+                    .model
+                    .initial_predicate_scopes
+                    .iter()
+                    .take(predicate_count)
+                    .any(Option::is_some)
+                {
+                    return Err(Unsupported(
+                        "evaluating the failure again: an implied init in an instance's scope"
+                            .into(),
+                    ));
+                }
                 if predicate_count > ir.model.initial_predicates.len() {
                     return Err(Unsupported(
                         "evaluating the failure again: an implied init the model doesn't have"
@@ -519,7 +537,7 @@ impl<'ir> Rebuilder<'ir> {
             }
             // TLC evaluates the atom as it adds the state, on the state, the successor whose
             // state predicate it checks, or the step to it.
-            Site::Atom { atom, .. } => {
+            Site::Atom { atom, .. } | Site::InitialAtom(atom) => {
                 let Some(atom) = ir.model.atoms.get(atom as usize) else {
                     return Err(Unsupported("an atom the model doesn't have".into()));
                 };
@@ -711,6 +729,43 @@ impl<'ir> Rebuilder<'ir> {
                 error.reason
             )));
         };
+        // TLC reports an error adding an initial state to the behavior graphs with the state, and
+        // exits with the error's own status, since its replay of the initial states, which have
+        // the state already, doesn't fail again (`ModelChecker#doInit`). An EvalException escapes
+        // `doInit` without the state, which isn't ported.
+        if let Site::InitialAtom(_) = site {
+            if message.is_eval_exception {
+                return Err(Unsupported(
+                    "evaluating the failure again: an EvalException adding an initial state".into(),
+                ));
+            }
+            let Some(values) = evaluator
+                .current
+                .iter()
+                .cloned()
+                .collect::<Option<Vec<Value>>>()
+            else {
+                return Err(Unsupported(
+                    "evaluating the failure again: an initial state the path lacks".into(),
+                ));
+            };
+            return Ok(Failure {
+                code: INITIAL_STATE,
+                message: message.text.clone(),
+                tool_message: nested(&message),
+                call_stack: Vec::new(),
+                // `EC.ExitStatus.errorConstantToExitStatus` of the error's code: an identifier
+                // that is undefined is among the configuration's errors, and the other errors an
+                // evaluation raises are general ones.
+                exit_code: match message.code {
+                    Some(UNDEFINED_IDENTIFIER) => ERROR_CONFIG_PARSE,
+                    _ => FAILURE_ERROR,
+                },
+                printed,
+                fingerprint: None,
+                state: Some(values.iter().map(format_value).collect()),
+            });
+        }
         // TLC reports a check of an initial state that fails with the state, where the failure
         // reaches it as a TLCRuntimeException, but an EvalException escapes `doInit` without it.
         if is_initial {

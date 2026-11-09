@@ -652,9 +652,6 @@ fn check_violation(
     rebuilt: &[Vec<Value>],
 ) -> Result<(), Unsupported> {
     let ir = evaluator.ir;
-    if ir.model.has_scoped_property() {
-        return unsupported("a property read in an instance's scope");
-    }
     let state = |values: &[Value]| values.iter().cloned().map(Some).collect();
     let last = rebuilt.len() - 1;
     evaluator.current = state(&rebuilt[last]);
@@ -664,16 +661,21 @@ fn check_violation(
         let Some(index) = invariant.root.definition else {
             return unsupported("an invariant without a definition");
         };
-        invariants.push(evaluator.definition(ir.definitions[index as usize]).body);
+        invariants.push((
+            evaluator.definition(ir.definitions[index as usize]).body,
+            None,
+        ));
     }
     invariants.extend(
         ir.model
             .property_invariants
             .iter()
-            .map(|invariant| invariant.root),
+            .zip(&ir.model.property_invariant_scopes)
+            .map(|(invariant, &scope)| (invariant.root, scope)),
     );
-    for invariant in invariants {
-        if !run(evaluator.boolean(invariant, &Context::default()))? {
+    for (invariant, scope) in invariants {
+        let context = run(evaluator.scope_context(scope))?;
+        if !run(evaluator.boolean(invariant, &context))? {
             return Ok(());
         }
     }
@@ -685,7 +687,7 @@ fn check_violation(
     evaluator.level = last as i32;
     for property in &ir.model.action_properties {
         // `[A]_v`: A, or else v unchanged.
-        let context = Context::default();
+        let context = run(evaluator.scope_context(property.scope))?;
         if run(evaluator.boolean(property.action, &context))? {
             continue;
         }
