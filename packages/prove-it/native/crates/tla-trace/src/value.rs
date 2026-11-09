@@ -11,7 +11,10 @@ use std::rc::Rc;
 use tla_values::Store;
 
 use crate::print::format_pretty;
-use tla_values::store::{KIND_BOOL, KIND_INT, KIND_MODEL, KIND_SET, KIND_STRING, KIND_TUPLE, TRUE};
+use tla_values::store::{
+    INT, KIND_BOOL, KIND_INFINITE_SET, KIND_INT, KIND_MODEL, KIND_SET, KIND_STRING, KIND_TUPLE,
+    NAT, STRINGS, TRUE,
+};
 
 /// Why an evaluation failed, as TLC would have, or where the evaluator can't follow it: the
 /// evaluator's reason, and TLC's message where the failure gives TLC's text.
@@ -614,9 +617,22 @@ pub fn matches(store: &Store, id: u32, value: &Value) -> bool {
         Value::Int(int) => kind == KIND_INT && store.int_of(id) == *int,
         Value::Str(text) => kind == KIND_STRING && *store.text_of(id) == *text.units,
         Value::Model(text) => kind == KIND_MODEL && *store.text_of(id) == *text.units,
+        Value::Lazy(lazy) if matches!(**lazy, Lazy::Nat | Lazy::Int | Lazy::Strings) => {
+            kind == KIND_INFINITE_SET
+                && store.infinite_name_of(id)
+                    == match **lazy {
+                        Lazy::Nat => NAT,
+                        Lazy::Int => INT,
+                        _ => STRINGS,
+                    }
+        }
         Value::Function(function) => {
             let size = function.domain.len();
-            if kind == KIND_SET || kind <= KIND_MODEL || store.size_of(id) as usize != size {
+            if kind == KIND_SET
+                || kind <= KIND_MODEL
+                || kind == KIND_INFINITE_SET
+                || store.size_of(id) as usize != size
+            {
                 return false;
             }
             (0..size).all(|index| {
@@ -758,6 +774,11 @@ pub fn from_store(store: &Store, id: u32) -> Value {
         KIND_INT => Value::Int(store.int_of(id)),
         KIND_STRING => Value::Str(text()),
         KIND_MODEL => Value::Model(text()),
+        KIND_INFINITE_SET => Value::Lazy(Rc::new(match store.infinite_name_of(id) {
+            NAT => Lazy::Nat,
+            INT => Lazy::Int,
+            _ => Lazy::Strings,
+        })),
         KIND_SET => Value::Set(Rc::new(
             (0..size)
                 .map(|index| from_store(store, store.element_at(id, index)))
