@@ -29,7 +29,7 @@ pub use postcondition::{Checked, CounterExample, PostconditionInputs, Stats, Ver
 pub use pretty::pretty_print;
 pub use print::{format_printed, format_value};
 pub use rebuild::Rebuilder;
-pub use split::add_actions;
+pub use split::{Described, SpecDescription, add_actions, add_spec};
 pub use value::Value;
 
 /// Where the evaluator can't follow TLC yet: the caller reports `not native yet: <reason>`.

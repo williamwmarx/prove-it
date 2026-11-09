@@ -887,6 +887,31 @@ fn checks_a_postcondition_on_a_lasso_stuttering_at_its_initial_state() {
     std::fs::remove_dir_all(directory).expect("removed");
 }
 
+#[test]
+fn checks_a_model_whose_assumption_prints_a_record() {
+    // TLC's Github726: TLC prints a record's fields in the order it built them, which the store
+    // forgets, but TLC prints the assumption's text in the front the binary records.
+    let spec = "---- MODULE Stop ----\nEXTENDS TLC\nVARIABLE x\nASSUME PrintT([dst |-> \"a\"] @@ [data |-> 15])\nInit == x = 0\nNext == x' = x\n====\n";
+    let directory =
+        std::env::temp_dir().join(format!("prove-it-cli-printed-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    for (extension, contents) in [
+        ("tla", spec),
+        ("cfg", "INIT Init\nNEXT Next\n"),
+        ("front", ""),
+    ] {
+        std::fs::write(directory.join(format!("Stop.{extension}")), contents).expect("a file");
+    }
+    let output = run(&directory, &["Stop"]);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(0), "{text}");
+    assert!(
+        text.contains("Model checking completed. No error has been found."),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
 const CDOT_IMPLIED_INIT_IR: &[u8] = include_bytes!(
     "../../../../tests/conformance/ir/tlc/tlatools/org.lamport.tlatools/test-model/cdot/CdotWithContextB.ir"
 );
@@ -922,6 +947,7 @@ fn rejects_a_constant_invariant_the_front_end_leaves_to_the_startup() {
         libraries: &[],
         version: None,
         is_warning_enabled: true,
+        is_spec_described: false,
     };
     let ir = tla_front::model::lower_model(&spec, config, &options).expect("an IR");
     std::fs::remove_file(&spec).expect("removed");
@@ -932,5 +958,21 @@ fn rejects_a_constant_invariant_the_front_end_leaves_to_the_startup() {
         text.contains("Error: The invariant of Bad is equal to FALSE\nFinished in "),
         "{text}"
     );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn records_the_specification_as_the_interpreter_does() {
+    // TLCGet("spec"), which tla-front describes and the split gives the actions of, as the
+    // interpreter prints it for this spec.
+    let spec = "---- MODULE Stop ----\nEXTENDS Integers, TLC\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nStep(d) == x < 3 /\\ x' = x + d /\\ y' = y\nReset == x >= 3 /\\ x' = 0 /\\ UNCHANGED y\nNext == (\\E d \\in {1, 2} : Step(d)) \\/ Reset\nSpec == Init /\\ [][Next]_<<x, y>> /\\ WF_<<x, y>>(Next)\nSmall == x < 10\nProp == [][x' # x]_<<x, y>> /\\ []<>(x = 0)\nBound == y < 5\nMoves == x' # x \\/ y' = y\nRecorded == PrintT(TLCGet(\"spec\"))\n====\n";
+    let (output, directory) = run_lowered(
+        "spec",
+        spec,
+        "SPECIFICATION Spec\nINVARIANT Small\nPROPERTY Prop\nCONSTRAINT Bound\nACTION_CONSTRAINT Moves\nPOSTCONDITION Recorded\n",
+    );
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(0), "{text}");
+    assert!(text.contains(include_str!("spec-record.txt")), "{text}");
     std::fs::remove_dir_all(directory).expect("removed");
 }

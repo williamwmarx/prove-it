@@ -30,6 +30,7 @@ fn lower(test: &str, config: &str) -> Result<Vec<u8>, FrontError> {
         libraries: &[],
         version: None,
         is_warning_enabled: true,
+        is_spec_described: false,
     };
     let lowered = lower_model(&path, config, &options);
     std::fs::remove_dir_all(&directory).expect("removed");
@@ -113,4 +114,19 @@ fn reads_the_conjuncts_of_the_specification_as_tlc_does() {
         Err(FrontError::Evaluation(message))
             if message == "TLC cannot handle the temporal formula line 12, col 21 to line 12, col 25 of module Checked"
     ));
+}
+
+#[test]
+fn lowers_a_model_without_a_next_state_relation() {
+    // TLC computes the initial states, and stops, of a model that checks nothing of behaviors.
+    let ir = lower("unsearched", "CONSTANT Flag = TRUE\nINIT Init\n").expect("an IR");
+    let model = tla_ir::decode(&ir).expect("an IR that decodes").model;
+    assert_eq!(model.next, None);
+    assert_eq!(
+        config_error(
+            "checked",
+            "CONSTANT Flag = TRUE\nINIT Init\nINVARIANT Small\n"
+        ),
+        "The configuration file did not specify the next state predicate."
+    );
 }
