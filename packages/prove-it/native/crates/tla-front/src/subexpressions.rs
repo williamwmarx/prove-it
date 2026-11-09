@@ -733,14 +733,14 @@ pub fn resolve_module_subexpressions(
             }))
         })
         .collect::<Result<Vec<_>>>()?;
-    let has_references = module
-        .definitions
+    let has_references = module.definitions.iter().any(|definition| {
+        contains_reference(&definition.body)
+            || matches!(&definition.kind, DefinitionKind::Function { bounds }
+                if bounds.iter().any(|bound| contains_reference(&bound.set)))
+    }) || module
+        .assumptions
         .iter()
-        .any(|definition| contains_reference(&definition.body))
-        || module
-            .assumptions
-            .iter()
-            .any(|assumption| contains_reference(&assumption.expression));
+        .any(|assumption| contains_reference(&assumption.expression));
     if !has_references {
         return Ok(Rc::new(Module {
             theorems,
