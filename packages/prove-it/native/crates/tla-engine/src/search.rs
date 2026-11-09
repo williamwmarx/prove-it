@@ -652,6 +652,11 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         Ok(context) => context,
         Err(error) => return SearchOutcome::Declined(describe(error)),
     };
+    // A search that ranked strings may start over in the interpreter, which would print again
+    // what the search printed.
+    if compiler.is_printing && compiler.is_ranking {
+        return SearchOutcome::Declined("unsupported: Print with ToString".into());
+    }
     let is_distinct_read = compiler.is_distinct_read;
     // Checking a successor once the walk reaches the next reorders nothing anyone can see where
     // nothing prints, reads the count of distinct states, or fingerprints a VIEW or symmetry's

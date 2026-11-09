@@ -9,6 +9,7 @@ import {
   compareStateLogs,
   compareWithInterpreter,
   COMPLETE,
+  declined,
   restoreSettings,
   stopped,
 } from "./native-runs";
@@ -281,6 +282,19 @@ describe.if(ADDON !== undefined)("the native engine's bridged builtins", () => {
     ];
     expect(await compareWithInterpreter(body, "SPECIFICATION Spec\nPROPERTY Live")).toContainEqual(
       expect.stringMatching(stopped("a graph with strings the search ranked")),
+    );
+  });
+  // A search that ranked strings may start over, which would print again what it printed.
+  it("leaves a model that prints and uses ToString", async () => {
+    const body = [
+      "EXTENDS Integers, TLC",
+      "VARIABLE n",
+      "Init == n = 0",
+      'Next == n < 3 /\\ PrintT(n) /\\ ToString(100 + n) # "q" /\\ n\' = n + 1',
+    ];
+    const config = "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE";
+    expect(await compareWithInterpreter(body, config, { PROVE_IT_STOP_AT: "1" })).toContainEqual(
+      expect.stringMatching(declined("unsupported: Print with ToString")),
     );
   });
 });

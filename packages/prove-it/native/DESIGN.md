@@ -2298,7 +2298,8 @@ On the 4-core cloud machine, with `main` at a0f66ec before the merge of #31 and 
   the store keeps unranked. So the store freezes TLC's order when the search starts
   (`freeze_string_order`), and comparing a string ranked since with another string stops the
   search. A search that ranked strings hands over none of its states, so the interpreter makes
-  them again from the start, in TLC's order.
+  them again from the start, in TLC's order. Starting over would print again what the search
+  printed, so a model that prints and uses ToString declines.
 - With it, the native engine declines no corpus model the TypeScript engine searches:
   simple_strings and UnicodeStringDiskStateQueue, the two it declined for ToString, now search in
   Rust until the stop the TypeScript engine reaches. The other 49 it declines (TLC under 20 s) the
