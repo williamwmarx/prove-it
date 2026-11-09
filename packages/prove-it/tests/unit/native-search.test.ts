@@ -82,6 +82,24 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     );
   });
 
+  it("intersects and subtracts sets TLC only tests for membership, as TLC enumerates them", async () => {
+    // From TLC's test-model/suite/test8.tla, which the TypeScript engine leaves to the interpreter.
+    const body = [
+      "EXTENDS Integers, Sequences",
+      "VARIABLE x",
+      "Init == x \\in {1, 2, 3, 4} \\cap {i \\in Int : i > 2}",
+      "Next ==",
+      "  /\\ x' \\in ({1, 2, 3, 4} \\ {i \\in Int : i > 2}) \\cup {x}",
+      "  /\\ -5 \\notin {-5} \\ Int",
+      "  /\\ <<1, 2>> \\in Seq({1, 2, 3}) \\cap Seq({0, 1, 2})",
+      "  /\\ <<1, 2>> \\notin Seq({1, 2, 3}) \\ Seq({1, 2})",
+    ];
+    const config = "INIT Init\nNEXT Next";
+    expect(await compareWithInterpreter(body, config)).toContainEqual(
+      expect.stringMatching(COMPLETE),
+    );
+  });
+
   it("tests guards fused in place: f[k] = c, f[k] = j, x = c and membership", async () => {
     const body = [
       "CONSTANT P",

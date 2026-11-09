@@ -1528,14 +1528,39 @@ impl Compiler<'_> {
         } else {
             None
         };
+        // TLC enumerates the left set of an intersection or a difference where it can, testing
+        // each element for membership in the right one (SetCapValue.elements and
+        // SetDiffValue.elements), so a set enumeration it keeps in order keeps that order.
+        if name != "\\cup"
+            && left.infinite.is_none()
+            && right.infinite.is_some()
+            && left.is_normalized
+        {
+            let right_member = self.member_test(right);
+            let left_eval = left.eval.clone();
+            let is_kept_in_right = name == "\\cap";
+            return Ok(Some(Compiled {
+                is_costly: true,
+                member: lazy_member,
+                ..leaf(
+                    eval(move |machine| {
+                        let left = left_eval(machine)?;
+                        let set = expect_set(machine, left, "expected a set")?;
+                        let mut kept = Vec::new();
+                        for index in 0..machine.store.size_of(set) {
+                            let element = machine.store.element_at(set, index);
+                            if right_member(machine, element)? == is_kept_in_right {
+                                kept.push(element);
+                            }
+                        }
+                        Ok(machine.store.set_of_sorted(&kept))
+                    }),
+                    left.footprint.merge(&right.footprint),
+                )
+            }));
+        }
         if left.infinite.is_some() || right.infinite.is_some() {
-            if if name == "\\" {
-                right.infinite.is_some()
-            } else {
-                name != "\\cup"
-            } {
-                return Ok(None);
-            }
+            // A combination of sets TLC can't enumerate is one it only tests for membership.
             return Ok(Some(Compiled {
                 is_normalized: false,
                 infinite: Some("Combined"),
