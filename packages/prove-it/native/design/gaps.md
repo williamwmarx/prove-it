@@ -120,3 +120,34 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   (`isSettledValue`), which TLC doesn't keep lazy, so the search reads it in place of the
   definition. One TLC may keep lazy, such as SUBSET or `\cup`, still declines. Github648 (TLC's
   tests) now completes in Rust.
+
+## RandomElement and RandomSubset
+
+- TLC draws from one java.util.Random per thread (`RandomEnumerableValues`): the main thread's
+  for the assumptions and the initial states, and in a worker one it reseeds with the fingerprint
+  of each state it expands, xored with the seed. So a state's successors draw the same whatever
+  thread expands it. The IR (version 10) carries the seed and the state the assumptions left the
+  generator in. The search draws from that for the initial states and reseeds for each expansion
+  with the fingerprint it found the state by (`Machine::seed_random`). `compile/random.rs` ports
+  java.util.Random and the draws of `tlc/random.ts`: RandomElement draws each component of a set
+  of functions, records or tuples in turn, and RandomSubset draws indices from TLC's linear
+  congruential generator, of an interval by its bounds and of a product by its index, as TLC 1.7.4
+  or master does.
+- Both compile where Print may print, since a draw depends on how many draws came before it, so
+  the search stays on one thread and evaluates them as TLC does. Elsewhere they decline: as an
+  operand of `\subseteq`, as in RandomSubsetNext, and where a liveness graph evaluates actions
+  again.
+- A trace the interpreter rebuilds after a hand-over now draws as TLC's does (`TLCTrace#getTrace`):
+  each initial state from the generator the search started with, and each successor from one
+  seeded with its predecessor.
+- RandomElement, RandomElementXandY, RandomSubsetNextTuples and RandomSubsetSetOfFcns (TLC's
+  tests), declined before, now search in Rust, and RandomSubset until its invariant builds
+  `1..100000000`.
+
+## Parked: TLC registers
+
+- The branch tlc-registers has TLCSet and TLCGet in the Rust search: IR and ABI 9 carry the
+  registers, startup registers included, and the search hands them back with a checkpoint or
+  when it completes. It gains no model: Test2, TLCGetNonDeterminism and NQSpec check a property,
+  and under a liveness graph TLC evaluates the actions again. ConstantContextTLCCache would also
+  need TLCCache's cache, which the interpreter fills while it evaluates the assumptions.
