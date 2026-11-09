@@ -185,3 +185,42 @@ fn reports_a_primed_variable_an_action_reads_before_it_assigns_it() {
          8. Line 16, column 23 to line 16, column 23 in etest6\n\n"
     );
 }
+
+#[test]
+fn reports_an_equality_of_values_tlc_cant_compare() {
+    let (failure, call_stack) = evaluate_failure("spectacle/specs/bfs_anim");
+    let text = "Attempted to check equality of integer 1 with non-integer:\n<<1, 0>>";
+    assert_eq!(failure.code, 1000);
+    assert_eq!(
+        failure.message,
+        format!(
+            "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: {text}"
+        )
+    );
+    assert_eq!(
+        call_stack,
+        "0. Line 62, column 8 to line 62, column 37 in bfs\n\
+         1. Line 62, column 28 to line 62, column 37 in bfs\n\
+         2. Line 49, column 5 to line 54, column 44 in bfs\n\
+         3. Line 49, column 8 to line 49, column 23 in bfs\n\
+         4. Line 50, column 8 to line 50, column 36 in bfs\n\
+         5. Line 50, column 9 to line 50, column 36 in bfs\n\
+         6. Line 50, column 29 to line 50, column 36 in bfs\n\n"
+    );
+}
+
+#[test]
+fn reports_a_non_function_applied_as_a_function() {
+    let (failure, call_stack) = evaluate_failure(&format!("{MODELS}/suite/etest4"));
+    let text = "A non-function (a model value) was applied as a function.\nline 15, col 12 to line 15, col 22 of module etest4";
+    assert_eq!(failure.code, 1000);
+    assert_eq!(failure.message, text);
+    assert_eq!(failure.tool_message, text);
+    assert_eq!(
+        call_stack,
+        "0. Line 13, column 9 to line 16, column 51 in etest4\n\
+         1. Line 13, column 12 to line 13, column 16 in etest4\n\
+         2. Line 15, column 12 to line 15, column 26 in etest4\n\
+         3. Line 15, column 12 to line 15, column 22 in etest4\n\n"
+    );
+}

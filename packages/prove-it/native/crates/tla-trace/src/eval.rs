@@ -863,7 +863,7 @@ impl<'ir> Evaluator<'ir> {
                 None => fail("@ outside an EXCEPT"),
             },
             NodeKind::FunctionApplication { function, args } => {
-                self.apply_function(*function, args, context)
+                self.apply_function(node, *function, args, context)
             }
             NodeKind::FieldAccess { record, field } => {
                 let record = self.evaluate(*record, context)?;
@@ -1522,6 +1522,7 @@ impl<'ir> Evaluator<'ir> {
 
     fn apply_function(
         &mut self,
+        node: NodeId,
         function: NodeId,
         args: &[NodeId],
         context: &Context,
@@ -1559,8 +1560,17 @@ impl<'ir> Evaluator<'ir> {
             let bound_context = self.bind_pattern(&bound.pattern, &argument, &inner)?;
             return self.nested(|evaluator| evaluator.evaluate(body, &bound_context));
         }
-        // `evalAppl` evaluates the function before the argument.
+        // `evalAppl` checks that it applies a function before it evaluates the argument.
         let function = self.evaluate(function, context)?;
+        if let Some(kind) = scalar_kind(&function) {
+            return fail_runtime(
+                "applied a non-function",
+                format!(
+                    "A non-function ({kind}) was applied as a function.\n{}",
+                    self.describe_range(node)
+                ),
+            );
+        }
         let argument = argument(self)?;
         self.apply_checked(&function, &argument)
     }
@@ -2230,6 +2240,18 @@ fn is_finite(value: &Value) -> bool {
             Lazy::Product(factors) => factors.iter().all(is_finite),
         },
         _ => true,
+    }
+}
+
+// TLC's `getKindString` of a value that isn't a set or a function, whose class the evaluator
+// knows: a set it may hold as another class than TLC does.
+fn scalar_kind(value: &Value) -> Option<&'static str> {
+    match value {
+        Value::Bool(_) => Some("a Boolean value"),
+        Value::Int(_) => Some("an integer"),
+        Value::Str(_) => Some("a string"),
+        Value::Model(_) => Some("a model value"),
+        _ => None,
     }
 }
 
