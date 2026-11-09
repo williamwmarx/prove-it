@@ -53,6 +53,7 @@ pub fn lower_model(
         config: &config,
         is_unconfigured: false,
         version,
+        is_level_checked: false,
     })?;
     let order = TlcOrder::new(&source, &load, version)?;
     let texts: Vec<Rc<str>> = order

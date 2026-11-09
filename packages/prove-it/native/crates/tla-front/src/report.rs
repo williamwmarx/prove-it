@@ -454,6 +454,7 @@ pub fn get_sany_text(spec_path: &Path, options: &ReportOptions) -> Result<String
         config: &config,
         is_unconfigured: true,
         version: options.version,
+        is_level_checked: true,
     })
     .map_err(|_| FrontError::NotYet("SANY's semantic errors".to_owned()))?;
     if !environment.printed.is_empty() {
