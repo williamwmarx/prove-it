@@ -60,6 +60,11 @@ pub struct Environment {
     pub root_symbols: Rc<Symbols>,
     /// The copies an INSTANCE with substitutions makes (`substitutedDefinitions`), by address.
     pub substituted_definitions: FastMap<usize, Rc<Definition>>,
+    /// The copies an INSTANCE with substitutions makes, by key, with the name and location TLC
+    /// gives an action that applies one (`instanceActions`).
+    pub instance_actions: OrderedMap<Name, InstanceAction>,
+    /// The name TLC gives each copy a named INSTANCE makes, by key: `I!Foo` (`instanceNames`).
+    pub instance_names: OrderedMap<Name, Name>,
     /// What linking prints: SANY's warnings.
     pub printed: Vec<String>,
     /// The definitions TLC computes when it starts, each module's in the order TLC computes them,
@@ -68,6 +73,14 @@ pub struct Environment {
     pub startup_definitions: Vec<Rc<Definition>>,
     /// The assumptions of the root module and the modules it extends, an extended module's first.
     pub assumptions: Vec<Rc<Assumption>>,
+}
+
+/// The name and location TLC gives an action that applies a definition an INSTANCE with
+/// substitutions copies: the name the instance exports it by, at the INSTANCE.
+#[derive(Clone)]
+pub struct InstanceAction {
+    pub name: Name,
+    pub location: Location,
 }
 
 pub struct EnvironmentOptions<'a> {
@@ -291,6 +304,8 @@ struct Linker<'a> {
     checked_modules: RefCell<FastMap<Name, Rc<LinkedModule>>>,
     /// The qualified name, such as I!Foo, of each copy a named INSTANCE makes.
     qualified_names: RefCell<FastMap<Name, Name>>,
+    instance_actions: RefCell<OrderedMap<Name, InstanceAction>>,
+    instance_names: RefCell<OrderedMap<Name, Name>>,
     /// Whether linking goes on after a module's errors, as SANY's semantic analysis does,
     /// keeping each module's messages and level checks in `collected`.
     is_collecting: Cell<bool>,
@@ -1326,6 +1341,7 @@ impl Linker<'_> {
         let has_declarations = !declarations.is_empty();
         let prefix = instance.params.len();
         let module_name = module.name.clone();
+        let instance_name = instance.name.clone();
         let instantiator = self.instantiation(
             instance
                 .params
@@ -1362,6 +1378,14 @@ impl Linker<'_> {
                 self.copy_sources
                     .borrow_mut()
                     .insert(key.clone(), (source.clone(), prefix));
+                if let Some(instance_name) = &instance_name {
+                    let mut instance_names = self.instance_names.borrow_mut();
+                    let source_name = instance_names.get(source).cloned().unwrap_or(name.clone());
+                    instance_names.insert(
+                        key.clone(),
+                        Rc::from(format!("{instance_name}!{source_name}")),
+                    );
+                }
                 Ok(key)
             }),
         );
@@ -1370,13 +1394,24 @@ impl Linker<'_> {
             &linked.exported,
             &declarations,
             &mut |key, name| {
-                if instance.name.is_none() {
-                    return instantiator.get_key(key);
+                let copy = match instance.name {
+                    None => instantiator.get_key(key)?,
+                    Some(_) => instantiator.get_qualified_key(key)?,
+                };
+                if has_declarations {
+                    self.instance_actions.borrow_mut().insert(
+                        copy.clone(),
+                        InstanceAction {
+                            name: name.clone(),
+                            location: instance.location.clone(),
+                        },
+                    );
                 }
-                let copy = instantiator.get_qualified_key(key)?;
-                self.qualified_names
-                    .borrow_mut()
-                    .insert(copy.clone(), name.clone());
+                if instance.name.is_some() {
+                    self.qualified_names
+                        .borrow_mut()
+                        .insert(copy.clone(), name.clone());
+                }
                 Ok(copy)
             },
         )
@@ -1779,6 +1814,8 @@ fn create_linker<'a>(options: &'a EnvironmentOptions<'a>, root: &Rc<Module>) -> 
         instance_checks: RefCell::default(),
         checked_modules: RefCell::default(),
         qualified_names: RefCell::default(),
+        instance_actions: RefCell::default(),
+        instance_names: RefCell::default(),
         is_collecting: Cell::new(false),
         collected: RefCell::default(),
     }
@@ -2183,6 +2220,8 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
         root_constants: linked_root.constants.clone(),
         root_symbols: linked_root.visible.clone(),
         substituted_definitions: linker.substituted_definitions.take(),
+        instance_actions: linker.instance_actions.take(),
+        instance_names: linker.instance_names.take(),
         printed,
     };
     // TLC evaluates a substitute for a constant at startup, and rejects it only when that fails

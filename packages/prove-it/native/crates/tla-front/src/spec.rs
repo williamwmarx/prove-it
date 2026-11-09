@@ -563,6 +563,140 @@ fn get_config_definition(
     )
 }
 
+/// Where the configuration's SPECIFICATION reaches its next-state relation through a definition an
+/// INSTANCE with substitutions copies, the location of the first such INSTANCE on the way to
+/// `[][Next]_v`: TLC then takes the whole relation as one unnamed action there
+/// (`describeSpecification` in `spec-description.ts`). None for a model without one, or whose
+/// specification reaches its next-state relation directly.
+pub fn get_next_substitution(
+    config: &crate::config::ModelConfig,
+    environment: &Environment,
+    facts: &DefinitionFacts,
+) -> Result<Option<Location>> {
+    let Some(name) = &config.specification else {
+        return Ok(None);
+    };
+    let Some(definition) = get_definition(name, environment) else {
+        return Ok(None);
+    };
+    let key = environment
+        .root_symbols
+        .get(name.as_str())
+        .map_or_else(|| name.as_str().into(), |symbol| symbol.key.clone());
+    let substitution = environment
+        .instance_actions
+        .get(&key)
+        .map(|action| action.location.clone());
+    let mut found = None;
+    find_next(
+        &definition.body,
+        None,
+        substitution,
+        environment,
+        facts,
+        &mut found,
+    )?;
+    Ok(found.flatten())
+}
+
+// The next-state relation `describeSpecification` finds in a specification, with the substitution
+// it reaches it through: the first it finds, as TLC allows one.
+fn find_next(
+    expression: &Expr,
+    scope: Option<&Rc<Scope>>,
+    substitution: Option<Location>,
+    environment: &Environment,
+    facts: &DefinitionFacts,
+    found: &mut Option<Option<Location>>,
+) -> Result<()> {
+    if found.is_some() {
+        return Ok(());
+    }
+    let recurse = |inner: &Expr, inner_scope: Option<&Rc<Scope>>, substitution, found: &mut _| {
+        find_next(inner, inner_scope, substitution, environment, facts, found)
+    };
+    match &expression.kind {
+        ExpressionKind::Let {
+            definitions, body, ..
+        } => {
+            let bound = bind_definitions(definitions, scope)?;
+            return recurse(body, bound.as_ref(), substitution, found);
+        }
+        ExpressionKind::Label { body, .. } => return recurse(body, scope, substitution, found),
+        ExpressionKind::Junction {
+            is_and: true,
+            operands,
+            ..
+        } => {
+            for operand in operands {
+                recurse(operand, scope, substitution.clone(), found)?;
+            }
+            return Ok(());
+        }
+        ExpressionKind::Always(inner) => {
+            if matches!(inner.kind, ExpressionKind::Action { is_box: true, .. }) {
+                *found = Some(substitution);
+            }
+            return Ok(());
+        }
+        _ => {}
+    }
+    if expression.is_locally_resolved()
+        && let Some(name) = expression.reference()
+        && let Some((
+            node,
+            Binding::Thunk {
+                expression: bound,
+                scope: bound_scope,
+            },
+        )) = lookup_scope(scope, &name)
+    {
+        let bound_scope = bound_scope.resolve(node);
+        return recurse(bound, bound_scope.as_ref(), substitution, found);
+    }
+    let args: &[Expr] = match &expression.kind {
+        ExpressionKind::Apply { args, .. } => args,
+        ExpressionKind::Identifier { .. } => &[],
+        _ => return Ok(()),
+    };
+    let Some(name) = expression.reference() else {
+        return Ok(());
+    };
+    if !expression.is_locally_resolved()
+        && (environment.constants.contains_key(&name)
+            || environment.variable_index.contains_key(&name))
+    {
+        return Ok(());
+    }
+    let Some((params, body, closure_scope)) =
+        resolve_apply_operator(expression, scope, environment)
+    else {
+        return Ok(());
+    };
+    if params.is_empty() {
+        // A definition of constant level holds no next-state relation, and one of variable
+        // level is an initial predicate.
+        if get_level(&body, closure_scope.as_ref(), environment, facts, &[]) <= Level::Variable {
+            return Ok(());
+        }
+        let instance = (!expression.is_locally_resolved())
+            .then(|| environment.instance_actions.get(&name))
+            .flatten()
+            .map(|action| action.location.clone());
+        return recurse(
+            &body,
+            closure_scope.as_ref(),
+            substitution.or(instance),
+            found,
+        );
+    }
+    if params.len() != args.len() {
+        return Ok(());
+    }
+    let bound = bind_operator_arguments(&params, args, closure_scope, scope, environment)?;
+    recurse(&body, bound.as_ref(), substitution, found)
+}
+
 /// `getSpecification` (`search.ts`).
 pub fn get_specification(
     config: &crate::config::ModelConfig,
