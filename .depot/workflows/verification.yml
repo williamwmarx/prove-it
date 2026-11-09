@@ -93,6 +93,13 @@ jobs:
               for mode in tokens ast sany-ast config; do
                 bun scripts/front-differential.ts "$mode" --mutate 400 --rust native/target/release/front-dump
               done
+          # The standalone executable with the native engine embedded, which build-binary.ts runs on
+          # models that need what it embeds.
+          - task: Binary
+            command: |
+              cd packages/prove-it
+              bun scripts/platform-packages.ts build
+              bun run build:binary
           - task: Cargo Test
             command: cd packages/prove-it/native && cargo test --locked
           - task: Cargo Clippy
