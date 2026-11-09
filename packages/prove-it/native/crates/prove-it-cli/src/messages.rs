@@ -24,6 +24,10 @@ pub const VERSION: u32 = 2262;
 pub const CHECKING_TEMPORAL_END: u32 = 2267;
 pub const STATE_GRAPH_OUTDEGREE: u32 = 2268;
 pub const STATE_PRINT_2: u32 = 2217;
+pub const STATE_PRINT_3: u32 = 2218;
+pub const TEMPORAL_PROPERTY_VIOLATED: u32 = 2116;
+pub const BACK_TO_STATE: u32 = 2122;
+pub const COUNTER_EXAMPLE: u32 = 2264;
 pub const COMPUTING_INIT_PROGRESS: u32 = 2269;
 pub const CONFIG_FILE_ERROR: u32 = 5001;
 

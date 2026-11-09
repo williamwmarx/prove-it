@@ -244,3 +244,26 @@ fn checks_temporal_properties_that_hold() {
     );
     std::fs::remove_dir_all(directory).expect("removed");
 }
+
+#[test]
+fn prints_a_temporal_propertys_lasso() {
+    let ir = include_bytes!(
+        "../../../../tests/conformance/ir/tlc/tlatools/org.lamport.tlatools/test-model/Github1389ViolatedB.ir"
+    );
+    let config = "SPECIFICATION Spec\nCHECK_DEADLOCK FALSE\nPROPERTY PropViolated\n";
+    let (output, directory) = run_golden("lasso", ir, "Github1389ViolatedB", config, &[]);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(13), "{text}");
+    // TLC names the property, prints the lasso's states and the step back into its cycle, and
+    // then finishes checking the temporal properties.
+    let label = "Next line 10, col 9 to line 10, col 18 of module Github1389ViolatedB";
+    let lasso = format!(
+        "Error: Temporal property PropViolated was violated.\n\nError: The following behavior constitutes a counter-example:\n\nState 1: <Initial predicate>\nx = 0\n\nState 2: <{label}>\nx = 1\n\nBack to state 1: <{label}>\n\nFinished checking temporal properties in "
+    );
+    assert!(text.contains(&lasso), "{text}");
+    assert!(
+        text.contains("3 states generated, 2 distinct states found, 0 states left on queue.\nThe depth of the complete state graph search is 2.\n"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}

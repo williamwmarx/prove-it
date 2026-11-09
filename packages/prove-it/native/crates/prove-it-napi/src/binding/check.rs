@@ -445,6 +445,8 @@ pub(super) unsafe extern "C" fn check_model(env: napi_env, info: napi_callback_i
                     threads,
                     collisions,
                     possible,
+                    // The interpreter prints a lasso.
+                    violation: _,
                 } => {
                     set(env, result, c"possible", create_possible(env, &possible)?)?;
                     if let Some(verdict) = &liveness {

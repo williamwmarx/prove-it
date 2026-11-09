@@ -5,10 +5,8 @@ use std::path::Path;
 use std::sync::mpsc;
 use std::time::{Instant, SystemTime};
 
-use tla_engine::search::{
-    Counts, Reporter, SearchOutcome, Settings, Violation, ViolationKind, search,
-};
-use tla_live::Verdict;
+use tla_engine::search::{Reporter, SearchOutcome, Settings, Violation, ViolationKind, search};
+use tla_live::{Liveness, Verdict};
 use tla_values::print::{is_printable, write_value};
 use tla_values::{Id, Store};
 
@@ -29,6 +27,7 @@ use tla_front::config::{ModelConfig, parse_config};
 const SUCCESS: i32 = 0;
 const DEADLOCK: i32 = 11;
 const SAFETY_VIOLATION: i32 = 12;
+const LIVENESS_VIOLATION: i32 = 13;
 const CONFIG_PARSE_ERROR: i32 = 151;
 
 /// The exit code of a run that needs something the binary doesn't do natively yet.
@@ -511,21 +510,38 @@ fn check_spec(spec_path: &str, args: &Parsed, printer: &mut Printer) -> i32 {
     let (counts, fingerprints) = match outcome {
         SearchOutcome::Complete {
             counts,
-            checkpoint: None,
             fingerprints,
             liveness,
+            violation,
             ..
         } => {
             if let Some(liveness) = liveness {
+                if let (Some(violation), Verdict::Lasso { .. }) = (violation, &liveness.verdict) {
+                    return print_violation(
+                        printer,
+                        &ir,
+                        &config,
+                        &violation,
+                        Some(&liveness),
+                        start,
+                    )
+                    .unwrap_or_else(|| {
+                        report_not_native(printer, "a temporal property's counterexample")
+                    });
+                }
                 if liveness.verdict != Verdict::Holds {
                     return report_not_native(printer, "a temporal property's counterexample");
                 }
-                print_liveness_holds(printer, &counts, liveness.branches.unwrap_or(1));
+                let statistics = Statistics {
+                    generated: counts.generated,
+                    distinct: counts.distinct,
+                    queued: 0,
+                    depth: counts.depth,
+                };
+                let checking = print_liveness_started(printer, &statistics, liveness.branches);
+                print_liveness_finished(printer, checking);
             }
             (counts, fingerprints)
-        }
-        SearchOutcome::Complete { .. } => {
-            return report_not_native(printer, "a temporal property's counterexample");
         }
         SearchOutcome::Declined(reason) => {
             return report_not_native(printer, &format!("the engine declined: {reason}"));
@@ -535,7 +551,7 @@ fn check_spec(spec_path: &str, args: &Parsed, printer: &mut Printer) -> i32 {
             reason,
             ..
         } => {
-            return print_violation(printer, &ir, &config, &violation, start).unwrap_or_else(
+            return print_violation(printer, &ir, &config, &violation, None, start).unwrap_or_else(
                 || report_not_native(printer, &format!("the engine stopped: {reason}")),
             );
         }
@@ -578,16 +594,15 @@ fn check_spec(spec_path: &str, args: &Parsed, printer: &mut Printer) -> i32 {
 }
 
 /// Once the search is complete, TLC reports how far it got, then checks the temporal properties
-/// on the complete state graph, which hold here (`liveness-started`, `liveness-finished`).
-fn print_liveness_holds(printer: &mut Printer, counts: &Counts, branches: usize) {
+/// on the complete state graph (`liveness-started`): returns when it started.
+fn print_liveness_started(
+    printer: &mut Printer,
+    statistics: &Statistics,
+    branches: Option<usize>,
+) -> Instant {
     let checking = Instant::now();
-    let statistics = Statistics {
-        generated: counts.generated,
-        distinct: counts.distinct,
-        queued: 0,
-        depth: counts.depth,
-    };
-    print_progress(printer, &statistics, None);
+    let branches = branches.unwrap_or(1);
+    print_progress(printer, statistics, None);
     let branch_text = if branches > 1 {
         format!("{branches} branches of ")
     } else {
@@ -598,10 +613,15 @@ fn print_liveness_holds(printer: &mut Printer, counts: &Counts, branches: usize)
         Level::None,
         &format!(
             "Checking {branch_text}temporal properties for the complete state space with {} total distinct states at ({})",
-            branches as u64 * counts.distinct,
+            branches as u64 * statistics.distinct,
             format_date(SystemTime::now())
         ),
     );
+    checking
+}
+
+/// TLC has checked the temporal properties (`liveness-finished`).
+fn print_liveness_finished(printer: &mut Printer, checking: Instant) {
     printer.print(
         code::CHECKING_TEMPORAL_END,
         Level::None,
@@ -637,13 +657,15 @@ fn print_statistics(printer: &mut Printer, statistics: &Statistics, start: Insta
     );
 }
 
-/// Prints a violation the engine stopped at, as `printViolation` in `src/cli/tlc.ts` does, and
-/// returns the exit code, or nothing when it can't print it yet.
+/// Prints a violation the engine stopped at, or the lasso the liveness checker found, as
+/// `printViolation` in `src/cli/tlc.ts` does, and returns the exit code, or nothing when it can't
+/// print it yet.
 fn print_violation(
     printer: &mut Printer,
     ir: &tla_ir::Ir,
     config: &ModelConfig,
     violation: &Violation,
+    liveness: Option<&Liveness>,
     start: Instant,
 ) -> Option<i32> {
     // TLC prints a state through the ALIAS when there is one, which the IR doesn't carry yet, and
@@ -660,57 +682,112 @@ fn print_violation(
         };
         Some(&ir.texts[name as usize])
     };
-    // TLC prints a trace once it has rebuilt all of it, and a state that the evaluator can't
-    // rebuild as TLC built it keeps the run not native.
-    let trace = match rebuild_trace(ir, violation) {
-        Ok(trace) => trace,
-        Err(reason) => return Some(report_not_native(printer, &reason)),
+    let action_label = |action: u32| {
+        let action = model.actions.get(action as usize)?;
+        Some(ir.texts[action.label as usize].as_ref())
     };
     let (code, text, exit_code) = match violation.kind {
-        // TLC prints the initial state that violates an invariant in the same message, and no
-        // statistics, since it checks the initial states before it searches.
-        ViolationKind::InitialInvariant(owner) => {
-            let name = invariant_name(owner)?;
-            let state = &trace.states.first()?.text;
-            printer.print(
-                code::INVARIANT_VIOLATED_INITIAL,
-                Level::Error,
-                &format!("Invariant {name} is violated by the initial state:\n{state}"),
-            );
-            print_finished(printer, start);
-            return Some(SAFETY_VIOLATION);
-        }
+        ViolationKind::InitialInvariant(owner) => (
+            code::INVARIANT_VIOLATED_INITIAL,
+            format!(
+                "Invariant {} is violated by the initial state:",
+                invariant_name(owner)?
+            ),
+            SAFETY_VIOLATION,
+        ),
         ViolationKind::Invariant(owner) => (
             code::INVARIANT_VIOLATED_BEHAVIOR,
             format!("Invariant {} is violated.", invariant_name(owner)?),
             SAFETY_VIOLATION,
         ),
         ViolationKind::Deadlock => (code::DEADLOCK_REACHED, "Deadlock reached.".into(), DEADLOCK),
+        ViolationKind::Lasso { .. } => (
+            code::TEMPORAL_PROPERTY_VIOLATED,
+            temporal_headline(ir, liveness?)?,
+            LIVENESS_VIOLATION,
+        ),
     };
-    let mut labels = Vec::with_capacity(trace.states.len());
-    for position in 0..trace.states.len() {
-        labels.push(match position.checked_sub(1) {
-            None => "Initial predicate",
-            Some(step) => {
-                let action = ir
-                    .model
-                    .actions
-                    .get(*violation.labels.get(step)? as usize)?;
-                &ir.texts[action.label as usize]
+    let lasso = match violation.kind {
+        ViolationKind::Lasso {
+            loop_start,
+            loop_label,
+        } => {
+            let is_stuttering = loop_start + 1 == violation.states.len();
+            // TLC warns of a stuttering counterexample where the solution constrains the cycle,
+            // and prints what the spec prints as it finds the step back into the cycle.
+            let Verdict::Lasso {
+                is_cycle_constrained,
+                ..
+            } = liveness?.verdict
+            else {
+                return None;
+            };
+            let is_printing = ir
+                .builtins
+                .iter()
+                .any(|builtin| matches!(&*ir.texts[builtin.name as usize], "Print" | "PrintT"));
+            if is_stuttering && is_cycle_constrained || !is_stuttering && is_printing {
+                return None;
             }
-        });
+            let label = match loop_label {
+                Some(action) => Some(action_label(action)?),
+                None => None,
+            };
+            Some((loop_start, is_stuttering, label))
+        }
+        _ => None,
+    };
+    let mut labels = vec!["Initial predicate"];
+    for &action in &violation.labels {
+        labels.push(action_label(action)?);
     }
+    // TLC prints a trace once it has rebuilt all of it, and a state that the evaluator can't
+    // rebuild as TLC built it keeps the run not native.
+    let trace = match rebuild_trace(ir, violation) {
+        Ok(trace) => trace,
+        Err(reason) => return Some(report_not_native(printer, &reason)),
+    };
+    let counts = &violation.counts;
+    let statistics = Statistics {
+        generated: counts.generated,
+        distinct: counts.distinct,
+        queued: counts.queued,
+        depth: counts.depth,
+    };
+    // TLC prints the initial state that violates an invariant in the same message, and no
+    // statistics, since it checks the initial states before it searches.
+    if let ViolationKind::InitialInvariant(_) = violation.kind {
+        let state = &trace.states.first()?.text;
+        printer.print(code, Level::Error, &format!("{text}\n{state}"));
+        print_finished(printer, start);
+        return Some(exit_code);
+    }
+    let checking =
+        liveness.map(|liveness| print_liveness_started(printer, &statistics, liveness.branches));
     // What the spec printed as TLC rebuilt the trace: the first state's after the headline, each
-    // later state's before it, and the rebuild after the trace (`printViolation`).
-    printer.print(code, Level::Error, &text);
-    for line in &trace.states[0].output {
-        printer.line(line);
-    }
-    printer.print(
-        code::BEHAVIOR_UP_TO_THIS_POINT,
-        Level::Error,
-        "The behavior up to this point is:",
-    );
+    // later state's before it, and the rebuild after the trace. TLC rebuilds a counterexample
+    // before it reports it, all of it as it recovers the first state (`printViolation`).
+    let first_output = trace.states[0].output.iter();
+    let (heading_code, heading) = if lasso.is_some() {
+        for line in first_output.clone().chain(&trace.trace_output) {
+            printer.line(line);
+        }
+        printer.print(code, Level::Error, &text);
+        (
+            code::COUNTER_EXAMPLE,
+            "The following behavior constitutes a counter-example:\n",
+        )
+    } else {
+        printer.print(code, Level::Error, &text);
+        for line in first_output {
+            printer.line(line);
+        }
+        (
+            code::BEHAVIOR_UP_TO_THIS_POINT,
+            "The behavior up to this point is:",
+        )
+    };
+    printer.print(heading_code, Level::Error, heading);
     for (position, (state, label)) in trace.states.iter().zip(labels).enumerate() {
         if position > 0 {
             for line in &state.output {
@@ -723,19 +800,62 @@ fn print_violation(
             &format!("{}: <{label}>\n{}", position + 1, state.text),
         );
     }
-    for line in &trace.trace_output {
-        printer.line(line);
+    match lasso {
+        None => {
+            for line in &trace.trace_output {
+                printer.line(line);
+            }
+        }
+        Some((loop_start, true, _)) => printer.print(
+            code::STATE_PRINT_3,
+            Level::State,
+            &format!("{}: Stuttering", loop_start + 2),
+        ),
+        Some((loop_start, false, label)) => {
+            let label = label
+                .map(|label| format!(": <{label}>\n"))
+                .unwrap_or_default();
+            if printer.is_tool {
+                printer.print(
+                    code::BACK_TO_STATE,
+                    Level::State,
+                    &format!("{}: Back to state{label}", loop_start + 1),
+                );
+            } else {
+                printer.line(&format!("Back to state {}{label}", loop_start + 1));
+            }
+        }
     }
-    let counts = &violation.counts;
-    let statistics = Statistics {
-        generated: counts.generated,
-        distinct: counts.distinct,
-        queued: counts.queued,
-        depth: counts.depth,
-    };
+    if let Some(checking) = checking {
+        print_liveness_finished(printer, checking);
+    }
     print_statistics(printer, &statistics, start);
     print_finished(printer, start);
     Some(exit_code)
+}
+
+// TLC names the properties the lasso violates, or none when it can't tell which
+// (`getTemporalHeadline`).
+fn temporal_headline(ir: &tla_ir::Ir, liveness: &Liveness) -> Option<String> {
+    let Verdict::Lasso { violated, .. } = &liveness.verdict else {
+        return None;
+    };
+    let mut names: Vec<&str> = Vec::new();
+    for &position in violated {
+        let name = &*ir.texts[ir.model.live_properties.get(position)?.name as usize];
+        if !names.contains(&name) {
+            names.push(name);
+        }
+    }
+    Some(match names.as_slice() {
+        [] => "Temporal properties were violated.\n".into(),
+        [name] => format!("Temporal property {name} was violated.\n"),
+        [rest @ .., last] => format!(
+            "Temporal properties {}{} and {last} were violated.\n",
+            rest.join(", "),
+            if rest.len() > 1 { "," } else { "" }
+        ),
+    })
 }
 
 /// Without -tool, TLC prints how long it ran for a person to read.

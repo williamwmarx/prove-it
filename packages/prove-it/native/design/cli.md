@@ -129,7 +129,28 @@ the implementing PR, with the front end's review.
     branches × distinct total distinct states at (…)`;
   - 2267 `Finished checking temporal properties in … at …`;
   - then the summary, as for any search.
-- A counterexample (a lasso, or an accepting node) stays not native ("a temporal property's
-  counterexample") until the binary prints it with the trace evaluator's states and labels.
+- A counterexample stays not native ("a temporal property's counterexample") until the binary
+  prints it with the trace evaluator's states and labels.
 - Measured on Depot: 798 of 1466 runs print what TLC prints. That count includes main's own gains
   since #84. Of the 264 temporal runs, 132 remain counterexamples. Nothing native differs.
+
+## A temporal property's lasso
+
+- When the liveness check finds a lasso and the binary reports violations itself, the search's
+  `Complete` outcome carries it as a `Violation` of kind `Lasso { loop_start, loop_label }`: the
+  lasso's states, the action of each step (`label_lasso`), the counts and the store. Under SYMMETRY
+  or a VIEW the stored states aren't the ones TLC prints, so there is none.
+- The binary prints what `printViolation` prints for a `liveness-violation` with a `loopStart`:
+  - the Progress line and 2192, as for properties that hold;
+  - what the spec printed as TLC rebuilt the whole trace, which it rebuilds before it reports;
+  - 2116, naming the violated properties as `getTemporalHeadline` does;
+  - 2264 and each state (2217);
+  - `Back to state N: <label>` (2122 with -tool), or `N: Stuttering` (2218) where the cycle is the
+    last state alone;
+  - 2267, then the statistics and exit code 13.
+- Still not native:
+  - a stuttering counterexample TLC warns of (2245/2246), which names the definition of the
+    specification;
+  - a lasso whose cycle steps back to an earlier state in a spec that prints, since TLC prints as it
+    finds that step's action;
+  - an accepting node, which TLC reports as it builds the behavior graph.
