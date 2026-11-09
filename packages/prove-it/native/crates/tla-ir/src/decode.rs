@@ -434,6 +434,12 @@ impl Decoder<'_> {
                     .map(|action| &action.definition),
             )
             .chain(model.instance_names.iter().map(|(index, _)| index))
+            .chain(
+                model
+                    .actions
+                    .iter()
+                    .filter_map(|action| action.definition.as_ref()),
+            )
             .find(|&&index| index as usize >= definition_count)
         {
             return self.error(format!("definition {index} of {definition_count}"));
@@ -606,6 +612,11 @@ impl Decoder<'_> {
                     label: self.text()?,
                     name: self.text()?,
                     location: self.range()?,
+                    definition: match self.next()? {
+                        -1 => None,
+                        index if index >= 0 => Some(index as Index),
+                        other => return self.error(format!("action definition {other}")),
+                    },
                 })
             })
             .collect::<Decoded<_>>()?;
