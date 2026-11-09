@@ -48,6 +48,7 @@ fn stop(path: &str) -> (ErrorSite, usize, u32, String, [u64; OUT_DEGREE_BUCKETS]
             ErrorSite::Init => Site::Init,
             ErrorSite::Next => Site::Next,
             ErrorSite::Invariant(position) => Site::Invariant(position),
+            ErrorSite::Atom { atom, is_extra } => Site::Atom { atom, is_extra },
             ErrorSite::InitialConstraint(_)
             | ErrorSite::InitialInvariant(_)
             | ErrorSite::InitialPredicate(_) => {
