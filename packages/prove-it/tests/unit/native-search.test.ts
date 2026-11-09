@@ -1325,13 +1325,13 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
   });
 
   it("leaves a model it can't search to the TypeScript engine", async () => {
-    // TLC assigns x' \subseteq S as x' \in SUBSET S, which neither engine does.
-    const body = ["VARIABLE x", "Init == x = {}", "Next == x' \\subseteq {1, 2}"];
+    // UNCHANGED in the initial predicate, which TLC evaluates and neither engine walks.
+    const body = ["VARIABLE x", "Init == x = 0 /\\ UNCHANGED x", "Next == x' = x"];
     const lines = await compareWithInterpreter(body, "INIT Init\nNEXT Next");
     expect(lines).toEqual([
       expect.stringMatching(/^\[engine\] native: ir: /),
-      expect.stringMatching(declined("unsupported: x' \\\\subseteq S")),
-      expect.stringMatching(/^\[engine\] handed over after \d+ ms: x' \\subseteq S$/),
+      expect.stringMatching(declined("unsupported: UNCHANGED in the initial predicate")),
+      expect.stringMatching(/^\[engine\] handed over after \d+ ms: primed variable not assigned$/),
     ]);
   });
 
