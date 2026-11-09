@@ -61,6 +61,15 @@ pub fn format_range(range: &crate::ast::SourceRange) -> String {
     )
 }
 
+/// `describeRange`: where an expression is written, which TLC's messages print.
+pub fn describe_range(expression: &crate::ast::Expression) -> String {
+    let location = &expression.location;
+    location.range.as_ref().map_or_else(
+        || format!("line {}, column {}", location.line, location.column),
+        format_range,
+    )
+}
+
 /// What stops the front end: an error of `errors.ts` it raises as TypeScript does, or a construct
 /// it doesn't cover yet.
 #[derive(Clone, Debug, PartialEq, Eq)]

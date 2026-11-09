@@ -58,6 +58,12 @@ pub struct Environment {
     pub substituted_definitions: FastMap<usize, Rc<Definition>>,
     /// What linking prints: SANY's warnings.
     pub printed: Vec<String>,
+    /// The definitions TLC computes when it starts, each module's in the order TLC computes them,
+    /// the modules in the order SANY finishes them, except a module an INSTANCE gives parameters
+    /// to; empty for a spec linked without a configuration.
+    pub startup_definitions: Vec<Rc<Definition>>,
+    /// The assumptions of the root module and the modules it extends, an extended module's first.
+    pub assumptions: Vec<Rc<Assumption>>,
 }
 
 pub struct EnvironmentOptions<'a> {
@@ -78,6 +84,7 @@ struct LinkedModule {
     exported: Rc<Symbols>,
     modules: OrderedMap<Name, Rc<LinkedModule>>,
     facts: FastSet<Name>,
+    extended: Vec<Rc<LinkedModule>>,
 }
 
 /// `errors` and `warnings` collect what SANY reports for the module.
@@ -622,6 +629,7 @@ impl Linker<'_> {
         let facts: Rc<RefCell<FastSet<Name>>> = Rc::default();
         let mut modules: OrderedMap<Name, Rc<LinkedModule>> = OrderedMap::new();
         let mut constants: Vec<Rc<Declaration>> = parsed.constants.clone();
+        let mut extended = Vec::new();
         let mut variables: Vec<Name> = parsed
             .variables
             .iter()
@@ -667,6 +675,7 @@ impl Linker<'_> {
             for (module_name, module) in linked.modules.iter() {
                 modules.insert(module_name.clone(), module.clone());
             }
+            extended.push(linked);
         }
         let bound = Rc::new(visible.clone());
         let declaration_symbol = |declaration: &Declaration, kind: SymbolKind| ModuleSymbol {
@@ -920,6 +929,7 @@ impl Linker<'_> {
             exported: Rc::new(exported),
             modules,
             facts: linked_facts,
+            extended,
         });
         self.link_order.borrow_mut().push(linked.clone());
         Ok(linked)
@@ -1881,7 +1891,16 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
             .unwrap_or(variable_index.len());
         variable_index.insert(get_enabled_variable_name(&name), index);
     }
+    let startup_definitions = if options.is_unconfigured {
+        Vec::new()
+    } else {
+        get_startup_definitions(&linker, &linked_root, &definitions, options)?
+    };
+    let mut assumptions = Vec::new();
+    add_assumptions(&linked_root, &mut Vec::new(), &mut assumptions);
     let environment = Environment {
+        startup_definitions,
+        assumptions,
         definitions,
         builtins,
         substitutions,
@@ -1916,4 +1935,56 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
         }
     }
     Ok(environment)
+}
+
+// TLC computes the constant definitions of each module in the order SANY finishes the modules,
+// except those of a module that an INSTANCE gives parameters to.
+fn get_startup_definitions(
+    linker: &Linker,
+    linked_root: &Rc<LinkedModule>,
+    definitions: &OrderedMap<Name, Rc<Definition>>,
+    options: &EnvironmentOptions,
+) -> Result<Vec<Rc<Definition>>> {
+    let link_order = linker.link_order.borrow();
+    let instantiated: FastSet<Name> = link_order
+        .iter()
+        .flat_map(|linked| {
+            linked
+                .module
+                .instances
+                .iter()
+                .map(|instance| instance.module.clone())
+        })
+        .collect();
+    let order = TlcOrder::new(options.source, options.load_module, options.version)?;
+    let mut startup = Vec::new();
+    for linked in link_order.iter().filter(|linked| {
+        !instantiated.contains(&linked.module.name)
+            || (linked.constants.is_empty() && linked.variables.is_empty())
+    }) {
+        let name = (!Rc::ptr_eq(linked, linked_root)).then_some(&*linked.module.name);
+        for name in order.get_definition_order(name)? {
+            let key = linked
+                .visible
+                .get(&name)
+                .map_or(&name, |symbol| &symbol.key);
+            startup.extend(definitions.get(key).cloned());
+        }
+    }
+    Ok(startup)
+}
+
+fn add_assumptions(
+    linked: &Rc<LinkedModule>,
+    visited: &mut Vec<*const LinkedModule>,
+    assumptions: &mut Vec<Rc<Assumption>>,
+) {
+    if visited.contains(&Rc::as_ptr(linked)) {
+        return;
+    }
+    visited.push(Rc::as_ptr(linked));
+    for extended in &linked.extended {
+        add_assumptions(extended, visited, assumptions);
+    }
+    assumptions.extend(linked.module.assumptions.iter().cloned());
 }

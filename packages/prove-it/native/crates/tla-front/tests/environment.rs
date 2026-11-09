@@ -5,7 +5,7 @@ use tla_front::TlcVersion;
 use tla_front::ast::{DefinitionKind, Expression, ExpressionKind};
 use tla_front::config::parse_config;
 use tla_front::environment::{Environment, EnvironmentOptions, create_environment};
-use tla_front::errors::FrontError;
+use tla_front::errors::{FrontError, describe_range};
 
 fn link(source: &str, modules: &[(&str, &str)]) -> Result<Environment, FrontError> {
     link_model(source, modules, None)
@@ -195,4 +195,36 @@ fn assigns_and_substitutes_the_constants_of_the_configuration() {
                 .to_owned()
         )
     );
+}
+
+#[test]
+fn lists_the_assumptions_and_startup_definitions_of_a_model() {
+    let environment = link_model(
+        "---- MODULE Main ----\nEXTENDS Base\nASSUME Two == N > 1\nAXIOM N > 0\nDouble == 2 * N\nInit == TRUE\n====",
+        &[(
+            "Base",
+            "---- MODULE Base ----\nEXTENDS Naturals\nCONSTANT N\nASSUME N \\in Nat\nHalf == N \\div 2\n====",
+        )],
+        Some("CONSTANT N = 3\nINIT Init\nNEXT Init"),
+    )
+    .expect("an environment");
+    let assumptions: Vec<String> = environment
+        .assumptions
+        .iter()
+        .map(|assumption| describe_range(&assumption.expression))
+        .collect();
+    assert_eq!(
+        assumptions,
+        [
+            "line 4, col 8 to line 4, col 16 of module Base",
+            "line 3, col 15 to line 3, col 19 of module Main",
+            "line 4, col 7 to line 4, col 11 of module Main",
+        ]
+    );
+    let startup: Vec<&str> = environment
+        .startup_definitions
+        .iter()
+        .map(|definition| &*definition.name)
+        .collect();
+    assert!(startup.contains(&"Half") && startup.contains(&"Double"));
 }
