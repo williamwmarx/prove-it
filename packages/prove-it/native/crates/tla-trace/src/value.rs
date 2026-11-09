@@ -6,6 +6,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::cmp::Ordering;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use tla_values::Store;
@@ -373,6 +374,58 @@ fn typed_model_failure<T>(left: &Value, right: &Value, is_equality: bool) -> Eva
     fail_runtime(reason, text)
 }
 
+thread_local! {
+    // The sets a replay built that TLC holds unnormalized still, by address, each with its
+    // elements in the order TLC built it. Each entry holds its set, so that no other set takes
+    // its address while the entry lasts.
+    static UNNORMALIZED: RefCell<HashMap<usize, Unnormalized>> = RefCell::new(HashMap::new());
+}
+
+// A set TLC holds unnormalized, with its elements as TLC built it.
+type Unnormalized = (Rc<Vec<Value>>, Vec<Value>);
+
+/// Records a set a replay built as TLC holds it unnormalized (`SetEnumValue` with `isNorm`
+/// false), with its elements as TLC built it.
+pub(crate) fn mark_unnormalized(set: &Value, written: Vec<Value>) {
+    if let Value::Set(elements) = set {
+        UNNORMALIZED.with(|sets| {
+            sets.borrow_mut().insert(
+                Rc::as_ptr(elements) as usize,
+                (Rc::clone(elements), written),
+            )
+        });
+    }
+}
+
+/// The elements of a set TLC holds unnormalized, as TLC built it.
+pub(crate) fn unnormalized(set: &Value) -> Option<Vec<Value>> {
+    let Value::Set(elements) = set else {
+        return None;
+    };
+    UNNORMALIZED.with(|sets| {
+        sets.borrow()
+            .get(&(Rc::as_ptr(elements) as usize))
+            .map(|entry| entry.1.clone())
+    })
+}
+
+/// Forgets the sets the last replay built.
+pub(crate) fn clear_unnormalized() {
+    UNNORMALIZED.with(|sets| sets.borrow_mut().clear());
+}
+
+// TLC normalizes a set to enumerate, compare or print it.
+pub(crate) fn normalize(value: &Value) {
+    if let Value::Set(elements) = value {
+        UNNORMALIZED.with(|sets| {
+            let mut sets = sets.borrow_mut();
+            if !sets.is_empty() {
+                sets.remove(&(Rc::as_ptr(elements) as usize));
+            }
+        });
+    }
+}
+
 /// The elements of a set TLC can enumerate, in TLC's order.
 /// `IntervalValue.size`: an interval of more than 2^31 - 1 elements has no int size.
 pub fn interval_size(low: i32, high: i32) -> Evaluated<usize> {
@@ -393,6 +446,7 @@ pub fn interval_size(low: i32, high: i32) -> Evaluated<usize> {
 const MAXIMUM_INTERVAL: usize = 1 << 24;
 
 pub fn elements(value: &Value) -> Evaluated<Rc<Vec<Value>>> {
+    normalize(value);
     match value {
         Value::Set(elements) => Ok(Rc::clone(elements)),
         // An interval TLC walks without building it, which the evaluator builds, up to a size.
@@ -424,6 +478,8 @@ fn sort(function: &Function) {
 
 /// TLC's `compareTo`, as the store's `compare`: an error where TLC can't compare the two.
 pub fn compare(left: &Value, right: &Value) -> Evaluated<Ordering> {
+    normalize(left);
+    normalize(right);
     match (left, right) {
         (Value::Int(left), Value::Int(right)) => Ok(left.cmp(right)),
         (Value::Bool(left), Value::Bool(right)) => Ok(left.cmp(right)),
@@ -496,6 +552,8 @@ fn compare_functions(left: &Rc<Function>, right: &Rc<Function>) -> Evaluated<Ord
 /// TLC's `equals`, as the store's: values of kinds TLC can't compare fail, but a model value
 /// without a type is unequal to anything else.
 pub fn equals(left: &Value, right: &Value) -> Evaluated<bool> {
+    normalize(left);
+    normalize(right);
     match (left, right) {
         (Value::Int(left), Value::Int(right)) => Ok(left == right),
         (Value::Bool(left), Value::Bool(right)) => Ok(left == right),
@@ -846,7 +904,11 @@ pub fn note_sorted(value: &Value) {
 /// and turns a lambda into the function it enumerates, as `settleRecoveredState` does.
 pub fn settle(value: &Value) {
     match value {
-        Value::Set(elements) => elements.iter().for_each(settle),
+        // Fingerprinting normalizes a set (`SetEnumValue.fingerPrint`).
+        Value::Set(elements) => {
+            normalize(value);
+            elements.iter().for_each(settle);
+        }
         Value::Function(function) => {
             sort(function);
             function.search.set(Search::Sorted);
