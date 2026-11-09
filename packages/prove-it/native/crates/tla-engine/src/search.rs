@@ -1133,14 +1133,15 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     // over the search.
     let is_unordered = machine.store.has_unordered_strings();
     match outcome {
+        // TLC orders a violation's sets of strings by its own ranking, which the search's may not
+        // be, so the interpreter reports it.
         SearchOutcome::Stopped {
-            reason,
-            checkpoint: Some(_),
-            collisions,
+            reason, collisions, ..
         } if is_unordered => SearchOutcome::Stopped {
             reason,
             checkpoint: None,
             collisions,
+            violation: None,
         },
         SearchOutcome::Complete {
             checkpoint: Some(_),
@@ -1150,6 +1151,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             reason: "a graph with strings the search ranked".into(),
             checkpoint: None,
             collisions,
+            violation: None,
         },
         outcome => outcome,
     }
