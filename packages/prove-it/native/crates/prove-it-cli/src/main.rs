@@ -7,6 +7,7 @@ mod check;
 // gaps session lands it; until then nothing calls the module.
 #[allow(dead_code)]
 mod failure;
+mod files;
 mod front;
 mod messages;
 mod summary;

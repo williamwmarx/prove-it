@@ -66,6 +66,21 @@ had then. The interpreter replays the engine's graph for those counts only, with
 liveness checker, and at that state reports the native checker's path: Github1389Counting, the
 one corpus model this reaches.
 
+The native binary reports it itself (`ViolationKind::Accepted`). TLC's counts at that state come
+from the graph: the initial states plus each expanded state's successors and new states up to it,
+and its depth then. TLC adds the states to the behavior graphs as it searches even under
+`-lncheck final`, so the engine adds them as TLC would where its search stops anyway:
+- Past `MAXIMUM_GRAPH_STATES`, before it hands the graph over: TLC's Github710b, whose x grows
+  without bound, stops at its third state, which the binary now reports.
+- At a deadlock or an invariant violation, the deadlocked state included, which TLC adds after it
+  reports the deadlock. Where no state reaches an accepting node, TLC reports the violation, which
+  the binary prints; where one does (Github710d), it hands over.
+
+Where no tableau node of a model with no PEM conditions accepts every behavior (`hasEmptyPEM`),
+TLC can't stop this way and the checker evaluates nothing. It still hands over where TLC would fail
+evaluating an atom the engine couldn't answer, a state predicate on any state or ENABLED on an
+expanded one, as on InitialLivenessEvaluationError.
+
 ## Temporal formulas inside a predicate (as built)
 
 A liveness atom can be an operator whose body holds a temporal formula in a branch the run never
