@@ -739,11 +739,17 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         .collect();
     let mut store = Store::new();
     store.reset(ranked.iter().map(Vec::as_slice));
+    store.freeze_string_order();
     let mut compiler = Compiler::new(ir, &mut store, settings.compile);
     let context = match EngineContext::build(&mut compiler, ir) {
         Ok(context) => context,
         Err(error) => return SearchOutcome::Declined(describe(error)),
     };
+    // A search that ranked strings may start over in the interpreter, which would print again
+    // what the search printed.
+    if compiler.is_printing && compiler.is_ranking {
+        return SearchOutcome::Declined("unsupported: Print with ToString".into());
+    }
     let is_distinct_read = compiler.is_distinct_read;
     let is_printing = compiler.is_printing;
     // Checking a successor once the walk reaches the next reorders nothing anyone can see where
@@ -1034,7 +1040,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             }),
         }
     };
-    match result {
+    let outcome = match result {
         Err(bail) if bail.0 == OTHER_STEPS => SearchOutcome::Invariant(OTHER_STEPS.into()),
         Ok(()) => {
             let count = search.states.count();
@@ -1198,6 +1204,33 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 violation,
             }
         }
+    };
+    // The strings the search ranked, such as ToString's, the temporal atoms' included, may rank
+    // otherwise in TLC, so the interpreter makes them again from the start rather than taking
+    // over the search.
+    let is_unordered = machine.store.has_unordered_strings();
+    match outcome {
+        // TLC orders a violation's sets of strings by its own ranking, which the search's may not
+        // be, so the interpreter reports it.
+        SearchOutcome::Stopped {
+            reason, collisions, ..
+        } if is_unordered => SearchOutcome::Stopped {
+            reason,
+            checkpoint: None,
+            collisions,
+            violation: None,
+        },
+        SearchOutcome::Complete {
+            checkpoint: Some(_),
+            collisions,
+            ..
+        } if is_unordered => SearchOutcome::Stopped {
+            reason: "a graph with strings the search ranked".into(),
+            checkpoint: None,
+            collisions,
+            violation: None,
+        },
+        outcome => outcome,
     }
 }
 
@@ -1421,7 +1454,9 @@ fn to_violation(
             .skip(1)
             .collect::<Option<Vec<u32>>>()?
     };
-    (labels.len() + 1 == states.len()).then(|| {
+    // The store goes with the violation, so whether the search, or finding the actions, ranked
+    // strings is read here, as for the search's outcome.
+    (labels.len() + 1 == states.len() && !machine.store.has_unordered_strings()).then(|| {
         Box::new(Violation {
             kind: found.kind,
             states,
