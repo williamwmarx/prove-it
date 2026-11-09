@@ -450,6 +450,7 @@ const TLC_FAILURES: &[&str] = &[
     "differently typed model values",
     "division by zero",
     "drew from a value that isn't a set",
+    "enumerated a filter of an infinite set",
     "enumerated a non-set",
     crate::compile::INFINITE_BOUND,
     "equality of values TLC can't compare",

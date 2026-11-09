@@ -654,14 +654,17 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   with "EXCEPT outside the domain" as a failure of TLC's, where TLC leaves the function as it is
   (`FcnRcdValue.takeExcept`; a record or a tuple with a warning). The reason is now a limit, so
   such an assumption goes to the trace evaluator.
-- **MCEWD687a** (both copies) stops on "enumerated a filter of an infinite set", which is TLC's
-  own failure (`SetPredValue.elements`: "Attempted to enumerate { x \in S : p(x) } when S: ...
-  is not enumerable") evaluating the property TreeWithRoot as an invariant. Counting the reason
-  among `TLC_FAILURES` isn't enough: the CLI declines a failure in a model with temporal
-  properties (one copy) or with an ALIAS or POSTCONDITION (the other). Past those,
-  `Site::Invariant` reads only the model's invariants, not the properties checked as
-  invariants, in an instance's scope here; the replay of the expansion declines them too; and
-  `tla-trace` builds a filter where TLC keeps it lazy, with no message for this failure.
+- **MCEWD687a** (both copies) stops where TLC fails (`SetPredValue.elements`: "Attempted to
+  enumerate { x \in S : p(x) } when S: ... is not enumerable") evaluating the property
+  TreeWithRoot as an invariant. The engine and the CLI now follow TLC there: the stop is among
+  `TLC_FAILURES`; `Site::Invariant` and the replay of the expansion read the properties checked as
+  invariants after the model's invariants, each in its scope and by TLC's name for it
+  (`tlc_invariants`); and the CLI no longer declines an invariant that fails to evaluate in a
+  model with temporal properties, unless an atom of theirs may print (`atoms_print`), since
+  TLC's worker stops before it adds the state to the behavior graphs and its replay adds nothing
+  to them. What is left is in `tla-trace`: it builds a filter where TLC keeps it lazy, and has
+  no message for this failure (test-model copy); and the examples copy fails on an initial
+  state, a site the CLI still declines with temporal properties.
 - **PrintTraceRace** declines on purpose: TLC searches a set enumeration it hasn't normalized,
   as `{1..2}` built by the invariant, element by element with `equals`, and words the failure
   otherwise than the sorted search does. `evaluate_failure` declines an invariant's failure
