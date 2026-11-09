@@ -162,3 +162,30 @@ corpus (the 641 IRs `bun scripts/run.ts engine-ir` writes, and the 30 goldens in
 - `front-differential.ts model` links each corpus model, a `.cfg` file and the spec beside it:
   1,092 of 1,111 match and none differ; with `--mutate 400` (variants of the configurations),
   2,682 of 2,711. Verification's Front End job runs it.
+
+## F8 slice 2 as built (nodes and definitions)
+
+- `lower` ports the core of `lowerToIr` into `tla_ir`'s structures: each node in prefix order as
+  the blob holds it, a node met again as a reference, LET definitions inline and the others in
+  the order the model reaches them, names with their resolutions and caches, builtins, texts in
+  the order of their first use after the ranked ones, and how each junction is written (IR 9: a
+  bulleted list, or where each prefix of an infix chain ends). A constant's value (slice 3) and a
+  startup value (the startup phase) aren't written yet.
+- `front-differential.ts ir` lowers each module's environment, on both sides, as a model whose
+  Init and Next are a placeholder and whose configuration names every definition by key as an
+  invariant, with no text ranked, and compares the IRs byte for byte: 2,332 of 2,357 modules
+  match and none differ; with `--mutate 400`, 3,932 of 3,957. Verification's Front End job runs
+  it. Slices 3 and 4 add TLC's string order, the values and the model's own roots.
+
+## F8 slice 3a as built (TLC's orders)
+
+- `order` ports `createTlcOrder` (F7's order): the module set TLC reads (TLC's own module texts,
+  which `scripts/front-modules.ts` now writes to `modules/tlc` with SANY's and TLC's interned
+  texts in `src/tlc_data.rs`), SANY's symbol table per module as `java.util.Hashtable`
+  enumerates it, TLC's string order (the configuration's values, TLC's startup strings, each
+  module's tokens in the order SpecObj parses the modules, the string literals, TLC's runtime
+  strings), the root module's declarations in SANY's order, and each module's definitions in the
+  order TLC computes them.
+- `front-differential.ts order`: all 1,111 corpus models match, and all 2,711 with
+  `--mutate 400`. Verification's Front End job runs it. The lowering ranks texts by this order
+  once the model section (slice 4) is in.
