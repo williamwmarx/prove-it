@@ -403,6 +403,49 @@ const getReplayExitCode = (error: TlaEvaluationError): number => {
 
 // TLC finishes the -dump file whether or not the search finds a violation. The readings are those
 // of a spec SANY accepted.
+// What TLC evaluates when it starts, for the engine IR: the substitutes it checks, the constant
+// definitions with effects (one without computes the same wherever it is first used), the
+// SYMMETRY definition, which the search found to be an operator without parameters, and the
+// assumptions.
+export const getIrStartup = (
+  config: ModelConfig,
+  specification: ReturnType<typeof createEnvironment>,
+): IrStartup => {
+  const environment = specification.environment;
+  const symmetry =
+    config.symmetry === undefined ? undefined : environment.definitions.get(config.symmetry);
+  return {
+    substitutes: [...environment.substitutions].flatMap(([name, target]) => {
+      const definition = environment.definitions.get(target);
+      const isChecked =
+        specification.rootConstants.some((constant) => constant.name === name) &&
+        definition?.kind === "Operator" &&
+        definition.params.length === 0 &&
+        !isConstantLevel(definition, environment);
+      return isChecked ? [{ name, definition }] : [];
+    }),
+    definitions: [
+      ...new Set(
+        specification.startupDefinitions.filter(
+          (definition) =>
+            isStartupDefinition(definition, environment) &&
+            isImpureDefinition(definition, environment),
+        ),
+      ),
+    ],
+    symmetry:
+      symmetry?.kind === "Operator"
+        ? { definition: symmetry, permutedSets: getPermutedSets(symmetry, config.substitutions) }
+        : undefined,
+    assumptions: specification.assumptions
+      .filter((assumption) => !assumption.isAxiom)
+      .map((assumption) => ({
+        expression: assumption.expression,
+        name: describeRange(assumption.expression),
+      })),
+  };
+};
+
 export const checkSequentially = (
   options: CheckOptions,
   readings?: ReadonlyMap<string, SanyReading>,
@@ -544,44 +587,6 @@ const searchStates = (
     ),
   });
 
-  // What TLC evaluates when it starts, for the engine IR: the substitutes it checks, the constant
-  // definitions with effects (one without computes the same wherever it is first used), the
-  // SYMMETRY definition, which the search found to be an operator without parameters, and the
-  // assumptions.
-  const getIrStartup = (): IrStartup => {
-    const symmetry =
-      config.symmetry === undefined ? undefined : environment.definitions.get(config.symmetry);
-    return {
-      substitutes: [...environment.substitutions].flatMap(([name, target]) => {
-        const definition = environment.definitions.get(target);
-        const isChecked =
-          specification.rootConstants.some((constant) => constant.name === name) &&
-          definition?.kind === "Operator" &&
-          definition.params.length === 0 &&
-          !isConstantLevel(definition, environment);
-        return isChecked ? [{ name, definition }] : [];
-      }),
-      definitions: [
-        ...new Set(
-          specification.startupDefinitions.filter(
-            (definition) =>
-              isStartupDefinition(definition, environment) &&
-              isImpureDefinition(definition, environment),
-          ),
-        ),
-      ],
-      symmetry:
-        symmetry?.kind === "Operator"
-          ? { definition: symmetry, permutedSets: getPermutedSets(symmetry, config.substitutions) }
-          : undefined,
-      assumptions: specification.assumptions
-        .filter((assumption) => !assumption.isAxiom)
-        .map((assumption) => ({
-          expression: assumption.expression,
-          name: describeRange(assumption.expression),
-        })),
-    };
-  };
   const search = createSearch(
     config,
     environment,
@@ -618,7 +623,7 @@ const searchStates = (
         atoms: [],
         liveFormula: undefined,
         liveProperties: [],
-        startup: getIrStartup(),
+        startup: getIrStartup(config, specification),
       });
       if ("ir" in outcome) writeDebugBytes("PROVE_IT_IR_DUMP", outcome.ir);
     }
@@ -1834,7 +1839,7 @@ const searchStates = (
         })),
         liveFormula: liveness?.formula,
         liveProperties: liveness?.properties ?? [],
-        startup: getIrStartup(),
+        startup: getIrStartup(config, specification),
       });
       const milliseconds = performance.now() - loweredAt;
       if ("ir" in outcome) writeDebugBytes("PROVE_IT_IR_DUMP", outcome.ir);

@@ -40,6 +40,9 @@ pub struct EngineContext {
     /// The owner of each of `initial_invariants`, as `invariant_owners`.
     pub initial_invariant_owners: Vec<usize>,
     pub constraints: Vec<Predicate>,
+    /// For each of `constraints`, the position in the model's constraints of the first it is a
+    /// conjunct of.
+    pub constraint_owners: Vec<u32>,
     pub action_constraints: Vec<Eval>,
     /// The `_POSSIBLE` predicates, each with whether it is of a step: TLC counts the states in the
     /// model, or the steps, each holds of.
@@ -116,15 +119,6 @@ pub fn holds(machine: &mut Machine<'_>, predicate: &Eval) -> Outcome<bool> {
 }
 
 /// The position of the first predicate that doesn't hold, if one doesn't.
-pub fn first_failing(machine: &mut Machine<'_>, predicates: &[Eval]) -> Outcome<Option<usize>> {
-    for (position, predicate) in predicates.iter().enumerate() {
-        if !holds(machine, predicate)? {
-            return Ok(Some(position));
-        }
-    }
-    Ok(None)
-}
-
 pub fn holds_all(machine: &mut Machine<'_>, predicates: &[Eval]) -> Outcome<bool> {
     for predicate in predicates {
         if !holds(machine, predicate)? {
@@ -463,13 +457,11 @@ impl EngineContext {
             }
             None => None,
         };
-        let mut constraint_roots = Vec::new();
-        for constraint in &model.constraints {
-            constraint_roots.push(Conjunct::Named(named("constraint", ir, constraint)?));
-        }
         let mut conjuncts = Conjuncts::new(ir);
-        for root in constraint_roots {
-            conjuncts.collect(root);
+        let mut constraint_owners = Vec::new();
+        for (owner, constraint) in model.constraints.iter().enumerate() {
+            conjuncts.collect(Conjunct::Named(named("constraint", ir, constraint)?));
+            constraint_owners.resize(conjuncts.found.len(), owner as u32);
         }
         let constraints = conjuncts
             .found
@@ -590,6 +582,7 @@ impl EngineContext {
             initial_invariants,
             initial_invariant_owners,
             constraints,
+            constraint_owners,
             action_constraints,
             possible,
             action_properties,
