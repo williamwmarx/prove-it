@@ -333,12 +333,9 @@ fn to_integer(source: &[u16]) -> i32 {
     for byte in digits.bytes().take(kept) {
         low = low.wrapping_mul(10).wrapping_add(u32::from(byte - b'0'));
     }
-    for _ in 0..shift.max(0).min(64) {
+    // 10^32 is a multiple of 2^32, so more zeros keep the low bits 0.
+    for _ in 0..shift.clamp(0, 32) {
         low = low.wrapping_mul(10);
-    }
-    // 10^64 and beyond are 0 modulo 2^32.
-    if shift >= 64 {
-        low = 0;
     }
     (if sign < 0 { low.wrapping_neg() } else { low }) as i32
 }
