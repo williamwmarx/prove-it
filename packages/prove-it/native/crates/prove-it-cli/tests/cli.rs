@@ -672,3 +672,18 @@ fn rebuilds_a_trace_of_bags_as_tlc_builds_them() {
     );
     std::fs::remove_dir_all(directory).expect("removed");
 }
+
+#[test]
+fn prints_what_the_expansion_printed_before_its_violation() {
+    // TLC checks each successor as it finds it, so it prints what finding the violating one
+    // printed before it reports the violation, as TLC 1.8 prints this spec's 1.
+    let spec = "---- MODULE Stop ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0\nNext == x' \\in {x + 1, x + 2} /\\ PrintT(x')\nInv == x # 1\n====\n";
+    let (output, directory) = run_lowered("printed", spec, "INIT Init\nNEXT Next\nINVARIANT Inv\n");
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(12), "{text}");
+    assert!(
+        text.contains(".\n1\nError: Invariant Inv is violated.\n"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}

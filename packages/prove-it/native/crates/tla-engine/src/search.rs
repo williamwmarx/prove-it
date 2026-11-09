@@ -2786,21 +2786,23 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 }
                 found => found,
             };
-            // What the search held back for the liveness checker's atoms to print between comes
-            // before the violation, unless an atom printed.
-            if found.is_some()
-                && !context.is_live_printing
-                && let Some(held) = search.held.take()
-                && let Some((initial, expansions)) = held.split_first()
-            {
-                for printed in initial {
-                    report_printed(search.reporter, &machine.store, printed);
-                }
-                search
-                    .reporter
-                    .initial_states(initial_states.0, initial_states.1);
-                for printed in expansions.iter().flatten() {
-                    report_printed(search.reporter, &machine.store, printed);
+            // What the search printed comes before the violation, as TLC prints as it checks each
+            // successor once it has it (`Worker.addElement`): that of the expansion it stopped in
+            // too, and what it held back for the liveness checker's atoms to print between, unless
+            // an atom printed.
+            if found.is_some() && !(search.held.is_some() && context.is_live_printing) {
+                if let Some(held) = search.held.take()
+                    && let Some((initial, expansions)) = held.split_first()
+                {
+                    for printed in initial {
+                        report_printed(search.reporter, &machine.store, printed);
+                    }
+                    search
+                        .reporter
+                        .initial_states(initial_states.0, initial_states.1);
+                    for printed in expansions.iter().flatten() {
+                        report_printed(search.reporter, &machine.store, printed);
+                    }
                 }
                 search.flush(&mut machine);
             }
