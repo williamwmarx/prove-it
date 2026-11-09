@@ -135,6 +135,9 @@ type SelectionError = (Expr, Vec<Expr>, SanyError);
 /// keeps each node it names, so no other node takes its address.
 #[derive(Default)]
 pub struct Tables {
+    /// Whether the linker collects SANY's messages, for which an error that stops linking carries
+    /// SANY's report.
+    pub is_collecting: std::cell::Cell<bool>,
     selected: RefCell<FastMap<usize, Expr>>,
     source_names: RefCell<FastMap<usize, (Rc<Definition>, Name)>>,
     errors: RefCell<FastMap<usize, SelectionError>>,
@@ -2462,15 +2465,29 @@ fn check_substitutions(
         if let Some(arity) = arity
             && arity != declaration.arity
         {
-            return Err(SyntaxError::new(format!(
+            let mut error = SyntaxError::new(format!(
                 "An operator must be substituted for symbol '{}', and it must have arity {} in the instance of {} at line {}, column {}",
                 declaration.name,
                 declaration.arity,
                 instance.module,
                 instance.location.line,
                 instance.location.column
-            ))
-            .into());
+            ));
+            // Generator.checkSubstitutionForCorrectArity reports it at the substitute, which an
+            // implicit substitution places at the INSTANCE.
+            if let Some(range) = &expression.location.range
+                && unit.tables.is_collecting.get()
+            {
+                error.sany = SyntaxError::sany(vec![SanyError {
+                    location: format_range(range),
+                    message: format!(
+                        "An operator must be substituted for symbol '{}', and it must have arity {}.",
+                        declaration.name, declaration.arity
+                    ),
+                }])
+                .sany;
+            }
+            return Err(error.into());
         }
         Ok(())
     };
