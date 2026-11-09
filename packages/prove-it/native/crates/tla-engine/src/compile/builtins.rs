@@ -1,11 +1,11 @@
 //! The builtins, as `compileBuiltin` and `compileNativeBuiltin` compile them. The pure builtins
 //! the TypeScript engine runs in the interpreter (`PURE_BUILTINS`) are `bridged.rs`'s, except
-//! ToString, which needs TLC's printer and declines.
+//! ToString, which prints as the interpreter's printer does (`format_value`).
 
 use std::sync::Arc;
 
 use tla_ir::{Builtin, Index, NodeKind};
-use tla_values::print::is_printable;
+use tla_values::print::{is_printable, write_value};
 use tla_values::store::{
     EMPTY_SET, EMPTY_TUPLE, FALSE, KIND_INT, KIND_SET, KIND_STRING, KIND_TUPLE, Outcome, TRUE,
     is_function_kind,
@@ -564,6 +564,9 @@ impl Compiler<'_> {
                 let base_parts = Self::parts_of(&base);
                 Compiled {
                     is_normalized: false,
+                    // It streams in its order, and its elements are set enumerations.
+                    is_in_order: true,
+                    are_elements_in_order: true,
                     reference: combine_references(&[&base], |_, mut bases| {
                         Ok(Lazy::Subset(Box::new(bases.remove(0))))
                     }),
@@ -635,9 +638,22 @@ impl Compiler<'_> {
                     },
                     true,
                 );
+                // TLC keeps UNION S lazy unless S and its elements are set enumerations, and then
+                // streams each element of S in turn (`UnionValue.Enumerator`). An element streams
+                // as its normalized set does unless it streams apart itself, which the engine,
+                // holding it as an id, can't follow.
+                let reference = (!is_enumerated && outer.are_elements_in_order)
+                    .then(|| reference_of(&outer))
+                    .flatten()
+                    .map(|base| {
+                        Arc::new(move |machine: &mut Machine<'_>| {
+                            Ok(Lazy::Union(Box::new(base(machine)?)))
+                        }) as Reference
+                    });
                 Compiled {
                     is_normalized: is_enumerated,
                     is_enumerated,
+                    reference,
                     member: only.as_ref().map(|only| self.member_test(only)),
                     parts: only.as_ref().map(Self::parts_of),
                     ..compiled
@@ -732,12 +748,19 @@ impl Compiler<'_> {
                 let bounds = (low.clone(), high.clone());
                 Compiled {
                     is_costly: true,
+                    is_in_order: true,
                     interval: Some(bounds),
                     ..leaf(
                         eval(move |machine| fused::interval(machine, &low, &high)),
                         left.footprint.merge(&right.footprint),
                     )
                 }
+            }
+            "ToString" => {
+                arity(1)?;
+                self.is_ranking = true;
+                let value = self.operand(&operands[0])?;
+                unary(&value, to_string, true)
             }
             "Len" => {
                 arity(1)?;
@@ -1100,9 +1123,75 @@ impl Compiler<'_> {
         };
         Ok(Some(Compiled {
             is_normalized,
+            // TLC streams a `\cup` it keeps lazy from both sets, duplicates and all.
+            is_in_order: (is_normalized || name != "\\cup")
+                && left.is_in_order
+                && right.is_in_order,
+            are_elements_in_order: left.are_elements_in_order && right.are_elements_in_order,
             member: lazy_member,
             reference,
             ..binary(left, right, operation, true, false)
         }))
+    }
+}
+// ToString(v): TLC's text of v (`write_value`), as a string TLC ranks as it makes it.
+fn to_string(machine: &mut Machine<'_>, value: Id) -> Outcome<Id> {
+    if !is_printable(&machine.store, value) {
+        return Err(Bail(
+            "ToString of a value whose text depends on how TLC built it",
+        ));
+    }
+    let mut text = Vec::new();
+    write_value(&machine.store, value, &mut text);
+    // A text the engine made before, such as by \o, keeps the rank it had then, -1, which the
+    // store's guard on unordered strings doesn't see.
+    if let Some(string) = machine.store.find_str(&text)
+        && machine.store.text_rank_of(string) < 0
+    {
+        return Err(Bail("ToString of a text the engine made unranked"));
+    }
+    machine.store.get_string_rank(&text);
+    Ok(machine.store.str(&text))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::machine::Program;
+    use tla_values::Store;
+
+    fn to_text(store: &mut Store, id: Id) -> Option<String> {
+        let program = Program::default();
+        let mut machine = Machine::new(&program, std::mem::take(store));
+        let result = to_string(&mut machine, id)
+            .ok()
+            .map(|string| String::from_utf16(machine.store.text_of(string)).expect("UTF-16"));
+        *store = machine.store;
+        result
+    }
+
+    // The string it makes ranks then, after the strings TLC ranked before, and it stops where the
+    // text depends on how TLC built the value.
+    #[test]
+    fn ranks_the_string_it_makes_and_stops_on_a_value_it_cant_print() {
+        let mut store = Store::new();
+        store.reset(
+            ["z"]
+                .map(|text| text.encode_utf16().collect::<Vec<u16>>())
+                .iter()
+                .map(Vec::as_slice),
+        );
+        let twelve = store.int(12).expect("an integer");
+        let thirteen = store.int(13).expect("an integer");
+        assert_eq!(to_text(&mut store, twelve).as_deref(), Some("12"));
+        assert_eq!(
+            store.get_string_order(),
+            [
+                &[u16::from(b'z')][..],
+                &"12".encode_utf16().collect::<Vec<u16>>()
+            ]
+        );
+        let interval = store.set_of(&[twelve, thirteen]).expect("a set");
+        assert_eq!(to_text(&mut store, interval), None);
     }
 }

@@ -174,6 +174,11 @@ pub struct Compiled {
     /// For a set: whether TLC's value is a set enumeration, and whether each element's is.
     pub(crate) is_enumerated: bool,
     pub(crate) are_elements_enumerated: bool,
+    /// For a set: whether TLC's value is known to stream its elements as its normalized set does,
+    /// which a UNION or `\cup` TLC keeps lazy doesn't (`isStreamedApart`), and a value of unknown
+    /// provenance, such as a bound name's, may not; and whether each of its elements is.
+    pub(crate) is_in_order: bool,
+    pub(crate) are_elements_in_order: bool,
     /// Whether the value is always TRUE or FALSE.
     pub(crate) is_boolean: bool,
     pub(crate) is_constant: bool,
@@ -236,6 +241,8 @@ pub(crate) fn leaf(eval: Eval, footprint: Footprint) -> Compiled {
         is_normalized: true,
         is_enumerated: false,
         are_elements_enumerated: false,
+        is_in_order: false,
+        are_elements_in_order: false,
         is_boolean: false,
         is_constant: false,
         infinite: None,
@@ -247,6 +254,11 @@ pub(crate) fn leaf(eval: Eval, footprint: Footprint) -> Compiled {
         predicate: None,
         reference: None,
     }
+}
+
+// Where the definition cache keeps a definition compiled in a context.
+fn definition_index(context: &Context) -> usize {
+    usize::from(context.is_primed) + 2 * usize::from(context.is_init)
 }
 
 // A set's reference, or None for a set TLC keeps lazy that the engine has no reference for, such
@@ -560,7 +572,9 @@ pub struct Compiler<'a> {
     options: Options,
     program: Program,
     texts: Vec<Option<Vec<u16>>>,
-    definition_cache: HashMap<NodeId, Entries<(u64, Compiled)>>,
+    // A definition compiled unprimed or primed, outside the initial predicate or in it, where a
+    // variable's value isn't yet known to stream in order (`is_in_order`).
+    definition_cache: HashMap<NodeId, [Option<(u64, Compiled)>; 4]>,
     recursive_operators: HashMap<usize, OperatorEntries>,
     recursive_functions: HashMap<(NodeId, usize), FunctionEntries>,
     expanding: HashSet<NodeId>,
@@ -583,8 +597,9 @@ pub struct Compiler<'a> {
     specialisations: usize,
     /// Whether an expression reads TLCGet("distinct"), whose slot the search must then set.
     pub is_distinct_read: bool,
-    /// Whether anything compiled may print.
+    /// Whether anything compiled may print, and whether it uses ToString, which ranks strings.
     pub is_printing: bool,
+    pub is_ranking: bool,
     // The contexts of the instance scopes translated so far.
     scope_contexts: HashMap<Index, Option<Context>>,
 }
@@ -639,6 +654,7 @@ impl<'a> Compiler<'a> {
             specialisations: 0,
             is_distinct_read: false,
             is_printing: false,
+            is_ranking: false,
             scope_contexts: HashMap::new(),
         }
     }
@@ -1071,8 +1087,12 @@ impl<'a> Compiler<'a> {
                 Footprint::prime(index),
             ));
         }
+        // TLC fingerprints a state, which caches each lazy set in it as its normalized set, but
+        // not before the initial predicate has assigned it.
         Ok(Compiled {
             shape: Shape::Current(index),
+            is_in_order: !context.is_init,
+            are_elements_in_order: !context.is_init,
             ..leaf(
                 eval(move |machine| machine.read_current(index)),
                 Footprint::var(index),
@@ -1172,7 +1192,7 @@ impl<'a> Compiler<'a> {
         if !params.is_empty() {
             return unsupported("an operator used as a value");
         }
-        let index = usize::from(context.is_primed);
+        let index = definition_index(context);
         if let Some((entry, known)) = self
             .definition_cache
             .get(&node)
@@ -1816,7 +1836,7 @@ impl<'a> Compiler<'a> {
             let recursive = self.get_recursive_function(node, context, None)?;
             return Ok(self.materialize_recursive(&recursive));
         }
-        let index = usize::from(context.is_primed);
+        let index = definition_index(context);
         if let Some((entry, known)) = self
             .definition_cache
             .get(&node)

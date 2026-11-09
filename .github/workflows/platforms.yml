@@ -1,7 +1,7 @@
-# Builds and tests the native engine on the systems Depot has no runners for: macOS on arm64 and
-# x64, where the addon is built, the native tests run with it, and its platform package is packed
-# for release.yml to publish, and Windows x64, where the crates' own tests run. It publishes nothing
-# and holds no credential.
+# Builds and tests the native engine on the systems Depot has no runners for: macOS, where one Apple
+# silicon runner builds the arm64 and x64 packages, tests arm64 natively and x64 under Rosetta, and
+# packs both for release.yml to publish, and Windows x64, where the crates' own tests run. It
+# publishes nothing and holds no credential.
 name: Platforms
 "on":
   pull_request: null
@@ -17,44 +17,69 @@ concurrency:
   group: platforms-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
+  # One Apple silicon runner builds and tests both macOS packages: arm64 natively, and x64 built
+  # for x86_64-apple-darwin and tested under Rosetta 2 with x64 builds of Bun and Node.
   macos:
-    name: macOS ${{ matrix.arch }}
-    runs-on: ${{ matrix.runner }}
+    name: macOS
+    runs-on: macos-15
     timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: arm64
-            runner: macos-15
-          - arch: x64
-            runner: macos-15-intel
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      - name: Build the addon and run the native tests with it
+      - name: Build both packages and test arm64
         run: |
           set -euo pipefail
           npm install --global --no-audit --no-fund bun@1.4.4
           cd packages/prove-it/native
           rustup toolchain install
+          rustup target add x86_64-apple-darwin
           cargo test --locked
           cd ..
           bun install --frozen-lockfile --ignore-scripts
           bun scripts/platform-packages.ts build
+          bun scripts/platform-packages.ts build --target x86_64-apple-darwin
           bun run build
-          addon="$PWD/native/npm/darwin-${{ matrix.arch }}/prove-it-engine.node"
+          addon="$PWD/native/npm/darwin-arm64/prove-it-engine.node"
           PROVE_IT_ENGINE_ADDON="$addon" bun test tests/unit/native.test.ts tests/unit/native-search.test.ts \
             tests/unit/engine-store.test.ts tests/unit/engine-fingerprints.test.ts
           PROVE_IT_ENGINE_BACKEND=rust PROVE_IT_ENGINE_ADDON="$addon" bun test tests/unit
           bun scripts/platform-packages.ts pack "$RUNNER_TEMP/platform-packages"
-      - name: Keep the platform package for release.yml
+      - name: Test x64 under Rosetta
+        run: |
+          set -euo pipefail
+          arch -x86_64 /usr/bin/true || sudo softwareupdate --install-rosetta --agree-to-license
+          tools="$RUNNER_TEMP/x64"
+          mkdir -p "$tools"
+          (cd "$tools" && npm pack --silent @oven/bun-darwin-x64@1.4.4 && tar -xzf oven-bun-darwin-x64-1.4.4.tgz)
+          curl --fail --silent --show-error --location --retry 5 --output "$tools/node.tar.gz" \
+            https://nodejs.org/dist/v24.16.0/node-v24.16.0-darwin-x64.tar.gz
+          echo "298b4c7b3cb80765c8703e42b90324a4ece3b6634947b89e769c3c980ab55185  $tools/node.tar.gz" | shasum -a 256 --check --quiet -
+          tar -xzf "$tools/node.tar.gz" -C "$tools"
+          cd packages/prove-it/native
+          cargo test --locked --target x86_64-apple-darwin
+          cd ..
+          export PATH="$tools/package/bin:$tools/node-v24.16.0-darwin-x64/bin:$PATH"
+          # Each check also has Rosetta translate the binary ahead of time, which takes seconds on a
+          # first launch and would otherwise land inside a test's time limit.
+          arch -x86_64 bun --print 'process.arch' | grep -qx x64
+          arch -x86_64 node --print 'process.arch' | grep -qx x64
+          PROVE_IT_ENGINE_ADDON="$PWD/native/npm/darwin-x64/prove-it-engine.node" arch -x86_64 bun test \
+            tests/unit/native.test.ts tests/unit/native-search.test.ts tests/unit/engine-store.test.ts \
+            tests/unit/engine-fingerprints.test.ts
+      - name: Keep the arm64 platform package for release.yml
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: darwin-${{ matrix.arch }}
-          path: ${{ runner.temp }}/platform-packages/
+          name: darwin-arm64
+          path: ${{ runner.temp }}/platform-packages/*-darwin-arm64-*.tgz
+          if-no-files-found: error
+          retention-days: 30
+      - name: Keep the x64 platform package for release.yml
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: darwin-x64
+          path: ${{ runner.temp }}/platform-packages/*-darwin-x64-*.tgz
           if-no-files-found: error
           retention-days: 30
   windows:

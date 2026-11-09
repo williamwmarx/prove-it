@@ -32,7 +32,7 @@ pub use decode::{DecodeError, decode};
 pub use encode::encode;
 
 /// The version of the layout, `IR_VERSION` in `ir.ts`.
-pub const IR_VERSION: u32 = 4;
+pub const IR_VERSION: u32 = 5;
 
 /// "PIIR" as a little-endian word.
 pub const MAGIC: u32 = 0x5249_4950;
@@ -165,6 +165,8 @@ pub struct Printed<T> {
 pub struct Action {
     pub expression: NodeId,
     pub scope: Option<Index>,
+    /// How TLC names the action in a trace: `Inc line 5, col 8 to line 5, col 41 of module D`.
+    pub label: TextId,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -232,8 +234,11 @@ pub struct Model {
     pub init: NodeId,
     pub next: NodeId,
     pub scope: Option<Index>,
-    /// TLC's actions of the next-state relation, when the search labels its steps.
-    pub actions: Option<Vec<Action>>,
+    /// TLC's actions of the next-state relation, which a trace labels its steps with.
+    pub actions: Vec<Action>,
+    /// Whether the search takes each state's steps through the actions and labels them, which
+    /// ENABLED asks for, rather than through the next-state relation.
+    pub is_labelled: bool,
     pub invariants: Vec<Printed<ConfigName>>,
     pub property_invariants: Vec<Printed<NodeId>>,
     pub constraints: Vec<ConfigName>,

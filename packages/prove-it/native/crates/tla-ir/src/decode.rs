@@ -518,20 +518,17 @@ impl Decoder<'_> {
         let init = node(self)?;
         let next = node(self)?;
         let scope = self.optional_below(scope_count, "scope")?;
-        let actions = match self.next()? {
-            -1 => None,
-            count if count >= 0 => Some(
-                (0..count)
-                    .map(|_| {
-                        Ok(Action {
-                            expression: node(self)?,
-                            scope: self.optional_below(scope_count, "scope")?,
-                        })
-                    })
-                    .collect::<Decoded<_>>()?,
-            ),
-            other => return self.error(format!("{other} actions")),
-        };
+        let count = self.count()?;
+        let actions = (0..count)
+            .map(|_| {
+                Ok(Action {
+                    expression: node(self)?,
+                    scope: self.optional_below(scope_count, "scope")?,
+                    label: self.text()?,
+                })
+            })
+            .collect::<Decoded<_>>()?;
+        let is_labelled = self.flag()?;
         let invariants = self.config_names(true)?;
         let count = self.count()?;
         let property_invariants = (0..count)
@@ -634,6 +631,7 @@ impl Decoder<'_> {
             next,
             scope,
             actions,
+            is_labelled,
             invariants,
             property_invariants,
             constraints,
@@ -1025,7 +1023,7 @@ impl Model {
     ) -> Decoded<()> {
         visit(&mut self.init)?;
         visit(&mut self.next)?;
-        for action in self.actions.iter_mut().flatten() {
+        for action in &mut self.actions {
             visit(&mut action.expression)?;
         }
         for invariant in &mut self.property_invariants {

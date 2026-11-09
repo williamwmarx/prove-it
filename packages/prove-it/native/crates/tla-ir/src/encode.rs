@@ -88,15 +88,15 @@ fn encode_here(ir: &Ir) -> Vec<u8> {
         offset(model.next),
         optional(model.scope),
     ]);
-    match &model.actions {
-        None => words.push(-1),
-        Some(actions) => {
-            words.push(actions.len() as i32);
-            for action in actions {
-                words.extend([offset(action.expression), optional(action.scope)]);
-            }
-        }
+    words.push(model.actions.len() as i32);
+    for action in &model.actions {
+        words.extend([
+            offset(action.expression),
+            optional(action.scope),
+            action.label as i32,
+        ]);
     }
+    words.push(model.is_labelled as i32);
     let config_name = |name: &ConfigName| [name.name as i32, optional(name.definition)].into_iter();
     words.push(model.invariants.len() as i32);
     for invariant in &model.invariants {
