@@ -104,14 +104,40 @@ fn reports_what_tlc_reports_before_the_search() {
 }
 
 #[test]
-fn turns_deadlock_checking_off_with_deadlock() {
+fn prints_a_deadlock_unless_deadlock_turns_it_off() {
     // TCommit's configuration turns deadlock checking off; with it on, its final states deadlock.
     let mut ir = tla_ir::decode(COMMIT_IR).expect("an IR");
     ir.model.check_deadlock = true;
     let directory = commit_directory_with("deadlock", &tla_ir::encode(&ir));
     let checked = run(&directory, &["TCommit"]);
-    assert_eq!(checked.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&checked.stderr).contains("the engine stopped: deadlock"));
+    let text = stdout(&checked);
+    assert_eq!(checked.status.code(), Some(11), "{text}");
+    assert!(
+        text.contains(concat!(
+            "Error: Deadlock reached.\n",
+            "Error: The behavior up to this point is:\n",
+            "State 1: <Initial predicate>\n",
+            "rmState = (r1 :> \"working\" @@ r2 :> \"working\" @@ r3 :> \"working\")\n\n",
+            "State 2: <Decide(r1) line 37, col 19 to line 39, col 66 of module TCommit>\n",
+            "rmState = (r1 :> \"aborted\" @@ r2 :> \"working\" @@ r3 :> \"working\")\n\n",
+            "State 3: <Decide(r2) line 37, col 19 to line 39, col 66 of module TCommit>\n",
+            "rmState = (r1 :> \"aborted\" @@ r2 :> \"aborted\" @@ r3 :> \"working\")\n\n",
+            "State 4: <Decide(r3) line 37, col 19 to line 39, col 66 of module TCommit>\n",
+            "rmState = (r1 :> \"aborted\" @@ r2 :> \"aborted\" @@ r3 :> \"aborted\")\n\n",
+            "85 states generated, 30 distinct states found, 3 states left on queue.\n",
+            "The depth of the complete state graph search is 5.\n",
+            "Finished in ",
+        )),
+        "{text}"
+    );
+    let tool = run(&directory, &["-tool", "TCommit"]);
+    let text = stdout(&tool);
+    assert_eq!(tool.status.code(), Some(11), "{text}");
+    assert!(text.contains(concat!(
+        "@!@!@STARTMSG 2114:1 @!@!@\nDeadlock reached.\n@!@!@ENDMSG 2114 @!@!@\n",
+        "@!@!@STARTMSG 2121:1 @!@!@\nThe behavior up to this point is:\n@!@!@ENDMSG 2121 @!@!@\n",
+        "@!@!@STARTMSG 2217:4 @!@!@\n1: <Initial predicate>\n",
+    )), "{text}");
     let unchecked = run(&directory, &["-deadlock", "TCommit"]);
     assert_eq!(unchecked.status.code(), Some(0));
     assert!(stdout(&unchecked).contains("94 states generated, 34 distinct states found"));
