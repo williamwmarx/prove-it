@@ -100,6 +100,23 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     );
   });
 
+  it("searches an invariant that reads TLCExt's Trace only once it fails", async () => {
+    // As ewd840/EWD840_json does: the second disjunct, which serializes the trace, is never reached.
+    const body = [
+      "EXTENDS Naturals, Sequences, TLCExt",
+      "VARIABLE x",
+      "Init == x = 0",
+      "Next == x < 3 /\\ x' = x + 1",
+      "Inv == x < 10 \\/ Len(Trace) > 0",
+    ];
+    expect(
+      await compareWithInterpreter(
+        body,
+        "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
+      ),
+    ).toContainEqual(expect.stringMatching(COMPLETE));
+  });
+
   it("tests guards fused in place: f[k] = c, f[k] = j, x = c and membership", async () => {
     const body = [
       "CONSTANT P",
