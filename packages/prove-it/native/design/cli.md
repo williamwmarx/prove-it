@@ -275,7 +275,21 @@ Still to do:
   - a PROPERTY: the warning of a state-level property and the tableau's branches (2212);
   - the trace exploration spec TLC parses with the spec, unless `-tool`, `-noGenerateSpecTE`
     (`-noTE`) or `-continue` (`isTraceRecorded`).
+- The binary seeds TLC's generator with -seed, which tla-front's IR doesn't hold.
 - `differential --native <binary> --native-front` runs the binary this way.
+- Measured (2026-11-09) on the TLC test models of up to 5 s: 462 of 758 runs print what TLC
+  prints with no recorded front, and none differs once the seed is set. What only this path
+  declines:
+  - a PROPERTY (244 runs, 122 models): TLC's warning of a state-level property (2255,
+    `getProperties`), the warning of symmetry with liveness (2279), and 2212 `Implied-temporal
+    checking--satisfiability problem has N branches.`, with N the tableau's solutions
+    (`Tableau::solutions` on the IR's `live_formula`), all in TLC's order after 2300 and before
+    the assumptions. The state-level check needs a property's level, which tla-front knows
+    (`get_properties`) and the IR doesn't carry;
+  - an assumption's print whose value the store forgot (SetPredValue): it needs the trace
+    evaluator's prints of the assumptions, with a check of their count where the search starts;
+  - Java overrides (UserModuleOverride): TLC's report of the class it loads (2168, or 2400
+    where a method matches no operator).
 
 ## AssertError assumptions
 
