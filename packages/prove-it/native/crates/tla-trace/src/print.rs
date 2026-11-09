@@ -96,7 +96,9 @@ fn write_value(value: &Value, is_strict: bool, is_normalized: bool, out: &mut St
 // The set TLC expands a lazy one into to print it, if any (`getExpandedLazySet`).
 fn expand(lazy: &Lazy) -> Option<Vec<Value>> {
     let size = match lazy {
-        Lazy::Nat | Lazy::Int | Lazy::Real | Lazy::Strings | Lazy::Seq(_) => return None,
+        Lazy::Nat | Lazy::Int | Lazy::Real | Lazy::Strings | Lazy::Seq(_) | Lazy::Cup(..) => {
+            return None;
+        }
         Lazy::Subset(base) => {
             return (cardinality(base).ok()? <= MAXIMUM_EXPANDED_SUBSET_BASE)
                 .then(|| crate::sets::enumerate(lazy).ok())
@@ -145,6 +147,23 @@ fn write_lazy(lazy: &Lazy, is_strict: bool, is_normalized: bool, out: &mut Strin
         Lazy::Int => out.push_str("Int"),
         Lazy::Real => out.push_str("Real"),
         Lazy::Strings => out.push_str("STRING"),
+        // TLC fails to expand it and prints it as written (`toStringForCupCapDiff`).
+        Lazy::Cup(first, second) => {
+            for (index, operand) in [first, second].into_iter().enumerate() {
+                if index == 1 {
+                    out.push_str(" \\cup ");
+                }
+                let is_cup =
+                    matches!(operand, Value::Lazy(lazy) if matches!(**lazy, Lazy::Cup(..)));
+                if is_cup {
+                    out.push('(');
+                }
+                format(operand, out);
+                if is_cup {
+                    out.push(')');
+                }
+            }
+        }
         Lazy::Seq(base) => {
             out.push_str("Seq(");
             format(base, out);

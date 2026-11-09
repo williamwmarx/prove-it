@@ -2441,7 +2441,7 @@ impl<'ir> Evaluator<'ir> {
                 ) {
                     return fail("IsFiniteSet of a non-set");
                 }
-                Value::Bool(is_finite(&set))
+                Value::Bool(is_finite(&set)?)
             }
             "Seq" => {
                 arity(1)?;
@@ -2982,17 +2982,33 @@ enum Operand {
 }
 
 // Whether a set (or a function, which the engine counts as a finite set) is finite, without
-// enumerating it: a lazy set is when its parts are.
-fn is_finite(value: &Value) -> bool {
-    match value {
-        Value::Lazy(lazy) => match &**lazy {
-            Lazy::Nat | Lazy::Int | Lazy::Real | Lazy::Strings | Lazy::Seq(_) => false,
-            Lazy::Subset(base) => is_finite(base),
-            Lazy::FunctionSet(domain, range) => is_finite(domain) && is_finite(range),
-            Lazy::RecordSet(fields, _) => fields.iter().all(|(_, set)| is_finite(set)),
-            Lazy::Product(factors) => factors.iter().all(is_finite),
-        },
-        _ => true,
+// enumerating it: a lazy set is when its parts are. The replay doesn't follow a union with an
+// operand that isn't a set.
+fn is_finite(value: &Value) -> Evaluated<bool> {
+    let Value::Lazy(lazy) = value else {
+        return Ok(true);
+    };
+    match &**lazy {
+        Lazy::Nat | Lazy::Int | Lazy::Real | Lazy::Strings | Lazy::Seq(_) => Ok(false),
+        Lazy::Subset(base) => is_finite(base),
+        Lazy::FunctionSet(domain, range) => Ok(is_finite(domain)? && is_finite(range)?),
+        Lazy::RecordSet(fields, _) => {
+            for (_, set) in fields {
+                if !is_finite(set)? {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        }
+        Lazy::Product(factors) => {
+            for factor in factors {
+                if !is_finite(factor)? {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        }
+        Lazy::Cup(..) => fail("the finiteness of a union with an operand that isn't a set"),
     }
 }
 

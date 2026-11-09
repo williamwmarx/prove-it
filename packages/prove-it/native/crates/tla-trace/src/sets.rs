@@ -26,6 +26,14 @@ pub fn enumerate(lazy: &Lazy) -> Evaluated<Vec<Value>> {
         Lazy::Nat | Lazy::Int | Lazy::Real | Lazy::Strings | Lazy::Seq(_) => {
             fail("enumerated an infinite set")
         }
+        Lazy::Cup(first, second) => fail_runtime(
+            "enumerated a union with an operand that isn't a set",
+            format!(
+                "Attempted to enumerate S \\cup T when S:\n{}\nand T:\n{}\nare not both enumerable",
+                format_pretty(first),
+                format_pretty(second)
+            ),
+        ),
         Lazy::Subset(base) => {
             let base = elements(base)?;
             if base.len() > 20 {
@@ -306,6 +314,7 @@ pub fn is_member(value: &Value, set: &Value) -> Evaluated<bool> {
                 }
                 Ok(true)
             }
+            Lazy::Cup(first, second) => Ok(is_member(value, first)? || is_member(value, second)?),
             Lazy::Seq(base) => {
                 let Some(tuple) = as_tuple(value) else {
                     return Ok(false);
@@ -361,6 +370,20 @@ pub fn union(left: &Value, right: &Value) -> Evaluated<Value> {
     }
     if is_empty_reducible(right) && !is_reducible(left) {
         return Ok(left.clone());
+    }
+    // TLC keeps a union with an operand that isn't a set lazy (`SetCupValue`), calling `cup` on
+    // the operand it can enumerate, or else on the left one.
+    let is_set = |value: &Value| value.is_set() || matches!(value, Value::Unsorted(_));
+    if !is_set(left) || !is_set(right) {
+        let (first, second) = if is_reducible(right) && !is_reducible(left) {
+            (right, left)
+        } else {
+            (left, right)
+        };
+        return Ok(Value::Lazy(Rc::new(Lazy::Cup(
+            first.clone(),
+            second.clone(),
+        ))));
     }
     let mut all = elements(left)?.to_vec();
     all.extend(elements(right)?.iter().cloned());

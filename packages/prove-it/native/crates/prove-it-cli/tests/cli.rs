@@ -770,6 +770,23 @@ fn tests_membership_in_a_set_tlc_holds_unnormalized_element_by_element() {
 }
 
 #[test]
+fn reports_a_union_with_an_operand_that_isnt_a_set_as_it_fingerprints_it() {
+    // Spectacle's semantic_error1: TLC keeps {6} \cup 0 lazy, calling cup on {6}, and fails to
+    // enumerate it as it fingerprints the successor.
+    let spec = "---- MODULE Stop ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == \\E s \\in {6} : x' = x \\cup {s}\n====\n";
+    let (output, directory) = run_lowered("cup", spec, "INIT Init\nNEXT Next\n");
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(75), "{text}");
+    let reason =
+        "Attempted to enumerate S \\cup T when S:\n{6}\nand T:\n0\nare not both enumerable";
+    assert!(
+        text.contains(&format!("Error: TLC was unable to fingerprint.\n\nFingerprint Stack Trace:\n0) line 5, col 29 to line 5, col 38 of module Stop\n\nReason:\n{reason}\n")),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
 fn prints_what_the_expansion_printed_before_its_violation() {
     // TLC checks each successor as it finds it, so it prints what finding the violating one
     // printed before it reports the violation, as TLC 1.8 prints this spec's 1.
