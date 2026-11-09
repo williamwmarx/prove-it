@@ -44,12 +44,9 @@ const isAheadOfTime = process.argv.includes("--aot");
 const outfile = join(PACKAGE_DIRECTORY, isAheadOfTime ? "dist/prove-it-aot" : "dist/prove-it");
 
 const result = await Bun.build({
-  entrypoints: [
-    "src/cli.ts",
-    "src/parallel-worker.ts",
-    "src/engine-worker.ts",
-    "src/prover/prove-worker.ts",
-  ].map((entry) => join(PACKAGE_DIRECTORY, entry)),
+  entrypoints: ["src/cli.ts", "src/parallel-worker.ts", "src/prover/prove-worker.ts"].map((entry) =>
+    join(PACKAGE_DIRECTORY, entry),
+  ),
   compile: {
     outfile,
     // Bun 1.4.4 doesn't know aot yet; its canary does.
@@ -86,17 +83,10 @@ result.logs.forEach((log) => console.error(log));
 if (!result.success) process.exit(1);
 
 // The executable throws a MissingBuildFileError for the snapshot or a worker it can't find: every
-// check reads the snapshot, the engine starts its workers with PROVE_IT_WORKERS once a search runs
-// long enough, the interpreter starts its own with -workers when the engine is off, and tlapm starts
-// the prover's with --threads.
+// check reads the snapshot, the interpreter starts its workers with -workers when the engine is
+// off, and tlapm starts the prover's with --threads.
 const cacheDirectory = mkdtempSync(join(tmpdir(), "prove-it-binary-"));
 const checks = [
-  {
-    directory: "benchmarks/commit",
-    args: ["Commit.cfg"],
-    env: { PROVE_IT_ENGINE: "debug", PROVE_IT_WORKERS: "2" },
-    expected: [" on 2 threads "],
-  },
   {
     directory: "tests/fixtures/commit",
     args: ["-workers", "2", "Commit.cfg"],

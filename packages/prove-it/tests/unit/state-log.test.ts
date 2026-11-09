@@ -9,7 +9,7 @@ import { getTlcFingerprint } from "../../src/tlc/fingerprint";
 import { createStateDecoder } from "../../src/transfer";
 import { setStringOrder } from "../../src/values";
 
-// The workers run from the build, which bun run test makes first.
+// The CLI runs from the build, which bun run test makes first.
 const CLI = join(import.meta.dirname, "../../dist/cli.js");
 
 const directory = mkdtempSync(join(tmpdir(), "prove-it-state-log-"));
@@ -34,24 +34,6 @@ const logRun = (
 const FIXTURES = join(import.meta.dirname, "../fixtures");
 
 describe("PROVE_IT_STATE_LOG", () => {
-  // The TypeScript engine's workers take the levels, so both runs pin that backend;
-  // native/ts-only-tests.json names the Rust counterpart.
-  it("writes the same states with 1 and 4 threads when the workers take levels", () => {
-    const commit = join(import.meta.dirname, "../../benchmarks/commit");
-    const serial = logRun(commit, "Commit", "serial", {
-      PROVE_IT_ENGINE_BACKEND: "ts",
-      PROVE_IT_WORKERS: "1",
-    });
-    const parallel = logRun(commit, "Commit", "parallel", {
-      PROVE_IT_ENGINE_BACKEND: "ts",
-      PROVE_IT_WORKERS: "4",
-    });
-    expect(serial.stderr).toContain("checked 282251 states on 1 thread ");
-    expect(parallel.stderr).toMatch(/checked 282251 states on [2-4] threads /);
-    expect(parallel.log).toBe(serial.log);
-    expect(getStateLogDifference(serial.log.split("\n"), parallel.log.split("\n"))).toBeUndefined();
-  }, 60_000);
-
   it("writes each state's parent and TLC's fingerprint, in TLC's order", () => {
     const lines = logRun(join(FIXTURES, "cli-output"), "Success", "success").log.split("\n");
     expect(JSON.parse(lines[0])).toEqual({
