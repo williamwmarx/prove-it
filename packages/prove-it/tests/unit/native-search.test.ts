@@ -1476,6 +1476,23 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
 
   // Tool.evalAppl evaluates UNCHANGED e, [A]_e and <<A>>_e in the current state first, so the
   // search stops on the current state's failure.
+  it("goes through UNCHANGED of a tuple element by element, as TLC's processUnchanged", async () => {
+    // As Github702 (TLC's tests), whose instance substitutes a constant for x in UNCHANGED <<x, z>>:
+    // TLC compares the constant's values and assigns z.
+    const body = [
+      "EXTENDS Naturals",
+      "VARIABLES y, z",
+      "c == 1",
+      "Keep(v) == UNCHANGED <<c, v>>",
+      "Init == y \\in {1, 2} /\\ z \\in {1, 2}",
+      "Next == \\/ y < 4 /\\ y' = y + 1 /\\ UNCHANGED <<c, z>>",
+      "        \\/ y < 3 /\\ y' = y + 2 /\\ Keep(z)",
+    ];
+    expect(
+      await compareWithInterpreter(body, "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE"),
+    ).toContainEqual(expect.stringMatching(COMPLETE));
+  });
+
   it("evaluates UNCHANGED in the current state first like TLC", async () => {
     const subscript = 'IF x = 0 THEN Assert(FALSE, "before") ELSE <<>>[1]';
     for (const form of ["[FALSE]_(e)", "IF UNCHANGED (e) THEN TRUE ELSE TRUE", "<<TRUE>>_(e)"]) {

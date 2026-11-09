@@ -307,6 +307,8 @@ const MAXIMUM_DEPTH: u32 = 10_000;
 /// `EC.TLC_MODULE_ONE_ARGUMENT_ERROR`.
 const TLCGET_UNDEFINED: u32 = 2145;
 const ARGUMENT_ERROR: u32 = 2169;
+/// `EC.TLC_MODULE_DIVISION_BY_ZERO`.
+const DIVISION_BY_ZERO: u32 = 2179;
 const ONE_ARGUMENT_ERROR: u32 = 2283;
 
 // TLCGet of a register TLCSet hasn't set, named by its number or its name.
@@ -2256,20 +2258,36 @@ impl<'ir> Evaluator<'ir> {
                     "*" => int(left * right)?,
                     "\\div" => {
                         if right == 0 {
-                            return fail("division by zero");
+                            return fail_coded(
+                                "division by zero",
+                                DIVISION_BY_ZERO,
+                                "The second argument of \\div is 0.".into(),
+                            );
                         }
                         int(left.div_euclid(right)
                             - i64::from(right < 0 && left.rem_euclid(right) != 0))?
                     }
                     "%" => {
                         if right <= 0 {
-                            return fail("modulus by a non-positive number");
+                            return fail_coded(
+                                "modulus by a non-positive number",
+                                ARGUMENT_ERROR,
+                                format!(
+                                    "The second argument of % should be a positive number, but instead it is:\n{right}"
+                                ),
+                            );
                         }
                         int(left.rem_euclid(right))?
                     }
                     "^" => {
                         if right < 0 {
-                            return fail("a negative exponent");
+                            return fail_coded(
+                                "a negative exponent",
+                                ARGUMENT_ERROR,
+                                format!(
+                                    "The second argument of ^ should be a natural number, but instead it is:\n{right}"
+                                ),
+                            );
                         }
                         match u32::try_from(right)
                             .ok()

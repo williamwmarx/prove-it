@@ -741,3 +741,42 @@ fn rebuilds_a_trace_through_a_recursive_function_tlc_keeps_lazy() {
     );
     std::fs::remove_dir_all(directory).expect("removed");
 }
+
+const PULL_RAFT_IR: &[u8] =
+    include_bytes!("../../../../tests/conformance/ir/raft/specifications/pull-raft/PullRaft.ir");
+
+#[test]
+fn rebuilds_a_trace_under_symmetry_through_sets_tlc_streams_in_order() {
+    let (output, directory) = run_golden("pull-raft", PULL_RAFT_IR, "PullRaft", "", &[]);
+    let text = stdout(&output);
+    // Under SYMMETRY, TLC takes the first of the successors in a state's orbit, in the order it
+    // streams \E m \in DOMAIN messages, a variable's domain it normalized.
+    assert_eq!(output.status.code(), Some(11), "{text}");
+    assert!(text.contains(include_str!("pull-raft.txt")), "{text}");
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn reports_a_division_by_zero_after_what_the_expansion_printed() {
+    let directory =
+        std::env::temp_dir().join(format!("prove-it-cli-divide-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    let spec = "---- MODULE D ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 1\nNext == /\\ PrintT(\"step\") /\\ x' = x \\div 0\n====\n";
+    for (file, contents) in [
+        ("D.tla", spec),
+        ("D.cfg", "INIT Init\nNEXT Next\n"),
+        ("D.front", ""),
+    ] {
+        std::fs::write(directory.join(file), contents).expect("a file");
+    }
+    let output = run(&directory, &["-workers", "1", "D"]);
+    let text = stdout(&output);
+    // As TLC prints it: the EvalException's message after the expansion's print, the trace, the
+    // replay's print and the call stack.
+    assert_eq!(output.status.code(), Some(75), "{text}");
+    assert!(
+        text.contains("\"step\"\nError: The second argument of \\div is 0.\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 1\n\n\"step\"\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 42 in D\n1. Line 5, column 12 to line 5, column 42 in D\n2. Line 5, column 12 to line 5, column 25 in D\n3. Line 5, column 30 to line 5, column 42 in D\n4. Line 5, column 35 to line 5, column 42 in D\n\n\n1 states generated, 1 distinct states found, 0 states left on queue.\n"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}

@@ -303,7 +303,7 @@ fn write_sany_text(out: &mut String, path: &Path, library: Option<&Path>) {
 
 fn write_model_full(out: &mut String, config: &str, spec_path: &Path, library: Option<&Path>) {
     let options = ModelOptions {
-        library,
+        libraries: library.as_slice(),
         version: None,
         is_warning_enabled: true,
     };

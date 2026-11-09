@@ -682,6 +682,22 @@ impl<'ir> Evaluator<'ir> {
             {
                 return Ok(true);
             }
+            // TLC streams [S -> T] over S normalized, the last argument varying fastest through
+            // T's own order, which is the order of the functions where T's is.
+            NodeKind::FunctionSet { range, .. } => {
+                return self.is_in_normalized_order(*range, context, depth + 1);
+            }
+            // The domain of a variable's value, which TLC normalized as it fingerprinted the state.
+            NodeKind::Apply { name, args }
+                if !name.is_local && args.len() == 1 && self.name(name.text) == "DOMAIN" =>
+            {
+                if let NodeKind::Identifier(operand) = self.kind(args[0])
+                    && !operand.is_local
+                    && matches!(operand.resolution, Resolution::Variable(_))
+                {
+                    return Ok(!context.is_primed);
+                }
+            }
             NodeKind::Identifier(name) if !name.is_local => match name.resolution {
                 Resolution::Variable(_) => return Ok(!context.is_primed),
                 Resolution::Constant(_) => return Ok(true),

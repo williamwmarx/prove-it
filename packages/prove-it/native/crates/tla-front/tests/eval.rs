@@ -75,3 +75,9 @@ fn computes_constant_formulas() {
         ConfigValue::Number(2.0)
     );
 }
+
+#[test]
+fn computes_powers() {
+    assert_eq!(evaluate("N == 2^3 - 1", "N"), ConfigValue::Number(7.0));
+    assert_eq!(evaluate("N == 1^40 + 0^2", "N"), ConfigValue::Number(1.0));
+}
