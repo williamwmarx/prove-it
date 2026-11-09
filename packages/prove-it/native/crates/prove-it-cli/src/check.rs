@@ -15,7 +15,7 @@ use tla_values::{Id, Store};
 use crate::args::{Java, Parsed, USAGE, get_java_launch};
 use crate::failure::{ErrorStop, print_assumption_failure, print_failure};
 use crate::files::FileDescriber;
-use crate::front::{Failure, Read, read_front};
+use crate::front::{Failure, FrontText, Read, read_front};
 use crate::messages::{self as code, Level, Printer};
 use crate::summary::{
     actual_probability, fingerprint_distance, format_count, format_probability,
@@ -491,7 +491,15 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
         Ok(Read::Failed(failure)) => return print_failed_front(printer, &failure, start),
         Err(reason) => return report_not_native(printer, &reason),
     };
-    printer.raw(&front.output);
+    match &front.text {
+        FrontText::Recorded(output) => printer.raw(output),
+        FrontText::Native { .. } => {
+            return report_not_native(
+                printer,
+                "the front a search prints, whose startup hooks the CLI doesn't wire yet",
+            );
+        }
+    }
     let mut ir = match tla_ir::decode(&front.ir) {
         Ok(ir) => ir,
         Err(error) => {

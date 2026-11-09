@@ -8,7 +8,7 @@ use std::path::Path;
 
 use tla_front::TlcVersion;
 use tla_front::errors::FrontError;
-use tla_front::model::{ModelOptions, lower_model};
+use tla_front::model::{ModelOptions, StartupMessage, lower_front};
 use tla_front::report::{ReportOptions, SanyText, get_sany_text};
 use tla_front::tlc_messages::CodedError;
 
@@ -30,7 +30,24 @@ pub struct Failure {
 pub struct Front {
     pub ir: Vec<u8>,
     /// What TLC prints after the banner and before it computes the initial states.
-    pub output: Vec<u8>,
+    pub text: FrontText,
+}
+
+/// What TLC prints of the front: recorded by the differential, or written by tla-front.
+pub enum FrontText {
+    /// What TLC printed from the banner to "Computing initial states...", as the TypeScript CLI
+    /// printed it; the engine's startup hooks stay silent, since it holds what they report.
+    Recorded(Vec<u8>),
+    /// What tla-front writes, printed as TLC prints it: SANY's report, framed by 2220
+    /// "Starting SANY..." and 2219 "SANY finished." under -tool, then 2185 `Starting... (…)`, then
+    /// the search's startup, whose Print and PrintT output and symmetry warnings the engine's
+    /// hooks report, with `startup_messages` printed at `startup_done`, before the assumptions.
+    // HACK: read once the CLI wires the engine's startup hooks; until then check.rs declines it.
+    #[allow(dead_code)]
+    Native {
+        sany: String,
+        startup_messages: Vec<StartupMessage>,
+    },
 }
 
 pub fn read_front(
@@ -44,23 +61,27 @@ pub fn read_front(
     let name = Path::new(spec_path)
         .file_stem()
         .map_or_else(String::new, |stem| stem.to_string_lossy().into_owned());
-    let Some(directory) = std::env::var_os("PROVE_IT_FRONT") else {
-        return Err(format!("the front end, to parse {spec_path}"));
+    let directory = std::env::var_os("PROVE_IT_FRONT");
+    let directory = directory.as_deref().map(Path::new);
+    let read = |extension: &str| match directory {
+        Some(directory) => std::fs::read(directory.join(format!("{name}.{extension}"))),
+        None => Err(std::io::ErrorKind::NotFound.into()),
     };
-    let directory = Path::new(&directory);
-    let read = |extension: &str| std::fs::read(directory.join(format!("{name}.{extension}")));
-    let no_front = || format!("no recorded front of {name} in {}", directory.display());
-    // Where TLC prints nothing past its startup for the differential to record, tla-front finds
-    // whether SANY rejects the spec or TLC reports an error before the search.
+    let no_front = || match directory {
+        Some(directory) => format!("no recorded front of {name} in {}", directory.display()),
+        None => "the front a search prints, which tla-front doesn't write".to_owned(),
+    };
+    // Without a recorded front, as where TLC prints nothing past its startup for the differential
+    // to record, tla-front writes the front, or finds that SANY rejects the spec or TLC reports an
+    // error before the search.
     let Ok(recorded) = read("front") else {
-        let failure = Lowering {
+        let lowering = Lowering {
             spec_path,
             config_text,
             is_warning_enabled,
             is_tool,
         };
-        return native_failure(&failure, describer, libraries)
-            .map(Read::Failed)
+        return native_front(&lowering, describer, libraries)
             .map_err(|reason| format!("{}: {reason}", no_front()));
     };
     // PROVE_IT_NATIVE_FRONT=1 prints SANY's report as tla-front writes it in place of the recorded
@@ -74,24 +95,27 @@ pub fn read_front(
     let ir = match read("ir") {
         Ok(ir) => ir,
         Err(_) => {
-            lower(spec_path, config_text, is_warning_enabled, libraries).map_err(|error| {
-                match error {
+            lower(spec_path, config_text, is_warning_enabled, libraries)
+                .map_err(|error| match error {
                     FrontError::NotYet(reason) => format!("{}: {reason}", no_front()),
                     _ => no_front(),
-                }
-            })?
+                })?
+                .ir
         }
     };
-    Ok(Read::Model(Front { ir, output }))
+    Ok(Read::Model(Front {
+        ir,
+        text: FrontText::Recorded(output),
+    }))
 }
 
-// The model's IR as tla-front lowers it.
+// The model as tla-front lowers it.
 fn lower(
     spec_path: &str,
     config_text: &str,
     is_warning_enabled: bool,
     libraries: &[String],
-) -> Result<Vec<u8>, FrontError> {
+) -> Result<tla_front::model::LoweredModel, FrontError> {
     let path = if spec_path.ends_with(".tla") {
         spec_path.to_string()
     } else {
@@ -104,7 +128,7 @@ fn lower(
         is_warning_enabled,
         is_spec_described: true,
     };
-    lower_model(Path::new(&path), config_text, &options)
+    lower_front(Path::new(&path), config_text, &options)
 }
 
 /// What tla-front lowers a run's model from.
@@ -115,20 +139,21 @@ struct Lowering<'a> {
     is_tool: bool,
 }
 
-// Where TLC stops before the search, as tla-front finds: SANY rejects the spec, or lowering the
-// model raises an error TLC reports with a code. Otherwise why tla-front doesn't find where.
-fn native_failure(
+// The front as tla-front writes it: the model with what TLC prints as it starts, or where TLC
+// stops before the search, as SANY rejects the spec or lowering the model raises an error TLC
+// reports with a code. Otherwise why tla-front doesn't write it.
+fn native_front(
     lowering: &Lowering<'_>,
     describer: &FileDescriber,
     libraries: &[String],
-) -> Result<Failure, String> {
+) -> Result<Read, String> {
     let sany = native_sany(lowering.spec_path, describer, libraries)
         .ok_or("SANY's report, which tla-front doesn't write")?;
     if sany.is_failed {
-        return Ok(Failure {
+        return Ok(Read::Failed(Failure {
             sany: sany.text,
             error: None,
-        });
+        }));
     }
     let error = match lower(
         lowering.spec_path,
@@ -136,8 +161,14 @@ fn native_failure(
         lowering.is_warning_enabled,
         libraries,
     ) {
-        Ok(_) => {
-            return Err("an error TLC reports as it starts, which tla-front doesn't raise".into());
+        Ok(lowered) => {
+            return Ok(Read::Model(Front {
+                ir: lowered.ir,
+                text: FrontText::Native {
+                    sany: sany.text,
+                    startup_messages: lowered.startup_messages?,
+                },
+            }));
         }
         Err(FrontError::NotYet(reason)) => return Err(reason),
         Err(error) => error,
@@ -145,10 +176,10 @@ fn native_failure(
     let coded = error
         .get_coded(lowering.is_tool)
         .ok_or("an error tla-front raises that TLC reports without a code")?;
-    Ok(Failure {
+    Ok(Read::Failed(Failure {
         sany: sany.text,
         error: Some(coded),
-    })
+    }))
 }
 
 fn native_sany(
