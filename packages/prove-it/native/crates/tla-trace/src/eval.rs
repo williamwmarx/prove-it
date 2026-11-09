@@ -328,10 +328,8 @@ const JAVA_METHOD_FAILED: u32 = 2154;
 
 impl<'ir> Evaluator<'ir> {
     pub fn new(ir: &'ir Ir) -> Evaluator<'ir> {
-        let ranks = ir.texts[..ir.ranked_count as usize]
-            .iter()
-            .enumerate()
-            .map(|(rank, text)| (text.encode_utf16().collect(), rank as i32))
+        let ranks = (0..ir.ranked_count)
+            .map(|rank| (ir.get_text_units(rank).into(), rank as i32))
             .collect();
         let width = ir.variables.len();
         Evaluator {
@@ -360,7 +358,7 @@ impl<'ir> Evaluator<'ir> {
         if let Some(text) = &self.texts[id as usize] {
             return Rc::clone(text);
         }
-        let units: Box<[u16]> = self.ir.texts[id as usize].encode_utf16().collect();
+        let units: Box<[u16]> = self.ir.get_text_units(id).into();
         let text = self.text_of(units);
         self.texts[id as usize] = Some(Rc::clone(&text));
         text
