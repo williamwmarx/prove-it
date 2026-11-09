@@ -2,12 +2,16 @@
 // the fetched corpora and the test fixtures, as text: each side writes one JSON line per module.
 // Usage: bun scripts/front-differential.ts <mode> [--fixtures] [--filter text] [--mutate count]
 //   [--rust <front-dump>]
-// The modes are tokens, ast, sany-ast, config (over the .cfg files), resolve, and time, which
+// The modes are tokens, ast, sany-ast, config (over the .cfg files), resolve, model, ir, order,
+// and time, which
 // compares how long each side takes to parse each module instead. resolve links each module as the
 // root of a spec without a model, reading the modules it imports beside it and from the corpora's
 // library, and compares the environment: each definition by key, with every name resolved, the
 // builtins, the variables, and SANY's errors and warnings. A module the Rust front end doesn't
-// link yet is counted, not compared. --fixtures reads only the fixtures, so it runs without the corpora.
+// link yet is counted, not compared. model does the same for each corpus model, a .cfg file and
+// the spec beside it, with the model's constants and substitutions. ir lowers each module's
+// environment to the engine IR, with every definition in it, and compares the bytes. order compares
+// TLC's string order of each model and the root module's orders of declarations and definitions. --fixtures reads only the fixtures, so it runs without the corpora.
 // --mutate adds four variants of each of the first count modules, with syntax inserted and text
 // deleted at places a fixed seed picks, so the two sides' errors are compared too. Without --rust,
 // it builds front-dump with cargo first.
@@ -17,14 +21,16 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 
-import type { Definition } from "../src/ast";
-import { parseConfig } from "../src/config";
+import type { Definition, Expression } from "../src/ast";
+import { type ModelConfig, parseConfig } from "../src/config";
+import { lowerToIr } from "../src/engine/ir";
 import { createEnvironment } from "../src/environment";
-import { TlaConfigError, TlaEvaluationError, TlaSyntaxError } from "../src/errors";
+import { TlaConfigError, TlaEvaluationError, TlaModuleError, TlaSyntaxError } from "../src/errors";
 import type { Builtin } from "../src/evaluate";
 import { tokenize } from "../src/lexer";
 import { parseModule, parseSanyModule } from "../src/parser";
 import { createTlcOrder } from "../src/tlc/order";
+import { setStringOrder } from "../src/values";
 import {
   CORPORA_DIRECTORY,
   getCorpora,
@@ -41,7 +47,11 @@ const BATCH = 50;
 const TIMED_RUNS = 5;
 
 const describe = (error: unknown) => {
-  if (error instanceof TlaConfigError || error instanceof TlaEvaluationError) {
+  if (
+    error instanceof TlaConfigError ||
+    error instanceof TlaEvaluationError ||
+    error instanceof TlaModuleError
+  ) {
     return { error: error.message };
   }
   if (!(error instanceof TlaSyntaxError)) throw error;
@@ -55,10 +65,10 @@ const sortKeys = (_key: string, value: unknown) =>
     : Object.fromEntries(Object.entries(value).sort(([left], [right]) => (left < right ? -1 : 1)));
 
 const writeResult =
-  (read: (source: string, path: string) => unknown) =>
-  (source: string, path = "") => {
+  (read: (source: string, path: string, spec: string) => unknown) =>
+  (source: string, path = "", spec = "") => {
     try {
-      return JSON.stringify(read(source, path), sortKeys);
+      return JSON.stringify(read(source, path, spec), sortKeys);
     } catch (error) {
       return JSON.stringify(describe(error), sortKeys);
     }
@@ -67,23 +77,47 @@ const writeResult =
 const getBuiltinFlags = (builtin: Builtin) =>
   (builtin.isStateLevel ? 1 : 0) | (builtin.isLevelConstant ? 2 : 0) | (builtin.isLazy ? 4 : 0);
 
-// The environment of a spec whose root module is the file, linked without a model.
-const readEnvironment = (source: string, path: string) => {
-  const loadModule = (name: string) =>
-    [dirname(path), LIBRARY_PATH]
-      .map((directory) => join(directory, `${name}.tla`))
-      .filter((file) => existsSync(file))
-      .map((file) => readFileSync(file, "utf8"))[0];
+// The spec whose root module is the file, linked with the model's configuration, or without a
+// model, and what linking prints.
+const createLoader = (path: string) => (name: string) =>
+  [dirname(path), LIBRARY_PATH]
+    .map((directory) => join(directory, `${name}.tla`))
+    .filter((file) => existsSync(file))
+    .map((file) => readFileSync(file, "utf8"))[0];
+
+// TLC's orders of a model: its string order, the root module's variables and constants, and the
+// root module's definitions in the order TLC computes them.
+const readOrders = (source: string, _path: string, spec: string) => {
+  const config = parseConfig(source);
+  const order = createTlcOrder(readFileSync(spec, "utf8"), createLoader(spec));
+  return {
+    strings: order.getStringOrder(config),
+    variables: order.getDeclarationOrder("variable"),
+    constants: order.getDeclarationOrder("constant"),
+    definitions: order.createDefinitionOrder()(undefined),
+  };
+};
+
+const linkSpec = (source: string, path: string, config?: ModelConfig) => {
+  const loadModule = createLoader(path);
   const printed: string[] = [];
-  const specification = createEnvironment(parseConfig(""), {
+  const specification = createEnvironment(config ?? parseConfig(""), {
     source,
     loadModule,
     order: createTlcOrder(source, loadModule),
     print: (text) => printed.push(text),
     files: { readFile: () => undefined, writeFile: () => {} },
-    isUnconfigured: true,
+    isUnconfigured: config === undefined,
     isSanyAccepted: true,
   });
+  return { specification, printed };
+};
+
+// The environment of a spec, as canonical JSON.
+const readEnvironment = (source: string, path: string, config?: ModelConfig) => {
+  const linked = linkSpec(source, path, config);
+  const specification = linked.specification;
+  const printed = linked.printed;
   const environment = specification.environment;
   const keys = new Map<Definition, string>();
   return {
@@ -102,6 +136,8 @@ const readEnvironment = (source: string, path: string) => {
       .filter((entry) => environment.substitutedDefinitions.has(entry[1]))
       .map((entry) => entry[0]),
     facts: { words: environment.facts.words, rows: [...environment.facts.rows] },
+    assigned: [...environment.constants.keys()],
+    substitutions: [...environment.substitutions],
     variables: environment.variables,
     variableIndex: [...environment.variableIndex],
     constants: specification.rootConstants.map((constant) => constant.name),
@@ -109,7 +145,32 @@ const readEnvironment = (source: string, path: string) => {
   };
 };
 
-const MODES: Record<string, (source: string, path: string) => string> = {
+// The IR of a model whose Init and Next are a placeholder and whose configuration names each
+// definition of the environment, by key, as an invariant, so it holds every definition. No text is
+// ranked, so the texts follow their first use.
+const lowerDefinitions = (source: string, path: string) => {
+  const environment = linkSpec(source, path).specification.environment;
+  const root: Expression = { kind: "Number", value: 0, location: { line: 0, column: 0 } };
+  setStringOrder([]);
+  const outcome = lowerToIr({
+    config: { ...parseConfig(""), invariants: [...environment.definitions.keys()] },
+    environment,
+    spec: { init: root, next: root },
+    traceActions: [],
+    isWarningEnabled: true,
+    tlcOrder: [],
+    properties: { invariants: [], invariantNames: [], actionProperties: [], initialPredicates: [] },
+    symmetry: undefined,
+    isRecordingGraph: false,
+    version: undefined,
+    atoms: [],
+    liveFormula: undefined,
+    liveProperties: [],
+  });
+  return "ir" in outcome ? { ir: Buffer.from(outcome.ir).toString("hex") } : outcome;
+};
+
+const MODES: Record<string, (source: string, path: string, spec: string) => string> = {
   tokens: writeResult((source) =>
     tokenize(source).map((token) => [
       token.kind,
@@ -122,7 +183,12 @@ const MODES: Record<string, (source: string, path: string) => string> = {
   ),
   ast: writeResult(parseModule),
   "sany-ast": writeResult((source) => parseSanyModule(source)),
-  resolve: writeResult(readEnvironment),
+  resolve: writeResult((source, path) => readEnvironment(source, path)),
+  ir: writeResult(lowerDefinitions),
+  order: writeResult(readOrders),
+  model: writeResult((source, _path, spec) =>
+    readEnvironment(readFileSync(spec, "utf8"), spec, parseConfig(source)),
+  ),
   config: (source) =>
     `{"master":${writeResult((text) => parseConfig(text, "master"))(source)},"v174":${writeResult((text) => parseConfig(text, "1.7.4"))(source)}}`,
 };
@@ -164,13 +230,20 @@ if (mode !== "time" && MODES[mode] === undefined) {
   throw new Error(`front-differential takes a mode: ${[...Object.keys(MODES), "time"].join(", ")}`);
 }
 const filter = getOption("--filter");
-const extension = mode === "config" ? ".cfg" : ".tla";
+const isModel = mode === "model" || mode === "order";
+const extension = mode === "config" || isModel ? ".cfg" : ".tla";
+// A model is a configuration and the spec of the same name beside it.
+const getSpec = (path: string) => {
+  const spec = path.replace(/\.cfg$/, ".tla");
+  return isModel && existsSync(spec) ? spec : undefined;
+};
 const findFiles = (root: string, paths: string[], prefix: string) =>
   paths
     .flatMap((path) => (existsSync(join(root, path)) ? listFiles(join(root, path)) : []))
     .filter((path) => path.endsWith(extension))
     .sort()
-    .map((path) => ({ id: `${prefix}${relative(root, path)}`, path }));
+    .filter((path) => !isModel || getSpec(path) !== undefined)
+    .map((path) => ({ id: `${prefix}${relative(root, path)}`, path, spec: getSpec(path) }));
 const corpora = process.argv.includes("--fixtures")
   ? []
   : getCorpora().flatMap((corpus) =>
@@ -188,7 +261,7 @@ const mutations = originals
     return [0, 1, 2, 3].map((variant) => {
       const path = join(mutationDirectory, `${index}-${variant}.tla`);
       writeFileSync(path, mutate(source, random));
-      return { id: `${module.id} (variant ${variant})`, path };
+      return { id: `${module.id} (variant ${variant})`, path, spec: module.spec };
     });
   });
 const modules = [...originals, ...mutations];
@@ -206,11 +279,14 @@ const getRustBinary = () => {
 };
 const rust = getRustBinary();
 
-if (mode === "resolve") linkLibraryModules();
+const isLinked = ["resolve", "model", "ir", "order"].includes(mode);
+if (isLinked) linkLibraryModules();
 
 const runRust = (batch: typeof modules) => {
-  const run = spawnSync(rust, mode === "resolve" ? [mode, "--library", LIBRARY_PATH] : [mode], {
-    input: batch.map((module) => module.path).join("\n"),
+  const run = spawnSync(rust, isLinked ? [mode, "--library", LIBRARY_PATH] : [mode], {
+    input: batch
+      .map((module) => (module.spec ? `${module.path}\t${module.spec}` : module.path))
+      .join("\n"),
     maxBuffer: 2 ** 31 - 1,
     encoding: "utf8",
   });
@@ -250,7 +326,7 @@ const time = () => {
   );
 };
 
-const compare = (write: (source: string, path: string) => string) => {
+const compare = (write: (source: string, path: string, spec: string) => string) => {
   const rustLines: string[] = [];
   const unported = new Map<string, number>();
   const differences = modules.filter((module, index) => {
@@ -263,7 +339,7 @@ const compare = (write: (source: string, path: string) => string) => {
       unported.set(notYet, (unported.get(notYet) ?? 0) + 1);
       return false;
     }
-    const expected = write(readFileSync(module.path, "utf8"), module.path);
+    const expected = write(readFileSync(module.path, "utf8"), module.path, module.spec ?? "");
     if (expected === actual) return false;
     const start = Array.from(expected).findIndex(
       (_, position) => actual?.[position] !== expected[position],

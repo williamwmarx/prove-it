@@ -9,6 +9,7 @@ dependencies = [
  "tla-engine",
  "tla-front",
  "tla-ir",
+ "tla-trace",
  "tla-values",
 ]
 
@@ -43,6 +44,9 @@ dependencies = [
 [[package]]
 name = "tla-front"
 version = "0.1.0"
+dependencies = [
+ "tla-ir",
+]
 
 [[package]]
 name = "tla-ir"

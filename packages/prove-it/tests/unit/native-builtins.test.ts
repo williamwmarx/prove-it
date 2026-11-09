@@ -288,6 +288,18 @@ describe.if(ADDON !== undefined)("the native engine's bridged builtins", () => {
     expect(await compareWithInterpreter(ranked, `${CONFIG}\nINVARIANT First`)).toContainEqual(
       expect.stringMatching(stopped("an order of model values the search ranked")),
     );
+    // A name \o made takes the rank the model value gives it, so comparing it with another string
+    // stops, as the search ranked it.
+    const unranked = [
+      "EXTENDS Sequences, TLC, TLCExt",
+      "VARIABLES s, t, m",
+      'Init == s = "z" \\o "x" /\\ t = "a" \\o "x" /\\ m = TLCModelValue(s)',
+      "Next == UNCHANGED <<s, t, m>>",
+      "First == (CHOOSE x \\in {s, t} : TRUE) = t",
+    ];
+    expect(await compareWithInterpreter(unranked, `${CONFIG}\nINVARIANT First`)).toContainEqual(
+      expect.stringMatching(stopped("an order of strings the search ranked")),
+    );
     for (const [init, reason] of [
       ['v = {TLCModelValue("A_a"), TLCModelValue("B_a")}', "differently typed model values"],
       ["v = TLCModelValue(1)", "TLCModelValue of a value that isn't a string"],
@@ -298,6 +310,101 @@ describe.if(ADDON !== undefined)("the native engine's bridged builtins", () => {
       );
       expect(lines).toContainEqual(expect.stringMatching(stopped(reason)));
     }
+  });
+
+  // From TLC's RandomElement: the initial states draw from the generator the assumptions drew
+  // from, and each expansion from one seeded with the fingerprint of the state it expands.
+  it("draws RandomElement and RandomSubset as TLC does", async () => {
+    const body = [
+      "EXTENDS Integers, TLC, Randomization",
+      "VARIABLES x, y",
+      "ASSUME RandomElement(1..10) \\in 1..10",
+      "Init == x \\in RandomSubset(3, 1..1000) /\\ y = 0",
+      "Next == /\\ y < 3",
+      "        /\\ \\/ x' = RandomElement(1..1000)",
+      "           \\/ x' \\in RandomSubset(2, {x, x + 1, x + 2})",
+      "        /\\ y' = y + 1",
+    ];
+    expect(await compareWithInterpreter(body, `${CONFIG}\nCHECK_DEADLOCK FALSE`)).toContainEqual(
+      expect.stringMatching(COMPLETE),
+    );
+    // Each component of a set of functions, records or tuples, and the elements of a product
+    // by their index, of one with more elements than an int holds too.
+    for (const draw of [
+      "x = RandomElement([{1, 2} -> 1..5])",
+      'x = RandomElement([a : 1..5, b : {"p", "q"}])',
+      "x = RandomElement((1..5) \\X {7, 8})",
+      "x = RandomElement(SUBSET {1, 2, 3})",
+      "x \\in RandomSubset(4, [{1, 2, 3} -> 1..10])",
+      "x \\in RandomSubset(4, [a : 1..5, b : 1..6])",
+      "x \\in RandomSubset(4, (1..200) \\X (1..200) \\X (1..200))",
+      "x \\in RandomSubset(4, (1..4000) \\X (1..4000) \\X (1..4000))",
+      "x \\in RandomSubset(4, SUBSET {1, 2, 3})",
+    ]) {
+      const drawn = [
+        "EXTENDS Integers, TLC, Randomization",
+        "VARIABLES x, y",
+        `Init == ${draw} /\\ y = 0`,
+        "Next == UNCHANGED <<x, y>>",
+      ];
+      expect(await compareWithInterpreter(drawn, CONFIG)).toContainEqual(
+        expect.stringMatching(COMPLETE),
+      );
+    }
+  });
+
+  it("stops drawing from a product too large to index", async () => {
+    const body = [
+      "EXTENDS Integers, Randomization",
+      "VARIABLE x",
+      "Init == x \\in RandomSubset(1, [1..128 -> BOOLEAN])",
+      "Next == UNCHANGED x",
+    ];
+    expect(await compareWithInterpreter(body, CONFIG)).toContainEqual(
+      expect.stringMatching(stopped("RandomSubset of a product too large to index")),
+    );
+    // TLC draws the first index of an interval with nextInt, whose bound is an int.
+    const interval = [
+      "EXTENDS Integers, Randomization",
+      "VARIABLE x",
+      "Init == x \\in RandomSubset(1, (-2147483647 - 1)..2147483647)",
+      "Next == UNCHANGED x",
+      "Inv == x # -1870019805",
+    ];
+    expect(await compareWithInterpreter(interval, `${CONFIG}\nINVARIANT Inv`)).toContainEqual(
+      expect.stringMatching(stopped("RandomSubset of an interval too large to draw from")),
+    );
+  });
+
+  // A variable holds a set of functions as its elements, which TLC may keep lazy and draw from
+  // component by component.
+  it("stops drawing from a set of functions a variable holds", async () => {
+    const body = [
+      "EXTENDS Integers, TLC",
+      "VARIABLES s, x, y",
+      "Init == s = [1..3 -> 1..5] /\\ x = 0 /\\ y = 0",
+      "Next == y = 0 /\\ x' = RandomElement(s) /\\ y' = y + 1 /\\ UNCHANGED s",
+      "Inv == y = 0 \\/ x[3] # 2",
+    ];
+    expect(
+      await compareWithInterpreter(body, `${CONFIG}\nINVARIANT Inv\nCHECK_DEADLOCK FALSE`),
+    ).toContainEqual(
+      expect.stringMatching(stopped("drew from a set whose shape the engine forgets")),
+    );
+  });
+
+  // The interpreter rebuilds the trace from the initial predicate, as TLC does, so it draws again.
+  it("hands over a violation whose trace drew at random", async () => {
+    const body = [
+      "EXTENDS Integers, TLC",
+      "VARIABLES x, y",
+      "Init == x = RandomElement(1..1000) /\\ y = 0",
+      "Next == (x' = RandomElement(1..1000) \\/ x' = x) /\\ y' = y + 1",
+      "Inv == y < 3",
+    ];
+    expect(await compareWithInterpreter(body, `${CONFIG}\nINVARIANT Inv`)).toContainEqual(
+      expect.stringMatching(stopped("an invariant violated")),
+    );
   });
 
   // A search that ranked strings hands over none of its states, so the interpreter ranks them

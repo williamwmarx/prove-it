@@ -19,7 +19,8 @@ mod builtins;
 mod fused;
 pub(crate) mod lazy;
 mod nodes;
-pub(crate) mod predicate;
+mod predicate;
+pub(crate) mod random;
 mod sets;
 mod walker;
 
@@ -39,7 +40,7 @@ use tla_values::store::{FALSE, Outcome, TRUE};
 use tla_values::{Bail, Id, Store};
 
 use crate::footprint::Footprint;
-use crate::machine::{Eval, Key, Machine, Member, Parts, Program, Recursive};
+use crate::machine::{Eval, Key, Machine, Member, Parts, Program, Recursive, Step};
 use crate::memo::EPOCH_KEYS;
 
 /// What TLCGet reads of TLC's search, at slots of their own so that an expression that reads one
@@ -50,7 +51,15 @@ pub const LEVEL_SLOT: u32 = 0;
 pub const NEXT_LEVEL_SLOT: u32 = 1;
 pub const DISTINCT_SLOT: u32 = 2;
 const PRINT_SLOT: u32 = 3;
-const SEARCH_SLOTS: [u32; 4] = [LEVEL_SLOT, NEXT_LEVEL_SLOT, DISTINCT_SLOT, PRINT_SLOT];
+/// TLCGet("diameter"), which only the liveness checker's atoms read.
+pub const DIAMETER_SLOT: u32 = 4;
+const SEARCH_SLOTS: [u32; 5] = [
+    LEVEL_SLOT,
+    NEXT_LEVEL_SLOT,
+    DISTINCT_SLOT,
+    PRINT_SLOT,
+    DIAMETER_SLOT,
+];
 
 const MAXIMUM_MEMO_WIDTH: usize = 6;
 const MAXIMUM_EXPANSION: u32 = 2000;
@@ -214,7 +223,21 @@ impl Compiled {
             .any(|slot| SEARCH_SLOTS.contains(slot))
     }
 
-    fn is_printing(&self) -> bool {
+    /// Whether the expression reads TLCGet("level") or TLCGet("distinct"), which only the search
+    /// keeps.
+    pub fn reads_tlc_get(&self) -> bool {
+        self.footprint
+            .slots
+            .iter()
+            .any(|&slot| slot == LEVEL_SLOT || slot == NEXT_LEVEL_SLOT || slot == DISTINCT_SLOT)
+    }
+
+    /// Whether the expression reads TLCGet("diameter").
+    pub fn reads_diameter(&self) -> bool {
+        self.footprint.slots.contains(&DIAMETER_SLOT)
+    }
+
+    pub(crate) fn is_printing(&self) -> bool {
         self.footprint.slots.contains(&PRINT_SLOT)
     }
 
@@ -544,7 +567,10 @@ struct RecursiveOperator {
 pub(crate) struct RecursiveFunction {
     entry: u64,
     runtime: usize,
+    /// The slot of its argument: a tuple where it has several bounds.
     slot: u32,
+    /// How many bounds it has: TLC's domain is their product.
+    arity: usize,
     domain: Compiled,
     assumed: RefCell<Footprint>,
     body_footprint: RefCell<Option<Footprint>>,
@@ -593,6 +619,9 @@ pub struct Compiler<'a> {
     depth: u32,
     // The unsettled fixed points the compiles under way have read, innermost first.
     reads: Option<Vec<Rc<FixedPoint>>>,
+    /// The walks whose first step is a guard `f[k] = c`, by the address of their step, each kept
+    /// alive so no other step takes its address (`walker::Leading`).
+    leading_guards: HashMap<usize, (Step, walker::Leading)>,
     // What cached compiles read of fixed points that hadn't settled when they compiled.
     provisional: HashMap<u64, Vec<Rc<FixedPoint>>>,
     entry_count: u64,
@@ -600,6 +629,8 @@ pub struct Compiler<'a> {
     specialisations: usize,
     /// Whether an expression reads TLCGet("distinct"), whose slot the search must then set.
     pub is_distinct_read: bool,
+    /// Whether an expression reads TLCGet("diameter"), which only the liveness checker sets.
+    pub is_diameter_read: bool,
     /// Whether anything compiled may print, and whether it uses ToString, which ranks strings.
     pub is_printing: bool,
     pub is_ranking: bool,
@@ -635,6 +666,8 @@ impl<'a> Compiler<'a> {
                 width: ir.variables.len(),
                 slot_count: SEARCH_SLOTS.len(),
                 is_epoch_checked: options.is_epoch_checked,
+                random_seed: ir.model.random_seed,
+                startup_random: ir.model.startup_random,
                 ..Program::default()
             },
             texts: vec![None; ir.texts.len()],
@@ -652,10 +685,12 @@ impl<'a> Compiler<'a> {
                 .map_or(TextId::MAX - 1, |index| index as TextId),
             depth: 0,
             reads: None,
+            leading_guards: HashMap::new(),
             provisional: HashMap::new(),
             entry_count: 0,
             specialisations: 0,
             is_distinct_read: false,
+            is_diameter_read: false,
             is_printing: false,
             is_ranking: false,
             scope_contexts: HashMap::new(),
@@ -1046,7 +1081,7 @@ impl<'a> Compiler<'a> {
                     }
                     Resolution::Builtin(index) => matches!(
                         self.builtin_name(index),
-                        "Print" | "PrintT" | "=" | "#" | "~"
+                        "Print" | "PrintT" | "RandomElement" | "RandomSubset" | "=" | "#" | "~"
                     ),
                     _ => false,
                 }
@@ -1943,12 +1978,13 @@ impl<'a> Compiler<'a> {
         let DefinitionForm::Function(bounds) = &definition.form else {
             unreachable!("a recursive function that isn't one");
         };
-        let [bound] = &bounds[..] else {
-            return unsupported("a recursive function of several arguments");
-        };
-        let tla_ir::Pattern::Name(param) = bound.pattern else {
-            return unsupported("a recursive function of several arguments");
-        };
+        let mut params = Vec::with_capacity(bounds.len());
+        for bound in bounds {
+            let tla_ir::Pattern::Name(param) = bound.pattern else {
+                return unsupported("a recursive function over a tuple pattern");
+            };
+            params.push(param);
+        }
         let outer = Context {
             scope: base_scope.clone(),
             is_primed: context.is_primed,
@@ -1957,11 +1993,21 @@ impl<'a> Compiler<'a> {
         };
         let slot = self.allocate_slot();
         let mut read = Vec::new();
-        let domain = self.tracking(&mut read, |compiler| compiler.compile(bound.set, &outer))?;
+        let domain = self.tracking(&mut read, |compiler| match &bounds[..] {
+            [bound] => compiler.compile(bound.set, &outer),
+            bounds => {
+                let factors = bounds
+                    .iter()
+                    .map(|bound| compiler.compile(bound.set, &outer))
+                    .collect::<Compiling<Vec<Compiled>>>()?;
+                Ok(compiler.product_of(&factors))
+            }
+        })?;
         let record = Rc::new(RecursiveFunction {
             entry: self.next_entry(),
             runtime: self.allocate_runtime(),
             slot,
+            arity: params.len(),
             domain,
             assumed: RefCell::new(Footprint::default()),
             body_footprint: RefCell::new(None),
@@ -1974,7 +2020,30 @@ impl<'a> Compiler<'a> {
             .entry(key)
             .or_insert_with(|| (base_scope.clone(), [None, None]))
             .1[index] = Some(Rc::clone(&record));
-        let body_context = outer.with_scope(bind(&base_scope, param, Binding::Slot(slot)));
+        // With several bounds, each name is its element of the tuple the function is applied to.
+        let scope = match &params[..] {
+            [param] => bind(&base_scope, *param, Binding::Slot(slot)),
+            params => {
+                params
+                    .iter()
+                    .enumerate()
+                    .fold(base_scope.clone(), |scope, (index, &param)| {
+                        let element = leaf(
+                            eval(move |machine| {
+                                let argument = machine.locals[slot as usize];
+                                Ok(machine.store.get_range_value(argument, index as u32))
+                            }),
+                            Footprint::slot(slot),
+                        );
+                        let binding = Binding::Value {
+                            compiled: Box::new(element),
+                            lazy: None,
+                        };
+                        bind(&scope, param, binding)
+                    })
+            }
+        };
+        let body_context = outer.with_scope(scope);
         let settled = self.settle_function(&record, definition.body, &body_context, &mut read);
         let (body, slot_start, slot_end) = match settled {
             Ok(settled) => settled,
@@ -2055,6 +2124,12 @@ impl<'a> Compiler<'a> {
                     let definition = *definition;
                     self.get_recursive_function(definition, context, Some(Rc::clone(&found)))
                         .map(Some)
+                }
+                // An operator's argument that names one, which TLC passes as its lazy value.
+                Binding::Argument(argument) => {
+                    let is_primed = context.is_primed || argument.context.is_primed;
+                    let argument_context = argument_context(argument).primed(is_primed);
+                    self.get_applied_recursive_function(argument.expression, &argument_context)
                 }
                 _ => Ok(None),
             };
