@@ -874,24 +874,6 @@ fn rebuilds_a_trace_of_bags_as_tlc_builds_them() {
 }
 
 #[test]
-fn declines_an_invariant_failure_tlc_replays_on_another_successor() {
-    // TLC's test FingerprintExceptionHang: after the report, TLC replays the expansion with its
-    // CallStackTool, checks the successor it hasn't seen, and fails to fingerprint there.
-    let spec = "---- MODULE Stop ----\nEXTENDS Naturals\nCONSTANT Nodes\nVARIABLE node_state\nTypeOK == node_state \\in [Nodes -> [set : {{}}]]\nInit == node_state = [n \\in Nodes |-> [set |-> {}]]\nNext == \\E n \\in Nodes, m \\in {1} : node_state' = [node_state EXCEPT ![n].set = m]\n====\n";
-    let (output, directory) = run_lowered(
-        "replayed",
-        spec,
-        "INIT Init\nNEXT Next\nCONSTANT Nodes = {A, B}\nINVARIANT TypeOK\n",
-    );
-    assert!(
-        String::from_utf8_lossy(&output.stderr).contains("prove-it: not native yet: "),
-        "{}",
-        stdout(&output)
-    );
-    std::fs::remove_dir_all(directory).expect("removed");
-}
-
-#[test]
 fn tests_membership_in_a_set_tlc_holds_unnormalized_element_by_element() {
     // TLC's test PrintTraceRace: {1..2} stays as written, so TLC asks its element 1..2 whether
     // it equals 1, and checks the invariant without the sources that would make that failure a

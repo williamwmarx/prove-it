@@ -1,8 +1,10 @@
 //! Where TLC fails to fingerprint a value (`fingerprint` and `size` of its values): a power set of
 //! a set of 31 elements or more, whose size overflows an int (`SubsetValue.size`).
 
+use tla_values::fingerprint::{Fingerprints, of_bool, of_int, of_model, of_string};
+
 use crate::print::format_value;
-use crate::value::{Lazy, TlcMessage, Value};
+use crate::value::{Lazy, TlcMessage, Value, elements};
 
 /// `EC.TLC_MODULE_OVERFLOW`.
 const OVERFLOW: u32 = 2178;
@@ -72,5 +74,43 @@ fn size(set: &Value) -> Result<u64, ()> {
             _ => Err(()),
         },
         _ => Err(()),
+    }
+}
+
+/// TLC's fingerprint of a state the evaluator holds, its values in TLC's order of the variables,
+/// as the search's of the same state in its store. `None` where the evaluator doesn't hold a
+/// value as the store would: a set it doesn't enumerate, or a text the IR doesn't rank.
+pub fn state_fingerprint(fingerprints: &mut Fingerprints, values: &[&Value]) -> Option<u64> {
+    let values: Option<Vec<_>> = values
+        .iter()
+        .map(|value| value_fingerprint(fingerprints, value))
+        .collect();
+    Some(fingerprints.of_state(&values?))
+}
+
+// F and length of a value (`Fingerprints::get_value` of the store's).
+fn value_fingerprint(fingerprints: &mut Fingerprints, value: &Value) -> Option<(u64, u64)> {
+    match value {
+        Value::Bool(boolean) => Some(of_bool(*boolean)),
+        Value::Int(int) => Some(of_int(*int)),
+        Value::Str(text) => Some(of_string(&text.units)),
+        Value::Model(text) => (text.rank >= 0).then(|| of_model(text.rank)),
+        Value::Unsorted(_) => None,
+        Value::Function(function) => {
+            let mut parts = Vec::with_capacity(function.domain.len() * 2);
+            for (key, held) in function.domain.iter().zip(&function.range) {
+                parts.push(value_fingerprint(fingerprints, key)?);
+                parts.push(value_fingerprint(fingerprints, held)?);
+            }
+            Some(fingerprints.of_parts(false, &parts))
+        }
+        Value::Set(_) | Value::Interval(..) | Value::Lazy(_) => {
+            let parts: Option<Vec<_>> = elements(value)
+                .ok()?
+                .iter()
+                .map(|element| value_fingerprint(fingerprints, element))
+                .collect();
+            Some(fingerprints.of_parts(true, &parts?))
+        }
     }
 }

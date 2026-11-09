@@ -9,8 +9,8 @@ use tla_values::fingerprint::{Fingerprints, INITIAL};
 use tla_values::json;
 use tla_values::print::{is_printable, write_value};
 use tla_values::store::{
-    EMPTY_SET, EMPTY_TUPLE, FALSE, KIND_INT, KIND_SET, KIND_STRING, KIND_TUPLE, Outcome, TRUE,
-    is_function_kind,
+    EMPTY_SET, EMPTY_TUPLE, FALSE, INT, KIND_INT, KIND_SET, KIND_STRING, KIND_TUPLE, NAT, Outcome,
+    STRINGS, TRUE, is_function_kind,
 };
 use tla_values::{Bail, Id, Store};
 
@@ -205,9 +205,9 @@ impl Compiler<'_> {
             "TRUE" => super::constant(TRUE),
             "FALSE" => super::constant(FALSE),
             "BOOLEAN" => super::constant(self.store.set_of(&[FALSE, TRUE])?),
-            "Nat" => Self::infinite_set("Nat", "enumerated Nat"),
-            "Int" => Self::infinite_set("Int", "enumerated Int"),
-            "STRING" => Self::infinite_set("STRING", "enumerated STRING"),
+            "Nat" => Self::infinite_set("Nat", NAT, "enumerated Nat"),
+            "Int" => Self::infinite_set("Int", INT, "enumerated Int"),
+            "STRING" => Self::infinite_set("STRING", STRINGS, "enumerated STRING"),
             "EmptyBag" => super::constant(EMPTY_TUPLE),
             name => {
                 return decline(format!(
@@ -264,10 +264,11 @@ impl Compiler<'_> {
     }
 
     // Nat, Int and STRING, which the engine only tests for membership.
-    fn infinite_set(name: &'static str, reason: &'static str) -> Compiled {
+    fn infinite_set(name: &'static str, value: i32, reason: &'static str) -> Compiled {
         Compiled {
             is_normalized: false,
             infinite: Some(name),
+            infinite_value: Some(value),
             reference: Some(Arc::new(move |_| Ok(Lazy::Infinite(name)))),
             ..leaf(eval(move |_| Err(Bail(reason))), Footprint::default())
         }
@@ -1466,6 +1467,32 @@ impl Compiler<'_> {
                         fused::cardinality_filter(Arc::clone(filter)),
                         set.footprint.clone(),
                     ),
+                    // TLC sizes a set of functions, records or tuples by its parts, and finds
+                    // one that an empty part empties before it asks anything of a part it can't
+                    // enumerate, as `[Nat -> {}]` (`SetOfFcnsValue.size`).
+                    None if set.reference.is_some() && set.may_be_infinite() => {
+                        let reference = set.reference.clone().expect("a reference");
+                        let evaluate = set.eval.clone();
+                        Compiled {
+                            is_costly: true,
+                            ..leaf(
+                                eval(move |machine| {
+                                    let lazy = reference(machine)?;
+                                    if lazy.is_empty(machine)? {
+                                        return machine.store.int(0);
+                                    }
+                                    let set = evaluate(machine)?;
+                                    let size = machine.store.size_of(expect_set(
+                                        machine,
+                                        set,
+                                        "expected a set",
+                                    )?);
+                                    machine.store.int(i64::from(size))
+                                }),
+                                set.footprint.clone(),
+                            )
+                        }
+                    }
                     None => unary(
                         &set,
                         |machine, set| {
@@ -1586,10 +1613,20 @@ impl Compiler<'_> {
         }
         if left.infinite.is_some() || right.infinite.is_some() {
             // A combination of sets TLC can't enumerate is one it only tests for membership.
+            let operator = match name {
+                "\\cup" => Operator::Union,
+                "\\cap" => Operator::Intersection,
+                _ => Operator::Difference,
+            };
             return Ok(Some(Compiled {
                 is_normalized: false,
                 infinite: Some("Combined"),
                 member: lazy_member,
+                reference: combine_references(&[left, right], move |machine, mut sets| {
+                    let right = sets.pop().expect("the right set");
+                    let left = sets.pop().expect("the left set");
+                    Lazy::combine(machine, operator, left, right)
+                }),
                 ..leaf(
                     eval(|_| Err(Bail("an enumerated infinite set"))),
                     left.footprint.merge(&right.footprint),

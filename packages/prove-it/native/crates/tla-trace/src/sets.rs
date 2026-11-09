@@ -194,6 +194,59 @@ fn mistyped(value: &Value, set: &str) -> Evaluated<bool> {
     )
 }
 
+/// The sets nested in `set` whose own membership tests a failing `is_member(value, set)` was in,
+/// outermost first: the values whose `member` TLC's failure passes through after `set`'s. `None`
+/// where the failure isn't followed to the set whose own test fails.
+pub fn failing_sets(value: &Value, set: &Value) -> Option<Vec<Value>> {
+    let Value::Lazy(lazy) = set else {
+        return Some(Vec::new());
+    };
+    // Each element a nested set tests, in the order `is_member` tests them.
+    let tested: Vec<(&Value, &Value)> = match (&**lazy, value) {
+        (Lazy::FunctionSet(domain, range), Value::Function(function)) => {
+            equals(&Value::Set(Rc::new(function.domain.clone())), domain).ok()?;
+            function
+                .range
+                .iter()
+                .map(|element| (element, range))
+                .collect()
+        }
+        (Lazy::RecordSet(fields, _), Value::Function(function)) => fields
+            .iter()
+            .map(|(name, set)| {
+                let position = find_key(function, &Value::Str(Rc::clone(name))).ok()??;
+                Some((&function.range[position], set))
+            })
+            .collect::<Option<_>>()?,
+        (Lazy::Product(factors), _) => match as_tuple(value) {
+            Some(tuple) if tuple.len() == factors.len() => tuple.iter().zip(factors).collect(),
+            _ => return None,
+        },
+        (Lazy::Seq(base), _) => as_tuple(value)?
+            .iter()
+            .map(|element| (element, base))
+            .collect(),
+        // The failure is in the set's own test: a mistyped value.
+        (
+            Lazy::Nat | Lazy::Int | Lazy::Strings | Lazy::FunctionSet(..) | Lazy::RecordSet(..),
+            _,
+        ) => return Some(Vec::new()),
+        _ => return None,
+    };
+    for (element, nested) in tested {
+        match is_member(element, nested) {
+            Ok(true) => {}
+            Ok(false) => return None,
+            Err(_) => {
+                let mut sets = vec![nested.clone()];
+                sets.extend(failing_sets(element, nested)?);
+                return Some(sets);
+            }
+        }
+    }
+    None
+}
+
 pub fn is_member(value: &Value, set: &Value) -> Evaluated<bool> {
     // TLC tests a set it holds unnormalized element by element, as it built it, asking each
     // element whether it equals the value (`ValueVec.search`).

@@ -305,6 +305,11 @@ impl Compiler<'_> {
                     .iter()
                     .map(|&element| self.compile(element, context))
                     .collect::<Compiling<Vec<Compiled>>>()?;
+                // A state can't hold Nat, Int or STRING, which TLC can't fingerprint: the search
+                // looks for one as it does for a function TLC keeps lazy.
+                self.is_lambda_built |= elements
+                    .iter()
+                    .any(|element| element.infinite_value.is_some());
                 Ok(Self::compile_set_enumeration(&elements))
             }
             NodeKind::Tuple(elements) => {
@@ -705,10 +710,22 @@ impl Compiler<'_> {
                 lazy::Lazy::filter(machine, bases.remove(0), Arc::clone(&test))
             })
         };
+        // TLC keeps a filter of a set it doesn't reduce (any but an enumeration or an interval)
+        // lazy too, and tests membership in it the same way: the predicate of the one element.
+        let tested = (!set.is_normalized).then(|| {
+            let base = self.member_test(&set);
+            let tested = Arc::clone(&filter);
+            member(move |machine, element| {
+                Ok(base(machine, element)? && test_element(machine, &tested, element)?)
+            })
+        });
+        let tested_parts = (!set.is_normalized).then(|| Self::parts_of(&set));
         Ok(Compiled {
             is_costly: true,
             is_normalized: set.is_normalized,
             has_infinite_part: set.has_infinite_part,
+            member: tested,
+            parts: tested_parts,
             reference,
             is_enumerated: set.is_enumerated,
             are_elements_enumerated: set.are_elements_enumerated,
@@ -1111,9 +1128,13 @@ impl Compiler<'_> {
                 ..constant(EMPTY_SET)
             };
         }
+        // TLC holds Nat, Int or STRING as an element, where the engine otherwise only tests it.
         let evaluators: Vec<Eval> = elements
             .iter()
-            .map(|element| element.eval.clone())
+            .map(|element| match element.infinite_value {
+                Some(name) => eval(move |machine| Ok(machine.store.infinite_set(name))),
+                None => element.eval.clone(),
+            })
             .collect();
         Compiled {
             is_costly: true,

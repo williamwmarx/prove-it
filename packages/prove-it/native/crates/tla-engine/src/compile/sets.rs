@@ -4,6 +4,7 @@
 use tla_ir::{NodeId, NodeKind};
 use tla_values::store::{
     KIND_FUNCTION, KIND_INT, KIND_MODEL, KIND_SET, KIND_STRING, KIND_TUPLE, Outcome,
+    is_tested_set_kind,
 };
 use tla_values::{Bail, Id};
 
@@ -147,7 +148,7 @@ impl Compiler<'_> {
                 let evaluate = set.eval.clone();
                 member(move |machine, element| {
                     let id = evaluate(machine)?;
-                    if machine.store.kind_of(id) != KIND_SET {
+                    if !is_tested_set_kind(machine.store.kind_of(id)) {
                         return Err(Bail("membership in a non-set"));
                     }
                     machine.store.is_member(element, id)

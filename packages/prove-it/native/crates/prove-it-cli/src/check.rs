@@ -927,6 +927,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                             depth: counts.depth,
                         },
                         out_degrees: &counts.out_degrees,
+                        fingerprints: &violation.fingerprints,
                     };
                     print_failure(printer, &ir, &stop, start)
                 }
