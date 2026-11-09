@@ -53,6 +53,8 @@ pub struct EngineContext {
     pub atoms: Vec<Atom>,
     /// Whether evaluating an atom may print.
     pub is_live_printing: bool,
+    /// Whether each atom reads TLCGet("diameter").
+    pub diameter_atoms: Vec<bool>,
     /// Whether an invariant may print, which the search prints among Next's prints.
     pub is_invariant_printing: bool,
 }
@@ -461,20 +463,24 @@ impl EngineContext {
                 (steps.len() == actions.len()).then_some(steps)
             }
         };
-        let (atoms, is_live_printing) = if model.is_recording_graph {
-            let compiled: Vec<(Atom, bool)> = model
+        // TLC's diameter grows as the search goes, which only the liveness checker's atoms follow.
+        if compiler.is_diameter_read {
+            return Err(CompileError::Bail(
+                "unsupported: TLCGet(\"diameter\") in the search".into(),
+            ));
+        }
+        let compiled: Vec<CompiledAtom> = if model.is_recording_graph {
+            model
                 .atoms
                 .iter()
                 .map(|atom| compile_atom(compiler, ir, atom))
-                .collect();
-            let is_printing = compiled.iter().any(|atom| atom.1);
-            (
-                compiled.into_iter().map(|atom| atom.0).collect(),
-                is_printing,
-            )
+                .collect()
         } else {
-            (Vec::new(), false)
+            Vec::new()
         };
+        let is_live_printing = compiled.iter().any(|atom| atom.is_printing);
+        let diameter_atoms = compiled.iter().map(|atom| atom.reads_diameter).collect();
+        let atoms = compiled.into_iter().map(|atom| atom.atom).collect();
         let (initial_invariants, initial_invariant_owners) = invariants
             .iter()
             .zip(&invariant_conjuncts)
@@ -505,6 +511,7 @@ impl EngineContext {
             view,
             atoms,
             is_live_printing,
+            diameter_atoms,
             is_invariant_printing,
         })
     }
@@ -548,21 +555,29 @@ fn compile_subscript(
     compiler: &mut Compiler<'_>,
     node: NodeId,
     scope: Option<Index>,
-) -> Result<Eval, String> {
+) -> Result<Compiled, String> {
     let compiled = compile_live(compiler, node, scope)?;
     if !compiled.footprint.primes.is_empty() {
         return Err("unsupported: a subscript that reads a primed variable".into());
     }
-    Ok(compiled.eval)
+    Ok(compiled)
 }
 
-// An atom, compiled, and whether evaluating it may print.
-fn compile_atom(compiler: &mut Compiler<'_>, ir: &Ir, atom: &tla_ir::Atom) -> (Atom, bool) {
+// An atom, compiled, with whether evaluating it may print and whether it reads TLCGet("diameter").
+struct CompiledAtom {
+    atom: Atom,
+    is_printing: bool,
+    reads_diameter: bool,
+}
+
+fn compile_atom(compiler: &mut Compiler<'_>, ir: &Ir, atom: &tla_ir::Atom) -> CompiledAtom {
     let scope = atom.scope;
     let mut is_printing = false;
+    let mut reads_diameter = false;
     let compiled = match &atom.kind {
         AtomKind::State => compile_live(compiler, atom.expression, scope).map(|compiled| {
             is_printing = compiled.is_printing();
+            reads_diameter = compiled.reads_diameter();
             Atom::State(compiled.eval)
         }),
         AtomKind::Action { unchanged, enabled } => (|| {
@@ -575,9 +590,11 @@ fn compile_atom(compiler: &mut Compiler<'_>, ir: &Ir, atom: &tla_ir::Atom) -> (A
             };
             let action = compile_live(compiler, atom.expression, scope)?;
             is_printing = action.is_printing();
+            reads_diameter =
+                action.reads_diameter() || subscript.as_ref().is_some_and(Compiled::reads_diameter);
             Ok(Atom::Action {
                 action: action.eval,
-                subscript,
+                subscript: subscript.map(|subscript| subscript.eval),
                 enabled: enabled.map(|position| position as usize),
             })
         })(),
@@ -593,10 +610,13 @@ fn compile_atom(compiler: &mut Compiler<'_>, ir: &Ir, atom: &tla_ir::Atom) -> (A
             let steps = match (resolve(ir, atom.expression), actions) {
                 (_, EnabledActions::Unknown) => None,
                 (NodeKind::AngleAction { subscript, .. }, actions) => {
+                    // A subscript that reads TLC's diameter leaves ENABLED to its run, which
+                    // doesn't read it.
                     compile_subscript(compiler, *subscript, scope)
                         .ok()
+                        .filter(|subscript| !subscript.reads_diameter())
                         .map(|subscript| EnabledSteps {
-                            subscript,
+                            subscript: subscript.eval,
                             actions: match actions {
                                 EnabledActions::Some(positions) => {
                                     let length =
@@ -616,5 +636,9 @@ fn compile_atom(compiler: &mut Compiler<'_>, ir: &Ir, atom: &tla_ir::Atom) -> (A
             Ok(Atom::Enabled { run, steps })
         }
     };
-    (compiled.unwrap_or_else(Atom::Unknown), is_printing)
+    CompiledAtom {
+        atom: compiled.unwrap_or_else(Atom::Unknown),
+        is_printing,
+        reads_diameter,
+    }
 }

@@ -14,6 +14,7 @@ fn graph() -> Graph<'static> {
         edges: &EDGES,
         fingerprints: &FINGERPRINTS,
         reals: None,
+        diameters: None,
     }
 }
 
