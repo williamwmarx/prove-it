@@ -32,10 +32,11 @@ afterEach(() => {
 
 process.on("exit", () => rmSync(directory, { recursive: true, force: true }));
 
-// Checks Commit with the engine's lines collected, writing its IR to `dump` if given.
+// Checks Commit on the TypeScript engine with the engine's lines collected, writing its IR to `dump`
+// if given.
 const checkCommit = async (dump?: string) => {
   process.env.PROVE_IT_ENGINE = "debug";
-  delete process.env.PROVE_IT_ENGINE_BACKEND;
+  process.env.PROVE_IT_ENGINE_BACKEND = "ts";
   if (dump === undefined) delete process.env.PROVE_IT_IR_DUMP;
   else process.env.PROVE_IT_IR_DUMP = dump;
   const lines: string[] = [];

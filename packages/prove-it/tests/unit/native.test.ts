@@ -23,12 +23,21 @@ const getEngineLines = (runtime: string, cli: string, env: Record<string, string
 };
 
 describe("the native engine", () => {
-  it("is left alone by default", () => {
-    const lines = getEngineLines("bun", SOURCE_CLI, { PROVE_IT_ENGINE_BACKEND: undefined });
+  it("is left alone with ts", () => {
+    const lines = getEngineLines("bun", SOURCE_CLI, { PROVE_IT_ENGINE_BACKEND: "ts" });
     expect(lines).toEqual([expect.stringMatching(/^\[engine\] checked 251 states on 1 thread /)]);
   });
 
-  it.each(["rust", "auto"])(
+  it("leaves a search on more than one thread to the TypeScript engine by default", () => {
+    const lines = getEngineLines("bun", SOURCE_CLI, {
+      PROVE_IT_ENGINE_BACKEND: undefined,
+      PROVE_IT_WORKERS: "2",
+      PROVE_IT_ENGINE_ADDON: join(COMMIT, "missing.node"),
+    });
+    expect(lines.filter((line) => line.startsWith("[engine] native: "))).toEqual([]);
+  });
+
+  it.each([undefined, "rust", "auto"])(
     "leaves the model to the TypeScript engine with %s when it can't load the addon",
     (backend) => {
       const missing = join(COMMIT, "missing.node");

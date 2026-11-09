@@ -1,6 +1,8 @@
 # Publishes packages/prove-it to npm when a commit on main changes its version, then tags the
 # commit v<version>. A push that changes package.json but not the version publishes nothing. Run
-# it by hand for a first release or to retry one that failed.
+# it by hand for a first release or to retry one that failed. The native engine's Linux x64 platform
+# package goes first, and the main package lists it as an optionalDependency, added when it is
+# packed; other platforms get the TypeScript engine.
 #
 # The npm token is NPM_TOKEN in the 1Password Environment prove-it-release, whose ID is below.
 # ONEPASSWORD_PROVE_IT_RELEASE_TOKEN, a Depot CI secret scoped to this repository, main and this
@@ -81,9 +83,8 @@ jobs:
           bun run format:check
           bun run test
           test -z "$(git status --porcelain)"
-      # Packs the native engine's platform packages too, but publishes none of them: they need
-      # their npm packages set up first, and the main package doesn't list them yet
-      # (packages/prove-it/native/DESIGN.md, section 7.1).
+      # Builds the Linux x64 engine's platform package, then lists it in the main package's
+      # optionalDependencies, at its own version, as the main package is packed.
       - name: Pack
         id: pack
         if: steps.plan.outputs.publish == 'true'
@@ -91,13 +92,22 @@ jobs:
           set -euo pipefail
           PATH="$(scripts/ci/bootstrap.sh bun node rust):$PATH"
           cd packages/prove-it
+          bun scripts/platform-packages.ts build
+          platform=$(bun scripts/platform-packages.ts pack "$RUNNER_TEMP/platform-packages")
+          echo "platform=$platform" >> "$GITHUB_OUTPUT"
+          echo "Packed $(basename "$platform"), sha256 $(sha256sum "$platform" | cut -d' ' -f1)" | tee -a "$GITHUB_STEP_SUMMARY"
+          node -e '
+            const fs = require("fs");
+            const main = JSON.parse(fs.readFileSync("package.json", "utf8"));
+            main.optionalDependencies = Object.fromEntries(
+              ["linux-x64-gnu"].map((name) => [`${main.name}-${name}`, main.version]),
+            );
+            fs.writeFileSync("package.json", `${JSON.stringify(main, null, 2)}\n`);
+          '
           tarball=$(npm pack --silent --pack-destination "$RUNNER_TEMP")
+          git checkout -- package.json
           echo "tarball=$RUNNER_TEMP/$tarball" >> "$GITHUB_OUTPUT"
           echo "Packed $tarball, sha256 $(sha256sum "$RUNNER_TEMP/$tarball" | cut -d' ' -f1)" | tee -a "$GITHUB_STEP_SUMMARY"
-          bun scripts/platform-packages.ts build
-          for platform in $(bun scripts/platform-packages.ts pack "$RUNNER_TEMP/platform-packages"); do
-            echo "Packed $(basename "$platform") but didn't publish it, sha256 $(sha256sum "$platform" | cut -d' ' -f1)" | tee -a "$GITHUB_STEP_SUMMARY"
-          done
       # op run puts NPM_TOKEN in npm's environment alone; the npmrc names the variable, not the
       # value, and npm expands it.
       - name: Publish the packed tarball
@@ -105,6 +115,7 @@ jobs:
         env:
           OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.ONEPASSWORD_PROVE_IT_RELEASE_TOKEN }}
           TARBALL: ${{ steps.pack.outputs.tarball }}
+          PLATFORM: ${{ steps.pack.outputs.platform }}
         run: |
           set -euo pipefail
           [[ -n "$ONEPASSWORD_ENVIRONMENT_ID" ]] || { echo "set ONEPASSWORD_ENVIRONMENT_ID in this workflow" >&2; exit 1; }
@@ -113,10 +124,18 @@ jobs:
           npmrc="$RUNNER_TEMP/npmrc"
           # shellcheck disable=SC2016 # npm expands ${NPM_TOKEN} itself, so the shell must not.
           printf '//registry.npmjs.org/:_authToken=${NPM_TOKEN}\n' > "$npmrc"
-          NPM_CONFIG_USERCONFIG="$npmrc" op run --environment "$ONEPASSWORD_ENVIRONMENT_ID" -- \
-            npm publish "$TARBALL" --access public --ignore-scripts
+          # A retry skips a package an earlier attempt published.
+          for tarball in "$PLATFORM" "$TARBALL"; do
+            spec=$(tar -xOzf "$tarball" package/package.json | node -p 'const p = JSON.parse(require("fs").readFileSync(0, "utf8")); `${p.name}@${p.version}`')
+            if [[ "$(npm view "$spec" version 2>/dev/null)" != "" ]]; then
+              echo "$spec is already on npm" >> "$GITHUB_STEP_SUMMARY"
+              continue
+            fi
+            NPM_CONFIG_USERCONFIG="$npmrc" op run --environment "$ONEPASSWORD_ENVIRONMENT_ID" -- \
+              npm publish "$tarball" --access public --ignore-scripts
+          done
           rm -f "$npmrc"
-          echo "Published $PACKAGE@${{ steps.plan.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Published $PACKAGE@${{ steps.plan.outputs.version }} and its Linux x64 engine" >> "$GITHUB_STEP_SUMMARY"
       - name: Tag the release
         env:
           GH_TOKEN: ${{ github.token }}
