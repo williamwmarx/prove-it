@@ -16,14 +16,18 @@ use crate::instances::{
     AddDefinition, Instantiation, Instantiator, apply, identifier, let_expression, local_arguments,
     local_identifier, operator_definition, param, rename_locals, with_let_instances,
 };
+use crate::levels::{
+    InstanceCheck, LevelAnalyzer, LevelContext, ModuleLevelContext, check_instance, get_level_units,
+};
 use crate::lexer::tokenize;
 use crate::order::TlcOrder;
 use crate::ordered_map::OrderedMap;
 use crate::parser::{extract_module, parse_module_tokens};
 use crate::resolve::{
     ErrorList, GetKey, InstancedModule, KEY_SEPARATOR, MODULE_START, ModuleContext, ModuleReport,
-    ModuleSymbol, Result, SymbolKind, Symbols, Tables, get_arity, get_param_arities, is_before,
-    is_theorem_definition, resolve_module, resolve_substitutions,
+    ModuleSymbol, Result, SemanticUnit, SymbolKind, Symbols, Tables, collect_semantic_errors,
+    get_arity, get_param_arities, is_before, is_theorem_definition, resolve_module,
+    resolve_substitutions,
 };
 use crate::standard_builtins::{
     self, CORE_OPERATORS, STANDARD_DEPENDENCIES, StandardModule, USER_STANDARD_MODULES,
@@ -73,6 +77,9 @@ pub struct EnvironmentOptions<'a> {
     /// Links the modules without a model, as SANY does, so a declared constant needs no value.
     pub is_unconfigured: bool,
     pub version: TlcVersion,
+    /// Checks the levels of each module, as `createEnvironment` does for a spec SANY hasn't
+    /// accepted (`isSanyAccepted`).
+    pub is_level_checked: bool,
 }
 
 struct LinkedModule {
@@ -95,7 +102,11 @@ struct ModuleScope {
     nested: Rc<RefCell<Vec<Rc<Module>>>>,
     errors: ErrorList,
     warnings: ErrorList,
+    level_checks: LevelChecks,
 }
+
+/// The modules a top-level module links, each with the instances SANY checks with it.
+type LevelChecks = Rc<RefCell<Vec<(Rc<LinkedModule>, Vec<InstanceCheck>)>>>;
 
 /// `createSanyError`.
 fn sany_error(errors: Vec<SanyError>, is_fatal: bool, warnings: Vec<SanyError>) -> FrontError {
@@ -273,6 +284,12 @@ struct Linker<'a> {
     /// The definition each instance copy came from, and the instance parameters the copy adds.
     copy_sources: RefCell<OrderedMap<Name, (Name, usize)>>,
     tables: Rc<Tables>,
+    /// The instances linked so far whose substitutions SANY checks.
+    instance_checks: RefCell<Vec<InstanceCheck>>,
+    /// The first module linked of each name, which an instance check reads.
+    checked_modules: RefCell<FastMap<Name, Rc<LinkedModule>>>,
+    /// The qualified name, such as I!Foo, of each copy a named INSTANCE makes.
+    qualified_names: RefCell<FastMap<Name, Name>>,
 }
 
 fn get_standard_modules(version: TlcVersion) -> &'static [StandardModule] {
@@ -467,6 +484,7 @@ impl Linker<'_> {
         }
         let nested: Rc<RefCell<Vec<Rc<Module>>>> = Rc::default();
         let errors: ErrorList = Rc::default();
+        let level_checks: LevelChecks = Rc::default();
         self.linking.borrow_mut().push(parsed.name.clone());
         self.loading.borrow_mut().push(FastSet::default());
         let linked = self.link_module(
@@ -478,6 +496,7 @@ impl Linker<'_> {
                 nested: nested.clone(),
                 errors: errors.clone(),
                 warnings: self.warnings.clone(),
+                level_checks: level_checks.clone(),
             },
         );
         let closure = self.loading.borrow_mut().pop().unwrap_or_default();
@@ -508,7 +527,94 @@ impl Linker<'_> {
             }
             return Err(module_redefined_error(&duplicate));
         }
+        if self.options.is_level_checked {
+            for (module, checks) in level_checks.take() {
+                self.check_levels(&module, checks)?;
+            }
+        }
         Ok((linked, closure))
+    }
+
+    /// `checkModuleLevels`'s context of a linked module: its declarations, and its definitions by
+    /// the names it sees them by.
+    fn create_level_context(&self, linked: &Rc<LinkedModule>) -> LevelContext<'_> {
+        let get_key = {
+            let linked = linked.clone();
+            move |symbol: &str| -> Name {
+                linked
+                    .visible
+                    .get(symbol)
+                    .map_or_else(|| Rc::from(symbol), |visible| visible.key.clone())
+            }
+        };
+        let definition_key = get_key.clone();
+        LevelContext {
+            constants: linked
+                .constants
+                .iter()
+                .map(|constant| constant.name.clone())
+                .collect(),
+            variables: linked.variables.iter().cloned().collect(),
+            get_definition: Box::new(move |symbol| {
+                self.definitions
+                    .borrow()
+                    .get(&definition_key(symbol))
+                    .cloned()
+            }),
+            get_qualified_name: Box::new(move |symbol| {
+                self.qualified_names.borrow().get(&get_key(symbol)).cloned()
+            }),
+        }
+    }
+
+    /// What an instance check reads of the module an instance names.
+    fn create_module_level_context(&self, name: &Name) -> Result<ModuleLevelContext<'_>> {
+        let checked = self.checked_modules.borrow().get(name).cloned();
+        let linked = match checked {
+            Some(linked) => linked,
+            None => self.get_linked_module(name, name)?,
+        };
+        let mut seen: FastSet<usize> = FastSet::default();
+        let definitions = linked
+            .visible
+            .values()
+            .filter_map(|symbol| self.definitions.borrow().get(&symbol.key).cloned())
+            .filter(|definition| seen.insert(Rc::as_ptr(definition) as usize))
+            .collect();
+        Ok(ModuleLevelContext {
+            constants: linked.constants.clone(),
+            variables: linked.variables.clone(),
+            definitions,
+            assumptions: linked
+                .module
+                .assumptions
+                .iter()
+                .map(|assumption| assumption.expression.clone())
+                .collect(),
+            theorems: linked.module.theorems.clone(),
+            analyzer: LevelAnalyzer::new(self.create_level_context(&linked), &self.tables),
+        })
+    }
+
+    /// `checkModuleLevels`: SANY's level errors in a linked module and its instances.
+    fn check_levels(&self, linked: &Rc<LinkedModule>, checks: Vec<InstanceCheck>) -> Result<()> {
+        let analyzer = LevelAnalyzer::new(self.create_level_context(linked), &self.tables);
+        let instance_units = checks
+            .iter()
+            .map(|check| SemanticUnit {
+                location: check.location.position(),
+                check: Box::new(|_, _| {
+                    let instancee = self.create_module_level_context(&check.module)?;
+                    check_instance(check, &instancee, &analyzer)
+                }),
+            })
+            .collect();
+        let units = get_level_units(&linked.module, &analyzer, instance_units);
+        let errors = collect_semantic_errors(units, &self.warnings)?;
+        if errors.is_empty() {
+            return Ok(());
+        }
+        Err(sany_error(errors, false, self.warnings.borrow().clone()))
     }
 
     fn get_linked_module(&self, name: &Name, importer: &str) -> Result<Rc<LinkedModule>> {
@@ -560,6 +666,7 @@ impl Linker<'_> {
     }
 
     fn link_module(&self, parsed: &Rc<Module>, scope: ModuleScope) -> Result<Rc<LinkedModule>> {
+        let first_check = self.instance_checks.borrow().len();
         let mut visible: Symbols = CORE_OPERATORS
             .iter()
             .map(|(name, arity, _)| {
@@ -832,6 +939,7 @@ impl Linker<'_> {
                             nested: scope.nested.clone(),
                             errors: report.errors.clone(),
                             warnings: report.warnings.clone(),
+                            level_checks: scope.level_checks.clone(),
                         },
                     )?;
                     if let Some(redefinition) = redefinition {
@@ -931,6 +1039,17 @@ impl Linker<'_> {
             facts: linked_facts,
             extended,
         });
+        self.checked_modules
+            .borrow_mut()
+            .entry(linked.module.name.clone())
+            .or_insert_with(|| linked.clone());
+        // SANY checks the instances of a module with its definitions and theorems, so it reports
+        // their errors together.
+        let checks = self.instance_checks.borrow_mut().split_off(first_check);
+        scope
+            .level_checks
+            .borrow_mut()
+            .push((linked.clone(), checks));
         self.link_order.borrow_mut().push(linked.clone());
         Ok(linked)
     }
@@ -1143,6 +1262,13 @@ impl Linker<'_> {
             module,
             context,
         )?;
+        self.instance_checks.borrow_mut().push(InstanceCheck {
+            module: instance.module.clone(),
+            instancer: module.name.clone(),
+            lets: Vec::new(),
+            substitutions: substitutions.clone(),
+            location: instance.location.clone(),
+        });
         let has_declarations = !declarations.is_empty();
         let prefix = instance.params.len();
         let module_name = module.name.clone();
@@ -1185,20 +1311,28 @@ impl Linker<'_> {
                 Ok(key)
             }),
         );
-        self.get_instance_symbols(instance, &linked.exported, &declarations, &mut |key, _| {
-            if instance.name.is_none() {
-                instantiator.get_key(key)
-            } else {
-                instantiator.get_qualified_key(key)
-            }
-        })
+        self.get_instance_symbols(
+            instance,
+            &linked.exported,
+            &declarations,
+            &mut |key, name| {
+                if instance.name.is_none() {
+                    return instantiator.get_key(key);
+                }
+                let copy = instantiator.get_qualified_key(key)?;
+                self.qualified_names
+                    .borrow_mut()
+                    .insert(copy.clone(), name.clone());
+                Ok(copy)
+            },
+        )
     }
 
     /// `instantiateLocally`: the definitions an INSTANCE in a LET adds to the LET.
     fn instantiate_locally(
         &self,
         instance: &Rc<Instance>,
-        _lets: &[Rc<Definition>],
+        lets: &[Rc<Definition>],
         instancer: &Name,
         nested: Option<Rc<LinkedModule>>,
     ) -> Result<Vec<Rc<Definition>>> {
@@ -1244,6 +1378,16 @@ impl Linker<'_> {
                 .cloned()
                 .unwrap_or_else(|| identifier(declaration.name.clone(), location))
         };
+        self.instance_checks.borrow_mut().push(InstanceCheck {
+            module: instance.module.clone(),
+            instancer: instancer.clone(),
+            lets: lets.to_vec(),
+            substitutions: declarations
+                .iter()
+                .map(|declaration| (declaration.name.clone(), get_replacement(declaration)))
+                .collect(),
+            location: location.clone(),
+        });
         let instance_param_names: FastSet<Name> = instance
             .params
             .iter()
@@ -1585,6 +1729,9 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
         substituted_definitions: RefCell::default(),
         copy_sources: RefCell::default(),
         tables: Rc::default(),
+        instance_checks: RefCell::default(),
+        checked_modules: RefCell::default(),
+        qualified_names: RefCell::default(),
     };
     reject_module_literals(&root)?;
     let (linked_root, _) = linker.link_top_level(&root)?;

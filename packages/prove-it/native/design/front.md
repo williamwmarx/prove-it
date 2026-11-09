@@ -241,4 +241,21 @@ The last case is a conservative stand-in for SANY's linter. On the corpora it ho
 
 The `sany-text` gate (`front-differential.ts sany-text`) describes files as `name|origin` on both sides. It reports 1,716 of 2,357 matching and 636 not compared yet.
 
-The 5 that differ are SANY's level-check errors (LevelError, test212, test213, test215, test217). The level check isn't ported yet; it is (d2). The mutated variants all come back `NotYet`, because their files are named apart from their modules.
+The mutated variants all come back `NotYet`, because their files are named apart from their modules.
+
+## (d2) part 1 as built: SANY's level checks (`levels.rs`)
+
+`levels.rs` ports `src/levels.ts` and `src/substitution-levels.ts`, which compute on the AST the levels, weights and Leibniz flags SANY does, and report its level errors. The linker runs them when `EnvironmentOptions.is_level_checked` is set, as `createEnvironment` does without `isSanyAccepted`. That covers each module's definitions, assumptions and theorems, and the substitutions of every INSTANCE, in the order SANY reports them.
+
+`get_sany_text` links with the checks, so a spec with a level error comes back `NotYet` instead of printing a clean parse. The `levels` gate compares the linker's result with TypeScript's `createEnvironment` with level checks on: 2,332 of 2,357 match, and 3,932 of 3,957 with `--mutate 400`, with 0 differing. The 25 left are the ones `resolve` doesn't compare yet.
+
+The corpora exercise these errors, with SANY's wording:
+
+- actions in a temporal formula;
+- `[]` or `<>` followed by a raw action;
+- action-level bounds;
+- non-constant steps of a temporal proof;
+- arguments over an operator's levels;
+- the levels and Leibniz checks of instance substitutions.
+
+With the checks, `sany-text` reports 1,716 of 2,357 matching and 0 differing.
