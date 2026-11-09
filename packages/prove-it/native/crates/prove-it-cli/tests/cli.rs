@@ -741,3 +741,17 @@ fn rebuilds_a_trace_through_a_recursive_function_tlc_keeps_lazy() {
     );
     std::fs::remove_dir_all(directory).expect("removed");
 }
+
+const PULL_RAFT_IR: &[u8] =
+    include_bytes!("../../../../tests/conformance/ir/raft/specifications/pull-raft/PullRaft.ir");
+
+#[test]
+fn rebuilds_a_trace_under_symmetry_through_sets_tlc_streams_in_order() {
+    let (output, directory) = run_golden("pull-raft", PULL_RAFT_IR, "PullRaft", "", &[]);
+    let text = stdout(&output);
+    // Under SYMMETRY, TLC takes the first of the successors in a state's orbit, in the order it
+    // streams \E m \in DOMAIN messages, a variable's domain it normalized.
+    assert_eq!(output.status.code(), Some(11), "{text}");
+    assert!(text.contains(include_str!("pull-raft.txt")), "{text}");
+    std::fs::remove_dir_all(directory).expect("removed");
+}

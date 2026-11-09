@@ -1,0 +1,1092 @@
+Error: Deadlock reached.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ leader = (n1 :> Nil @@ n2 :> Nil @@ n3 :> Nil)
+/\ messages = <<>>
+/\ matchIndex = ( n1 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) @@
+  n2 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) @@
+  n3 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) )
+/\ log = (n1 :> <<>> @@ n2 :> <<>> @@ n3 :> <<>>)
+/\ state = (n1 :> Follower @@ n2 :> Follower @@ n3 :> Follower)
+/\ electionCtr = 0
+/\ commitIndex = (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0)
+/\ restartCtr = 0
+/\ currentTerm = (n1 :> 1 @@ n2 :> 1 @@ n3 :> 1)
+/\ votesGranted = (n1 :> {} @@ n2 :> {} @@ n3 :> {})
+/\ acked = (v1 :> Nil @@ v2 :> Nil)
+
+State 2: <RequestVote(n1) line 284, col 5 to line 298, col 59 of module PullRaft>
+/\ leader = (n1 :> n1 @@ n2 :> Nil @@ n3 :> Nil)
+/\ messages = ( [ mtype |-> RequestVoteRequest,
+    mterm |-> 2,
+    mdest |-> n2,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n1 ] :>
+      1 @@
+  [ mtype |-> RequestVoteRequest,
+    mterm |-> 2,
+    mdest |-> n3,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n1 ] :>
+      1 )
+/\ matchIndex = ( n1 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) @@
+  n2 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) @@
+  n3 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) )
+/\ log = (n1 :> <<>> @@ n2 :> <<>> @@ n3 :> <<>>)
+/\ state = (n1 :> Candidate @@ n2 :> Follower @@ n3 :> Follower)
+/\ electionCtr = 1
+/\ commitIndex = (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0)
+/\ restartCtr = 0
+/\ currentTerm = (n1 :> 2 @@ n2 :> 1 @@ n3 :> 1)
+/\ votesGranted = (n1 :> {n1} @@ n2 :> {} @@ n3 :> {})
+/\ acked = (v1 :> Nil @@ v2 :> Nil)
+
+State 3: <UpdateTerm line 270, col 5 to line 276, col 78 of module PullRaft>
+/\ leader = (n1 :> n1 @@ n2 :> Nil @@ n3 :> Nil)
+/\ messages = ( [ mtype |-> RequestVoteRequest,
+    mterm |-> 2,
+    mdest |-> n2,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n1 ] :>
+      1 @@
+  [ mtype |-> RequestVoteRequest,
+    mterm |-> 2,
+    mdest |-> n3,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n1 ] :>
+      1 )
+/\ matchIndex = ( n1 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) @@
+  n2 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) @@
+  n3 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) )
+/\ log = (n1 :> <<>> @@ n2 :> <<>> @@ n3 :> <<>>)
+/\ state = (n1 :> Candidate @@ n2 :> Follower @@ n3 :> Follower)
+/\ electionCtr = 1
+/\ commitIndex = (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0)
+/\ restartCtr = 0
+/\ currentTerm = (n1 :> 2 @@ n2 :> 2 @@ n3 :> 1)
+/\ votesGranted = (n1 :> {n1} @@ n2 :> {} @@ n3 :> {})
+/\ acked = (v1 :> Nil @@ v2 :> Nil)
+
+State 4: <UpdateTerm line 270, col 5 to line 276, col 78 of module PullRaft>
+/\ leader = (n1 :> n1 @@ n2 :> Nil @@ n3 :> Nil)
+/\ messages = ( [ mtype |-> RequestVoteRequest,
+    mterm |-> 2,
+    mdest |-> n2,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n1 ] :>
+      1 @@
+  [ mtype |-> RequestVoteRequest,
+    mterm |-> 2,
+    mdest |-> n3,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n1 ] :>
+      1 )
+/\ matchIndex = ( n1 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) @@
+  n2 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) @@
+  n3 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) )
+/\ log = (n1 :> <<>> @@ n2 :> <<>> @@ n3 :> <<>>)
+/\ state = (n1 :> Candidate @@ n2 :> Follower @@ n3 :> Follower)
+/\ electionCtr = 1
+/\ commitIndex = (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0)
+/\ restartCtr = 0
+/\ currentTerm = (n1 :> 2 @@ n2 :> 2 @@ n3 :> 2)
+/\ votesGranted = (n1 :> {n1} @@ n2 :> {} @@ n3 :> {})
+/\ acked = (v1 :> Nil @@ v2 :> Nil)
+
+State 5: <HandleRequestVoteRequest line 307, col 5 to line 330, col 48 of module PullRaft>
+/\ leader = (n1 :> n1 @@ n2 :> n1 @@ n3 :> Nil)
+/\ messages = ( [ mtype |-> RequestVoteResponse,
+    mterm |-> 2,
+    mdest |-> n1,
+    msource |-> n2,
+    mvoteGranted |-> TRUE ] :>
+      1 @@
+  [ mtype |-> RequestVoteRequest,
+    mterm |-> 2,
+    mdest |-> n2,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n1 ] :>
+      0 @@
+  [ mtype |-> RequestVoteRequest,
+    mterm |-> 2,
+    mdest |-> n3,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n1 ] :>
+      1 )
+/\ matchIndex = ( n1 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) @@
+  n2 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) @@
+  n3 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) )
+/\ log = (n1 :> <<>> @@ n2 :> <<>> @@ n3 :> <<>>)
+/\ state = (n1 :> Candidate @@ n2 :> Follower @@ n3 :> Follower)
+/\ electionCtr = 1
+/\ commitIndex = (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0)
+/\ restartCtr = 0
+/\ currentTerm = (n1 :> 2 @@ n2 :> 2 @@ n3 :> 2)
+/\ votesGranted = (n1 :> {n1} @@ n2 :> {} @@ n3 :> {})
+/\ acked = (v1 :> Nil @@ v2 :> Nil)
+
+State 6: <RequestVote(n2) line 284, col 5 to line 298, col 59 of module PullRaft>
+/\ leader = (n1 :> n1 @@ n2 :> n2 @@ n3 :> Nil)
+/\ messages = ( [ mtype |-> RequestVoteResponse,
+    mterm |-> 2,
+    mdest |-> n1,
+    msource |-> n2,
+    mvoteGranted |-> TRUE ] :>
+      1 @@
+  [ mtype |-> RequestVoteRequest,
+    mterm |-> 2,
+    mdest |-> n2,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n1 ] :>
+      0 @@
+  [ mtype |-> RequestVoteRequest,
+    mterm |-> 2,
+    mdest |-> n3,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n1 ] :>
+      1 @@
+  [ mtype |-> RequestVoteRequest,
+    mterm |-> 3,
+    mdest |-> n1,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n2 ] :>
+      1 @@
+  [ mtype |-> RequestVoteRequest,
+    mterm |-> 3,
+    mdest |-> n3,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n2 ] :>
+      1 )
+/\ matchIndex = ( n1 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) @@
+  n2 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) @@
+  n3 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) )
+/\ log = (n1 :> <<>> @@ n2 :> <<>> @@ n3 :> <<>>)
+/\ state = (n1 :> Candidate @@ n2 :> Candidate @@ n3 :> Follower)
+/\ electionCtr = 2
+/\ commitIndex = (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0)
+/\ restartCtr = 0
+/\ currentTerm = (n1 :> 2 @@ n2 :> 3 @@ n3 :> 2)
+/\ votesGranted = (n1 :> {n1} @@ n2 :> {n2} @@ n3 :> {})
+/\ acked = (v1 :> Nil @@ v2 :> Nil)
+
+State 7: <HandleRequestVoteRequest line 307, col 5 to line 330, col 48 of module PullRaft>
+/\ leader = (n1 :> n1 @@ n2 :> n2 @@ n3 :> n1)
+/\ messages = ( [ mtype |-> RequestVoteResponse,
+    mterm |-> 2,
+    mdest |-> n1,
+    msource |-> n2,
+    mvoteGranted |-> TRUE ] :>
+      1 @@
+  [ mtype |-> RequestVoteResponse,
+    mterm |-> 2,
+    mdest |-> n1,
+    msource |-> n3,
+    mvoteGranted |-> TRUE ] :>
+      1 @@
+  [ mtype |-> RequestVoteRequest,
+    mterm |-> 2,
+    mdest |-> n2,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n1 ] :>
+      0 @@
+  [ mtype |-> RequestVoteRequest,
+    mterm |-> 2,
+    mdest |-> n3,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n1 ] :>
+      0 @@
+  [ mtype |-> RequestVoteRequest,
+    mterm |-> 3,
+    mdest |-> n1,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n2 ] :>
+      1 @@
+  [ mtype |-> RequestVoteRequest,
+    mterm |-> 3,
+    mdest |-> n3,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n2 ] :>
+      1 )
+/\ matchIndex = ( n1 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) @@
+  n2 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) @@
+  n3 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) )
+/\ log = (n1 :> <<>> @@ n2 :> <<>> @@ n3 :> <<>>)
+/\ state = (n1 :> Candidate @@ n2 :> Candidate @@ n3 :> Follower)
+/\ electionCtr = 2
+/\ commitIndex = (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0)
+/\ restartCtr = 0
+/\ currentTerm = (n1 :> 2 @@ n2 :> 3 @@ n3 :> 2)
+/\ votesGranted = (n1 :> {n1} @@ n2 :> {n2} @@ n3 :> {})
+/\ acked = (v1 :> Nil @@ v2 :> Nil)
+
+State 8: <HandleRequestVoteResponse line 336, col 5 to line 350, col 38 of module PullRaft>
+/\ leader = (n1 :> n1 @@ n2 :> n2 @@ n3 :> n1)
+/\ messages = ( [ mtype |-> RequestVoteResponse,
+    mterm |-> 2,
+    mdest |-> n1,
+    msource |-> n2,
+    mvoteGranted |-> TRUE ] :>
+      0 @@
+  [ mtype |-> RequestVoteResponse,
+    mterm |-> 2,
+    mdest |-> n1,
+    msource |-> n3,
+    mvoteGranted |-> TRUE ] :>
+      1 @@
+  [ mtype |-> RequestVoteRequest,
+    mterm |-> 2,
+    mdest |-> n2,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n1 ] :>
+      0 @@
+  [ mtype |-> RequestVoteRequest,
+    mterm |-> 2,
+    mdest |-> n3,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n1 ] :>
+      0 @@
+  [ mtype |-> RequestVoteRequest,
+    mterm |-> 3,
+    mdest |-> n1,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n2 ] :>
+      1 @@
+  [ mtype |-> RequestVoteRequest,
+    mterm |-> 3,
+    mdest |-> n3,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n2 ] :>
+      1 )
+/\ matchIndex = ( n1 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) @@
+  n2 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) @@
+  n3 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) )
+/\ log = (n1 :> <<>> @@ n2 :> <<>> @@ n3 :> <<>>)
+/\ state = (n1 :> Candidate @@ n2 :> Candidate @@ n3 :> Follower)
+/\ electionCtr = 2
+/\ commitIndex = (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0)
+/\ restartCtr = 0
+/\ currentTerm = (n1 :> 2 @@ n2 :> 3 @@ n3 :> 2)
+/\ votesGranted = (n1 :> {n1, n2} @@ n2 :> {n2} @@ n3 :> {})
+/\ acked = (v1 :> Nil @@ v2 :> Nil)
+
+State 9: <BecomeLeader(n1) line 355, col 5 to line 366, col 52 of module PullRaft>
+/\ leader = (n1 :> n1 @@ n2 :> n2 @@ n3 :> n1)
+/\ messages = ( [mtype |-> LeaderNotifyRequest, mterm |-> 2, mdest |-> n3, msource |-> n1] :>
+      1 @@
+  [ mtype |-> RequestVoteResponse,
+    mterm |-> 2,
+    mdest |-> n1,
+    msource |-> n2,
+    mvoteGranted |-> TRUE ] :>
+      0 @@
+  [ mtype |-> RequestVoteResponse,
+    mterm |-> 2,
+    mdest |-> n1,
+    msource |-> n3,
+    mvoteGranted |-> TRUE ] :>
+      1 @@
+  [ mtype |-> RequestVoteRequest,
+    mterm |-> 2,
+    mdest |-> n2,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n1 ] :>
+      0 @@
+  [ mtype |-> RequestVoteRequest,
+    mterm |-> 2,
+    mdest |-> n3,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n1 ] :>
+      0 @@
+  [ mtype |-> RequestVoteRequest,
+    mterm |-> 3,
+    mdest |-> n1,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n2 ] :>
+      1 @@
+  [ mtype |-> RequestVoteRequest,
+    mterm |-> 3,
+    mdest |-> n3,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n2 ] :>
+      1 )
+/\ matchIndex = ( n1 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) @@
+  n2 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) @@
+  n3 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) )
+/\ log = (n1 :> <<>> @@ n2 :> <<>> @@ n3 :> <<>>)
+/\ state = (n1 :> Leader @@ n2 :> Candidate @@ n3 :> Follower)
+/\ electionCtr = 2
+/\ commitIndex = (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0)
+/\ restartCtr = 0
+/\ currentTerm = (n1 :> 2 @@ n2 :> 3 @@ n3 :> 2)
+/\ votesGranted = (n1 :> {n1, n2} @@ n2 :> {n2} @@ n3 :> {})
+/\ acked = (v1 :> Nil @@ v2 :> Nil)
+
+State 10: <ClientRequest(n1,v1) line 371, col 5 to line 379, col 69 of module PullRaft>
+/\ leader = (n1 :> n1 @@ n2 :> n2 @@ n3 :> n1)
+/\ messages = ( [mtype |-> LeaderNotifyRequest, mterm |-> 2, mdest |-> n3, msource |-> n1] :>
+      1 @@
+  [ mtype |-> RequestVoteResponse,
+    mterm |-> 2,
+    mdest |-> n1,
+    msource |-> n2,
+    mvoteGranted |-> TRUE ] :>
+      0 @@
+  [ mtype |-> RequestVoteResponse,
+    mterm |-> 2,
+    mdest |-> n1,
+    msource |-> n3,
+    mvoteGranted |-> TRUE ] :>
+      1 @@
+  [ mtype |-> RequestVoteRequest,
+    mterm |-> 2,
+    mdest |-> n2,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n1 ] :>
+      0 @@
+  [ mtype |-> RequestVoteRequest,
+    mterm |-> 2,
+    mdest |-> n3,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n1 ] :>
+      0 @@
+  [ mtype |-> RequestVoteRequest,
+    mterm |-> 3,
+    mdest |-> n1,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n2 ] :>
+      1 @@
+  [ mtype |-> RequestVoteRequest,
+    mterm |-> 3,
+    mdest |-> n3,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n2 ] :>
+      1 )
+/\ matchIndex = ( n1 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) @@
+  n2 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) @@
+  n3 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) )
+/\ log = (n1 :> <<[term |-> 2, value |-> v1]>> @@ n2 :> <<>> @@ n3 :> <<>>)
+/\ state = (n1 :> Leader @@ n2 :> Candidate @@ n3 :> Follower)
+/\ electionCtr = 2
+/\ commitIndex = (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0)
+/\ restartCtr = 0
+/\ currentTerm = (n1 :> 2 @@ n2 :> 3 @@ n3 :> 2)
+/\ votesGranted = (n1 :> {n1, n2} @@ n2 :> {n2} @@ n3 :> {})
+/\ acked = (v1 :> FALSE @@ v2 :> Nil)
+
+State 11: <SendPullEntriesRequest(n3,n1) line 397, col 5 to line 411, col 76 of module PullRaft>
+/\ leader = (n1 :> n1 @@ n2 :> n2 @@ n3 :> n1)
+/\ messages = ( [mtype |-> LeaderNotifyRequest, mterm |-> 2, mdest |-> n3, msource |-> n1] :>
+      1 @@
+  [ mtype |-> RequestVoteResponse,
+    mterm |-> 2,
+    mdest |-> n1,
+    msource |-> n2,
+    mvoteGranted |-> TRUE ] :>
+      0 @@
+  [ mtype |-> RequestVoteResponse,
+    mterm |-> 2,
+    mdest |-> n1,
+    msource |-> n3,
+    mvoteGranted |-> TRUE ] :>
+      1 @@
+  [ mtype |-> RequestVoteRequest,
+    mterm |-> 2,
+    mdest |-> n2,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n1 ] :>
+      0 @@
+  [ mtype |-> RequestVoteRequest,
+    mterm |-> 2,
+    mdest |-> n3,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n1 ] :>
+      0 @@
+  [ mtype |-> RequestVoteRequest,
+    mterm |-> 3,
+    mdest |-> n1,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n2 ] :>
+      1 @@
+  [ mtype |-> RequestVoteRequest,
+    mterm |-> 3,
+    mdest |-> n3,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n2 ] :>
+      1 @@
+  [ mtype |-> PullEntriesRequest,
+    mterm |-> 2,
+    mdest |-> n1,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n3 ] :>
+      1 )
+/\ matchIndex = ( n1 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) @@
+  n2 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) @@
+  n3 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) )
+/\ log = (n1 :> <<[term |-> 2, value |-> v1]>> @@ n2 :> <<>> @@ n3 :> <<>>)
+/\ state = (n1 :> Leader @@ n2 :> Candidate @@ n3 :> Follower)
+/\ electionCtr = 2
+/\ commitIndex = (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0)
+/\ restartCtr = 0
+/\ currentTerm = (n1 :> 2 @@ n2 :> 3 @@ n3 :> 2)
+/\ votesGranted = (n1 :> {n1, n2} @@ n2 :> {n2} @@ n3 :> {})
+/\ acked = (v1 :> FALSE @@ v2 :> Nil)
+
+State 12: <AcceptPullEntriesRequest line 461, col 5 to line 488, col 80 of module PullRaft>
+/\ leader = (n1 :> n1 @@ n2 :> n2 @@ n3 :> n1)
+/\ messages = ( [mtype |-> LeaderNotifyRequest, mterm |-> 2, mdest |-> n3, msource |-> n1] :>
+      1 @@
+  [ mtype |-> RequestVoteResponse,
+    mterm |-> 2,
+    mdest |-> n1,
+    msource |-> n2,
+    mvoteGranted |-> TRUE ] :>
+      0 @@
+  [ mtype |-> RequestVoteResponse,
+    mterm |-> 2,
+    mdest |-> n1,
+    msource |-> n3,
+    mvoteGranted |-> TRUE ] :>
+      1 @@
+  [ mtype |-> RequestVoteRequest,
+    mterm |-> 2,
+    mdest |-> n2,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n1 ] :>
+      0 @@
+  [ mtype |-> RequestVoteRequest,
+    mterm |-> 2,
+    mdest |-> n3,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n1 ] :>
+      0 @@
+  [ mtype |-> RequestVoteRequest,
+    mterm |-> 3,
+    mdest |-> n1,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n2 ] :>
+      1 @@
+  [ mtype |-> RequestVoteRequest,
+    mterm |-> 3,
+    mdest |-> n3,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n2 ] :>
+      1 @@
+  [ mtype |-> PullEntriesRequest,
+    mterm |-> 2,
+    mdest |-> n1,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n3 ] :>
+      0 @@
+  [ mtype |-> PullEntriesResponse,
+    mterm |-> 2,
+    mdest |-> n3,
+    msource |-> n1,
+    msuccess |-> TRUE,
+    mentries |-> <<[term |-> 2, value |-> v1]>>,
+    mcommitIndex |-> 0 ] :>
+      1 )
+/\ matchIndex = ( n1 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) @@
+  n2 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) @@
+  n3 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) )
+/\ log = (n1 :> <<[term |-> 2, value |-> v1]>> @@ n2 :> <<>> @@ n3 :> <<>>)
+/\ state = (n1 :> Leader @@ n2 :> Candidate @@ n3 :> Follower)
+/\ electionCtr = 2
+/\ commitIndex = (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0)
+/\ restartCtr = 0
+/\ currentTerm = (n1 :> 2 @@ n2 :> 3 @@ n3 :> 2)
+/\ votesGranted = (n1 :> {n1, n2} @@ n2 :> {n2} @@ n3 :> {})
+/\ acked = (v1 :> FALSE @@ v2 :> Nil)
+
+State 13: <UpdateTerm line 270, col 5 to line 276, col 78 of module PullRaft>
+/\ leader = (n1 :> Nil @@ n2 :> n2 @@ n3 :> n1)
+/\ messages = ( [mtype |-> LeaderNotifyRequest, mterm |-> 2, mdest |-> n3, msource |-> n1] :>
+      1 @@
+  [ mtype |-> RequestVoteResponse,
+    mterm |-> 2,
+    mdest |-> n1,
+    msource |-> n2,
+    mvoteGranted |-> TRUE ] :>
+      0 @@
+  [ mtype |-> RequestVoteResponse,
+    mterm |-> 2,
+    mdest |-> n1,
+    msource |-> n3,
+    mvoteGranted |-> TRUE ] :>
+      1 @@
+  [ mtype |-> RequestVoteRequest,
+    mterm |-> 2,
+    mdest |-> n2,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n1 ] :>
+      0 @@
+  [ mtype |-> RequestVoteRequest,
+    mterm |-> 2,
+    mdest |-> n3,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n1 ] :>
+      0 @@
+  [ mtype |-> RequestVoteRequest,
+    mterm |-> 3,
+    mdest |-> n1,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n2 ] :>
+      1 @@
+  [ mtype |-> RequestVoteRequest,
+    mterm |-> 3,
+    mdest |-> n3,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n2 ] :>
+      1 @@
+  [ mtype |-> PullEntriesRequest,
+    mterm |-> 2,
+    mdest |-> n1,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n3 ] :>
+      0 @@
+  [ mtype |-> PullEntriesResponse,
+    mterm |-> 2,
+    mdest |-> n3,
+    msource |-> n1,
+    msuccess |-> TRUE,
+    mentries |-> <<[term |-> 2, value |-> v1]>>,
+    mcommitIndex |-> 0 ] :>
+      1 )
+/\ matchIndex = ( n1 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) @@
+  n2 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) @@
+  n3 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) )
+/\ log = (n1 :> <<[term |-> 2, value |-> v1]>> @@ n2 :> <<>> @@ n3 :> <<>>)
+/\ state = (n1 :> Follower @@ n2 :> Candidate @@ n3 :> Follower)
+/\ electionCtr = 2
+/\ commitIndex = (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0)
+/\ restartCtr = 0
+/\ currentTerm = (n1 :> 3 @@ n2 :> 3 @@ n3 :> 2)
+/\ votesGranted = (n1 :> {n1, n2} @@ n2 :> {n2} @@ n3 :> {})
+/\ acked = (v1 :> FALSE @@ v2 :> Nil)
+
+State 14: <HandleRequestVoteRequest line 307, col 5 to line 330, col 48 of module PullRaft>
+/\ leader = (n1 :> Nil @@ n2 :> n2 @@ n3 :> n1)
+/\ messages = ( [mtype |-> LeaderNotifyRequest, mterm |-> 2, mdest |-> n3, msource |-> n1] :>
+      1 @@
+  [ mtype |-> RequestVoteResponse,
+    mterm |-> 2,
+    mdest |-> n1,
+    msource |-> n2,
+    mvoteGranted |-> TRUE ] :>
+      0 @@
+  [ mtype |-> RequestVoteResponse,
+    mterm |-> 2,
+    mdest |-> n1,
+    msource |-> n3,
+    mvoteGranted |-> TRUE ] :>
+      1 @@
+  [ mtype |-> RequestVoteResponse,
+    mterm |-> 3,
+    mdest |-> n2,
+    msource |-> n1,
+    mvoteGranted |-> FALSE ] :>
+      1 @@
+  [ mtype |-> RequestVoteRequest,
+    mterm |-> 2,
+    mdest |-> n2,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n1 ] :>
+      0 @@
+  [ mtype |-> RequestVoteRequest,
+    mterm |-> 2,
+    mdest |-> n3,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n1 ] :>
+      0 @@
+  [ mtype |-> RequestVoteRequest,
+    mterm |-> 3,
+    mdest |-> n1,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n2 ] :>
+      0 @@
+  [ mtype |-> RequestVoteRequest,
+    mterm |-> 3,
+    mdest |-> n3,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n2 ] :>
+      1 @@
+  [ mtype |-> PullEntriesRequest,
+    mterm |-> 2,
+    mdest |-> n1,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n3 ] :>
+      0 @@
+  [ mtype |-> PullEntriesResponse,
+    mterm |-> 2,
+    mdest |-> n3,
+    msource |-> n1,
+    msuccess |-> TRUE,
+    mentries |-> <<[term |-> 2, value |-> v1]>>,
+    mcommitIndex |-> 0 ] :>
+      1 )
+/\ matchIndex = ( n1 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) @@
+  n2 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) @@
+  n3 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) )
+/\ log = (n1 :> <<[term |-> 2, value |-> v1]>> @@ n2 :> <<>> @@ n3 :> <<>>)
+/\ state = (n1 :> Follower @@ n2 :> Candidate @@ n3 :> Follower)
+/\ electionCtr = 2
+/\ commitIndex = (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0)
+/\ restartCtr = 0
+/\ currentTerm = (n1 :> 3 @@ n2 :> 3 @@ n3 :> 2)
+/\ votesGranted = (n1 :> {n1, n2} @@ n2 :> {n2} @@ n3 :> {})
+/\ acked = (v1 :> FALSE @@ v2 :> Nil)
+
+State 15: <HandleRequestVoteResponse line 336, col 5 to line 350, col 38 of module PullRaft>
+/\ leader = (n1 :> Nil @@ n2 :> n2 @@ n3 :> n1)
+/\ messages = ( [mtype |-> LeaderNotifyRequest, mterm |-> 2, mdest |-> n3, msource |-> n1] :>
+      1 @@
+  [ mtype |-> RequestVoteResponse,
+    mterm |-> 2,
+    mdest |-> n1,
+    msource |-> n2,
+    mvoteGranted |-> TRUE ] :>
+      0 @@
+  [ mtype |-> RequestVoteResponse,
+    mterm |-> 2,
+    mdest |-> n1,
+    msource |-> n3,
+    mvoteGranted |-> TRUE ] :>
+      1 @@
+  [ mtype |-> RequestVoteResponse,
+    mterm |-> 3,
+    mdest |-> n2,
+    msource |-> n1,
+    mvoteGranted |-> FALSE ] :>
+      0 @@
+  [ mtype |-> RequestVoteRequest,
+    mterm |-> 2,
+    mdest |-> n2,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n1 ] :>
+      0 @@
+  [ mtype |-> RequestVoteRequest,
+    mterm |-> 2,
+    mdest |-> n3,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n1 ] :>
+      0 @@
+  [ mtype |-> RequestVoteRequest,
+    mterm |-> 3,
+    mdest |-> n1,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n2 ] :>
+      0 @@
+  [ mtype |-> RequestVoteRequest,
+    mterm |-> 3,
+    mdest |-> n3,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n2 ] :>
+      1 @@
+  [ mtype |-> PullEntriesRequest,
+    mterm |-> 2,
+    mdest |-> n1,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n3 ] :>
+      0 @@
+  [ mtype |-> PullEntriesResponse,
+    mterm |-> 2,
+    mdest |-> n3,
+    msource |-> n1,
+    msuccess |-> TRUE,
+    mentries |-> <<[term |-> 2, value |-> v1]>>,
+    mcommitIndex |-> 0 ] :>
+      1 )
+/\ matchIndex = ( n1 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) @@
+  n2 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) @@
+  n3 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) )
+/\ log = (n1 :> <<[term |-> 2, value |-> v1]>> @@ n2 :> <<>> @@ n3 :> <<>>)
+/\ state = (n1 :> Follower @@ n2 :> Candidate @@ n3 :> Follower)
+/\ electionCtr = 2
+/\ commitIndex = (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0)
+/\ restartCtr = 0
+/\ currentTerm = (n1 :> 3 @@ n2 :> 3 @@ n3 :> 2)
+/\ votesGranted = (n1 :> {n1, n2} @@ n2 :> {n2} @@ n3 :> {})
+/\ acked = (v1 :> FALSE @@ v2 :> Nil)
+
+State 16: <HandleSuccessPullEntriesResponse line 494, col 5 to line 503, col 77 of module PullRaft>
+/\ leader = (n1 :> Nil @@ n2 :> n2 @@ n3 :> n1)
+/\ messages = ( [mtype |-> LeaderNotifyRequest, mterm |-> 2, mdest |-> n3, msource |-> n1] :>
+      1 @@
+  [ mtype |-> RequestVoteResponse,
+    mterm |-> 2,
+    mdest |-> n1,
+    msource |-> n2,
+    mvoteGranted |-> TRUE ] :>
+      0 @@
+  [ mtype |-> RequestVoteResponse,
+    mterm |-> 2,
+    mdest |-> n1,
+    msource |-> n3,
+    mvoteGranted |-> TRUE ] :>
+      1 @@
+  [ mtype |-> RequestVoteResponse,
+    mterm |-> 3,
+    mdest |-> n2,
+    msource |-> n1,
+    mvoteGranted |-> FALSE ] :>
+      0 @@
+  [ mtype |-> RequestVoteRequest,
+    mterm |-> 2,
+    mdest |-> n2,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n1 ] :>
+      0 @@
+  [ mtype |-> RequestVoteRequest,
+    mterm |-> 2,
+    mdest |-> n3,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n1 ] :>
+      0 @@
+  [ mtype |-> RequestVoteRequest,
+    mterm |-> 3,
+    mdest |-> n1,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n2 ] :>
+      0 @@
+  [ mtype |-> RequestVoteRequest,
+    mterm |-> 3,
+    mdest |-> n3,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n2 ] :>
+      1 @@
+  [ mtype |-> PullEntriesRequest,
+    mterm |-> 2,
+    mdest |-> n1,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n3 ] :>
+      0 @@
+  [ mtype |-> PullEntriesResponse,
+    mterm |-> 2,
+    mdest |-> n3,
+    msource |-> n1,
+    msuccess |-> TRUE,
+    mentries |-> <<[term |-> 2, value |-> v1]>>,
+    mcommitIndex |-> 0 ] :>
+      0 )
+/\ matchIndex = ( n1 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) @@
+  n2 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) @@
+  n3 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) )
+/\ log = ( n1 :> <<[term |-> 2, value |-> v1]>> @@
+  n2 :> <<>> @@
+  n3 :> <<[term |-> 2, value |-> v1]>> )
+/\ state = (n1 :> Follower @@ n2 :> Candidate @@ n3 :> Follower)
+/\ electionCtr = 2
+/\ commitIndex = (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0)
+/\ restartCtr = 0
+/\ currentTerm = (n1 :> 3 @@ n2 :> 3 @@ n3 :> 2)
+/\ votesGranted = (n1 :> {n1, n2} @@ n2 :> {n2} @@ n3 :> {})
+/\ acked = (v1 :> FALSE @@ v2 :> Nil)
+
+State 17: <UpdateTerm line 270, col 5 to line 276, col 78 of module PullRaft>
+/\ leader = (n1 :> Nil @@ n2 :> n2 @@ n3 :> Nil)
+/\ messages = ( [mtype |-> LeaderNotifyRequest, mterm |-> 2, mdest |-> n3, msource |-> n1] :>
+      1 @@
+  [ mtype |-> RequestVoteResponse,
+    mterm |-> 2,
+    mdest |-> n1,
+    msource |-> n2,
+    mvoteGranted |-> TRUE ] :>
+      0 @@
+  [ mtype |-> RequestVoteResponse,
+    mterm |-> 2,
+    mdest |-> n1,
+    msource |-> n3,
+    mvoteGranted |-> TRUE ] :>
+      1 @@
+  [ mtype |-> RequestVoteResponse,
+    mterm |-> 3,
+    mdest |-> n2,
+    msource |-> n1,
+    mvoteGranted |-> FALSE ] :>
+      0 @@
+  [ mtype |-> RequestVoteRequest,
+    mterm |-> 2,
+    mdest |-> n2,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n1 ] :>
+      0 @@
+  [ mtype |-> RequestVoteRequest,
+    mterm |-> 2,
+    mdest |-> n3,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n1 ] :>
+      0 @@
+  [ mtype |-> RequestVoteRequest,
+    mterm |-> 3,
+    mdest |-> n1,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n2 ] :>
+      0 @@
+  [ mtype |-> RequestVoteRequest,
+    mterm |-> 3,
+    mdest |-> n3,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n2 ] :>
+      1 @@
+  [ mtype |-> PullEntriesRequest,
+    mterm |-> 2,
+    mdest |-> n1,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n3 ] :>
+      0 @@
+  [ mtype |-> PullEntriesResponse,
+    mterm |-> 2,
+    mdest |-> n3,
+    msource |-> n1,
+    msuccess |-> TRUE,
+    mentries |-> <<[term |-> 2, value |-> v1]>>,
+    mcommitIndex |-> 0 ] :>
+      0 )
+/\ matchIndex = ( n1 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) @@
+  n2 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) @@
+  n3 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) )
+/\ log = ( n1 :> <<[term |-> 2, value |-> v1]>> @@
+  n2 :> <<>> @@
+  n3 :> <<[term |-> 2, value |-> v1]>> )
+/\ state = (n1 :> Follower @@ n2 :> Candidate @@ n3 :> Follower)
+/\ electionCtr = 2
+/\ commitIndex = (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0)
+/\ restartCtr = 0
+/\ currentTerm = (n1 :> 3 @@ n2 :> 3 @@ n3 :> 3)
+/\ votesGranted = (n1 :> {n1, n2} @@ n2 :> {n2} @@ n3 :> {})
+/\ acked = (v1 :> FALSE @@ v2 :> Nil)
+
+State 18: <HandleRequestVoteRequest line 307, col 5 to line 330, col 48 of module PullRaft>
+/\ leader = (n1 :> Nil @@ n2 :> n2 @@ n3 :> Nil)
+/\ messages = ( [mtype |-> LeaderNotifyRequest, mterm |-> 2, mdest |-> n3, msource |-> n1] :>
+      1 @@
+  [ mtype |-> RequestVoteResponse,
+    mterm |-> 2,
+    mdest |-> n1,
+    msource |-> n2,
+    mvoteGranted |-> TRUE ] :>
+      0 @@
+  [ mtype |-> RequestVoteResponse,
+    mterm |-> 2,
+    mdest |-> n1,
+    msource |-> n3,
+    mvoteGranted |-> TRUE ] :>
+      1 @@
+  [ mtype |-> RequestVoteResponse,
+    mterm |-> 3,
+    mdest |-> n2,
+    msource |-> n1,
+    mvoteGranted |-> FALSE ] :>
+      0 @@
+  [ mtype |-> RequestVoteResponse,
+    mterm |-> 3,
+    mdest |-> n2,
+    msource |-> n3,
+    mvoteGranted |-> FALSE ] :>
+      1 @@
+  [ mtype |-> RequestVoteRequest,
+    mterm |-> 2,
+    mdest |-> n2,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n1 ] :>
+      0 @@
+  [ mtype |-> RequestVoteRequest,
+    mterm |-> 2,
+    mdest |-> n3,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n1 ] :>
+      0 @@
+  [ mtype |-> RequestVoteRequest,
+    mterm |-> 3,
+    mdest |-> n1,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n2 ] :>
+      0 @@
+  [ mtype |-> RequestVoteRequest,
+    mterm |-> 3,
+    mdest |-> n3,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n2 ] :>
+      0 @@
+  [ mtype |-> PullEntriesRequest,
+    mterm |-> 2,
+    mdest |-> n1,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n3 ] :>
+      0 @@
+  [ mtype |-> PullEntriesResponse,
+    mterm |-> 2,
+    mdest |-> n3,
+    msource |-> n1,
+    msuccess |-> TRUE,
+    mentries |-> <<[term |-> 2, value |-> v1]>>,
+    mcommitIndex |-> 0 ] :>
+      0 )
+/\ matchIndex = ( n1 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) @@
+  n2 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) @@
+  n3 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) )
+/\ log = ( n1 :> <<[term |-> 2, value |-> v1]>> @@
+  n2 :> <<>> @@
+  n3 :> <<[term |-> 2, value |-> v1]>> )
+/\ state = (n1 :> Follower @@ n2 :> Candidate @@ n3 :> Follower)
+/\ electionCtr = 2
+/\ commitIndex = (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0)
+/\ restartCtr = 0
+/\ currentTerm = (n1 :> 3 @@ n2 :> 3 @@ n3 :> 3)
+/\ votesGranted = (n1 :> {n1, n2} @@ n2 :> {n2} @@ n3 :> {})
+/\ acked = (v1 :> FALSE @@ v2 :> Nil)
+
+State 19: <HandleRequestVoteResponse line 336, col 5 to line 350, col 38 of module PullRaft>
+/\ leader = (n1 :> Nil @@ n2 :> n2 @@ n3 :> Nil)
+/\ messages = ( [mtype |-> LeaderNotifyRequest, mterm |-> 2, mdest |-> n3, msource |-> n1] :>
+      1 @@
+  [ mtype |-> RequestVoteResponse,
+    mterm |-> 2,
+    mdest |-> n1,
+    msource |-> n2,
+    mvoteGranted |-> TRUE ] :>
+      0 @@
+  [ mtype |-> RequestVoteResponse,
+    mterm |-> 2,
+    mdest |-> n1,
+    msource |-> n3,
+    mvoteGranted |-> TRUE ] :>
+      1 @@
+  [ mtype |-> RequestVoteResponse,
+    mterm |-> 3,
+    mdest |-> n2,
+    msource |-> n1,
+    mvoteGranted |-> FALSE ] :>
+      0 @@
+  [ mtype |-> RequestVoteResponse,
+    mterm |-> 3,
+    mdest |-> n2,
+    msource |-> n3,
+    mvoteGranted |-> FALSE ] :>
+      0 @@
+  [ mtype |-> RequestVoteRequest,
+    mterm |-> 2,
+    mdest |-> n2,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n1 ] :>
+      0 @@
+  [ mtype |-> RequestVoteRequest,
+    mterm |-> 2,
+    mdest |-> n3,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n1 ] :>
+      0 @@
+  [ mtype |-> RequestVoteRequest,
+    mterm |-> 3,
+    mdest |-> n1,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n2 ] :>
+      0 @@
+  [ mtype |-> RequestVoteRequest,
+    mterm |-> 3,
+    mdest |-> n3,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n2 ] :>
+      0 @@
+  [ mtype |-> PullEntriesRequest,
+    mterm |-> 2,
+    mdest |-> n1,
+    mlastLogIndex |-> 0,
+    mlastLogTerm |-> 0,
+    msource |-> n3 ] :>
+      0 @@
+  [ mtype |-> PullEntriesResponse,
+    mterm |-> 2,
+    mdest |-> n3,
+    msource |-> n1,
+    msuccess |-> TRUE,
+    mentries |-> <<[term |-> 2, value |-> v1]>>,
+    mcommitIndex |-> 0 ] :>
+      0 )
+/\ matchIndex = ( n1 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) @@
+  n2 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) @@
+  n3 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) )
+/\ log = ( n1 :> <<[term |-> 2, value |-> v1]>> @@
+  n2 :> <<>> @@
+  n3 :> <<[term |-> 2, value |-> v1]>> )
+/\ state = (n1 :> Follower @@ n2 :> Candidate @@ n3 :> Follower)
+/\ electionCtr = 2
+/\ commitIndex = (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0)
+/\ restartCtr = 0
+/\ currentTerm = (n1 :> 3 @@ n2 :> 3 @@ n3 :> 3)
+/\ votesGranted = (n1 :> {n1, n2} @@ n2 :> {n2} @@ n3 :> {})
+/\ acked = (v1 :> FALSE @@ v2 :> Nil)
+
+311817 states generated, 105961 distinct states found, 29841 states left on queue.
+The depth of the complete state graph search is 20.

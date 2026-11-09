@@ -2715,6 +2715,69 @@ describe("evaluation errors match TLC", () => {
     );
   });
 
+  it("reports a property that is an action like TLC", async () => {
+    // TLC's test-model/ActionLevelProp.tla and its ActionLevelProp*Test cases.
+    const source = [
+      "---- MODULE ActionLevelProp ----",
+      "EXTENDS Naturals",
+      "",
+      "VARIABLE x",
+      "vars == x",
+      "",
+      "Init ==",
+      "    x = 0",
+      "",
+      "Next ==",
+      "    /\\ x < 5",
+      "    /\\ x' = x + 1",
+      "",
+      "Spec ==",
+      "    Init /\\ [][Next]_vars",
+      "",
+      "------",
+      "",
+      "ActionLivePropA ==",
+      "    x' > x",
+      "",
+      "ActionLivePropB ==",
+      "\tNext",
+      "",
+      "ActionLivePropC ==",
+      "    Next \\/ UNCHANGED vars",
+      "",
+      "ActionLivePropD ==",
+      "    [Next]_vars",
+      "",
+      "ActionLivePropE ==",
+      "    <<Next>>_vars",
+      "",
+      "====",
+    ].join("\n");
+    // TLC rejects the configuration before it searches.
+    const getFailure = (property: string) =>
+      check({ source, config: `SPECIFICATION Spec\nPROPERTY ${property}` }).then(
+        () => undefined,
+        (error: unknown) => (error instanceof TlaConfigError ? error.message : error),
+      );
+    const formula = (name: string, at: string) =>
+      `The formula ${name} at ${at} is an action-level formula (i.e., it contains no temporal operators). Only temporal-level (or state-level) formulas are allowed under PROPERTY or PROPERTIES.`;
+    const book = "https://lamport.azurewebsites.net/tla/book.html";
+    const rewrite = (name: string, at: string) =>
+      `${formula(name, at)} To check that action ${name} holds in *every* step of the behavior, define a temporal property: Let A be the formula at ${at}; rewrite A as [][A]_v, where v is a state function (typically the tuple of variables) (compare page 90 of Specifying Systems at ${book}).`;
+    const at = (line: number, from: number, to: number) =>
+      `line ${line}, col ${from} to line ${line}, col ${to} of module ActionLevelProp`;
+    expect(await getFailure("ActionLivePropA")).toBe(rewrite("ActionLivePropA", at(20, 5, 10)));
+    // TLC names a conjunct of the action by its location.
+    expect(await getFailure("ActionLivePropB")).toBe(rewrite(at(12, 8, 17), at(12, 8, 17)));
+    expect(await getFailure("ActionLivePropC")).toBe(rewrite("ActionLivePropC", at(26, 5, 26)));
+    expect(await getFailure("ActionLivePropD")).toBe(
+      `${formula("ActionLivePropD", at(29, 5, 15))} To check that action ActionLivePropD holds in *every* step of the behavior, define a temporal property by applying the "always" temporal operator ([]) to the formula at ${at(29, 5, 15)} (compare page 90 of Specifying Systems at ${book}).`,
+    );
+    expect(await getFailure("ActionLivePropE")).toBe(
+      `${formula("ActionLivePropE", at(32, 5, 17))} To check that infinitely many ActionLivePropE steps occur, define a temporal property by applying the "always eventually" temporal operator combination ([]<>) to the formula at ${at(32, 5, 17)} (compare page 91 of Specifying Systems at ${book}).`,
+    );
+  });
+
   it("reports action composition as unsupported like TLC", async () => {
     const result = await check({
       source:

@@ -325,6 +325,11 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   model's constraints or invariants, with the state as the violation's one state and TLC's
   counts: 1/0/0 at depth 1 on DoInitFunctorEvalException and 1/1/1 on
   DoInitFunctorMinimalErrorStack. The CLI leaves both to the interpreter until it prints them.
+- TLC checks its implied inits, the state predicates of the properties, of each initial state
+  after the invariants (`getImpliedInits`). A failure there, as cdot/CdotWithContextB's
+  `Prop2 == ENABLED Next` reaching `A(n) \cdot B(n)`, now stops at
+  `ErrorSite::InitialPredicate(n)`, n the position in the IR's `model.initial_predicates`, with
+  the state and TLC's counts (1/1/1 at depth 1).
 
 ## An assumption that fails to evaluate
 
