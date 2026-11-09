@@ -975,8 +975,11 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                 // After a failure TLC checks the postconditions only as its worker goes on to
                 // check the state for deadlock, having generated no successor of it
                 // (`Worker.run`): which the search's counts say only of the first state expanded.
+                // TLC reports a failure among the initial states with the state as it is, and
+                // ends there, with no postcondition checked (`ModelChecker#doInit`).
                 ViolationKind::Error { site }
-                    if !config.postconditions.is_empty()
+                    if !is_initial_site(site)
+                        && !config.postconditions.is_empty()
                         && (has_constant_postcondition(&ir)
                             || match site {
                                 ErrorSite::Invariant(_) => false,
@@ -991,6 +994,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                 }
                 ViolationKind::Error { site }
                     if config.alias.is_some()
+                        && !is_initial_site(site)
                         && !matches!(site, ErrorSite::Next | ErrorSite::Invariant(_)) =>
                 {
                     Err("a failure outside the next-state relation with an ALIAS".to_string())
@@ -1026,9 +1030,10 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                         },
                         out_degrees: &counts.out_degrees,
                         fingerprints: &violation.fingerprints,
-                        replayed: (config.alias.is_some() || !config.postconditions.is_empty())
-                            .then_some(&violation),
-                        is_aliased: config.alias.is_some(),
+                        replayed: (!is_initial_site(site)
+                            && (config.alias.is_some() || !config.postconditions.is_empty()))
+                        .then_some(&violation),
+                        is_aliased: config.alias.is_some() && !is_initial_site(site),
                         postconditions: (!config.postconditions.is_empty()
                             && site == ErrorSite::Next
                             && ir.model.check_deadlock)
@@ -1189,6 +1194,18 @@ const NOT_IN_IR: &str = "a name the IR doesn't carry";
 /// Prints a violation the engine stopped at, or the lasso the liveness checker found, as
 /// `printViolation` in `src/cli/tlc.ts` does, and returns the exit code, or why it can't print
 /// it yet.
+// Whether a failure is among the initial states, before TLC has taken a step.
+fn is_initial_site(site: ErrorSite) -> bool {
+    matches!(
+        site,
+        ErrorSite::Init
+            | ErrorSite::InitialConstraint(_)
+            | ErrorSite::InitialInvariant(_)
+            | ErrorSite::InitialPredicate(_)
+            | ErrorSite::InitialAtom(_)
+    )
+}
+
 fn print_violation(
     printer: &mut Printer,
     ir: &tla_ir::Ir,

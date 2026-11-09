@@ -897,6 +897,32 @@ fn reports_a_bound_tlc_cant_enumerate_in_the_initial_predicate() {
 }
 
 #[test]
+fn reports_a_constraint_that_fails_in_a_values_method_on_an_initial_state() {
+    // The shape of ccf's TraceMultiNodeReads without the Java overrides: the constraint chooses
+    // from [STRING -> STRING], which TLC can't enumerate. TLC reports the error with the initial
+    // state, then its replay of the initial states ends in a FingerprintException whose call
+    // stack holds the initial predicate's frames and the constraint's; the model has a
+    // temporal property.
+    let spec = "---- MODULE Stop ----\nEXTENDS Naturals\nVARIABLE x\nEnv == CHOOSE r \\in [STRING -> STRING] : TRUE\nInit == x = 0\nNext == x' = (x + 1) % 3\nCon == x < 5 => \"A\" \\in DOMAIN Env\nLive == []<>(x = 1)\n====\n";
+    let (output, directory) = run_lowered(
+        "constraint-fingerprint",
+        spec,
+        "INIT Init\nNEXT Next\nCONSTRAINT Con\nPROPERTY Live\n",
+    );
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(75), "{text}");
+    assert!(
+        text.contains("Computing initial states...\nError: Attempted to enumerate a set of the form [D -> R],but the domain D:\nSTRING\ncannot be enumerated.\nWhile working on the initial state:\nx = 0\n\nError: TLC was unable to fingerprint.\n\nFingerprint Stack Trace:\n0. Line 5, column 9 to line 5, column 13 in Stop\n"),
+        "{text}"
+    );
+    assert!(
+        text.contains("in Stop\n\n\nReason:\nAttempted to enumerate a set of the form [D -> R],but the domain D:\nSTRING\ncannot be enumerated.\n1 states generated, 0 distinct states found, 0 states left on queue.\nThe depth of the complete state graph search is 1.\n"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
 fn reads_and_sets_tlcs_registers() {
     // TLCCache evaluates Counted once, TLCFP is TLC's fingerprint under -fp 0, which the
     // interpreter and TLC print the same, and a Java property TLC hasn't set is its key.
