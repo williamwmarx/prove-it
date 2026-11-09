@@ -130,15 +130,19 @@ impl<'ir> Rebuilder<'ir> {
         let initial_output = std::mem::take(&mut evaluator.printed);
         let mut outputs: Vec<Vec<Vec<String>>> = vec![Vec::new()];
         rebuilt.push(initial);
-        let all_actions: Vec<(NodeId, Option<u32>)> = if ir.model.actions.is_empty() {
-            vec![(ir.model.next, ir.model.scope)]
+        // Each candidate action, with its position in the model's actions: the next-state
+        // relation, which is none of them, when the IR has none.
+        let all_actions: Vec<(NodeId, Option<u32>, Option<u32>)> = if ir.model.actions.is_empty() {
+            vec![(ir.model.next, ir.model.scope, None)]
         } else {
             ir.model
                 .actions
                 .iter()
-                .map(|action| (action.expression, action.scope))
+                .enumerate()
+                .map(|(index, action)| (action.expression, action.scope, Some(index as u32)))
                 .collect()
         };
+        let mut steps: Vec<Option<u32>> = vec![None];
         for (position, pair) in states.windows(2).enumerate() {
             // TLC recovers a state, and so fingerprints it, before it takes its step.
             settle_recovered(evaluator, &self.key, &rebuilt[position])?;
@@ -146,19 +150,21 @@ impl<'ir> Rebuilder<'ir> {
             if pair[0] == pair[1] {
                 rebuilt.push(previous);
                 outputs.push(Vec::new());
+                steps.push(None);
                 continue;
             }
             evaluator.current = previous.into_iter().map(Some).collect();
             evaluator.level = position as i32 + 1;
             let candidates = match actions.get(position).copied().flatten() {
-                Some(action) if !is_printing => match ir.model.actions.get(action as usize) {
-                    Some(action) => vec![(action.expression, action.scope)],
+                Some(index) if !is_printing => match ir.model.actions.get(index as usize) {
+                    Some(action) => vec![(action.expression, action.scope, Some(index))],
                     None => return unsupported("an action the model doesn't have"),
                 },
                 _ => all_actions.clone(),
             };
             let mut found = None;
-            for (expression, scope) in candidates {
+            let mut step = None;
+            for (expression, scope, index) in candidates {
                 let context = run(evaluator.scope_context(scope))?;
                 evaluator.next = vec![None; width];
                 found = find(
@@ -170,6 +176,7 @@ impl<'ir> Rebuilder<'ir> {
                     pair[1],
                 )?;
                 if found.is_some() {
+                    step = index;
                     break;
                 }
             }
@@ -181,6 +188,7 @@ impl<'ir> Rebuilder<'ir> {
             };
             rebuilt.push(state);
             outputs.push(std::mem::take(&mut evaluator.printed));
+            steps.push(step);
         }
         let last = &rebuilt[rebuilt.len() - 1];
         let is_reducing = !matches!(self.key, Key::State);
@@ -195,7 +203,7 @@ impl<'ir> Rebuilder<'ir> {
             check_violation(evaluator, &rebuilt)?;
         }
         evaluator.printed.clear();
-        Ok(compose(rebuilt, initial_output, outputs, ending))
+        Ok(compose(rebuilt, steps, initial_output, outputs, ending))
     }
 }
 
@@ -225,6 +233,7 @@ fn settle_recovered(
 // is printed.
 fn compose(
     rebuilt: Vec<Vec<Value>>,
+    steps: Vec<Option<u32>>,
     initial_output: Vec<Vec<String>>,
     outputs: Vec<Vec<Vec<String>>>,
     ending: Ending,
@@ -236,6 +245,7 @@ fn compose(
                 .into_iter()
                 .map(|values| TraceState {
                     values,
+                    action: None,
                     printed: Vec::new(),
                 })
                 .collect(),
@@ -269,9 +279,11 @@ fn compose(
     let states = rebuilt
         .into_iter()
         .zip(outputs)
+        .zip(steps)
         .enumerate()
-        .map(|(position, (values, output))| TraceState {
+        .map(|(position, ((values, output), action))| TraceState {
             values,
+            action,
             printed: match position {
                 0 => prefix.take().unwrap_or_default(),
                 _ if position < recovered => Vec::new(),
@@ -530,7 +542,13 @@ mod tests {
                 _ => vec![print(&position.to_string())],
             })
             .collect();
-        compose(vec![Vec::new(); count], vec![print("i")], outputs, ending)
+        compose(
+            vec![Vec::new(); count],
+            vec![None; count],
+            vec![print("i")],
+            outputs,
+            ending,
+        )
     }
 
     fn printed(trace: &Trace) -> Vec<Vec<Vec<String>>> {

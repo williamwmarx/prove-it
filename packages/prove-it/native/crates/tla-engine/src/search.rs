@@ -4,6 +4,7 @@
 //! error, a feature it doesn't implement) ends the run with a checkpoint, from which the reference
 //! interpreter goes on.
 
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::io::Write as _;
@@ -1627,8 +1628,10 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     let mut periodic_size = 1usize;
     let mut periodic_time = Duration::ZERO;
     let mut test_live_check_at = settings.test_live_check_at.filter(|_| is_periodic);
-    let is_graph_bounded =
-        model.is_recording_graph && settings.is_liveness_periodic && !is_periodic;
+    // Where the engine doesn't check as the graph grows, or a check couldn't decide, it hands a
+    // large graph to the interpreter, which checks as it grows and, even under `-lncheck final`,
+    // stops at a state whose tableau node accepts every behavior.
+    let is_graph_bounded = Cell::new(model.is_recording_graph && !is_periodic);
     // What the check that found a counterexample answered and found, and the states it took.
     let mut periodic_lasso: Option<(Vec<Table>, Liveness, usize)> = None;
     let result = (|| -> Outcome<()> {
@@ -1690,10 +1693,12 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 let liveness =
                     check_liveness(model, search, &tables, None, false, &context.diameter_atoms);
                 periodic_time += at.elapsed();
-                // Whatever the checker leaves undecided, the check of the complete graph decides.
+                // Whatever the checker leaves undecided, the check of the complete graph decides,
+                // and the graph is bounded again for the interpreter, which checks as it grows.
                 let (Some(branches), Verdict::Holds | Verdict::Lasso { .. }) =
                     (liveness.branches, &liveness.verdict)
                 else {
+                    is_graph_bounded.set(true);
                     return Ok(());
                 };
                 search.reporter.liveness_started(
@@ -1808,7 +1813,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             if Some(expanding) == settings.stop_at {
                 return Err(Bail("stopped where PROVE_IT_STOP_AT asked"));
             }
-            if is_graph_bounded && search.states.count() > MAXIMUM_GRAPH_STATES {
+            if is_graph_bounded.get() && search.states.count() > MAXIMUM_GRAPH_STATES {
                 return Err(Bail("a state graph too large to keep"));
             }
             search.current.clear();

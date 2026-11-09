@@ -777,6 +777,30 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     }
   });
 
+  it("hands the graph over past four million states under -lncheck final", async () => {
+    // TLC's test model Github710b: TLC stops at the third state, whose tableau node accepts every
+    // behavior, though x grows without bound and the properties are checked only at the end.
+    const body = [
+      "EXTENDS Naturals",
+      "VARIABLE x",
+      "Init == x = 1",
+      "Spec == Init /\\ [][x' = x + 1]_x",
+      "AtMostOnce == [](x > 1 => [](x > 2))",
+    ];
+    const native = await run(
+      {
+        source: toModule(body),
+        config: "SPECIFICATION Spec\nPROPERTY AtMostOnce",
+        livenessCheck: "final",
+      },
+      { PROVE_IT_ENGINE: "debug", PROVE_IT_ENGINE_BACKEND: "rust" },
+    );
+    expect(native.lines).toContainEqual(
+      expect.stringMatching(stopped("a state graph too large to keep")),
+    );
+    expect([native.result.status, native.result.distinctStates]).toEqual(["property-violation", 3]);
+  }, 60_000);
+
   it("reports a tableau node that accepts every behavior as TLC finds it", async () => {
     // TLC's test model Github1389Counting: x becomes TRUE at most twice.
     const body = [
