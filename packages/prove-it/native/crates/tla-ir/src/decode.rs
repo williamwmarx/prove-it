@@ -531,14 +531,19 @@ impl Decoder<'_> {
         let is_labelled = self.flag()?;
         let invariants = self.config_names(true)?;
         let count = self.count()?;
-        let property_invariants = (0..count)
+        let (property_invariants, property_invariant_names) = (0..count)
             .map(|_| {
-                Ok(Printed {
-                    root: node(self)?,
-                    has_repeated_effect: self.flag()?,
-                })
+                Ok((
+                    Printed {
+                        root: node(self)?,
+                        has_repeated_effect: self.flag()?,
+                    },
+                    self.text()?,
+                ))
             })
-            .collect::<Decoded<_>>()?;
+            .collect::<Decoded<Vec<_>>>()?
+            .into_iter()
+            .unzip();
         let constraints = self.unprinted()?;
         let action_constraints = self.unprinted()?;
         let count = self.count()?;
@@ -634,6 +639,7 @@ impl Decoder<'_> {
             is_labelled,
             invariants,
             property_invariants,
+            property_invariant_names,
             constraints,
             action_constraints,
             action_properties,
