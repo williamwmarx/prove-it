@@ -23,9 +23,12 @@ fn checked_size(size: usize, factor: usize) -> Evaluated<usize> {
 /// The elements of a lazy set in TLC's order.
 pub fn enumerate(lazy: &Lazy) -> Evaluated<Vec<Value>> {
     match lazy {
-        Lazy::Nat | Lazy::Int | Lazy::Real | Lazy::Strings | Lazy::Seq(_) => {
-            fail("enumerated an infinite set")
-        }
+        Lazy::Nat
+        | Lazy::Int
+        | Lazy::Real
+        | Lazy::Strings
+        | Lazy::Seq(_)
+        | Lazy::Difference(..) => fail("enumerated an infinite set"),
         Lazy::Subset(base) => {
             let base = elements(base)?;
             if base.len() > 20 {
@@ -371,6 +374,9 @@ pub fn is_member(value: &Value, set: &Value) -> Evaluated<bool> {
                 }
                 Ok(true)
             }
+            Lazy::Difference(left, right) => {
+                Ok(is_member(value, left)? && !is_member(value, right)?)
+            }
         },
         _ => fail(format!(
             "a membership in a {}, which isn't a set",
@@ -473,6 +479,8 @@ pub(crate) fn is_empty_by_argument(set: &Value) -> bool {
             Lazy::FunctionSet(..) | Lazy::RecordSet(..) | Lazy::Product(_) => {
                 !is_empty_by_argument(value)
             }
+            // TLC can't tell without enumerating it.
+            Lazy::Difference(..) => false,
         },
         _ => false,
     };

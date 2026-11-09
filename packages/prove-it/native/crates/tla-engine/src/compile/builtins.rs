@@ -1476,7 +1476,14 @@ impl Compiler<'_> {
                     // TLC sizes a set of functions, records or tuples by its parts
                     // (`Lazy::size`): an empty part empties it before TLC asks anything of a part
                     // it can't enumerate, as in `[Nat -> {}]`, or of one too large to.
-                    None if set.reference.is_some() && !set.is_normalized => {
+                    // A power set of a set the engine holds is counted as it was, by building it.
+                    None if set.reference.is_some()
+                        && !set.is_normalized
+                        && !set
+                            .subset_base
+                            .as_ref()
+                            .is_some_and(|base| base.is_normalized) =>
+                    {
                         let reference = set.reference.clone().expect("a reference");
                         Compiled {
                             is_costly: true,
