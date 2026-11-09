@@ -25,6 +25,7 @@ import { dirname, join, relative } from "node:path";
 
 import type { Definition, Expression } from "../src/ast";
 import { type ModelConfig, parseConfig } from "../src/config";
+import { toEngineProperties } from "../src/engine/context";
 import { lowerToIr } from "../src/engine/ir";
 import { createEnvironment } from "../src/environment";
 import { TlaConfigError, TlaEvaluationError, TlaModuleError, TlaSyntaxError } from "../src/errors";
@@ -190,6 +191,50 @@ const lowerModel = (source: string, _path: string, spec: string) => {
   return lowerEnvironment(specification.environment);
 };
 
+// A model as check.ts lowers it, without TLC's actions, which the engine splits.
+const lowerFullModel = (source: string, _path: string, spec: string) => {
+  const config = parseConfig(source);
+  const specSource = readFileSync(spec, "utf8");
+  const loadModule = createLoader(spec);
+  const order = createTlcOrder(specSource, loadModule);
+  setStringOrder(order.getStringOrder(config));
+  const environment = createEnvironment(config, {
+    source: specSource,
+    loadModule,
+    order,
+    print: () => {},
+    files: { readFile: () => undefined, writeFile: () => {} },
+    isSanyAccepted: true,
+  }).environment;
+  const specification = getSpecification(config, environment);
+  const properties = toEngineProperties(getProperties(config, environment, () => {}));
+  if (!specification.init || !specification.next) return { reason: "no Init or Next" };
+  if (!properties) return { reason: "a property read in a scope" };
+  const variableOrder = order.getDeclarationOrder("variable");
+  const getPosition = (index: number) => {
+    const position = variableOrder.indexOf(environment.variables[index]);
+    return position === -1 ? environment.variables.length : position;
+  };
+  const outcome = lowerToIr({
+    config,
+    environment,
+    spec: { init: specification.init!, next: specification.next!, scope: specification.scope },
+    traceActions: [],
+    isWarningEnabled: true,
+    tlcOrder: environment.variables
+      .map((_, index) => index)
+      .sort((left, right) => getPosition(left) - getPosition(right)),
+    properties,
+    symmetry: undefined,
+    isRecordingGraph: false,
+    version: undefined,
+    atoms: [],
+    liveFormula: undefined,
+    liveProperties: [],
+  });
+  return "ir" in outcome ? { ir: Buffer.from(outcome.ir).toString("hex") } : outcome;
+};
+
 const lowerEnvironment = (environment: Environment) => {
   const root: Expression = { kind: "Number", value: 0, location: { line: 0, column: 0 } };
   const outcome = lowerToIr({
@@ -226,6 +271,7 @@ const MODES: Record<string, (source: string, path: string, spec: string) => stri
   resolve: writeResult((source, path) => readEnvironment(source, path)),
   ir: writeResult(lowerDefinitions),
   "model-ir": writeResult(lowerModel),
+  "model-full": writeResult(lowerFullModel),
   order: writeResult(readOrders),
   spec: writeResult((source, _path, spec) => {
     const config = parseConfig(source);
@@ -316,7 +362,7 @@ if (mode !== "time" && MODES[mode] === undefined) {
   throw new Error(`front-differential takes a mode: ${[...Object.keys(MODES), "time"].join(", ")}`);
 }
 const filter = getOption("--filter");
-const isModel = ["model", "order", "model-ir", "spec", "properties"].includes(mode);
+const isModel = ["model", "order", "model-ir", "model-full", "spec", "properties"].includes(mode);
 const extension = mode === "config" || isModel ? ".cfg" : ".tla";
 // A model is a configuration and the spec of the same name beside it.
 const getSpec = (path: string) => {
@@ -365,9 +411,16 @@ const getRustBinary = () => {
 };
 const rust = getRustBinary();
 
-const isLinked = ["resolve", "model", "ir", "order", "model-ir", "spec", "properties"].includes(
-  mode,
-);
+const isLinked = [
+  "resolve",
+  "model",
+  "ir",
+  "order",
+  "model-ir",
+  "model-full",
+  "spec",
+  "properties",
+].includes(mode);
 if (isLinked) linkLibraryModules();
 
 const runRust = (batch: typeof modules) => {
