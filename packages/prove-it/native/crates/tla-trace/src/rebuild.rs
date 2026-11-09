@@ -415,11 +415,15 @@ fn is_in_model(evaluator: &mut Evaluator<'_>, rebuilt: &[Vec<Value>]) -> Result<
         let Some(index) = name.definition else {
             return unsupported("a constraint without a definition");
         };
+        // TLCGet("level") reads the level of the state that is current: the predecessor's for an
+        // action constraint, and the last state's own, one past it, for a constraint.
         if is_action {
             evaluator.current = state(&rebuilt[last - 1]);
             evaluator.next = state(&rebuilt[last]);
+            evaluator.level = last as i32;
         } else {
             evaluator.current = state(&rebuilt[last]);
+            evaluator.level = last as i32 + 1;
         }
         let body = evaluator.definition(ir.definitions[index as usize]).body;
         if !run(evaluator.boolean(body, &Context::default()))? {
