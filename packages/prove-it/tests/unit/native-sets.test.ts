@@ -177,6 +177,23 @@ describe.if(ADDON !== undefined)("the native engine's lazy sets", () => {
     }
   });
 
+  it("enumerates a UNION of sets of the model's constants, which TLC normalizes", async () => {
+    // As LoopInvariance's MCBinarySearch does, with Seq <- LimitedSeq.
+    const body = [
+      "EXTENDS Naturals, Sequences",
+      "CONSTANTS Values, MaxSeqLen",
+      "VARIABLE seq",
+      "LimitedSeq(S) == UNION {[1..n -> S] : n \\in 1..MaxSeqLen}",
+      "SortedSeqs == {s \\in Seq(Values) : \\A i, j \\in 1..Len(s) : i < j => s[i] =< s[j]}",
+      "Init == seq \\in SortedSeqs",
+      "Next == UNCHANGED seq",
+    ];
+    const config = `CONSTANTS Values = {3, 1, 2}\nMaxSeqLen = 3\nSeq <- LimitedSeq\n${CONFIG}`;
+    expect(await compareWithInterpreter(body, config)).toContainEqual(
+      expect.stringMatching(COMPLETE),
+    );
+  });
+
   it("leaves a UNION of a variable the initial predicate assigned", async () => {
     // TLC fingerprints a state only once the initial predicate has assigned it.
     const body = [
