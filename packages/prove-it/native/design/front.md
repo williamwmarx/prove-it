@@ -116,3 +116,15 @@ what each milestone built and measured, in the order they landed.
   the call graph with Tarjan's algorithm, which the IR's repeated-effect flag and the model's
   printed roots read (`has_repeated_definition_effect`, `has_repeated_effect`).
 - `front-differential.ts resolve` compares each environment's rows of facts too: all match.
+
+## F8 slice 1d as built (the model's configuration)
+
+- `environment` takes the model's configuration: the constants it assigns (by key, scoped to a
+  module or not), the operators it gives a value or a table of values (builtins), its
+  substitutions, the overrides that a module-scoped entry makes of every instance copy, and TLC's
+  configuration errors, word for word. Two cases return `NotYet`: several unassigned constants,
+  which TLC reports in SANY's order of declarations (F7), and a substitute TLC evaluates at
+  startup (the engine's startup phase, which the CLI session plans in `design/cli.md`).
+- `front-differential.ts model` links each corpus model, a `.cfg` file and the spec beside it:
+  1,092 of 1,111 match and none differ; with `--mutate 400` (variants of the configurations),
+  2,682 of 2,711. Verification's Front End job runs it.
