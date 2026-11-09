@@ -223,6 +223,21 @@ pub(crate) fn format_partial_state(ir: &Ir, values: &[Option<&Value>]) -> String
     }))
 }
 
+/// A state whose values are the texts TLC prints for them, in the IR's order of the variables.
+pub(crate) fn format_texts(ir: &Ir, texts: &[String]) -> String {
+    let is_conjunction = ir.tlc_order.len() > 1;
+    let mut text = String::new();
+    for &position in &ir.tlc_order {
+        let conjunct = if is_conjunction { "/\\ " } else { "" };
+        let name = &ir.texts[ir.variables[position as usize] as usize];
+        text.push_str(&format!(
+            "{conjunct}{name} = {}\n",
+            pretty(&texts[position as usize])
+        ));
+    }
+    text
+}
+
 /// Named values as TLC prints a state (`TLCStateMut.toString`): a line each, as a conjunction when
 /// there are several.
 fn format_fields<'v>(
