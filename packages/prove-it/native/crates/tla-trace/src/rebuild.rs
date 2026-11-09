@@ -40,6 +40,10 @@ fn unsupported<T>(reason: impl Into<String>) -> Result<T, Unsupported> {
 }
 
 impl<'ir> Rebuilder<'ir> {
+    pub(crate) fn evaluator(&mut self) -> &mut Evaluator<'ir> {
+        &mut self.evaluator
+    }
+
     pub fn new(ir: &'ir Ir) -> Result<Rebuilder<'ir>, Unsupported> {
         let model = &ir.model;
         let mut evaluator = Evaluator::new(ir);

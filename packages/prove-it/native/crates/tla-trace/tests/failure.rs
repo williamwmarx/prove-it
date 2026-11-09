@@ -1,0 +1,104 @@
+//! Evaluates again where the engine's search stops on an error, on golden IRs of TLC's tests, and
+//! compares the message and call stack with what TLC prints for them.
+
+mod common;
+
+use common::{ir_directory, path_to, stop_search};
+use tla_trace::{Failure, Rebuilder, Site, format_call_stack};
+use tla_values::Id;
+
+// The search's stop on the model, evaluated again: in the initial predicate when the search kept
+// no state, and otherwise in the successors of the state it was expanding.
+fn evaluate_failure(path: &str) -> (Failure, String) {
+    let bytes = std::fs::read(ir_directory().join(format!("{path}.ir"))).expect("a golden IR");
+    let ir = tla_ir::decode(&bytes).expect("an IR that decodes");
+    tla_values::on_nesting_stack(|| {
+        let stopped =
+            tla_engine::on_nesting_stack(|| stop_search(&ir, None)).expect("a search that stops");
+        let positions = if stopped.states.is_empty() {
+            Vec::new()
+        } else {
+            path_to(&stopped.parents, stopped.expanding)
+        };
+        let states: Vec<&[Id]> = positions
+            .iter()
+            .map(|&position| stopped.states[position].as_slice())
+            .collect();
+        let site = if states.is_empty() {
+            Site::Init
+        } else {
+            Site::Next
+        };
+        let actions = vec![None; states.len().saturating_sub(1)];
+        let failure = Rebuilder::new(&ir)
+            .and_then(|mut rebuilder| {
+                rebuilder.evaluate_failure(&stopped.store, &states, &actions, site)
+            })
+            .unwrap_or_else(|unsupported| {
+                panic!("{path}, stopped by {}: {}", stopped.reason, unsupported.0)
+            });
+        let call_stack = format_call_stack(&ir, &failure.call_stack);
+        (failure, call_stack)
+    })
+}
+
+const MODELS: &str = "tlc/tlatools/org.lamport.tlatools/test-model";
+
+#[test]
+fn reports_a_mistyped_membership_in_the_initial_predicate() {
+    for (name, value, set, end) in [
+        ("etest9", "\"a\"", "Nat", (33, 18, 26)),
+        ("etest10", "\"a\"", "Int", (33, 18, 26)),
+        ("etest11", "1", "STRING", (36, 18, 29)),
+    ] {
+        let (failure, call_stack) = evaluate_failure(&format!("{MODELS}/suite/{name}"));
+        assert_eq!(failure.code, 1000);
+        let text = format!("Attempted to check if the value:\n{value}\nis an element of {set}.");
+        assert_eq!(failure.message, text);
+        assert_eq!(
+            failure.tool_message,
+            format!("@!@!@STARTMSG 2158:0 @!@!@\n{text}\n@!@!@ENDMSG 2158 @!@!@")
+        );
+        let (whole, start, finish) = end;
+        let first = if name == "etest11" { 16 } else { 18 };
+        assert_eq!(
+            call_stack,
+            format!(
+                "0. Line 9, column 9 to line 11, column {whole} in {name}\n\
+                 1. Line 9, column 12 to line 9, column {first} in {name}\n\
+                 2. Line 11, column 12 to line 11, column {whole} in {name}\n\
+                 3. Line 11, column {start} to line 11, column {finish} in {name}\n\n"
+            )
+        );
+    }
+}
+
+#[test]
+fn reports_a_failed_assertion_in_an_action() {
+    let (failure, call_stack) = evaluate_failure(&format!("{MODELS}/AssertExpressionStack"));
+    let text = "The first argument of Assert evaluated to FALSE; the second argument was:\n\"Fails after initial state\"";
+    assert_eq!(
+        (
+            failure.code,
+            failure.message.as_str(),
+            failure.tool_message.as_str()
+        ),
+        (2132, text, text)
+    );
+    assert_eq!(
+        call_stack,
+        "0. Line 6, column 21 to line 6, column 66 in AssertExpressionStack\n\
+         1. Line 6, column 21 to line 6, column 24 in AssertExpressionStack\n\
+         2. Line 6, column 27 to line 6, column 66 in AssertExpressionStack\n\n"
+    );
+    let (failure, call_stack) = evaluate_failure(&format!("{MODELS}/Github461"));
+    assert_eq!(
+        failure.message,
+        "The first argument of Assert evaluated to FALSE; the second argument was:\n\"Failure of assertion at line 8, column 4.\""
+    );
+    assert_eq!(
+        call_stack,
+        "0. Line 9, column 5 to line 10, column 17 in Github461\n\
+         1. Line 9, column 8 to line 9, column 65 in Github461\n\n"
+    );
+}
