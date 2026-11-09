@@ -729,6 +729,47 @@ fn reports_an_atom_that_fails_on_an_initial_state() {
 }
 
 #[test]
+fn prints_a_lasso_a_check_part_way_through_the_search_finds() {
+    // Without fairness x stutters, which a check after two states finds with a state left to
+    // expand: TLC reports the check's start, the counterexample and the counts so far.
+    let spec = "---- MODULE Stop ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 10\nUnfair == Init /\\ [][Next]_x\nReaches == <>(x = 9)\n====\n";
+    let directory = std::env::temp_dir().join(format!(
+        "prove-it-cli-periodic-lasso-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    for (file, contents) in [
+        ("Stop.tla", spec),
+        ("Stop.cfg", "SPECIFICATION Unfair\nPROPERTY Reaches\n"),
+        ("Stop.front", ""),
+    ] {
+        std::fs::write(directory.join(file), contents).expect("a file");
+    }
+    let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
+        .arg("Stop")
+        .current_dir(&directory)
+        .env("PROVE_IT_FRONT", &directory)
+        .env("PROVE_IT_TEST_LIVE_CHECK_AT", "2")
+        .output()
+        .expect("the binary runs");
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(13), "{text}");
+    assert!(
+        text.contains(".\nChecking temporal properties for the current state space with 2 total distinct states at ("),
+        "{text}"
+    );
+    assert!(
+        text.contains(")\nError: Temporal property Reaches was violated.\n\nError: The following behavior constitutes a counter-example:\n\nState 1: <Initial predicate>\nx = 0\n\nState 2: <Next line 5, col 9 to line 5, col 25 of module Stop>\nx = 1\n\nState 3: Stuttering\n"),
+        "{text}"
+    );
+    assert!(
+        text.contains("\n3 states generated, 3 distinct states found, 1 states left on queue.\nThe depth of the complete state graph search is 3.\n"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
 fn reads_and_sets_tlcs_registers() {
     // TLCCache evaluates Counted once, TLCFP is TLC's fingerprint under -fp 0, which the
     // interpreter and TLC print the same, and a Java property TLC hasn't set is its key.

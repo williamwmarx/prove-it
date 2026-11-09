@@ -2616,13 +2616,26 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 initial_distinct: initial_states.1,
                 out_degrees,
             };
+            let violation = match &liveness.verdict {
+                Verdict::Lasso {
+                    path, loop_start, ..
+                } if settings.is_violation_reported => to_lasso(
+                    &mut machine,
+                    &context,
+                    &search,
+                    (path, *loop_start),
+                    &lasso_actions,
+                    Vec::new(),
+                    &counts,
+                ),
+                _ => None,
+            };
             SearchOutcome::Complete {
                 counts: Box::new(counts),
                 checkpoint: Some(Box::new(checkpoint)),
                 liveness: Some(liveness),
                 lasso_actions,
-                // The interpreter prints a counterexample found part way through the search.
-                violation: None,
+                violation,
                 value_count: machine.store.value_count(),
                 threads: threads_used,
                 collisions,

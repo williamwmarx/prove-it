@@ -291,7 +291,7 @@ Done on native-parity:
   `evaluate_failure` declines an implied init in a scope that fails to evaluate.
 - A lasso whose atoms print (UserModuleOverrideAnnotation): TLC evaluates each property on the
   lasso it rebuilt (`Liveness.findViolatedProperties`), each atom anew. `tla-live` logs those
-  evaluations (`Liveness::lasso_events`), the engine carries what they printed in
+  evaluations after `Event::Lasso`, the engine carries what they printed in
   `ViolationKind::Lasso::printed`, and the binary prints it before the violation.
 - An atom that fails as TLC adds an initial state (InitialLivenessEvaluationError): TLC adds
   each initial state to the behavior graphs before it checks it or reports the initial states
@@ -301,6 +301,9 @@ Done on native-parity:
   among the initial states is reported only where every atom evaluates on them
   (`answers_initial_atoms`). At a safety stop, the first atom unanswered on a state TLC had
   added by then (`unanswered_at`) is reported as at the search's end.
+- A lasso a check part way through the search finds: the search builds the violation with
+  `to_lasso` and the counts so far, and the binary prints it after the check's start, which the
+  search reported as the check began.
 
 Open, with what is known:
 - The front names a property an instance exports by the definition's own name (`Safe`) where
@@ -312,5 +315,3 @@ Open, with what is known:
   `add_state`, give stuttering steps their own slot space, and keep `unanswered`.
 - YoYoAllGraphs (enumerated Seq(S)) and MCEWD687a (filter of an infinite set): engine
   enumeration limits. MCEWD687a also needs the scoped properties.
-- Periodic lasso: `PERIODIC_LASSO` gives `violation: None`. Build the violation with `to_lasso`
-  from the periodic check's verdict, as the final check does.

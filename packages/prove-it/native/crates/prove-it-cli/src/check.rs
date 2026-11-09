@@ -580,6 +580,9 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
     let (sender, receiver) = mpsc::channel();
     // How many initial states TLC generated, which TLCGet("stats") reports.
     let mut initial_generated = 0;
+    // When the check of the temporal properties part way through the search that found a
+    // counterexample started.
+    let mut checking = None;
     let outcome = std::thread::scope(|scope| {
         let ir = &ir;
         let searching = std::thread::Builder::new()
@@ -592,7 +595,6 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                 search(ir, &settings, &mut relay)
             })
             .expect("a thread for the search");
-        let mut checking = None;
         for event in receiver {
             match event {
                 Event::InitialStatesStarted => printer.print(
@@ -671,7 +673,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                         &Statistics {
                             generated: counts.generated,
                             distinct: counts.distinct,
-                            queued: 0,
+                            queued: counts.queued,
                             depth: counts.depth,
                         },
                         counts.initial_generated,
@@ -682,7 +684,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                         &ir,
                         &config,
                         &violation,
-                        is_lasso.then_some(&liveness),
+                        is_lasso.then_some((&liveness, checking)),
                         Some(&run),
                         start,
                     )
@@ -996,10 +998,12 @@ fn print_violation(
     ir: &tla_ir::Ir,
     config: &ModelConfig,
     violation: &Violation,
-    liveness: Option<&Liveness>,
+    liveness: Option<(&Liveness, Option<Instant>)>,
     postconditions: Option<&PostconditionRun>,
     start: Instant,
 ) -> Result<i32, &'static str> {
+    let started = liveness.and_then(|(_, started)| started);
+    let liveness = liveness.map(|(liveness, _)| liveness);
     // TLC reports a _POSSIBLE predicate the search didn't witness before it stopped, which the
     // printing doesn't follow yet, before it checks the postconditions on the trace.
     let possible = postconditions.map_or(&[][..], |run| &run.possible[..]);
@@ -1175,8 +1179,10 @@ fn print_violation(
             .ok_or("printing a value whose text depends on how TLC built it")?,
         _ => Vec::new(),
     };
-    let checking =
-        liveness.map(|liveness| print_liveness_started(printer, &statistics, liveness.branches));
+    // A check part way through the search reported its start as it began.
+    let checking = liveness.map(|liveness| {
+        started.unwrap_or_else(|| print_liveness_started(printer, &statistics, liveness.branches))
+    });
     // What the spec printed as TLC rebuilt the trace: the first state's after the headline, each
     // later state's before it, and the rebuild after the trace. TLC rebuilds a counterexample
     // before it reports it, all of it as it recovers the first state (`printViolation`).
