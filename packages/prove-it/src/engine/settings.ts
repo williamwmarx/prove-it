@@ -26,7 +26,8 @@ export const getFingerprintSetting = () => getEnvironment()?.PROVE_IT_FINGERPRIN
 
 // PROVE_IT_ENGINE_BACKEND=auto, the default, or =rust tries the native engine before the TypeScript
 // one, which checks whatever the native engine declines and everything where its platform package
-// isn't installed; ts goes straight to the TypeScript one. PROVE_IT_ENGINE_ADDON loads the native
+// isn't installed; auto doesn't when PROVE_IT_WORKERS asks for more than one thread, since the
+// native search runs on one. ts goes straight to the TypeScript one. PROVE_IT_ENGINE_ADDON loads the native
 // engine from that path rather than its platform's package.
 export const getEngineBackend = () => getEnvironment()?.PROVE_IT_ENGINE_BACKEND ?? "auto";
 
