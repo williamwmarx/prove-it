@@ -587,6 +587,50 @@ fn reports_a_spec_sany_rejects() {
     std::fs::remove_dir_all(directory).expect("removed");
 }
 
+// Runs the binary on a spec of the test's own, which tla-front lowers, as TLC prints nothing
+// before the search for it.
+fn run_lowered(test: &str, spec: &str, config: &str) -> (Output, PathBuf) {
+    let directory =
+        std::env::temp_dir().join(format!("prove-it-cli-{test}-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    std::fs::write(directory.join("Stop.front"), "").expect("a front");
+    run_unrecorded(test, spec, config)
+}
+
+#[test]
+fn reads_and_sets_tlcs_registers() {
+    // TLCCache evaluates Counted once, and TLCFP is TLC's fingerprint under -fp 0, which the
+    // interpreter and TLC print the same.
+    let spec = "---- MODULE Stop ----\nEXTENDS Integers, TLC, TLCExt\nVARIABLE x\nASSUME TLCSet(1, 0)\nCounted(v) == CASE TLCSet(1, TLCGet(1) + 1) -> v\nCached == TLCCache(Counted(7), {1})\nInit == x = 0 /\\ TLCSet(\"s:steps\", 0)\nNext == x < 3 /\\ x' = x + 1 /\\ Cached = 7 /\\ TLCSet(\"s:steps\", TLCGet(\"s:steps\") + 1)\nCounts == PrintT(<<TLCGet(1), TLCGet(\"s:steps\"), TLCGet(\"all\"), TLCGet(\"all:named\")>>)\nFingerprints == TLCFP(1) = -1504394061 /\\ TLCFP(\"a\") = -1022804895\n====\n";
+    let (output, directory) = run_lowered(
+        "registers",
+        spec,
+        "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE\nINVARIANT Fingerprints\nPOSTCONDITION Counts\n",
+    );
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(0), "{text}");
+    assert!(
+        text.contains(".\n<<1, 3, <<<<1>>>>, (\"s:steps\" :> <<3>>)>>\nModel checking completed."),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn rebuilds_a_trace_that_sets_registers() {
+    // TLC rebuilds the trace from the initial predicate, which sets the register again (as on
+    // TLC's TLCGetNonDeterminism).
+    let spec = "---- MODULE Stop ----\nEXTENDS Integers, TLC\nVARIABLES x, y\nInit == TLCSet(1, 0) /\\ x = 0 /\\ y = TLCGet(1)\nNext == x < 2 /\\ TLCSet(1, TLCGet(1) + 1) /\\ x' = x + 1 /\\ y' = TLCGet(1)\n====\n";
+    let (output, directory) = run_lowered("rebuilt", spec, "INIT Init\nNEXT Next\n");
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(11), "{text}");
+    assert!(
+        text.contains("State 2: <Next line 5, col 9 to line 5, col 73 of module Stop>\n/\\ x = 1\n/\\ y = 1\n\nState 3: <Next line 5, col 9 to line 5, col 73 of module Stop>\n/\\ x = 2\n/\\ y = 2\n\n"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
 #[test]
 fn reports_an_initial_state_tlc_fails_to_print() {
     // TLC's Github696b: TLC keeps the set as written, then fails to compare its model values as it

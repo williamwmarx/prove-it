@@ -148,13 +148,25 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   tests), declined before, now search in Rust, and RandomSubset until its invariant builds
   `1..100000000`.
 
-## Parked: TLC registers
+## TLC registers
 
-- The branch tlc-registers has TLCSet and TLCGet in the Rust search: IR and ABI 9 carry the
-  registers, startup registers included, and the search hands them back with a checkpoint or
-  when it completes. It gains no model: Test2, TLCGetNonDeterminism and NQSpec check a property,
-  and under a liveness graph TLC evaluates the actions again. ConstantContextTLCCache would also
-  need TLCCache's cache, which the interpreter fills while it evaluates the assumptions.
+- TLCSet and TLCGet of a number or of a name that starts with "s:" run in the Rust search as TLC
+  runs them on one worker (`TLCGetSet`): a register TLCSet sets at startup, in an assumption,
+  holds for the search. TLCSet is an effect, so like Print it compiles where the engine evaluates
+  as TLC does, and nothing caches what reads a register. The search hands the registers on with a
+  violation, whose trace `tla-trace` rebuilds setting them again as TLC does, and once it
+  completes, for the postconditions, which read `TLCGet("all")` and the named registers in
+  `TLCGet("all:named")`.
+- TLCCache evaluates its expression once for each key where the expression reads no variable
+  (`TLCExt.tlcEval2`), by the expression's node, and TLCFP is the low 32 bits of the fingerprint
+  of a state of its value alone. TLCGet("config") is the record `AbstractChecker.createConfig`
+  makes.
+- Only the native binary takes them: the interpreter would take a search over without the
+  registers, so the engine declines them under the TypeScript engine.
+- Still declined: an atom of the liveness checker that sets or reads a register, since TLC
+  evaluates the atoms as it adds each state to the behavior graphs (TLC's Test2 counts them), the
+  keys that stop, pause or configure TLC, and TLCGet("spec"). TLCFP and TLCCache don't evaluate in
+  `tla-trace` yet.
 
 ## Functions of several bounds, and recursive functions TLC keeps lazy
 

@@ -255,6 +255,39 @@ pub struct Evaluator<'ir> {
     pub random: Option<JavaRandom>,
     /// What TLCGet and CounterExample read once the search is over, as a postcondition reads them.
     pub runtime: Option<Runtime>,
+    /// TLC's registers, which TLCSet sets and TLCGet reads, as the search left them.
+    pub registers: Registers,
+}
+
+/// TLC's registers (`IdThread`'s local values and named registers): the value TLCSet stored under
+/// each natural number, and under each name that starts with "s:", a string.
+#[derive(Clone, Debug, Default)]
+pub struct Registers {
+    pub numbered: Vec<Option<Value>>,
+    pub named: Vec<(Value, Value)>,
+}
+
+/// The prefix of the names of TLC's named registers (`TLCGetSet.NAMED_REGISTER_PREFIX`).
+const NAMED_REGISTER_PREFIX: &str = "s:";
+
+impl Registers {
+    /// The registers whose values are ids of `store`: by number, and by name.
+    pub fn from_store(store: &Store, numbered: &[Option<Id>], named: &[(Id, Id)]) -> Registers {
+        Registers {
+            numbered: numbered
+                .iter()
+                .map(|value| value.map(|id| from_store(store, id)))
+                .collect(),
+            named: named
+                .iter()
+                .map(|&(name, value)| (from_store(store, name), from_store(store, value)))
+                .collect(),
+        }
+    }
+}
+
+fn is_register_name(key: &Value) -> bool {
+    matches!(key, Value::Str(text) if String::from_utf16_lossy(&text.units).starts_with(NAMED_REGISTER_PREFIX))
 }
 
 /// The values a postcondition reads of the run: TLCGet("all:named"), TLCGet("stats") and TLCExt's
@@ -263,14 +296,31 @@ pub struct Runtime {
     pub named: Value,
     pub stats: Value,
     pub counter_example: Value,
-    /// The registers TLCSet sets by index as the postconditions evaluate.
-    pub registers: HashMap<i32, Value>,
     /// Each `_POSSIBLE` predicate's count by name, totalled over the workers, as `_Counts` gives
     /// it.
     pub possible_counts: Value,
 }
 
 const MAXIMUM_DEPTH: u32 = 10_000;
+
+/// `EC.TLC_MODULE_TLCGET_UNDEFINED`, `EC.TLC_MODULE_ARGUMENT_ERROR` and
+/// `EC.TLC_MODULE_ONE_ARGUMENT_ERROR`.
+const TLCGET_UNDEFINED: u32 = 2145;
+const ARGUMENT_ERROR: u32 = 2169;
+const ONE_ARGUMENT_ERROR: u32 = 2283;
+
+// TLCGet of a register TLCSet hasn't set, named by its number or its name.
+fn undefined_register<T>(key: &Value) -> Evaluated<T> {
+    let name = match key {
+        Value::Str(text) => String::from_utf16_lossy(&text.units),
+        key => format_value(key),
+    };
+    fail_coded(
+        "TLCGet of a register TLC hasn't set",
+        TLCGET_UNDEFINED,
+        format!("TLCGet({name}) was undefined."),
+    )
+}
 
 const LAZY_FILTER: &str = "a filter TLC keeps lazy";
 /// `EC.TLC_MODULE_VALUE_JAVA_METHOD_OVERRIDE`.
@@ -300,6 +350,7 @@ impl<'ir> Evaluator<'ir> {
             choices: Vec::new(),
             random: None,
             runtime: None,
+            registers: Registers::default(),
         }
     }
 
@@ -1092,6 +1143,58 @@ impl<'ir> Evaluator<'ir> {
         }
         self.random = None;
         Ok(())
+    }
+
+    fn get_named_register(&self, key: &Value) -> Evaluated<Option<Value>> {
+        for (name, value) in &self.registers.named {
+            if equals(name, key)? {
+                return Ok(Some(value.clone()));
+            }
+        }
+        Ok(None)
+    }
+
+    // TLCSet (`TLCGetSet.TLCSet`): a register's value, set; TLCSet("exit", FALSE) and
+    // TLCSet("pause", FALSE) do nothing.
+    fn set_register(&mut self, key: Value, value: Value) -> Evaluated<()> {
+        if let Value::Int(index) = key
+            && index >= 0
+        {
+            let index = index as usize;
+            let numbered = &mut self.registers.numbered;
+            if numbered.len() <= index {
+                numbered.resize(index + 1, None);
+            }
+            numbered[index] = Some(value);
+            return Ok(());
+        }
+        if is_register_name(&key) {
+            for (name, held) in &mut self.registers.named {
+                if equals(name, &key)? {
+                    *held = value;
+                    return Ok(());
+                }
+            }
+            self.registers.named.push((key, value));
+            return Ok(());
+        }
+        if let Value::Str(text) = &key {
+            let text = String::from_utf16_lossy(&text.units);
+            if matches!(text.as_str(), "exit" | "pause") && !matches!(value, Value::Bool(true)) {
+                return Ok(());
+            }
+            if matches!(text.as_str(), "exit" | "pause") || text.starts_with("-D") {
+                return fail("TLCSet of a key that stops or configures TLC");
+            }
+        }
+        fail_coded(
+            "TLCSet of a key that isn't a natural number",
+            ARGUMENT_ERROR,
+            format!(
+                "The first argument of TLCSet should be a nonnegative integer, but instead it is:\n{}",
+                format_pretty(&key)
+            ),
+        )
     }
 
     /// Takes the values the search computed at startup for the model's startup definitions,
@@ -2548,9 +2651,49 @@ impl<'ir> Evaluator<'ir> {
                     _ => return fail("TLCModelValue of a value that isn't a string"),
                 }
             }
+            "TLCSet" => {
+                arity(2)?;
+                let key = self.operand(&operands[0])?;
+                let value = self.operand(&operands[1])?;
+                // What sets a register is never the same twice, so what calls it isn't cached.
+                self.reads += 1;
+                self.set_register(key, value)?;
+                Value::Bool(true)
+            }
             "TLCGet" => {
                 arity(1)?;
                 match self.operand(&operands[0])? {
+                    // A register, whose value no cache may keep.
+                    key @ Value::Int(index) if index >= 0 => {
+                        self.reads += 1;
+                        match self.registers.numbered.get(index as usize) {
+                            Some(Some(value)) => value.clone(),
+                            _ => return undefined_register(&key),
+                        }
+                    }
+                    key if is_register_name(&key) => {
+                        self.reads += 1;
+                        match self.get_named_register(&key)? {
+                            Some(value) => value,
+                            None => return undefined_register(&key),
+                        }
+                    }
+                    key @ (Value::Int(_)
+                    | Value::Bool(_)
+                    | Value::Model(_)
+                    | Value::Set(_)
+                    | Value::Interval(..)
+                    | Value::Function(_)
+                    | Value::Lazy(_)) => {
+                        return fail_coded(
+                            "TLCGet of a key that isn't a natural number",
+                            ONE_ARGUMENT_ERROR,
+                            format!(
+                                "The argument of TLCGet should be a nonnegative integer, but instead it is:\n{}",
+                                format_pretty(&key)
+                            ),
+                        );
+                    }
                     Value::Str(key)
                         if *key.units == *"level".encode_utf16().collect::<Vec<_>>() =>
                     {
@@ -2565,6 +2708,19 @@ impl<'ir> Evaluator<'ir> {
                         let runtime = self.runtime.as_ref().expect("the runtime");
                         match key.as_str() {
                             "all:named" => runtime.named.clone(),
+                            "all" => {
+                                let (indices, values) = self
+                                    .registers
+                                    .numbered
+                                    .iter()
+                                    .enumerate()
+                                    .filter_map(|(index, value)| {
+                                        let value = value.clone()?;
+                                        Some((Value::Int(index as i32), Value::tuple(vec![value])))
+                                    })
+                                    .unzip();
+                                sorted_function(indices, values, Class::Plain)?
+                            }
                             "stats" => runtime.stats.clone(),
                             "generated" | "distinct" | "queue" | "diameter" => {
                                 let Value::Function(stats) = &runtime.stats else {
@@ -2581,32 +2737,8 @@ impl<'ir> Evaluator<'ir> {
                             _ => return fail("TLCGet"),
                         }
                     }
-                    // A register TLCSet set as the postconditions evaluate.
-                    Value::Int(index) => match self
-                        .runtime
-                        .as_ref()
-                        .and_then(|runtime| runtime.registers.get(&index))
-                    {
-                        Some(value) => value.clone(),
-                        None => return fail("TLCGet of a register the replay didn't set"),
-                    },
                     _ => return fail("TLCGet"),
                 }
-            }
-            // Once the search is over, TLCSet sets the register at an index, which TLCGet reads.
-            "TLCSet" if self.runtime.is_some() => {
-                arity(2)?;
-                let Value::Int(index) = self.operand(&operands[0])? else {
-                    return fail("TLCSet of a register other than an index");
-                };
-                if index < 0 {
-                    return fail("TLCSet of a negative index");
-                }
-                let value = self.operand(&operands[1])?;
-                if let Some(runtime) = &mut self.runtime {
-                    runtime.registers.insert(index, value);
-                }
-                Value::Bool(true)
             }
             "Permutations" => {
                 arity(1)?;

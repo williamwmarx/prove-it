@@ -10,7 +10,7 @@ use tla_values::fingerprint::Fingerprints;
 use tla_values::random::JavaRandom;
 use tla_values::{Id, Store};
 
-use crate::eval::{Context, Evaluator};
+use crate::eval::{Context, Evaluator, Registers};
 use std::rc::Rc;
 
 use crate::value::{
@@ -74,6 +74,12 @@ impl<'ir> Rebuilder<'ir> {
     pub fn set_startup(&mut self, store: &Store, values: &[Id], random: u64) {
         self.evaluator.set_startup(store, values);
         self.startup_random = random;
+    }
+
+    /// Takes TLC's registers as the search left them, which TLC's trace reads and sets again as
+    /// TLC rebuilds it.
+    pub fn set_registers(&mut self, registers: Registers) {
+        self.evaluator.registers = registers;
     }
 
     /// What a state of a rebuilt lasso, or its step to the next, answers of the liveness checker's

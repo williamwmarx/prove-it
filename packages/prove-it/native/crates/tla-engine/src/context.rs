@@ -432,10 +432,13 @@ impl EngineContext {
         } else {
             HashSet::new()
         };
+        // TLC checks each step against the action properties as it finds the step, after the
+        // invariants (`doNextCheckImplied`), as the search does, so they may print.
         let mut action_properties = Vec::new();
         for property in &model.action_properties {
-            let action = compiler.compile_root(Root::Expression(property.action))?;
-            let unchanged = compiler.compile_root(Root::Unchanged(property.subscript))?;
+            let action = compiler.compile_root_printing(Root::Expression(property.action), true)?;
+            let unchanged =
+                compiler.compile_root_printing(Root::Unchanged(property.subscript), true)?;
             action_properties.push((action.eval, unchanged.eval));
         }
         let initial_predicates = model
@@ -623,6 +626,11 @@ fn compile_live(
     match compiler.compile_in_scope(node, scope) {
         Ok(Some(compiled)) if compiled.reads_tlc_get() => {
             Err("unsupported: TLCGet after the search".into())
+        }
+        // TLC evaluates the atoms as it adds each state to the behavior graphs, in an order
+        // the registers would tell.
+        Ok(Some(compiled)) if compiled.uses_registers() => {
+            Err("unsupported: TLC's registers in the liveness checker's atoms".into())
         }
         Ok(Some(compiled)) => Ok(compiled),
         Ok(None) => Err("a scope the engine can't translate".into()),
