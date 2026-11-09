@@ -7,10 +7,15 @@
 use tla_values::Id;
 use tla_values::store::{FALSE, Outcome, TRUE};
 
+use crate::compile::DIAMETER_SLOT;
 use crate::context::{Atom, EnabledSteps};
 use crate::machine::{Eval, Machine, Printed, UNASSIGNED};
 
 pub const UNKNOWN: u8 = 2;
+
+/// The most answers an atom that reads TLCGet("diameter") takes, one per state or step for each
+/// diameter: past them the interpreter answers it.
+const MAXIMUM_DIAMETER_ANSWERS: usize = 1 << 26;
 
 /// What PROVE_IT_LIVE_CHECK finds when ENABLED from the steps the search took differs from
 /// ENABLED run.
@@ -185,6 +190,8 @@ pub fn answer_atoms(
     atoms: &[Atom],
     is_live_checked: bool,
     is_printing: bool,
+    diameter_atoms: &[bool],
+    last_diameter: Option<u32>,
 ) -> Result<Vec<Table>, &'static str> {
     let mut evaluator = Evaluator {
         machine,
@@ -194,122 +201,171 @@ pub fn answer_atoms(
         current: None,
     };
     let mut tables = Vec::with_capacity(atoms.len());
-    for atom in atoms {
-        let mut values = vec![UNASSIGNED; graph.count];
-        let mut prints = Vec::new();
-        let table = match atom {
-            Atom::Unknown(reason) => Table {
+    for (position, atom) in atoms.iter().enumerate() {
+        // An atom that reads TLCGet("diameter") is answered for each diameter from 1 to the last,
+        // and left to the interpreter where the search isn't complete or the answers for every
+        // diameter wouldn't fit in memory.
+        let is_diameter_read = diameter_atoms.get(position) == Some(&true);
+        let is_too_deep = last_diameter.is_some_and(|last| {
+            (graph.edges.len() + graph.count).saturating_mul(last as usize)
+                > MAXIMUM_DIAMETER_ANSWERS
+        });
+        if is_diameter_read && (last_diameter.is_none() || is_too_deep) {
+            tables.push(Table {
                 answers: Vec::new(),
                 is_from_steps: false,
-                unknown: Some(reason.clone()),
-                prints,
-            },
-            Atom::State(eval) => Table {
-                answers: (0..graph.count)
-                    .map(|index| {
-                        let answer = evaluator.evaluate_state(index, eval);
-                        keep_printed(evaluator.machine, &mut prints, index);
-                        answer
-                    })
-                    .collect(),
-                is_from_steps: false,
-                unknown: None,
-                prints,
-            },
-            Atom::Action {
-                action,
-                subscript,
-                enabled,
-            } => {
-                // The checker asks about no step from a state where the ENABLED of the action's
-                // fairness is false, and the interpreter answers any it does; where the atom
-                // prints, it evaluates the action on every step TLC does.
-                let disabled = enabled
-                    .filter(|_| !is_printing)
-                    .and_then(|position| tables.get(position))
-                    .filter(|table: &&Table| table.answers.len() == graph.count)
-                    .map(|table| &table.answers);
-                let is_asked = |index: usize| disabled.is_none_or(|answers| answers[index] != 0);
-                let mut answers = Vec::with_capacity(graph.edges.len() + graph.count);
-                for index in 0..graph.expanded {
-                    let start = graph.edge_offsets[index] as usize;
-                    let end = graph.edge_offsets[index + 1] as usize;
-                    if !is_asked(index) {
-                        answers.resize(answers.len() + end - start, UNKNOWN);
-                        continue;
-                    }
-                    for edge in start..end {
-                        let next = graph.edges[edge] as usize;
-                        answers.push(evaluator.action(
-                            &mut values,
-                            action,
-                            subscript.as_ref(),
-                            index,
-                            next,
-                        ));
-                        keep_printed(evaluator.machine, &mut prints, edge);
-                    }
-                }
-                for index in 0..graph.count {
-                    answers.push(if is_asked(index) {
-                        evaluator.action(&mut values, action, subscript.as_ref(), index, index)
-                    } else {
-                        UNKNOWN
-                    });
-                    keep_printed(evaluator.machine, &mut prints, graph.edges.len() + index);
-                }
-                Table {
-                    answers,
+                unknown: Some("TLCGet(\"diameter\") as the search goes".into()),
+                prints: Vec::new(),
+            });
+            continue;
+        }
+        let rounds = match last_diameter {
+            Some(last) if is_diameter_read => 1..=last,
+            _ => 0..=0,
+        };
+        let mut whole: Option<Table> = None;
+        for diameter in rounds {
+            if diameter > 0 {
+                let value = evaluator
+                    .machine
+                    .store
+                    .int(i64::from(diameter))
+                    .map_err(|_| "a diameter the store doesn't hold")?;
+                evaluator.machine.set_slot(DIAMETER_SLOT, value);
+                evaluator.epochs.fill(0);
+                evaluator.current = None;
+            }
+            let mut values = vec![UNASSIGNED; graph.count];
+            let mut prints = Vec::new();
+            let table = match atom {
+                Atom::Unknown(reason) => Table {
+                    answers: Vec::new(),
+                    is_from_steps: false,
+                    unknown: Some(reason.clone()),
+                    prints,
+                },
+                Atom::State(eval) => Table {
+                    answers: (0..graph.count)
+                        .map(|index| {
+                            let answer = evaluator.evaluate_state(index, eval);
+                            keep_printed(evaluator.machine, &mut prints, index);
+                            answer
+                        })
+                        .collect(),
                     is_from_steps: false,
                     unknown: None,
                     prints,
-                }
-            }
-            Atom::Enabled { run, steps } => {
-                // TLC's ENABLED walks what the shortcut evaluated, so only a search that took no
-                // shortcut past a walk found the successors ENABLED finds.
-                // Where it prints, TLC runs it on each state.
-                let steps = steps.as_ref().filter(|steps| {
-                    !is_printing
-                        && graph.is_enabled_exact
-                        && (steps.actions.is_none() || graph.labels.is_some())
-                });
-                let mut answers = Vec::with_capacity(graph.count);
-                for index in 0..graph.count {
-                    let from_steps = match steps {
-                        Some(steps) if index < graph.expanded => {
-                            evaluator.enabled_from_steps(&mut values, steps, index)
+                },
+                Atom::Action {
+                    action,
+                    subscript,
+                    enabled,
+                } => {
+                    // The checker asks about no step from a state where the ENABLED of the action's
+                    // fairness is false, and the interpreter answers any it does; where the atom
+                    // prints, it evaluates the action on every step TLC does.
+                    let disabled = enabled
+                        .filter(|_| !is_printing)
+                        .and_then(|position| tables.get(position))
+                        .filter(|table: &&Table| table.answers.len() == graph.count)
+                        .map(|table| &table.answers);
+                    let is_asked =
+                        |index: usize| disabled.is_none_or(|answers| answers[index] != 0);
+                    let mut answers = Vec::with_capacity(graph.edges.len() + graph.count);
+                    for index in 0..graph.expanded {
+                        let start = graph.edge_offsets[index] as usize;
+                        let end = graph.edge_offsets[index + 1] as usize;
+                        if !is_asked(index) {
+                            answers.resize(answers.len() + end - start, UNKNOWN);
+                            continue;
                         }
-                        _ => UNKNOWN,
-                    };
-                    let ran = match run {
-                        Ok(eval) if from_steps == UNKNOWN || is_live_checked => {
-                            evaluator.evaluate_state(index, eval)
+                        for edge in start..end {
+                            let next = graph.edges[edge] as usize;
+                            answers.push(evaluator.action(
+                                &mut values,
+                                action,
+                                subscript.as_ref(),
+                                index,
+                                next,
+                            ));
+                            keep_printed(evaluator.machine, &mut prints, edge);
                         }
-                        _ => UNKNOWN,
-                    };
-                    keep_printed(evaluator.machine, &mut prints, index);
-                    if from_steps != UNKNOWN && ran != UNKNOWN && from_steps != ran {
-                        return Err(ENABLED_DIFFERS);
                     }
-                    answers.push(if from_steps == UNKNOWN {
-                        ran
-                    } else {
-                        from_steps
+                    for index in 0..graph.count {
+                        answers.push(if is_asked(index) {
+                            evaluator.action(&mut values, action, subscript.as_ref(), index, index)
+                        } else {
+                            UNKNOWN
+                        });
+                        keep_printed(evaluator.machine, &mut prints, graph.edges.len() + index);
+                    }
+                    Table {
+                        answers,
+                        is_from_steps: false,
+                        unknown: None,
+                        prints,
+                    }
+                }
+                Atom::Enabled { run, steps } => {
+                    // TLC's ENABLED walks what the shortcut evaluated, so only a search that took no
+                    // shortcut past a walk found the successors ENABLED finds.
+                    // Where it prints, TLC runs it on each state.
+                    let steps = steps.as_ref().filter(|steps| {
+                        !is_printing
+                            && graph.is_enabled_exact
+                            && (steps.actions.is_none() || graph.labels.is_some())
                     });
+                    let mut answers = Vec::with_capacity(graph.count);
+                    for index in 0..graph.count {
+                        let from_steps = match steps {
+                            Some(steps) if index < graph.expanded => {
+                                evaluator.enabled_from_steps(&mut values, steps, index)
+                            }
+                            _ => UNKNOWN,
+                        };
+                        let ran = match run {
+                            Ok(eval) if from_steps == UNKNOWN || is_live_checked => {
+                                evaluator.evaluate_state(index, eval)
+                            }
+                            _ => UNKNOWN,
+                        };
+                        keep_printed(evaluator.machine, &mut prints, index);
+                        if from_steps != UNKNOWN && ran != UNKNOWN && from_steps != ran {
+                            return Err(ENABLED_DIFFERS);
+                        }
+                        answers.push(if from_steps == UNKNOWN {
+                            ran
+                        } else {
+                            from_steps
+                        });
+                    }
+                    Table {
+                        answers,
+                        is_from_steps: steps.is_some(),
+                        unknown: match (run, steps) {
+                            (Err(reason), None) => Some(reason.clone()),
+                            _ => None,
+                        },
+                        prints,
+                    }
                 }
-                Table {
-                    answers,
-                    is_from_steps: steps.is_some(),
-                    unknown: match (run, steps) {
-                        (Err(reason), None) => Some(reason.clone()),
-                        _ => None,
-                    },
-                    prints,
+            };
+            whole = Some(match whole {
+                None => table,
+                Some(mut whole) => {
+                    let offset = whole.answers.len();
+                    whole.answers.extend(table.answers);
+                    whole.prints.extend(
+                        table
+                            .prints
+                            .into_iter()
+                            .map(|(at, printed)| (at + offset, printed)),
+                    );
+                    whole
                 }
-            }
-        };
-        tables.push(table);
+            });
+        }
+        tables.push(whole.expect("an answer for each diameter"));
     }
     Ok(tables)
 }

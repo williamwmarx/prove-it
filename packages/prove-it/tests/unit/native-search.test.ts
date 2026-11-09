@@ -781,6 +781,35 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     );
   });
 
+  it('reads TLCGet("diameter") in a temporal property as TLC\'s search goes', async () => {
+    // TLC's diameter is the deepest level its search has found when it adds a state to the
+    // behavior graphs, after it expanded the state: 2, 3, 4 and 4 for x = 0 to 3.
+    const body = [
+      "EXTENDS Naturals, TLC",
+      "VARIABLE x",
+      "Spec == x = 0 /\\ [][x' = (x + 1) % 4]_x /\\ WF_x(x' = (x + 1) % 4)",
+      'Below == <>[](x < TLCGet("diameter"))',
+      'Past == <>[](TLCGet("diameter") > x + 1)',
+      // Holds only where the diameter is read as each state is added, not as the search ends.
+      'Early == <>[](TLCGet("diameter") < 4 + x)',
+      // The tableau's predicates and a fairness's subscript, read at the diameter TLC has then.
+      'Nested == []<>(TLCGet("diameter") < 4 /\\ <>(x = 2))',
+      'Sub == IF TLCGet("diameter") < 4 THEN x ELSE 0',
+      'Fairly == []<>(x < TLCGet("diameter")) /\\ SF_Sub(x\' = (x + 1) % 4)',
+    ];
+    for (const [property, verdict] of [
+      ["Below", "holds"],
+      ["Past", "lasso"],
+      ["Early", "holds"],
+      // A late node at another diameter, which the interpreter checks.
+      ["Nested", "declined: a late node TLC adds at another diameter"],
+    ] as const) {
+      const lines = await compareWithInterpreter(body, `SPECIFICATION Spec\nPROPERTY ${property}`);
+      expect(lines).toContain(`[engine] native: liveness: ${verdict}`);
+    }
+    await compareWithInterpreter(body, "SPECIFICATION Spec\nPROPERTY Fairly");
+  });
+
   it("hands over a violated invariant, deadlock and a failed action property", async () => {
     const cases: [string[], string, string][] = [
       [
