@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use tla_ir::{Ir, LiveTerm, Model};
 use tla_live::{Liveness, Term, Verdict};
-use tla_values::fingerprint::{Fingerprints, Parent};
+use tla_values::fingerprint::{Carried, Fingerprints, Parent};
 use tla_values::store::Outcome;
 use tla_values::transfer::{EncodedStates, SharedEncoder, SharedStates, StateEncoder};
 use tla_values::{Bail, Id, NESTING_STACK_BYTES, Store};
@@ -487,6 +487,8 @@ struct Search<'r, T> {
     level_id: Id,
     next_level_id: Id,
     fingerprints: Fingerprints,
+    // The fingerprints the threads of the last level shared computed of the values they made.
+    carried: Carried,
     // The state being expanded, whose successors' fingerprints follow from its own when the key is
     // the state.
     parent: Parent,
@@ -535,6 +537,7 @@ impl<'r, T: Reached> Search<'r, T> {
             level_id: 0,
             next_level_id: 0,
             fingerprints: Fingerprints::new(),
+            carried: Carried::default(),
             parent: Parent::default(),
             canonicalizer: None,
             graph: None,
@@ -1066,9 +1069,9 @@ struct Worker<'p> {
 }
 
 impl Worker<'_> {
-    fn attach(&mut self, store: &Arc<Store>) {
+    fn attach(&mut self, store: &Arc<Store>, carried: &Carried) {
         self.machine.forget_from(self.bound);
-        self.fingerprints.forget_from(self.bound);
+        self.fingerprints.forget_from_carried(self.bound, carried);
         if let Some(canonicalizer) = &mut self.canonicalizer {
             canonicalizer.forget_from(self.bound);
         }
@@ -1237,11 +1240,11 @@ impl Search<'_, States> {
             let threads: Vec<_> = workers
                 .iter_mut()
                 .map(|worker| {
-                    let (shared, store) = (&shared, &store);
+                    let (shared, store, carried) = (&shared, &store, &self.carried);
                     std::thread::Builder::new()
                         .stack_size(NESTING_STACK_BYTES)
                         .spawn_scoped(scope, move || {
-                            worker.attach(store);
+                            worker.attach(store, carried);
                             expand_claimed(worker, shared)
                         })
                         .expect("a thread for the search")
@@ -1352,6 +1355,14 @@ impl Search<'_, States> {
             machine.is_past_walk |= found.is_past_walk;
         }
         self.expanding = stop;
+        // The fingerprints each thread computed of the values it made that are now the store's,
+        // for every thread to keep at the next level.
+        self.carried.reset(workers[0].bound);
+        for worker in workers.iter() {
+            worker
+                .fingerprints
+                .carry(&worker.imported, &mut self.carried);
+        }
         if let Some(bail) = violated {
             return Err(bail);
         }
