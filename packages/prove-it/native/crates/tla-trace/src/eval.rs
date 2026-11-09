@@ -1913,6 +1913,24 @@ impl<'ir> Evaluator<'ir> {
                         _ => None,
                     }
                 }
+                // A recursive function an instance's scope binds, as a LET's in an action's scope.
+                Binding::Thunk {
+                    node,
+                    context: bound,
+                    is_self,
+                } => match self.kind(*node) {
+                    NodeKind::FunctionConstruction {
+                        is_recursive: true,
+                        bounds,
+                        body,
+                    } => Some((
+                        &bounds[..],
+                        *body,
+                        own_context(bound, &frame, *is_self)
+                            .primed(context.is_primed || bound.is_primed),
+                    )),
+                    _ => None,
+                },
                 _ => None,
             });
         }
