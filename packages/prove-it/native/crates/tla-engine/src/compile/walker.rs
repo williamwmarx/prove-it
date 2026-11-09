@@ -18,6 +18,7 @@ use tla_ir::{Index, NodeId, NodeKind, Pattern, Resolution, ScopeBinding};
 use tla_values::store::{FALSE, KIND_SET, KIND_TUPLE, Outcome, TRUE};
 use tla_values::{Bail, Id};
 
+use super::nodes::assign_bound;
 use super::predicate::Test;
 use super::{
     Binding, CompileError, Compiled, Compiler, Compiling, Context, Definition, DefinitionForm,
@@ -288,23 +289,24 @@ enum Op {
     PastWalk,
 }
 
-/// A run of conjuncts, then the rest of the walk. Its assignments are undone in reverse once the
-/// rest returns, as each conjunction of `action.ts` unassigns its own.
-struct Segment {
-    ops: Vec<Op>,
-    rest: Rest,
-    is_init: bool,
+#[inline(always)]
+fn read_source(machine: &mut Machine<'_>, source: &Source, variable: u32) -> Outcome<Id> {
+    match source {
+        Source::Value(value) => value(machine),
+        Source::Current => Ok(machine.cur[variable as usize]),
+    }
 }
 
-impl Segment {
-    #[inline(always)]
-    fn source(machine: &mut Machine<'_>, source: &Source, variable: u32) -> Outcome<Id> {
-        match source {
-            Source::Value(value) => value(machine),
-            Source::Current => Ok(machine.cur[variable as usize]),
-        }
-    }
+/// A run of conjuncts, then the rest of the walk. Its assignments are undone in reverse once the
+/// rest returns, or once a conjunct stops it, as each conjunction of `action.ts` unassigns its own.
+struct Segment<const IS_INIT: bool> {
+    ops: Box<[Op]>,
+    // The variables the ops assign, in order, for the undo.
+    assigns: Box<[u32]>,
+    rest: Rest,
+}
 
+impl<const IS_INIT: bool> Segment<IS_INIT> {
     // Applies one conjunct: whether the walk goes on past it.
     #[inline(always)]
     fn apply(&self, machine: &mut Machine<'_>, op: &Op) -> Outcome<bool> {
@@ -316,14 +318,14 @@ impl Segment {
             },
             Op::Holds(test) => test(machine),
             Op::Assign(variable, source) => {
-                let value = Self::source(machine, source, *variable)?;
-                target(machine, self.is_init)[*variable as usize] = value;
+                let value = read_source(machine, source, *variable)?;
+                target(machine, IS_INIT)[*variable as usize] = value;
                 machine.assigned += 1;
                 Ok(true)
             }
             Op::Test(variable, source) => {
-                let value = Self::source(machine, source, *variable)?;
-                let current = target(machine, self.is_init)[*variable as usize];
+                let value = read_source(machine, source, *variable)?;
+                let current = target(machine, IS_INIT)[*variable as usize];
                 Ok(current == value || machine.store.equals(current, value)?)
             }
             Op::PastWalk => {
@@ -334,31 +336,21 @@ impl Segment {
     }
 
     fn run(&self, machine: &mut Machine<'_>, on_complete: &mut Continue<'_>) -> Outcome<()> {
-        let mut reached = self.ops.len();
-        let mut result = Ok(());
-        for (index, op) in self.ops.iter().enumerate() {
-            match self.apply(machine, op) {
-                Ok(true) => {}
-                Ok(false) => {
-                    reached = index;
-                    break;
-                }
-                Err(bail) => {
-                    reached = index;
-                    result = Err(bail);
-                    break;
+        let mut count = 0;
+        let result = 'walk: {
+            for op in &self.ops {
+                match self.apply(machine, op) {
+                    Ok(true) => count += usize::from(matches!(op, Op::Assign(..))),
+                    Ok(false) => break 'walk Ok(()),
+                    Err(bail) => break 'walk Err(bail),
                 }
             }
+            run_rest(&self.rest, machine, on_complete)
+        };
+        for &variable in self.assigns[..count].iter().rev() {
+            target(machine, IS_INIT)[variable as usize] = UNASSIGNED;
         }
-        if reached == self.ops.len() {
-            result = run_rest(&self.rest, machine, on_complete);
-        }
-        for op in self.ops[..reached].iter().rev() {
-            if let Op::Assign(variable, _) = op {
-                target(machine, self.is_init)[*variable as usize] = UNASSIGNED;
-                machine.assigned -= 1;
-            }
-        }
+        machine.assigned -= count as u32;
         result
     }
 }
@@ -376,10 +368,21 @@ fn segment(ops: Vec<Op>, rest: Rest, is_init: bool) -> Rest {
     if ops.is_empty() {
         return rest;
     }
-    let segment = Segment { ops, rest, is_init };
-    Some(step(move |machine, on_complete| {
-        segment.run(machine, on_complete)
-    }))
+    let assigns = ops
+        .iter()
+        .filter_map(|op| match op {
+            Op::Assign(variable, _) => Some(*variable),
+            _ => None,
+        })
+        .collect();
+    let ops = ops.into_boxed_slice();
+    Some(if is_init {
+        let segment = Segment::<true> { ops, assigns, rest };
+        step(move |machine, on_complete| segment.run(machine, on_complete))
+    } else {
+        let segment = Segment::<false> { ops, assigns, rest };
+        step(move |machine, on_complete| segment.run(machine, on_complete))
+    })
 }
 
 // An assignment of a variable that may or may not be assigned on the path: it assigns or tests,
@@ -387,7 +390,7 @@ fn segment(ops: Vec<Op>, rest: Rest, is_init: bool) -> Rest {
 fn either_step(variable: u32, source: Source, rest: Rest, is_init: bool) -> Step {
     let index = variable as usize;
     step(move |machine, on_complete| {
-        let value = Segment::source(machine, &source, variable)?;
+        let value = read_source(machine, &source, variable)?;
         let current = target(machine, is_init)[index];
         if current == UNASSIGNED {
             target(machine, is_init)[index] = value;
@@ -1157,13 +1160,10 @@ impl<'a> Compiler<'a> {
                 let mut inner = context.clone();
                 let mut levels = Vec::new();
                 for bound in bounds {
-                    if !matches!(bound.pattern, Pattern::Name(_)) {
-                        return unsupported("a tuple pattern in an action's \\E");
-                    }
                     let set = self.compile_ordered(bound.set, &inner, false)?;
                     let binder = self.bind_bound(&bound.pattern, &inner);
                     inner = binder.context;
-                    levels.push((set, binder.slots[0]));
+                    levels.push((set, binder.slots, binder.tuple));
                 }
                 let body = self.walk(*body, &inner, options, known, then)?;
                 Ok(Some(exists_step(levels, body)))
@@ -1858,14 +1858,18 @@ impl<'a> Compiler<'a> {
     }
 }
 
-fn exists_step(levels: Vec<(Ordered, u32)>, body: Rest) -> Step {
-    if let [(set, slot)] = &levels[..] {
-        let (set, slot) = (set.clone(), *slot as usize);
+// A bound of `\E`: its set, and the slots its name or tuple of names binds (`assign_bound`).
+type Level = (Ordered, Vec<u32>, bool);
+
+fn exists_step(levels: Vec<Level>, body: Rest) -> Step {
+    if let [(set, slots, tuple)] = &levels[..] {
+        let (set, slots, tuple) = (set.clone(), slots.clone(), *tuple);
         return step(move |machine, on_complete| {
             let id = (set.eval)(machine)?;
             let size = set.size(machine, id)?;
             for position in 0..size {
-                machine.locals[slot] = machine.store.element_at(id, position);
+                let element = machine.store.element_at(id, position);
+                assign_bound(machine, &slots, tuple, element)?;
                 run_rest(&body, machine, on_complete)?;
             }
             Ok(())
@@ -1875,7 +1879,7 @@ fn exists_step(levels: Vec<(Ordered, u32)>, body: Rest) -> Step {
     step(move |machine, on_complete| {
         let mut sets = Vec::with_capacity(levels.len());
         let mut is_empty = false;
-        for (set, _) in &levels {
+        for (set, ..) in &levels {
             let id = (set.eval)(machine)?;
             if set.size(machine, id)? == 0 {
                 is_empty = true;
@@ -1887,9 +1891,9 @@ fn exists_step(levels: Vec<(Ordered, u32)>, body: Rest) -> Step {
         }
         let mut positions = vec![0u32; levels.len()];
         loop {
-            for (level, &(_, slot)) in levels.iter().enumerate() {
-                machine.locals[slot as usize] =
-                    machine.store.element_at(sets[level], positions[level]);
+            for (level, (_, slots, tuple)) in levels.iter().enumerate() {
+                let element = machine.store.element_at(sets[level], positions[level]);
+                assign_bound(machine, slots, *tuple, element)?;
             }
             run_rest(&body, machine, on_complete)?;
             let mut level = 0;

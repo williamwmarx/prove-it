@@ -245,21 +245,24 @@ impl<'p> Machine<'p> {
 
     // Evaluates through a memo table, the keys read before the inner evaluation and the value
     // stored after it, so a bailout stores nothing.
-    pub(crate) fn lookup(&mut self, table: usize, keys: &[Key], inner: &Eval) -> Outcome<Id> {
+    // The number of keys is the closure's own, so their reads unroll.
+    #[inline(always)]
+    pub(crate) fn lookup<const WIDTH: usize>(
+        &mut self,
+        table: usize,
+        keys: &[Key; WIDTH],
+        inner: &Eval,
+    ) -> Outcome<Id> {
         if !self.tables[table].is_enabled() {
             return inner(self);
         }
-        let mut read = [0; 6];
-        for (index, &key) in keys.iter().enumerate() {
-            read[index] = self.read_key(key);
-        }
-        let read = &read[..keys.len()];
-        let known = self.tables[table].get(read);
+        let read = keys.map(|key| self.read_key(key));
+        let known = self.tables[table].get(&read);
         if known != EMPTY {
             return Ok(known);
         }
         let value = inner(self)?;
-        self.tables[table].set(read, value);
+        self.tables[table].set(&read, value);
         Ok(value)
     }
 

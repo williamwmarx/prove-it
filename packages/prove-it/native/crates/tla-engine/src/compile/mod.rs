@@ -279,6 +279,22 @@ pub(crate) fn combine_references(
     }))
 }
 
+// A memo table's lookup, with its keys in an array of their own length.
+fn memo_lookup(table: usize, keys: &[Key], inner: Eval) -> Eval {
+    fn with<const WIDTH: usize>(table: usize, keys: &[Key], inner: Eval) -> Eval {
+        let keys: [Key; WIDTH] = keys.try_into().expect("as many keys as the width");
+        eval(move |machine| machine.lookup(table, &keys, &inner))
+    }
+    match keys.len() {
+        1 => with::<1>(table, keys, inner),
+        2 => with::<2>(table, keys, inner),
+        3 => with::<3>(table, keys, inner),
+        4 => with::<4>(table, keys, inner),
+        5 => with::<5>(table, keys, inner),
+        _ => with::<MAXIMUM_MEMO_WIDTH>(table, keys, inner),
+    }
+}
+
 // A boolean whose value is a fused predicate.
 pub(crate) fn predicate_node(predicate: predicate::Predicate, footprint: Footprint) -> Compiled {
     Compiled {
@@ -835,10 +851,9 @@ impl<'a> Compiler<'a> {
             .chain(footprint.primes.iter().map(|&variable| Key::Next(variable)))
             .chain(footprint.slots.iter().map(|&slot| Key::Slot(slot)))
             .collect();
-        let inner = compiled.eval.clone();
         Compiled {
             is_costly: false,
-            ..compiled.with_eval(eval(move |machine| machine.lookup(table, &keys, &inner)))
+            ..compiled.with_eval(memo_lookup(table, &keys, compiled.eval.clone()))
         }
     }
 
