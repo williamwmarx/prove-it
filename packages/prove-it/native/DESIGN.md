@@ -2296,12 +2296,12 @@ On the 4-core cloud machine, with `main` at a0f66ec before the merge of #31 and 
   set of S (`isElementOf`).
 - The engine holds S's elements as ids, so it streams each as its normalized set. That is TLC's
   order unless the element itself streams apart (`isStreamedApart`: a UNION or `\cup` TLC keeps
-  lazy, or a set built from one). So `Compiled` now says whether a set is known to stream in
-  order (`is_in_order`) and whether each of its elements is (`are_elements_in_order`). Both are
-  false unless the compiler knows: set enumerations, set maps, intervals, SUBSET and unprimed
-  variables are in order, and IF, filters, set operations and sets of functions, records and
-  tuples are in order when their parts are, a lazy `\cup` never. A UNION over anything else,
-  such as a set map whose body is a bound name, or a set of functions over one, still has no
+  lazy, or a set built from one). So `Compiled` now says whether a set is known to stream in order
+  (`is_in_order`) and whether each of its elements is (`are_elements_in_order`). Both are false
+  unless the compiler knows: set enumerations, set maps, intervals, SUBSET and unprimed variables
+  outside the initial predicate are in order, and IF, filters, set operations and sets of functions,
+  records and tuples are in order when their parts are, a lazy `\cup` never. A UNION over anything
+  else, such as a set map whose body is a bound name, or a set of functions over one, still has no
   reference and is refused.
 - With it, RealQuicksort and RealQuicksort2 (TLC test-model/pcal), declined for
   `UNION {[1..N -> 1..N] : N \in 0..MaxLen}`, complete in Rust with output identical to TLC's.

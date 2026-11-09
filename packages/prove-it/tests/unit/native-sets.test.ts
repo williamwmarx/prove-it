@@ -176,4 +176,16 @@ describe.if(ADDON !== undefined)("the native engine's lazy sets", () => {
       ]);
     }
   });
+
+  it("leaves a UNION of a variable the initial predicate assigned", async () => {
+    // TLC fingerprints a state only once the initial predicate has assigned it.
+    const body = [
+      "VARIABLES s, x",
+      "Init == s = (SUBSET {1}) \\cup SUBSET {2} /\\ x \\in UNION {s}",
+      "Next == UNCHANGED <<s, x>>",
+    ];
+    expect(await compareWithInterpreter(body, CONFIG)).toContainEqual(
+      expect.stringMatching(/^\[engine\] native: declined: unsupported: enumerating a set TLC /),
+    );
+  });
 });

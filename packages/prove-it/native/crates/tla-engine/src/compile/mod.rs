@@ -1063,11 +1063,12 @@ impl<'a> Compiler<'a> {
                 Footprint::prime(index),
             ));
         }
-        // TLC fingerprints a state, which caches each lazy set in it as its normalized set.
+        // TLC fingerprints a state, which caches each lazy set in it as its normalized set, but
+        // not before the initial predicate has assigned it.
         Ok(Compiled {
             shape: Shape::Current(index),
-            is_in_order: true,
-            are_elements_in_order: true,
+            is_in_order: !context.is_init,
+            are_elements_in_order: !context.is_init,
             ..leaf(
                 eval(move |machine| machine.read_current(index)),
                 Footprint::var(index),
