@@ -121,7 +121,7 @@ fn pattern(value: &BoundPattern) -> Json {
         } => object(vec![
             ("kind", Some(text("Name"))),
             ("name", Some(name(bound))),
-            ("ranges", Some(ranges(bound_ranges))),
+            ("ranges", pattern_ranges(bound_ranges)),
         ]),
         BoundPattern::Tuple {
             names: bound,
@@ -129,9 +129,14 @@ fn pattern(value: &BoundPattern) -> Json {
         } => object(vec![
             ("kind", Some(text("Tuple"))),
             ("names", Some(names(bound))),
-            ("ranges", Some(ranges(bound_ranges))),
+            ("ranges", pattern_ranges(bound_ranges)),
         ]),
     }
+}
+
+/// A pattern the front end makes, such as an instance copy's, has no ranges.
+fn pattern_ranges(values: &[Range]) -> Option<Json> {
+    (!values.is_empty()).then(|| ranges(values))
 }
 
 fn bound(value: &Bound) -> Json {
@@ -172,12 +177,26 @@ fn selector(value: &Selector) -> Json {
     }
 }
 
+/// The fields of a node, with what resolution wrote on it: a name's key in place of its name, as
+/// `resolve.ts` writes it, and `resolution`.
 fn with_kind(kind: &str, value: &Expression, fields: Vec<(&'static str, Option<Json>)>) -> Json {
+    let key = value.resolved.key.borrow().clone();
     let mut all = vec![
         ("kind", Some(text(kind))),
         ("location", Some(location(&value.location))),
+        (
+            "resolution",
+            value
+                .resolved
+                .is_local
+                .get()
+                .then(|| object(vec![("kind", Some(text("Local")))])),
+        ),
     ];
-    all.extend(fields);
+    all.extend(fields.into_iter().map(|(field, json)| match (&key, field) {
+        (Some(key), "name" | "operator") => (field, Some(name(key))),
+        _ => (field, json),
+    }));
     object(all)
 }
 
@@ -443,6 +462,14 @@ pub fn expression(value: &Expression) -> Json {
             vec![
                 ("bounds", some(bounds(constructed))),
                 ("body", some(expression(body))),
+                (
+                    "isRecursive",
+                    value
+                        .resolved
+                        .is_recursive
+                        .get()
+                        .then_some(Json::Bool(true)),
+                ),
             ],
         ),
         ExpressionKind::FunctionSet {
@@ -539,6 +566,7 @@ pub fn expression(value: &Expression) -> Json {
             is_strong,
             subscript,
             action,
+            enabled,
         } => with_kind(
             if *is_strong {
                 "StrongFairness"
@@ -549,6 +577,7 @@ pub fn expression(value: &Expression) -> Json {
             vec![
                 ("subscript", some(expression(subscript))),
                 ("action", some(expression(action))),
+                ("enabled", enabled.as_deref().map(expression)),
             ],
         ),
         ExpressionKind::Label {
@@ -598,7 +627,7 @@ fn param(value: &OperatorParam) -> Json {
     object(vec![
         ("name", Some(name(&value.name))),
         ("arity", Some(number(value.arity))),
-        ("location", Some(location(&value.location))),
+        ("location", value.location.as_ref().map(location)),
     ])
 }
 
@@ -619,6 +648,10 @@ pub fn definition(value: &Definition) -> Json {
         DefinitionKind::Function { bounds: domain } => {
             fields.push(("kind", Some(text("Function"))));
             fields.push(("bounds", Some(bounds(domain))));
+            fields.push((
+                "isSelfReferential",
+                value.is_self_referential.get().map(Json::Bool),
+            ));
         }
     }
     object(fields)
@@ -1029,5 +1062,120 @@ pub fn config(value: &Result<crate::config::ModelConfig, crate::config::ConfigEr
         ("possible", words(&config.possible)),
         ("periodic", optional(&config.periodic)),
         ("rlReward", optional(&config.rl_reward)),
+    ])
+}
+
+/// The facts of the environment's definitions, as `createDefinitionFacts` writes their rows.
+fn facts(environment: &crate::environment::Environment) -> Json {
+    let facts = crate::dependencies::create_definition_facts(environment);
+    object(vec![
+        ("words", Some(number(facts.words()))),
+        (
+            "rows",
+            Some(list(facts.rows(), |word| Json::Number(f64::from(*word)))),
+        ),
+    ])
+}
+
+/// What linking makes of a spec, for `front-differential.ts resolve`: each definition by key, in
+/// the environment's order, written the first time the environment holds it and named by that
+/// key after; the builtins by key, with name, arity and flags; the variables and their indices;
+/// the root module's constants; and what linking prints. A failure is its error, or `notYet` with
+/// what the Rust front end doesn't cover yet.
+pub fn environment(
+    value: &Result<crate::environment::Environment, crate::errors::FrontError>,
+) -> Json {
+    use crate::errors::FrontError;
+    let environment = match value {
+        Ok(environment) => environment,
+        Err(FrontError::Syntax(error)) => return syntax_error(error),
+        Err(FrontError::Evaluation(message) | FrontError::Config(message)) => {
+            return object(vec![("error", Some(text(message)))]);
+        }
+        Err(FrontError::NotYet(reason)) => return object(vec![("notYet", Some(text(reason)))]),
+    };
+    let mut keys: crate::hash::FastMap<*const Definition, Name> = Default::default();
+    let definitions = environment
+        .definitions
+        .iter()
+        .map(|(key, value)| {
+            let written = match keys.get(&Rc::as_ptr(value)) {
+                Some(first) => object(vec![("same", Some(name(first)))]),
+                None => {
+                    keys.insert(Rc::as_ptr(value), key.clone());
+                    definition(value)
+                }
+            };
+            Json::Array(vec![name(key), written])
+        })
+        .collect();
+    object(vec![
+        ("definitions", Some(Json::Array(definitions))),
+        (
+            "builtins",
+            Some(Json::Array(
+                environment
+                    .builtins
+                    .iter()
+                    .map(|(key, builtin)| {
+                        Json::Array(vec![
+                            name(key),
+                            name(&builtin.name),
+                            number(builtin.arity),
+                            Json::Number(f64::from(builtin.flags)),
+                        ])
+                    })
+                    .collect(),
+            )),
+        ),
+        (
+            "substituted",
+            Some(Json::Array(
+                environment
+                    .definitions
+                    .iter()
+                    .filter(|(_, value)| environment.is_substituted(value))
+                    .map(|(key, _)| name(key))
+                    .collect(),
+            )),
+        ),
+        ("facts", Some(facts(environment))),
+        (
+            "assigned",
+            Some(Json::Array(
+                environment.constants_order.iter().map(name).collect(),
+            )),
+        ),
+        (
+            "substitutions",
+            Some(Json::Array(
+                environment
+                    .substitutions
+                    .iter()
+                    .map(|(key, target)| Json::Array(vec![name(key), name(target)]))
+                    .collect(),
+            )),
+        ),
+        ("variables", Some(names(&environment.variables))),
+        (
+            "variableIndex",
+            Some(Json::Array(
+                environment
+                    .variable_index
+                    .iter()
+                    .map(|(key, index)| Json::Array(vec![name(key), number(*index)]))
+                    .collect(),
+            )),
+        ),
+        (
+            "constants",
+            Some(list(&environment.root_constants, |constant| {
+                name(&constant.name)
+            })),
+        ),
+        (
+            "printed",
+            Some(list(&environment.printed, |printed| text(printed))),
+        ),
     ])
 }

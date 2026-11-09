@@ -11,8 +11,8 @@
 //! the file to write the state log to, or "". It returns:
 //! - `{ status: "declined", reason }`;
 //! - `{ status: "complete", counts, outDegrees, fingerprints[, liveness, checkpoint] }`, with
-//!   `counts` a Float64Array of the generated, distinct and initial counts, the depth, the values
-//!   and the collisions, and with temporal properties what checking them found, `{ status:
+//!   `counts` a Float64Array of the generated, distinct and initial counts, the depth, the values,
+//!   the most threads a level was shared between and the collisions, and with temporal properties what checking them found, `{ status:
 //!   "holds" | "lasso" | "accepted" | "declined", reason, path, loopStart, state,
 //!   isCycleConstrained, violated, branches }`, and the checkpoint of the whole search unless they hold;
 //! - `{ status: "stopped", reason, counts, outDegrees, parents, words, strings, states[,
@@ -52,7 +52,7 @@ use super::{
 const NAPI_UINT8_ARRAY: i32 = 1;
 const NAPI_FLOAT64_ARRAY: i32 = 8;
 
-unsafe extern "C" {
+napi_functions! {
     fn napi_get_undefined(env: napi_env, result: *mut napi_value) -> napi_status;
     fn napi_call_function(
         env: napi_env,
@@ -442,6 +442,7 @@ pub(super) unsafe extern "C" fn check_model(env: napi_env, info: napi_callback_i
                     lasso_actions,
                     fingerprints,
                     value_count,
+                    threads,
                     collisions,
                     possible,
                 } => {
@@ -469,6 +470,7 @@ pub(super) unsafe extern "C" fn check_model(env: napi_env, info: napi_callback_i
                         counts.initial_distinct,
                         counts.depth,
                         value_count as u64,
+                        threads as u64,
                         collisions,
                     ];
                     set(

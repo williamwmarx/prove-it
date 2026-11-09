@@ -55,6 +55,8 @@ pub struct EngineContext {
     pub is_live_printing: bool,
     /// Whether each atom reads TLCGet("diameter").
     pub diameter_atoms: Vec<bool>,
+    /// Whether an invariant may print, which the search prints among Next's prints.
+    pub is_invariant_printing: bool,
 }
 
 /// How the engine answers a liveness atom on its states, or why it can't, in which case the
@@ -340,6 +342,7 @@ impl EngineContext {
             .iter()
             .map(|&conjunct| compile_conjunct(compiler, conjunct, printed.contains(&conjunct)))
             .collect::<Result<Vec<Compiled>, CompileError>>()?;
+        let is_invariant_printing = invariants.iter().any(Compiled::is_printing);
         // An initial predicate in an instance's scope resolves its names there, so it implies
         // nothing.
         let init_conjuncts: HashSet<Conjunct> = if model.scope.is_none() {
@@ -509,6 +512,7 @@ impl EngineContext {
             atoms,
             is_live_printing,
             diameter_atoms,
+            is_invariant_printing,
         })
     }
 }

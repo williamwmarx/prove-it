@@ -551,6 +551,25 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     }
   });
 
+  it("compiles a predicate that holds a temporal formula in a branch it never takes", async () => {
+    // TLC's test model Github1389ViolatedB: the liveness checker's atom is Reach(0), whose body
+    // holds <> in the branch for n > 0.
+    const body = [
+      "EXTENDS Naturals",
+      "VARIABLE x",
+      "RECURSIVE Reach(_)",
+      "Reach(n) == IF n = 0 THEN (x = 99) ELSE <>(Reach(n - 1))",
+      "Init == x = 0",
+      "Next == x' = 1 - x",
+      "Spec == Init /\\ [][Next]_x /\\ WF_x(Next)",
+      "PropViolated == Reach(3)",
+    ];
+    const config = "SPECIFICATION Spec\nCHECK_DEADLOCK FALSE\nPROPERTY PropViolated";
+    const lines = await compareWithInterpreter(body, config);
+    expect(lines).toContain("[engine] native: liveness: lasso");
+    await compareWithInterpreter(body, config, { PROVE_IT_LIVE_CHECK: "1" });
+  });
+
   it("takes the steps from a state a step reached but the search didn't store", async () => {
     // TLC's ChooseTableauSymmetry: a late node of the tableau is of a state the search told apart
     // from the one stored for it only under SYMMETRY, so TLC runs Next from that state.
@@ -582,6 +601,75 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
         /native: stopped: printing where .*: steps from states it didn't store/,
       ),
     );
+  });
+
+  it("searches again where a search under SYMMETRY with temporal properties stops part way", async () => {
+    // TLC's SymmetryLivenessTableau: the graph a stopped search recorded holds the states it
+    // stored, not those each step reached, so the interpreter searches again from the start.
+    const body = [
+      "EXTENDS TLC",
+      "CONSTANTS a, b, c, d, e, f, NoVal",
+      "VARIABLES mem, ctl, buf, memInt",
+      "Proc == {c, d}",
+      "Adr == {e, f}",
+      "Val == {a, b}",
+      'MReq == [op : {"Rd"}, adr : Adr] \\cup [op : {"Wr"}, adr : Adr, val : Val]',
+      "Init == /\\ mem \\in [Adr -> Val]",
+      '        /\\ ctl = [p \\in Proc |-> "rdy"]',
+      "        /\\ buf = [p \\in Proc |-> NoVal]",
+      "        /\\ memInt \\in {<<p, NoVal>> : p \\in Proc}",
+      'Req(p) == /\\ ctl[p] = "rdy"',
+      "          /\\ \\E req \\in MReq : /\\ memInt' = <<p, req>>",
+      "                               /\\ buf' = [buf EXCEPT ![p] = req]",
+      `                               /\\ ctl' = [ctl EXCEPT ![p] = "busy"]`,
+      "          /\\ UNCHANGED mem",
+      'Do(p) == /\\ ctl[p] = "busy"',
+      `         /\\ mem' = IF buf[p].op = "Wr" THEN [mem EXCEPT ![buf[p].adr] = buf[p].val] ELSE mem`,
+      `         /\\ buf' = [buf EXCEPT ![p] = IF buf[p].op = "Wr" THEN NoVal ELSE mem[buf[p].adr]]`,
+      `         /\\ ctl' = [ctl EXCEPT ![p] = "done"]`,
+      "         /\\ UNCHANGED memInt",
+      'Rsp(p) == /\\ ctl[p] = "done"',
+      "          /\\ memInt' = <<p, buf[p]>>",
+      `          /\\ ctl' = [ctl EXCEPT ![p] = "rdy"]`,
+      "          /\\ UNCHANGED <<mem, buf>>",
+      "vars == <<memInt, mem, ctl, buf>>",
+      "Next == \\E p \\in Proc : Req(p) \\/ Do(p) \\/ Rsp(p)",
+      "Spec == Init /\\ [][Next]_vars /\\ \\A p \\in Proc : WF_vars(Do(p) \\/ Rsp(p))",
+      'Liveness == \\A p \\in Proc : (ctl[p] = "busy") ~> (ctl[p] = "rdy")',
+      "Symmetry == Permutations(Val) \\union Permutations(Proc) \\union Permutations(Adr)",
+    ];
+    const config =
+      "CONSTANTS a = a\nb = b\nc = c\nd = d\ne = e\nf = f\nNoVal = NoVal\nSYMMETRY Symmetry\nSPECIFICATION Spec\nPROPERTY Liveness";
+    for (const backend of ["ts", "rust"]) {
+      expect(
+        await compareWithInterpreter(body, config, {
+          PROVE_IT_ENGINE_BACKEND: backend,
+          PROVE_IT_STOP_AT: "65",
+        }),
+      ).toContainEqual(expect.stringMatching(/stopped where PROVE_IT_STOP_AT asked/));
+    }
+  });
+
+  it("reports a tableau node that accepts every behavior as TLC finds it", async () => {
+    // TLC's test model Github1389Counting: x becomes TRUE at most twice.
+    const body = [
+      "EXTENDS Naturals",
+      "VARIABLE x",
+      "RECURSIVE AtMost(_)",
+      "AtMost(n) == IF n = 0 THEN []~x ELSE [](x => [](~x => AtMost(n - 1)))",
+      "Init == x = FALSE",
+      "Next == x' \\in BOOLEAN",
+      "Spec == Init /\\ [][Next]_x",
+      "CountAtMostTwo == AtMost(2)",
+    ];
+    const config = "SPECIFICATION Spec\nCHECK_DEADLOCK FALSE\nPROPERTY CountAtMostTwo";
+    const lines = await compareWithInterpreter(body, config);
+    expect(lines).toContain("[engine] native: liveness: accepted");
+    // The interpreter prints the node's path without checking the properties itself.
+    expect(lines).toContainEqual(
+      expect.stringMatching(/^\[engine\] found 2 states in \d+ ms; the interpreter prints/),
+    );
+    await compareWithInterpreter(body, config, { PROVE_IT_LIVE_CHECK: "1" });
   });
 
   it("prints what the search and the temporal properties print in TLC's order", async () => {
@@ -627,6 +715,32 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
       );
       expect(lines).toContainEqual(expect.stringMatching(verdict));
     }
+    // TLC checks no invariant as it runs Next again for a late node, so where an invariant prints
+    // the interpreter checks from the start.
+    const checked = [...cycling, 'Shown == PrintT(<<"inv", x>>)'].map((line) =>
+      line.replace("Next == PrintT(x) /\\ ", "Next == "),
+    );
+    expect(
+      await compareWithInterpreter(checked, "SPECIFICATION Fair\nINVARIANT Shown\nPROPERTY Leads"),
+    ).toContainEqual(
+      expect.stringMatching(/native: stopped: printing where .*: prints it doesn't/),
+    );
+    // Nor does Next print the same again where it prints the count of distinct states, which
+    // has grown since.
+    const counted = [
+      "EXTENDS Naturals, TLC",
+      "VARIABLE x",
+      "Init == x = 0",
+      "A == x' = (x + 1) % 3",
+      'Next == PrintT(<<x, TLCGet("distinct")>>) /\\ A',
+      "Fair == Init /\\ [][Next]_x /\\ WF_x(A)",
+      "Leads == [](x = 0 => <>(x = 2))",
+    ];
+    expect(
+      await compareWithInterpreter(counted, "SPECIFICATION Fair\nPROPERTY Leads"),
+    ).toContainEqual(
+      expect.stringMatching(/native: stopped: printing where .*: prints it doesn't/),
+    );
   });
 
   it('reads TLCGet("diameter") in a temporal property as TLC\'s search goes', async () => {
@@ -974,6 +1088,28 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     }
   });
 
+  it("merges states whose strings differ only above U+00FF, as TLC's fingerprints do", async () => {
+    // TLC fingerprints a string by the low byte of each character, so "Ā" and "Ȁ" make one state.
+    const body = [
+      "EXTENDS Naturals",
+      "VARIABLES x, y",
+      'Init == x \\in {"Ā", "Ȁ", "a"} /\\ y = 0',
+      "Next == y' = (y + 1) % 3 /\\ UNCHANGED x",
+    ];
+    const config = "INIT Init\nNEXT Next";
+    expect(await compareWithInterpreter(body, config)).toContainEqual(
+      expect.stringMatching(COMPLETE),
+    );
+    expect(await compareWithInterpreter(body, config, { PROVE_IT_STOP_AT: "2" })).toContainEqual(
+      expect.stringMatching(stopped("stopped where PROVE_IT_STOP_AT asked")),
+    );
+    // Under a VIEW the interpreter takes the states over by TLC's fingerprint of the view.
+    const viewed = [...body, "View == y"];
+    expect(
+      await compareWithInterpreter(viewed, `${config}\nVIEW View`, { PROVE_IT_STOP_AT: "2" }),
+    ).toContainEqual(expect.stringMatching(stopped("stopped where PROVE_IT_STOP_AT asked")));
+  });
+
   it("stops where TLC fails on action composition, with the states before", async () => {
     const body = [
       "EXTENDS Naturals",
@@ -1015,5 +1151,33 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     expect(native.result).toEqual(interpreter.result);
     expect(native.lines).toContainEqual(expect.stringMatching(COMPLETE));
     expect(native.result.distinctStates).toBe(3);
+  });
+
+  // From TLC's Github648: TLC computes a constant definition once when it starts, a random one too,
+  // and the search reads that value unless TLC may keep it lazy.
+  it("reads the value TLC computed at startup for a definition with effects", async () => {
+    const body = [
+      "EXTENDS TLC, Naturals",
+      "Graph == TLCEval(LET g == RandomElement([edge : SUBSET ({1, 2} \\X {1, 2})])",
+      "                 IN [edge |-> g.edge \\cup {<<1, 1>>}])",
+      "VARIABLE v",
+      "Init == v \\in Graph.edge",
+      "Next == v' \\in Graph.edge",
+      "Inv == v \\in Graph.edge",
+    ];
+    expect(
+      await compareWithInterpreter(body, "INIT Init\nNEXT Next\nINVARIANT Inv"),
+    ).toContainEqual(expect.stringMatching(COMPLETE));
+    const lazy = [
+      "VARIABLE v",
+      "S == IF RandomElement({TRUE}) THEN SUBSET {1, 2} ELSE {}",
+      "Init == v \\in S",
+      "Next == UNCHANGED v",
+    ];
+    expect(
+      await compareWithInterpreter(["EXTENDS TLC", ...lazy], "INIT Init\nNEXT Next"),
+    ).toContainEqual(
+      expect.stringMatching(declined("unsupported: a value TLC computed at startup with effects")),
+    );
   });
 });
