@@ -55,8 +55,15 @@ pub struct Settings {
     pub minimum_shared_level: usize,
 }
 
-/// A level of fewer states runs on one thread, as `MINIMUM_SHARED_LEVEL` in `search.ts`.
+/// A level of fewer states runs on one thread, as `MINIMUM_SHARED_LEVEL` in `search.ts`, unless
+/// its states are costly enough that sharing it pays (`SHARED_WORK`).
 pub const MINIMUM_SHARED_LEVEL: usize = 2048;
+
+/// A shorter level is shared too where the previous level's time per state says its work, on one
+/// thread, would take this long; each thread then takes at least `THREAD_WORK` of it. Starting a
+/// level's threads costs tens of microseconds, and sharing changes none of what the search finds.
+const SHARED_WORK: Duration = Duration::from_millis(8);
+const THREAD_WORK: Duration = Duration::from_millis(2);
 
 impl Default for Settings {
     fn default() -> Settings {
@@ -1520,6 +1527,9 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         // can be shared between threads.
         let mut level_end = 0;
         search.level = 0;
+        // The previous level's first state, when it started and on how many threads, for its time
+        // per state on one thread.
+        let mut level_start = (0, Instant::now(), 1);
         let started_at = Instant::now();
         let mut progress_at = started_at + FIRST_PROGRESS;
         search.expanding = 0;
@@ -1528,14 +1538,31 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             if expanding == level_end {
                 search.level += 1;
                 level_end = search.states.count();
-                // A thread takes at least half the fewest states a level shares.
-                let threads = thread_count.min(
-                    (level_end - expanding) / settings.minimum_shared_level.div_ceil(2).max(1),
+                let states = level_end - expanding;
+                let (previous_start, previous_at, previous_threads) = level_start;
+                let per_state = (expanding > previous_start).then(|| {
+                    previous_at.elapsed() * previous_threads / (expanding - previous_start) as u32
+                });
+                let work = per_state.map_or(Duration::ZERO, |per_state| per_state * states as u32);
+                // A thread takes at least half the fewest states a level shares, or at least
+                // THREAD_WORK of its predicted work, whichever gives more threads.
+                let by_count = if states >= settings.minimum_shared_level {
+                    states / settings.minimum_shared_level.div_ceil(2).max(1)
+                } else {
+                    1
+                };
+                let by_work = if work >= SHARED_WORK {
+                    (work.as_nanos() / THREAD_WORK.as_nanos()) as usize
+                } else {
+                    1
+                };
+                let threads = thread_count.min(by_count.max(by_work));
+                level_start = (
+                    expanding,
+                    Instant::now(),
+                    if is_shared { threads.max(1) as u32 } else { 1 },
                 );
-                if is_shared
-                    && level_end - expanding >= settings.minimum_shared_level
-                    && threads > 1
-                {
+                if is_shared && threads > 1 {
                     if workers.is_empty() {
                         workers = (0..thread_count)
                             .map(|_| Worker {
