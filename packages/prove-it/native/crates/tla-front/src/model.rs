@@ -34,6 +34,8 @@ pub struct ModelOptions<'a> {
     /// binary checks the model with, as it holds TLC's actions; the TypeScript front end's model
     /// lowers neither.
     pub is_spec_described: bool,
+    /// The seed TLC seeds its generator with, which `-seed` gives.
+    pub random_seed: u64,
 }
 
 /// A module's text from the spec's directory, or else the first library's that has it.
@@ -136,6 +138,7 @@ pub fn lower_front(
             },
         );
         lowering.evaluator = Some(&evaluator);
+        lowering.random_seed = options.random_seed;
         let version_text = options.version.map(|version| match version {
             TlcVersion::V1_7_4 => "1.7.4",
             TlcVersion::Master => "master",

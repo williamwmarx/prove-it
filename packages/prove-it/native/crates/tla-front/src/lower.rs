@@ -73,6 +73,8 @@ pub struct Lowering<'a> {
     environment: &'a Environment,
     /// How many branches TLC's liveness checker has, once the model is written with one.
     pub branches: Option<usize>,
+    /// The seed TLC seeds its generator with.
+    pub random_seed: u64,
     /// The evaluator of the constant parts of the liveness formula, without which they stay
     /// `NotYet`.
     pub evaluator: Option<&'a crate::eval::Evaluator<'a>>,
@@ -112,6 +114,7 @@ impl<'a> Lowering<'a> {
         let facts = create_definition_facts(environment);
         Lowering {
             branches: None,
+            random_seed: 0,
             normalized: environment
                 .startup_definitions
                 .iter()
@@ -1003,7 +1006,7 @@ impl<'a> Lowering<'a> {
             is_recording_graph: liveness.is_some(),
             version,
             // TLC's default seed.
-            random_seed: 0,
+            random_seed: self.random_seed,
             atoms,
             live_formula,
             live_properties,

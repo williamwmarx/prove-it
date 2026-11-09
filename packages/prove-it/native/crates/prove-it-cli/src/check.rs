@@ -486,6 +486,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
         ),
         &java.libraries,
         printer.is_tool,
+        seed,
     ) {
         Ok(Read::Model(front)) => front,
         Ok(Read::Failed(failure)) => return print_failed_front(printer, &failure, start),

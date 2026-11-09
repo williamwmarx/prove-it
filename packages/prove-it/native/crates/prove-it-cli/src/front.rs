@@ -57,7 +57,16 @@ pub fn read_front(
     describer: &FileDescriber,
     libraries: &[String],
     is_tool: bool,
+    seed: i64,
 ) -> Result<Read, String> {
+    let lowering = Lowering {
+        spec_path,
+        config_text,
+        is_warning_enabled,
+        is_tool,
+        // TLC's seed as the generator's 64 bits.
+        random_seed: seed as u64,
+    };
     let name = Path::new(spec_path)
         .file_stem()
         .map_or_else(String::new, |stem| stem.to_string_lossy().into_owned());
@@ -75,12 +84,6 @@ pub fn read_front(
     // to record, tla-front writes the front, or finds that SANY rejects the spec or TLC reports an
     // error before the search.
     let Ok(recorded) = read("front") else {
-        let lowering = Lowering {
-            spec_path,
-            config_text,
-            is_warning_enabled,
-            is_tool,
-        };
         return native_front(&lowering, describer, libraries)
             .map_err(|reason| format!("{}: {reason}", no_front()));
     };
@@ -95,7 +98,7 @@ pub fn read_front(
     let ir = match read("ir") {
         Ok(ir) => ir,
         Err(_) => {
-            lower(spec_path, config_text, is_warning_enabled, libraries)
+            lower(&lowering, libraries)
                 .map_err(|error| match error {
                     FrontError::NotYet(reason) => format!("{}: {reason}", no_front()),
                     _ => no_front(),
@@ -111,11 +114,10 @@ pub fn read_front(
 
 // The model as tla-front lowers it.
 fn lower(
-    spec_path: &str,
-    config_text: &str,
-    is_warning_enabled: bool,
+    lowering: &Lowering<'_>,
     libraries: &[String],
 ) -> Result<tla_front::model::LoweredModel, FrontError> {
+    let spec_path = lowering.spec_path;
     let path = if spec_path.ends_with(".tla") {
         spec_path.to_string()
     } else {
@@ -125,10 +127,11 @@ fn lower(
     let options = ModelOptions {
         libraries: &libraries,
         version: None,
-        is_warning_enabled,
+        is_warning_enabled: lowering.is_warning_enabled,
         is_spec_described: true,
+        random_seed: lowering.random_seed,
     };
-    lower_front(Path::new(&path), config_text, &options)
+    lower_front(Path::new(&path), lowering.config_text, &options)
 }
 
 /// What tla-front lowers a run's model from.
@@ -137,6 +140,7 @@ struct Lowering<'a> {
     config_text: &'a str,
     is_warning_enabled: bool,
     is_tool: bool,
+    random_seed: u64,
 }
 
 // The front as tla-front writes it: the model with what TLC prints as it starts, or where TLC
@@ -155,12 +159,7 @@ fn native_front(
             error: None,
         }));
     }
-    let error = match lower(
-        lowering.spec_path,
-        lowering.config_text,
-        lowering.is_warning_enabled,
-        libraries,
-    ) {
+    let error = match lower(lowering, libraries) {
         Ok(lowered) => {
             return Ok(Read::Model(Front {
                 ir: lowered.ir,
