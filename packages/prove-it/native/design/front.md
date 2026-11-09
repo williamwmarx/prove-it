@@ -109,3 +109,10 @@ what each milestone built and measured, in the order they landed.
   proof that resolution meets, interleaved with nested modules in the order of the text.
 - `front-differential.ts resolve`: 2,331 of 2,356 modules match, up from 1,771, and none differ;
   with `--mutate 400`, 3,931 of 3,956. The 25 left are modules SANY's parser rejects (F5).
+
+## F8 slice 1c as built (the definitions' facts)
+
+- `dependencies` ports `dependencies.ts`: each definition's local facts and its edges, closed over
+  the call graph with Tarjan's algorithm, which the IR's repeated-effect flag and the model's
+  printed roots read (`has_repeated_definition_effect`, `has_repeated_effect`).
+- `front-differential.ts resolve` compares each environment's rows of facts too: all match.
