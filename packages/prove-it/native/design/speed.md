@@ -84,6 +84,9 @@ Tried and dropped:
   - It is bit for bit the same as the tables, but slower in wall time: MCbtree went from 0.68 to 0.81 s, and MCBakery from 0.65 to 0.70 s.
   - The suite's models meet few lengths, so their tables stay in cache. Eight independent loads from L1 beat a chain of three dependent multiplies behind a call that can't be inlined, since the multiply needs its own target feature.
   - It could only win where the tables miss the cache. The branch is `fingerprint-multiply`.
+- **Fingerprinting a successor from the variables its action assigned.** The walker kept a list of the variables assigned a value other than UNCHANGED's, and `get_child` compared only those slots.
+  - It cost more instructions than it saved: MCLamportMutex went from 16.77B to 17.05B, MCBakery from 9.05B to 9.11B, and SimpleRegular from 3.67B to 3.75B.
+  - Most suite states have only a few variables, and comparing ids is cheap. A push and a truncate on every assignment outweigh skipping the comparison. The branch is `changed-slots`.
 
 ## Where the suite's instructions go
 
