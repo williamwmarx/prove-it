@@ -4,8 +4,10 @@
 //! true, 0 for false, or [`UNKNOWN`] where the engine stops, which the interpreter answers itself,
 //! failing where TLC fails.
 
+use std::cell::RefCell;
 use std::sync::Arc;
 
+use tla_live::{Answers, Declined, Slot};
 use tla_values::store::{FALSE, Outcome, TRUE};
 use tla_values::{Id, NESTING_STACK_BYTES};
 
@@ -582,4 +584,103 @@ pub fn answer_atoms(
         tables.push(whole.expect("an answer for each diameter"));
     }
     Ok(tables)
+}
+
+/// The atoms' answers as TLC evaluates them while it searches: each evaluated when the checker
+/// asks, on the machine as it is then, so an atom reads the registers the search has set and the
+/// search those the atom sets.
+pub struct LiveAnswers<'m, 'p, 'g> {
+    pub machine: RefCell<&'m mut Machine<'p>>,
+    pub atoms: &'g [Atom],
+    /// The states found so far, `width` ids each, and the steps taken.
+    pub states: &'g [Id],
+    pub width: usize,
+    pub edges: &'g [u32],
+}
+
+impl LiveAnswers<'_, '_, '_> {
+    fn state(&self, index: u32) -> &[Id] {
+        &self.states[index as usize * self.width..(index as usize + 1) * self.width]
+    }
+
+    // An atom of a state, with no next state.
+    fn of_state(&self, index: u32, eval: &Eval) -> Outcome<Id> {
+        let machine = &mut **self.machine.borrow_mut();
+        let epoch = machine.next_epoch();
+        machine.set_current(self.state(index), epoch);
+        machine.set_next(&vec![UNASSIGNED; self.width]);
+        eval(machine)
+    }
+
+    // `<<A>>_v` of a step as TLC's `LNAction#eval` evaluates it: v of each state, and A only
+    // where they differ.
+    fn of_step(
+        &self,
+        action: &Eval,
+        subscript: Option<&Eval>,
+        index: u32,
+        next: u32,
+    ) -> Outcome<Id> {
+        if let Some(subscript) = subscript {
+            let before = self.of_state(index, subscript)?;
+            let after = self.of_state(next, subscript)?;
+            if self.machine.borrow_mut().store.equals(before, after)? {
+                return Ok(FALSE);
+            }
+        }
+        let machine = &mut **self.machine.borrow_mut();
+        let epoch = machine.next_epoch();
+        machine.set_current(self.state(index), epoch);
+        machine.set_next(self.state(next));
+        action(machine)
+    }
+}
+
+impl Answers for LiveAnswers<'_, '_, '_> {
+    fn answer(&self, atom: u32, slot: Slot, _diameter: u32) -> Result<bool, Declined> {
+        let value = match (self.atoms.get(atom as usize), slot) {
+            (Some(Atom::State(eval) | Atom::Enabled { run: Ok(eval), .. }), Slot::State(index)) => {
+                self.of_state(index, eval)
+            }
+            (
+                Some(Atom::Action {
+                    action, subscript, ..
+                }),
+                Slot::Step { state, edge },
+            ) => self.of_step(action, subscript.as_ref(), state, self.edges[edge as usize]),
+            (
+                Some(Atom::Action {
+                    action, subscript, ..
+                }),
+                Slot::Stutter(state),
+            ) => self.of_step(action, subscript.as_ref(), state, state),
+            (
+                Some(
+                    Atom::Unknown(reason)
+                    | Atom::Enabled {
+                        run: Err(reason), ..
+                    },
+                ),
+                _,
+            ) => {
+                return Err(Declined(reason.clone()));
+            }
+            _ => return Err(Declined::from("an atom the engine doesn't answer")),
+        };
+        match value {
+            Ok(TRUE) => Ok(true),
+            Ok(FALSE) => Ok(false),
+            _ => Err(Declined::from(
+                "a predicate the engine leaves to the interpreter",
+            )),
+        }
+    }
+
+    fn position(&self, _atom: u32, slot: Slot, _diameter: u32) -> usize {
+        match slot {
+            Slot::State(state) => state as usize,
+            Slot::Step { edge, .. } => edge as usize,
+            Slot::Stutter(state) => self.edges.len() + state as usize,
+        }
+    }
 }

@@ -223,6 +223,77 @@ pub fn find_accepted(
         .transpose()
 }
 
+/// TLC's behavior graphs as a search builds them: each state added once the search has expanded
+/// it, where TLC evaluates its atoms, whose effects the rest of the search sees, such as the
+/// registers they set. The atoms are asked each time TLC evaluates them.
+pub struct Online {
+    checker: checker::Checker,
+    properties: Vec<TermId>,
+}
+
+impl Online {
+    pub fn new(formula: &[Term], properties: &[&[Term]]) -> Result<Online, Declined> {
+        let mut terms = Terms::default();
+        let root = read_formula(&mut terms, formula)?;
+        let properties = properties
+            .iter()
+            .map(|property| read_formula(&mut terms, property))
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut checker = checker::Checker::new(terms, root)?;
+        checker.log_effects();
+        Ok(Online {
+            checker,
+            properties,
+        })
+    }
+
+    /// How many solutions TLC checks, which it calls branches.
+    pub fn branches(&self) -> usize {
+        self.checker.branches()
+    }
+
+    /// Whether TLC evaluates an atom as it adds an initial state.
+    pub fn asks_initial_states(&self) -> bool {
+        self.checker.asks_initial_states()
+    }
+
+    /// Adds an initial state as TLC does as it finds it.
+    pub fn add_initial_state(&mut self, source: &Source<'_>, state: u32) -> Result<(), Declined> {
+        self.checker.add_one(source, state, true).map(|_| ())
+    }
+
+    /// Adds a state the search has expanded, with its steps: the path to a tableau node that
+    /// accepts every behavior, where TLC stops at one.
+    pub fn add_state(
+        &mut self,
+        source: &Source<'_>,
+        state: u32,
+    ) -> Result<Option<Vec<u32>>, Declined> {
+        self.checker.add_one(source, state, false)
+    }
+
+    /// What TLC did since the last call: the states it added, and the atoms it evaluated.
+    pub fn take_events(&mut self) -> Vec<Event> {
+        self.checker.drain_events()
+    }
+
+    /// The first atom the engine didn't answer as TLC added a state.
+    pub fn unanswered(&self) -> Option<Unanswered> {
+        self.checker.unanswered.get()
+    }
+
+    /// TLC's check of the graphs once the search is over.
+    pub fn finish(&mut self, source: &Source<'_>) -> Result<Verdict, Declined> {
+        checker::finish(
+            &mut self.checker,
+            source,
+            &self.properties,
+            &mut Vec::new(),
+            true,
+        )
+    }
+}
+
 /// The first atom the engine didn't answer that TLC evaluates as it adds the states the search
 /// expanded to the behavior graphs, where it may fail, unless TLC stops first at a node that
 /// accepts every behavior.

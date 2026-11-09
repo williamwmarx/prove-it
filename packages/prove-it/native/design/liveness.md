@@ -271,6 +271,43 @@ itself with its bound on enumerated sets at 2^24. bcastByz at N = 5 (1.07 millio
 the suite: TLC didn't finish it in 1500 s, and Rust took 284 s, nearly all of it on one action atom,
 Receive's `\E` over `SUBSET sent`, evaluated on each of 38 million steps.
 
+## Atoms that use TLC's registers (as built)
+
+TLC evaluates the atoms as it adds each state it expanded to the behavior graphs
+(`Worker#doNextCheckLiveness`), between the expansions, so an atom that sets or reads a register
+(TLCSet, TLCGet of a number or a name) and a next-state relation that does see each other's
+effects in that order: TLC's Test2 counts 20 evaluations of Next over 5 states, one in the search
+and three in WF's ENABLED and action for each. Answering the atoms in tables once the search is
+over can't give that, so the native checker answers them as the search goes:
+
+- `tla-live`'s checker no longer borrows the graph and the tables: each call takes a `Source`, the
+  graph so far and the atoms' `Answers`. `Answers::answer(atom, slot, diameter)` is asked each
+  time the checker reads an atom, at a `Slot` (a state, a step from a state by its edge, or a
+  state's stuttering step); `Tables` is its implementation for a search that is over, with the
+  position of an answer in an atom's table, which the logged events and `Unanswered` still name.
+- `tla_live::Online` is the checker driven state by state, with the effects on, so it asks each
+  atom each time TLC evaluates it: `add_initial_state`, `add_state` once the search expanded a
+  state, `take_events`, `finish` for TLC's check of the graphs at the end.
+- `tla-engine`'s `LiveAnswers` evaluates an atom when asked, on the machine as it is then:
+  `<<A>>_v` as TLC's `LNAction#eval` does, v of each state and A only where they differ.
+- The search runs this way where it reports violations itself (the native binary) and an atom
+  uses the registers (`EngineContext::is_live_registered`): after each expansion it adds the
+  state (`add_online`), and what the search and the atoms print comes out as it is printed, with
+  nothing held. It makes no check part way through the search.
+
+Verified against TLC d8fb231 on models whose registers are a running hash of every evaluation
+(branching steps, two initial states, WF and SF, an atom that prints): the registers a
+POSTCONDITION prints are TLC's.
+
+It declines, each with its reason, where it doesn't follow TLC: under SYMMETRY or a VIEW; with an
+atom that reads TLCGet("diameter"); where TLC evaluates an atom as it finds an initial state (a
+tableau whose initial nodes have state predicates, `Online::asks_initial_states`), which would
+come between the initial predicate's own evaluations; where TLC runs Next again for a late node
+(`Event::Late`); at a node that accepts every behavior; at a counterexample, whose states TLC
+rebuilds, with what Next sets, before it evaluates the properties on it; at a deadlock, whose
+state TLC adds after it reports it; and where an atom doesn't evaluate. The interpreter and the
+TypeScript engine's path are as before: there such an atom is one the engine doesn't answer.
+
 ## Handoff (liveness session, 2026-11-09)
 
 Done on native-parity:
@@ -304,14 +341,25 @@ Done on native-parity:
 - A lasso a check part way through the search finds: the search builds the violation with
   `to_lasso` and the counts so far, and the binary prints it after the check's start, which the
   search reported as the check began.
+- Test2: atoms that use TLC's registers are answered as the search goes (the section above).
 
 Open, with what is known:
 - The front names a property an instance exports by the definition's own name (`Safe`) where
   TLC names it as the configuration's property refers to it (`A!Safe`, `opNode.getName()` in
   `SpecProcessor#processConfigProps`), in both front ends, scoped or not. No corpus model
   reports such an invariant violated. Reported to the coordinator for the front's owner.
-- Test2 (TLCSet in atoms): the engine session is doing online atom evaluation through an
-  `Answers` trait in tla-live. My review notes were sent to them: pass the graph to each
-  `add_state`, give stuttering steps their own slot space, and keep `unanswered`.
-- YoYoAllGraphs (enumerated Seq(S)) and MCEWD687a (filter of an infinite set): engine
-  enumeration limits. MCEWD687a also needs the scoped properties.
+- YoYoAllGraphs isn't a liveness gap: without the community modules' Java overrides TLC fails
+  computing the initial states ("TLC encountered the non-enumerable quantifier bound Seq({1})",
+  with the call stack). It needs the engine to report "enumerated Seq(S)" at a quantifier's bound
+  as TLC's failure, `tla-trace` to give that message, and `print_failure` to take a failure
+  computing the initial states of a model with temporal properties. Handed to the coordinator.
+- MCEWD687a gets past the scoped properties and stops on "enumerated a filter of an infinite
+  set": the infinite-sets session's.
+- Where the atoms use TLC's registers, the cases the search declines (the section above): the
+  next would be an atom TLC evaluates on an initial state, which needs the checker called from
+  `visit_initial` with the machine's state kept around the atom, and a late node, where Next's
+  walk from the state runs again for what it sets.
+- A POSTCONDITION that reads a register Next sets, after an invariant is violated, prints another
+  value than TLC's (TLC 9, the binary 6, for Next == x' = (x + 1) % 4 /\ TLCSet(2, TLCGet(2) + 1),
+  Inv == x < 3): TLC's rebuilds of the trace run Next again. No temporal property is involved;
+  reported to the coordinator for the trace's owner.

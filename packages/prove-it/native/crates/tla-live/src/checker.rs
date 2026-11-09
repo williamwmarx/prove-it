@@ -365,6 +365,46 @@ impl Checker {
         *self.effects.get_mut() = Some(Effects::default());
     }
 
+    /// The evaluations logged so far, which the log goes on from.
+    pub fn drain_events(&mut self) -> Vec<Event> {
+        self.effects
+            .get_mut()
+            .as_mut()
+            .map(|effects| std::mem::take(&mut effects.events))
+            .unwrap_or_default()
+    }
+
+    /// Whether TLC evaluates an atom as it adds an initial state: a state predicate of an initial
+    /// node of a tableau.
+    pub fn asks_initial_states(&self) -> bool {
+        self.solutions
+            .iter()
+            .filter_map(|solution| solution.tableau.as_ref())
+            .any(|tableau| {
+                tableau.nodes[..tableau.initial_count]
+                    .iter()
+                    .any(|node| !node.state_predicates.is_empty())
+            })
+    }
+
+    /// Adds an initial state, or a state the search expanded, naming the first atom left
+    /// unanswered as `add_states` does.
+    pub fn add_one(
+        &mut self,
+        source: &Source<'_>,
+        state: u32,
+        is_initial: bool,
+    ) -> Result<Option<Vec<u32>>, Declined> {
+        self.adding.set(Some((state, is_initial)));
+        let added = if is_initial {
+            self.add_initial_state(source, state).map(|()| None)
+        } else {
+            self.add_state(source, state)
+        };
+        self.adding.set(None);
+        added
+    }
+
     /// The evaluations logged, which ends the log.
     pub fn take_events(&mut self) -> Vec<Event> {
         self.effects
@@ -630,11 +670,7 @@ impl Checker {
             .collect()
     }
 
-    pub(crate) fn add_initial_state(
-        &mut self,
-        source: &Source<'_>,
-        state: u32,
-    ) -> Result<(), Declined> {
+    fn add_initial_state(&mut self, source: &Source<'_>, state: u32) -> Result<(), Declined> {
         self.log(Event::Initial(state));
         self.diameter.set(1);
         for behavior in 0..self.behaviors.len() {
@@ -659,11 +695,7 @@ impl Checker {
 
     /// Adds a state with its successors to every graph, and returns the path to a node of a
     /// tableau that accepts every behavior, when TLC finds one.
-    pub(crate) fn add_state(
-        &mut self,
-        source: &Source<'_>,
-        state: u32,
-    ) -> Result<Option<Vec<u32>>, Declined> {
+    fn add_state(&mut self, source: &Source<'_>, state: u32) -> Result<Option<Vec<u32>>, Declined> {
         self.log(Event::Expanded(state));
         if let Some(diameters) = &source.graph.diameters {
             self.diameter.set(diameters.states[state as usize]);

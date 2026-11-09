@@ -770,6 +770,55 @@ fn prints_a_lasso_a_check_part_way_through_the_search_finds() {
 }
 
 #[test]
+fn answers_atoms_that_use_registers_as_the_search_goes() {
+    // TLC evaluates the temporal properties' atoms as it adds each state it expanded to the
+    // behavior graphs (TLC's Test2 counts them): A mixes each step into register 1 each time TLC
+    // evaluates it, in the search and in WF's ENABLED and action, Seen each time TLC checks the
+    // property's predicate, and B reads register 1 into register 2, so the registers tell the
+    // order of it all.
+    let spec = "---- MODULE Stop ----\nEXTENDS Naturals, TLC\nVARIABLES x, y\nASSUME TLCSet(1, 1) /\\ TLCSet(2, 1)\nMix(v) == TLCSet(1, (TLCGet(1) * 31 + v) % 1000003)\nInit == x \\in {0, 3} /\\ y = 0\nA == /\\ x' \\in {(x + 1) % 6, (x * 2) % 6, (x + 3) % 6}\n     /\\ y' = y\n     /\\ Mix(x + 7 * x')\nB == /\\ y' = 1 - y\n     /\\ x' = x\n     /\\ TLCSet(2, (TLCGet(2) * 17 + TLCGet(1) + x + y) % 1000003)\nNext == A \\/ B\nvars == <<x, y>>\nSpec == Init /\\ [][Next]_vars /\\ WF_vars(A) /\\ SF_y(B)\nSeen(p) == Mix(100 + x + 10 * y) /\\ p\nPropA == []<>Seen(y = 1)\nPropB == <>[]Seen(x < 6)\nPropL == <>[]Seen(x = 7)\nPost == PrintT(<<TLCGet(1), TLCGet(2)>>)\n====\n";
+    for (property, registers) in [
+        ("PropA", "<<575965, 353382>>"),
+        ("PropB", "<<261017, 589225>>"),
+    ] {
+        let (output, directory) = run_lowered(
+            "online",
+            spec,
+            &format!(
+                "SPECIFICATION Spec\nPROPERTY {property}\nPOSTCONDITION Post\nCHECK_DEADLOCK FALSE\n"
+            ),
+        );
+        let text = stdout(&output);
+        assert_eq!(output.status.code(), Some(0), "{text}");
+        assert!(
+            text.contains("\nFinished checking temporal properties in 00s at "),
+            "{text}"
+        );
+        assert!(
+            text.contains(&format!(
+                "\n{registers}\nModel checking completed. No error has been found.\n"
+            )),
+            "{text}"
+        );
+        std::fs::remove_dir_all(directory).expect("removed");
+    }
+    // TLC rebuilds a counterexample before it evaluates the properties on it, which the binary
+    // doesn't follow where the atoms use the registers.
+    let (output, directory) = run_lowered(
+        "online",
+        spec,
+        "SPECIFICATION Spec\nPROPERTY PropL\nPOSTCONDITION Post\nCHECK_DEADLOCK FALSE\n",
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("a counterexample where the atoms use TLC's registers"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
 fn reads_and_sets_tlcs_registers() {
     // TLCCache evaluates Counted once, TLCFP is TLC's fingerprint under -fp 0, which the
     // interpreter and TLC print the same, and a Java property TLC hasn't set is its key.
