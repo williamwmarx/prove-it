@@ -1978,8 +1978,8 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         Err(error) => return SearchOutcome::Declined(describe(error)),
     };
     // A search that ranked strings may start over in the interpreter, which would print again
-    // what the search printed; the native checker has no interpreter to start over in.
-    if compiler.is_printing && compiler.is_ranking && !compiler.is_native {
+    // what the search printed; the native checker never starts over.
+    if compiler.is_printing && compiler.is_ranking && !settings.is_violation_reported {
         return SearchOutcome::Declined("unsupported: Print with ToString".into());
     }
     let is_distinct_read = compiler.is_distinct_read;
