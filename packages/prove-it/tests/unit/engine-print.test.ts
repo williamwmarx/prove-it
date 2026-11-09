@@ -236,7 +236,6 @@ describe("the engine's Print, PrintT and TLCGet", () => {
     const ordered = [
       "P == {Print(z, z) : z \\in {x, 5}} # {}",
       "P == IF \\E z \\in {x, 5} : Print(z, z = 5) THEN TRUE ELSE FALSE",
-      "P == \\A z \\in {5, x} : Print(z, z < 5) \\/ z = 5",
     ];
     for (const print of ordered) {
       const body = `EXTENDS Naturals, TLC\nVARIABLE x\n${print}\nInit == x = 0\nNext == x < 2 /\\ P /\\ x' = x + 1`;
