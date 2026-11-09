@@ -92,6 +92,7 @@ impl<'ir> Rebuilder<'ir> {
         };
         let context = run(evaluator.scope_context(atom.scope))?;
         let values = |values: &[Value]| values.iter().cloned().map(Some).collect();
+        evaluator.printed.clear();
         evaluator.current = values(state);
         evaluator.next = vec![None; state.len()];
         match &atom.kind {

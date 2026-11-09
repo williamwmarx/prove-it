@@ -287,18 +287,27 @@ fn prints_a_node_that_accepts_every_behavior() {
 }
 
 #[test]
-fn prints_a_lasso_it_rebuilds_under_symmetry() {
+fn prints_a_lasso_it_rebuilds_under_a_view() {
     let ir = include_bytes!(
-        "../../../../tests/conformance/ir/tlc/tlatools/org.lamport.tlatools/test-model/symmetry/UnsymmetricMCA.ir"
+        "../../../../tests/conformance/ir/tlc/tlatools/org.lamport.tlatools/test-model/examples/FiniteMonotonic/MCDistributedReplicatedLog.ir"
     );
-    let config = "CONSTANTS\na = a\nb = b\nCONSTANT\nS <- const_1444366015085101000\nSYMMETRY symm_1444366015096102000\nSPECIFICATION\nspec_1444366015106103000\nPROPERTY\nprop_1444366015116104000\nPROPERTY neg_prop_1444366015116104000\nPROPERTY XVisitsIntegers\nPROPERTY Tautology\n";
-    let (output, directory) = run_golden("symmetry-lasso", ir, "UnsymmetricMCA", config, &[]);
+    let config = "SPECIFICATION Spec\nCONSTANTS\n    Servers = {n1, n2, n3}\n    Values = {v}\n    Lag = 3\nINVARIANTS TypeOK BoundedLag\nPROPERTIES AllExtending InSync\nVIEW DropCommonPrefix\nCHECK_DEADLOCK TRUE\n";
+    let (output, directory) =
+        run_golden("view-lasso", ir, "MCDistributedReplicatedLog", config, &[]);
     let text = stdout(&output);
     assert_eq!(output.status.code(), Some(13), "{text}");
     // TLC rebuilds the lasso from the states it stored, the step back into the cycle with it,
-    // and names the one of the four properties the rebuilt lasso violates.
-    let lasso = "Error: Temporal property prop_1444366015116104000 was violated.\n\nError: The following behavior constitutes a counter-example:\n\nState 1: <Initial predicate>\nx = a\n\nState 2: <NextA line 17, col 13 to line 19, col 36 of module Unsymmetric>\nx = 1\n\nBack to state 1: <Back line 7, col 12 to line 8, col 22 of module Unsymmetric>\n\nFinished checking temporal properties in ";
-    assert!(text.contains(lasso), "{text}");
+    // and names the one of the two properties the rebuilt lasso violates.
+    let module = "of module DistributedReplicatedLog";
+    let extend = format!("Extend(n2) line 35, col 5 to line 38, col 49 {module}");
+    let copy = |server: &str| format!("Copy({server}) line 26, col 9 to line 32, col 96 {module}");
+    let lasso = format!(
+        "Error: Temporal property InSync was violated.\n\nError: The following behavior constitutes a counter-example:\n\nState 1: <Initial predicate>\ncLogs = (n1 :> <<>> @@ n2 :> <<>> @@ n3 :> <<>>)\n\nState 2: <{extend}>\ncLogs = (n1 :> <<>> @@ n2 :> <<v, v, v>> @@ n3 :> <<>>)\n\nState 3: <{}>\ncLogs = (n1 :> <<>> @@ n2 :> <<v, v, v>> @@ n3 :> <<v, v, v>>)\n\nState 4: <{}>\ncLogs = (n1 :> <<v, v>> @@ n2 :> <<v, v, v>> @@ n3 :> <<v, v, v>>)\n\nState 5: <{extend}>\ncLogs = (n1 :> <<v, v>> @@ n2 :> <<v, v, v, v, v>> @@ n3 :> <<v, v, v>>)\n\nState 6: <{}>\ncLogs = (n1 :> <<v, v, v>> @@ n2 :> <<v, v, v, v, v>> @@ n3 :> <<v, v, v>>)\n\nBack to state 2: <{extend}>\n\nFinished checking temporal properties in ",
+        copy("n3"),
+        copy("n1"),
+        copy("n1")
+    );
+    assert!(text.contains(&lasso), "{text}");
     std::fs::remove_dir_all(directory).expect("removed");
 }
 
