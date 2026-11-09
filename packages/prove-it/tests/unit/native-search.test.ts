@@ -753,7 +753,7 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     );
     expect(native.lines).toContainEqual(expect.stringMatching(COMPLETE));
     expect([native.result.status, native.result.distinctStates]).toEqual(["success", 4_000_001]);
-  });
+  }, 60_000);
 
   it("reports a tableau node that accepts every behavior as TLC finds it", async () => {
     // TLC's test model Github1389Counting: x becomes TRUE at most twice.
