@@ -147,9 +147,9 @@ pub struct CallStack {
     /// Whether the failure was in a method of a value with a source, which TLC reports as a
     /// FingerprintException rather than with the nested expressions.
     pub is_fingerprinted: bool,
-    /// Whether the failure was reached through an assignment `x' \in S` whose set TLC streams in
-    /// an order of its own, so that which element fails first isn't known.
-    pub is_unordered: bool,
+    /// Why the replay can't follow TLC to the failure, where it can't: through an assignment
+    /// `x' \in S` whose set TLC streams in an order of its own, or through a filter TLC keeps lazy.
+    pub unfollowed: Option<&'static str>,
 }
 
 // The address of a value TLC's `CallStackTool` can give a source: an object, as a set, a function
@@ -731,7 +731,16 @@ impl<'ir> Evaluator<'ir> {
                 let mut kept = Vec::new();
                 for element in elements(&set)?.iter() {
                     let inner = self.bind_pattern(&bound.pattern, element, context)?;
-                    if self.boolean(*predicate, &inner)? {
+                    let test = self.boolean(*predicate, &inner);
+                    // TLC filters a set it can't enumerate lazily, so its predicate fails only
+                    // where TLC uses the result, which the replay doesn't follow.
+                    if test.is_err()
+                        && !matches!(set, Value::Set(_) | Value::Interval(..))
+                        && let Some(stack) = &mut self.call_stack
+                    {
+                        stack.unfollowed.get_or_insert("a filter TLC keeps lazy");
+                    }
+                    if test? {
                         kept.push(element.clone());
                     }
                 }

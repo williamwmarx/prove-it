@@ -189,10 +189,10 @@ impl<'ir> Rebuilder<'ir> {
                 "evaluating the failure again: it didn't fail".into(),
             ));
         };
-        if call_stack.is_unordered {
-            return Err(Unsupported(
-                "evaluating the failure again: an assignment from a set TLC streams".into(),
-            ));
+        if let Some(reason) = call_stack.unfollowed {
+            return Err(Unsupported(format!(
+                "evaluating the failure again: {reason}"
+            )));
         }
         if call_stack.is_fingerprinted {
             return Err(Unsupported(
