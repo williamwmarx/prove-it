@@ -222,3 +222,23 @@ corpus (the 641 IRs `bun scripts/run.ts engine-ir` writes, and the 30 goldens in
   models are byte-identical, none differ. Still `NotYet`: temporal properties and fairness (the
   liveness formula and atoms), SYMMETRY (the engine's startup phase), scoped properties, and the
   evaluations above.
+
+## (d1) as built: what SANY prints (`report.rs`)
+
+`report::get_sany_text` writes what `getSanyReport` prints while TLC runs SANY on a spec that SANY accepts without a message. That covers the "Parsing file" lines in the order `SpecObj.loadSpec` reads the modules, the "Semantic processing" lines in `calculateDependencies` order, and the "Linting" lines. The caller describes each file through `describe_file(name, origin)`, so the CLI keeps `createFileDescriber`'s temporary paths.
+
+It returns `NotYet` in these cases, which (d2) and (d4) take on:
+
+- SANY's parse errors;
+- a file named apart from its module;
+- a missing module;
+- a circular dependency;
+- linking's semantic errors or warnings;
+- PlusCal;
+- any record field named like a symbol of a loaded module.
+
+The last case is a conservative stand-in for SANY's linter. On the corpora it holds back 150 specs, and only 25 of them really warn.
+
+The `sany-text` gate (`front-differential.ts sany-text`) describes files as `name|origin` on both sides. It reports 1,716 of 2,357 matching and 636 not compared yet.
+
+The 5 that differ are SANY's level-check errors (LevelError, test212, test213, test215, test217). The level check isn't ported yet; it is (d2). The mutated variants all come back `NotYet`, because their files are named apart from their modules.
