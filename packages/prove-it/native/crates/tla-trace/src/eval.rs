@@ -1718,28 +1718,24 @@ impl<'ir> Evaluator<'ir> {
             && !name.is_local
             && let Resolution::Builtin(index) = name.resolution
         {
+            // TLC builds a union, intersection or difference of enumerable sets at once, testing
+            // their elements, so a failure replay builds each rather than test the membership
+            // lazily.
             let operation = match self.name(self.ir.builtins[index as usize].name) {
+                _ if self.call_stack.is_some() => None,
                 "\\cup" => Some(SetOperation::Union),
-                // TLC builds an intersection or a difference of an enumerable set at once,
-                // testing its elements, so the replay builds it too rather than test the
-                // membership lazily.
-                "\\cap" | "\\" if self.call_stack.is_some() => None,
                 "\\cap" => Some(SetOperation::Intersection),
                 "\\" => Some(SetOperation::Difference),
                 _ => None,
             };
             if let Some(operation) = operation {
-                // The operation's operands, in its frame of the call stack, as TLC evaluates it.
-                let frame = StackFrame::Node(self.resolved(*node));
-                return self.in_frame(frame, &mut |evaluator| {
-                    let left = evaluator.combined_set(&Operand::Node(left, context.clone()))?;
-                    let right = evaluator.combined_set(&Operand::Node(right, context.clone()))?;
-                    Ok(Combined::Operation(
-                        operation,
-                        Box::new(left),
-                        Box::new(right),
-                    ))
-                });
+                let left = self.combined_set(&Operand::Node(left, context.clone()))?;
+                let right = self.combined_set(&Operand::Node(right, context.clone()))?;
+                return Ok(Combined::Operation(
+                    operation,
+                    Box::new(left),
+                    Box::new(right),
+                ));
             }
         }
         Ok(Combined::Set(self.operand(set)?))
@@ -2154,7 +2150,6 @@ fn permute(
 
 /// An argument of a builtin: an expression as written, or a value an operator argument is
 /// applied to.
-#[derive(Clone, Copy)]
 enum SetOperation {
     Union,
     Intersection,
