@@ -488,3 +488,29 @@ compared:
 |---|---|
 | 10 | SANY's parse errors: TLC itself fails to parse these specs ("Precedence conflict" in ccfraft, KVsnap, Linearizability, Bodega, NormalizationCases, and the two fixtures' `Base`), so no model is lowered. The native binary's SANY report owns their output. |
 | 1 | `tlc-174/Unhandled`, TLC 1.7.4 only. |
+
+## The end-state front (no recorded front)
+
+Without `PROVE_IT_FRONT`, or without a recorded `<Spec>.front` in it, `front.rs` reads the whole
+front from tla-front: `FrontText::Native` holds SANY's report and `LoweredModel::startup_messages`,
+what TLC prints itself after the constant definitions and before the assumptions, in its order:
+
+- 2149, each invariant that is a constant equal to TRUE (`check_invariants`), and 2255, each
+  property that is a state formula, both warnings, which `-nowarning` drops;
+- with liveness, 2279 under a SYMMETRY (a warning), then 2212 "Implied-temporal
+  checking--satisfiability problem has N branches.", N counted by `tla_live::count_branches`.
+
+The CLI prints SANY's report framed under -tool, then 2185 `Starting...`, and, through the engine's
+startup hooks, what Print and PrintT print as TLC starts, the symmetry's 2300, and these messages at
+`startup_done`. Until the CLI wires the hooks, `check.rs` declines a native front. Not native yet:
+a Java class beside the spec that overrides a module, TLC 1.7.4, an invariant the engine checks at
+startup with warnings on, and warnings about invariants or properties under a SYMMETRY (the order
+of 2300 among them isn't checked).
+
+`ModelOptions::random_seed` carries `-seed` into the model, as `runtime.seed` does.
+
+`bun scripts/run.ts differential --native native/target/release/prove-it --native-only` runs the
+binary alone this way on the whole corpus, against TLC's recordings, in minutes. With `check.rs`
+printing the native front (locally, hooks silent): 1,298 of 1,466 runs print what TLC prints; the
+80 that differ are each missing a startup Print, which the hooks report; the rest decline as with
+a recorded front.
