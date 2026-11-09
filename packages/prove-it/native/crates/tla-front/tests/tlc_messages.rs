@@ -56,3 +56,28 @@ fn exits_as_for_a_general_error_after_an_unexpected_exception() {
     let printed = coded(error, false).expect("a coded error");
     assert_eq!((printed.code, printed.exit_code), (1000, 255));
 }
+
+#[test]
+fn exits_as_tlc_does_for_a_temporal_formula_it_rejects() {
+    for (text, exit_code) in [
+        (
+            "Temporal formula is a tautology (its negation is unsatisfiable).",
+            77,
+        ),
+        (
+            "TLC cannot handle the temporal formula line 21, col 11 to line 21, col 15 of module M",
+            255,
+        ),
+        (
+            "TLC cannot handle the temporal formula because it exceeds the maximum supported size in disjunctive normal form.",
+            255,
+        ),
+        (
+            "Temporal formulas containing actions must be of forms <>[]A or []<>A.",
+            255,
+        ),
+    ] {
+        let printed = coded(FrontError::Evaluation(text.to_owned()), false).expect("a coded error");
+        assert_eq!(printed.exit_code, exit_code, "{text}");
+    }
+}
