@@ -65,6 +65,13 @@ impl Graph<'_> {
     fn count(&self) -> usize {
         self.parents.len()
     }
+
+    /// How many of the states the search stored it expanded, which have their steps: all of them
+    /// once it is complete, and the first few for a check part way through it. Under SYMMETRY or a
+    /// VIEW the steps of the states it reached but didn't store follow theirs.
+    fn expanded(&self) -> usize {
+        self.edge_offsets.len().saturating_sub(1).min(self.count())
+    }
 }
 
 /// What the check found, and how many solutions of the formula TLC checks, which it calls branches,
@@ -161,7 +168,7 @@ fn read_formula(terms: &mut Terms, formula: &[Term]) -> Result<TermId, Declined>
 }
 
 /// Checks the formula, the fairness and the negated properties as `createLivenessChecker` joins
-/// them, on a complete search's graph, from the engine's answers to each atom (`None` for an atom
+/// them, on a search's graph, from the engine's answers to each atom (`None` for an atom
 /// it doesn't answer), and finds which of the properties a counterexample violates. Where the
 /// atoms' evaluations have effects, it logs each evaluation of an atom TLC makes.
 pub fn check(
@@ -174,8 +181,8 @@ pub fn check(
     let mut branches = None;
     let mut events = Vec::new();
     let mut run = || {
-        if graph.edge_offsets.len() <= graph.count() {
-            return Err(Declined::from("a search that didn't expand every state"));
+        if graph.edge_offsets.is_empty() {
+            return Err(Declined::from("a graph without its steps"));
         }
         let mut terms = Terms::default();
         let root = read_formula(&mut terms, formula)?;
