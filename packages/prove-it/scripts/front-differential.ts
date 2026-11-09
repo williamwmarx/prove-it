@@ -3,7 +3,7 @@
 // Usage: bun scripts/front-differential.ts <mode> [--fixtures] [--filter text] [--mutate count]
 //   [--rust <front-dump>]
 // The modes are tokens, ast, sany-ast, config (over the .cfg files), resolve, model, ir, order,
-// model-ir, and time, which
+// model-ir, pcal, and time, which
 // compares how long each side takes to parse each module instead. resolve links each module as the
 // root of a spec without a model, reading the modules it imports beside it and from the corpora's
 // library, and compares the environment: each definition by key, with every name resolved, the
@@ -13,8 +13,10 @@
 // environment to the engine IR, with every definition in it, and compares the bytes. order compares
 // TLC's string order of each model and the root module's orders of declarations and definitions.
 // model-ir lowers each model's environment as ir does, with its constants' values and the texts
-// ranked in TLC's string order. --fixtures reads only the fixtures, so it runs without the corpora.
-// --mutate adds four variants of each of the first count modules, with syntax inserted and text
+// ranked in TLC's string order. pcal validates each module with a PlusCal algorithm against the
+// checksums of its translation, as SANY does under TLC master and 1.7.4, and compares the
+// results, what the translator logs and the exception it throws. --fixtures reads only the
+// fixtures, so it runs without the corpora. --mutate adds four variants of each of the first count modules, with syntax inserted and text
 // deleted at places a fixed seed picks, so the two sides' errors are compared too. Without --rust,
 // it builds front-dump with cargo first.
 
@@ -28,15 +30,26 @@ import { type ModelConfig, parseConfig } from "../src/config";
 import { toEngineProperties } from "../src/engine/context";
 import { lowerToIr } from "../src/engine/ir";
 import { createEnvironment } from "../src/environment";
-import { TlaConfigError, TlaEvaluationError, TlaModuleError, TlaSyntaxError } from "../src/errors";
+import {
+  PcalBugError,
+  PcalRuntimeError,
+  TlaConfigError,
+  TlaEvaluationError,
+  TlaModuleError,
+  TlaSyntaxError,
+} from "../src/errors";
 import { type Builtin, describeRange, type Environment } from "../src/evaluate";
 import { tokenize } from "../src/lexer";
 import { getLevel } from "../src/liveness";
 import { createLivenessChecker } from "../src/liveness-checker";
 import { parseModule, parseSanyModule } from "../src/parser";
+import { createPcalParams } from "../src/pcal/ast";
+import { createPcalSession } from "../src/pcal/parse";
+import { validatePcalModule } from "../src/pcal/validate";
 import { getSanyReport } from "../src/sany/report";
 import { getProperties, getSpecification } from "../src/search";
 import { createTlcOrder } from "../src/tlc/order";
+import type { TlcVersion } from "../src/tlc/version";
 import { setStringOrder } from "../src/values";
 import {
   CORPORA_DIRECTORY,
@@ -264,6 +277,20 @@ const lowerEnvironment = (environment: Environment) => {
   return "ir" in outcome ? { ir: Buffer.from(outcome.ir).toString("hex") } : outcome;
 };
 
+// SANY's validation of the module's PlusCal algorithm in a session of its own: the results, what
+// it logs, and the message of the Java exception it throws.
+const readPcal = (source: string, version: TlcVersion) => {
+  const log: string[] = [];
+  const session = createPcalSession(createPcalParams(), (line) => log.push(line));
+  try {
+    const results = validatePcalModule(session, source.split(/\r\n|\r|\n/), version);
+    return { results: [...results].sort(), log };
+  } catch (error) {
+    if (!(error instanceof PcalRuntimeError || error instanceof PcalBugError)) throw error;
+    return { fatal: error.message, log };
+  }
+};
+
 const MODES: Record<string, (source: string, path: string, spec: string) => string> = {
   tokens: writeResult((source) =>
     tokenize(source).map((token) => [
@@ -344,6 +371,11 @@ const MODES: Record<string, (source: string, path: string, spec: string) => stri
   model: writeResult((source, _path, spec) =>
     readEnvironment(readFileSync(spec, "utf8"), spec, parseConfig(source)),
   ),
+  pcal: (source) =>
+    JSON.stringify(
+      { master: readPcal(source, "master"), v174: readPcal(source, "1.7.4") },
+      sortKeys,
+    ),
   config: (source) =>
     `{"master":${writeResult((text) => parseConfig(text, "master"))(source)},"v174":${writeResult((text) => parseConfig(text, "1.7.4"))(source)}}`,
 };
@@ -404,9 +436,12 @@ const corpora = process.argv.includes("--fixtures")
   : getCorpora().flatMap((corpus) =>
       findFiles(join(CORPORA_DIRECTORY, corpus.name), corpus.paths, `${corpus.name}/`),
     );
-const originals = [...findFiles(PACKAGE_DIRECTORY, ["tests/fixtures"], ""), ...corpora].filter(
-  (module) => filter === undefined || module.id.includes(filter),
-);
+// pcal compares only the modules with a PlusCal algorithm, so --mutate varies them.
+const originals = [...findFiles(PACKAGE_DIRECTORY, ["tests/fixtures"], ""), ...corpora]
+  .filter((module) => filter === undefined || module.id.includes(filter))
+  .filter(
+    (module) => mode !== "pcal" || /--algorithm|--fair/.test(readFileSync(module.path, "utf8")),
+  );
 const mutationDirectory = mkdtempSync(join(tmpdir(), "front-differential-"));
 const random = createRandom(7);
 const mutations = originals

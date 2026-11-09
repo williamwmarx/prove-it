@@ -299,6 +299,7 @@ impl<'a> Lowering<'a> {
             name: text,
             arity: builtin.arity as i32,
             flags: builtin.flags as i32,
+            table: Vec::new(),
         });
         Some(index)
     }

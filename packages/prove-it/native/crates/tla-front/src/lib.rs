@@ -18,6 +18,7 @@ pub mod model;
 pub mod order;
 pub mod ordered_map;
 pub mod parser;
+pub mod pcal;
 pub mod report;
 pub mod resolve;
 pub mod spec;
