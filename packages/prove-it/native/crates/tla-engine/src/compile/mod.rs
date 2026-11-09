@@ -197,6 +197,8 @@ pub struct Compiled {
     /// For a set TLC keeps lazy: the interpreter's value of it, which says the order TLC
     /// enumerates it in.
     pub(crate) reference: Option<lazy::Reference>,
+    /// For `SUBSET S`: S, which `\subseteq` of two power sets compares in their place.
+    pub(crate) subset_base: Option<Box<Compiled>>,
 }
 
 impl Compiled {
@@ -253,6 +255,7 @@ pub(crate) fn leaf(eval: Eval, footprint: Footprint) -> Compiled {
         filter: None,
         predicate: None,
         reference: None,
+        subset_base: None,
     }
 }
 
