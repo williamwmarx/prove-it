@@ -76,7 +76,8 @@ pub fn lower_model(
         .collect();
     let evaluator = Evaluator::new(&environment, ValueOrder { ranks: &ranks }, version, true);
     check_invariants(&config, &environment, &facts, &evaluator)?;
-    let specification = get_specification(&config, &environment, &facts, version)?;
+    let specification =
+        get_specification(&config, &environment, &facts, version, Some(&evaluator))?;
     let properties = get_properties(&config, &environment, &facts, version, Some(&evaluator))?;
     // `getTlcOrder`: the variables in TLC's order of declarations.
     let position = |index: &i32| {

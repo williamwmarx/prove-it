@@ -411,3 +411,21 @@ evaluations rather than overflow on a recursion.
 
 A text with a lone surrogate, which TLC's strings hold, makes the TypeScript IR decline the
 model; model-full lists such a model as not compared.
+
+## TLC's errors of the specification and its temporal formulas
+
+`get_specification` and `get_properties` read a conjunct that is a constant name as
+`isConstantTrue` does, with the evaluator: TRUE is dropped, FALSE is "The spec is trivially
+false", and another value can't be "used as a spec". `[]P` of a state predicate in the
+specification is "TLC cannot handle the temporal formula" at P.
+
+`live.rs` follows `toLiveExpression`'s failures:
+- "cannot handle" at a formula it can't translate;
+- `expandCall` re-reports a failure inside an operator's expansion as "cannot handle" at the
+  application, except for a recursive operator;
+- a constant quantifier whose body fails becomes an atom below temporal level, or "cannot handle"
+  under `\E` (under `\A`, TLC adds the inner message: still `NotYet`);
+- expanding past 100 levels is TLC's stack overflow.
+
+`tla_live::atom_order`'s refusals become TLC's errors: the tautology, the formula too large in
+disjunctive normal form, and actions outside `<>[]A` and `[]<>A`.
