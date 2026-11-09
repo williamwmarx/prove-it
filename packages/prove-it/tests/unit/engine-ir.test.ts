@@ -160,4 +160,22 @@ describe("the engine IR", () => {
     };
     expect(await run(join(directory, "random.ir"))).toBe(await run());
   });
+
+  it("finds TLC's actions without evaluating a specification's conjunct that draws", async () => {
+    const source =
+      "---- MODULE S ----\nEXTENDS Naturals, TLC\nVARIABLE x\nC == RandomElement(1..100) > 0\nInit == x = RandomElement(1..100)\nNext == UNCHANGED x\nSpec == C /\\ Init /\\ [][Next]_x\nInv == x = 42\n====";
+    const run = async (dump?: string) => {
+      process.env.PROVE_IT_ENGINE_BACKEND = "ts";
+      if (dump === undefined) delete process.env.PROVE_IT_IR_DUMP;
+      else process.env.PROVE_IT_IR_DUMP = dump;
+      const result = await check({
+        source,
+        config: "SPECIFICATION Spec\nINVARIANT Inv",
+        seed: 1n,
+        onPrint: () => {},
+      });
+      return result.status;
+    };
+    expect(await run(join(directory, "specification.ir"))).toBe(await run());
+  });
 });

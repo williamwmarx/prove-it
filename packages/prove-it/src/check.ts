@@ -1698,16 +1698,18 @@ const searchStates = (
       [...images].map(([name, image]): [string, string] => [name, image.name]),
     );
     // TLC's actions for the IR, when the search doesn't take its steps through them already.
-    // Finding them evaluates the next-state relation's arguments and the constant invariants and
-    // properties, so it happens only where none of them has an effect (a random choice, a TLC
-    // register, printing), which would change what the run does. It can also fail where the
-    // search doesn't, such as on an invariant that recurses forever. Either way the IR then has
-    // none, and no trace is labelled natively.
+    // Finding them describes the spec, which evaluates parts of what the configuration names (an
+    // action's arguments, a constant conjunct of the specification or invariant), so it happens
+    // only where none of those has an effect (a random choice, a TLC register, printing), which
+    // would change what the run does. It can also fail where the search doesn't, such as on an
+    // invariant that recurses forever. Either way the IR then has none, and no trace is labelled
+    // natively.
     const getTraceActions = () => {
-      const evaluated = [...config.invariants, ...config.properties].flatMap(
-        (name) => getDefinition(name, environment)?.body ?? [],
+      const names = [config.specification, config.init, config.next];
+      const described = [...names, ...config.invariants, ...config.properties].flatMap((name) =>
+        name === undefined ? [] : (getDefinition(name, environment)?.body ?? []),
       );
-      if (hasEffect([next, ...evaluated], environment)) return [];
+      if (hasEffect([next, ...described], environment)) return [];
       try {
         return getNextActions(config, environment, specification.instanceActions);
       } catch (error) {
