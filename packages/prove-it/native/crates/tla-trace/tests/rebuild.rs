@@ -246,6 +246,14 @@ fn sorts_the_records_of_built_lambdas_under_view_and_symmetry() {
     assert_eq!(states[0], tlc_states(RAFT_RECONFIG_INITIAL_STATE)[0]);
 }
 
+#[test]
+fn sorts_the_records_tlc_permutes_under_symmetry() {
+    // TLC permutes the state under SYMMETRY, which sorts each record it permutes, so a state it
+    // finds the least of its orbit prints its records sorted.
+    let (states, _) = deadlock_trace("mongodb-txns/MultiShardTxn/Storage", false);
+    assert_eq!(states[..2], tlc_states(STORAGE_TRACE_START));
+}
+
 // Rebuilds the trace of the violation the search stops at, and hands it to `then` with the
 // rebuilder and the start of a lasso's cycle.
 fn rebuild_violation<T: Send>(

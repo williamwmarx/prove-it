@@ -243,8 +243,13 @@ after each pull request.
   Under both, the views of their least states in the orbit must be equal (`TLCStateMut.fingerPrint`).
   A violation's last state is matched by its value, as TLC holds it (`getTrace` with the last
   successor). Every state but the last is settled as `settleRecoveredState` settles it: fingerprinted
-  without VIEW or SYMMETRY, deeply but for lambdas under SYMMETRY, and as `deepNormalize` with the
-  view deeply under a VIEW. So is the last one if
+  without VIEW or SYMMETRY, and as `deepNormalize` with the view deeply under a VIEW. Under
+  SYMMETRY it is settled as TLC's search of its orbit leaves it: each permutation, in the group's
+  order (generators, then their closure, the identity left out), permutes the values in TLC's order
+  of the variables until one compares greater than the least so far, and permuting a value
+  normalizes it and builds its lambdas. The state is then fingerprinted, which sorts it all, where
+  it is the least of its orbit, and deep-normalized, which leaves lambdas, where it isn't. So is
+  the last one if
   it satisfies the CONSTRAINTs and ACTION_CONSTRAINTs, as TLC fingerprints only such a state.
   A violating last state outside them goes through TLC's checks of it instead, which sort what
   their comparisons reach: the invariants in order until one fails, then the action properties

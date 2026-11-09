@@ -319,11 +319,21 @@ fn settle_recovered(
 ) -> Result<(), Unsupported> {
     match key {
         Key::State => state.iter().for_each(settle),
-        Key::Symmetry(_) => state.iter().for_each(settle_deep),
-        // TLC permutes every value, which builds each lambda into the function it enumerates,
-        // and then deep-normalizes the state and fingerprints the view of the least state.
+        // TLC permutes the state to find the least in its orbit, which sorts each value it
+        // permutes and builds each lambda in it, then fingerprints the state itself where it is
+        // the least, or else deep-normalizes it.
+        Key::Symmetry(group) => {
+            if run(permute_settled(evaluator.ir, group, state))? {
+                state.iter().for_each(settle_built);
+            } else {
+                state.iter().for_each(settle_deep);
+            }
+        }
+        // Under a VIEW too, TLC deep-normalizes the state and fingerprints the view of the
+        // least state.
         Key::ViewOfSymmetry(view, group) => {
-            state.iter().for_each(settle_built);
+            run(permute_settled(evaluator.ir, group, state))?;
+            state.iter().for_each(settle_normalized);
             let least = run(least_in_orbit(evaluator.ir, group, state))?;
             settle_deep(&run(view_of(evaluator, *view, &least))?);
         }
@@ -518,6 +528,47 @@ fn view_of(evaluator: &mut Evaluator<'_>, view: NodeId, state: &[Value]) -> Eval
 
 // The least state of a state's orbit, as `TLCStateMut.fingerPrint` finds it: each permutation's
 // values compared with the least so far in TLC's order of the variables.
+// TLC's search of a state's orbit in `TLCStateMut.fingerPrint`: each permutation, in the group's
+// order, permutes the values in TLC's order of the variables until one compares greater than the
+// least so far, or all of them where one compares less. Permuting a value sorts it and builds the
+// lambdas in it, which this does to the state's own values; it returns whether the state is the
+// least of its orbit.
+fn permute_settled(
+    ir: &Ir,
+    group: &[Vec<(Rc<Text>, Rc<Text>)>],
+    state: &[Value],
+) -> Evaluated<bool> {
+    let mut is_permuted = vec![false; state.len()];
+    let mut least: Option<Vec<Value>> = None;
+    for permutation in group {
+        let mut order = std::cmp::Ordering::Equal;
+        let mut permuted = state.to_vec();
+        for &position in &ir.tlc_order {
+            let position = position as usize;
+            permuted[position] = permute(&state[position], permutation)?;
+            is_permuted[position] = true;
+            if order == std::cmp::Ordering::Equal {
+                let smallest = least
+                    .as_ref()
+                    .map_or(&state[position], |least| &least[position]);
+                order = compare(&permuted[position], smallest)?;
+                if order == std::cmp::Ordering::Greater {
+                    break;
+                }
+            }
+        }
+        if order == std::cmp::Ordering::Less {
+            least = Some(permuted);
+        }
+    }
+    for (value, is_permuted) in state.iter().zip(is_permuted) {
+        if is_permuted {
+            settle_built(value);
+        }
+    }
+    Ok(least.is_none())
+}
+
 fn least_in_orbit(
     ir: &Ir,
     group: &[Vec<(Rc<Text>, Rc<Text>)>],
