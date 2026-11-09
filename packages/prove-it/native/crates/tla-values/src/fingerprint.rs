@@ -95,6 +95,111 @@ impl ShiftTable {
     }
 }
 
+// The polynomial 1, with x^0 in the top bit.
+const ONE: u64 = 1 << 63;
+
+// floor(x^128 / P) - x^64, where P is x^64 plus the polynomial INITIAL holds, which Barrett
+// reduction multiplies by.
+const QUOTIENT: u64 = {
+    let polynomial = (1u128 << 64) | INITIAL.reverse_bits() as u128;
+    // x^128 less x^64 * P, then each term of degree 64 or more cleared by a multiple of P.
+    let mut remainder = (INITIAL.reverse_bits() as u128) << 64;
+    let mut quotient = 0u64;
+    let mut degree = 127;
+    while degree >= 64 {
+        if remainder >> degree & 1 == 1 {
+            quotient |= 1 << (degree - 64);
+            remainder ^= polynomial << (degree - 64);
+        }
+        degree -= 1;
+    }
+    quotient.reverse_bits()
+};
+
+// A shift by a fixed number L of zero bytes: a table, or, where the processor multiplies
+// polynomials without carries, x^(8L) mod P, which the shift multiplies by.
+enum Shift {
+    Table(Box<ShiftTable>),
+    Multiply(u64),
+}
+
+impl Shift {
+    fn build(is_multiplied: bool, shift: impl Fn(u64) -> u64) -> Shift {
+        if is_multiplied {
+            Shift::Multiply(shift(ONE))
+        } else {
+            Shift::Table(ShiftTable::build(shift))
+        }
+    }
+
+    #[inline(always)]
+    fn shift(&self, fingerprint: u64) -> u64 {
+        match self {
+            Shift::Table(table) => table.shift(fingerprint),
+            // SAFETY: a Multiply is only built where `is_multiply_supported` found the feature.
+            Shift::Multiply(factor) => unsafe { multiply(fingerprint, *factor) },
+        }
+    }
+}
+
+// The product mod P of two polynomials, from a carry-less multiply of 64-bit words: with x^0 in
+// each word's top bit, the 127-bit product shifted up one holds its terms below x^64 in its top
+// half and the rest, over x^64, in its bottom half. The top terms are reduced by Barrett's method.
+#[inline(always)]
+fn reduce(left: u64, right: u64, carryless: impl Fn(u64, u64) -> u128) -> u64 {
+    let split = |left, right| {
+        let product = carryless(left, right) << 1;
+        ((product >> 64) as u64, product as u64)
+    };
+    let (low, high) = split(left, right);
+    let quotient = high ^ split(high, QUOTIENT).1;
+    low ^ split(quotient, INITIAL).0
+}
+
+#[cfg(target_arch = "x86_64")]
+fn is_multiply_supported() -> bool {
+    std::arch::is_x86_feature_detected!("pclmulqdq")
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "pclmulqdq")]
+fn multiply(left: u64, right: u64) -> u64 {
+    use std::arch::x86_64::{
+        _mm_clmulepi64_si128, _mm_cvtsi64_si128, _mm_cvtsi128_si64, _mm_unpackhi_epi64,
+    };
+    reduce(left, right, |left, right| {
+        let product = _mm_clmulepi64_si128::<0>(
+            _mm_cvtsi64_si128(left as i64),
+            _mm_cvtsi64_si128(right as i64),
+        );
+        let high = _mm_cvtsi128_si64(_mm_unpackhi_epi64(product, product)) as u64;
+        u128::from(high) << 64 | u128::from(_mm_cvtsi128_si64(product) as u64)
+    })
+}
+
+#[cfg(target_arch = "aarch64")]
+fn is_multiply_supported() -> bool {
+    std::arch::is_aarch64_feature_detected!("aes")
+}
+
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "aes")]
+fn multiply(left: u64, right: u64) -> u64 {
+    reduce(left, right, |left, right| {
+        std::arch::aarch64::vmull_p64(left, right)
+    })
+}
+
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+fn is_multiply_supported() -> bool {
+    false
+}
+
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+unsafe fn multiply(_left: u64, _right: u64) -> u64 {
+    unreachable!()
+}
+
 // Tables for the lengths of values and of the tails of states, as far as the cap allows.
 const MAXIMUM_LENGTH_TABLES: usize = 1024;
 // A value's length table, before it is looked up.
@@ -143,13 +248,13 @@ impl Carried {
 
 /// F(v) and |v| of the store's values, computed as they are first asked for, and the tables that
 /// shift by their lengths.
-#[derive(Default)]
 pub struct Fingerprints {
     generation: Option<u32>,
     values: Vec<ValueFingerprint>,
     // Shifts by 2^j zero bytes.
-    powers: Vec<Box<ShiftTable>>,
-    lengths: Vec<Box<ShiftTable>>,
+    powers: Vec<Shift>,
+    lengths: Vec<Shift>,
+    is_multiplied: bool,
     // The number of each length's table, or UNKNOWN_TABLE: by length up to SHORT_LENGTHS, which a
     // state's tails are found by once per state, and in a map past it.
     short_numbers: Vec<i32>,
@@ -158,9 +263,27 @@ pub struct Fingerprints {
 
 const SHORT_LENGTHS: usize = 1 << 12;
 
+impl Default for Fingerprints {
+    fn default() -> Fingerprints {
+        Fingerprints::new()
+    }
+}
+
 impl Fingerprints {
     pub fn new() -> Fingerprints {
-        Fingerprints::default()
+        Fingerprints::with_multiply(is_multiply_supported())
+    }
+
+    fn with_multiply(is_multiplied: bool) -> Fingerprints {
+        Fingerprints {
+            generation: None,
+            values: Vec::new(),
+            powers: Vec::new(),
+            lengths: Vec::new(),
+            is_multiplied,
+            short_numbers: Vec::new(),
+            length_numbers: HashMap::new(),
+        }
     }
 
     /// Forgets every value's fingerprint, as `resetFingerprints` does. The fingerprints also
@@ -212,11 +335,15 @@ impl Fingerprints {
         }
     }
 
-    fn get_power(&mut self, exponent: usize) -> &ShiftTable {
+    fn get_power(&mut self, exponent: usize) -> &Shift {
         while self.powers.len() <= exponent {
             let table = match self.powers.last() {
-                None => ShiftTable::build(|fingerprint| extend_byte(fingerprint, 0)),
-                Some(half) => ShiftTable::build(|fingerprint| half.shift(half.shift(fingerprint))),
+                None => Shift::build(self.is_multiplied, |fingerprint| {
+                    extend_byte(fingerprint, 0)
+                }),
+                Some(half) => Shift::build(self.is_multiplied, |fingerprint| {
+                    half.shift(half.shift(fingerprint))
+                }),
             };
             self.powers.push(table);
         }
@@ -261,7 +388,7 @@ impl Fingerprints {
             self.get_power(exponents as usize - 1);
         }
         let powers = &self.powers;
-        let table = ShiftTable::build(|mut fingerprint| {
+        let table = Shift::build(self.is_multiplied, |mut fingerprint| {
             for (exponent, power) in powers.iter().enumerate() {
                 if length >> exponent & 1 == 1 {
                     fingerprint = power.shift(fingerprint);
@@ -643,4 +770,37 @@ impl Fingerprints {
 // F of an integer.
 fn get_int(value: i32) -> u64 {
     extend_int(extend_byte(0, INT_VALUE), value)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Fingerprints, extend_byte, is_multiply_supported};
+
+    // Shifting by multiplying gives the tables' fingerprints, which give extending byte by byte's,
+    // over random fingerprints and lengths short and long, with and without a table.
+    #[test]
+    fn shift_alike_by_tables_and_by_multiplying() {
+        let mut random = 0x2545f4914f6cdd1du64;
+        let mut next = || {
+            random ^= random << 13;
+            random ^= random >> 7;
+            random ^= random << 17;
+            random
+        };
+        let mut by_tables = Fingerprints::with_multiply(false);
+        let mut by_multiplying = Fingerprints::with_multiply(is_multiply_supported());
+        for length in 0..300u64 {
+            let fingerprint = next();
+            let extended = (0..length).fold(fingerprint, |extended, _| extend_byte(extended, 0));
+            assert_eq!(by_tables.shift(fingerprint, length), extended);
+            assert_eq!(by_multiplying.shift(fingerprint, length), extended);
+        }
+        for _ in 0..5000 {
+            let (fingerprint, length) = (next(), next() >> (next() % 64));
+            assert_eq!(
+                by_multiplying.shift(fingerprint, length),
+                by_tables.shift(fingerprint, length)
+            );
+        }
+    }
 }
