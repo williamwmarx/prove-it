@@ -370,7 +370,8 @@ const generateExpression = (generator: Generator, expression: Expression, frame:
         expression: expression.expression,
         location: expression.location,
       });
-      return `equal(${primed}, ${generate(expression.expression)})`;
+      // TLC evaluates the current state's side first (Tool.evalAppl's OPCODE_unchanged).
+      return `equal(${generate(expression.expression)}, ${primed})`;
     }
     case "Forall":
     case "Exists":

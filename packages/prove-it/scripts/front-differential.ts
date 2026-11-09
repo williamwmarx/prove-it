@@ -33,6 +33,7 @@ import { type Builtin, describeRange, type Environment } from "../src/evaluate";
 import { tokenize } from "../src/lexer";
 import { getLevel } from "../src/liveness";
 import { parseModule, parseSanyModule } from "../src/parser";
+import { getSanyReport } from "../src/sany/report";
 import { getProperties, getSpecification } from "../src/search";
 import { createTlcOrder } from "../src/tlc/order";
 import { setStringOrder } from "../src/values";
@@ -318,6 +319,15 @@ const MODES: Record<string, (source: string, path: string, spec: string) => stri
       stateLevel,
     };
   }),
+  // What SANY prints, with each file described by its module's name and origin, as front-dump
+  // describes it.
+  "sany-text": (_source, path) =>
+    JSON.stringify({
+      text: getSanyReport(path, createLoader(path), {
+        describeFile: (name, origin) =>
+          `${name}|${{ file: "File", "root file": "RootFile", standard: "Standard" }[origin]}`,
+      }).text,
+    }),
   model: writeResult((source, _path, spec) =>
     readEnvironment(readFileSync(spec, "utf8"), spec, parseConfig(source)),
   ),
@@ -420,6 +430,7 @@ const isLinked = [
   "model-full",
   "spec",
   "properties",
+  "sany-text",
 ].includes(mode);
 if (isLinked) linkLibraryModules();
 

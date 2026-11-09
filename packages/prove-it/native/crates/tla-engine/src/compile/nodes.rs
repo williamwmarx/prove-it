@@ -459,10 +459,11 @@ impl Compiler<'_> {
         let footprint = now.footprint.merge(&next.footprint);
         let (now, next) = (now.eval, next.eval);
         Ok(leaf(
+            // TLC evaluates the current state's side first (Tool.evalAppl's OPCODE_unchanged).
             eval(move |machine| {
-                let next = next(machine)?;
                 let now = now(machine)?;
-                Ok(bool_id(machine.store.equals(next, now)?))
+                let next = next(machine)?;
+                Ok(bool_id(machine.store.equals(now, next)?))
             }),
             footprint,
         ))
