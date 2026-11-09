@@ -213,6 +213,8 @@ pub struct Possible {
 pub struct ActionProperty {
     pub action: NodeId,
     pub subscript: NodeId,
+    /// The scope of the instance the property comes from, which it is read in.
+    pub scope: Option<Index>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -268,6 +270,21 @@ pub struct LiveProperty {
     pub formula: Vec<LiveTerm>,
 }
 
+impl Model {
+    /// Whether a property is read in the scope of the instance it comes from.
+    pub fn has_scoped_property(&self) -> bool {
+        self.property_invariant_scopes
+            .iter()
+            .chain(&self.initial_predicate_scopes)
+            .chain(
+                self.action_properties
+                    .iter()
+                    .map(|property| &property.scope),
+            )
+            .any(Option::is_some)
+    }
+}
+
 /// What the configuration and the checker ask of the search.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Model {
@@ -286,11 +303,15 @@ pub struct Model {
     /// The name TLC gives each of `property_invariants` when it reports it violated: the operator
     /// the property asserts always holds, or the property's name.
     pub property_invariant_names: Vec<TextId>,
+    /// The scope of the instance each of `property_invariants` comes from, which it is read in.
+    pub property_invariant_scopes: Vec<Option<Index>>,
     pub constraints: Vec<ConfigName>,
     pub action_constraints: Vec<ConfigName>,
     pub possible: Vec<Possible>,
     pub action_properties: Vec<ActionProperty>,
     pub initial_predicates: Vec<NodeId>,
+    /// The scope of the instance each of `initial_predicates` comes from, which it is read in.
+    pub initial_predicate_scopes: Vec<Option<Index>>,
     pub view: Option<ConfigName>,
     /// The configuration's ALIAS, which TLC prints each state of a trace through.
     pub alias: Option<ConfigName>,

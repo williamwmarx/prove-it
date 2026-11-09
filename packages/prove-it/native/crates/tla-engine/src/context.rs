@@ -414,6 +414,11 @@ impl EngineContext {
         // With temporal properties, the search keeps what it prints until the checker has
         // evaluated the atoms, whose prints go between its own.
         let can_print = true;
+        if model.has_scoped_property() {
+            return Err(CompileError::Decline(
+                "a property read in an instance's scope".into(),
+            ));
+        }
         let mut conjuncts = Conjuncts::new(ir);
         let mut printed = HashSet::new();
         let mut invariant_owners = Vec::new();

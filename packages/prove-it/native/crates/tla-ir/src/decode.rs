@@ -624,19 +624,18 @@ impl Decoder<'_> {
         let is_labelled = self.flag()?;
         let invariants = self.config_names(true)?;
         let count = self.count()?;
-        let (property_invariants, property_invariant_names) = (0..count)
-            .map(|_| {
-                Ok((
-                    Printed {
-                        root: node(self)?,
-                        has_repeated_effect: self.flag()?,
-                    },
-                    self.text()?,
-                ))
-            })
-            .collect::<Decoded<Vec<_>>>()?
-            .into_iter()
-            .unzip();
+        let mut property_invariants = Vec::with_capacity(count);
+        let mut property_invariant_scopes = Vec::with_capacity(count);
+        let mut property_invariant_names = Vec::with_capacity(count);
+        for _ in 0..count {
+            let root = node(self)?;
+            property_invariant_scopes.push(self.optional_below(scope_count, "scope")?);
+            property_invariants.push(Printed {
+                root,
+                has_repeated_effect: self.flag()?,
+            });
+            property_invariant_names.push(self.text()?);
+        }
         let constraints = self.unprinted()?;
         let action_constraints = self.unprinted()?;
         let possible = self
@@ -653,11 +652,17 @@ impl Decoder<'_> {
                 Ok(ActionProperty {
                     action: node(self)?,
                     subscript: node(self)?,
+                    scope: self.optional_below(scope_count, "scope")?,
                 })
             })
             .collect::<Decoded<_>>()?;
         let count = self.count()?;
-        let initial_predicates = (0..count).map(|_| node(self)).collect::<Decoded<_>>()?;
+        let mut initial_predicates = Vec::with_capacity(count);
+        let mut initial_predicate_scopes = Vec::with_capacity(count);
+        for _ in 0..count {
+            initial_predicates.push(node(self)?);
+            initial_predicate_scopes.push(self.optional_below(scope_count, "scope")?);
+        }
         let mut views = self.unprinted()?;
         if views.len() > 1 {
             return self.error(format!("{} views", views.len()));
@@ -804,11 +809,13 @@ impl Decoder<'_> {
             invariants,
             property_invariants,
             property_invariant_names,
+            property_invariant_scopes,
             constraints,
             action_constraints,
             possible,
             action_properties,
             initial_predicates,
+            initial_predicate_scopes,
             view,
             alias,
             postconditions,

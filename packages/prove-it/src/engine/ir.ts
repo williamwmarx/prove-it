@@ -61,7 +61,7 @@ import {
   getStringOrder,
   type Value,
 } from "../values";
-import type { EngineProperties, EngineSpec } from "./context";
+import type { EngineSpec } from "./context";
 
 // The version of the layout below, which the decoder checks. Any change to it changes this.
 export const IR_VERSION = 12;
@@ -187,6 +187,17 @@ export interface IrSpec extends Omit<EngineSpec, "next"> {
   next: Expression | undefined;
 }
 
+// The properties the IR holds, each read in the scope of the instance it comes from, if any.
+export interface IrProperties {
+  invariants: { expression: Expression; scope: EvaluationScope | undefined; name: string }[];
+  actionProperties: {
+    action: Expression;
+    subscript: Expression;
+    scope: EvaluationScope | undefined;
+  }[];
+  initialPredicates: { expression: Expression; scope: EvaluationScope | undefined }[];
+}
+
 export interface IrInput {
   config: ModelConfig;
   environment: Environment;
@@ -196,7 +207,7 @@ export interface IrInput {
   traceActions: TraceAction[];
   isWarningEnabled: boolean;
   tlcOrder: number[];
-  properties: EngineProperties;
+  properties: IrProperties;
   isRecordingGraph: boolean;
   version: TlcVersion | undefined;
   atoms: IrAtom[];
@@ -776,10 +787,6 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
   };
   const hasRepeatedEffectOfName = (name: string) =>
     hasRepeatedEffect({ kind: "Identifier", name, location: { line: 0, column: 0 } }, environment);
-  const writeRoots = (expressions: readonly Expression[]) => {
-    push(model, expressions.length);
-    for (const expression of expressions) push(model, writeRoot(expression));
-  };
 
   const spec = input.spec;
   push(model, writeRoot(spec.init));
@@ -796,11 +803,12 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
   push(model, spec.actions ? 1 : 0);
   writeConfigNames(config.invariants, true);
   push(model, input.properties.invariants.length);
-  input.properties.invariants.forEach((invariant, index) => {
-    push(model, writeRoot(invariant));
-    push(model, hasRepeatedEffect(invariant, environment) ? 1 : 0);
-    push(model, getText(input.properties.invariantNames[index]));
-  });
+  for (const invariant of input.properties.invariants) {
+    push(model, writeRoot(invariant.expression));
+    push(model, getScopeIndex(invariant.scope));
+    push(model, hasRepeatedEffect(invariant.expression, environment) ? 1 : 0);
+    push(model, getText(invariant.name));
+  }
   writeConfigNames(config.constraints);
   writeConfigNames(config.actionConstraints);
   // Each _POSSIBLE predicate, and whether it is of a step rather than a state.
@@ -816,8 +824,13 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
   for (const property of input.properties.actionProperties) {
     push(model, writeRoot(property.action));
     push(model, writeRoot(property.subscript));
+    push(model, getScopeIndex(property.scope));
   }
-  writeRoots(input.properties.initialPredicates);
+  push(model, input.properties.initialPredicates.length);
+  for (const predicate of input.properties.initialPredicates) {
+    push(model, writeRoot(predicate.expression));
+    push(model, getScopeIndex(predicate.scope));
+  }
   writeConfigNames(config.view === undefined ? [] : [config.view]);
   writeConfigNames(config.alias === undefined ? [] : [config.alias]);
   writeConfigNames(config.postconditions);

@@ -849,21 +849,6 @@ impl<'a> Lowering<'a> {
                 crate::TlcVersion::Master
             },
         )?;
-        let is_scoped = properties
-            .invariants
-            .iter()
-            .any(|property| property.scope.is_some())
-            || properties
-                .initial_predicates
-                .iter()
-                .any(|property| property.scope.is_some())
-            || properties
-                .action_properties
-                .iter()
-                .any(|property| property.scope.is_some());
-        if is_scoped {
-            return Err(not_yet("a property read in a scope"));
-        }
         let init = self.write_root(init)?;
         let next = match &specification.next {
             Some(next) => Some(self.write_root(next)?),
@@ -877,8 +862,10 @@ impl<'a> Lowering<'a> {
             .collect();
         let mut property_invariants = Vec::new();
         let mut property_invariant_names = Vec::new();
+        let mut property_invariant_scopes = Vec::new();
         for invariant in &properties.invariants {
             let root = self.write_root(&invariant.expression)?;
+            property_invariant_scopes.push(self.get_scope_index(invariant.scope.as_ref()));
             property_invariants.push(Printed {
                 root,
                 has_repeated_effect: self
@@ -915,11 +902,17 @@ impl<'a> Lowering<'a> {
         for property in &properties.action_properties {
             let action = self.write_root(&property.action)?;
             let subscript = self.write_root(&property.subscript)?;
-            action_properties.push(IrActionProperty { action, subscript });
+            action_properties.push(IrActionProperty {
+                action,
+                subscript,
+                scope: self.get_scope_index(property.scope.as_ref()),
+            });
         }
         let mut initial_predicates = Vec::new();
+        let mut initial_predicate_scopes = Vec::new();
         for predicate in &properties.initial_predicates {
             initial_predicates.push(self.write_root(&predicate.expression)?);
+            initial_predicate_scopes.push(self.get_scope_index(predicate.scope.as_ref()));
         }
         let view = config
             .view
@@ -956,11 +949,13 @@ impl<'a> Lowering<'a> {
             invariants,
             property_invariants,
             property_invariant_names,
+            property_invariant_scopes,
             constraints,
             action_constraints,
             possible,
             action_properties,
             initial_predicates,
+            initial_predicate_scopes,
             view,
             alias,
             postconditions,

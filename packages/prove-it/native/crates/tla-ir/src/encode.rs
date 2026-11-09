@@ -114,13 +114,15 @@ fn encode_here(ir: &Ir) -> Vec<u8> {
         words.push(invariant.has_repeated_effect as i32);
     }
     words.push(model.property_invariants.len() as i32);
-    for (invariant, &name) in model
+    for ((invariant, &name), &scope) in model
         .property_invariants
         .iter()
         .zip(&model.property_invariant_names)
+        .zip(&model.property_invariant_scopes)
     {
         words.extend([
             offset(invariant.root),
+            optional(scope),
             invariant.has_repeated_effect as i32,
             name as i32,
         ]);
@@ -136,10 +138,20 @@ fn encode_here(ir: &Ir) -> Vec<u8> {
     }
     words.push(model.action_properties.len() as i32);
     for property in &model.action_properties {
-        words.extend([offset(property.action), offset(property.subscript)]);
+        words.extend([
+            offset(property.action),
+            offset(property.subscript),
+            optional(property.scope),
+        ]);
     }
     words.push(model.initial_predicates.len() as i32);
-    words.extend(model.initial_predicates.iter().map(|&id| offset(id)));
+    for (&predicate, &scope) in model
+        .initial_predicates
+        .iter()
+        .zip(&model.initial_predicate_scopes)
+    {
+        words.extend([offset(predicate), optional(scope)]);
+    }
     words.push(model.view.is_some() as i32);
     words.extend(model.view.iter().flat_map(config_name));
     words.push(model.alias.is_some() as i32);

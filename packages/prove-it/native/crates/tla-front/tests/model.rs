@@ -122,7 +122,10 @@ fn lowers_a_model_without_a_next_state_relation() {
     let model = tla_ir::decode(&ir).expect("an IR that decodes").model;
     assert_eq!(model.next, None);
     assert_eq!(
-        config_error("checked", "CONSTANT Flag = TRUE\nINIT Init\nINVARIANT Small\n"),
+        config_error(
+            "checked",
+            "CONSTANT Flag = TRUE\nINIT Init\nINVARIANT Small\n"
+        ),
         "The configuration file did not specify the next state predicate."
     );
 }

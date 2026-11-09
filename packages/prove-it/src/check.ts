@@ -2,9 +2,15 @@ import type { Expression } from "./ast";
 import { type ModelConfig, parseConfig } from "./config";
 import { hasEffect, isConstantLevel, isImpureDefinition } from "./dependencies";
 import { getMemoStatistics } from "./engine/compile";
-import { type EngineProperties, toEngineProperties } from "./engine/context";
+import { toEngineProperties } from "./engine/context";
 import { toValue as toEngineValue } from "./engine/convert";
-import { type IrOutcome, type IrSpec, type IrStartup, lowerToIr } from "./engine/ir";
+import {
+  type IrOutcome,
+  type IrProperties,
+  type IrSpec,
+  type IrStartup,
+  lowerToIr,
+} from "./engine/ir";
 import { checkNatively, type NativeLiveness, toEngineResult, toStop } from "./engine/native";
 import {
   type EngineCheckpoint,
@@ -462,7 +468,7 @@ export const lowerUnsearchedSpec = (
   specification: ReturnType<typeof createEnvironment>,
   spec: IrSpec,
   tlcOrder: number[],
-  properties: EngineProperties,
+  properties: IrProperties,
   version: TlcVersion | undefined,
 ) =>
   lowerToIr({
@@ -496,7 +502,7 @@ export const lowerConstantSpec = (
     specification,
     { init: NO_BEHAVIOR, next: NO_BEHAVIOR },
     [],
-    { invariants: [], invariantNames: [], actionProperties: [], initialPredicates: [] },
+    { invariants: [], actionProperties: [], initialPredicates: [] },
     version,
   );
 
@@ -1776,7 +1782,7 @@ const searchStates = (
           specification,
           { init, next, scope: spec.scope },
           search.getTlcOrder(),
-          toEngineProperties(search.properties)!,
+          search.properties,
           options.version,
         );
         if ("ir" in outcome) writeDebugBytes("PROVE_IT_IR_DUMP", outcome.ir);
@@ -1834,7 +1840,9 @@ const searchStates = (
         })),
       }),
     };
-    const engineProperties = toEngineProperties(search.properties)!;
+    // The engine here checks no property read in an instance's scope; the IR holds it for the
+    // native binary.
+    const engineProperties = toEngineProperties(search.properties);
     const tlcOrder = search.getTlcOrder();
     const symmetry = search.symmetryGroup?.map((images) =>
       [...images].map(([name, image]): [string, string] => [name, image.name]),
@@ -1882,7 +1890,7 @@ const searchStates = (
         }),
         isWarningEnabled: runtime.isWarningEnabled,
         tlcOrder,
-        properties: engineProperties,
+        properties: search.properties,
         isRecordingGraph: liveness !== undefined,
         version: options.version,
         atoms: (liveness?.atoms ?? []).map((atom) => ({
@@ -1905,6 +1913,10 @@ const searchStates = (
     };
     if (isIrDumped()) lowerModel();
     if (isLoweredOnly) return undefined;
+    if (!engineProperties) {
+      reportEngine("skipped: properties in an instance");
+      return undefined;
+    }
     const callbacks = {
       onProgress: (progress: CheckProgress) => {
         engineReport.isReported = true;
@@ -2115,7 +2127,6 @@ const searchStates = (
     if (nativeOnlyReason && !isNativeBackend()) return nativeOnlyReason;
     if (config.periodic !== undefined) return "periodic";
     if (is174) return "TLC 1.7.4";
-    if (!toEngineProperties(search.properties)) return "properties in an instance";
     return undefined;
   };
 

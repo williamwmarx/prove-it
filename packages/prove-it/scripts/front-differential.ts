@@ -30,7 +30,6 @@ import { dirname, join, relative } from "node:path";
 import type { Definition, Expression } from "../src/ast";
 import { getIrStartup, lowerConstantSpec, lowerUnsearchedSpec } from "../src/check";
 import { type ModelConfig, parseConfig } from "../src/config";
-import { toEngineProperties } from "../src/engine/context";
 import { lowerToIr } from "../src/engine/ir";
 import { createEnvironment } from "../src/environment";
 import {
@@ -255,13 +254,11 @@ const lowerLinkedModel = (
   const environment = linked.environment;
   const specification = getSpecification(config, environment);
   const search = getProperties(config, environment, () => {});
-  const properties = toEngineProperties(search);
   if (environment.variables.length === 0) {
     const constant = lowerConstantSpec(config, linked, undefined);
     return "ir" in constant ? { ir: Buffer.from(constant.ir).toString("hex") } : constant;
   }
   if (!specification.init) return { reason: "no Init" };
-  if (!properties) return { reason: "a property read in a scope" };
   const variableOrder = order.getDeclarationOrder("variable");
   const getPosition = (index: number) => {
     const position = variableOrder.indexOf(environment.variables[index]);
@@ -276,7 +273,7 @@ const lowerLinkedModel = (
       linked,
       { init: specification.init, next: undefined, scope: specification.scope },
       tlcOrder,
-      properties,
+      search,
       undefined,
     );
     return "ir" in unsearched ? { ir: Buffer.from(unsearched.ir).toString("hex") } : unsearched;
@@ -293,7 +290,7 @@ const lowerLinkedModel = (
     traceActions: [],
     isWarningEnabled: true,
     tlcOrder,
-    properties,
+    properties: search,
     isRecordingGraph: liveness !== undefined,
     version: undefined,
     // Without TLC's actions, which ENABLED's split into.
@@ -320,7 +317,7 @@ const lowerEnvironment = (
     traceActions: [],
     isWarningEnabled: true,
     tlcOrder: [],
-    properties: { invariants: [], invariantNames: [], actionProperties: [], initialPredicates: [] },
+    properties: { invariants: [], actionProperties: [], initialPredicates: [] },
     isRecordingGraph: false,
     version: undefined,
     atoms: [],

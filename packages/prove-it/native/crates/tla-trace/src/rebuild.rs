@@ -652,6 +652,9 @@ fn check_violation(
     rebuilt: &[Vec<Value>],
 ) -> Result<(), Unsupported> {
     let ir = evaluator.ir;
+    if ir.model.has_scoped_property() {
+        return unsupported("a property read in an instance's scope");
+    }
     let state = |values: &[Value]| values.iter().cloned().map(Some).collect();
     let last = rebuilt.len() - 1;
     evaluator.current = state(&rebuilt[last]);
