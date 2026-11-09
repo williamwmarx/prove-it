@@ -1064,8 +1064,20 @@ impl<'a> Compiler<'a> {
             | NodeKind::Case { .. }
             | NodeKind::Let { .. }
             | NodeKind::Label { .. }
-            | NodeKind::Identifier(_) => true,
-            NodeKind::Apply { name, .. } => {
+            | NodeKind::Identifier(_)
+            // TLC evaluates each element, field and part once, in the order written, as the
+            // engine does.
+            | NodeKind::SetEnumeration(_)
+            | NodeKind::Tuple(_)
+            | NodeKind::Record(_)
+            | NodeKind::FieldAccess { .. } => true,
+            // TLC evaluates the body once for each element of the set, in the set's order, which
+            // is the engine's where TLC normalizes the set. The engine evaluates the set of an
+            // inner bound once for each element of the outer one, where TLC evaluates it once.
+            NodeKind::SetMap { bounds, .. } => {
+                matches!(&bounds[..], [bound] if !self.may_be_lazy(bound.set, &mut HashSet::new()))
+            }
+            NodeKind::Apply { name, args } => {
                 if name.is_local
                     && let Some(found) = lookup(&context.scope, name.text)
                 {
@@ -1079,13 +1091,85 @@ impl<'a> Compiler<'a> {
                             && definition.flags & Definition::RECURSIVE == 0
                             && !self.expanding.contains(&node)
                     }
-                    Resolution::Builtin(index) => matches!(
-                        self.builtin_name(index),
-                        "Print" | "PrintT" | "RandomElement" | "RandomSubset" | "=" | "#" | "~"
-                    ),
+                    Resolution::Builtin(index) => match self.builtin_name(index) {
+                        "Print" | "PrintT" | "RandomElement" | "RandomSubset" | "TLCEval" | "="
+                        | "#" | "~" => true,
+                        // TLC evaluates the operands, then builds the set, which the engine
+                        // builds the same way unless an operand is a set TLC keeps lazy.
+                        "\\cup" | "\\cap" | "\\" | "UNION" => !args
+                            .iter()
+                            .any(|&arg| self.may_be_lazy(arg, &mut HashSet::new())),
+                        _ => false,
+                    },
                     _ => false,
                 }
             }
+            _ => false,
+        }
+    }
+
+    // Whether TLC may keep the value of an expression lazy, a set it enumerates in its own order
+    // or a function it applies anew each time, rather than normalize it as the engine's value is:
+    // through the branches and bodies that give the value, any set or function it builds lazily.
+    fn may_be_lazy(&self, node: NodeId, seen: &mut HashSet<NodeId>) -> bool {
+        if !seen.insert(node) {
+            return true;
+        }
+        match self.node(node).1 {
+            NodeKind::FunctionConstruction { .. }
+            | NodeKind::Lambda { .. }
+            | NodeKind::FunctionSet { .. }
+            | NodeKind::RecordSet(_) => true,
+            NodeKind::If {
+                consequent,
+                alternative,
+                ..
+            } => self.may_be_lazy(*consequent, seen) || self.may_be_lazy(*alternative, seen),
+            NodeKind::Case { arms, other } => {
+                arms.iter().any(|&(_, arm)| self.may_be_lazy(arm, seen))
+                    || other.is_some_and(|other| self.may_be_lazy(other, seen))
+            }
+            NodeKind::Let { body, .. } => self.may_be_lazy(*body, seen),
+            NodeKind::SetFilter { bound, .. } => self.may_be_lazy(bound.set, seen),
+            NodeKind::SetEnumeration(elements)
+            | NodeKind::Tuple(elements)
+            | NodeKind::Product(elements) => elements
+                .iter()
+                .any(|&element| self.may_be_lazy(element, seen)),
+            NodeKind::Record(fields) => fields
+                .iter()
+                .any(|&(_, field)| self.may_be_lazy(field, seen)),
+            NodeKind::Identifier(name) if !name.is_local => match name.resolution {
+                Resolution::Definition(index) => self.may_be_lazy(
+                    self.definition(self.ir.definitions[index as usize]).body,
+                    seen,
+                ),
+                Resolution::Builtin(index) => {
+                    matches!(self.builtin_name(index), "Nat" | "Int" | "Real" | "STRING")
+                }
+                _ => false,
+            },
+            NodeKind::Apply { name, args } if !name.is_local => match name.resolution {
+                Resolution::Builtin(index) => {
+                    match self.text(self.ir.builtins[index as usize].name) {
+                        "SUBSET" | "Seq" => true,
+                        "UNION" | "\\cup" | "\\cap" | "\\" => {
+                            args.iter().any(|&arg| self.may_be_lazy(arg, seen))
+                        }
+                        "TLCEval" => self.may_be_lazy(args[0], seen),
+                        "Print" | "PrintT" => {
+                            args.last().is_some_and(|&arg| self.may_be_lazy(arg, seen))
+                        }
+                        _ => false,
+                    }
+                }
+                Resolution::Definition(index) => self.may_be_lazy(
+                    self.definition(self.ir.definitions[index as usize]).body,
+                    seen,
+                ),
+                _ => true,
+            },
+            NodeKind::Apply { .. } => true,
             _ => false,
         }
     }
