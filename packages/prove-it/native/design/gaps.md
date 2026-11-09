@@ -79,3 +79,13 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
 - Only the native engine counts them, so a model with `_POSSIBLE` predicates goes to the
   interpreter where the native engine doesn't take it, never to the TypeScript engine. The search
   stays on one thread with them.
+
+## Wide strings
+
+- TLC fingerprints a string by the low byte of each character and tells states apart by their
+  fingerprints alone, so states whose strings differ only above U+00FF are one state. The native
+  engine does both already (`fingerprint.rs`, `States::find`). Only the TypeScript engine tells
+  states apart by their values, so a model whose strings may be wide (`hasWideString`) goes to the
+  native engine, or to the interpreter where it doesn't take the model, never to the TypeScript
+  engine. Resuming from a checkpoint, the interpreter then takes every state over at once, since it
+  tells them apart by fingerprint and the checkpoint looks a state up by its key.

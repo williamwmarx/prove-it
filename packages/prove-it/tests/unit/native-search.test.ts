@@ -820,6 +820,23 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     }
   });
 
+  it("merges states whose strings differ only above U+00FF, as TLC's fingerprints do", async () => {
+    // TLC fingerprints a string by the low byte of each character, so "Ā" and "Ȁ" make one state.
+    const body = [
+      "EXTENDS Naturals",
+      "VARIABLES x, y",
+      'Init == x \\in {"Ā", "Ȁ", "a"} /\\ y = 0',
+      "Next == y' = (y + 1) % 3 /\\ UNCHANGED x",
+    ];
+    const config = "INIT Init\nNEXT Next";
+    expect(await compareWithInterpreter(body, config)).toContainEqual(
+      expect.stringMatching(COMPLETE),
+    );
+    expect(await compareWithInterpreter(body, config, { PROVE_IT_STOP_AT: "2" })).toContainEqual(
+      expect.stringMatching(stopped("stopped where PROVE_IT_STOP_AT asked")),
+    );
+  });
+
   it("stops where TLC fails on action composition, with the states before", async () => {
     const body = [
       "EXTENDS Naturals",
