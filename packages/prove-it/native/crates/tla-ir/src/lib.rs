@@ -293,6 +293,9 @@ pub struct Model {
     pub possible: Vec<Possible>,
     pub action_properties: Vec<ActionProperty>,
     pub initial_predicates: Vec<NodeId>,
+    /// The name TLC gives each of `initial_predicates` when an initial state violates it: the
+    /// property's.
+    pub initial_predicate_names: Vec<TextId>,
     pub view: Option<ConfigName>,
     /// The configuration's ALIAS, which TLC prints each state of a trace through.
     pub alias: Option<ConfigName>,

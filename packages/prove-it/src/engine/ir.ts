@@ -784,11 +784,6 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
   };
   const hasRepeatedEffectOfName = (name: string) =>
     hasRepeatedEffect({ kind: "Identifier", name, location: { line: 0, column: 0 } }, environment);
-  const writeRoots = (expressions: readonly Expression[]) => {
-    push(model, expressions.length);
-    for (const expression of expressions) push(model, writeRoot(expression));
-  };
-
   const spec = input.spec;
   push(model, writeRoot(spec.init));
   push(model, writeRoot(spec.next));
@@ -826,7 +821,11 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
     push(model, writeRoot(property.action));
     push(model, writeRoot(property.subscript));
   }
-  writeRoots(input.properties.initialPredicates);
+  push(model, input.properties.initialPredicates.length);
+  input.properties.initialPredicates.forEach((predicate, index) => {
+    push(model, writeRoot(predicate));
+    push(model, getText(input.properties.initialPredicateNames[index]));
+  });
   writeConfigNames(config.view === undefined ? [] : [config.view]);
   writeConfigNames(config.alias === undefined ? [] : [config.alias]);
   writeConfigNames(config.postconditions);
