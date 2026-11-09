@@ -480,16 +480,18 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   Nat, Int and STRING are tested as before, and enumerating one still stops.
 - suite/test7 now prints what TLC prints.
 
-## Open: infinite sets as values
+## Sizing a set an empty part empties
 
-Still declined, and neither lazy functions nor a set held as a value fix it:
-
-- **RandomSubsetEmpty**: `Cardinality` and `RandomSubset` of `[Nat -> {}]`, `[n1 : Nat, n2 : {}]`,
-  `Nat \X {}` and the like decline with "enumerated Nat". TLC counts these sets without
-  enumerating them. A product or record set is empty when any factor is, and `[S -> {}]` is empty
-  for a nonempty S. RandomSubset then picks from none. The spec's comments name the order that
-  matters: the empty factor must be found before an infinite one is touched. Cardinality and
-  RandomSubset need a size for a lazy set that answers 0 in these cases before they enumerate.
+- TLC sizes a set of functions, records or tuples by its parts (`SetOfFcnsValue.size` and the
+  like), and finds one that an empty part empties before it asks anything of a part it can't
+  enumerate: `Cardinality([Nat -> {}])`, `Cardinality([n1 : Nat, n2 : {}])` and
+  `Cardinality(Nat \X {})` are 0. Cardinality of a set with a part that may be infinite now asks
+  the lazy set whether it is empty (`Lazy::is_empty`, the parts in TLC's order) before it
+  enumerates it. RandomSubset already drew from the lazy set, and so picks from none.
+- `Nat \ {0}` and the other combinations with a set TLC can't enumerate now have a lazy value
+  too (`Lazy::Operation`), so a set of records can hold one after an empty field.
+- RandomSubsetEmpty now prints what TLC prints. A nonempty set with a part TLC can't enumerate
+  still stops, where TLC answers some (`[Nat -> {1}]` has one element).
 
 ## Open: Test2, liveness atoms answered as the search goes
 
