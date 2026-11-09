@@ -658,6 +658,9 @@ pub struct Compiler<'a> {
     /// The walks whose first step is a guard `f[k] = c`, by the address of their step, each kept
     /// alive so no other step takes its address (`walker::Leading`).
     leading_guards: HashMap<usize, (Step, walker::Leading)>,
+    /// The bodies of recursive functions an action applies, each walked once for what the walk
+    /// knows where it applies it (`walker::WalkedFunction`).
+    walked_functions: Vec<walker::WalkedFunction>,
     // What cached compiles read of fixed points that hadn't settled when they compiled.
     provisional: HashMap<u64, Vec<Rc<FixedPoint>>>,
     entry_count: u64,
@@ -728,6 +731,7 @@ impl<'a> Compiler<'a> {
             depth: 0,
             reads: None,
             leading_guards: HashMap::new(),
+            walked_functions: Vec::new(),
             provisional: HashMap::new(),
             entry_count: 0,
             specialisations: 0,
