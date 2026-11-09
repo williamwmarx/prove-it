@@ -7,6 +7,7 @@ pub mod dependencies;
 pub mod dump;
 pub mod environment;
 pub mod errors;
+pub mod eval;
 pub mod hash;
 pub mod instances;
 pub mod json;
@@ -31,6 +32,7 @@ pub mod subexpressions;
 #[rustfmt::skip]
 pub mod tlc_data;
 pub mod tlc_messages;
+pub mod values;
 
 /// The version of TLC whose behaviour the front end reproduces, as `TlcVersion` in
 /// `src/tlc/version.ts`.

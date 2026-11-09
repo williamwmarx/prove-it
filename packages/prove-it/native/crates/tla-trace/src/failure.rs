@@ -9,7 +9,7 @@ use tla_values::{Id, Store};
 use crate::eval::{CallStack, Context, Evaluator, StackFrame};
 use crate::fingerprint::fingerprint_failure;
 use crate::print::format_value;
-use crate::rebuild::{Rebuilder, run};
+use crate::rebuild::{Rebuilder, is_same, run};
 use crate::value::{Evaluated, TlcMessage, Value, fail, fail_with};
 use crate::{Ending, Trace, Unsupported};
 
@@ -23,6 +23,12 @@ pub enum Site {
     /// Evaluating the invariant at this position of the model's invariants on the path's last
     /// state, a successor that failed it, past the initial states.
     Invariant(u32),
+    /// Evaluating the constraint at this position of the model's constraints on the initial state
+    /// the path holds.
+    InitialConstraint(u32),
+    /// Evaluating the invariant at this position of the model's invariants on the initial state
+    /// the path holds.
+    InitialInvariant(u32),
 }
 
 /// Where TLC fails to fingerprint a state: the ranges of the expressions that built the values it
@@ -59,6 +65,7 @@ pub struct Failure {
 const GENERAL: u32 = 1000;
 const INVARIANT_EVALUATION_FAILED: u32 = 2111;
 const ASSERT_FAILED: u32 = 2132;
+const EXPECTED_VALUE: u32 = 2215;
 /// `EC.TLC_INITIAL_STATE`: an error and the initial state TLC was working on.
 const INITIAL_STATE: u32 = 2102;
 
@@ -128,7 +135,15 @@ impl<'ir> Rebuilder<'ir> {
             Site::Invariant(_) => Ending::Violation,
             _ => Ending::Kept,
         };
+        let is_initial = matches!(site, Site::InitialConstraint(_) | Site::InitialInvariant(_));
+        if is_initial && states.len() != 1 {
+            return Err(Unsupported(
+                "evaluating the failure again: an initial state's check past the initial states"
+                    .into(),
+            ));
+        }
         let last = match states {
+            _ if is_initial => None,
             [] => None,
             _ => Some(
                 self.rebuild_checked(store, states, actions, ending, false)?
@@ -145,7 +160,79 @@ impl<'ir> Rebuilder<'ir> {
             .and_then(|states| states.last().map(|state| state.values.clone()))
             .map(|values| values.into_iter().map(Some).collect())
             .unwrap_or_else(|| vec![None; width]);
+        // The initial state TLC failed to check, as the replay found it.
+        let mut checked: Option<Vec<Value>> = None;
         let result = match site {
+            Site::InitialConstraint(position) | Site::InitialInvariant(position) => {
+                let body = |name: &tla_ir::ConfigName| {
+                    name.definition
+                        .map(|index| evaluator.definition(ir.definitions[index as usize]).body)
+                };
+                // TLC checks the constraints, then the invariants (`DoInitFunctor`), up to the one
+                // that failed.
+                let (constraint_count, invariant_count) = match site {
+                    Site::InitialConstraint(_) => (position as usize + 1, 0),
+                    _ => (ir.model.constraints.len(), position as usize + 1),
+                };
+                let checks: Option<Vec<NodeId>> = ir
+                    .model
+                    .constraints
+                    .iter()
+                    .take(constraint_count)
+                    .map(body)
+                    .chain(
+                        ir.model
+                            .invariants
+                            .iter()
+                            .take(invariant_count)
+                            .map(|invariant| body(&invariant.root)),
+                    )
+                    .collect();
+                let Some(checks) = checks else {
+                    return Err(Unsupported(
+                        "evaluating the failure again: a check the model doesn't define".into(),
+                    ));
+                };
+                // TLC evaluates a failing invariant with its call stack, on the frames of the
+                // initial predicate that found the state, and the constraints without it.
+                let is_traced = matches!(site, Site::InitialInvariant(_));
+                let target = states[0];
+                evaluator.current = vec![None; width];
+                evaluator.level = 0;
+                let context = evaluator.scope_context(ir.model.scope);
+                context.and_then(|context| {
+                    evaluator.walk_action(ir.model.init, &context, true, &mut |evaluator| {
+                        let values: Option<Vec<Value>> =
+                            evaluator.current.iter().cloned().collect();
+                        let Some(values) = values.filter(|values| is_same(store, target, values))
+                        else {
+                            return Ok(true);
+                        };
+                        checked = Some(values);
+                        evaluator.level = 1;
+                        let call_stack = evaluator.call_stack.take();
+                        let (failed, earlier) = checks.split_last().expect("a check");
+                        for (position, &body) in earlier.iter().enumerate() {
+                            let holds = if position < constraint_count {
+                                constraint_holds(evaluator, body)
+                            } else {
+                                evaluator.boolean(body, &Context::default())
+                            };
+                            if !matches!(holds, Ok(true)) {
+                                evaluator.call_stack = call_stack;
+                                return holds;
+                            }
+                        }
+                        if is_traced {
+                            evaluator.call_stack = call_stack;
+                            return evaluator.boolean(*failed, &Context::default());
+                        }
+                        let holds = constraint_holds(evaluator, *failed);
+                        evaluator.call_stack = call_stack;
+                        holds
+                    })
+                })
+            }
             Site::Init => {
                 evaluator.current = vec![None; width];
                 evaluator.level = 0;
@@ -293,6 +380,31 @@ impl<'ir> Rebuilder<'ir> {
                 error.reason
             )));
         };
+        // TLC reports a check of an initial state that fails with the state, where the failure
+        // reaches it as a TLCRuntimeException, but an EvalException escapes `doInit` without it.
+        if is_initial {
+            let Some(values) = checked else {
+                return Err(Unsupported(
+                    "evaluating the failure again: an initial state the replay didn't find".into(),
+                ));
+            };
+            let state = (!message.is_eval_exception)
+                .then(|| values.iter().map(format_value).collect::<Vec<_>>());
+            return Ok(Failure {
+                code: if state.is_some() {
+                    INITIAL_STATE
+                } else {
+                    GENERAL
+                },
+                message: message.text.clone(),
+                tool_message: nested(&message),
+                call_stack: ranges(evaluator, &call_stack),
+                exit_code: FAILURE_SPEC_EVAL,
+                printed,
+                fingerprint: None,
+                state,
+            });
+        }
         // TLC reports an invariant that fails to evaluate with a headline of its own, and no call
         // stack (`doNextEvalFailed`).
         if let Site::Invariant(position) = site {
@@ -497,5 +609,24 @@ impl Evaluator<'_> {
             }
         }
         Ok(true)
+    }
+}
+
+// Whether a state satisfies a constraint, which TLC fails where it isn't a boolean (`isInModel`).
+fn constraint_holds(evaluator: &mut Evaluator<'_>, body: NodeId) -> Evaluated<bool> {
+    match evaluator.evaluate(body, &Context::default())? {
+        Value::Bool(holds) => Ok(holds),
+        _ if evaluator.ir.nodes.arena[body as usize].range.is_some() => fail_with(
+            "a constraint that isn't a boolean",
+            TlcMessage {
+                text: format!(
+                    "TLC expected a boolean value, but did not find one. {}",
+                    evaluator.describe_range(body)
+                ),
+                code: Some(EXPECTED_VALUE),
+                is_eval_exception: false,
+            },
+        ),
+        _ => fail("a constraint that isn't a boolean, without a range"),
     }
 }
