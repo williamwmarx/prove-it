@@ -893,7 +893,7 @@ export const createEnvironment = (
     });
     const isParameterFree = constants.length === 0 && variables.length === 0;
     const getKey = (definition: Definition) =>
-      parsed === root ? definition.name : `${definition.name}${KEY_SEPARATOR}${scope.id}`;
+      unlinked === root ? definition.name : `${definition.name}${KEY_SEPARATOR}${scope.id}`;
     const instanced = new Map<Instance, Symbols>();
     const getVisibleModules = () => new Map([...scope.modules, ...modules]);
     const isInstancedAfterDefinition = (nested: Module) => {

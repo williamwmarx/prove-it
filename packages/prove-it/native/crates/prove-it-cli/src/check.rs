@@ -670,6 +670,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
         }
         Output::Native {
             sany,
+            override_messages,
             startup_messages,
         } => {
             if is_trace_recorded(args) {
@@ -678,10 +679,11 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                     "SANY's report of the trace exploration spec TLC parses with the spec",
                 );
             }
-            if let Some(reason) = get_unprinted_startup(spec_path, &sany) {
-                return report_not_native(printer, reason);
-            }
             print_sany(printer, &sany);
+            // TLC loads the classes of the modules before it computes the constant definitions.
+            for message in &override_messages {
+                print_startup_message(printer, message);
+            }
             (true, startup_messages)
         }
     };
@@ -782,15 +784,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                     }
                 }
                 Event::Print(Some(text)) => printer.line(&text),
-                Event::StartupMessage(message) => printer.print(
-                    message.code,
-                    if message.is_warning {
-                        Level::Warning
-                    } else {
-                        Level::None
-                    },
-                    &message.text,
-                ),
+                Event::StartupMessage(message) => print_startup_message(printer, &message),
                 Event::SymmetrySetsTooSmall(names) => print_small_sets(printer, &names),
                 // Nothing more this run prints can be right, so it ends here rather than search
                 // on, the search thread with it.
@@ -1635,16 +1629,14 @@ fn is_trace_recorded(args: &Parsed) -> bool {
     is_spec_generated && !has_flag("-noGenerateSpecTEBin", "-noTEBin")
 }
 
-// What TLC prints as it starts that the binary doesn't print from tla-front's model yet, which
-// keeps the run not native: TLC's report of the Java overrides it loads, from the class beside the
-// spec named after each module SANY processed.
-fn get_unprinted_startup(spec_path: &str, sany: &str) -> Option<&'static str> {
-    let directory = Path::new(spec_path).parent().unwrap_or(Path::new("."));
-    let has_classes = sany.lines().any(|line| {
-        line.strip_prefix("Semantic processing of module ")
-            .is_some_and(|module| directory.join(format!("{module}.class")).exists())
-    });
-    has_classes.then_some("the Java overrides TLC reports as it starts")
+// A message TLC prints itself as it starts, as tla-front writes it.
+fn print_startup_message(printer: &mut Printer, message: &StartupMessage) {
+    let level = if message.is_warning {
+        Level::Warning
+    } else {
+        Level::None
+    };
+    printer.print(message.code, level, &message.text);
 }
 
 // `TLC_SYMMETRY_SET_TOO_SMALL`, as `symmetry.ts` words it.
