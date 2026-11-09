@@ -151,3 +151,18 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   when it completes. It gains no model: Test2, TLCGetNonDeterminism and NQSpec check a property,
   and under a liveness graph TLC evaluates the actions again. ConstantContextTLCCache would also
   need TLCCache's cache, which the interpreter fills while it evaluates the assumptions.
+
+## Functions of several bounds, and recursive functions TLC keeps lazy
+
+- **A recursive function of several bounds**, such as `add[a \in A, b \in B]`, is TLC's function
+  over `A \X B`. Its argument is a tuple in one slot, each name is its element of the tuple, and
+  `add[a, b]` applies it to `<<a, b>>`. A bound with a tuple pattern still declines.
+- **A function construction of several bounds** binds a tuple pattern at any level
+  (`assign_bound`), as `[a \in S, <<b, c>> \in T |-> e]` does, where it stopped before.
+- TLC keeps a recursive function lazy (`FcnLambdaValue`). So an operator's argument that names
+  one applies it where the operator applies the argument, and DOMAIN of one is its domain. Before,
+  the engine built it, which a domain such as Nat stopped, and a body that reads its own DOMAIN
+  never finished.
+- With them, function_syntax (tla-rs), declined before, now completes in Rust. test45 (TLC's
+  tests) now searches in Rust until a function construction in a recursive body applies the
+  function to itself, which needs the construction to stay lazy as TLC keeps it.

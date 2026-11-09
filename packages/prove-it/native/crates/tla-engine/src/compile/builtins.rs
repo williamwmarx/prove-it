@@ -761,7 +761,15 @@ impl Compiler<'_> {
             }
             "DOMAIN" => {
                 arity(1)?;
-                let function = self.operand(&operands[0])?;
+                // A recursive function's domain, which TLC reads without applying it.
+                let operand = &operands[0];
+                if operand.slot.is_none()
+                    && let Some(recursive) =
+                        self.get_applied_recursive_function(operand.node, &operand.context)?
+                {
+                    return Ok(Some(recursive.domain.clone()));
+                }
+                let function = self.operand(operand)?;
                 unary(
                     &function,
                     |machine, function| {
@@ -1266,8 +1274,10 @@ fn model_value(machine: &mut Machine<'_>, name: Id) -> Outcome<Id> {
     if machine.store.kind_of(name) != KIND_STRING {
         return Err(Bail("TLCModelValue of a value that isn't a string"));
     }
+    // The name's string, which \o may have made unranked, takes the rank too, as the interpreter's
+    // strings read it.
     let text = machine.store.text_of(name).to_vec();
-    machine.store.get_string_rank(&text);
+    machine.store.rank_text(&text);
     Ok(machine.store.model(&text))
 }
 

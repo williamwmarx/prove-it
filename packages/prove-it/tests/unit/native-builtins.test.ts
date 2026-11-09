@@ -288,6 +288,18 @@ describe.if(ADDON !== undefined)("the native engine's bridged builtins", () => {
     expect(await compareWithInterpreter(ranked, `${CONFIG}\nINVARIANT First`)).toContainEqual(
       expect.stringMatching(stopped("an order of model values the search ranked")),
     );
+    // A name \o made takes the rank the model value gives it, so comparing it with another string
+    // stops, as the search ranked it.
+    const unranked = [
+      "EXTENDS Sequences, TLC, TLCExt",
+      "VARIABLES s, t, m",
+      'Init == s = "z" \\o "x" /\\ t = "a" \\o "x" /\\ m = TLCModelValue(s)',
+      "Next == UNCHANGED <<s, t, m>>",
+      "First == (CHOOSE x \\in {s, t} : TRUE) = t",
+    ];
+    expect(await compareWithInterpreter(unranked, `${CONFIG}\nINVARIANT First`)).toContainEqual(
+      expect.stringMatching(stopped("an order of strings the search ranked")),
+    );
     for (const [init, reason] of [
       ['v = {TLCModelValue("A_a"), TLCModelValue("B_a")}', "differently typed model values"],
       ["v = TLCModelValue(1)", "TLCModelValue of a value that isn't a string"],
