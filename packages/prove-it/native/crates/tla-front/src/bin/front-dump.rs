@@ -39,6 +39,7 @@ use tla_front::errors::FrontError;
 use tla_front::json::write_js_string;
 use tla_front::lexer::tokenize;
 use tla_front::lower::{Lowering, RankedTexts};
+use tla_front::model::{ModelOptions, lower_model};
 use tla_front::order::TlcOrder;
 use tla_front::parser::{parse_module, parse_sany_module};
 use tla_front::spec::{get_properties, get_specification};
@@ -248,53 +249,12 @@ fn write_model_ir(out: &mut String, config: &str, spec_path: &Path, library: Opt
 
 /// The IR of a model as `check.ts` lowers it, without TLC's actions, which the engine splits.
 fn write_model_full(out: &mut String, config: &str, spec_path: &Path, library: Option<&Path>) {
-    let source = std::fs::read_to_string(spec_path).unwrap_or_default();
-    let load_module = |name: &str| load(spec_path, library, name);
-    let lowered = parse_config(config, TlcVersion::Master)
-        .map_err(|error| FrontError::Config(error.message))
-        .and_then(|model| {
-            // SANY's errors come from linking, before TLC's orders parse the modules again.
-            let environment = create_environment(&EnvironmentOptions {
-                source: &source,
-                load_module: &load_module,
-                config: &model,
-                is_unconfigured: false,
-                version: TlcVersion::Master,
-            })?;
-            let order = TlcOrder::new(&source, &load_module, TlcVersion::Master)?;
-            let strings = order.get_string_order(&model)?;
-            let variable_order = order.get_declaration_order(true)?;
-            let texts: Vec<Rc<str>> = strings.iter().map(|text| Rc::from(text.as_str())).collect();
-            let facts = create_definition_facts(&environment);
-            let specification =
-                get_specification(&model, &environment, &facts, TlcVersion::Master)?;
-            let properties = get_properties(&model, &environment, &facts, TlcVersion::Master)?;
-            let position = |index: &i32| {
-                let variable = &environment.variables[*index as usize];
-                variable_order
-                    .iter()
-                    .position(|name| name == variable)
-                    .unwrap_or(environment.variables.len())
-            };
-            let mut tlc_order: Vec<i32> = (0..environment.variables.len() as i32).collect();
-            tlc_order.sort_by_key(position);
-            let ranks = texts
-                .iter()
-                .enumerate()
-                .map(|(rank, text)| (text.clone(), rank as u32))
-                .collect();
-            let mut lowering = Lowering::new(
-                &environment,
-                RankedTexts {
-                    texts: &texts,
-                    ranks,
-                },
-            );
-            let written =
-                lowering.write_model(&model, &specification, &properties, true, None, tlc_order)?;
-            Ok(tla_ir::encode(&lowering.finish(written)?))
-        });
-    write_ir(out, lowered);
+    let options = ModelOptions {
+        library,
+        version: None,
+        is_warning_enabled: true,
+    };
+    write_ir(out, lower_model(spec_path, config, &options));
 }
 
 /// TLC's orders of a model: its string order, the root module's variables and constants, and the
