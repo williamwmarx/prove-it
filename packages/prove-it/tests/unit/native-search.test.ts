@@ -574,6 +574,14 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     const lines = await compareWithInterpreter(body, config);
     expect(lines).toContain("[engine] native: liveness: lasso");
     await compareWithInterpreter(body, config, { PROVE_IT_LIVE_CHECK: "1" });
+    // TLC prints what Next prints from that state where the engine doesn't follow, so the
+    // interpreter checks from the start.
+    const printing = body.map((line) => line.replace("Next == ", "Next == PrintT(arr) /\\ "));
+    expect(await compareWithInterpreter(printing, config)).toContainEqual(
+      expect.stringMatching(
+        /native: stopped: printing where .*: steps from states it didn't store/,
+      ),
+    );
   });
 
   it("prints what the search and the temporal properties print in TLC's order", async () => {
@@ -596,6 +604,28 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     ] as const) {
       const lines = await compareWithInterpreter(body, `SPECIFICATION Spec\nPROPERTY ${property}`);
       expect(lines).toContain(`[engine] native: liveness: ${verdict}`);
+    }
+    // Where only the search prints: again as TLC runs Next from a state it adds a node of late; and
+    // where a node accepts every behavior, the interpreter checks from the start.
+    const cycling = [
+      "EXTENDS Naturals, TLC",
+      "VARIABLE x",
+      "Init == x = 0",
+      "Next == PrintT(x) /\\ x' = (x + 1) % 3",
+      "Fair == Init /\\ [][Next]_x /\\ WF_x(Next)",
+      "Unfair == Init /\\ [][Next]_x",
+      "Never == ~(<>(x = 2))",
+      "Leads == [](x = 0 => <>(x = 2))",
+    ];
+    for (const [spec, property, verdict] of [
+      ["Unfair", "Never", /native: stopped: printing where .*: a node that accepts/],
+      ["Fair", "Leads", /native: liveness: holds/],
+    ] as const) {
+      const lines = await compareWithInterpreter(
+        cycling,
+        `SPECIFICATION ${spec}\nPROPERTY ${property}`,
+      );
+      expect(lines).toContainEqual(expect.stringMatching(verdict));
     }
   });
 
