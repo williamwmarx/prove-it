@@ -170,6 +170,7 @@ fn rebuild(
                         ViolationKind::Lasso {
                             loop_start,
                             loop_label,
+                            ..
                         } => loop_label
                             .or(loop_action)
                             // TLC's record of a stuttering lasso closes it by the action of its

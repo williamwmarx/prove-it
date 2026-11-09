@@ -81,6 +81,9 @@ pub struct Liveness {
     pub branches: Option<usize>,
     pub verdict: Verdict,
     pub events: Vec<Event>,
+    /// The evaluations of the atoms TLC makes once it has a lasso, as it finds the properties the
+    /// lasso violates (`Liveness.findViolatedProperties`), where they have effects.
+    pub lasso_events: Vec<Event>,
     /// Where the checker declined at an atom the engine didn't answer as it added a state the
     /// search expanded, that atom: TLC evaluates it there, and may fail.
     pub unanswered: Option<Unanswered>,
@@ -363,6 +366,7 @@ pub fn check(
 ) -> Liveness {
     let mut branches = None;
     let mut events = Vec::new();
+    let mut lasso_events = Vec::new();
     let mut unanswered = None;
     let mut run = || {
         if graph.edge_offsets.is_empty() {
@@ -379,7 +383,7 @@ pub fn check(
         if is_effectful {
             checker.log_effects();
         }
-        let verdict = checker::check(&mut checker, &properties, &mut events);
+        let verdict = checker::check(&mut checker, &properties, &mut events, &mut lasso_events);
         unanswered = verdict.is_err().then(|| checker.unanswered.get()).flatten();
         verdict
     };
@@ -394,6 +398,7 @@ pub fn check(
         branches,
         verdict,
         events,
+        lasso_events,
         unanswered,
     }
 }

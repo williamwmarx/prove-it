@@ -312,19 +312,23 @@ impl Reporter for Relay {
     // Print and PrintT print each value as TLC's normalized text, pretty printed, two spaces
     // apart, unless the store has forgotten how TLC built one.
     fn print(&mut self, store: &Store, values: &[Id]) {
-        let printed = values.iter().all(|&id| is_printable(store, id)).then(|| {
-            values
-                .iter()
-                .map(|&id| {
-                    let mut text = Vec::new();
-                    write_value(store, id, &mut text);
-                    pretty_print(&text)
-                })
-                .collect::<Vec<_>>()
-                .join("  ")
-        });
-        let _ = self.0.send(Event::Print(printed));
+        let _ = self.0.send(Event::Print(format_printed(store, values)));
     }
+}
+
+// What Print or PrintT prints of the values, unless the store has forgotten how TLC built one.
+fn format_printed(store: &Store, values: &[Id]) -> Option<String> {
+    values.iter().all(|&id| is_printable(store, id)).then(|| {
+        values
+            .iter()
+            .map(|&id| {
+                let mut text = Vec::new();
+                write_value(store, id, &mut text);
+                pretty_print(&text)
+            })
+            .collect::<Vec<_>>()
+            .join("  ")
+    })
 }
 
 /// The counts a Progress line reports.
@@ -1050,6 +1054,7 @@ fn print_violation(
         ViolationKind::Lasso {
             loop_start,
             loop_label,
+            ..
         } => {
             let is_stuttering = loop_start + 1 == violation.states.len();
             // TLC warns of a stuttering counterexample where the solution constrains the cycle,
@@ -1113,6 +1118,14 @@ fn print_violation(
         print_finished(printer, start);
         return Ok(exit_code);
     }
+    let lasso_printed = match &violation.kind {
+        ViolationKind::Lasso { printed, .. } => printed
+            .iter()
+            .map(|values| format_printed(&violation.store, values))
+            .collect::<Option<Vec<_>>>()
+            .ok_or("printing a value whose text depends on how TLC built it")?,
+        _ => Vec::new(),
+    };
     let checking =
         liveness.map(|liveness| print_liveness_started(printer, &statistics, liveness.branches));
     // What the spec printed as TLC rebuilt the trace: the first state's after the headline, each
@@ -1121,6 +1134,10 @@ fn print_violation(
     let first_output = trace.states[0].output.iter();
     let (heading_code, heading) = if is_counterexample {
         for line in first_output.clone().chain(&trace.trace_output) {
+            printer.line(line);
+        }
+        // What the atoms print as TLC finds the properties the lasso it rebuilt violates.
+        for line in &lasso_printed {
             printer.line(line);
         }
         printer.print(code, Level::Error, &text);

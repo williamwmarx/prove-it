@@ -315,6 +315,9 @@ pub enum ViolationKind {
     Lasso {
         loop_start: usize,
         loop_label: Option<u32>,
+        /// What the atoms printed as TLC found the properties the lasso violates, once it had
+        /// rebuilt the lasso: each print's values, ids of the violation's store.
+        printed: Vec<Vec<Id>>,
     },
     /// The last state of the trace reaches a tableau node that accepts every behavior, which TLC
     /// stops at as it adds the state: the positions of the properties it names.
@@ -2612,7 +2615,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             // The temporal properties are checked here, and the interpreter takes the graph over
             // only to print a counterexample, to check them itself, or under PROVE_IT_LIVE_CHECK
             // to check them again.
-            let (checkpoint, liveness, lasso_actions) = match search.graph {
+            let (checkpoint, liveness, lasso_actions, lasso_printed) = match search.graph {
                 Some(_) => {
                     // Under SYMMETRY or a VIEW, the checker may ask about the steps from states the
                     // search reached but didn't store, which the engine takes and checks again.
@@ -2738,6 +2741,18 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                             }
                         }
                     }
+                    let lasso_printed: Vec<Vec<Id>> = liveness
+                        .lasso_events
+                        .iter()
+                        .flat_map(|event| match *event {
+                            Event::Atom { atom, slot } => tables[atom as usize].printed(slot),
+                            _ => &[],
+                        })
+                        .filter_map(|printed| match printed {
+                            Printed::Values(values) => Some(values.clone()),
+                            Printed::InitialStates(_) => None,
+                        })
+                        .collect();
                     let checkpoint = (liveness.verdict != Verdict::Holds
                         || settings.is_live_checked)
                         .then(|| {
@@ -2773,9 +2788,9 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                             .unwrap_or_default(),
                         _ => Vec::new(),
                     };
-                    (checkpoint, Some(liveness), lasso_actions)
+                    (checkpoint, Some(liveness), lasso_actions, lasso_printed)
                 }
-                None => (None, None, Vec::new()),
+                None => (None, None, Vec::new(), Vec::new()),
             };
             let counts = Counts {
                 generated: search.generated,
@@ -2794,17 +2809,15 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             // Under SYMMETRY or a VIEW the lasso's states are the stored ones, from which the
             // caller rebuilds those TLC prints.
             let violation = match liveness.as_ref().map(|liveness| &liveness.verdict) {
-                // What the atoms print as TLC checks the properties prints among the check's
-                // lines, which the interpreter orders.
                 Some(Verdict::Lasso {
                     path, loop_start, ..
-                }) if settings.is_violation_reported && !context.is_live_printing => to_lasso(
+                }) if settings.is_violation_reported => to_lasso(
                     &mut machine,
                     &context,
                     &search,
-                    path,
-                    *loop_start,
+                    (path, *loop_start),
                     &lasso_actions,
+                    lasso_printed,
                     &counts,
                 ),
                 Some(Verdict::Accepted {
@@ -3562,9 +3575,9 @@ fn to_lasso(
     machine: &mut Machine<'_>,
     context: &EngineContext,
     search: &Search<'_, States>,
-    path: &[u32],
-    loop_start: usize,
+    (path, loop_start): (&[u32], usize),
     actions: &[Option<u32>],
+    printed: Vec<Vec<Id>>,
     counts: &Counts,
 ) -> Option<Box<Violation>> {
     // Under SYMMETRY or a VIEW the stored states aren't those TLC prints, and the caller's rebuild
@@ -3591,6 +3604,7 @@ fn to_lasso(
             kind: ViolationKind::Lasso {
                 loop_start,
                 loop_label,
+                printed,
             },
             states: path
                 .iter()

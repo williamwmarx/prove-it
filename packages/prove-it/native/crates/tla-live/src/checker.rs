@@ -983,6 +983,8 @@ impl<'c> Checker<'c> {
             _ => {
                 let state = path[position];
                 let step = self.step_to(state, path[next(position)])?;
+                // TLC evaluates each atom of a property anew.
+                self.start_evaluation();
                 self.evaluate(term, state, Some(step))
             }
         }
@@ -1469,14 +1471,17 @@ pub fn accepted(
 }
 
 /// Checks the formula on the search's graph, and names the properties a lasso violates.
-/// Builds the behavior graphs, into `events` the evaluations it logged, and searches them.
+/// Builds the behavior graphs, into `events` the evaluations it logged, and searches them; into
+/// `lasso_events` go the evaluations TLC makes naming the properties a lasso violates.
 pub fn check(
     checker: &mut Checker<'_>,
     properties: &[TermId],
     events: &mut Vec<Event>,
+    lasso_events: &mut Vec<Event>,
 ) -> Result<Verdict, Declined> {
     let graph = checker.graph;
     let found = add_states(checker)?;
+    let is_effectful = checker.is_effectful();
     *events = checker.take_events();
     if let Some((state, path)) = found {
         return accepted(checker, properties, state, path);
@@ -1484,13 +1489,18 @@ pub fn check(
     if let Some(diameters) = &graph.diameters {
         checker.diameter.set(diameters.last);
     }
-    Ok(match checker.find_violation()? {
-        Some((path, loop_start, is_cycle_constrained)) => Verdict::Lasso {
-            violated: checker.violated(properties, &path, loop_start)?,
-            path,
-            loop_start,
-            is_cycle_constrained,
-        },
-        None => Verdict::Holds,
+    let Some((path, loop_start, is_cycle_constrained)) = checker.find_violation()? else {
+        return Ok(Verdict::Holds);
+    };
+    if is_effectful {
+        checker.log_effects();
+    }
+    let violated = checker.violated(properties, &path, loop_start)?;
+    *lasso_events = checker.take_events();
+    Ok(Verdict::Lasso {
+        violated,
+        path,
+        loop_start,
+        is_cycle_constrained,
     })
 }
