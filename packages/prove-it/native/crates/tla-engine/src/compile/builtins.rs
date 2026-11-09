@@ -471,6 +471,9 @@ impl Compiler<'_> {
             .merge(&Footprint::slot(super::PRINT_SLOT));
         let is_boolean = !is_print || compiled[1].is_boolean;
         let evaluators: Vec<Eval> = compiled.into_iter().map(|operand| operand.eval).collect();
+        // The native binary's reporter finds what it can't print itself: TLC prints the startup's
+        // in the front the binary records, and the binary stops at any later one.
+        let is_native = self.is_native;
         Ok(Compiled {
             is_boolean,
             ..leaf(
@@ -480,7 +483,7 @@ impl Compiler<'_> {
                         values.push(evaluate(machine)?);
                     }
                     for &value in &values {
-                        if !is_printable(&machine.store, value) {
+                        if !is_native && !is_printable(&machine.store, value) {
                             return Err(Bail(
                                 "printing a value whose text depends on how TLC built it",
                             ));
