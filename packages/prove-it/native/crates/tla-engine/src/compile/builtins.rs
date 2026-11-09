@@ -155,6 +155,9 @@ fn comparison(left: &Compiled, right: &Compiled, operation: fn(i64, i64) -> bool
 
 fn power_set(machine: &mut Machine<'_>, set: Id) -> Outcome<Id> {
     let size = machine.store.size_of(set);
+    if size as usize >= super::lazy::OVERFLOWING_SUBSET_BASE {
+        return Err(Bail(super::lazy::SUBSET_OVERFLOW));
+    }
     if size > MAXIMUM_POWER_SET {
         return Err(Bail("a power set too large to build"));
     }
