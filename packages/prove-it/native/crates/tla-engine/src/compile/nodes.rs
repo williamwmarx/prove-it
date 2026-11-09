@@ -435,6 +435,16 @@ impl Compiler<'_> {
             }
             NodeKind::Enabled(action) => self.compile_enabled(*action, context),
             NodeKind::Label { body, .. } => self.compile(*body, context),
+            // TLC can't evaluate a temporal formula in a state, but a predicate may hold one in a
+            // branch it never takes, such as a recursive operator's: the interpreter reports where
+            // a run reaches one.
+            NodeKind::Always(_)
+            | NodeKind::Eventually(_)
+            | NodeKind::WeakFairness { .. }
+            | NodeKind::StrongFairness { .. } => Ok(leaf(
+                eval(|_| Err(Bail("a temporal formula in a state"))),
+                Footprint::default(),
+            )),
             kind => unsupported(format!("expression {}", kind_name(kind))),
         }
     }
@@ -781,20 +791,15 @@ impl Compiler<'_> {
             })
         } else {
             // A function of several arguments takes tuples, in TLC's order of the product.
-            let is_tuple = levels.iter().any(|level| level.tuple);
-            let levels: Arc<Vec<(Eval, u32)>> = Arc::new(
-                levels
-                    .into_iter()
-                    .map(|level| (level.set.eval, level.slots[0]))
-                    .collect(),
-            );
+            let levels: Arc<Vec<Level>> = Arc::new(levels);
             eval(move |machine| {
                 let mut sets = Vec::with_capacity(levels.len());
-                for (set, _) in levels.iter() {
-                    sets.push(evaluate_set(machine, set, "a function over a non-set")?);
-                }
-                if is_tuple {
-                    return Err(Bail("a tuple pattern in a function"));
+                for level in levels.iter() {
+                    sets.push(evaluate_set(
+                        machine,
+                        &level.set.eval,
+                        "a function over a non-set",
+                    )?);
                 }
                 let mut keys = Vec::new();
                 let mut values = Vec::new();
@@ -827,14 +832,23 @@ impl Compiler<'_> {
         context: &Context,
     ) -> Compiling<Compiled> {
         if let Some(recursive) = self.get_applied_recursive_function(function, context)?
-            && let [argument] = args
+            && (args.len() == 1 || args.len() == recursive.arity)
         {
-            let argument = self.compile(*argument, context)?;
-            let footprint = argument.footprint.merge(&recursive.footprint());
-            let (runtime, slot, argument) = (recursive.runtime, recursive.slot, argument.eval);
+            // f[a, b] applies f to the tuple <<a, b>>.
+            let args = args
+                .iter()
+                .map(|&argument| self.compile(argument, context))
+                .collect::<Compiling<Vec<Compiled>>>()?;
+            let footprint = Footprint::merge_all(args.iter().map(|argument| &argument.footprint))
+                .merge(&recursive.footprint());
+            let (runtime, slot) = (recursive.runtime, recursive.slot);
+            let evaluators: Vec<Eval> = args.into_iter().map(|argument| argument.eval).collect();
             return Ok(leaf(
                 eval(move |machine| {
-                    let value = argument(machine)?;
+                    let value = match &evaluators[..] {
+                        [argument] => argument(machine)?,
+                        evaluators => evaluate_tuple(machine, evaluators)?,
+                    };
                     call_recursive_function(machine, runtime, slot, value)
                 }),
                 footprint,
@@ -1070,7 +1084,7 @@ fn test_element(machine: &mut Machine<'_>, filter: &Filter, element: Id) -> Outc
 #[allow(clippy::too_many_arguments)]
 fn construct_product(
     machine: &mut Machine<'_>,
-    levels: &[(Eval, u32)],
+    levels: &[Level],
     sets: &[Id],
     level: usize,
     current: &mut Vec<Id>,
@@ -1087,7 +1101,8 @@ fn construct_product(
     for index in 0..machine.store.size_of(set) {
         let element = machine.store.element_at(set, index);
         current[level] = element;
-        machine.locals[levels[level].1 as usize] = element;
+        let bound = &levels[level];
+        assign_bound(machine, &bound.slots, bound.tuple, element)?;
         construct_product(
             machine,
             levels,

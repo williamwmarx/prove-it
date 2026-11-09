@@ -4,6 +4,7 @@
 //! error, a feature it doesn't implement) ends the run with a checkpoint, from which the reference
 //! interpreter goes on.
 
+use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::io::Write as _;
 use std::sync::Arc;
@@ -12,7 +13,7 @@ use std::time::{Duration, Instant};
 
 use tla_ir::{Ir, LiveTerm, Model};
 use tla_live::{Liveness, Term, Verdict};
-use tla_values::fingerprint::{Fingerprints, Parent};
+use tla_values::fingerprint::{Carried, Fingerprints, Parent};
 use tla_values::store::Outcome;
 use tla_values::transfer::{EncodedStates, SharedEncoder, SharedStates, StateEncoder};
 use tla_values::{Bail, Id, NESTING_STACK_BYTES, Store};
@@ -55,8 +56,15 @@ pub struct Settings {
     pub minimum_shared_level: usize,
 }
 
-/// A level of fewer states runs on one thread, as `MINIMUM_SHARED_LEVEL` in `search.ts`.
+/// A level of fewer states runs on one thread, as `MINIMUM_SHARED_LEVEL` in `search.ts`, unless
+/// its states are costly enough that sharing it pays (`SHARED_WORK`).
 pub const MINIMUM_SHARED_LEVEL: usize = 2048;
+
+/// A shorter level is shared too where the previous level's time per state says its work, on one
+/// thread, would take this long; each thread then takes at least `THREAD_WORK` of it. Starting a
+/// level's threads costs tens of microseconds, and sharing changes none of what the search finds.
+const SHARED_WORK: Duration = Duration::from_millis(8);
+const THREAD_WORK: Duration = Duration::from_millis(2);
 
 impl Default for Settings {
     fn default() -> Settings {
@@ -150,6 +158,8 @@ pub enum SearchOutcome {
         /// TLC's fingerprint of each state's key, in the order found.
         fingerprints: Vec<u64>,
         value_count: usize,
+        /// The most threads a level was shared between, 1 where none was.
+        threads: usize,
         /// Under PROVE_IT_FP_VERIFY, how many fingerprints two different keys shared.
         collisions: u64,
         /// What each `_POSSIBLE` predicate counted, or -1 where it wasn't evaluated.
@@ -229,6 +239,9 @@ struct Graph {
     edges: Vec<u32>,
     labels: Option<Vec<u32>>,
     initial_counts: Vec<u64>,
+    /// Under SYMMETRY or a VIEW, the state each step reached, `width` ids each, which the liveness
+    /// checker checks rather than the state stored for it.
+    reals: Option<Vec<Id>>,
 }
 
 /// The fingerprints found, each with the index of its state: open addressing with linear probing,
@@ -487,6 +500,8 @@ struct Search<'r, T> {
     level_id: Id,
     next_level_id: Id,
     fingerprints: Fingerprints,
+    // The fingerprints the threads of the last level shared computed of the values they made.
+    carried: Carried,
     // The state being expanded, whose successors' fingerprints follow from its own when the key is
     // the state.
     parent: Parent,
@@ -535,6 +550,7 @@ impl<'r, T: Reached> Search<'r, T> {
             level_id: 0,
             next_level_id: 0,
             fingerprints: Fingerprints::new(),
+            carried: Carried::default(),
             parent: Parent::default(),
             canonicalizer: None,
             graph: None,
@@ -845,6 +861,9 @@ impl<'r, T: Reached> Search<'r, T> {
             if let Some(labels) = &mut graph.labels {
                 labels.push(self.action);
             }
+            if let Some(reals) = &mut graph.reals {
+                reals.extend_from_slice(&self.successor);
+            }
         }
         for (action, unchanged) in &context.action_properties {
             if !crate::context::holds(machine, action)?
@@ -889,6 +908,7 @@ impl<T: Reached> Search<'_, T> {
         self.level_id = machine.store.int(self.level as i64)?;
         self.next_level_id = machine.store.int(self.level as i64 + 1)?;
         self.set_expanded_current(machine);
+        machine.seed_random(fingerprint);
         machine.set_slot(NEXT_LEVEL_SLOT, self.next_level_id);
         if self.states.key_width().is_none() {
             self.fingerprints.set_parent(
@@ -1066,9 +1086,9 @@ struct Worker<'p> {
 }
 
 impl Worker<'_> {
-    fn attach(&mut self, store: &Arc<Store>) {
+    fn attach(&mut self, store: &Arc<Store>, carried: &Carried) {
         self.machine.forget_from(self.bound);
-        self.fingerprints.forget_from(self.bound);
+        self.fingerprints.forget_from_carried(self.bound, carried);
         if let Some(canonicalizer) = &mut self.canonicalizer {
             canonicalizer.forget_from(self.bound);
         }
@@ -1237,11 +1257,11 @@ impl Search<'_, States> {
             let threads: Vec<_> = workers
                 .iter_mut()
                 .map(|worker| {
-                    let (shared, store) = (&shared, &store);
+                    let (shared, store, carried) = (&shared, &store, &self.carried);
                     std::thread::Builder::new()
                         .stack_size(NESTING_STACK_BYTES)
                         .spawn_scoped(scope, move || {
-                            worker.attach(store);
+                            worker.attach(store, carried);
                             expand_claimed(worker, shared)
                         })
                         .expect("a thread for the search")
@@ -1352,6 +1372,14 @@ impl Search<'_, States> {
             machine.is_past_walk |= found.is_past_walk;
         }
         self.expanding = stop;
+        // The fingerprints each thread computed of the values it made that are now the store's,
+        // for every thread to keep at the next level.
+        self.carried.reset(workers[0].bound);
+        for worker in workers.iter() {
+            worker
+                .fingerprints
+                .carry(&worker.imported, &mut self.carried);
+        }
         if let Some(bail) = violated {
             return Err(bail);
         }
@@ -1478,6 +1506,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             .as_ref()
             .filter(|_| model.is_labelled)
             .map(|_| Vec::new()),
+        reals: search.states.key_width.map(|_| Vec::new()),
         ..Graph::default()
     });
     // The actions take each state's steps when the search labels them for ENABLED.
@@ -1493,6 +1522,8 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     let mut initial_states = (0, 0);
     let mut is_past_initial = false;
     let mut workers: Vec<Worker<'_>> = Vec::new();
+    // The most threads a level was shared between.
+    let mut threads_used = 1;
     let result = (|| -> Outcome<()> {
         // --- initial states ---
         let unassigned = vec![UNASSIGNED; width];
@@ -1520,6 +1551,9 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         // can be shared between threads.
         let mut level_end = 0;
         search.level = 0;
+        // The previous level's first state, when it started and on how many threads, for its time
+        // per state on one thread.
+        let mut level_start = (0, Instant::now(), 1);
         let started_at = Instant::now();
         let mut progress_at = started_at + FIRST_PROGRESS;
         search.expanding = 0;
@@ -1528,14 +1562,34 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             if expanding == level_end {
                 search.level += 1;
                 level_end = search.states.count();
-                // A thread takes at least half the fewest states a level shares.
-                let threads = thread_count.min(
-                    (level_end - expanding) / settings.minimum_shared_level.div_ceil(2).max(1),
+                let states = level_end - expanding;
+                let (previous_start, previous_at, previous_threads) = level_start;
+                let per_state = (expanding > previous_start).then(|| {
+                    previous_at.elapsed() * previous_threads / (expanding - previous_start) as u32
+                });
+                let work = per_state.map_or(Duration::ZERO, |per_state| per_state * states as u32);
+                // A thread takes at least half the fewest states a level shares, or at least
+                // THREAD_WORK of its predicted work, whichever gives more threads, and at least
+                // one state.
+                let by_count = if states >= settings.minimum_shared_level {
+                    states / settings.minimum_shared_level.div_ceil(2).max(1)
+                } else {
+                    1
+                };
+                let by_work = if work >= SHARED_WORK {
+                    (work.as_nanos() / THREAD_WORK.as_nanos()) as usize
+                } else {
+                    1
+                };
+                // A thread claims whole states, so no more threads than states.
+                let threads = thread_count.min(by_count.max(by_work)).min(states);
+                level_start = (
+                    expanding,
+                    Instant::now(),
+                    if is_shared { threads.max(1) as u32 } else { 1 },
                 );
-                if is_shared
-                    && level_end - expanding >= settings.minimum_shared_level
-                    && threads > 1
-                {
+                if is_shared && threads > 1 {
+                    threads_used = threads_used.max(threads);
                     if workers.is_empty() {
                         workers = (0..thread_count)
                             .map(|_| Worker {
@@ -1638,25 +1692,40 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         .map(|&text| &*ir.texts[text as usize])
         .collect();
     let collisions = search.states.collisions;
-    let is_enabled_exact = !machine.is_past_walk;
     // The answers to the liveness checker's atoms about the first `count` states and the steps of
     // the first `expanded`.
     let graph_tables = |machine: &mut Machine<'_>,
                         search: &Search<'_, States>,
                         expanded: usize,
-                        count: usize|
+                        count: usize,
+                        reals: Option<&Reals>|
      -> Result<Vec<Table>, &'static str> {
         let graph = search.graph.as_ref().expect("a graph");
         let edge_count = graph.edge_offsets[expanded] as usize;
-        let live = LiveGraph {
-            states: &search.states.ids[..count * width],
-            width,
-            count,
-            expanded,
-            edge_offsets: &graph.edge_offsets[..=expanded],
-            edges: &graph.edges[..edge_count],
-            labels: graph.labels.as_ref().map(|labels| &labels[..edge_count]),
-            is_enabled_exact,
+        // Read as the tables are answered, since taking the steps from the states the search
+        // didn't store may take a shortcut past a walk too.
+        let is_enabled_exact = !machine.is_past_walk;
+        let live = match reals {
+            Some(reals) => LiveGraph {
+                states: &reals.states,
+                width,
+                count: reals.states.len() / width,
+                expanded: reals.expanded(),
+                edge_offsets: &reals.offsets,
+                edges: &reals.edges,
+                labels: reals.labels.as_deref(),
+                is_enabled_exact,
+            },
+            None => LiveGraph {
+                states: &search.states.ids[..count * width],
+                width,
+                count,
+                expanded,
+                edge_offsets: &graph.edge_offsets[..=expanded],
+                edges: &graph.edges[..edge_count],
+                labels: graph.labels.as_ref().map(|labels| &labels[..edge_count]),
+                is_enabled_exact,
+            },
         };
         answer_atoms(machine, &live, &context.atoms, settings.is_live_checked)
     };
@@ -1693,7 +1762,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     .as_ref()
                     .map(|labels| labels[..edge_count].to_vec()),
                 initial_counts: graph.initial_counts.clone(),
-                is_enabled_exact,
+                is_enabled_exact: !machine.is_past_walk,
                 tables,
             }),
             possible,
@@ -1722,11 +1791,36 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             // to check them again.
             let (checkpoint, liveness, lasso_actions) = match search.graph {
                 Some(_) => {
-                    let tables = match graph_tables(&mut machine, &search, count, count) {
-                        Ok(tables) => tables,
-                        Err(reason) => return SearchOutcome::Invariant(reason.into()),
+                    // Under SYMMETRY or a VIEW, the checker may ask about the steps from states the
+                    // search reached but didn't store, which the engine takes and checks again.
+                    let mut reals = real_states(&search, width);
+                    let (tables, liveness) = loop {
+                        let tables =
+                            match graph_tables(&mut machine, &search, count, count, reals.as_ref())
+                            {
+                                Ok(tables) => tables,
+                                Err(reason) => return SearchOutcome::Invariant(reason.into()),
+                            };
+                        let mut liveness = check_liveness(model, &search, &tables, reals.as_ref());
+                        if liveness.verdict != Verdict::Unexpanded {
+                            break (tables, liveness);
+                        }
+                        let expanded = match &mut reals {
+                            Some(reals) => expand_reals(&mut machine, &context, &mut search, reals),
+                            None => Ok(false),
+                        };
+                        match expanded {
+                            Ok(true) => {}
+                            Ok(false) => {
+                                liveness.verdict = Verdict::Declined(tla_live::UNEXPANDED.into());
+                                break (tables, liveness);
+                            }
+                            Err(Bail(reason)) => {
+                                liveness.verdict = Verdict::Declined(reason.into());
+                                break (tables, liveness);
+                            }
+                        }
                     };
-                    let liveness = check_liveness(model, &search, &tables);
                     let checkpoint = (liveness.verdict != Verdict::Holds
                         || settings.is_live_checked)
                         .then(|| {
@@ -1743,7 +1837,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     let lasso_actions = match &liveness.verdict {
                         Verdict::Lasso {
                             path, loop_start, ..
-                        } => label_lasso(&mut machine, &context, &search, path, *loop_start)
+                        } => label_lasso(&mut machine, &context, &mut search, path, *loop_start)
                             .unwrap_or_default(),
                         _ => Vec::new(),
                     };
@@ -1769,6 +1863,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 liveness,
                 lasso_actions,
                 value_count: machine.store.value_count(),
+                threads: threads_used,
                 collisions,
                 possible: search.possible.clone(),
                 fingerprints: search.states.fingerprints,
@@ -1788,7 +1883,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 checkpoint: None,
                 collisions,
                 violation: violation
-                    .and_then(|found| to_violation(found, &mut machine, &context, &search)),
+                    .and_then(|found| to_violation(found, &mut machine, &context, &mut search)),
             }
         }
         Err(bail) => {
@@ -1828,14 +1923,15 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     graph: None,
                     possible: checkpoint_possible.clone(),
                 }))
-            } else if !is_kept {
+            } else if !is_kept || search.states.key_width.is_some() {
                 // The interpreter searches a graph too large to keep from the start, since its
                 // liveness checker may stop in the first states, before it has taken all of them
-                // over.
+                // over; and under SYMMETRY or a VIEW, since its replay of the graph would give its
+                // liveness checker the states stored rather than the states each step reached.
                 None
             } else {
                 let expanding = search.expanding;
-                match graph_tables(&mut machine, &search, expanding, count) {
+                match graph_tables(&mut machine, &search, expanding, count, None) {
                     Ok(tables) => Some(Box::new(graph_checkpoint(
                         &mut machine,
                         &search,
@@ -1859,7 +1955,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 .violation
                 .take()
                 .filter(|_| is_traced)
-                .and_then(|found| to_violation(found, &mut machine, &context, &search));
+                .and_then(|found| to_violation(found, &mut machine, &context, &mut search));
             SearchOutcome::Stopped {
                 reason: bail.0.to_string(),
                 checkpoint,
@@ -2043,53 +2139,69 @@ fn write_state_log(
 fn label_path(
     machine: &mut Machine<'_>,
     context: &EngineContext,
-    search: &Search<'_, States>,
+    search: &mut Search<'_, States>,
     path: &[u32],
     last: Option<&[Id]>,
+    is_rebuilt: bool,
 ) -> Outcome<Vec<Option<u32>>> {
     let Some(actions) = &context.actions else {
         return Ok(Vec::new());
     };
     let unassigned = vec![UNASSIGNED; context.width];
     let states = &search.states;
-    // Each state's depth, from its parent's: the search stores a parent before its children.
-    let mut depths: Vec<i64> = Vec::with_capacity(states.parents.len());
-    for &parent in &states.parents {
-        depths.push(if parent == -1 {
-            1
-        } else {
-            depths[parent as usize] + 1
-        });
-    }
+    let depths = get_depths(&states.parents);
+    let depths: Vec<i64> = path.iter().map(|&state| depths[state as usize]).collect();
+    let fingerprints: Vec<u64> = path
+        .iter()
+        .map(|&state| states.fingerprints[state as usize])
+        .collect();
+    let mut targets: Vec<Vec<Id>> = path
+        .iter()
+        .skip(1)
+        .map(|&state| states.state(state).to_vec())
+        .collect();
+    targets.extend(last.map(<[Id]>::to_vec));
+    // Under SYMMETRY or a VIEW, TLC rebuilds the trace as `Tool#getState` does: each state is the
+    // first successor of the one before with the fingerprint of the next state of the path.
+    let mut from = states.state(path[0]).to_vec();
     let mut labels = vec![None];
-    for (position, &state) in path.iter().enumerate() {
-        let target = match (path.get(position + 1), last) {
-            (Some(&next), _) => states.state(next),
-            (None, Some(last)) => last,
-            (None, None) => break,
-        };
-        let depth = depths[state as usize];
-        let epoch = machine.next_epoch();
-        machine.set_current(states.state(state), epoch);
-        let level = machine.store.int(depth)?;
-        let next_level = machine.store.int(depth + 1)?;
-        machine.set_slot(LEVEL_SLOT, level);
-        machine.set_slot(NEXT_LEVEL_SLOT, next_level);
+    for (position, target) in targets.iter().enumerate() {
+        let level = machine.store.int(depths[position])?;
+        let next_level = machine.store.int(depths[position] + 1)?;
         let mut found = None;
         for (index, action) in actions.iter().enumerate() {
+            let epoch = machine.next_epoch();
+            machine.set_current(&from, epoch);
+            machine.set_slot(LEVEL_SLOT, level);
+            machine.set_slot(NEXT_LEVEL_SLOT, next_level);
             machine.set_next(&unassigned);
             machine.reset_assigned();
-            let mut is_found = false;
+            let mut successors = Vec::new();
             action(machine, &mut |machine: &mut Machine<'_>| {
-                is_found |= machine.next() == target;
+                if is_rebuilt {
+                    successors.push(machine.next().to_vec());
+                } else if successors.is_empty() && machine.next() == &target[..] {
+                    successors.push(target.clone());
+                }
                 Ok(())
             })?;
-            if is_found {
-                found = Some(index as u32);
+            for successor in successors {
+                let is_found = !is_rebuilt || {
+                    let epoch = machine.next_epoch();
+                    machine.set_current(&successor, epoch);
+                    search.compute_key(machine, context, false)? == fingerprints[position + 1]
+                };
+                if is_found {
+                    found = Some((index as u32, successor));
+                    break;
+                }
+            }
+            if found.is_some() {
                 break;
             }
         }
-        labels.push(found);
+        labels.push(found.as_ref().map(|found| found.0));
+        from = found.map_or_else(|| target.clone(), |found| found.1);
     }
     Ok(labels)
 }
@@ -2100,7 +2212,7 @@ fn to_violation(
     found: Found,
     machine: &mut Machine<'_>,
     context: &EngineContext,
-    search: &Search<'_, States>,
+    search: &mut Search<'_, States>,
 ) -> Option<Box<Violation>> {
     let path = found
         .parent
@@ -2113,11 +2225,18 @@ fn to_violation(
     let labels = if path.is_empty() {
         Vec::new()
     } else {
-        label_path(machine, context, search, &path, found.last.as_deref())
-            .ok()?
-            .into_iter()
-            .skip(1)
-            .collect::<Option<Vec<u32>>>()?
+        label_path(
+            machine,
+            context,
+            search,
+            &path,
+            found.last.as_deref(),
+            false,
+        )
+        .ok()?
+        .into_iter()
+        .skip(1)
+        .collect::<Option<Vec<u32>>>()?
     };
     // The store goes with the violation, so whether the search, or finding the actions, ranked
     // strings is read here, as for the search's outcome.
@@ -2137,7 +2256,7 @@ fn to_violation(
 fn label_lasso(
     machine: &mut Machine<'_>,
     context: &EngineContext,
-    search: &Search<'_, States>,
+    search: &mut Search<'_, States>,
     path: &[u32],
     loop_start: usize,
 ) -> Outcome<Vec<Option<u32>>> {
@@ -2146,7 +2265,8 @@ fn label_lasso(
     if !is_stuttering {
         closed.push(path[loop_start]);
     }
-    let mut labels = label_path(machine, context, search, &closed, None)?;
+    let is_rebuilt = search.states.key_width.is_some();
+    let mut labels = label_path(machine, context, search, &closed, None, is_rebuilt)?;
     if labels.is_empty() {
         return Ok(labels);
     }
@@ -2157,8 +2277,164 @@ fn label_lasso(
     Ok(labels)
 }
 
+/// Under SYMMETRY or a VIEW, the states the steps reached: the states stored, then each other state
+/// a step reached, once, with its level. The steps are the search's, then those from the states
+/// past the stored ones that the liveness checker asked about, each with the stored state with its
+/// fingerprint and the position of the state it reached.
+struct Reals {
+    width: usize,
+    states: Vec<Id>,
+    levels: Vec<i64>,
+    positions: HashMap<Vec<Id>, u32>,
+    offsets: Vec<u32>,
+    targets: Vec<u32>,
+    edges: Vec<u32>,
+    labels: Option<Vec<u32>>,
+}
+
+impl Reals {
+    fn expanded(&self) -> usize {
+        self.offsets.len() - 1
+    }
+
+    // The position of the state a step to the stored state `target` reached.
+    fn position(&mut self, stored: &[Id], target: u32, real: &[Id], level: i64) -> u32 {
+        if stored == real {
+            return target;
+        }
+        if let Some(&position) = self.positions.get(real) {
+            return position;
+        }
+        self.states.extend_from_slice(real);
+        self.levels.push(level);
+        let position = (self.states.len() / self.width - 1) as u32;
+        self.positions.insert(real.to_vec(), position);
+        position
+    }
+}
+
+// Each state's depth, from its parent's: the search stores a parent before its children.
+fn get_depths(parents: &[i32]) -> Vec<i64> {
+    let mut depths: Vec<i64> = Vec::with_capacity(parents.len());
+    for &parent in parents {
+        depths.push(if parent == -1 {
+            1
+        } else {
+            depths[parent as usize] + 1
+        });
+    }
+    depths
+}
+
+fn real_states(search: &Search<'_, States>, width: usize) -> Option<Reals> {
+    let graph = search.graph.as_ref()?;
+    let reached = graph.reals.as_ref()?;
+    let states = &search.states;
+    let count = states.count();
+    let depths = get_depths(&states.parents);
+    let mut reals = Reals {
+        width,
+        states: states.ids[..count * width].to_vec(),
+        levels: Vec::new(),
+        positions: HashMap::new(),
+        offsets: graph.edge_offsets.clone(),
+        targets: graph.edges.clone(),
+        edges: Vec::with_capacity(graph.edges.len()),
+        labels: graph.labels.clone(),
+    };
+    for (state, &depth) in depths.iter().enumerate() {
+        let start = graph.edge_offsets[state] as usize;
+        let end = graph.edge_offsets[state + 1] as usize;
+        for edge in start..end {
+            let target = graph.edges[edge];
+            let real = &reached[edge * width..(edge + 1) * width];
+            let position = reals.position(states.state(target), target, real, depth + 1);
+            reals.edges.push(position);
+        }
+    }
+    Some(reals)
+}
+
+// Takes the steps from the states past the stored ones that no step was taken from yet, as TLC's
+// late `addNextState` takes them: each successor in the model, through each of TLC's actions when
+// the search labels its steps. Whether there were any.
+fn expand_reals(
+    machine: &mut Machine<'_>,
+    context: &EngineContext,
+    search: &mut Search<'_, States>,
+    reals: &mut Reals,
+) -> Outcome<bool> {
+    let width = reals.width;
+    let count = search.states.count();
+    let first = reals.expanded();
+    let total = reals.states.len() / width;
+    let walks: Vec<&Step> = match (&reals.labels, &context.actions) {
+        (Some(_), Some(actions)) => actions.iter().collect(),
+        _ => vec![&context.next],
+    };
+    let unassigned = vec![UNASSIGNED; width];
+    for state in first..total {
+        let current = reals.states[state * width..(state + 1) * width].to_vec();
+        let depth = reals.levels[state - count];
+        let level = machine.store.int(depth)?;
+        let next_level = machine.store.int(depth + 1)?;
+        let set_current = |machine: &mut Machine<'_>| {
+            let epoch = machine.next_epoch();
+            machine.set_current(&current, epoch);
+            machine.set_slot(LEVEL_SLOT, level);
+            machine.set_slot(NEXT_LEVEL_SLOT, next_level);
+        };
+        let mut successors: Vec<(Vec<Id>, u32)> = Vec::new();
+        for (label, walk) in walks.iter().enumerate() {
+            set_current(machine);
+            machine.set_next(&unassigned);
+            machine.reset_assigned();
+            walk(machine, &mut |machine: &mut Machine<'_>| {
+                if machine.next().contains(&UNASSIGNED) {
+                    return Err(Bail("a successor that isn't complete"));
+                }
+                successors.push((machine.next().to_vec(), label as u32));
+                Ok(())
+            })?;
+        }
+        for (successor, label) in successors {
+            let epoch = machine.next_epoch();
+            machine.set_current(&successor, epoch);
+            machine.set_slot(LEVEL_SLOT, next_level);
+            if !holds_all_changed_none(machine, context)? {
+                continue;
+            }
+            let fingerprint = search.compute_key(machine, context, false)?;
+            set_current(machine);
+            machine.set_next(&successor);
+            if !holds_all(machine, &context.action_constraints)? {
+                continue;
+            }
+            let slot = search
+                .states
+                .find(&search.key, fingerprint)
+                .map_err(|_| Bail("a step to a state the search didn't find"))?;
+            let target = search.states.index(slot);
+            let position =
+                reals.position(search.states.state(target), target, &successor, depth + 1);
+            reals.targets.push(target);
+            reals.edges.push(position);
+            if let Some(labels) = &mut reals.labels {
+                labels.push(label);
+            }
+        }
+        reals.offsets.push(reals.targets.len() as u32);
+    }
+    Ok(first < total)
+}
+
 // Checks the temporal properties on a complete search's graph from the answers to the atoms.
-fn check_liveness(model: &Model, search: &Search<'_, States>, tables: &[Table]) -> Liveness {
+fn check_liveness(
+    model: &Model,
+    search: &Search<'_, States>,
+    tables: &[Table],
+    reals: Option<&Reals>,
+) -> Liveness {
     let graph = search.graph.as_ref().expect("a graph");
     let to_terms = |terms: &[LiveTerm]| -> Vec<Term> {
         terms
@@ -2177,9 +2453,12 @@ fn check_liveness(model: &Model, search: &Search<'_, States>, tables: &[Table]) 
             })
             .collect()
     };
+    // Under SYMMETRY or a VIEW, TLC names the violated properties from the trace it rebuilds, of
+    // states the graph doesn't hold, so the checker names none.
     let properties: Vec<Vec<Term>> = model
         .live_properties
         .iter()
+        .filter(|_| reals.is_none())
         .map(|property| to_terms(&property.formula))
         .collect();
     let property_terms: Vec<&[Term]> = properties.iter().map(Vec::as_slice).collect();
@@ -2192,9 +2471,10 @@ fn check_liveness(model: &Model, search: &Search<'_, States>, tables: &[Table]) 
         &property_terms,
         &tla_live::Graph {
             parents: &search.states.parents,
-            edge_offsets: &graph.edge_offsets,
-            edges: &graph.edges,
+            edge_offsets: reals.map_or(&graph.edge_offsets, |reals| &reals.offsets),
+            edges: reals.map_or(&graph.edges, |reals| &reals.targets),
             fingerprints: &search.states.fingerprints,
+            reals: reals.map(|reals| &reals.edges[..]),
         },
         &answers,
     )

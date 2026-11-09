@@ -104,3 +104,61 @@ corpus (the 641 IRs `bun scripts/run.ts engine-ir` writes, and the 30 goldens in
    atoms and formula; a model that needs one gets `NotYet` until the engine's startup phase
    (DESIGN section 14, which the CLI session owns) and `tla-live` compute them in Rust, with no
    TypeScript involved, and the harness counts those.
+
+## F8 slice 1a as built (linking and resolution, without instances)
+
+- `resolve` ports `resolve.ts` whole: binding, `isBindable`'s errors and warnings, labels,
+  selections of a theorem's or step's parts, substitutions, `collectSemanticErrors` and
+  `resolveModule`. What the TypeScript resolver writes on the AST, the Rust one writes in each
+  node's `resolved` cells (`key`, `is_local`, `is_recursive`) and a definition's
+  `is_self_referential`, so a copy of a node carries them as a spread TypeScript node does. The
+  `WeakSet`s and `WeakMap`s keyed by node (`selections`, `selectionErrors`, `renamedArities`) are
+  tables keyed by the node's address that keep the node alive.
+- `environment` ports the linking of `createEnvironment` for a spec without a model that SANY
+  accepted: the module loader, one parse per text, rejected literals, EXTENDS, standard modules
+  (their builtins come from `src/standard_builtins.rs`, which `scripts/front-modules.ts` writes
+  from `getStandardModule` and `CORE_OPERATORS` and checks in CI), a user's module that replaces a
+  standard one, nested modules, cycles, the root's names for its definitions, and the variable
+  index. `ordered_map` keeps a JavaScript `Map`'s order, which the environment's maps follow.
+  An INSTANCE (at the top, in a LET, or in a proof) and a name that selects a subexpression
+  return `NotYet`; slice 1b ports `instances.ts` and `subexpressions.ts`.
+- `front-differential.ts resolve` links every module of the corpora and fixtures as a spec's root
+  and compares the environments as canonical JSON: each definition by key with every name
+  resolved, the builtins with their flags, the variables and their indices, the root's constants,
+  SANY's errors and warnings. 1,771 of 2,356 modules match and 585 are not compared yet (an
+  INSTANCE, a selecting name, or a module SANY's parser rejects, which F5 ports); with
+  `--mutate 400`, 3,268 of 3,956. None differ. Verification's Front End job runs it.
+
+## F8 slice 1b as built (instances and selecting names)
+
+- `instances` ports `instances.ts`: `mapChildren` and `mapDefinition` in the order TypeScript's
+  object literals evaluate their fields (copies are made in that order, and their keys count up
+  in it), `substitute` with its three modes for ENABLED, the renamer, and `withLetInstances`.
+  `sourceNames` is a table by address, as the `WeakMap` is, so a spread copy doesn't carry it.
+- `subexpressions` ports `subexpressions.ts`: the selection of a definition's, label's, LET's or
+  operand's part, with SANY's errors for a name that selects nothing.
+- `environment` links an INSTANCE at the top of a module (its copies under `Name@Module#n`, the
+  names it adds, qualified or not, and the definitions an instance with substitutions makes, which
+  the IR flags), a LET INSTANCE (its definitions put in the LET), and an INSTANCE in a LET or a
+  proof that resolution meets, interleaved with nested modules in the order of the text.
+- `front-differential.ts resolve`: 2,331 of 2,356 modules match, up from 1,771, and none differ;
+  with `--mutate 400`, 3,931 of 3,956. The 25 left are modules SANY's parser rejects (F5).
+
+## F8 slice 1c as built (the definitions' facts)
+
+- `dependencies` ports `dependencies.ts`: each definition's local facts and its edges, closed over
+  the call graph with Tarjan's algorithm, which the IR's repeated-effect flag and the model's
+  printed roots read (`has_repeated_definition_effect`, `has_repeated_effect`).
+- `front-differential.ts resolve` compares each environment's rows of facts too: all match.
+
+## F8 slice 1d as built (the model's configuration)
+
+- `environment` takes the model's configuration: the constants it assigns (by key, scoped to a
+  module or not), the operators it gives a value or a table of values (builtins), its
+  substitutions, the overrides that a module-scoped entry makes of every instance copy, and TLC's
+  configuration errors, word for word. Two cases return `NotYet`: several unassigned constants,
+  which TLC reports in SANY's order of declarations (F7), and a substitute TLC evaluates at
+  startup (the engine's startup phase, which the CLI session plans in `design/cli.md`).
+- `front-differential.ts model` links each corpus model, a `.cfg` file and the spec beside it:
+  1,092 of 1,111 match and none differ; with `--mutate 400` (variants of the configurations),
+  2,682 of 2,711. Verification's Front End job runs it.

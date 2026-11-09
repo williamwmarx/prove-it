@@ -4,9 +4,10 @@ use std::fmt;
 
 use crate::{
     Action, ActionProperty, Atom, AtomKind, Bound, Builtin, ConfigName, Constant, Definition,
-    DefinitionForm, EnabledActions, IR_VERSION, Index, Ir, LiveProperty, LiveTerm, MAGIC, Model,
-    Name, Node, NodeId, NodeKind, Nodes, Param, PathStep, Pattern, Possible, Printed, Resolution,
-    Scope, ScopeBinding, Selector, SourceRange, Startup, TextId, Update, Value, Values, code, tag,
+    DefinitionForm, EnabledActions, IR_VERSION, Index, Ir, Junction, LiveProperty, LiveTerm, MAGIC,
+    Model, Name, Node, NodeId, NodeKind, Nodes, Param, PathStep, Pattern, Possible, Printed,
+    Resolution, Scope, ScopeBinding, Selector, SourceRange, Startup, TextId, Update, Value, Values,
+    code, tag,
 };
 
 /// Why a blob isn't an IR this decoder reads: where it stopped, in words, and what it found.
@@ -159,6 +160,13 @@ impl Decoder<'_> {
             return self.error(format!("a count of {count} with {remaining} words left"));
         }
         Ok(count as usize)
+    }
+
+    // A 64-bit number as two words, the low first.
+    fn long(&mut self) -> Decoded<u64> {
+        let low = self.next()? as u32;
+        let high = self.next()? as u32;
+        Ok(u64::from(low) | (u64::from(high) << 32))
     }
 
     fn flag(&mut self) -> Decoded<bool> {
@@ -611,6 +619,8 @@ impl Decoder<'_> {
         let is_warning_enabled = self.flag()?;
         let is_recording_graph = self.flag()?;
         let version = self.optional_below(self.text_count as usize, "text")?;
+        let random_seed = self.long()?;
+        let startup_random = self.long()?;
         let count = self.count()?;
         let mut atoms = Vec::with_capacity(count);
         for _ in 0..count {
@@ -682,6 +692,8 @@ impl Decoder<'_> {
             is_warning_enabled,
             is_recording_graph,
             version,
+            random_seed,
+            startup_random,
             atoms,
             live_formula,
             live_properties,
@@ -729,6 +741,8 @@ impl Decoder<'_> {
                 tag::NUMBER
                     | tag::IDENTIFIER
                     | tag::APPLY
+                    | tag::AND
+                    | tag::OR
                     | tag::CASE
                     | tag::UNBOUNDED_QUANTIFIER
                     | tag::FUNCTION_CONSTRUCTION
@@ -738,6 +752,7 @@ impl Decoder<'_> {
         }
         // The node's id is taken before its children's, as its offset comes before theirs.
         let id = self.push(nodes, offset, (line, column, range), NodeKind::ExceptAt);
+        let mut junction = None;
         let mut child = |decoder: &mut Self| decoder.node(start, limits, nodes);
         let kind = match tag {
             tag::NUMBER if is_flagged => NodeKind::WideNumber(self.text()?),
@@ -755,8 +770,24 @@ impl Decoder<'_> {
                 params: self.texts()?,
                 body: child(self)?,
             },
-            tag::AND => NodeKind::And(self.children(&mut child)?),
-            tag::OR => NodeKind::Or(self.children(&mut child)?),
+            tag::AND | tag::OR => {
+                let count = self.count()?;
+                let prefix_ends = (0..count)
+                    .map(|_| Ok((self.next()?, self.next()?)))
+                    .collect::<Decoded<Vec<_>>>()?;
+                if is_flagged || !prefix_ends.is_empty() {
+                    junction = Some(Junction {
+                        is_bulleted: is_flagged,
+                        prefix_ends,
+                    });
+                }
+                let operands = self.children(&mut child)?;
+                if tag == tag::AND {
+                    NodeKind::And(operands)
+                } else {
+                    NodeKind::Or(operands)
+                }
+            }
             tag::PRIME => NodeKind::Prime(child(self)?),
             tag::UNCHANGED => NodeKind::Unchanged(child(self)?),
             tag::ENABLED => NodeKind::Enabled(child(self)?),
@@ -958,6 +989,9 @@ impl Decoder<'_> {
             return self.error(format!("a LET defines node {definition}"));
         }
         nodes.arena[id as usize].kind = kind;
+        if let Some(junction) = junction {
+            nodes.junctions.insert(id, junction);
+        }
         self.depth -= 1;
         Ok(id)
     }

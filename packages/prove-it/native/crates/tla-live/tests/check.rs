@@ -13,6 +13,7 @@ fn graph() -> Graph<'static> {
         edge_offsets: &OFFSETS,
         edges: &EDGES,
         fingerprints: &FINGERPRINTS,
+        reals: None,
     }
 }
 

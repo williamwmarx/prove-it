@@ -108,7 +108,7 @@ pub(crate) fn apply(function: &Compiled, argument: &Compiled, footprint: Footpri
                 eval(move |machine| {
                     let function = machine.read_current(variable)?;
                     let key = machine.locals[slot as usize];
-                    predicate::apply(machine, function, key)
+                    machine.store.apply(function, key)
                 }),
                 footprint,
             )
