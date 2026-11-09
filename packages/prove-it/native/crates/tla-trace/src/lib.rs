@@ -9,14 +9,17 @@
 //! thread with a deep stack, as the search runs.
 
 mod action;
+mod alias;
 mod eval;
 mod failure;
 mod pretty;
 mod print;
+mod random;
 mod rebuild;
 mod sets;
 mod value;
 
+pub use alias::Alias;
 pub use failure::{Failure, Site, format_call_stack};
 pub use pretty::pretty_print;
 pub use print::{format_printed, format_value};

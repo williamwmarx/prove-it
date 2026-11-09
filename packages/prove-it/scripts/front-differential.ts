@@ -25,6 +25,7 @@ import { dirname, join, relative } from "node:path";
 
 import type { Definition, Expression } from "../src/ast";
 import { type ModelConfig, parseConfig } from "../src/config";
+import { toEngineProperties } from "../src/engine/context";
 import { lowerToIr } from "../src/engine/ir";
 import { createEnvironment } from "../src/environment";
 import { TlaConfigError, TlaEvaluationError, TlaModuleError, TlaSyntaxError } from "../src/errors";
@@ -32,7 +33,8 @@ import { type Builtin, describeRange, type Environment } from "../src/evaluate";
 import { tokenize } from "../src/lexer";
 import { getLevel } from "../src/liveness";
 import { parseModule, parseSanyModule } from "../src/parser";
-import { getSpecification } from "../src/search";
+import { getSanyReport } from "../src/sany/report";
+import { getProperties, getSpecification } from "../src/search";
 import { createTlcOrder } from "../src/tlc/order";
 import { setStringOrder } from "../src/values";
 import {
@@ -102,7 +104,7 @@ const readOrders = (source: string, _path: string, spec: string) => {
   };
 };
 
-const linkSpec = (source: string, path: string, config?: ModelConfig) => {
+const linkSpec = (source: string, path: string, config?: ModelConfig, isSanyAccepted = true) => {
   const loadModule = createLoader(path);
   const printed: string[] = [];
   const specification = createEnvironment(config ?? parseConfig(""), {
@@ -112,7 +114,7 @@ const linkSpec = (source: string, path: string, config?: ModelConfig) => {
     print: (text) => printed.push(text),
     files: { readFile: () => undefined, writeFile: () => {} },
     isUnconfigured: config === undefined,
-    isSanyAccepted: true,
+    isSanyAccepted,
   });
   return { specification, printed };
 };
@@ -190,6 +192,50 @@ const lowerModel = (source: string, _path: string, spec: string) => {
   return lowerEnvironment(specification.environment);
 };
 
+// A model as check.ts lowers it, without TLC's actions, which the engine splits.
+const lowerFullModel = (source: string, _path: string, spec: string) => {
+  const config = parseConfig(source);
+  const specSource = readFileSync(spec, "utf8");
+  const loadModule = createLoader(spec);
+  const order = createTlcOrder(specSource, loadModule);
+  setStringOrder(order.getStringOrder(config));
+  const environment = createEnvironment(config, {
+    source: specSource,
+    loadModule,
+    order,
+    print: () => {},
+    files: { readFile: () => undefined, writeFile: () => {} },
+    isSanyAccepted: true,
+  }).environment;
+  const specification = getSpecification(config, environment);
+  const properties = toEngineProperties(getProperties(config, environment, () => {}));
+  if (!specification.init || !specification.next) return { reason: "no Init or Next" };
+  if (!properties) return { reason: "a property read in a scope" };
+  const variableOrder = order.getDeclarationOrder("variable");
+  const getPosition = (index: number) => {
+    const position = variableOrder.indexOf(environment.variables[index]);
+    return position === -1 ? environment.variables.length : position;
+  };
+  const outcome = lowerToIr({
+    config,
+    environment,
+    spec: { init: specification.init!, next: specification.next!, scope: specification.scope },
+    traceActions: [],
+    isWarningEnabled: true,
+    tlcOrder: environment.variables
+      .map((_, index) => index)
+      .sort((left, right) => getPosition(left) - getPosition(right)),
+    properties,
+    symmetry: undefined,
+    isRecordingGraph: false,
+    version: undefined,
+    atoms: [],
+    liveFormula: undefined,
+    liveProperties: [],
+  });
+  return "ir" in outcome ? { ir: Buffer.from(outcome.ir).toString("hex") } : outcome;
+};
+
 const lowerEnvironment = (environment: Environment) => {
   const root: Expression = { kind: "Number", value: 0, location: { line: 0, column: 0 } };
   const outcome = lowerToIr({
@@ -224,8 +270,14 @@ const MODES: Record<string, (source: string, path: string, spec: string) => stri
   ast: writeResult(parseModule),
   "sany-ast": writeResult((source) => parseSanyModule(source)),
   resolve: writeResult((source, path) => readEnvironment(source, path)),
+  // Whether linking with SANY's level checks passes, or its error.
+  levels: writeResult((source, path) => {
+    linkSpec(source, path, undefined, false);
+    return { isLevelChecked: true };
+  }),
   ir: writeResult(lowerDefinitions),
   "model-ir": writeResult(lowerModel),
+  "model-full": writeResult(lowerFullModel),
   order: writeResult(readOrders),
   spec: writeResult((source, _path, spec) => {
     const config = parseConfig(source);
@@ -246,6 +298,41 @@ const MODES: Record<string, (source: string, path: string, spec: string) => stri
       temporals: specification.temporals.map((temporal) => describeRange(temporal.expression)),
     };
   }),
+  properties: writeResult((source, _path, spec) => {
+    const config = parseConfig(source);
+    const environment = linkSpec(readFileSync(spec, "utf8"), spec, config).specification
+      .environment;
+    const stateLevel: string[] = [];
+    const properties = getProperties(config, environment, (progress) => {
+      if (progress.kind === "state-level-property") stateLevel.push(progress.name);
+    });
+    const describe = (property: { name: string; expression: Expression; scope: unknown }) => [
+      property.name,
+      describeRange(property.expression),
+      property.scope !== undefined,
+    ];
+    return {
+      invariants: properties.invariants.map(describe),
+      actionProperties: properties.actionProperties.map((property) => [
+        property.name,
+        describeRange(property.action),
+        describeRange(property.subscript),
+        property.scope !== undefined,
+      ]),
+      initialPredicates: properties.initialPredicates.map(describe),
+      liveness: properties.liveness.map(describe),
+      stateLevel,
+    };
+  }),
+  // What SANY prints, with each file described by its module's name and origin, as front-dump
+  // describes it.
+  "sany-text": (_source, path) =>
+    JSON.stringify({
+      text: getSanyReport(path, createLoader(path), {
+        describeFile: (name, origin) =>
+          `${name}|${{ file: "File", "root file": "RootFile", standard: "Standard" }[origin]}`,
+      }).text,
+    }),
   model: writeResult((source, _path, spec) =>
     readEnvironment(readFileSync(spec, "utf8"), spec, parseConfig(source)),
   ),
@@ -290,7 +377,7 @@ if (mode !== "time" && MODES[mode] === undefined) {
   throw new Error(`front-differential takes a mode: ${[...Object.keys(MODES), "time"].join(", ")}`);
 }
 const filter = getOption("--filter");
-const isModel = ["model", "order", "model-ir", "spec"].includes(mode);
+const isModel = ["model", "order", "model-ir", "model-full", "spec", "properties"].includes(mode);
 const extension = mode === "config" || isModel ? ".cfg" : ".tla";
 // A model is a configuration and the spec of the same name beside it.
 const getSpec = (path: string) => {
@@ -339,7 +426,18 @@ const getRustBinary = () => {
 };
 const rust = getRustBinary();
 
-const isLinked = ["resolve", "model", "ir", "order", "model-ir", "spec"].includes(mode);
+const isLinked = [
+  "resolve",
+  "model",
+  "ir",
+  "order",
+  "model-ir",
+  "model-full",
+  "spec",
+  "properties",
+  "sany-text",
+  "levels",
+].includes(mode);
 if (isLinked) linkLibraryModules();
 
 const runRust = (batch: typeof modules) => {

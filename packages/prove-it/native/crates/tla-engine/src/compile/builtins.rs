@@ -679,8 +679,17 @@ impl Compiler<'_> {
                     // It streams in its order, and its elements are set enumerations.
                     is_in_order: true,
                     are_elements_in_order: true,
+                    // TLC enumerates SUBSET S in the normalized order of S's elements, whatever S's
+                    // own order (SubsetValue.elementsNormalized), so S's value does where S has no
+                    // reference.
                     reference: combine_references(&[&base], |_, mut bases| {
                         Ok(Lazy::Subset(Box::new(bases.remove(0))))
+                    })
+                    .or_else(|| {
+                        let evaluate = base.eval.clone();
+                        Some(Arc::new(move |machine| {
+                            Ok(Lazy::Subset(Box::new(Lazy::Set(evaluate(machine)?))))
+                        }))
                     }),
                     parts: Some(base_parts.clone()),
                     member: Some(member(move |machine, element| {

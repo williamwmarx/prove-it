@@ -206,7 +206,7 @@ fn leaves_a_postcondition_to_the_front_end() {
 }
 
 #[test]
-fn leaves_a_state_an_alias_prints_to_the_front_end() {
+fn prints_a_state_through_the_alias() {
     let ir = include_bytes!(
         "../../../../tests/conformance/ir/tlc/tlatools/org.lamport.tlatools/test-model/Github746.ir"
     );
@@ -217,9 +217,15 @@ fn leaves_a_state_an_alias_prints_to_the_front_end() {
         "SPECIFICATION Spec\nINVARIANT Inv\nALIAS Alias\n",
         &[],
     );
-    assert_eq!(output.status.code(), Some(1));
-    assert!(!stdout(&output).contains("violated"));
-    assert!(String::from_utf8_lossy(&output.stderr).contains("not native yet"));
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(12), "{text}");
+    // TLC prints the record the alias gives in place of the state's variables.
+    assert!(
+        text.contains(
+            "Error: Invariant Inv is violated by the initial state:\n/\\ i = 1\n/\\ foo = \"bar\"\n/\\ j = TRUE\n"
+        ),
+        "{text}"
+    );
     std::fs::remove_dir_all(directory).expect("removed");
 }
 
@@ -344,5 +350,27 @@ fn checks_temporal_properties_part_way_through_the_search() {
         "{text}"
     );
     assert!(!stdout(&output).contains("current state space"));
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn lowers_a_model_without_a_recorded_ir() {
+    let directory = std::env::temp_dir().join(format!("prove-it-cli-lower-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    let spec = "---- MODULE Count ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x < 3 /\\ x' = x + 1\n====\n";
+    for (file, contents) in [
+        ("Count.tla", spec),
+        ("Count.cfg", "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE\n"),
+        ("Count.front", ""),
+    ] {
+        std::fs::write(directory.join(file), contents).expect("a file");
+    }
+    let output = run(&directory, &["Count"]);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(0), "{text}");
+    assert!(
+        text.contains("4 states generated, 4 distinct states found, 0 states left on queue."),
+        "{text}"
+    );
     std::fs::remove_dir_all(directory).expect("removed");
 }

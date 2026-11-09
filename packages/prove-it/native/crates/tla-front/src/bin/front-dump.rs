@@ -39,9 +39,11 @@ use tla_front::errors::FrontError;
 use tla_front::json::write_js_string;
 use tla_front::lexer::tokenize;
 use tla_front::lower::{Lowering, RankedTexts};
+use tla_front::model::{ModelOptions, lower_model};
 use tla_front::order::TlcOrder;
 use tla_front::parser::{parse_module, parse_sany_module};
-use tla_front::spec::get_specification;
+use tla_front::report::{ModuleOrigin, ReportOptions, get_sany_text};
+use tla_front::spec::{get_properties, get_specification};
 use tla_ir::Model;
 
 fn write_tokens(out: &mut String, source: &str) {
@@ -101,6 +103,17 @@ fn link(
     library: Option<&Path>,
     config: Option<&str>,
 ) -> Result<Environment, FrontError> {
+    link_checked(source, path, library, config, false)
+}
+
+/// Links the spec at `path`, checking its levels when `is_level_checked`.
+fn link_checked(
+    source: &str,
+    path: &Path,
+    library: Option<&Path>,
+    config: Option<&str>,
+    is_level_checked: bool,
+) -> Result<Environment, FrontError> {
     let load_module = |name: &str| load(path, library, name);
     let parsed = match config {
         None => parse_config("", TlcVersion::Master),
@@ -115,6 +128,7 @@ fn link(
                 config: &model,
                 is_unconfigured: config.is_none(),
                 version: TlcVersion::Master,
+                is_level_checked,
             })
         })
 }
@@ -170,6 +184,7 @@ fn lower_definitions(
         initial_predicates: Vec::new(),
         view: None,
         alias: None,
+        postconditions: Vec::new(),
         symmetry: None,
         check_deadlock: true,
         is_warning_enabled: true,
@@ -229,6 +244,7 @@ fn write_model_ir(out: &mut String, config: &str, spec_path: &Path, library: Opt
                 config: &model,
                 is_unconfigured: false,
                 version: TlcVersion::Master,
+                is_level_checked: false,
             })?;
             let ranks = texts
                 .iter()
@@ -244,6 +260,38 @@ fn write_model_ir(out: &mut String, config: &str, spec_path: &Path, library: Opt
             )
         });
     write_ir(out, lowered);
+}
+
+/// The IR of a model as `check.ts` lowers it, without TLC's actions, which the engine splits.
+/// What SANY prints for the spec at `path`, with each file described by its module's name and
+/// origin.
+fn write_sany_text(out: &mut String, path: &Path, library: Option<&Path>) {
+    let load_module = |name: &str| load(path, library, name);
+    let describe_file = |name: &str, origin: ModuleOrigin| format!("{name}|{origin:?}");
+    match get_sany_text(
+        path,
+        &ReportOptions {
+            version: TlcVersion::Master,
+            load_module: &load_module,
+            describe_file: &describe_file,
+        },
+    ) {
+        Ok(text) => {
+            out.push_str("{\"text\":");
+            write_js_string(out, &text);
+            out.push('}');
+        }
+        Err(error) => dump::environment(&Err(error)).write(out),
+    }
+}
+
+fn write_model_full(out: &mut String, config: &str, spec_path: &Path, library: Option<&Path>) {
+    let options = ModelOptions {
+        library,
+        version: None,
+        is_warning_enabled: true,
+    };
+    write_ir(out, lower_model(spec_path, config, &options));
 }
 
 /// TLC's orders of a model: its string order, the root module's variables and constants, and the
@@ -309,7 +357,8 @@ fn main() -> ExitCode {
         .and_then(|index| arguments.get(index + 1))
         .map(PathBuf::from);
     let write: fn(&mut String, &str) = match mode.as_str() {
-        "resolve" | "model" | "ir" | "order" | "model-ir" | "spec" => |_, _| {},
+        "resolve" | "model" | "ir" | "order" | "model-ir" | "model-full" | "spec"
+        | "properties" | "sany-text" | "levels" => |_, _| {},
         "tokens" => write_tokens,
         "ast" => |out, source| write_module(out, source, false),
         "sany-ast" => |out, source| write_module(out, source, true),
@@ -323,7 +372,7 @@ fn main() -> ExitCode {
         },
         _ => {
             eprintln!(
-                "usage: front-dump tokens|ast|sany-ast|config|resolve|model|ir|order|model-ir|spec|time < paths"
+                "usage: front-dump tokens|ast|sany-ast|config|resolve|model|ir|order|model-ir|model-full|spec|properties|sany-text|levels|time < paths"
             );
             return ExitCode::from(2);
         }
@@ -339,7 +388,16 @@ fn main() -> ExitCode {
             }
         };
         let mut line = String::new();
-        if mode == "model-ir" {
+        if mode == "levels" {
+            match link_checked(&source, Path::new(&path), library.as_deref(), None, true) {
+                Ok(_) => line.push_str("{\"isLevelChecked\":true}"),
+                Err(error) => dump::environment(&Err(error)).write(&mut line),
+            }
+        } else if mode == "sany-text" {
+            write_sany_text(&mut line, Path::new(&path), library.as_deref());
+        } else if mode == "model-full" {
+            write_model_full(&mut line, &source, Path::new(spec_path), library.as_deref());
+        } else if mode == "model-ir" {
             write_model_ir(&mut line, &source, Path::new(spec_path), library.as_deref());
         } else if mode == "order" {
             write_order(&mut line, &source, Path::new(spec_path), library.as_deref());
@@ -353,6 +411,21 @@ fn main() -> ExitCode {
                 library.as_deref(),
                 None,
             );
+        } else if mode == "properties" {
+            let spec = std::fs::read_to_string(spec_path).unwrap_or_default();
+            let properties = link(
+                &spec,
+                Path::new(spec_path),
+                library.as_deref(),
+                Some(&source),
+            )
+            .and_then(|environment| {
+                let config = parse_config(&source, TlcVersion::Master)
+                    .map_err(|error| FrontError::Config(error.message))?;
+                let facts = create_definition_facts(&environment);
+                get_properties(&config, &environment, &facts, TlcVersion::Master)
+            });
+            dump::properties(&properties).write(&mut line);
         } else if mode == "spec" {
             let spec = std::fs::read_to_string(spec_path).unwrap_or_default();
             let specification = link(

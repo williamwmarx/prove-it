@@ -31,10 +31,20 @@ pub struct Failure {
     pub message: String,
     pub tool_message: String,
     pub call_stack: Vec<SourceRange>,
+    /// The status TLC exits with (`EC.ExitStatus.errorConstantToExitStatus`).
+    pub exit_code: i32,
+    /// What the spec printed as TLC replayed the failure, each print's values as `Trace` holds
+    /// them.
+    pub printed: Vec<Vec<String>>,
 }
 
 const GENERAL: u32 = 1000;
 const INVARIANT_EVALUATION_FAILED: u32 = 2111;
+const ASSERT_FAILED: u32 = 2132;
+
+const VIOLATION_ASSERT: i32 = 14;
+const FAILURE_SPEC_EVAL: i32 = 75;
+const FAILURE_SAFETY_EVAL: i32 = 76;
 
 const UNEXPECTED_EXCEPTION: &str = "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: ";
 
@@ -196,7 +206,7 @@ impl<'ir> Rebuilder<'ir> {
             }
         };
         let call_stack = evaluator.call_stack.take().unwrap_or_default();
-        evaluator.printed.clear();
+        let printed = std::mem::take(&mut evaluator.printed);
         let Err(error) = result else {
             return Err(Unsupported(
                 "evaluating the failure again: it didn't fail".into(),
@@ -229,6 +239,8 @@ impl<'ir> Rebuilder<'ir> {
                 message: format!("{headline}\n{}", message.text),
                 tool_message: format!("{headline}\n{}", nested(&message)),
                 call_stack: Vec::new(),
+                exit_code: FAILURE_SAFETY_EVAL,
+                printed,
             });
         }
         let (code, text, tool_text) = report(&message, site == Site::Next);
@@ -237,6 +249,13 @@ impl<'ir> Rebuilder<'ir> {
             message: text,
             tool_message: tool_text,
             call_stack: ranges(evaluator, &call_stack),
+            // A failed assertion exits as one, and any other error as the nested expression
+            // failure the replay reports.
+            exit_code: match message.code {
+                Some(ASSERT_FAILED) => VIOLATION_ASSERT,
+                _ => FAILURE_SPEC_EVAL,
+            },
+            printed,
         })
     }
 }

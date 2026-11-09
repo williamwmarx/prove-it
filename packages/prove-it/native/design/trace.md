@@ -338,3 +338,39 @@ is outside the evaluator:
 - traces the engine hands over no violation for, as where it can't label a step (ACP_NB_WRONG,
   the raft specs);
 - one ENABLED (spectacle's Elevator).
+
+## The ALIAS
+
+`Rebuilder::alias(trace, cycle_start)` evaluates the configuration's ALIAS on each state of a
+rebuilt trace, as `Tool.evalAlias` does. `TLCGet("level")` is the state's position in the trace
+plus one. The next state is the state after it: for a lasso's last state, the state its cycle
+starts at, and otherwise the state itself. TLC prints a record (`RecordValue.toState`) through
+`PrintTLCState`, in the order of the record's names: as written until TLC sorts it. A value that
+isn't a function gives `Value.toState`'s null, and TLC prints the state itself (`Alias::State`).
+`Unsupported` covers the rest:
+- a function TLC converts to a record (`FcnRcdValue.toState`) or one it keeps lazy;
+- a `_format` field;
+- an alias that prints;
+- an alias that fails, which TLC prints as the state with an `_ALIASEvalError` field.
+
+The test rebuilds Github746's initial state, which violates its invariant, through its alias. The
+alias reads the next state. EWD840/MC02's alias reads ENABLED, and the engine stops at no
+violation there.
+
+## Random draws
+
+The evaluator draws RandomElement and RandomSubset as TLC does (`TLC.RandomElement`,
+`Enumerable.getRandomSubset`), from the java.util.Random draws that `tla-values` shares with the
+engine. A set of functions, records or tuples draws component by component, into a normalized
+value. Any other set draws from its normalized elements. TLC's thread-local generator
+(`RandomEnumerableValues`) is never reseeded in the initial predicate, so the rebuild draws there
+from the state startup left (`Model.startup_random`). It walks the whole initial predicate, so it
+draws as the search drew. Each step draws from a generator seeded with the predecessor's
+fingerprint XOR `Model.random_seed`, as the worker does. A model that draws walks each step
+through all of TLC's actions in order, as one that prints does. `Unsupported` covers:
+- draws under a VIEW or SYMMETRY, whose key the seed is the fingerprint of;
+- draws in the checks after the last step;
+- RandomSubset in TLC 1.7.4, which draws a subset's indices another way.
+
+The test rebuilds the invariant traces of TLC's RandomElement, RandomElementXandY, RandomSubset
+and RandomSubsetNextTuples.

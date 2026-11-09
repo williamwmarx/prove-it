@@ -315,11 +315,11 @@ impl Reporter for Relay {
 }
 
 /// The counts a Progress line reports.
-struct Statistics {
-    generated: u64,
-    distinct: u64,
-    queued: u64,
-    depth: u64,
+pub(crate) struct Statistics {
+    pub generated: u64,
+    pub distinct: u64,
+    pub queued: u64,
+    pub depth: u64,
 }
 
 /// TLC reports a depth of at least 1, even before it finds a state, and rates a minute only once
@@ -439,9 +439,10 @@ fn check_spec(spec_path: &str, args: &Parsed, printer: &mut Printer) -> i32 {
     }
     let start = Instant::now();
     // The front end reports a configuration it can't read; the binary reads what it prints by.
-    let Some(config) = config_path
-        .and_then(|path| std::fs::read_to_string(path).ok())
-        .and_then(|text| parse_config(&text, TlcVersion::Master).ok())
+    let config_text = config_path.and_then(|path| std::fs::read_to_string(path).ok());
+    let Some(config) = config_text
+        .as_deref()
+        .and_then(|text| parse_config(text, TlcVersion::Master).ok())
     else {
         return report_not_native(printer, "a configuration file the front end rejects");
     };
@@ -451,7 +452,11 @@ fn check_spec(spec_path: &str, args: &Parsed, printer: &mut Printer) -> i32 {
     if args.has("-continue") {
         return report_not_native(printer, "-continue");
     }
-    let front = match read_front(spec_path) {
+    let front = match read_front(
+        spec_path,
+        config_text.as_deref().unwrap_or_default(),
+        !args.has("-nowarning"),
+    ) {
         Ok(front) => front,
         Err(reason) => return report_not_native(printer, &reason),
     };
@@ -538,8 +543,20 @@ fn check_spec(spec_path: &str, args: &Parsed, printer: &mut Printer) -> i32 {
             fingerprints,
             liveness,
             violation,
+            possible,
             ..
         } => {
+            // Once the search completes, TLC checks the postconditions, which the binary doesn't
+            // evaluate yet, and reports a _POSSIBLE predicate the search never witnessed.
+            if !config.postconditions.is_empty() {
+                return report_not_native(printer, "a POSTCONDITION");
+            }
+            if possible.iter().any(|&count| count <= 0) {
+                return report_not_native(
+                    printer,
+                    "a _POSSIBLE predicate the search didn't witness",
+                );
+            }
             if let Some(liveness) = liveness {
                 // TLC stops at a node that accepts every behavior as it searches, so it checks
                 // nothing once the search is done.
@@ -601,13 +618,14 @@ fn check_spec(spec_path: &str, args: &Parsed, printer: &mut Printer) -> i32 {
         SearchOutcome::Declined(reason) => {
             return report_not_native(printer, &format!("the engine declined: {reason}"));
         }
+        // TLC's report of a failure evaluating the model is the trace session's to print.
         SearchOutcome::Stopped {
             violation: Some(violation),
             reason,
             ..
-        } => {
+        } if !matches!(violation.kind, ViolationKind::Error { .. }) => {
             return print_violation(printer, &ir, &config, &violation, None, start).unwrap_or_else(
-                |_| report_not_native(printer, &format!("the engine stopped: {reason}")),
+                |why| report_not_native(printer, &format!("the engine stopped: {reason}: {why}")),
             );
         }
         SearchOutcome::Stopped { reason, .. } => {
@@ -696,7 +714,7 @@ fn print_liveness_finished(printer: &mut Printer, checking: Instant) {
 
 /// After a search, TLC prints how many states it found and how deep it went, after the progress
 /// with -tool.
-fn print_statistics(printer: &mut Printer, statistics: &Statistics, start: Instant) {
+pub(crate) fn print_statistics(printer: &mut Printer, statistics: &Statistics, start: Instant) {
     if printer.is_tool {
         print_progress(printer, statistics, Some(start));
     }
@@ -734,10 +752,9 @@ fn print_violation(
     liveness: Option<&Liveness>,
     start: Instant,
 ) -> Result<i32, &'static str> {
-    // TLC prints a state through the ALIAS when there is one, which the IR doesn't carry yet, and
-    // checks the postconditions on the trace after it prints it.
-    if config.alias.is_some() || !config.postconditions.is_empty() || !config.possible.is_empty() {
-        return Err("ALIAS, POSTCONDITION or _POSSIBLE");
+    // TLC checks the postconditions on the trace after it prints it.
+    if !config.postconditions.is_empty() || !config.possible.is_empty() {
+        return Err("POSTCONDITION or _POSSIBLE");
     }
     // An owner past the configuration's invariants is a property checked as one.
     let model = &ir.model;
@@ -770,6 +787,7 @@ fn print_violation(
             SAFETY_VIOLATION,
         ),
         ViolationKind::Deadlock => (code::DEADLOCK_REACHED, "Deadlock reached.".into(), DEADLOCK),
+        ViolationKind::Error { .. } => return Err(NOT_IN_IR),
         ViolationKind::Lasso { .. } => (
             code::TEMPORAL_PROPERTY_VIOLATED,
             temporal_headline(ir, liveness.ok_or(NOT_IN_IR)?).ok_or(NOT_IN_IR)?,
@@ -823,16 +841,20 @@ fn print_violation(
         }
         _ => None,
     };
-    let mut labels = vec!["Initial predicate"];
-    for &action in &violation.labels {
-        labels.push(action_label(action)?);
-    }
     // TLC prints a trace once it has rebuilt all of it, and a state that the evaluator can't
     // rebuild as TLC built it keeps the run not native.
     let trace = match rebuild_trace(ir, violation) {
         Ok(trace) => trace,
         Err(reason) => return Ok(report_not_native(printer, &reason)),
     };
+    // TLC labels each step with the action it finds taking it as it rebuilds the trace.
+    let mut labels = vec!["Initial predicate"];
+    for state in trace.states.iter().skip(1) {
+        let action = state
+            .action
+            .ok_or("a step whose action the rebuilt trace lacks")?;
+        labels.push(action_label(action)?);
+    }
     let counts = &violation.counts;
     let statistics = Statistics {
         generated: counts.generated,
@@ -959,7 +981,7 @@ fn properties_headline(ir: &tla_ir::Ir, violated: &[usize]) -> Option<String> {
 }
 
 /// Without -tool, TLC prints how long it ran for a person to read.
-fn print_finished(printer: &mut Printer, start: Instant) {
+pub(crate) fn print_finished(printer: &mut Printer, start: Instant) {
     let runtime = start.elapsed().as_millis();
     let duration = if printer.is_tool {
         format!("{runtime}ms")

@@ -1335,6 +1335,101 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
   // From tla-rs's function_syntax: TLC applies a recursive function of several bounds to tuples
   // of its product, and keeps a recursive function lazy where a spec passes it or takes its
   // domain.
+  // From mongodb-txns' ClientCentric, whose fold folds in the operator it applies: a definition
+  // reached again through an argument isn't recursion.
+  it("expands a definition again through an argument", async () => {
+    const body = [
+      "EXTENDS Naturals",
+      "VARIABLE x",
+      "Fold(op(_, _), base, S) ==",
+      "  LET it[s \\in SUBSET S] ==",
+      "        IF s = {} THEN base ELSE LET y == CHOOSE y \\in s : TRUE IN op(y, it[s \\ {y}])",
+      "  IN it[S]",
+      "Sum(S) == Fold(LAMBDA a, b : a + b, 0, S)",
+      "Init == x = 0",
+      "Next == x' = (x + 1) % 3",
+      "Inv == /\\ Fold(LAMBDA a, acc : acc + Sum({i + x : i \\in 1..a}), 0, {1, 2}) = 4 + 3 * x",
+      "       /\\ Fold(LAMBDA a, acc : a + acc, Fold(LAMBDA a, b : a + b, x, {1}), {2}) = 3 + x",
+    ];
+    expect(
+      await compareWithInterpreter(body, "INIT Init\nNEXT Next\nINVARIANT Inv"),
+    ).toContainEqual(expect.stringMatching(COMPLETE));
+  });
+
+  // Tool.evalAppl evaluates UNCHANGED e, [A]_e and <<A>>_e in the current state first, so the
+  // search stops on the current state's failure.
+  it("evaluates UNCHANGED in the current state first like TLC", async () => {
+    const subscript = 'IF x = 0 THEN Assert(FALSE, "before") ELSE <<>>[1]';
+    for (const form of ["[FALSE]_(e)", "IF UNCHANGED (e) THEN TRUE ELSE TRUE", "<<TRUE>>_(e)"]) {
+      const body = [
+        "EXTENDS TLC",
+        "VARIABLE x",
+        "Init == x = 0",
+        `Next == x' = 1 /\\ ${form.replace("(e)", `(${subscript})`)}`,
+      ];
+      expect([form, await compareWithInterpreter(body, "INIT Init\nNEXT Next")]).toEqual([
+        form,
+        expect.arrayContaining([expect.stringMatching(/native: stopped: an assertion failed/)]),
+      ]);
+    }
+  });
+
+  // From tla-rs's function_syntax: TLC applies a recursive function of several bounds to tuples
+  // of its product, and keeps a recursive function lazy where a spec passes it or takes its
+  // domain.
+  // From mongodb-txns' Storage.cfg, which substitutes FALSE for actions with parameters: TLC
+  // takes the value and leaves the arguments unevaluated.
+  it("takes a value a configuration substitutes for an operator with parameters", async () => {
+    const body = [
+      "EXTENDS Naturals",
+      "VARIABLE x",
+      "A(n) == x' = n",
+      "Init == x = 0",
+      "Next == \\/ x < 3 /\\ x' = x + 1",
+      "        \\/ \\E n \\in {0} : A(1 \\div n)",
+    ];
+    expect(
+      await compareWithInterpreter(
+        body,
+        "INIT Init\nNEXT Next\nCONSTANT A <- FALSE\nCHECK_DEADLOCK FALSE",
+      ),
+    ).toContainEqual(expect.stringMatching(COMPLETE));
+  });
+
+  // From TLC's Github725d: TLC's getPrimedVar looks through a LET to the primed variable it
+  // assigns, in the next-state relation and in ENABLED.
+  it("assigns a primed variable a LET names", async () => {
+    const body = [
+      "EXTENDS Naturals",
+      "VARIABLE x",
+      "Init == x = 0",
+      "Next == x < 3 /\\ (LET y == x' IN y) = x + 1",
+      "Inv == ENABLED ((LET y == x' IN y) = 0)",
+    ];
+    expect(
+      await compareWithInterpreter(
+        body,
+        "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
+      ),
+    ).toContainEqual(expect.stringMatching(COMPLETE));
+  });
+
+  // From TLC's test46: SubsetValue.elementsNormalized enumerates SUBSET S in the normalized order
+  // of S's elements, whatever S's own order.
+  it("assigns from SUBSET of a set it has no order for, in TLC's normalized order", async () => {
+    const body = [
+      "EXTENDS Naturals, FiniteSets",
+      "VARIABLES x, f",
+      "S == UNION {[p : {k}, i : DOMAIN f[k]] : k \\in {1, 2}}",
+      "Init == f = [k \\in {1, 2} |-> <<0>>] /\\ x = {}",
+      "Next == f' = f /\\ x' \\in SUBSET (S' \\X S')",
+      "Inv == Cardinality(x) <= 4",
+    ];
+    expect(
+      await compareWithInterpreter(body, "INIT Init\nNEXT Next\nINVARIANT Inv"),
+    ).toContainEqual(expect.stringMatching(COMPLETE));
+  });
+
   it("applies recursive functions as TLC keeps them lazy", async () => {
     const body = [
       "EXTENDS Naturals, FiniteSets",

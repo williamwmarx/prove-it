@@ -4,8 +4,9 @@
 
 mod common;
 
-use common::{ir_directory, path_to, stop_search};
-use tla_trace::{Ending, Rebuilder, Unsupported, format_value};
+use common::{Quiet, ir_directory, path_to, stop_search};
+use tla_engine::search::{SearchOutcome, Settings, ViolationKind, search};
+use tla_trace::{Alias, Ending, Rebuilder, Unsupported, format_value};
 use tla_values::Id;
 
 fn golden_irs(directory: &std::path::Path, found: &mut Vec<std::path::PathBuf>) {
@@ -219,4 +220,124 @@ fn sorts_the_records_of_built_lambdas_under_view_and_symmetry() {
     let (states, _) =
         deadlock_trace("raft/specifications/standard-raft/RaftWithReconfigJointConsensus");
     assert_eq!(states[0], tlc_states(RAFT_RECONFIG_INITIAL_STATE)[0]);
+}
+
+// Rebuilds the trace of the violation the search stops at, and hands it to `then` with the
+// rebuilder and the start of a lasso's cycle.
+fn rebuild_violation<T: Send>(
+    path: &str,
+    then: impl FnOnce(
+        &tla_ir::Ir,
+        &mut Rebuilder,
+        &tla_trace::Trace,
+        Option<usize>,
+    ) -> Result<T, Unsupported>
+    + Send,
+) -> Result<T, Unsupported> {
+    let bytes = std::fs::read(ir_directory().join(format!("{path}.ir"))).expect("a golden IR");
+    let ir = tla_ir::decode(&bytes).expect("an IR that decodes");
+    tla_values::on_nesting_stack(|| {
+        let SearchOutcome::Stopped {
+            violation: Some(violation),
+            ..
+        } = tla_engine::on_nesting_stack(|| {
+            let settings = Settings {
+                is_violation_reported: true,
+                ..Settings::default()
+            };
+            search(&ir, &settings, &mut Quiet)
+        })
+        else {
+            panic!("{path}: a search that stops at a violation");
+        };
+        let (ending, cycle_start) = match violation.kind {
+            ViolationKind::Deadlock => (Ending::Kept, None),
+            ViolationKind::Invariant(_) | ViolationKind::InitialInvariant(_) => {
+                (Ending::Violation, None)
+            }
+            ViolationKind::Lasso { loop_start, .. } => (Ending::Lasso, Some(loop_start)),
+            ViolationKind::Accepted { .. } => (Ending::Lasso, None),
+            ViolationKind::Error { .. } => panic!("{path}: a failure evaluating the model"),
+        };
+        let states: Vec<&[Id]> = violation.states.iter().map(Vec::as_slice).collect();
+        let mut rebuilder = Rebuilder::new(&ir)?;
+        let trace = rebuilder.rebuild(&violation.store, &states, &violation.labels, ending)?;
+        then(&ir, &mut rebuilder, &trace, cycle_start)
+    })
+}
+
+#[test]
+fn draws_random_elements_and_subsets_as_tlc_does() {
+    // TLC draws in the initial predicate from the generator startup left, and in each step from
+    // one seeded with the predecessor's fingerprint.
+    for (name, expected) in [
+        ("RandomElement", RANDOM_ELEMENT_TRACE),
+        ("RandomElementXandY", RANDOM_ELEMENT_X_AND_Y_TRACE),
+        ("RandomSubset", RANDOM_SUBSET_TRACE),
+        ("RandomSubsetNextTuples", RANDOM_SUBSET_NEXT_TUPLES_TRACE),
+    ] {
+        let states = rebuild_violation(
+            &format!("tlc/tlatools/org.lamport.tlatools/test-model/{name}"),
+            |ir, _, trace, _| {
+                Ok(trace
+                    .states
+                    .iter()
+                    .map(|state| rebuilt_state(ir, &state.values))
+                    .collect::<Vec<_>>())
+            },
+        );
+        assert_eq!(states, Ok(tlc_states(expected)), "{name}");
+    }
+}
+
+// Each state of the trace the search stops with, through the ALIAS, as TLC prints it without
+// whitespace: the alias record's fields in order, or the state's variables where it gives none.
+fn aliased_trace(path: &str) -> Result<Vec<String>, Unsupported> {
+    rebuild_violation(path, |ir, rebuilder, trace, cycle_start| {
+        let aliases = rebuilder
+            .alias(trace, cycle_start)?
+            .expect("a model with an ALIAS");
+        let text = |fields: Vec<(String, String)>| {
+            fields
+                .into_iter()
+                .map(|(name, value)| format!("/\\{name}={value}"))
+                .collect::<String>()
+                .chars()
+                .filter(|character| !character.is_whitespace())
+                .collect()
+        };
+        Ok(aliases
+            .into_iter()
+            .zip(&trace.states)
+            .map(|(alias, state)| match alias {
+                Alias::Record(fields) => text(
+                    fields
+                        .into_iter()
+                        .map(|(name, value)| (name, format_value(&value)))
+                        .collect(),
+                ),
+                Alias::State => text(
+                    ir.tlc_order
+                        .iter()
+                        .map(|&position| {
+                            (
+                                ir.texts[ir.variables[position as usize] as usize].to_string(),
+                                format_value(&state.values[position as usize]),
+                            )
+                        })
+                        .collect(),
+                ),
+            })
+            .collect())
+    })
+}
+
+#[test]
+fn prints_a_state_through_the_alias_record_in_the_order_written() {
+    // Github746's alias reads the next state, which for the initial state that violates the
+    // invariant is the state itself.
+    assert_eq!(
+        aliased_trace("tlc/tlatools/org.lamport.tlatools/test-model/Github746"),
+        Ok(vec!["/\\i=1/\\foo=\"bar\"/\\j=TRUE".to_string()])
+    );
 }

@@ -29,6 +29,7 @@ fn link_model(
         config: &model,
         is_unconfigured: config.is_none(),
         version: TlcVersion::Master,
+        is_level_checked: false,
     })
 }
 
