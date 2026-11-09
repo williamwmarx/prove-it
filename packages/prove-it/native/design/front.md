@@ -104,3 +104,27 @@ corpus (the 641 IRs `bun scripts/run.ts engine-ir` writes, and the 30 goldens in
    atoms and formula; a model that needs one gets `NotYet` until the engine's startup phase
    (DESIGN section 14, which the CLI session owns) and `tla-live` compute them in Rust, with no
    TypeScript involved, and the harness counts those.
+
+## F8 slice 1a as built (linking and resolution, without instances)
+
+- `resolve` ports `resolve.ts` whole: binding, `isBindable`'s errors and warnings, labels,
+  selections of a theorem's or step's parts, substitutions, `collectSemanticErrors` and
+  `resolveModule`. What the TypeScript resolver writes on the AST, the Rust one writes in each
+  node's `resolved` cells (`key`, `is_local`, `is_recursive`) and a definition's
+  `is_self_referential`, so a copy of a node carries them as a spread TypeScript node does. The
+  `WeakSet`s and `WeakMap`s keyed by node (`selections`, `selectionErrors`, `renamedArities`) are
+  tables keyed by the node's address that keep the node alive.
+- `environment` ports the linking of `createEnvironment` for a spec without a model that SANY
+  accepted: the module loader, one parse per text, rejected literals, EXTENDS, standard modules
+  (their builtins come from `src/standard_builtins.rs`, which `scripts/front-modules.ts` writes
+  from `getStandardModule` and `CORE_OPERATORS` and checks in CI), a user's module that replaces a
+  standard one, nested modules, cycles, the root's names for its definitions, and the variable
+  index. `ordered_map` keeps a JavaScript `Map`'s order, which the environment's maps follow.
+  An INSTANCE (at the top, in a LET, or in a proof) and a name that selects a subexpression
+  return `NotYet`; slice 1b ports `instances.ts` and `subexpressions.ts`.
+- `front-differential.ts resolve` links every module of the corpora and fixtures as a spec's root
+  and compares the environments as canonical JSON: each definition by key with every name
+  resolved, the builtins with their flags, the variables and their indices, the root's constants,
+  SANY's errors and warnings. 1,771 of 2,356 modules match and 585 are not compared yet (an
+  INSTANCE, a selecting name, or a module SANY's parser rejects, which F5 ports); with
+  `--mutate 400`, 3,268 of 3,956. None differ. Verification's Front End job runs it.

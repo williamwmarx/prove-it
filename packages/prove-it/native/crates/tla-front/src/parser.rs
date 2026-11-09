@@ -6,7 +6,7 @@ use std::rc::Rc;
 
 use crate::TlcVersion;
 use crate::ast::*;
-use crate::errors::{SanyError, SyntaxError, SyntaxFailure};
+use crate::errors::{SanyError, SyntaxError, SyntaxFailure, format_range};
 use crate::hash::FastSet;
 use crate::json::write_js_string;
 use crate::lexer::{Token, TokenKind, tokenize};
@@ -297,7 +297,7 @@ fn location_of(token: &Token) -> Location {
 }
 
 fn located(kind: ExpressionKind, location: Location) -> Expression {
-    Expression { kind, location }
+    Expression::new(kind, location)
 }
 
 impl Parser {
@@ -1413,6 +1413,7 @@ impl Parser {
                         is_strong: &*token.text == "SF_",
                         subscript,
                         action,
+                        enabled: None,
                     },
                     location,
                 ))
@@ -1763,6 +1764,7 @@ impl Parser {
             is_local,
             is_recursive,
             location,
+            is_self_referential: Default::default(),
         })))
     }
 
@@ -1825,6 +1827,7 @@ impl Parser {
                 is_local,
                 is_recursive,
                 location,
+                is_self_referential: Default::default(),
             })));
         }
         let definition_start = self.index;
@@ -2584,6 +2587,7 @@ impl Parser {
                 is_local: false,
                 is_recursive: false,
                 location,
+                is_self_referential: Default::default(),
             });
         }
         Ok(())
@@ -2744,6 +2748,7 @@ impl Parser {
                             is_local: false,
                             is_recursive: false,
                             location: assumption.location.clone(),
+                            is_self_referential: Default::default(),
                         });
                     }
                     continue;
@@ -2806,13 +2811,6 @@ impl Parser {
             self.add_definition_unit(unit);
         }
     }
-}
-
-pub fn format_range(range: &SourceRange) -> String {
-    format!(
-        "line {}, col {} to line {}, col {} of module {}",
-        range.start.line, range.start.column, range.end.line, range.end.column, range.module
-    )
 }
 
 fn parse(
