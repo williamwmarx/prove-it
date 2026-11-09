@@ -51,6 +51,8 @@ pub struct EngineContext {
     pub view: Option<Eval>,
     /// The liveness checker's atoms, compiled, when the search records its graph.
     pub atoms: Vec<Atom>,
+    /// Whether evaluating an atom may print.
+    pub is_live_printing: bool,
 }
 
 /// How the engine answers a liveness atom on its states, or why it can't, in which case the
@@ -302,7 +304,9 @@ impl EngineContext {
         // Each invariant and constraint is checked conjunct by conjunct, so a successor skips
         // each conjunct that reads only variables its step left unchanged. An invariant that may
         // print is checked whole each time, as TLC checks it, where the search may print.
-        let can_print = !model.is_recording_graph;
+        // With temporal properties, the search keeps what it prints until the checker has
+        // evaluated the atoms, whose prints go between its own.
+        let can_print = true;
         let mut conjuncts = Conjuncts::new(ir);
         let mut printed = HashSet::new();
         let mut invariant_owners = Vec::new();
@@ -454,14 +458,19 @@ impl EngineContext {
                 (steps.len() == actions.len()).then_some(steps)
             }
         };
-        let atoms = if model.is_recording_graph {
-            model
+        let (atoms, is_live_printing) = if model.is_recording_graph {
+            let compiled: Vec<(Atom, bool)> = model
                 .atoms
                 .iter()
                 .map(|atom| compile_atom(compiler, ir, atom))
-                .collect()
+                .collect();
+            let is_printing = compiled.iter().any(|atom| atom.1);
+            (
+                compiled.into_iter().map(|atom| atom.0).collect(),
+                is_printing,
+            )
         } else {
-            Vec::new()
+            (Vec::new(), false)
         };
         let (initial_invariants, initial_invariant_owners) = invariants
             .iter()
@@ -492,6 +501,7 @@ impl EngineContext {
             initial_predicates,
             view,
             atoms,
+            is_live_printing,
         })
     }
 }
@@ -513,14 +523,14 @@ fn describe(error: CompileError) -> String {
 }
 
 // An expression of an atom, compiled in the atom's scope. What TLCGet reads holds only while the
-// search runs.
+// search runs; what the atom prints the search prints in TLC's order.
 fn compile_live(
     compiler: &mut Compiler<'_>,
     node: NodeId,
     scope: Option<Index>,
 ) -> Result<Compiled, String> {
     match compiler.compile_in_scope(node, scope) {
-        Ok(Some(compiled)) if compiled.reads_search() => {
+        Ok(Some(compiled)) if compiled.reads_tlc_get() => {
             Err("unsupported: TLCGet after the search".into())
         }
         Ok(Some(compiled)) => Ok(compiled),
@@ -542,11 +552,15 @@ fn compile_subscript(
     Ok(compiled.eval)
 }
 
-fn compile_atom(compiler: &mut Compiler<'_>, ir: &Ir, atom: &tla_ir::Atom) -> Atom {
+// An atom, compiled, and whether evaluating it may print.
+fn compile_atom(compiler: &mut Compiler<'_>, ir: &Ir, atom: &tla_ir::Atom) -> (Atom, bool) {
     let scope = atom.scope;
+    let mut is_printing = false;
     let compiled = match &atom.kind {
-        AtomKind::State => compile_live(compiler, atom.expression, scope)
-            .map(|compiled| Atom::State(compiled.eval)),
+        AtomKind::State => compile_live(compiler, atom.expression, scope).map(|compiled| {
+            is_printing = compiled.is_printing();
+            Atom::State(compiled.eval)
+        }),
         AtomKind::Action { unchanged, enabled } => (|| {
             let subscript = match unchanged {
                 None => None,
@@ -555,16 +569,20 @@ fn compile_atom(compiler: &mut Compiler<'_>, ir: &Ir, atom: &tla_ir::Atom) -> At
                     _ => return Err("a subscript the engine doesn't read".to_string()),
                 },
             };
-            let action = compile_live(compiler, atom.expression, scope)?.eval;
+            let action = compile_live(compiler, atom.expression, scope)?;
+            is_printing = action.is_printing();
             Ok(Atom::Action {
-                action,
+                action: action.eval,
                 subscript,
                 enabled: enabled.map(|position| position as usize),
             })
         })(),
         AtomKind::Enabled { actions } => {
             let run = match compiler.compile_enabled_in_scope(atom.expression, scope) {
-                Ok(Some(compiled)) => Ok(compiled.eval),
+                Ok(Some(compiled)) => {
+                    is_printing = compiled.is_printing();
+                    Ok(compiled.eval)
+                }
                 Ok(None) => Err("a scope the engine can't translate".to_string()),
                 Err(error) => Err(describe(error)),
             };
@@ -594,5 +612,5 @@ fn compile_atom(compiler: &mut Compiler<'_>, ir: &Ir, atom: &tla_ir::Atom) -> At
             Ok(Atom::Enabled { run, steps })
         }
     };
-    compiled.unwrap_or_else(Atom::Unknown)
+    (compiled.unwrap_or_else(Atom::Unknown), is_printing)
 }

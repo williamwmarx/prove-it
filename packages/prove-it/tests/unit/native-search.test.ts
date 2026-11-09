@@ -576,6 +576,29 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     await compareWithInterpreter(body, config, { PROVE_IT_LIVE_CHECK: "1" });
   });
 
+  it("prints what the search and the temporal properties print in TLC's order", async () => {
+    // TLC prints PrintT in Next as the search takes each step, and again each time its liveness
+    // checks evaluate Next: ENABLED of the fairness and the action on each step.
+    const body = [
+      "EXTENDS Naturals, TLC",
+      "VARIABLE x",
+      "Next == \\/ x < 3 /\\ PrintT(x) /\\ x' = x + 1",
+      "        \\/ x = 3 /\\ UNCHANGED x",
+      "Spec == x = 0 /\\ [][Next]_x /\\ WF_x(Next)",
+      "Ends == <>(x = 3)",
+      'Shown == []<>(PrintT(<<"at", x>>) /\\ x = 3)',
+      "Stays == <>[](x = 0)",
+    ];
+    for (const [property, verdict] of [
+      ["Ends", "holds"],
+      ["Shown", "holds"],
+      ["Stays", "lasso"],
+    ] as const) {
+      const lines = await compareWithInterpreter(body, `SPECIFICATION Spec\nPROPERTY ${property}`);
+      expect(lines).toContain(`[engine] native: liveness: ${verdict}`);
+    }
+  });
+
   it("hands over a violated invariant, deadlock and a failed action property", async () => {
     const cases: [string[], string, string][] = [
       [
@@ -772,7 +795,6 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
       [[`Next == ${next}`, `Constraint == ${prints}`], "\nCONSTRAINT Constraint"],
       [[`Next == ${next}`, "Constraint == Print(x', TRUE)"], "\nACTION_CONSTRAINT Constraint"],
       [[`Next == ${next}`, "View == Print(x, x)"], "\nVIEW View"],
-      [[`Next == ${prints} /\\ ${next}`, "Live == <>(x = 2)"], "\nPROPERTY Live"],
     ];
     for (const [actions, config, where = ""] of cases) {
       const body = ["EXTENDS Naturals, TLC", "VARIABLE x", "Init == x = 0", ...actions];
