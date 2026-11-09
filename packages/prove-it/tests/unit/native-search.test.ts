@@ -355,6 +355,28 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     );
   });
 
+  it("checks the invariant of the state that first takes a VIEW's key, on any number of threads", async () => {
+    // Every initial state's successor has the key 0, and only the first's, (0, 0), holds the
+    // invariant: TLC checks only that one, though a thread that expands other initial states meets
+    // the others first.
+    const body = [
+      "EXTENDS Naturals",
+      "VARIABLES x, y",
+      "Init == x \\in 1..4096 /\\ y = 0",
+      "Next == \\/ x > 0 /\\ x' = 0 /\\ y' = IF x = 1 THEN 0 ELSE 1",
+      "        \\/ x = 0 /\\ UNCHANGED <<x, y>>",
+      "View == x",
+      "Inv == y = 0",
+    ];
+    const config = "INIT Init\nNEXT Next\nINVARIANT Inv\nVIEW View";
+    for (const workers of ["1", "2", "4"]) {
+      const settings = { PROVE_IT_WORKERS: workers, PROVE_IT_SHARED_LEVEL: "1" };
+      expect(await compareWithInterpreter(body, config, settings)).toContainEqual(
+        expect.stringMatching(COMPLETE),
+      );
+    }
+  });
+
   it("reduces by symmetry, with and without a VIEW, and hands over representatives", async () => {
     const body = [
       "EXTENDS Naturals, FiniteSets, TLC",

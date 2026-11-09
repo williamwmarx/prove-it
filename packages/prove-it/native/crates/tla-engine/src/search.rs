@@ -352,6 +352,11 @@ trait Reached {
     fn add(&mut self, state: &[Id], key: &[Id], fingerprint: u64, slot: usize, parent: i32);
     // The index of the state in a slot, for an edge of the graph.
     fn index(&self, slot: usize) -> u32;
+    // Whether an invariant that fails of a new state waits to stop the search until it is known
+    // that no other thread found another state with its key first, which it records.
+    fn defers_violation(&mut self, _parent: usize, _fingerprint: u64) -> bool {
+        false
+    }
 }
 
 impl Reached for States {
@@ -693,7 +698,13 @@ impl<'r, T: Reached> Search<'r, T> {
             let holds =
                 holds_all_changed(machine, &context.invariants, &self.successor, &self.current);
             self.swap_successor(machine, self.expansion_epoch, self.level_id);
-            if !holds? {
+            let is_deferred = |states: &mut T| {
+                is_new
+                    && fingerprint.is_some_and(|fingerprint| {
+                        states.defers_violation(self.expanding, fingerprint)
+                    })
+            };
+            if !holds? && !is_deferred(&mut self.states) {
                 return Err(Bail("an invariant violated"));
             }
         }
@@ -824,6 +835,7 @@ struct Candidates<'b> {
     keys: Vec<Id>,
     fingerprints: Vec<u64>,
     parents: Vec<u32>,
+    deferred: Vec<(u32, u64)>,
     collisions: u64,
 }
 
@@ -888,6 +900,16 @@ impl Reached for Candidates<'_> {
     fn index(&self, _slot: usize) -> u32 {
         unreachable!("a search that records its graph runs on one thread")
     }
+
+    // Where the key isn't the state, a thread that takes a state for new may have missed another
+    // with the same key that another thread found first, whose invariant TLC checks instead.
+    fn defers_violation(&mut self, parent: usize, fingerprint: u64) -> bool {
+        if self.before.key_width.is_none() {
+            return false;
+        }
+        self.deferred.push((parent as u32, fingerprint));
+        true
+    }
 }
 
 // A thread of the search: its machine, on an overlay of the store, and its caches, which it keeps
@@ -934,6 +956,9 @@ struct Expanded {
     keys: Vec<Id>,
     fingerprints: Vec<u64>,
     parents: Vec<u32>,
+    // Each state, by its parent, whose invariant failed but which another thread may have found
+    // first under a VIEW or symmetry, as another state with the same key.
+    deferred: Vec<(u32, u64)>,
     collisions: u64,
     stop: Option<(usize, Bail)>,
     is_past_walk: bool,
@@ -982,6 +1007,7 @@ fn expand_claimed(worker: &mut Worker<'_>, shared: &Shared<'_>) -> Expanded {
         keys: Vec::new(),
         fingerprints: Vec::new(),
         parents: Vec::new(),
+        deferred: Vec::new(),
         collisions: 0,
     };
     let mut quiet = Quiet;
@@ -1040,6 +1066,7 @@ fn expand_claimed(worker: &mut Worker<'_>, shared: &Shared<'_>) -> Expanded {
         keys: found.keys,
         fingerprints: found.fingerprints,
         parents: found.parents,
+        deferred: found.deferred,
         collisions: found.collisions,
         stop,
         is_past_walk: worker.machine.is_past_walk,
@@ -1094,7 +1121,7 @@ impl Search<'_, States> {
             worker.machine.store.detach();
         }
         machine.store = Arc::into_inner(store).expect("the store, once the threads let go of it");
-        let stop = level.stop.load(Ordering::Relaxed);
+        let mut stop = level.stop.load(Ordering::Relaxed);
         let mut owners = vec![None; (level.end - level.start).div_ceil(level.chunk)];
         for (thread, found) in expanded.iter().enumerate() {
             for (run, claimed) in found.claimed.iter().enumerate() {
@@ -1104,19 +1131,16 @@ impl Search<'_, States> {
         let width = self.states.width;
         let key_width = self.states.key_width;
         let is_verified = self.states.is_verified;
-        let mut new_counts = vec![0u32; stop - level.start];
+        let mut new_counts = vec![0u32; level.end - level.start];
+        let mut violated = None;
         let (mut state, mut key) = (Vec::with_capacity(width), Vec::with_capacity(width));
-        for &(thread, run) in owners.iter().map_while(Option::as_ref) {
+        // The states in order, each run by the thread that claimed it: what each state's expansion
+        // found joins the states found, unless an invariant it deferred fails of a state that is
+        // new, which stops the search there.
+        'states: for &(thread, run) in owners.iter().map_while(Option::as_ref) {
             let found = &expanded[thread];
             let claimed = &found.claimed[run];
             let next = found.claimed.get(run + 1);
-            let successors = &found.successors
-                [claimed.successors..next.map_or(found.successors.len(), |next| next.successors)];
-            for (offset, &count) in successors.iter().enumerate() {
-                if claimed.start + offset < stop {
-                    self.generated += u64::from(count);
-                }
-            }
             let worker = &mut workers[thread];
             let overlay = &worker.machine.store;
             let mut import = |ids: &[Id], into: &mut Vec<Id>| {
@@ -1126,32 +1150,58 @@ impl Search<'_, States> {
                         .map(|&id| machine.store.import(overlay, id, &mut worker.imported)),
                 );
             };
-            let candidates =
-                claimed.candidates..next.map_or(found.parents.len(), |next| next.candidates);
-            for index in candidates {
-                let parent = found.parents[index] as usize;
-                if parent >= stop {
-                    break;
+            let mut candidate = claimed.candidates;
+            let mut deferred = found
+                .deferred
+                .partition_point(|&(parent, _)| (parent as usize) < claimed.start);
+            for (offset, parent) in
+                (claimed.start..(claimed.start + level.chunk).min(level.end)).enumerate()
+            {
+                if parent > stop {
+                    break 'states;
                 }
-                let fingerprint = found.fingerprints[index];
-                let ids = &found.ids[index * width..(index + 1) * width];
-                let keys = key_width
-                    .map(|key_width| &found.keys[index * key_width..(index + 1) * key_width]);
-                if is_verified {
-                    import(keys.unwrap_or(ids), &mut key);
+                while let Some(&(at, fingerprint)) = found.deferred.get(deferred)
+                    && at as usize == parent
+                {
+                    if self.states.set.find(fingerprint).is_err() {
+                        stop = parent;
+                        violated = Some(Bail("an invariant violated"));
+                        break 'states;
+                    }
+                    deferred += 1;
                 }
-                let Err(slot) = self.states.find(&key, fingerprint) else {
-                    continue;
-                };
-                import(ids, &mut state);
-                if let Some(keys) = keys {
-                    import(keys, &mut key);
+                if parent == stop {
+                    break 'states;
                 }
-                self.states
-                    .add(&state, &key, fingerprint, slot, parent as i32);
-                new_counts[parent - level.start] += 1;
+                self.generated += u64::from(found.successors[claimed.successors + offset]);
+                let candidates =
+                    candidate..next.map_or(found.parents.len(), |next| next.candidates);
+                for index in candidates {
+                    if found.parents[index] as usize != parent {
+                        break;
+                    }
+                    candidate += 1;
+                    let fingerprint = found.fingerprints[index];
+                    let ids = &found.ids[index * width..(index + 1) * width];
+                    let keys = key_width
+                        .map(|key_width| &found.keys[index * key_width..(index + 1) * key_width]);
+                    if is_verified {
+                        import(keys.unwrap_or(ids), &mut key);
+                    }
+                    let Err(slot) = self.states.find(&key, fingerprint) else {
+                        continue;
+                    };
+                    import(ids, &mut state);
+                    if let Some(keys) = keys {
+                        import(keys, &mut key);
+                    }
+                    self.states
+                        .add(&state, &key, fingerprint, slot, parent as i32);
+                    new_counts[parent - level.start] += 1;
+                }
             }
         }
+        new_counts.truncate(stop - level.start);
         for &count in &new_counts {
             out_degrees[(count as usize).min(OUT_DEGREE_BUCKETS - 1)] += 1;
         }
@@ -1163,6 +1213,9 @@ impl Search<'_, States> {
             machine.is_past_walk |= found.is_past_walk;
         }
         self.expanding = stop;
+        if let Some(bail) = violated {
+            return Err(bail);
+        }
         if stop < level.end && stop_at == Some(stop) {
             return Err(Bail("stopped where PROVE_IT_STOP_AT asked"));
         }
@@ -1308,7 +1361,10 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         is_past_initial = true;
 
         // --- next states ---
-        let mut level_end = search.states.count();
+        // The initial states are the first level, which starts as the loop does, so that it too
+        // can be shared between threads.
+        let mut level_end = 0;
+        search.level = 0;
         let started_at = Instant::now();
         let mut progress_at = started_at + FIRST_PROGRESS;
         search.expanding = 0;
