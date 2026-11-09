@@ -37,6 +37,16 @@ pub fn fingerprint_failure(value: &Value) -> Result<Option<(Vec<Value>, TlcMessa
                 // Each subset holds elements of the base, which fingerprint.
                 return Ok(None);
             }
+            // TLC enumerates it to fingerprint it, which fails.
+            Lazy::Cup(..) => {
+                let Err(error) = crate::sets::enumerate(lazy) else {
+                    return Err(());
+                };
+                return error
+                    .message
+                    .map(|message| Some((vec![value.clone()], message)))
+                    .ok_or(());
+            }
             _ => return Err(()),
         },
         Value::Unsorted(_) => return Err(()),
