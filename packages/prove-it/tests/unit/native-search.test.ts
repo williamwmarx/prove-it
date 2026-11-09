@@ -184,6 +184,22 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     );
   });
 
+  it("walks a universal quantifier whose body only assigns, in the initial predicate", async () => {
+    // TLC walks \A in getInitStates whatever its body, so s = v assigns s for the first binding
+    // and tests it for the others, as AssignmentInit (TLC's tests) does.
+    const body = [
+      "EXTENDS Naturals",
+      "VARIABLE s",
+      "Init == \\/ \\A v \\in {2} : s = v /\\ s \\in {2}",
+      "        \\/ \\A v \\in {6, 7} : s = v",
+      "        \\/ \\A v \\in {9} : s \\in {8, 9} /\\ s > v - 1",
+      "Next == UNCHANGED s",
+    ];
+    expect(await compareWithInterpreter(body, "INIT Init\nNEXT Next")).toContainEqual(
+      expect.stringMatching(COMPLETE),
+    );
+  });
+
   it("assigns or tests where a path may or may not have assigned a variable", async () => {
     // The walk is compiled path by path, knowing which variables each has assigned. Past more
     // paths than it compiles apart, or a walked \A, it knows only what every path assigned, and
@@ -1019,12 +1035,11 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
 
   it("hands over a failure in the initial predicate with nothing found yet", async () => {
     // The interpreter computes the initial states again from the start, as it does when the
-    // TypeScript engine stops there.
+    // TypeScript engine stops there. TLC builds the function at once, so s has no value.
     const body = [
       "EXTENDS Naturals",
       "VARIABLE s",
-      "All(var, S) == \\A v \\in S : var = v",
-      "Init == All(s, {2}) \\/ s \\in {3, 4}",
+      "Init == [k \\in {1} |-> s = 2][1] \\/ s \\in {3, 4}",
       "Next == UNCHANGED s",
     ];
     expect(await compareWithInterpreter(body, "INIT Init\nNEXT Next")).toContainEqual(

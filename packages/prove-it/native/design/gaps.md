@@ -333,3 +333,16 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   not assigned" where TLC completes. It now walks the body of a function a definition gives too,
   a recursive one included, unless TLC evaluated the definition at startup. coverage/I (TLC's
   tests) now completes in Rust: 20 states generated, 5 distinct, as TLC.
+
+## A universal quantifier in the initial predicate
+
+- TLC walks `\A` in `getInitStates` whatever its body, so `\A v \in {2} : s = v` assigns s for the
+  first binding and tests it for the others. The engine walked `\A` only where its body has a
+  prime, UNCHANGED, `\/` or `\E`, and evaluated `s = v` as a guard while s had no value: it
+  stopped on "variable not assigned" where TLC finds the state. Its check of a body now also finds
+  an initial predicate's unprimed assignments, `x = e` and `x \in S`.
+- TLC computes the initial states building a function at once (`EvalControl.Init`), all but a
+  recursive one, so it applies a function's value there rather than walking its body. The engine
+  walked the body of a function a construction gives where it branches; in the initial predicate
+  it now walks only a recursive function's body. AssignmentInit (TLC's tests) now stops at the
+  deadlock in Rust, as TLC.
