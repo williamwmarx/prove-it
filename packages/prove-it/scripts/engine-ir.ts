@@ -72,6 +72,7 @@ const GOLDEN_MODELS = [
   "tlc/tlatools/org.lamport.tlatools/test-model/Github461.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/TESpecTest/TESpecRuntimeErrorTest.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/EvaluatingValueTest.cfg",
+  "tlc/tlatools/org.lamport.tlatools/test-model/suite/etest6.cfg",
 ];
 
 const GOLDEN_DIRECTORY = join(CONFORMANCE_DIRECTORY, "ir");

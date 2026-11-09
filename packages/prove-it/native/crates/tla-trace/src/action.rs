@@ -120,6 +120,76 @@ impl<'ir> Evaluator<'ir> {
         }
     }
 
+    /// TLC's actions of a next-state relation, as `Tool.getActions` splits it: each disjunct, the
+    /// body of an operator whose arguments are constant, a LET's body, and `\\E` at each of its
+    /// bindings; anything else, and an `\\E` of no bindings or one TLC fails to enumerate, is an
+    /// action.
+    pub fn split_actions(
+        &mut self,
+        node: NodeId,
+        context: &Context,
+        actions: &mut Vec<(NodeId, Context)>,
+    ) -> Evaluated<()> {
+        match self.kind(node) {
+            NodeKind::Or(operands) => {
+                for &operand in operands {
+                    self.split_actions(operand, context, actions)?;
+                }
+                return Ok(());
+            }
+            NodeKind::Let {
+                instances,
+                definitions,
+                body,
+            } => {
+                let inner = self.bind_let(*instances, definitions, context)?;
+                return self.split_actions(*body, &inner, actions);
+            }
+            NodeKind::Exists { bounds, body } => {
+                let mut contexts = Vec::new();
+                let enumerated = self.for_each_binding(bounds, context, &mut |_, inner| {
+                    contexts.push(inner.clone());
+                    Ok(true)
+                });
+                if enumerated.is_err() || contexts.is_empty() {
+                    actions.push((node, context.clone()));
+                    return Ok(());
+                }
+                for inner in contexts {
+                    self.split_actions(*body, &inner, actions)?;
+                }
+                return Ok(());
+            }
+            NodeKind::Identifier(_) | NodeKind::Apply { .. }
+                if self.has_constant_arguments(node, context) =>
+            {
+                if let Some((body, inner)) = self.resolve_action(node, context)? {
+                    return self.split_actions(body, &inner, actions);
+                }
+            }
+            _ => {}
+        }
+        actions.push((node, context.clone()));
+        Ok(())
+    }
+
+    // Whether the arguments of an operator application are constant, as `getActionsAppl` asks of
+    // them before it splits the operator's body: here, whether each evaluates without the state.
+    fn has_constant_arguments(&mut self, node: NodeId, context: &Context) -> bool {
+        let NodeKind::Apply { args, .. } = self.kind(node) else {
+            return true;
+        };
+        let width = self.current.len();
+        let current = std::mem::replace(&mut self.current, vec![None; width]);
+        let next = std::mem::replace(&mut self.next, vec![None; width]);
+        let is_constant = args
+            .iter()
+            .all(|&argument| self.evaluate(argument, context).is_ok());
+        self.current = current;
+        self.next = next;
+        is_constant
+    }
+
     // Walks a node in its frame of the call stack, as `visit` in `tlc/replay.ts` does.
     fn walk(
         &mut self,

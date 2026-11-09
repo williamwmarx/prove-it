@@ -120,25 +120,42 @@ impl<'ir> Rebuilder<'ir> {
             Site::Next => {
                 evaluator.current = current;
                 evaluator.level = level;
-                let actions: Vec<(NodeId, Option<u32>)> = if ir.model.actions.is_empty() {
-                    vec![(ir.model.next, ir.model.scope)]
+                // TLC's actions: the IR's, or, where it has none, the next-state relation split
+                // as TLC splits it.
+                let actions = if ir.model.actions.is_empty() {
+                    // TLC splits the relation before it replays, outside the call stack.
+                    let call_stack = evaluator.call_stack.take();
+                    let mut actions = Vec::new();
+                    let split = evaluator
+                        .scope_context(ir.model.scope)
+                        .and_then(|context| {
+                            evaluator.split_actions(ir.model.next, &context, &mut actions)
+                        })
+                        .map(|()| actions);
+                    evaluator.call_stack = call_stack;
+                    split
                 } else {
                     ir.model
                         .actions
                         .iter()
-                        .map(|action| (action.expression, action.scope))
+                        .map(|action| {
+                            evaluator
+                                .scope_context(action.scope)
+                                .map(|context| (action.expression, context))
+                        })
                         .collect()
                 };
-                actions
-                    .into_iter()
-                    .try_for_each(|(expression, scope)| {
-                        evaluator.next = vec![None; width];
-                        let context = evaluator.scope_context(scope)?;
-                        evaluator
-                            .walk_action(expression, &context, false, &mut |_| Ok(true))
-                            .map(|_| ())
-                    })
-                    .map(|()| true)
+                actions.and_then(|actions| {
+                    actions
+                        .into_iter()
+                        .try_for_each(|(expression, context)| {
+                            evaluator.next = vec![None; width];
+                            evaluator
+                                .walk_action(expression, &context, false, &mut |_| Ok(true))
+                                .map(|_| ())
+                        })
+                        .map(|()| true)
+                })
             }
             Site::Invariant(position) => {
                 evaluator.current = current;

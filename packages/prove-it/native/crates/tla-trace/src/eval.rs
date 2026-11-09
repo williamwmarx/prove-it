@@ -15,8 +15,8 @@ use tla_ir::{
 use crate::print::{format_pretty, format_printed, format_value};
 use crate::sets::{as_tuple, cardinality, difference, intersection, is_member, is_subset, union};
 use crate::value::{
-    Class, Evaluated, Function, Lazy, Text, Value, compare, elements, equals, fail, fail_coded,
-    fail_runtime, find_key, set_of, sorted_function, written_function,
+    Class, Evaluated, Function, Lazy, Text, TlcMessage, Value, compare, elements, equals, fail,
+    fail_coded, fail_runtime, fail_with, find_key, set_of, sorted_function, written_function,
 };
 
 /// The bindings an expression sees, innermost first.
@@ -331,7 +331,13 @@ impl<'ir> Evaluator<'ir> {
 
     // --- the state ---
 
-    fn read_variable(&mut self, index: u32, context: &Context) -> Evaluated<Value> {
+    fn read_variable(
+        &mut self,
+        node: NodeId,
+        name: &Name,
+        index: u32,
+        context: &Context,
+    ) -> Evaluated<Value> {
         self.reads += 1;
         let state = if context.is_primed {
             &self.next
@@ -340,11 +346,24 @@ impl<'ir> Evaluator<'ir> {
         };
         match state.get(index as usize) {
             Some(Some(value)) => Ok(value.clone()),
-            Some(None) => fail(if context.is_primed {
-                "primed variable not assigned"
-            } else {
-                "variable not assigned"
-            }),
+            // TLC's `Tool#evalAppl` fails to look up a variable the state doesn't assign
+            // (`createUnassignedError` in `evaluate.ts`).
+            Some(None) => fail_with(
+                if context.is_primed {
+                    "primed variable not assigned"
+                } else {
+                    "variable not assigned"
+                },
+                TlcMessage {
+                    text: format!(
+                        "In evaluation, the identifier {} is either undefined or not an operator.\n{}",
+                        self.name(name.text),
+                        self.describe_range(node)
+                    ),
+                    code: Some(2280),
+                    is_eval_exception: false,
+                },
+            ),
             None => fail("a variable past the state's"),
         }
     }
@@ -568,7 +587,7 @@ impl<'ir> Evaluator<'ir> {
             NodeKind::WideNumber(_) => fail("an integer outside 32 bits"),
             NodeKind::Decimal(_) => fail("a real number"),
             NodeKind::String(text) => Ok(Value::Str(self.text(*text))),
-            NodeKind::Identifier(name) => self.identifier(name, context),
+            NodeKind::Identifier(name) => self.identifier(node, name, context),
             NodeKind::Apply { name, args } => self.apply(name, args, context),
             NodeKind::And(operands) => {
                 for &operand in operands {
@@ -802,14 +821,14 @@ impl<'ir> Evaluator<'ir> {
 
     // --- names ---
 
-    fn identifier(&mut self, name: &Name, context: &Context) -> Evaluated<Value> {
+    fn identifier(&mut self, node: NodeId, name: &Name, context: &Context) -> Evaluated<Value> {
         if name.is_local
             && let Some(frame) = lookup(&context.env, name.text)
         {
             return self.binding(&frame, context);
         }
         match name.resolution {
-            Resolution::Variable(index) => return self.read_variable(index, context),
+            Resolution::Variable(index) => return self.read_variable(node, name, index, context),
             Resolution::Constant(index) => {
                 return match self.ir.constants[index as usize].value {
                     Some(value) => self.value(value),

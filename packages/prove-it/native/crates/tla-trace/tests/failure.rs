@@ -160,3 +160,28 @@ fn reports_a_missing_field_in_an_action_as_an_unexpected_exception() {
          2. Line 10, column 12 to line 10, column 16 in TESpecRuntimeErrorTest\n\n"
     );
 }
+
+#[test]
+fn reports_a_primed_variable_an_action_reads_before_it_assigns_it() {
+    let (failure, call_stack) = evaluate_failure(&format!("{MODELS}/suite/etest6"));
+    let text = "In evaluation, the identifier x is either undefined or not an operator.\nline 16, col 23 to line 16, col 23 of module etest6";
+    let prefix = "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: ";
+    assert_eq!(failure.code, 1000);
+    assert_eq!(failure.message, format!("{prefix}{text}"));
+    assert_eq!(
+        failure.tool_message,
+        format!("{prefix}@!@!@STARTMSG 2280:0 @!@!@\n{text}\n@!@!@ENDMSG 2280 @!@!@")
+    );
+    assert_eq!(
+        call_stack,
+        "0. Line 15, column 13 to line 17, column 53 in etest6\n\
+         1. Line 15, column 16 to line 15, column 23 in etest6\n\
+         2. Line 16, column 16 to line 16, column 24 in etest6\n\
+         3. Line 13, column 14 to line 13, column 43 in etest6\n\
+         4. Line 13, column 19 to line 13, column 43 in etest6\n\
+         5. Line 13, column 36 to line 13, column 42 in etest6\n\
+         6. Line 13, column 37 to line 13, column 40 in etest6\n\
+         7. Line 13, column 37 to line 13, column 37 in etest6\n\
+         8. Line 16, column 23 to line 16, column 23 in etest6\n\n"
+    );
+}
