@@ -1298,28 +1298,36 @@ impl<'ir> Evaluator<'ir> {
 
     // Membership in a set, through the operands of a `\\cup`, `\\cap` or `\\`, as TLC's lazy
     // `SetCupValue`, `SetCapValue` and `SetDiffValue` test it, so that an infinite operand such as
-    // Nat isn't enumerated. Both operands are evaluated, as TLC builds the set from both.
+    // Nat isn't enumerated.
     fn is_member_of(&mut self, element: &Value, set: &Operand) -> Evaluated<bool> {
+        self.combined_set(set)?.has(element)
+    }
+
+    // A set as TLC builds it, both operands of each `\\cup`, `\\cap` or `\\` evaluated.
+    fn combined_set(&mut self, set: &Operand) -> Evaluated<Combined> {
         if let Operand::Node(node, context) = set
             && let NodeKind::Apply { name, args } = self.kind(*node)
             && let [left, right] = args[..]
             && !name.is_local
             && let Resolution::Builtin(index) = name.resolution
         {
-            let operator = self.name(self.ir.builtins[index as usize].name);
-            if matches!(operator, "\\cup" | "\\cap" | "\\") {
-                let is_left = self.is_member_of(element, &Operand::Node(left, context.clone()))?;
-                let is_right =
-                    self.is_member_of(element, &Operand::Node(right, context.clone()))?;
-                return Ok(match operator {
-                    "\\cup" => is_left || is_right,
-                    "\\cap" => is_left && is_right,
-                    _ => is_left && !is_right,
-                });
+            let operation = match self.name(self.ir.builtins[index as usize].name) {
+                "\\cup" => Some(SetOperation::Union),
+                "\\cap" => Some(SetOperation::Intersection),
+                "\\" => Some(SetOperation::Difference),
+                _ => None,
+            };
+            if let Some(operation) = operation {
+                let left = self.combined_set(&Operand::Node(left, context.clone()))?;
+                let right = self.combined_set(&Operand::Node(right, context.clone()))?;
+                return Ok(Combined::Operation(
+                    operation,
+                    Box::new(left),
+                    Box::new(right),
+                ));
             }
         }
-        let set = self.operand(set)?;
-        is_member(element, &set)
+        Ok(Combined::Set(self.operand(set)?))
     }
 
     fn builtin(
@@ -1727,6 +1735,31 @@ fn permute(
 
 /// An argument of a builtin: an expression as written, or a value an operator argument is
 /// applied to.
+enum SetOperation {
+    Union,
+    Intersection,
+    Difference,
+}
+
+enum Combined {
+    Set(Value),
+    Operation(SetOperation, Box<Combined>, Box<Combined>),
+}
+
+impl Combined {
+    // Membership, testing the right operand only where the left one doesn't decide it.
+    fn has(&self, element: &Value) -> Evaluated<bool> {
+        match self {
+            Combined::Set(set) => is_member(element, set),
+            Combined::Operation(operation, left, right) => Ok(match operation {
+                SetOperation::Union => left.has(element)? || right.has(element)?,
+                SetOperation::Intersection => left.has(element)? && right.has(element)?,
+                SetOperation::Difference => left.has(element)? && !right.has(element)?,
+            }),
+        }
+    }
+}
+
 enum Operand {
     Node(NodeId, Context),
     Value(Value),
