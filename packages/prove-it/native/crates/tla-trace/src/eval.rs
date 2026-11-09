@@ -365,6 +365,7 @@ fn as_java_failure<T>(signature: &str, result: Evaluated<T>) -> Evaluated<T> {
 fn is_text(text: &Text, word: &str) -> bool {
     text.units.iter().copied().eq(word.encode_utf16())
 }
+const CARDINALITY: &str = "public static tlc2.value.impl.IntValue tlc2.module.FiniteSets.Cardinality(tlc2.value.impl.Value)";
 const TEXT_SERIALIZE: &str = "public static synchronized tlc2.value.impl.Value tlc2.module.Json.textSerialize(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel)";
 
 impl<'ir> Evaluator<'ir> {
@@ -941,6 +942,18 @@ impl<'ir> Evaluator<'ir> {
                     ),
                 )
             }
+            // `OPCODE_uc`: TLC evaluates no CHOOSE without a bound. Where it computes ENABLED of
+            // one as an action, it words the failure apart.
+            NodeKind::Choose { set: None, .. } if self.is_enabling => {
+                fail("an unbounded CHOOSE in ENABLED")
+            }
+            NodeKind::Choose { set: None, .. } => fail_runtime(
+                "an unbounded CHOOSE",
+                format!(
+                    "TLC attempted to evaluate an unbounded CHOOSE.\nMake sure that the expression is of form CHOOSE x \\in S: P(x).\n{}",
+                    self.describe_range(node)
+                ),
+            ),
             NodeKind::SetEnumeration(items) => {
                 let values = items
                     .iter()
@@ -2455,10 +2468,20 @@ impl<'ir> Evaluator<'ir> {
                 arity(1)?;
                 int(-self.operand_int(&operands[0])?)?
             }
+            // TLC reports what fails as it counts, but an EvalException, as the failure of the Java
+            // method `FiniteSets.Cardinality` (`MethodValue.eval`).
             "Cardinality" => {
                 arity(1)?;
                 let set = self.operand(&operands[0])?;
-                int(cardinality(&set)? as i64)?
+                let counted = cardinality(&set);
+                let counted = match &counted {
+                    Err(EvalError {
+                        message: Some(message),
+                        ..
+                    }) if !message.is_eval_exception => as_java_failure(CARDINALITY, counted),
+                    _ => counted,
+                };
+                int(counted? as i64)?
             }
             "IsFiniteSet" => {
                 arity(1)?;
@@ -3092,7 +3115,6 @@ fn describe(kind: &NodeKind) -> &'static str {
         NodeKind::Lambda { .. } => "LAMBDA",
         NodeKind::OperatorReference(_) => "an operator reference",
         NodeKind::UnboundedQuantifier { .. } => "an unbounded quantifier",
-        NodeKind::Choose { .. } => "an unbounded CHOOSE",
         NodeKind::FunctionConstruction { .. } => "a recursive function",
         NodeKind::Always(_) | NodeKind::Eventually(_) => "a temporal formula",
         NodeKind::WeakFairness { .. } | NodeKind::StrongFairness { .. } => "a fairness",

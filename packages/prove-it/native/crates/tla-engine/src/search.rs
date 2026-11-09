@@ -413,6 +413,7 @@ const TLC_FAILURES: &[&str] = &[
     "an assertion failed",
     "an initial state that isn't complete",
     "an operator's table applied outside its rows",
+    "an unbounded CHOOSE",
     "applied a function outside its domain",
     "applied a non-function",
     "applied a recursive function outside its domain",

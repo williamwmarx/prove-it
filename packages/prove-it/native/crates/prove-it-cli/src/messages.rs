@@ -42,6 +42,7 @@ pub const POSTCONDITION_FAILED: u32 = 2405;
 pub const NO_SPECIFICATION_BUT_PROPERTY: u32 = 2257;
 pub const NO_FAIRNESS_BUT_PROPERTY: u32 = 2259;
 pub const COMPUTING_INIT_PROGRESS: u32 = 2269;
+pub const SYMMETRY_SET_TOO_SMALL: u32 = 2300;
 pub const CONFIG_FILE_ERROR: u32 = 5001;
 
 #[derive(Clone, Copy, PartialEq, Eq)]

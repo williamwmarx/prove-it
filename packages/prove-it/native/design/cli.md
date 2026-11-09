@@ -256,17 +256,30 @@ Still to do:
 - Lowering reads modules beside the spec, then from each `-DTLA-Library` directory in order.
 - Where tla-front doesn't find where TLC stops, the not-native reason says why.
 
+## The front from tla-front alone
+
+- Without `PROVE_IT_FRONT`, tla-front is the whole front end: the binary prints SANY's report as
+  tla-front writes it (framed by 2220 and 2219 under -tool), then `Starting...`, and lowers the
+  model itself. What TLC prints as it starts comes from the engine's startup hooks, which the
+  binary wires only on this path (`Relay::is_startup_printed`), since a recorded front holds it:
+  - `startup_print` prints as `Relay::print` does, with the same `is_printable` check, so a value
+    whose text depends on how TLC built it stops the run as not native;
+  - `symmetry_sets_too_small` prints 2300 as `Tool.getSymmetryPerms` words it.
+- Still not native on this path, as TLC prints more as it starts:
+  - the Java overrides TLC loads (any `.class` file beside the spec);
+  - the warning of a constant-level invariant (2149), which the IR drops;
+  - a PROPERTY: the warning of a state-level property and the tableau's branches (2212);
+  - the trace exploration spec TLC parses with the spec, unless `-tool`, `-noGenerateSpecTE`
+    (`-noTE`) or `-continue` (`isTraceRecorded`).
+- `differential --native <binary> --native-front` runs the binary this way.
+
 ## Handoff
 
 - Two paths feed the search. With a recorded front (`PROVE_IT_FRONT/<spec>.front`, what TLC
   printed from the banner to "Computing initial states", which the differential records), the
-  binary prints that text and lowers the IR itself where no `.ir` is recorded. Without one it only
-  reports where TLC stops before the search (above); every run that searches has a recorded front.
-- Open: the engine's startup hooks `startup_print`, `symmetry_sets_too_small` and `startup_done`
-  are not wired in the CLI, since the recorded front holds that output. The tla-front path needs
-  them to print what TLC prints as it starts. `startup_print` must check `is_printable` as
-  `Relay::print` does and stop the run as not native otherwise: under `compiler.is_native` the
-  Print builtin no longer declines a value whose text depends on how TLC built it.
+  binary prints that text and lowers the IR itself where no `.ir` is recorded. Where the directory
+  has no recorded front, it only reports where TLC stops before the search. Without
+  `PROVE_IT_FRONT`, tla-front is the whole front end (above).
 - Sweep for wrong output after a big push: list the corpus models whose configuration uses
   SYMMETRY, VIEW, ALIAS, POSTCONDITION(S) or `_POSSIBLE`, and run
   `bun scripts/run.ts differential --compare-backends --filter <id> --native
