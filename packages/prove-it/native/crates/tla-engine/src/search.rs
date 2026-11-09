@@ -1845,9 +1845,8 @@ fn share_startup(machine: &mut Machine<'_>, context: &EngineContext) -> Outcome<
 /// expressions and values, so its caller runs it on a thread with a deep stack.
 pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> SearchOutcome {
     let model = &ir.model;
-    let ranked: Vec<Vec<u16>> = ir.texts[..ir.ranked_count as usize]
-        .iter()
-        .map(|text| text.encode_utf16().collect())
+    let ranked: Vec<Vec<u16>> = (0..ir.ranked_count)
+        .map(|text| ir.get_text_units(text))
         .collect();
     let mut store = Store::new();
     store.reset(ranked.iter().map(Vec::as_slice));
