@@ -587,6 +587,50 @@ fn reports_a_spec_sany_rejects() {
     std::fs::remove_dir_all(directory).expect("removed");
 }
 
+// Runs the binary on a spec of the test's own, which tla-front lowers, as TLC prints nothing
+// before the search for it.
+fn run_lowered(test: &str, spec: &str, config: &str) -> (Output, PathBuf) {
+    let directory =
+        std::env::temp_dir().join(format!("prove-it-cli-{test}-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    std::fs::write(directory.join("Stop.front"), "").expect("a front");
+    run_unrecorded(test, spec, config)
+}
+
+#[test]
+fn reads_and_sets_tlcs_registers() {
+    // TLCCache evaluates Counted once, and TLCFP is TLC's fingerprint under -fp 0, which the
+    // interpreter and TLC print the same.
+    let spec = "---- MODULE Stop ----\nEXTENDS Integers, TLC, TLCExt\nVARIABLE x\nASSUME TLCSet(1, 0)\nCounted(v) == CASE TLCSet(1, TLCGet(1) + 1) -> v\nCached == TLCCache(Counted(7), {1})\nInit == x = 0 /\\ TLCSet(\"s:steps\", 0)\nNext == x < 3 /\\ x' = x + 1 /\\ Cached = 7 /\\ TLCSet(\"s:steps\", TLCGet(\"s:steps\") + 1)\nCounts == PrintT(<<TLCGet(1), TLCGet(\"s:steps\"), TLCGet(\"all\"), TLCGet(\"all:named\")>>)\nFingerprints == TLCFP(1) = -1504394061 /\\ TLCFP(\"a\") = -1022804895\n====\n";
+    let (output, directory) = run_lowered(
+        "registers",
+        spec,
+        "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE\nINVARIANT Fingerprints\nPOSTCONDITION Counts\n",
+    );
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(0), "{text}");
+    assert!(
+        text.contains(".\n<<1, 3, <<<<1>>>>, (\"s:steps\" :> <<3>>)>>\nModel checking completed."),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn rebuilds_a_trace_that_sets_registers() {
+    // TLC rebuilds the trace from the initial predicate, which sets the register again (as on
+    // TLC's TLCGetNonDeterminism).
+    let spec = "---- MODULE Stop ----\nEXTENDS Integers, TLC\nVARIABLES x, y\nInit == TLCSet(1, 0) /\\ x = 0 /\\ y = TLCGet(1)\nNext == x < 2 /\\ TLCSet(1, TLCGet(1) + 1) /\\ x' = x + 1 /\\ y' = TLCGet(1)\n====\n";
+    let (output, directory) = run_lowered("rebuilt", spec, "INIT Init\nNEXT Next\n");
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(11), "{text}");
+    assert!(
+        text.contains("State 2: <Next line 5, col 9 to line 5, col 73 of module Stop>\n/\\ x = 1\n/\\ y = 1\n\nState 3: <Next line 5, col 9 to line 5, col 73 of module Stop>\n/\\ x = 2\n/\\ y = 2\n\n"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
 #[test]
 fn reports_an_initial_state_tlc_fails_to_print() {
     // TLC's Github696b: TLC keeps the set as written, then fails to compare its model values as it
@@ -607,6 +651,47 @@ fn reports_an_initial_state_tlc_fails_to_print() {
     assert_eq!(output.status.code(), Some(255), "{text}");
     assert!(
         text.contains("Computing initial states...\nError: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: Attempted to compare the differently-typed model values B_a and A_a\nFinished in "),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+const ETCDRAFT_IR: &[u8] =
+    include_bytes!("../../../../tests/conformance/ir/etcd-raft/tla/etcdraft.ir");
+
+#[test]
+fn rebuilds_a_trace_of_bags_as_tlc_builds_them() {
+    let (output, directory) = run_golden("bags", ETCDRAFT_IR, "etcdraft", "", &[]);
+    let text = stdout(&output);
+    // The messages are bags, which (+) and (-) build and SetToBag starts, and applying the empty
+    // bag fails as applying TLC's empty function does.
+    assert_eq!(output.status.code(), Some(75), "{text}");
+    assert!(
+        text.contains(include_str!("etcdraft-failure.txt")),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+const SCHEDULING_ALLOCATOR_IR: &[u8] = include_bytes!(
+    "../../../../tests/conformance/ir/tlc/tlatools/org.lamport.tlatools/test-model/examples/allocator/SchedulingAllocator.ir"
+);
+
+#[test]
+fn rebuilds_a_trace_through_a_recursive_function_tlc_keeps_lazy() {
+    let (output, directory) = run_golden(
+        "recursive-function",
+        SCHEDULING_ALLOCATOR_IR,
+        "SchedulingAllocator",
+        "",
+        &[],
+    );
+    let text = stdout(&output);
+    // The schedule's permutations come from the recursive LET function perms over SUBSET S,
+    // which TLC applies to an argument without building it.
+    assert_eq!(output.status.code(), Some(13), "{text}");
+    assert!(
+        text.contains(include_str!("scheduling-allocator.txt")),
         "{text}"
     );
     std::fs::remove_dir_all(directory).expect("removed");

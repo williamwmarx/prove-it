@@ -54,7 +54,7 @@ import { validatePcalModule } from "../src/pcal/validate";
 import { getSany174LexicalError } from "../src/sany/lexer";
 import { getSanyParseError } from "../src/sany/parse-error";
 import { getSanyReport } from "../src/sany/report";
-import { createSearch, getInvariants, getProperties, getSpecification } from "../src/search";
+import { createSearch, getProperties, getSpecification } from "../src/search";
 import { getNextSubstitution } from "../src/spec-description";
 import { createTlcOrder } from "../src/tlc/order";
 import type { TlcVersion } from "../src/tlc/version";
@@ -232,9 +232,10 @@ const lowerFullModel = (source: string, _path: string, spec: string) => {
     files: { readFile: () => undefined, writeFile: () => {} },
     isSanyAccepted: true,
   });
-  // createSearch checks the invariants before it reads the specification, so their error comes
-  // first. Evaluating them ranks the strings TLC computes at startup, which this mode leaves out, so
-  // they are checked after the model is lowered.
+  // createSearch checks the configuration, as check.ts does first, so its error comes first, and
+  // gives no search for a spec without variables, whose IR check.ts lowers with FALSE for Init and
+  // Next. Its checks evaluate the invariants, which ranks the strings TLC computes at startup,
+  // which this mode leaves out, so it runs after the model is lowered.
   const lowered = (() => {
     try {
       return { outcome: lowerLinkedModel(config, linked, order) };
@@ -242,7 +243,7 @@ const lowerFullModel = (source: string, _path: string, spec: string) => {
       return { error };
     }
   })();
-  getInvariants(config.invariants, linked.environment);
+  createSearch(config, linked.environment, () => [], undefined);
   if ("error" in lowered) throw lowered.error;
   return lowered.outcome;
 };
@@ -256,10 +257,7 @@ const lowerLinkedModel = (
   const specification = getSpecification(config, environment);
   const search = getProperties(config, environment, () => {});
   const properties = toEngineProperties(search);
-  // createSearch checks the configuration, and gives no search for a spec without variables,
-  // whose IR check.ts lowers with FALSE for Init and Next.
   if (environment.variables.length === 0) {
-    createSearch(config, environment, () => [], undefined);
     const constant = lowerConstantSpec(config, linked, undefined);
     return "ir" in constant ? { ir: Buffer.from(constant.ir).toString("hex") } : constant;
   }
@@ -582,6 +580,8 @@ const time = () => {
 const compare = (write: (source: string, path: string, spec: string) => string) => {
   const rustLines: string[] = [];
   const unported = new Map<string, number>();
+  // A text TLC's strings hold but UTF-8 can't, which the TypeScript IR declines and Rust can't make.
+  const surrogates: string[] = [];
   const differences = modules.filter((module, index) => {
     if (index % BATCH === 0) {
       rustLines.splice(0, Infinity, ...runRust(modules.slice(index, index + BATCH)));
@@ -594,6 +594,10 @@ const compare = (write: (source: string, path: string, spec: string) => string) 
     }
     const expected = write(readFileSync(module.path, "utf8"), module.path, module.spec ?? "");
     if (expected === actual) return false;
+    if (expected === '{"reason":"a text with a lone surrogate"}') {
+      surrogates.push(module.id);
+      return false;
+    }
     const start = Array.from(expected).findIndex(
       (_, position) => actual?.[position] !== expected[position],
     );
@@ -604,8 +608,12 @@ const compare = (write: (source: string, path: string, spec: string) => string) 
   });
   const unportedCount = [...unported.values()].reduce((sum, count) => sum + count, 0);
   unported.forEach((count, reason) => console.log(`not linked yet: ${count} with ${reason}`));
+  surrogates.forEach((id) =>
+    console.log(`no TypeScript IR: ${id} has a text with a lone surrogate`),
+  );
+  const uncompared = unportedCount + surrogates.length;
   console.log(
-    `${mode}: ${modules.length - differences.length - unportedCount} of ${modules.length} modules match${unportedCount > 0 ? `, ${unportedCount} not compared yet` : ""}`,
+    `${mode}: ${modules.length - differences.length - uncompared} of ${modules.length} modules match${uncompared > 0 ? `, ${uncompared} not compared yet` : ""}`,
   );
   return differences.length === 0;
 };

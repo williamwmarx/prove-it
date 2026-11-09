@@ -1287,6 +1287,22 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     ]);
   });
 
+  it("leaves a recursive operator whose body it would walk to the interpreter", async () => {
+    // TLC walks Flip's body, assigning clock, as coverage/Github649 does; the engine can't unroll
+    // it as it compiles, so it declines rather than evaluate the call as a guard.
+    const body = [
+      "EXTENDS Naturals",
+      "VARIABLE clock",
+      "RECURSIVE Flip(_, _, _)",
+      "Flip(v, b, n) == IF n = 0 THEN v = ~b ELSE Flip(v, b, n - 1)",
+      "Init == Flip(clock, FALSE, 1)",
+      "Next == clock' = ~clock",
+    ];
+    expect(await compareWithInterpreter(body, "INIT Init\nNEXT Next")).toContainEqual(
+      expect.stringMatching(declined("unsupported: walking a recursive operator")),
+    );
+  });
+
   it("counts the _POSSIBLE predicates as TLC does, and hands the counts over", async () => {
     // TLC counts the states in the model and the steps each predicate holds of, duplicates and
     // all, and reports one that never held with the counts.

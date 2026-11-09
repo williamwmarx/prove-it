@@ -25,12 +25,12 @@ fn evaluate(definitions: &str, name: &str) -> ConfigValue {
     })
     .expect("an environment");
     let ranks: FastMap<Rc<str>, u32> = FastMap::default();
-    let evaluator = Evaluator {
-        environment: &environment,
-        order: ValueOrder { ranks: &ranks },
-        version: TlcVersion::Master,
-        is_started: true,
-    };
+    let evaluator = Evaluator::new(
+        &environment,
+        ValueOrder { ranks: &ranks },
+        TlcVersion::Master,
+        true,
+    );
     evaluator
         .evaluate(&create_identifier(name), None)
         .unwrap_or_else(|error| panic!("{error:?}"))
