@@ -268,3 +268,41 @@ State 7: <Next line 19, col 9 to line 21, col 21 of module RandomSubsetNextTuple
 /\ y = 6
 
 "#;
+
+// The first states of TLC's deadlock trace of mongodb-txns/MultiShardTxn/Storage (default mode),
+// under SYMMETRY.
+const STORAGE_TRACE_START: &str = r#"State 1: <Initial predicate>
+/\ oldestTs = (n :> -1)
+/\ allDurableTs = (n :> 0)
+/\ mcommitIndex = (n :> 0)
+/\ mlog = (n :> <<>>)
+/\ txnStatus = (n :> (t1 :> "OK" @@ t2 :> "OK" @@ t3 :> "OK"))
+/\ stableTs = (n :> -1)
+/\ mtxnSnapshots = ( n :>
+      ( t1 :> [aborted |-> FALSE, committed |-> FALSE, active |-> FALSE] @@
+        t2 :> [aborted |-> FALSE, committed |-> FALSE, active |-> FALSE] @@
+        t3 :> [aborted |-> FALSE, committed |-> FALSE, active |-> FALSE] ) )
+
+State 2: <StartTransaction(n,t1,1,"snapshot","false") line 252, col 5 to line 261, col 67 of module Storage>
+/\ oldestTs = (n :> -1)
+/\ allDurableTs = (n :> 0)
+/\ mcommitIndex = (n :> 0)
+/\ mlog = (n :> <<>>)
+/\ txnStatus = (n :> (t1 :> "OK" @@ t2 :> "OK" @@ t3 :> "OK"))
+/\ stableTs = (n :> -1)
+/\ mtxnSnapshots = ( n :>
+      ( t1 :>
+            [ ts |-> 1,
+              prepared |-> FALSE,
+              data |-> (k1 :> NoValue @@ k2 :> NoValue),
+              ignorePrepare |-> "false",
+              prepareTs |-> 0,
+              aborted |-> FALSE,
+              committed |-> FALSE,
+              readSet |-> {},
+              writeSet |-> {},
+              active |-> TRUE ] @@
+        t2 :> [aborted |-> FALSE, committed |-> FALSE, active |-> FALSE] @@
+        t3 :> [aborted |-> FALSE, committed |-> FALSE, active |-> FALSE] ) )
+
+"#;
