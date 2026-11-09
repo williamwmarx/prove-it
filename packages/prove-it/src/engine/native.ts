@@ -110,6 +110,18 @@ interface NativeCheckpoint {
   graph?: NativeGraph;
 }
 
+// What the native liveness checker found on a complete search (tla-live): the properties hold, a
+// counterexample's states with the start of its cycle, a path to a tableau node TLC accepts as it
+// adds the state, or why the interpreter checks them.
+export interface NativeLiveness {
+  status: "holds" | "lasso" | "accepted" | "declined";
+  reason: string;
+  path: Int32Array;
+  loopStart: number;
+  state: number;
+  isCycleConstrained: number;
+}
+
 // What the native engine did with a model (binding/check.rs).
 export type NativeOutcome =
   | { status: "unavailable" | "declined"; reason: string }
@@ -122,12 +134,13 @@ export type NativeOutcome =
       counts: Float64Array;
       outDegrees: Float64Array;
       fingerprints: BigInt64Array;
+      liveness?: NativeLiveness;
       checkpoint?: NativeCheckpoint;
     }
   | ({ status: "stopped"; reason: string } & NativeCheckpoint);
 
 // The contract between this loader and the addon, ABI_VERSION in its lib.rs.
-const ABI_VERSION = 3;
+const ABI_VERSION = 4;
 
 export const ADDON_FILE = "prove-it-engine.node";
 
