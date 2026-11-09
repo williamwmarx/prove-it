@@ -145,6 +145,11 @@ pub struct Trace {
 pub struct TraceState {
     /// Each variable's value, in `ir.variables` order, normalized as TLC normalized it.
     pub values: Vec<Value>,
+    /// The position in `ir.model.actions` of the action whose walk reached this state first, as
+    /// `Tool.getState` finds it; `None` for the first state, a stuttering step, or an IR without
+    /// actions. Under VIEW or SYMMETRY, where the engine can't label a step by its ids, this is
+    /// TLC's label.
+    pub action: Option<u32>,
     /// What Print and PrintT printed before this state: each print as the text of each value,
     /// which the caller pretty prints and joins as it does a print during the search.
     pub printed: Vec<Vec<String>>,
