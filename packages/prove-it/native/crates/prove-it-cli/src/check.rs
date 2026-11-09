@@ -459,7 +459,14 @@ fn check_spec(spec_path: &str, args: &Parsed, printer: &mut Printer) -> i32 {
         let searching = std::thread::Builder::new()
             .stack_size(SEARCH_STACK_BYTES)
             .spawn_scoped(scope, move || {
-                search(ir, &Settings::default(), &mut Relay(sender))
+                search(
+                    ir,
+                    &Settings {
+                        is_violation_reported: true,
+                        ..Settings::default()
+                    },
+                    &mut Relay(sender),
+                )
             })
             .expect("a thread for the search");
         for event in receiver {
@@ -587,8 +594,9 @@ fn print_violation(
     violation: &Violation,
     start: Instant,
 ) -> Option<i32> {
-    // TLC prints a state through the ALIAS when there is one, which the IR doesn't carry yet.
-    if config.alias.is_some() {
+    // TLC prints a state through the ALIAS when there is one, which the IR doesn't carry yet, and
+    // checks the postconditions on the trace after it prints it.
+    if config.alias.is_some() || !config.postconditions.is_empty() || !config.possible.is_empty() {
         return None;
     }
     match violation.kind {

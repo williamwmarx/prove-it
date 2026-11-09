@@ -39,6 +39,9 @@ pub struct Settings {
     /// through TLC's actions, and run each ENABLED answered from the steps, and fail where the two
     /// differ.
     pub is_live_checked: bool,
+    /// Whether the caller reports a violation the search stops at itself, once the search has
+    /// passed on what the spec printed before it.
+    pub is_violation_reported: bool,
 }
 
 /// What a search tells its caller as it runs, as `runEngine`'s callbacks.
@@ -1034,18 +1037,28 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 fingerprints: search.states.fingerprints,
             }
         }
-        Err(bail) if !is_past_initial => SearchOutcome::Stopped {
-            reason: bail.0.to_string(),
-            checkpoint: None,
-            collisions,
-            violation: search.violation.take().map(|found| {
-                Box::new(Violation {
-                    kind: found.kind,
-                    states: found.states,
-                    store: std::mem::replace(&mut machine.store, Store::new()),
-                })
-            }),
-        },
+        Err(bail) if !is_past_initial => {
+            let violation = search
+                .violation
+                .take()
+                .filter(|_| settings.is_violation_reported);
+            // Otherwise the interpreter starts from scratch and prints it all again.
+            if violation.is_some() {
+                search.flush(&mut machine);
+            }
+            SearchOutcome::Stopped {
+                reason: bail.0.to_string(),
+                checkpoint: None,
+                collisions,
+                violation: violation.map(|found| {
+                    Box::new(Violation {
+                        kind: found.kind,
+                        states: found.states,
+                        store: std::mem::replace(&mut machine.store, Store::new()),
+                    })
+                }),
+            }
+        }
         Err(bail) => {
             let count = checkpoint_count;
             let is_kept = search.graph.is_none() || count <= MAXIMUM_GRAPH_STATES;

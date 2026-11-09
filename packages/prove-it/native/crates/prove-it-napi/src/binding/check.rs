@@ -354,6 +354,8 @@ pub(super) unsafe extern "C" fn check_model(env: napi_env, info: napi_callback_i
                 is_fingerprint_verified: fingerprint_verified != 0,
                 state_log: (!state_log.is_empty()).then_some(state_log),
                 is_live_checked: live_checked != 0,
+                // The interpreter reports a violation itself.
+                is_violation_reported: false,
             };
             let mut undefined = null_mut();
             status(napi_get_undefined(env, &mut undefined))?;

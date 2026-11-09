@@ -165,6 +165,21 @@ fn marks_the_initial_violation_with_tool() {
 }
 
 #[test]
+fn leaves_a_postcondition_to_the_front_end() {
+    let (output, directory) = run_golden(
+        "postcondition",
+        TEST57_IR,
+        "test57",
+        "POSTCONDITION Never\n",
+        &[],
+    );
+    assert_eq!(output.status.code(), Some(1));
+    assert!(!stdout(&output).contains("violated"));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("not native yet: the engine stopped"));
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
 fn leaves_a_state_an_alias_prints_to_the_front_end() {
     let ir = include_bytes!(
         "../../../../tests/conformance/ir/tlc/tlatools/org.lamport.tlatools/test-model/Github746.ir"
