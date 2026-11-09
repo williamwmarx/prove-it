@@ -9,8 +9,8 @@ use std::sync::Arc;
 use tla_values::store::Outcome;
 use tla_values::{Bail, Id, Store};
 
-use crate::compile::random::JavaRandom;
 use crate::memo::{EMPTY, EPOCH_KEYS, EpochCache, MemoTable};
+use tla_values::random::JavaRandom;
 
 /// A compiled expression: its value, or where TLC would fail, or the engine hands over.
 pub type Eval = Arc<dyn Fn(&mut Machine<'_>) -> Outcome<Id> + Send + Sync>;
