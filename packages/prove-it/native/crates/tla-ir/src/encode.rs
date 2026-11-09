@@ -2,9 +2,9 @@
 //! the same bytes.
 
 use crate::{
-    AtomKind, Bound, ConfigName, DefinitionForm, EnabledActions, IR_VERSION, Ir, MAGIC, Name,
-    NodeId, NodeKind, Param, PathStep, Pattern, Resolution, ScopeBinding, Selector, Startup, Value,
-    code, tag,
+    AtomKind, Bound, ConfigName, DefinitionForm, EnabledActions, IR_VERSION, Ir, LiveTerm, MAGIC,
+    Name, NodeId, NodeKind, Param, PathStep, Pattern, Resolution, ScopeBinding, Selector, Startup,
+    Value, code, tag,
 };
 
 /// Encodes an IR.
@@ -164,6 +164,26 @@ fn encode_here(ir: &Ir) -> Vec<u8> {
             words.push(optional(*enabled));
         }
     }
+    let mut live = Vec::new();
+    for term in &model.live_formula {
+        match *term {
+            LiveTerm::Boolean(false) => live.push(code::LIVE_FALSE),
+            LiveTerm::Boolean(true) => live.push(code::LIVE_TRUE),
+            LiveTerm::State(atom) => live.extend([code::LIVE_STATE, atom as i32]),
+            LiveTerm::Enabled(atom) => live.extend([code::LIVE_ENABLED, atom as i32]),
+            LiveTerm::Action { atom, enabled } => {
+                live.extend([code::LIVE_ACTION, atom as i32, optional(enabled)]);
+            }
+            LiveTerm::Not => live.push(code::LIVE_NOT),
+            LiveTerm::Always => live.push(code::LIVE_ALWAYS),
+            LiveTerm::Eventually => live.push(code::LIVE_EVENTUALLY),
+            LiveTerm::Next => live.push(code::LIVE_NEXT),
+            LiveTerm::And(count) => live.extend([code::LIVE_AND, count as i32]),
+            LiveTerm::Or(count) => live.extend([code::LIVE_OR, count as i32]),
+        }
+    }
+    words.push(live.len() as i32);
+    words.extend(live);
     words.push(ir.definitions.len() as i32);
     words.extend(ir.definitions.iter().map(|&id| offset(id)));
     words.push(nodes.words.len() as i32);

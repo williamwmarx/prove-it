@@ -5,6 +5,7 @@ members = [
   "crates/tla-engine",
   "crates/tla-front",
   "crates/tla-ir",
+  "crates/tla-live",
   "crates/tla-values",
   "tools/replay",
 ]

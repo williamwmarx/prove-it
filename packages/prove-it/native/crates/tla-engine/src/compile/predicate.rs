@@ -34,6 +34,11 @@ pub(crate) enum Leaf {
         slot: u32,
         is_int: bool,
     },
+    ApplyVar2 {
+        variable: u32,
+        slot: u32,
+        second: u32,
+    },
     Eval(Eval),
 }
 
@@ -69,6 +74,19 @@ pub(crate) fn apply(machine: &mut Machine<'_>, function: Id, key: Id) -> Outcome
         return apply_tuple(machine, function, key);
     }
     machine.store.apply(function, key)
+}
+
+/// `f[i][j]` of a variable and two bound names.
+#[inline(always)]
+pub(crate) fn apply_var2(
+    machine: &mut Machine<'_>,
+    variable: u32,
+    slot: u32,
+    second: u32,
+) -> Outcome<Id> {
+    let function = machine.read_current(variable)?;
+    let inner = apply(machine, function, machine.locals[slot as usize])?;
+    apply(machine, inner, machine.locals[second as usize])
 }
 
 // A tuple applied to an integer.
@@ -111,6 +129,15 @@ impl Leaf {
                 slot,
                 is_int,
             },
+            Shape::ApplyVar2 {
+                variable,
+                slot,
+                second,
+            } => Leaf::ApplyVar2 {
+                variable,
+                slot,
+                second,
+            },
             Shape::Other => Leaf::Eval(compiled.eval.clone()),
         }
     }
@@ -126,6 +153,11 @@ impl Leaf {
                 let key = machine.locals[*slot as usize];
                 apply(machine, function, key)
             }
+            Leaf::ApplyVar2 {
+                variable,
+                slot,
+                second,
+            } => apply_var2(machine, *variable, *slot, *second),
             Leaf::Eval(eval) => eval(machine),
         }
     }
