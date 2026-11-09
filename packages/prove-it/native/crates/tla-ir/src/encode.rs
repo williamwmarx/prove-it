@@ -32,13 +32,15 @@ fn encode_here(ir: &Ir) -> Vec<u8> {
         ir.ranked_count as i32,
     ];
     words.push(ir.texts.len() as i32);
-    let mut text = Vec::new();
-    let mut units = 0;
-    for entry in &ir.texts {
-        text.extend_from_slice(entry.as_bytes());
-        units += entry.encode_utf16().count() as i32;
-        words.push(units);
+    // The texts' units are encoded together, as JavaScript encodes them joined, so a lone surrogate
+    // that ends a text and one that starts the next are one code point.
+    let mut units = Vec::new();
+    for id in 0..ir.texts.len() as crate::TextId {
+        units.extend(ir.get_text_units(id));
+        words.push(units.len() as i32);
     }
+    let mut text = Vec::new();
+    crate::wtf8::encode(&units, &mut text);
     words.push(ir.variables.len() as i32);
     words.extend(ir.variables.iter().map(|&variable| variable as i32));
     words.push(ir.tlc_order.len() as i32);

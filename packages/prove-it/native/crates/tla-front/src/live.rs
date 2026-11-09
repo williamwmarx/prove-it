@@ -196,6 +196,8 @@ impl Converter<'_> {
         expression: &Expr,
         scope: Option<&Rc<Scope>>,
     ) -> Result<Rc<Live>> {
+        // TLC's translation of the formula recurses until it overflows its stack, as on its
+        // Github1389Loops and Github1389StateGuard (`createStackOverflowError`).
         if self.depth >= MAXIMUM_EXPANSION_DEPTH {
             return Err(FrontError::StackOverflow);
         }

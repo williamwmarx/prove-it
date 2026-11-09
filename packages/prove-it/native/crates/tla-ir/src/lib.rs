@@ -5,6 +5,7 @@
 
 mod decode;
 mod encode;
+pub mod wtf8;
 
 /// The stack the decoder and the encoder run on. Both follow nested nodes by recursion, up to the
 /// decoder's limit, and a Rust stack overflow aborts the process rather than failing, so they run
@@ -46,12 +47,25 @@ pub type NodeId = u32;
 /// An index into [`Ir::definitions`], [`Ir::scopes`], [`Ir::constants`] or [`Ir::builtins`].
 pub type Index = u32;
 
+impl Ir {
+    /// A text's UTF-16 code units, as the store holds a string.
+    pub fn get_text_units(&self, text: TextId) -> Vec<u16> {
+        self.wide_texts.get(&text).map_or_else(
+            || self.texts[text as usize].encode_utf16().collect(),
+            |units| units.to_vec(),
+        )
+    }
+}
+
 /// A decoded IR. Everything that refers to a node does so by its [`NodeId`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct Ir {
     /// How many of the texts TLC ranks: text `i` below this has rank `i`.
     pub ranked_count: u32,
     pub texts: Vec<Box<str>>,
+    /// The UTF-16 code units of each text with a lone surrogate, which a `str` can't hold: TLC
+    /// computes such strings, as `Tail("😀a")`, and ranks them.
+    pub wide_texts: std::collections::BTreeMap<TextId, Box<[u16]>>,
     /// The variables in the engine's order.
     pub variables: Vec<TextId>,
     /// TLC's order of the variables, as positions in [`Ir::variables`].

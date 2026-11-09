@@ -55,6 +55,20 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     );
   });
 
+  it("searches strings with a lone surrogate, which TLC computes at startup", async () => {
+    // Java's strings are UTF-16, as JavaScript's are: Tail("😀a") is half the emoji and "a".
+    const body = [
+      "EXTENDS Sequences",
+      "VARIABLE x",
+      'Lone == Tail("😀a")',
+      "Init == x = Lone",
+      'Next == x\' \\in {Lone, SubSeq("😀b", 1, 1), "b"}',
+    ];
+    expect(await compareWithInterpreter(body, "INIT Init\nNEXT Next")).toContainEqual(
+      expect.stringMatching(COMPLETE),
+    );
+  });
+
   it("tests guards fused in place: f[k] = c, f[k] = j, x = c and membership", async () => {
     const body = [
       "CONSTANT P",

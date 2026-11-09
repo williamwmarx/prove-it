@@ -1870,9 +1870,8 @@ fn share_startup(machine: &mut Machine<'_>, context: &EngineContext) -> Outcome<
 /// expressions and values, so its caller runs it on a thread with a deep stack.
 pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> SearchOutcome {
     let model = &ir.model;
-    let ranked: Vec<Vec<u16>> = ir.texts[..ir.ranked_count as usize]
-        .iter()
-        .map(|text| text.encode_utf16().collect())
+    let ranked: Vec<Vec<u16>> = (0..ir.ranked_count)
+        .map(|text| ir.get_text_units(text))
         .collect();
     let mut store = Store::new();
     store.reset(ranked.iter().map(Vec::as_slice));
@@ -2616,9 +2615,11 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             // Under SYMMETRY or a VIEW the lasso's states are the stored ones, from which the
             // caller rebuilds those TLC prints.
             let violation = match liveness.as_ref().map(|liveness| &liveness.verdict) {
+                // What the atoms print as TLC checks the properties prints among the check's
+                // lines, which the interpreter orders.
                 Some(Verdict::Lasso {
                     path, loop_start, ..
-                }) if settings.is_violation_reported => to_lasso(
+                }) if settings.is_violation_reported && !context.is_live_printing => to_lasso(
                     &mut machine,
                     &context,
                     &search,
