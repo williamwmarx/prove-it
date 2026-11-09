@@ -13,6 +13,9 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
 - **Permutations(S)** is normalized: `TLC.Permutations` makes a `SetEnumValue`, which TLC
   normalizes before it enumerates, so `\E p \in Permutations(S)` and `x' \in Permutations(S)`
   take the store's order (spectacle's quicksort).
+- A function of one bound takes a tuple pattern too (`[<<i, j>> \in S |-> e]`): it binds each
+  element's components and keeps the element as the key, as TLC does. AsyncGameOfLife_anim
+  (spectacle) now completes in Rust. A function of several bounds with a tuple pattern still stops.
 
 ## Lazy UNION
 
@@ -87,3 +90,23 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   its base (`Compiled::subset_base`) for `\subseteq` to compare in its place. SubsetEq (TLC's
   tests), which stopped building `SUBSET (1..42)`, now completes in Rust. The interpreter doesn't
   recurse into power sets of power sets, so the unit test leaves that case out.
+
+## Wide strings
+
+- TLC fingerprints a string by the low byte of each character and tells states apart by their
+  fingerprints alone, so states whose strings differ only above U+00FF are one state. The native
+  engine does both already (`fingerprint.rs`, `States::find`). Only the TypeScript engine tells
+  states apart by their values, so a model whose strings may be wide (`hasWideString`) goes to the
+  native engine, or to the interpreter where it doesn't take the model, never to the TypeScript
+  engine. Resuming from a checkpoint, the interpreter then takes every state over at once, since it
+  tells them apart by fingerprint and the checkpoint looks a state up by its key.
+
+## TLCModelValue
+
+- **TLCModelValue(s)** gives the model value named s, which TLC makes once per name and ranks
+  the name as it makes it (`TLCExt.tlcModelValue`, `ModelValue.add`). So it ranks as ToString
+  does: the search stays on one thread, one that ranked a name hands over none of its states, and
+  comparing a model value whose name it ranked stops, as comparing such a string does. It stops
+  where s isn't a string, which TLC reports. Github696 and Github696b (TLC's tests),
+  declined before, now search in Rust until the comparison of differently typed model values
+  TLC reports.
