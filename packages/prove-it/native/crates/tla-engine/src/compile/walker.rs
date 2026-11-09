@@ -19,7 +19,7 @@ use tla_values::store::{FALSE, KIND_SET, KIND_TUPLE, Outcome, TRUE};
 use tla_values::{Bail, Id};
 
 use super::nodes::assign_bound;
-use super::predicate::Test;
+use super::predicate::{self, Leaf, Predicate, Test};
 use super::{
     Binding, CompileError, Compiled, Compiler, Compiling, Context, Definition, DefinitionForm,
     OperatorBody, SEARCH_SLOTS, Scope, decline, eval, leaf, lookup, unsupported,
@@ -361,6 +361,35 @@ fn guard(compiled: Compiled) -> Op {
         Some(predicate) => Op::Holds(predicate.build()),
         None => Op::Check(compiled.eval, "a conjunct that isn't a boolean"),
     }
+}
+
+// A walk's first step, a guard `f[k] = c` of a variable and a bound name.
+#[derive(Clone, Copy)]
+pub(crate) struct Leading {
+    variable: u32,
+    slot: u32,
+    constant: Id,
+}
+
+impl Leading {
+    fn of(compiled: &Compiled) -> Option<Leading> {
+        match &**compiled.predicate.as_ref()? {
+            Predicate::Equal {
+                left: Leaf::ApplyVar { variable, slot, .. },
+                right: Leaf::Constant(constant),
+                is_equal: true,
+            } => Some(Leading {
+                variable: *variable,
+                slot: *slot,
+                constant: *constant,
+            }),
+            _ => None,
+        }
+    }
+}
+
+fn step_address(step: &Step) -> usize {
+    Arc::as_ptr(step).cast::<()>() as usize
 }
 
 // A run of conjuncts before the rest, or the rest alone.
@@ -1405,12 +1434,67 @@ impl<'a> Compiler<'a> {
             .iter()
             .map(|&operand| self.walk(operand, context, options, known, &mut then))
             .collect::<Compiling<Vec<Rest>>>()?;
+        if let Some(switch) = self.switch(&branches) {
+            return Ok(Some(switch));
+        }
         Ok(Some(step(move |machine, on_complete| {
             for branch in &branches {
                 run_rest(branch, machine, on_complete)?;
             }
             Ok(())
         })))
+    }
+
+    // Notes a walk whose first step is a guard `f[k] = c` of a variable and a bound name, keeping
+    // the step alive so that its address names it alone.
+    fn led(&mut self, rest: Rest, leading: Option<Leading>) -> Rest {
+        if let (Some(step), Some(leading)) = (&rest, leading) {
+            self.leading_guards
+                .insert(step_address(step), (step.clone(), leading));
+        }
+        rest
+    }
+
+    // A disjunction each of whose walks starts with a guard `f[k] = c` of the same variable and
+    // bound name, as PlusCal's `pc[self] = "label"` does: `f[k]` is read once, where the first
+    // walk would read it, and each walk is entered only where its constant equals that value, in
+    // order. Each walk still tests its own guard, so it finds and bails as it would have, and the
+    // reads it saves are of a variable and a bound name, which can't differ or have effects.
+    fn switch(&self, branches: &[Rest]) -> Option<Step> {
+        let leads = branches
+            .iter()
+            .map(|branch| {
+                let step = branch.as_ref()?;
+                self.leading_guards
+                    .get(&step_address(step))
+                    .map(|(_, leading)| *leading)
+            })
+            .collect::<Option<Vec<Leading>>>()?;
+        let (variable, slot) = (leads.first()?.variable, leads[0].slot);
+        if leads.len() < 2
+            || leads
+                .iter()
+                .any(|leading| (leading.variable, leading.slot) != (variable, slot))
+        {
+            return None;
+        }
+        let walks: Box<[(Id, Step)]> = leads
+            .iter()
+            .zip(branches)
+            .map(|(leading, branch)| (leading.constant, branch.clone().expect("a walk")))
+            .collect();
+        Some(step(move |machine, on_complete| {
+            let function = machine.read_current(variable)?;
+            let value = machine
+                .store
+                .apply(function, machine.locals[slot as usize])?;
+            for (constant, walk) in walks.iter() {
+                if predicate::equals(machine, value, *constant)? {
+                    walk(machine, on_complete)?;
+                }
+            }
+            Ok(())
+        }))
     }
 
     // UNCHANGED e as a step: an assignment or test of each variable of e, or a guard.
@@ -1508,6 +1592,7 @@ impl<'a> Compiler<'a> {
         let mut ops = Vec::new();
         let mut index = start;
         let mut first_variable = start_variable;
+        let mut leading = None;
         while index < items.len() {
             if index > 0 && first_variable == 0 && options.is_shortcut {
                 match known.shortcut(width) {
@@ -1515,7 +1600,7 @@ impl<'a> Compiler<'a> {
                     Shortcut::Always => {
                         ops.extend(self.shortcut_guards(items, context, options, index)?);
                         let rest = then(self, &known)?;
-                        return Ok(segment(ops, rest, is_init));
+                        return Ok(self.led(segment(ops, rest, is_init), leading));
                     }
                     Shortcut::Maybe => {
                         let guards = self.shortcut_guards(items, context, options, index)?;
@@ -1538,13 +1623,19 @@ impl<'a> Compiler<'a> {
                                 run_rest(&walked, machine, on_complete)
                             }
                         });
-                        return Ok(segment(ops, Some(shortcut), is_init));
+                        return Ok(self.led(segment(ops, Some(shortcut), is_init), leading));
                     }
                 }
             }
             let item = &items[index];
             match &item.shape {
-                Shape::Guard => ops.push(guard(self.compile(item.node, context)?)),
+                Shape::Guard => {
+                    let compiled = self.compile(item.node, context)?;
+                    if index == 0 && ops.is_empty() {
+                        leading = Leading::of(&compiled);
+                    }
+                    ops.push(guard(compiled));
+                }
                 Shape::Assign(variable, value) => {
                     let variable = *variable;
                     let value = Source::Value(self.compile(*value, context)?.eval);
@@ -1566,7 +1657,7 @@ impl<'a> Compiler<'a> {
                                 then,
                             )?;
                             let either = either_step(variable, value, rest, is_init);
-                            return Ok(segment(ops, Some(either), is_init));
+                            return Ok(self.led(segment(ops, Some(either), is_init), leading));
                         }
                     }
                 }
@@ -1590,21 +1681,21 @@ impl<'a> Compiler<'a> {
                                     then,
                                 )?;
                                 let either = either_step(variable, Source::Current, rest, is_init);
-                                return Ok(segment(ops, Some(either), is_init));
+                                return Ok(self.led(segment(ops, Some(either), is_init), leading));
                             }
                         }
                     }
                 }
                 Shape::Branch => {
                     let rest = self.conjunct(items, context, options, index, 0, known, then)?;
-                    return Ok(segment(ops, rest, is_init));
+                    return Ok(self.led(segment(ops, rest, is_init), leading));
                 }
             }
             first_variable = 0;
             index += 1;
         }
         let rest = then(self, &known)?;
-        Ok(segment(ops, rest, is_init))
+        Ok(self.led(segment(ops, rest, is_init), leading))
     }
 
     // The walk of one conjunct that branches, or of the conjunction from it on, its rest the
@@ -2029,8 +2120,8 @@ impl<'a> Compiler<'a> {
         )
     }
 
-    /// Compiles an expression in the scope of an instance, or `None` when the engine can't
-    /// translate the scope.
+    /// Compiles an expression of a liveness atom in the scope of an instance, where what it prints
+    /// is printed, or `None` when the engine can't translate the scope.
     pub fn compile_in_scope(
         &mut self,
         node: NodeId,
@@ -2038,6 +2129,10 @@ impl<'a> Compiler<'a> {
     ) -> Result<Option<Compiled>, CompileError> {
         let Some(context) = self.context_from_scope(scope)? else {
             return Ok(None);
+        };
+        let context = Context {
+            can_print: true,
+            ..context
         };
         self.compile(node, &context).map(Some)
     }
@@ -2053,6 +2148,10 @@ impl<'a> Compiler<'a> {
     ) -> Result<Option<Compiled>, CompileError> {
         let Some(context) = self.context_from_scope(scope)? else {
             return Ok(None);
+        };
+        let context = Context {
+            can_print: true,
+            ..context
         };
         self.compile_enabled(action, &context).map(Some)
     }

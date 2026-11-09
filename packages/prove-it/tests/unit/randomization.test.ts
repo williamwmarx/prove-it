@@ -35,6 +35,20 @@ describe("random choices match TLC run with -fp 0 and the same -seed", () => {
     expect(await getSummary("RandomElementXandY", 2n)).toEqual(["success", 3, 2]);
   });
 
+  it("labels each step with the action that draws it, as TLC rebuilds the trace", async () => {
+    // TLC labels a step as it rebuilds the trace, with the generator reseeded for each state.
+    for (const seed of [0n, 4n]) {
+      const result = await checkWithSeed("RandomElementXandY", seed);
+      expect(result.violation?.trace.map((step) => step.label)).toEqual([
+        undefined,
+        ...Array.from(
+          { length: (result.violation?.trace.length ?? 1) - 1 },
+          () => "Next line 9, col 9 to line 10, col 35 of module RandomElementXandY",
+        ),
+      ]);
+    }
+  });
+
   it("checks the RandomElement spec from TLC's RandomElementTest", async () => {
     const result = await checkWithSeed("RandomElement", 8006803340504660123n);
     expect([result.status, result.generatedStates, result.distinctStates]).toEqual([

@@ -102,3 +102,53 @@ checker declines, or under `PROVE_IT_LIVE_CHECK=1`, the interpreter searches aga
 On the 26 corpus models with temporal properties under SYMMETRY or a VIEW, all 26 are decided
 natively (23 lassos, 3 hold); their outputs match TLC's recordings, and under
 `PROVE_IT_LIVE_CHECK=1` the verdicts, lassos, branches and labels match the interpreter's.
+
+## Print while checking the temporal properties (as built)
+
+TLC prints what Print and PrintT print each time it evaluates them, and its liveness checker
+evaluates as it adds each state to the behavior graphs, right after the search expands the state:
+ENABLED of the fairness runs Next, and so does each action check on each step. The interpreter's
+checker, with nothing shared where the spec has repeated effects, evaluates as often as TLC, which
+is how it matches TLC's output on Euclid3 and ULEvenOdd, whose Next prints four times per state.
+
+The native engine evaluates every atom on every state and step before the check, so the order
+comes from the checker instead:
+- With temporal properties and a spec that may print, the search holds what it prints, the initial
+  states' and each expansion's, and the count of initial states, rather than reporting them.
+- `answer_atoms` keeps what each evaluation of an atom printed, by its position in the table, runs
+  ENABLED on each state rather than answering it from the steps, and evaluates an action on every
+  step.
+- `tla-live`, told the atoms have effects, keeps no result across evaluations, as the interpreter's
+  checker does then (no shared rows, no consistency kept, `evaluateLive`'s cache within one check),
+  and logs each atom it evaluates after the state it starts to add (`Event`).
+- The engine then reports, in order: the initial states' prints, the count of initial states, and
+  for each state its expansion's prints followed by those of the atoms the checker evaluated as it
+  added the state, up to the state whose accepting node ends TLC's search. Where TLC runs Next
+  again for a late node of a stored state, the engine repeats that state's expansion prints.
+
+Where an invariant may print, or anything reads `TLCGet("distinct")`, that repeat would differ from
+TLC's: TLC checks no invariant for a late node, and the count of distinct states has grown since.
+So where a late node would repeat prints there, the engine hands over as below.
+
+Where the check isn't decided natively, under `PROVE_IT_LIVE_CHECK=1`, where an atom prints as TLC
+adds an initial state, or where the steps from a state the search didn't store print, the engine
+hands over with no checkpoint and nothing printed, and the interpreter checks from the start.
+
+## TLCGet("diameter") in the temporal properties (as built)
+
+TLC's `TLCGet("diameter")` is `ModelChecker#getProgress`, `TLCTrace#getLevelForReporting`: the
+deepest level of the states the search has written so far, which only grows. The liveness checker
+reads it as it adds each state: 1 as it adds an initial state, and as it adds an expanded state the
+depth the search reached once it expanded the state. So an atom that reads it has an answer per
+state and diameter, not per state.
+
+- The compiler gives the diameter a slot, and the engine declines a model whose search reads it
+  (`TLCGet("diameter") in the search`), whose value grows within an expansion.
+- The search keeps its depth after each expansion (`Graph::diameters`).
+- `answer_atoms` answers an atom that reads the diameter once for each diameter from 1 to the last,
+  the tables one after another, and leaves it to the interpreter in a checkpoint.
+- `tla-live` (`Graph::diameters`) sets the diameter as it adds each state and once the search is
+  done, and reads such an atom's answer for the diameter then.
+
+UserModuleOverride and its Annotation variant, whose property prints and reads the diameter, are
+checked natively and match TLC.

@@ -140,6 +140,10 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
 - A trace the interpreter rebuilds after a hand-over now draws as TLC's does (`TLCTrace#getTrace`):
   each initial state from the generator the search started with, and each successor from one
   seeded with its predecessor.
+- TLC labels each step of a trace as it rebuilds the trace, with a generator it resets first, so
+  it reseeds for each predecessor. The checker finds a step's action by evaluating the actions
+  again, so it now resets the generator first (`resetRandom`). Before, a step whose predecessor
+  the generator was last seeded for drew on from where it stopped, and the step lost its label.
 - RandomElement, RandomElementXandY, RandomSubsetNextTuples and RandomSubsetSetOfFcns (TLC's
   tests), declined before, now search in Rust, and RandomSubset until its invariant builds
   `1..100000000`.
@@ -151,3 +155,18 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   when it completes. It gains no model: Test2, TLCGetNonDeterminism and NQSpec check a property,
   and under a liveness graph TLC evaluates the actions again. ConstantContextTLCCache would also
   need TLCCache's cache, which the interpreter fills while it evaluates the assumptions.
+
+## Functions of several bounds, and recursive functions TLC keeps lazy
+
+- **A recursive function of several bounds**, such as `add[a \in A, b \in B]`, is TLC's function
+  over `A \X B`. Its argument is a tuple in one slot, each name is its element of the tuple, and
+  `add[a, b]` applies it to `<<a, b>>`. A bound with a tuple pattern still declines.
+- **A function construction of several bounds** binds a tuple pattern at any level
+  (`assign_bound`), as `[a \in S, <<b, c>> \in T |-> e]` does, where it stopped before.
+- TLC keeps a recursive function lazy (`FcnLambdaValue`). So an operator's argument that names
+  one applies it where the operator applies the argument, and DOMAIN of one is its domain. Before,
+  the engine built it, which a domain such as Nat stopped, and a body that reads its own DOMAIN
+  never finished.
+- With them, function_syntax (tla-rs), declined before, now completes in Rust. test45 (TLC's
+  tests) now searches in Rust until a function construction in a recursive body applies the
+  function to itself, which needs the construction to stay lazy as TLC keeps it.

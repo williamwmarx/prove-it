@@ -48,6 +48,17 @@ pub struct Graph<'g> {
     /// it, by its index, or a state past them that the search told apart from it by its key. The
     /// tables of state predicates have an answer for each.
     pub reals: Option<&'g [u32]>,
+    /// Where an atom reads TLCGet("diameter"), what TLC's diameter is as it adds each state.
+    pub diameters: Option<Diameters<'g>>,
+}
+
+/// TLC's diameter, the deepest level its search has found so far, as it adds each state to the
+/// behavior graphs, after the search expanded it, and once the search is done; and the atoms that
+/// read it, whose tables hold the answers for each diameter from 1 to the last, one after another.
+pub struct Diameters<'g> {
+    pub states: &'g [u32],
+    pub last: u32,
+    pub atoms: &'g [bool],
 }
 
 impl Graph<'_> {
@@ -57,11 +68,27 @@ impl Graph<'_> {
 }
 
 /// What the check found, and how many solutions of the formula TLC checks, which it calls branches,
-/// unless it declined before it knew.
+/// unless it declined before it knew, with the evaluations of the atoms where they have effects.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Liveness {
     pub branches: Option<usize>,
     pub verdict: Verdict,
+    pub events: Vec<Event>,
+}
+
+/// Where the atoms' evaluations have effects, such as what Print prints, TLC has them each time it
+/// evaluates an atom while it builds the behavior graphs: the evaluations in its order, after the
+/// state each starts to add.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Event {
+    /// TLC adds an initial state.
+    Initial(u32),
+    /// TLC adds a state it expanded, with its successors.
+    Expanded(u32),
+    /// TLC runs Next from the state for a node of it it finds late.
+    Late(u32),
+    /// TLC evaluates an atom: on the state at the position in its table, or on the step.
+    Atom { atom: u32, slot: usize },
 }
 
 /// What the check found.
@@ -135,14 +162,17 @@ fn read_formula(terms: &mut Terms, formula: &[Term]) -> Result<TermId, Declined>
 
 /// Checks the formula, the fairness and the negated properties as `createLivenessChecker` joins
 /// them, on a complete search's graph, from the engine's answers to each atom (`None` for an atom
-/// it doesn't answer), and finds which of the properties a counterexample violates.
+/// it doesn't answer), and finds which of the properties a counterexample violates. Where the
+/// atoms' evaluations have effects, it logs each evaluation of an atom TLC makes.
 pub fn check(
     formula: &[Term],
     properties: &[&[Term]],
     graph: &Graph<'_>,
     tables: &[Option<&[u8]>],
+    is_effectful: bool,
 ) -> Liveness {
     let mut branches = None;
+    let mut events = Vec::new();
     let mut run = || {
         if graph.edge_offsets.len() <= graph.count() {
             return Err(Declined::from("a search that didn't expand every state"));
@@ -155,7 +185,10 @@ pub fn check(
             .collect::<Result<Vec<_>, _>>()?;
         let mut checker = checker::Checker::new(terms, root, graph, tables)?;
         branches = Some(checker.branches());
-        checker::check(&mut checker, &properties)
+        if is_effectful {
+            checker.log_effects();
+        }
+        checker::check(&mut checker, &properties, &mut events)
     };
     let verdict = run().unwrap_or_else(|declined| {
         if declined.0 == UNEXPANDED {
@@ -164,5 +197,9 @@ pub fn check(
             Verdict::Declined(declined)
         }
     });
-    Liveness { branches, verdict }
+    Liveness {
+        branches,
+        verdict,
+        events,
+    }
 }
