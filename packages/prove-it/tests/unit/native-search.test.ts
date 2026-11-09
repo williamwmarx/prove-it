@@ -557,6 +557,50 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     expect(lines).toContainEqual(expect.stringMatching(COMPLETE));
   });
 
+  it("checks the temporal properties on the states a step reached under a VIEW", async () => {
+    // The view tells (0, 1) apart from (0, 0) by x alone, so the step back to x = 0 reaches a
+    // state the search doesn't store, on which TLC checks the properties.
+    const body = [
+      "EXTENDS Naturals",
+      "VARIABLES x, t",
+      "vars == <<x, t>>",
+      "Init == x = 0 /\\ t = 0",
+      "Next == x' = (x + 1) % 3 /\\ t' = 1 - t",
+      "Spec == Init /\\ [][Next]_vars /\\ WF_vars(Next)",
+      "View == x",
+      "Settles == <>[](t = 0)",
+      "Visits == []<>(t = 1)",
+    ];
+    for (const [property, verdict] of [
+      ["Settles", "lasso"],
+      ["Visits", "holds"],
+    ] as const) {
+      const config = `SPECIFICATION Spec\nVIEW View\nPROPERTY ${property}`;
+      const lines = await compareWithInterpreter(body, config);
+      expect(lines).toContain(`[engine] native: liveness: ${verdict}`);
+      await compareWithInterpreter(body, config, { PROVE_IT_LIVE_CHECK: "1" });
+    }
+  });
+
+  it("compiles a predicate that holds a temporal formula in a branch it never takes", async () => {
+    // TLC's test model Github1389ViolatedB: the liveness checker's atom is Reach(0), whose body
+    // holds <> in the branch for n > 0.
+    const body = [
+      "EXTENDS Naturals",
+      "VARIABLE x",
+      "RECURSIVE Reach(_)",
+      "Reach(n) == IF n = 0 THEN (x = 99) ELSE <>(Reach(n - 1))",
+      "Init == x = 0",
+      "Next == x' = 1 - x",
+      "Spec == Init /\\ [][Next]_x /\\ WF_x(Next)",
+      "PropViolated == Reach(3)",
+    ];
+    const config = "SPECIFICATION Spec\nCHECK_DEADLOCK FALSE\nPROPERTY PropViolated";
+    const lines = await compareWithInterpreter(body, config);
+    expect(lines).toContain("[engine] native: liveness: lasso");
+    await compareWithInterpreter(body, config, { PROVE_IT_LIVE_CHECK: "1" });
+  });
+
   it("reports a tableau node that accepts every behavior as TLC finds it", async () => {
     // TLC's test model Github1389Counting: x becomes TRUE at most twice.
     const body = [
