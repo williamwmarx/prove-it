@@ -43,10 +43,6 @@ export const getStopAt = () => {
   return Number.isInteger(stopAt) && stopAt >= 0 ? stopAt : -1;
 };
 
-// Whether PROVE_IT_STORE_TRACE asks for the store's operations, which only a search on one thread
-// records whole: the workers' operations go to the shared store and not to the trace.
-export const isStoreTraced = () => Boolean(getEnvironment()?.PROVE_IT_STORE_TRACE);
-
 // How many threads the engine searches with: PROVE_IT_WORKERS, else one. TLC's -workers doesn't
 // change it, since a model tuned for TLC's workers is usually faster on one engine thread; the
 // engine keeps TLC's order whatever the number.
