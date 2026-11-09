@@ -77,7 +77,9 @@ fn write_value(value: &Value, is_strict: bool, is_normalized: bool, out: &mut St
         Value::Int(int) => out.push_str(&int.to_string()),
         Value::Str(text) => write_string(&text.units, out),
         Value::Model(text) => write_text(&text.units, out),
-        Value::Set(elements) => write_joined(elements, "{", "}", is_strict, is_normalized, out),
+        Value::Set(elements) | Value::Unsorted(elements) => {
+            write_joined(elements, "{", "}", is_strict, is_normalized, out)
+        }
         Value::Interval(low, high) => {
             if low <= high {
                 out.push_str(&format!("{low}..{high}"));

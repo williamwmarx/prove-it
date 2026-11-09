@@ -37,6 +37,7 @@ pub fn fingerprint_failure(value: &Value) -> Result<Option<(Vec<Value>, TlcMessa
             }
             _ => return Err(()),
         },
+        Value::Unsorted(_) => return Err(()),
         _ => Vec::new(),
     };
     for inner in held {
