@@ -3,7 +3,7 @@
 //! (`formatState` in `values.ts`) writes them, a line per variable in TLC's order, as a conjunction
 //! when there are several. What the spec printed as TLC rebuilt the trace comes with it.
 
-use tla_engine::search::{FinalRegisters, Violation, ViolationKind};
+use tla_engine::search::{AcceptedTrace, FinalRegisters, Violation, ViolationKind};
 use tla_ir::Ir;
 use tla_trace::{
     Alias, CounterExample, Ending, PostconditionInputs, Rebuilder, Registers, Stats, Unsupported,
@@ -57,17 +57,52 @@ pub fn rebuild_trace(
     violation: &Violation,
     postconditions: Option<&PostconditionRun>,
 ) -> Result<PrintedTrace, String> {
+    rebuild(
+        ir,
+        violation,
+        &violation.kind,
+        &violation.states,
+        violation.labels.clone(),
+        postconditions,
+    )
+}
+
+/// The trace of the tableau node a deadlocked state reaches, from the deadlock's store.
+pub fn rebuild_accepted(
+    ir: &Ir,
+    violation: &Violation,
+    accepted: &AcceptedTrace,
+) -> Result<PrintedTrace, String> {
+    rebuild(
+        ir,
+        violation,
+        &ViolationKind::Accepted {
+            violated: accepted.violated.clone(),
+        },
+        &accepted.states,
+        vec![None; accepted.states.len().saturating_sub(1)],
+        None,
+    )
+}
+
+fn rebuild(
+    ir: &Ir,
+    violation: &Violation,
+    kind: &ViolationKind,
+    states: &[Vec<Id>],
+    mut labels: Vec<Option<u32>>,
+    postconditions: Option<&PostconditionRun>,
+) -> Result<PrintedTrace, String> {
     std::thread::scope(|scope| {
         std::thread::Builder::new()
             .stack_size(SEARCH_STACK_BYTES)
             .spawn_scoped(scope, || {
-                let mut states: Vec<&[Id]> = violation.states.iter().map(Vec::as_slice).collect();
-                let mut labels = violation.labels.clone();
+                let mut states: Vec<&[Id]> = states.iter().map(Vec::as_slice).collect();
                 // Under SYMMETRY or a VIEW the lasso's states are the stored ones: TLC rebuilds
                 // the states it prints, the step back into the cycle with them, to a state whose
                 // key is the stored first state of the cycle's.
                 let is_reduced = violation.symmetry.is_some() || ir.model.view.is_some();
-                let reduced_cycle = match violation.kind {
+                let reduced_cycle = match *kind {
                     ViolationKind::Lasso { loop_start, .. } if is_reduced => Some(loop_start),
                     _ => None,
                 };
@@ -77,8 +112,8 @@ pub fn rebuild_trace(
                     labels.push(None);
                 }
                 // TLC holds a violating state as it found it, and recovers a deadlocked one.
-                let ending = match violation.kind {
-                    ViolationKind::Deadlock => Ending::Kept,
+                let ending = match *kind {
+                    ViolationKind::Deadlock { .. } => Ending::Kept,
                     ViolationKind::Invariant(_) | ViolationKind::InitialInvariant(_) => {
                         Ending::Violation
                     }
@@ -87,7 +122,7 @@ pub fn rebuild_trace(
                         return Err("a failure evaluating the model".into());
                     }
                 };
-                let cycle_start = match violation.kind {
+                let cycle_start = match *kind {
                     ViolationKind::Lasso { loop_start, .. } => Some(loop_start),
                     _ => None,
                 };
@@ -126,7 +161,7 @@ pub fn rebuild_trace(
                     let aliases = rebuilder.alias(&trace, cycle_start)?;
                     // CounterExample closes a lasso with its step back into the cycle, which a
                     // stuttering one doesn't take.
-                    let cycle = match violation.kind {
+                    let cycle = match *kind {
                         ViolationKind::Lasso {
                             loop_start,
                             loop_label,
@@ -145,7 +180,7 @@ pub fn rebuild_trace(
                     // TLC's record of a lasso that stutters at its first state closes it by an
                     // unnamed action, which CounterExample doesn't take yet.
                     let is_unnamed_cycle =
-                        matches!(violation.kind, ViolationKind::Lasso { loop_start: 0, .. })
+                        matches!(*kind, ViolationKind::Lasso { loop_start: 0, .. })
                             && trace.states.len() == 1;
                     if postconditions.is_some() && is_unnamed_cycle {
                         return Err(Unsupported(
