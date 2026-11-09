@@ -14,7 +14,7 @@ use std::collections::HashSet;
 use std::rc::Rc;
 use std::sync::{Arc, OnceLock};
 
-use tla_ir::{Index, NodeId, NodeKind, Param, Pattern, Resolution, ScopeBinding};
+use tla_ir::{Bound, Index, NodeId, NodeKind, Param, Pattern, Resolution, ScopeBinding};
 use tla_values::store::{FALSE, KIND_SET, KIND_TUPLE, Outcome, TRUE};
 use tla_values::{Bail, Id};
 
@@ -30,6 +30,9 @@ use crate::machine::{Continue, Eval, Machine, Member, Step, UNASSIGNED};
 
 /// What ENABLED's walk stops with at its first successor (`FOUND` in `action.ts`).
 const FOUND: &str = "ENABLED found a successor";
+
+/// What a walk or a quantifier stops with where TLC enumerates a set it can't.
+pub(crate) const INFINITE_BOUND: &str = "enumerated a set TLC can't enumerate";
 
 fn is_found(bail: &Bail) -> bool {
     bail.0 == FOUND
@@ -103,13 +106,13 @@ fn element_at(machine: &Machine<'_>, id: Id, position: u32) -> Id {
 
 /// The set an action enumerates: a set, or the tuple of a lazy set's elements in TLC's order.
 #[derive(Clone)]
-struct Ordered {
-    eval: Eval,
+pub(super) struct Ordered {
+    pub(super) eval: Eval,
     is_ordered: bool,
 }
 
 impl Ordered {
-    fn size(&self, machine: &Machine<'_>, id: Id) -> Outcome<u32> {
+    pub(super) fn size(&self, machine: &Machine<'_>, id: Id) -> Outcome<u32> {
         if self.is_ordered || machine.store.kind_of(id) == KIND_SET {
             Ok(machine.store.size_of(id))
         } else {
@@ -602,9 +605,8 @@ struct RecursiveApplication {
     base: Context,
 }
 
-struct LazyApplication {
-    pattern: Pattern,
-    set: NodeId,
+struct LazyApplication<'a> {
+    bounds: &'a [Bound],
     body: NodeId,
     base: Context,
     is_recursive: bool,
@@ -738,8 +740,8 @@ impl<'a> Compiler<'a> {
         &mut self,
         node: NodeId,
         context: &Context,
-    ) -> Compiling<Option<LazyApplication>> {
-        let NodeKind::FunctionApplication { function, args } = self.node(node).1 else {
+    ) -> Compiling<Option<LazyApplication<'a>>> {
+        let NodeKind::FunctionApplication { function, .. } = self.node(node).1 else {
             return Ok(None);
         };
         let (bounds, body, base, is_recursive) = match self.node(*function).1 {
@@ -806,15 +808,8 @@ impl<'a> Compiler<'a> {
             }
             _ => return Ok(None),
         };
-        let [bound] = &bounds[..] else {
-            return unsupported("walking a lazy function of several arguments");
-        };
-        if !matches!(bound.pattern, Pattern::Name(_)) || args.len() != 1 {
-            return unsupported("walking a lazy function of several arguments");
-        }
         Ok(Some(LazyApplication {
-            pattern: bound.pattern.clone(),
-            set: bound.set,
+            bounds,
             body,
             base,
             is_recursive,
@@ -1025,18 +1020,21 @@ impl<'a> Compiler<'a> {
     // that goes on with the rest of the walk where the application is, the caller's slots back.
     fn walk_recursive_application(
         &mut self,
-        lazy: &LazyApplication,
-        argument: NodeId,
+        lazy: &LazyApplication<'a>,
+        args: &[NodeId],
         context: &Context,
         options: WalkOptions,
         known: &Known,
         then: &mut Then<'_, 'a>,
     ) -> Compiling<Rest> {
-        if !matches!(lazy.pattern, Pattern::Name(_)) {
+        let ([bound], [argument]) = (lazy.bounds, args) else {
+            return unsupported("walking a recursive function of several arguments");
+        };
+        if !matches!(bound.pattern, Pattern::Name(_)) {
             return unsupported("walking a recursive function over a tuple pattern");
         }
-        let argument = self.compile(argument, context)?.eval;
-        let set = self.compile(lazy.set, &lazy.base)?;
+        let argument = self.compile(*argument, context)?.eval;
+        let set = self.compile(bound.set, &lazy.base)?;
         let member = self.member_test(&set);
         let is_walked = |walked: &&WalkedFunction| {
             walked.body == lazy.body
@@ -1058,7 +1056,7 @@ impl<'a> Compiler<'a> {
         let (slot, walk) = match found {
             Some(found) => found,
             None => {
-                let binder = self.bind_bound(&lazy.pattern, &lazy.base);
+                let binder = self.bind_bound(&bound.pattern, &lazy.base);
                 let slot = binder.slots[0];
                 let walk = Arc::new(OnceLock::new());
                 self.walked_functions.push(WalkedFunction {
@@ -1416,13 +1414,21 @@ impl<'a> Compiler<'a> {
     }
 
     // A compiled set in the order TLC enumerates it, `node` naming it where TLC keeps it lazy.
-    fn order(
+    pub(super) fn order(
         &mut self,
         set: Compiled,
         node: NodeId,
         context: &Context,
         is_streamed: bool,
     ) -> Compiling<Ordered> {
+        // TLC fails enumerating a set it only tests for membership, such as Nat, which the
+        // engine doesn't enumerate elsewhere without TLC doing so.
+        if set.infinite.is_some() {
+            return Ok(Ordered {
+                eval: eval(|_| Err(Bail(INFINITE_BOUND))),
+                is_ordered: false,
+            });
+        }
         if set.is_normalized {
             return Ok(Ordered {
                 eval: set.eval,
@@ -1735,21 +1741,51 @@ impl<'a> Compiler<'a> {
                 }
                 if lazy.is_recursive {
                     return self
-                        .walk_recursive_application(&lazy, args[0], context, options, known, then);
+                        .walk_recursive_application(&lazy, args, context, options, known, then);
                 }
-                let argument = self.compile(args[0], context)?.eval;
-                let set = self.compile(lazy.set, &lazy.base)?;
-                let member: Member = self.member_test(&set);
-                let binder = self.bind_bound(&lazy.pattern, &lazy.base);
-                let slot = binder.slots[0];
-                let walk = self.walk(lazy.body, &binder.context, options, known, then)?;
+                // TLC binds each name to its argument once every argument is in its bound's
+                // set (`getFcnContext`).
+                if args.len() != lazy.bounds.len()
+                    || lazy
+                        .bounds
+                        .iter()
+                        .any(|bound| !matches!(bound.pattern, Pattern::Name(_)))
+                {
+                    return unsupported("walking a lazy function over a tuple");
+                }
+                let mut inner = lazy.base.clone();
+                let mut parameters = Vec::with_capacity(args.len());
+                for (bound, &argument) in lazy.bounds.iter().zip(args) {
+                    let argument = self.compile(argument, context)?.eval;
+                    let set = self.compile(bound.set, &lazy.base)?;
+                    let member: Member = self.member_test(&set);
+                    let binder = self.bind_bound(&bound.pattern, &inner);
+                    inner = binder.context;
+                    parameters.push((argument, member, binder.slots[0]));
+                }
+                let walk = self.walk(lazy.body, &inner, options, known, then)?;
                 Ok(Some(step(move |machine, on_complete| {
-                    let value = argument(machine)?;
-                    if !member(machine, value)? {
-                        return Err(Bail("applied a function outside its domain"));
+                    // Each argument once, as the interpreter evaluates it: a Print in it prints
+                    // once.
+                    let at = machine.stack.len();
+                    for (argument, ..) in &parameters {
+                        match argument(machine) {
+                            Ok(value) => machine.stack.push(value),
+                            Err(bail) => {
+                                machine.stack.truncate(at);
+                                return Err(bail);
+                            }
+                        }
                     }
-                    // The argument once, as the interpreter evaluates it: a Print in it prints once.
-                    machine.locals[slot as usize] = value;
+                    let values = machine.stack.split_off(at);
+                    for ((_, member, _), &value) in parameters.iter().zip(&values) {
+                        if !member(machine, value)? {
+                            return Err(Bail("applied a function outside its domain"));
+                        }
+                    }
+                    for ((.., slot), value) in parameters.iter().zip(values) {
+                        machine.locals[*slot as usize] = value;
+                    }
                     run_rest(&walk, machine, on_complete)
                 })))
             }
@@ -2337,10 +2373,12 @@ impl<'a> Compiler<'a> {
         action: NodeId,
         context: &Context,
     ) -> Compiling<Compiled> {
-        if context.is_primed || context.is_init {
+        if context.is_primed {
             return unsupported("expression Enabled");
         }
+        let silent = u32::from(!context.can_print);
         self.enabled_depth += 1;
+        self.silent_enabled_depth += silent;
         let compiled = self
             .compile_step(
                 action,
@@ -2352,6 +2390,7 @@ impl<'a> Compiler<'a> {
             )
             .and_then(|walk| Ok((walk, self.get_enabled_footprint(action, context)?)));
         self.enabled_depth -= 1;
+        self.silent_enabled_depth -= silent;
         let (walk, footprint) = compiled?;
         if footprint
             .slots

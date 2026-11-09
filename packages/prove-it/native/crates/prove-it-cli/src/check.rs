@@ -461,6 +461,14 @@ impl Reporter for Relay<'_> {
                 let _ = self.sender.send(Event::Print(Some(text)));
             }
         }
+        // The replay doesn't yet word every failure as TLC does, and a message worded apart makes
+        // AssertError false where TLC finds it true, so a false one stays not native.
+        if !checked.holds {
+            return Err(
+                "an AssertError assumption the replay finds false, whose message it may word apart from TLC's"
+                    .into(),
+            );
+        }
         Ok(Delegated {
             holds: checked.holds,
             random: checked.random,
@@ -966,15 +974,34 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                     print_finished(printer, start);
                     Ok(NO_NEXT_ACTION)
                 }
-                // TLC's report of a failure evaluating the model, which it replays.
-                // TLC prints the trace through the ALIAS and checks the postconditions after it,
-                // which the printing doesn't follow yet.
-                ViolationKind::Error { .. }
-                    if config.alias.is_some()
-                        || !config.postconditions.is_empty()
-                        || !config.possible.is_empty() =>
+                // TLC's report of a failure evaluating the model, which it replays. It prints the
+                // trace through the ALIAS, which the printing follows for a failure in the
+                // next-state relation or an invariant.
+                ViolationKind::Error { .. } if !config.possible.is_empty() => {
+                    Err("a failure with a _POSSIBLE predicate".to_string())
+                }
+                // After a failure TLC checks the postconditions only as its worker goes on to
+                // check the state for deadlock, having generated no successor of it
+                // (`Worker.run`): which the search's counts say only of the first state expanded.
+                ViolationKind::Error { site }
+                    if !config.postconditions.is_empty()
+                        && (has_constant_postcondition(&ir)
+                            || match site {
+                                ErrorSite::Invariant(_) => false,
+                                ErrorSite::Next => {
+                                    ir.model.check_deadlock
+                                        && violation.counts.generated != initial_generated
+                                }
+                                _ => true,
+                            }) =>
                 {
-                    Err("a failure with an ALIAS, POSTCONDITION or _POSSIBLE".to_string())
+                    Err("a failure with a POSTCONDITION".to_string())
+                }
+                ViolationKind::Error { site }
+                    if config.alias.is_some()
+                        && !matches!(site, ErrorSite::Next | ErrorSite::Invariant(_)) =>
+                {
+                    Err("a failure outside the next-state relation with an ALIAS".to_string())
                 }
                 ViolationKind::Error { site } => {
                     let counts = &violation.counts;
@@ -1007,6 +1034,26 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                         },
                         out_degrees: &counts.out_degrees,
                         fingerprints: &violation.fingerprints,
+                        replayed: (config.alias.is_some() || !config.postconditions.is_empty())
+                            .then_some(&violation),
+                        is_aliased: config.alias.is_some(),
+                        postconditions: (!config.postconditions.is_empty()
+                            && site == ErrorSite::Next
+                            && ir.model.check_deadlock)
+                            .then(|| {
+                                postcondition_run(
+                                    &ir,
+                                    Some(&violation.possible),
+                                    &Statistics {
+                                        generated: counts.generated,
+                                        distinct: counts.distinct,
+                                        queued: counts.queued,
+                                        depth: counts.depth,
+                                    },
+                                    initial_generated,
+                                    start,
+                                )
+                            }),
                     };
                     print_failure(printer, &ir, &stop, start)
                 }
@@ -1551,7 +1598,7 @@ fn has_constant_postcondition(ir: &tla_ir::Ir) -> bool {
 
 /// TLC's report of the first postcondition that doesn't hold, named with where its definition's
 /// body is written (`findPostconditionViolation`).
-fn print_postcondition_failure(
+pub(crate) fn print_postcondition_failure(
     printer: &mut Printer,
     ir: &tla_ir::Ir,
     postconditions: Option<&Postconditions>,
