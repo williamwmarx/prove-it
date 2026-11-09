@@ -12,7 +12,7 @@
 // nothing to check against, makes the run fail.
 //
 // Usage: bun scripts/bench-suite.ts [--runs 3] [--filter text] [--checkers tlc,tlc-auto,...]
-//        [--timeout seconds] [--out path] [--markdown path]
+//        [--timeout seconds] [--out path] [--markdown path] [--suite bench-liveness.json]
 // TLA2TOOLS_JAR names tla2tools.jar, TLA_TS_CLI tla-ts's dist/cli.js and TLA_RS_BIN tla-rs's tla
 // binary, and PROVE_IT_BASE_BINARY another build's dist/prove-it (prove-it-base); the Prove It binary
 // is dist/prove-it (bun run build:binary), and the one Bun compiled ahead of time dist/prove-it-aot
@@ -102,8 +102,9 @@ const AOT_BINARY_PATH = join(PACKAGE_DIRECTORY, "dist/prove-it-aot");
 // platform.
 const getAddonPath = (binaryPath: string) => join(dirname(binaryPath), "embedded", ADDON_FILE);
 const RUST_BACKEND = { PROVE_IT_ENGINE_BACKEND: "rust" };
+// --suite names another list of models beside this script, such as bench-liveness.json.
 const MODELS: SuiteModel[] = JSON.parse(
-  readFileSync(join(import.meta.dirname, "bench-suite.json"), "utf8"),
+  readFileSync(join(import.meta.dirname, getOption("--suite") ?? "bench-suite.json"), "utf8"),
 );
 const runs = Number(getOption("--runs") ?? 3);
 const filter = getOption("--filter");
@@ -385,7 +386,7 @@ const checkers = ALL_CHECKERS.filter(
 );
 // The speedups are over this Prove It, and the counts are checked against TLC on one worker, or
 // against TLC's recording in expected.json when TLC isn't run.
-const baseline = ["prove-it", "prove-it-bun", "prove-it-node"].find((name) =>
+const baseline = ["prove-it", "prove-it-bun", "prove-it-node", "prove-it-rust"].find((name) =>
   checkers.some((checker) => checker.name === name),
 );
 const isProveIt = (name: string) => name.startsWith("prove-it");
@@ -532,8 +533,13 @@ console.log(machine);
 
 if (MODELS.some((model) => model.isUsingLibrary)) linkLibraryModules();
 
+// A config named by a path, such as a scaled model's in benchmarks/liveness, is the package's.
 const models = MODELS.filter((model) => filter === undefined || model.id.includes(filter)).map(
-  (model) => ({ ...model, directory: join(PACKAGE_DIRECTORY, model.directory) }),
+  (model) => ({
+    ...model,
+    directory: join(PACKAGE_DIRECTORY, model.directory),
+    config: model.config.includes("/") ? join(PACKAGE_DIRECTORY, model.config) : model.config,
+  }),
 );
 
 const describeOutcome = (outcome: Outcome | undefined, isCountingGenerated = true) =>
@@ -793,14 +799,16 @@ if (markdownPath !== undefined) {
     `| ${cells.map((cell) => String(cell ?? "-").replaceAll("|", "\\|")).join(" | ")} |`;
   const spread = (result: Result, name: string) => {
     const measurement = result.measurements[name];
-    return measurement.verdict === "agrees" && measurement.runs.length > 1
-      ? ` ${formatSeconds(measurement.minimumWallMilliseconds)}–${formatSeconds(measurement.maximumWallMilliseconds)}`
-      : "";
+    const wall =
+      measurement.runs.length > 1
+        ? ` ${formatSeconds(measurement.minimumWallMilliseconds)}–${formatSeconds(measurement.maximumWallMilliseconds)}`
+        : "";
+    return measurement.verdict === "agrees" ? `${wall}, ${measurement.maxRssMegabytes} MB` : "";
   };
   const lines = [
     "## Checker benchmark",
     "",
-    `Median wall seconds of ${runs} interleaved runs (CPU seconds; min–max wall), startup included, on ${machine.cores} cores (${machine.cpu}, ${machine.memoryGigabytes} GB). Speedups are over \`${baseline}\` at ${machine.proveIt}, on the models where both agree with TLC on one worker. A checker that fails${timeoutSeconds === undefined ? "" : `, times out (${timeoutSeconds} s)`} or disagrees with TLC on a model says so instead of a time and takes no more runs there.`,
+    `Median wall seconds of ${runs} interleaved runs (CPU seconds; min–max wall, median peak resident memory), startup included, on ${machine.cores} cores (${machine.cpu}, ${machine.memoryGigabytes} GB). Speedups are over \`${baseline}\` at ${machine.proveIt}, on the models where both agree with TLC on one worker. A checker that fails${timeoutSeconds === undefined ? "" : `, times out (${timeoutSeconds} s)`} or disagrees with TLC on a model says so instead of a time and takes no more runs there.`,
     "",
     row(["Checker", "Version", `${baseline} is faster (wall)`, "(CPU)", "Models agreeing"]),
     row(["---", "---", "---:", "---:", "---:"]),
