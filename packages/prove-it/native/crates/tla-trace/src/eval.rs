@@ -548,6 +548,29 @@ impl<'ir> Evaluator<'ir> {
         result
     }
 
+    // ENABLED A: whether A takes the current state anywhere, as `Tool.enabled` finds with a next
+    // state of its own, a successor whether or not it assigns every variable. A failure inside it
+    // is one the replay doesn't follow, since `enabled` evaluates apart from the walk.
+    fn enabled(&mut self, action: NodeId, context: &Context) -> Evaluated<Value> {
+        let width = self.next.len();
+        let next = std::mem::replace(&mut self.next, vec![None; width]);
+        let target = self.target.take();
+        let mut is_enabled = false;
+        let walked = self.walk(action, context, false, &mut |_| {
+            is_enabled = true;
+            Ok(false)
+        });
+        self.next = next;
+        self.target = target;
+        if walked.is_err()
+            && let Some(stack) = &mut self.call_stack
+        {
+            stack.unfollowed.get_or_insert("a failure inside ENABLED");
+        }
+        walked?;
+        Ok(Value::Bool(is_enabled))
+    }
+
     // TLC 1.7.4, which words some messages apart.
     pub(crate) fn is_174(&self) -> bool {
         self.ir
@@ -923,6 +946,7 @@ impl<'ir> Evaluator<'ir> {
                 )))
             }
             NodeKind::Label { body, .. } => self.evaluate(*body, context),
+            NodeKind::Enabled(action) if !context.is_primed => self.enabled(*action, context),
             _ => fail(format!("evaluating a {}", describe(kind))),
         }
     }

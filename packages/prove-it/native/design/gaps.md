@@ -167,9 +167,13 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   one applies it where the operator applies the argument, and DOMAIN of one is its domain. Before,
   the engine built it, which a domain such as Nat stopped, and a body that reads its own DOMAIN
   never finished.
-- With them, function_syntax (tla-rs), declined before, now completes in Rust. test45 (TLC's
-  tests) now searches in Rust until a function construction in a recursive body applies the
-  function to itself, which needs the construction to stay lazy as TLC keeps it.
+- With them, function_syntax (tla-rs), declined before, now completes in Rust.
+- TLC keeps a function construction lazy too, so `f[i \in S] == [j \in T |-> e]` applied as
+  `f[a][b]` evaluates e for b alone, and e may apply `f[a]` to another element. The engine built
+  `f[a]` whole, which recursed forever where e applies it. Where a recursive function's body is a
+  function construction, `f[a][b]` now calls a runtime of its own for e, with a and b bound and
+  each checked against its domain, as `FcnLambdaValue.apply` checks them. test45 (TLC's tests)
+  now completes in Rust.
 
 ## Filters of infinite sets
 
