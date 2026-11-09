@@ -167,6 +167,10 @@ fn get_argument_ranges(expression: &Expression) -> Option<&[Option<Range>]> {
     }
 }
 
+/// What the parts of a name select: the definition, its name, the arguments, and how many of
+/// them the parts before its own give.
+type Selected = (Rc<Definition>, Name, Vec<Expr>, usize);
+
 struct Found {
     definition: Rc<Definition>,
     args: Vec<Expr>,
@@ -208,25 +212,37 @@ impl Selector<'_> {
         Ok(())
     }
 
-    fn find_definition(
-        &mut self,
-        local: Option<&[Rc<Definition>]>,
-    ) -> Result<(Rc<Definition>, Name, Vec<Expr>, usize)> {
+    /// The definition the next parts of the name select. While collecting SANY's messages, a
+    /// name that selects nothing is SANY's error at the parts that are names, which
+    /// `Generator.selectorToNode` reports after it skips the parts that aren't.
+    fn find_definition(&mut self, local: Option<&[Rc<Definition>]>) -> Result<Option<Selected>> {
         let mut names: Vec<Name> = Vec::new();
         let mut args: Vec<Expr> = Vec::new();
+        let mut name_ranges: Vec<Range> = Vec::new();
+        let is_collecting = self.tables.is_collecting.get();
         while self.index < self.selectors.len() {
             let crate::ast::Selector::Name {
                 name,
                 args: own_args,
             } = &self.selectors[self.index]
             else {
-                return Err(create_error(
-                    "Expected an operator name",
-                    &self.reference.location,
-                ));
+                if !is_collecting || names.is_empty() {
+                    return Err(create_error(
+                        "Expected an operator name",
+                        &self.reference.location,
+                    ));
+                }
+                args.extend(self.selectors[self.index].args().iter().cloned());
+                self.index += 1;
+                continue;
             };
             names.push(name.clone());
             args.extend(own_args.iter().cloned());
+            if let Some(range) =
+                get_selector_ranges(self.reference).and_then(|ranges| ranges.get(self.index))
+            {
+                name_ranges.push(range.clone());
+            }
             let joined: Name = Rc::from(names.join("!"));
             let definition = match local {
                 Some(local) => local
@@ -237,18 +253,35 @@ impl Selector<'_> {
             };
             if let Some(definition) = definition {
                 let earlier = args.len() - own_args.len();
-                return Ok((definition, joined, args, earlier));
+                return Ok(Some((definition, joined, args, earlier)));
             }
             self.index += 1;
         }
-        Err(create_error(
-            &format!("Unknown operator {}", names.join("!")),
-            &self.reference.location,
-        ))
+        let (Some(first), Some(last), true) =
+            (name_ranges.first(), name_ranges.last(), is_collecting)
+        else {
+            return Err(create_error(
+                &format!("Unknown operator {}", names.join("!")),
+                &self.reference.location,
+            ));
+        };
+        let range = Range {
+            module: first.module.clone(),
+            start: first.start,
+            end: last.end,
+        };
+        self.index = self.selectors.len().saturating_sub(1);
+        self.report(
+            Some(range),
+            format!("Unknown operator: `{}'.", names.join("!")),
+        )?;
+        Ok(None)
     }
 
     fn enter_definition(&mut self, local: Option<&[Rc<Definition>]>) -> Result<Option<Found>> {
-        let (definition, name, args, earlier) = self.find_definition(local)?;
+        let Some((definition, name, args, earlier)) = self.find_definition(local)? else {
+            return Ok(None);
+        };
         let arity = get_arity(&definition);
         let is_last = self.index == self.selectors.len() - 1;
         if args.len() != arity && (!self.is_operator || !args.is_empty()) {

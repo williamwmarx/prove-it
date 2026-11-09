@@ -22,7 +22,7 @@ use crate::levels::{
 use crate::lexer::tokenize;
 use crate::order::TlcOrder;
 use crate::ordered_map::OrderedMap;
-use crate::parser::{extract_module, parse_module_tokens};
+use crate::parser::{extract_module, parse_module_for_sany, parse_module_tokens};
 use crate::resolve::{
     ErrorList, GetKey, InstancedModule, KEY_SEPARATOR, MODULE_START, ModuleContext, ModuleReport,
     ModuleSymbol, Result, SemanticUnit, SymbolKind, Symbols, Tables, collect_semantic_errors,
@@ -488,7 +488,10 @@ impl Linker<'_> {
                 Vec::new(),
             ));
         }
-        reject_module_literals(&module)?;
+        // SANY accepts the literals TLC can't evaluate.
+        if !self.is_collecting.get() {
+            reject_module_literals(&module)?;
+        }
         Ok(module)
     }
 
@@ -1799,16 +1802,52 @@ pub fn get_sany_messages(
     options: &EnvironmentOptions,
     order: &[Name],
 ) -> Result<Vec<ModuleMessages>> {
-    let root = Rc::new(parse_module_tokens(
-        options.source,
-        &tokenize(options.source)?,
-        options.version,
-    )?);
+    // SANY reports what the parser rejects in a BY, USE or HIDE as semantic errors of the module,
+    // before the others.
+    let (root, parser_errors) =
+        parse_module_for_sany(options.source, &tokenize(options.source)?, options.version)?;
+    let root = Rc::new(root);
     let linker = create_linker(options, &root);
     linker.is_collecting.set(true);
-    reject_module_literals(&root)?;
-    linker.link_top_level(&root)?;
-    let collected = linker.collected.take();
+    linker.tables.is_collecting.set(true);
+    if let Err(error) = linker.link_top_level(&root) {
+        // An error of the root module that stops linking is one SANY reports with the module's
+        // other messages, after the modules before it.
+        let FrontError::Syntax(SyntaxError {
+            sany: Some(report), ..
+        }) = &error
+        else {
+            return Err(error);
+        };
+        let is_in_root = |location: &str| {
+            location.ends_with(&format!(" of module {}", root.name))
+                || location == format!("In module {}", root.name)
+        };
+        if report.is_fatal || !report.errors.iter().all(|item| is_in_root(&item.location)) {
+            return Err(error);
+        }
+        let mut collected = linker.collected.borrow_mut();
+        collected
+            .errors
+            .entry(root.name.clone())
+            .or_default()
+            .extend(report.errors.iter().cloned());
+        let count = linker.warnings.borrow().len();
+        let owned = collected.warning_modules.len();
+        collected
+            .warning_modules
+            .extend((owned..count).map(|_| root.name.clone()));
+    }
+    let mut collected = linker.collected.take();
+    if !parser_errors.is_empty() {
+        let errors = collected.errors.entry(root.name.clone()).or_default();
+        if !errors.is_empty() {
+            return Err(FrontError::NotYet(
+                "SANY's errors in a BY, USE or HIDE with other errors".to_owned(),
+            ));
+        }
+        *errors = parser_errors;
+    }
     let warnings = linker.warnings.borrow().clone();
     let is_listed = |name: &Name| order.contains(name);
     let is_unlisted = collected
