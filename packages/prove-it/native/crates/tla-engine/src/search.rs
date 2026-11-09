@@ -8,7 +8,8 @@ use std::fmt::Write as _;
 use std::io::Write as _;
 use std::time::{Duration, Instant};
 
-use tla_ir::Ir;
+use tla_ir::{Ir, LiveTerm, Model};
+use tla_live::{Term, Verdict};
 use tla_values::fingerprint::{Fingerprints, Parent};
 use tla_values::store::Outcome;
 use tla_values::transfer::{EncodedStates, SharedEncoder, SharedStates, StateEncoder};
@@ -103,8 +104,11 @@ pub enum SearchOutcome {
     Declined(String),
     Complete {
         counts: Box<Counts>,
-        /// With temporal properties, the whole search for the interpreter to replay.
+        /// With temporal properties, the whole search for the interpreter to print a
+        /// counterexample from or to check them on, unless they hold.
         checkpoint: Option<Box<Checkpoint>>,
+        /// With temporal properties, what checking them found.
+        liveness: Option<Verdict>,
         /// TLC's fingerprint of each state's key, in the order found.
         fingerprints: Vec<u64>,
         value_count: usize,
@@ -865,19 +869,17 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         .collect();
     let collisions = search.states.collisions;
     let is_enabled_exact = !machine.is_past_walk;
-    // The first `count` states and the steps of the first `expanded`, for the interpreter to
-    // replay from the initial states on, with the answers to the liveness checker's atoms.
-    let graph_checkpoint = |machine: &mut Machine<'_>,
-                            search: &Search<'_>,
-                            expanded: usize,
-                            count: usize,
-                            expanding: usize|
-     -> Result<Checkpoint, &'static str> {
+    // The answers to the liveness checker's atoms about the first `count` states and the steps of
+    // the first `expanded`.
+    let graph_tables = |machine: &mut Machine<'_>,
+                        search: &Search<'_>,
+                        expanded: usize,
+                        count: usize|
+     -> Result<Vec<Table>, &'static str> {
         let graph = search.graph.as_ref().expect("a graph");
-        let states = &search.states;
         let edge_count = graph.edge_offsets[expanded] as usize;
         let live = LiveGraph {
-            states: &states.ids[..count * width],
+            states: &search.states.ids[..count * width],
             width,
             count,
             expanded,
@@ -886,8 +888,21 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             labels: graph.labels.as_ref().map(|labels| &labels[..edge_count]),
             is_enabled_exact,
         };
-        let tables = answer_atoms(machine, &live, &context.atoms, settings.is_live_checked)?;
-        Ok(Checkpoint {
+        answer_atoms(machine, &live, &context.atoms, settings.is_live_checked)
+    };
+    // The first `count` states and the steps of the first `expanded`, for the interpreter to
+    // replay from the initial states on, with the answers to the liveness checker's atoms.
+    let graph_checkpoint = |machine: &mut Machine<'_>,
+                            search: &Search<'_>,
+                            expanded: usize,
+                            count: usize,
+                            expanding: usize,
+                            tables: Vec<Table>|
+     -> Checkpoint {
+        let graph = search.graph.as_ref().expect("a graph");
+        let states = &search.states;
+        let edge_count = graph.edge_offsets[expanded] as usize;
+        Checkpoint {
             expanding: expanding as u64,
             count: count as u64,
             generated: search.initial_generated,
@@ -910,7 +925,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 is_enabled_exact,
                 tables,
             }),
-        })
+        }
     };
     match result {
         Err(bail) if bail.0 == OTHER_STEPS => SearchOutcome::Invariant(OTHER_STEPS.into()),
@@ -930,12 +945,30 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     },
                 );
             }
-            let checkpoint = match search.graph {
-                Some(_) => match graph_checkpoint(&mut machine, &search, count, count, 0) {
-                    Ok(checkpoint) => Some(Box::new(checkpoint)),
-                    Err(reason) => return SearchOutcome::Invariant(reason.into()),
-                },
-                None => None,
+            // The temporal properties are checked here, and the interpreter takes the graph over
+            // only to print a counterexample, to check them itself, or under PROVE_IT_LIVE_CHECK
+            // to check them again.
+            let (checkpoint, liveness) = match search.graph {
+                Some(_) => {
+                    let tables = match graph_tables(&mut machine, &search, count, count) {
+                        Ok(tables) => tables,
+                        Err(reason) => return SearchOutcome::Invariant(reason.into()),
+                    };
+                    let verdict = check_liveness(model, &search, &tables);
+                    let checkpoint =
+                        (verdict != Verdict::Holds || settings.is_live_checked).then(|| {
+                            Box::new(graph_checkpoint(
+                                &mut machine,
+                                &search,
+                                count,
+                                count,
+                                0,
+                                tables,
+                            ))
+                        });
+                    (checkpoint, Some(verdict))
+                }
+                None => (None, None),
             };
             let counts = Counts {
                 generated: search.generated,
@@ -952,6 +985,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             SearchOutcome::Complete {
                 counts: Box::new(counts),
                 checkpoint,
+                liveness,
                 value_count: machine.store.value_count(),
                 collisions,
                 fingerprints: search.states.fingerprints,
@@ -1005,8 +1039,15 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 None
             } else {
                 let expanding = search.expanding;
-                match graph_checkpoint(&mut machine, &search, expanding, count, expanding) {
-                    Ok(checkpoint) => Some(Box::new(checkpoint)),
+                match graph_tables(&mut machine, &search, expanding, count) {
+                    Ok(tables) => Some(Box::new(graph_checkpoint(
+                        &mut machine,
+                        &search,
+                        expanding,
+                        count,
+                        expanding,
+                        tables,
+                    ))),
                     Err(reason) => return SearchOutcome::Invariant(reason.into()),
                 }
             };
@@ -1156,6 +1197,41 @@ fn write_state_log(
     }
     let _ = writer.write_all(line.as_bytes());
     let _ = writer.flush();
+}
+
+// Checks the temporal properties on a complete search's graph from the answers to the atoms.
+fn check_liveness(model: &Model, search: &Search<'_>, tables: &[Table]) -> Verdict {
+    let graph = search.graph.as_ref().expect("a graph");
+    let formula: Vec<Term> = model
+        .live_formula
+        .iter()
+        .map(|&term| match term {
+            LiveTerm::Boolean(value) => Term::Boolean(value),
+            LiveTerm::State(atom) => Term::State(atom),
+            LiveTerm::Enabled(atom) => Term::Enabled(atom),
+            LiveTerm::Action { atom, enabled } => Term::Action { atom, enabled },
+            LiveTerm::Not => Term::Not,
+            LiveTerm::Always => Term::Always,
+            LiveTerm::Eventually => Term::Eventually,
+            LiveTerm::Next => Term::Next,
+            LiveTerm::And(count) => Term::And(count),
+            LiveTerm::Or(count) => Term::Or(count),
+        })
+        .collect();
+    let answers: Vec<Option<&[u8]>> = tables
+        .iter()
+        .map(|table| table.unknown.is_none().then_some(&table.answers[..]))
+        .collect();
+    tla_live::check(
+        &formula,
+        &tla_live::Graph {
+            parents: &search.states.parents,
+            edge_offsets: &graph.edge_offsets,
+            edges: &graph.edges,
+            fingerprints: &search.states.fingerprints,
+        },
+        &answers,
+    )
 }
 
 #[cfg(test)]

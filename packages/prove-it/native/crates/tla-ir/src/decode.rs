@@ -4,9 +4,9 @@ use std::fmt;
 
 use crate::{
     Action, ActionProperty, Atom, AtomKind, Bound, Builtin, ConfigName, Constant, Definition,
-    DefinitionForm, EnabledActions, IR_VERSION, Index, Ir, MAGIC, Model, Name, Node, NodeId,
-    NodeKind, Nodes, Param, PathStep, Pattern, Printed, Resolution, Scope, ScopeBinding, Selector,
-    Startup, TextId, Update, Value, Values, code, tag,
+    DefinitionForm, EnabledActions, IR_VERSION, Index, Ir, LiveTerm, MAGIC, Model, Name, Node,
+    NodeId, NodeKind, Nodes, Param, PathStep, Pattern, Printed, Resolution, Scope, ScopeBinding,
+    Selector, Startup, TextId, Update, Value, Values, code, tag,
 };
 
 /// Why a blob isn't an IR this decoder reads: where it stopped, in words, and what it found.
@@ -579,6 +579,42 @@ impl Decoder<'_> {
                 scope,
             });
         }
+        let words = self.count()?;
+        let end = self.at + words;
+        let mut live_formula = Vec::new();
+        while self.at < end {
+            let position = |decoder: &mut Self| -> Decoded<Index> {
+                match decoder.next()? {
+                    word if word >= 0 => Ok(word as Index),
+                    word => decoder.error(format!("an atom at {word}")),
+                }
+            };
+            live_formula.push(match self.next()? {
+                code::LIVE_FALSE => LiveTerm::Boolean(false),
+                code::LIVE_TRUE => LiveTerm::Boolean(true),
+                code::LIVE_STATE => LiveTerm::State(position(self)?),
+                code::LIVE_ENABLED => LiveTerm::Enabled(position(self)?),
+                code::LIVE_ACTION => LiveTerm::Action {
+                    atom: position(self)?,
+                    enabled: if self.words.get(self.at) == Some(&-1) {
+                        self.at += 1;
+                        None
+                    } else {
+                        Some(position(self)?)
+                    },
+                },
+                code::LIVE_NOT => LiveTerm::Not,
+                code::LIVE_ALWAYS => LiveTerm::Always,
+                code::LIVE_EVENTUALLY => LiveTerm::Eventually,
+                code::LIVE_NEXT => LiveTerm::Next,
+                code::LIVE_AND => LiveTerm::And(self.count()? as u32),
+                code::LIVE_OR => LiveTerm::Or(self.count()? as u32),
+                other => return self.error(format!("a liveness term {other}")),
+            });
+        }
+        if self.at != end {
+            return self.error("a liveness formula past its words");
+        }
         Ok(Model {
             init,
             next,
@@ -597,6 +633,7 @@ impl Decoder<'_> {
             is_recording_graph,
             version,
             atoms,
+            live_formula,
         })
     }
 

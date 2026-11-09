@@ -2286,6 +2286,26 @@ On the 4-core cloud machine, with `main` at a0f66ec before the merge of #31 and 
   could close the 1.3× gate is compiling guards and invariants to code rather than closure trees
   (3.1's later tier), not more tuning of the closures.
 
+#### After M7: lazy UNION
+
+- **UNION S** that TLC keeps lazy (`UnionValue.union` combines S at once only when S and its
+  elements are set enumerations) now has a reference, `Lazy::Union`, so the native engine
+  enumerates it where the TypeScript engine refuses it. It streams each set of S in turn, in the
+  order S streams, duplicates and all (`UnionValue.Enumerator`, the interpreter's
+  `streamElements`), enumerates the normalized union (`toFiniteSet`), and tests membership in any
+  set of S (`isElementOf`).
+- The engine holds S's elements as ids, so it streams each as its normalized set. That is TLC's
+  order unless the element itself streams apart (`isStreamedApart`: a UNION or `\cup` TLC keeps
+  lazy, or a set built from one). So `Compiled` now says whether a set is known to stream in
+  order (`is_in_order`) and whether each of its elements is (`are_elements_in_order`). Both are
+  false unless the compiler knows: set enumerations, set maps, intervals, SUBSET and unprimed
+  variables are in order, and IF, filters, set operations and sets of functions, records and
+  tuples are in order when their parts are, a lazy `\cup` never. A UNION over anything else,
+  such as a set map whose body is a bound name, or a set of functions over one, still has no
+  reference and is refused.
+- With it, RealQuicksort and RealQuicksort2 (TLC test-model/pcal), declined for
+  `UNION {[1..N -> 1..N] : N \in 0..MaxLen}`, complete in Rust with output identical to TLC's.
+
 ---
 
 ## 12. Rust end to end
@@ -2318,6 +2338,56 @@ covering it in Rust, then removing the TypeScript path once the gates below hold
 **Distribution.** The binary ships per platform; the npm package becomes a thin launcher for it and
 then carries the binary alone. The proof checker (`src/prover`, `src/obligations`) is outside this
 plan for now.
+
+### 12.1 Liveness, as built (stage 3, first part)
+
+Branch `rust-liveness`. The crate `tla-live` (std only) ports `tableau.ts` and
+`liveness-checker.ts` as 5.1 sketched them, on the engine's own graph:
+- **The formula travels in the IR** (version 3, ABI 4): after the atoms, the fairness and negated
+  properties as `createLivenessChecker` joins them, its terms in prefix order, each atom by its
+  position (one past the atoms for an atom the checker never asks about). TypeScript still turns
+  the AST into that formula (`toLiveExpression`, front end, stage 4) and still reports the errors
+  TLC reports while it solves it, before the search; Rust solves it again and declines where it
+  can't.
+- **Terms are hash-consed**, so two are equal just when `getTermKey` makes them equal, and particles
+  compare as sets of ids. Junctions keep the shape the TypeScript code gives them (flattened by
+  `createJunction`, binary by `createPair`), since the tableau's node order follows from it.
+- **The graphs are built state by state in the order the interpreter's replay adds them**: each
+  initial state, then every state with its successors in TLC's `SetOfStates` order (slot order of
+  a linear-probing table keyed by the low 31 bits of TLC's fingerprint, with the capacity factor
+  that grows across states), the late expansion of a tableau node found for a state already
+  added, and the search's steps (with their duplicates) for it. Predicates are read from the
+  engine's atom tables; a 2 there, or an atom without a table, declines the whole check. An
+  action of a fairness whose ENABLED is false is false, as the interpreter's checker finds it.
+- **The search** is `LiveWorker#checkSccs` as the TypeScript port has it (one stack of words with
+  the marker frames), and the counterexample is `printTrace`'s: the BFS prefix, the greedy walk
+  through the component, `bfsPostFix`. Rust returns `Holds`, `Lasso { path, loop_start,
+  is_cycle_constrained }` (state indices), `Accepted { state, path }` (a tableau node that accepts
+  every behavior, which TLC reports as it adds `state`), or `Declined(reason)`, in
+  `SearchOutcome::Complete::liveness`.
+- **TypeScript** succeeds on `Holds` without taking the graph over (the engine builds no checkpoint
+  then); on `Lasso` it takes the states over and prints the lasso through `reportLasso`, with the
+  search's counts. `Accepted` and `Declined` replay the graph through the TypeScript checker as
+  before: printing an accepted path needs the replay's partial counts. Under
+  `PROVE_IT_LIVE_CHECK=1` the interpreter replays the graph too and throws where its verdict or
+  lasso differs from Rust's.
+
+As run, on the 4-core cloud machine (Depot's CLI wasn't available to this session):
+- **Parity: met on the liveness models.** `differential --compare-backends --modes default` on the
+  222 corpus models whose configuration has a PROPERTY (TLC under 20 s): tlc/ts 222 same, ts/rust
+  222 same; ts/interpreter 221, the other the engine-off run of MCTxnsMoveRange killed for memory
+  with four runs at once. Of their native searches that complete with a graph, Rust decides 83
+  (53 hold, 30 lasso) and leaves 7 to the replay: Github1389Counting (accepted), and six it
+  declines for a predicate the engine leaves to the interpreter (liveness_error, Github607,
+  Github1389ViolatedB/C, UserModuleOverride, UserModuleOverrideAnnotation).
+- **Speed.** Median of 7 interleaved runs of `dist/cli.js`, wall/CPU ms, TypeScript backend, Rust on
+  `main`, Rust here: ReadersWriters 690/2,120, 434/850, 249/350; TokenRing 941/2,650, 637/1,060,
+  374/450; StarkMutex 981/2,460, 805/1,330, 396/520; MacroQuicksort 672/2,240, 443/910, 268/380;
+  nbacg_guer01 707/1,640, 508/1,070, 282/390; MCDisruptor_SPMC 543/1,740, 321/630, 269/390;
+  OneBitMutexNoSymmetryMC (a lasso) 311/800, 253/610, 227/510.
+- **Left.** Printing an accepted path natively; the engine's last declines above; lifting
+  `MAXIMUM_GRAPH_STATES`, which exists for the interpreter's periodic checks; and deleting the
+  TypeScript checker once nothing but the oracle calls it.
 
 ---
 
@@ -2428,24 +2498,237 @@ banner, then the recorded front, then everything after it. So the recorded part 
 
 ### 13.7 As built
 
-Nothing yet.
+- **#44, the crate.** `prove-it-cli` builds `prove-it`: the arguments and the Java launch, the
+  command-line errors, the printer, the welcome and banner, the engine's events and the summary of
+  a complete search, exit codes, `-deadlock`. 1.3 MB stripped; about 1.4 ms to print the usage.
+  Anything else it reports on stderr as `prove-it: not native yet: <reason>` and exits 1; a search
+  that prints ends at its first `Print`.
+- **The differential's `tlc/native` pair**, on Depot (`depot-ubuntu-24.04-16`, all 1466 runs):
+  **542 of 1466** runs print what TLC prints. Every other run gave its reason; none printed
+  something different. The reasons, by runs: 342 no recorded front (SANY, the configuration or an
+  assumption stopped the TypeScript run before the engine), 264 checking temporal properties, 64
+  deadlock, 52 printing values, 60 invariant violations (14 of them by an initial state), and the
+  engine's other stops and declines (about 140).
 
-#### After M7: lazy UNION
+---
 
-- **UNION S** that TLC keeps lazy (`UnionValue.union` combines S at once only when S and its
-  elements are set enumerations) now has a reference, `Lazy::Union`, so the native engine
-  enumerates it where the TypeScript engine refuses it. It streams each set of S in turn, in the
-  order S streams, duplicates and all (`UnionValue.Enumerator`, the interpreter's
-  `streamElements`), enumerates the normalized union (`toFiniteSet`), and tests membership in any
-  set of S (`isElementOf`).
-- The engine holds S's elements as ids, so it streams each as its normalized set. That is TLC's
-  order unless the element itself streams apart (`isStreamedApart`: a UNION or `\cup` TLC keeps
-  lazy, or a set built from one). So `Compiled` now says whether a set is known to stream in
-  order (`is_in_order`) and whether each of its elements is (`are_elements_in_order`). Both are
-  false unless the compiler knows: set enumerations, set maps, intervals, SUBSET and unprimed
-  variables are in order, and IF, filters, set operations and sets of functions, records and
-  tuples are in order when their parts are, a lazy `\cup` never. A UNION over anything else,
-  such as a set map whose body is a bound name, or a set of functions over one, still has no
-  reference and is refused.
-- With it, RealQuicksort and RealQuicksort2 (TLC test-model/pcal), declined for
-  `UNION {[1..N -> 1..N] : N \in 0..MaxLen}`, complete in Rust with output identical to TLC's.
+## 14. The front end (`tla-front`), stage 4
+
+Stage 4 ports the front end, so a Rust binary goes from `.tla` and `.cfg` files to the IR, and on
+to the engine, with no JavaScript. The TypeScript front end stays as the oracle, and is retired
+piece by piece once the Rust one matches it on the corpora. This section is the plan as built; it
+replaces the "native front door" of section 0's stage 4 that hands the unusual to the JS binary,
+since the Rust front end reproduces SANY's messages for the unusual too.
+
+### 14.1 Crate boundaries
+
+One crate, `crates/tla-front`, std only, depending on `tla-ir` (whose encoder writes the IR) and
+nothing else. Its modules follow the TypeScript files they port, one for one, so a difference
+found by the harness points at one pair of files:
+
+| Rust module | TypeScript |
+|---|---|
+| `lexer` | `src/lexer.ts` |
+| `ast`, `parser` | `src/ast.ts`, `src/parser.ts` (TLAPS proofs parse only) |
+| `modules` | `src/standard-modules.ts`, `src/bundled-modules.ts`, `src/sany/modules.ts`, the standard modules' texts |
+| `resolve`, `levels` | `src/resolve.ts`, `src/levels.ts`, `src/substitution-levels.ts`, `src/subexpressions.ts`, `src/instances.ts` |
+| `sany` | `src/sany/` (lexer, parse errors, generator, levels, linter, report) |
+| `config` | `src/config.ts` |
+| `order` | `src/tlc/order.ts` |
+| `environment` | `src/environment.ts` (startup values, constants, the model's definitions) |
+| `lower` | `src/engine/ir.ts` |
+
+`hash` is FxHash for the front end's maps, `json` writes JSON as `JSON.stringify` does for the
+harness, and `errors` holds the errors of `src/errors.ts` the front end raises, with the same
+messages. Positions are the TypeScript ones: lines from 1, columns in UTF-16 code units from 1,
+a tab reaching the next multiple of eight. The sources are `&str`; the lexer counts each
+character's UTF-16 length, so nothing converts the text.
+
+PlusCal translation (`src/pcal`) is a later step: until it is ported, a module SANY would validate
+PlusCal in, which holds a `--algorithm` or `--fair algorithm` comment, is one the front end gives
+up on (`NotYet`, 14.2).
+
+### 14.2 The API (for the Rust CLI)
+
+This is the seam 13.2 names. The binary makes one call, in TLC's order inside it: the
+configuration first, SANY next, then the model:
+
+```rust
+pub enum TlcVersion { Master, V1_7_4 }
+
+/// Where SANY reads a module from, as `SanyModuleOrigin`.
+pub enum ModuleOrigin { File, RootFile, Standard }
+
+/// How the binary finds a module's text: the spec's directory, then the TLA-Library
+/// directories, as `createModuleLoader`; and how SANY names the file it parses a module from
+/// ("Parsing file …"), which depends on the spec's path and the TLC version, as
+/// `createFileDescriber`.
+pub trait Files {
+    fn load(&self, module: &str) -> Option<String>;
+    fn describe(&self, module: &str, origin: ModuleOrigin) -> String;
+}
+
+pub struct FrontRequest<'a> {
+    pub spec: &'a Path,           // the spec's .tla file
+    pub spec_name: &'a str,       // what SANY calls the spec in its messages
+    pub config: &'a str,          // the .cfg file's text
+    pub files: &'a dyn Files,
+    pub version: TlcVersion,
+    pub check_deadlock: bool,     // false after -deadlock
+    pub is_warning_enabled: bool, // false after -nowarning
+    pub is_trace_recorded: bool,  // TLC's trace exploration extends _TLCTrace
+}
+
+/// What TLC prints before the search, in order.
+pub enum FrontEvent {
+    /// Text SANY prints, byte for byte, to standard output or standard error.
+    Sany { is_error: bool, text: String },
+    /// A TLC message by its code, with its parameters: the warnings before the search (2149,
+    /// 2255, 2279, 2284, 2168, 2400) and the liveness preamble (2212).
+    Message { code: u32, parameters: Vec<String> },
+}
+
+pub enum Front {
+    /// The IR the engine runs, byte for byte what the TypeScript lowering writes.
+    Model { ir: Vec<u8>, events: Vec<FrontEvent> },
+    /// The spec or its configuration is rejected: SANY's diagnostics, or a configuration or
+    /// model error, with TLC's exit code. `error` carries the message code and parameters of a
+    /// TLC error (a configuration error, a constant TLC can't assign), not its text.
+    Rejected { events: Vec<FrontEvent>, error: Option<TlcError>, exit_code: u8 },
+    /// A construct or condition the front end doesn't cover yet, with what it is.
+    NotYet { reason: String },
+}
+
+pub fn front(request: &FrontRequest) -> Front;
+```
+
+SANY's output is buffered as events rather than printed as it goes: the front end takes
+milliseconds, and the binary buffers its output until the first progress line anyway (8.4).
+`NotYet` shrinks milestone by milestone, as the binary's own `not native yet` does. The names may
+change as the milestones land; the shape won't.
+
+### 14.3 Milestones
+
+Each is one or more small PRs, and each lands with its mode of the differential harness
+(`scripts/front-differential.ts <mode>`), which runs the TypeScript front end and
+`front-dump <mode>` over every module of the fetched corpora and the test fixtures, writes each
+module's result as one canonical JSON line per side, and fails on any difference. Verification
+runs it on every pull request once the mode is in, over the corpora (the Front End job fetches
+them).
+
+- **F1. Lexer** (`lexer`): tokens with kinds, texts, synonyms' spellings and positions, and the
+  lexer's errors. Harness mode `tokens`.
+- **F2. Parser to AST** (`ast`, `parser`): the AST of `ast.ts` with source locations, the parse
+  errors' messages and failures, `extractModule`, and the TLAPS proof syntax, which only has to
+  parse. Mode `ast`: the AST as canonical JSON (fields in `ast.ts`'s order, no identities).
+- **F3. Modules** (`modules`): the standard and bundled modules, as texts compiled in with
+  `include_str!` from the same `.tla` sources the TypeScript reads, SANY's standard-module sets
+  per TLC version, and the module loader. Mode `modules`: what each name loads to.
+- **F4. Resolution and levels** (`resolve`, `levels`): symbols, resolutions, instances and
+  substitutions, the semantic errors and their messages, and levels. Mode `resolve`: each
+  identifier's resolution and each definition's level, and the errors.
+- **F5. SANY** (`sany`): SANY's lexer and parse errors (`parse-error.ts`), the semantic generator,
+  SANY's levels, the linter and the report, for both TLC versions. Mode `sany`: the report's text
+  and `isFailed` for every module, and `conformance:sany` (`scripts/proof-conformance.ts` against
+  `sany.json`) gains `--backend rust`.
+- **F6. Configuration** (`config`): `parseConfig` and `TlaConfigError`'s messages. Mode `config`
+  over every `.cfg` of the corpora.
+- **F7. TLC order and startup values** (`order`, `environment`): `createTlcOrder`'s string table,
+  the constants, and `environment.startupValues` in `transfer.ts`'s encoding. Mode `order`.
+- **F8. IR lowering** (`lower`): the IR of every corpus model. Mode `ir`: the bytes, equal to
+  what `PROVE_IT_IR_DUMP` writes (section 6.10's first check), and the same decline reasons.
+
+What F7 and F8 need is evaluation, not only analysis. Today the IR holds values that the
+TypeScript environment computes by evaluating TLA+ before the search: the constants a
+configuration assigns (`toValue`, and an operator table for a constant with arguments), the
+startup values of definitions with repeated effects (TLC evaluates constant definitions at
+startup, printing what they `Print`), the check of a substitute TLC evaluates at startup, the
+SYMMETRY permutations, and TLC's split of Next into actions, which enumerates the constant sets
+of its `\E`. Assumptions are evaluated there too (2104, 2105). The front end has no evaluator,
+and should not grow a second one beside the engine's. So the plan for F7 and F8:
+- the configuration's constants need no evaluator: the front end writes them in `transfer.ts`'s
+  encoding directly;
+- everything else that TLC evaluates at startup moves into the engine, as a startup phase that
+  runs on the IR before the search: the IR names the startup definitions in TLC's order, the
+  substitutes to check, the assumptions, the SYMMETRY definition and Next, and the engine
+  evaluates them, reporting `Print` output and errors as events, as 13.2 already plans for ASSUME;
+- the TypeScript lowering changes the same way in the same PR (an IR version bump), so
+  byte-equality holds on IR whose content is what the front end alone determines. The liveness
+  atoms and the tableau come from `tla-live`, which the liveness session ports, once the IR
+  carries the formula (#46).
+This needs the engine sessions' agreement on the startup phase; until it lands, F7 and F8 cover
+the models whose startup evaluates nothing beyond the configuration's constants, and give up
+(`NotYet`) on the rest.
+
+Speed is measured at F2, F4 and F8 on the largest corpus modules (`TE.tla`, 2.9 MB;
+`tcp_proof.tla`; `LevelSpec.tla`; btree's and 2PCwithBTM's models), parse plus analysis, against
+the TypeScript front end in Bun.
+
+#### F1 as built
+
+- `crates/tla-front` with `lexer`, `errors`, `json` and `hash`, and the `front-dump` binary.
+  `tokenize` returns the tokens with their texts interned as `Rc<str>`, as `lexer.ts` keeps each
+  name one string object, so later stages compare names by pointer where TypeScript does.
+- `scripts/front-differential.ts tokens`: 2,356 of 2,356 modules match (the 304 fixtures and the
+  2,052 corpus modules), and so do 2,400 modules made by inserting and deleting text at random in
+  800 corpus modules, 448 of which the lexer rejects, so its errors and their positions are held
+  too. `cargo test` covers tabs, UTF-16 columns, synonyms, steps and every error kind without the
+  corpora.
+- Speed, best of five in process, on this 4-core machine: `TE.tla` (2.9 MB) 50 ms against
+  95 ms for `lexer.ts` in Bun; `tcp_proof.tla` (259 KB) 3.2 ms against 12.6 ms; `LevelSpec.tla`
+  (132 KB) 0.45 ms against 5.6 ms.
+
+#### F2 as built
+
+- `ast` mirrors `ast.ts` type for type. A node TypeScript reaches from two places is one `Rc`:
+  the set of `\A x, y \in S` in both bounds, a theorem's or assumption's statement and the
+  definition its name makes, a module's definitions and its units. Later stages that key on
+  identity, as the IR lowering does, see the same sharing. Ranges are values, not `Rc`s.
+- `parser` ports the `tlc` and `sany` modes of `parser.ts` (`parse_module`,
+  `parse_module_tokens`, `parse_sany_module`) and `extractModule`. The `tlapm` mode, which reads
+  proof obligations as tlapm does, is left out: the checker never uses it. A module named by a
+  keyword makes `parser.ts` run SANY's own parser (`getSanyParseError`), which F5 ports; until then
+  the Rust parser returns an `unsupported:` error there, and no corpus module reaches it.
+- `dump` writes the AST and errors as canonical JSON: keys sorted, `undefined` fields left out, so
+  the harness compares the two ASTs as text without either side building objects in the other's
+  order. `scripts/front-differential.ts` gains the modes `ast` and `sany-ast`, `--mutate <n>`
+  (four variants of each of the first n modules, inserting TLA+ syntax and deleting text at places
+  a fixed seed picks, so errors and their positions are compared too), and `time`.
+- **Parity.** `ast` and `sany-ast`: 2,356 of 2,356 modules match, and so do 6,000 variants of
+  1,500 randomly chosen corpus modules (1,488 of the first 2,000 rejected), with every error's
+  message, reason and position, and the SANY errors of `HIDE`. Verification's Front End job runs
+  all three modes with `--mutate 400`.
+- **Speed** (`front-differential.ts time`, best of five, tokens and AST, this 4-core machine):
+  all 2,356 modules 996 ms in TypeScript against 397 ms in Rust; `TE.tla` 337 against 216 ms,
+  `tcp_proof.tla` 39 against 12.6 ms, `FindOp.tla` 10.9 against 2.7 ms. Under callgrind, about
+  a third of Rust's time is the allocator (an `Rc` per node, a `Vec` per argument list) and a
+  sixth is dropping the AST, which the binary can skip at exit. An `ExpressionKind` is 160 bytes,
+  set by the qualified `Apply`'s ranges; boxing them is the next step if parsing shows up in a
+  whole front end's profile.
+
+#### F6 as built
+
+- `config` ports `parseConfig`: TLC's `ModelConfig.parse` over the tokens TLC reads with SANY's
+  lexer, for TLC master and 1.7.4 (TYPE and TYPE_CONSTRAINT, none of the later keywords), and
+  JavaCC's lexical errors (`formatLexicalError`, `escapeLexeme`), whose columns and escapes count
+  UTF-16 code units. `ModelConfig` keeps `config.ts`'s fields; `ConfigError` is `TlaConfigError`.
+- `front-differential.ts config` runs over every `.cfg` of the corpora and fixtures, writing each
+  file's configuration (or error) for both versions on one line: 1,425 of 1,425 match, and so do
+  5,700 variants from `--mutate`, and 3,324 more variants made to hit the lexer (unterminated
+  strings and comments, characters outside the BMP), of which 2,620 are errors (10 kinds of
+  message, counting the keyword named as one).
+
+#### F3 as built (the texts)
+
+- The standard modules are the strings of `src/sany/modules.ts` (SANY's, for TLC master and
+  1.7.4) and `src/bundled-modules.ts` (the Reals, RealTime and Toolbox TLC bundles, which differ
+  from SANY's copies by a final newline). `scripts/front-modules.ts` writes each to
+  `crates/tla-front/modules/<set>/<Name>.tla`, with `src/standard_modules.rs` including them, and
+  `--check`, which Verification's Front End job runs, fails when a copy differs from the
+  TypeScript string. The copies are generated, so the TypeScript stays the one place to change a
+  text until it is retired, when the `.tla` files become the source.
+- `get_standard_module(name, version)` reads them; `cargo test` parses all 33 in SANY's mode.
+- Left for F4, with resolution: the module loader (`createTlcOrder`'s search of the spec's
+  directory, the root file's extracted modules, the user's copies of standard modules TLC reads
+  first) and the tables that go with the texts (`STANDARD_LEVELS`, `USER_STANDARD_MODULES`).
+

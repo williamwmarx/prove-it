@@ -136,6 +136,12 @@ pub(crate) enum Shape {
         slot: u32,
         is_int: bool,
     },
+    /// `f[i][j]`, with `f` an unprimed variable and `i` and `j` bound names.
+    ApplyVar2 {
+        variable: u32,
+        slot: u32,
+        second: u32,
+    },
 }
 
 impl Shape {
