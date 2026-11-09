@@ -8,7 +8,7 @@ use tla_values::Id;
 use tla_values::store::{FALSE, Outcome, TRUE};
 
 use crate::context::{Atom, EnabledSteps};
-use crate::machine::{Eval, Machine, UNASSIGNED};
+use crate::machine::{Eval, Machine, Printed, UNASSIGNED};
 
 pub const UNKNOWN: u8 = 2;
 
@@ -39,6 +39,28 @@ pub struct Table {
     pub is_from_steps: bool,
     /// Why the engine doesn't answer the atom at all, if it doesn't.
     pub unknown: Option<String>,
+    /// What evaluating the atom printed, by position, in the order of the positions.
+    pub prints: Vec<(usize, Vec<Printed>)>,
+}
+
+impl Table {
+    /// What evaluating the atom at the position printed.
+    pub fn printed(&self, position: usize) -> &[Printed] {
+        self.prints
+            .binary_search_by_key(&position, |printed| printed.0)
+            .map_or(&[], |found| &self.prints[found].1)
+    }
+}
+
+// Keeps what the evaluation at the position printed.
+fn keep_printed(
+    machine: &mut Machine<'_>,
+    prints: &mut Vec<(usize, Vec<Printed>)>,
+    position: usize,
+) {
+    if !machine.output.is_empty() {
+        prints.push((position, std::mem::take(&mut machine.output)));
+    }
 }
 
 fn answer(value: Outcome<Id>) -> u8 {
@@ -162,6 +184,7 @@ pub fn answer_atoms(
     graph: &LiveGraph<'_>,
     atoms: &[Atom],
     is_live_checked: bool,
+    is_printing: bool,
 ) -> Result<Vec<Table>, &'static str> {
     let mut evaluator = Evaluator {
         machine,
@@ -173,18 +196,25 @@ pub fn answer_atoms(
     let mut tables = Vec::with_capacity(atoms.len());
     for atom in atoms {
         let mut values = vec![UNASSIGNED; graph.count];
+        let mut prints = Vec::new();
         let table = match atom {
             Atom::Unknown(reason) => Table {
                 answers: Vec::new(),
                 is_from_steps: false,
                 unknown: Some(reason.clone()),
+                prints,
             },
             Atom::State(eval) => Table {
                 answers: (0..graph.count)
-                    .map(|index| evaluator.evaluate_state(index, eval))
+                    .map(|index| {
+                        let answer = evaluator.evaluate_state(index, eval);
+                        keep_printed(evaluator.machine, &mut prints, index);
+                        answer
+                    })
                     .collect(),
                 is_from_steps: false,
                 unknown: None,
+                prints,
             },
             Atom::Action {
                 action,
@@ -192,8 +222,10 @@ pub fn answer_atoms(
                 enabled,
             } => {
                 // The checker asks about no step from a state where the ENABLED of the action's
-                // fairness is false, and the interpreter answers any it does.
+                // fairness is false, and the interpreter answers any it does; where the atom
+                // prints, it evaluates the action on every step TLC does.
                 let disabled = enabled
+                    .filter(|_| !is_printing)
                     .and_then(|position| tables.get(position))
                     .filter(|table: &&Table| table.answers.len() == graph.count)
                     .map(|table| &table.answers);
@@ -215,6 +247,7 @@ pub fn answer_atoms(
                             index,
                             next,
                         ));
+                        keep_printed(evaluator.machine, &mut prints, edge);
                     }
                 }
                 for index in 0..graph.count {
@@ -223,18 +256,23 @@ pub fn answer_atoms(
                     } else {
                         UNKNOWN
                     });
+                    keep_printed(evaluator.machine, &mut prints, graph.edges.len() + index);
                 }
                 Table {
                     answers,
                     is_from_steps: false,
                     unknown: None,
+                    prints,
                 }
             }
             Atom::Enabled { run, steps } => {
                 // TLC's ENABLED walks what the shortcut evaluated, so only a search that took no
                 // shortcut past a walk found the successors ENABLED finds.
+                // Where it prints, TLC runs it on each state.
                 let steps = steps.as_ref().filter(|steps| {
-                    graph.is_enabled_exact && (steps.actions.is_none() || graph.labels.is_some())
+                    !is_printing
+                        && graph.is_enabled_exact
+                        && (steps.actions.is_none() || graph.labels.is_some())
                 });
                 let mut answers = Vec::with_capacity(graph.count);
                 for index in 0..graph.count {
@@ -250,6 +288,7 @@ pub fn answer_atoms(
                         }
                         _ => UNKNOWN,
                     };
+                    keep_printed(evaluator.machine, &mut prints, index);
                     if from_steps != UNKNOWN && ran != UNKNOWN && from_steps != ran {
                         return Err(ENABLED_DIFFERS);
                     }
@@ -266,6 +305,7 @@ pub fn answer_atoms(
                         (Err(reason), None) => Some(reason.clone()),
                         _ => None,
                     },
+                    prints,
                 }
             }
         };

@@ -215,7 +215,15 @@ impl Compiled {
             .any(|slot| SEARCH_SLOTS.contains(slot))
     }
 
-    fn is_printing(&self) -> bool {
+    /// Whether the expression reads what TLCGet reads, which only the search keeps.
+    pub fn reads_tlc_get(&self) -> bool {
+        self.footprint
+            .slots
+            .iter()
+            .any(|&slot| slot != PRINT_SLOT && SEARCH_SLOTS.contains(&slot))
+    }
+
+    pub(crate) fn is_printing(&self) -> bool {
         self.footprint.slots.contains(&PRINT_SLOT)
     }
 

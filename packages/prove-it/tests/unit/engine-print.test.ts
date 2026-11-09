@@ -230,14 +230,13 @@ describe("the engine's Print, PrintT and TLCGet", () => {
     }
   });
 
-  it("hands over Print in a constraint, in ENABLED, and in a spec with temporal properties", async () => {
+  it("hands over Print in a constraint and in ENABLED", async () => {
     const models = [
       ["Next == x < 2 /\\ x' = x + 1\nC == Print(x, TRUE)", "CONSTRAINT C"],
       [
         "Next == x < 2 /\\ Print(x, TRUE) /\\ x' = x + 1\nInv == x = 2 \\/ ENABLED Next",
         "INVARIANT Inv",
       ],
-      ["Next == x < 2 /\\ Print(x, TRUE) /\\ x' = x + 1\nLive == <>(x = 2)", "PROPERTY Live"],
     ];
     for (const [definitions, check] of models) {
       const body = `EXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\n${definitions}`;
@@ -250,6 +249,22 @@ describe("the engine's Print, PrintT and TLCGet", () => {
         [expect.stringMatching(/handed over .*: unsupported: Print/)],
       ]);
     }
+  });
+
+  it("prints with temporal properties where the native engine checks them", async () => {
+    // The native engine prints in TLC's order as it checks the properties; the TypeScript engine
+    // hands the search over.
+    const body =
+      "EXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ Print(x, TRUE) /\\ x' = x + 1\nLive == <>(x = 2)";
+    const { lines } = await checkBoth(
+      body,
+      "INIT Init\nNEXT Next\nPROPERTY Live\nCHECK_DEADLOCK FALSE",
+    );
+    expect(lines).toEqual([
+      process.env.PROVE_IT_ENGINE_BACKEND === "rust"
+        ? expect.stringMatching(/the interpreter prints the counterexample/)
+        : expect.stringMatching(/handed over .*: unsupported: Print/),
+    ]);
   });
 
   it("hands over printing a value whose text depends on how TLC built it", async () => {
