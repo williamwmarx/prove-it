@@ -889,6 +889,7 @@ impl<T: Reached> Search<'_, T> {
         self.level_id = machine.store.int(self.level as i64)?;
         self.next_level_id = machine.store.int(self.level as i64 + 1)?;
         self.set_expanded_current(machine);
+        machine.seed_random(fingerprint);
         machine.set_slot(NEXT_LEVEL_SLOT, self.next_level_id);
         if self.states.key_width().is_none() {
             self.fingerprints.set_parent(

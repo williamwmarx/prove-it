@@ -51,7 +51,7 @@ import type { EngineProperties, EngineSpec } from "./context";
 import type { NamedPermutation } from "./symmetry";
 
 // The version of the layout below, which the decoder checks. Any change to it changes this.
-export const IR_VERSION = 8;
+export const IR_VERSION = 9;
 
 // "PIIR" read as a little-endian word.
 const MAGIC = 0x52494950;
@@ -755,6 +755,14 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
   push(model, input.isWarningEnabled ? 1 : 0);
   push(model, input.isRecordingGraph ? 1 : 0);
   push(model, input.version === undefined ? -1 : getText(input.version));
+  // The seed TLC reseeds its generator with for each state it expands, and the state of the
+  // generator the initial states draw from, which the assumptions drew from before them.
+  const runtime = environment.runtime;
+  for (const word of [runtime.seed, runtime.evaluateAtStartup(runtime.getRandom).getState()]) {
+    const unsigned = BigInt.asUintN(64, word);
+    push(model, Number(BigInt.asIntN(32, unsigned)));
+    push(model, Number(BigInt.asIntN(32, unsigned >> 32n)));
+  }
   push(model, input.atoms.length);
   const atomPositions = new Map(input.atoms.map((entry, position) => [entry.atom, position]));
   for (const entry of input.atoms) {

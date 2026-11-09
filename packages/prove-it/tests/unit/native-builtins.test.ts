@@ -260,6 +260,61 @@ describe.if(ADDON !== undefined)("the native engine's bridged builtins", () => {
     }
   });
 
+  // From TLC's RandomElement: the initial states draw from the generator the assumptions drew
+  // from, and each expansion from one seeded with the fingerprint of the state it expands.
+  it("draws RandomElement and RandomSubset as TLC does", async () => {
+    const body = [
+      "EXTENDS Integers, TLC, Randomization",
+      "VARIABLES x, y",
+      "ASSUME RandomElement(1..10) \\in 1..10",
+      "Init == x \\in RandomSubset(3, 1..1000) /\\ y = 0",
+      "Next == /\\ y < 3",
+      "        /\\ \\/ x' = RandomElement(1..1000)",
+      "           \\/ x' \\in RandomSubset(2, {x, x + 1, x + 2})",
+      "        /\\ y' = y + 1",
+    ];
+    expect(await compareWithInterpreter(body, `${CONFIG}\nCHECK_DEADLOCK FALSE`)).toContainEqual(
+      expect.stringMatching(COMPLETE),
+    );
+    // Each component of a set of functions, records or tuples, and the elements of a product
+    // by their index, of one with more elements than an int holds too.
+    for (const draw of [
+      "x = RandomElement([{1, 2} -> 1..5])",
+      'x = RandomElement([a : 1..5, b : {"p", "q"}])',
+      "x = RandomElement((1..5) \\X {7, 8})",
+      "x = RandomElement(SUBSET {1, 2, 3})",
+      "x \\in RandomSubset(4, [{1, 2, 3} -> 1..10])",
+      "x \\in RandomSubset(4, [a : 1..5, b : 1..6])",
+      "x \\in RandomSubset(4, (1..200) \\X (1..200) \\X (1..200))",
+      "x \\in RandomSubset(4, (1..4000) \\X (1..4000) \\X (1..4000))",
+      "x \\in RandomSubset(4, SUBSET {1, 2, 3})",
+    ]) {
+      const drawn = [
+        "EXTENDS Integers, TLC, Randomization",
+        "VARIABLES x, y",
+        `Init == ${draw} /\\ y = 0`,
+        "Next == UNCHANGED <<x, y>>",
+      ];
+      expect(await compareWithInterpreter(drawn, CONFIG)).toContainEqual(
+        expect.stringMatching(COMPLETE),
+      );
+    }
+  });
+
+  // The interpreter rebuilds the trace from the initial predicate, as TLC does, so it draws again.
+  it("hands over a violation whose trace drew at random", async () => {
+    const body = [
+      "EXTENDS Integers, TLC",
+      "VARIABLES x, y",
+      "Init == x = RandomElement(1..1000) /\\ y = 0",
+      "Next == (x' = RandomElement(1..1000) \\/ x' = x) /\\ y' = y + 1",
+      "Inv == y < 3",
+    ];
+    expect(await compareWithInterpreter(body, `${CONFIG}\nINVARIANT Inv`)).toContainEqual(
+      expect.stringMatching(stopped("an invariant violated")),
+    );
+  });
+
   // A search that ranked strings hands over none of its states, so the interpreter ranks them
   // again from the start.
   it("hands over a search that ranked strings from the start", async () => {

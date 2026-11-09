@@ -150,6 +150,9 @@ fn encode_here(ir: &Ir) -> Vec<u8> {
         model.is_recording_graph as i32,
         optional(model.version),
     ]);
+    for long in [model.random_seed, model.startup_random] {
+        words.extend([long as u32 as i32, (long >> 32) as u32 as i32]);
+    }
     words.push(model.atoms.len() as i32);
     for atom in &model.atoms {
         let (kind, unchanged, actions) = match &atom.kind {
