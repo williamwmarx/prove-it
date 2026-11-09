@@ -557,6 +557,8 @@ pub struct Compiler<'a> {
     // What cached compiles read of fixed points that hadn't settled when they compiled.
     provisional: HashMap<u64, Vec<Rc<FixedPoint>>>,
     entry_count: u64,
+    /// How many continuations the walk being compiled has compiled for what its paths know.
+    specialisations: usize,
     /// Whether an expression reads TLCGet("distinct"), whose slot the search must then set.
     pub is_distinct_read: bool,
     /// Whether anything compiled may print.
@@ -612,6 +614,7 @@ impl<'a> Compiler<'a> {
             reads: None,
             provisional: HashMap::new(),
             entry_count: 0,
+            specialisations: 0,
             is_distinct_read: false,
             is_printing: false,
             scope_contexts: HashMap::new(),

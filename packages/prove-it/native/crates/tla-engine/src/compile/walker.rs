@@ -224,13 +224,18 @@ impl Known {
 type Then<'t, 'a> = dyn FnMut(&mut Compiler<'a>, &Known) -> Compiling<Rest> + 't;
 
 /// A continuation compiled once for each thing known on the paths that reach it: a few, and past
-/// those once for nothing known, so a walk compiles in time linear in its size.
+/// those once for nothing known, so a walk compiles in time linear in its size. Each compile of a
+/// branching conjunct shares its own continuation, so the walk as a whole also has a budget:
+/// independent branches would otherwise compile the rest of the walk once per combination of
+/// them.
 struct Shared<'s, 't, 'a> {
     then: &'s mut Then<'t, 'a>,
     compiled: Vec<(Known, Rest)>,
 }
 
 const SHARED_PATHS: usize = 4;
+
+const WALK_SPECIALISATIONS: usize = 256;
 
 impl<'s, 't, 'a> Shared<'s, 't, 'a> {
     fn new(then: &'s mut Then<'t, 'a>) -> Self {
@@ -241,7 +246,8 @@ impl<'s, 't, 'a> Shared<'s, 't, 'a> {
     }
 
     fn call(&mut self, compiler: &mut Compiler<'a>, known: &Known) -> Compiling<Rest> {
-        let known = if self.compiled.len() >= SHARED_PATHS
+        let known = if (self.compiled.len() >= SHARED_PATHS
+            || compiler.specialisations >= WALK_SPECIALISATIONS)
             && !self.compiled.iter().any(|(seen, _)| seen == known)
         {
             Known::unknown()
@@ -251,6 +257,7 @@ impl<'s, 't, 'a> Shared<'s, 't, 'a> {
         if let Some((_, rest)) = self.compiled.iter().find(|(seen, _)| *seen == known) {
             return Ok(rest.clone());
         }
+        compiler.specialisations += 1;
         let rest = (self.then)(compiler, &known)?;
         self.compiled.push((known, rest.clone()));
         Ok(rest)
@@ -1061,7 +1068,11 @@ impl<'a> Compiler<'a> {
         context: &Context,
         options: WalkOptions,
     ) -> Compiling<Step> {
-        self.compile_step_from(node, context, options, &Known::start())
+        // ENABLED compiles a walk of its own inside another's.
+        let outer = std::mem::replace(&mut self.specialisations, 0);
+        let step = self.compile_step_from(node, context, options, &Known::start());
+        self.specialisations = outer;
+        step
     }
 
     // A walk with its own continuation, from a path where `known` holds.

@@ -141,6 +141,23 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     }
   });
 
+  it("compiles a walk of many independent branches in time linear in its size", async () => {
+    // Each conjunct has a path that assigns its variable and one that doesn't, so the paths into
+    // the rest of the walk double with each conjunct. Only one is ever walked, as the guard fails.
+    const variables = Array.from({ length: 40 }, (_, index) => `x${index}`);
+    const body = [
+      `VARIABLES flag, ${variables.join(", ")}`,
+      `Init == flag = 0 /\\ ${variables.map((name) => `${name} = 0`).join(" /\\ ")}`,
+      "Next ==",
+      ...variables.map((name) => `  /\\ \\/ flag = 1 /\\ ${name}' = 1\n     \\/ flag = 0`),
+      `  /\\ UNCHANGED <<flag, ${variables.join(", ")}>>`,
+    ];
+    const config = "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE";
+    expect(await compareStateLogs(body, config, false)).toContainEqual(
+      expect.stringMatching(COMPLETE),
+    );
+  });
+
   it("checks a successor before what the walk does after it, as it hands over", async () => {
     // Where nothing prints, the search checks a successor once the walk reaches the next one, so
     // its fingerprint's probe doesn't wait on memory. A successor the walk completed is still
