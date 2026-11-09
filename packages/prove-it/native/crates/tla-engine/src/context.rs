@@ -362,7 +362,7 @@ impl EngineContext {
             },
             "a specification",
         )?;
-        let actions = match &model.actions {
+        let actions = match model.is_labelled.then_some(&model.actions) {
             None => None,
             Some(actions) => {
                 let mut steps = Vec::with_capacity(actions.len());

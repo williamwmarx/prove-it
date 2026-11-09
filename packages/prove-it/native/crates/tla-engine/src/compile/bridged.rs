@@ -76,7 +76,8 @@ impl Compiler<'_> {
         }
         Ok(Some(Compiled {
             is_costly: true,
-            is_normalized: false,
+            // TLC.Permutations makes a SetEnumValue, which TLC normalizes before it enumerates it.
+            is_normalized: name == "Permutations",
             ..leaf(
                 eval(move |machine| {
                     let mut ids = Vec::with_capacity(values.len());

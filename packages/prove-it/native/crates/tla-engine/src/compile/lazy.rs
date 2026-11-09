@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use tla_values::store::{
-    KIND_INT, KIND_MODEL, KIND_SET, KIND_STRING, KIND_TUPLE, Outcome, is_function_kind,
+    EMPTY_SET, KIND_INT, KIND_MODEL, KIND_SET, KIND_STRING, KIND_TUPLE, Outcome, is_function_kind,
 };
 use tla_values::{Bail, Id};
 
@@ -44,6 +44,9 @@ pub(crate) enum Lazy {
     Product(Vec<Lazy>),
     Filtered(Box<Lazy>, Test),
     Operation(Operator, Box<Lazy>, Box<Lazy>),
+    /// `UNION S`, with S's elements the sets the engine holds, each enumerated as its normalized
+    /// set.
+    Union(Box<Lazy>),
 }
 
 impl Lazy {
@@ -228,6 +231,28 @@ impl Lazy {
                 }
                 Ok(kept)
             }
+            Lazy::Union(base) => {
+                // `getUnionSets`, then each set in turn: streamed, duplicates and all, or merged
+                // into the normalized set.
+                if !base.is_enumerable() {
+                    return Err(Bail("enumerated UNION of an infinite set"));
+                }
+                let mut elements = Vec::new();
+                let mut union = EMPTY_SET;
+                for set in base.elements(machine, is_streamed)? {
+                    let set = Self::set(machine, set)?;
+                    if is_streamed {
+                        elements.extend_from_slice(machine.store.set_elements(set));
+                    } else {
+                        union = machine.store.union(union, set)?;
+                    }
+                }
+                Ok(if is_streamed {
+                    elements
+                } else {
+                    machine.store.set_elements(union).to_vec()
+                })
+            }
             Lazy::Operation(Operator::Union, left, right) => {
                 if !left.is_enumerable() || !right.is_enumerable() {
                     return Err(Bail("enumerated a union with an infinite set"));
@@ -302,7 +327,9 @@ impl Lazy {
                 }
                 false
             }
-            Lazy::Filtered(..) | Lazy::Operation(..) => self.enumerate(machine)?.is_empty(),
+            Lazy::Filtered(..) | Lazy::Operation(..) | Lazy::Union(_) => {
+                self.enumerate(machine)?.is_empty()
+            }
         })
     }
 
@@ -421,6 +448,18 @@ impl Lazy {
             Lazy::Filtered(base, test) => {
                 Ok(base.contains(machine, element)? && test(machine, element)?)
             }
+            Lazy::Union(base) => {
+                if !base.is_enumerable() {
+                    return Err(Bail("a membership in UNION of an infinite set"));
+                }
+                for set in base.enumerate(machine)? {
+                    let set = Self::set(machine, set)?;
+                    if machine.store.is_member(element, set)? {
+                        return Ok(true);
+                    }
+                }
+                Ok(false)
+            }
             Lazy::Operation(operator, left, right) => {
                 let is_left = left.contains(machine, element)?;
                 Ok(match operator {
@@ -505,4 +544,46 @@ fn sorted_union(machine: &mut Machine<'_>, left: Vec<Id>, right: Vec<Id>) -> Out
     merged.extend_from_slice(&left[left_index..]);
     merged.extend_from_slice(&right[right_index..]);
     Ok(merged)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::machine::Program;
+    use tla_values::Store;
+
+    // UNION {{1, 2}, {2, 3}}, kept lazy: it streams each set in turn, 2 twice, and enumerates the
+    // normalized union.
+    #[test]
+    fn streams_each_set_of_a_union_in_turn() {
+        let program = Program::default();
+        let mut store = Store::new();
+        store.reset(std::iter::empty::<&[u16]>());
+        let mut machine = Machine::new(&program, store);
+        let integers: Vec<Id> = (0..=3)
+            .map(|value| machine.store.int(value).expect("an integer"))
+            .collect();
+        let left = machine.store.set_of(&integers[1..3]).expect("a set");
+        let right = machine.store.set_of(&integers[2..4]).expect("a set");
+        let sets = machine.store.set_of(&[right, left]).expect("a set");
+        let union = Lazy::Union(Box::new(Lazy::Set(sets)));
+        let [zero, one, two, three] = integers[..] else {
+            panic!("four integers");
+        };
+        assert_eq!(
+            union.stream(&mut machine).ok(),
+            Some(vec![one, two, two, three])
+        );
+        assert_eq!(
+            union.enumerate(&mut machine).ok(),
+            Some(vec![one, two, three])
+        );
+        assert_eq!(union.contains(&mut machine, three).ok(), Some(true));
+        assert_eq!(union.contains(&mut machine, zero).ok(), Some(false));
+        assert_eq!(union.is_empty(&mut machine).ok(), Some(false));
+        let of_integers = Lazy::Union(Box::new(Lazy::Set(left)));
+        assert!(of_integers.stream(&mut machine).is_err());
+        let infinite = Lazy::Union(Box::new(Lazy::Infinite("Nat")));
+        assert!(infinite.enumerate(&mut machine).is_err());
+    }
 }

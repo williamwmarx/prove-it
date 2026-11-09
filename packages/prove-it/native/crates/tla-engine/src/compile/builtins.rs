@@ -564,6 +564,9 @@ impl Compiler<'_> {
                 let base_parts = Self::parts_of(&base);
                 Compiled {
                     is_normalized: false,
+                    // It streams in its order, and its elements are set enumerations.
+                    is_in_order: true,
+                    are_elements_in_order: true,
                     reference: combine_references(&[&base], |_, mut bases| {
                         Ok(Lazy::Subset(Box::new(bases.remove(0))))
                     }),
@@ -635,9 +638,22 @@ impl Compiler<'_> {
                     },
                     true,
                 );
+                // TLC keeps UNION S lazy unless S and its elements are set enumerations, and then
+                // streams each element of S in turn (`UnionValue.Enumerator`). An element streams
+                // as its normalized set does unless it streams apart itself, which the engine,
+                // holding it as an id, can't follow.
+                let reference = (!is_enumerated && outer.are_elements_in_order)
+                    .then(|| reference_of(&outer))
+                    .flatten()
+                    .map(|base| {
+                        Arc::new(move |machine: &mut Machine<'_>| {
+                            Ok(Lazy::Union(Box::new(base(machine)?)))
+                        }) as Reference
+                    });
                 Compiled {
                     is_normalized: is_enumerated,
                     is_enumerated,
+                    reference,
                     member: only.as_ref().map(|only| self.member_test(only)),
                     parts: only.as_ref().map(Self::parts_of),
                     ..compiled
@@ -732,6 +748,7 @@ impl Compiler<'_> {
                 let bounds = (low.clone(), high.clone());
                 Compiled {
                     is_costly: true,
+                    is_in_order: true,
                     interval: Some(bounds),
                     ..leaf(
                         eval(move |machine| fused::interval(machine, &low, &high)),
@@ -1100,6 +1117,11 @@ impl Compiler<'_> {
         };
         Ok(Some(Compiled {
             is_normalized,
+            // TLC streams a `\cup` it keeps lazy from both sets, duplicates and all.
+            is_in_order: (is_normalized || name != "\\cup")
+                && left.is_in_order
+                && right.is_in_order,
+            are_elements_in_order: left.are_elements_in_order && right.are_elements_in_order,
             member: lazy_member,
             reference,
             ..binary(left, right, operation, true, false)
