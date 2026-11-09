@@ -1493,7 +1493,6 @@ impl<'ir> Evaluator<'ir> {
             && let Some((bounds, body, inner)) = self.lazy_function(name, context)?
             && let [bound] = bounds
         {
-            let argument = argument(self)?;
             let set = self.evaluate(bound.set, &inner);
             // TLC builds the function, its domain in the frames of the name and the definition,
             // which the replay doesn't record.
@@ -1505,6 +1504,7 @@ impl<'ir> Evaluator<'ir> {
                     .get_or_insert("the domain of a function TLC keeps lazy");
             }
             let set = set?;
+            let argument = argument(self)?;
             if !is_member(&argument, &set)? {
                 return fail("applied a function outside its domain");
             }
