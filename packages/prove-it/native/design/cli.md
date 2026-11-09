@@ -129,7 +129,42 @@ the implementing PR, with the front end's review.
     branches × distinct total distinct states at (…)`;
   - 2267 `Finished checking temporal properties in … at …`;
   - then the summary, as for any search.
-- A counterexample (a lasso, or an accepting node) stays not native ("a temporal property's
-  counterexample") until the binary prints it with the trace evaluator's states and labels.
+- A counterexample stays not native ("a temporal property's counterexample") until the binary
+  prints it with the trace evaluator's states and labels.
 - Measured on Depot: 798 of 1466 runs print what TLC prints. That count includes main's own gains
   since #84. Of the 264 temporal runs, 132 remain counterexamples. Nothing native differs.
+
+## A temporal property's lasso
+
+- When the liveness check finds a lasso and the binary reports violations itself, the search's
+  `Complete` outcome carries it as a `Violation` of kind `Lasso { loop_start, loop_label }`: the
+  lasso's states, the action of each step (`label_lasso`), the counts and the store. Under SYMMETRY
+  or a VIEW the stored states aren't the ones TLC prints, so there is none.
+- The binary prints what `printViolation` prints for a `liveness-violation` with a `loopStart`:
+  - the Progress line and 2192, as for properties that hold;
+  - what the spec printed as TLC rebuilt the whole trace, which it rebuilds before it reports;
+  - 2116, naming the violated properties as `getTemporalHeadline` does;
+  - 2264 and each state (2217);
+  - `Back to state N: <label>` (2122 with -tool), or `N: Stuttering` (2218) where the cycle is the
+    last state alone;
+  - 2267, then the statistics and exit code 13.
+- Still not native:
+  - a stuttering counterexample TLC warns of under a SPECIFICATION (2259), which names where the
+    specification is defined. Without one, the binary prints TLC's 2257 warning after the
+    `Stuttering` line;
+  - a lasso whose cycle steps back to an earlier state in a spec that prints, since TLC prints as it
+    finds that step's action;
+  - an accepting node, which TLC reports as it builds the behavior graph.
+
+## Temporal checks part way through the search
+
+- As TLC does unless `-lncheck final` (or `seqfinal`, `off`), the binary asks the engine to check the
+  temporal properties as the search goes (`is_liveness_periodic`, #148). For each check it prints
+  2192 `Checking [N branches of ]temporal properties for the current state space with
+  branches × expanded total distinct states at (…)`, with no Progress line before it, and 2267 once
+  the check finds that the properties hold so far, as check.ts does for the engine's
+  `liveness-started` and `liveness-finished`.
+- PROVE_IT_TEST_LIVE_CHECK_AT sets the number of expanded states after which the first check comes,
+  as for the TypeScript CLI, so a test can reach one on a small model.
+- A counterexample a check part way through finds stays not native: the interpreter prints it with
+  the counts so far.

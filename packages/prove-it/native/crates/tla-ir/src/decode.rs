@@ -601,6 +601,11 @@ impl Decoder<'_> {
             return self.error(format!("{} views", views.len()));
         }
         let view = views.pop();
+        let mut aliases = self.unprinted()?;
+        if aliases.len() > 1 {
+            return self.error(format!("{} aliases", aliases.len()));
+        }
+        let alias = aliases.pop();
         let symmetry = match self.next()? {
             -1 => None,
             count if count >= 0 => Some(
@@ -687,6 +692,7 @@ impl Decoder<'_> {
             action_properties,
             initial_predicates,
             view,
+            alias,
             symmetry,
             check_deadlock,
             is_warning_enabled,

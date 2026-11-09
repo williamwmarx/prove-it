@@ -180,6 +180,9 @@ pub enum SearchOutcome {
         /// that takes it to the next state of the lasso (from the last, the cycle's first), or
         /// `None` where none does or it stutters; empty without a lasso or a walk of the actions.
         lasso_actions: Vec<Option<u32>>,
+        /// The lasso's states and the actions of its steps, where the caller reports the
+        /// violation itself and the search labelled every step TLC labels.
+        violation: Option<Box<Violation>>,
         /// TLC's fingerprint of each state's key, in the order found.
         fingerprints: Vec<u64>,
         value_count: usize,
@@ -227,6 +230,13 @@ pub enum ViolationKind {
     Invariant(usize),
     /// The last state of the trace has no successors.
     Deadlock,
+    /// The trace is a lasso whose cycle starts at the state at `loop_start` and goes back to it,
+    /// by the action at `loop_label` in the model's actions; `None` where the cycle is the last
+    /// state alone, which stutters.
+    Lasso {
+        loop_start: usize,
+        loop_label: Option<u32>,
+    },
 }
 
 /// The counts of a search that stopped, as TLC reports them.
@@ -1955,6 +1965,8 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 checkpoint: Some(Box::new(checkpoint)),
                 liveness: Some(liveness),
                 lasso_actions,
+                // The interpreter prints a counterexample found part way through the search.
+                violation: None,
                 value_count: machine.store.value_count(),
                 threads: threads_used,
                 collisions,
@@ -2131,12 +2143,34 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 initial_distinct: initial_states.1,
                 out_degrees,
             };
+            let value_count = machine.store.value_count();
+            // Under SYMMETRY or a VIEW the lasso's states are the stored ones, not those TLC
+            // rebuilds and prints.
+            let violation = match liveness.as_ref().map(|liveness| &liveness.verdict) {
+                Some(Verdict::Lasso {
+                    path, loop_start, ..
+                }) if settings.is_violation_reported
+                    && search.states.key_width.is_none()
+                    && model.symmetry.is_none() =>
+                {
+                    to_lasso(
+                        &mut machine,
+                        &search,
+                        path,
+                        *loop_start,
+                        &lasso_actions,
+                        &counts,
+                    )
+                }
+                _ => None,
+            };
             SearchOutcome::Complete {
                 counts: Box::new(counts),
                 checkpoint,
                 liveness,
                 lasso_actions,
-                value_count: machine.store.value_count(),
+                violation,
+                value_count,
                 threads: threads_used,
                 collisions,
                 possible: search.possible.clone(),
@@ -2524,6 +2558,42 @@ fn to_violation(
             states,
             labels,
             counts: found.counts,
+            store: std::mem::replace(&mut machine.store, Store::new()),
+        })
+    })
+}
+
+// A lasso as a violation the caller prints: its states, and the action of each step, which every
+// step but a stuttering last one has.
+fn to_lasso(
+    machine: &mut Machine<'_>,
+    search: &Search<'_, States>,
+    path: &[u32],
+    loop_start: usize,
+    actions: &[Option<u32>],
+    counts: &Counts,
+) -> Option<Box<Violation>> {
+    let (&loop_label, steps) = actions.split_last()?;
+    let labels = steps.iter().copied().collect::<Option<Vec<u32>>>()?;
+    let is_stuttering = loop_start + 1 == path.len();
+    let is_labelled = actions.len() == path.len() && (is_stuttering || loop_label.is_some());
+    (is_labelled && !machine.store.has_unordered_strings()).then(|| {
+        Box::new(Violation {
+            kind: ViolationKind::Lasso {
+                loop_start,
+                loop_label,
+            },
+            states: path
+                .iter()
+                .map(|&index| search.states.state(index).to_vec())
+                .collect(),
+            labels,
+            counts: StopCounts {
+                generated: counts.generated,
+                distinct: counts.distinct,
+                queued: counts.queued,
+                depth: counts.depth,
+            },
             store: std::mem::replace(&mut machine.store, Store::new()),
         })
     })

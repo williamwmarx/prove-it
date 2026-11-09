@@ -244,3 +244,55 @@ fn checks_temporal_properties_that_hold() {
     );
     std::fs::remove_dir_all(directory).expect("removed");
 }
+
+#[test]
+fn prints_a_temporal_propertys_lasso() {
+    let ir = include_bytes!(
+        "../../../../tests/conformance/ir/tlc/tlatools/org.lamport.tlatools/test-model/Github1389ViolatedB.ir"
+    );
+    let config = "SPECIFICATION Spec\nCHECK_DEADLOCK FALSE\nPROPERTY PropViolated\n";
+    let (output, directory) = run_golden("lasso", ir, "Github1389ViolatedB", config, &[]);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(13), "{text}");
+    // TLC names the property, prints the lasso's states and the step back into its cycle, and
+    // then finishes checking the temporal properties.
+    let label = "Next line 10, col 9 to line 10, col 18 of module Github1389ViolatedB";
+    let lasso = format!(
+        "Error: Temporal property PropViolated was violated.\n\nError: The following behavior constitutes a counter-example:\n\nState 1: <Initial predicate>\nx = 0\n\nState 2: <{label}>\nx = 1\n\nBack to state 1: <{label}>\n\nFinished checking temporal properties in "
+    );
+    assert!(text.contains(&lasso), "{text}");
+    assert!(
+        text.contains("3 states generated, 2 distinct states found, 0 states left on queue.\nThe depth of the complete state graph search is 2.\n"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn checks_temporal_properties_part_way_through_the_search() {
+    let ir = include_bytes!(
+        "../../../../tests/conformance/ir/examples/specifications/glowingRaccoon/stages.ir"
+    );
+    let config = "CONSTANTS\n  DNA = 5\n  PRIMER = 5\nINVARIANT TypeOK\nSPECIFICATION Spec\nPROPERTIES cleanSpec primerDepleted\nCHECK_DEADLOCK FALSE\n";
+    let (output, directory) = run_golden("periodic", ir, "stages", config, &["-lncheck", "final"]);
+    assert_eq!(output.status.code(), Some(0));
+    let current = "Checking temporal properties for the current state space with 10 total distinct states at (";
+    // PROVE_IT_TEST_LIVE_CHECK_AT has the first check made after 10 states are expanded, which
+    // -lncheck final leaves to the end.
+    let periodic = Command::new(env!("CARGO_BIN_EXE_prove-it"))
+        .arg("stages")
+        .current_dir(&directory)
+        .env("PROVE_IT_FRONT", &directory)
+        .env("PROVE_IT_TEST_LIVE_CHECK_AT", "10")
+        .output()
+        .expect("the binary runs");
+    let text = stdout(&periodic);
+    assert_eq!(periodic.status.code(), Some(0), "{text}");
+    assert!(text.contains(current), "{text}");
+    assert!(
+        text.contains("Finished checking temporal properties in 00s at "),
+        "{text}"
+    );
+    assert!(!stdout(&output).contains("current state space"));
+    std::fs::remove_dir_all(directory).expect("removed");
+}

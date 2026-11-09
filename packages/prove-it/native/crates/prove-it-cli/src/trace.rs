@@ -39,6 +39,7 @@ pub fn rebuild_trace(ir: &Ir, violation: &Violation) -> Result<PrintedTrace, Str
                     ViolationKind::Invariant(_) | ViolationKind::InitialInvariant(_) => {
                         Ending::Violation
                     }
+                    ViolationKind::Lasso { .. } => Ending::Lasso,
                 };
                 let trace = Rebuilder::new(ir).and_then(|mut rebuilder| {
                     rebuilder.rebuild(&violation.store, &states, &actions, ending)
