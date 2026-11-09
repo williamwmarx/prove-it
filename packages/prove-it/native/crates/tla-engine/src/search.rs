@@ -3377,7 +3377,7 @@ fn to_atom_failure(
 ) -> Option<Found> {
     let graph = search.graph.as_ref()?;
     let state = unanswered.state as usize;
-    let slot = unanswered.slot;
+    let slot = unanswered.slot as usize;
     // The state the atom reads besides the one TLC adds: a successor's state predicate, or the
     // next state of one of the added state's steps.
     let extra = match context.atoms.get(unanswered.atom as usize)? {
@@ -3432,7 +3432,6 @@ fn to_atom_failure(
             queued: distinct - state as u64 - 1,
             depth: u64::from(graph.diameters[state]),
             out_degrees,
-            ..StopCounts::default()
         },
     })
 }

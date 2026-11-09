@@ -92,7 +92,7 @@ pub struct Liveness {
 pub struct Unanswered {
     pub state: u32,
     pub atom: u32,
-    pub slot: usize,
+    pub slot: u32,
 }
 
 /// Where the atoms' evaluations have effects, such as what Print prints, TLC has them each time it

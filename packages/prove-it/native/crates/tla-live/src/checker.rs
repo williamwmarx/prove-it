@@ -276,7 +276,7 @@ impl<'c> Checker<'c> {
                     self.unanswered.set(Some(Unanswered {
                         state,
                         atom,
-                        slot: position,
+                        slot: position as u32,
                     }));
                 }
                 Err(Declined::from(match answer {
