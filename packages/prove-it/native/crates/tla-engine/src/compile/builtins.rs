@@ -259,6 +259,43 @@ impl Compiler<'_> {
         ))
     }
 
+    // `S \subseteq T`, as TLC's isSubsetEq: for two power sets, SUBSET A \subseteq SUBSET B is
+    // A \subseteq B, unless TLC can't enumerate A (SubsetValue.isSubsetEq); otherwise each element
+    // of S, enumerated, is a member of T.
+    fn compile_subseteq(&mut self, left: &Compiled, right: &Compiled) -> Compiled {
+        if let (Some(left_base), Some(right_base)) = (&left.subset_base, &right.subset_base)
+            && left_base.infinite.is_none()
+        {
+            return self.compile_subseteq(left_base, right_base);
+        }
+        let footprint = left.footprint.merge(&right.footprint);
+        let left_eval = left.eval.clone();
+        let evaluate = if right.member.is_some() || right.infinite.is_some() {
+            let test = self.member_test(right);
+            eval(move |machine| {
+                let set = evaluate_set(machine, &left_eval, "expected a set")?;
+                for index in 0..machine.store.size_of(set) {
+                    let element = machine.store.element_at(set, index);
+                    if !test(machine, element)? {
+                        return Ok(FALSE);
+                    }
+                }
+                Ok(TRUE)
+            })
+        } else {
+            let right_eval = right.eval.clone();
+            eval(move |machine| {
+                let left = evaluate_set(machine, &left_eval, "expected a set")?;
+                let right = evaluate_set(machine, &right_eval, "expected a set")?;
+                Ok(bool_id(machine.store.is_subset(left, right)?))
+            })
+        };
+        Compiled {
+            is_costly: true,
+            ..leaf(evaluate, footprint)
+        }
+    }
+
     // Print(a, b) and PrintT(a) print as TLC does where the engine evaluates them as TLC does, and
     // only a value whose text doesn't depend on how it was built, which the engine forgets. The
     // search hands what they print to the interpreter's printer once it completes the initial
@@ -524,32 +561,7 @@ impl Compiler<'_> {
                 arity(2)?;
                 let left = self.operand(&operands[0])?;
                 let right = self.operand(&operands[1])?;
-                let footprint = left.footprint.merge(&right.footprint);
-                let left_eval = left.eval.clone();
-                let evaluate = if right.member.is_some() || right.infinite.is_some() {
-                    let test = self.member_test(&right);
-                    eval(move |machine| {
-                        let set = evaluate_set(machine, &left_eval, "expected a set")?;
-                        for index in 0..machine.store.size_of(set) {
-                            let element = machine.store.element_at(set, index);
-                            if !test(machine, element)? {
-                                return Ok(FALSE);
-                            }
-                        }
-                        Ok(TRUE)
-                    })
-                } else {
-                    let right_eval = right.eval.clone();
-                    eval(move |machine| {
-                        let left = evaluate_set(machine, &left_eval, "expected a set")?;
-                        let right = evaluate_set(machine, &right_eval, "expected a set")?;
-                        Ok(bool_id(machine.store.is_subset(left, right)?))
-                    })
-                };
-                Compiled {
-                    is_costly: true,
-                    ..leaf(evaluate, footprint)
-                }
+                self.compile_subseteq(&left, &right)
             }
             "\\cup" | "\\cap" | "\\" => {
                 arity(2)?;
@@ -564,6 +576,7 @@ impl Compiler<'_> {
                 let base_parts = Self::parts_of(&base);
                 Compiled {
                     is_normalized: false,
+                    subset_base: Some(Box::new(base.clone())),
                     // It streams in its order, and its elements are set enumerations.
                     is_in_order: true,
                     are_elements_in_order: true,

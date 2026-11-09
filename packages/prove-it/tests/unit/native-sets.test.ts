@@ -177,6 +177,23 @@ describe.if(ADDON !== undefined)("the native engine's lazy sets", () => {
     }
   });
 
+  it("compares two power sets by their bases, as TLC's isSubsetEq does", async () => {
+    // From TLC's SubsetEq: neither power set is built.
+    const body = [
+      "EXTENDS Integers",
+      "VARIABLE b",
+      "Init == b = TRUE",
+      "Next == b' = /\\ SUBSET (1..23) \\subseteq SUBSET (1..42)",
+      "             /\\ ~(SUBSET (1..42) \\subseteq SUBSET (2..42))",
+      "             /\\ SUBSET {1, 2, 3} \\subseteq SUBSET {1, 2, 3, 4}",
+      "             /\\ SUBSET {} \\subseteq SUBSET {}",
+      "             /\\ SUBSET {1} \\subseteq SUBSET Nat",
+    ];
+    expect(await compareWithInterpreter(body, CONFIG)).toContainEqual(
+      expect.stringMatching(COMPLETE),
+    );
+  });
+
   it("enumerates a UNION of sets of the model's constants, which TLC normalizes", async () => {
     // As LoopInvariance's MCBinarySearch does, with Seq <- LimitedSeq.
     const body = [
