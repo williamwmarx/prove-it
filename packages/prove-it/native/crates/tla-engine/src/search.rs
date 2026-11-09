@@ -25,7 +25,7 @@ use crate::context::{
     holds_all, holds_all_changed,
 };
 use crate::live::{Diameters, LiveGraph, Table, UNKNOWN, answer_atoms};
-use crate::machine::{Eval, Machine, Printed, Step, UNASSIGNED};
+use crate::machine::{Eval, Machine, Printed, Registers, Step, UNASSIGNED};
 use crate::symmetry::{
     Canonicalizer, Group, NamedGroup, close_group, get_permutations, name_group,
 };
@@ -61,6 +61,8 @@ pub struct Settings {
     /// PROVE_IT_WORKERS: how many threads expand a level of states, at most as many as the
     /// machine runs at once.
     pub threads: usize,
+    /// How many workers TLC runs with (`-workers`), which TLCGet("config") reports.
+    pub workers: usize,
     /// PROVE_IT_SHARED_LEVEL: the fewest states a level shares between the threads, below which
     /// one thread expands it, since a short level isn't worth the threads' start.
     pub minimum_shared_level: usize,
@@ -92,6 +94,7 @@ impl Default for Settings {
             is_live_checked: false,
             is_violation_reported: false,
             threads: 1,
+            workers: 1,
             minimum_shared_level: MINIMUM_SHARED_LEVEL,
             is_liveness_periodic: false,
             test_live_check_at: None,
@@ -167,6 +170,24 @@ pub struct Checkpoint {
     pub symmetry: Option<NamedGroup>,
 }
 
+/// TLC's registers once the search completes, which a postcondition reads, with the store their
+/// ids are of.
+pub struct FinalRegisters {
+    pub registers: Registers,
+    pub store: Store,
+}
+
+// TLC's registers once the search is over, where TLCSet set any, which takes the store: only
+// what follows the search reads them.
+fn take_registers(machine: &mut Machine<'_>) -> Option<Box<FinalRegisters>> {
+    (!machine.registers.is_empty()).then(|| {
+        Box::new(FinalRegisters {
+            registers: std::mem::take(&mut machine.registers),
+            store: std::mem::replace(&mut machine.store, Store::new()),
+        })
+    })
+}
+
 /// The steps of a search (`EngineGraph`): for each of the first `expanded` states, how many
 /// successors it generated, how many of them were new, and the states, in the model, its steps went
 /// to in the order generated, each labelled with its action when the search took TLC's actions.
@@ -218,6 +239,8 @@ pub enum SearchOutcome {
         collisions: u64,
         /// What each `_POSSIBLE` predicate counted, or -1 where it wasn't evaluated.
         possible: Vec<i64>,
+        /// TLC's registers once the search completes, where TLCSet set any.
+        registers: Option<Box<FinalRegisters>>,
     },
     /// The search stopped, with a checkpoint unless it stopped computing the initial states, as
     /// the TypeScript engine computes them before the part of its search that hands over a
@@ -254,6 +277,8 @@ pub struct Violation {
     pub startup_random: u64,
     /// The symmetry group the search reduced by, if any.
     pub symmetry: Option<NamedGroup>,
+    /// TLC's registers as the search left them, ids of `store`.
+    pub registers: Registers,
 }
 
 pub enum ViolationKind {
@@ -1853,6 +1878,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     store.reset(ranked.iter().map(Vec::as_slice));
     store.freeze_string_order();
     let mut compiler = Compiler::new(ir, &mut store, settings.compile);
+    compiler.workers = settings.workers;
     let context = match EngineContext::build(&mut compiler, ir) {
         Ok(context) => context,
         Err(error) => return SearchOutcome::Declined(describe(error)),
@@ -1861,6 +1887,14 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     // what the search printed.
     if compiler.is_printing && compiler.is_ranking {
         return SearchOutcome::Declined("unsupported: Print with ToString".into());
+    }
+    // The interpreter takes a search over without what only the native checker follows, which a
+    // caller that reports the violation itself doesn't hand over.
+    if let Some(reason) = compiler
+        .native_only
+        .filter(|_| !settings.is_violation_reported)
+    {
+        return SearchOutcome::Declined(format!("unsupported: {reason}"));
     }
     let is_distinct_read = compiler.is_distinct_read;
     let is_printing = compiler.is_printing;
@@ -2405,6 +2439,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 threads: threads_used,
                 collisions,
                 possible: search.possible.clone(),
+                registers: None,
                 fingerprints: search.states.fingerprints,
             }
         }
@@ -2622,6 +2657,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 threads: threads_used,
                 collisions,
                 possible: search.possible.clone(),
+                registers: None,
                 fingerprints: search.states.fingerprints,
             }
         }
@@ -2750,6 +2786,24 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 }
                 found => found,
             };
+            // What the search held back for the liveness checker's atoms to print between comes
+            // before the violation, unless an atom printed.
+            if found.is_some()
+                && !context.is_live_printing
+                && let Some(held) = search.held.take()
+                && let Some((initial, expansions)) = held.split_first()
+            {
+                for printed in initial {
+                    report_printed(search.reporter, &machine.store, printed);
+                }
+                search
+                    .reporter
+                    .initial_states(initial_states.0, initial_states.1);
+                for printed in expansions.iter().flatten() {
+                    report_printed(search.reporter, &machine.store, printed);
+                }
+                search.flush(&mut machine);
+            }
             let mut violation = found.and_then(|found| {
                 to_violation(found, &mut machine, &context, &mut search, is_printing)
             });
@@ -2819,6 +2873,31 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             checkpoint: None,
             collisions,
             violation: None,
+        },
+        SearchOutcome::Complete {
+            counts,
+            checkpoint,
+            liveness,
+            lasso_actions,
+            violation,
+            fingerprints,
+            value_count,
+            threads,
+            collisions,
+            possible,
+            registers: _,
+        } => SearchOutcome::Complete {
+            counts,
+            checkpoint,
+            liveness,
+            lasso_actions,
+            violation,
+            fingerprints,
+            value_count,
+            threads,
+            collisions,
+            possible,
+            registers: take_registers(&mut machine),
         },
         outcome => outcome,
     }
@@ -3098,6 +3177,7 @@ fn to_violation(
             startup,
             startup_random: machine.startup_random,
             symmetry,
+            registers: std::mem::take(&mut machine.registers),
         })
     })
 }
@@ -3201,6 +3281,7 @@ fn to_accepted(
         startup,
         startup_random: machine.startup_random,
         symmetry: None,
+        registers: std::mem::take(&mut machine.registers),
     }))
 }
 
@@ -3256,6 +3337,7 @@ fn to_lasso(
             startup,
             startup_random: machine.startup_random,
             symmetry,
+            registers: std::mem::take(&mut machine.registers),
         })
     })
 }

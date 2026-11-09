@@ -4,8 +4,10 @@
 //! find by number, and how many caches of each kind to make. A [`Machine`] runs closures of one
 //! program on one store.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
+use tla_ir::NodeId;
 use tla_values::store::Outcome;
 use tla_values::{Bail, Id, Store};
 
@@ -116,6 +118,25 @@ pub struct Machine<'p> {
     pub(crate) random: JavaRandom,
     /// The state of the generator the startup left, which a violation's trace draws from.
     pub(crate) startup_random: u64,
+    /// TLC's registers, which TLCSet sets and TLCGet reads.
+    pub registers: Registers,
+    /// TLCCache's values of each expression it caches, by the expression's node: each key with
+    /// the value cached for it (`tlcEval2`).
+    pub(crate) tlc_caches: HashMap<NodeId, Vec<(Id, Id)>>,
+}
+
+/// TLC's registers (`IdThread`'s local values and named registers): the value TLCSet stored under
+/// each natural number, and under each name that starts with "s:", ids of the machine's store.
+#[derive(Clone, Debug, Default)]
+pub struct Registers {
+    pub numbered: Vec<Option<Id>>,
+    pub named: Vec<(Id, Id)>,
+}
+
+impl Registers {
+    pub fn is_empty(&self) -> bool {
+        self.numbered.iter().all(Option::is_none) && self.named.is_empty()
+    }
 }
 
 impl<'p> Machine<'p> {
@@ -148,6 +169,8 @@ impl<'p> Machine<'p> {
             output: Vec::new(),
             random: JavaRandom::seeded(program.random_seed),
             startup_random: 0,
+            registers: Registers::default(),
+            tlc_caches: HashMap::new(),
         }
     }
 
