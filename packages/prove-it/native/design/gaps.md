@@ -100,3 +100,13 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   native engine, or to the interpreter where it doesn't take the model, never to the TypeScript
   engine. Resuming from a checkpoint, the interpreter then takes every state over at once, since it
   tells them apart by fingerprint and the checkpoint looks a state up by its key.
+
+## TLCModelValue
+
+- **TLCModelValue(s)** gives the model value named s, which TLC makes once per name and ranks
+  the name as it makes it (`TLCExt.tlcModelValue`, `ModelValue.add`). So it ranks as ToString
+  does: the search stays on one thread, one that ranked a name hands over none of its states, and
+  comparing a model value whose name it ranked stops, as comparing such a string does. It stops
+  where s isn't a string, which TLC reports. Github696 and Github696b (TLC's tests),
+  declined before, now search in Rust until the comparison of differently typed model values
+  TLC reports.
