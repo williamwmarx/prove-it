@@ -8,8 +8,8 @@ use tla_values::{Id, Store};
 
 use crate::eval::{CallStack, Context, Evaluator, StackFrame};
 use crate::rebuild::{Rebuilder, run};
-use crate::value::TlcMessage;
-use crate::{Ending, Unsupported};
+use crate::value::{TlcMessage, Value};
+use crate::{Ending, Trace, Unsupported};
 
 /// Where the search failed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -314,4 +314,71 @@ pub fn format_call_stack(ir: &tla_ir::Ir, call_stack: &[SourceRange]) -> String 
     }
     text.push('\n');
     text
+}
+
+/// The successor TLC finds incomplete as it expands the last state of a trace: the action that
+/// left it so (its position in the model's actions, `None` where the IR carries none), the
+/// variables it leaves undefined in the order declared, and its values.
+pub struct Incomplete {
+    pub action: Option<u32>,
+    pub missing: Vec<usize>,
+    pub partial: Vec<Option<Value>>,
+}
+
+impl Rebuilder<'_> {
+    /// The first successor of the last of `states` that the next-state relation leaves
+    /// incomplete, walking TLC's actions in order, as `forEachSuccessor` finds it.
+    pub fn incomplete_successor(&mut self, trace: &Trace) -> Result<Incomplete, Unsupported> {
+        let evaluator = self.evaluator();
+        let ir = evaluator.ir;
+        let width = ir.variables.len();
+        let Some(last) = trace.states.last() else {
+            return Err(Unsupported("an incomplete successor of no state".into()));
+        };
+        evaluator.current = last.values.iter().cloned().map(Some).collect();
+        evaluator.level = trace.states.len() as i32;
+        evaluator.printed.clear();
+        let candidates: Vec<(NodeId, Option<u32>, Option<u32>)> = if ir.model.actions.is_empty() {
+            vec![(ir.model.next, ir.model.scope, None)]
+        } else {
+            ir.model
+                .actions
+                .iter()
+                .enumerate()
+                .map(|(index, action)| (action.expression, action.scope, Some(index as u32)))
+                .collect()
+        };
+        for (expression, scope, action) in candidates {
+            let context = run(evaluator.scope_context(scope))?;
+            evaluator.next = vec![None; width];
+            let mut found = None;
+            run(
+                evaluator.walk(expression, &context, false, &mut |evaluator| {
+                    if evaluator.next.iter().all(Option::is_some) {
+                        return Ok(true);
+                    }
+                    found = Some(evaluator.next.clone());
+                    Ok(false)
+                }),
+            )?;
+            // What the spec prints as TLC finds the successor comes before the report.
+            if !evaluator.printed.is_empty() {
+                evaluator.printed.clear();
+                return Err(Unsupported(
+                    "an incomplete successor of a spec that prints".into(),
+                ));
+            }
+            if let Some(partial) = found {
+                let missing = (0..width)
+                    .filter(|&index| partial[index].is_none())
+                    .collect();
+                return Ok(Incomplete {
+                    action,
+                    missing,
+                    partial,
+                });
+            }
+        }
+        Err(Unsupported("no successor is incomplete".into()))
+    }
 }

@@ -319,6 +319,7 @@ impl Reporter for Relay {
 }
 
 /// The counts a Progress line reports.
+#[derive(Clone, Copy)]
 pub(crate) struct Statistics {
     pub generated: u64,
     pub distinct: u64,
@@ -649,6 +650,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                 ViolationKind::Error { site } => {
                     let counts = &violation.counts;
                     let stop = ErrorStop {
+                        reason: &reason,
                         store: &violation.store,
                         states: violation.states.iter().map(Vec::as_slice).collect(),
                         actions: violation.labels.clone(),

@@ -20,7 +20,7 @@ mod sets;
 mod value;
 
 pub use alias::Alias;
-pub use failure::{Failure, Site, format_call_stack};
+pub use failure::{Failure, Incomplete, Site, format_call_stack};
 pub use pretty::pretty_print;
 pub use print::{format_printed, format_value};
 pub use rebuild::Rebuilder;

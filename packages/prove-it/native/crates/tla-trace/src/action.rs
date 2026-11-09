@@ -324,7 +324,7 @@ impl<'ir> Evaluator<'ir> {
     }
 
     // Walks a node in its frame of the call stack, as `visit` in `tlc/replay.ts` does.
-    fn walk(
+    pub(crate) fn walk(
         &mut self,
         node: NodeId,
         context: &Context,
