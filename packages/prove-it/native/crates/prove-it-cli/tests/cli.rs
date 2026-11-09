@@ -654,6 +654,41 @@ fn stops_at_initial_states_without_a_next_state_relation() {
 }
 
 #[test]
+fn checks_properties_in_the_scope_of_their_instance() {
+    // A property an INSTANCE with substitutions exports reads its names in the instance: the
+    // invariant of `[]`, checked on the trace's last state again, and the implied init.
+    let inner = "---- MODULE Abs ----\nEXTENDS Naturals\nVARIABLE s\nCONSTANT K\nSafe == [](s < K)\nStart == s = K /\\ [](s >= 0)\nSafe2 == Safe\n====\n";
+    let spec = "---- MODULE Stop ----\nEXTENDS Naturals\nVARIABLE t\nA == INSTANCE Abs WITH s <- t * 2, K <- 6\nInit == t = 0\nNext == t' = (t + 1) % 5\nSpec == Init /\\ [][Next]_t\nPStart == A!Start\nPSafe2 == A!Safe2\n====\n";
+    let directory =
+        std::env::temp_dir().join(format!("prove-it-cli-scoped-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    std::fs::write(directory.join("Abs.tla"), inner).expect("a module");
+    let (output, _) = run_lowered("scoped", spec, "SPECIFICATION Spec\nPROPERTY PSafe2\n");
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(12), "{text}");
+    assert!(
+        text.contains(
+            "Error: Invariant Safe is violated.\nError: The behavior up to this point is:\n"
+        ),
+        "{text}"
+    );
+    assert!(
+        text.contains(
+            "t = 3\n\n4 states generated, 4 distinct states found, 0 states left on queue.\n"
+        ),
+        "{text}"
+    );
+    let (output, _) = run_lowered("scoped", spec, "SPECIFICATION Spec\nPROPERTY PStart\n");
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(13), "{text}");
+    assert!(
+        text.contains("Error: Property line 6, col 10 to line 6, col 14 of module Abs is violated by the initial state:\nt = 0\n\nFinished in "),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
 fn reads_and_sets_tlcs_registers() {
     // TLCCache evaluates Counted once, TLCFP is TLC's fingerprint under -fp 0, which the
     // interpreter and TLC print the same, and a Java property TLC hasn't set is its key.

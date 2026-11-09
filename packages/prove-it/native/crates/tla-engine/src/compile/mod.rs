@@ -803,22 +803,7 @@ impl<'a> Compiler<'a> {
         root: Root,
         can_print: bool,
     ) -> Result<Compiled, CompileError> {
-        let context = Context {
-            can_print,
-            ..Context::ROOT
-        };
-        match root {
-            Root::Definition(index) => {
-                let definition = self.ir.definitions[index as usize];
-                self.wrap_compile(|compiler| {
-                    compiler.compile_definition_reference(definition, &context)
-                })
-            }
-            Root::Expression(node) => self.compile(node, &context),
-            Root::Unchanged(node) => {
-                self.wrap_compile(|compiler| compiler.compile_unchanged(node, &context))
-            }
-        }
+        self.compile_scoped(root, None, can_print)
     }
 
     // --- the IR ---

@@ -313,6 +313,18 @@ impl<'ir> Rebuilder<'ir> {
                             .map(|&predicate| Some(predicate)),
                     )
                     .collect();
+                if ir
+                    .model
+                    .initial_predicate_scopes
+                    .iter()
+                    .take(predicate_count)
+                    .any(Option::is_some)
+                {
+                    return Err(Unsupported(
+                        "evaluating the failure again: an implied init in an instance's scope"
+                            .into(),
+                    ));
+                }
                 if predicate_count > ir.model.initial_predicates.len() {
                     return Err(Unsupported(
                         "evaluating the failure again: an implied init the model doesn't have"
