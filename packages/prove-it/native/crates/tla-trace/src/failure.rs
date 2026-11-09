@@ -7,7 +7,7 @@ use tla_ir::{NodeId, NodeKind, SourceRange};
 use tla_values::{Id, Store};
 
 use crate::eval::{CallStack, Context, Evaluator, StackFrame};
-use crate::rebuild::Rebuilder;
+use crate::rebuild::{Rebuilder, run};
 use crate::value::TlcMessage;
 use crate::{Ending, Unsupported};
 
@@ -170,16 +170,29 @@ impl<'ir> Rebuilder<'ir> {
             Site::Invariant(position) => {
                 evaluator.current = current;
                 evaluator.level = level;
-                let Some(index) = ir
-                    .model
-                    .invariants
-                    .get(position as usize)
-                    .and_then(|invariant| invariant.root.definition)
+                let mut bodies = Vec::new();
+                for invariant in ir.model.invariants.iter().take(position as usize + 1) {
+                    let Some(index) = invariant.root.definition else {
+                        return Err(Unsupported("an invariant the model doesn't define".into()));
+                    };
+                    bodies.push(evaluator.definition(ir.definitions[index as usize]).body);
+                }
+                let Some(failed) = bodies.pop().filter(|_| bodies.len() == position as usize)
                 else {
-                    return Err(Unsupported("an invariant the model doesn't define".into()));
+                    return Err(Unsupported("an invariant the model doesn't have".into()));
                 };
-                let body = evaluator.definition(ir.definitions[index as usize]).body;
-                evaluator.boolean(body, &Context::default())
+                // TLC checks the invariants before it in order, outside the call stack, and their
+                // comparisons sort what they reach of the state.
+                let call_stack = evaluator.call_stack.take();
+                for body in bodies {
+                    if !run(evaluator.boolean(body, &Context::default()))? {
+                        return Err(Unsupported(
+                            "evaluating the failure again: an earlier invariant is violated".into(),
+                        ));
+                    }
+                }
+                evaluator.call_stack = call_stack;
+                evaluator.boolean(failed, &Context::default())
             }
         };
         let call_stack = evaluator.call_stack.take().unwrap_or_default();
