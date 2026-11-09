@@ -10,6 +10,48 @@ use std::ptr::{null, null_mut};
 
 use crate::ABI_VERSION;
 
+// Declares N-API functions. Linux and macOS leave them to the loader, which finds them in the host
+// process. Windows has no such lookup, and the host may be node.exe or bun.exe, so each is resolved
+// in the host's executable the first time it is called.
+macro_rules! napi_functions {
+    ($($vis:vis fn $name:ident($($argument:ident: $type:ty),* $(,)?) -> $result:ty;)*) => {
+        #[cfg(not(windows))]
+        unsafe extern "C" {
+            $($vis fn $name($($argument: $type),*) -> $result;)*
+        }
+        $(
+            #[cfg(windows)]
+            $vis unsafe fn $name($($argument: $type),*) -> $result {
+                static ADDRESS: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+                let address = *ADDRESS
+                    .get_or_init(|| crate::binding::get_host_function(concat!(stringify!($name), "\0")));
+                // SAFETY: the host exports the function under its N-API name with this signature.
+                let function = unsafe {
+                    std::mem::transmute::<usize, unsafe extern "C" fn($($type),*) -> $result>(address)
+                };
+                unsafe { function($($argument),*) }
+            }
+        )*
+    };
+}
+
+// The address of a function the host's executable exports.
+#[cfg(windows)]
+fn get_host_function(name: &'static str) -> usize {
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GetModuleHandleW(name: *const u16) -> *mut c_void;
+        fn GetProcAddress(module: *mut c_void, name: *const c_char) -> *mut c_void;
+    }
+    let address = unsafe { GetProcAddress(GetModuleHandleW(null()), name.as_ptr().cast()) };
+    assert!(
+        !address.is_null(),
+        "the host doesn't export {}",
+        name.trim_end_matches('\0')
+    );
+    address as usize
+}
+
 mod check;
 mod store;
 
@@ -23,7 +65,7 @@ const NAPI_OK: napi_status = 0;
 const NAPI_UINT8_ARRAY: i32 = 1;
 const NAPI_VERSION: i32 = 8;
 
-unsafe extern "C" {
+napi_functions! {
     fn napi_create_function(
         env: napi_env,
         name: *const c_char,

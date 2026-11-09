@@ -6,9 +6,12 @@
 // the main package's.
 // Usage: bun scripts/platform-packages.ts build [--target <Rust target>]
 //        bun scripts/platform-packages.ts pack <destination>
+//        bun scripts/platform-packages.ts install-test
 // build compiles the addon and the binary with cargo, for the host or a Rust target whose standard library and
 // linker are installed, and writes its package to native/npm/<platform>. pack packs every package
-// built there into the destination.
+// built there into the destination. install-test packs the main package, built first, and the
+// package built for this system, installs both with npm into an empty project, and checks that the
+// installed CLI searches a model natively under Node and under Bun.
 
 import { spawnSync } from "node:child_process";
 import {
@@ -16,11 +19,13 @@ import {
   copyFileSync,
   existsSync,
   mkdirSync,
+  mkdtempSync,
   readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 
 import { ADDON_FILE } from "../src/engine/native";
@@ -108,6 +113,8 @@ const run = (command: string, args: string[], cwd: string) => {
     cwd,
     stdio: ["ignore", "pipe", "inherit"],
     encoding: "utf8",
+    // HACK: npm is npm.cmd on Windows, which only a shell runs. No argument here has a space.
+    shell: process.platform === "win32",
   });
   if (result.status !== 0) {
     console.error(`${command} ${args.join(" ")} failed`);
@@ -193,19 +200,68 @@ const pack = (argument: string | undefined) => {
   }
 };
 
+const installTest = () => {
+  const built = PLATFORMS.filter(
+    (platform) =>
+      platform.os === process.platform &&
+      platform.cpu === process.arch &&
+      existsSync(join(NPM_DIRECTORY, platform.name)),
+  );
+  if (built.length !== 1) {
+    console.error(
+      `Build exactly one platform package for ${process.platform}-${process.arch} first; built: ${built.map((platform) => platform.name).join(", ") || "none"}`,
+    );
+    process.exit(1);
+  }
+  const project = mkdtempSync(join(tmpdir(), "prove-it-install-"));
+  // The main package's prepack copies files with cp, which Windows lacks; they aren't needed here.
+  const npmPack = (directory: string) =>
+    join(
+      project,
+      run("npm", ["pack", "--silent", "--ignore-scripts", "--pack-destination", project], directory)
+        .trim()
+        .split("\n")
+        .at(-1) ?? "",
+    );
+  const tarballs = [npmPack(PACKAGE_DIRECTORY), npmPack(join(NPM_DIRECTORY, built[0].name))];
+  writeFileSync(join(project, "package.json"), '{ "private": true }\n');
+  run("npm", ["install", "--no-audit", "--no-fund", "--ignore-scripts", ...tarballs], project);
+  const cli = join(project, "node_modules/@atemp/prove-it/dist/cli.js");
+  const failures = ["node", "bun"].flatMap((runtime) => {
+    const result = spawnSync(runtime, [cli, "Commit.tla"], {
+      cwd: join(PACKAGE_DIRECTORY, "tests/fixtures/commit"),
+      env: { ...process.env, PROVE_IT_ENGINE: "debug", PROVE_IT_ENGINE_ADDON: undefined },
+      encoding: "utf8",
+    });
+    const isNative = result.status === 0 && result.stderr.includes("[engine] native: complete");
+    console.log(`${runtime}: ${isNative ? "native: complete" : "not native"}`);
+    return isNative
+      ? []
+      : [`${runtime} exited ${result.status}:\n${result.stdout}\n${result.stderr}`];
+  });
+  rmSync(project, { recursive: true, force: true });
+  if (failures.length > 0) {
+    console.error(
+      `The installed ${built[0].name} package didn't search natively:\n${failures.join("\n")}`,
+    );
+    process.exit(1);
+  }
+};
+
 const COMMANDS: Record<string, () => void> = {
   build: () => {
     const targetIndex = process.argv.indexOf("--target");
     build(targetIndex === -1 ? undefined : process.argv[targetIndex + 1]);
   },
   pack: () => pack(process.argv[3]),
+  "install-test": installTest,
 };
 
 if (import.meta.main) {
   const command = COMMANDS[process.argv[2] ?? ""];
   if (command === undefined) {
     console.error(
-      "Usage: bun scripts/platform-packages.ts build [--target <Rust target>] | pack <destination>",
+      "Usage: bun scripts/platform-packages.ts build [--target <Rust target>] | pack <destination> | install-test",
     );
     process.exit(1);
   }
