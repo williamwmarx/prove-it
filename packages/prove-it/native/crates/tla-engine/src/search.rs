@@ -215,8 +215,9 @@ pub struct Violation {
     /// `store`.
     pub states: Vec<Vec<Id>>,
     /// For each step of the trace, the position in the model's actions of the first of TLC's
-    /// actions that takes it.
-    pub labels: Vec<u32>,
+    /// actions that takes it, or `None` where the search didn't find it, as under SYMMETRY or a
+    /// VIEW, whose stored states aren't the ones TLC prints.
+    pub labels: Vec<Option<u32>>,
     /// The counts TLC reports after the trace.
     pub counts: StopCounts,
     pub store: Store,
@@ -2258,11 +2259,8 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             };
             // The search finds a trace's actions only where nothing it evaluates for them prints
             // and the states it keeps are those TLC prints.
-            let is_traced = settings.is_violation_reported
-                && !is_printing
-                && search.graph.is_none()
-                && search.states.key_width.is_none()
-                && model.symmetry.is_none();
+            let is_traced =
+                settings.is_violation_reported && !is_printing && search.graph.is_none();
             let violation = search
                 .violation
                 .take()
@@ -2534,10 +2532,13 @@ fn to_violation(
         .map(|&index| search.states.state(index).to_vec())
         .collect();
     states.extend(found.last.iter().cloned());
+    let is_reduced = search.states.key_width.is_some() || search.canonicalizer.is_some();
     let labels = if path.is_empty() {
         Vec::new()
+    } else if is_reduced {
+        vec![None; states.len() - 1]
     } else {
-        label_path(
+        let mut labels = label_path(
             machine,
             context,
             search,
@@ -2545,10 +2546,9 @@ fn to_violation(
             found.last.as_deref(),
             false,
         )
-        .ok()?
-        .into_iter()
-        .skip(1)
-        .collect::<Option<Vec<u32>>>()?
+        .ok()?;
+        labels.remove(0);
+        labels
     };
     // The store goes with the violation, so whether the search, or finding the actions, ranked
     // strings is read here, as for the search's outcome.
@@ -2574,7 +2574,7 @@ fn to_lasso(
     counts: &Counts,
 ) -> Option<Box<Violation>> {
     let (&loop_label, steps) = actions.split_last()?;
-    let labels = steps.iter().copied().collect::<Option<Vec<u32>>>()?;
+    let labels = steps.to_vec();
     let is_stuttering = loop_start + 1 == path.len();
     let is_labelled = actions.len() == path.len() && (is_stuttering || loop_label.is_some());
     (is_labelled && !machine.store.has_unordered_strings()).then(|| {
