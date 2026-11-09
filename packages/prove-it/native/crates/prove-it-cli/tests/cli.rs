@@ -459,3 +459,28 @@ fn prints_a_constraint_that_fails_on_an_initial_state() {
     );
     std::fs::remove_dir_all(directory).expect("removed");
 }
+
+const ETEST14_IR: &[u8] = include_bytes!(
+    "../../../../tests/conformance/ir/tlc/tlatools/org.lamport.tlatools/test-model/suite/etest14.ir"
+);
+
+#[test]
+fn prints_an_assumption_that_fails_to_evaluate() {
+    for (args, expected) in [
+        (
+            &[][..],
+            "Error: Evaluating assumption line 5, col 3 to line 5, col 56 of module etest14 failed.\nAttempted to compute the value of an expression of form\nCHOOSE x \\in S: P, but no element of S satisfied P.\nline 5, col 7 to line 5, col 28 of module etest14\nFinished in ",
+        ),
+        (
+            &["-tool"][..],
+            "@!@!@STARTMSG 2105:1 @!@!@\nEvaluating assumption line 5, col 3 to line 5, col 56 of module etest14 failed.\nAttempted to compute the value of an expression of form\nCHOOSE x \\in S: P, but no element of S satisfied P.\nline 5, col 7 to line 5, col 28 of module etest14\n@!@!@ENDMSG 2105 @!@!@\n@!@!@STARTMSG 2186:0 @!@!@\nFinished in ",
+        ),
+    ] {
+        let (output, directory) = run_golden("assumption-failure", ETEST14_IR, "etest14", "", args);
+        let text = stdout(&output);
+        // TLC reports the assumption by where it is written, and no statistics.
+        assert_eq!(output.status.code(), Some(10), "{text}");
+        assert!(text.contains(expected), "{text}");
+        std::fs::remove_dir_all(directory).expect("removed");
+    }
+}

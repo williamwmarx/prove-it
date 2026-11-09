@@ -13,7 +13,7 @@ use tla_values::print::{is_printable, write_value};
 use tla_values::{Id, Store};
 
 use crate::args::{Java, Parsed, USAGE, get_java_launch};
-use crate::failure::{ErrorStop, print_failure};
+use crate::failure::{ErrorStop, print_assumption_failure, print_failure};
 use crate::files::FileDescriber;
 use crate::front::read_front;
 use crate::messages::{self as code, Level, Printer};
@@ -695,8 +695,13 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
         SearchOutcome::Declined(reason) => {
             return report_not_native(printer, &format!("the engine declined: {reason}"));
         }
-        SearchOutcome::AssumptionFailed { .. } => {
-            return report_not_native(printer, "an assumption that fails to evaluate");
+        SearchOutcome::AssumptionFailed { position } => {
+            return print_assumption_failure(printer, &ir, position, start).unwrap_or_else(|why| {
+                report_not_native(
+                    printer,
+                    &format!("an assumption that fails to evaluate: {why}"),
+                )
+            });
         }
         // TLC reports a false assumption with no statistics, since it hasn't searched.
         SearchOutcome::AssumptionViolated { name } => {
