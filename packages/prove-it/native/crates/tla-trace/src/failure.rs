@@ -11,7 +11,9 @@ use crate::eval::{CallStack, Context, Evaluator, StackFrame, UNFOLLOWED_FRAMES};
 use crate::fingerprint::{fingerprint_failure, state_fingerprint};
 use crate::print::format_value;
 use crate::rebuild::{Rebuilder, is_in_model, is_same, run};
-use crate::value::{Evaluated, TlcMessage, Value, fail, fail_with, normalize_failure};
+use crate::value::{
+    Evaluated, TlcMessage, Value, clear_unnormalized, fail, fail_with, normalize_failure,
+};
 use crate::{Ending, Trace, Unsupported};
 
 /// Where the search failed.
@@ -280,6 +282,7 @@ impl<'ir> Rebuilder<'ir> {
         // The startup printed its definitions and the assumptions before this one already.
         run(evaluator.compute_startup())?;
         evaluator.printed.clear();
+        clear_unnormalized();
         evaluator.call_stack = Some(CallStack::default());
         let result = evaluator.evaluate(node, &Context::default());
         let call_stack = evaluator.call_stack.take().unwrap_or_default();
@@ -383,6 +386,7 @@ impl<'ir> Rebuilder<'ir> {
         let evaluator = self.evaluator();
         let ir = evaluator.ir;
         evaluator.printed.clear();
+        clear_unnormalized();
         evaluator.call_stack = Some(CallStack::default());
         let width = ir.variables.len();
         let level = states.len() as i32;

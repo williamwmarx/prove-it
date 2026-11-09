@@ -471,3 +471,34 @@ with TLCSet in the spec each walk runs to its end, as with Print. The binary pri
 prints the state, part way through its lazy first rebuild, so an ALIAS that uses the registers
 where a rebuild set one isn't native ("an ALIAS that uses registers the rebuild of the trace
 sets").
+
+## Sets TLC holds unnormalized
+
+TLC builds a set enumeration as written (`SetEnumValue` with `isNorm` false) and normalizes it in
+place only as it compares, enumerates, sizes, prints or fingerprints it. Until then `member`
+searches it element by element, asking each element whether it equals the value
+(`ValueVec.search`), so the error and its wording can differ from a sorted search's. A failure
+replay records each set enumeration it builds, with its elements as written, in a registry keyed
+by the set's address (`mark_unnormalized` in `value.rs`). Each entry holds its set, so that no
+other set takes a freed one's address. `elements`, `compare`, `equals`, printing and settling
+drop the entry, as TLC's `normalize` would. `\cap` and `\` of a recorded set test its elements
+as written and give a recorded set, as `SetEnumValue.cap` and `diff` keep `isNorm`. Not followed
+yet: `\cup` normalizes its left operand, where TLC's `cup` doesn't, and DOMAIN of a lambda over a
+recorded set.
+
+## Handoff
+
+Done:
+- PrintTraceRace: membership in sets TLC holds unnormalized (above). A failure in a method of a
+  set with a source is followed through a membership (`is_member_followed`) where each set
+  enumeration the failure passes through has no source or is one the replay records as TLC holds
+  it unnormalized.
+- semantic_error1: TLC's own NullPointerException as it reports the failure is a TLC bug. The
+  binary prints Prove It's error, the one tlc/ts and tlc/rust print, and
+  `known-differences.json` lists it for tlc/native as for the others. function_syntax (TLC
+  overflows Java's default stack) is listed for tlc/native too.
+
+Open:
+- Sets TLC holds unnormalized: `\cup` and DOMAIN, above.
+- Not this workstream's: FingerprintExceptionHang, TSnapShot and DoInitFunctorMinimalErrorStack
+  (infinite sets and the trace's stops).

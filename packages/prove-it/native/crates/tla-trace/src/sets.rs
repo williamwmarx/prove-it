@@ -6,7 +6,7 @@ use std::rc::Rc;
 use crate::print::{format_pretty, format_value};
 use crate::value::{
     Class, Evaluated, Lazy, Value, compare, elements, equals, fail, fail_coded, fail_runtime,
-    find_key, is_enumerable, set_of,
+    find_key, is_enumerable, mark_unnormalized, set_of, unnormalized,
 };
 
 /// How many elements the evaluator enumerates of a lazy set before it gives up, as the engine
@@ -310,6 +310,16 @@ pub fn failing_sets(value: &Value, set: &Value) -> Option<Vec<Value>> {
 }
 
 pub fn is_member(value: &Value, set: &Value) -> Evaluated<bool> {
+    // TLC tests a set it holds unnormalized element by element, as it built it, asking each
+    // element whether it equals the value (`ValueVec.search`).
+    if let Some(written) = unnormalized(set) {
+        for element in &written {
+            if equals(element, value)? {
+                return Ok(true);
+            }
+        }
+        return Ok(false);
+    }
     match set {
         Value::Set(elements) => {
             let (mut low, mut high) = (0, elements.len());
@@ -554,13 +564,7 @@ pub fn intersection(left: &Value, right: &Value) -> Evaluated<Value> {
         (false, true) => (right, left),
         (false, false) => return Ok(lazy(Lazy::Cap(left.clone(), right.clone()))),
     };
-    let mut kept = Vec::new();
-    for element in elements(enumerated)?.iter() {
-        if is_member(element, tested)? {
-            kept.push(element.clone());
-        }
-    }
-    Ok(Value::Set(Rc::new(kept)))
+    filter(enumerated, |element| is_member(element, tested))
 }
 
 /// `\` (`Tool`'s OPCODE_setdiff): a reducible left operand's elements not in the right, and a
@@ -569,13 +573,30 @@ pub fn difference(left: &Value, right: &Value) -> Evaluated<Value> {
     if !is_reducible(left) {
         return Ok(lazy(Lazy::Diff(left.clone(), right.clone())));
     }
+    filter(left, |element| Ok(!is_member(element, right)?))
+}
+
+// The elements of a set that `keep` keeps. TLC's `cap` and `diff` of a set enumeration test its
+// elements as it holds them and keep its normalization, so a set TLC holds unnormalized gives one it
+// holds unnormalized.
+fn filter(left: &Value, keep: impl Fn(&Value) -> Evaluated<bool>) -> Evaluated<Value> {
+    let written = unnormalized(left);
+    let held = match &written {
+        Some(written) => written.clone(),
+        None => elements(left)?.to_vec(),
+    };
     let mut kept = Vec::new();
-    for element in elements(left)?.iter() {
-        if !is_member(element, right)? {
-            kept.push(element.clone());
+    for element in held {
+        if keep(&element)? {
+            kept.push(element);
         }
     }
-    Ok(Value::Set(Rc::new(kept)))
+    if written.is_none() {
+        return Ok(Value::Set(Rc::new(kept)));
+    }
+    let set = set_of(kept.clone())?;
+    mark_unnormalized(&set, kept);
+    Ok(set)
 }
 
 pub fn is_subset(left: &Value, right: &Value) -> Evaluated<bool> {
