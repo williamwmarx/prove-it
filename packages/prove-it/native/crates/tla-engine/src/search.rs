@@ -1818,7 +1818,11 @@ struct Started {
 // TLC's startup: it evaluates the substitutes and the constant definitions, then the assumptions
 // until one is false. What they print is kept until all of it is evaluated, so a model the engine
 // can't take prints nothing.
-fn run_startup(machine: &mut Machine<'_>, startup: &Startup) -> Outcome<Started> {
+// `is_native`: the native checker reports an assumption the engine fails to evaluate however it
+// fails, since its evaluator of failures words TLC's error or finds none, which keeps the run
+// from being native; otherwise one the engine can't follow is the interpreter's, as is a
+// substitute that fails.
+fn run_startup(machine: &mut Machine<'_>, startup: &Startup, is_native: bool) -> Outcome<Started> {
     let take = |machine: &mut Machine<'_>| {
         std::mem::take(&mut machine.output)
             .into_iter()
@@ -1828,8 +1832,18 @@ fn run_startup(machine: &mut Machine<'_>, startup: &Startup) -> Outcome<Started>
             })
             .collect::<Vec<_>>()
     };
-    for evaluate in startup.substitutes.iter().chain(&startup.definitions) {
-        evaluate(machine)?;
+    // The front end rejects a substitute TLC checks and finds failing (`processConstantDefns`), so
+    // one that fails here is one the native checker leaves to fail where it is used, as TLC does.
+    for evaluate in &startup.substitutes {
+        let result = evaluate(machine);
+        if !is_native {
+            result?;
+        }
+    }
+    // `processConstantDefns`: TLC swallows whatever a constant definition throws and keeps it as
+    // an operator, which evaluates it again, and fails again, where it is used.
+    for evaluate in &startup.definitions {
+        let _ = evaluate(machine);
     }
     // `getConstantValue`: TLC keeps a definition that fails to evaluate as an operator.
     for (evaluate, form, kind, name) in &startup.predicates {
@@ -1882,7 +1896,7 @@ fn run_startup(machine: &mut Machine<'_>, startup: &Startup) -> Outcome<Started>
                 violated = Some(name.clone());
                 break;
             }
-            Err(bail) if is_engine_limit(bail.0) => return Err(bail),
+            Err(bail) if is_engine_limit(bail.0) && !is_native => return Err(bail),
             Err(bail) => {
                 failed = Some((position as u32, bail));
                 break;
@@ -2008,7 +2022,11 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     // TLCGet("level") is 0 while TLC starts.
     let startup = machine.store.int(0).and_then(|zero| {
         machine.set_slot(LEVEL_SLOT, zero);
-        run_startup(&mut machine, &context.startup)
+        run_startup(
+            &mut machine,
+            &context.startup,
+            settings.is_violation_reported,
+        )
     });
     let group = match startup {
         Err(Bail(reason)) => return SearchOutcome::Declined(reason.into()),
@@ -2037,9 +2055,14 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             if let Some((position, _)) = started.failed {
                 return SearchOutcome::AssumptionFailed { position };
             }
-            if context.is_diameter_searched {
+            if context.is_diameter_searched || context.is_view_search_read {
                 return SearchOutcome::Stopped {
-                    reason: crate::context::DIAMETER_SEARCHED.into(),
+                    reason: if context.is_diameter_searched {
+                        crate::context::DIAMETER_SEARCHED
+                    } else {
+                        crate::context::VIEW_SEARCH_READ
+                    }
+                    .into(),
                     checkpoint: None,
                     collisions: 0,
                     violation: None,
