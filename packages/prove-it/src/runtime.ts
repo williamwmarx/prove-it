@@ -12,6 +12,8 @@ export interface CheckerRuntime {
   getCurrentState: () => Value[] | undefined;
   getFingerprint: (state: Value[]) => bigint;
   getRandom: () => JavaRandom;
+  // TLC's RandomEnumerableValues.reset: the next draw in an action reseeds for its state.
+  resetRandom: () => void;
   evaluateAtStartup: <Result>(evaluate: () => Result) => Result;
   pause: () => void;
   // Prints a warning TLC raises while it evaluates, with its message code. TLC prints each
@@ -66,6 +68,9 @@ export const createRuntime = (checkDeadlock: boolean, seed = 0n): CheckerRuntime
         worker.seededState = state;
       }
       return worker.random;
+    },
+    resetRandom: () => {
+      worker.seededState = undefined;
     },
     evaluateAtStartup: (evaluate) => {
       const wasStartup = phase.isStartup;
