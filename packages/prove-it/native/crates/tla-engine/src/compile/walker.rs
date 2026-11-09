@@ -14,15 +14,16 @@ use std::collections::HashSet;
 use std::rc::Rc;
 use std::sync::{Arc, OnceLock};
 
-use tla_ir::{Index, NodeId, NodeKind, Pattern, Resolution, ScopeBinding};
+use tla_ir::{Index, NodeId, NodeKind, Param, Pattern, Resolution, ScopeBinding};
 use tla_values::store::{FALSE, KIND_SET, KIND_TUPLE, Outcome, TRUE};
 use tla_values::{Bail, Id};
 
 use super::nodes::assign_bound;
 use super::predicate::{Leaf, Predicate, Test};
 use super::{
-    Binding, CompileError, Compiled, Compiler, Compiling, Context, Definition, DefinitionForm,
-    OperatorBody, Root, SEARCH_SLOTS, Scope, decline, eval, leaf, lookup, unsupported,
+    Argument, Binding, CompileError, Compiled, Compiler, Compiling, Context, Definition,
+    DefinitionForm, Operator, OperatorBody, Root, SEARCH_SLOTS, Scope, bind, decline, eval, leaf,
+    lookup, unsupported,
 };
 use crate::footprint::Footprint;
 use crate::machine::{Continue, Eval, Machine, Member, Step, UNASSIGNED};
@@ -575,6 +576,32 @@ pub(crate) struct WalkedFunction {
     walk: Arc<OnceLock<(Rest, u32)>>,
 }
 
+/// The walk of a RECURSIVE operator's body, compiled once for what the walk knows where an action
+/// applies the operator and the variables its arguments name, and the slots from its first
+/// parameter's to the last the walk binds.
+pub(crate) struct WalkedOperator {
+    key: usize,
+    // The operator a LET defines, kept so its address isn't reused.
+    operator: Option<Rc<Operator>>,
+    variables: Vec<Option<(u32, bool)>>,
+    is_primed: bool,
+    can_print: bool,
+    is_init: bool,
+    is_shortcut: bool,
+    known: Known,
+    slots: Vec<Option<u32>>,
+    start: u32,
+    walk: Arc<OnceLock<(Rest, u32)>>,
+}
+
+struct RecursiveApplication {
+    key: usize,
+    operator: Option<Rc<Operator>>,
+    params: Vec<Param>,
+    body: NodeId,
+    base: Context,
+}
+
 struct LazyApplication {
     pattern: Pattern,
     set: NodeId,
@@ -924,7 +951,8 @@ impl<'a> Compiler<'a> {
                         return Ok(false);
                     }
                 }
-                Ok(self.resolve_action(node, context)?.is_none())
+                Ok(self.resolve_action(node, context)?.is_none()
+                    && !self.is_recursive_walk(node, context, is_init)?)
             }
             _ => Ok(true),
         }
@@ -1091,6 +1119,275 @@ impl<'a> Compiler<'a> {
                 })
             });
             machine.locals[slots].copy_from_slice(&caller);
+            result
+        })))
+    }
+
+    // A RECURSIVE operator an expression applies: its parameters, its body and the context the
+    // body sees before they are bound.
+    fn resolve_recursive_operator(
+        &mut self,
+        node: NodeId,
+        context: &Context,
+    ) -> Option<RecursiveApplication> {
+        let NodeKind::Apply { name, .. } = self.node(node).1 else {
+            return None;
+        };
+        if name.is_local
+            && let Some(found) = lookup(&context.scope, name.text)
+        {
+            let Binding::Operator(operator) = &found.binding else {
+                return None;
+            };
+            let OperatorBody::Node(body) = operator.body else {
+                return None;
+            };
+            return operator.is_recursive.then(|| RecursiveApplication {
+                key: Rc::as_ptr(operator) as usize,
+                operator: Some(Rc::clone(operator)),
+                params: operator.params.clone(),
+                body,
+                base: super::operator_context(operator)
+                    .primed(context.is_primed || operator.context.is_primed),
+            });
+        }
+        let Resolution::Definition(index) = name.resolution else {
+            return None;
+        };
+        let definition_node = self.ir.definitions[index as usize];
+        let definition = self.definition(definition_node);
+        let DefinitionForm::Operator(params) = &definition.form else {
+            return None;
+        };
+        (definition.flags & Definition::RECURSIVE != 0).then(|| RecursiveApplication {
+            key: definition_node as usize,
+            operator: None,
+            params: params.clone(),
+            body: definition.body,
+            base: context.global(context.can_print),
+        })
+    }
+
+    // Whether an expression applies a RECURSIVE operator whose body TLC walks.
+    fn is_recursive_walk(
+        &mut self,
+        node: NodeId,
+        context: &Context,
+        is_init: bool,
+    ) -> Compiling<bool> {
+        match self.resolve_operator(node, context, true)? {
+            Some((body, inner)) => self.is_walked_body(body, &inner, is_init),
+            None => Ok(false),
+        }
+    }
+
+    // The variable an argument names, and whether primed: what an operator's body may assign
+    // through the parameter.
+    fn get_named_variable(
+        &mut self,
+        node: NodeId,
+        context: &Context,
+        depth: u32,
+    ) -> Compiling<Option<(u32, bool)>> {
+        if depth > 50 || context.is_primed {
+            return Ok(None);
+        }
+        match self.node(node).1 {
+            NodeKind::Prime(inner) => {
+                Ok(match self.get_named_variable(*inner, context, depth + 1)? {
+                    Some((variable, false)) => Some((variable, true)),
+                    _ => None,
+                })
+            }
+            NodeKind::Identifier(name) => {
+                if name.is_local
+                    && let Some(found) = lookup(&context.scope, name.text)
+                {
+                    return match &found.binding {
+                        Binding::Argument(argument) => self.get_named_variable(
+                            argument.expression,
+                            &super::argument_context(argument),
+                            depth + 1,
+                        ),
+                        _ => Ok(None),
+                    };
+                }
+                let Resolution::Variable(index) = name.resolution else {
+                    return Ok(None);
+                };
+                self.note_variable(index)?;
+                Ok(Some((index, false)))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    // TLC walks a RECURSIVE operator's body where the initial predicate or an action applies it,
+    // as any operator's, which a walk compiled path by path can't unroll. The body's walk is
+    // compiled once for what the walk knows and the variables the arguments name, which decide
+    // what the body assigns, and each application runs it a level deeper with the other
+    // arguments' values in the parameters' slots. What the body assigns the compiler doesn't
+    // follow, so the rest of the walk knows only what was assigned before.
+    fn walk_recursive_operator(
+        &mut self,
+        recursive: &RecursiveApplication,
+        args: &[NodeId],
+        context: &Context,
+        options: WalkOptions,
+        known: &Known,
+        then: &mut Then<'_, 'a>,
+    ) -> Compiling<Rest> {
+        if recursive.params.len() != args.len() {
+            return unsupported("an operator applied to the wrong number of arguments");
+        }
+        if recursive.params.iter().any(|param| param.arity > 0) {
+            return unsupported("walking a recursive higher-order operator");
+        }
+        let argument_context = context.without_print();
+        let mut variables = Vec::with_capacity(args.len());
+        let mut values = Vec::new();
+        for &argument in args {
+            let named = self.get_named_variable(argument, context, 0)?;
+            if named.is_none() {
+                if self
+                    .get_assignable_index(argument, context, options.is_init)?
+                    .is_some()
+                    || self.get_unchanged_indices(argument, context, 0)?.is_some()
+                {
+                    return unsupported(
+                        "walking a recursive operator whose argument names variables indirectly",
+                    );
+                }
+                values.push(self.compile(argument, &argument_context)?.eval);
+            }
+            variables.push(named);
+        }
+        let is_walked = |walked: &&WalkedOperator, known: &Known| {
+            walked.key == recursive.key
+                && match (&walked.operator, &recursive.operator) {
+                    (Some(walked), Some(operator)) => Rc::ptr_eq(walked, operator),
+                    (walked, operator) => walked.is_none() && operator.is_none(),
+                }
+                && walked.variables == variables
+                && walked.is_primed == recursive.base.is_primed
+                && walked.can_print == recursive.base.can_print
+                && walked.is_init == options.is_init
+                && walked.is_shortcut == options.is_shortcut
+                && walked.known == *known
+        };
+        // A body that assigns applies itself knowing more each level down, so past a few of
+        // what a walk may know the body compiles for nothing known.
+        let body_known = if self
+            .walked_operators
+            .iter()
+            .filter(|walked| walked.key == recursive.key)
+            .count()
+            >= SHARED_PATHS
+            && !self
+                .walked_operators
+                .iter()
+                .any(|walked| is_walked(&walked, known))
+        {
+            Known::unknown()
+        } else {
+            known.clone()
+        };
+        let found = self
+            .walked_operators
+            .iter()
+            .find(|walked| is_walked(walked, &body_known))
+            .map(|walked| (walked.slots.clone(), walked.start, Arc::clone(&walked.walk)));
+        let (slots, start, walk) = match found {
+            Some(found) => found,
+            None => {
+                let start = self.program.slot_count as u32;
+                let mut scope = recursive.base.scope.clone();
+                let mut slots = Vec::with_capacity(args.len());
+                for ((param, &argument), named) in recursive.params.iter().zip(args).zip(&variables)
+                {
+                    let binding = match named {
+                        Some(_) => {
+                            slots.push(None);
+                            Binding::Argument(Rc::new(Argument {
+                                expression: argument,
+                                context: argument_context.clone(),
+                                compiled: RefCell::new([None, None]),
+                                own_scope: RefCell::new(std::rc::Weak::new()),
+                            }))
+                        }
+                        None => {
+                            let slot = self.allocate_slot();
+                            slots.push(Some(slot));
+                            Binding::Slot(slot)
+                        }
+                    };
+                    scope = bind(&scope, param.name, binding);
+                }
+                let walk = Arc::new(OnceLock::new());
+                self.walked_operators.push(WalkedOperator {
+                    key: recursive.key,
+                    operator: recursive.operator.clone(),
+                    variables,
+                    is_primed: recursive.base.is_primed,
+                    can_print: recursive.base.can_print,
+                    is_init: options.is_init,
+                    is_shortcut: options.is_shortcut,
+                    known: body_known.clone(),
+                    slots: slots.clone(),
+                    start,
+                    walk: Arc::clone(&walk),
+                });
+                let body = self.walk(
+                    recursive.body,
+                    &recursive.base.with_scope(scope),
+                    options,
+                    &body_known,
+                    &mut |_, _| Ok(None),
+                );
+                let body = match body {
+                    Ok(body) => body,
+                    Err(error) => {
+                        self.walked_operators
+                            .retain(|walked| !Arc::ptr_eq(&walked.walk, &walk));
+                        return Err(error);
+                    }
+                };
+                let _ = walk.set((body, self.program.slot_count as u32));
+                (slots, start, walk)
+            }
+        };
+        let slots: Vec<u32> = slots.into_iter().flatten().collect();
+        let rest = then(self, &known.opaque())?;
+        Ok(Some(step(move |machine, on_complete| {
+            let at = machine.stack.len();
+            for value in &values {
+                match value(machine) {
+                    Ok(value) => machine.stack.push(value),
+                    Err(bail) => {
+                        machine.stack.truncate(at);
+                        return Err(bail);
+                    }
+                }
+            }
+            let (body, end) = walk
+                .get()
+                .expect("a recursive operator's walk run before it compiled");
+            let frame = start as usize..*end as usize;
+            let caller = machine.locals[frame.clone()].to_vec();
+            for (offset, &slot) in slots.iter().enumerate() {
+                machine.locals[slot as usize] = machine.stack[at + offset];
+            }
+            machine.stack.truncate(at);
+            let result = machine.nested(|machine| {
+                run_rest(body, machine, &mut |machine| {
+                    let callee = machine.locals[frame.clone()].to_vec();
+                    machine.locals[frame.clone()].copy_from_slice(&caller);
+                    let result = run_rest(&rest, machine, on_complete);
+                    machine.locals[frame.clone()].copy_from_slice(&callee);
+                    result
+                })
+            });
+            machine.locals[frame].copy_from_slice(&caller);
             result
         })))
     }
@@ -1512,13 +1809,11 @@ impl<'a> Compiler<'a> {
                 if let Some((body, inner)) = self.resolve_action(node, context)? {
                     return self.walk(body, &inner, options, known, then);
                 }
-                // TLC walks a recursive operator's body as any other's, which the engine can't
-                // unroll as it compiles: where the body is walked, the interpreter takes over,
-                // rather than the engine evaluate as a guard what TLC walks.
-                if let Some((body, inner)) = self.resolve_operator(node, context, true)?
-                    && self.is_walked_body(body, &inner, is_init)?
+                if let Some(recursive) = self.resolve_recursive_operator(node, context)
+                    && self.is_recursive_walk(node, context, is_init)?
                 {
-                    return unsupported("walking a recursive operator");
+                    return self
+                        .walk_recursive_operator(&recursive, args, context, options, known, then);
                 }
                 self.guard_step(node, context, known, then)
             }
