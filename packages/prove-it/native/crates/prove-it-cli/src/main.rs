@@ -7,6 +7,7 @@ mod front;
 mod messages;
 mod summary;
 mod time;
+mod zone;
 
 fn main() {
     let args: Vec<String> = std::env::args_os()
