@@ -104,6 +104,7 @@ const GOLDEN_MODELS = [
   "tlc/tlatools/org.lamport.tlatools/test-model/PossibleCountsTest.cfg",
   "etcd-raft/tla/etcdraft.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/examples/allocator/SchedulingAllocator.cfg",
+  "raft/specifications/pull-raft/PullRaft.cfg",
 ];
 
 const GOLDEN_DIRECTORY = join(CONFORMANCE_DIRECTORY, "ir");

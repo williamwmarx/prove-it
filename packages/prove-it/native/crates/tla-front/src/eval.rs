@@ -322,6 +322,21 @@ impl Evaluator<'_> {
                 to_integer(left * right)?
             }
             ("-.", 1) => to_integer(-get_integer(&value(0)?)?)?,
+            ("^", 2) => {
+                let (base, exponent) = integers()?;
+                if exponent < 0 || (base == 0 && exponent == 0) {
+                    return Err(not_yet("an exponent TLC rejects"));
+                }
+                let power = match base {
+                    -1 => 1 - 2 * (exponent % 2),
+                    0 | 1 => base,
+                    _ => u32::try_from(exponent)
+                        .ok()
+                        .and_then(|exponent| base.checked_pow(exponent))
+                        .ok_or_else(|| not_yet("an integer TLC overflows"))?,
+                };
+                to_integer(power)?
+            }
             ("\\div", 2) => {
                 let (left, right) = integers()?;
                 if right == 0 {
