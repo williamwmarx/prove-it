@@ -23,6 +23,7 @@ mod split;
 mod value;
 
 pub use alias::Alias;
+pub use eval::Registers;
 pub use failure::{Failure, FingerprintFailure, Incomplete, Site, format_call_stack};
 pub use postcondition::{Checked, CounterExample, PostconditionInputs, Stats, Verdict};
 pub use pretty::pretty_print;
