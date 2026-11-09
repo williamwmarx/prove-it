@@ -104,7 +104,7 @@ const readOrders = (source: string, _path: string, spec: string) => {
   };
 };
 
-const linkSpec = (source: string, path: string, config?: ModelConfig) => {
+const linkSpec = (source: string, path: string, config?: ModelConfig, isSanyAccepted = true) => {
   const loadModule = createLoader(path);
   const printed: string[] = [];
   const specification = createEnvironment(config ?? parseConfig(""), {
@@ -114,7 +114,7 @@ const linkSpec = (source: string, path: string, config?: ModelConfig) => {
     print: (text) => printed.push(text),
     files: { readFile: () => undefined, writeFile: () => {} },
     isUnconfigured: config === undefined,
-    isSanyAccepted: true,
+    isSanyAccepted,
   });
   return { specification, printed };
 };
@@ -270,6 +270,11 @@ const MODES: Record<string, (source: string, path: string, spec: string) => stri
   ast: writeResult(parseModule),
   "sany-ast": writeResult((source) => parseSanyModule(source)),
   resolve: writeResult((source, path) => readEnvironment(source, path)),
+  // Whether linking with SANY's level checks passes, or its error.
+  levels: writeResult((source, path) => {
+    linkSpec(source, path, undefined, false);
+    return { isLevelChecked: true };
+  }),
   ir: writeResult(lowerDefinitions),
   "model-ir": writeResult(lowerModel),
   "model-full": writeResult(lowerFullModel),
@@ -431,6 +436,7 @@ const isLinked = [
   "spec",
   "properties",
   "sany-text",
+  "levels",
 ].includes(mode);
 if (isLinked) linkLibraryModules();
 
