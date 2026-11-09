@@ -11,14 +11,63 @@ use std::rc::Rc;
 use tla_values::Store;
 use tla_values::store::{KIND_BOOL, KIND_INT, KIND_MODEL, KIND_SET, KIND_STRING, KIND_TUPLE, TRUE};
 
-/// Why an evaluation failed, as TLC would have, or where the evaluator can't follow it.
+/// Why an evaluation failed, as TLC would have, or where the evaluator can't follow it: the
+/// evaluator's reason, and TLC's message where the failure gives TLC's text.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct EvalError(pub String);
+pub struct EvalError {
+    pub reason: String,
+    pub message: Option<TlcMessage>,
+}
+
+/// TLC's message for an error: its text, the code of TLC's message it is where it is one of
+/// `tlc2.output.MP`'s, and whether TLC raises it as an EvalException rather than a
+/// RuntimeException.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TlcMessage {
+    pub text: String,
+    pub code: Option<u32>,
+    pub is_eval_exception: bool,
+}
 
 pub type Evaluated<T> = Result<T, EvalError>;
 
 pub fn fail<T>(reason: impl Into<String>) -> Evaluated<T> {
-    Err(EvalError(reason.into()))
+    Err(EvalError {
+        reason: reason.into(),
+        message: None,
+    })
+}
+
+/// A failure TLC raises as a RuntimeException with a message of no code.
+pub fn fail_runtime<T>(reason: impl Into<String>, text: String) -> Evaluated<T> {
+    Err(EvalError {
+        reason: reason.into(),
+        message: Some(TlcMessage {
+            text,
+            code: None,
+            is_eval_exception: false,
+        }),
+    })
+}
+
+/// A failure with TLC's message for it.
+pub fn fail_with<T>(reason: impl Into<String>, message: TlcMessage) -> Evaluated<T> {
+    Err(EvalError {
+        reason: reason.into(),
+        message: Some(message),
+    })
+}
+
+/// A failure TLC raises as an EvalException with the message of this code.
+pub fn fail_coded<T>(reason: impl Into<String>, code: u32, text: String) -> Evaluated<T> {
+    Err(EvalError {
+        reason: reason.into(),
+        message: Some(TlcMessage {
+            text,
+            code: Some(code),
+            is_eval_exception: true,
+        }),
+    })
 }
 
 /// A string or a model value's name, with TLC's rank of it: the order TLC interned the text in,

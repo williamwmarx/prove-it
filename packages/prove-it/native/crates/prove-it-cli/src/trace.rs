@@ -9,7 +9,7 @@ use tla_trace::{Ending, Rebuilder, Unsupported, Value, format_value};
 use tla_values::Id;
 
 use crate::check::SEARCH_STACK_BYTES;
-use crate::pretty::pretty_print;
+use tla_trace::pretty_print;
 
 /// A trace's states as TLC prints them, each with what TLC printed before it, and what it prints
 /// after the trace.

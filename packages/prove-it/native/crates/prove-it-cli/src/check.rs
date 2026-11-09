@@ -15,7 +15,6 @@ use tla_values::{Id, Store};
 use crate::args::{Java, Parsed, USAGE, get_java_launch};
 use crate::front::read_front;
 use crate::messages::{self as code, Level, Printer};
-use crate::pretty::pretty_print;
 use crate::summary::{
     actual_probability, fingerprint_distance, format_count, format_probability,
     optimistic_probability, out_degree_summary,
@@ -24,6 +23,7 @@ use crate::time::{format_date, format_duration};
 use crate::trace::rebuild_trace;
 use tla_front::TlcVersion;
 use tla_front::config::{ModelConfig, parse_config};
+use tla_trace::pretty_print;
 
 // TLC's exit statuses, from EC.ExitStatus.
 const SUCCESS: i32 = 0;
