@@ -269,4 +269,18 @@ describe.if(ADDON !== undefined)("the native engine's bridged builtins", () => {
       );
     }
   });
+  // The temporal atoms the search answers rank strings too, after it found the states.
+  it("hands over a graph whose atoms ranked strings from the start", async () => {
+    const body = [
+      "EXTENDS Integers, TLC",
+      "VARIABLE n",
+      "Init == n = 0",
+      "Next == n' = (n + 1) % 3",
+      "Spec == Init /\\ [][Next]_n /\\ WF_n(Next)",
+      'Live == []<>(ToString(n + 1000 + 7) = "1007")',
+    ];
+    expect(await compareWithInterpreter(body, "SPECIFICATION Spec\nPROPERTY Live")).toContainEqual(
+      expect.stringMatching(stopped("a graph with strings the search ranked")),
+    );
+  });
 });

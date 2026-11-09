@@ -913,7 +913,6 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             }),
         })
     };
-    let is_unordered = machine.store.has_unordered_strings();
     let outcome = match result {
         Err(bail) if bail.0 == OTHER_STEPS => SearchOutcome::Invariant(OTHER_STEPS.into()),
         Ok(()) => {
@@ -1019,8 +1018,10 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             }
         }
     };
-    // The strings the search ranked, such as ToString's, may rank otherwise in TLC, so the
-    // interpreter makes them again from the start rather than taking over the search.
+    // The strings the search ranked, such as ToString's, the temporal atoms' included, may rank
+    // otherwise in TLC, so the interpreter makes them again from the start rather than taking
+    // over the search.
+    let is_unordered = machine.store.has_unordered_strings();
     match outcome {
         SearchOutcome::Stopped {
             reason,
