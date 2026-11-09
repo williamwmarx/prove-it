@@ -28,7 +28,6 @@ const result = await Bun.build({
     "src/index.ts",
     "src/cli.ts",
     "src/parallel-worker.ts",
-    "src/engine-worker.ts",
     "src/prover/prove-worker.ts",
   ].map((entry) => join(PACKAGE_DIRECTORY, entry)),
   outdir: OUT_DIRECTORY,
