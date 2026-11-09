@@ -417,14 +417,65 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   as the interpreter evaluates it. Github702 (TLC's tests) now completes in Rust: 36 states
   generated, 30 distinct, as TLC.
 
-## INSTANCE in a LET
+## Functions TLC keeps lazy
 
-- The environment copies the definitions an INSTANCE in a LET gives into the LET, under keys
-  such as `Next@Base#0.0`, and `B!Next` names its copy. The resolver leaves keys alone, so the IR
-  wrote those names unresolved and not local, and both engines declined any LET with an
-  INSTANCE. The IR now writes a name nothing global resolves as local (`writeName`), which a
-  scope binds, and the engines take a LET's INSTANCE as its definitions. suite/test59 completes in
-  Rust, and CyclicRedefineInstance (TLC's tests) finds the invariant violation TLC does.
-  EWD998Chan (TLC's tests), whose Utils has `LET SE == INSTANCE SequencesExt`, completes in Rust
-  in 25 s with TLC's counts (12882257 generated, 1524022 distinct, depth 58); its recording says
-  "error" only because the first recorder stopped TLC at 300 s.
+- TLC keeps a function construction over a set it can't enumerate, such as `[n \in Nat |-> e]`,
+  as a `FcnLambdaValue`. The engine now does the same (`compile/lazy_function.rs`). It is a store
+  value of its own kind (`KIND_LAZY_FUNCTION`) that indexes `Machine.lazy_functions`.
+- Applying one checks its EXCEPTs, latest first, then that the state is the one it was built in,
+  then the key against each bound's domain (`Lazy::contains`). Then it evaluates the body with the
+  captured slots and the key bound. EXCEPT, with `@` and nested paths, appends a key and value.
+- Comparing, fingerprinting, printing, DOMAIN, and a state holding one are engine limits, as TLC
+  can't do them without enumerating the domain.
+- The lazy path compiles only where a bound's set may be infinite (`Compiled::may_be_infinite`,
+  with `has_infinite_part` for sets built from others). Where it compiles, it turns off pipelining
+  and level sharing, since only the machine that built a function can apply it.
+- suite/test3, test5, test10, test12, test17 and test202 now print what TLC prints.
+
+## Open: infinite sets as values
+
+These three are declined, and lazy functions don't fix them:
+
+- **suite/test7**, Test 14: `CHOOSE j \in {{Nat}, {Int}} : \E k \in j : -1 \in k` holds Nat and Int
+  as elements of a set. TLC keeps them as values and tests membership in them. The engine has no
+  store value for a set it only tests, so it declines with "enumerated Nat". This needs a store
+  kind like the lazy function's, an infinite set by name, with membership and the comparisons TLC
+  makes when it normalizes `{Nat}` and `{Int}`.
+- **suite/test9**: `2 \notin {i \in Int : i > 1}` and `<<3,4>> \notin {<<i,j>> \in Int \X Int : j > i}`
+  decline with "enumerated Int". A filter compiles to its membership test only where its set is
+  marked `infinite` (see "Filters of infinite sets"). `Int \X Int` is a product, marked only
+  `has_infinite_part`, so its filter compiles to the enumerating form. Find out whether the
+  constant `\notin` of the plain Int filter also goes that way. The likely fix is to key the
+  filter's membership form on `may_be_infinite` and use the product's own member test.
+- **RandomSubsetEmpty**: `Cardinality` and `RandomSubset` of `[Nat -> {}]`, `[n1 : Nat, n2 : {}]`,
+  `Nat \X {}` and the like decline with "enumerated Nat". TLC counts these sets without
+  enumerating them. A product or record set is empty when any factor is, and `[S -> {}]` is empty
+  for a nonempty S. RandomSubset then picks from none. The spec's comments name the order that
+  matters: the empty factor must be found before an infinite one is touched. Cardinality and
+  RandomSubset need a size for a lazy set that answers 0 in these cases before they enumerate.
+
+## Open: Test2, liveness atoms answered as the search goes
+
+TLC evaluates the liveness checker's atoms as it finds states, so atoms that print or set
+registers do it in TLC's order. The engine answers them in tables after the search, which is why
+Test2's output differs. The liveness session's design, open for whoever owns it next:
+
+- `add_states` (tla-live `checker.rs`) is already incremental. It calls `add_initial_state` for
+  each initial state, then `add_state(i)` for each state in order. `add_state` reads only what is
+  known once i is expanded: its edges, `parents` and `fingerprints`, and `diameters[i]`. Late
+  nodes and `Verdict::Unexpanded` come only with SYMMETRY or VIEW (`reals`), which this path can
+  decline.
+- The obstacle is ownership. `Checker<'c>` borrows the graph and tables for its whole life, so
+  the search can't grow them. Preferred fix: pass the graph into each call
+  (`add_state(&mut self, graph: &Graph, state)`) and build it once for `check`, `find_accepted` and
+  `add_states`, which then keep their signatures.
+- Answers move behind an `Answers` trait in tla-live (std only), with the table-backed answers as
+  the default implementation. That implementation keeps `position()` and its diameter offset.
+  Action answers are indexed by edge position, with stuttering at `edges.len() + state`, and that
+  offset shifts as edges grow. So an online provider takes (atom, state, step), or the trait gives
+  stuttering steps their own index (`Slot { State, Step, Stutter }`).
+- `Liveness::unanswered` must keep working; it gives `ErrorSite::Atom` for Github607. An online
+  provider can return the evaluation failure itself instead.
+- Evaluate each atom every time TLC does. The `effects` log and the `known` short-circuit assume
+  one evaluation per check, so don't cache across checks when an atom has effects
+  (`is_effectful` already turns caching off).
