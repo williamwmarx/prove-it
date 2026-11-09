@@ -81,6 +81,18 @@ pub struct Liveness {
     pub branches: Option<usize>,
     pub verdict: Verdict,
     pub events: Vec<Event>,
+    /// Where the checker declined at an atom the engine didn't answer as it added a state the
+    /// search expanded, that atom: TLC evaluates it there, and may fail.
+    pub unanswered: Option<Unanswered>,
+}
+
+/// An atom the engine didn't answer, at the position `slot` in its table, which TLC evaluates as
+/// it adds `state` to the behavior graphs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Unanswered {
+    pub state: u32,
+    pub atom: u32,
+    pub slot: u32,
 }
 
 /// Where the atoms' evaluations have effects, such as what Print prints, TLC has them each time it
@@ -351,6 +363,7 @@ pub fn check(
 ) -> Liveness {
     let mut branches = None;
     let mut events = Vec::new();
+    let mut unanswered = None;
     let mut run = || {
         if graph.edge_offsets.is_empty() {
             return Err(Declined::from("a graph without its steps"));
@@ -366,7 +379,9 @@ pub fn check(
         if is_effectful {
             checker.log_effects();
         }
-        checker::check(&mut checker, &properties, &mut events)
+        let verdict = checker::check(&mut checker, &properties, &mut events);
+        unanswered = verdict.is_err().then(|| checker.unanswered.get()).flatten();
+        verdict
     };
     let verdict = run().unwrap_or_else(|declined| {
         if declined.0 == UNEXPANDED {
@@ -379,5 +394,6 @@ pub fn check(
         branches,
         verdict,
         events,
+        unanswered,
     }
 }

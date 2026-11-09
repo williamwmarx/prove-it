@@ -990,6 +990,42 @@ fn rejects_a_constant_invariant_the_front_end_leaves_to_the_startup() {
 }
 
 #[test]
+fn reports_an_atom_that_fails_as_tlc_adds_a_state_to_the_behavior_graphs() {
+    let ir = include_bytes!(
+        "../../../../tests/conformance/ir/tlc/tlatools/org.lamport.tlatools/test-model/Github607.ir"
+    );
+    let config = "SPECIFICATION\n    Spec\nPROPERTIES\n    Prop\n";
+    let (output, directory) = run_golden("atom-failure", ir, "Github607", config, &[]);
+    let text = stdout(&output);
+    // TLC evaluates x = "abc" as it adds the state it expanded, prints the call stack before the
+    // exception, and exits as on one it didn't expect.
+    assert_eq!(output.status.code(), Some(255), "{text}");
+    assert!(
+        text.contains("Error: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 21, column 21 to line 21, column 29 in Github607\n\n\nError: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: Attempted to check equality of integer 0 with non-integer:\n\"abc\"\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\n2 states generated, 1 distinct states found, 0 states left on queue.\nThe depth of the complete state graph search is 1.\nThe average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).\n"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn names_the_fairness_condition_whose_action_leaves_a_variable_unassigned() {
+    let ir = include_bytes!(
+        "../../../../tests/conformance/ir/tla-rs/test_cases/should_error/liveness_error.ir"
+    );
+    let config = "SPECIFICATION Spec\nPROPERTY FairOnlyX\nCHECK_DEADLOCK FALSE\n";
+    let (output, directory) = run_golden("fairness-subscript", ir, "liveness_error", config, &[]);
+    let text = stdout(&output);
+    // ENABLED <<OnlyX>>_vars reads y' in the successor, which OnlyX doesn't assign; TLC's call
+    // stack starts at OnlyX, as it records no node for the <<A>>_v of WF_v(A).
+    assert_eq!(output.status.code(), Some(255), "{text}");
+    assert!(
+        text.contains("Error: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 9, column 22 to line 9, column 26 in liveness_error\n1. Line 7, column 10 to line 7, column 15 in liveness_error\n2. Line 9, column 17 to line 9, column 20 in liveness_error\n3. Line 4, column 9 to line 4, column 16 in liveness_error\n4. Line 4, column 14 to line 4, column 14 in liveness_error\n\n\nError: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: The action formula A appearing in a WF_v(A) or SF_v(A) operator does not specify the primed value of the variable y occurring in the state formula v.\n\nError: The behavior up to this point is:\nState 1: <Initial predicate>\n/\\ x = 0\n/\\ y = 0\n\n2 states generated, 2 distinct states found, 1 states left on queue.\n"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
 fn records_the_specification_as_the_interpreter_does() {
     // TLCGet("spec"), which tla-front describes and the split gives the actions of, as the
     // interpreter prints it for this spec.

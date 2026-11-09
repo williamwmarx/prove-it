@@ -8,7 +8,7 @@ use std::collections::{HashMap, HashSet};
 use std::hash::{BuildHasherDefault, Hasher};
 
 use crate::tableau::{Kind, Model, Solution, Tableau, TermId, Terms};
-use crate::{Declined, Event, Graph, Verdict};
+use crate::{Declined, Event, Graph, Unanswered, Verdict};
 
 const NO_NODE: u32 = u32::MAX;
 const UNWRITTEN: usize = usize::MAX;
@@ -153,6 +153,9 @@ pub struct Checker<'c> {
     effects: RefCell<Option<Effects>>,
     /// TLC's diameter as it evaluates, for the atoms that read it.
     diameter: Cell<u32>,
+    /// The expanded state being added, and the first atom found unanswered while adding one.
+    adding: Cell<Option<u32>>,
+    pub(crate) unanswered: Cell<Option<Unanswered>>,
 }
 
 /// The evaluations of atoms so far, and the atoms' answers within the evaluation of one check, as
@@ -237,6 +240,8 @@ impl<'c> Checker<'c> {
             is_cycle_constrained,
             effects: RefCell::new(None),
             diameter: Cell::new(1),
+            adding: Cell::new(None),
+            unanswered: Cell::new(None),
         })
     }
 
@@ -256,18 +261,29 @@ impl<'c> Checker<'c> {
 
     fn answer(&self, atom: u32, position: usize) -> Result<bool, Declined> {
         let position = self.position(atom, position);
-        let table = self
+        let answer = self
             .tables
             .get(atom as usize)
             .copied()
-            .flatten()
-            .ok_or_else(|| Declined::from("an atom the engine doesn't answer"))?;
-        match table.get(position) {
-            Some(0) => Ok(false),
-            Some(1) => Ok(true),
-            _ => Err(Declined::from(
-                "a predicate the engine leaves to the interpreter",
-            )),
+            .map(|table| table.map(|answers| answers.get(position).copied()));
+        match answer {
+            Some(Some(Some(0))) => Ok(false),
+            Some(Some(Some(1))) => Ok(true),
+            _ => {
+                if let Some(state) = self.adding.get()
+                    && self.unanswered.get().is_none()
+                {
+                    self.unanswered.set(Some(Unanswered {
+                        state,
+                        atom,
+                        slot: position as u32,
+                    }));
+                }
+                Err(Declined::from(match answer {
+                    Some(Some(_)) => "a predicate the engine leaves to the interpreter",
+                    _ => "an atom the engine doesn't answer",
+                }))
+            }
         }
     }
 
@@ -1426,10 +1442,13 @@ fn add_states(checker: &mut Checker<'_>) -> Result<Option<(u32, Vec<u32>)>, Decl
     // A check part way through the search, as TLC's periodic one, adds the states it expanded:
     // the nodes of the others are undone, and the search for a cycle passes them by.
     for state in 0..graph.expanded() as u32 {
+        checker.adding.set(Some(state));
         if let Some(path) = checker.add_state(state)? {
+            checker.adding.set(None);
             return Ok(Some((state, path)));
         }
     }
+    checker.adding.set(None);
     Ok(None)
 }
 
