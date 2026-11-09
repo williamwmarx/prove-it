@@ -509,9 +509,17 @@ impl<'ir> Evaluator<'ir> {
                             let set = self.evaluate(args[1], context)?;
                             let is_in_order = self.is_in_normalized_order(args[1], context, 0)?;
                             for (position, element) in elements(&set)?.iter().enumerate() {
-                                if !self.choose(position as u32, is_in_order, &mut |evaluator| {
-                                    evaluator.assign(variable, element.clone(), is_init, then)
-                                })? {
+                                let chosen =
+                                    self.choose(position as u32, is_in_order, &mut |evaluator| {
+                                        evaluator.assign(variable, element.clone(), is_init, then)
+                                    });
+                                if chosen.is_err()
+                                    && !is_in_order
+                                    && let Some(stack) = &mut self.call_stack
+                                {
+                                    stack.is_unordered = true;
+                                }
+                                if !chosen? {
                                     return Ok(false);
                                 }
                             }

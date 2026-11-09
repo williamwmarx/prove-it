@@ -147,6 +147,9 @@ pub struct CallStack {
     /// Whether the failure was in a method of a value with a source, which TLC reports as a
     /// FingerprintException rather than with the nested expressions.
     pub is_fingerprinted: bool,
+    /// Whether the failure was reached through an assignment `x' \in S` whose set TLC streams in
+    /// an order of its own, so that which element fails first isn't known.
+    pub is_unordered: bool,
 }
 
 // The address of a value TLC's `CallStackTool` can give a source: an object, as a set, a function

@@ -189,6 +189,11 @@ impl<'ir> Rebuilder<'ir> {
                 "evaluating the failure again: it didn't fail".into(),
             ));
         };
+        if call_stack.is_unordered {
+            return Err(Unsupported(
+                "evaluating the failure again: an assignment from a set TLC streams".into(),
+            ));
+        }
         if call_stack.is_fingerprinted {
             return Err(Unsupported(
                 "evaluating the failure again: a failure TLC reports as a FingerprintException"
