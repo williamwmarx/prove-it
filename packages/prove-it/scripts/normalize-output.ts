@@ -34,9 +34,10 @@ export const getSteadyLines = (output: string) =>
 // - the version of TLC, or of Prove It;
 // - the machine and process in `Running breadth-first search ...`: the cores, the memory, the pid,
 //   the operating system, the runtime and the kinds of fingerprint set and queue;
-// - the directory of each file SANY parses, and where TLC found it: the jar a standard module
-//   comes from, the path on the library path that led to a library module, or the module a copy
-//   in the metadata directory was made from;
+// - the directory of each file SANY parses, and where TLC found it: the temporary directory a
+//   standard module is copied to, /tmp on Linux and under /var/folders on macOS; the jar a standard
+//   module comes from, the path on the library path that led to a library module, or the module a
+//   copy in the metadata directory was made from;
 // - the directory of the class file an operator override was loaded from, or failed to match;
 // - in a stack trace, where Prove It's built files are, the hash in a chunk's name, and the line
 //   and column in it, which change with every build;
@@ -60,7 +61,7 @@ export const normalizeOutput = (output: string) =>
           "$1_ cores with _MB heap and _MB offheap memory [pid: _] (_).",
         )
         .replace(/^(Parsing file \S+) \(\S+\)$/, "$1")
-        .replace(/^(Parsing file \/tmp\/tlc-)\d+\//, "$1_/")
+        .replace(/^(Parsing file )\S*\/tlc-\d+\//, "$1/tmp/tlc-_/")
         .replace(/^(Parsing file )(?!\/tmp\/tlc-_\/)\S*\/(\S+)$/, "$1$2")
         .replace(
           /^((?:Loading|Failed to match) \S+ operator override from file:)\S*\/(\S+\.class )/,
