@@ -2,14 +2,16 @@
 // the fetched corpora and the test fixtures, as text: each side writes one JSON line per module.
 // Usage: bun scripts/front-differential.ts <mode> [--fixtures] [--filter text] [--mutate count]
 //   [--rust <front-dump>]
-// The modes are tokens, ast, sany-ast, config (over the .cfg files), resolve, model, ir, and time, which
+// The modes are tokens, ast, sany-ast, config (over the .cfg files), resolve, model, ir, order,
+// and time, which
 // compares how long each side takes to parse each module instead. resolve links each module as the
 // root of a spec without a model, reading the modules it imports beside it and from the corpora's
 // library, and compares the environment: each definition by key, with every name resolved, the
 // builtins, the variables, and SANY's errors and warnings. A module the Rust front end doesn't
 // link yet is counted, not compared. model does the same for each corpus model, a .cfg file and
 // the spec beside it, with the model's constants and substitutions. ir lowers each module's
-// environment to the engine IR, with every definition in it, and compares the bytes. --fixtures reads only the fixtures, so it runs without the corpora.
+// environment to the engine IR, with every definition in it, and compares the bytes. order compares
+// TLC's string order of each model and the root module's orders of declarations and definitions. --fixtures reads only the fixtures, so it runs without the corpora.
 // --mutate adds four variants of each of the first count modules, with syntax inserted and text
 // deleted at places a fixed seed picks, so the two sides' errors are compared too. Without --rust,
 // it builds front-dump with cargo first.
@@ -77,12 +79,27 @@ const getBuiltinFlags = (builtin: Builtin) =>
 
 // The spec whose root module is the file, linked with the model's configuration, or without a
 // model, and what linking prints.
+const createLoader = (path: string) => (name: string) =>
+  [dirname(path), LIBRARY_PATH]
+    .map((directory) => join(directory, `${name}.tla`))
+    .filter((file) => existsSync(file))
+    .map((file) => readFileSync(file, "utf8"))[0];
+
+// TLC's orders of a model: its string order, the root module's variables and constants, and the
+// root module's definitions in the order TLC computes them.
+const readOrders = (source: string, _path: string, spec: string) => {
+  const config = parseConfig(source);
+  const order = createTlcOrder(readFileSync(spec, "utf8"), createLoader(spec));
+  return {
+    strings: order.getStringOrder(config),
+    variables: order.getDeclarationOrder("variable"),
+    constants: order.getDeclarationOrder("constant"),
+    definitions: order.createDefinitionOrder()(undefined),
+  };
+};
+
 const linkSpec = (source: string, path: string, config?: ModelConfig) => {
-  const loadModule = (name: string) =>
-    [dirname(path), LIBRARY_PATH]
-      .map((directory) => join(directory, `${name}.tla`))
-      .filter((file) => existsSync(file))
-      .map((file) => readFileSync(file, "utf8"))[0];
+  const loadModule = createLoader(path);
   const printed: string[] = [];
   const specification = createEnvironment(config ?? parseConfig(""), {
     source,
@@ -168,6 +185,7 @@ const MODES: Record<string, (source: string, path: string, spec: string) => stri
   "sany-ast": writeResult((source) => parseSanyModule(source)),
   resolve: writeResult((source, path) => readEnvironment(source, path)),
   ir: writeResult(lowerDefinitions),
+  order: writeResult(readOrders),
   model: writeResult((source, _path, spec) =>
     readEnvironment(readFileSync(spec, "utf8"), spec, parseConfig(source)),
   ),
@@ -212,18 +230,19 @@ if (mode !== "time" && MODES[mode] === undefined) {
   throw new Error(`front-differential takes a mode: ${[...Object.keys(MODES), "time"].join(", ")}`);
 }
 const filter = getOption("--filter");
-const extension = mode === "config" || mode === "model" ? ".cfg" : ".tla";
+const isModel = mode === "model" || mode === "order";
+const extension = mode === "config" || isModel ? ".cfg" : ".tla";
 // A model is a configuration and the spec of the same name beside it.
 const getSpec = (path: string) => {
   const spec = path.replace(/\.cfg$/, ".tla");
-  return mode === "model" && existsSync(spec) ? spec : undefined;
+  return isModel && existsSync(spec) ? spec : undefined;
 };
 const findFiles = (root: string, paths: string[], prefix: string) =>
   paths
     .flatMap((path) => (existsSync(join(root, path)) ? listFiles(join(root, path)) : []))
     .filter((path) => path.endsWith(extension))
     .sort()
-    .filter((path) => mode !== "model" || getSpec(path) !== undefined)
+    .filter((path) => !isModel || getSpec(path) !== undefined)
     .map((path) => ({ id: `${prefix}${relative(root, path)}`, path, spec: getSpec(path) }));
 const corpora = process.argv.includes("--fixtures")
   ? []
@@ -260,7 +279,7 @@ const getRustBinary = () => {
 };
 const rust = getRustBinary();
 
-const isLinked = mode === "resolve" || mode === "model" || mode === "ir";
+const isLinked = ["resolve", "model", "ir", "order"].includes(mode);
 if (isLinked) linkLibraryModules();
 
 const runRust = (batch: typeof modules) => {
