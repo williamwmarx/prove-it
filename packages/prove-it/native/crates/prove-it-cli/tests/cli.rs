@@ -246,6 +246,56 @@ fn checks_temporal_properties_that_hold() {
 }
 
 #[test]
+fn prints_a_violation_the_behavior_graphs_dont_stop_before() {
+    // TLC adds each state to the behavior graphs as it searches, and would stop first at a tableau
+    // node that accepts every behavior; none does here, so it reports the invariant.
+    let ir = include_bytes!(
+        "../../../../tests/conformance/ir/examples/specifications/acp/ACP_NB_WRONG_TLC.ir"
+    );
+    let config = "CONSTANTS\n  participants = { p0, p1 }\n  waiting = waiting\n  notsent = notsent\n  undecided = undecided\n  commit = commit\n  abort = abort\n  yes = yes\n  timeout = timeout\n  no = no\nSPECIFICATION SpecNB\nPROPERTIES AC1\nCHECK_DEADLOCK FALSE\n";
+    let (output, directory) = run_golden("graph-invariant", ir, "ACP_NB_WRONG_TLC", config, &[]);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(12), "{text}");
+    assert!(
+        text.contains("Error: Invariant AC1 is violated.\n"),
+        "{text}"
+    );
+    assert!(
+        text.contains("59286 states generated, 11852 distinct states found, 1248 states left on queue.\nThe depth of the complete state graph search is 13.\n"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn prints_a_node_that_accepts_every_behavior() {
+    let ir = include_bytes!(
+        "../../../../tests/conformance/ir/tlc/tlatools/org.lamport.tlatools/test-model/Github1389Counting.ir"
+    );
+    // TLC's configuration but its POSTCONDITION, which TLC doesn't reach.
+    let config = "SPECIFICATION Spec\nCHECK_DEADLOCK FALSE\nPROPERTIES CountAtMostFour\n";
+    let (output, directory) = run_golden("accepted", ir, "Github1389Counting", config, &[]);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(12), "{text}");
+    // TLC stops as it adds the second state, and prints the path to the node through the
+    // behavior graph, which passes through each state many times, with the counts by then.
+    let label = "Next line 24, col 9 to line 24, col 22 of module Github1389Counting";
+    let mut trace = String::from("State 1: <Initial predicate>\nx = FALSE\n\n");
+    for position in 2..=10 {
+        let value = if position % 2 == 0 { "TRUE" } else { "FALSE" };
+        trace.push_str(&format!("State {position}: <{label}>\nx = {value}\n\n"));
+    }
+    assert!(
+        text.contains(&format!(
+            "Error: Temporal property CountAtMostFour was violated.\n\nError: The following behavior constitutes a counter-example:\n\n{trace}5 states generated, 2 distinct states found, 0 states left on queue.\nThe depth of the complete state graph search is 2.\n"
+        )),
+        "{text}"
+    );
+    assert!(!text.contains("Checking temporal properties"), "{text}");
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
 fn prints_a_temporal_propertys_lasso() {
     let ir = include_bytes!(
         "../../../../tests/conformance/ir/tlc/tlatools/org.lamport.tlatools/test-model/Github1389ViolatedB.ir"

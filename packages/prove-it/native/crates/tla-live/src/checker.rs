@@ -512,6 +512,17 @@ impl<'c> Checker<'c> {
         tableau_node.particle.is_empty() && tableau_node.successors == [node]
     }
 
+    // Whether a state may reach a tableau node that accepts every behavior, which TLC stops at as
+    // it adds the state: one with no particle that leads only to itself, of a solution with a
+    // model that asks nothing of the cycle.
+    fn may_accept(&self) -> bool {
+        (0..self.behaviors.len()).any(|behavior| {
+            self.has_empty_model(behavior)
+                && (0..self.tableau_size(behavior) as u32)
+                    .any(|node| self.is_accepting(behavior, node))
+        })
+    }
+
     fn has_empty_model(&self, behavior: usize) -> bool {
         self.solutions[self.behaviors[behavior].solution]
             .models
@@ -1394,13 +1405,18 @@ impl<'s, 'c> Search<'s, 'c> {
     }
 }
 
-/// Checks the formula on the search's graph, and names the properties a lasso violates.
-/// Builds the behavior graphs, into `events` the evaluations it logged, and searches them.
-pub fn check(
-    checker: &mut Checker<'_>,
-    properties: &[TermId],
-    events: &mut Vec<Event>,
-) -> Result<Verdict, Declined> {
+/// Where no state may reach a tableau node that accepts every behavior, none: otherwise as
+/// `add_states`.
+pub fn find_accepted(checker: &mut Checker<'_>) -> Result<Option<(u32, Vec<u32>)>, Declined> {
+    if !checker.may_accept() {
+        return Ok(None);
+    }
+    add_states(checker)
+}
+
+/// Adds the states to the behavior graphs as TLC does as it searches: the first whose tableau node
+/// accepts every behavior, and the path to it.
+fn add_states(checker: &mut Checker<'_>) -> Result<Option<(u32, Vec<u32>)>, Declined> {
     let graph = checker.graph;
     for (state, &parent) in graph.parents.iter().enumerate() {
         if parent == -1 {
@@ -1411,11 +1427,41 @@ pub fn check(
     // the nodes of the others are undone, and the search for a cycle passes them by.
     for state in 0..graph.expanded() as u32 {
         if let Some(path) = checker.add_state(state)? {
-            *events = checker.take_events();
-            return Ok(Verdict::Accepted { state, path });
+            return Ok(Some((state, path)));
         }
     }
+    Ok(None)
+}
+
+/// The path to a node that accepts every behavior, and the properties it violates, which TLC
+/// names from the path with its last state stuttering.
+pub fn accepted(
+    checker: &Checker<'_>,
+    properties: &[TermId],
+    state: u32,
+    path: Vec<u32>,
+) -> Result<Verdict, Declined> {
+    let loop_start = path.len().saturating_sub(1);
+    Ok(Verdict::Accepted {
+        violated: checker.violated(properties, &path, loop_start)?,
+        state,
+        path,
+    })
+}
+
+/// Checks the formula on the search's graph, and names the properties a lasso violates.
+/// Builds the behavior graphs, into `events` the evaluations it logged, and searches them.
+pub fn check(
+    checker: &mut Checker<'_>,
+    properties: &[TermId],
+    events: &mut Vec<Event>,
+) -> Result<Verdict, Declined> {
+    let graph = checker.graph;
+    let found = add_states(checker)?;
     *events = checker.take_events();
+    if let Some((state, path)) = found {
+        return accepted(checker, properties, state, path);
+    }
     if let Some(diameters) = &graph.diameters {
         checker.diameter.set(diameters.last);
     }
