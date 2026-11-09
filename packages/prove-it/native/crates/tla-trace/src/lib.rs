@@ -14,6 +14,7 @@ mod eval;
 mod failure;
 mod pretty;
 mod print;
+mod random;
 mod rebuild;
 mod sets;
 mod value;

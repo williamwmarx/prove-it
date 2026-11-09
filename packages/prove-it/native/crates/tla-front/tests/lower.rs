@@ -42,6 +42,7 @@ fn lower(source: &str, name: &str) -> Ir {
             initial_predicates: Vec::new(),
             view: None,
             alias: None,
+            postconditions: Vec::new(),
             symmetry: None,
             check_deadlock: true,
             is_warning_enabled: true,

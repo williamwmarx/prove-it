@@ -105,7 +105,7 @@ fn format_print(texts: &[String]) -> String {
 }
 
 /// A state's values, in the engine's order of the variables, as TLC prints the state.
-fn format_state(ir: &Ir, values: &[Value]) -> String {
+pub(crate) fn format_state(ir: &Ir, values: &[Value]) -> String {
     format_fields(ir.tlc_order.iter().map(|&position| {
         (
             ir.texts[ir.variables[position as usize] as usize].as_ref(),

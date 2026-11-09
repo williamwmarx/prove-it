@@ -222,9 +222,18 @@ fn sorts_the_records_of_built_lambdas_under_view_and_symmetry() {
     assert_eq!(states[0], tlc_states(RAFT_RECONFIG_INITIAL_STATE)[0]);
 }
 
-// Each state of the trace the search stops with, through the ALIAS, as TLC prints it without
-// whitespace: the alias record's fields in order, or the state's variables where it gives none.
-fn aliased_trace(path: &str) -> Result<Vec<String>, Unsupported> {
+// Rebuilds the trace of the violation the search stops at, and hands it to `then` with the
+// rebuilder and the start of a lasso's cycle.
+fn rebuild_violation<T: Send>(
+    path: &str,
+    then: impl FnOnce(
+        &tla_ir::Ir,
+        &mut Rebuilder,
+        &tla_trace::Trace,
+        Option<usize>,
+    ) -> Result<T, Unsupported>
+    + Send,
+) -> Result<T, Unsupported> {
     let bytes = std::fs::read(ir_directory().join(format!("{path}.ir"))).expect("a golden IR");
     let ir = tla_ir::decode(&bytes).expect("an IR that decodes");
     tla_values::on_nesting_stack(|| {
@@ -250,11 +259,42 @@ fn aliased_trace(path: &str) -> Result<Vec<String>, Unsupported> {
             ViolationKind::Error { .. } => panic!("{path}: a failure evaluating the model"),
         };
         let states: Vec<&[Id]> = violation.states.iter().map(Vec::as_slice).collect();
-        let actions = violation.labels.clone();
         let mut rebuilder = Rebuilder::new(&ir)?;
-        let trace = rebuilder.rebuild(&violation.store, &states, &actions, ending)?;
+        let trace = rebuilder.rebuild(&violation.store, &states, &violation.labels, ending)?;
+        then(&ir, &mut rebuilder, &trace, cycle_start)
+    })
+}
+
+#[test]
+fn draws_random_elements_and_subsets_as_tlc_does() {
+    // TLC draws in the initial predicate from the generator startup left, and in each step from
+    // one seeded with the predecessor's fingerprint.
+    for (name, expected) in [
+        ("RandomElement", RANDOM_ELEMENT_TRACE),
+        ("RandomElementXandY", RANDOM_ELEMENT_X_AND_Y_TRACE),
+        ("RandomSubset", RANDOM_SUBSET_TRACE),
+        ("RandomSubsetNextTuples", RANDOM_SUBSET_NEXT_TUPLES_TRACE),
+    ] {
+        let states = rebuild_violation(
+            &format!("tlc/tlatools/org.lamport.tlatools/test-model/{name}"),
+            |ir, _, trace, _| {
+                Ok(trace
+                    .states
+                    .iter()
+                    .map(|state| rebuilt_state(ir, &state.values))
+                    .collect::<Vec<_>>())
+            },
+        );
+        assert_eq!(states, Ok(tlc_states(expected)), "{name}");
+    }
+}
+
+// Each state of the trace the search stops with, through the ALIAS, as TLC prints it without
+// whitespace: the alias record's fields in order, or the state's variables where it gives none.
+fn aliased_trace(path: &str) -> Result<Vec<String>, Unsupported> {
+    rebuild_violation(path, |ir, rebuilder, trace, cycle_start| {
         let aliases = rebuilder
-            .alias(&trace, cycle_start)?
+            .alias(trace, cycle_start)?
             .expect("a model with an ALIAS");
         let text = |fields: Vec<(String, String)>| {
             fields

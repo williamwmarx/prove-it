@@ -315,11 +315,11 @@ impl Reporter for Relay {
 }
 
 /// The counts a Progress line reports.
-struct Statistics {
-    generated: u64,
-    distinct: u64,
-    queued: u64,
-    depth: u64,
+pub(crate) struct Statistics {
+    pub generated: u64,
+    pub distinct: u64,
+    pub queued: u64,
+    pub depth: u64,
 }
 
 /// TLC reports a depth of at least 1, even before it finds a state, and rates a minute only once
@@ -538,8 +538,20 @@ fn check_spec(spec_path: &str, args: &Parsed, printer: &mut Printer) -> i32 {
             fingerprints,
             liveness,
             violation,
+            possible,
             ..
         } => {
+            // Once the search completes, TLC checks the postconditions, which the binary doesn't
+            // evaluate yet, and reports a _POSSIBLE predicate the search never witnessed.
+            if !config.postconditions.is_empty() {
+                return report_not_native(printer, "a POSTCONDITION");
+            }
+            if possible.iter().any(|&count| count <= 0) {
+                return report_not_native(
+                    printer,
+                    "a _POSSIBLE predicate the search didn't witness",
+                );
+            }
             if let Some(liveness) = liveness {
                 if let (Some(violation), Verdict::Lasso { .. }) = (violation, &liveness.verdict) {
                     return print_violation(
@@ -693,7 +705,7 @@ fn print_liveness_finished(printer: &mut Printer, checking: Instant) {
 
 /// After a search, TLC prints how many states it found and how deep it went, after the progress
 /// with -tool.
-fn print_statistics(printer: &mut Printer, statistics: &Statistics, start: Instant) {
+pub(crate) fn print_statistics(printer: &mut Printer, statistics: &Statistics, start: Instant) {
     if printer.is_tool {
         print_progress(printer, statistics, Some(start));
     }
@@ -943,7 +955,7 @@ fn temporal_headline(ir: &tla_ir::Ir, liveness: &Liveness) -> Option<String> {
 }
 
 /// Without -tool, TLC prints how long it ran for a person to read.
-fn print_finished(printer: &mut Printer, start: Instant) {
+pub(crate) fn print_finished(printer: &mut Printer, start: Instant) {
     let runtime = start.elapsed().as_millis();
     let duration = if printer.is_tool {
         format!("{runtime}ms")

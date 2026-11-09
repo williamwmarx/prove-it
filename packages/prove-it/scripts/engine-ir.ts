@@ -77,6 +77,10 @@ const GOLDEN_MODELS = [
   "spectacle/specs/bfs_anim.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/suite/etest4.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/suite/etest6.cfg",
+  "tlc/tlatools/org.lamport.tlatools/test-model/RandomElement.cfg",
+  "tlc/tlatools/org.lamport.tlatools/test-model/RandomElementXandY.cfg",
+  "tlc/tlatools/org.lamport.tlatools/test-model/RandomSubset.cfg",
+  "tlc/tlatools/org.lamport.tlatools/test-model/RandomSubsetNextTuples.cfg",
 ];
 
 const GOLDEN_DIRECTORY = join(CONFORMANCE_DIRECTORY, "ir");
