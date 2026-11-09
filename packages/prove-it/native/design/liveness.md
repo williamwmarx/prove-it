@@ -281,28 +281,37 @@ Done on native-parity:
 - An atom that fails as TLC adds a state to the behavior graphs (Github607, tla-rs
   liveness_error): `Liveness::unanswered`, `ErrorSite::Atom`, `Site::Atom`. ENABLED names the
   fairness condition whose action leaves a variable unassigned (2148).
+- Optional Next (tm/AS): `EngineContext.next` is an `Option<Step>`. With initial states and no
+  next-state relation the search stops with `ViolationKind::NoNextState`, which the binary
+  prints as 2115 with no statistics, exit 75; with no initial states it completes. It declines
+  with temporal properties, a POSTCONDITION or `_POSSIBLE`, which TLC never reaches there.
+- Scoped properties (tm/Github1161): `Conjunct::Scoped`, checked whole, and
+  `Compiler::compile_scoped` for the invariants, action properties and implied inits of an
+  instance; tla-trace's `check_violation` reads each in `scope_context(scope)`, and
+  `evaluate_failure` declines an implied init in a scope that fails to evaluate.
+- A lasso whose atoms print (UserModuleOverrideAnnotation): TLC evaluates each property on the
+  lasso it rebuilt (`Liveness.findViolatedProperties`), each atom anew. `tla-live` logs those
+  evaluations after `Event::Lasso`, the engine carries what they printed in
+  `ViolationKind::Lasso::printed`, and the binary prints it before the violation.
+- An atom that fails as TLC adds an initial state (InitialLivenessEvaluationError): TLC adds
+  each initial state to the behavior graphs before it checks it or reports the initial states
+  (`DoInitFunctor`), so the search asks `tla_live::find_unanswered` of the initial states before
+  it reports them, and stops with `ErrorSite::InitialAtom`. TLC then replays the initial states,
+  which the engine follows only where there is one; with more it declines. A violation found
+  among the initial states is reported only where every atom evaluates on them
+  (`answers_initial_atoms`). At a safety stop, the first atom unanswered on a state TLC had
+  added by then (`unanswered_at`) is reported as at the search's end.
+- A lasso a check part way through the search finds: the search builds the violation with
+  `to_lasso` and the counts so far, and the binary prints it after the check's start, which the
+  search reported as the check began.
 
 Open, with what is known:
-- Optional Next (NoNext, tm/AS), engine half. It was written and type-checked but neither tested
-  nor pushed. Make `EngineContext.next` an `Option<Step>`. At the top of `Search::expand`, a model
-  without one sets `Found { kind: ViolationKind::NoNextState }` (empty trace) and bails;
-  `to_violation` accepts that kind with no states. The CLI prints 2115 "No next state actions
-  defined to generate successor states from." with no statistics, and exits 75. It declines with
-  a POSTCONDITION or _POSSIBLE. With no initial states the search completes as it does today.
-- Scoped properties (MCEWD687a, tm/Github1161), engine half. Same status. Add
-  `Conjunct::Scoped(node, scope)`, checked whole, and `Compiler::compile_scoped(root, scope,
-  can_print)` beside `compile_in_scope` in walker.rs. Compile action properties and initial
-  predicates through it when a scope is given. Remove the `has_scoped_property` decline. In
-  tla-trace, `check_violation` evaluates each property in `scope_context(scope)`, and
-  `evaluate_failure` declines an implied init in a scope.
+- The front names a property an instance exports by the definition's own name (`Safe`) where
+  TLC names it as the configuration's property refers to it (`A!Safe`, `opNode.getName()` in
+  `SpecProcessor#processConfigProps`), in both front ends, scoped or not. No corpus model
+  reports such an invariant violated. Reported to the coordinator for the front's owner.
 - Test2 (TLCSet in atoms): the engine session is doing online atom evaluation through an
   `Answers` trait in tla-live. My review notes were sent to them: pass the graph to each
   `add_state`, give stuttering steps their own slot space, and keep `unanswered`.
-- UserModuleOverrideAnnotation: "a lasso the engine doesn't hand over". Not investigated.
-- InitialLivenessEvaluationError: it stops at an invariant violation where an atom is
-  unanswered (`accepted_at` returns None). `Liveness::unanswered` with `ErrorSite::Atom` is the
-  likely way through, applied on the safety-stop path too.
 - YoYoAllGraphs (enumerated Seq(S)) and MCEWD687a (filter of an infinite set): engine
   enumeration limits. MCEWD687a also needs the scoped properties.
-- Periodic lasso: `PERIODIC_LASSO` gives `violation: None`. Build the violation with `to_lasso`
-  from the periodic check's verdict, as the final check does.

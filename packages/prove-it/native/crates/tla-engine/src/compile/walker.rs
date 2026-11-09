@@ -22,8 +22,8 @@ use super::nodes::assign_bound;
 use super::predicate::{Leaf, Predicate, Test};
 use super::{
     Argument, Binding, CompileError, Compiled, Compiler, Compiling, Context, Definition,
-    DefinitionForm, Operator, OperatorBody, SEARCH_SLOTS, Scope, bind, decline, eval, leaf, lookup,
-    unsupported,
+    DefinitionForm, Operator, OperatorBody, Root, SEARCH_SLOTS, Scope, bind, decline, eval, leaf,
+    lookup, unsupported,
 };
 use crate::footprint::Footprint;
 use crate::machine::{Continue, Eval, Machine, Member, Step, UNASSIGNED};
@@ -2556,6 +2556,35 @@ impl<'a> Compiler<'a> {
                 is_shortcut,
             },
         )
+    }
+
+    /// Compiles a root of the model in the scope of the instance it comes from, as a property
+    /// an instance exports is read.
+    pub fn compile_scoped(
+        &mut self,
+        root: Root,
+        scope: Option<Index>,
+        can_print: bool,
+    ) -> Result<Compiled, CompileError> {
+        let Some(context) = self.context_from_scope(scope)? else {
+            return unsupported("a property scope the engine can't translate".to_string());
+        };
+        let context = Context {
+            can_print,
+            ..context
+        };
+        match root {
+            Root::Definition(index) => {
+                let definition = self.ir.definitions[index as usize];
+                self.wrap_compile(|compiler| {
+                    compiler.compile_definition_reference(definition, &context)
+                })
+            }
+            Root::Expression(node) => self.compile(node, &context),
+            Root::Unchanged(node) => {
+                self.wrap_compile(|compiler| compiler.compile_unchanged(node, &context))
+            }
+        }
     }
 
     /// Compiles an expression of a liveness atom in the scope of an instance, where what it prints

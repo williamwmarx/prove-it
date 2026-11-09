@@ -30,7 +30,9 @@ pub struct EngineContext {
     /// checker doesn't follow: it too stops once TLC has started.
     pub is_view_search_read: bool,
     pub init: Step,
-    pub next: Step,
+    /// The walk of the next-state relation, none where the configuration names none: TLC then
+    /// stops once it has the initial states.
+    pub next: Option<Step>,
     /// A walk of each of TLC's actions, which together take the steps of `next` in its order, or
     /// `None` when the engine can't build one. The search walks them only when the model asks it
     /// to label its steps; they also label the steps of a path it prints.
@@ -196,6 +198,8 @@ pub fn first_failing_changed(
 enum Conjunct {
     Named(Index),
     Node(NodeId),
+    /// An expression read in the scope of the instance it comes from, checked whole.
+    Scoped(NodeId, Index),
 }
 
 struct Conjuncts<'i> {
@@ -239,6 +243,7 @@ impl<'i> Conjuncts<'i> {
     fn asserted(&self, conjunct: Conjunct) -> Option<Index> {
         let index = match conjunct {
             Conjunct::Named(index) => index,
+            Conjunct::Scoped(..) => return None,
             Conjunct::Node(node) => match self.resolve(node).1 {
                 NodeKind::Identifier(name) if !name.is_local => match name.resolution {
                     Resolution::Definition(index) => index,
@@ -265,7 +270,7 @@ impl<'i> Conjuncts<'i> {
     fn collect(&mut self, conjunct: Conjunct) {
         let conjunct = match conjunct {
             Conjunct::Node(node) => Conjunct::Node(self.resolve(node).0),
-            named => named,
+            other => other,
         };
         if let Conjunct::Node(node) = conjunct
             && let NodeKind::And(operands) = self.resolve(node).1
@@ -302,13 +307,12 @@ fn compile_conjunct(
     conjunct: Conjunct,
     can_print: bool,
 ) -> Result<Compiled, CompileError> {
-    compiler.compile_root_printing(
-        match conjunct {
-            Conjunct::Named(index) => Root::Definition(index),
-            Conjunct::Node(node) => Root::Expression(node),
-        },
-        can_print,
-    )
+    let (root, scope) = match conjunct {
+        Conjunct::Named(index) => (Root::Definition(index), None),
+        Conjunct::Node(node) => (Root::Expression(node), None),
+        Conjunct::Scoped(node, scope) => (Root::Expression(node), Some(scope)),
+    };
+    compiler.compile_scoped(root, scope, can_print)
 }
 
 // The variables a state predicate reads, which decide its value: it reads only its footprint.
@@ -417,11 +421,6 @@ impl EngineContext {
         // With temporal properties, the search keeps what it prints until the checker has
         // evaluated the atoms, whose prints go between its own.
         let can_print = true;
-        if model.has_scoped_property() {
-            return Err(CompileError::Decline(
-                "a property read in an instance's scope".into(),
-            ));
-        }
         let mut conjuncts = Conjuncts::new(ir);
         let mut printed = HashSet::new();
         let mut invariant_owners = Vec::new();
@@ -432,12 +431,20 @@ impl EngineContext {
                 let root = Conjunct::Named(named("invariant", ir, &invariant.root)?);
                 Ok((root, invariant.has_repeated_effect))
             })
-            .chain(model.property_invariants.iter().map(|invariant| {
-                Ok((
-                    Conjunct::Node(invariant.root),
-                    invariant.has_repeated_effect,
-                ))
-            }))
+            .chain(
+                model
+                    .property_invariants
+                    .iter()
+                    .zip(&model.property_invariant_scopes)
+                    .map(|(invariant, scope)| {
+                        Ok((
+                            scope.map_or(Conjunct::Node(invariant.root), |scope| {
+                                Conjunct::Scoped(invariant.root, scope)
+                            }),
+                            invariant.has_repeated_effect,
+                        ))
+                    }),
+            )
             .collect::<Result<Vec<_>, CompileError>>()?;
         for (owner, (root, has_repeated_effect)) in roots.into_iter().enumerate() {
             if has_repeated_effect && can_print {
@@ -469,18 +476,25 @@ impl EngineContext {
         let mut action_properties = Vec::new();
         let is_native = compiler.is_native;
         for property in &model.action_properties {
-            let action =
-                compiler.compile_root_printing(Root::Expression(property.action), is_native)?;
-            let unchanged =
-                compiler.compile_root_printing(Root::Unchanged(property.subscript), is_native)?;
+            let action = compiler.compile_scoped(
+                Root::Expression(property.action),
+                property.scope,
+                is_native,
+            )?;
+            let unchanged = compiler.compile_scoped(
+                Root::Unchanged(property.subscript),
+                property.scope,
+                is_native,
+            )?;
             action_properties.push((action.eval, unchanged.eval));
         }
         let initial_predicates = model
             .initial_predicates
             .iter()
-            .map(|&predicate| {
+            .zip(&model.initial_predicate_scopes)
+            .map(|(&predicate, &scope)| {
                 compiler
-                    .compile_root(Root::Expression(predicate))
+                    .compile_scoped(Root::Expression(predicate), scope, false)
                     .map(|compiled| compiled.eval)
             })
             .collect::<Result<Vec<Eval>, CompileError>>()?;
@@ -555,21 +569,33 @@ impl EngineContext {
             },
             "a specification",
         )?;
-        let Some(next) = model.next else {
+        // Without a next-state relation TLC stops once it has the initial states, before the
+        // temporal properties, the postconditions and the `_POSSIBLE` predicates it would check.
+        if model.next.is_none()
+            && (!compiler.is_native
+                || model.is_recording_graph
+                || !model.postconditions.is_empty()
+                || !model.possible.is_empty())
+        {
             return Err(CompileError::Decline(
                 "a model without a next-state relation".into(),
             ));
-        };
-        let next = compiler.compile_action(
-            next,
-            model.scope,
-            ActionOptions {
-                is_init: false,
-                is_shortcut: model.is_warning_enabled,
-                can_print,
-            },
-            "a specification",
-        )?;
+        }
+        let next = model
+            .next
+            .map(|next| {
+                compiler.compile_action(
+                    next,
+                    model.scope,
+                    ActionOptions {
+                        is_init: false,
+                        is_shortcut: model.is_warning_enabled,
+                        can_print,
+                    },
+                    "a specification",
+                )
+            })
+            .transpose()?;
         // Compiled whether or not the search walks them, since they also label a printed path.
         let actions = match Some(&model.actions).filter(|actions| !actions.is_empty()) {
             None => None,
