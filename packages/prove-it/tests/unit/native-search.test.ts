@@ -81,6 +81,31 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     );
   });
 
+  it("reads f[i][j] of a variable and two bound names in place", async () => {
+    const body = [
+      "EXTENDS Naturals",
+      "VARIABLE f",
+      "Init == f = [i \\in 1..2 |-> [j \\in 1..2 |-> 0]]",
+      "Next == \\E i, j \\in 1..2 : f[i][j] < 2 /\\ f[j][i] # 1 /\\ f' = [f EXCEPT ![i][j] = @ + 1]",
+    ];
+    const config = "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE";
+    expect(await compareStateLogs(body, config, false)).toContainEqual(
+      expect.stringMatching(COMPLETE),
+    );
+    expect(await compareWithInterpreter(body, config)).toContainEqual(
+      expect.stringMatching(COMPLETE),
+    );
+    const outside = [
+      "EXTENDS Naturals",
+      "VARIABLE f",
+      "Init == f = <<<<0>>, <<0, 0>>>>",
+      "Next == \\E i, j \\in 1..2 : f[i][j] = 0 /\\ f' = f",
+    ];
+    expect(await compareWithInterpreter(outside, "INIT Init\nNEXT Next")).toContainEqual(
+      expect.stringMatching(stopped("applied a function outside its domain")),
+    );
+  });
+
   it("takes TLC's shortcut past a walk once every variable is assigned, with warnings on", async () => {
     // With warnings on, the disjunction after y' = 1 is a guard once x and y are assigned, so it
     // gives one successor rather than two.
