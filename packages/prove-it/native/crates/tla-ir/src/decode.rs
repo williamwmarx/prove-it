@@ -673,8 +673,8 @@ impl Decoder<'_> {
         let mut initial_predicate_names = Vec::with_capacity(count);
         for _ in 0..count {
             initial_predicates.push(node(self)?);
-            initial_predicate_scopes.push(self.optional_below(scope_count, "scope")?);
             initial_predicate_names.push(self.text()?);
+            initial_predicate_scopes.push(self.optional_below(scope_count, "scope")?);
         }
         let mut views = self.unprinted()?;
         if views.len() > 1 {
