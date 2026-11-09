@@ -55,8 +55,13 @@ const SEMANTIC_PRELUDE = ["LAMBDA", "$$InAssume", "nullODN", "nullOpArg", "nullL
 const THEOREM_KEYWORDS = new Set(["THEOREM", "LEMMA", "COROLLARY", "PROPOSITION"]);
 
 // SANY's NewSymb declares a CONSTANT or VARIABLE local to an ASSUME ... PROVE, after the ASSUME, a
-// comma or NEW, where a module's own declaration never starts.
-const PROOF_DECLARATION_PREFIXES = new Set(["ASSUME", ",", "NEW"]);
+// comma or NEW, where a module's own declaration never starts. A field may be named ASSUME or NEW.
+const isProofDeclaration = (tokens: Token[], index: number) => {
+  const previous = tokens[index - 1];
+  return previous?.kind === "Keyword"
+    ? (previous.text === "ASSUME" || previous.text === "NEW") && tokens[index - 2]?.text !== "."
+    : previous?.kind === "Operator" && previous.text === ",";
+};
 
 const CANONICAL_OPERATORS = new Map(
   SANY_OPERATOR_SYNONYMS.flatMap((synonyms) => synonyms.map((name) => [name, synonyms[0]])),
@@ -386,7 +391,7 @@ const createContexts = (getParsed: ModuleSet) => {
       }
       if (token.kind === "ModuleEnd") depth.value--;
       if (depth.value !== 1 || token.kind !== "Keyword") return;
-      if (PROOF_DECLARATION_PREFIXES.has(tokens[index - 1]?.text)) return;
+      if (isProofDeclaration(tokens, index)) return;
       if (token.text === "CONSTANT" || token.text === "CONSTANTS") declare(index, "constant");
       if (token.text === "VARIABLE" || token.text === "VARIABLES") declare(index, "variable");
       if (token.text === "RECURSIVE") {

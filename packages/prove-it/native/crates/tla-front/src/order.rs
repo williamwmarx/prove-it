@@ -101,8 +101,20 @@ const SEMANTIC_PRELUDE: [&str; 5] = [
 const THEOREM_KEYWORDS: [&str; 4] = ["THEOREM", "LEMMA", "COROLLARY", "PROPOSITION"];
 
 /// SANY's NewSymb declares a CONSTANT or VARIABLE local to an ASSUME ... PROVE, after the ASSUME, a
-/// comma or NEW, where a module's own declaration never starts.
-const PROOF_DECLARATION_PREFIXES: [&str; 3] = ["ASSUME", ",", "NEW"];
+/// comma or NEW, where a module's own declaration never starts. A field may be named ASSUME or NEW.
+fn is_proof_declaration(tokens: &[Token], index: usize) -> bool {
+    let Some(previous) = index.checked_sub(1).map(|at| &tokens[at]) else {
+        return false;
+    };
+    match previous.kind {
+        TokenKind::Keyword => {
+            matches!(&*previous.text, "ASSUME" | "NEW")
+                && (index < 2 || &*tokens[index - 2].text != ".")
+        }
+        TokenKind::Operator => &*previous.text == ",",
+        _ => false,
+    }
+}
 
 fn get_canonical_name(name: &str) -> &str {
     SANY_OPERATOR_SYNONYMS
@@ -846,7 +858,7 @@ impl<'a> TlcOrder<'a> {
             if depth != 1 || token.kind != TokenKind::Keyword {
                 continue;
             }
-            if index > 0 && PROOF_DECLARATION_PREFIXES.contains(&&*tokens[index - 1].text) {
+            if is_proof_declaration(tokens, index) {
                 continue;
             }
             match &*token.text {

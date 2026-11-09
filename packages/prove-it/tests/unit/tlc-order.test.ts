@@ -7,12 +7,15 @@ describe("TLC's declaration order", () => {
     const source = [
       "---- MODULE Main ----",
       "CONSTANT N",
+      "Field == [NEW |-> 1].NEW",
       "VARIABLE x",
+      'Text == "NEW"',
+      "VARIABLE w",
       "THEOREM Thm == ASSUME NEW VARIABLE y, CONSTANT c, NEW d PROVE y = y",
       "====",
     ].join("\n");
     const order = createTlcOrder(source, () => undefined);
-    expect(order.getDeclarationOrder("variable")).toEqual(["x"]);
+    expect(order.getDeclarationOrder("variable")).toEqual(["w", "x"]);
     expect(order.getDeclarationOrder("constant")).toEqual(["N"]);
   });
 });
