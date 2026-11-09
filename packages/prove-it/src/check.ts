@@ -1443,6 +1443,8 @@ const searchStates = (
     lassoActions: undefined as Int32Array | undefined,
     actionLabels: [] as string[],
     lasso: undefined as Lasso | undefined,
+    // A path to a tableau node that accepts every behavior, which TLC reports as it adds the state.
+    accepted: undefined as { state: number; path: number[] } | undefined,
     result: undefined as EngineResult | undefined,
   };
   // Under PROVE_IT_LIVE_CHECK the interpreter checks the temporal properties on the engine's graph
@@ -1541,7 +1543,8 @@ const searchStates = (
     current.candidateLevel = 1;
     unstoredState.fingerprint = taken.fingerprintState;
     try {
-      if (!engineReport.lasso) liveness?.addInitialState(index, taken.state);
+      if (!engineReport.lasso && !engineReport.accepted)
+        liveness?.addInitialState(index, taken.state);
       return undefined;
     } catch (error) {
       return reportInitialFailure(error, taken.state);
@@ -1854,6 +1857,9 @@ const searchStates = (
           tlcFingerprints[index] = Number(BigInt.asIntN(32, fingerprint));
         });
         const isLasso = verdict?.status === "lasso" && !isLiveChecked;
+        if (verdict?.status === "accepted" && !isLiveChecked) {
+          engineReport.accepted = { state: verdict.state, path: Array.from(verdict.path) };
+        }
         if (verdict && isLasso) {
           const loopStart = verdict.loopStart;
           const path = Array.from(verdict.path);
@@ -1865,7 +1871,7 @@ const searchStates = (
           engineReport.result = result;
         }
         reportEngine(
-          `found ${result.distinctStates} states in ${(performance.now() - startedAt).toFixed(0)} ms; the interpreter ${isLasso ? "prints the counterexample" : "checks the temporal properties"}`,
+          `found ${result.distinctStates} states in ${(performance.now() - startedAt).toFixed(0)} ms; the interpreter ${isLasso || engineReport.accepted ? "prints the counterexample" : "checks the temporal properties"}`,
         );
         return undefined;
       }
@@ -2196,7 +2202,13 @@ const searchStates = (
     if (result) return result;
     const addLiveState = () => {
       if (liveness && source && is174) stateWriter?.writeStuttering(source);
-      const accepted = liveness?.addState(index, state, liveSuccessors);
+      // The native checker found the node; the replay only counts up to the state it reports at.
+      const native = engineReport.accepted;
+      const accepted = native
+        ? index === native.state
+          ? native.path
+          : undefined
+        : liveness?.addState(index, state, liveSuccessors);
       if (!liveness || !accepted) return undefined;
       checkLiveVerdict({
         status: "accepted",
