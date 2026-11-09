@@ -1369,7 +1369,9 @@ impl<'ir> Evaluator<'ir> {
             if let Value::Interval(low, high) = set {
                 let mut values = Vec::new();
                 for key in low..=high {
-                    values.push(self.evaluate(body, &context.bind_value(name, Value::Int(key)))?);
+                    values.push(
+                        self.function_body(body, &context.bind_value(name, Value::Int(key)))?,
+                    );
                 }
                 return Ok(Value::over_interval(low, values, Class::Lambda));
             }
@@ -1377,7 +1379,7 @@ impl<'ir> Evaluator<'ir> {
             let mut values = Vec::new();
             for element in elements(&set)?.iter() {
                 keys.push(element.clone());
-                values.push(self.evaluate(body, &context.bind_value(name, element.clone()))?);
+                values.push(self.function_body(body, &context.bind_value(name, element.clone()))?);
             }
             return sorted_function(keys, values, Class::Lambda);
         }
@@ -1393,11 +1395,24 @@ impl<'ir> Evaluator<'ir> {
                     [element] => element.clone(),
                     _ => Value::tuple(bound.to_vec()),
                 });
-                values.push(evaluator.evaluate(body, inner)?);
+                values.push(evaluator.function_body(body, inner)?);
                 Ok(())
             },
         )?;
         sorted_function(keys, values, Class::Lambda)
+    }
+
+    // A function's value at one key. TLC builds the function in a method of the FcnLambdaValue
+    // that `CallStackTool` gives a source, so a failure there is a FingerprintException, as
+    // `headFingerprint` in `evaluate.ts` marks it.
+    fn function_body(&mut self, body: NodeId, context: &Context) -> Evaluated<Value> {
+        let result = self.evaluate(body, context);
+        if result.is_err()
+            && let Some(stack) = &mut self.call_stack
+        {
+            stack.is_fingerprinted = true;
+        }
+        result
     }
 
     // Each binding of the bounds with the elements bound, the last bound varying fastest.
