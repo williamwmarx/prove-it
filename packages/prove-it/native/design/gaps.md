@@ -379,6 +379,13 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   it doesn't know falls back to the interpreter. Enumerating an infinite set is a limit too: the
   engine enumerates Nat where TLC keeps the set lazy, as on suite/test202's and
   RandomSubsetEmpty's assumptions, which hold in TLC.
+- Comparing a record with a function fails in TLC only where it built one value as a record
+  (`RecordValue.equals`); a function a constructor builds over strings is a FcnRcdValue, which
+  compares its domain with any function's. The store, which merges equal values, knows a value by
+  its domain only, so it can't tell the two: tla-rs model_values_distinct compares
+  `[n \in Node |-> "idle"]` with `[n \in {"n1", "n2"} |-> "idle"]` and gets FALSE in TLC, where
+  the engine stopped. "record compared with a function" is now a limit, which the interpreter
+  takes over from; following it natively needs the store to keep how TLC built a value.
 
 ## Len and Tail of a string
 

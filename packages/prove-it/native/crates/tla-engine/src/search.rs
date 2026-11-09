@@ -336,7 +336,8 @@ fn is_engine_limit(reason: &str) -> bool {
 // The reasons a search stops for that are failures TLC reports evaluating the model. Every other
 // reason is the engine's own limit, for the interpreter to take over from, so a model the engine
 // can't follow never reports a failure TLC doesn't. Enumerating an infinite set is among the
-// limits: the engine enumerates some sets TLC keeps lazy.
+// limits: the engine enumerates some sets TLC keeps lazy. So is comparing a record with a
+// function, which fails in TLC only where it built the value as a record.
 const TLC_FAILURES: &[&str] = &[
     "@@ of non-functions",
     "BagCardinality of a non-bag",
@@ -412,7 +413,6 @@ const TLC_FAILURES: &[&str] = &[
     "no CASE arm holds",
     "primed variable not assigned",
     "quantified over a non-set",
-    "record compared with a function",
     "the left side of => isn't a boolean",
     "values TLC can't compare",
     "variable not assigned",
@@ -3694,6 +3694,9 @@ mod tests {
         assert!(!is_engine_limit("a mistyped membership in Nat"));
         // suite/test202's assumption, which TLC evaluates without enumerating Nat.
         assert!(is_engine_limit("enumerated Nat"));
+        // TLC fails only where a value it built as a record meets a function, which the store,
+        // knowing a value by its domain, can't tell from a function over strings.
+        assert!(is_engine_limit("record compared with a function"));
     }
 
     fn verified_states() -> States {
