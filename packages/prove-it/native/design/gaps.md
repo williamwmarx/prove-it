@@ -179,3 +179,12 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   marked infinite as S is, and stops where it is enumerated, which the interpreter reports.
   Community Graphs' `Path(G) == {p \in Seq(G.node) : ...}` is one. MCEWD687a (Examples) and
   Bakery (spectacle), declined before, now search in Rust until the enumeration TLC reports.
+
+## Membership in an interval
+
+- TLC tests `x \in a..b` by comparing an integer with the bounds (`IntervalValue.member`), and
+  fails on any other value but an untyped model value, which isn't a member. Membership in
+  `..` (`member_test`) now does the same, where the engine built the interval to look the element
+  up, and stopped on one too large to build, such as RandomSubset's invariant
+  `x \in 1..100000000`. Elsewhere the interval is as before, so a set operation or a set of
+  functions over one still evaluates it, and its bounds, as TLC does.
