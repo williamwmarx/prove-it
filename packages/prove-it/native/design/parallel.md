@@ -40,11 +40,16 @@ how.
     checkpoint is the one-thread search's, with the reason the one-thread search gives for `p`. A
     state earlier in the level that would stop it stops it first.
   - `PROVE_IT_STOP_AT` inside a shared level is a stop at that state.
-  - The invariant a thread checks of a successor it takes for new, but that another thread found
-    first, can't stop the search early, for the same reason: the earlier parent stops it first.
+  - Where the key is the state, an invariant that fails of a successor a thread takes for new
+    stops it at once: if another thread found that state first, its parent is earlier and stops
+    the search first. Under a VIEW or symmetry the state another thread found first can be another
+    state with the same key, whose invariant TLC checks instead, so the thread only records the
+    failure, and the merge stops there only if that successor's key is still new when its
+    parent's turn comes.
 - **How many threads.** `PROVE_IT_WORKERS`, at most `available_parallelism`, since more threads
   than the machine runs at once only take turns. The coordinator waits on the threads it spawned,
   and no thread spins.
+- **The first level** is the initial states, and is shared like any other.
 - **Where it runs on one thread.** A level runs on one thread when:
   - it has fewer than `PROVE_IT_SHARED_LEVEL` states (default 2,048, `MINIMUM_SHARED_LEVEL` as
     in `search.ts`), or too few for two threads of half that each;
