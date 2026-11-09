@@ -108,39 +108,46 @@ information this crate exists to keep.
 ## The API
 
 ```rust
-pub struct Rebuilder<'ir> { /* the IR, the evaluator's caches */ }
+pub struct Rebuilder<'ir> { /* the IR, the evaluator and its caches, how TLC matches a state */ }
 
 impl<'ir> Rebuilder<'ir> {
     pub fn new(ir: &'ir Ir) -> Result<Rebuilder<'ir>, Unsupported>;
 
     /// TLC's trace recovery. `states` are the path's states as ids of `store`, in `ir.variables`
     /// order; `actions[i]` is the position in `ir.model.actions` of the step from `states[i]` to
-    /// `states[i + 1]` (label_path), `None` for a stuttering step. `loop_start` marks a lasso,
-    /// which TLC doesn't rebuild a second time.
+    /// `states[i + 1]` (label_path), `None` to try each action as `Tool.getState` does. A step to
+    /// the same state stutters. `ending` says what the last state is to TLC.
     pub fn rebuild(
         &mut self,
         store: &Store,
         states: &[&[Id]],
         actions: &[Option<u32>],
-        loop_start: Option<usize>,
+        ending: Ending,
     ) -> Result<Trace, Unsupported>;
 
-    /// Evaluates again where the search failed, on a rebuilt state (and its successor), and
-    /// returns TLC's error with its values in TLC's text.
+    /// Planned: evaluates again where the search failed, on a rebuilt state (and its successor),
+    /// and returns TLC's error with its values in TLC's text.
     pub fn evaluate_failure(&mut self, trace: &Trace, site: Site) -> Result<Failure, Unsupported>;
 }
 
+/// What the last state is to TLC (`known` in `toTrace`): a state the search kept (a deadlock's),
+/// a violating state TLC holds as it found it (matched by value, whatever the VIEW or SYMMETRY,
+/// with the state before it not rebuilt), or a lasso's (all rebuilt, no second rebuild).
+pub enum Ending { Kept, Violation, Lasso }
+
 pub struct Trace {
     pub states: Vec<TraceState>,
-    /// What the spec printed as TLC rebuilt the trace again after printing it (`traceOutput`).
-    pub trace_output: Vec<String>,
+    /// What the spec printed as TLC rebuilt the trace again after printing it (`traceOutput`);
+    /// for a trace of one state, what the initial predicate printed.
+    pub trace_output: Vec<Vec<String>>,
 }
 
 pub struct TraceState {
     /// Each variable's value, in `ir.variables` order, normalized as TLC normalized it.
     pub values: Vec<Value>,
-    /// What Print and PrintT printed while TLC rebuilt this state.
-    pub printed: Vec<String>,
+    /// What Print and PrintT printed before this state: each print as the text of each value,
+    /// which the caller pretty prints and joins as it does a print during the search.
+    pub printed: Vec<Vec<String>>,
 }
 
 /// TLC's `Value.toString`; the caller pretty prints it.
@@ -149,6 +156,9 @@ pub fn format_value(value: &Value) -> String;
 /// Where the evaluator can't follow TLC yet; the caller reports `not native yet: <reason>`.
 pub struct Unsupported(pub String);
 ```
+
+The evaluator recurses with the expressions it evaluates, so the caller runs it on a thread with a
+deep stack (`tla_values::on_nesting_stack`), as the search runs.
 
 The consumers are:
 - **The CLI session.** It prints invariant, action-property and deadlock traces: the `Violation`'s
@@ -183,3 +193,79 @@ TLC's, `rebuild` returns `Unsupported`.
 The measure is the differential's `tlc/native` pair (`scripts/differential.ts --native`):
 the runs, of 1466, whose native transcript equals TLC's. This file records the count before and
 after each pull request.
+
+## As built
+
+### The crate (`tla-trace`)
+
+- **Values** (`value.rs`, `sets.rs`). Each function keeps its class, its written order (the
+  position of each key written, until a comparison, an equality or a fingerprint sorts it), and
+  the interval it was built over, which DOMAIN gives back (`getDomainInterval`). Order,
+  equality and membership follow the store's `compare`, `equals` and `is_member`, including where
+  they fail. `from_store` reads a store's value as TLC holds it normalized, and `matches` compares a
+  value with an id of the store without interning.
+- **Expressions** (`eval.rs`). Names resolve as the compiler resolves them, and instances' scopes
+  are bound as `context_from_scope` binds them. An operator's argument is evaluated where it is
+  used. A function that a definition or a LET defines is applied without being built, so a
+  recursive one over `Nat` works. A zero-arity definition that reads nothing of the state is
+  evaluated once, as TLC evaluates a constant definition. The builtins are the ones the engine
+  implements: logic, sets, integers, sequences, `:>`, `@@`, Assert, Print, PrintT, ToString,
+  TLCEval, `TLCGet("level")` and Permutations. Anything else is `Unsupported`.
+- **Actions** (`action.rs`). The walk follows `walker.rs`. It assigns at the first `x' = e` or
+  `x' \in S`, tests elsewhere, walks UNCHANGED variable by variable, treats `[A]_v` and `<<A>>_v`
+  as TLC does, and evaluates the rest of a conjunction as guards once every variable is assigned.
+  It binds the bounds of a quantifier as TLC's `ContextEnumerator` does: every set first, then the
+  first bound varying fastest. It walks `\A` as the conjunction of its body over the bindings, the
+  first and then the others in reverse, as `getNextStates` queues them.
+- **Matching** (`rebuild.rs`). Without VIEW or SYMMETRY, a candidate is the state when it equals
+  the search's state. Under VIEW, its view must equal the view of the search's state. Under
+  SYMMETRY, some permutation of the group must map it to that state, so the two are in one orbit.
+  Under both, the views of their least states in the orbit must be equal (`TLCStateMut.fingerPrint`).
+  A violation's last state is matched by its value, as TLC holds it (`getTrace` with the last
+  successor). Every state but the last is settled as `settleRecoveredState` settles it: fingerprinted
+  without VIEW or SYMMETRY, deeply but for lambdas under SYMMETRY, and as `deepNormalize` with the
+  view deeply under a VIEW. So is the last one if
+  it satisfies the CONSTRAINTs and ACTION_CONSTRAINTs, as TLC fingerprints only such a state.
+  A violating last state outside them goes through TLC's checks of it instead, which sort what
+  their comparisons reach: the invariants in order until one fails, then the action properties
+  (`doNextCheckInvariants`, `doNextCheckImplied`).
+  For a plain match where nothing prints, the walk drops an assignment as soon as it differs from
+  the search's state. The check sorts nothing, so it changes no value TLC prints, and a model such
+  as MCBakery's ISpec doesn't enumerate its 1.7 million initial states again.
+- **Enumeration order.** The walks enumerate every set in TLC's normalized order. TLC streams a
+  `\cup`, a UNION, SUBSET and the sets of functions, records and tuples in orders of its own
+  (`compile/lazy.rs` in the engine). The state the evaluator finds doesn't depend on that order
+  without VIEW or SYMMETRY, since it equals the search's. Under VIEW or SYMMETRY, the walk goes
+  on past the first candidate that matches. Each walk records the choices it made: the branch of
+  each disjunction and the element of each enumeration, and whether TLC takes that enumeration in
+  normalized order too (a set enumeration, an interval, a current variable, a constant or a value
+  computed at startup). Where two different candidates match, the first is TLC's when their
+  choices first part at such an enumeration; otherwise `rebuild` returns `Unsupported` rather than
+  guess. What a spec
+  prints while TLC enumerates such a set may come in another order; porting the streaming orders
+  is left.
+- **Print.** Where the spec prints, each walk runs to its end, and each step tries TLC's actions in
+  order, as `findStepAction` does. What the walks print is composed as `toTrace` composes it.
+  Elsewhere a walk stops at the state it looks for.
+
+Tests:
+- every golden IR's search, stopped partway, rebuilds the paths to its last states, VIEW and
+  SYMMETRY models included;
+- the deadlock traces of kafka_transactions (records) and TLCGetLevel (`TLCGet("level")`) print
+  TLC's recorded text, whitespace aside;
+- unit tests on the printer and on written order.
+
+### Parity
+
+The crate isn't wired into the binary in this pull request, so on main `tlc/native` is unchanged.
+On a scratch branch that wired `rebuild` into the CLI's violation and deadlock traces (as of
+`native-deadlock-traces`), the Depot differential (all 1466 runs, `depot-ubuntu-24.04-16`) gave
+**652** runs that print what TLC prints with the store's printer and **692** with the evaluator.
+No run printed anything that differs from TLC's text. With the evaluator, the deadlock traces
+still not native fell from 46 to 16 and the invariant traces from 22 to 12. What is left of them
+is outside the evaluator:
+- an ALIAS (the `_anim` specs, Github746, ViewMap), which the IR doesn't carry;
+- a POSTCONDITION;
+- traces the engine hands over no violation for, as where it can't label a step (ACP_NB_WRONG,
+  the raft specs);
+- one ENABLED (spectacle's Elevator).

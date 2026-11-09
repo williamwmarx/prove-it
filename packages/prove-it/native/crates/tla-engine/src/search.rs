@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 
 use tla_ir::{Ir, LiveTerm, Model};
 use tla_live::{Liveness, Term, Verdict};
-use tla_values::fingerprint::{Fingerprints, Parent};
+use tla_values::fingerprint::{Carried, Fingerprints, Parent};
 use tla_values::store::Outcome;
 use tla_values::transfer::{EncodedStates, SharedEncoder, SharedStates, StateEncoder};
 use tla_values::{Bail, Id, NESTING_STACK_BYTES, Store};
@@ -56,8 +56,15 @@ pub struct Settings {
     pub minimum_shared_level: usize,
 }
 
-/// A level of fewer states runs on one thread, as `MINIMUM_SHARED_LEVEL` in `search.ts`.
+/// A level of fewer states runs on one thread, as `MINIMUM_SHARED_LEVEL` in `search.ts`, unless
+/// its states are costly enough that sharing it pays (`SHARED_WORK`).
 pub const MINIMUM_SHARED_LEVEL: usize = 2048;
+
+/// A shorter level is shared too where the previous level's time per state says its work, on one
+/// thread, would take this long; each thread then takes at least `THREAD_WORK` of it. Starting a
+/// level's threads costs tens of microseconds, and sharing changes none of what the search finds.
+const SHARED_WORK: Duration = Duration::from_millis(8);
+const THREAD_WORK: Duration = Duration::from_millis(2);
 
 impl Default for Settings {
     fn default() -> Settings {
@@ -151,6 +158,8 @@ pub enum SearchOutcome {
         /// TLC's fingerprint of each state's key, in the order found.
         fingerprints: Vec<u64>,
         value_count: usize,
+        /// The most threads a level was shared between, 1 where none was.
+        threads: usize,
         /// Under PROVE_IT_FP_VERIFY, how many fingerprints two different keys shared.
         collisions: u64,
         /// What each `_POSSIBLE` predicate counted, or -1 where it wasn't evaluated.
@@ -491,6 +500,8 @@ struct Search<'r, T> {
     level_id: Id,
     next_level_id: Id,
     fingerprints: Fingerprints,
+    // The fingerprints the threads of the last level shared computed of the values they made.
+    carried: Carried,
     // The state being expanded, whose successors' fingerprints follow from its own when the key is
     // the state.
     parent: Parent,
@@ -539,6 +550,7 @@ impl<'r, T: Reached> Search<'r, T> {
             level_id: 0,
             next_level_id: 0,
             fingerprints: Fingerprints::new(),
+            carried: Carried::default(),
             parent: Parent::default(),
             canonicalizer: None,
             graph: None,
@@ -1073,9 +1085,9 @@ struct Worker<'p> {
 }
 
 impl Worker<'_> {
-    fn attach(&mut self, store: &Arc<Store>) {
+    fn attach(&mut self, store: &Arc<Store>, carried: &Carried) {
         self.machine.forget_from(self.bound);
-        self.fingerprints.forget_from(self.bound);
+        self.fingerprints.forget_from_carried(self.bound, carried);
         if let Some(canonicalizer) = &mut self.canonicalizer {
             canonicalizer.forget_from(self.bound);
         }
@@ -1244,11 +1256,11 @@ impl Search<'_, States> {
             let threads: Vec<_> = workers
                 .iter_mut()
                 .map(|worker| {
-                    let (shared, store) = (&shared, &store);
+                    let (shared, store, carried) = (&shared, &store, &self.carried);
                     std::thread::Builder::new()
                         .stack_size(NESTING_STACK_BYTES)
                         .spawn_scoped(scope, move || {
-                            worker.attach(store);
+                            worker.attach(store, carried);
                             expand_claimed(worker, shared)
                         })
                         .expect("a thread for the search")
@@ -1359,6 +1371,14 @@ impl Search<'_, States> {
             machine.is_past_walk |= found.is_past_walk;
         }
         self.expanding = stop;
+        // The fingerprints each thread computed of the values it made that are now the store's,
+        // for every thread to keep at the next level.
+        self.carried.reset(workers[0].bound);
+        for worker in workers.iter() {
+            worker
+                .fingerprints
+                .carry(&worker.imported, &mut self.carried);
+        }
         if let Some(bail) = violated {
             return Err(bail);
         }
@@ -1501,6 +1521,8 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     let mut initial_states = (0, 0);
     let mut is_past_initial = false;
     let mut workers: Vec<Worker<'_>> = Vec::new();
+    // The most threads a level was shared between.
+    let mut threads_used = 1;
     let result = (|| -> Outcome<()> {
         // --- initial states ---
         let unassigned = vec![UNASSIGNED; width];
@@ -1528,6 +1550,9 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         // can be shared between threads.
         let mut level_end = 0;
         search.level = 0;
+        // The previous level's first state, when it started and on how many threads, for its time
+        // per state on one thread.
+        let mut level_start = (0, Instant::now(), 1);
         let started_at = Instant::now();
         let mut progress_at = started_at + FIRST_PROGRESS;
         search.expanding = 0;
@@ -1536,14 +1561,34 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             if expanding == level_end {
                 search.level += 1;
                 level_end = search.states.count();
-                // A thread takes at least half the fewest states a level shares.
-                let threads = thread_count.min(
-                    (level_end - expanding) / settings.minimum_shared_level.div_ceil(2).max(1),
+                let states = level_end - expanding;
+                let (previous_start, previous_at, previous_threads) = level_start;
+                let per_state = (expanding > previous_start).then(|| {
+                    previous_at.elapsed() * previous_threads / (expanding - previous_start) as u32
+                });
+                let work = per_state.map_or(Duration::ZERO, |per_state| per_state * states as u32);
+                // A thread takes at least half the fewest states a level shares, or at least
+                // THREAD_WORK of its predicted work, whichever gives more threads, and at least
+                // one state.
+                let by_count = if states >= settings.minimum_shared_level {
+                    states / settings.minimum_shared_level.div_ceil(2).max(1)
+                } else {
+                    1
+                };
+                let by_work = if work >= SHARED_WORK {
+                    (work.as_nanos() / THREAD_WORK.as_nanos()) as usize
+                } else {
+                    1
+                };
+                // A thread claims whole states, so no more threads than states.
+                let threads = thread_count.min(by_count.max(by_work)).min(states);
+                level_start = (
+                    expanding,
+                    Instant::now(),
+                    if is_shared { threads.max(1) as u32 } else { 1 },
                 );
-                if is_shared
-                    && level_end - expanding >= settings.minimum_shared_level
-                    && threads > 1
-                {
+                if is_shared && threads > 1 {
+                    threads_used = threads_used.max(threads);
                     if workers.is_empty() {
                         workers = (0..thread_count)
                             .map(|_| Worker {
@@ -1780,6 +1825,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 liveness,
                 lasso_actions,
                 value_count: machine.store.value_count(),
+                threads: threads_used,
                 collisions,
                 possible: search.possible.clone(),
                 fingerprints: search.states.fingerprints,

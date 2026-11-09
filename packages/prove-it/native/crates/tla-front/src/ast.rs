@@ -2,6 +2,7 @@
 //! `\A x, y \in S` or a theorem's statement that its name defines, is one `Rc` here, so later stages
 //! see the same identities the TypeScript ones do.
 
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 pub type Name = Rc<str>;
@@ -43,6 +44,54 @@ pub type Expr = Rc<Expression>;
 pub struct Expression {
     pub kind: ExpressionKind,
     pub location: Location,
+    pub resolved: Resolved,
+}
+
+/// What `resolve.ts` writes on a node of the TypeScript AST: the key a name resolves to, in place
+/// of the name it is written with (`key`), its `LOCAL_RESOLUTION` (`is_local`), and a function
+/// construction's `isRecursive`. A copy of a node carries them, as a copy made by spreading a
+/// TypeScript node does.
+#[derive(Clone, Debug, Default)]
+pub struct Resolved {
+    pub key: RefCell<Option<Name>>,
+    pub is_local: Cell<bool>,
+    pub is_recursive: Cell<bool>,
+}
+
+impl Expression {
+    pub fn new(kind: ExpressionKind, location: Location) -> Expression {
+        Expression {
+            kind,
+            location,
+            resolved: Resolved::default(),
+        }
+    }
+
+    /// The name of an `Identifier` or the operator of an `Apply` or `OperatorReference`, as
+    /// resolution leaves it: the key of the symbol it names, once resolved.
+    pub fn reference(&self) -> Option<Name> {
+        let written = match &self.kind {
+            ExpressionKind::Identifier { name, .. } => name,
+            ExpressionKind::Apply { operator, .. }
+            | ExpressionKind::OperatorReference { operator, .. } => operator,
+            _ => return None,
+        };
+        Some(
+            self.resolved
+                .key
+                .borrow()
+                .clone()
+                .unwrap_or_else(|| written.clone()),
+        )
+    }
+
+    /// `isLocallyResolved`.
+    pub fn is_locally_resolved(&self) -> bool {
+        matches!(
+            self.kind,
+            ExpressionKind::Identifier { .. } | ExpressionKind::Apply { .. }
+        ) && self.resolved.is_local.get()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -252,11 +301,13 @@ pub enum ExpressionKind {
         action: Expr,
         subscript: Expr,
     },
-    /// `WeakFairness`, or `StrongFairness` when `is_strong`.
+    /// `WeakFairness`, or `StrongFairness` when `is_strong`. An instance's copy holds the
+    /// `ENABLED` of its action with the instance's substitutions in `enabled`.
     Fairness {
         is_strong: bool,
         subscript: Expr,
         action: Expr,
+        enabled: Option<Expr>,
     },
     Label {
         name: Name,
@@ -271,11 +322,12 @@ pub enum ExpressionKind {
     },
 }
 
+/// A parameter the front end makes, such as an instance copy's, has no `location`.
 #[derive(Clone, Debug)]
 pub struct OperatorParam {
     pub name: Name,
     pub arity: usize,
-    pub location: Location,
+    pub location: Option<Location>,
 }
 
 #[derive(Clone, Debug)]
@@ -289,6 +341,7 @@ pub enum DefinitionKind {
     },
 }
 
+/// `is_self_referential` is a function definition's `isSelfReferential`, which resolution sets.
 #[derive(Clone, Debug)]
 pub struct Definition {
     pub name: Name,
@@ -297,6 +350,7 @@ pub struct Definition {
     pub is_local: bool,
     pub is_recursive: bool,
     pub location: Location,
+    pub is_self_referential: Cell<Option<bool>>,
 }
 
 #[derive(Clone, Debug)]
@@ -518,4 +572,106 @@ pub struct Module {
     pub theorems: Vec<Rc<Theorem>>,
     pub uses: Vec<Rc<UseOrHide>>,
     pub units: Vec<ModuleUnit>,
+}
+
+impl Expression {
+    /// `getChildren`: the expressions a node holds, in the order `ast.ts` lists them.
+    pub fn children(&self) -> Vec<Expr> {
+        match &self.kind {
+            ExpressionKind::Number { .. }
+            | ExpressionKind::Decimal { .. }
+            | ExpressionKind::String { .. }
+            | ExpressionKind::Identifier { .. }
+            | ExpressionKind::OperatorReference { .. }
+            | ExpressionKind::ExceptAt => Vec::new(),
+            ExpressionKind::Apply { args, .. } => args.clone(),
+            ExpressionKind::Lambda { body, .. } => vec![body.clone()],
+            ExpressionKind::Junction { operands, .. } => operands.clone(),
+            ExpressionKind::Prime(inner)
+            | ExpressionKind::Unchanged(inner)
+            | ExpressionKind::Enabled(inner)
+            | ExpressionKind::Always(inner)
+            | ExpressionKind::Eventually(inner) => vec![inner.clone()],
+            ExpressionKind::If {
+                condition,
+                consequent,
+                alternative,
+            } => vec![condition.clone(), consequent.clone(), alternative.clone()],
+            ExpressionKind::Case { arms, other } => arms
+                .iter()
+                .flat_map(|arm| [arm.condition.clone(), arm.body.clone()])
+                .chain(other.clone())
+                .collect(),
+            ExpressionKind::Let {
+                definitions, body, ..
+            } => definitions
+                .iter()
+                .flat_map(|definition| match &definition.kind {
+                    DefinitionKind::Function { bounds } => bounds
+                        .iter()
+                        .map(|bound| bound.set.clone())
+                        .chain([definition.body.clone()])
+                        .collect(),
+                    DefinitionKind::Operator { .. } => vec![definition.body.clone()],
+                })
+                .chain([body.clone()])
+                .collect(),
+            ExpressionKind::Quantified { bounds, body, .. }
+            | ExpressionKind::FunctionConstruction { bounds, body } => bounds
+                .iter()
+                .map(|bound| bound.set.clone())
+                .chain([body.clone()])
+                .collect(),
+            ExpressionKind::UnboundedQuantifier { body, .. } => vec![body.clone()],
+            ExpressionKind::Choose { set, body, .. } => {
+                set.iter().cloned().chain([body.clone()]).collect()
+            }
+            ExpressionKind::SetEnumeration(elements) | ExpressionKind::Tuple(elements) => {
+                elements.clone()
+            }
+            ExpressionKind::SetFilter { bound, predicate } => {
+                vec![bound.set.clone(), predicate.clone()]
+            }
+            ExpressionKind::SetMap { expression, bounds } => [expression.clone()]
+                .into_iter()
+                .chain(bounds.iter().map(|bound| bound.set.clone()))
+                .collect(),
+            ExpressionKind::FunctionSet { domain, range } => vec![domain.clone(), range.clone()],
+            ExpressionKind::Record { fields, .. } => {
+                fields.iter().map(|field| field.value.clone()).collect()
+            }
+            ExpressionKind::Except { function, updates } => [function.clone()]
+                .into_iter()
+                .chain(updates.iter().flat_map(|update| {
+                    update
+                        .path
+                        .iter()
+                        .flat_map(|step| match step {
+                            ExceptPathStep::Index(args) => args.clone(),
+                            ExceptPathStep::Field(_) => Vec::new(),
+                        })
+                        .chain([update.value.clone()])
+                        .collect::<Vec<_>>()
+                }))
+                .collect(),
+            ExpressionKind::FunctionApplication { function, args } => [function.clone()]
+                .into_iter()
+                .chain(args.iter().cloned())
+                .collect(),
+            ExpressionKind::Bracket(args) => args.clone(),
+            ExpressionKind::FieldAccess { record, .. } => vec![record.clone()],
+            ExpressionKind::Product(factors) => factors.clone(),
+            ExpressionKind::Action {
+                action, subscript, ..
+            } => vec![action.clone(), subscript.clone()],
+            ExpressionKind::Fairness {
+                subscript, action, ..
+            } => vec![subscript.clone(), action.clone()],
+            ExpressionKind::Label { body, .. } => vec![body.clone()],
+            ExpressionKind::Subexpression { selectors, .. } => selectors
+                .iter()
+                .flat_map(|selector| selector.args().to_vec())
+                .collect(),
+        }
+    }
 }
