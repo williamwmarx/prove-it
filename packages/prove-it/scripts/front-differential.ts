@@ -98,6 +98,9 @@ const readEnvironment = (source: string, path: string) => {
       builtin.arity,
       getBuiltinFlags(builtin),
     ]),
+    substituted: [...environment.definitions]
+      .filter((entry) => environment.substitutedDefinitions.has(entry[1]))
+      .map((entry) => entry[0]),
     variables: environment.variables,
     variableIndex: [...environment.variableIndex],
     constants: specification.rootConstants.map((constant) => constant.name),

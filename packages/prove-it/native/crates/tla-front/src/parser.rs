@@ -1696,7 +1696,7 @@ impl Parser {
             .map(|declaration| OperatorParam {
                 name: declaration.name,
                 arity: declaration.arity,
-                location: declaration.location,
+                location: Some(declaration.location),
             })
             .collect())
     }
@@ -1727,11 +1727,11 @@ impl Parser {
         OperatorParam {
             name,
             arity: 0,
-            location: Location {
+            location: Some(Location {
                 line: range.start.line,
                 column: range.start.column,
                 range: Some(range),
-            },
+            }),
         }
     }
 
