@@ -37,12 +37,17 @@ use crate::subexpressions::{resolve_instance_subexpressions, resolve_module_sube
 
 /// A builtin the environment holds: its name, arity and flags (state-level, level-constant,
 /// lazy), which the IR writes.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Builtin {
     pub name: Name,
     pub arity: usize,
     pub flags: u32,
+    /// A configuration's definition of a constant operator by its values: each row's arguments
+    /// and its value (`createOperatorTable`).
+    pub table: Option<Rc<OperatorTable>>,
 }
+
+pub type OperatorTable = Vec<(Vec<ConfigValue>, ConfigValue)>;
 
 /// What linking makes of a spec.
 pub struct Environment {
@@ -390,6 +395,7 @@ impl Linker<'_> {
                     name: operator_name.clone(),
                     arity: operator.arity,
                     flags: operator.flags,
+                    table: None,
                 },
             );
             let range = operator
@@ -686,6 +692,7 @@ impl Linker<'_> {
                         name: Rc::from(operator.name),
                         arity: operator.arity,
                         flags: operator.flags,
+                        table: None,
                     },
                 );
                 self.definitions.borrow_mut().remove(&symbol.key);
@@ -1758,6 +1765,7 @@ fn create_linker<'a>(options: &'a EnvironmentOptions<'a>, root: &Rc<Module>) -> 
                             name,
                             arity: *arity,
                             flags: *flags,
+                            table: None,
                         },
                     )
                 })
@@ -1954,6 +1962,7 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
                         name: key.clone(),
                         arity,
                         flags: BUILTIN_LAZY,
+                        table: None,
                     },
                     &mut definitions,
                     &mut constants,
@@ -1962,7 +1971,8 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
         }
     }
     // The rows of each operator the configuration gives by its values, as a table.
-    let mut tables: OrderedMap<String, (Name, Option<String>, usize)> = OrderedMap::new();
+    let mut tables: OrderedMap<String, (Name, Option<String>, usize, OperatorTable)> =
+        OrderedMap::new();
     for assignment in &config.constants {
         let Some(args) = &assignment.args else {
             continue;
@@ -1985,16 +1995,21 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
         }
         if !tables.contains_key(&table_key) {
             tables.insert(
-                table_key,
+                table_key.clone(),
                 (
                     Rc::from(assignment.name.as_str()),
                     assignment.module.clone(),
                     args.len(),
+                    Vec::new(),
                 ),
             );
         }
+        if let Some(table) = tables.get_mut(&table_key) {
+            table.3.push((args.clone(), assignment.value.clone()));
+        }
     }
-    for (name, module, row_arity) in tables.values() {
+    for (name, module, row_arity, rows) in tables.values() {
+        let rows = Rc::new(rows.clone());
         for key in get_scoped_keys(name, module.as_deref()) {
             let arity = match get_key_arity(&definitions, &key) {
                 0 => *row_arity,
@@ -2006,6 +2021,7 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
                     name: name.clone(),
                     arity,
                     flags: 0,
+                    table: Some(rows.clone()),
                 },
                 &mut definitions,
                 &mut constants,

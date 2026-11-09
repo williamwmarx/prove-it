@@ -721,6 +721,12 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                 {
                     Err("a failure with an ALIAS, POSTCONDITION or _POSSIBLE".to_string())
                 }
+                ViolationKind::Error {
+                    site: ErrorSite::InitialConstraint(_) | ErrorSite::InitialInvariant(_),
+                } => Err(
+                    "a failure on an initial state, which the printing doesn't follow yet"
+                        .to_string(),
+                ),
                 ViolationKind::Error { site } => {
                     let counts = &violation.counts;
                     let stop = ErrorStop {
@@ -732,6 +738,11 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                             ErrorSite::Init => Site::Init,
                             ErrorSite::Next => Site::Next,
                             ErrorSite::Invariant(position) => Site::Invariant(position),
+                            ErrorSite::InitialConstraint(_) | ErrorSite::InitialInvariant(_) => {
+                                unreachable!(
+                                    "a failure on an initial state, which the arm above leaves"
+                                )
+                            }
                         },
                         statistics: Statistics {
                             generated: counts.generated,
@@ -739,6 +750,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                             queued: counts.queued,
                             depth: counts.depth,
                         },
+                        out_degrees: &counts.out_degrees,
                     };
                     print_failure(printer, &ir, &stop, start)
                 }
@@ -886,11 +898,6 @@ fn print_violation(
 ) -> Result<i32, &'static str> {
     // TLC reports a _POSSIBLE predicate the search never witnessed, which a search that stopped
     // doesn't count yet, before it checks the postconditions on the trace.
-    // HACK: under SYMMETRY without a VIEW, the rebuilt trace sorts records TLC prints as they were
-    // built (mongodb-txns Storage), until tla-trace settles them as TLC does.
-    if ir.model.startup.symmetry.is_some() && ir.model.view.is_none() {
-        return Err("a trace under SYMMETRY, whose records TLC may print unsorted");
-    }
     let possible = postconditions.map_or(&[][..], |run| &run.possible[..]);
     if possible.len() != ir.model.possible.len() || possible.iter().any(|(_, count)| *count <= 0) {
         return Err("a _POSSIBLE predicate");
