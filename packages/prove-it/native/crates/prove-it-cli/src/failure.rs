@@ -12,8 +12,10 @@ use crate::check::{SEARCH_STACK_BYTES, Statistics, print_finished, print_statist
 use crate::messages::{self as code, Level, Printer};
 use crate::summary::out_degree_summary;
 
-// The status TLC exits with after a failure evaluating the spec (`EC.ExitStatus`).
+// The status TLC exits with after a failure evaluating the spec, and after an exception it didn't
+// expect (`EC.ExitStatus`).
 const FAILURE_SPEC_EVAL: i32 = 75;
+const ERROR: i32 = 255;
 use crate::trace::{format_partial_state, format_print, format_state, format_texts};
 
 /// Where the search stopped on an error: the path to the state it was expanding, as ids of
@@ -81,6 +83,11 @@ pub fn print_failure(
             ),
         ),
         None => printer.print(failure.code, Level::Error, message),
+    }
+    // TLC reports an exception it didn't expect without the call stack or statistics.
+    if failure.exit_code == ERROR {
+        print_finished(printer, start);
+        return Ok(ERROR);
     }
     // TLC prints the trace to the state it was expanding, and none for the initial predicate:
     // what the spec printed as it rebuilt the first state after the error, and each later state's

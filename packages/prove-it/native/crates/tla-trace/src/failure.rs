@@ -10,7 +10,7 @@ use crate::eval::{CallStack, Context, Evaluator, StackFrame};
 use crate::fingerprint::fingerprint_failure;
 use crate::print::format_value;
 use crate::rebuild::{Rebuilder, is_same, run};
-use crate::value::{Evaluated, TlcMessage, Value, fail, fail_with};
+use crate::value::{Evaluated, TlcMessage, Value, fail, fail_with, normalize_failure};
 use crate::{Ending, Trace, Unsupported};
 
 /// Where the search failed.
@@ -74,6 +74,7 @@ const VIOLATION_ASSUMPTION: i32 = 10;
 const VIOLATION_ASSERT: i32 = 14;
 const FAILURE_SPEC_EVAL: i32 = 75;
 const FAILURE_SAFETY_EVAL: i32 = 76;
+const FAILURE_ERROR: i32 = 255;
 
 const UNEXPECTED_EXCEPTION: &str = "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: ";
 
@@ -374,6 +375,31 @@ impl<'ir> Rebuilder<'ir> {
                 "evaluating the failure again: it didn't fail".into(),
             ));
         };
+        // TLC fails to fingerprint an initial state that holds a set it can't normalize, then to
+        // print the state as it reports that, which escapes as an exception it didn't expect.
+        if call_stack.is_unsorted {
+            return match call_stack.unprintable {
+                Some(message)
+                    if site == Site::Init
+                        && call_stack.unfollowed.is_none()
+                        && printed.is_empty() =>
+                {
+                    Ok(Failure {
+                        code: GENERAL,
+                        message: format!("{UNEXPECTED_EXCEPTION}{}", message.text),
+                        tool_message: format!("{UNEXPECTED_EXCEPTION}{}", nested(&message)),
+                        call_stack: Vec::new(),
+                        exit_code: FAILURE_ERROR,
+                        printed,
+                        fingerprint: None,
+                        state: None,
+                    })
+                }
+                _ => Err(Unsupported(
+                    "evaluating the failure again: a set TLC leaves unnormalized".into(),
+                )),
+            };
+        }
         if let Some(reason) = call_stack.unfollowed {
             return Err(Unsupported(format!(
                 "evaluating the failure again: {reason}"
@@ -621,6 +647,27 @@ impl Evaluator<'_> {
     fn fingerprint_found(&mut self, is_init: bool) -> Evaluated<bool> {
         let ir = self.ir;
         let state = if is_init { &self.current } else { &self.next };
+        if let Some(stack) = &mut self.call_stack
+            && stack.is_unsorted
+            && state.iter().flatten().any(contains_unsorted)
+        {
+            // TLC prints the state's variables in order, and a set it can't normalize fails as it
+            // prints it; the replay doesn't follow one inside another value.
+            let is_followed = is_init
+                && state
+                    .iter()
+                    .flatten()
+                    .all(|value| matches!(value, Value::Unsorted(_)) || !contains_unsorted(value));
+            stack.unprintable = state
+                .iter()
+                .flatten()
+                .find_map(|value| match value {
+                    Value::Unsorted(elements) if is_followed => normalize_failure(elements),
+                    _ => None,
+                })
+                .and_then(|error| error.message);
+            return fail("a state TLC fails to fingerprint and print");
+        }
         for &position in &ir.tlc_order {
             let Some(value) = &state[position as usize] else {
                 continue;
@@ -660,6 +707,20 @@ impl Evaluator<'_> {
             }
         }
         Ok(true)
+    }
+}
+
+// Whether a value holds a set TLC can't normalize, or may: the replay doesn't look into a lazy set.
+fn contains_unsorted(value: &Value) -> bool {
+    match value {
+        Value::Unsorted(_) | Value::Lazy(_) => true,
+        Value::Set(elements) => elements.iter().any(contains_unsorted),
+        Value::Function(function) => function
+            .domain
+            .iter()
+            .chain(&function.range)
+            .any(contains_unsorted),
+        _ => false,
     }
 }
 

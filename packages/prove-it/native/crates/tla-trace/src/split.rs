@@ -671,6 +671,7 @@ impl<'i> Writer<'i> {
                         .collect::<Result<_, _>>()?,
                 )
             }
+            Value::Unsorted(_) => return Err(Unsupported("a set TLC leaves unnormalized".into())),
             Value::Function(function) => {
                 let range = function
                     .range
