@@ -30,6 +30,7 @@ fn link_model(
         is_unconfigured: config.is_none(),
         version: TlcVersion::Master,
         is_level_checked: false,
+        load_class: None,
     })
 }
 

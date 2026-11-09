@@ -85,6 +85,9 @@ pub struct Environment {
     pub assumptions: Vec<Rc<Assumption>>,
     /// The resolution tables SANY's level analysis reads.
     pub tables: Rc<Tables>,
+    /// The methods of the Java class that overrides a module's operators, which TLC reports as it
+    /// starts.
+    pub java_overrides: Vec<crate::java_overrides::JavaOverride>,
 }
 
 impl Environment {
@@ -121,6 +124,9 @@ pub struct InstanceAction {
     pub location: Location,
 }
 
+/// What reads the bytes of the Java class TLC loads for a module, if it has one.
+pub type ClassLoader<'a> = dyn Fn(&str) -> Option<Vec<u8>> + 'a;
+
 pub struct EnvironmentOptions<'a> {
     pub source: &'a str,
     pub load_module: &'a dyn Fn(&str) -> Option<String>,
@@ -131,6 +137,9 @@ pub struct EnvironmentOptions<'a> {
     /// Checks the levels of each module, as `createEnvironment` does for a spec SANY hasn't
     /// accepted (`isSanyAccepted`).
     pub is_level_checked: bool,
+    /// The bytes of the Java class TLC loads for a module (`loadClass`), whose public static
+    /// methods override the module's operators.
+    pub load_class: Option<&'a ClassLoader<'a>>,
 }
 
 struct LinkedModule {
@@ -323,6 +332,8 @@ struct Linker<'a> {
     linked_modules: RefCell<FastMap<Name, Rc<LinkedModule>>>,
     nested_modules: RefCell<FastMap<Name, Rc<LinkedModule>>>,
     link_order: RefCell<Vec<Rc<LinkedModule>>>,
+    /// The methods of the Java class that overrides a module's operators.
+    java_overrides: RefCell<Vec<crate::java_overrides::JavaOverride>>,
     dependencies: RefCell<FastMap<Name, FastSet<Name>>>,
     loading: RefCell<Vec<FastSet<Name>>>,
     /// The top-level modules being linked, to report a cycle of EXTENDS or INSTANCE.
@@ -509,6 +520,25 @@ impl Linker<'_> {
         symbols
     }
 
+    /// `overrideDefinitions` with the class TLC loads for the module, if any.
+    fn override_module(&self, module: Rc<Module>, is_root: bool) -> Result<Rc<Module>> {
+        let Some(bytes) = self.options.load_class.and_then(|load| load(&module.name)) else {
+            return Ok(module);
+        };
+        let (module, overrides) =
+            crate::java_overrides::override_definitions(&module, &bytes, is_root)?;
+        let mut java_overrides = self.java_overrides.borrow_mut();
+        // TLC reports the overrides in the order it links the modules, which matters only for
+        // two of them.
+        if !java_overrides.is_empty() {
+            return Err(FrontError::NotYet(
+                "Java classes overriding two modules".to_owned(),
+            ));
+        }
+        *java_overrides = overrides;
+        Ok(module)
+    }
+
     fn load_module(&self, name: &Name, importer: &str) -> Result<Rc<Module>> {
         let source = (self.options.load_module)(name)
             .or_else(|| {
@@ -523,6 +553,7 @@ impl Linker<'_> {
         let module = self
             .parse_text(&source)
             .map_err(|_| FrontError::NotYet(format!("SANY's parse error for module {name}")))?;
+        let module = self.override_module(module, false)?;
         if module.name != *name {
             return Err(sany_error(
                 vec![SanyError {
@@ -1846,6 +1877,7 @@ fn create_linker<'a>(options: &'a EnvironmentOptions<'a>, root: &Rc<Module>) -> 
         linked_modules: RefCell::default(),
         nested_modules: RefCell::default(),
         link_order: RefCell::default(),
+        java_overrides: RefCell::default(),
         dependencies: RefCell::default(),
         loading: RefCell::default(),
         linking: RefCell::default(),
@@ -1970,12 +2002,17 @@ pub fn get_sany_messages(
 /// Links the spec's modules as `createEnvironment` does for a spec without a model
 /// (`isUnconfigured`) that SANY accepted (`isSanyAccepted`), so it runs no level checks.
 pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
-    let root = Rc::new(parse_module_tokens(
+    let parsed = Rc::new(parse_module_tokens(
         options.source,
         &tokenize(options.source)?,
         options.version,
     )?);
+    let (root, root_overrides) = match options.load_class.and_then(|load| load(&parsed.name)) {
+        Some(bytes) => crate::java_overrides::override_definitions(&parsed, &bytes, true)?,
+        None => (parsed, Vec::new()),
+    };
     let linker = create_linker(options, &root);
+    *linker.java_overrides.borrow_mut() = root_overrides;
     reject_module_literals(&root)?;
     let (linked_root, _) = linker.link_top_level(&root)?;
     let warnings = linker.warnings.borrow().clone();
@@ -2313,6 +2350,7 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
         instance_actions: linker.instance_actions.take(),
         instance_names: linker.instance_names.take(),
         printed,
+        java_overrides: linker.java_overrides.take(),
     };
     // TLC evaluates a substitute for a constant at startup and rejects it only when that fails and
     // the level bound it computes is above constant. The bound counts the operators that TLC's

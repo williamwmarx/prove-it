@@ -32,6 +32,7 @@ fn try_evaluate_ranked(
         is_unconfigured: true,
         version: TlcVersion::Master,
         is_level_checked: false,
+        load_class: None,
     })
     .expect("an environment");
     let ranks: FastMap<Rc<str>, u32> = texts

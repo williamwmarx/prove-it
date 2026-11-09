@@ -299,9 +299,60 @@ struct Relay<'ir> {
     /// What the substitutes and constant definitions printed as the store words it, where it
     /// does, until `startup_done`.
     startup_worded: Option<Vec<Option<String>>>,
+    /// What the assumptions printed as the store words it, or as the trace evaluator printed an
+    /// assumption the engine left to it, from `startup_done` on.
+    assumed_worded: Vec<Option<String>>,
+    /// What the trace evaluator finds the assumptions print, in order, where the store forgot how
+    /// TLC built a value one prints.
+    assumed_texts: Option<Option<Vec<String>>>,
     /// What the trace evaluator finds they print, as TLC built the values, where the store
     /// forgot how TLC built one.
     startup_texts: Option<Option<Vec<String>>>,
+}
+
+impl Relay<'_> {
+    // What an assumption prints, which the trace evaluator prints as TLC built it where the store
+    // forgot, as long as it prints the same: each print before it the store worded alike.
+    fn word_assumed(&mut self, worded: Option<String>) -> Option<String> {
+        self.assumed_worded.push(worded.clone());
+        if self.assumed_texts.is_none() && worded.is_some() {
+            return worded;
+        }
+        let ir = self.ir;
+        let (workers, is_tool) = (self.workers, self.is_tool);
+        let worded_prints = &self.assumed_worded;
+        let texts = self.assumed_texts.get_or_insert_with(|| {
+            // Each assumption's prints in turn, up to one the evaluator doesn't follow, as TLC
+            // stops at an assumption that doesn't hold.
+            let mut texts = Vec::new();
+            for position in 0..ir.model.startup.assumptions.len() as u32 {
+                let checked = Rebuilder::new(ir).and_then(|mut rebuilder| {
+                    rebuilder.set_workers(workers);
+                    rebuilder.check_assumption(position, is_tool)
+                });
+                let Ok(checked) = checked else {
+                    break;
+                };
+                texts.extend(checked.printed.iter().map(|print| format_print(print)));
+                if !checked.holds {
+                    break;
+                }
+            }
+            let index = worded_prints.len() - 1;
+            (texts.len() > index
+                && worded_prints[..index]
+                    .iter()
+                    .zip(&texts)
+                    .all(|(worded, text)| worded.as_ref() == Some(text)))
+            .then_some(texts)
+        });
+        let index = self.assumed_worded.len() - 1;
+        texts
+            .as_ref()
+            .and_then(|texts| texts.get(index))
+            .filter(|text| worded.as_ref().is_none_or(|worded| worded == *text))
+            .cloned()
+    }
 }
 
 impl Reporter for Relay<'_> {
@@ -346,7 +397,8 @@ impl Reporter for Relay<'_> {
         }
         let worded = format_printed(store, values);
         let Some(worded_prints) = self.startup_worded.as_mut() else {
-            let _ = self.sender.send(Event::Print(worded));
+            let printed = self.word_assumed(worded);
+            let _ = self.sender.send(Event::Print(printed));
             return;
         };
         worded_prints.push(worded.clone());
@@ -404,7 +456,9 @@ impl Reporter for Relay<'_> {
             .map_err(|Unsupported(reason)| format!("checking an assumption again: {reason}"))?;
         if self.is_startup_printed {
             for print in &checked.printed {
-                let _ = self.sender.send(Event::Print(Some(format_print(print))));
+                let text = format_print(print);
+                self.assumed_worded.push(Some(text.clone()));
+                let _ = self.sender.send(Event::Print(Some(text)));
             }
         }
         // The replay doesn't yet word every failure as TLC does, and a message worded apart makes
@@ -624,6 +678,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
         }
         Output::Native {
             sany,
+            override_messages,
             startup_messages,
         } => {
             if is_trace_recorded(args) {
@@ -632,10 +687,11 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                     "SANY's report of the trace exploration spec TLC parses with the spec",
                 );
             }
-            if let Some(reason) = get_unprinted_startup(spec_path, &sany) {
-                return report_not_native(printer, reason);
-            }
             print_sany(printer, &sany);
+            // TLC loads the classes of the modules before it computes the constant definitions.
+            for message in &override_messages {
+                print_startup_message(printer, message);
+            }
             (true, startup_messages)
         }
     };
@@ -694,6 +750,8 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                     workers,
                     startup_messages,
                     startup_worded: Some(Vec::new()),
+                    assumed_worded: Vec::new(),
+                    assumed_texts: None,
                     startup_texts: None,
                 };
                 search(ir, &settings, &mut relay)
@@ -734,15 +792,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                     }
                 }
                 Event::Print(Some(text)) => printer.line(&text),
-                Event::StartupMessage(message) => printer.print(
-                    message.code,
-                    if message.is_warning {
-                        Level::Warning
-                    } else {
-                        Level::None
-                    },
-                    &message.text,
-                ),
+                Event::StartupMessage(message) => print_startup_message(printer, &message),
                 Event::SymmetrySetsTooSmall(names) => print_small_sets(printer, &names),
                 // Nothing more this run prints can be right, so it ends here rather than search
                 // on, the search thread with it.
@@ -1626,16 +1676,14 @@ fn is_trace_recorded(args: &Parsed) -> bool {
     is_spec_generated && !has_flag("-noGenerateSpecTEBin", "-noTEBin")
 }
 
-// What TLC prints as it starts that the binary doesn't print from tla-front's model yet, which
-// keeps the run not native: TLC's report of the Java overrides it loads, from the class beside the
-// spec named after each module SANY processed.
-fn get_unprinted_startup(spec_path: &str, sany: &str) -> Option<&'static str> {
-    let directory = Path::new(spec_path).parent().unwrap_or(Path::new("."));
-    let has_classes = sany.lines().any(|line| {
-        line.strip_prefix("Semantic processing of module ")
-            .is_some_and(|module| directory.join(format!("{module}.class")).exists())
-    });
-    has_classes.then_some("the Java overrides TLC reports as it starts")
+// A message TLC prints itself as it starts, as tla-front writes it.
+fn print_startup_message(printer: &mut Printer, message: &StartupMessage) {
+    let level = if message.is_warning {
+        Level::Warning
+    } else {
+        Level::None
+    };
+    printer.print(message.code, level, &message.text);
 }
 
 // `TLC_SYMMETRY_SET_TOO_SMALL`, as `symmetry.ts` words it.
