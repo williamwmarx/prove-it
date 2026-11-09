@@ -302,7 +302,7 @@ fn compose(
     }
 }
 
-fn run<T>(evaluated: Evaluated<T>) -> Result<T, Unsupported> {
+pub(crate) fn run<T>(evaluated: Evaluated<T>) -> Result<T, Unsupported> {
     evaluated.map_err(|error| Unsupported(format!("rebuilding a trace: {}", error.reason)))
 }
 
