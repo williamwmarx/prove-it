@@ -214,6 +214,9 @@ after each pull request.
 - **Actions** (`action.rs`). The walk follows `walker.rs`. It assigns at the first `x' = e` or
   `x' \in S`, tests elsewhere, walks UNCHANGED variable by variable, treats `[A]_v` and `<<A>>_v`
   as TLC does, and evaluates the rest of a conjunction as guards once every variable is assigned.
+  It binds the bounds of a quantifier as TLC's `ContextEnumerator` does: every set first, then the
+  first bound varying fastest. It walks `\A` as the conjunction of its body over the bindings, the
+  first and then the others in reverse, as `getNextStates` queues them.
 - **Matching** (`rebuild.rs`). Without VIEW or SYMMETRY, a candidate is the state when it equals
   the search's state. Under VIEW, its view must equal the view of the search's state. Under
   SYMMETRY, some permutation of the group must map it to that state, so the two are in one orbit.
@@ -223,6 +226,9 @@ after each pull request.
   without VIEW or SYMMETRY, deeply but for lambdas under SYMMETRY, and as `deepNormalize` with the
   view deeply under a VIEW. So is the last one if
   it satisfies the CONSTRAINTs and ACTION_CONSTRAINTs, as TLC fingerprints only such a state.
+  A violating last state outside them goes through TLC's checks of it instead, which sort what
+  their comparisons reach: the invariants in order until one fails, then the action properties
+  (`doNextCheckInvariants`, `doNextCheckImplied`).
   For a plain match where nothing prints, the walk drops an assignment as soon as it differs from
   the search's state. The check sorts nothing, so it changes no value TLC prints, and a model such
   as MCBakery's ISpec doesn't enumerate its 1.7 million initial states again.
