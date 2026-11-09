@@ -191,6 +191,10 @@ pub struct Action {
     /// `UnnamedAction` for an action of no operator.
     pub name: TextId,
     pub location: Option<SourceRange>,
+    /// The definition TLC split the action from (`Action.getOpDef`), whose parameters
+    /// CounterExample binds, by index; none for an action of no operator, or of one a LET
+    /// defines.
+    pub definition: Option<Index>,
 }
 
 /// A definition an INSTANCE with substitutions copies, and the name and location TLC gives an

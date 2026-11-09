@@ -721,6 +721,14 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                 )
             });
         }
+        // TLC rejects the value of a constant definition the configuration names as it reads
+        // the configuration.
+        SearchOutcome::ConfigError { message } => {
+            return match FrontError::Config(message).get_coded(printer.is_tool) {
+                Some(coded) => print_coded_failure(printer, &coded, start),
+                None => report_not_native(printer, "a configuration error without TLC's code"),
+            };
+        }
         // TLC reports a false assumption with no statistics, since it hasn't searched.
         SearchOutcome::AssumptionViolated { name } => {
             printer.print(

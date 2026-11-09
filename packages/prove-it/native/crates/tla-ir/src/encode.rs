@@ -105,6 +105,7 @@ fn encode_here(ir: &Ir) -> Vec<u8> {
             action.name as i32,
         ]);
         words.extend(range_words(action.location));
+        words.push(optional(action.definition));
     }
     words.push(model.is_labelled as i32);
     let config_name = |name: &ConfigName| [name.name as i32, optional(name.definition)].into_iter();

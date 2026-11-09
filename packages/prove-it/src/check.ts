@@ -1855,6 +1855,7 @@ const searchStates = (
             label,
             name: action.name,
             range: action.location.range,
+            operator: action.operator,
           };
         }),
         isWarningEnabled: runtime.isWarningEnabled,

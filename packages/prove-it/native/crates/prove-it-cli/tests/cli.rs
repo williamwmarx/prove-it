@@ -886,3 +886,27 @@ fn checks_a_postcondition_on_a_lasso_stuttering_at_its_initial_state() {
     assert!(!text.contains("Postcondition"), "{text}");
     std::fs::remove_dir_all(directory).expect("removed");
 }
+
+#[test]
+fn rejects_a_constant_invariant_the_front_end_leaves_to_the_startup() {
+    // tla-front's evaluator computes no records, so the engine evaluates Bad as TLC starts.
+    let source = "---- MODULE Bad ----\nVARIABLE x\nInit == x = 0\nNext == x' = x\nBad == [a |-> 1].a = 2\n====\n";
+    let config = "INIT Init\nNEXT Next\nINVARIANT Bad\n";
+    let spec = std::env::temp_dir().join(format!("prove-it-cli-bad-{}.tla", std::process::id()));
+    std::fs::write(&spec, source).expect("the spec");
+    let options = tla_front::model::ModelOptions {
+        libraries: &[],
+        version: None,
+        is_warning_enabled: true,
+    };
+    let ir = tla_front::model::lower_model(&spec, config, &options).expect("an IR");
+    std::fs::remove_file(&spec).expect("removed");
+    let (output, directory) = run_golden("constant-invariant", &ir, "Bad", config, &[]);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(151), "{text}");
+    assert!(
+        text.contains("Error: The invariant of Bad is equal to FALSE\nFinished in "),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
