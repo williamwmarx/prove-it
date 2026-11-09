@@ -840,6 +840,43 @@ fn reports_an_invariant_violated_before_atoms_the_tables_leave_unanswered() {
 }
 
 #[test]
+fn rebuilds_a_violations_trace_again_before_the_postconditions() {
+    // TLC rebuilds the trace as it prints it and once more for the counterexample the
+    // postconditions read, running Next again each time: Next prints and counts in a register
+    // both times, before the postcondition reads the register.
+    let spec = "---- MODULE Stop ----\nEXTENDS Naturals, TLC\nVARIABLE x\nASSUME TLCSet(2, 0)\nInit == x = 0\nNext == x < 5 /\\ x' = x + 1 /\\ TLCSet(2, TLCGet(2) + 1) /\\ PrintT(<<\"n\", x, TLCGet(2)>>)\nInv == x < 3\nPost == PrintT(<<TLCGet(2)>>)\nShown == [x |-> x, r |-> TLCGet(2)]\n====\n";
+    let (output, directory) = run_lowered(
+        "rebuilt-twice",
+        spec,
+        "INIT Init\nNEXT Next\nINVARIANT Inv\nPOSTCONDITION Post\n",
+    );
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(12), "{text}");
+    assert!(
+        text.contains("<<\"n\", 2, 3>>\nError: Invariant Inv is violated.\n<<\"n\", 0, 4>>\nError: The behavior up to this point is:\n"),
+        "{text}"
+    );
+    assert!(
+        text.contains("<<\"n\", 2, 6>>\nState 4: <Next line 6, col 9 to line 6, col 88 of module Stop>\nx = 3\n\n<<\"n\", 0, 7>>\n<<\"n\", 1, 8>>\n<<\"n\", 2, 9>>\n<<9>>\n4 states generated, 4 distinct states found, 0 states left on queue.\n"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+    // TLC evaluates the ALIAS of each state as it prints it, part way through those rebuilds.
+    let (output, directory) = run_lowered(
+        "rebuilt-twice",
+        spec,
+        "INIT Init\nNEXT Next\nINVARIANT Inv\nALIAS Shown\n",
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("an ALIAS that uses registers the rebuild of the trace sets"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
 fn reads_and_sets_tlcs_registers() {
     // TLCCache evaluates Counted once, TLCFP is TLC's fingerprint under -fp 0, which the
     // interpreter and TLC print the same, and a Java property TLC hasn't set is its key.

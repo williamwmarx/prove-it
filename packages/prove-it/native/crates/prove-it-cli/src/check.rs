@@ -1358,18 +1358,21 @@ fn print_violation(
     };
     printer.print(heading_code, Level::Error, heading);
     print_states(printer, &trace, &labels);
-    // What the postconditions printed follows the trace (`traceOutput`).
-    for line in trace
+    // TLC rebuilds a violation's trace again for the counterexample the postconditions read,
+    // so what that prints comes before what they print.
+    let postcondition_output = trace
         .postconditions
         .iter()
-        .flat_map(|checked| &checked.printed)
-    {
-        printer.line(line);
+        .flat_map(|checked| &checked.printed);
+    if lasso.is_some() || is_counterexample {
+        for line in postcondition_output.clone() {
+            printer.line(line);
+        }
     }
     match lasso {
         None if is_counterexample => {}
         None => {
-            for line in &trace.trace_output {
+            for line in trace.trace_output.iter().chain(postcondition_output) {
                 printer.line(line);
             }
         }

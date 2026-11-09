@@ -362,7 +362,3 @@ Open, with what is known:
   next would be an atom TLC evaluates on an initial state, which needs the checker called from
   `visit_initial` with the machine's state kept around the atom, and a late node, where Next's
   walk from the state runs again for what it sets.
-- A POSTCONDITION that reads a register Next sets, after an invariant is violated, prints another
-  value than TLC's (TLC 9, the binary 6, for Next == x' = (x + 1) % 4 /\ TLCSet(2, TLCGet(2) + 1),
-  Inv == x < 3): TLC's rebuilds of the trace run Next again. No temporal property is involved;
-  reported to the coordinator for the trace's owner.

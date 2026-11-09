@@ -272,6 +272,8 @@ pub struct Evaluator<'ir> {
     pub registers: Registers,
     /// How many times TLCSet set a register.
     pub register_writes: usize,
+    /// How many times TLCGet read a register.
+    pub register_reads: usize,
     /// Whether TLC runs with -tool, under which the message of an error TLC raises with a code
     /// holds the code's markers, which AssertError compares with. `None` where the caller doesn't
     /// say, and AssertError isn't followed.
@@ -407,6 +409,7 @@ impl<'ir> Evaluator<'ir> {
             runtime: None,
             registers: Registers::default(),
             register_writes: 0,
+            register_reads: 0,
             is_tool: None,
             workers: None,
         }
@@ -2964,6 +2967,7 @@ impl<'ir> Evaluator<'ir> {
                     // A register, whose value no cache may keep.
                     key @ Value::Int(index) if index >= 0 => {
                         self.reads += 1;
+                        self.register_reads += 1;
                         match self.registers.numbered.get(index as usize) {
                             Some(Some(value)) => value.clone(),
                             _ => return undefined_register(&key),
@@ -2971,6 +2975,7 @@ impl<'ir> Evaluator<'ir> {
                     }
                     key if is_register_name(&key) => {
                         self.reads += 1;
+                        self.register_reads += 1;
                         match self.get_named_register(&key)? {
                             Some(value) => value,
                             None => return undefined_register(&key),
