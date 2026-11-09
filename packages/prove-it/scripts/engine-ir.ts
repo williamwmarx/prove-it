@@ -94,6 +94,7 @@ const GOLDEN_MODELS = [
   "tlc/tlatools/org.lamport.tlatools/test-model/Github1389Counting.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/Github710b.cfg",
   "mongodb-txns/MultiShardTxn/Storage.cfg",
+  "tlc/tlatools/org.lamport.tlatools/test-model/examples/ewd998/AsyncTerminationDetection.cfg",
 ];
 
 const GOLDEN_DIRECTORY = join(CONFORMANCE_DIRECTORY, "ir");
