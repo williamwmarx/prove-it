@@ -411,7 +411,6 @@ fn check_spec(spec_path: &str, args: &Parsed, printer: &mut Printer) -> i32 {
         return report_not_native(printer, "checking temporal properties");
     }
     let (sender, receiver) = mpsc::channel();
-    let mut is_printing = false;
     let outcome = std::thread::scope(|scope| {
         let ir = &ir;
         let searching = std::thread::Builder::new()
@@ -421,9 +420,6 @@ fn check_spec(spec_path: &str, args: &Parsed, printer: &mut Printer) -> i32 {
             })
             .expect("a thread for the search");
         for event in receiver {
-            if is_printing {
-                continue;
-            }
             match event {
                 Event::InitialStatesStarted => printer.print(
                     code::COMPUTING_INIT,
@@ -448,16 +444,15 @@ fn check_spec(spec_path: &str, args: &Parsed, printer: &mut Printer) -> i32 {
                     print_progress(printer, &statistics, Some(start));
                     printer.flush();
                 }
-                Event::Print => is_printing = true,
+                // Nothing more this run prints can be right, so it ends here rather than search
+                // on, the search thread with it.
+                Event::Print => std::process::exit(report_not_native(printer, "printing values")),
             }
         }
         searching
             .join()
             .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
     });
-    if is_printing {
-        return report_not_native(printer, "printing values");
-    }
     let (counts, fingerprints) = match outcome {
         SearchOutcome::Complete {
             counts,
