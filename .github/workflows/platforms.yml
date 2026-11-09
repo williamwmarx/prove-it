@@ -11,8 +11,8 @@ name: Platforms
   workflow_dispatch: null
 permissions:
   contents: read
-# A push to main is never cancelled: release.yml takes the macOS packages from the run of the commit
-# it releases.
+# A push to main is never cancelled: release.yml takes the macOS and Windows packages from the run of
+# the commit it releases.
 concurrency:
   group: platforms-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
