@@ -739,6 +739,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                             queued: counts.queued,
                             depth: counts.depth,
                         },
+                        out_degrees: &counts.out_degrees,
                     };
                     print_failure(printer, &ir, &stop, start)
                 }
