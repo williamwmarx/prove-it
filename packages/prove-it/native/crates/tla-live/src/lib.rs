@@ -50,17 +50,27 @@ impl Graph<'_> {
     }
 }
 
+/// What the check found, and how many solutions of the formula TLC checks, which it calls branches,
+/// unless it declined before it knew.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Liveness {
+    pub branches: Option<usize>,
+    pub verdict: Verdict,
+}
+
 /// What the check found.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Verdict {
     /// The properties hold.
     Holds,
-    /// A counterexample: the states of the lasso, the cycle from `loop_start` on, and whether
-    /// the solution it violates constrains the cycle, so TLC warns of a stuttering one.
+    /// A counterexample: the states of the lasso, the cycle from `loop_start` on, whether the
+    /// solution it violates constrains the cycle, so TLC warns of a stuttering one, and the
+    /// positions of the properties it violates, which TLC names.
     Lasso {
         path: Vec<u32>,
         loop_start: usize,
         is_cycle_constrained: bool,
+        violated: Vec<usize>,
     },
     /// A tableau node that accepts every behavior, which TLC reports as it adds `state` to the
     /// graph, with the path of states to it.
@@ -102,22 +112,39 @@ fn read_term(terms: &mut Terms, formula: &[Term], at: &mut usize) -> Result<Term
     Ok(terms.create(kind, children))
 }
 
+fn read_formula(terms: &mut Terms, formula: &[Term]) -> Result<TermId, Declined> {
+    let mut at = 0;
+    let root = read_term(terms, formula, &mut at)?;
+    if at != formula.len() {
+        return Err(Declined::from("a formula with terms past its end"));
+    }
+    Ok(root)
+}
+
 /// Checks the formula, the fairness and the negated properties as `createLivenessChecker` joins
 /// them, on a complete search's graph, from the engine's answers to each atom (`None` for an atom
-/// it doesn't answer).
-pub fn check(formula: &[Term], graph: &Graph<'_>, tables: &[Option<&[u8]>]) -> Verdict {
-    let run = || {
+/// it doesn't answer), and finds which of the properties a counterexample violates.
+pub fn check(
+    formula: &[Term],
+    properties: &[&[Term]],
+    graph: &Graph<'_>,
+    tables: &[Option<&[u8]>],
+) -> Liveness {
+    let mut branches = None;
+    let mut run = || {
         if graph.edge_offsets.len() != graph.count() + 1 {
             return Err(Declined::from("a search that didn't expand every state"));
         }
         let mut terms = Terms::default();
-        let mut at = 0;
-        let root = read_term(&mut terms, formula, &mut at)?;
-        if at != formula.len() {
-            return Err(Declined::from("a formula with terms past its end"));
-        }
+        let root = read_formula(&mut terms, formula)?;
+        let properties = properties
+            .iter()
+            .map(|property| read_formula(&mut terms, property))
+            .collect::<Result<Vec<_>, _>>()?;
         let mut checker = checker::Checker::new(terms, root, graph, tables)?;
-        checker::check(&mut checker)
+        branches = Some(checker.branches());
+        checker::check(&mut checker, &properties)
     };
-    run().unwrap_or_else(Verdict::Declined)
+    let verdict = run().unwrap_or_else(Verdict::Declined);
+    Liveness { branches, verdict }
 }
