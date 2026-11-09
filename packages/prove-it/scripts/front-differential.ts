@@ -2,13 +2,14 @@
 // the fetched corpora and the test fixtures, as text: each side writes one JSON line per module.
 // Usage: bun scripts/front-differential.ts <mode> [--fixtures] [--filter text] [--mutate count]
 //   [--rust <front-dump>]
-// The modes are tokens, ast, sany-ast, config (over the .cfg files), resolve, model, and time, which
+// The modes are tokens, ast, sany-ast, config (over the .cfg files), resolve, model, ir, and time, which
 // compares how long each side takes to parse each module instead. resolve links each module as the
 // root of a spec without a model, reading the modules it imports beside it and from the corpora's
 // library, and compares the environment: each definition by key, with every name resolved, the
 // builtins, the variables, and SANY's errors and warnings. A module the Rust front end doesn't
 // link yet is counted, not compared. model does the same for each corpus model, a .cfg file and
-// the spec beside it, with the model's constants and substitutions. --fixtures reads only the fixtures, so it runs without the corpora.
+// the spec beside it, with the model's constants and substitutions. ir lowers each module's
+// environment to the engine IR, with every definition in it, and compares the bytes. --fixtures reads only the fixtures, so it runs without the corpora.
 // --mutate adds four variants of each of the first count modules, with syntax inserted and text
 // deleted at places a fixed seed picks, so the two sides' errors are compared too. Without --rust,
 // it builds front-dump with cargo first.
@@ -18,14 +19,16 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 
-import type { Definition } from "../src/ast";
+import type { Definition, Expression } from "../src/ast";
 import { type ModelConfig, parseConfig } from "../src/config";
+import { lowerToIr } from "../src/engine/ir";
 import { createEnvironment } from "../src/environment";
 import { TlaConfigError, TlaEvaluationError, TlaModuleError, TlaSyntaxError } from "../src/errors";
 import type { Builtin } from "../src/evaluate";
 import { tokenize } from "../src/lexer";
 import { parseModule, parseSanyModule } from "../src/parser";
 import { createTlcOrder } from "../src/tlc/order";
+import { setStringOrder } from "../src/values";
 import {
   CORPORA_DIRECTORY,
   getCorpora,
@@ -72,9 +75,9 @@ const writeResult =
 const getBuiltinFlags = (builtin: Builtin) =>
   (builtin.isStateLevel ? 1 : 0) | (builtin.isLevelConstant ? 2 : 0) | (builtin.isLazy ? 4 : 0);
 
-// The environment of a spec whose root module is the file, linked with the model's configuration,
-// or without a model.
-const readEnvironment = (source: string, path: string, config?: ModelConfig) => {
+// The spec whose root module is the file, linked with the model's configuration, or without a
+// model, and what linking prints.
+const linkSpec = (source: string, path: string, config?: ModelConfig) => {
   const loadModule = (name: string) =>
     [dirname(path), LIBRARY_PATH]
       .map((directory) => join(directory, `${name}.tla`))
@@ -90,6 +93,14 @@ const readEnvironment = (source: string, path: string, config?: ModelConfig) => 
     isUnconfigured: config === undefined,
     isSanyAccepted: true,
   });
+  return { specification, printed };
+};
+
+// The environment of a spec, as canonical JSON.
+const readEnvironment = (source: string, path: string, config?: ModelConfig) => {
+  const linked = linkSpec(source, path, config);
+  const specification = linked.specification;
+  const printed = linked.printed;
   const environment = specification.environment;
   const keys = new Map<Definition, string>();
   return {
@@ -117,6 +128,31 @@ const readEnvironment = (source: string, path: string, config?: ModelConfig) => 
   };
 };
 
+// The IR of a model whose Init and Next are a placeholder and whose configuration names each
+// definition of the environment, by key, as an invariant, so it holds every definition. No text is
+// ranked, so the texts follow their first use.
+const lowerDefinitions = (source: string, path: string) => {
+  const environment = linkSpec(source, path).specification.environment;
+  const root: Expression = { kind: "Number", value: 0, location: { line: 0, column: 0 } };
+  setStringOrder([]);
+  const outcome = lowerToIr({
+    config: { ...parseConfig(""), invariants: [...environment.definitions.keys()] },
+    environment,
+    spec: { init: root, next: root },
+    traceActions: [],
+    isWarningEnabled: true,
+    tlcOrder: [],
+    properties: { invariants: [], invariantNames: [], actionProperties: [], initialPredicates: [] },
+    symmetry: undefined,
+    isRecordingGraph: false,
+    version: undefined,
+    atoms: [],
+    liveFormula: undefined,
+    liveProperties: [],
+  });
+  return "ir" in outcome ? { ir: Buffer.from(outcome.ir).toString("hex") } : outcome;
+};
+
 const MODES: Record<string, (source: string, path: string, spec: string) => string> = {
   tokens: writeResult((source) =>
     tokenize(source).map((token) => [
@@ -131,6 +167,7 @@ const MODES: Record<string, (source: string, path: string, spec: string) => stri
   ast: writeResult(parseModule),
   "sany-ast": writeResult((source) => parseSanyModule(source)),
   resolve: writeResult((source, path) => readEnvironment(source, path)),
+  ir: writeResult(lowerDefinitions),
   model: writeResult((source, _path, spec) =>
     readEnvironment(readFileSync(spec, "utf8"), spec, parseConfig(source)),
   ),
@@ -223,7 +260,7 @@ const getRustBinary = () => {
 };
 const rust = getRustBinary();
 
-const isLinked = mode === "resolve" || mode === "model";
+const isLinked = mode === "resolve" || mode === "model" || mode === "ir";
 if (isLinked) linkLibraryModules();
 
 const runRust = (batch: typeof modules) => {

@@ -140,6 +140,10 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
 - A trace the interpreter rebuilds after a hand-over now draws as TLC's does (`TLCTrace#getTrace`):
   each initial state from the generator the search started with, and each successor from one
   seeded with its predecessor.
+- TLC labels each step of a trace as it rebuilds the trace, with a generator it resets first, so
+  it reseeds for each predecessor. The checker finds a step's action by evaluating the actions
+  again, so it now resets the generator first (`resetRandom`). Before, a step whose predecessor
+  the generator was last seeded for drew on from where it stopped, and the step lost its label.
 - RandomElement, RandomElementXandY, RandomSubsetNextTuples and RandomSubsetSetOfFcns (TLC's
   tests), declined before, now search in Rust, and RandomSubset until its invariant builds
   `1..100000000`.

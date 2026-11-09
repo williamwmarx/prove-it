@@ -851,6 +851,7 @@ const searchStates = (
     Object.assign(current, { index, isExpanding: true, candidate: undefined });
     const getKey = isHeld ? (values: Value[]) => values : getFingerprintState;
     const key = getKey(state);
+    runtime.resetRandom();
     const action = withRebuiltLevel(previous, depths[index], () =>
       actions.find((item) =>
         getSuccessors(item.expression, previous, environment, item.scope).some((successor) =>
@@ -1793,7 +1794,15 @@ const searchStates = (
         computed.initialStates = { generated, distinct };
         if (!liveness) reportComputed();
       },
-      onPrint: print,
+      // With temporal properties, the engine prints once it has checked them, after it reports the
+      // initial states, which TLC reports before anything the search prints.
+      onPrint: (text: string) => {
+        if (liveness) {
+          releaseInitialProgress(Infinity);
+          reportComputed();
+        }
+        print(text);
+      },
     };
     const startedAt = performance.now();
     const native = isNativeBackend() ? checkNatively(lowerModel, callbacks) : undefined;

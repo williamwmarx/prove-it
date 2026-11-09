@@ -442,13 +442,16 @@ impl Compiler<'_> {
             },
             _ => None,
         };
-        if key != Some("level") && key != Some("distinct") {
+        if key != Some("level") && key != Some("distinct") && key != Some("diameter") {
             return unsupported("TLCGet");
         }
         if context.is_init && context.is_primed {
             return unsupported("TLCGet");
         }
-        let slot = if key == Some("distinct") {
+        let slot = if key == Some("diameter") {
+            self.is_diameter_read = true;
+            super::DIAMETER_SLOT
+        } else if key == Some("distinct") {
             self.is_distinct_read = true;
             DISTINCT_SLOT
         } else if context.is_primed {
