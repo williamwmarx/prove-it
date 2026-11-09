@@ -287,6 +287,19 @@ mod tests {
     }
 
     #[test]
+    fn settles_the_values_a_lazy_set_enumerates_into() {
+        let record = Value::record(vec![
+            (text("a", 1), Value::Int(1)),
+            (text("b", 0), Value::Int(1)),
+        ])
+        .expect("a record");
+        let subset = Value::Lazy(Rc::new(Lazy::Subset(set_of(vec![record]).expect("a set"))));
+        assert_eq!(format_value(&subset), "{{}, {[a |-> 1, b |-> 1]}}");
+        settle(&subset);
+        assert_eq!(format_value(&subset), "{{}, {[b |-> 1, a |-> 1]}}");
+    }
+
+    #[test]
     fn prints_intervals_functions_and_tuples() {
         assert_eq!(format_value(&Value::Interval(1, 3)), "1..3");
         assert_eq!(format_value(&Value::Interval(2, 1)), "{}");

@@ -448,6 +448,17 @@ pub fn settle(value: &Value) {
             function.domain.iter().for_each(settle);
             function.range.iter().for_each(settle);
         }
+        // A lazy set enumerates into its parts' values, so fingerprinting it settles them.
+        Value::Lazy(lazy) => match &**lazy {
+            Lazy::Subset(base) | Lazy::Seq(base) => settle(base),
+            Lazy::FunctionSet(domain, range) => {
+                settle(domain);
+                settle(range);
+            }
+            Lazy::RecordSet(fields, _) => fields.iter().for_each(|(_, set)| settle(set)),
+            Lazy::Product(factors) => factors.iter().for_each(settle),
+            Lazy::Nat | Lazy::Int | Lazy::Real | Lazy::Strings => {}
+        },
         _ => {}
     }
 }
