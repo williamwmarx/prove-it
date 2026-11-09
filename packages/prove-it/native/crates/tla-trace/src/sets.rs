@@ -39,25 +39,16 @@ pub fn enumerate(lazy: &Lazy) -> Evaluated<Vec<Value>> {
             }
             sorted(subsets)
         }
-        Lazy::FunctionSet(domain, range) => {
-            let domain = elements(domain)?;
+        Lazy::FunctionSet(domain_set, range) => {
+            let domain = elements(domain_set)?;
             let range = elements(range)?;
             let tuples = product(&vec![Rc::clone(&range); domain.len()])?;
-            let class = if domain
-                .iter()
-                .enumerate()
-                .all(|(index, key)| matches!(key, Value::Int(int) if *int == index as i32 + 1))
-            {
-                Class::Tuple
-            } else {
-                Class::Plain
+            // A function over an interval keeps it as its domain.
+            let build = |values: Vec<Value>| match domain_set {
+                Value::Interval(low, _) => Value::over_interval(*low, values, Class::Plain),
+                _ => Value::function(domain.to_vec(), values, Class::Plain),
             };
-            sorted(
-                tuples
-                    .into_iter()
-                    .map(|values| Value::function(domain.to_vec(), values, class))
-                    .collect(),
-            )
+            sorted(tuples.into_iter().map(build).collect())
         }
         Lazy::RecordSet(fields, _) => {
             let sets = fields

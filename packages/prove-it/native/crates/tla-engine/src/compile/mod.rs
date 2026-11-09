@@ -1247,8 +1247,14 @@ impl<'a> Compiler<'a> {
         match name.resolution {
             Resolution::Variable(index) => return self.read_variable(index, context),
             Resolution::Constant(index) => {
+                // The model's constants are the values it writes, which TLC normalizes, so a set
+                // and each set in it stream in order.
                 return match self.ir.constants[index as usize].value {
-                    Some(value) => Ok(constant(self.intern_value(value)?)),
+                    Some(value) => Ok(Compiled {
+                        is_in_order: true,
+                        are_elements_in_order: true,
+                        ..constant(self.intern_value(value)?)
+                    }),
                     None => decline(format!(
                         "the constant {}, whose value the IR can't hold",
                         self.text(name.text)
@@ -1501,6 +1507,14 @@ impl<'a> Compiler<'a> {
         {
             let operator = Rc::clone(operator);
             return self.compile_operator_call(&operator, args, context);
+        }
+        // TLC fails on action composition wherever it reaches it, unless a Java property enables
+        // its incomplete implementation.
+        if self.text(name.text) == "\\cdot" && args.len() == 2 {
+            return Ok(leaf(
+                eval(|_| Err(Bail("action composition"))),
+                Footprint::default(),
+            ));
         }
         unsupported(format!("the operator {}", self.text(name.text)))
     }

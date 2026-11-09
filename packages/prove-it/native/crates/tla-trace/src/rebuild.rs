@@ -12,7 +12,7 @@ use crate::eval::{Context, Evaluator};
 use std::rc::Rc;
 
 use crate::value::{Evaluated, Text, Value, compare, equals, from_store, matches, permute, settle};
-use crate::{Trace, TraceState, Unsupported};
+use crate::{Ending, Trace, TraceState, Unsupported};
 
 /// Rebuilds traces of one model.
 pub struct Rebuilder<'ir> {
@@ -71,13 +71,13 @@ impl<'ir> Rebuilder<'ir> {
     /// values as ids of `store`, in the IR's order of the variables; `actions[i]` is the position
     /// in the model's actions of the step from `states[i]` to `states[i + 1]` (`label_path`), or
     /// `None` to try each action in turn, as `Tool.getState` does. A step to the same state is a
-    /// stuttering step. `loop_start` marks a liveness counterexample, which TLC rebuilds once.
+    /// stuttering step. `ending` says what the last state is to TLC.
     pub fn rebuild(
         &mut self,
         store: &Store,
         states: &[&[Id]],
         actions: &[Option<u32>],
-        loop_start: Option<usize>,
+        ending: Ending,
     ) -> Result<Trace, Unsupported> {
         let evaluator = &mut self.evaluator;
         let ir = evaluator.ir;
@@ -103,9 +103,19 @@ impl<'ir> Rebuilder<'ir> {
         let context = run(evaluator.scope_context(ir.model.scope))?;
         evaluator.level = 0;
         evaluator.current = vec![None; width];
+        // TLC prints a violating state as it found it, not as it recovers a state, so it is the
+        // candidate equal to the search's, whatever the VIEW or SYMMETRY.
+        let is_held = matches!(ending, Ending::Violation);
+        let key_of = |position: usize| {
+            if is_held && position + 1 == states.len() {
+                &Key::State
+            } else {
+                &self.key
+            }
+        };
         let initial = find(
             evaluator,
-            &self.key,
+            key_of(0),
             (ir.model.init, &context, true),
             is_printing,
             store,
@@ -156,7 +166,7 @@ impl<'ir> Rebuilder<'ir> {
                 evaluator.next = vec![None; width];
                 found = find(
                     evaluator,
-                    &self.key,
+                    key_of(position + 1),
                     (expression, &context, false),
                     is_printing,
                     store,
@@ -181,7 +191,7 @@ impl<'ir> Rebuilder<'ir> {
             rebuilt[rebuilt.len() - 1].iter().for_each(settle);
         }
         evaluator.printed.clear();
-        Ok(compose(rebuilt, steps, initial_output, outputs, loop_start))
+        Ok(compose(rebuilt, steps, initial_output, outputs, ending))
     }
 }
 
@@ -195,7 +205,7 @@ fn compose(
     steps: Vec<Option<u32>>,
     initial_output: Vec<Vec<String>>,
     outputs: Vec<Vec<Vec<String>>>,
-    loop_start: Option<usize>,
+    ending: Ending,
 ) -> Trace {
     let count = rebuilt.len();
     if count == 1 {
@@ -211,7 +221,12 @@ fn compose(
             trace_output: initial_output,
         };
     }
-    let known = usize::from(loop_start.is_none());
+    // The states TLC holds rather than rebuilds at the trace's end (`known` in `toTrace`).
+    let known = match ending {
+        Ending::Kept => 1,
+        Ending::Violation => 2,
+        Ending::Lasso => 0,
+    };
     let recovered = count - known;
     let trace_output = if known > 0 {
         initial_output
@@ -222,12 +237,14 @@ fn compose(
     } else {
         Vec::new()
     };
-    let mut prefix = Some(
+    let mut prefix = Some(if recovered > 0 {
         initial_output
             .into_iter()
             .chain(outputs[1..recovered].iter().flatten().cloned())
-            .collect::<Vec<_>>(),
-    );
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    });
     let states = rebuilt
         .into_iter()
         .zip(outputs)
@@ -395,4 +412,60 @@ fn is_in_model(evaluator: &mut Evaluator<'_>, rebuilt: &[Vec<Value>]) -> Result<
         }
     }
     Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn print(text: &str) -> Vec<String> {
+        vec![text.to_string()]
+    }
+
+    // The prints of a trace of states 0..count: Init printed "i", and the step to state n "n".
+    fn composed(count: usize, ending: Ending) -> Trace {
+        let outputs = (0..count)
+            .map(|position| match position {
+                0 => Vec::new(),
+                _ => vec![print(&position.to_string())],
+            })
+            .collect();
+        compose(
+            vec![Vec::new(); count],
+            vec![None; count],
+            vec![print("i")],
+            outputs,
+            ending,
+        )
+    }
+
+    fn printed(trace: &Trace) -> Vec<Vec<Vec<String>>> {
+        trace
+            .states
+            .iter()
+            .map(|state| state.printed.clone())
+            .collect()
+    }
+
+    #[test]
+    fn composes_what_tlc_prints_as_it_rebuilds_a_trace() {
+        // A deadlock: every state but the last is recovered before the trace prints.
+        let kept = composed(3, Ending::Kept);
+        assert_eq!(
+            printed(&kept),
+            [vec![print("i"), print("1")], vec![], vec![print("2")]]
+        );
+        assert_eq!(kept.trace_output, [print("i"), print("1"), print("2")]);
+        // A violation: TLC holds the last two states, so nothing is recovered from two.
+        let violation = composed(2, Ending::Violation);
+        assert_eq!(printed(&violation), [vec![], vec![print("1")]]);
+        assert_eq!(violation.trace_output, [print("i"), print("1")]);
+        // A lasso: everything is recovered first, and the trace isn't rebuilt again.
+        let lasso = composed(3, Ending::Lasso);
+        assert_eq!(
+            printed(&lasso),
+            [vec![print("i"), print("1"), print("2")], vec![], vec![]]
+        );
+        assert!(lasso.trace_output.is_empty());
+    }
 }

@@ -23,6 +23,19 @@ pub use value::Value;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Unsupported(pub String);
 
+/// What the last state of a trace is to TLC, which decides how TLC finds it and which states it
+/// rebuilds (`known` in `toTrace`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Ending {
+    /// A state the search kept, as a deadlock's: TLC recovers every state.
+    Kept,
+    /// A state that violates an invariant or an action property, which TLC holds as it found it:
+    /// matched by its value, and printed with the one before it as TLC has them.
+    Violation,
+    /// A lasso's last state: TLC recovers every state, and doesn't rebuild the trace again.
+    Lasso,
+}
+
 /// The states of a trace as TLC prints them, with what the spec printed as TLC rebuilt them. Each
 /// print is the text of each value Print or PrintT printed, which the caller pretty prints and
 /// joins as it does a print during the search.
