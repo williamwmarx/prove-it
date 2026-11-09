@@ -2615,9 +2615,11 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             // Under SYMMETRY or a VIEW the lasso's states are the stored ones, from which the
             // caller rebuilds those TLC prints.
             let violation = match liveness.as_ref().map(|liveness| &liveness.verdict) {
+                // What the atoms print as TLC checks the properties prints among the check's
+                // lines, which the interpreter orders.
                 Some(Verdict::Lasso {
                     path, loop_start, ..
-                }) if settings.is_violation_reported => to_lasso(
+                }) if settings.is_violation_reported && !context.is_live_printing => to_lasso(
                     &mut machine,
                     &context,
                     &search,

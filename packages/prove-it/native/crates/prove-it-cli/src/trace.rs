@@ -130,9 +130,28 @@ pub fn rebuild_trace(
                         ViolationKind::Lasso {
                             loop_start,
                             loop_label,
-                        } => loop_label.or(loop_action).map(|label| (loop_start, label)),
+                        } => loop_label
+                            .or(loop_action)
+                            // TLC's record of a stuttering lasso closes it by the action of its
+                            // last step, as `getStepAction` gives it.
+                            .or_else(|| {
+                                (loop_start + 1 == trace.states.len())
+                                    .then(|| trace.states.last().and_then(|state| state.action))
+                                    .flatten()
+                            })
+                            .map(|label| (loop_start, label)),
                         _ => None,
                     };
+                    // TLC's record of a lasso that stutters at its first state closes it by an
+                    // unnamed action, which CounterExample doesn't take yet.
+                    let is_unnamed_cycle =
+                        matches!(violation.kind, ViolationKind::Lasso { loop_start: 0, .. })
+                            && trace.states.len() == 1;
+                    if postconditions.is_some() && is_unnamed_cycle {
+                        return Err(Unsupported(
+                            "a postcondition of a lasso that stutters at its first state".into(),
+                        ));
+                    }
                     let checked = postconditions
                         .map(|run| {
                             check(
