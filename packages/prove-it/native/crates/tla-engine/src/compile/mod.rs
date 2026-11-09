@@ -681,6 +681,9 @@ pub struct Compiler<'a> {
     /// The bodies of recursive functions an action applies, each walked once for what the walk
     /// knows where it applies it (`walker::WalkedFunction`).
     walked_functions: Vec<walker::WalkedFunction>,
+    /// The bodies of RECURSIVE operators an action applies, each walked once likewise
+    /// (`walker::WalkedOperator`).
+    walked_operators: Vec<walker::WalkedOperator>,
     // What cached compiles read of fixed points that hadn't settled when they compiled.
     provisional: HashMap<u64, Vec<Rc<FixedPoint>>>,
     entry_count: u64,
@@ -762,6 +765,7 @@ impl<'a> Compiler<'a> {
             reads: None,
             leading_guards: HashMap::new(),
             walked_functions: Vec::new(),
+            walked_operators: Vec::new(),
             provisional: HashMap::new(),
             entry_count: 0,
             specialisations: 0,
