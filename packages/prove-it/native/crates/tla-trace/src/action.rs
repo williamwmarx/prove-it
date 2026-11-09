@@ -5,9 +5,11 @@
 //! has a value, TLC evaluates the rest of a conjunction as guards, in the initial predicate and,
 //! with warnings on, in an action.
 
-use tla_ir::{NodeId, NodeKind, Resolution, Startup};
+use std::collections::HashSet;
 
-use crate::eval::{Context, Evaluator};
+use tla_ir::{Bound, DefinitionForm, Name, NodeId, NodeKind, PathStep, Resolution, Startup};
+
+use crate::eval::{Context, Evaluator, StackFrame, bound_expression};
 use crate::sets::is_member;
 use crate::value::{Evaluated, Value, elements, equals, fail, is_same};
 
@@ -107,42 +109,6 @@ impl<'ir> Evaluator<'ir> {
         }
     }
 
-    // The variables UNCHANGED e names, following names to what they're bound to.
-    fn unchanged_variables(
-        &mut self,
-        node: NodeId,
-        context: &Context,
-        depth: u32,
-    ) -> Evaluated<Option<Vec<u32>>> {
-        if depth > MAXIMUM_DEPTH {
-            return Ok(None);
-        }
-        match self.kind(node) {
-            NodeKind::Tuple(items) => {
-                let mut variables = Vec::new();
-                for &item in items {
-                    match self.unchanged_variables(item, context, depth + 1)? {
-                        Some(found) => variables.extend(found),
-                        None => return Ok(None),
-                    }
-                }
-                Ok(Some(variables))
-            }
-            NodeKind::Identifier(name) => {
-                if !name.is_local
-                    && let Resolution::Variable(index) = name.resolution
-                {
-                    return Ok(Some(vec![index]));
-                }
-                match self.resolve_action(node, context)? {
-                    Some((body, inner)) => self.unchanged_variables(body, &inner, depth + 1),
-                    None => Ok(None),
-                }
-            }
-            _ => Ok(None),
-        }
-    }
-
     fn guard(
         &mut self,
         node: NodeId,
@@ -156,6 +122,208 @@ impl<'ir> Evaluator<'ir> {
         }
     }
 
+    /// TLC's actions of a next-state relation, as `Tool.getActions` splits it: each disjunct, the
+    /// body of an operator whose arguments are constant, a LET's or a label's body, and `\\E` at each of its
+    /// bindings; anything else, and an `\\E` of no bindings or one TLC fails to enumerate, is an
+    /// action.
+    pub fn split_actions(
+        &mut self,
+        node: NodeId,
+        context: &Context,
+        actions: &mut Vec<(NodeId, Context)>,
+    ) -> Evaluated<()> {
+        match self.kind(node) {
+            NodeKind::Or(operands) => {
+                for &operand in operands {
+                    self.split_actions(operand, context, actions)?;
+                }
+                return Ok(());
+            }
+            NodeKind::Let {
+                instances,
+                definitions,
+                body,
+            } => {
+                let inner = self.bind_let(*instances, definitions, context)?;
+                return self.split_actions(*body, &inner, actions);
+            }
+            NodeKind::Label { body, .. } => return self.split_actions(*body, context, actions),
+            NodeKind::Exists { bounds, body } => {
+                let mut contexts = Vec::new();
+                let enumerated = self.for_each_binding(bounds, context, &mut |_, inner| {
+                    contexts.push(inner.clone());
+                    Ok(true)
+                });
+                if enumerated.is_err() || contexts.is_empty() {
+                    actions.push((node, context.clone()));
+                    return Ok(());
+                }
+                for inner in contexts {
+                    self.split_actions(*body, &inner, actions)?;
+                }
+                return Ok(());
+            }
+            NodeKind::Identifier(_) | NodeKind::Apply { .. }
+                if self.has_constant_arguments(node, context) =>
+            {
+                if let Some((body, inner)) = self.resolve_action(node, context)? {
+                    return self.split_actions(body, &inner, actions);
+                }
+            }
+            _ => {}
+        }
+        actions.push((node, context.clone()));
+        Ok(())
+    }
+
+    // Whether the arguments of an operator application are constant, as `getActionsAppl` asks of
+    // them before it splits the operator's body: here, whether none can read the state, and each
+    // evaluates without it.
+    fn has_constant_arguments(&mut self, node: NodeId, context: &Context) -> bool {
+        let NodeKind::Apply { args, .. } = self.kind(node) else {
+            return true;
+        };
+        let mut visited = HashSet::new();
+        if args
+            .iter()
+            .any(|&argument| self.can_read_state(argument, context, &mut visited))
+        {
+            return false;
+        }
+        let width = self.current.len();
+        let current = std::mem::replace(&mut self.current, vec![None; width]);
+        let next = std::mem::replace(&mut self.next, vec![None; width]);
+        let is_constant = args
+            .iter()
+            .all(|&argument| self.evaluate(argument, context).is_ok());
+        self.current = current;
+        self.next = next;
+        is_constant
+    }
+
+    // Whether an expression may read the state, as an expression above constant level, which
+    // `getLevel` finds: a variable, a prime, UNCHANGED or ENABLED in it or in a definition it names.
+    // A form the check doesn't follow counts as one that may.
+    fn can_read_state(
+        &self,
+        node: NodeId,
+        context: &Context,
+        visited: &mut HashSet<NodeId>,
+    ) -> bool {
+        let any = |nodes: &[NodeId], visited: &mut HashSet<NodeId>| {
+            nodes
+                .iter()
+                .any(|&inner| self.can_read_state(inner, context, visited))
+        };
+        let bounds = |bounds: &[Bound]| bounds.iter().map(|bound| bound.set).collect::<Vec<_>>();
+        match self.kind(node) {
+            NodeKind::Number(_)
+            | NodeKind::WideNumber(_)
+            | NodeKind::Decimal(_)
+            | NodeKind::String(_)
+            | NodeKind::ExceptAt => false,
+            NodeKind::Identifier(name) | NodeKind::OperatorReference(name) => {
+                self.can_name_read_state(name, context, visited)
+            }
+            NodeKind::Apply { name, args } => {
+                self.can_name_read_state(name, context, visited) || any(args, visited)
+            }
+            NodeKind::Lambda { body, .. }
+            | NodeKind::UnboundedQuantifier { body, .. }
+            | NodeKind::Label { body, .. } => self.can_read_state(*body, context, visited),
+            NodeKind::And(nodes)
+            | NodeKind::Or(nodes)
+            | NodeKind::SetEnumeration(nodes)
+            | NodeKind::Tuple(nodes)
+            | NodeKind::Bracket(nodes)
+            | NodeKind::Product(nodes) => any(nodes, visited),
+            NodeKind::If {
+                condition,
+                consequent,
+                alternative,
+            } => any(&[*condition, *consequent, *alternative], visited),
+            NodeKind::Case { arms, other } => {
+                arms.iter()
+                    .any(|&(condition, body)| any(&[condition, body], visited))
+                    || other.is_some_and(|other| self.can_read_state(other, context, visited))
+            }
+            NodeKind::Let {
+                definitions, body, ..
+            } => any(definitions, visited) || self.can_read_state(*body, context, visited),
+            NodeKind::Forall { bounds: list, body }
+            | NodeKind::Exists { bounds: list, body }
+            | NodeKind::FunctionConstruction {
+                bounds: list, body, ..
+            } => any(&bounds(list), visited) || self.can_read_state(*body, context, visited),
+            NodeKind::SetMap {
+                expression,
+                bounds: list,
+            } => any(&bounds(list), visited) || self.can_read_state(*expression, context, visited),
+            NodeKind::Choose { set, body, .. } => {
+                set.is_some_and(|set| self.can_read_state(set, context, visited))
+                    || self.can_read_state(*body, context, visited)
+            }
+            NodeKind::SetFilter { bound, predicate } => any(&[bound.set, *predicate], visited),
+            NodeKind::FunctionSet { domain, range } => any(&[*domain, *range], visited),
+            NodeKind::Record(fields) | NodeKind::RecordSet(fields) => fields
+                .iter()
+                .any(|&(_, value)| self.can_read_state(value, context, visited)),
+            NodeKind::Except { function, updates } => {
+                self.can_read_state(*function, context, visited)
+                    || updates.iter().any(|update| {
+                        self.can_read_state(update.value, context, visited)
+                            || update.path.iter().any(|step| match step {
+                                PathStep::Field(_) => false,
+                                PathStep::Index(indices) => any(indices, visited),
+                            })
+                    })
+            }
+            NodeKind::FunctionApplication { function, args } => {
+                self.can_read_state(*function, context, visited) || any(args, visited)
+            }
+            NodeKind::FieldAccess { record, .. } => self.can_read_state(*record, context, visited),
+            NodeKind::Definition(definition) => {
+                let sets = match &definition.form {
+                    DefinitionForm::Function(list) => bounds(list),
+                    DefinitionForm::Operator(_) => Vec::new(),
+                };
+                visited.insert(node)
+                    && sets
+                        .into_iter()
+                        .chain([definition.body])
+                        .any(|inner| self.can_read_state(inner, context, visited))
+            }
+            _ => true,
+        }
+    }
+
+    // Whether a name may read the state: a variable, a definition whose body may, or a LET
+    // definition or operator argument whose expression may in the scope that binds it.
+    fn can_name_read_state(
+        &self,
+        name: &Name,
+        context: &Context,
+        visited: &mut HashSet<NodeId>,
+    ) -> bool {
+        if name.is_local {
+            return bound_expression(context, name.text).is_some_and(|(node, inner)| {
+                // A definition checks its own visit, in the Definition arm.
+                (matches!(self.kind(node), NodeKind::Definition(_)) || visited.insert(node))
+                    && self.can_read_state(node, &inner, visited)
+            });
+        }
+        match name.resolution {
+            Resolution::Variable(_) => true,
+            Resolution::Definition(index) => self.can_read_state(
+                self.ir.definitions[index as usize],
+                &Context::default(),
+                visited,
+            ),
+            _ => false,
+        }
+    }
+
+    // Walks a node in its frame of the call stack, as `visit` in `tlc/replay.ts` does.
     fn walk(
         &mut self,
         node: NodeId,
@@ -163,9 +331,81 @@ impl<'ir> Evaluator<'ir> {
         is_init: bool,
         then: &mut Visit<'_, 'ir>,
     ) -> Evaluated<bool> {
+        if self.call_stack.is_none() {
+            return self.walk_node(node, context, is_init, then);
+        }
+        let frame = StackFrame::Node(self.resolved(node));
+        self.in_frame(frame, &mut |evaluator| {
+            evaluator.walk_node(node, context, is_init, then)
+        })
+    }
+
+    // The first `count` operands of an infix conjunction, as SANY's node of that prefix: the
+    // prefix of one fewer, then the last.
+    fn conjunction_prefix(
+        &mut self,
+        node: NodeId,
+        operands: &[NodeId],
+        count: usize,
+        context: &Context,
+        is_init: bool,
+        then: &mut Visit<'_, 'ir>,
+    ) -> Evaluated<bool> {
+        if self.is_walked_whole(node, count) {
+            return self.conjunction(&operands[..count], true, context, is_init, then);
+        }
+        let last = operands[count - 1];
+        let frame = StackFrame::Prefix(self.resolved(node), count - 1);
+        self.in_frame(frame, &mut |evaluator| {
+            evaluator.conjunction_prefix(
+                node,
+                operands,
+                count - 1,
+                context,
+                is_init,
+                &mut |evaluator| evaluator.conjunction(&[last], false, context, is_init, then),
+            )
+        })
+    }
+
+    // The first `count` operands of an infix disjunction, as `conjunction_prefix` nests them.
+    fn disjunction_prefix(
+        &mut self,
+        node: NodeId,
+        operands: &[NodeId],
+        count: usize,
+        context: &Context,
+        is_init: bool,
+        then: &mut Visit<'_, 'ir>,
+    ) -> Evaluated<bool> {
+        if self.is_walked_whole(node, count) {
+            return self.disjunction(&operands[..count], context, is_init, then);
+        }
+        let frame = StackFrame::Prefix(self.resolved(node), count - 1);
+        if !self.in_frame(frame, &mut |evaluator| {
+            evaluator.disjunction_prefix(node, operands, count - 1, context, is_init, then)
+        })? {
+            return Ok(false);
+        }
+        self.choose(count as u32 - 1, true, &mut |evaluator| {
+            evaluator.walk(operands[count - 1], context, is_init, then)
+        })
+    }
+
+    fn walk_node(
+        &mut self,
+        node: NodeId,
+        context: &Context,
+        is_init: bool,
+        then: &mut Visit<'_, 'ir>,
+    ) -> Evaluated<bool> {
         match self.kind(node) {
-            NodeKind::And(operands) => self.conjunction(operands, true, context, is_init, then),
-            NodeKind::Or(operands) => self.disjunction(operands, context, is_init, then),
+            NodeKind::And(operands) => {
+                self.conjunction_prefix(node, operands, operands.len(), context, is_init, then)
+            }
+            NodeKind::Or(operands) => {
+                self.disjunction_prefix(node, operands, operands.len(), context, is_init, then)
+            }
             NodeKind::Exists { bounds, body } => {
                 let mut is_in_order = true;
                 for bound in bounds {
@@ -258,9 +498,23 @@ impl<'ir> Evaluator<'ir> {
                 let Some((bound, body, base)) = self.walked_function(*function, context)? else {
                     return self.guard(node, context, then);
                 };
-                // The argument once, as TLC evaluates it, then the body walked at it.
+                // The function first, its domain in its frame, as TLC builds the FcnLambdaValue;
+                // then the argument once, and the body walked at it.
+                let frame = StackFrame::Node(self.resolved(*function));
+                let set =
+                    self.in_frame(frame, &mut |evaluator| evaluator.evaluate(bound.set, &base));
+                // A LET's function is built in the frame of its definition too, which the replay
+                // doesn't record.
+                if set.is_err()
+                    && matches!(self.kind(*function), NodeKind::Identifier(_))
+                    && let Some(stack) = &mut self.call_stack
+                {
+                    stack
+                        .unfollowed
+                        .get_or_insert("the domain of a function a LET defines");
+                }
+                let set = set?;
                 let argument = self.evaluate(args[0], context)?;
-                let set = self.evaluate(bound.set, &base)?;
                 if !is_member(&argument, &set)? {
                     return fail("applied a function outside its domain");
                 }
@@ -284,8 +538,9 @@ impl<'ir> Evaluator<'ir> {
                     None
                 };
                 if let Some(variable) = variable {
-                    // A variable assigned already is tested, as the conjunct's value.
-                    if self.targets(is_init)[variable as usize].is_some() {
+                    // A variable assigned already is tested: against the value of x' = e, as
+                    // `proceedWithValue` does, and otherwise as the conjunct's value.
+                    if operator != "=" && self.targets(is_init)[variable as usize].is_some() {
                         return self.guard(node, context, then);
                     }
                     return match operator {
@@ -297,9 +552,19 @@ impl<'ir> Evaluator<'ir> {
                             let set = self.evaluate(args[1], context)?;
                             let is_in_order = self.is_in_normalized_order(args[1], context, 0)?;
                             for (position, element) in elements(&set)?.iter().enumerate() {
-                                if !self.choose(position as u32, is_in_order, &mut |evaluator| {
-                                    evaluator.assign(variable, element.clone(), is_init, then)
-                                })? {
+                                let chosen =
+                                    self.choose(position as u32, is_in_order, &mut |evaluator| {
+                                        evaluator.assign(variable, element.clone(), is_init, then)
+                                    });
+                                if chosen.is_err()
+                                    && !is_in_order
+                                    && let Some(stack) = &mut self.call_stack
+                                {
+                                    stack
+                                        .unfollowed
+                                        .get_or_insert("an assignment from a set TLC streams");
+                                }
+                                if !chosen? {
                                     return Ok(false);
                                 }
                             }
@@ -359,7 +624,12 @@ impl<'ir> Evaluator<'ir> {
             return then(self);
         };
         self.walk(body, first, is_init, &mut |evaluator| {
-            if is_init && !rest.is_empty() && evaluator.is_complete(true) {
+            // TLC puts the other bindings at the front of the conjuncts left, so the shortcut past
+            // assigned conjuncts applies to them as it does to a conjunction's.
+            if (is_init || evaluator.ir.model.is_warning_enabled)
+                && !rest.is_empty()
+                && evaluator.is_complete(is_init)
+            {
                 for context in rest {
                     if !evaluator.boolean(body, context)? {
                         return Ok(true);
@@ -452,34 +722,69 @@ impl<'ir> Evaluator<'ir> {
         })
     }
 
-    // UNCHANGED e: each variable of e assigned its current value or tested, or e' = e as a guard.
+    // UNCHANGED e, as TLC's `processUnchanged` takes it, each part in its frame: a variable assigned
+    // its current value or tested, a tuple element by element, a name through what it's bound to,
+    // and anything else compared with its value in the next state.
     fn walk_unchanged(
         &mut self,
         expression: NodeId,
         context: &Context,
         then: &mut Visit<'_, 'ir>,
     ) -> Evaluated<bool> {
-        let Some(variables) = self.unchanged_variables(expression, context, 0)? else {
-            let now = self.evaluate(expression, context)?;
-            let after = self.evaluate(expression, &context.primed(true))?;
-            return if equals(&now, &after)? {
-                then(self)
-            } else {
-                Ok(true)
-            };
-        };
-        self.unchanged_from(&variables, then)
+        let frame = StackFrame::Node(self.resolved(expression));
+        self.in_frame(frame, &mut |evaluator| {
+            evaluator.unchanged_node(expression, context, then)
+        })
     }
 
-    fn unchanged_from(&mut self, variables: &[u32], then: &mut Visit<'_, 'ir>) -> Evaluated<bool> {
-        let Some((&first, rest)) = variables.split_first() else {
+    fn unchanged_node(
+        &mut self,
+        expression: NodeId,
+        context: &Context,
+        then: &mut Visit<'_, 'ir>,
+    ) -> Evaluated<bool> {
+        if let Some(variable) = self.assignable(expression, context, false, 0)? {
+            let Some(value) = self.current[variable as usize].clone() else {
+                return fail("variable not assigned");
+            };
+            return self.assign(variable, value, false, then);
+        }
+        match self.kind(expression) {
+            NodeKind::Tuple(items) => self.unchanged_items(items, context, then),
+            NodeKind::Identifier(_) => match self.resolve_action(expression, context)? {
+                Some((body, inner)) => self.walk_unchanged(body, &inner, then),
+                None => self.unchanged_value(expression, context, then),
+            },
+            _ => self.unchanged_value(expression, context, then),
+        }
+    }
+
+    fn unchanged_items(
+        &mut self,
+        items: &[NodeId],
+        context: &Context,
+        then: &mut Visit<'_, 'ir>,
+    ) -> Evaluated<bool> {
+        let Some((&first, rest)) = items.split_first() else {
             return then(self);
         };
-        let Some(value) = self.current[first as usize].clone() else {
-            return fail("variable not assigned");
-        };
-        self.assign(first, value, false, &mut |evaluator| {
-            evaluator.unchanged_from(rest, then)
+        self.walk_unchanged(first, context, &mut |evaluator| {
+            evaluator.unchanged_items(rest, context, then)
         })
+    }
+
+    fn unchanged_value(
+        &mut self,
+        expression: NodeId,
+        context: &Context,
+        then: &mut Visit<'_, 'ir>,
+    ) -> Evaluated<bool> {
+        let now = self.evaluate(expression, context)?;
+        let after = self.evaluate(expression, &context.primed(true))?;
+        if equals(&now, &after)? {
+            then(self)
+        } else {
+            Ok(true)
+        }
     }
 }

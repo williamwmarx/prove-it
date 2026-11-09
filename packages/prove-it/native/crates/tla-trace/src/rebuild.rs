@@ -12,8 +12,8 @@ use crate::eval::{Context, Evaluator};
 use std::rc::Rc;
 
 use crate::value::{
-    Evaluated, Text, Value, compare, equals, from_store, matches, permute, settle, settle_deep,
-    settle_normalized,
+    Evaluated, Text, Value, compare, equals, from_store, matches, permute, settle, settle_built,
+    settle_deep, settle_normalized,
 };
 use crate::{Ending, Trace, TraceState, Unsupported};
 
@@ -40,6 +40,10 @@ fn unsupported<T>(reason: impl Into<String>) -> Result<T, Unsupported> {
 }
 
 impl<'ir> Rebuilder<'ir> {
+    pub(crate) fn evaluator(&mut self) -> &mut Evaluator<'ir> {
+        &mut self.evaluator
+    }
+
     pub fn new(ir: &'ir Ir) -> Result<Rebuilder<'ir>, Unsupported> {
         let model = &ir.model;
         let mut evaluator = Evaluator::new(ir);
@@ -81,6 +85,19 @@ impl<'ir> Rebuilder<'ir> {
         states: &[&[Id]],
         actions: &[Option<u32>],
         ending: Ending,
+    ) -> Result<Trace, Unsupported> {
+        self.rebuild_checked(store, states, actions, ending, true)
+    }
+
+    /// `rebuild`, with TLC's checks of a violating state outside the model replayed only when
+    /// `is_checked`: a failure replays the check that failed itself.
+    pub(crate) fn rebuild_checked(
+        &mut self,
+        store: &Store,
+        states: &[&[Id]],
+        actions: &[Option<u32>],
+        ending: Ending,
+        is_checked: bool,
     ) -> Result<Trace, Unsupported> {
         let evaluator = &mut self.evaluator;
         let ir = evaluator.ir;
@@ -197,7 +214,7 @@ impl<'ir> Rebuilder<'ir> {
             last.iter().for_each(settle_deep);
         } else if is_in_model(evaluator, &rebuilt)? {
             settle_recovered(evaluator, &self.key, &rebuilt[rebuilt.len() - 1])?;
-        } else if is_held {
+        } else if is_held && is_checked {
             // A violating state outside the model isn't fingerprinted, but TLC's checks of it
             // sort what their comparisons reach.
             check_violation(evaluator, &rebuilt)?;
@@ -217,7 +234,14 @@ fn settle_recovered(
 ) -> Result<(), Unsupported> {
     match key {
         Key::State => state.iter().for_each(settle),
-        Key::Symmetry(_) | Key::ViewOfSymmetry(..) => state.iter().for_each(settle_deep),
+        Key::Symmetry(_) => state.iter().for_each(settle_deep),
+        // TLC permutes every value, which builds each lambda into the function it enumerates,
+        // and then deep-normalizes the state and fingerprints the view of the least state.
+        Key::ViewOfSymmetry(view, group) => {
+            state.iter().for_each(settle_built);
+            let least = run(least_in_orbit(evaluator.ir, group, state))?;
+            settle_deep(&run(view_of(evaluator, *view, &least))?);
+        }
         Key::View(view) => {
             state.iter().for_each(settle_normalized);
             settle_deep(&run(view_of(evaluator, *view, state))?);
@@ -297,8 +321,8 @@ fn compose(
     }
 }
 
-fn run<T>(evaluated: Evaluated<T>) -> Result<T, Unsupported> {
-    evaluated.map_err(|error| Unsupported(format!("rebuilding a trace: {}", error.0)))
+pub(crate) fn run<T>(evaluated: Evaluated<T>) -> Result<T, Unsupported> {
+    evaluated.map_err(|error| Unsupported(format!("rebuilding a trace: {}", error.reason)))
 }
 
 // The first state the walk of an action completes that TLC takes for the search's state.

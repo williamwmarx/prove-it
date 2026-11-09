@@ -171,3 +171,62 @@ under `PROVE_IT_LIVE_CHECK=1`, or where an atom reads TLC's diameter. Whatever a
 undecided, the check of the complete graph decides. `PROVE_IT_TEST_LIVE_CHECK_AT=n` makes the first
 check after `n` states for the engine and the interpreter alike, for the tests, since the time a
 check happens at isn't deterministic.
+
+Where it checks this way, the search keeps its graph however large it grows. Past 4 million states
+(`MAXIMUM_GRAPH_STATES`) the engine still hands the graph over where it doesn't check this way, or
+where a check part way through couldn't decide, say on an atom the engine doesn't answer: the
+interpreter checks as the graph grows, and even under `-lncheck final` TLC stops at the first state
+whose tableau node accepts every behavior (TLC's Github710b, whose x grows without bound, stops at
+its third state), which the engine finds only once the search is done. TokenRing at N = 8, M = 7
+(5.8 million states, 41 million steps) checks natively in 91 s at 2.6 GB peak on 4 cores, where the
+interpreter took 135 s and 9.1 GB on Depot's 16 and TLC 149 s and 2.75 GB; 49 s of it answers
+WF_vars(Next)'s action on each step, as TLC does. Under `-lncheck final` the engine hands it over.
+
+With PROVE_IT_WORKERS above one, `answer_atoms` answers the state and action atoms on that many
+threads, each a run of the states over the search's store, as a parallel search's threads expand a
+level: an evaluation that neither prints, draws nor reads TLC's diameter is the same on any thread.
+Each extra thread's overlay copies the store's values, as the search's do, so each costs about the
+store's size in memory. TokenRing at N = 8, its graph kept, checks on 4 threads in 51 s rather than
+81 s, its atoms in about 19 s rather than 49, at 5.0 GB peak rather than 2.6. Sharing the store
+instead slows a search on one thread by 9 to 18 %, so the parallel atoms stay opt-in: the engine
+answers them on one thread unless PROVE_IT_WORKERS asks for more.
+
+## Speed against TLC (measured)
+
+`scripts/bench-liveness.json` lists the liveness models: the 13 corpus models with temporal
+properties that both checkers finish in seconds, and the scaled models in `benchmarks/liveness`,
+which TLC takes a minute or more to check. The Benchmark workflow runs them with
+`suite = bench-liveness.json`, and the scaled models on `runner = depot-ubuntu-24.04-16`.
+
+Depot run rghnhzfvg3 (16 cores, 3 runs, `--checkers tlc,prove-it-rust`, Prove It at 48ef0dd), median
+wall seconds and peak resident memory. Rust agreed with TLC on all 16 models and is 11.5x faster
+in wall time (geometric mean).
+
+| Model | Distinct states | TLC | Rust |
+| --- | ---: | ---: | ---: |
+| StarkMutex (pcal) | 23,168 | 2.64 s, 1214 MB | 0.18 s, 105 MB |
+| TokenRing (ewd426) | 46,656 | 1.15 s, 651 MB | 0.18 s, 95 MB |
+| nbacg_guer01 | 24,922 | 2.04 s, 1207 MB | 0.12 s, 83 MB |
+| MCDisruptor_SPMC | 8,496 | 0.88 s, 625 MB | 0.10 s, 86 MB |
+| MacroQuicksort (pcal) | 31,092 | 5.50 s, 1489 MB | 0.12 s, 87 MB |
+| ReadersWriters | 21,527 | 1.40 s, 724 MB | 0.11 s, 83 MB |
+| cf1s_folklore | 10,016 | 1.34 s, 471 MB | 0.09 s, 81 MB |
+| SingleLaneBridge | 3,605 | 2.81 s, 1190 MB | 0.10 s, 85 MB |
+| FastMutexWithGoto2 (pcal) | 15,900 | 0.83 s, 484 MB | 0.07 s, 80 MB |
+| Dijkstra1 (pcal) | 5,510 | 0.60 s, 354 MB | 0.05 s, 75 MB |
+| Euclid (pcal) | 6,352 | 0.49 s, 236 MB | 0.04 s, 75 MB |
+| Barriers | 29,279 | 2.07 s, 1258 MB | 0.33 s, 136 MB |
+| bcastByz | 14,424 | 8.23 s, 1582 MB | 0.39 s, 153 MB |
+| StarkMutex, N = 4 | 399,763 | 75.0 s, 1987 MB | 4.73 s, 654 MB |
+| Barriers, N = 8 | 536,319 | 44.5 s, 1701 MB | 6.18 s, 508 MB |
+| TokenRing, N = 8, M = 7 | 5,764,801 | 149 s, 2750 MB | 135 s, 9098 MB (interpreter) |
+
+The scaled models check in time and memory proportional to their states, but for TokenRing at N = 8.
+There the engine handed over at the start, and the interpreter checked the model. The initial
+predicate draws from a set of 5.8 million functions, past the 1e6 bound the engine had copied from
+the TypeScript engine, and past 4 million states (`MAXIMUM_GRAPH_STATES`) the engine hands its graph
+over anyway, so that the interpreter checks the properties as the graph grows, as TLC does. The
+suite now scales TokenRing to N = 7, M = 8 (2.1 million states) instead, which the engine checks
+itself with its bound on enumerated sets at 2^24. bcastByz at N = 5 (1.07 million states) is out of
+the suite: TLC didn't finish it in 1500 s, and Rust took 284 s, nearly all of it on one action atom,
+Receive's `\E` over `SUBSET sent`, evaluated on each of 38 million steps.

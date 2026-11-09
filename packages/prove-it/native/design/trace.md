@@ -125,9 +125,15 @@ impl<'ir> Rebuilder<'ir> {
         ending: Ending,
     ) -> Result<Trace, Unsupported>;
 
-    /// Planned: evaluates again where the search failed, on a rebuilt state (and its successor),
-    /// and returns TLC's error with its values in TLC's text.
-    pub fn evaluate_failure(&mut self, trace: &Trace, site: Site) -> Result<Failure, Unsupported>;
+    /// Evaluates again where the search failed, at `site`, after the path `states` (none for the
+    /// initial predicate), and returns TLC's report of the error.
+    pub fn evaluate_failure(
+        &mut self,
+        store: &Store,
+        states: &[&[Id]],
+        actions: &[Option<u32>],
+        site: Site,
+    ) -> Result<Failure, Unsupported>;
 }
 
 /// What the last state is to TLC (`known` in `toTrace`): a state the search kept (a deadlock's),
@@ -154,6 +160,15 @@ pub struct TraceState {
     /// which the caller pretty prints and joins as it does a print during the search.
     pub printed: Vec<Vec<String>>,
 }
+
+/// Where the search failed: computing the initial states, the successors of the path's last
+/// state, or the invariant at a position on the path's last state, a successor past the initial
+/// states (which the caller appends, as the search doesn't keep it).
+pub enum Site { Init, Next, Invariant(u32) }
+
+/// TLC's report of the error: the code of its message, the message and its -tool text, and the
+/// nested expressions it was in, which the caller prints with `format_call_stack` as message 2103.
+pub struct Failure { pub code: u32, pub message: String, pub tool_message: String, pub call_stack: Vec<SourceRange> }
 
 /// TLC's `Value.toString`; the caller pretty prints it.
 pub fn format_value(value: &Value) -> String;
@@ -259,6 +274,55 @@ Tests:
 - the deadlock traces of kafka_transactions (records) and TLCGetLevel (`TLCGet("level")`) print
   TLC's recorded text, whitespace aside;
 - unit tests on the printer and on written order.
+
+### Failures (`failure.rs`)
+
+`evaluate_failure` replays the failure as TLC's `CallStackTool` does, which `tlc/replay.ts` and the
+tracing evaluator of `evaluate.ts` port. While it replays, the evaluator keeps a call stack:
+- each node `evaluate` evaluates;
+- each node the walk visits, as `visit` and `visitUnchanged` do;
+- each prefix of an infix chain of junctions, which SANY nests as a node of its own. Its range
+  comes from the IR's prefix ends (IR 9).
+
+The successors are replayed for each of TLC's actions: the IR's, or, where the IR has none (as for
+a spec that prints), the next-state relation split as `Tool.getActions` splits it. Each disjunct,
+the body of an operator whose arguments evaluate without the state, a LET's body and `\E` at each
+binding is an action. The first failure freezes the stack. The walk takes TLC's shortcut past assigned conjuncts only in
+the initial predicate, and in an action with warnings on, as `isAssignedShortcut` does; that also
+decides which frames a stack keeps. The report follows `getFailureMessage`:
+- an EvalException that escapes the next-state computation keeps its own code;
+- any other error there is TLC's unexpected RuntimeException;
+- in the initial predicate the code is the general one, and the -tool text marks the coded message
+  inside it;
+- an invariant that fails to evaluate past the initial states has the headline "Evaluating
+  invariant Inv failed." (2111) and no call stack. Its successor is held as found, as a violating
+  one is. On an initial state TLC reports it otherwise, which returns `Unsupported` so far.
+
+An error has TLC's message only where its kind is ported. So far:
+- a mistyped membership in Nat, Int or STRING (2158);
+- Assert (2132);
+- a field selected from a record that lacks it, from a tuple or from a value that isn't a
+  function, worded as `getFieldSelector` words it;
+- a function applied outside its domain, worded by its class (`describeMissingArgument`);
+- a variable read before the state assigns it (2280, `createUnassignedError`), with the range of
+  the name read.
+
+A lambda has no message yet: TLC keeps a function constructor lazy only where it evaluates it so
+(`EvalControl.KeepLazy`), which the evaluator doesn't follow. A model for TLC 1.7.4 returns
+`Unsupported`: that version streams a quantifier's lazy bounds rather than enumerating them in order,
+and words some messages apart.
+
+TLC reports a failure in a method of a value with a source (a set, tuple, record or function set
+the replay built, or a `\cup`, `\cap` or `\`) as a FingerprintException, with the values'
+sources. The replay marks it, as `freezeCallStack` finds it, and returns `Unsupported` for it so
+far. So does a failure reached through an assignment `x' \in S` from a set TLC streams in an
+order of its own, such as a union built during the walk, and one in the predicate of a filter TLC
+keeps lazy, of a set other than an enumeration or an interval. Every other failure returns
+`Unsupported` too. The pretty printer moved here from the CLI, since the messages need it.
+
+Tests: `tests/failure.rs` runs the engine's search on golden IRs of TLC's own tests (etest9, 10 and
+11, AssertExpressionStack, Github461 and EvaluatingValueTest) until it stops, and compares the
+message and the call stack with TLC's text.
 
 ### Parity
 

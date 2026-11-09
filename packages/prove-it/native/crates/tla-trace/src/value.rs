@@ -9,16 +9,67 @@ use std::cmp::Ordering;
 use std::rc::Rc;
 
 use tla_values::Store;
+
+use crate::print::format_pretty;
 use tla_values::store::{KIND_BOOL, KIND_INT, KIND_MODEL, KIND_SET, KIND_STRING, KIND_TUPLE, TRUE};
 
-/// Why an evaluation failed, as TLC would have, or where the evaluator can't follow it.
+/// Why an evaluation failed, as TLC would have, or where the evaluator can't follow it: the
+/// evaluator's reason, and TLC's message where the failure gives TLC's text.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct EvalError(pub String);
+pub struct EvalError {
+    pub reason: String,
+    pub message: Option<TlcMessage>,
+}
+
+/// TLC's message for an error: its text, the code of TLC's message it is where it is one of
+/// `tlc2.output.MP`'s, and whether TLC raises it as an EvalException rather than a
+/// RuntimeException.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TlcMessage {
+    pub text: String,
+    pub code: Option<u32>,
+    pub is_eval_exception: bool,
+}
 
 pub type Evaluated<T> = Result<T, EvalError>;
 
 pub fn fail<T>(reason: impl Into<String>) -> Evaluated<T> {
-    Err(EvalError(reason.into()))
+    Err(EvalError {
+        reason: reason.into(),
+        message: None,
+    })
+}
+
+/// A failure TLC raises as a RuntimeException with a message of no code.
+pub fn fail_runtime<T>(reason: impl Into<String>, text: String) -> Evaluated<T> {
+    Err(EvalError {
+        reason: reason.into(),
+        message: Some(TlcMessage {
+            text,
+            code: None,
+            is_eval_exception: false,
+        }),
+    })
+}
+
+/// A failure with TLC's message for it.
+pub fn fail_with<T>(reason: impl Into<String>, message: TlcMessage) -> Evaluated<T> {
+    Err(EvalError {
+        reason: reason.into(),
+        message: Some(message),
+    })
+}
+
+/// A failure TLC raises as an EvalException with the message of this code.
+pub fn fail_coded<T>(reason: impl Into<String>, code: u32, text: String) -> Evaluated<T> {
+    Err(EvalError {
+        reason: reason.into(),
+        message: Some(TlcMessage {
+            text,
+            code: Some(code),
+            is_eval_exception: true,
+        }),
+    })
 }
 
 /// A string or a model value's name, with TLC's rank of it: the order TLC interned the text in,
@@ -291,7 +342,7 @@ pub fn compare(left: &Value, right: &Value) -> Evaluated<Ordering> {
             }
             Ok(Ordering::Equal)
         }
-        _ => fail("values TLC can't compare"),
+        _ => incomparable(left, right, false),
     }
 }
 
@@ -382,8 +433,41 @@ pub fn equals(left: &Value, right: &Value) -> Evaluated<bool> {
             }
             Ok(true)
         }
-        _ => fail("equality of values TLC can't compare"),
+        _ => incomparable(left, right, true),
     }
+}
+
+// TLC's error for two values of kinds it can't compare, worded by the class of the left operand.
+// A set compares as `toSetEnum` enumerates it.
+fn incomparable<T>(left: &Value, right: &Value, is_equality: bool) -> Evaluated<T> {
+    let reason = if is_equality {
+        "equality of values TLC can't compare"
+    } else {
+        "values TLC can't compare"
+    };
+    let (subject, other) = match left {
+        Value::Int(_) => ("integer", "non-integer:"),
+        Value::Bool(_) => ("boolean", "non-boolean:"),
+        Value::Str(_) => ("string", "non-string:"),
+        _ if left.is_set() => ("the set", "the value:"),
+        _ => return fail(reason),
+    };
+    let verb = match left {
+        Value::Bool(_) if is_equality => "compare equality of",
+        _ if is_equality => "check equality of",
+        _ => "compare",
+    };
+    let shown = match left {
+        Value::Interval(..) | Value::Lazy(_) => format_pretty(&Value::Set(elements(left)?)),
+        _ => format_pretty(left),
+    };
+    fail_runtime(
+        reason,
+        format!(
+            "Attempted to {verb} {subject} {shown} with {other}\n{}",
+            format_pretty(right)
+        ),
+    )
 }
 
 /// A set of elements in any order and with duplicates, sorted into TLC's order.
@@ -527,6 +611,28 @@ pub fn settle_normalized(value: &Value) {
                 settle_sorted(&function.domain);
             }
             function.range.iter().for_each(settle_normalized);
+        }
+        _ => {}
+    }
+}
+
+/// `deepNormalize` of a state whose lambdas TLC has built into the functions they enumerate, as
+/// permuting the state under SYMMETRY builds them: each lambda becomes the function it enumerates,
+/// and then the state normalizes as `settle_normalized` does.
+pub fn settle_built(value: &Value) {
+    build_lambdas(value);
+    settle_normalized(value);
+}
+
+fn build_lambdas(value: &Value) {
+    match value {
+        Value::Set(elements) => elements.iter().for_each(build_lambdas),
+        Value::Function(function) => {
+            if function.class.get() == Class::Lambda {
+                function.class.set(Class::Plain);
+            }
+            function.domain.iter().for_each(build_lambdas);
+            function.range.iter().for_each(build_lambdas);
         }
         _ => {}
     }

@@ -3,8 +3,10 @@
 use std::cmp::Ordering;
 use std::rc::Rc;
 
+use crate::print::{format_pretty, format_value};
 use crate::value::{
-    Class, Evaluated, Lazy, Value, compare, elements, equals, fail, find_key, set_of,
+    Class, Evaluated, Lazy, Value, compare, elements, equals, fail, fail_coded, fail_runtime,
+    find_key, set_of,
 };
 
 /// How many elements the evaluator enumerates of a lazy set before it gives up, as the engine
@@ -123,6 +125,19 @@ fn product(sets: &[Rc<Vec<Value>>]) -> Evaluated<Vec<Vec<Value>>> {
 }
 
 /// TLC's `member`: whether a value is in a set, failing where TLC can't tell.
+// TLC's `EC.TLC_MODULE_CHECK_MEMBER_OF`, for a value that can't be an element of a set of the
+// standard modules.
+fn mistyped(value: &Value, set: &str) -> Evaluated<bool> {
+    fail_coded(
+        format!("a mistyped membership in {set}"),
+        2158,
+        format!(
+            "Attempted to check if the value:\n{}\nis an element of {set}.",
+            format_value(value)
+        ),
+    )
+}
+
 pub fn is_member(value: &Value, set: &Value) -> Evaluated<bool> {
     match set {
         Value::Set(elements) => {
@@ -144,21 +159,29 @@ pub fn is_member(value: &Value, set: &Value) -> Evaluated<bool> {
         }
         Value::Interval(low, high) => match value {
             Value::Int(int) => Ok(low <= int && int <= high),
-            _ => fail("a mistyped membership in an interval"),
+            _ if low > high => Ok(false),
+            _ => fail_runtime(
+                "a mistyped membership in an interval",
+                format!(
+                    "Attempted to check if the value:\n{}\nis in the integer interval {}",
+                    format_pretty(value),
+                    format_pretty(set)
+                ),
+            ),
         },
         Value::Lazy(lazy) => match &**lazy {
             Lazy::Nat => match value {
                 Value::Int(int) => Ok(*int >= 0),
-                _ => fail("a mistyped membership in Nat"),
+                _ => mistyped(value, "Nat"),
             },
             Lazy::Int => match value {
                 Value::Int(_) => Ok(true),
-                _ => fail("a mistyped membership in Int"),
+                _ => mistyped(value, "Int"),
             },
             Lazy::Real => fail("a membership in Real"),
             Lazy::Strings => match value {
                 Value::Str(_) => Ok(true),
-                _ => fail("a mistyped membership in STRING"),
+                _ => mistyped(value, "STRING"),
             },
             Lazy::Subset(base) => {
                 if !value.is_set() {
@@ -313,5 +336,42 @@ pub fn cardinality(set: &Value) -> Evaluated<usize> {
     match set {
         Value::Interval(low, high) => Ok((i64::from(*high) - i64::from(*low) + 1).max(0) as usize),
         _ => Ok(elements(set)?.len()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::value::Text;
+
+    fn message(result: Evaluated<bool>) -> String {
+        result
+            .expect_err("a failure")
+            .message
+            .expect("TLC's message")
+            .text
+    }
+
+    #[test]
+    fn reports_a_non_integer_in_an_interval_as_tlc_does() {
+        let empty = Value::Set(Rc::new(Vec::new()));
+        assert_eq!(
+            message(is_member(&empty, &Value::Interval(1, 4))),
+            "Attempted to check if the value:\n{}\nis in the integer interval 1..4"
+        );
+        // An empty interval holds nothing, whatever is checked against it.
+        assert!(!is_member(&empty, &Value::Interval(4, 1)).expect("no failure"));
+        let string = Value::Str(Rc::new(Text {
+            units: "a".encode_utf16().collect(),
+            rank: 0,
+        }));
+        assert_eq!(
+            message(equals(&Value::Int(1), &string)),
+            "Attempted to check equality of integer 1 with non-integer:\n\"a\""
+        );
+        assert_eq!(
+            message(compare(&Value::Interval(1, 2), &Value::Int(1)).map(|_| true)),
+            "Attempted to compare the set {1, 2} with the value:\n1"
+        );
     }
 }

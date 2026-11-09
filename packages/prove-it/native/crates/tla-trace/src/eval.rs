@@ -4,7 +4,7 @@
 //! at the call site with their arguments evaluated where used, and functions TLC keeps lazy, a
 //! definition's or a LET's, are applied without building them.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use tla_ir::{
@@ -12,11 +12,11 @@ use tla_ir::{
     Resolution, ScopeBinding, Startup, TextId,
 };
 
-use crate::print::{format_printed, format_value};
+use crate::print::{format_pretty, format_printed, format_value};
 use crate::sets::{as_tuple, cardinality, difference, intersection, is_member, is_subset, union};
 use crate::value::{
-    Class, Evaluated, Function, Lazy, Text, Value, compare, elements, equals, fail, find_key,
-    set_of, sorted_function, written_function,
+    Class, Evaluated, Function, Lazy, Text, TlcMessage, Value, compare, elements, equals, fail,
+    fail_coded, fail_runtime, fail_with, find_key, set_of, sorted_function, written_function,
 };
 
 /// The bindings an expression sees, innermost first.
@@ -122,6 +122,32 @@ fn lookup(env: &Env, name: TextId) -> Option<Rc<Frame>> {
     None
 }
 
+/// The expression a local name binds and the scope it is evaluated in, to find its level: a LET
+/// definition's body or an operator argument. A value, a builtin or an unbound name has none.
+pub(crate) fn bound_expression(context: &Context, name: TextId) -> Option<(NodeId, Context)> {
+    let frame = lookup(&context.env, name)?;
+    match &frame.binding {
+        Binding::Value(_) => None,
+        Binding::Thunk {
+            node,
+            context: inner,
+            is_self,
+        } => Some((*node, own_context(inner, &frame, *is_self))),
+        Binding::Operator(operator) => match operator.body {
+            Body::Node(node) => Some((
+                node,
+                own_context(&operator.context, &frame, operator.is_self),
+            )),
+            Body::Builtin(_) => None,
+        },
+        Binding::Function {
+            definition,
+            context: inner,
+            is_self,
+        } => Some((*definition, own_context(inner, &frame, *is_self))),
+    }
+}
+
 // The context a self-closing binding's body sees: the scope that binds it.
 fn own_context(context: &Context, frame: &Rc<Frame>, is_self: bool) -> Context {
     if is_self {
@@ -135,6 +161,43 @@ fn own_context(context: &Context, frame: &Rc<Frame>, is_self: bool) -> Context {
 type KeyedVisit<'v, 'ir> = dyn FnMut(&mut Evaluator<'ir>, &Context, &[Value]) -> Evaluated<()> + 'v;
 
 /// The evaluator: the IR, the texts as values, the state it evaluates in, and what it printed.
+/// TLC's `CallStack`: the nodes a replay is in, which stop being popped once it fails.
+#[derive(Debug, Default)]
+pub struct CallStack {
+    pub frames: Vec<StackFrame>,
+    pub is_frozen: bool,
+    /// The values the replay built that TLC's `CallStackTool` gives a source, by their address.
+    sourced: HashSet<usize>,
+    /// The value each node of the replay last evaluated to.
+    values: HashMap<NodeId, Value>,
+    /// Whether the failure was in a method of a value with a source, which TLC reports as a
+    /// FingerprintException rather than with the nested expressions.
+    pub is_fingerprinted: bool,
+    /// Why the replay can't follow TLC to the failure, where it can't: through an assignment
+    /// `x' \in S` whose set TLC streams in an order of its own, or through a filter TLC keeps lazy.
+    pub unfollowed: Option<&'static str>,
+}
+
+// The address of a value TLC's `CallStackTool` can give a source: an object, as a set, a function
+// or a lazy set is.
+fn address(value: &Value) -> Option<usize> {
+    match value {
+        Value::Set(set) => Some(Rc::as_ptr(set) as usize),
+        Value::Function(function) => Some(Rc::as_ptr(function) as usize),
+        Value::Lazy(lazy) => Some(Rc::as_ptr(lazy) as *const u8 as usize),
+        _ => None,
+    }
+}
+
+/// A node TLC's call stack holds: a node of the IR, or the prefix of an infix chain of junctions,
+/// such as A /\ B of A /\ B /\ C, which SANY parses as a node of its own.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StackFrame {
+    Node(NodeId),
+    /// The first `count` operands of a junction.
+    Prefix(NodeId, usize),
+}
+
 pub struct Evaluator<'ir> {
     pub ir: &'ir Ir,
     texts: Vec<Option<Rc<Text>>>,
@@ -154,6 +217,9 @@ pub struct Evaluator<'ir> {
     /// The state a walk looks for, where a value that differs from it can't lead to it: a walk
     /// then drops an assignment of another value, as nothing else follows from it.
     pub target: Option<Vec<Value>>,
+    /// Where a replay of a failure is, as TLC's `CallStackTool` records it: each node the walks and
+    /// the evaluation are in, outermost first, frozen once an evaluation fails.
+    pub call_stack: Option<CallStack>,
     /// The choices the walk made to reach where it is: at each disjunction or enumeration, the
     /// position of the branch or element it took, and whether TLC takes them in the same order.
     pub choices: Vec<(u32, bool)>,
@@ -181,6 +247,7 @@ impl<'ir> Evaluator<'ir> {
             level: 0,
             printed: Vec::new(),
             target: None,
+            call_stack: None,
             choices: Vec::new(),
         }
     }
@@ -293,7 +360,13 @@ impl<'ir> Evaluator<'ir> {
 
     // --- the state ---
 
-    fn read_variable(&mut self, index: u32, context: &Context) -> Evaluated<Value> {
+    fn read_variable(
+        &mut self,
+        node: NodeId,
+        name: &Name,
+        index: u32,
+        context: &Context,
+    ) -> Evaluated<Value> {
         self.reads += 1;
         let state = if context.is_primed {
             &self.next
@@ -302,11 +375,24 @@ impl<'ir> Evaluator<'ir> {
         };
         match state.get(index as usize) {
             Some(Some(value)) => Ok(value.clone()),
-            Some(None) => fail(if context.is_primed {
-                "primed variable not assigned"
-            } else {
-                "variable not assigned"
-            }),
+            // TLC's `Tool#evalAppl` fails to look up a variable the state doesn't assign
+            // (`createUnassignedError` in `evaluate.ts`).
+            Some(None) => fail_with(
+                if context.is_primed {
+                    "primed variable not assigned"
+                } else {
+                    "variable not assigned"
+                },
+                TlcMessage {
+                    text: format!(
+                        "In evaluation, the identifier {} is either undefined or not an operator.\n{}",
+                        self.name(name.text),
+                        self.describe_range(node)
+                    ),
+                    code: Some(2280),
+                    is_eval_exception: false,
+                },
+            ),
             None => fail("a variable past the state's"),
         }
     }
@@ -321,30 +407,295 @@ impl<'ir> Evaluator<'ir> {
     }
 
     pub fn evaluate(&mut self, node: NodeId, context: &Context) -> Evaluated<Value> {
+        if self.call_stack.is_none() {
+            return self.evaluate_node(node, context);
+        }
+        let (node, _) = self.node(node);
+        let result = self.in_frame(StackFrame::Node(node), &mut |evaluator| {
+            evaluator.evaluate_node(node, context)
+        });
+        let is_sourced = self.is_sourced(node);
+        if let (Some(stack), Ok(value)) = (&mut self.call_stack, &result) {
+            if is_sourced && let Some(address) = address(value) {
+                stack.sourced.insert(address);
+            }
+            stack.values.insert(node, value.clone());
+        }
+        result
+    }
+
+    // The nodes whose value TLC's `CallStackTool` gives a source (`SOURCED_KINDS` and
+    // `SOURCED_OPERATORS` in `evaluate.ts`).
+    fn is_sourced(&self, node: NodeId) -> bool {
+        match self.kind(node) {
+            NodeKind::SetEnumeration(_)
+            | NodeKind::SetFilter { .. }
+            | NodeKind::SetMap { .. }
+            | NodeKind::Tuple(_)
+            | NodeKind::FunctionSet { .. }
+            | NodeKind::Record(_)
+            | NodeKind::RecordSet(_)
+            | NodeKind::Product(_) => true,
+            NodeKind::Apply { name, .. } => {
+                !name.is_local
+                    && matches!(
+                        self.name(name.text),
+                        "SUBSET" | "UNION" | "DOMAIN" | "\\cup" | "\\cap" | "\\"
+                    )
+            }
+            _ => false,
+        }
+    }
+
+    // The operand whose method TLC calls to compute a node, as `getReceiver` in `evaluate.ts`
+    // finds it: the function applied, or the set of a membership.
+    fn receiver(&self, node: NodeId) -> Option<NodeId> {
+        match self.kind(node) {
+            NodeKind::FunctionApplication { function, .. } | NodeKind::Except { function, .. } => {
+                Some(*function)
+            }
+            NodeKind::Apply { name, args } if !name.is_local && args.len() == 2 => {
+                match self.name(name.text) {
+                    "\\in" | "\\notin" => Some(args[1]),
+                    "\\subseteq" | "=" | "#" | "\\" => Some(args[0]),
+                    // TLC calls the method of the operand it can enumerate, or else the right one.
+                    "\\cap" | "\\cup" => {
+                        let left = self.resolved(args[0]);
+                        let is_reducible = self.call_stack.as_ref().is_some_and(|stack| {
+                            matches!(
+                                stack.values.get(&left),
+                                Some(Value::Set(_) | Value::Interval(..))
+                            )
+                        });
+                        Some(if is_reducible { args[0] } else { args[1] })
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    // Marks the failure as one in a method of a value with a source, where it is.
+    fn mark_fingerprinted(&mut self, frame: StackFrame) {
+        let StackFrame::Node(node) = frame else {
+            return;
+        };
+        let receiver = self.receiver(node).map(|receiver| self.resolved(receiver));
+        let Some(stack) = &mut self.call_stack else {
+            return;
+        };
+        let is_sourced = receiver
+            .and_then(|receiver| stack.values.get(&receiver))
+            .and_then(address)
+            .is_some_and(|address| stack.sourced.contains(&address));
+        stack.is_fingerprinted |= is_sourced;
+    }
+
+    /// Runs `run` in a frame of the call stack, which a failure freezes, as `CallStack.push` and
+    /// `pop` do around each node TLC's `CallStackTool` visits.
+    pub fn in_frame<T>(
+        &mut self,
+        frame: StackFrame,
+        run: &mut dyn FnMut(&mut Self) -> Evaluated<T>,
+    ) -> Evaluated<T> {
+        if let Some(stack) = &mut self.call_stack {
+            stack.frames.push(frame);
+        }
+        let result = run(self);
+        if result.is_err()
+            && self
+                .call_stack
+                .as_ref()
+                .is_some_and(|stack| !stack.is_frozen)
+        {
+            self.mark_fingerprinted(frame);
+        }
+        if let Some(stack) = &mut self.call_stack {
+            stack.is_frozen |= result.is_err();
+            if !stack.is_frozen {
+                stack.frames.pop();
+            }
+        }
+        result
+    }
+
+    // TLC 1.7.4, which words some messages apart.
+    pub(crate) fn is_174(&self) -> bool {
+        self.ir
+            .model
+            .version
+            .is_some_and(|version| &*self.ir.texts[version as usize] == "1.7.4")
+    }
+
+    /// Where a node is written, as TLC's messages say it: `line 2, col 3 to line 2, col 9 of
+    /// module M`, or its start where the IR has no range.
+    pub fn describe_range(&self, node: NodeId) -> String {
+        let node = &self.ir.nodes.arena[self.resolved(node) as usize];
+        match node.range {
+            Some(range) => format!(
+                "line {}, col {} to line {}, col {} of module {}",
+                range.start_line,
+                range.start_column,
+                range.end_line,
+                range.end_column,
+                self.ir.texts[range.module as usize]
+            ),
+            None => format!("line {}, column {}", node.line, node.column),
+        }
+    }
+
+    // `f[x]` with TLC's message where `x` isn't in the domain of `f`.
+    fn apply_checked(&self, function: &Value, key: &Value) -> Evaluated<Value> {
+        let result = apply_value(function, key);
+        match (&result, function) {
+            (Err(error), Value::Function(inner))
+                if error.message.is_none()
+                    && !self.is_174()
+                    && error.reason == "applied a function outside its domain" =>
+            {
+                match describe_missing(function, inner.class.get(), key) {
+                    Some(text) => fail_runtime(&error.reason, text),
+                    None => result,
+                }
+            }
+            _ => result,
+        }
+    }
+
+    // `r.f`, with TLC's messages as `getFieldSelector` words them.
+    fn select_field(&self, node: NodeId, record: &Value, field: &Value) -> Evaluated<Value> {
+        let Value::Str(name) = field else {
+            return fail("a field that isn't a string");
+        };
+        let name = String::from_utf16_lossy(&name.units);
+        let Value::Function(inner) = record else {
+            return fail_runtime(
+                "selected a field of a non-record",
+                format!(
+                    "Attempted to select field \"{name}\" from a non-record value {}\n{}",
+                    format_pretty(record),
+                    self.describe_range(node)
+                ),
+            );
+        };
+        if self.is_174() {
+            return apply_value(record, field);
+        }
+        match inner.class.get() {
+            Class::Tuple => fail_runtime(
+                "selected a field of a tuple",
+                format!(
+                    "Attempted to apply function with integer domain to the non-integer argument {}",
+                    format_pretty(field)
+                ),
+            ),
+            Class::Record => match find_key(inner, field)? {
+                Some(position) => Ok(inner.range[position].clone()),
+                None => fail_runtime(
+                    "selected a field a record lacks",
+                    format!(
+                        "Attempted to select nonexistent field \"{name}\" from the record\n{}\n{}",
+                        format_value(record),
+                        self.describe_range(node)
+                    ),
+                ),
+            },
+            _ => match find_key(inner, field)? {
+                Some(position) => Ok(inner.range[position].clone()),
+                None => fail_runtime(
+                    "applied a function outside its domain",
+                    format!(
+                        "Attempted to apply function:\n{}\nto argument \"{name}\", which is not in the domain of the function.",
+                        format_pretty(record)
+                    ),
+                ),
+            },
+        }
+    }
+
+    // The positions of a record's fields in TLC's order of their names, which `compileRecord`
+    // evaluates them in.
+    fn field_order(&mut self, fields: &[(TextId, NodeId)]) -> Vec<usize> {
+        let names: Vec<Value> = fields
+            .iter()
+            .map(|&(name, _)| Value::Str(self.text(name)))
+            .collect();
+        let mut order: Vec<usize> = (0..fields.len()).collect();
+        order.sort_by(|&left, &right| {
+            compare(&names[left], &names[right]).unwrap_or(std::cmp::Ordering::Equal)
+        });
+        order
+    }
+
+    /// The resolved node of a reference.
+    pub fn resolved(&self, node: NodeId) -> NodeId {
+        self.node(node).0
+    }
+
+    // The operands of a junction TLC walks as one: all of a bulleted list or a junction of two, or
+    // otherwise a prefix of an infix chain, then its last operand, as SANY nests the chain.
+    pub fn is_walked_whole(&self, node: NodeId, count: usize) -> bool {
+        count <= 2
+            || self
+                .ir
+                .nodes
+                .junctions
+                .get(&self.resolved(node))
+                .is_some_and(|junction| junction.is_bulleted)
+    }
+
+    // The first `count` operands of a junction, evaluated as TLC evaluates SANY's nesting of an
+    // infix chain: the prefix of one fewer, in a frame of its own, then the last.
+    fn junction(
+        &mut self,
+        node: NodeId,
+        operands: &[NodeId],
+        count: usize,
+        is_conjunction: bool,
+        context: &Context,
+    ) -> Evaluated<bool> {
+        if self.call_stack.is_none() || self.is_walked_whole(node, count) {
+            for &operand in &operands[..count] {
+                if self.boolean(operand, context)? != is_conjunction {
+                    return Ok(!is_conjunction);
+                }
+            }
+            return Ok(is_conjunction);
+        }
+        let frame = StackFrame::Prefix(self.resolved(node), count - 1);
+        let prefix = self.in_frame(frame, &mut |evaluator| {
+            evaluator.junction(node, operands, count - 1, is_conjunction, context)
+        })?;
+        if prefix != is_conjunction {
+            return Ok(prefix);
+        }
+        self.boolean(operands[count - 1], context)
+    }
+
+    fn evaluate_node(&mut self, node: NodeId, context: &Context) -> Evaluated<Value> {
         let kind = self.kind(node);
         match kind {
             NodeKind::Number(int) => Ok(Value::Int(*int)),
             NodeKind::WideNumber(_) => fail("an integer outside 32 bits"),
             NodeKind::Decimal(_) => fail("a real number"),
             NodeKind::String(text) => Ok(Value::Str(self.text(*text))),
-            NodeKind::Identifier(name) => self.identifier(name, context),
+            NodeKind::Identifier(name) => self.identifier(node, name, context),
             NodeKind::Apply { name, args } => self.apply(name, args, context),
-            NodeKind::And(operands) => {
-                for &operand in operands {
-                    if !self.boolean(operand, context)? {
-                        return Ok(Value::Bool(false));
-                    }
-                }
-                Ok(Value::Bool(true))
-            }
-            NodeKind::Or(operands) => {
-                for &operand in operands {
-                    if self.boolean(operand, context)? {
-                        return Ok(Value::Bool(true));
-                    }
-                }
-                Ok(Value::Bool(false))
-            }
+            NodeKind::And(operands) => Ok(Value::Bool(self.junction(
+                node,
+                operands,
+                operands.len(),
+                true,
+                context,
+            )?)),
+            NodeKind::Or(operands) => Ok(Value::Bool(self.junction(
+                node,
+                operands,
+                operands.len(),
+                false,
+                context,
+            )?)),
             NodeKind::Prime(inner) => {
                 if context.is_primed {
                     return fail("a prime under a prime");
@@ -355,9 +706,7 @@ impl<'ir> Evaluator<'ir> {
                 if context.is_primed {
                     return fail("UNCHANGED under a prime");
                 }
-                let now = self.evaluate(*inner, context)?;
-                let then = self.evaluate(*inner, &context.primed(true))?;
-                Ok(Value::Bool(equals(&now, &then)?))
+                self.unchanged(*inner, context)
             }
             NodeKind::If {
                 condition,
@@ -431,7 +780,16 @@ impl<'ir> Evaluator<'ir> {
                 let mut kept = Vec::new();
                 for element in elements(&set)?.iter() {
                     let inner = self.bind_pattern(&bound.pattern, element, context)?;
-                    if self.boolean(*predicate, &inner)? {
+                    let test = self.boolean(*predicate, &inner);
+                    // TLC filters a set it can't enumerate lazily, so its predicate fails only
+                    // where TLC uses the result, which the replay doesn't follow.
+                    if test.is_err()
+                        && !matches!(set, Value::Set(_) | Value::Interval(..))
+                        && let Some(stack) = &mut self.call_stack
+                    {
+                        stack.unfollowed.get_or_insert("a filter TLC keeps lazy");
+                    }
+                    if test? {
                         kept.push(element.clone());
                     }
                 }
@@ -462,22 +820,21 @@ impl<'ir> Evaluator<'ir> {
                 Ok(Value::Lazy(Rc::new(Lazy::FunctionSet(domain, range))))
             }
             NodeKind::Record(fields) => {
-                let values = fields
-                    .iter()
-                    .map(|&(name, value)| Ok((self.text(name), self.evaluate(value, context)?)))
-                    .collect::<Evaluated<Vec<_>>>()?;
+                let mut values = vec![None; fields.len()];
+                for index in self.field_order(fields) {
+                    let (name, value) = fields[index];
+                    values[index] = Some((self.text(name), self.evaluate(value, context)?));
+                }
                 self.check_fields(fields.iter().map(|field| field.0))?;
-                Value::record(values)
+                Value::record(values.into_iter().flatten().collect())
             }
             NodeKind::RecordSet(fields) => {
                 self.check_fields(fields.iter().map(|field| field.0))?;
-                let mut sets = fields
-                    .iter()
-                    .enumerate()
-                    .map(|(index, &(name, set))| {
-                        Ok((self.text(name), self.evaluate(set, context)?, index as u32))
-                    })
-                    .collect::<Evaluated<Vec<_>>>()?;
+                let mut sets = Vec::with_capacity(fields.len());
+                for index in self.field_order(fields) {
+                    let (name, set) = fields[index];
+                    sets.push((self.text(name), self.evaluate(set, context)?, index as u32));
+                }
                 sets.sort_by(|left, right| {
                     compare(
                         &Value::Str(Rc::clone(&left.0)),
@@ -506,12 +863,12 @@ impl<'ir> Evaluator<'ir> {
                 None => fail("@ outside an EXCEPT"),
             },
             NodeKind::FunctionApplication { function, args } => {
-                self.apply_function(*function, args, context)
+                self.apply_function(node, *function, args, context)
             }
             NodeKind::FieldAccess { record, field } => {
                 let record = self.evaluate(*record, context)?;
                 let key = Value::Str(self.text(*field));
-                apply_value(&record, &key)
+                self.select_field(node, &record, &key)
             }
             NodeKind::Product(factors) => Ok(Value::Lazy(Rc::new(Lazy::Product(
                 factors
@@ -539,6 +896,7 @@ impl<'ir> Evaluator<'ir> {
         }
     }
 
+    // `e = e'`, the current side first, as `Tool.evalAppl` evaluates UNCHANGED and `[A]_e`.
     fn unchanged(&mut self, subscript: NodeId, context: &Context) -> Evaluated<Value> {
         let now = self.evaluate(subscript, context)?;
         let then = self.evaluate(subscript, &context.primed(true))?;
@@ -561,14 +919,14 @@ impl<'ir> Evaluator<'ir> {
 
     // --- names ---
 
-    fn identifier(&mut self, name: &Name, context: &Context) -> Evaluated<Value> {
+    fn identifier(&mut self, node: NodeId, name: &Name, context: &Context) -> Evaluated<Value> {
         if name.is_local
             && let Some(frame) = lookup(&context.env, name.text)
         {
             return self.binding(&frame, context);
         }
         match name.resolution {
-            Resolution::Variable(index) => return self.read_variable(index, context),
+            Resolution::Variable(index) => return self.read_variable(node, name, index, context),
             Resolution::Constant(index) => {
                 return match self.ir.constants[index as usize].value {
                     Some(value) => self.value(value),
@@ -615,7 +973,7 @@ impl<'ir> Evaluator<'ir> {
                 };
                 let inner = own_context(bound, frame, *is_self)
                     .primed(context.is_primed || bound.is_primed);
-                self.construct_function(bounds, definition.body, &inner)
+                self.defined_function(bounds, definition.body, &inner)
             }
             Binding::Operator(_) => fail("an operator used as a value"),
         }
@@ -638,7 +996,7 @@ impl<'ir> Evaluator<'ir> {
         let printed = self.printed.len();
         let value = match &definition.form {
             DefinitionForm::Function(bounds) => {
-                self.construct_function(bounds, definition.body, &context.global())?
+                self.defined_function(bounds, definition.body, &context.global())?
             }
             DefinitionForm::Operator(params) if params.is_empty() => {
                 self.evaluate(definition.body, &context.global())?
@@ -1057,6 +1415,25 @@ impl<'ir> Evaluator<'ir> {
 
     // --- functions ---
 
+    // A function a definition or a LET defines. TLC builds it in the frame of the definition,
+    // which the replay doesn't record, so a failure building it isn't one the replay follows.
+    fn defined_function(
+        &mut self,
+        bounds: &[Bound],
+        body: NodeId,
+        context: &Context,
+    ) -> Evaluated<Value> {
+        let result = self.construct_function(bounds, body, context);
+        if result.is_err()
+            && let Some(stack) = &mut self.call_stack
+        {
+            stack
+                .unfollowed
+                .get_or_insert("building a function a definition defines");
+        }
+        result
+    }
+
     fn construct_function(
         &mut self,
         bounds: &[Bound],
@@ -1071,7 +1448,9 @@ impl<'ir> Evaluator<'ir> {
             if let Value::Interval(low, high) = set {
                 let mut values = Vec::new();
                 for key in low..=high {
-                    values.push(self.evaluate(body, &context.bind_value(name, Value::Int(key)))?);
+                    values.push(
+                        self.function_body(body, &context.bind_value(name, Value::Int(key)))?,
+                    );
                 }
                 return Ok(Value::over_interval(low, values, Class::Lambda));
             }
@@ -1079,9 +1458,14 @@ impl<'ir> Evaluator<'ir> {
             let mut values = Vec::new();
             for element in elements(&set)?.iter() {
                 keys.push(element.clone());
-                values.push(self.evaluate(body, &context.bind_value(name, element.clone()))?);
+                values.push(self.function_body(body, &context.bind_value(name, element.clone()))?);
             }
             return sorted_function(keys, values, Class::Lambda);
+        }
+        // TLC evaluates every domain before it enumerates any (`Tool.evalAppl`'s
+        // `OPCODE_fc`), so a later domain fails even when an earlier one is empty.
+        for bound in bounds {
+            self.evaluate(bound.set, context)?;
         }
         let mut keys = Vec::new();
         let mut values = Vec::new();
@@ -1095,11 +1479,24 @@ impl<'ir> Evaluator<'ir> {
                     [element] => element.clone(),
                     _ => Value::tuple(bound.to_vec()),
                 });
-                values.push(evaluator.evaluate(body, inner)?);
+                values.push(evaluator.function_body(body, inner)?);
                 Ok(())
             },
         )?;
         sorted_function(keys, values, Class::Lambda)
+    }
+
+    // A function's value at one key. TLC builds the function in a method of the FcnLambdaValue
+    // that `CallStackTool` gives a source, so a failure there is a FingerprintException, as
+    // `headFingerprint` in `evaluate.ts` marks it.
+    fn function_body(&mut self, body: NodeId, context: &Context) -> Evaluated<Value> {
+        let result = self.evaluate(body, context);
+        if result.is_err()
+            && let Some(stack) = &mut self.call_stack
+        {
+            stack.is_fingerprinted = true;
+        }
+        result
     }
 
     // Each binding of the bounds with the elements bound, the last bound varying fastest.
@@ -1125,33 +1522,57 @@ impl<'ir> Evaluator<'ir> {
 
     fn apply_function(
         &mut self,
+        node: NodeId,
         function: NodeId,
         args: &[NodeId],
         context: &Context,
     ) -> Evaluated<Value> {
-        let argument = if args.len() == 1 {
-            self.evaluate(args[0], context)?
-        } else {
-            Value::tuple(
+        let argument = |evaluator: &mut Self| {
+            if args.len() == 1 {
+                return evaluator.evaluate(args[0], context);
+            }
+            Ok(Value::tuple(
                 args.iter()
-                    .map(|&arg| self.evaluate(arg, context))
+                    .map(|&arg| evaluator.evaluate(arg, context))
                     .collect::<Evaluated<_>>()?,
-            )
+            ))
         };
         // A function TLC keeps lazy, a definition's or a LET's, is applied without being built.
         if let NodeKind::Identifier(name) = self.kind(function)
             && let Some((bounds, body, inner)) = self.lazy_function(name, context)?
             && let [bound] = bounds
         {
-            let set = self.evaluate(bound.set, &inner)?;
+            let set = self.evaluate(bound.set, &inner);
+            // TLC builds the function, its domain in the frames of the name and the definition,
+            // which the replay doesn't record.
+            if set.is_err()
+                && let Some(stack) = &mut self.call_stack
+            {
+                stack
+                    .unfollowed
+                    .get_or_insert("the domain of a function TLC keeps lazy");
+            }
+            let set = set?;
+            let argument = argument(self)?;
             if !is_member(&argument, &set)? {
                 return fail("applied a function outside its domain");
             }
             let bound_context = self.bind_pattern(&bound.pattern, &argument, &inner)?;
             return self.nested(|evaluator| evaluator.evaluate(body, &bound_context));
         }
+        // `evalAppl` checks that it applies a function before it evaluates the argument.
         let function = self.evaluate(function, context)?;
-        apply_value(&function, &argument)
+        if let Some(kind) = scalar_kind(&function) {
+            return fail_runtime(
+                "applied a non-function",
+                format!(
+                    "A non-function ({kind}) was applied as a function.\n{}",
+                    self.describe_range(node)
+                ),
+            );
+        }
+        let argument = argument(self)?;
+        self.apply_checked(&function, &argument)
     }
 
     /// For `f[e]` in an action where TLC keeps `f` lazy, a function constructor or a LET's
@@ -1323,7 +1744,18 @@ impl<'ir> Evaluator<'ir> {
     // `SetCupValue`, `SetCapValue` and `SetDiffValue` test it, so that an infinite operand such as
     // Nat isn't enumerated.
     fn is_member_of(&mut self, element: &Value, set: &Operand) -> Evaluated<bool> {
-        self.combined_set(set)?.has(element)
+        let combined = self.combined_set(set)?;
+        let result = combined.has(element);
+        // TLC's \\cup, \\cap and \\ have a source, so a failure in testing their members is a
+        // FingerprintException.
+        if result.is_err()
+            && matches!(combined, Combined::Operation(..))
+            && let Some(stack) = &mut self.call_stack
+            && !stack.is_frozen
+        {
+            stack.is_fingerprinted = true;
+        }
+        result
     }
 
     // A set as TLC builds it, both operands of each `\\cup`, `\\cap` or `\\` evaluated.
@@ -1334,7 +1766,11 @@ impl<'ir> Evaluator<'ir> {
             && !name.is_local
             && let Resolution::Builtin(index) = name.resolution
         {
+            // TLC builds a union, intersection or difference of enumerable sets at once, testing
+            // their elements, so a failure replay builds each rather than test the membership
+            // lazily.
             let operation = match self.name(self.ir.builtins[index as usize].name) {
+                _ if self.call_stack.is_some() => None,
                 "\\cup" => Some(SetOperation::Union),
                 "\\cap" => Some(SetOperation::Intersection),
                 "\\" => Some(SetOperation::Difference),
@@ -1664,10 +2100,14 @@ impl<'ir> Evaluator<'ir> {
                     Value::Bool(true)
                 } else {
                     let message = self.operand(&operands[1])?;
-                    return fail(format!(
-                        "The first argument of Assert evaluated to FALSE; the second argument was:\n{}",
-                        format_value(&message)
-                    ));
+                    return fail_coded(
+                        "an assertion failed",
+                        2132,
+                        format!(
+                            "The first argument of Assert evaluated to FALSE; the second argument was:\n{}",
+                            format_pretty(&message)
+                        ),
+                    );
                 }
             }
             "Print" | "PrintT" => {
@@ -1803,6 +2243,18 @@ fn is_finite(value: &Value) -> bool {
     }
 }
 
+// TLC's `getKindString` of a value that isn't a set or a function, whose class the evaluator
+// knows: a set it may hold as another class than TLC does.
+fn scalar_kind(value: &Value) -> Option<&'static str> {
+    match value {
+        Value::Bool(_) => Some("a Boolean value"),
+        Value::Int(_) => Some("an integer"),
+        Value::Str(_) => Some("a string"),
+        Value::Model(_) => Some("a model value"),
+        _ => None,
+    }
+}
+
 fn sequence_of(value: &Value) -> Evaluated<&[Value]> {
     match as_tuple(value) {
         Some(elements) => Ok(elements),
@@ -1822,6 +2274,35 @@ pub fn apply_value(function: &Value, key: &Value) -> Evaluated<Value> {
         Some(position) => Ok(inner.range[position].clone()),
         None => fail("applied a function outside its domain"),
     }
+}
+
+// TLC's message for a function applied outside its domain, by the class of the function, as
+// `describeMissingArgument` in `values.ts` words it after TLC 1.7.4. A lambda has none here: TLC
+// keeps a function constructor lazy only where it evaluates it so (`EvalControl.KeepLazy`), and
+// turns one of enumerable domains into a `FcnRcdValue` elsewhere, as at startup, which the
+// evaluator doesn't follow yet.
+fn describe_missing(function: &Value, class: Class, key: &Value) -> Option<String> {
+    let shown = format_pretty(function);
+    let shown_key = format_pretty(key);
+    Some(match (class, key) {
+        (Class::Lambda, _) => return None,
+        (Class::Tuple, Value::Int(index)) => {
+            format!("Attempted to access index {index} of tuple\n{shown}\nwhich is out of bounds.")
+        }
+        (Class::Tuple, _) => {
+            format!("Attempted to access tuple at a non integral index: {shown_key}")
+        }
+        (Class::Record, Value::Str(field)) => format!(
+            "Attempted to access nonexistent field '{}' of record\n{shown}",
+            String::from_utf16_lossy(&field.units)
+        ),
+        (Class::Record, _) => {
+            format!("Attempted to access record by a non-string argument: {shown_key}")
+        }
+        (Class::Plain, _) => format!(
+            "Attempted to apply function:\n{shown}\nto argument {shown_key}, which is not in the domain of the function."
+        ),
+    })
 }
 
 fn describe(kind: &NodeKind) -> &'static str {

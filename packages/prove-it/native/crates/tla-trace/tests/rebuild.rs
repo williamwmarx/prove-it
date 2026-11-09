@@ -2,24 +2,11 @@
 //! stops partway, and the path to each of its last states, from the checkpoint's parents, must
 //! rebuild to states equal to the search's.
 
-use tla_engine::search::{Reporter, SearchOutcome, Settings, search};
+mod common;
+
+use common::{ir_directory, path_to, stop_search};
 use tla_trace::{Ending, Rebuilder, Unsupported, format_value};
-use tla_values::transfer::decode_shared_states;
-use tla_values::{Id, Store};
-
-struct Quiet;
-
-impl Reporter for Quiet {
-    fn initial_states_started(&mut self) {}
-    fn initial_states_progress(&mut self, _count: u64) {}
-    fn initial_states(&mut self, _generated: u64, _distinct: u64) {}
-    fn progress(&mut self, _generated: u64, _distinct: u64, _queued: u64, _depth: u64) {}
-    fn print(&mut self, _store: &Store, _values: &[Id]) {}
-}
-
-fn ir_directory() -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../tests/conformance/ir")
-}
+use tla_values::Id;
 
 fn golden_irs(directory: &std::path::Path, found: &mut Vec<std::path::PathBuf>) {
     let mut entries: Vec<_> = std::fs::read_dir(directory)
@@ -34,59 +21,6 @@ fn golden_irs(directory: &std::path::Path, found: &mut Vec<std::path::PathBuf>) 
             found.push(path);
         }
     }
-}
-
-/// The search's states up to where it stopped, in a store of their own, with their parents, why
-/// it stopped and the state it was expanding.
-struct Stopped {
-    store: Store,
-    states: Vec<Vec<Id>>,
-    parents: Vec<i32>,
-    reason: String,
-    expanding: usize,
-}
-
-fn stop_search(ir: &tla_ir::Ir, stop_at: Option<usize>) -> Option<Stopped> {
-    let settings = Settings {
-        stop_at,
-        ..Settings::default()
-    };
-    let SearchOutcome::Stopped {
-        reason,
-        checkpoint: Some(checkpoint),
-        ..
-    } = search(ir, &settings, &mut Quiet)
-    else {
-        return None;
-    };
-    let width = ir.variables.len();
-    let mut store = Store::new();
-    let ranked: Vec<Vec<u16>> = ir.texts[..ir.ranked_count as usize]
-        .iter()
-        .map(|text| text.encode_utf16().collect())
-        .collect();
-    store.reset(ranked.iter().map(Vec::as_slice));
-    let ids = decode_shared_states(&mut store, &checkpoint.states, width).ok()?;
-    let states = if width == 0 {
-        Vec::new()
-    } else {
-        ids.chunks(width).map(<[Id]>::to_vec).collect()
-    };
-    Some(Stopped {
-        store,
-        states,
-        parents: checkpoint.parents.clone(),
-        reason,
-        expanding: checkpoint.expanding as usize,
-    })
-}
-
-fn path_to(parents: &[i32], index: usize) -> Vec<usize> {
-    let mut path = vec![index];
-    while parents[path[0]] >= 0 {
-        path.insert(0, parents[path[0]] as usize);
-    }
-    path
 }
 
 // Rebuilds the paths to the last few states the search kept, and says what failed.
@@ -276,4 +210,13 @@ fn rebuilds_deadlock_traces_as_tlc_prints_them() {
             assert_eq!(labels, tlc_labels(expected), "{path}");
         }
     }
+}
+
+#[test]
+fn sorts_the_records_of_built_lambdas_under_view_and_symmetry() {
+    // TLC permutes the state under SYMMETRY, which builds each lambda into the function it
+    // enumerates, and deep-normalizes it under the VIEW, so the records within print sorted.
+    let (states, _) =
+        deadlock_trace("raft/specifications/standard-raft/RaftWithReconfigJointConsensus");
+    assert_eq!(states[0], tlc_states(RAFT_RECONFIG_INITIAL_STATE)[0]);
 }
