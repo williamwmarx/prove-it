@@ -152,11 +152,9 @@ jobs:
           fi
           PATH="$(scripts/ci/bootstrap.sh node):$PATH"
           # npm can take minutes to serve a version it has just accepted, so after a publish this
-          # asks for five minutes before it fails; a version this run didn't publish isn't tagged.
-          for attempt in $(seq 20); do
-            [[ "$(npm view "$PACKAGE@$VERSION" version 2>/dev/null || true)" == "$VERSION" ]] && break
+          # waits until it does; a version this run didn't publish and npm lacks isn't tagged.
+          until [[ "$(npm view "$PACKAGE@$VERSION" version 2>/dev/null || true)" == "$VERSION" ]]; do
             [[ "$PUBLISHED" == true ]] || exit 0
-            (( attempt < 20 )) || { echo "npm doesn't serve $PACKAGE@$VERSION yet; run Release again to tag it" >&2; exit 1; }
             sleep 15
           done
           AUTH="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
