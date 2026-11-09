@@ -1,0 +1,15 @@
+[package]
+name = "tla-trace"
+description = "Rebuilds a trace's states by evaluating them again, so values print as TLC built them"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+tla-ir = { path = "../tla-ir" }
+tla-values = { path = "../tla-values" }
+
+[dev-dependencies]
+tla-engine = { path = "../tla-engine" }
