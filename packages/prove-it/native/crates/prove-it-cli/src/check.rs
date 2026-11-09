@@ -730,10 +730,9 @@ fn print_violation(
     liveness: Option<&Liveness>,
     start: Instant,
 ) -> Result<i32, &'static str> {
-    // TLC prints a state through the ALIAS when there is one, which the IR doesn't carry yet, and
-    // checks the postconditions on the trace after it prints it.
-    if config.alias.is_some() || !config.postconditions.is_empty() || !config.possible.is_empty() {
-        return Err("ALIAS, POSTCONDITION or _POSSIBLE");
+    // TLC checks the postconditions on the trace after it prints it.
+    if !config.postconditions.is_empty() || !config.possible.is_empty() {
+        return Err("POSTCONDITION or _POSSIBLE");
     }
     // An owner past the configuration's invariants is a property checked as one.
     let model = &ir.model;

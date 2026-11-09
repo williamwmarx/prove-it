@@ -5,7 +5,7 @@
 
 use tla_engine::search::{Violation, ViolationKind};
 use tla_ir::Ir;
-use tla_trace::{Ending, Rebuilder, Unsupported, Value, format_value};
+use tla_trace::{Alias, Ending, Rebuilder, Unsupported, Value, format_value};
 use tla_values::Id;
 
 use crate::check::SEARCH_STACK_BYTES;
@@ -42,16 +42,30 @@ pub fn rebuild_trace(ir: &Ir, violation: &Violation) -> Result<PrintedTrace, Str
                     }
                     ViolationKind::Lasso { .. } => Ending::Lasso,
                 };
-                let trace = Rebuilder::new(ir).and_then(|mut rebuilder| {
-                    rebuilder.rebuild(&violation.store, &states, &violation.labels, ending)
+                let cycle_start = match violation.kind {
+                    ViolationKind::Lasso { loop_start, .. } => Some(loop_start),
+                    _ => None,
+                };
+                // TLC prints each state through the ALIAS, when there is one.
+                let rebuilt = Rebuilder::new(ir).and_then(|mut rebuilder| {
+                    let trace =
+                        rebuilder.rebuild(&violation.store, &states, &violation.labels, ending)?;
+                    let aliases = rebuilder.alias(&trace, cycle_start)?;
+                    Ok((trace, aliases))
                 });
-                trace
-                    .map(|trace| PrintedTrace {
+                rebuilt
+                    .map(|(trace, aliases)| PrintedTrace {
                         states: trace
                             .states
                             .iter()
-                            .map(|state| PrintedState {
-                                text: format_state(ir, &state.values),
+                            .enumerate()
+                            .map(|(position, state)| PrintedState {
+                                text: match aliases.as_ref().map(|aliases| &aliases[position]) {
+                                    Some(Alias::Record(fields)) => format_fields(
+                                        fields.iter().map(|(name, value)| (name.as_str(), value)),
+                                    ),
+                                    _ => format_state(ir, &state.values),
+                                },
                                 action: state.action,
                                 output: state
                                     .printed
@@ -89,13 +103,25 @@ fn format_print(texts: &[String]) -> String {
 
 /// A state's values, in the engine's order of the variables, as TLC prints the state.
 fn format_state(ir: &Ir, values: &[Value]) -> String {
-    let is_conjunction = ir.tlc_order.len() > 1;
+    format_fields(ir.tlc_order.iter().map(|&position| {
+        (
+            ir.texts[ir.variables[position as usize] as usize].as_ref(),
+            &values[position as usize],
+        )
+    }))
+}
+
+/// Named values as TLC prints a state (`TLCStateMut.toString`): a line each, as a conjunction when
+/// there are several.
+fn format_fields<'v>(fields: impl ExactSizeIterator<Item = (&'v str, &'v Value)>) -> String {
+    let is_conjunction = fields.len() > 1;
     let mut text = String::new();
-    for &position in &ir.tlc_order {
-        let value = pretty(&format_value(&values[position as usize]));
-        let name = &ir.texts[ir.variables[position as usize] as usize];
+    for (name, value) in fields {
         let conjunct = if is_conjunction { "/\\ " } else { "" };
-        text.push_str(&format!("{conjunct}{name} = {value}\n"));
+        text.push_str(&format!(
+            "{conjunct}{name} = {}\n",
+            pretty(&format_value(value))
+        ));
     }
     text
 }
