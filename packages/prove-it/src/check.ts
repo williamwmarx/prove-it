@@ -872,11 +872,16 @@ const searchStates = (
   ): Result => {
     if (transferred.count === 0) return evaluate();
     const saved = { ...rebuilding };
+    // TLC rebuilds a trace with the generator the initial states drew from, then draws each
+    // successor from one seeded with its predecessor (TLCTrace#getTrace).
+    const startupRandom = runtime.evaluateAtStartup(runtime.getRandom);
+    const randomState = startupRandom.getState();
     Object.assign(rebuilding, { isActive: true, state, depth });
     try {
       return evaluate();
     } finally {
       Object.assign(rebuilding, saved);
+      startupRandom.setState(randomState);
     }
   };
   // Before TLC prints a trace, it rebuilds from the initial predicate the states it does not keep,
@@ -1230,7 +1235,12 @@ const searchStates = (
     const index = state === current.candidate ? -1 : states.indexOf(state);
     return index === -1 ? [...getPath(current.index), state] : getPath(index);
   };
-  runtime.getCurrentState = () => (current.index === -1 ? undefined : states[current.index]);
+  runtime.getCurrentState = () =>
+    rebuilding.isActive
+      ? rebuilding.state
+      : current.index === -1
+        ? undefined
+        : states[current.index];
   runtime.setLivenessSource = (index) => {
     current.livenessSource = index ?? -1;
   };
@@ -1920,11 +1930,13 @@ const searchStates = (
       };
     } catch (error) {
       // A search that stopped part way hands over the graph it found, when it recorded one for the
-      // temporal properties, and the interpreter goes on from the state it stopped at.
+      // temporal properties, and the interpreter goes on from the state it stopped at. Under
+      // SYMMETRY or a VIEW that graph holds the states stored rather than those each step reached,
+      // so the interpreter searches again.
       if (isBailout(error) && error.checkpoint) {
         const checkpoint = error.checkpoint as EngineCheckpoint;
         if (!liveness) engineReport.checkpoint = checkpoint;
-        else if (checkpoint.graph) takeGraph(checkpoint);
+        else if (checkpoint.graph && !isReducing) takeGraph(checkpoint);
       }
       reportEngine(
         `handed over after ${(performance.now() - startedAt).toFixed(0)} ms: ${isBailout(error) ? error.message : String(error instanceof Error ? (error.stack ?? error.message) : error)}`,
