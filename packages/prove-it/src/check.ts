@@ -1,5 +1,6 @@
 import type { Expression } from "./ast";
 import { type ModelConfig, parseConfig } from "./config";
+import { hasEffect } from "./dependencies";
 import { getMemoStatistics } from "./engine/compile";
 import { toEngineProperties } from "./engine/context";
 import { toValue as toEngineValue } from "./engine/convert";
@@ -1696,15 +1697,19 @@ const searchStates = (
     const symmetry = search.symmetryGroup?.map((images) =>
       [...images].map(([name, image]): [string, string] => [name, image.name]),
     );
-    // TLC's actions for the IR, found again with what they print discarded: TLC prints at startup
-    // once, and a trace prints again when it finds them. Finding them describes the whole spec,
-    // which can fail where the search doesn't, such as on an invariant that recurses forever: the
-    // IR then has none, and no trace is labelled natively.
+    // TLC's actions for the IR, when the search doesn't take its steps through them already.
+    // Finding them evaluates the next-state relation's arguments and the constant invariants and
+    // properties, so it happens only where none of them has an effect (a random choice, a TLC
+    // register, printing), which would change what the run does. It can also fail where the
+    // search doesn't, such as on an invariant that recurses forever. Either way the IR then has
+    // none, and no trace is labelled natively.
     const getTraceActions = () => {
+      const evaluated = [...config.invariants, ...config.properties].flatMap(
+        (name) => getDefinition(name, environment)?.body ?? [],
+      );
+      if (hasEffect([next, ...evaluated], environment)) return [];
       try {
-        return captureOutput(() =>
-          getNextActions(config, environment, specification.instanceActions),
-        ).result;
+        return getNextActions(config, environment, specification.instanceActions);
       } catch (error) {
         if (isStackOverflow(error) || error instanceof TlaError) return [];
         throw error;
@@ -1720,7 +1725,7 @@ const searchStates = (
         config,
         environment,
         spec: engineSpec,
-        traceActions: getTraceActions().map((action) => ({
+        traceActions: (isLabelled ? getSpecNextActions() : getTraceActions()).map((action) => ({
           expression: action.expression,
           scope: action.scope,
           label: getActionLabel(action, options.version),

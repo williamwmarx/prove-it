@@ -131,4 +131,33 @@ describe("the engine IR", () => {
       "messages",
     ]);
   });
+
+  it("labels TLC's actions as a trace names them", async () => {
+    const dump = join(directory, "actions.ir");
+    await checkCommit(dump);
+    const texts = readIr(readFileSync(dump)).texts;
+    const range = "line \\d+, col \\d+ to line \\d+, col \\d+ of module Commit";
+    expect(texts.some((text) => new RegExp(`^CoordinatorAbort ${range}$`).test(text))).toBe(true);
+    expect(texts.some((text) => new RegExp(`^Prepare\\(.+\\) ${range}$`).test(text))).toBe(true);
+  });
+
+  it("finds TLC's actions without drawing from the run's random numbers", async () => {
+    // Finding the actions evaluates their arguments, which would draw a number here and change
+    // the initial state the seed picks.
+    const source =
+      "---- MODULE R ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = RandomElement(1..100)\nStep(v) == UNCHANGED x\nNext == Step(RandomElement(1..100))\nInv == x = 74\n====";
+    const run = async (dump?: string) => {
+      process.env.PROVE_IT_ENGINE_BACKEND = "ts";
+      if (dump === undefined) delete process.env.PROVE_IT_IR_DUMP;
+      else process.env.PROVE_IT_IR_DUMP = dump;
+      const result = await check({
+        source,
+        config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+        seed: 1n,
+        onPrint: () => {},
+      });
+      return result.status;
+    };
+    expect(await run(join(directory, "random.ir"))).toBe(await run());
+  });
 });
