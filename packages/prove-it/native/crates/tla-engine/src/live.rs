@@ -13,6 +13,10 @@ use crate::machine::{Eval, Machine, Printed, UNASSIGNED};
 
 pub const UNKNOWN: u8 = 2;
 
+/// The most answers an atom that reads TLCGet("diameter") takes, one per state or step for each
+/// diameter: past them the interpreter answers it.
+const MAXIMUM_DIAMETER_ANSWERS: usize = 1 << 26;
+
 /// What PROVE_IT_LIVE_CHECK finds when ENABLED from the steps the search took differs from
 /// ENABLED run.
 pub const ENABLED_DIFFERS: &str = "ENABLED from the steps the search took differs from ENABLED run";
@@ -199,9 +203,14 @@ pub fn answer_atoms(
     let mut tables = Vec::with_capacity(atoms.len());
     for (position, atom) in atoms.iter().enumerate() {
         // An atom that reads TLCGet("diameter") is answered for each diameter from 1 to the last,
-        // and left to the interpreter where the search isn't complete.
+        // and left to the interpreter where the search isn't complete or the answers for every
+        // diameter wouldn't fit in memory.
         let is_diameter_read = diameter_atoms.get(position) == Some(&true);
-        if is_diameter_read && last_diameter.is_none() {
+        let is_too_deep = last_diameter.is_some_and(|last| {
+            (graph.edges.len() + graph.count).saturating_mul(last as usize)
+                > MAXIMUM_DIAMETER_ANSWERS
+        });
+        if is_diameter_read && (last_diameter.is_none() || is_too_deep) {
             tables.push(Table {
                 answers: Vec::new(),
                 is_from_steps: false,
