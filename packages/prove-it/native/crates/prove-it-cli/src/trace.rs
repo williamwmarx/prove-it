@@ -414,7 +414,7 @@ pub(crate) fn format_texts(ir: &Ir, texts: &[String]) -> String {
 
 /// Named values as TLC prints a state (`TLCStateMut.toString`): a line each, as a conjunction when
 /// there are several.
-fn format_fields<'v>(
+pub(crate) fn format_fields<'v>(
     fields: impl ExactSizeIterator<Item = (&'v str, Option<&'v Value>)>,
 ) -> String {
     let is_conjunction = fields.len() > 1;

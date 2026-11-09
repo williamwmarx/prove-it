@@ -888,14 +888,19 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                     Ok(NO_NEXT_ACTION)
                 }
                 // TLC's report of a failure evaluating the model, which it replays.
-                // TLC prints the trace through the ALIAS and checks the postconditions after it,
-                // which the printing doesn't follow yet.
+                // TLC checks the postconditions after the trace, which the printing doesn't
+                // follow yet, and prints the trace through the ALIAS, which it follows for a
+                // failure in the next-state relation or an invariant.
                 ViolationKind::Error { .. }
-                    if config.alias.is_some()
-                        || !config.postconditions.is_empty()
-                        || !config.possible.is_empty() =>
+                    if !config.postconditions.is_empty() || !config.possible.is_empty() =>
                 {
-                    Err("a failure with an ALIAS, POSTCONDITION or _POSSIBLE".to_string())
+                    Err("a failure with a POSTCONDITION or _POSSIBLE".to_string())
+                }
+                ViolationKind::Error { site }
+                    if config.alias.is_some()
+                        && !matches!(site, ErrorSite::Next | ErrorSite::Invariant(_)) =>
+                {
+                    Err("a failure outside the next-state relation with an ALIAS".to_string())
                 }
                 ViolationKind::Error { site } => {
                     let counts = &violation.counts;
@@ -927,6 +932,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                             depth: counts.depth,
                         },
                         out_degrees: &counts.out_degrees,
+                        aliased: config.alias.is_some().then_some(&violation),
                     };
                     print_failure(printer, &ir, &stop, start)
                 }
