@@ -258,7 +258,7 @@ const isConstantTrue = (item: ScopedExpression, environment: Environment, usage:
   return true;
 };
 
-const getSpecification = (config: ModelConfig, environment: Environment): Specification => {
+export const getSpecification = (config: ModelConfig, environment: Environment): Specification => {
   if (config.specification === undefined) {
     const getOperator = (name: string | undefined, description: string) => {
       if (name === undefined) return undefined;

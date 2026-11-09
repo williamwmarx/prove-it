@@ -32,6 +32,7 @@ import { type Builtin, describeRange, type Environment } from "../src/evaluate";
 import { tokenize } from "../src/lexer";
 import { getLevel } from "../src/liveness";
 import { parseModule, parseSanyModule } from "../src/parser";
+import { getSpecification } from "../src/search";
 import { createTlcOrder } from "../src/tlc/order";
 import { setStringOrder } from "../src/values";
 import {
@@ -226,6 +227,25 @@ const MODES: Record<string, (source: string, path: string, spec: string) => stri
   ir: writeResult(lowerDefinitions),
   "model-ir": writeResult(lowerModel),
   order: writeResult(readOrders),
+  spec: writeResult((source, _path, spec) => {
+    const config = parseConfig(source);
+    const environment = linkSpec(readFileSync(spec, "utf8"), spec, config).specification
+      .environment;
+    const specification = getSpecification(config, environment);
+    const describe = (expression: Expression) => [
+      expression.kind === "Identifier" ? expression.name : null,
+      describeRange(expression),
+    ];
+    const names: string[] = [];
+    for (let scope = specification.scope; scope; scope = scope.parent) names.push(scope.name);
+    const init = specification.init;
+    return {
+      init: init ? (init.kind === "And" ? init.operands : [init]).map(describe) : null,
+      next: specification.next ? describe(specification.next) : null,
+      scope: names,
+      temporals: specification.temporals.map((temporal) => describeRange(temporal.expression)),
+    };
+  }),
   model: writeResult((source, _path, spec) =>
     readEnvironment(readFileSync(spec, "utf8"), spec, parseConfig(source)),
   ),
@@ -270,7 +290,7 @@ if (mode !== "time" && MODES[mode] === undefined) {
   throw new Error(`front-differential takes a mode: ${[...Object.keys(MODES), "time"].join(", ")}`);
 }
 const filter = getOption("--filter");
-const isModel = ["model", "order", "model-ir"].includes(mode);
+const isModel = ["model", "order", "model-ir", "spec"].includes(mode);
 const extension = mode === "config" || isModel ? ".cfg" : ".tla";
 // A model is a configuration and the spec of the same name beside it.
 const getSpec = (path: string) => {
@@ -319,7 +339,7 @@ const getRustBinary = () => {
 };
 const rust = getRustBinary();
 
-const isLinked = ["resolve", "model", "ir", "order", "model-ir"].includes(mode);
+const isLinked = ["resolve", "model", "ir", "order", "model-ir", "spec"].includes(mode);
 if (isLinked) linkLibraryModules();
 
 const runRust = (batch: typeof modules) => {
