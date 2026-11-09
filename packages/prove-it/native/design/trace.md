@@ -279,7 +279,10 @@ tracing evaluator of `evaluate.ts` port. While it replays, the evaluator keeps a
 - each prefix of an infix chain of junctions, which SANY nests as a node of its own. Its range
   comes from the IR's prefix ends (IR 9).
 
-The first failure freezes the stack. The walk takes TLC's shortcut past assigned conjuncts only in
+The successors are replayed for each of TLC's actions: the IR's, or, where the IR has none (as for
+a spec that prints), the next-state relation split as `Tool.getActions` splits it. Each disjunct,
+the body of an operator whose arguments evaluate without the state, a LET's body and `\E` at each
+binding is an action. The first failure freezes the stack. The walk takes TLC's shortcut past assigned conjuncts only in
 the initial predicate, and in an action with warnings on, as `isAssignedShortcut` does; that also
 decides which frames a stack keeps. The report follows `getFailureMessage`:
 - an EvalException that escapes the next-state computation keeps its own code;
@@ -295,7 +298,9 @@ An error has TLC's message only where its kind is ported. So far:
 - Assert (2132);
 - a field selected from a record that lacks it, from a tuple or from a value that isn't a
   function, worded as `getFieldSelector` words it;
-- a function applied outside its domain, worded by its class (`describeMissingArgument`).
+- a function applied outside its domain, worded by its class (`describeMissingArgument`);
+- a variable read before the state assigns it (2280, `createUnassignedError`), with the range of
+  the name read.
 
 A lambda has no message yet: TLC keeps a function constructor lazy only where it evaluates it so
 (`EvalControl.KeepLazy`), which the evaluator doesn't follow. TLC 1.7.4's wording isn't ported.

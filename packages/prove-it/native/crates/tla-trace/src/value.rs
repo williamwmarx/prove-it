@@ -50,6 +50,14 @@ pub fn fail_runtime<T>(reason: impl Into<String>, text: String) -> Evaluated<T> 
     })
 }
 
+/// A failure with TLC's message for it.
+pub fn fail_with<T>(reason: impl Into<String>, message: TlcMessage) -> Evaluated<T> {
+    Err(EvalError {
+        reason: reason.into(),
+        message: Some(message),
+    })
+}
+
 /// A failure TLC raises as an EvalException with the message of this code.
 pub fn fail_coded<T>(reason: impl Into<String>, code: u32, text: String) -> Evaluated<T> {
     Err(EvalError {
