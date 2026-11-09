@@ -77,6 +77,8 @@ interface ModuleBinding extends Binding {
 // What SANY reports while it goes on analyzing a unit of a module, and the scope it analyzes it in.
 interface Unit {
   imported: Symbols;
+  // Where the module declares each of its constants and variables, which a unit sees only after.
+  declared: Map<string, SourceLocation>;
   getInstance: (instance: Instance) => InstancedModule;
   definitions: Map<string, Definition>;
   getKey: (definition: Definition) => string;
@@ -263,14 +265,16 @@ const getVisibleDefinition = (name: string, unit: Unit) => {
 
 const findSymbol = (name: string, unit: Unit): ModuleSymbol | undefined => {
   const definition = getVisibleDefinition(name, unit);
-  return definition
-    ? {
-        key: unit.getKey(definition),
-        arity: getArity(definition),
-        params: getParamArities(definition),
-        kind: "Definition",
-      }
-    : unit.imported.get(name);
+  if (definition) {
+    return {
+      key: unit.getKey(definition),
+      arity: getArity(definition),
+      params: getParamArities(definition),
+      kind: "Definition",
+    };
+  }
+  const declaredAt = unit.declared.get(name);
+  return declaredAt && !isBefore(declaredAt, unit.location) ? undefined : unit.imported.get(name);
 };
 
 const findBinding = (name: string, scope: LocalName | undefined, unit: Unit): Binding | undefined =>
@@ -1482,6 +1486,14 @@ export const isTheoremDefinition = (module: Module, definition: Definition) =>
       item.location.column === definition.location.column,
   );
 
+const getDeclared = (module: Module) =>
+  new Map(
+    [...module.constants, ...module.variables].map((declaration) => [
+      declaration.name,
+      declaration.location,
+    ]),
+  );
+
 const createSymbols = (module: Module, imported: Symbols) => {
   const symbols = new Map([...CORE_SYMBOLS, ...imported]);
   module.constants.forEach((constant) =>
@@ -1591,6 +1603,7 @@ export const resolveSubstitutions = (
   unit.reports.push(report);
   return checkSubstitutions(instance, declarations, module.name, undefined, {
     imported,
+    declared: getDeclared(module),
     getInstance: unit.getInstance,
     definitions: unit.definitions,
     getKey: unit.getKey,
@@ -1662,6 +1675,7 @@ export const collectSemanticErrors = (
 // that no definition follows at the end. Returns the errors.
 export const resolveModule = (module: Module, unit: ModuleUnit) => {
   const symbols = createSymbols(module, unit.imported);
+  const declared = getDeclared(module);
   const facts = new Set([
     ...unit.facts,
     ...[...module.theorems, ...module.assumptions].flatMap((fact) => fact.name ?? []),
@@ -1689,6 +1703,7 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
     hasLabelScope: boolean,
   ): Unit => ({
     imported: symbols,
+    declared,
     getInstance: unit.getInstance,
     definitions: unit.definitions,
     getKey: unit.getKey,
