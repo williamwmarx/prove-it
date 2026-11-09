@@ -39,7 +39,7 @@ use tla_values::store::{FALSE, Outcome, TRUE};
 use tla_values::{Bail, Id, Store};
 
 use crate::footprint::Footprint;
-use crate::machine::{Eval, Key, Machine, Member, Parts, Program, Recursive};
+use crate::machine::{Eval, Key, Machine, Member, Parts, Program, Recursive, Step};
 use crate::memo::EPOCH_KEYS;
 
 /// What TLCGet reads of TLC's search, at slots of their own so that an expression that reads one
@@ -593,6 +593,9 @@ pub struct Compiler<'a> {
     depth: u32,
     // The unsettled fixed points the compiles under way have read, innermost first.
     reads: Option<Vec<Rc<FixedPoint>>>,
+    /// The walks whose first step is a guard `f[k] = c`, by the address of their step, each kept
+    /// alive so no other step takes its address (`walker::Leading`).
+    leading_guards: HashMap<usize, (Step, walker::Leading)>,
     // What cached compiles read of fixed points that hadn't settled when they compiled.
     provisional: HashMap<u64, Vec<Rc<FixedPoint>>>,
     entry_count: u64,
@@ -652,6 +655,7 @@ impl<'a> Compiler<'a> {
                 .map_or(TextId::MAX - 1, |index| index as TextId),
             depth: 0,
             reads: None,
+            leading_guards: HashMap::new(),
             provisional: HashMap::new(),
             entry_count: 0,
             specialisations: 0,
