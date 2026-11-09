@@ -1436,8 +1436,6 @@ fn describe(error: CompileError) -> String {
     }
 }
 
-/// Searches the model the IR describes. It runs compiled closures, which recurse with the
-/// expressions and values, so its caller runs it on a thread with a deep stack.
 // What TLC's startup printed as it evaluated the substitutes and the constant definitions, then
 // as it evaluated the assumptions, and the assumption it found false.
 struct Started {
@@ -1499,6 +1497,8 @@ fn share_startup(machine: &mut Machine<'_>, context: &EngineContext) -> Outcome<
     Ok(encoder.finish())
 }
 
+/// Searches the model the IR describes. It runs compiled closures, which recurse with the
+/// expressions and values, so its caller runs it on a thread with a deep stack.
 pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> SearchOutcome {
     let model = &ir.model;
     let ranked: Vec<Vec<u16>> = ir.texts[..ir.ranked_count as usize]

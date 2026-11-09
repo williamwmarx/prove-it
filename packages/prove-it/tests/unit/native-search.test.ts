@@ -1250,6 +1250,29 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     );
   });
 
+  // TLC evaluates a substitute and the constant definitions with effects when it starts, then the
+  // assumptions, and the search reads what they drew, which the invariant prints.
+  it("draws and prints at startup as TLC does", async () => {
+    const body = [
+      "EXTENDS TLC, Naturals",
+      'Shown == Print("shown", 4)',
+      'Sub == IF PrintT("sub") THEN 5 ELSE 0',
+      "D == 3",
+      "R == RandomElement(1..100)",
+      'ASSUME PrintT(<<"assume", R>>)',
+      "ASSUME Shown > 0",
+      "VARIABLE x",
+      "Init == x = R",
+      "Next == x' = x",
+      'Inv == PrintT(<<"inv", x>>) /\\ x = R /\\ D = 5',
+    ];
+    const lines = await compareWithInterpreter(
+      body,
+      "CONSTANT D <- Sub\nINIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
+    );
+    expect(lines).toContainEqual(expect.stringMatching(COMPLETE));
+  });
+
   // From tla-rs's function_syntax: TLC applies a recursive function of several bounds to tuples
   // of its product, and keeps a recursive function lazy where a spec passes it or takes its
   // domain.
