@@ -232,9 +232,14 @@ pub fn print_assumption_failure(
     printer: &mut Printer,
     ir: &Ir,
     position: u32,
+    workers: usize,
     start: Instant,
 ) -> Result<i32, String> {
-    let failure = on_search_stack(|| Rebuilder::new(ir)?.evaluate_assumption(position))?;
+    let failure = on_search_stack(|| {
+        let mut rebuilder = Rebuilder::new(ir)?;
+        rebuilder.set_workers(workers);
+        rebuilder.evaluate_assumption(position)
+    })?;
     for print in &failure.printed {
         printer.line(&format_print(print));
     }
