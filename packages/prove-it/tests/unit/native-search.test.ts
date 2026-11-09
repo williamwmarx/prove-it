@@ -69,6 +69,19 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     );
   });
 
+  it("assigns each subset of a set to x' \\subseteq S, as x' \\in SUBSET S", async () => {
+    // TLC's test-model/SubseteqNextState.tla. The TypeScript engine leaves it to the interpreter.
+    const body = [
+      "VARIABLES x, y",
+      "Init == x \\subseteq {1, 2} /\\ y = {1, 2, 3}",
+      "Next == UNCHANGED y /\\ x' \\subseteq y'",
+    ];
+    const config = "INIT Init\nNEXT Next";
+    expect(await compareWithInterpreter(body, config)).toContainEqual(
+      expect.stringMatching(COMPLETE),
+    );
+  });
+
   it("tests guards fused in place: f[k] = c, f[k] = j, x = c and membership", async () => {
     const body = [
       "CONSTANT P",

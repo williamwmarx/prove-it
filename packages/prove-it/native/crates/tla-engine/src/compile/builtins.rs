@@ -207,6 +207,51 @@ impl Compiler<'_> {
         })
     }
 
+    /// `SUBSET S` of a compiled S, which TLC enumerates in the normalized order of S's elements.
+    pub(crate) fn compile_subset(&mut self, base: &Compiled) -> Compiled {
+        let base_member = self.member_test(base);
+        let base_parts = Self::parts_of(base);
+        Compiled {
+            is_normalized: false,
+            subset_base: Some(Box::new(base.clone())),
+            // It streams in its order, and its elements are set enumerations.
+            is_in_order: true,
+            are_elements_in_order: true,
+            // TLC enumerates SUBSET S in the normalized order of S's elements, whatever S's
+            // own order (SubsetValue.elementsNormalized), so S's value does where S has no
+            // reference.
+            reference: combine_references(&[base], |_, mut bases| {
+                Ok(Lazy::Subset(Box::new(bases.remove(0))))
+            })
+            .or_else(|| {
+                let evaluate = base.eval.clone();
+                Some(Arc::new(move |machine| {
+                    Ok(Lazy::Subset(Box::new(Lazy::Set(evaluate(machine)?))))
+                }))
+            }),
+            parts: Some(base_parts.clone()),
+            member: Some(member(move |machine, element| {
+                machine.run_parts(&base_parts)?;
+                // TLC fails on anything it can't enumerate, untyped model values included.
+                if machine.store.kind_of(element) != KIND_SET {
+                    return Err(Bail("a membership in SUBSET of a non-set"));
+                }
+                for index in 0..machine.store.size_of(element) {
+                    let value = machine.store.element_at(element, index);
+                    if !base_member(machine, value)? {
+                        return Ok(false);
+                    }
+                }
+                Ok(true)
+            })),
+            ..unary(
+                &base,
+                |machine, set| power_set(machine, expect_set(machine, set, "expected a set")?),
+                true,
+            )
+        }
+    }
+
     // Nat, Int and STRING, which the engine only tests for membership.
     fn infinite_set(name: &'static str, reason: &'static str) -> Compiled {
         Compiled {
@@ -996,49 +1041,7 @@ impl Compiler<'_> {
             "SUBSET" => {
                 arity(1)?;
                 let base = self.operand(&operands[0])?;
-                let base_member = self.member_test(&base);
-                let base_parts = Self::parts_of(&base);
-                Compiled {
-                    is_normalized: false,
-                    subset_base: Some(Box::new(base.clone())),
-                    // It streams in its order, and its elements are set enumerations.
-                    is_in_order: true,
-                    are_elements_in_order: true,
-                    // TLC enumerates SUBSET S in the normalized order of S's elements, whatever S's
-                    // own order (SubsetValue.elementsNormalized), so S's value does where S has no
-                    // reference.
-                    reference: combine_references(&[&base], |_, mut bases| {
-                        Ok(Lazy::Subset(Box::new(bases.remove(0))))
-                    })
-                    .or_else(|| {
-                        let evaluate = base.eval.clone();
-                        Some(Arc::new(move |machine| {
-                            Ok(Lazy::Subset(Box::new(Lazy::Set(evaluate(machine)?))))
-                        }))
-                    }),
-                    parts: Some(base_parts.clone()),
-                    member: Some(member(move |machine, element| {
-                        machine.run_parts(&base_parts)?;
-                        // TLC fails on anything it can't enumerate, untyped model values included.
-                        if machine.store.kind_of(element) != KIND_SET {
-                            return Err(Bail("a membership in SUBSET of a non-set"));
-                        }
-                        for index in 0..machine.store.size_of(element) {
-                            let value = machine.store.element_at(element, index);
-                            if !base_member(machine, value)? {
-                                return Ok(false);
-                            }
-                        }
-                        Ok(true)
-                    })),
-                    ..unary(
-                        &base,
-                        |machine, set| {
-                            power_set(machine, expect_set(machine, set, "expected a set")?)
-                        },
-                        true,
-                    )
-                }
+                self.compile_subset(&base)
             }
             "UNION" => {
                 arity(1)?;
