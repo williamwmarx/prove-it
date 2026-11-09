@@ -6,7 +6,10 @@ mod common;
 
 use common::{Quiet, ir_directory, path_to, stop_search};
 use tla_engine::search::{SearchOutcome, Settings, ViolationKind, search};
-use tla_trace::{Alias, Ending, Rebuilder, Unsupported, format_value};
+use tla_trace::{
+    Alias, CounterExample, Ending, PostconditionInputs, Rebuilder, Stats, Trace, TraceState,
+    Unsupported, Value, Verdict, format_value,
+};
 use tla_values::Id;
 
 fn golden_irs(directory: &std::path::Path, found: &mut Vec<std::path::PathBuf>) {
@@ -39,6 +42,10 @@ fn check(path: &std::path::Path) -> Result<usize, String> {
         Ok(rebuilder) => rebuilder,
         Err(Unsupported(reason)) => return Err(reason),
     };
+    rebuilder.set_startup(&stopped.store, &stopped.startup, stopped.startup_random);
+    if let Some(group) = &stopped.symmetry {
+        rebuilder.set_symmetry(group);
+    }
     let count = stopped.states.len();
     let mut rebuilt = 0;
     for index in count.saturating_sub(3)..count {
@@ -162,6 +169,10 @@ fn deadlock_trace(path: &str) -> (Vec<String>, Option<Vec<String>>) {
             .collect();
         let trace = Rebuilder::new(&ir)
             .and_then(|mut rebuilder| {
+                rebuilder.set_startup(&stopped.store, &stopped.startup, stopped.startup_random);
+                if let Some(group) = &stopped.symmetry {
+                    rebuilder.set_symmetry(group);
+                }
                 rebuilder.rebuild(
                     &stopped.store,
                     &states,
@@ -261,6 +272,11 @@ fn rebuild_violation<T: Send>(
         };
         let states: Vec<&[Id]> = violation.states.iter().map(Vec::as_slice).collect();
         let mut rebuilder = Rebuilder::new(&ir)?;
+        rebuilder.set_startup(
+            &violation.store,
+            &violation.startup,
+            violation.startup_random,
+        );
         let trace = rebuilder.rebuild(&violation.store, &states, &violation.labels, ending)?;
         then(&ir, &mut rebuilder, &trace, cycle_start)
     })
@@ -340,4 +356,49 @@ fn prints_a_state_through_the_alias_record_in_the_order_written() {
         aliased_trace("tlc/tlatools/org.lamport.tlatools/test-model/Github746"),
         Ok(vec!["/\\i=1/\\foo=\"bar\"/\\j=TRUE".to_string()])
     );
+}
+
+#[test]
+fn checks_a_postcondition_on_the_counter_example() {
+    // Github1389Counting's postcondition reads the states and steps of the stuttering lasso TLC
+    // prints: x alternating from FALSE over ten states, each step Next. It holds there, and not
+    // on a trace one state short.
+    let bytes = std::fs::read(
+        ir_directory().join("tlc/tlatools/org.lamport.tlatools/test-model/Github1389Counting.ir"),
+    )
+    .expect("a golden IR");
+    let ir = tla_ir::decode(&bytes).expect("an IR that decodes");
+    let check = |count: usize| {
+        let trace = Trace {
+            states: (0..count)
+                .map(|position| TraceState {
+                    values: vec![Value::Bool(position % 2 == 1)],
+                    action: (position > 0).then_some(0),
+                    printed: Vec::new(),
+                })
+                .collect(),
+            trace_output: Vec::new(),
+        };
+        Rebuilder::new(&ir)?.postcondition(
+            0,
+            &PostconditionInputs {
+                possible: &[],
+                stats: Stats {
+                    queue: 0,
+                    distinct: 2,
+                    initial: 1,
+                    generated: 5,
+                    diameter: 2,
+                    duration: 0,
+                },
+                counter_example: Some(CounterExample {
+                    trace: &trace,
+                    cycle: None,
+                }),
+            },
+        )
+    };
+    let verdict = |count| check(count).map(|checked| checked.verdict);
+    assert_eq!(verdict(10), Ok(Verdict::Holds));
+    assert_eq!(verdict(9), Ok(Verdict::False));
 }

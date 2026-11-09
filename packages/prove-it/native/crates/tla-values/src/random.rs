@@ -28,6 +28,11 @@ impl JavaRandom {
         }
     }
 
+    /// The state another generator can go on from (`from_state`).
+    pub fn state(&self) -> u64 {
+        self.state
+    }
+
     fn next(&mut self, bits: u32) -> i32 {
         self.state = self.state.wrapping_mul(MULTIPLIER).wrapping_add(0xb) & MASK;
         (self.state >> (48 - bits)) as u32 as i32

@@ -5,7 +5,7 @@
 //! interpreter goes on.
 
 use std::cell::Cell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 use std::io::Write as _;
 use std::sync::Arc;
@@ -14,19 +14,21 @@ use std::time::{Duration, Instant};
 
 use tla_ir::{Ir, LiveTerm, Model};
 use tla_live::{Event, Liveness, Term, Verdict};
-use tla_values::fingerprint::{Carried, Fingerprints, Parent};
-use tla_values::store::Outcome;
+use tla_values::fingerprint::{Dense, Entries, Fingerprints, Overlaid, Parent, SharedFingerprints};
+use tla_values::store::{FALSE, KIND_SET, Outcome, TRUE};
 use tla_values::transfer::{EncodedStates, SharedEncoder, SharedStates, StateEncoder};
 use tla_values::{Bail, Id, NESTING_STACK_BYTES, Store};
 
 use crate::compile::{CompileError, Compiler, DISTINCT_SLOT, LEVEL_SLOT, NEXT_LEVEL_SLOT, Options};
 use crate::context::{
-    Atom, EngineContext, count_possible, first_failing, first_failing_changed, holds_all,
-    holds_all_changed,
+    Atom, EngineContext, Startup, StartupSymmetry, count_possible, first_failing,
+    first_failing_changed, holds_all, holds_all_changed,
 };
 use crate::live::{Diameters, LiveGraph, Table, UNKNOWN, answer_atoms};
-use crate::machine::{Machine, Printed, Step, UNASSIGNED};
-use crate::symmetry::Canonicalizer;
+use crate::machine::{Eval, Machine, Printed, Step, UNASSIGNED};
+use crate::symmetry::{
+    Canonicalizer, Group, NamedGroup, close_group, get_permutations, name_group,
+};
 
 pub const OUT_DEGREE_BUCKETS: usize = 32;
 const PROGRESS_INTERVAL: Duration = Duration::from_secs(60);
@@ -111,6 +113,17 @@ pub trait Reporter {
     fn liveness_finished(&mut self) {}
     /// What Print or PrintT printed: the values, as ids of the search's store.
     fn print(&mut self, store: &Store, values: &[Id]);
+    /// What Print or PrintT printed while TLC started: as the substitutes and constant
+    /// definitions were evaluated, before [`Reporter::startup_done`], then as the assumptions
+    /// were. The interpreter printed it already where it handed the search over.
+    fn startup_print(&mut self, _store: &Store, _values: &[Id]) {}
+    /// The sets the symmetry permutes that hold fewer than two elements, by name, which TLC warns
+    /// about once it has evaluated the symmetry (2300, `TLC_SYMMETRY_SET_TOO_SMALL`). The
+    /// interpreter warned already where it handed the search over.
+    fn symmetry_sets_too_small(&mut self, _names: &[String]) {}
+    /// TLC has evaluated the substitutes, the constant definitions and the symmetry, and prints
+    /// what it prints itself before it checks the assumptions.
+    fn startup_done(&mut self) {}
 }
 
 /// The counts TLC reports of a search, so far or in all.
@@ -146,6 +159,12 @@ pub struct Checkpoint {
     /// What each `_POSSIBLE` predicate counted before the expansion the interpreter goes on
     /// from, or -1 where it wasn't evaluated.
     pub possible: Vec<i64>,
+    /// The value TLC computed at startup of each of the model's startup definitions, as one row.
+    pub startup: SharedStates,
+    /// The state of the generator the startup left (`JavaRandom::state`).
+    pub startup_random: u64,
+    /// The symmetry group the search reduced by, if any.
+    pub symmetry: Option<NamedGroup>,
 }
 
 /// The steps of a search (`EngineGraph`): for each of the first `expanded` states, how many
@@ -167,8 +186,11 @@ pub struct GraphCheckpoint {
 }
 
 pub enum SearchOutcome {
-    /// The engine doesn't take the model, for this reason, before producing any state.
+    /// The engine doesn't take the model, for this reason, before producing any state or
+    /// reporting anything.
     Declined(String),
+    /// The assumption TLC reports by this name is false (2104).
+    AssumptionViolated { name: String },
     Complete {
         counts: Box<Counts>,
         /// With temporal properties, the whole search for the interpreter to print a
@@ -221,6 +243,13 @@ pub struct Violation {
     /// The counts TLC reports after the trace.
     pub counts: StopCounts,
     pub store: Store,
+    /// The value TLC computed at startup of each of the model's startup definitions, ids of
+    /// `store`.
+    pub startup: Vec<Id>,
+    /// The state of the generator the startup left (`JavaRandom::state`).
+    pub startup_random: u64,
+    /// The symmetry group the search reduced by, if any.
+    pub symmetry: Option<NamedGroup>,
 }
 
 pub enum ViolationKind {
@@ -573,7 +602,7 @@ impl Reached for States {
 }
 
 // The search's state besides the machine, which the walks' continuations update.
-struct Search<'r, T> {
+struct Search<'r, T, E = Dense> {
     states: T,
     reporter: &'r mut dyn Reporter,
     is_distinct_read: bool,
@@ -591,9 +620,7 @@ struct Search<'r, T> {
     expansion_epoch: u64,
     level_id: Id,
     next_level_id: Id,
-    fingerprints: Fingerprints,
-    // The fingerprints the threads of the last level shared computed of the values they made.
-    carried: Carried,
+    fingerprints: Fingerprints<E>,
     // The state being expanded, whose successors' fingerprints follow from its own when the key is
     // the state.
     parent: Parent,
@@ -619,13 +646,13 @@ struct Search<'r, T> {
     held: Option<Vec<Vec<Printed>>>,
 }
 
-impl<'r, T: Reached> Search<'r, T> {
+impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
     fn new(
         states: T,
         reporter: &'r mut dyn Reporter,
         is_distinct_read: bool,
         is_pipelined: bool,
-    ) -> Search<'r, T> {
+    ) -> Search<'r, T, E> {
         let width = states.order().len().max(1);
         Search {
             states,
@@ -644,8 +671,7 @@ impl<'r, T: Reached> Search<'r, T> {
             expansion_epoch: 0,
             level_id: 0,
             next_level_id: 0,
-            fingerprints: Fingerprints::new(),
-            carried: Carried::default(),
+            fingerprints: Fingerprints::default(),
             parent: Parent::default(),
             canonicalizer: None,
             graph: None,
@@ -1009,7 +1035,7 @@ impl<'r, T: Reached> Search<'r, T> {
     }
 }
 
-impl<T: Reached> Search<'_, T> {
+impl<T: Reached, E: Entries> Search<'_, T, E> {
     // Takes the steps of the state `current` holds, the state `expanding` names, whose
     // fingerprint is given: through the next-state relation, or through each of TLC's actions.
     fn expand(
@@ -1092,7 +1118,7 @@ impl<T: Reached> Search<'_, T> {
     }
 }
 
-impl<T: Reached> Search<'_, T> {
+impl<T: Reached, E: Entries> Search<'_, T, E> {
     // A failure computing the successors of the state being expanded, which TLC reports with the
     // path to that state, unless the search already found what stopped it.
     fn note_next_error(&mut self, bail: Bail) -> Bail {
@@ -1223,7 +1249,7 @@ impl Reached for Candidates<'_> {
 #[repr(align(128))]
 struct Worker<'p> {
     machine: Machine<'p>,
-    fingerprints: Fingerprints,
+    fingerprints: Fingerprints<Overlaid>,
     canonicalizer: Option<Canonicalizer>,
     // The store's count of values when the overlay was last laid on it: its own ids start there.
     bound: Id,
@@ -1232,9 +1258,10 @@ struct Worker<'p> {
 }
 
 impl Worker<'_> {
-    fn attach(&mut self, store: &Arc<Store>, carried: &Carried) {
+    fn attach(&mut self, store: &Arc<Store>, fingerprints: &SharedFingerprints) {
         self.machine.forget_from(self.bound);
-        self.fingerprints.forget_from_carried(self.bound, carried);
+        self.fingerprints
+            .attach(fingerprints, store.value_count() as Id);
         if let Some(canonicalizer) = &mut self.canonicalizer {
             canonicalizer.forget_from(self.bound);
         }
@@ -1399,15 +1426,16 @@ impl Search<'_, States> {
             level,
         };
         let store = Arc::new(std::mem::take(&mut machine.store));
+        let fingerprints = self.fingerprints.share();
         let expanded: Vec<Expanded> = std::thread::scope(|scope| {
             let threads: Vec<_> = workers
                 .iter_mut()
                 .map(|worker| {
-                    let (shared, store, carried) = (&shared, &store, &self.carried);
+                    let (shared, store, fingerprints) = (&shared, &store, &fingerprints);
                     std::thread::Builder::new()
                         .stack_size(NESTING_STACK_BYTES)
                         .spawn_scoped(scope, move || {
-                            worker.attach(store, carried);
+                            worker.attach(store, fingerprints);
                             expand_claimed(worker, shared)
                         })
                         .expect("a thread for the search")
@@ -1424,8 +1452,10 @@ impl Search<'_, States> {
         });
         for worker in workers.iter_mut() {
             worker.machine.store.detach();
+            worker.fingerprints.detach();
         }
         machine.store = Arc::into_inner(store).expect("the store, once the threads let go of it");
+        self.fingerprints.take_back(fingerprints);
         let mut stop = level.stop.load(Ordering::Relaxed);
         let mut owners = vec![None; (level.end - level.start).div_ceil(level.chunk)];
         for (thread, found) in expanded.iter().enumerate() {
@@ -1518,13 +1548,11 @@ impl Search<'_, States> {
             machine.is_past_walk |= found.is_past_walk;
         }
         self.expanding = stop;
-        // The fingerprints each thread computed of the values it made that are now the store's,
-        // for every thread to keep at the next level.
-        self.carried.reset(workers[0].bound);
+        // The fingerprints each thread computed, of the store's values and of the values it made
+        // that are now the store's, for every thread to read at the next level.
         for worker in workers.iter() {
-            worker
-                .fingerprints
-                .carry(&worker.imported, &mut self.carried);
+            self.fingerprints
+                .absorb(&worker.fingerprints, &worker.imported);
         }
         if let Some(bail) = violated {
             return Err(bail);
@@ -1558,6 +1586,113 @@ fn describe(error: CompileError) -> String {
     }
 }
 
+// What TLC's startup printed as it evaluated the substitutes, the constant definitions and the
+// symmetry, the symmetry's group and the sets it warns about, then what it printed as it evaluated
+// the assumptions, and the assumption it found false.
+struct Started {
+    printed: Vec<Vec<Id>>,
+    /// The sets the symmetry permutes that TLC warns hold fewer than two elements, by name.
+    small_sets: Vec<String>,
+    group: Option<Group>,
+    assumed: Vec<Vec<Id>>,
+    violated: Option<String>,
+}
+
+// TLC's startup: it evaluates the substitutes and the constant definitions, then the assumptions
+// until one is false. What they print is kept until all of it is evaluated, so a model the engine
+// can't take prints nothing.
+fn run_startup(machine: &mut Machine<'_>, startup: &Startup) -> Outcome<Started> {
+    let take = |machine: &mut Machine<'_>| {
+        std::mem::take(&mut machine.output)
+            .into_iter()
+            .filter_map(|printed| match printed {
+                Printed::Values(values) => Some(values),
+                Printed::InitialStates(_) => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    for evaluate in startup.substitutes.iter().chain(&startup.definitions) {
+        evaluate(machine)?;
+    }
+    let (group, small_sets) = match &startup.symmetry {
+        Some(symmetry) => symmetry_group(machine, symmetry)?,
+        None => (None, Vec::new()),
+    };
+    let printed = take(machine);
+    let mut violated = None;
+    for (evaluate, name) in &startup.assumptions {
+        match evaluate(machine)? {
+            TRUE => {}
+            FALSE => {
+                violated = Some(name.clone());
+                break;
+            }
+            _ => return Err(Bail("an assumption that isn't a boolean")),
+        }
+    }
+    Ok(Started {
+        printed,
+        small_sets,
+        group,
+        assumed: take(machine),
+        violated,
+    })
+}
+
+// The group of the SYMMETRY definition's value as `Tool.getSymmetryPerms` builds it, none where
+// it has no permutation but the identity, and the sets it permutes that TLC warns hold fewer than
+// two elements: all of them where there are as many as permutations, or else each set TLC checks
+// that holds no model value the group moves.
+fn symmetry_group(
+    machine: &mut Machine<'_>,
+    symmetry: &StartupSymmetry,
+) -> Outcome<(Option<Group>, Vec<String>)> {
+    let value = (symmetry.definition)(machine)?;
+    let permutations = get_permutations(&mut machine.store, value)?;
+    let names = |sets: Vec<&(String, Option<Eval>)>| {
+        sets.into_iter().map(|(name, _)| name.clone()).collect()
+    };
+    if symmetry.permuted_sets.len() >= permutations.len() {
+        return Ok((None, names(symmetry.permuted_sets.iter().collect())));
+    }
+    let group = close_group(permutations);
+    let moved: HashSet<Id> = group
+        .iter()
+        .flat_map(|permutation| permutation.values().copied())
+        .collect();
+    let mut small = Vec::new();
+    for set in &symmetry.permuted_sets {
+        let Some(operand) = &set.1 else { continue };
+        let value = operand(machine)?;
+        let store = &machine.store;
+        if store.kind_of(value) == KIND_SET
+            && !(0..store.size_of(value))
+                .any(|index| moved.contains(&store.element_at(value, index)))
+        {
+            small.push(set);
+        }
+    }
+    Ok(((!group.is_empty()).then_some(group), names(small)))
+}
+
+// The values the startup definitions computed, which reading them again gives without effects.
+fn startup_values(machine: &mut Machine<'_>, context: &EngineContext) -> Outcome<Vec<Id>> {
+    context
+        .startup
+        .definitions
+        .iter()
+        .map(|evaluate| evaluate(machine))
+        .collect()
+}
+
+// The startup definitions' values as one row of shared states.
+fn share_startup(machine: &mut Machine<'_>, context: &EngineContext) -> Outcome<SharedStates> {
+    let values = startup_values(machine, context)?;
+    let mut encoder = SharedEncoder::new(&machine.store);
+    encoder.encode(&machine.store, &values);
+    Ok(encoder.finish())
+}
+
 /// Searches the model the IR describes. It runs compiled closures, which recurse with the
 /// expressions and values, so its caller runs it on a thread with a deep stack.
 pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> SearchOutcome {
@@ -1587,7 +1722,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     let is_pipelined = !is_printing
         && !is_distinct_read
         && context.view.is_none()
-        && model.symmetry.is_none()
+        && model.startup.symmetry.is_none()
         && !settings.is_live_checked;
     // A level's states are shared between threads where the order of the steps across states
     // shows nowhere but in the states found: nothing prints or reads the count of distinct states,
@@ -1608,19 +1743,43 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     let atom_threads = if compiler.is_ranking { 1 } else { thread_count };
     let program = compiler.finish();
     let mut machine = Machine::new(&program, store);
-    let canonicalizer = model.symmetry.as_ref().map(|group| {
-        let units = |text: u32| ir.texts[text as usize].encode_utf16().collect::<Vec<u16>>();
-        let group: Vec<Vec<(Vec<u16>, Vec<u16>)>> = group
-            .iter()
-            .map(|pairs| {
-                pairs
+    // TLCGet("level") is 0 while TLC starts.
+    let startup = machine.store.int(0).and_then(|zero| {
+        machine.set_slot(LEVEL_SLOT, zero);
+        run_startup(&mut machine, &context.startup)
+    });
+    let group = match startup {
+        Err(Bail(reason)) => return SearchOutcome::Declined(reason.into()),
+        Ok(started) => {
+            let report = |reporter: &mut dyn Reporter, printed: &[Vec<Id>]| {
+                printed
                     .iter()
-                    .map(|&(name, image)| (units(name), units(image)))
-                    .collect()
-            })
-            .collect();
+                    .for_each(|values| reporter.startup_print(&machine.store, values));
+            };
+            report(reporter, &started.printed);
+            if !started.small_sets.is_empty() {
+                reporter.symmetry_sets_too_small(&started.small_sets);
+            }
+            reporter.startup_done();
+            report(reporter, &started.assumed);
+            if let Some(name) = started.violated {
+                return SearchOutcome::AssumptionViolated { name };
+            }
+            started.group
+        }
+    };
+    // The initial states draw on from where the startup left the generator.
+    let startup_random = machine.random.state();
+    machine.startup_random = startup_random;
+    // The group by the names of the model values each permutation moves, for the interpreter and
+    // the trace, which read the search's states by another store.
+    let named_group = group
+        .as_ref()
+        .map(|group| name_group(&machine.store, group));
+    let is_symmetric = group.is_some();
+    let canonicalizer = group.map(|group| {
         let order = ir.tlc_order.iter().map(|&index| index as usize).collect();
-        Canonicalizer::new(&mut machine.store, &group, order)
+        Canonicalizer::new(&machine.store, group, order)
     });
     let width = context.width;
     let order: Vec<usize> = if context.view.is_some() {
@@ -1633,7 +1792,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         key_width: if context.view.is_some() {
             Some(1)
         } else {
-            model.symmetry.as_ref().map(|_| width)
+            is_symmetric.then_some(width)
         },
         ids: Vec::new(),
         keys: Vec::new(),
@@ -1862,7 +2021,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                         workers = (0..thread_count)
                             .map(|_| Worker {
                                 machine: Machine::new(&program, Store::new()),
-                                fingerprints: Fingerprints::new(),
+                                fingerprints: Fingerprints::default(),
                                 canonicalizer: search
                                     .canonicalizer
                                     .as_ref()
@@ -2012,6 +2171,9 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 tables,
             }),
             possible,
+            startup: share_startup(machine, &context).expect("values computed at startup"),
+            startup_random,
+            symmetry: named_group.clone(),
         }
     };
     let outcome = match result {
@@ -2252,10 +2414,11 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     path, loop_start, ..
                 }) if settings.is_violation_reported
                     && search.states.key_width.is_none()
-                    && model.symmetry.is_none() =>
+                    && !is_symmetric =>
                 {
                     to_lasso(
                         &mut machine,
+                        &context,
                         &search,
                         path,
                         *loop_start,
@@ -2269,7 +2432,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     violated,
                 }) if settings.is_violation_reported
                     && search.states.key_width.is_none()
-                    && model.symmetry.is_none() =>
+                    && !is_symmetric =>
                 {
                     to_accepted(
                         &mut machine,
@@ -2369,6 +2532,10 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     }),
                     graph: None,
                     possible: checkpoint_possible.clone(),
+                    startup: share_startup(&mut machine, &context)
+                        .expect("values computed at startup"),
+                    startup_random,
+                    symmetry: named_group.clone(),
                 }))
             } else if !is_kept || search.states.key_width.is_some() || search.held.is_some() {
                 // The interpreter searches a graph too large to keep from the start, since its
@@ -2427,7 +2594,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 && bail.0 == GRAPH_TOO_LARGE
                 && !is_printing
                 && search.states.key_width.is_none()
-                && model.symmetry.is_none()
+                && !is_symmetric
             {
                 let expanded = search.expanding;
                 let accepted = graph_tables(&mut machine, &search, expanded, count, None, None)
@@ -2740,6 +2907,11 @@ fn to_violation(
         .filter(|labels| !labels.is_empty())
         .map_or(unlabelled, |labels| labels.into_iter().skip(1).collect())
     };
+    let startup = startup_values(machine, context).ok()?;
+    let symmetry = search
+        .canonicalizer
+        .as_ref()
+        .map(|canonicalizer| name_group(&machine.store, canonicalizer.group()));
     // The store goes with the violation, so whether the search, or finding the actions, ranked
     // strings is read here, as for the search's outcome.
     let is_shaped = labels.len() + 1 == states.len()
@@ -2756,6 +2928,9 @@ fn to_violation(
             labels,
             counts: found.counts,
             store: std::mem::replace(&mut machine.store, Store::new()),
+            startup,
+            startup_random: machine.startup_random,
+            symmetry,
         })
     })
 }
@@ -2830,6 +3005,7 @@ fn to_accepted(
         return None;
     }
     labels.remove(0);
+    let startup = startup_values(machine, context).ok()?;
     let graph = search.graph.as_ref()?;
     let state = state as usize;
     let sum = |counts: &[u32]| {
@@ -2854,6 +3030,9 @@ fn to_accepted(
         labels,
         counts,
         store: std::mem::replace(&mut machine.store, Store::new()),
+        startup,
+        startup_random: machine.startup_random,
+        symmetry: None,
     }))
 }
 
@@ -2861,6 +3040,7 @@ fn to_accepted(
 // step but a stuttering last one has.
 fn to_lasso(
     machine: &mut Machine<'_>,
+    context: &EngineContext,
     search: &Search<'_, States>,
     path: &[u32],
     loop_start: usize,
@@ -2871,6 +3051,7 @@ fn to_lasso(
     let labels = steps.to_vec();
     let is_stuttering = loop_start + 1 == path.len();
     let is_labelled = actions.len() == path.len() && (is_stuttering || loop_label.is_some());
+    let startup = startup_values(machine, context).ok()?;
     (is_labelled && !machine.store.has_unordered_strings()).then(|| {
         Box::new(Violation {
             kind: ViolationKind::Lasso {
@@ -2889,6 +3070,9 @@ fn to_lasso(
                 depth: counts.depth,
             },
             store: std::mem::replace(&mut machine.store, Store::new()),
+            startup,
+            startup_random: machine.startup_random,
+            symmetry: None,
         })
     })
 }

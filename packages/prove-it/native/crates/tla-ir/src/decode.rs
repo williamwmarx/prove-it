@@ -5,9 +5,9 @@ use std::fmt;
 use crate::{
     Action, ActionProperty, Atom, AtomKind, Bound, Builtin, ConfigName, Constant, Definition,
     DefinitionForm, EnabledActions, IR_VERSION, Index, Ir, Junction, LiveProperty, LiveTerm, MAGIC,
-    Model, Name, Node, NodeId, NodeKind, Nodes, Param, PathStep, Pattern, Possible, Printed,
-    Resolution, Scope, ScopeBinding, Selector, SourceRange, Startup, TextId, Update, Value, Values,
-    code, tag,
+    Model, Name, Node, NodeId, NodeKind, Nodes, Param, PathStep, Pattern, PermutedSet, Possible,
+    Printed, Resolution, Scope, ScopeBinding, Selector, SourceRange, Startup, Symmetry, TextId,
+    Update, Value, Values, code, tag,
 };
 
 /// Why a blob isn't an IR this decoder reads: where it stopped, in words, and what it found.
@@ -163,6 +163,14 @@ impl Decoder<'_> {
     }
 
     // A 64-bit number as two words, the low first.
+    // A definition's index, which the definitions decoded after the model bound.
+    fn index(&mut self) -> Decoded<Index> {
+        match self.next()? {
+            index if index >= 0 => Ok(index as Index),
+            other => self.error(format!("definition {other}")),
+        }
+    }
+
     fn long(&mut self) -> Decoded<u64> {
         let low = self.next()? as u32;
         let high = self.next()? as u32;
@@ -402,11 +410,27 @@ impl Decoder<'_> {
                 self.words.len() - nodes_start
             ));
         }
+        if let Some(&index) = model
+            .startup
+            .substitutes
+            .iter()
+            .map(|(_, index)| index)
+            .chain(&model.startup.definitions)
+            .chain(
+                model
+                    .startup
+                    .symmetry
+                    .iter()
+                    .map(|symmetry| &symmetry.definition),
+            )
+            .find(|&&index| index as usize >= definition_count)
+        {
+            return self.error(format!("definition {index} of {definition_count}"));
+        }
         let limits = Limits {
             constants: constant_count,
             definitions: definition_count,
             builtins: builtin_count,
-            values: values.list.len(),
         };
         let nodes = self.nodes(nodes_start, &limits)?;
 
@@ -619,26 +643,11 @@ impl Decoder<'_> {
         }
         let alias = aliases.pop();
         let postconditions = self.unprinted()?;
-        let symmetry = match self.next()? {
-            -1 => None,
-            count if count >= 0 => Some(
-                (0..count)
-                    .map(|_| {
-                        let pairs = self.count()?;
-                        (0..pairs)
-                            .map(|_| Ok((self.text()?, self.text()?)))
-                            .collect::<Decoded<Vec<_>>>()
-                    })
-                    .collect::<Decoded<_>>()?,
-            ),
-            other => return self.error(format!("{other} permutations")),
-        };
         let check_deadlock = self.flag()?;
         let is_warning_enabled = self.flag()?;
         let is_recording_graph = self.flag()?;
         let version = self.optional_below(self.text_count as usize, "text")?;
         let random_seed = self.long()?;
-        let startup_random = self.long()?;
         let count = self.count()?;
         let mut atoms = Vec::with_capacity(count);
         for _ in 0..count {
@@ -690,6 +699,38 @@ impl Decoder<'_> {
                 })
             })
             .collect::<Decoded<_>>()?;
+        let count = self.count()?;
+        let substitutes = (0..count)
+            .map(|_| Ok((self.text()?, self.index()?)))
+            .collect::<Decoded<_>>()?;
+        let count = self.count()?;
+        let definitions = (0..count).map(|_| self.index()).collect::<Decoded<_>>()?;
+        let symmetry = match self.next()? {
+            -1 => None,
+            definition if definition >= 0 => {
+                let count = self.count()?;
+                let mut permuted_sets = Vec::with_capacity(count);
+                for _ in 0..count {
+                    let name = self.text()?;
+                    let operand = if self.words.get(self.at) == Some(&-1) {
+                        self.at += 1;
+                        None
+                    } else {
+                        Some(node(self)?)
+                    };
+                    permuted_sets.push(PermutedSet { name, operand });
+                }
+                Some(Symmetry {
+                    definition: definition as Index,
+                    permuted_sets,
+                })
+            }
+            other => return self.error(format!("symmetry definition {other}")),
+        };
+        let count = self.count()?;
+        let assumptions = (0..count)
+            .map(|_| Ok((node(self)?, self.text()?)))
+            .collect::<Decoded<_>>()?;
         Ok(Model {
             init,
             next,
@@ -707,16 +748,20 @@ impl Decoder<'_> {
             view,
             alias,
             postconditions,
-            symmetry,
             check_deadlock,
             is_warning_enabled,
             is_recording_graph,
             version,
             random_seed,
-            startup_random,
             atoms,
             live_formula,
             live_properties,
+            startup: Startup {
+                substitutes,
+                definitions,
+                symmetry,
+                assumptions,
+            },
         })
     }
 
@@ -978,14 +1023,6 @@ impl Decoder<'_> {
                     return self.error(format!("definition flags {flags}"));
                 }
                 let name = self.text()?;
-                let startup = match self.next()? {
-                    code::NO_STARTUP_VALUE => Startup::None,
-                    code::OBJECT_STARTUP_VALUE => Startup::Object,
-                    ordinal if (ordinal as usize) < limits.values => {
-                        Startup::Value(Some(ordinal as u32))
-                    }
-                    other => return self.error(format!("startup value {other}")),
-                };
                 let form = match self.next()? {
                     0 => DefinitionForm::Operator(self.params()?),
                     1 => DefinitionForm::Function(self.bounds(&mut child)?),
@@ -994,7 +1031,6 @@ impl Decoder<'_> {
                 NodeKind::Definition(Definition {
                     name,
                     flags,
-                    startup,
                     form,
                     body: child(self)?,
                 })
@@ -1109,7 +1145,6 @@ struct Limits {
     constants: usize,
     definitions: usize,
     builtins: usize,
-    values: usize,
 }
 
 impl Model {
@@ -1142,6 +1177,19 @@ impl Model {
             {
                 visit(unchanged)?;
             }
+        }
+        for set in self
+            .startup
+            .symmetry
+            .iter_mut()
+            .flat_map(|symmetry| &mut symmetry.permuted_sets)
+        {
+            if let Some(operand) = &mut set.operand {
+                visit(operand)?;
+            }
+        }
+        for (assumption, _) in &mut self.startup.assumptions {
+            visit(assumption)?;
         }
         Ok(())
     }

@@ -446,8 +446,6 @@ impl<'a> Lowering<'a> {
         };
         let id = self.open(&definition.location);
         let name = self.get_text(&definition.name);
-        // TLC computes a startup value only when it starts, which the engine's startup phase will
-        // do; until then, linking alone holds none.
         let form = match &definition.kind {
             DefinitionKind::Operator { params, .. } => DefinitionForm::Operator(
                 params
@@ -466,7 +464,6 @@ impl<'a> Lowering<'a> {
         self.arena[id as usize].kind = NodeKind::Definition(IrDefinition {
             name,
             flags,
-            startup: Startup::None,
             form,
             body,
         });
@@ -984,17 +981,16 @@ impl<'a> Lowering<'a> {
             view,
             alias,
             postconditions,
-            symmetry: None,
             check_deadlock: config.check_deadlock,
             is_warning_enabled,
             is_recording_graph: liveness.is_some(),
             version,
-            // TLC's default seed, 0, and java.util.Random seeded with it, before startup.
+            // TLC's default seed.
             random_seed: 0,
-            startup_random: 0x5_DEEC_E66D,
             atoms,
             live_formula,
             live_properties,
+            startup: Startup::default(),
         })
     }
 

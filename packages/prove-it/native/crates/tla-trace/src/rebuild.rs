@@ -23,6 +23,8 @@ use crate::{Ending, Trace, TraceState, Unsupported};
 pub struct Rebuilder<'ir> {
     evaluator: Evaluator<'ir>,
     key: Key,
+    /// The state of the generator TLC's startup left, which the initial predicate draws from.
+    startup_random: u64,
 }
 
 /// How TLC tells a candidate is the state it looks for: by its fingerprint, which is of the state,
@@ -48,7 +50,7 @@ impl<'ir> Rebuilder<'ir> {
 
     pub fn new(ir: &'ir Ir) -> Result<Rebuilder<'ir>, Unsupported> {
         let model = &ir.model;
-        let mut evaluator = Evaluator::new(ir);
+        let evaluator = Evaluator::new(ir);
         let view = match &model.view {
             Some(view) => match view.definition {
                 Some(index) => Some(evaluator.definition(ir.definitions[index as usize]).body),
@@ -56,24 +58,41 @@ impl<'ir> Rebuilder<'ir> {
             },
             None => None,
         };
-        let group = model.symmetry.as_ref().map(|group| {
-            group
-                .iter()
-                .map(|permutation| {
-                    permutation
-                        .iter()
-                        .map(|&(from, to)| (evaluator.text(from), evaluator.text(to)))
-                        .collect()
-                })
-                .collect()
-        });
-        let key = match (view, group) {
-            (Some(view), Some(group)) => Key::ViewOfSymmetry(view, group),
-            (Some(view), None) => Key::View(view),
-            (None, Some(group)) => Key::Symmetry(group),
-            (None, None) => Key::State,
+        let key = match view {
+            Some(view) => Key::View(view),
+            None => Key::State,
         };
-        Ok(Rebuilder { evaluator, key })
+        Ok(Rebuilder {
+            evaluator,
+            key,
+            startup_random: JavaRandom::seeded(ir.model.random_seed).state(),
+        })
+    }
+
+    /// Takes the values the search computed at startup, ids of `store`, which TLC's trace reads
+    /// as it computed them, and the state of the generator the startup left.
+    pub fn set_startup(&mut self, store: &Store, values: &[Id], random: u64) {
+        self.evaluator.set_startup(store, values);
+        self.startup_random = random;
+    }
+
+    /// Takes the symmetry group the search reduced by, each permutation as the names of the model
+    /// values it moves, each with its image's.
+    pub fn set_symmetry(&mut self, group: &[Vec<(Vec<u16>, Vec<u16>)>]) {
+        let text = |units: &[u16]| self.evaluator.text_of(units.into());
+        let group = group
+            .iter()
+            .map(|permutation| {
+                permutation
+                    .iter()
+                    .map(|(name, image)| (text(name), text(image)))
+                    .collect()
+            })
+            .collect();
+        self.key = match &self.key {
+            Key::View(view) | Key::ViewOfSymmetry(view, _) => Key::ViewOfSymmetry(*view, group),
+            Key::State | Key::Symmetry(_) => Key::Symmetry(group),
+        };
     }
 
     /// The states of a path the search found, as TLC prints them. `states` holds each state's
@@ -157,7 +176,7 @@ impl<'ir> Rebuilder<'ir> {
         };
         // The initial states draw from the generator startup left, which TLC never reseeds
         // there, so walking the whole initial predicate draws as the search drew.
-        evaluator.random = is_drawing.then(|| JavaRandom::from_state(ir.model.startup_random));
+        evaluator.random = is_drawing.then(|| JavaRandom::from_state(self.startup_random));
         let initial = find(
             evaluator,
             key_of(0),

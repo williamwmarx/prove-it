@@ -7,12 +7,19 @@
 //! state's value is compared with the smallest image so far without building it, from the cached
 //! images of its parts. Only the image of a permutation that wins is built.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
-use tla_values::store::{KIND_FUNCTION, KIND_MODEL, KIND_SET, KIND_TUPLE, Outcome};
+use tla_values::store::{Bail, KIND_FUNCTION, KIND_MODEL, KIND_SET, KIND_TUPLE, Outcome};
 use tla_values::{Id, Store};
 
 const NONE: Id = u32::MAX;
+
+/// A symmetry group, each permutation as the model values it moves, each to its image.
+pub type Group = Vec<HashMap<Id, Id>>;
+
+/// A symmetry group, each permutation as the names of the model values it moves, each with its
+/// image's.
+pub type NamedGroup = Vec<Vec<(Vec<u16>, Vec<u16>)>>;
 
 pub struct Canonicalizer {
     permutations: Vec<HashMap<Id, Id>>,
@@ -38,6 +45,102 @@ fn get(table: &[Id], id: Id) -> Id {
     table.get(id as usize).copied().unwrap_or(NONE)
 }
 
+/// The group by the names of the model values each permutation moves, for a reader with another
+/// store.
+pub fn name_group(store: &Store, group: &[HashMap<Id, Id>]) -> NamedGroup {
+    group
+        .iter()
+        .map(|permutation| {
+            let mut pairs: Vec<(Vec<u16>, Vec<u16>)> = permutation
+                .iter()
+                .map(|(&id, &image)| (store.text_of(id).to_vec(), store.text_of(image).to_vec()))
+                .collect();
+            pairs.sort_unstable();
+            pairs
+        })
+        .collect()
+}
+
+/// The permutations a SYMMETRY definition's value lists (`Tool.getSymmetryPerms`), each as the
+/// model values it moves, each to its image. A value that isn't a set of functions of model values,
+/// which TLC reports, is the interpreter's to report.
+pub fn get_permutations(store: &mut Store, value: Id) -> Outcome<Group> {
+    if store.kind_of(value) != KIND_SET {
+        return Err(Bail("a symmetry that isn't a set of functions"));
+    }
+    (0..store.size_of(value))
+        .map(|index| {
+            let function = store.element_at(value, index);
+            if !matches!(store.kind_of(function), KIND_FUNCTION | KIND_TUPLE) {
+                return Err(Bail("a symmetry value that isn't a function"));
+            }
+            let mut permutation = HashMap::new();
+            for position in 0..store.size_of(function) {
+                let key = store.get_key(function, position);
+                let image = store.get_range_value(function, position);
+                if !store.is_model_id(key) || !store.is_model_id(image) {
+                    return Err(Bail(
+                        "a symmetry function of values that aren't model values",
+                    ));
+                }
+                if key != image {
+                    permutation.insert(key, image);
+                }
+            }
+            Ok(permutation)
+        })
+        .collect()
+}
+
+/// The group the permutations generate, without the identity, as `symmetry.ts`'s
+/// `getSymmetryGroup` closes it: the generators, then each composition of a generator with a
+/// member found in the round before.
+pub fn close_group(permutations: Group) -> Group {
+    let key = |permutation: &HashMap<Id, Id>| {
+        let mut pairs: Vec<(Id, Id)> = permutation
+            .iter()
+            .map(|(&id, &image)| (id, image))
+            .collect();
+        pairs.sort_unstable();
+        pairs
+    };
+    let mut seen = HashSet::new();
+    let mut group: Group = permutations
+        .into_iter()
+        .filter(|permutation| !permutation.is_empty() && seen.insert(key(permutation)))
+        .collect();
+    let generators = group.clone();
+    let mut start = 0;
+    while start < group.len() {
+        let end = group.len();
+        for generator in &generators {
+            for index in start..end {
+                let composed = compose(generator, &group[index]);
+                if !composed.is_empty() && seen.insert(key(&composed)) {
+                    group.push(composed);
+                }
+            }
+        }
+        start = end;
+    }
+    group
+}
+
+// The permutation that applies `first`, then `second`.
+fn compose(first: &HashMap<Id, Id>, second: &HashMap<Id, Id>) -> HashMap<Id, Id> {
+    first
+        .keys()
+        .chain(second.keys())
+        .filter_map(|&id| {
+            let image = match first.get(&id) {
+                Some(image) => *second.get(image).unwrap_or(image),
+                None => *second.get(&id)?,
+            };
+            (image != id).then_some((id, image))
+        })
+        .collect()
+}
+
 fn put(table: &mut Vec<Id>, id: Id, value: Id, count: usize) {
     if id as usize >= table.len() {
         table.resize((count * 2).max(1024).max(id as usize + 1), NONE);
@@ -46,17 +149,9 @@ fn put(table: &mut Vec<Id>, id: Id, value: Id, count: usize) {
 }
 
 impl Canonicalizer {
-    /// A canonicalizer for the group, each permutation as the model values it moves, by name.
-    pub fn new(store: &mut Store, group: &[Vec<(Vec<u16>, Vec<u16>)>], order: Vec<usize>) -> Self {
-        let permutations: Vec<HashMap<Id, Id>> = group
-            .iter()
-            .map(|pairs| {
-                pairs
-                    .iter()
-                    .map(|(name, image)| (store.model(name), store.model(image)))
-                    .collect()
-            })
-            .collect();
+    /// A canonicalizer for the group, each permutation as the model values it moves, each to its
+    /// image.
+    pub fn new(store: &Store, permutations: Group, order: Vec<usize>) -> Self {
         let is_type_preserving = permutations.iter().all(|permutation| {
             permutation
                 .iter()
@@ -75,6 +170,11 @@ impl Canonicalizer {
             stamp: 0,
             smallest: vec![NONE; width],
         }
+    }
+
+    /// The group, each permutation as the model values it moves, each to its image.
+    pub fn group(&self) -> &[HashMap<Id, Id>] {
+        &self.permutations
     }
 
     /// A canonicalizer for the same group that has permuted nothing yet, for another thread.
@@ -350,5 +450,51 @@ impl Canonicalizer {
         state.copy_from_slice(&smallest);
         self.smallest = smallest;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn model(store: &mut Store, name: &str) -> Id {
+        store.model(&name.encode_utf16().collect::<Vec<u16>>())
+    }
+
+    // A permutation of model values as a function, as TLC's Permutations gives it.
+    fn function(store: &mut Store, pairs: &[(&str, &str)]) -> Id {
+        let keys: Vec<Id> = pairs.iter().map(|(key, _)| model(store, key)).collect();
+        let images: Vec<Id> = pairs.iter().map(|(_, image)| model(store, image)).collect();
+        store.function_of(&keys, &images).expect("a function")
+    }
+
+    #[test]
+    fn closes_the_group_the_permutations_generate() {
+        let mut store = Store::new();
+        // Two transpositions of {a, b, c} generate the five permutations that move something.
+        let swaps = [
+            function(&mut store, &[("a", "b"), ("b", "a"), ("c", "c")]),
+            function(&mut store, &[("a", "a"), ("b", "c"), ("c", "b")]),
+            function(&mut store, &[("a", "a"), ("b", "b"), ("c", "c")]),
+        ];
+        let set = store.set_of(&swaps).expect("a set");
+        let permutations = get_permutations(&mut store, set).expect("permutations");
+        assert_eq!(permutations.len(), 3);
+        assert_eq!(close_group(permutations).len(), 5);
+    }
+
+    #[test]
+    fn leaves_a_value_that_isnt_a_set_of_permutations_to_the_interpreter() {
+        let mut store = Store::new();
+        let one = store.int(1).expect("an int");
+        let a = model(&mut store, "a");
+        let of_ints = store.function_of(&[one], &[a]).expect("a function");
+        for value in [
+            one,
+            store.set_of(&[one]).expect("a set"),
+            store.set_of(&[of_ints]).expect("a set"),
+        ] {
+            assert!(get_permutations(&mut store, value).is_err());
+        }
     }
 }
