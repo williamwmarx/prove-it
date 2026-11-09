@@ -1837,7 +1837,22 @@ export const createCompiler = (environment: Environment): Compiler => {
       definitionCache.set(definition, entries);
       return compiled;
     }
-    return materializeRecursive(getRecursiveFunction(definition, context, undefined));
+    return materializeRecursive(
+      getRecursiveFunction(definition, context, getGlobalFunctionScope(definition)),
+    );
+  };
+
+  // An instance copies a recursive function with its body naming it as the module did, which the
+  // interpreter binds when it builds the function, as LET binds its own.
+  const globalFunctionScopes = new Map<FunctionDefinition, Scope>();
+  const getGlobalFunctionScope = (definition: FunctionDefinition) => {
+    const known = globalFunctionScopes.get(definition);
+    if (known) return known;
+    const binding: Binding = { kind: "recursive", definition, scope: undefined };
+    const scope = bind(undefined, definition.name, binding);
+    binding.scope = scope;
+    globalFunctionScopes.set(definition, scope);
+    return scope;
   };
 
   // A recursive function as a value: its body applied to each element of its domain.
@@ -2010,7 +2025,18 @@ export const createCompiler = (environment: Environment): Compiler => {
   };
 
   // The recursive function an application applies, when it names one directly.
-  const getAppliedRecursiveFunction = (fn: Expression, context: Context) => {
+  // The recursive function an application applies, when it names one, or an operator or a LET
+  // gives one, which TLC keeps lazy.
+  const getAppliedRecursiveFunction = (
+    fn: Expression,
+    context: Context,
+  ): RecursiveFunction | undefined => {
+    if (fn.kind === "Let")
+      return getAppliedRecursiveFunction(fn.body, bindLetDefinitions(fn, context));
+    if (fn.kind === "Apply") {
+      const resolved = resolveAction(fn, context);
+      return resolved && getAppliedRecursiveFunction(resolved.body, resolved.context);
+    }
     if (fn.kind !== "Identifier") return undefined;
     const local = lookup(context.scope, fn.name);
     if (local?.kind === "recursive") {
@@ -2021,9 +2047,13 @@ export const createCompiler = (environment: Environment): Compiler => {
       return undefined;
     }
     const definition = getDefinition(fn.name, environment);
+    if (definition?.kind === "Operator") {
+      const resolved = resolveAction(fn, context);
+      return resolved && getAppliedRecursiveFunction(resolved.body, resolved.context);
+    }
     if (definition?.kind !== "Function") return undefined;
     if (!definition.isRecursive && !definition.isSelfReferential) return undefined;
-    return getRecursiveFunction(definition, context, undefined);
+    return getRecursiveFunction(definition, context, getGlobalFunctionScope(definition));
   };
 
   // --- quantifiers and bindings ---

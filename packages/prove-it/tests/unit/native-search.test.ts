@@ -1525,6 +1525,27 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     );
   });
 
+  // From tla-rs's function_instance: an instance's copy of a recursive function names itself as
+  // the module did, and an operator that gives a recursive function keeps it lazy, as TLC does.
+  it("applies recursive functions an instance or an operator gives", async () => {
+    const body = [
+      "EXTENDS Naturals",
+      "VARIABLE x",
+      "---- MODULE Lib ----",
+      "EXTENDS Naturals",
+      "fact[n \\in Nat] == IF n = 0 THEN 1 ELSE n * fact[n - 1]",
+      "====",
+      "I == INSTANCE Lib",
+      "Scaled(b) == LET s[n \\in Nat] == IF n = 0 THEN b ELSE n * s[n - 1] IN s",
+      "Init == x = 0",
+      "Next == x' = (x + 1) % 3",
+      "Inv == I!fact[4] = 24 /\\ Scaled(2)[3] = 12 /\\ Scaled(x + 1)[2] = 2 * (x + 1)",
+    ];
+    expect(
+      await compareWithInterpreter(body, "INIT Init\nNEXT Next\nINVARIANT Inv"),
+    ).toContainEqual(expect.stringMatching(COMPLETE));
+  });
+
   it("applies recursive functions as TLC keeps them lazy", async () => {
     const body = [
       "EXTENDS Naturals, FiniteSets",
