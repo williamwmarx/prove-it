@@ -27,8 +27,8 @@ env:
   # An identifier, not a secret: reading the Environment takes the service account's token.
   ONEPASSWORD_ENVIRONMENT_ID: tt44zeqhf5ciy4i4jorhug2d6i # gitleaks:allow
 jobs:
-  # Builds the Linux arm64 engine's platform package on arm64, runs the unit tests with it searching,
-  # and hands the packed tarball to the publish job. It holds no credential.
+  # Builds the Linux arm64 engine's platform package on arm64, runs the crates' tests and the unit
+  # tests with it searching, and hands the packed tarball to the publish job. It holds no credential.
   arm64:
     name: Build the Linux arm64 engine
     if: github.ref == 'refs/heads/main'
@@ -46,6 +46,7 @@ jobs:
           PATH="$(scripts/ci/bootstrap.sh bun node rust):$PATH"
           bun install --frozen-lockfile --ignore-scripts
           cd packages/prove-it
+          (cd native && cargo test --locked)
           bun scripts/platform-packages.ts build
           bun run build
           PROVE_IT_ENGINE_BACKEND=rust PROVE_IT_ENGINE_ADDON="$PWD/native/npm/linux-arm64-gnu/prove-it-engine.node" \
