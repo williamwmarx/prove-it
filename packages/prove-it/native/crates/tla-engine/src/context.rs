@@ -29,9 +29,15 @@ pub struct EngineContext {
     /// `None` when the engine can't build one.
     pub actions: Option<Vec<Step>>,
     pub invariants: Vec<Predicate>,
+    /// For each of `invariants`, the first invariant it is a conjunct of: a position in the
+    /// model's invariants, then past them in its properties checked as invariants. Checked in
+    /// order, the first that fails names the invariant TLC reports violated.
+    pub invariant_owners: Vec<usize>,
     /// The invariants an initial state may violate: the others are conjuncts of the initial
     /// predicate, so hold of every state it gives.
     pub initial_invariants: Vec<Eval>,
+    /// The owner of each of `initial_invariants`, as `invariant_owners`.
+    pub initial_invariant_owners: Vec<usize>,
     pub constraints: Vec<Predicate>,
     pub action_constraints: Vec<Eval>,
     /// Each holds of a step unless the action and the subscript's UNCHANGED are both false.
@@ -79,6 +85,16 @@ pub fn holds(machine: &mut Machine<'_>, predicate: &Eval) -> Outcome<bool> {
         FALSE => Ok(false),
         _ => Err(Bail("a predicate that isn't a boolean")),
     }
+}
+
+/// The position of the first predicate that doesn't hold, if one doesn't.
+pub fn first_failing(machine: &mut Machine<'_>, predicates: &[Eval]) -> Outcome<Option<usize>> {
+    for (position, predicate) in predicates.iter().enumerate() {
+        if !holds(machine, predicate)? {
+            return Ok(Some(position));
+        }
+    }
+    Ok(None)
 }
 
 pub fn holds_all(machine: &mut Machine<'_>, predicates: &[Eval]) -> Outcome<bool> {
@@ -257,23 +273,29 @@ impl EngineContext {
         let can_print = !model.is_recording_graph;
         let mut conjuncts = Conjuncts::new(ir);
         let mut printed = HashSet::new();
-        for invariant in &model.invariants {
-            let root = Conjunct::Named(named("invariant", ir, &invariant.root)?);
-            if invariant.has_repeated_effect && can_print {
+        let mut invariant_owners = Vec::new();
+        let roots = model
+            .invariants
+            .iter()
+            .map(|invariant| {
+                let root = Conjunct::Named(named("invariant", ir, &invariant.root)?);
+                Ok((root, invariant.has_repeated_effect))
+            })
+            .chain(model.property_invariants.iter().map(|invariant| {
+                Ok((
+                    Conjunct::Node(invariant.root),
+                    invariant.has_repeated_effect,
+                ))
+            }))
+            .collect::<Result<Vec<_>, CompileError>>()?;
+        for (owner, (root, has_repeated_effect)) in roots.into_iter().enumerate() {
+            if has_repeated_effect && can_print {
                 printed.insert(root);
                 conjuncts.add(root);
             } else {
                 conjuncts.collect(root);
             }
-        }
-        for invariant in &model.property_invariants {
-            let root = Conjunct::Node(invariant.root);
-            if invariant.has_repeated_effect && can_print {
-                printed.insert(root);
-                conjuncts.add(root);
-            } else {
-                conjuncts.collect(root);
-            }
+            invariant_owners.resize(conjuncts.found.len(), owner);
         }
         let invariant_conjuncts = conjuncts.found;
         let invariants = invariant_conjuncts
@@ -394,12 +416,13 @@ impl EngineContext {
         } else {
             Vec::new()
         };
-        let initial_invariants = invariants
+        let (initial_invariants, initial_invariant_owners) = invariants
             .iter()
             .zip(&invariant_conjuncts)
-            .filter(|(_, conjunct)| !init_conjuncts.contains(conjunct))
-            .map(|(compiled, _)| compiled.eval.clone())
-            .collect();
+            .zip(&invariant_owners)
+            .filter(|((_, conjunct), _)| !init_conjuncts.contains(conjunct))
+            .map(|((compiled, _), &owner)| (compiled.eval.clone(), owner))
+            .unzip();
         Ok(EngineContext {
             width,
             init,
@@ -412,7 +435,9 @@ impl EngineContext {
                     eval: compiled.eval,
                 })
                 .collect(),
+            invariant_owners,
             initial_invariants,
+            initial_invariant_owners,
             constraints,
             action_constraints,
             action_properties,

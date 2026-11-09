@@ -466,6 +466,7 @@ pub(super) unsafe extern "C" fn check_model(env: napi_env, info: napi_callback_i
                     reason,
                     checkpoint,
                     collisions,
+                    ..
                 } => {
                     set(env, result, c"status", create_string(env, "stopped")?)?;
                     set(env, result, c"reason", create_string(env, &reason)?)?;

@@ -5,7 +5,7 @@ use std::path::Path;
 use std::sync::mpsc;
 use std::time::{Instant, SystemTime};
 
-use tla_engine::search::{Reporter, SearchOutcome, Settings, search};
+use tla_engine::search::{Reporter, SearchOutcome, Settings, Violation, ViolationKind, search};
 use tla_values::print::{is_printable, write_value};
 use tla_values::{Id, Store};
 
@@ -18,9 +18,13 @@ use crate::summary::{
     optimistic_probability, out_degree_summary,
 };
 use crate::time::{format_date, format_duration};
+use crate::trace::format_state;
+use tla_front::TlcVersion;
+use tla_front::config::{ModelConfig, parse_config};
 
 // TLC's exit statuses, from EC.ExitStatus.
 const SUCCESS: i32 = 0;
+const SAFETY_VIOLATION: i32 = 12;
 const CONFIG_PARSE_ERROR: i32 = 151;
 
 /// The exit code of a run that needs something the binary doesn't do natively yet.
@@ -419,6 +423,13 @@ fn check_spec(spec_path: &str, args: &Parsed, printer: &mut Printer) -> i32 {
         return CONFIG_PARSE_ERROR;
     }
     let start = Instant::now();
+    // The front end reports a configuration it can't read; the binary reads what it prints by.
+    let Some(config) = config_path
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .and_then(|text| parse_config(&text, TlcVersion::Master).ok())
+    else {
+        return report_not_native(printer, "a configuration file the front end rejects");
+    };
     if dump.is_some() {
         return report_not_native(printer, "-dump");
     }
@@ -502,6 +513,15 @@ fn check_spec(spec_path: &str, args: &Parsed, printer: &mut Printer) -> i32 {
         SearchOutcome::Declined(reason) => {
             return report_not_native(printer, &format!("the engine declined: {reason}"));
         }
+        SearchOutcome::Stopped {
+            violation: Some(violation),
+            reason,
+            ..
+        } => {
+            return print_violation(printer, &ir, &config, &violation, start).unwrap_or_else(
+                || report_not_native(printer, &format!("the engine stopped: {reason}")),
+            );
+        }
         SearchOutcome::Stopped { reason, .. } => {
             return report_not_native(printer, &format!("the engine stopped: {reason}"));
         }
@@ -556,6 +576,39 @@ fn check_spec(spec_path: &str, args: &Parsed, printer: &mut Printer) -> i32 {
     }
     print_finished(printer, start);
     SUCCESS
+}
+
+/// Prints a violation the engine stopped at, as `printViolation` in `src/cli/tlc.ts` does, and
+/// returns the exit code, or nothing when it can't print it yet.
+fn print_violation(
+    printer: &mut Printer,
+    ir: &tla_ir::Ir,
+    config: &ModelConfig,
+    violation: &Violation,
+    start: Instant,
+) -> Option<i32> {
+    // TLC prints a state through the ALIAS when there is one, which the IR doesn't carry yet.
+    if config.alias.is_some() {
+        return None;
+    }
+    match violation.kind {
+        // TLC prints the initial state that violates an invariant in the same message, and no
+        // statistics, since it checks the initial states before it searches.
+        ViolationKind::InitialInvariant(owner) => {
+            let invariant = ir.model.invariants.get(owner)?;
+            let state = format_state(ir, &violation.store, violation.states.first()?)?;
+            printer.print(
+                code::INVARIANT_VIOLATED_INITIAL,
+                Level::Error,
+                &format!(
+                    "Invariant {} is violated by the initial state:\n{state}",
+                    ir.texts[invariant.root.name as usize]
+                ),
+            );
+            print_finished(printer, start);
+            Some(SAFETY_VIOLATION)
+        }
+    }
 }
 
 /// Without -tool, TLC prints how long it ran for a person to read.

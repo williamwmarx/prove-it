@@ -117,3 +117,67 @@ fn turns_deadlock_checking_off_with_deadlock() {
     assert!(stdout(&unchecked).contains("94 states generated, 34 distinct states found"));
     std::fs::remove_dir_all(directory).expect("removed");
 }
+
+// Runs the binary on a golden model's IR as the recorded front of a spec of that name, with no
+// output before the search and the given configuration, in a directory of the test's own.
+fn run_golden(test: &str, ir: &[u8], name: &str, config: &str, args: &[&str]) -> (Output, PathBuf) {
+    let directory =
+        std::env::temp_dir().join(format!("prove-it-cli-{test}-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    for (extension, contents) in [
+        ("tla", &b""[..]),
+        ("cfg", config.as_bytes()),
+        ("ir", ir),
+        ("front", b""),
+    ] {
+        std::fs::write(directory.join(format!("{name}.{extension}")), contents).expect("a file");
+    }
+    let mut all = args.to_vec();
+    all.push(name);
+    (run(&directory, &all), directory)
+}
+
+const TEST57_IR: &[u8] = include_bytes!(
+    "../../../../tests/conformance/ir/tlc/tlatools/org.lamport.tlatools/test-model/suite/test57.ir"
+);
+
+#[test]
+fn prints_an_invariant_an_initial_state_violates() {
+    let (output, directory) = run_golden("initial", TEST57_IR, "test57", "", &[]);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(12), "{text}");
+    // A state of one variable isn't a conjunction, and TLC prints no statistics.
+    assert!(text.contains(
+        "Computing initial states...\nError: Invariant Invariant1 is violated by the initial state:\nx = 1\n\nFinished in "
+    ), "{text}");
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn marks_the_initial_violation_with_tool() {
+    let (output, directory) = run_golden("initial-tool", TEST57_IR, "test57", "", &["-tool"]);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(12), "{text}");
+    assert!(text.contains(
+        "@!@!@STARTMSG 2107:1 @!@!@\nInvariant Invariant1 is violated by the initial state:\nx = 1\n\n@!@!@ENDMSG 2107 @!@!@\n"
+    ), "{text}");
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn leaves_a_state_an_alias_prints_to_the_front_end() {
+    let ir = include_bytes!(
+        "../../../../tests/conformance/ir/tlc/tlatools/org.lamport.tlatools/test-model/Github746.ir"
+    );
+    let (output, directory) = run_golden(
+        "alias",
+        ir,
+        "Github746",
+        "SPECIFICATION Spec\nINVARIANT Inv\nALIAS Alias\n",
+        &[],
+    );
+    assert_eq!(output.status.code(), Some(1));
+    assert!(!stdout(&output).contains("violated"));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("not native yet"));
+    std::fs::remove_dir_all(directory).expect("removed");
+}
