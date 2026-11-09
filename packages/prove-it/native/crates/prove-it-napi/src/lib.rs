@@ -6,7 +6,8 @@
 mod binding;
 
 pub use tla_engine::search::{Reporter, SearchOutcome, Settings};
-use tla_values::transfer::EncodedStates;
+use tla_values::transfer::{EncodedStates, StateEncoder};
+use tla_values::{Id, Store};
 
 /// The version of the contract between the loader and the addon: the exports, their arguments
 /// and the engine IR. The loader uses the TypeScript engine when it expects another.
@@ -60,8 +61,12 @@ impl Reporter for Relay {
             .send(Event::Progress(generated, distinct, queued, depth));
     }
 
-    fn print(&mut self, values: EncodedStates, width: usize) {
-        let _ = self.0.send(Event::Print(values, width));
+    // The values go to JavaScript in `transfer.ts`'s encoding, as one state of their count, for
+    // the interpreter's printer.
+    fn print(&mut self, store: &Store, values: &[Id]) {
+        let mut encoder = StateEncoder::new();
+        encoder.encode(store, values);
+        let _ = self.0.send(Event::Print(encoder.finish(), values.len()));
     }
 }
 

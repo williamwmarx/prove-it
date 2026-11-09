@@ -6,11 +6,13 @@ use std::sync::mpsc;
 use std::time::{Instant, SystemTime};
 
 use tla_engine::search::{Reporter, SearchOutcome, Settings, search};
-use tla_values::transfer::EncodedStates;
+use tla_values::print::{is_printable, write_value};
+use tla_values::{Id, Store};
 
 use crate::args::{Java, Parsed, USAGE, get_java_launch};
 use crate::front::read_front;
 use crate::messages::{self as code, Level, Printer};
+use crate::pretty::pretty_print;
 use crate::summary::{
     actual_probability, fingerprint_distance, format_count, format_probability,
     optimistic_probability, out_degree_summary,
@@ -250,7 +252,8 @@ enum Event {
     InitialStatesProgress(u64),
     InitialStates(u64, u64),
     Progress(u64, u64, u64, u64),
-    Print,
+    /// What Print or PrintT printed, or nothing when TLC's text isn't known.
+    Print(Option<String>),
 }
 
 struct Relay(mpsc::Sender<Event>);
@@ -274,8 +277,21 @@ impl Reporter for Relay {
             .send(Event::Progress(generated, distinct, queued, depth));
     }
 
-    fn print(&mut self, _: EncodedStates, _: usize) {
-        let _ = self.0.send(Event::Print);
+    // Print and PrintT print each value as TLC's normalized text, pretty printed, two spaces
+    // apart, unless the store has forgotten how TLC built one.
+    fn print(&mut self, store: &Store, values: &[Id]) {
+        let printed = values.iter().all(|&id| is_printable(store, id)).then(|| {
+            values
+                .iter()
+                .map(|&id| {
+                    let mut text = Vec::new();
+                    write_value(store, id, &mut text);
+                    pretty_print(&text)
+                })
+                .collect::<Vec<_>>()
+                .join("  ")
+        });
+        let _ = self.0.send(Event::Print(printed));
     }
 }
 
@@ -460,9 +476,13 @@ fn check_spec(spec_path: &str, args: &Parsed, printer: &mut Printer) -> i32 {
                     print_progress(printer, &statistics, Some(start));
                     printer.flush();
                 }
+                Event::Print(Some(text)) => printer.line(&text),
                 // Nothing more this run prints can be right, so it ends here rather than search
                 // on, the search thread with it.
-                Event::Print => std::process::exit(report_not_native(printer, "printing values")),
+                Event::Print(None) => std::process::exit(report_not_native(
+                    printer,
+                    "printing a value whose text depends on how TLC built it",
+                )),
             }
         }
         searching
