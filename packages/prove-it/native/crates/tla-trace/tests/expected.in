@@ -156,3 +156,115 @@ const RAFT_RECONFIG_INITIAL_STATE: &str = r#"State 1: <Initial predicate>
 /\ votesGranted = (n1 :> {} @@ n2 :> {} @@ n3 :> {} @@ n4 :> {})
 /\ acked = (v1 :> Nil)
 /\ votedFor = (n1 :> Nil @@ n2 :> Nil @@ n3 :> Nil @@ n4 :> Nil)"#;
+const RANDOM_ELEMENT_TRACE: &str = r#"State 1: <Initial predicate>
+/\ x = 731
+/\ y = 0
+
+State 2: <Next line 9, col 9 to line 11, col 21 of module RandomElement>
+/\ x = 681
+/\ y = 1
+
+State 3: <Next line 9, col 9 to line 11, col 21 of module RandomElement>
+/\ x = 426
+/\ y = 2
+
+State 4: <Next line 9, col 9 to line 11, col 21 of module RandomElement>
+/\ x = 686
+/\ y = 3
+
+State 5: <Next line 9, col 9 to line 11, col 21 of module RandomElement>
+/\ x = 505
+/\ y = 4
+
+State 6: <Next line 9, col 9 to line 11, col 21 of module RandomElement>
+/\ x = 84
+/\ y = 5
+
+State 7: <Next line 9, col 9 to line 11, col 21 of module RandomElement>
+/\ x = 979
+/\ y = 6
+
+State 8: <Next line 9, col 9 to line 11, col 21 of module RandomElement>
+/\ x = 771
+/\ y = 7
+
+State 9: <Next line 9, col 9 to line 11, col 21 of module RandomElement>
+/\ x = 590
+/\ y = 8
+
+State 10: <Next line 9, col 9 to line 11, col 21 of module RandomElement>
+/\ x = 297
+/\ y = 9
+
+State 11: <Next line 9, col 9 to line 11, col 21 of module RandomElement>
+/\ x = 715
+/\ y = 10
+
+"#;
+
+const RANDOM_ELEMENT_X_AND_Y_TRACE: &str = r#"State 1: <Initial predicate>
+/\ x = 0
+/\ y = 0
+
+State 2: <Next line 9, col 9 to line 10, col 35 of module RandomElementXandY>
+/\ x = 1
+/\ y = 1
+
+State 3: <Next line 9, col 9 to line 10, col 35 of module RandomElementXandY>
+/\ x = 1
+/\ y = 0
+
+"#;
+
+const RANDOM_SUBSET_TRACE: &str = r#"State 1: <Initial predicate>
+/\ p = <<62, 49, 166>>
+/\ q = <<2487, 674, 1426>>
+/\ x = 38314
+/\ y = 100000006
+/\ z = TRUE
+
+State 2: <Next line 17, col 9 to line 18, col 21 of module RandomSubset>
+/\ p = <<62, 49, 166>>
+/\ q = <<2487, 674, 1426>>
+/\ x = 38314
+/\ y = 100000006
+/\ z = FALSE
+
+"#;
+
+const RANDOM_SUBSET_NEXT_TUPLES_TRACE: &str = r#"State 1: <Initial predicate>
+/\ p = <<57, 130, 186>>
+/\ q = <<1931, 2446, 1746>>
+/\ y = 0
+
+State 2: <Next line 19, col 9 to line 21, col 21 of module RandomSubsetNextTuples>
+/\ p = <<42, 23, 21>>
+/\ q = <<2613, 644, 1232>>
+/\ y = 1
+
+State 3: <Next line 19, col 9 to line 21, col 21 of module RandomSubsetNextTuples>
+/\ p = <<62, 6, 147>>
+/\ q = <<3354, 2506, 50>>
+/\ y = 2
+
+State 4: <Next line 19, col 9 to line 21, col 21 of module RandomSubsetNextTuples>
+/\ p = <<80, 97, 156>>
+/\ q = <<1622, 1922, 73>>
+/\ y = 3
+
+State 5: <Next line 19, col 9 to line 21, col 21 of module RandomSubsetNextTuples>
+/\ p = <<101, 53, 73>>
+/\ q = <<1878, 2965, 2754>>
+/\ y = 4
+
+State 6: <Next line 19, col 9 to line 21, col 21 of module RandomSubsetNextTuples>
+/\ p = <<29, 9, 66>>
+/\ q = <<1510, 2961, 1944>>
+/\ y = 5
+
+State 7: <Next line 19, col 9 to line 21, col 21 of module RandomSubsetNextTuples>
+/\ p = <<96, 146, 28>>
+/\ q = <<822, 2914, 3062>>
+/\ y = 6
+
+"#;
