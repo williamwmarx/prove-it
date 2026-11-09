@@ -177,7 +177,7 @@ describe.if(ADDON !== undefined)("the native engine's lazy sets", () => {
       "VARIABLE x",
       "Init == x = 0",
       "Next == UNCHANGED x",
-      "Inv == <<>> \\in [{} -> 1..(1 \\div x)]",
+      "Inv == <<>> \\in [{} -> 1..(1 \\div x)] /\\ 0 \\in ({0} \\cup (1..(1 \\div x)))",
     ];
     expect(await compareWithInterpreter(divided, `${CONFIG}\nINVARIANT Inv`)).toContainEqual(
       expect.stringMatching(/^\[engine\] native: stopped: /),

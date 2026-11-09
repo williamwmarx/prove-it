@@ -7,6 +7,7 @@ use tla_values::store::{
 };
 use tla_values::{Bail, Id};
 
+use super::builtins::expect_int;
 use super::lazy::Lazy;
 use super::nodes::expect_set;
 use super::{
@@ -106,6 +107,18 @@ impl Compiler<'_> {
     pub(crate) fn member_test(&self, set: &Compiled) -> Member {
         if let Some(test) = &set.member {
             return test.clone();
+        }
+        // IntervalValue.member compares an integer with the bounds, building nothing.
+        if let Some((low, high)) = set.interval.clone() {
+            return member(move |machine, element| {
+                let (low, high) = (low(machine)?, high(machine)?);
+                let (low, high) = (expect_int(machine, low)?, expect_int(machine, high)?);
+                if machine.store.kind_of(element) != KIND_INT {
+                    return not_in(machine, element, "values TLC can't compare");
+                }
+                let value = i64::from(machine.store.int_of(element));
+                Ok(low <= value && value <= high)
+            });
         }
         match set.infinite {
             Some("Nat") => member(|machine, element| {

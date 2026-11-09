@@ -20,7 +20,7 @@ use super::sets::not_in;
 use super::{
     Binding, Compiled, Compiler, Compiling, Context, DISTINCT_SLOT, LEVEL_SLOT, NEXT_LEVEL_SLOT,
     Operand, OperatorBody, Shape, bind, bool_id, combine_references, decline, eval, leaf, lookup,
-    member, operator_context, parts, predicate_node, reference_of, unsupported,
+    member, operator_context, predicate_node, reference_of, unsupported,
 };
 use crate::footprint::Footprint;
 use crate::machine::{Eval, Machine, Printed};
@@ -62,7 +62,7 @@ const PURE_BUILTINS: [&str; 19] = [
 
 const MAXIMUM_POWER_SET: u32 = 20;
 
-fn expect_int(machine: &Machine<'_>, id: Id) -> Outcome<i64> {
+pub(crate) fn expect_int(machine: &Machine<'_>, id: Id) -> Outcome<i64> {
     if machine.store.kind_of(id) == KIND_INT {
         Ok(i64::from(machine.store.int_of(id)))
     } else {
@@ -531,7 +531,13 @@ impl Compiler<'_> {
                 let set = self.operand(&operands[1])?;
                 let is_in = name == "\\in";
                 let footprint = element.footprint.merge(&set.footprint);
-                if set.member.is_none() && set.infinite.is_none() && set.footprint.width() == 0 {
+                // An interval's membership compares with its bounds, which needs no fast path.
+                let is_interval = set.interval.is_some();
+                if set.member.is_none()
+                    && set.infinite.is_none()
+                    && !is_interval
+                    && set.footprint.width() == 0
+                {
                     return Ok(Some(predicate_node(
                         Predicate::Member {
                             element: Leaf::of(&element),
@@ -541,7 +547,10 @@ impl Compiler<'_> {
                         footprint,
                     )));
                 }
-                let evaluate = fused::member_const(&element, &set, is_in).unwrap_or_else(|| {
+                let fast = (!is_interval)
+                    .then(|| fused::member_const(&element, &set, is_in))
+                    .flatten();
+                let evaluate = fast.unwrap_or_else(|| {
                     let test = self.member_test(&set);
                     let element = element.eval.clone();
                     eval(move |machine| {
@@ -552,7 +561,7 @@ impl Compiler<'_> {
                 // A miss in a set that isn't constant compares the element with the set's elements
                 // as TLC's binary search does, to fail where it fails, so it is cached too.
                 Compiled {
-                    is_costly: set.member.is_some() || set.footprint.width() > 0,
+                    is_costly: set.member.is_some() || is_interval || set.footprint.width() > 0,
                     is_boolean: true,
                     ..leaf(evaluate, footprint)
                 }
@@ -759,30 +768,9 @@ impl Compiler<'_> {
                 let right = self.operand(&operands[1])?;
                 let (low, high) = (left.eval.clone(), right.eval.clone());
                 let bounds = (low.clone(), high.clone());
-                // IntervalValue.member compares an integer with the bounds, building nothing.
-                let (member_low, member_high) = bounds.clone();
-                let is_member = member(move |machine, element| {
-                    let (low, high) = (member_low(machine)?, member_high(machine)?);
-                    let (low, high) = (expect_int(machine, low)?, expect_int(machine, high)?);
-                    if machine.store.kind_of(element) != KIND_INT {
-                        return not_in(machine, element, "values TLC can't compare");
-                    }
-                    let value = i64::from(machine.store.int_of(element));
-                    Ok(low <= value && value <= high)
-                });
-                // Building the interval evaluates both bounds, which a set holding it does even
-                // where it tests none of its elements.
-                let (parts_low, parts_high) = bounds.clone();
-                let bound_parts = parts(move |machine| {
-                    let (low, high) = (parts_low(machine)?, parts_high(machine)?);
-                    expect_int(machine, low).and_then(|_| expect_int(machine, high))?;
-                    Ok(())
-                });
                 Compiled {
                     is_costly: true,
                     is_in_order: true,
-                    member: Some(is_member),
-                    parts: Some(bound_parts),
                     interval: Some(bounds),
                     ..leaf(
                         eval(move |machine| fused::interval(machine, &low, &high)),
