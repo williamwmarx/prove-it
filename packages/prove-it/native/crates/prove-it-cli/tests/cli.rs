@@ -709,6 +709,26 @@ fn prints_what_the_atoms_print_naming_a_lassos_properties() {
 }
 
 #[test]
+fn reports_an_atom_that_fails_on_an_initial_state() {
+    // TLC's InitialLivenessEvaluationError: TLC adds the initial state to the behavior graphs
+    // before it reports the initial states or checks the invariant, and ENABLED of an action
+    // that reads a primed variable it never assigns fails there.
+    let spec = "---- MODULE Stop ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == (x = 0 /\\ x' = 1) \\/ UNCHANGED x\nSpec == Init /\\ [][Next]_x\nInv == x = 0\nProp == <>~ENABLED (x' > x)\n====\n";
+    let (output, directory) = run_lowered(
+        "initial-atom",
+        spec,
+        "SPECIFICATION Spec\nINVARIANT Inv\nPROPERTY Prop\n",
+    );
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(151), "{text}");
+    assert!(
+        text.contains("Computing initial states...\nError: In evaluation, the identifier x is either undefined or not an operator.\nline 8, col 21 to line 8, col 21 of module Stop\nWhile working on the initial state:\nx = 0\n\n1 states generated, 1 distinct states found, 1 states left on queue.\nThe depth of the complete state graph search is 1.\nFinished in "),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
 fn reads_and_sets_tlcs_registers() {
     // TLCCache evaluates Counted once, TLCFP is TLC's fingerprint under -fp 0, which the
     // interpreter and TLC print the same, and a Java property TLC hasn't set is its key.

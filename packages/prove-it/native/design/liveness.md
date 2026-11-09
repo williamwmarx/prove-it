@@ -293,6 +293,14 @@ Done on native-parity:
   lasso it rebuilt (`Liveness.findViolatedProperties`), each atom anew. `tla-live` logs those
   evaluations (`Liveness::lasso_events`), the engine carries what they printed in
   `ViolationKind::Lasso::printed`, and the binary prints it before the violation.
+- An atom that fails as TLC adds an initial state (InitialLivenessEvaluationError): TLC adds
+  each initial state to the behavior graphs before it checks it or reports the initial states
+  (`DoInitFunctor`), so the search asks `tla_live::find_unanswered` of the initial states before
+  it reports them, and stops with `ErrorSite::InitialAtom`. TLC then replays the initial states,
+  which the engine follows only where there is one; with more it declines. A violation found
+  among the initial states is reported only where every atom evaluates on them
+  (`answers_initial_atoms`). At a safety stop, the first atom unanswered on a state TLC had
+  added by then (`unanswered_at`) is reported as at the search's end.
 
 Open, with what is known:
 - The front names a property an instance exports by the definition's own name (`Safe`) where
@@ -302,9 +310,6 @@ Open, with what is known:
 - Test2 (TLCSet in atoms): the engine session is doing online atom evaluation through an
   `Answers` trait in tla-live. My review notes were sent to them: pass the graph to each
   `add_state`, give stuttering steps their own slot space, and keep `unanswered`.
-- InitialLivenessEvaluationError: it stops at an invariant violation where an atom is
-  unanswered (`accepted_at` returns None). `Liveness::unanswered` with `ErrorSite::Atom` is the
-  likely way through, applied on the safety-stop path too.
 - YoYoAllGraphs (enumerated Seq(S)) and MCEWD687a (filter of an infinite set): engine
   enumeration limits. MCEWD687a also needs the scoped properties.
 - Periodic lasso: `PERIODIC_LASSO` gives `violation: None`. Build the violation with `to_lasso`

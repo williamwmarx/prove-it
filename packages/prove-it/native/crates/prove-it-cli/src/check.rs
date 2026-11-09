@@ -791,6 +791,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                                 Site::InitialPredicate(position)
                             }
                             ErrorSite::Atom { atom, is_extra } => Site::Atom { atom, is_extra },
+                            ErrorSite::InitialAtom(atom) => Site::InitialAtom(atom),
                         },
                         statistics: Statistics {
                             generated: counts.generated,

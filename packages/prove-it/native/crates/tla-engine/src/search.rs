@@ -355,6 +355,9 @@ pub enum ErrorSite {
     /// the violation's states, which isn't the trace's: a state predicate's state, or an action's
     /// step's next state.
     Atom { atom: u32, is_extra: bool },
+    /// Evaluating the atom at this position of the IR's `model.atoms` as TLC adds an initial
+    /// state, the violation's one state, to the behavior graphs, before it checks the state.
+    InitialAtom(u32),
 }
 
 // The stops that are the engine's own limits, not a failure TLC reports: what it doesn't
@@ -2254,6 +2257,37 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         })?;
         search.flush(&mut machine);
         initial_states = (search.initial_generated, search.states.count() as u64);
+        // TLC adds each initial state to the behavior graphs as it finds it, and stops where an
+        // atom fails to evaluate. It then replays the initial states, checking each again and
+        // adding those after the one it failed at, which the engine follows where there is but
+        // the one.
+        if settings.is_violation_reported
+            && search.graph.is_some()
+            && search.states.key_width.is_none()
+            && search.held.is_none()
+            && !context.is_live_printing
+            && !context.diameter_atoms.contains(&true)
+        {
+            let count = search.states.count();
+            let tables = graph_tables(&mut machine, &search, 0, count, None, None).map_err(Bail)?;
+            if let Some(unanswered) = unanswered_at(model, &search, &tables, 0, count) {
+                search.violation = (initial_states == (1, 1)).then(|| Found {
+                    kind: ViolationKind::Error {
+                        site: ErrorSite::InitialAtom(unanswered.atom),
+                    },
+                    parent: None,
+                    last: Some(search.states.state(unanswered.state).to_vec()),
+                    counts: StopCounts {
+                        generated: 1,
+                        distinct: 1,
+                        queued: 1,
+                        depth: 1,
+                        ..StopCounts::default()
+                    },
+                });
+                return Err(Bail(ATOM_FAILED));
+            }
+        }
         if search.held.is_none() {
             search
                 .reporter
@@ -2742,8 +2776,9 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                         }
                     }
                     let lasso_printed: Vec<Vec<Id>> = liveness
-                        .lasso_events
+                        .events
                         .iter()
+                        .skip_while(|&&event| event != Event::Lasso)
                         .flat_map(|event| match *event {
                             Event::Atom { atom, slot } => tables[atom as usize].printed(slot),
                             _ => &[],
@@ -2872,10 +2907,22 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     },
                 });
             }
+            // TLC adds each initial state to the behavior graphs before it checks it, and fails
+            // where an atom fails to evaluate, which the engine leaves to the interpreter.
             let violation = search
                 .violation
                 .take()
-                .filter(|_| settings.is_violation_reported);
+                .filter(|_| settings.is_violation_reported)
+                .filter(|found| {
+                    search.graph.is_none()
+                        || matches!(
+                            found.kind,
+                            ViolationKind::Error {
+                                site: ErrorSite::InitialAtom(_)
+                            }
+                        )
+                        || answers_initial_atoms(&mut machine, &context, &search, found)
+                });
             // Otherwise the interpreter starts from scratch and prints it all again.
             if violation.is_some() {
                 for printed in search.held.take().iter().flatten().flatten() {
@@ -2971,12 +3018,32 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                         graph.edge_offsets.push(graph.edges.len() as u32);
                         expanded += 1;
                     }
-                    let verdict = graph_tables(&mut machine, &search, expanded, count, None, None)
-                        .ok()
-                        .and_then(|tables| {
-                            accepted_at(model, &context, &search, &tables, expanded, count)
+                    let tables =
+                        graph_tables(&mut machine, &search, expanded, count, None, None).ok();
+                    // TLC had added the initial states and each state before the one it was
+                    // expanding, and stopped at the first whose atom failed to evaluate.
+                    let unanswered = tables
+                        .as_ref()
+                        .filter(|tables| {
+                            search.states.key_width.is_none()
+                                && !is_symmetric
+                                && !context.diameter_atoms.contains(&true)
+                                && search.held.as_ref().is_none_or(|held| {
+                                    held.iter().all(|printed| printed.is_empty())
+                                })
+                                && tables.iter().all(|table| table.prints.is_empty())
+                        })
+                        .and_then(|tables| unanswered_at(model, &search, tables, expanded, count))
+                        .filter(|unanswered| {
+                            unanswered.is_initial || (unanswered.state as usize) < search.expanding
                         });
+                    let verdict = tables.and_then(|tables| {
+                        accepted_at(model, &context, &search, &tables, expanded, count)
+                    });
                     match verdict {
+                        _ if unanswered.is_some() => unanswered.and_then(|unanswered| {
+                            to_atom_failure(&context, &search, initial_states, unanswered)
+                        }),
                         Some(None) => Some(found),
                         Some(Some(Verdict::Accepted { path, violated, .. })) if is_deadlock => {
                             found.kind = ViolationKind::Deadlock {
@@ -3448,6 +3515,60 @@ fn accepted_at(
     .ok()
 }
 
+// Whether every atom of a state evaluates on each initial state the search found before it
+// stopped among them, the one it stopped at included, and prints nothing.
+fn answers_initial_atoms(
+    machine: &mut Machine<'_>,
+    context: &EngineContext,
+    search: &Search<'_, States>,
+    found: &Found,
+) -> bool {
+    let unassigned = vec![UNASSIGNED; context.width];
+    let states: Vec<Vec<Id>> = (0..search.states.count() as u32)
+        .map(|index| search.states.state(index).to_vec())
+        .chain(found.last.clone())
+        .collect();
+    !context.is_live_printing
+        && states.iter().all(|state| {
+            let epoch = machine.next_epoch();
+            machine.set_current(state, epoch);
+            machine.set_next(&unassigned);
+            context.atoms.iter().all(|atom| match atom {
+                Atom::State(eval) | Atom::Enabled { run: Ok(eval), .. } => eval(machine).is_ok(),
+                Atom::Action { .. } => true,
+                Atom::Enabled { run: Err(_), .. } | Atom::Unknown(_) => false,
+            })
+        })
+}
+
+// The first atom the engine didn't answer that TLC evaluates as it adds the states the search
+// expanded to the behavior graphs.
+fn unanswered_at(
+    model: &Model,
+    search: &Search<'_, States>,
+    tables: &[Table],
+    expanded: usize,
+    count: usize,
+) -> Option<tla_live::Unanswered> {
+    let graph = search.graph.as_ref()?;
+    let answers: Vec<Option<&[u8]>> = tables
+        .iter()
+        .map(|table| table.unknown.is_none().then_some(&table.answers[..]))
+        .collect();
+    tla_live::find_unanswered(
+        &to_terms(&model.live_formula),
+        &tla_live::Graph {
+            parents: &search.states.parents[..count],
+            edge_offsets: &graph.edge_offsets[..=expanded],
+            edges: &graph.edges,
+            fingerprints: &search.states.fingerprints[..count],
+            reals: None,
+            diameters: None,
+        },
+        &answers,
+    )
+}
+
 // Where TLC evaluates an atom the engine didn't answer as it adds a state to the behavior graphs,
 // the failure the caller evaluates again, with the counts of TLC's search then: what it generated
 // and found up to that state, and the out-degrees of the states it expanded.
@@ -3460,6 +3581,11 @@ fn to_atom_failure(
     let graph = search.graph.as_ref()?;
     let state = unanswered.state as usize;
     let slot = unanswered.slot as usize;
+    // TLC fails adding an initial state before it reports the initial states, where the search
+    // looks for it.
+    if unanswered.is_initial {
+        return None;
+    }
     // The state the atom reads besides the one TLC adds: a successor's state predicate, or the
     // next state of one of the added state's steps.
     let extra = match context.atoms.get(unanswered.atom as usize)? {
@@ -3698,6 +3824,8 @@ fn order_printed<'p>(
     let mut is_initial = false;
     for event in &liveness.events {
         match *event {
+            // What TLC prints from here on follows the check's start.
+            Event::Lasso => break,
             Event::Initial(_) => is_initial = true,
             Event::Expanded(state) => {
                 is_initial = false;

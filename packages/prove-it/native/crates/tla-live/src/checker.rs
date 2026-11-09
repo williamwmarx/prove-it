@@ -153,8 +153,9 @@ pub struct Checker<'c> {
     effects: RefCell<Option<Effects>>,
     /// TLC's diameter as it evaluates, for the atoms that read it.
     diameter: Cell<u32>,
-    /// The expanded state being added, and the first atom found unanswered while adding one.
-    adding: Cell<Option<u32>>,
+    /// The state being added, with whether as an initial state, and the first atom found
+    /// unanswered while adding one.
+    adding: Cell<Option<(u32, bool)>>,
     pub(crate) unanswered: Cell<Option<Unanswered>>,
 }
 
@@ -270,13 +271,14 @@ impl<'c> Checker<'c> {
             Some(Some(Some(0))) => Ok(false),
             Some(Some(Some(1))) => Ok(true),
             _ => {
-                if let Some(state) = self.adding.get()
+                if let Some((state, is_initial)) = self.adding.get()
                     && self.unanswered.get().is_none()
                 {
                     self.unanswered.set(Some(Unanswered {
                         state,
                         atom,
                         slot: position as u32,
+                        is_initial,
                     }));
                 }
                 Err(Declined::from(match answer {
@@ -1423,6 +1425,15 @@ impl<'s, 'c> Search<'s, 'c> {
     }
 }
 
+/// The first atom the engine didn't answer that TLC evaluates as it adds the states to the
+/// behavior graphs, unless it stops first at a node that accepts every behavior.
+pub fn find_unanswered(checker: &mut Checker<'_>) -> Option<Unanswered> {
+    add_states(checker)
+        .is_err()
+        .then(|| checker.unanswered.get())
+        .flatten()
+}
+
 /// Where no state may reach a tableau node that accepts every behavior, none: otherwise as
 /// `add_states`.
 pub fn find_accepted(checker: &mut Checker<'_>) -> Result<Option<(u32, Vec<u32>)>, Declined> {
@@ -1438,13 +1449,14 @@ fn add_states(checker: &mut Checker<'_>) -> Result<Option<(u32, Vec<u32>)>, Decl
     let graph = checker.graph;
     for (state, &parent) in graph.parents.iter().enumerate() {
         if parent == -1 {
+            checker.adding.set(Some((state as u32, true)));
             checker.add_initial_state(state as u32)?;
         }
     }
     // A check part way through the search, as TLC's periodic one, adds the states it expanded:
     // the nodes of the others are undone, and the search for a cycle passes them by.
     for state in 0..graph.expanded() as u32 {
-        checker.adding.set(Some(state));
+        checker.adding.set(Some((state, false)));
         if let Some(path) = checker.add_state(state)? {
             checker.adding.set(None);
             return Ok(Some((state, path)));
@@ -1471,13 +1483,11 @@ pub fn accepted(
 }
 
 /// Checks the formula on the search's graph, and names the properties a lasso violates.
-/// Builds the behavior graphs, into `events` the evaluations it logged, and searches them; into
-/// `lasso_events` go the evaluations TLC makes naming the properties a lasso violates.
+/// Builds the behavior graphs, into `events` the evaluations it logged, and searches them.
 pub fn check(
     checker: &mut Checker<'_>,
     properties: &[TermId],
     events: &mut Vec<Event>,
-    lasso_events: &mut Vec<Event>,
 ) -> Result<Verdict, Declined> {
     let graph = checker.graph;
     let found = add_states(checker)?;
@@ -1494,9 +1504,10 @@ pub fn check(
     };
     if is_effectful {
         checker.log_effects();
+        checker.log(Event::Lasso);
     }
     let violated = checker.violated(properties, &path, loop_start)?;
-    *lasso_events = checker.take_events();
+    events.extend(checker.take_events());
     Ok(Verdict::Lasso {
         violated,
         path,
