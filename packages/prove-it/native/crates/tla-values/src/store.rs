@@ -348,6 +348,20 @@ impl Store {
         }
     }
 
+    /// Ranks a text as `get_string_rank` does, and gives the string the store already holds of it
+    /// that rank, which it held unranked, as one `\o` made.
+    pub fn rank_text(&mut self, text: &[u16]) -> i32 {
+        let rank = self.get_string_rank(text);
+        if let Some(string) = self.find_str(text) {
+            let payload = self.meta(string).payload;
+            let known = &mut self.texts[payload as usize];
+            if known.rank < 0 {
+                known.rank = rank;
+            }
+        }
+        rank
+    }
+
     /// TLC's ranked texts, in the order of their ranks, as `getStringOrder` gives them.
     pub fn get_string_order(&self) -> Vec<&[u16]> {
         let order = self.get_order();
