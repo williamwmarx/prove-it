@@ -189,6 +189,10 @@ impl<'ir> Rebuilder<'ir> {
             last.iter().for_each(settle_deep);
         } else if is_in_model(evaluator, &rebuilt)? {
             settle_recovered(evaluator, &self.key, &rebuilt[rebuilt.len() - 1])?;
+        } else if is_held {
+            // A violating state outside the model isn't fingerprinted, but TLC's checks of it
+            // sort what their comparisons reach.
+            check_violation(evaluator, &rebuilt)?;
         }
         evaluator.printed.clear();
         Ok(compose(rebuilt, initial_output, outputs, ending))
@@ -457,6 +461,57 @@ fn is_in_model(evaluator: &mut Evaluator<'_>, rebuilt: &[Vec<Value>]) -> Result<
         }
     }
     Ok(true)
+}
+
+// TLC's checks of a violating state, as `doNextCheckInvariants` and `doNextCheckImplied` make
+// them: the invariants in order until one fails, then, past an initial state, the action
+// properties in order until one fails.
+fn check_violation(
+    evaluator: &mut Evaluator<'_>,
+    rebuilt: &[Vec<Value>],
+) -> Result<(), Unsupported> {
+    let ir = evaluator.ir;
+    let state = |values: &[Value]| values.iter().cloned().map(Some).collect();
+    let last = rebuilt.len() - 1;
+    evaluator.current = state(&rebuilt[last]);
+    evaluator.level = last as i32 + 1;
+    let mut invariants = Vec::new();
+    for invariant in &ir.model.invariants {
+        let Some(index) = invariant.root.definition else {
+            return unsupported("an invariant without a definition");
+        };
+        invariants.push(evaluator.definition(ir.definitions[index as usize]).body);
+    }
+    invariants.extend(
+        ir.model
+            .property_invariants
+            .iter()
+            .map(|invariant| invariant.root),
+    );
+    for invariant in invariants {
+        if !run(evaluator.boolean(invariant, &Context::default()))? {
+            return Ok(());
+        }
+    }
+    if last == 0 {
+        return Ok(());
+    }
+    evaluator.current = state(&rebuilt[last - 1]);
+    evaluator.next = state(&rebuilt[last]);
+    evaluator.level = last as i32;
+    for property in &ir.model.action_properties {
+        // `[A]_v`: A, or else v unchanged.
+        let context = Context::default();
+        if run(evaluator.boolean(property.action, &context))? {
+            continue;
+        }
+        let now = run(evaluator.evaluate(property.subscript, &context))?;
+        let after = run(evaluator.evaluate(property.subscript, &context.primed(true)))?;
+        if !run(equals(&now, &after))? {
+            return Ok(());
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
