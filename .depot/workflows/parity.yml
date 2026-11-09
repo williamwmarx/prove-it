@@ -22,11 +22,13 @@ name: Parity
       - main
 permissions:
   contents: read
-# A push to main supersedes the run before it. A run by hand checks one change, which may share its
-# ref with other changes run by hand, so each gets a group of its own.
+# Pushes to main take turns: a run in progress always finishes, and only the newest push waits
+# behind it, so with merges coming faster than a run takes, every run still ends with a result for
+# the commit it checked. A run by hand checks one change, which may share its ref with other changes
+# run by hand, so each gets a group of its own.
 concurrency:
   group: parity-${{ github.event_name == 'push' && github.ref || github.run_id }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 env:
   NPM_TOKEN: ""
   NODE_AUTH_TOKEN: ""
