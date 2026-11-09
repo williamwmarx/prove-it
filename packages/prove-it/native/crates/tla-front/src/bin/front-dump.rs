@@ -17,6 +17,8 @@
 //! - `front-dump order [--library <directory>]` reads lines as `model` does and writes TLC's
 //!   string order for each model, the root module's variables and constants in SANY's order, and
 //!   its definitions in the order TLC computes them;
+//! - `front-dump model-ir [--library <directory>]` reads lines as `model` does and writes the IR
+//!   of each model's environment as `ir` does, with the texts ranked in TLC's string order;
 //! - `front-dump time` writes the best of five times to tokenize and parse each module, in
 //!   milliseconds.
 
@@ -127,14 +129,11 @@ fn write_environment(
 
 /// The IR of a model whose Init and Next are a placeholder and whose configuration names each
 /// definition of the environment, by key, as an invariant, so it holds every definition.
-fn lower_definitions(environment: &Environment) -> Result<Vec<u8>, FrontError> {
-    let mut lowering = Lowering::new(
-        environment,
-        RankedTexts {
-            texts: &[],
-            ranks: Default::default(),
-        },
-    );
+fn lower_definitions(
+    environment: &Environment,
+    ranked: RankedTexts,
+) -> Result<Vec<u8>, FrontError> {
+    let mut lowering = Lowering::new(environment, ranked);
     let root = Rc::new(Expression::new(
         ExpressionKind::Number {
             value: 0.0,
@@ -185,8 +184,19 @@ fn lower_definitions(environment: &Environment) -> Result<Vec<u8>, FrontError> {
 }
 
 fn write_lowered(out: &mut String, source: &str, path: &Path, library: Option<&Path>) {
-    let lowered =
-        link(source, path, library, None).and_then(|environment| lower_definitions(&environment));
+    let lowered = link(source, path, library, None).and_then(|environment| {
+        lower_definitions(
+            &environment,
+            RankedTexts {
+                texts: &[],
+                ranks: Default::default(),
+            },
+        )
+    });
+    write_ir(out, lowered);
+}
+
+fn write_ir(out: &mut String, lowered: Result<Vec<u8>, FrontError>) {
     match lowered {
         Ok(bytes) => {
             out.push_str("{\"ir\":\"");
@@ -197,6 +207,40 @@ fn write_lowered(out: &mut String, source: &str, path: &Path, library: Option<&P
         }
         Err(error) => dump::environment(&Err(error)).write(out),
     }
+}
+
+/// The IR of a model's environment, with the texts ranked in TLC's string order, as `ir` writes a
+/// module's.
+fn write_model_ir(out: &mut String, config: &str, spec_path: &Path, library: Option<&Path>) {
+    let source = std::fs::read_to_string(spec_path).unwrap_or_default();
+    let load_module = |name: &str| load(spec_path, library, name);
+    let lowered = parse_config(config, TlcVersion::Master)
+        .map_err(|error| FrontError::Config(error.message))
+        .and_then(|model| {
+            let strings = TlcOrder::new(&source, &load_module, TlcVersion::Master)?
+                .get_string_order(&model)?;
+            let texts: Vec<Rc<str>> = strings.iter().map(|text| Rc::from(text.as_str())).collect();
+            let environment = create_environment(&EnvironmentOptions {
+                source: &source,
+                load_module: &load_module,
+                config: &model,
+                is_unconfigured: false,
+                version: TlcVersion::Master,
+            })?;
+            let ranks = texts
+                .iter()
+                .enumerate()
+                .map(|(rank, text)| (text.clone(), rank as u32))
+                .collect();
+            lower_definitions(
+                &environment,
+                RankedTexts {
+                    texts: &texts,
+                    ranks,
+                },
+            )
+        });
+    write_ir(out, lowered);
 }
 
 /// TLC's orders of a model: its string order, the root module's variables and constants, and the
@@ -262,7 +306,7 @@ fn main() -> ExitCode {
         .and_then(|index| arguments.get(index + 1))
         .map(PathBuf::from);
     let write: fn(&mut String, &str) = match mode.as_str() {
-        "resolve" | "model" | "ir" | "order" => |_, _| {},
+        "resolve" | "model" | "ir" | "order" | "model-ir" => |_, _| {},
         "tokens" => write_tokens,
         "ast" => |out, source| write_module(out, source, false),
         "sany-ast" => |out, source| write_module(out, source, true),
@@ -276,7 +320,7 @@ fn main() -> ExitCode {
         },
         _ => {
             eprintln!(
-                "usage: front-dump tokens|ast|sany-ast|config|resolve|model|ir|order|time < paths"
+                "usage: front-dump tokens|ast|sany-ast|config|resolve|model|ir|order|model-ir|time < paths"
             );
             return ExitCode::from(2);
         }
@@ -292,7 +336,9 @@ fn main() -> ExitCode {
             }
         };
         let mut line = String::new();
-        if mode == "order" {
+        if mode == "model-ir" {
+            write_model_ir(&mut line, &source, Path::new(spec_path), library.as_deref());
+        } else if mode == "order" {
             write_order(&mut line, &source, Path::new(spec_path), library.as_deref());
         } else if mode == "ir" {
             write_lowered(&mut line, &source, Path::new(&path), library.as_deref());

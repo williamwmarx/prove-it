@@ -169,7 +169,7 @@ fn collect_local_facts(
                 .cloned()
                 .unwrap_or_else(|| name.clone());
             let definition = environment.definitions.get(&target).cloned();
-            let is_overridden = environment.constants.contains(&name);
+            let is_overridden = environment.constants.contains_key(&name);
             let variable_index = environment.variable_index.get(&name).copied();
             if variable_index.is_some()
                 || builtin_flags(environment, &name) & BUILTIN_STATE_LEVEL != 0

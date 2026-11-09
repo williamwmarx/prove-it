@@ -5,7 +5,10 @@ use std::path::Path;
 use std::sync::mpsc;
 use std::time::{Instant, SystemTime};
 
-use tla_engine::search::{Reporter, SearchOutcome, Settings, Violation, ViolationKind, search};
+use tla_engine::search::{
+    Counts, Reporter, SearchOutcome, Settings, Violation, ViolationKind, search,
+};
+use tla_live::Verdict;
 use tla_values::print::{is_printable, write_value};
 use tla_values::{Id, Store};
 
@@ -451,9 +454,6 @@ fn check_spec(spec_path: &str, args: &Parsed, printer: &mut Printer) -> i32 {
     if args.has("-deadlock") {
         ir.model.check_deadlock = false;
     }
-    if ir.model.is_recording_graph {
-        return report_not_native(printer, "checking temporal properties");
-    }
     let (sender, receiver) = mpsc::channel();
     let outcome = std::thread::scope(|scope| {
         let ir = &ir;
@@ -513,10 +513,19 @@ fn check_spec(spec_path: &str, args: &Parsed, printer: &mut Printer) -> i32 {
             counts,
             checkpoint: None,
             fingerprints,
+            liveness,
             ..
-        } => (counts, fingerprints),
+        } => {
+            if let Some(liveness) = liveness {
+                if liveness.verdict != Verdict::Holds {
+                    return report_not_native(printer, "a temporal property's counterexample");
+                }
+                print_liveness_holds(printer, &counts, liveness.branches.unwrap_or(1));
+            }
+            (counts, fingerprints)
+        }
         SearchOutcome::Complete { .. } => {
-            return report_not_native(printer, "checking temporal properties");
+            return report_not_native(printer, "a temporal property's counterexample");
         }
         SearchOutcome::Declined(reason) => {
             return report_not_native(printer, &format!("the engine declined: {reason}"));
@@ -566,6 +575,42 @@ fn check_spec(spec_path: &str, args: &Parsed, printer: &mut Printer) -> i32 {
     }
     print_finished(printer, start);
     SUCCESS
+}
+
+/// Once the search is complete, TLC reports how far it got, then checks the temporal properties
+/// on the complete state graph, which hold here (`liveness-started`, `liveness-finished`).
+fn print_liveness_holds(printer: &mut Printer, counts: &Counts, branches: usize) {
+    let checking = Instant::now();
+    let statistics = Statistics {
+        generated: counts.generated,
+        distinct: counts.distinct,
+        queued: 0,
+        depth: counts.depth,
+    };
+    print_progress(printer, &statistics, None);
+    let branch_text = if branches > 1 {
+        format!("{branches} branches of ")
+    } else {
+        String::new()
+    };
+    printer.print(
+        code::CHECKING_TEMPORAL,
+        Level::None,
+        &format!(
+            "Checking {branch_text}temporal properties for the complete state space with {} total distinct states at ({})",
+            branches as u64 * counts.distinct,
+            format_date(SystemTime::now())
+        ),
+    );
+    printer.print(
+        code::CHECKING_TEMPORAL_END,
+        Level::None,
+        &format!(
+            "Finished checking temporal properties in {} at {}",
+            format_duration(checking.elapsed().as_millis()),
+            format_date(SystemTime::now())
+        ),
+    );
 }
 
 /// After a search, TLC prints how many states it found and how deep it went, after the progress
