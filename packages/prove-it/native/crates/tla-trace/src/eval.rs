@@ -330,6 +330,8 @@ pub struct Evaluator<'ir> {
     pub registers: Registers,
     /// How many times TLCSet set a register.
     pub register_writes: usize,
+    /// How many times TLCGet read a register.
+    pub register_reads: usize,
     /// Whether TLC runs with -tool, under which the message of an error TLC raises with a code
     /// holds the code's markers, which AssertError compares with. `None` where the caller doesn't
     /// say, and AssertError isn't followed.
@@ -546,6 +548,7 @@ impl<'ir> Evaluator<'ir> {
             runtime: None,
             registers: Registers::default(),
             register_writes: 0,
+            register_reads: 0,
             is_tool: None,
             workers: None,
         }
@@ -2617,6 +2620,20 @@ impl<'ir> Evaluator<'ir> {
         Ok(Combined::Set(self.operand(set)?))
     }
 
+    // A failure in the predicate of a filter TLC keeps lazy, where what uses the filter, whose
+    // frames end at `frame`, enumerates it itself: TLC's call stack holds the frames from the
+    // predicate's on right after it.
+    fn follow_lazy_filter(&mut self, frame: Option<usize>) {
+        if let (Some(stack), Some(frame)) = (&mut self.call_stack, frame)
+            && stack.unfollowed == Some(LAZY_FILTER)
+            && let Some(start) = stack.lazy_filter.filter(|&start| start >= frame)
+        {
+            stack.frames.drain(frame..start);
+            stack.unfollowed = None;
+            stack.lazy_filter = None;
+        }
+    }
+
     // A failure in the predicate of a filter TLC keeps lazy, which TLC meets as Print's Java method
     // enumerates the filter it prints: the frames from the predicate's on, after Print's own, in
     // the error of the method.
@@ -2705,7 +2722,26 @@ impl<'ir> Evaluator<'ir> {
             "STRING" => Value::Lazy(Rc::new(Lazy::Strings)),
             "=" | "#" => {
                 arity(2)?;
-                let left = self.operand(&operands[0])?;
+                // The frame of the comparison, which enumerates a filter TLC kept lazy.
+                let frame = self
+                    .call_stack
+                    .as_ref()
+                    .filter(|stack| !stack.is_frozen)
+                    .map(|stack| stack.frames.len());
+                let left = match self.operand(&operands[0]) {
+                    Ok(left) => left,
+                    Err(error) => {
+                        // TLC evaluates the other side before the comparison enumerates the
+                        // filter, outside the frames of the failure.
+                        let stack = self.call_stack.take();
+                        let is_right_evaluated = self.operand(&operands[1]).is_ok();
+                        self.call_stack = stack;
+                        if is_right_evaluated {
+                            self.follow_lazy_filter(frame);
+                        }
+                        return Err(error);
+                    }
+                };
                 let right = self.operand(&operands[1])?;
                 Value::Bool(equals(&left, &right)? == (name == "="))
             }
@@ -3394,6 +3430,7 @@ impl<'ir> Evaluator<'ir> {
                     // A register, whose value no cache may keep.
                     key @ Value::Int(index) if index >= 0 => {
                         self.reads += 1;
+                        self.register_reads += 1;
                         match self.registers.numbered.get(index as usize) {
                             Some(Some(value)) => value.clone(),
                             _ => return undefined_register(&key),
@@ -3401,6 +3438,7 @@ impl<'ir> Evaluator<'ir> {
                     }
                     key if is_register_name(&key) => {
                         self.reads += 1;
+                        self.register_reads += 1;
                         match self.get_named_register(&key)? {
                             Some(value) => value,
                             None => return undefined_register(&key),

@@ -48,6 +48,9 @@ impl Rebuilder<'_> {
         let states = &trace.states;
         let state = |position: usize| states[position].values.iter().cloned().map(Some).collect();
         let mut aliases = Vec::with_capacity(states.len());
+        // TLC evaluates the alias of each state as it prints it, between its rebuilds of the
+        // states, so an alias that uses the registers those rebuilds set reads them part way.
+        let (reads, writes) = (evaluator.register_reads, evaluator.register_writes);
         for position in 0..states.len() {
             let next = match position + 1 {
                 after if after < states.len() => after,
@@ -90,6 +93,11 @@ impl Rebuilder<'_> {
             };
             if !evaluator.printed.is_empty() {
                 return unsupported("that prints");
+            }
+            if writes > 0
+                && (evaluator.register_reads, evaluator.register_writes) != (reads, writes)
+            {
+                return unsupported("that uses registers the rebuild of the trace sets");
             }
             aliases.push(match &value {
                 Value::Function(function) if function.class.get() == Class::Record => {

@@ -62,6 +62,9 @@ pub struct LoweredModel {
     pub ir: Vec<u8>,
     /// The messages, or why the front end doesn't know them yet.
     pub startup_messages: Result<Vec<StartupMessage>, String>,
+    /// What TLC prints of the Java overrides it loads, right after `Starting...`, before it
+    /// computes the constant definitions.
+    pub override_messages: Vec<StartupMessage>,
 }
 
 /// The encoded IR of the model the configuration describes, without TLC's actions, which the
@@ -84,12 +87,10 @@ pub fn lower_front(
     let version = options.version.unwrap_or(TlcVersion::Master);
     let source = std::fs::read_to_string(spec_path)
         .map_err(|error| FrontError::Config(format!("{}: {error}", spec_path.display())))?;
-    // The modules SANY reads, each of which TLC overrides with a Java class beside the spec.
-    let loaded = std::cell::RefCell::new(Vec::new());
-    let load = |name: &str| {
-        loaded.borrow_mut().push(name.to_owned());
-        load_module(spec_path, options.libraries, name)
-    };
+    let load = |name: &str| load_module(spec_path, options.libraries, name);
+    // TLC loads the class named after a module from the spec's directory (`loadClass`).
+    let directory = spec_path.parent().unwrap_or(Path::new("."));
+    let load_class = |name: &str| std::fs::read(directory.join(format!("{name}.class"))).ok();
     let config =
         parse_config(config_text, version).map_err(|error| FrontError::Config(error.message))?;
     // SANY's errors come from linking, before TLC's orders parse the modules again.
@@ -100,6 +101,7 @@ pub fn lower_front(
         is_unconfigured: false,
         version,
         is_level_checked: false,
+        load_class: Some(&load_class),
     })?;
     let order = TlcOrder::new(&source, &load, version)?;
     let texts: Vec<Rc<str>> = order
@@ -231,23 +233,31 @@ pub fn lower_front(
                 options.is_warning_enabled,
             )
         });
+        let override_messages = get_override_messages(&environment, directory)
+            .map(|messages| {
+                // -nowarning drops a method that matches no operator.
+                messages
+                    .into_iter()
+                    .filter(|message| options.is_warning_enabled || !message.is_warning)
+                    .collect::<Vec<_>>()
+            })
+            .and_then(|messages| {
+                // TLC lists the methods in an order that depends on the JVM.
+                if messages.len() > 1 {
+                    return Err("the Java overrides TLC lists in the JVM's order".to_owned());
+                }
+                Ok(messages)
+            });
+        let (startup_messages, override_messages) = match override_messages {
+            Ok(messages) => (startup_messages, messages),
+            Err(reason) => (Err(reason), Vec::new()),
+        };
         Ok(LoweredModel {
+            override_messages,
             ir: tla_ir::encode(&ir),
             startup_messages,
         })
     })();
-    let directory = spec_path.parent().unwrap_or(Path::new("."));
-    let module_name = spec_path.file_stem().and_then(|stem| stem.to_str());
-    if module_name
-        .into_iter()
-        .map(str::to_owned)
-        .chain(loaded.borrow().iter().cloned())
-        .any(|name| directory.join(format!("{name}.class")).exists())
-    {
-        return Err(FrontError::NotYet(
-            "a Java class overriding a module".to_owned(),
-        ));
-    }
     // TLC stops on a constant predicate the engine checks at startup before what follows it, so
     // the front end can't report what follows.
     match lowered {
@@ -256,6 +266,46 @@ pub fn lower_front(
         ),
         lowered => lowered,
     }
+}
+
+// `printCheckProgress`'s report of each method of a Java class that overrides a module, which
+// names the class file by its URL (`Class#getResource`).
+fn get_override_messages(
+    environment: &crate::environment::Environment,
+    directory: &Path,
+) -> Result<Vec<StartupMessage>, String> {
+    environment
+        .java_overrides
+        .iter()
+        .map(|java_override| {
+            let path =
+                std::path::absolute(directory.join(format!("{}.class", java_override.module)))
+                    .map_err(|error| error.to_string())?;
+            let path = path.to_str().unwrap_or_default();
+            // `pathToFileURL` escapes what a URL can't hold, which the front end doesn't follow.
+            let is_plain = !path.is_empty()
+                && path.chars().all(|character| {
+                    character.is_ascii_alphanumeric() || "/._-".contains(character)
+                });
+            if !is_plain {
+                return Err("the URL of a Java class whose path a URL escapes".to_owned());
+            }
+            Ok(StartupMessage {
+                code: if java_override.is_matched { 2168 } else { 2400 },
+                is_warning: !java_override.is_matched,
+                text: format!(
+                    "{} {} operator override from file:{path} with signature: <Java Method: {}>.",
+                    if java_override.is_matched {
+                        "Loading"
+                    } else {
+                        "Failed to match"
+                    },
+                    java_override.operator,
+                    java_override.signature
+                ),
+            })
+        })
+        .collect()
 }
 
 // What TLC prints as it starts after the constant definitions: `createSearch`'s warnings, in the

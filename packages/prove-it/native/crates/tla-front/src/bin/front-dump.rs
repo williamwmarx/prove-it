@@ -137,6 +137,7 @@ fn link_checked(
                 is_unconfigured: config.is_none(),
                 version: TlcVersion::Master,
                 is_level_checked,
+                load_class: None,
             })
         })
 }
@@ -259,6 +260,7 @@ fn write_model_ir(out: &mut String, config: &str, spec_path: &Path, library: Opt
                 is_unconfigured: false,
                 version: TlcVersion::Master,
                 is_level_checked: false,
+                load_class: None,
             })?;
             let ranks = texts
                 .iter()

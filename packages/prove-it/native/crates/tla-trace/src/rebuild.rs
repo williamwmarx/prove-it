@@ -183,6 +183,45 @@ impl<'ir> Rebuilder<'ir> {
         ending: Ending,
         is_checked: bool,
     ) -> Result<Trace, Unsupported> {
+        let Some(first) = self.rebuild_pass(store, states, actions, ending, is_checked)? else {
+            return Ok(Trace {
+                states: Vec::new(),
+                trace_output: Vec::new(),
+            });
+        };
+        // TLC rebuilds a violation's trace once more after it has printed it, for the
+        // counterexample its postconditions read: the spec prints again, as the registers then
+        // are, and sets them again.
+        let ir = self.evaluator.ir;
+        let is_effectful = ir.builtins.iter().any(|builtin| {
+            matches!(
+                &*ir.texts[builtin.name as usize],
+                "Print" | "PrintT" | "TLCSet"
+            )
+        });
+        let again = if !matches!(ending, Ending::Lasso) && first.rebuilt.len() > 1 && is_effectful {
+            self.rebuild_pass(store, states, actions, ending, false)?
+                .map(|pass| {
+                    pass.initial_output
+                        .into_iter()
+                        .chain(pass.outputs.into_iter().flatten())
+                        .collect()
+                })
+        } else {
+            None
+        };
+        Ok(compose(first, again, ending))
+    }
+
+    // One rebuild of the path, with what the spec printed finding the first state and each step.
+    fn rebuild_pass(
+        &mut self,
+        store: &Store,
+        states: &[&[Id]],
+        actions: &[Option<u32>],
+        ending: Ending,
+        is_checked: bool,
+    ) -> Result<Option<Pass>, Unsupported> {
         let evaluator = &mut self.evaluator;
         let ir = evaluator.ir;
         let width = ir.variables.len();
@@ -190,10 +229,7 @@ impl<'ir> Rebuilder<'ir> {
             return unsupported("a state of another width than the model's");
         }
         let Some(&first) = states.first() else {
-            return Ok(Trace {
-                states: Vec::new(),
-                trace_output: Vec::new(),
-            });
+            return Ok(None);
         };
         // What the spec prints depends on every state TLC enumerates, so where it prints, each
         // walk runs to its end, and each step tries TLC's actions in order, as `findStepAction`
@@ -205,12 +241,14 @@ impl<'ir> Rebuilder<'ir> {
             )
         });
         // A random draw depends on every draw before it in the expansion, as what the spec prints
-        // does.
+        // and the registers it sets do.
         let is_printing = is_drawing
-            || ir
-                .builtins
-                .iter()
-                .any(|builtin| matches!(&*ir.texts[builtin.name as usize], "Print" | "PrintT"));
+            || ir.builtins.iter().any(|builtin| {
+                matches!(
+                    &*ir.texts[builtin.name as usize],
+                    "Print" | "PrintT" | "TLCSet"
+                )
+            });
         // TLC's worker seeds the draws of each expansion with the fingerprint of the state it
         // expands, which is of the state itself where TLC fingerprints no other key.
         let order: Vec<usize> = ir.tlc_order.iter().map(|&index| index as usize).collect();
@@ -334,8 +372,22 @@ impl<'ir> Rebuilder<'ir> {
             check_violation(evaluator, &rebuilt)?;
         }
         evaluator.printed.clear();
-        Ok(compose(rebuilt, steps, initial_output, outputs, ending))
+        Ok(Some(Pass {
+            rebuilt,
+            steps,
+            initial_output,
+            outputs,
+        }))
     }
+}
+
+// What a rebuild of a path gives: its states, the action of each step, and what the spec printed
+// finding the first state and then each step.
+struct Pass {
+    rebuilt: Vec<Vec<Value>>,
+    steps: Vec<Option<u32>>,
+    initial_output: Vec<Vec<String>>,
+    outputs: Vec<Vec<Vec<String>>>,
 }
 
 // What TLC's fingerprint of a recovered state sorts, as `settleRecoveredState` gives it: under
@@ -378,14 +430,14 @@ fn settle_recovered(
 // before it prints the trace, all but the last of a violation's and all of a lasso's, and then
 // prints each later state with what finding its step printed. A trace of one state prints only
 // what the initial predicate printed, after it. A violation's trace is rebuilt once more after it
-// is printed.
-fn compose(
-    rebuilt: Vec<Vec<Value>>,
-    steps: Vec<Option<u32>>,
-    initial_output: Vec<Vec<String>>,
-    outputs: Vec<Vec<Vec<String>>>,
-    ending: Ending,
-) -> Trace {
+// is printed, which `again` holds what the spec printed in where it may differ.
+fn compose(pass: Pass, again: Option<Vec<Vec<String>>>, ending: Ending) -> Trace {
+    let Pass {
+        rebuilt,
+        steps,
+        initial_output,
+        outputs,
+    } = pass;
     let count = rebuilt.len();
     if count == 1 {
         return Trace {
@@ -407,14 +459,14 @@ fn compose(
         Ending::Lasso => 0,
     };
     let recovered = count - known;
-    let trace_output = if known > 0 {
-        initial_output
+    let trace_output = match again {
+        Some(again) => again,
+        None if known > 0 => initial_output
             .iter()
             .chain(outputs.iter().flatten())
             .cloned()
-            .collect()
-    } else {
-        Vec::new()
+            .collect(),
+        None => Vec::new(),
     };
     let mut prefix = Some(if recovered > 0 {
         initial_output
@@ -740,10 +792,13 @@ mod tests {
             })
             .collect();
         compose(
-            vec![Vec::new(); count],
-            vec![None; count],
-            vec![print("i")],
-            outputs,
+            Pass {
+                rebuilt: vec![Vec::new(); count],
+                steps: vec![None; count],
+                initial_output: vec![print("i")],
+                outputs,
+            },
+            None,
             ending,
         )
     }
