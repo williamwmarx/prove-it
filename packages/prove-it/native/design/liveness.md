@@ -51,6 +51,14 @@ step of a lasso whose cycle is its last state, and is empty when the engine has 
 actions. Under `PROVE_IT_LIVE_CHECK=1` the interpreter compares their labels with the trace's: no
 difference on the 30 corpus lassos.
 
+## An accepting tableau node (as built)
+
+Where the native checker finds a tableau node that accepts every behavior (`Verdict::Accepted`),
+TLC reports the violation as it adds the state to the behavior graph, with the counts the search
+had then. The interpreter replays the engine's graph for those counts only, without its own
+liveness checker, and at that state reports the native checker's path: Github1389Counting, the
+one corpus model this reaches.
+
 ## Temporal formulas inside a predicate (as built)
 
 A liveness atom can be an operator whose body holds a temporal formula in a branch the run never

@@ -545,6 +545,28 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     await compareWithInterpreter(body, config, { PROVE_IT_LIVE_CHECK: "1" });
   });
 
+  it("reports a tableau node that accepts every behavior as TLC finds it", async () => {
+    // TLC's test model Github1389Counting: x becomes TRUE at most twice.
+    const body = [
+      "EXTENDS Naturals",
+      "VARIABLE x",
+      "RECURSIVE AtMost(_)",
+      "AtMost(n) == IF n = 0 THEN []~x ELSE [](x => [](~x => AtMost(n - 1)))",
+      "Init == x = FALSE",
+      "Next == x' \\in BOOLEAN",
+      "Spec == Init /\\ [][Next]_x",
+      "CountAtMostTwo == AtMost(2)",
+    ];
+    const config = "SPECIFICATION Spec\nCHECK_DEADLOCK FALSE\nPROPERTY CountAtMostTwo";
+    const lines = await compareWithInterpreter(body, config);
+    expect(lines).toContain("[engine] native: liveness: accepted");
+    // The interpreter prints the node's path without checking the properties itself.
+    expect(lines).toContainEqual(
+      expect.stringMatching(/^\[engine\] found 2 states in \d+ ms; the interpreter prints/),
+    );
+    await compareWithInterpreter(body, config, { PROVE_IT_LIVE_CHECK: "1" });
+  });
+
   it("hands over a violated invariant, deadlock and a failed action property", async () => {
     const cases: [string[], string, string][] = [
       [
@@ -766,6 +788,29 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     const assigned = body.map((line) => line.replace("Next == ", "Next == x' = (x + 1) % 3 /\\ "));
     expect(await compareWithInterpreter(assigned, "INIT Init\nNEXT Next")).toContainEqual(
       expect.stringMatching(stopped("unsupported: Print")),
+    );
+  });
+
+  it("builds a function over a tuple pattern as TLC does", async () => {
+    // TLC binds each element's components and keeps the element as the key.
+    const body = [
+      "EXTENDS Naturals",
+      "VARIABLE f",
+      "Init == f = [<<i, j>> \\in {<<1, 2>>, <<3, 4>>} |-> i + j]",
+      "Next == f' = [<<i, j>> \\in DOMAIN f |-> f[<<i, j>>] + i * j]",
+      "Small == \\A key \\in DOMAIN f : f[key] < 40",
+    ];
+    expect(
+      await compareWithInterpreter(body, "INIT Init\nNEXT Next\nINVARIANT Small"),
+    ).toContainEqual(expect.stringMatching(stopped("an invariant violated")));
+    // A tuple of another length fails in TLC, which the interpreter then reports.
+    const mismatched = [
+      "VARIABLE f",
+      "Init == f = [<<i, j>> \\in {<<1>>} |-> i]",
+      "Next == UNCHANGED f",
+    ];
+    expect(await compareWithInterpreter(mismatched, "INIT Init\nNEXT Next")).toContainEqual(
+      expect.stringMatching(stopped("a tuple pattern that doesn't match")),
     );
   });
 
