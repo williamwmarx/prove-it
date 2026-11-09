@@ -761,7 +761,15 @@ impl Compiler<'_> {
             }
             "DOMAIN" => {
                 arity(1)?;
-                let function = self.operand(&operands[0])?;
+                // A recursive function's domain, which TLC reads without applying it.
+                let operand = &operands[0];
+                if operand.slot.is_none()
+                    && let Some(recursive) =
+                        self.get_applied_recursive_function(operand.node, &operand.context)?
+                {
+                    return Ok(Some(recursive.domain.clone()));
+                }
+                let function = self.operand(operand)?;
                 unary(
                     &function,
                     |machine, function| {

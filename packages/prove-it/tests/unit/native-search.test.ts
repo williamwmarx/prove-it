@@ -1111,4 +1111,30 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
       expect.stringMatching(declined("unsupported: a value TLC computed at startup with effects")),
     );
   });
+
+  // From tla-rs's function_syntax: TLC applies a recursive function of several bounds to tuples
+  // of its product, and keeps a recursive function lazy where a spec passes it or takes its
+  // domain.
+  it("applies recursive functions as TLC keeps them lazy", async () => {
+    const body = [
+      "EXTENDS Naturals, FiniteSets",
+      "VARIABLE x",
+      "add[a \\in 0..3, b \\in 0..3] == IF b = 0 THEN a ELSE add[a, b - 1] + 1",
+      "fact[n \\in Nat] == IF n = 0 THEN 1 ELSE n * fact[n - 1]",
+      "selfdom[n \\in 0..3] == IF n = 0 THEN Cardinality(DOMAIN selfdom) ELSE selfdom[n - 1]",
+      "k == [a \\in {1}, <<b, c>> \\in {<<2, 3>>, <<4, 5>>} |-> a + b + c]",
+      "ApplyAt(f, n) == f[n]",
+      "Init == x = 0",
+      "Next == x < 3 /\\ x' = add[x, 1]",
+      "Inv == /\\ add[2, 3] = 5 /\\ add[<<1, 1>>] = 2 /\\ DOMAIN add = (0..3) \\X (0..3)",
+      "       /\\ ApplyAt(fact, 4) = 24",
+      "       /\\ selfdom[2] = 4 /\\ k[1, <<4, 5>>] = 10",
+    ];
+    expect(
+      await compareWithInterpreter(
+        body,
+        "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
+      ),
+    ).toContainEqual(expect.stringMatching(COMPLETE));
+  });
 });

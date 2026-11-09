@@ -545,7 +545,10 @@ struct RecursiveOperator {
 pub(crate) struct RecursiveFunction {
     entry: u64,
     runtime: usize,
+    /// The slot of its argument: a tuple where it has several bounds.
     slot: u32,
+    /// How many bounds it has: TLC's domain is their product.
+    arity: usize,
     domain: Compiled,
     assumed: RefCell<Footprint>,
     body_footprint: RefCell<Option<Footprint>>,
@@ -1950,12 +1953,13 @@ impl<'a> Compiler<'a> {
         let DefinitionForm::Function(bounds) = &definition.form else {
             unreachable!("a recursive function that isn't one");
         };
-        let [bound] = &bounds[..] else {
-            return unsupported("a recursive function of several arguments");
-        };
-        let tla_ir::Pattern::Name(param) = bound.pattern else {
-            return unsupported("a recursive function of several arguments");
-        };
+        let mut params = Vec::with_capacity(bounds.len());
+        for bound in bounds {
+            let tla_ir::Pattern::Name(param) = bound.pattern else {
+                return unsupported("a recursive function over a tuple pattern");
+            };
+            params.push(param);
+        }
         let outer = Context {
             scope: base_scope.clone(),
             is_primed: context.is_primed,
@@ -1964,11 +1968,21 @@ impl<'a> Compiler<'a> {
         };
         let slot = self.allocate_slot();
         let mut read = Vec::new();
-        let domain = self.tracking(&mut read, |compiler| compiler.compile(bound.set, &outer))?;
+        let domain = self.tracking(&mut read, |compiler| match &bounds[..] {
+            [bound] => compiler.compile(bound.set, &outer),
+            bounds => {
+                let factors = bounds
+                    .iter()
+                    .map(|bound| compiler.compile(bound.set, &outer))
+                    .collect::<Compiling<Vec<Compiled>>>()?;
+                Ok(compiler.product_of(&factors))
+            }
+        })?;
         let record = Rc::new(RecursiveFunction {
             entry: self.next_entry(),
             runtime: self.allocate_runtime(),
             slot,
+            arity: params.len(),
             domain,
             assumed: RefCell::new(Footprint::default()),
             body_footprint: RefCell::new(None),
@@ -1981,7 +1995,30 @@ impl<'a> Compiler<'a> {
             .entry(key)
             .or_insert_with(|| (base_scope.clone(), [None, None]))
             .1[index] = Some(Rc::clone(&record));
-        let body_context = outer.with_scope(bind(&base_scope, param, Binding::Slot(slot)));
+        // With several bounds, each name is its element of the tuple the function is applied to.
+        let scope = match &params[..] {
+            [param] => bind(&base_scope, *param, Binding::Slot(slot)),
+            params => {
+                params
+                    .iter()
+                    .enumerate()
+                    .fold(base_scope.clone(), |scope, (index, &param)| {
+                        let element = leaf(
+                            eval(move |machine| {
+                                let argument = machine.locals[slot as usize];
+                                Ok(machine.store.get_range_value(argument, index as u32))
+                            }),
+                            Footprint::slot(slot),
+                        );
+                        let binding = Binding::Value {
+                            compiled: Box::new(element),
+                            lazy: None,
+                        };
+                        bind(&scope, param, binding)
+                    })
+            }
+        };
+        let body_context = outer.with_scope(scope);
         let settled = self.settle_function(&record, definition.body, &body_context, &mut read);
         let (body, slot_start, slot_end) = match settled {
             Ok(settled) => settled,
@@ -2062,6 +2099,12 @@ impl<'a> Compiler<'a> {
                     let definition = *definition;
                     self.get_recursive_function(definition, context, Some(Rc::clone(&found)))
                         .map(Some)
+                }
+                // An operator's argument that names one, which TLC passes as its lazy value.
+                Binding::Argument(argument) => {
+                    let is_primed = context.is_primed || argument.context.is_primed;
+                    let argument_context = argument_context(argument).primed(is_primed);
+                    self.get_applied_recursive_function(argument.expression, &argument_context)
                 }
                 _ => Ok(None),
             };
