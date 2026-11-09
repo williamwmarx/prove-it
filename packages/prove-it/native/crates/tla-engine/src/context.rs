@@ -47,10 +47,13 @@ pub struct EngineContext {
 /// interpreter answers it (`createLiveOracle` in `live.ts`).
 pub enum Atom {
     State(Eval),
-    /// An action, false of a step that leaves the subscript unchanged.
+    /// An action, false of a step that leaves the subscript unchanged, and the position of the
+    /// ENABLED atom of its fairness: the checker asks about no step from a state where that is
+    /// false.
     Action {
         action: Eval,
         subscript: Option<Eval>,
+        enabled: Option<usize>,
     },
     /// ENABLED, run, or answered from the steps the search took when the action is made of TLC's
     /// actions of the next-state relation.
@@ -471,7 +474,7 @@ fn compile_atom(compiler: &mut Compiler<'_>, ir: &Ir, atom: &tla_ir::Atom) -> At
     let compiled = match &atom.kind {
         AtomKind::State => compile_live(compiler, atom.expression, scope)
             .map(|compiled| Atom::State(compiled.eval)),
-        AtomKind::Action { unchanged } => (|| {
+        AtomKind::Action { unchanged, enabled } => (|| {
             let subscript = match unchanged {
                 None => None,
                 Some(node) => match resolve(ir, *node) {
@@ -480,7 +483,11 @@ fn compile_atom(compiler: &mut Compiler<'_>, ir: &Ir, atom: &tla_ir::Atom) -> At
                 },
             };
             let action = compile_live(compiler, atom.expression, scope)?.eval;
-            Ok(Atom::Action { action, subscript })
+            Ok(Atom::Action {
+                action,
+                subscript,
+                enabled: enabled.map(|position| position as usize),
+            })
         })(),
         AtomKind::Enabled { actions } => {
             let run = match compiler.compile_enabled_in_scope(atom.expression, scope) {

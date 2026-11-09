@@ -8,7 +8,7 @@ use std::collections::HashMap;
 
 use crate::store::{
     Bail, FALSE, Id, KIND_BOOL, KIND_FUNCTION, KIND_INT, KIND_MODEL, KIND_SET, KIND_STRING,
-    KIND_TUPLE, Store, TRUE,
+    KIND_TUPLE, SMALL_INT_MAX, Store, TRUE,
 };
 
 const FALSE_TAG: i32 = 0;
@@ -130,6 +130,172 @@ impl StateEncoder {
     }
 }
 
+/// States as the table of the values they hold, each written once, after its parts, as
+/// [`StateEncoder`] writes it but with each part as its position in the table, and each state as
+/// the positions of its values: a checkpoint of millions of states that share their values takes
+/// words for the values, not for every state's copy of them. Interning the values in the table's
+/// order interns what is new in the order that decoding the states one by one in `transfer.ts`'s
+/// encoding would, so it gives the same ids.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct SharedStates {
+    /// The values, `count` of them.
+    pub values: EncodedStates,
+    /// Each state's values, by position in the table.
+    pub states: Vec<i32>,
+}
+
+/// Writes states into one [`SharedStates`].
+pub struct SharedEncoder {
+    encoder: StateEncoder,
+    // The position of each id in the table, or -1.
+    positions: Vec<i32>,
+    states: Vec<i32>,
+}
+
+impl SharedEncoder {
+    pub fn new(store: &Store) -> SharedEncoder {
+        SharedEncoder {
+            encoder: StateEncoder::new(),
+            positions: vec![-1; store.value_count()],
+            states: Vec::new(),
+        }
+    }
+
+    pub fn encode(&mut self, store: &Store, state: &[Id]) {
+        for &id in state {
+            let position = self.write(store, id);
+            self.states.push(position);
+        }
+    }
+
+    pub fn finish(self) -> SharedStates {
+        SharedStates {
+            values: self.encoder.finish(),
+            states: self.states,
+        }
+    }
+
+    fn push(&mut self, words: &[i32]) -> i32 {
+        let encoded = &mut self.encoder.encoded;
+        encoded.words.extend_from_slice(words);
+        encoded.count += 1;
+        encoded.count as i32 - 1
+    }
+
+    fn write_parts(&mut self, store: &Store, parts: impl Iterator<Item = Id>) -> Vec<i32> {
+        parts.map(|part| self.write(store, part)).collect()
+    }
+
+    // The value's position, writing it and the parts not yet written first.
+    fn write(&mut self, store: &Store, id: Id) -> i32 {
+        let known = self.positions[id as usize];
+        if known != -1 {
+            return known;
+        }
+        let size = store.size_of(id);
+        let position = match store.kind_of(id) {
+            KIND_BOOL | KIND_INT => {
+                self.encoder.encode_value(store, id);
+                self.encoder.encoded.count += 1;
+                self.encoder.encoded.count as i32 - 1
+            }
+            kind @ (KIND_STRING | KIND_MODEL) => {
+                let tag = if kind == KIND_STRING {
+                    STRING_TAG
+                } else {
+                    MODEL_VALUE_TAG
+                };
+                self.encoder.encoded.words.push(tag);
+                self.encoder.push_text(store.text_of(id));
+                self.encoder.encoded.count += 1;
+                self.encoder.encoded.count as i32 - 1
+            }
+            KIND_SET => {
+                let elements =
+                    self.write_parts(store, (0..size).map(|index| store.element_at(id, index)));
+                self.push(&[&[SET_TAG, size as i32][..], &elements].concat())
+            }
+            // A reader interns an interval's keys before its values, so the keys a reset store
+            // doesn't hold already are written first.
+            KIND_TUPLE if size > 0 => {
+                for key in SMALL_INT_MAX + 1..=size as i32 {
+                    self.push(&[INTEGER_TAG, key]);
+                }
+                let values = self.write_parts(
+                    store,
+                    (0..size).map(|index| store.get_range_value(id, index)),
+                );
+                self.push(
+                    &[
+                        &[INTERVAL_FUNCTION_TAG, TUPLE_CLASS, 1, size as i32][..],
+                        &values,
+                    ]
+                    .concat(),
+                )
+            }
+            kind => {
+                let class = if kind == KIND_TUPLE {
+                    TUPLE_CLASS
+                } else if store.is_record(id) {
+                    RECORD_CLASS
+                } else {
+                    NO_CLASS
+                };
+                let keys = self.write_parts(
+                    store,
+                    (0..size).map(|index| {
+                        store
+                            .peek_key(id, index)
+                            .expect("a function's key is interned")
+                    }),
+                );
+                let values = self.write_parts(
+                    store,
+                    (0..size).map(|index| store.get_range_value(id, index)),
+                );
+                self.push(&[&[FUNCTION_TAG, class, size as i32][..], &keys, &values].concat())
+            }
+        };
+        self.positions[id as usize] = position;
+        position
+    }
+}
+
+/// Reads [`SharedStates`] of `width` values each and interns their values in the table's order.
+pub fn decode_shared_states(
+    store: &mut Store,
+    shared: &SharedStates,
+    width: usize,
+) -> Result<Vec<Id>, DecodeError> {
+    let encoded = &shared.values;
+    let mut reader = Reader {
+        words: &encoded.words,
+        strings: &encoded.strings,
+        index: 0,
+    };
+    let mut ids: Vec<Id> = Vec::with_capacity(encoded.count as usize);
+    for _ in 0..encoded.count {
+        let id = reader.read_shared(store, &ids)?;
+        ids.push(id);
+    }
+    if reader.index != encoded.words.len() {
+        return Err(DecodeError::Malformed("words follow the last value"));
+    }
+    if !shared.states.len().is_multiple_of(width.max(1)) {
+        return Err(DecodeError::Malformed("a state cut short"));
+    }
+    shared
+        .states
+        .iter()
+        .map(|&position| {
+            usize::try_from(position)
+                .ok()
+                .and_then(|position| ids.get(position).copied())
+                .ok_or(DecodeError::Malformed("a position outside the table"))
+        })
+        .collect()
+}
+
 /// Why words couldn't be read as states.
 #[derive(Debug, PartialEq, Eq)]
 pub enum DecodeError {
@@ -203,6 +369,48 @@ impl Reader<'_> {
 
     fn read_values(&mut self, store: &mut Store, length: usize) -> Result<Vec<Id>, DecodeError> {
         (0..length).map(|_| self.read_value(store)).collect()
+    }
+
+    // Parts, each the position of a value read before.
+    fn read_parts(&mut self, ids: &[Id], length: usize) -> Result<Vec<Id>, DecodeError> {
+        (0..length)
+            .map(|_| {
+                let position = self.next()?;
+                usize::try_from(position)
+                    .ok()
+                    .and_then(|position| ids.get(position).copied())
+                    .ok_or(DecodeError::Malformed("a part not read before"))
+            })
+            .collect()
+    }
+
+    fn read_shared(&mut self, store: &mut Store, ids: &[Id]) -> Result<Id, DecodeError> {
+        match self.words.get(self.index) {
+            Some(&SET_TAG) => {
+                self.index += 1;
+                let length = self.next_length()?;
+                let elements = self.read_parts(ids, length)?;
+                Ok(store.set_of(&elements)?)
+            }
+            Some(&FUNCTION_TAG) => {
+                self.index += 2;
+                let length = self.next_length()?;
+                let keys = self.read_parts(ids, length)?;
+                let values = self.read_parts(ids, length)?;
+                Ok(store.function_of(&keys, &values)?)
+            }
+            Some(&INTERVAL_FUNCTION_TAG) => {
+                self.index += 2;
+                let low = i64::from(self.next()?);
+                let length = self.next_length()?;
+                let keys = (0..length as i64)
+                    .map(|offset| store.int(low + offset))
+                    .collect::<Result<Vec<Id>, Bail>>()?;
+                let values = self.read_parts(ids, length)?;
+                Ok(store.function_of(&keys, &values)?)
+            }
+            _ => self.read_value(store),
+        }
     }
 
     fn read_value(&mut self, store: &mut Store) -> Result<Id, DecodeError> {

@@ -1717,7 +1717,10 @@ const searchStates = (
       onPrint: print,
     };
     const startedAt = performance.now();
-    const native = getEngineBackend() === "ts" ? undefined : checkNatively(lowerModel, callbacks);
+    // The native search runs on one thread, so auto leaves a search on more to the TypeScript engine.
+    const backend = getEngineBackend();
+    const isNative = backend === "rust" || (backend === "auto" && getEngineThreads() === 1);
+    const native = isNative ? checkNatively(lowerModel, callbacks) : undefined;
     if (native) {
       reportEngine(
         `native: ${native.status}: ${native.reason} (${(performance.now() - startedAt).toFixed(2)} ms)`,
