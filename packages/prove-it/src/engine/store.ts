@@ -1367,10 +1367,15 @@ let shared: SharedViews | undefined;
 
 const MAXIMUM_SHARED_BYTES = 1 << 30;
 
-// Append-only arrays get their whole capacity up front: the system commits a page only once it is
-// written, and a view of fixed length runs faster than one that tracks a growing buffer.
+// Append-only arrays get their whole capacity up front: Linux commits a page only once it is
+// written, and a view of fixed length runs faster than one that tracks a growing buffer. On macOS
+// each 1 GiB buffer costs a second or more to set up, so there, as with PROVE_IT_GROWABLE, they
+// grow as the store does.
+const isGrownOnDemand =
+  (globalThis as { process?: { platform?: string } }).process?.platform === "darwin";
+
 const createGrowable = (bytes: number) =>
-  getEnvironmentFlag("PROVE_IT_GROWABLE")
+  isGrownOnDemand || getEnvironmentFlag("PROVE_IT_GROWABLE")
     ? new SharedArrayBuffer(bytes, { maxByteLength: MAXIMUM_SHARED_BYTES })
     : new SharedArrayBuffer(Math.max(bytes, MAXIMUM_SHARED_BYTES));
 

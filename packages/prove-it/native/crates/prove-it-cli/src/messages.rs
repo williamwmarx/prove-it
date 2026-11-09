@@ -1,0 +1,96 @@
+//! TLC's messages, as `src/tlc/messages.ts` prints them: a message has a code from tlc2.output.EC
+//! and a level from tlc2.output.MP. With -tool, TLC wraps each in markers that name both, and
+//! otherwise starts it with the prefix of its level.
+
+use std::collections::HashSet;
+use std::io::{BufWriter, Stdout, Write};
+
+pub const COMMAND_LINE_ERROR: u32 = 1102;
+pub const FINISHED: u32 = 2186;
+pub const MODEL_CHECKING: u32 = 2187;
+pub const COMPUTING_INIT: u32 = 2189;
+pub const INIT_GENERATED_1: u32 = 2190;
+pub const INIT_GENERATED_2: u32 = 2191;
+pub const SUCCESS: u32 = 2193;
+pub const SEARCH_DEPTH: u32 = 2194;
+pub const STATS: u32 = 2199;
+pub const PROGRESS: u32 = 2200;
+pub const VERSION: u32 = 2262;
+pub const STATE_GRAPH_OUTDEGREE: u32 = 2268;
+pub const COMPUTING_INIT_PROGRESS: u32 = 2269;
+pub const CONFIG_FILE_ERROR: u32 = 5001;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Level {
+    None = 0,
+    Error = 1,
+    Warning = 3,
+}
+
+/// Writes TLC's messages to stdout. MP.printWarning prints a warning once, which -nowarning drops,
+/// and without -tool, TLC follows the first warning with how to drop them.
+pub struct Printer {
+    pub is_tool: bool,
+    is_warning_enabled: bool,
+    warnings: HashSet<String>,
+    out: BufWriter<Stdout>,
+}
+
+impl Printer {
+    pub fn new(is_tool: bool, is_warning_enabled: bool) -> Self {
+        Self {
+            is_tool,
+            is_warning_enabled,
+            warnings: HashSet::new(),
+            out: BufWriter::new(std::io::stdout()),
+        }
+    }
+
+    pub fn print(&mut self, code: u32, level: Level, text: &str) {
+        let is_warning = level == Level::Warning;
+        if is_warning && !self.is_warning_enabled {
+            return;
+        }
+        let message = if self.is_tool {
+            format!(
+                "@!@!@STARTMSG {code}:{} @!@!@\n{text}\n@!@!@ENDMSG {code} @!@!@",
+                level as u8
+            )
+        } else {
+            let prefix = match level {
+                Level::None => "",
+                Level::Error => "Error: ",
+                Level::Warning => "Warning: ",
+            };
+            let hint = if is_warning && self.warnings.is_empty() {
+                "\n(Use the -nowarning option to disable this warning.)"
+            } else {
+                ""
+            };
+            format!("{prefix}{text}{hint}")
+        };
+        if is_warning && !self.warnings.insert(message.clone()) {
+            return;
+        }
+        self.line(&message);
+    }
+
+    /// A line outside any message, such as what the front end printed.
+    pub fn line(&mut self, text: &str) {
+        let _ = writeln!(self.out, "{text}");
+    }
+
+    pub fn raw(&mut self, bytes: &[u8]) {
+        let _ = self.out.write_all(bytes);
+    }
+
+    pub fn flush(&mut self) {
+        let _ = self.out.flush();
+    }
+}
+
+impl Drop for Printer {
+    fn drop(&mut self) {
+        self.flush();
+    }
+}
