@@ -302,6 +302,10 @@ pub struct Violation {
     /// Each `_POSSIBLE` predicate's count as the search left it, which TLC checks with the
     /// postconditions after it reports the violation.
     pub possible: Vec<i64>,
+    /// After an invariant that fails to evaluate past the initial states, TLC's set of
+    /// fingerprints when it stopped, sorted, the failing state's among them where TLC added it:
+    /// TLC replays the expansion and skips each successor in the set. Empty for any other stop.
+    pub fingerprints: Vec<u64>,
 }
 
 /// A path to a tableau node that accepts every behavior: its states, as a `Violation`'s, whose
@@ -490,6 +494,8 @@ struct Found {
     kind: ViolationKind,
     parent: Option<usize>,
     last: Option<Vec<Id>>,
+    // TLC's fingerprint of the last state, where TLC added it to its set before the stop.
+    fingerprint: Option<u64>,
     counts: StopCounts,
 }
 
@@ -1000,6 +1006,7 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
                     ),
                     parent: None,
                     last: Some(machine.current().to_vec()),
+                    fingerprint: None,
                     counts: StopCounts::default(),
                 });
                 return Err(Bail("an invariant violated in an initial state"));
@@ -1012,6 +1019,7 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
                             kind: ViolationKind::InitialPredicate(position),
                             parent: None,
                             last: Some(machine.current().to_vec()),
+                            fingerprint: None,
                             counts: StopCounts::default(),
                         });
                         return Err(Bail("a property violated in an initial state"));
@@ -1168,6 +1176,7 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
                         kind: ViolationKind::Invariant(context.invariant_owners[failing]),
                         parent: Some(self.expanding),
                         last: Some(self.successor.clone()),
+                        fingerprint: None,
                         counts: StopCounts {
                             generated: self.generated,
                             distinct: count + u64::from(is_new),
@@ -1193,6 +1202,7 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
                             },
                             parent: Some(self.expanding),
                             last: Some(self.successor.clone()),
+                            fingerprint: fingerprint.filter(|_| is_new),
                             counts: StopCounts {
                                 generated: self.generated,
                                 distinct: count + u64::from(is_new),
@@ -1334,6 +1344,7 @@ impl<T: Reached, E: Entries> Search<'_, T, E> {
                 kind: ViolationKind::Deadlock { accepted: None },
                 parent: Some(self.expanding),
                 last: None,
+                fingerprint: None,
                 counts: StopCounts {
                     generated: self.generated,
                     distinct: count,
@@ -1365,6 +1376,7 @@ impl<T: Reached, E: Entries> Search<'_, T, E> {
                 kind: ViolationKind::Error { site },
                 parent: None,
                 last: Some(machine.current().to_vec()),
+                fingerprint: None,
                 counts: StopCounts {
                     generated: self.generated,
                     distinct,
@@ -1386,6 +1398,7 @@ impl<T: Reached, E: Entries> Search<'_, T, E> {
                 },
                 parent: Some(self.expanding),
                 last: None,
+                fingerprint: None,
                 counts: StopCounts {
                     generated: self.generated,
                     distinct: count,
@@ -2361,6 +2374,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     },
                     parent: None,
                     last: Some(search.states.state(unanswered.state).to_vec()),
+                    fingerprint: None,
                     counts: StopCounts {
                         generated: 1,
                         distinct: 1,
@@ -2383,6 +2397,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 kind: ViolationKind::NoNextState,
                 parent: None,
                 last: None,
+                fingerprint: None,
                 counts: StopCounts::default(),
             });
             return Err(Bail(NO_NEXT_STATE));
@@ -2995,6 +3010,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     },
                     parent: None,
                     last: None,
+                    fingerprint: None,
                     counts: StopCounts {
                         generated: search.generated,
                         distinct: count,
@@ -3543,6 +3559,17 @@ fn to_violation(
                     site: ErrorSite::Init
                 }
         ) && states.is_empty();
+    let fingerprints = match found.kind {
+        ViolationKind::Error {
+            site: ErrorSite::Invariant(_),
+        } => {
+            let mut fingerprints = search.states.fingerprints.clone();
+            fingerprints.extend(found.fingerprint);
+            fingerprints.sort_unstable();
+            fingerprints
+        }
+        _ => Vec::new(),
+    };
     (is_shaped && !machine.store.has_unordered_strings()).then(|| {
         Box::new(Violation {
             kind: found.kind,
@@ -3555,6 +3582,7 @@ fn to_violation(
             symmetry,
             registers: std::mem::take(&mut machine.registers),
             possible: search.possible.clone(),
+            fingerprints,
         })
     })
 }
@@ -3731,6 +3759,7 @@ fn to_atom_failure(
         },
         parent: Some(state),
         last: extra.map(|extra| search.states.state(extra as u32).to_vec()),
+        fingerprint: None,
         counts: StopCounts {
             generated: initial_states.0 + sum(&graph.successor_counts),
             distinct,
@@ -3789,6 +3818,7 @@ fn to_accepted(
         symmetry: None,
         registers: std::mem::take(&mut machine.registers),
         possible: search.possible.clone(),
+        fingerprints: Vec::new(),
     }))
 }
 
@@ -3847,6 +3877,7 @@ fn to_lasso(
             symmetry,
             registers: std::mem::take(&mut machine.registers),
             possible: search.possible.clone(),
+            fingerprints: Vec::new(),
         })
     })
 }

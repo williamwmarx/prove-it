@@ -303,6 +303,27 @@ decides which frames a stack keeps. The report follows `getFailureMessage`:
   invariant Inv failed." (2111) and no call stack. Its successor is held as found, as a violating
   one is. On an initial state TLC reports it otherwise, which returns `Unsupported` so far.
 
+After an invariant fails to evaluate past the initial states, TLC replays the expansion of the
+state before (`ModelChecker.doNext` with the `CallStackTool`), and `replay_expansion` follows it:
+- The caller hands over TLC's set of fingerprints when the search stopped
+  (`Rebuilder::set_fingerprints`, from the engine's `Violation::fingerprints`).
+- Each action's successors are computed, then checked in turn. One in the model is fingerprinted
+  (`state_fingerprint`, the store's fingerprint computed on the evaluator's values) and skipped
+  where the set has it. One the set lacks counts as a distinct state, and one that passes the
+  invariants as queued (`Failure::replay`).
+- TLC's error is already set, so an invariant that is false ends the replay quietly. One that
+  fails to evaluate is reported: as a FingerprintException with the replay's call stack where the
+  failure is in a method of a value with a source (2147), and otherwise with the nested
+  expressions (2103). TLC then exits by that error and prints no out-degrees.
+- The first failure, the one the search met, has no sources: TLC's search evaluates without the
+  `CallStackTool`. Its message is the evaluator's where the failure is a membership followed to
+  the set whose own test fails (`failing_sets`). A set enumeration the evaluation built itself
+  returns `Unsupported`: TLC hasn't normalized it, and searches it element by element with
+  `equals`, which words its failure otherwise (PrintTraceRace).
+- `Unsupported` covers a VIEW or SYMMETRY, action properties and properties checked as
+  invariants, a successor that is incomplete or fails to fingerprint, a failure computing the
+  successors, and a FingerprintException of any failure but such a membership.
+
 An error has TLC's message only where its kind is ported. So far:
 - a mistyped membership in Nat, Int or STRING (2158);
 - Assert (2132);

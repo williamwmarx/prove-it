@@ -32,6 +32,8 @@ pub struct ErrorStop<'a> {
     /// The outdegree buckets of the state graph TLC reports after an invariant that fails to
     /// evaluate.
     pub out_degrees: &'a [u64],
+    /// TLC's set of fingerprints when the search stopped at such an invariant, sorted.
+    pub fingerprints: &'a [u64],
 }
 
 // The failure and the trace's states as TLC prints them, each with its label and what the spec
@@ -95,8 +97,8 @@ pub fn print_failure(
         None => printer.print(failure.code, Level::Error, message),
     }
     // TLC reports an exception it didn't expect without the call stack or statistics, but for one
-    // adding a state to the behavior graphs.
-    if failure.exit_code == ERROR && !is_atom {
+    // adding a state to the behavior graphs, or one its replay of an expansion threw.
+    if failure.exit_code == ERROR && !is_atom && !failure.replay.is_failed {
         print_finished(printer, start);
         return Ok(ERROR);
     }
@@ -184,10 +186,13 @@ pub fn print_failure(
                 ),
             );
         }
-        // TLC reports an invariant that fails to evaluate without its call stack.
+        // TLC reports an invariant that fails to evaluate without its call stack, but for the
+        // call stack of its replay of the expansion where that fails in turn.
         // Nor one adding an initial state to the behavior graphs, which its replay of the
         // initial states doesn't meet again.
-        None if matches!(stop.site, Site::Invariant(_)) || is_atom || is_initial_atom => {}
+        None if is_atom
+            || is_initial_atom
+            || matches!(stop.site, Site::Invariant(_)) && !failure.replay.is_failed => {}
         None => print_call_stack(printer, ir, &failure.call_stack),
     }
     // TLC counts the state it failed to fingerprint as generated, which the search stopped before
@@ -204,8 +209,16 @@ pub fn print_failure(
         },
         (None, _) => stop.statistics,
     };
+    // TLC's replay adds the successors it hadn't seen to its set, and to its queue those that
+    // pass its checks.
+    let statistics = Statistics {
+        distinct: statistics.distinct + failure.replay.found,
+        queued: statistics.queued + failure.replay.queued,
+        ..statistics
+    };
     print_statistics(printer, &statistics, start);
     if (matches!(stop.site, Site::Invariant(_)) || is_atom)
+        && !failure.replay.is_failed
         && let Some(summary) = out_degree_summary(stop.out_degrees)
     {
         printer.print(code::STATE_GRAPH_OUTDEGREE, Level::None, &summary);
@@ -252,6 +265,7 @@ pub fn print_assumption_failure(
 fn evaluate(ir: &Ir, stop: &ErrorStop<'_>) -> Result<Report, String> {
     on_search_stack(|| {
         let mut rebuilder = Rebuilder::new(ir)?;
+        rebuilder.set_fingerprints(stop.fingerprints);
         let failure =
             rebuilder.evaluate_failure(stop.store, &stop.states, &stop.actions, stop.site)?;
         // TLC holds a successor that fails an invariant as it found it.

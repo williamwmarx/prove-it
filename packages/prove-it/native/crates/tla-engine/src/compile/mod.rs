@@ -200,6 +200,9 @@ pub struct Compiled {
     pub(crate) is_constant: bool,
     /// Nat, Int, STRING, Seq(S), or a union with one of them, which the engine only tests.
     pub(crate) infinite: Option<&'static str>,
+    /// For Nat, Int or STRING itself: the store's name of it, which a set that holds it as an
+    /// element takes as its value (`tla_values::store::NAT`).
+    pub(crate) infinite_value: Option<i32>,
     /// For a set built from others, such as `SUBSET S` or `S \X T`: whether one of them may be
     /// one the engine only tests, which would make it one TLC can't enumerate either.
     pub(crate) has_infinite_part: bool,
@@ -291,6 +294,7 @@ pub(crate) fn leaf(eval: Eval, footprint: Footprint) -> Compiled {
         is_boolean: false,
         is_constant: false,
         infinite: None,
+        infinite_value: None,
         has_infinite_part: false,
         member: None,
         parts: None,

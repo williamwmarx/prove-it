@@ -24,7 +24,9 @@ mod value;
 
 pub use alias::Alias;
 pub use eval::Registers;
-pub use failure::{Assumption, Failure, FingerprintFailure, Incomplete, Site, format_call_stack};
+pub use failure::{
+    Assumption, Failure, FingerprintFailure, Incomplete, Replay, Site, format_call_stack,
+};
 pub use postcondition::{Checked, CounterExample, PostconditionInputs, Stats, Verdict};
 pub use pretty::pretty_print;
 pub use print::{format_printed, format_value};
