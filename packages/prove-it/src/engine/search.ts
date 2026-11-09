@@ -33,7 +33,7 @@ import { getStateFingerprints, resetFingerprints } from "./fingerprint";
 import { createLiveOracle, type EnabledActions, type LiveOracle } from "./live";
 import { getEnvironmentFlag, getStopAt } from "./settings";
 import { writeStateLog } from "./state-log";
-import { bail, Bailout, getValueCount, int, resetStore, shareStore } from "./store";
+import { bail, Bailout, getValueCount, int, resetStore } from "./store";
 import { createCanonicalizer, type NamedPermutation } from "./symmetry";
 
 export type { EngineSpec } from "./context";
@@ -130,7 +130,6 @@ export const runEngine = (input: EngineInput): EngineResult => {
   const config = input.config;
   resetStore();
   resetCompileState();
-  if (getEnvironmentFlag("PROVE_IT_SHARED")) shareStore();
   resetFingerprints();
   resetAssigned();
   shortcuts.isPastWalk = false;

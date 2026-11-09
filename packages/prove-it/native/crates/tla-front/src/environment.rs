@@ -43,6 +43,10 @@ pub struct Environment {
     /// also by the names it gives them.
     pub definitions: OrderedMap<Name, Rc<Definition>>,
     pub builtins: OrderedMap<Name, Builtin>,
+    /// The configuration's substitutions, by the key of what it substitutes for.
+    pub substitutions: OrderedMap<Name, Name>,
+    /// The keys the configuration assigns values to.
+    pub constants: FastSet<Name>,
     pub variables: Vec<Name>,
     pub variable_index: OrderedMap<Name, usize>,
     pub root_constants: Vec<Rc<Declaration>>,
@@ -1590,6 +1594,8 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
     Ok(Environment {
         definitions,
         builtins: linker.builtins.take(),
+        substitutions: OrderedMap::new(),
+        constants: FastSet::default(),
         variables,
         variable_index,
         root_constants: linked_root.constants.clone(),
