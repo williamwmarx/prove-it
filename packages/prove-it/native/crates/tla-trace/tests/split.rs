@@ -1,6 +1,7 @@
 //! TLC's actions as the trace evaluator splits the next-state relation, against those `check.ts`
 //! wrote into each golden IR of `tests/conformance/ir`: the same labels, expressions and values
-//! bound, in the same order.
+//! bound, in the same order. `check.ts` writes none where the next-state relation may print, draw
+//! or set a register anywhere, which the split labels as TLC does, so those IRs aren't compared.
 
 use tla_ir::{Index, Ir, ScopeBinding, Value};
 use tla_trace::add_actions;
@@ -96,7 +97,7 @@ fn splits_the_next_state_relation_as_tlc_does() {
     for path in &paths {
         let bytes = std::fs::read(path).expect("a golden IR");
         let ir = tla_ir::decode(&bytes).expect("an IR that decodes");
-        if ir.model.is_labelled {
+        if ir.model.is_labelled || ir.model.actions.is_empty() {
             continue;
         }
         let expected = describe_actions(&ir);
