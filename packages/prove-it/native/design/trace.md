@@ -1,0 +1,185 @@
+# The trace evaluator (`tla-trace`)
+
+TLC prints the states of a trace as it rebuilds them, so the text of a value can depend on how
+TLC built it. The engine's store interns values and keeps none of that (DESIGN.md §2.8). Today
+the TypeScript interpreter rebuilds the path (`check.ts` `resumeFromEngine`, `getPathStates`,
+`findStepAction`, `toTrace`). This is the Rust replacement: a printing-only evaluator in a new
+crate, `tla-trace` (std only), that re-evaluates the path from the engine IR on a value tree of
+its own and returns each state's values as TLC prints them. It also re-evaluates where the engine
+failed, so it can give TLC's run-time error messages with their values. This file is the plan,
+followed by notes as built.
+
+## What TLC does
+
+Read in tlaplus/tlaplus (`tlc2.tool`, `tlc2.value.impl`):
+
+- **The search fingerprints a state before it checks it.** `ModelChecker.DoInitFunctor` does
+  `if (inModel) { fp = curState.fingerPrint(); ... }`, then checks the invariants. `doNext` sets
+  `inModel = isInModel(succ) && isInActions(cur, succ)`, fingerprints in `isSeenState` only when
+  `inModel` holds, and then checks the invariants of an unseen successor. So TLC fingerprints a
+  state that violates an invariant unless the state fails a CONSTRAINT or an ACTION_CONSTRAINT.
+- **Fingerprinting normalizes.** `TLCStateMut.fingerPrint` fingerprints each value. Without a
+  VIEW or SYMMETRY, `RecordValue.fingerPrint` calls `normalize()`, which sorts the fields in
+  place. So do `FcnRcdValue` and `SetEnumValue`. A VIEW calls `deepNormalize` on each value.
+  `FcnLambdaValue.fingerPrint` builds and caches its `FcnRcdValue` (`fcnRcd`), which prints from
+  then on.
+- **A sorted record is in intern order.** `RecordValue.sort` and `StringValue.compareTo` compare
+  `UniqueString`s, and `UniqueString.compareTo` is `this.tok - other.tok`: the order in which TLC
+  first interned each text. That is the IR's ranked string order (`createTlcOrder`), which the
+  store keeps. Walgit's initial state shows it: `manifest = [logSegments |-> {}, headSeq |-> 0,
+  checkpoint |-> None, version |-> 1]` is the order of the ranks (388, 433, 451, 477), not the
+  alphabetical one.
+- **A trace is rebuilt from fingerprints.** `TLCTrace.getTrace` walks the path of fingerprints.
+  `Tool.getState(fp)` enumerates the initial states, and `Tool.getState(fp, s)` the successors of
+  `s` action by action, and each returns the first state whose fingerprint matches. So each
+  rebuilt state is fingerprinted, and therefore normalized, before it prints. Each step's label
+  comes from `TLCStateInfo`: the action that generated it.
+
+So in a trace of fingerprinted states, a record prints in the store's order. What still depends
+on construction is the following:
+
+- **`IntervalValue`.** It stays an interval when fingerprinted and prints `1..3`. The store can't
+  tell it from `{1, 2, 3}`, so `is_printable` refuses every set of consecutive integers,
+  singletons included.
+- **Lazy sets TLC keeps.** These are `SubsetValue`, `SetOfFcnsValue`, `SetOfRcdsValue`,
+  `SetOfTuplesValue`, `SetCupValue` and the like, `UnionValue`, and `SetPredValue`. In a state each
+  prints expanded where it can be enumerated, and as written otherwise
+  (`getExpandedLazySet`, `formatLazySet` in values.ts).
+- **`RecordValue` against `FcnRcdValue`.** A one-key function whose key is a string that isn't a
+  field name prints as a record only if it is a `RecordValue`.
+
+Written order matters where TLC prints a value it hasn't normalized:
+- the last state of a violation outside the constraints;
+- an ALIAS, whose record TLC builds per state;
+- Print and PrintT output, where `formatPrinted` normalizes but a lambda's range is evaluated
+  afresh;
+- ToString;
+- the values in a run-time error message, such as `Attempted to apply function:\n<f>\n...`.
+
+The TypeScript interpreter models each of these rules: `writtenKeys`, the hash and fingerprint
+that mark a value sorted, `forgetWrittenOrder` on comparison, `markFingerprinted`, and the
+function classes. It prints what TLC prints on 1460 of the 1466 differential runs, so it is the
+reference for the port. TLC is the reference where the two disagree.
+
+## Approach
+
+The evaluator has a value representation of its own, with the engine IR as input. It never
+interns into the search's store. It only reads that store, to match states.
+
+- **Values** (`value.rs`) mirror the TypeScript `Value`, as reference-counted trees:
+  - booleans, integers, strings and model values, each string with its TLC rank (unranked texts
+    compare by their units, as the store does);
+  - enumerated sets, sorted;
+  - intervals;
+  - functions, each with its sorted domain, range, written keys (`None` once sorted), TLC class
+    (none, lambda, tuple, record) and a sorted mark that hashing or fingerprinting sets;
+  - the lazy sets TLC keeps, and `Nat`, `Int`, `Real`, `STRING`, `Seq(S)`.
+
+  The order of values is the store's `compare`, rule for rule, including its errors. A
+  comparison clears the written order of what it compares, as `compareFunctions` does.
+- **Expressions** (`eval.rs`) follow `evaluate.ts` kind by kind over `tla_ir::NodeKind`: names
+  resolved as the compiler resolves them (locals, definitions, constants and scopes, builtins
+  by name), operators expanded at the call site, recursive functions and operators by value, and
+  the builtins of the standard modules the engine implements. Constants come from the IR's
+  transfer encoding, which carries each function's class.
+- **Actions** (`action.rs`) enumerate successors in TLC's order, as `successors.ts` and
+  `Tool.getNextStates` do:
+  - conjunctions left to right, assigning `x' = e` and `x' \in S` to an unassigned variable;
+  - disjunctions and `\E` in the order of their sets;
+  - IF, CASE and LET;
+  - operators expanded;
+  - UNCHANGED.
+
+  The initial predicate is enumerated the same way.
+- **Matching** (`rebuild.rs`). Each candidate is compared by value with the search's state, ids
+  of the store, by a read-only walk. Equal ids in the store mean equal values, so the walk needs
+  no interning. The first candidate in TLC's order that matches is the state, as `Tool.getState`
+  finds it. Then it is fingerprinted, which sorts it deeply and turns lambdas into plain
+  functions, as `settleRecoveredState` does. The last state of a violation is settled only if the
+  search fingerprinted it: it must satisfy the constraints and action constraints, which the
+  evaluator checks on its own values.
+- **Printing** (`print.rs`) is `formatValue` and `formatState` over the tree. The caller pretty
+  prints the result, as it does for the store's values.
+
+The compiler's structure is reused where it fits, in how names resolve and which builtin an id
+names. The compiled closures are not reused: they compute ids in a store, which is the
+information this crate exists to keep.
+
+## The API
+
+```rust
+pub struct Rebuilder<'ir> { /* the IR, the evaluator's caches */ }
+
+impl<'ir> Rebuilder<'ir> {
+    pub fn new(ir: &'ir Ir) -> Result<Rebuilder<'ir>, Unsupported>;
+
+    /// TLC's trace recovery. `states` are the path's states as ids of `store`, in `ir.variables`
+    /// order; `actions[i]` is the position in `ir.model.actions` of the step from `states[i]` to
+    /// `states[i + 1]` (label_path), `None` for a stuttering step. `loop_start` marks a lasso,
+    /// which TLC doesn't rebuild a second time.
+    pub fn rebuild(
+        &mut self,
+        store: &Store,
+        states: &[&[Id]],
+        actions: &[Option<u32>],
+        loop_start: Option<usize>,
+    ) -> Result<Trace, Unsupported>;
+
+    /// Evaluates again where the search failed, on a rebuilt state (and its successor), and
+    /// returns TLC's error with its values in TLC's text.
+    pub fn evaluate_failure(&mut self, trace: &Trace, site: Site) -> Result<Failure, Unsupported>;
+}
+
+pub struct Trace {
+    pub states: Vec<TraceState>,
+    /// What the spec printed as TLC rebuilt the trace again after printing it (`traceOutput`).
+    pub trace_output: Vec<String>,
+}
+
+pub struct TraceState {
+    /// Each variable's value, in `ir.variables` order, normalized as TLC normalized it.
+    pub values: Vec<Value>,
+    /// What Print and PrintT printed while TLC rebuilt this state.
+    pub printed: Vec<String>,
+}
+
+/// TLC's `Value.toString`; the caller pretty prints it.
+pub fn format_value(value: &Value) -> String;
+
+/// Where the evaluator can't follow TLC yet; the caller reports `not native yet: <reason>`.
+pub struct Unsupported(pub String);
+```
+
+The consumers are:
+- **The CLI session.** It prints invariant, action-property and deadlock traces: the `Violation`'s
+  `states` and `labels` go straight into `rebuild`. It prints liveness lassos from the path,
+  `lasso_actions` and the loop start. It formats each value with `format_value` and pretty prints
+  it.
+- **The engine-gaps session.** It maps the engine's stop reasons to a `Site` (an invariant, an
+  action, the initial predicate, a constraint) and prints `Failure` as TLC prints it. The message
+  texts live here, since they depend on how each value was built (option A, agreed with that
+  session).
+
+A search that ranked strings at run time (ToString, #51) hands over no state, so `rebuild` never
+meets a store whose string ranks differ from the IR's. A string the evaluator makes that has no
+rank is compared by its units, as the store compares it. Where that order could differ from
+TLC's, `rebuild` returns `Unsupported`.
+
+## Pull requests
+
+1. `docs(native)`: this plan.
+2. `feat(native)`: the crate. It holds the values, their order, `format_value`, the expressions,
+   the actions and `rebuild`, for traces without VIEW or SYMMETRY. Its unit tests rebuild traces
+   of specs from the corpus and compare them with the interpreter's text. Anything not covered
+   returns `Unsupported` and stays not native.
+3. With the CLI session: the binary prints traces through `rebuild`. The `tlc/native` count
+   before and after goes here.
+4. `evaluate_failure`, for the engine-gaps session's errors that print values (about 22 models).
+5. ALIAS (the IR has to carry it), VIEW and SYMMETRY (matching through the view or the
+   canonical state), and the second rebuild's Print output.
+
+## Parity
+
+The measure is the differential's `tlc/native` pair (`scripts/differential.ts --native`):
+the runs, of 1466, whose native transcript equals TLC's. This file records the count before and
+after each pull request.
