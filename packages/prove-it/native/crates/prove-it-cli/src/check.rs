@@ -15,7 +15,7 @@ use tla_values::{Id, Store};
 use crate::args::{Java, Parsed, USAGE, get_java_launch};
 use crate::failure::{ErrorStop, print_assumption_failure, print_failure};
 use crate::files::FileDescriber;
-use crate::front::{Failure, Read, read_front};
+use crate::front::{Failure, Output, Read, read_front};
 use crate::messages::{self as code, Level, Printer};
 use crate::summary::{
     actual_probability, fingerprint_distance, format_count, format_probability,
@@ -277,35 +277,42 @@ enum Event {
     LivenessFinished,
     /// What Print or PrintT printed, or nothing when TLC's text isn't known.
     Print(Option<String>),
+    /// TLC warns that the sets the symmetry permutes, by these names, hold fewer than two
+    /// elements.
+    SymmetrySetsTooSmall(Vec<String>),
 }
 
-struct Relay(mpsc::Sender<Event>);
+struct Relay {
+    sender: mpsc::Sender<Event>,
+    /// Whether the run prints what TLC prints as it starts, which a recorded front holds.
+    is_startup_printed: bool,
+}
 
 impl Reporter for Relay {
     fn initial_states_started(&mut self) {
-        let _ = self.0.send(Event::InitialStatesStarted);
+        let _ = self.sender.send(Event::InitialStatesStarted);
     }
 
     fn initial_states_progress(&mut self, count: u64) {
-        let _ = self.0.send(Event::InitialStatesProgress(count));
+        let _ = self.sender.send(Event::InitialStatesProgress(count));
     }
 
     fn initial_states(&mut self, generated: u64, distinct: u64) {
-        let _ = self.0.send(Event::InitialStates(generated, distinct));
+        let _ = self.sender.send(Event::InitialStates(generated, distinct));
     }
 
     fn progress(&mut self, generated: u64, distinct: u64, queued: u64, depth: u64) {
         let _ = self
-            .0
+            .sender
             .send(Event::Progress(generated, distinct, queued, depth));
     }
 
     fn liveness_started(&mut self, branches: u64, expanded: u64, _counts: [u64; 3]) {
-        let _ = self.0.send(Event::LivenessStarted(branches, expanded));
+        let _ = self.sender.send(Event::LivenessStarted(branches, expanded));
     }
 
     fn liveness_finished(&mut self) {
-        let _ = self.0.send(Event::LivenessFinished);
+        let _ = self.sender.send(Event::LivenessFinished);
     }
 
     // Print and PrintT print each value as TLC's normalized text, pretty printed, two spaces
@@ -322,7 +329,21 @@ impl Reporter for Relay {
                 .collect::<Vec<_>>()
                 .join("  ")
         });
-        let _ = self.0.send(Event::Print(printed));
+        let _ = self.sender.send(Event::Print(printed));
+    }
+
+    fn startup_print(&mut self, store: &Store, values: &[Id]) {
+        if self.is_startup_printed {
+            self.print(store, values);
+        }
+    }
+
+    fn symmetry_sets_too_small(&mut self, names: &[String]) {
+        if self.is_startup_printed {
+            let _ = self
+                .sender
+                .send(Event::SymmetrySetsTooSmall(names.to_vec()));
+        }
     }
 }
 
@@ -491,11 +512,29 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
         Ok(Read::Failed(failure)) => return print_failed_front(printer, &failure, start),
         Err(reason) => return report_not_native(printer, &reason),
     };
-    printer.raw(&front.output);
     let mut ir = match tla_ir::decode(&front.ir) {
         Ok(ir) => ir,
         Err(error) => {
             return report_not_native(printer, &format!("the engine IR doesn't decode: {error}"));
+        }
+    };
+    let is_startup_printed = match &front.output {
+        Output::Recorded(output) => {
+            printer.raw(output);
+            false
+        }
+        Output::Native { sany } => {
+            if is_trace_recorded(args) {
+                return report_not_native(
+                    printer,
+                    "SANY's report of the trace exploration spec TLC parses with the spec",
+                );
+            }
+            if let Some(reason) = get_unprinted_startup(spec_path, &config, &ir) {
+                return report_not_native(printer, reason);
+            }
+            print_sany(printer, sany);
+            true
         }
     };
     if args.has("-deadlock") {
@@ -538,7 +577,13 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
         let ir = &ir;
         let searching = std::thread::Builder::new()
             .stack_size(SEARCH_STACK_BYTES)
-            .spawn_scoped(scope, move || search(ir, &settings, &mut Relay(sender)))
+            .spawn_scoped(scope, move || {
+                let mut relay = Relay {
+                    sender,
+                    is_startup_printed,
+                };
+                search(ir, &settings, &mut relay)
+            })
             .expect("a thread for the search");
         let mut checking = None;
         for event in receiver {
@@ -576,6 +621,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                     }
                 }
                 Event::Print(Some(text)) => printer.line(&text),
+                Event::SymmetrySetsTooSmall(names) => print_small_sets(printer, &names),
                 // Nothing more this run prints can be right, so it ends here rather than search
                 // on, the search thread with it.
                 Event::Print(None) => std::process::exit(report_not_native(
@@ -1358,11 +1404,12 @@ fn print_postcondition_failure(
 
 /// A spec TLC stops at before it searches: SANY's report, framed by SANY's start and finish under
 /// -tool, then Starting..., then SANY's rejection of the spec or the error TLC reports.
-fn print_failed_front(printer: &mut Printer, failure: &Failure, start: Instant) -> i32 {
+// What TLC prints from SANY's report to `Starting...`: SANY's report, framed under -tool.
+fn print_sany(printer: &mut Printer, sany: &str) {
     if printer.is_tool {
         printer.print(code::STARTING_SANY, Level::None, "Starting SANY...");
     }
-    printer.raw(failure.sany.as_bytes());
+    printer.raw(sany.as_bytes());
     if printer.is_tool {
         printer.print(code::SANY_FINISHED, Level::None, "SANY finished.");
     }
@@ -1371,6 +1418,82 @@ fn print_failed_front(printer: &mut Printer, failure: &Failure, start: Instant) 
         Level::None,
         &format!("Starting... ({})", format_date(SystemTime::now())),
     );
+}
+
+// `isTraceRecorded`: whether TLC writes the trace exploration spec, which it parses with the spec.
+fn is_trace_recorded(args: &Parsed) -> bool {
+    let has_flag = |name: &str, alias: &str| {
+        args.unknown
+            .iter()
+            .chain(args.options.iter().map(|(option, _)| option))
+            .any(|flag| flag == name || flag.eq_ignore_ascii_case(alias))
+    };
+    let is_spec_generated = has_flag("-generateSpecTE", "-generateSpecTE")
+        || (!has_flag("-noGenerateSpecTE", "-noTE")
+            && !has_flag("-tool", "-tool")
+            && !has_flag("-continue", "-continue"));
+    is_spec_generated && !has_flag("-noGenerateSpecTEBin", "-noTEBin")
+}
+
+// What TLC prints as it starts that the binary doesn't print from tla-front's model yet, which
+// keeps the run not native: TLC's report of the Java overrides it loads, its warning of a
+// constant-level invariant (one the IR doesn't keep, as TLC doesn't check it), and what it prints
+// as it processes the properties.
+fn get_unprinted_startup(
+    spec_path: &str,
+    config: &ModelConfig,
+    ir: &tla_ir::Ir,
+) -> Option<&'static str> {
+    let directory = Path::new(spec_path).parent().unwrap_or(Path::new("."));
+    let directory = if directory.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        directory
+    };
+    let has_classes = std::fs::read_dir(directory).is_ok_and(|entries| {
+        entries.flatten().any(|entry| {
+            entry
+                .path()
+                .extension()
+                .is_some_and(|extension| extension == "class")
+        })
+    });
+    if has_classes {
+        return Some("the Java overrides TLC reports as it starts");
+    }
+    let is_kept = |name: &String| {
+        ir.model
+            .invariants
+            .iter()
+            .any(|invariant| *ir.texts[invariant.root.name as usize] == **name)
+    };
+    if !config.invariants.iter().all(is_kept) {
+        return Some("the warning of a constant-level invariant TLC prints as it starts");
+    }
+    if !config.properties.is_empty() {
+        return Some("what TLC prints of the properties as it starts");
+    }
+    None
+}
+
+// `TLC_SYMMETRY_SET_TOO_SMALL`, as `symmetry.ts` words it.
+fn print_small_sets(printer: &mut Printer, names: &[String]) {
+    let is_plural = names.len() > 1;
+    printer.print(
+        code::SYMMETRY_SET_TOO_SMALL,
+        Level::Warning,
+        &format!(
+            "The set{} {} {} been defined to be a symmetry set but contain{} less than two elements.",
+            if is_plural { "s" } else { "" },
+            names.join(", and "),
+            if is_plural { "have" } else { "has" },
+            if is_plural { "" } else { "s" },
+        ),
+    );
+}
+
+fn print_failed_front(printer: &mut Printer, failure: &Failure, start: Instant) -> i32 {
+    print_sany(printer, &failure.sany);
     match &failure.error {
         Some(coded) => print_coded_failure(printer, coded, start),
         None => {
