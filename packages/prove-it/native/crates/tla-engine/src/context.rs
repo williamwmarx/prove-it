@@ -13,6 +13,7 @@ use tla_values::store::{FALSE, Outcome, TRUE};
 
 use crate::compile::{ActionOptions, CompileError, Compiled, Compiler, Root};
 use crate::machine::{Eval, Machine, Step};
+use crate::native::{self, NativeCode};
 
 /// A predicate checked conjunct by conjunct, with the variables it reads when a successor that
 /// leaves them unchanged may skip it.
@@ -283,6 +284,15 @@ fn compile_conjunct(
     )
 }
 
+// A state predicate's closure, from its native code where PROVE_IT_NATIVE_CODE asks for it.
+fn get_state_eval(compiled: &Compiled, native_code: NativeCode) -> Eval {
+    compiled
+        .predicate
+        .as_ref()
+        .and_then(|predicate| native::eval(predicate, native_code))
+        .unwrap_or_else(|| compiled.eval.clone())
+}
+
 // The variables a state predicate reads, which decide its value: it reads only its footprint.
 fn predicate_vars(compiled: &Compiled, width: usize) -> Option<Vec<u32>> {
     let footprint = &compiled.footprint;
@@ -330,9 +340,16 @@ impl EngineContext {
             invariant_owners.resize(conjuncts.found.len(), owner);
         }
         let invariant_conjuncts = conjuncts.found;
+        let native_code = compiler.options().native_code;
         let invariants = invariant_conjuncts
             .iter()
-            .map(|&conjunct| compile_conjunct(compiler, conjunct, printed.contains(&conjunct)))
+            .map(|&conjunct| {
+                let compiled = compile_conjunct(compiler, conjunct, printed.contains(&conjunct))?;
+                Ok(Compiled {
+                    eval: get_state_eval(&compiled, native_code),
+                    ..compiled
+                })
+            })
             .collect::<Result<Vec<Compiled>, CompileError>>()?;
         // An initial predicate in an instance's scope resolves its names there, so it implies
         // nothing.

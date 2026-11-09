@@ -26,6 +26,7 @@ use super::{
 };
 use crate::footprint::Footprint;
 use crate::machine::{Continue, Eval, Machine, Member, Step, UNASSIGNED};
+use crate::native::{self, NativeCode};
 
 /// What ENABLED's walk stops with at its first successor (`FOUND` in `action.ts`).
 const FOUND: &str = "ENABLED found a successor";
@@ -356,9 +357,9 @@ impl<const IS_INIT: bool> Segment<IS_INIT> {
 }
 
 // A guard, tested in place where it compiled to a fused predicate.
-fn guard(compiled: Compiled) -> Op {
+fn guard(compiled: Compiled, native_code: NativeCode) -> Op {
     match &compiled.predicate {
-        Some(predicate) => Op::Holds(predicate.build()),
+        Some(predicate) => Op::Holds(native::test(predicate, native_code)),
         None => Op::Check(compiled.eval, "a conjunct that isn't a boolean"),
     }
 }
@@ -1544,7 +1545,10 @@ impl<'a> Compiler<'a> {
             }
             let item = &items[index];
             match &item.shape {
-                Shape::Guard => ops.push(guard(self.compile(item.node, context)?)),
+                Shape::Guard => ops.push(guard(
+                    self.compile(item.node, context)?,
+                    self.options.native_code,
+                )),
                 Shape::Assign(variable, value) => {
                     let variable = *variable;
                     let value = Source::Value(self.compile(*value, context)?.eval);
@@ -1705,7 +1709,7 @@ impl<'a> Compiler<'a> {
                 Shape::Guard | Shape::Unchanged(_) => {}
             }
             guards.push(match &item.shape {
-                Shape::Guard => guard(self.compile(item.node, context)?),
+                Shape::Guard => guard(self.compile(item.node, context)?, self.options.native_code),
                 _ => Op::Check(
                     deferred_eval(deferred(self.compile(item.node, context))),
                     "a conjunct that isn't a boolean",

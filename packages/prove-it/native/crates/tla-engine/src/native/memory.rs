@@ -34,6 +34,11 @@ impl Code {
     }
 }
 
+// SAFETY: once sealed, the mapping is never written, so threads may share and run it; only the
+// `Code` that owns it unmaps it, when dropped.
+unsafe impl Send for Code {}
+unsafe impl Sync for Code {}
+
 impl Drop for Code {
     fn drop(&mut self) {
         system::unmap(self.address, self.length);

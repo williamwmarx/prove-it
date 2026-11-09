@@ -4,6 +4,10 @@
 
 /// A general-purpose register, by its number in the encoding.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "the whole register file, which N2 allocates")
+)]
 pub(crate) enum Gpr {
     Rax,
     Rcx,
@@ -50,6 +54,13 @@ impl Memory {
         }
     }
 
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "N2's segments, bounds checks and memo probes use it"
+        )
+    )]
     pub(crate) fn indexed(base: Gpr, index: Gpr, scale: Scale, displacement: i32) -> Memory {
         assert_ne!(index, Gpr::Rsp, "rsp can't be an index");
         Memory {
@@ -61,6 +72,13 @@ impl Memory {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "N2's segments, bounds checks and memo probes use it"
+    )
+)]
 pub(crate) enum Scale {
     One = 0,
     Four = 2,
@@ -69,6 +87,13 @@ pub(crate) enum Scale {
 
 /// A condition of `jcc` and `cmovcc`, by its number in the encoding.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "N2's segments, bounds checks and memo probes use it"
+    )
+)]
 pub(crate) enum Condition {
     Below = 0x2,
     AboveOrEqual = 0x3,
@@ -160,6 +185,13 @@ impl Assembler {
     }
 
     /// `lea to, [memory]`.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "N2's segments, bounds checks and memo probes use it"
+        )
+    )]
     pub(crate) fn lea(&mut self, to: Gpr, memory: Memory) {
         self.rex_memory(Width::W64, to, memory);
         self.bytes.push(0x8d);
@@ -167,6 +199,13 @@ impl Assembler {
     }
 
     /// `cmovcc to, from`: moves only if the condition holds.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "N2's segments, bounds checks and memo probes use it"
+        )
+    )]
     pub(crate) fn cmov(&mut self, width: Width, condition: Condition, to: Gpr, from: Gpr) {
         self.rex_registers(width, to, from);
         self.bytes
@@ -192,6 +231,13 @@ impl Assembler {
     }
 
     /// `cmp left, right`.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "N2's segments, bounds checks and memo probes use it"
+        )
+    )]
     pub(crate) fn cmp(&mut self, width: Width, left: Gpr, right: Gpr) {
         self.rex_registers(width, right, left);
         self.bytes.push(0x39);
@@ -206,6 +252,13 @@ impl Assembler {
     }
 
     /// `test left, right`.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "N2's segments, bounds checks and memo probes use it"
+        )
+    )]
     pub(crate) fn test(&mut self, width: Width, left: Gpr, right: Gpr) {
         self.rex_registers(width, right, left);
         self.bytes.push(0x85);

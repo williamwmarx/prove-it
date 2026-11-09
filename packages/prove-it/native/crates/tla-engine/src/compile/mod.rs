@@ -88,6 +88,8 @@ pub struct Options {
     /// PROVE_IT_EPOCH_CHECK=1: evaluate again on each hit of an epoch cache, and panic if the
     /// value differs.
     pub is_epoch_checked: bool,
+    /// PROVE_IT_NATIVE_CODE: whether guards and invariants run as native code.
+    pub native_code: crate::native::NativeCode,
 }
 
 pub(crate) fn eval(
@@ -660,6 +662,10 @@ impl<'a> Compiler<'a> {
             is_ranking: false,
             scope_contexts: HashMap::new(),
         }
+    }
+
+    pub fn options(&self) -> Options {
+        self.options
     }
 
     /// The program the compiled closures run with.

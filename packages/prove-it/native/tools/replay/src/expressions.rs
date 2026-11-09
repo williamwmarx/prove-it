@@ -61,6 +61,7 @@ pub fn replay(arguments: &[String]) -> Result<String, String> {
     let options = Options {
         is_memo_off: environment("PROVE_IT_MEMO").as_deref() == Some("off"),
         is_epoch_checked: environment("PROVE_IT_EPOCH_CHECK").as_deref() == Some("1"),
+        ..Options::default()
     };
     let model = &ir.model;
     let mut roots: Vec<(String, bool, Result<Root, String>)> = Vec::new();

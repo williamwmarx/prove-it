@@ -81,6 +81,37 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     );
   });
 
+  it("runs guards and invariants as native code with PROVE_IT_NATIVE_CODE, as their closures run them", async () => {
+    // verify runs each predicate's native code and its closures, and panics where they differ.
+    const settings = { PROVE_IT_NATIVE_CODE: "verify" };
+    const body = [
+      "EXTENDS FiniteSets, TLC",
+      "CONSTANT P",
+      "VARIABLES f, x, s",
+      'Init == f = [p \\in P |-> "a"] /\\ x = "go" /\\ s = {}',
+      "Next ==",
+      "  \\E p, q \\in P :",
+      '    \\/ f[p] = "a" /\\ x = "go" /\\ f\' = [f EXCEPT ![p] = "b"] /\\ UNCHANGED <<x, s>>',
+      '    \\/ f[p] # "a" /\\ f[p] \\in {"b", "c"} /\\ f\' = [f EXCEPT ![p] = "c"] /\\ UNCHANGED <<x, s>>',
+      "    \\/ p \\notin s /\\ f[p] = f[q] /\\ s' = s \\cup {p} /\\ UNCHANGED <<f, x>>",
+      '    \\/ x # "stop" /\\ s = P /\\ x\' = "stop" /\\ UNCHANGED <<f, s>>',
+      'Inv == PrintT(Cardinality(s)) /\\ (x = "stop" => s = P)',
+    ];
+    const config =
+      "CONSTANT P = {p1, p2, p3}\nINIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE";
+    expect(await compareWithInterpreter(body, config, settings)).toContainEqual(
+      expect.stringMatching(COMPLETE),
+    );
+    const violated = body.map((line) => line.replace("s = P)", "s = {})"));
+    expect(await compareWithInterpreter(violated, config, settings)).toContainEqual(
+      expect.stringMatching(stopped("an invariant violated")),
+    );
+    const mistyped = ["VARIABLE x", 'Init == x = "a"', "Next == x \\in {1, 2} /\\ x' = x"];
+    expect(await compareWithInterpreter(mistyped, "INIT Init\nNEXT Next", settings)).toContainEqual(
+      expect.stringMatching(stopped("values TLC can't compare")),
+    );
+  });
+
   it("reads f[i][j] of a variable and two bound names in place", async () => {
     const body = [
       "EXTENDS Naturals",

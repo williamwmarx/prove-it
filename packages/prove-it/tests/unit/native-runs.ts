@@ -19,6 +19,7 @@ const SETTINGS = [
   "PROVE_IT_LIVE_CHECK",
   "PROVE_IT_WORKERS",
   "PROVE_IT_SHARED_LEVEL",
+  "PROVE_IT_NATIVE_CODE",
 ] as const;
 const saved = Object.fromEntries(SETTINGS.map((name) => [name, process.env[name]]));
 

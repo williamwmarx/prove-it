@@ -157,7 +157,7 @@ export type NativeOutcome =
   | ({ status: "stopped"; reason: string } & NativeCheckpoint);
 
 // The contract between this loader and the addon, ABI_VERSION in its lib.rs.
-const ABI_VERSION = 9;
+const ABI_VERSION = 10;
 
 export const ADDON_FILE = "prove-it-engine.node";
 
@@ -231,6 +231,13 @@ type NativeCallbacks = Pick<
   "onProgress" | "onInitialStatesStarted" | "onInitialStates" | "onPrint"
 >;
 
+// PROVE_IT_NATIVE_CODE=on runs guards and invariants as native code where the addon can emit it,
+// and verify runs both and panics where they differ.
+const getNativeCode = () => {
+  const setting = globalThis.process?.env?.PROVE_IT_NATIVE_CODE;
+  return setting === "on" ? 1 : setting === "verify" ? 2 : 0;
+};
+
 // Loads the addon on first use, and lowers the model only once it has. The TypeScript engine checks
 // what it declines, and everything when it can't be loaded.
 export const checkNatively = (
@@ -249,6 +256,7 @@ export const checkNatively = (
     getEnvironmentFlag("PROVE_IT_LIVE_CHECK") ? 1 : 0,
     getEngineThreads(),
     getMinimumSharedLevel(),
+    getNativeCode(),
   );
   return addon.check(
     lowered.ir,

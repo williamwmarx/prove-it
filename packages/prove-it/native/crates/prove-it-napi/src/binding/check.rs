@@ -6,9 +6,10 @@
 //! `transfer.ts`'s encoding.
 //!
 //! `settings` is an Int32Array: whether the memo tables are off, whether epoch caches are checked,
-//! the state to stop before (-1 for none), whether fingerprints are verified, and whether the
-//! liveness answers are checked (PROVE_IT_LIVE_CHECK). `stateLog` is
-//! the file to write the state log to, or "". It returns:
+//! the state to stop before (-1 for none), whether fingerprints are verified, whether the
+//! liveness answers are checked (PROVE_IT_LIVE_CHECK), the threads, the fewest states a level is
+//! shared at, and whether guards and invariants run as native code (PROVE_IT_NATIVE_CODE: 0 off,
+//! 1 on, 2 verify). `stateLog` is the file to write the state log to, or "". It returns:
 //! - `{ status: "declined", reason }`;
 //! - `{ status: "complete", counts, outDegrees, fingerprints[, liveness, checkpoint] }`, with
 //!   `counts` a Float64Array of the generated, distinct and initial counts, the depth, the values,
@@ -35,6 +36,7 @@ use std::ptr::null_mut;
 
 use crate::{Event, MINIMUM_SHARED_LEVEL, SearchOutcome, Settings, check_on_thread};
 use tla_engine::Options;
+use tla_engine::native::NativeCode;
 use tla_engine::search::{Checkpoint, GraphCheckpoint};
 use tla_live::{Liveness, Verdict};
 use tla_values::transfer::{EncodedStates, SharedStates};
@@ -351,9 +353,10 @@ pub(super) unsafe extern "C" fn check_model(env: napi_env, info: napi_callback_i
                 live_checked,
                 threads,
                 minimum_shared_level,
+                native_code,
             ] = words[..]
             else {
-                return Err(wrong("the settings must hold seven numbers".into()));
+                return Err(wrong("the settings must hold eight numbers".into()));
             };
             if type_of(env, state_log)? != NAPI_STRING {
                 return Err(wrong("the state log must be a string".into()));
@@ -363,6 +366,11 @@ pub(super) unsafe extern "C" fn check_model(env: napi_env, info: napi_callback_i
                 compile: Options {
                     is_memo_off: memo_off != 0,
                     is_epoch_checked: epoch_checked != 0,
+                    native_code: match native_code {
+                        1 => NativeCode::On,
+                        2 => NativeCode::Verify,
+                        _ => NativeCode::Off,
+                    },
                 },
                 stop_at: usize::try_from(stop_at).ok(),
                 is_fingerprint_verified: fingerprint_verified != 0,
