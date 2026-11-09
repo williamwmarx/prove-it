@@ -1716,6 +1716,7 @@ const searchStates = (
           actions: atom.kind === "Enabled" ? enabledActions.get(atom) : undefined,
         })),
         liveFormula: liveness?.formula,
+        liveProperties: liveness?.properties ?? [],
       });
       const milliseconds = performance.now() - loweredAt;
       if ("ir" in outcome) writeDebugBytes("PROVE_IT_IR_DUMP", outcome.ir);
@@ -1757,6 +1758,13 @@ const searchStates = (
     const native = isNative ? checkNatively(lowerModel, callbacks) : undefined;
     const verdict = native?.status === "complete" ? native.liveness : undefined;
     engineReport.liveness = verdict;
+    if (isLiveChecked && liveness && verdict && verdict.branches !== -1) {
+      if (verdict.branches !== liveness.branches) {
+        throw new EngineInvariantError(
+          `the native liveness checker has ${verdict.branches} branches, the interpreter ${liveness.branches}`,
+        );
+      }
+    }
     if (native) {
       reportEngine(
         `native: ${native.status}: ${native.reason} (${(performance.now() - startedAt).toFixed(2)} ms)`,
@@ -2242,6 +2250,17 @@ const searchStates = (
       steps.map((step) => step.state),
       loopStart,
     );
+    const verdict = engineReport.liveness;
+    if (isLiveChecked && verdict?.status === "lasso") {
+      const named = [
+        ...new Set(Array.from(verdict.violated, (position) => checker.properties[position].name)),
+      ];
+      if (named.join("\n") !== properties.join("\n")) {
+        throw new EngineInvariantError(
+          `the native liveness checker names ${named.join(", ")}, the interpreter ${properties.join(", ")}`,
+        );
+      }
+    }
     const cycleStart = path[loopStart];
     const cycleEnd = path[path.length - 1];
     const lastState = steps[steps.length - 1].state;
