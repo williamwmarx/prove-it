@@ -88,15 +88,32 @@ Two consequences:
   for specs that print (etest3, etest8).
 - A configuration constant with arguments (`createOperatorTable` in `environment.ts`) needs no
   evaluation: its rows are the configuration's literals (`toValue`). So the front end writes the
-  table itself, in `transfer.ts`'s encoding, and it isn't part of the startup phase.
+  table itself, in a section `operator_tables` of the values: per builtin, its rows of arguments
+  and value in `transfer.ts`'s encoding. The engine formats the table and the arguments with TLC's
+  printer for the two errors it raises, so no formatted text is carried.
+
+Agreed with the front-end session in review:
+- Substitute checks need no level analyzer on either side. The IR lists every substitute of a
+  declared constant by a 0-ary operator definition, with the `dependencies.ts` facts' NONCONSTANT
+  bit as its level bound. The engine evaluates each at startup and reports a failure only where
+  the bound is above constant. The front-end differential checks that the bit agrees with the
+  level analyzer (2,711 configurations, no mismatch so far).
+- Action labels read `specification.instanceActions`: the name and location of an instance an
+  action was copied through. The IR carries, per definition key an instance copied, the instance's
+  name and location. `tla-front` fills it from linking.
+- Scope bindings: an IR scope holds a `Value` binding only from the action split
+  (`getActions` evaluating an action's constant arguments, `spec-description.ts`), which moves to
+  the engine. `Model.scope`, from SPECIFICATION resolved through an instance, holds thunks and
+  closures over the AST, which the front end writes without evaluating.
 
 Open before the layout is final:
 - Startup definitions whose level depends on a substitution: is the TS level filter static
   everywhere, or does it read values?
-- The order TLC reports these in. Startup values come before the constant-level invariant
-  warnings (`reportStartup`), then assumptions. Substitute checks run while the environment is
-  built, so they come before both. That needs checking against TLC's `Tool` and `ModelChecker`
-  startup.
+- The order TLC reports these in. Substitute checks run while the environment is built, so they
+  come first. Then come the startup values, before the constant-level invariant warnings
+  (`reportStartup`), and then the assumptions. That still needs checking against TLC's `Tool` and
+  `ModelChecker` startup.
 - `getActionLabel` depends on the TLC version (1.7.4 or later); the IR already carries the version.
 
-The front-end session reviews this layout before any code.
+The front-end session reviewed this layout (points above). The IR fields' exact order is fixed in
+the implementing PR, with the front end's review.
