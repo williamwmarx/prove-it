@@ -374,3 +374,26 @@ through all of TLC's actions in order, as one that prints does. `Unsupported` co
 
 The test rebuilds the invariant traces of TLC's RandomElement, RandomElementXandY, RandomSubset
 and RandomSubsetNextTuples.
+
+## Postconditions
+
+`Rebuilder::postcondition(index, inputs)` evaluates a POSTCONDITION as `findPostconditionViolation`
+does: with no state, reading what TLC holds once the search is over. It gives Holds, False or
+Failed with TLC's message, and what the postcondition printed. The values it reads are built as
+TLC builds them:
+- `TLCGet("stats")`: the record of queue, distinct, initial, generated, diameter, duration and
+  worker, in that order.
+- The plain counts it holds.
+- `TLCGet("all:named")`: each named register as the tuple of one worker's value, with
+  `s:_possible` the count of each `_POSSIBLE` predicate TLC evaluated.
+- `CounterExample`: the numbered state records of the trace TLC printed and its steps, each with
+  its action's name and location record, plus the step back into a lasso's cycle.
+
+`Unsupported` covers:
+- an action with parameters, whose record holds them;
+- a step whose action the trace lacks;
+- a result that isn't a boolean;
+- an error without TLC's message.
+
+The test checks Github1389Counting's postcondition on its ten-state counterexample, and on one a
+state short.

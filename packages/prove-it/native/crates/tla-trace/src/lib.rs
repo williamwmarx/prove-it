@@ -12,6 +12,7 @@ mod action;
 mod alias;
 mod eval;
 mod failure;
+mod postcondition;
 mod pretty;
 mod print;
 mod random;
@@ -21,6 +22,7 @@ mod value;
 
 pub use alias::Alias;
 pub use failure::{Failure, Incomplete, Site, format_call_stack};
+pub use postcondition::{Checked, CounterExample, PostconditionInputs, Stats, Verdict};
 pub use pretty::pretty_print;
 pub use print::{format_printed, format_value};
 pub use rebuild::Rebuilder;
