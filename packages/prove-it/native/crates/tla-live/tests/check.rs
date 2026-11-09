@@ -1,6 +1,6 @@
 //! The native liveness checker on small graphs: two states that step to each other, from state 0.
 
-use tla_live::{Declined, Graph, Term, Verdict, check, find_accepted};
+use tla_live::{Declined, Graph, Term, Verdict, atom_order, check, find_accepted};
 
 const PARENTS: [i32; 2] = [-1, 0];
 const OFFSETS: [u32; 3] = [0, 1, 2];
@@ -130,5 +130,33 @@ fn asks_nothing_where_no_tableau_node_accepts_every_behavior() {
             &[Some(&[1, 2])]
         ),
         Ok(None)
+    );
+}
+
+#[test]
+fn orders_the_atoms_as_the_checker_asks_about_them() {
+    // WF of action 2, whose ENABLED is atom 1, and the negation of []<>P, P atom 0: the checks ask
+    // of ENABLED and P first, then of the action.
+    let formula = [
+        Term::And(2),
+        Term::Always,
+        Term::Eventually,
+        Term::Or(2),
+        Term::Not,
+        Term::Enabled(1),
+        Term::Action {
+            atom: 2,
+            enabled: Some(1),
+        },
+        Term::Not,
+        Term::Always,
+        Term::Eventually,
+        Term::State(0),
+    ];
+    assert_eq!(atom_order(&formula), Ok(vec![1, 0, 2]));
+    // A property that always holds, whose negation is false, is a tautology.
+    assert_eq!(
+        atom_order(&[Term::Boolean(false)]),
+        Err(Declined::from("a tautology"))
     );
 }
