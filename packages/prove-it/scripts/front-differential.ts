@@ -32,7 +32,7 @@ import { type Builtin, describeRange, type Environment } from "../src/evaluate";
 import { tokenize } from "../src/lexer";
 import { getLevel } from "../src/liveness";
 import { parseModule, parseSanyModule } from "../src/parser";
-import { getSpecification } from "../src/search";
+import { getProperties, getSpecification } from "../src/search";
 import { createTlcOrder } from "../src/tlc/order";
 import { setStringOrder } from "../src/values";
 import {
@@ -246,6 +246,32 @@ const MODES: Record<string, (source: string, path: string, spec: string) => stri
       temporals: specification.temporals.map((temporal) => describeRange(temporal.expression)),
     };
   }),
+  properties: writeResult((source, _path, spec) => {
+    const config = parseConfig(source);
+    const environment = linkSpec(readFileSync(spec, "utf8"), spec, config).specification
+      .environment;
+    const stateLevel: string[] = [];
+    const properties = getProperties(config, environment, (progress) => {
+      if (progress.kind === "state-level-property") stateLevel.push(progress.name);
+    });
+    const describe = (property: { name: string; expression: Expression; scope: unknown }) => [
+      property.name,
+      describeRange(property.expression),
+      property.scope !== undefined,
+    ];
+    return {
+      invariants: properties.invariants.map(describe),
+      actionProperties: properties.actionProperties.map((property) => [
+        property.name,
+        describeRange(property.action),
+        describeRange(property.subscript),
+        property.scope !== undefined,
+      ]),
+      initialPredicates: properties.initialPredicates.map(describe),
+      liveness: properties.liveness.map(describe),
+      stateLevel,
+    };
+  }),
   model: writeResult((source, _path, spec) =>
     readEnvironment(readFileSync(spec, "utf8"), spec, parseConfig(source)),
   ),
@@ -290,7 +316,7 @@ if (mode !== "time" && MODES[mode] === undefined) {
   throw new Error(`front-differential takes a mode: ${[...Object.keys(MODES), "time"].join(", ")}`);
 }
 const filter = getOption("--filter");
-const isModel = ["model", "order", "model-ir", "spec"].includes(mode);
+const isModel = ["model", "order", "model-ir", "spec", "properties"].includes(mode);
 const extension = mode === "config" || isModel ? ".cfg" : ".tla";
 // A model is a configuration and the spec of the same name beside it.
 const getSpec = (path: string) => {
@@ -339,7 +365,9 @@ const getRustBinary = () => {
 };
 const rust = getRustBinary();
 
-const isLinked = ["resolve", "model", "ir", "order", "model-ir", "spec"].includes(mode);
+const isLinked = ["resolve", "model", "ir", "order", "model-ir", "spec", "properties"].includes(
+  mode,
+);
 if (isLinked) linkLibraryModules();
 
 const runRust = (batch: typeof modules) => {

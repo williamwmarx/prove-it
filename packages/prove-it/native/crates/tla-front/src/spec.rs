@@ -703,3 +703,144 @@ pub fn get_specification(
         temporals,
     })
 }
+
+/// A conjunct of a property, with the name TLC gives it and the scope it reads.
+pub struct Property {
+    pub name: Name,
+    pub expression: Expr,
+    pub scope: Option<Rc<Scope>>,
+}
+
+/// `[][A]_v` in a property, which TLC checks of each step.
+pub struct ActionProperty {
+    pub name: Name,
+    pub action: Expr,
+    pub subscript: Expr,
+    pub scope: Option<Rc<Scope>>,
+}
+
+/// `getProperties` (`search.ts`).
+#[derive(Default)]
+pub struct Properties {
+    pub initial_predicates: Vec<Property>,
+    pub invariants: Vec<Property>,
+    pub action_properties: Vec<ActionProperty>,
+    pub liveness: Vec<Property>,
+    /// The properties TLC warns are state formulas, which it checks only on the initial states.
+    pub state_level: Vec<Name>,
+}
+
+/// `getConfigPredicate`: the definition of what the configuration names, or none for a constant
+/// it assigns TRUE.
+fn get_config_predicate<'a>(
+    kind: &str,
+    name: &str,
+    environment: &'a Environment,
+    facts: &DefinitionFacts,
+) -> Result<Option<&'a Rc<Definition>>> {
+    if let Some(value) = environment.constants.get(name) {
+        return match value {
+            ConfigValue::Boolean(true) => Ok(None),
+            _ => Err(not_yet(
+                "a configured constant the configuration names as a predicate",
+            )),
+        };
+    }
+    let definition = get_config_operator(kind, name, environment)?;
+    check_not_constant(definition, environment, facts)?;
+    Ok(Some(definition))
+}
+
+pub fn get_properties(
+    config: &crate::config::ModelConfig,
+    environment: &Environment,
+    facts: &DefinitionFacts,
+    version: TlcVersion,
+) -> Result<Properties> {
+    let mut properties = Properties::default();
+    let expansion = Expansion {
+        environment,
+        facts,
+        version,
+        is_property: version != TlcVersion::V1_7_4,
+    };
+    for name in &config.properties {
+        let Some(definition) = get_config_predicate("property", name, environment, facts)? else {
+            continue;
+        };
+        let name: Name = Rc::from(name.as_str());
+        if get_level(&definition.body, None, environment, facts, &[]) == Level::Variable {
+            properties.state_level.push(name.clone());
+        }
+        for item in expansion.expand(&definition.body, None, &[], false, None)? {
+            let level = |expression: &Expr| {
+                get_level(expression, item.scope.as_ref(), environment, facts, &[])
+            };
+            let conjunct = &item.expression;
+            if matches!(conjunct.kind, ExpressionKind::Identifier { .. })
+                && level(conjunct) == Level::Constant
+            {
+                return Err(not_yet("a constant conjunct of a property"));
+            }
+            let part_name = item.name.clone().unwrap_or_else(|| name.clone());
+            if let ExpressionKind::Always(body) = &conjunct.kind {
+                if let ExpressionKind::Action {
+                    is_box: true,
+                    action,
+                    subscript,
+                } = &body.kind
+                {
+                    properties.action_properties.push(ActionProperty {
+                        name: part_name,
+                        action: action.clone(),
+                        subscript: subscript.clone(),
+                        scope: item.scope,
+                    });
+                    continue;
+                }
+                if level(body) <= Level::Variable {
+                    // TLC names the invariant by the operator the property asserts always holds,
+                    // when it applies the operator to no arguments.
+                    let is_identifier = matches!(body.kind, ExpressionKind::Identifier { .. });
+                    let reference = body.reference().unwrap_or_default();
+                    let operator = (is_identifier && !body.is_locally_resolved())
+                        .then(|| get_definition(&reference, environment))
+                        .flatten();
+                    properties.invariants.push(Property {
+                        name: operator.map_or_else(
+                            || {
+                                if is_identifier {
+                                    reference.clone()
+                                } else {
+                                    part_name
+                                }
+                            },
+                            |operator| operator.name.clone(),
+                        ),
+                        expression: body.clone(),
+                        scope: item.scope,
+                    });
+                    continue;
+                }
+            }
+            match level(conjunct) {
+                Level::Constant | Level::Variable => properties.initial_predicates.push(Property {
+                    name: part_name,
+                    expression: item.expression,
+                    scope: item.scope,
+                }),
+                Level::Action => {
+                    return Err(FrontError::Config(format!(
+                        "The property {name} is an action-level formula"
+                    )));
+                }
+                Level::Temporal => properties.liveness.push(Property {
+                    name: name.clone(),
+                    expression: item.expression,
+                    scope: item.scope,
+                }),
+            }
+        }
+    }
+    Ok(properties)
+}
