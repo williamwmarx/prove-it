@@ -33,8 +33,7 @@ use std::rc::{Rc, Weak};
 use std::sync::Arc;
 
 use tla_ir::{
-    Definition, DefinitionForm, Index, Ir, Name, NodeId, NodeKind, Param, Resolution, Startup,
-    TextId, Value,
+    Definition, DefinitionForm, Index, Ir, Name, NodeId, NodeKind, Param, Resolution, TextId, Value,
 };
 use tla_values::store::{FALSE, Outcome, TRUE};
 use tla_values::{Bail, Id, Store};
@@ -604,6 +603,9 @@ pub struct Compiler<'a> {
     // A definition compiled unprimed or primed, outside the initial predicate or in it, where a
     // variable's value isn't yet known to stream in order (`is_in_order`).
     definition_cache: HashMap<NodeId, [Option<(u64, Compiled)>; 4]>,
+    // The definitions TLC evaluates once at startup, each compiled to read the value it computed
+    // then, once compiled.
+    startup_definitions: HashMap<NodeId, Option<Compiled>>,
     recursive_operators: HashMap<usize, OperatorEntries>,
     recursive_functions: HashMap<(NodeId, usize), FunctionEntries>,
     expanding: HashSet<NodeId>,
@@ -667,11 +669,17 @@ impl<'a> Compiler<'a> {
                 slot_count: SEARCH_SLOTS.len(),
                 is_epoch_checked: options.is_epoch_checked,
                 random_seed: ir.model.random_seed,
-                startup_random: ir.model.startup_random,
                 ..Program::default()
             },
             texts: vec![None; ir.texts.len()],
             definition_cache: HashMap::new(),
+            startup_definitions: ir
+                .model
+                .startup
+                .definitions
+                .iter()
+                .map(|&index| (ir.definitions[index as usize], None))
+                .collect(),
             recursive_operators: HashMap::new(),
             recursive_functions: HashMap::new(),
             expanding: HashSet::new(),
@@ -705,6 +713,16 @@ impl<'a> Compiler<'a> {
     /// Compiles a root of the model, as `createEngineContext` compiles it, with no scope.
     pub fn compile_root(&mut self, root: Root) -> Result<Compiled, CompileError> {
         self.compile_root_printing(root, false)
+    }
+
+    /// Compiles the body of the SYMMETRY definition, which TLC evaluates as it starts, where what
+    /// it prints and draws counts. A set TLC may keep lazy is one TLC may reject as not a set of
+    /// functions, so the interpreter takes it.
+    pub fn compile_symmetry(&mut self, body: NodeId) -> Result<Compiled, CompileError> {
+        if self.may_be_lazy(body, &mut HashSet::new()) {
+            return unsupported("a symmetry TLC may keep lazy");
+        }
+        self.compile_root_printing(Root::Expression(body), true)
     }
 
     /// Compiles a root of the model where what it prints is printed, as an invariant that prints
@@ -1099,6 +1117,11 @@ impl<'a> Compiler<'a> {
                         "\\cup" | "\\cap" | "\\" | "UNION" => !args
                             .iter()
                             .any(|&arg| self.may_be_lazy(arg, &mut HashSet::new())),
+                        // TLC evaluates the element, then the set, and asks the set whether it
+                        // holds the element, which a set TLC keeps lazy answers its own way.
+                        "\\in" | "\\notin" => !args
+                            .last()
+                            .is_some_and(|&set| self.may_be_lazy(set, &mut HashSet::new())),
                         _ => false,
                     },
                     _ => false,
@@ -1300,12 +1323,11 @@ impl<'a> Compiler<'a> {
         context: &Context,
     ) -> Compiling<Compiled> {
         let definition = self.definition(node);
-        match definition.startup {
-            Startup::Value(Some(value)) => return Ok(constant(self.intern_value(value)?)),
-            Startup::Value(None) | Startup::Object => {
-                return unsupported("a value TLC computed at startup with effects");
-            }
-            Startup::None => {}
+        if let Some(startup) = self.startup_definitions.get(&node) {
+            return match startup {
+                Some(compiled) => Ok(compiled.clone()),
+                None => self.compile_startup_definition(node, context),
+            };
         }
         let params = match &definition.form {
             DefinitionForm::Function(_) => return self.compile_function_definition(node, context),
@@ -1337,6 +1359,42 @@ impl<'a> Compiler<'a> {
         self.expanding.remove(&node);
         let compiled = result?;
         self.cache_definition(node, index, compiled.clone(), &read);
+        Ok(compiled)
+    }
+
+    // A definition TLC evaluates once at startup: what it computes is its value from then on, so
+    // its effects aren't repeated. TLC keeps a function a definition constructs lazy, applying it
+    // anew each time, which the engine doesn't.
+    fn compile_startup_definition(
+        &mut self,
+        node: NodeId,
+        context: &Context,
+    ) -> Compiling<Compiled> {
+        let definition = self.definition(node);
+        if !matches!(&definition.form, DefinitionForm::Operator(params) if params.is_empty())
+            || self.may_be_lazy(definition.body, &mut HashSet::new())
+        {
+            return unsupported("a value TLC computed at startup with effects");
+        }
+        if self.expanding.contains(&node) {
+            return unsupported("a recursive zero-arity definition");
+        }
+        // TLC evaluates it where it starts, which may print and draw, and from then on reading
+        // it prints, draws and reads nothing.
+        self.expanding.insert(node);
+        let compiled = self.compile(definition.body, &context.global(true));
+        self.expanding.remove(&node);
+        let compiled = compiled?;
+        let once = self.allocate_once();
+        let inner = compiled.eval.clone();
+        let compiled = Compiled {
+            is_costly: false,
+            is_constant: true,
+            footprint: Footprint::default(),
+            ..compiled.with_eval(eval(move |machine| machine.once(once, &inner)))
+        };
+        self.startup_definitions
+            .insert(node, Some(compiled.clone()));
         Ok(compiled)
     }
 
@@ -1400,21 +1458,80 @@ impl<'a> Compiler<'a> {
 
     // --- LET ---
 
+    // How many times an expression names a local name, or `None` where it may evaluate a name
+    // more than once each time it is evaluated, under a binder, or where it isn't known.
+    fn count_uses(&self, node: NodeId, name: TextId) -> Option<u32> {
+        match self.node(node).1 {
+            NodeKind::Number(_)
+            | NodeKind::WideNumber(_)
+            | NodeKind::Decimal(_)
+            | NodeKind::String(_) => Some(0),
+            NodeKind::Identifier(identifier) => {
+                Some(u32::from(identifier.is_local && identifier.text == name))
+            }
+            NodeKind::Apply {
+                name: applied,
+                args,
+            } => {
+                let own = u32::from(applied.is_local && applied.text == name);
+                Some(own + self.sum_uses(name, args.iter().copied())?)
+            }
+            NodeKind::And(operands)
+            | NodeKind::Or(operands)
+            | NodeKind::SetEnumeration(operands)
+            | NodeKind::Tuple(operands)
+            | NodeKind::Product(operands) => self.sum_uses(name, operands.iter().copied()),
+            NodeKind::Record(fields) => self.sum_uses(name, fields.iter().map(|&(_, field)| field)),
+            NodeKind::FieldAccess { record, .. } => self.count_uses(*record, name),
+            NodeKind::FunctionApplication { function, args } => {
+                self.sum_uses(name, std::iter::once(*function).chain(args.iter().copied()))
+            }
+            NodeKind::If {
+                condition,
+                consequent,
+                alternative,
+            } => self.sum_uses(name, [*condition, *consequent, *alternative]),
+            NodeKind::Case { arms, other } => self.sum_uses(
+                name,
+                arms.iter()
+                    .flat_map(|&(guard, arm)| [guard, arm])
+                    .chain(*other),
+            ),
+            _ => None,
+        }
+    }
+
+    fn sum_uses(&self, name: TextId, nodes: impl IntoIterator<Item = NodeId>) -> Option<u32> {
+        nodes
+            .into_iter()
+            .try_fold(0, |count, node| Some(count + self.count_uses(node, name)?))
+    }
+
     fn bind_let_definitions(
         &mut self,
         instances: u32,
         definitions: &[NodeId],
+        body: NodeId,
         context: &Context,
     ) -> Compiling<Context> {
         if instances > 0 {
             return unsupported("INSTANCE in LET");
         }
         let mut scope = context.scope.clone();
-        for &node in definitions {
+        for (position, &node) in definitions.iter().enumerate() {
             let definition = self.definition(node);
+            // A definition the rest of the LET names once is evaluated once, as TLC evaluates
+            // it, so it may print.
+            let uses = definitions[position + 1..]
+                .iter()
+                .map(|&later| self.definition(later).body)
+                .chain([body])
+                .try_fold(0, |count, root| {
+                    Some(count + self.count_uses(root, definition.name)?)
+                });
             let definition_context = Context {
                 scope: scope.clone(),
-                can_print: false,
+                can_print: context.can_print && uses.is_some_and(|count| count <= 1),
                 ..context.clone()
             };
             match &definition.form {

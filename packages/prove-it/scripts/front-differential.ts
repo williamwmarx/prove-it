@@ -225,12 +225,13 @@ const lowerFullModel = (source: string, _path: string, spec: string) => {
       .map((_, index) => index)
       .sort((left, right) => getPosition(left) - getPosition(right)),
     properties,
-    symmetry: undefined,
     isRecordingGraph: false,
     version: undefined,
     atoms: [],
     liveFormula: undefined,
     liveProperties: [],
+    // The startup section, which tla-front doesn't write yet.
+    startup: { substitutes: [], definitions: [], symmetry: undefined, assumptions: [] },
   });
   return "ir" in outcome ? { ir: Buffer.from(outcome.ir).toString("hex") } : outcome;
 };
@@ -245,12 +246,12 @@ const lowerEnvironment = (environment: Environment) => {
     isWarningEnabled: true,
     tlcOrder: [],
     properties: { invariants: [], invariantNames: [], actionProperties: [], initialPredicates: [] },
-    symmetry: undefined,
     isRecordingGraph: false,
     version: undefined,
     atoms: [],
     liveFormula: undefined,
     liveProperties: [],
+    startup: { substitutes: [], definitions: [], symmetry: undefined, assumptions: [] },
   });
   return "ir" in outcome ? { ir: Buffer.from(outcome.ir).toString("hex") } : outcome;
 };

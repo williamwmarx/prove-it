@@ -24,6 +24,10 @@ pub fn ir_directory() -> std::path::PathBuf {
 pub struct Stopped {
     pub store: Store,
     pub states: Vec<Vec<Id>>,
+    /// The values the search computed at startup, ids of `store`.
+    pub startup: Vec<Id>,
+    /// The symmetry group the search reduced by, by the names of the model values.
+    pub symmetry: Option<tla_engine::symmetry::NamedGroup>,
     pub parents: Vec<i32>,
     pub reason: String,
     pub expanding: usize,
@@ -52,12 +56,20 @@ pub fn stop_search(ir: &tla_ir::Ir, stop_at: Option<usize>) -> Option<Stopped> {
         return Some(Stopped {
             store,
             states: Vec::new(),
+            startup: Vec::new(),
+            symmetry: None,
             parents: Vec::new(),
             reason,
             expanding: 0,
         });
     };
     let ids = decode_shared_states(&mut store, &checkpoint.states, width).ok()?;
+    let startup = decode_shared_states(
+        &mut store,
+        &checkpoint.startup,
+        ir.model.startup.definitions.len(),
+    )
+    .ok()?;
     let states = if width == 0 {
         Vec::new()
     } else {
@@ -66,6 +78,8 @@ pub fn stop_search(ir: &tla_ir::Ir, stop_at: Option<usize>) -> Option<Stopped> {
     Some(Stopped {
         store,
         states,
+        startup,
+        symmetry: checkpoint.symmetry.clone(),
         parents: checkpoint.parents.clone(),
         reason,
         expanding: checkpoint.expanding as usize,

@@ -1,6 +1,6 @@
 import type { Expression } from "./ast";
 import { type ModelConfig, parseConfig } from "./config";
-import { hasEffect } from "./dependencies";
+import { hasEffect, isConstantLevel, isImpureDefinition } from "./dependencies";
 import { getMemoStatistics } from "./engine/compile";
 import { toEngineProperties } from "./engine/context";
 import { toValue as toEngineValue } from "./engine/convert";
@@ -41,6 +41,7 @@ import {
 import {
   type CallStack,
   createTracingEnvironment,
+  describeRange,
   type Environment,
   evaluate,
   type FingerprintFailure,
@@ -48,6 +49,7 @@ import {
   getDefinition,
   hasRepeatedEffects,
   isImpure,
+  isStartupDefinition,
 } from "./evaluate";
 import { EXIT_STATUS, getExitCode, setExitCode, withLivenessExitCode } from "./exit-codes";
 import type { JavaOverride } from "./java-overrides";
@@ -91,6 +93,7 @@ import {
   getSuccessors,
   type Successor,
 } from "./successors";
+import { getPermutedSets } from "./symmetry";
 import type { LiveEnabled } from "./tableau";
 import {
   type FailureMessage,
@@ -1716,6 +1719,15 @@ const searchStates = (
     const symmetry = search.symmetryGroup?.map((images) =>
       [...images].map(([name, image]): [string, string] => [name, image.name]),
     );
+    // The search found the SYMMETRY definition, if the configuration names one, to be an operator
+    // without parameters.
+    const getStartupSymmetry = () => {
+      const definition =
+        config.symmetry === undefined ? undefined : environment.definitions.get(config.symmetry);
+      return definition?.kind === "Operator"
+        ? { definition, permutedSets: getPermutedSets(definition, config.substitutions) }
+        : undefined;
+    };
     // TLC's actions for the IR, when the search doesn't take its steps through them already.
     // Finding them describes the spec, which evaluates parts of what the configuration names (an
     // action's arguments, a constant conjunct of the specification or invariant), so it happens
@@ -1754,7 +1766,6 @@ const searchStates = (
         isWarningEnabled: runtime.isWarningEnabled,
         tlcOrder,
         properties: engineProperties,
-        symmetry,
         isRecordingGraph: liveness !== undefined,
         version: options.version,
         atoms: (liveness?.atoms ?? []).map((atom) => ({
@@ -1763,6 +1774,34 @@ const searchStates = (
         })),
         liveFormula: liveness?.formula,
         liveProperties: liveness?.properties ?? [],
+        startup: {
+          substitutes: [...environment.substitutions].flatMap(([name, target]) => {
+            const definition = environment.definitions.get(target);
+            const isChecked =
+              specification.rootConstants.some((constant) => constant.name === name) &&
+              definition?.kind === "Operator" &&
+              definition.params.length === 0 &&
+              !isConstantLevel(definition, environment);
+            return isChecked ? [{ name, definition }] : [];
+          }),
+          // A definition without effects computes the same wherever it is first used.
+          definitions: [
+            ...new Set(
+              specification.startupDefinitions.filter(
+                (definition) =>
+                  isStartupDefinition(definition, environment) &&
+                  isImpureDefinition(definition, environment),
+              ),
+            ),
+          ],
+          symmetry: getStartupSymmetry(),
+          assumptions: specification.assumptions
+            .filter((assumption) => !assumption.isAxiom)
+            .map((assumption) => ({
+              expression: assumption.expression,
+              name: describeRange(assumption.expression),
+            })),
+        },
       });
       const milliseconds = performance.now() - loweredAt;
       if ("ir" in outcome) writeDebugBytes("PROVE_IT_IR_DUMP", outcome.ir);

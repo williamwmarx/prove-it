@@ -43,7 +43,7 @@ use tla_front::model::{ModelOptions, lower_model};
 use tla_front::order::TlcOrder;
 use tla_front::parser::{parse_module, parse_sany_module};
 use tla_front::spec::{get_properties, get_specification};
-use tla_ir::Model;
+use tla_ir::{Model, Startup};
 
 fn write_tokens(out: &mut String, source: &str) {
     match tokenize(source) {
@@ -171,18 +171,16 @@ fn lower_definitions(
         initial_predicates: Vec::new(),
         view: None,
         alias: None,
-        symmetry: None,
         check_deadlock: true,
         is_warning_enabled: true,
         is_recording_graph: false,
         version: None,
-        // TLC's default seed, 0, and java.util.Random seeded with it, which no assumption has drawn
-        // from: the model `ir.ts` writes for an environment that evaluated nothing at startup.
+        // TLC's default seed.
         random_seed: 0,
-        startup_random: 0x5_DEEC_E66D,
         atoms: Vec::new(),
         live_formula: Vec::new(),
         live_properties: Vec::new(),
+        startup: Startup::default(),
     };
     Ok(tla_ir::encode(&lowering.finish(model)?))
 }

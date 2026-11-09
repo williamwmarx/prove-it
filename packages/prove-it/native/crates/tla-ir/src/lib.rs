@@ -118,7 +118,7 @@ pub struct Param {
     pub arity: i32,
 }
 
-/// The values of constants, scopes and startup values, in `transfer.ts`'s encoding.
+/// The values of constants and scopes, in `transfer.ts`'s encoding.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Values {
     /// The texts the values' strings and model values name, by the encoding's string index.
@@ -261,22 +261,57 @@ pub struct Model {
     pub view: Option<ConfigName>,
     /// The configuration's ALIAS, which TLC prints each state of a trace through.
     pub alias: Option<ConfigName>,
-    /// The symmetry group: each permutation as the model values it moves, by text.
-    pub symmetry: Option<Vec<Vec<(TextId, TextId)>>>,
     pub check_deadlock: bool,
     pub is_warning_enabled: bool,
     pub is_recording_graph: bool,
     pub version: Option<TextId>,
-    /// The seed TLC reseeds its generator with for each state it expands, xored with the state's
-    /// fingerprint (`RandomEnumerableValues`).
+    /// The seed TLC seeds its generator with before it starts, and reseeds it with for each state
+    /// it expands, xored with the state's fingerprint (`RandomEnumerableValues`).
     pub random_seed: u64,
-    /// The 48 bits of the generator the initial states draw from, as the assumptions left it.
-    pub startup_random: u64,
     pub atoms: Vec<Atom>,
     /// The fairness and the negated properties as the liveness checker joins them, or no terms.
     pub live_formula: Vec<LiveTerm>,
     /// Each property, whose violation a counterexample's checks find, in the configuration's order.
     pub live_properties: Vec<LiveProperty>,
+    /// What TLC evaluates when it starts, before the search.
+    pub startup: Startup,
+}
+
+/// What TLC evaluates when it starts, in the order the engine evaluates it: each substitute,
+/// then each definition, then the symmetry, then each assumption.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Startup {
+    /// The substitutes for declared constants that TLC evaluates and rejects if they fail: the
+    /// constant's name and the 0-ary definition substituted for it, whose level bound is above
+    /// constant.
+    pub substitutes: Vec<(TextId, Index)>,
+    /// The constant definitions with effects that TLC evaluates once, in TLC's order. Each keeps
+    /// the value it computes.
+    pub definitions: Vec<Index>,
+    /// The SYMMETRY definition, which TLC evaluates to its group as it builds its `Tool`.
+    pub symmetry: Option<Symmetry>,
+    /// The assumptions that aren't axioms, each with the name TLC reports it by.
+    pub assumptions: Vec<(NodeId, TextId)>,
+}
+
+/// The configuration's SYMMETRY: a 0-ary definition whose value is a set of permutations of
+/// model values (`Tool.getSymmetryPerms`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Symmetry {
+    pub definition: Index,
+    /// The sets the definition's body applies its operator to, which TLC warns about where they
+    /// hold fewer than two elements.
+    pub permuted_sets: Vec<PermutedSet>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PermutedSet {
+    /// The name TLC's warning gives the set: the name the configuration substitutes for it, or
+    /// the text of its expression.
+    pub name: TextId,
+    /// For `Permutations(S)` with S a constant or definition the configuration doesn't replace
+    /// with `<-`, S, whose value TLC checks for a model value the group moves.
+    pub operand: Option<NodeId>,
 }
 
 /// The nodes, in the order of the blob, and which of them are written at the top level.
@@ -384,9 +419,6 @@ pub enum DefinitionForm {
 pub struct Definition {
     pub name: TextId,
     pub flags: i32,
-    /// The value TLC computed at startup for a definition with effects, which the compiler reads
-    /// in its place.
-    pub startup: Startup,
     pub form: DefinitionForm,
     pub body: NodeId,
 }
@@ -397,15 +429,6 @@ impl Definition {
     pub const SELF_REFERENTIAL: i32 = 4;
     pub const REPEATED_EFFECT: i32 = 8;
     pub const SUBSTITUTED: i32 = 16;
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Startup {
-    None,
-    /// A value the engine can't read: one TLC may keep lazy, or one the encoding can't hold.
-    Object,
-    /// A value, or `None` for one the transfer encoding can't hold.
-    Value(Option<u32>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -588,8 +611,6 @@ pub(crate) mod code {
     pub const RESOLUTION_CONSTANT: i32 = 2;
     pub const RESOLUTION_DEFINITION: i32 = 3;
     pub const RESOLUTION_BUILTIN: i32 = 4;
-    pub const NO_STARTUP_VALUE: i32 = -1;
-    pub const OBJECT_STARTUP_VALUE: i32 = -2;
     pub const SCOPE_VALUE: i32 = 0;
     pub const SCOPE_THUNK: i32 = 1;
     pub const SCOPE_CLOSURE: i32 = 2;
