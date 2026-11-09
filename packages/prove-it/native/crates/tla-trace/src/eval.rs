@@ -22,8 +22,8 @@ use crate::random::{random_element, random_subset};
 use crate::sets::{as_tuple, cardinality, difference, intersection, is_member, is_subset, union};
 use crate::value::{
     Class, EvalError, Evaluated, Function, Lazy, Text, TlcMessage, Value, compare, elements,
-    equals, fail, fail_coded, fail_runtime, fail_with, find_key, from_store, set_of,
-    sorted_function, written_function,
+    equals, fail, fail_coded, fail_runtime, fail_with, find_key, from_store, mark_unnormalized,
+    set_of, sorted_function, unnormalized, written_function,
 };
 
 /// The bindings an expression sees, innermost first.
@@ -687,9 +687,12 @@ impl<'ir> Evaluator<'ir> {
             .and_then(|element| crate::sets::failing_sets(element, received));
         // TLC searches a set enumeration it hasn't normalized, as one an evaluation just built,
         // element by element with `equals`, which fails otherwise than the search of a sorted one.
+        // The evaluator searches so the sets it records as TLC holds them unnormalized.
         let is_followed = nested.as_ref().is_some_and(|nested| {
             std::iter::once(received).chain(nested).all(|set| {
-                !matches!(set, Value::Set(_) | Value::Unsorted(_)) || stack.source(set).is_none()
+                !matches!(set, Value::Set(_) | Value::Unsorted(_))
+                    || stack.source(set).is_none()
+                    || unnormalized(set).is_some()
             })
         });
         let sources = nested.iter().flatten().filter_map(|set| stack.source(set));
@@ -1027,6 +1030,12 @@ impl<'ir> Evaluator<'ir> {
                     {
                         stack.is_unsorted = true;
                         Ok(Value::Unsorted(Rc::new(values)))
+                    }
+                    // A replay keeps track of the set TLC holds unnormalized still, which it
+                    // tests for membership element by element.
+                    (Ok(set), Some(_)) => {
+                        mark_unnormalized(&set, values);
+                        Ok(set)
                     }
                     (set, _) => set,
                 }
