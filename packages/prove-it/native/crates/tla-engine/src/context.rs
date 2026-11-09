@@ -26,6 +26,9 @@ pub struct EngineContext {
     /// Whether the search reads TLC's diameter, which the native checker doesn't follow: it
     /// stops once TLC has started, as an assumption may stop TLC first.
     pub is_diameter_searched: bool,
+    /// Whether the VIEW reads what the search sets, such as TLCGet("level"), which the native
+    /// checker doesn't follow: it too stops once TLC has started.
+    pub is_view_search_read: bool,
     pub init: Step,
     pub next: Step,
     /// A walk of each of TLC's actions, which together take the steps of `next` in its order, or
@@ -481,11 +484,15 @@ impl EngineContext {
                     .map(|compiled| compiled.eval)
             })
             .collect::<Result<Vec<Eval>, CompileError>>()?;
+        let mut is_view_search_read = false;
         let view = match &model.view {
             Some(view) => {
                 let compiled = compiler.compile_root(Root::Definition(named("view", ir, view)?))?;
                 if compiled.reads_search() {
-                    return Err(CompileError::Bail("unsupported: TLCGet in a VIEW".into()));
+                    if !compiler.is_native {
+                        return Err(CompileError::Bail(VIEW_SEARCH_READ.into()));
+                    }
+                    is_view_search_read = true;
                 }
                 Some(compiled.eval)
             }
@@ -636,6 +643,7 @@ impl EngineContext {
             possible,
             action_properties,
             is_diameter_searched,
+            is_view_search_read,
             initial_predicates,
             view,
             atoms,
@@ -659,6 +667,7 @@ fn resolve(ir: &Ir, node: NodeId) -> &NodeKind {
 
 /// Why the engine doesn't search a model that reads TLC's diameter.
 pub const DIAMETER_SEARCHED: &str = "unsupported: TLCGet(\"diameter\") in the search";
+pub const VIEW_SEARCH_READ: &str = "unsupported: TLCGet in a VIEW";
 
 fn describe(error: CompileError) -> String {
     match error {
