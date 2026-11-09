@@ -15,3 +15,4 @@ path = "src/main.rs"
 tla-engine = { path = "../tla-engine" }
 tla-ir = { path = "../tla-ir" }
 tla-values = { path = "../tla-values" }
+tla-front = { path = "../tla-front" }
