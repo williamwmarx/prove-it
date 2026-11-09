@@ -76,6 +76,7 @@ import {
   getActionSignature,
   getInitActions,
   getNextActions,
+  getNextSubstitution,
   getSpecificationValue,
   type SpecAction,
   toActionValue,
@@ -619,6 +620,8 @@ const searchStates = (
         liveFormula: undefined,
         liveProperties: [],
         startup: getIrStartup(),
+        nextSubstitution: getNextSubstitution(config, environment, specification.instanceActions),
+        instanceActions: specification.instanceActions,
       });
       if ("ir" in outcome) writeDebugBytes("PROVE_IT_IR_DUMP", outcome.ir);
     }
@@ -1821,7 +1824,13 @@ const searchStates = (
         traceActions: (isLabelled ? getSpecNextActions() : getTraceActions()).map((action) => {
           const label = getActionLabel(action, options.version);
           engineReport.actionLabels.push(label);
-          return { expression: action.expression, scope: action.scope, label };
+          return {
+            expression: action.expression,
+            scope: action.scope,
+            label,
+            name: action.name,
+            range: action.location.range,
+          };
         }),
         isWarningEnabled: runtime.isWarningEnabled,
         tlcOrder,
@@ -1835,6 +1844,8 @@ const searchStates = (
         liveFormula: liveness?.formula,
         liveProperties: liveness?.properties ?? [],
         startup: getIrStartup(),
+        nextSubstitution: getNextSubstitution(config, environment, specification.instanceActions),
+        instanceActions: specification.instanceActions,
       });
       const milliseconds = performance.now() - loweredAt;
       if ("ir" in outcome) writeDebugBytes("PROVE_IT_IR_DUMP", outcome.ir);
