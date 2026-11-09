@@ -33,6 +33,12 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   reference and is refused.
 - With it, RealQuicksort and RealQuicksort2 (TLC test-model/pcal), declined for
   `UNION {[1..N -> 1..N] : N \in 0..MaxLen}`, complete in Rust with output identical to TLC's.
+- The model's constants are the values its configuration writes, which TLC normalizes, so a
+  constant and each set in it are in order too. MCBinarySearch and MCQuicksort (LoopInvariance),
+  which enumerate `UNION {[1 .. n -> S] : n \in 1 .. MaxSeqLen}` over the constant `Values`, now
+  complete in Rust. A value TLC computed at startup still isn't, since TLC may keep it lazy;
+  neither is an instance's substitution nor DOMAIN of a primed variable, which still decline
+  ClientCentricTests (mongodb-txns) and test46.
 
 ## ToString
 
