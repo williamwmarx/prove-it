@@ -28,13 +28,14 @@ describe("the native engine", () => {
     expect(lines).toEqual([expect.stringMatching(/^\[engine\] checked 251 states on 1 thread /)]);
   });
 
-  it("leaves a search on more than one thread to the TypeScript engine by default", () => {
+  it("tries the native engine first by default on more than one thread", () => {
+    const missing = join(COMMIT, "missing.node");
     const lines = getEngineLines("bun", SOURCE_CLI, {
       PROVE_IT_ENGINE_BACKEND: undefined,
       PROVE_IT_WORKERS: "2",
-      PROVE_IT_ENGINE_ADDON: join(COMMIT, "missing.node"),
+      PROVE_IT_ENGINE_ADDON: missing,
     });
-    expect(lines.filter((line) => line.startsWith("[engine] native: "))).toEqual([]);
+    expect(lines[0]).toStartWith(`[engine] native: unavailable: can't load ${missing}: `);
   });
 
   it.each([undefined, "rust", "auto"])(
