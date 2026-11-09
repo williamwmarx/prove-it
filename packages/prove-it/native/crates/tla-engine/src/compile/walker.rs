@@ -758,6 +758,18 @@ impl<'a> Compiler<'a> {
             NodeKind::Prime(inner) if is_primed => {
                 return self.get_assignable(*inner, context, false, depth + 1);
             }
+            // TLC's getPrimedVar looks through a LET and a label to the primed variable.
+            NodeKind::Let {
+                instances,
+                definitions,
+                body,
+            } => {
+                let inner = self.bind_let_definitions(*instances, definitions, context)?;
+                return self.get_assignable(*body, &inner, is_primed, depth + 1);
+            }
+            NodeKind::Label { body, .. } => {
+                return self.get_assignable(*body, context, is_primed, depth + 1);
+            }
             NodeKind::Identifier(name) => *name,
             _ => return Ok(None),
         };

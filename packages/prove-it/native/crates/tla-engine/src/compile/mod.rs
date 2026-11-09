@@ -1554,6 +1554,12 @@ impl<'a> Compiler<'a> {
                 let compiled = self.compile(definition.body, &callee)?;
                 return Ok(self.cached(compiled));
             }
+            // A configuration may substitute a value such as FALSE for an operator with
+            // parameters, and TLC then takes the value, without evaluating the arguments
+            // (Tool.evalAppl).
+            Resolution::Builtin(index) if self.ir.builtins[index as usize].arity == 0 => {
+                return self.compile_nullary_builtin(index);
+            }
             Resolution::Builtin(index) => {
                 let operands: Vec<Operand> = args
                     .iter()

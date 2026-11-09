@@ -153,6 +153,58 @@ describe("the engine", () => {
     }
   });
 
+  it("takes a value a configuration substitutes for an operator with parameters", async () => {
+    // As mongodb-txns' Storage.cfg substitutes FALSE for its actions: TLC takes the value and
+    // leaves the arguments unevaluated (Tool.evalAppl).
+    const { result, lines } = await checkInEngine(
+      [
+        "EXTENDS Naturals",
+        "VARIABLE x",
+        "A(n) == x' = n",
+        "Init == x = 0",
+        "Next == \\/ x < 3 /\\ x' = x + 1",
+        "        \\/ \\E n \\in {0} : A(1 \\div n)",
+      ].join("\n"),
+      "INIT Init\nNEXT Next\nCONSTANT A <- FALSE\nCHECK_DEADLOCK FALSE",
+    );
+    expect([result.status, result.distinctStates]).toEqual(["success", 4]);
+    expect(lines).toEqual([expect.stringMatching(/^\[engine\] checked 4 states/)]);
+  });
+
+  it("assigns a primed variable a LET names, as TLC's getPrimedVar looks through the LET", async () => {
+    // From TLC's Github725d, in the next-state relation and in ENABLED.
+    const { result, lines } = await checkInEngine(
+      [
+        "EXTENDS Naturals",
+        "VARIABLE x",
+        "Init == x = 0",
+        "Next == x < 3 /\\ (LET y == x' IN y) = x + 1",
+        "Inv == ENABLED ((LET y == x' IN y) = 0)",
+      ].join("\n"),
+      "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
+    );
+    expect([result.status, result.distinctStates]).toEqual(["success", 4]);
+    expect(lines).toEqual([expect.stringMatching(/^\[engine\] checked 4 states/)]);
+  });
+
+  it("assigns from SUBSET of a set it has no order for, in TLC's normalized order", async () => {
+    // From TLC's test46: SubsetValue.elementsNormalized enumerates SUBSET S in the normalized
+    // order of S's elements, whatever S's own order.
+    const { result, lines } = await checkInEngine(
+      [
+        "EXTENDS Naturals, FiniteSets",
+        "VARIABLES x, f",
+        "S == UNION {[p : {k}, i : DOMAIN f[k]] : k \\in {1, 2}}",
+        "Init == f = [k \\in {1, 2} |-> <<0>>] /\\ x = {}",
+        "Next == f' = f /\\ x' \\in SUBSET (S' \\X S')",
+        "Inv == Cardinality(x) < 3",
+      ].join("\n"),
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+    );
+    expect(result.status).toBe("invariant-violation");
+    expect(lines).toEqual([expect.stringMatching(/an invariant violated$/)]);
+  });
+
   it("keeps the names a recursive function binds apart in each call", async () => {
     const { result, lines } = await checkInEngine(
       [

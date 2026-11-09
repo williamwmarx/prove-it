@@ -1498,6 +1498,11 @@ const compileApply = (
     const subset = getSubsetOperator(expression, global);
     return (context) => subset(left(context), right(context));
   }
+  // A configuration may substitute a value such as FALSE for an operator with parameters, and
+  // TLC then takes the value, without evaluating the arguments (Tool.evalAppl).
+  if (global?.kind === "Builtin" && global.arity === 0) {
+    return (context) => global.evaluate([], context);
+  }
   if (global?.kind === "Builtin") return compileBuiltinCall(global, args, environment);
   // TLC refuses action composition unless a Java property enables its incomplete implementation.
   if (expression.operator === "\\cdot" && args.length === 2) {

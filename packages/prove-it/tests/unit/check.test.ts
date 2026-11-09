@@ -1434,6 +1434,21 @@ describe("evaluation errors match TLC", () => {
     },
   );
 
+  // TLC 1.8.0 takes a value a configuration substitutes for an operator with parameters, as
+  // mongodb-txns' Storage.cfg substitutes FALSE for actions, and leaves the arguments unevaluated.
+  it("takes a value substituted for an operator with parameters like TLC", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nA(n) == x' = n\nInit == x = 0\nNext == \\/ x < 3 /\\ x' = x + 1\n        \\/ \\E n \\in {0} : A(1 \\div n)\n====",
+      config: "INIT Init\nNEXT Next\nCONSTANT A <- FALSE\nCHECK_DEADLOCK FALSE",
+    });
+    expect([result.status, result.generatedStates, result.distinctStates]).toEqual([
+      "success",
+      4,
+      4,
+    ]);
+  });
+
   it("reports a CASE with no true guard like TLC", async () => {
     const result = await check({
       source:

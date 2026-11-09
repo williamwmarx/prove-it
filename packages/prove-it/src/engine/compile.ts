@@ -1616,6 +1616,9 @@ export const createCompiler = (environment: Environment): Compiler => {
     }
     if (definition) return unsupported("applying a function definition as an operator");
     const builtin = environment.builtins.get(target);
+    // A configuration may substitute a value such as FALSE for an operator with parameters, and
+    // TLC then takes the value, without evaluating the arguments (Tool.evalAppl).
+    if (builtin?.arity === 0) return compileNullaryBuiltin(target, builtin);
     if (builtin) return compileBuiltin(target, builtin, expression, context);
     const binding = lookup(context.scope, name);
     if (binding?.kind === "operator")
@@ -3053,10 +3056,14 @@ export const createCompiler = (environment: Environment): Compiler => {
         return {
           ...unary(base, (set) => powerSet(expectSet(set)), true),
           isNormalized: false,
-          reference: combineReferences([base], ([baseReference]) => () => ({
-            kind: "Subset",
-            base: baseReference(),
-          })),
+          // TLC enumerates SUBSET S in the normalized order of S's elements, whatever S's own
+          // order (SubsetValue.elementsNormalized), so S's value does where S has no reference.
+          reference:
+            combineReferences([base], ([baseReference]) => () => ({
+              kind: "Subset",
+              base: baseReference(),
+            })) ??
+            ((evaluate) => () => ({ kind: "Subset", base: toValue(evaluate()) }))(base.evaluate),
           parts: partsOf(base),
           member: ((baseMember, baseParts) => (element: number) => {
             runParts(baseParts);

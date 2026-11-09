@@ -207,3 +207,32 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   failure. The interpreter (`codegen.ts`, `evaluate.ts`) and both engines' UNCHANGED evaluated the
   next state's side first; each now evaluates the current state's first. The engines' `[A]_e` and
   `<<A>>_e` already did.
+
+## A value substituted for an operator with parameters
+
+- A configuration may substitute a value for an operator with parameters, as mongodb-txns'
+  Storage.cfg substitutes FALSE for its actions. TLC applies the operator by taking the value,
+  without evaluating the arguments (`Tool.evalAppl`), so `A(1 \div 0)` under `A <- FALSE` is FALSE
+  (checked with TLC 1.8.0). The interpreter evaluated the arguments and failed on them, and both
+  engines declined the builtin applied to arguments. All three now take the value. Storage
+  (mongodb-txns), declined before, now searches in Rust, and the TypeScript engine searches it too.
+
+## A primed variable a LET names
+
+- TLC's `getPrimedVar` looks through a LET and a label to the primed variable an `=` or `\in`
+  assigns, so `(LET y == x' IN y) = 0` assigns x', in the next-state relation and in ENABLED.
+  Both engines' walkers stopped at the LET and declined it as "an assignment the engine can't
+  resolve statically". They now bind the LET's definitions and look through it, and through a
+  label. Github725d (TLC's tests), declined before, now searches in Rust, and the TypeScript
+  engine searches it too.
+
+## SUBSET of a set with no order
+
+- TLC enumerates `SUBSET S` in the normalized order of S's elements, whatever S's own order
+  (`SubsetValue.elementsNormalized`). Both engines enumerated a power set only where its base had
+  an order of its own, and declined `x' \in SUBSET S` for any other S as "enumerating a set TLC
+  keeps lazy". The power set now enumerates its base's value in that order. test46 (TLC's tests),
+  declined before, now searches in Rust, and the TypeScript engine searches it too.
+- Comparing the results in full, where the native engine stops on a violation whose trace holds
+  sets of records, the interpreter's trace marks a record as fingerprinted and the native engine's
+  doesn't. What either prints is the same.
