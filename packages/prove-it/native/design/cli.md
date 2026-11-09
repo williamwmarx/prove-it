@@ -149,7 +149,7 @@ the implementing PR, with the front end's review.
     last state alone;
   - 2267, then the statistics and exit code 13.
 - Still not native:
-  - a stuttering counterexample TLC warns of (2245/2246), which names the definition of the
+  - a stuttering counterexample TLC warns of (2257, 2259), which names the definition of the
     specification;
   - a lasso whose cycle steps back to an earlier state in a spec that prints, since TLC prints as it
     finds that step's action;
