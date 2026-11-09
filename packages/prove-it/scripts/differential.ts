@@ -10,16 +10,19 @@
 // engine's backend, and --compare-backends runs every one: the first is compared with TLC and the
 // interpreter, and each other with the first (ts/rust). --update rewrites
 // known-differences.json from the run, keeping the reasons it gives.
+// --native names the native prove-it binary (native/DESIGN.md 12), which then runs on each model
+// too, with the front the first backend's run recorded, and is compared with TLC as tlc/native.
+// That pair fails nothing yet: the run reports how many runs it matches and why the others differ.
 // A run without a TLC recording fails the check, since nothing compared it with TLC. --timeout-ms
 // stops a checker that runs longer, and without it nothing does.
 // Usage: bun scripts/run.ts differential [--max-tlc-ms 20000] [--filter text] [--concurrency 3]
 //        [--modes default,tool] [--stop-at] [--timeout-ms ms] [--update] [--out path]
-//        [--backend ts | --compare-backends]
+//        [--backend ts | --compare-backends] [--native path]
 
 import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
 import {
   CONFORMANCE_DIRECTORY,
@@ -51,6 +54,8 @@ interface Output {
   // The exit code, stdout and stderr, normalised, as one text.
   transcript: string;
   engineLine: string | undefined;
+  stdout: string;
+  stderr: string;
 }
 
 interface KnownDifference {
@@ -87,13 +92,21 @@ const isStopping = process.argv.includes("--stop-at");
 const isUpdate = process.argv.includes("--update");
 const outPath = getOption("--out") ?? join(CONFORMANCE_DIRECTORY, ".differential.json");
 const backends = getBackends();
+const nativeBinary = getOption("--native");
 
-const runCli = (model: CorpusModel, mode: OutputMode, environment: NodeJS.ProcessEnv) =>
+// Runs a checker with TLC's command line for the model, from the model's directory.
+const runChecker = (
+  command: string,
+  args: string[],
+  model: CorpusModel,
+  mode: OutputMode,
+  environment: NodeJS.ProcessEnv,
+) =>
   new Promise<Output>((resolve) => {
     const metadataDirectory = mkdtempSync(join(tmpdir(), "prove-it-differential-"));
     const child = spawn(
-      process.execPath,
-      [CLI_PATH, LIBRARY_OPTION, "tlc2.TLC", ...getTlcArguments(model, mode, metadataDirectory)],
+      command,
+      [...args, LIBRARY_OPTION, "tlc2.TLC", ...getTlcArguments(model, mode, metadataDirectory)],
       {
         cwd: model.directory,
         env: environment,
@@ -107,17 +120,56 @@ const runCli = (model: CorpusModel, mode: OutputMode, environment: NodeJS.Proces
     child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
     child.on("close", (exitCode, signal) => {
       rmSync(metadataDirectory, { recursive: true, force: true });
+      const output = Buffer.concat(stdout).toString("utf8");
       const errorOutput = Buffer.concat(stderr).toString("utf8");
       resolve({
         transcript: getTranscript(
           signal === "SIGKILL" ? `killed after ${timeoutMilliseconds} ms` : String(exitCode),
-          Buffer.concat(stdout).toString("utf8"),
+          output,
           errorOutput,
         ),
         engineLine: getEngineLine(errorOutput),
+        stdout: output,
+        stderr: errorOutput,
       });
     });
   });
+
+const runCli = (model: CorpusModel, mode: OutputMode, environment: NodeJS.ProcessEnv) =>
+  runChecker(process.execPath, [CLI_PATH], model, mode, environment);
+
+// What TLC prints between its banner and the first message of the search, which the front end
+// computes: the native binary reads it, with the IR, as the front of the run until tla-front
+// lands (native/DESIGN.md 12.5). A run whose engine never computed the initial states has none.
+const getFront = (stdout: string) => {
+  const isTool = stdout.startsWith("@!@!@STARTMSG");
+  const banner = isTool ? "@!@!@ENDMSG 2187 @!@!@\n" : "\nRunning breadth-first search ";
+  const bannerAt = stdout.indexOf(banner);
+  const start = isTool
+    ? bannerAt + banner.length
+    : stdout.indexOf("\n", bannerAt + banner.length) + 1;
+  const end = stdout.indexOf(isTool ? "@!@!@STARTMSG 2189:" : "\nComputing initial states...\n");
+  return bannerAt === -1 || end === -1 ? undefined : stdout.slice(start, end + (isTool ? 0 : 1));
+};
+
+// Runs the native binary on a model, with the front the TypeScript CLI recorded for it.
+const runNative = async (
+  binary: string,
+  model: CorpusModel,
+  mode: OutputMode,
+  recorded: Output,
+  directory: string,
+) => {
+  const stem = basename(model.specPath, ".tla");
+  const front = getFront(recorded.stdout);
+  if (front !== undefined) writeFileSync(join(directory, `${stem}.front`), front);
+  const native = await runChecker(binary, [], model, mode, {
+    ...process.env,
+    PROVE_IT_FRONT: directory,
+  });
+  rmSync(directory, { recursive: true, force: true });
+  return native;
+};
 
 // A state from those the run found, the same for a model on every run.
 const getStopState = (id: string, transcript: string) => {
@@ -164,21 +216,34 @@ const absent = expectedResults
 const STOPPED_REASON = "stopped where PROVE_IT_STOP_AT asked";
 
 const comparisons: Comparison[] = [];
+// The native binary's comparisons with TLC, which measure how much of TLC's output it prints and
+// fail nothing yet: why it couldn't do a run, if it said.
+const nativeComparisons: (Comparison & { reason: string | undefined })[] = [];
 const missing: string[] = [];
 // The runs --stop-at couldn't stop, since the engine handed over before the first state it could.
 const unforced: string[] = [];
 const results: unknown[] = [];
 
-const compare = (id: string, mode: OutputMode, pair: string, left: string, right: string) => {
+const getComparison = (
+  id: string,
+  mode: OutputMode,
+  pair: string,
+  left: string,
+  right: string,
+): Comparison => {
   const diff = getLineDiff(left.split("\n"), right.split("\n"));
   const known = knownByKey.get(getKey(id, mode, pair));
-  const comparison = {
+  return {
     id,
     mode,
     pair,
     diff,
     isKnown: diff.length === 0 || JSON.stringify(diff) === JSON.stringify(known?.diff),
   };
+};
+
+const compare = (id: string, mode: OutputMode, pair: string, left: string, right: string) => {
+  const comparison = getComparison(id, mode, pair, left, right);
   comparisons.push(comparison);
   return comparison;
 };
@@ -194,10 +259,15 @@ const work = async (queue: { model: CorpusModel; mode: OutputMode }[], total: nu
     const interpreter = await runCli(model, mode, { ...process.env, PROVE_IT_ENGINE: "0" });
     const modelComparisons: Comparison[] = [];
     const outputs: Record<string, Output> = { interpreter };
+    const frontDirectory = nativeBinary && mkdtempSync(join(tmpdir(), "prove-it-front-"));
     for (const backend of backends) {
+      const isFrontRecorded = frontDirectory && backend === backends[0];
       const engine = await runCli(model, mode, {
         ...getBackendEnvironment(backend),
         PROVE_IT_ENGINE: "debug",
+        ...(isFrontRecorded && {
+          PROVE_IT_IR_DUMP: join(frontDirectory, `${basename(model.specPath, ".tla")}.ir`),
+        }),
       });
       outputs[backend] = engine;
       const first = backends[0];
@@ -250,6 +320,23 @@ const work = async (queue: { model: CorpusModel; mode: OutputMode }[], total: nu
       }
       if (isStopping && isSearched && !isForced) unforced.push(`${backend} ${mode} ${model.id}`);
     }
+    if (nativeBinary && frontDirectory) {
+      const native = await runNative(
+        nativeBinary,
+        model,
+        mode,
+        outputs[backends[0]],
+        frontDirectory,
+      );
+      outputs.native = native;
+      if (tlc) {
+        const comparison = getComparison(model.id, mode, "tlc/native", tlc, native.transcript);
+        nativeComparisons.push({
+          ...comparison,
+          reason: /^prove-it: not native yet: (.*)$/m.exec(native.stderr)?.[1],
+        });
+      }
+    }
     results.push({ id: model.id, mode, tlc, outputs, comparisons: modelComparisons });
     const unknown = modelComparisons.filter((comparison) => !comparison.isKnown);
     const differing = modelComparisons.filter((comparison) => comparison.diff.length > 0);
@@ -298,6 +385,21 @@ console.table(
     new: unknown.filter((comparison) => comparison.pair === pair).length,
   })),
 );
+if (nativeBinary) {
+  const same = nativeComparisons.filter((comparison) => comparison.diff.length === 0);
+  console.log(
+    `\nnative: ${same.length} of ${nativeComparisons.length} runs print what TLC prints.`,
+  );
+  const reasons = new Map<string, number>();
+  for (const comparison of nativeComparisons) {
+    if (comparison.diff.length === 0) continue;
+    const reason = comparison.reason ?? "differs";
+    reasons.set(reason, (reasons.get(reason) ?? 0) + 1);
+  }
+  for (const [reason, count] of [...reasons].sort((left, right) => right[1] - left[1])) {
+    console.log(`  ${String(count).padStart(5)}  ${reason}`);
+  }
+}
 if (missing.length > 0) {
   console.log(
     `\n${missing.length} runs have no TLC recording; record them with record-tlc.ts --stdout.`,
