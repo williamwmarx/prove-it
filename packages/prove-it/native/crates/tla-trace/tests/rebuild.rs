@@ -283,7 +283,7 @@ fn rebuild_violation<T: Send>(
             panic!("{path}: a search that stops at a violation");
         };
         let (ending, cycle_start) = match violation.kind {
-            ViolationKind::Deadlock => (Ending::Kept, None),
+            ViolationKind::Deadlock { .. } => (Ending::Kept, None),
             ViolationKind::Invariant(_) | ViolationKind::InitialInvariant(_) => {
                 (Ending::Violation, None)
             }
@@ -495,7 +495,7 @@ fn records_the_parameters_of_the_counter_examples_actions() {
                         },
                         counter_example: Some(CounterExample {
                             trace: &trace,
-                            cycle: Some((0, closing)),
+                            cycle: Some((0, Some(closing))),
                         }),
                     },
                 )

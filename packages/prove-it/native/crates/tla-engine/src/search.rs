@@ -279,6 +279,16 @@ pub struct Violation {
     pub symmetry: Option<NamedGroup>,
     /// TLC's registers as the search left them, ids of `store`.
     pub registers: Registers,
+    /// Each `_POSSIBLE` predicate's count as the search left it, which TLC checks with the
+    /// postconditions after it reports the violation.
+    pub possible: Vec<i64>,
+}
+
+/// A path to a tableau node that accepts every behavior: its states, as a `Violation`'s, whose
+/// actions the caller finds, and the positions of the properties TLC names.
+pub struct AcceptedTrace {
+    pub states: Vec<Vec<Id>>,
+    pub violated: Vec<usize>,
 }
 
 pub enum ViolationKind {
@@ -287,8 +297,12 @@ pub enum ViolationKind {
     InitialInvariant(usize),
     /// The last state of the trace violates an invariant, as an `InitialInvariant` names it.
     Invariant(usize),
-    /// The last state of the trace has no successors.
-    Deadlock,
+    /// The last state of the trace has no successors. TLC adds it to the behavior graphs after it
+    /// reports the deadlock, where it may reach a tableau node that accepts every behavior, which
+    /// it reports next, as on its Github710d.
+    Deadlock {
+        accepted: Option<Box<AcceptedTrace>>,
+    },
     /// The trace is a lasso whose cycle starts at the state at `loop_start` and goes back to it,
     /// by the action at `loop_label` in the model's actions; `None` where the cycle is the last
     /// state alone, which stutters.
@@ -1251,7 +1265,7 @@ impl<T: Reached, E: Entries> Search<'_, T, E> {
         if self.successors == 0 && check_deadlock {
             let count = self.states.count() as u64;
             self.violation = Some(Found {
-                kind: ViolationKind::Deadlock,
+                kind: ViolationKind::Deadlock { accepted: None },
                 parent: Some(self.expanding),
                 last: None,
                 counts: StopCounts {
@@ -2780,23 +2794,39 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             let found = search.violation.take().filter(|_| is_traced);
             // TLC adds each state it expands to the behavior graphs, even under -lncheck final, the
             // deadlocked state too after it reports the deadlock, and stops at the first whose
-            // tableau node accepts every behavior (`LiveCheck#addNextState`), as on its
-            // Github710d: the search reports its violation where TLC wouldn't.
+            // tableau node accepts every behavior (`LiveCheck#addNextState`): the search reports
+            // its violation where TLC wouldn't, and a deadlock with the path to the node the
+            // deadlocked state reaches, as on TLC's Github710d.
             let found = match found {
-                Some(found) if search.graph.is_some() => {
+                Some(mut found) if search.graph.is_some() => {
                     let mut expanded = search.expanding;
-                    if matches!(found.kind, ViolationKind::Deadlock) {
+                    let is_deadlock = matches!(found.kind, ViolationKind::Deadlock { .. });
+                    if is_deadlock {
                         let graph = search.graph.as_mut().expect("a graph");
                         graph.edge_offsets.push(graph.edges.len() as u32);
                         expanded += 1;
                     }
-                    graph_tables(&mut machine, &search, expanded, count, None, None)
+                    let verdict = graph_tables(&mut machine, &search, expanded, count, None, None)
                         .ok()
                         .and_then(|tables| {
                             accepted_at(model, &context, &search, &tables, expanded, count)
-                        })
-                        .is_some_and(|accepted| accepted.is_none())
-                        .then_some(found)
+                        });
+                    match verdict {
+                        Some(None) => Some(found),
+                        Some(Some(Verdict::Accepted { path, violated, .. })) if is_deadlock => {
+                            found.kind = ViolationKind::Deadlock {
+                                accepted: Some(Box::new(AcceptedTrace {
+                                    states: path
+                                        .iter()
+                                        .map(|&index| search.states.state(index).to_vec())
+                                        .collect(),
+                                    violated,
+                                })),
+                            };
+                            Some(found)
+                        }
+                        _ => None,
+                    }
                 }
                 found => found,
             };
@@ -3194,6 +3224,7 @@ fn to_violation(
             startup_random: machine.startup_random,
             symmetry,
             registers: std::mem::take(&mut machine.registers),
+            possible: search.possible.clone(),
         })
     })
 }
@@ -3298,6 +3329,7 @@ fn to_accepted(
         startup_random: machine.startup_random,
         symmetry: None,
         registers: std::mem::take(&mut machine.registers),
+        possible: search.possible.clone(),
     }))
 }
 
@@ -3354,6 +3386,7 @@ fn to_lasso(
             startup_random: machine.startup_random,
             symmetry,
             registers: std::mem::take(&mut machine.registers),
+            possible: search.possible.clone(),
         })
     })
 }
