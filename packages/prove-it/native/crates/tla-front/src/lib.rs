@@ -7,6 +7,7 @@ pub mod dependencies;
 pub mod dump;
 pub mod environment;
 pub mod errors;
+pub mod eval;
 pub mod hash;
 pub mod instances;
 pub mod json;
