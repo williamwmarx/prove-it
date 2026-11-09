@@ -5,7 +5,7 @@
 #[cfg(not(test))]
 mod binding;
 
-pub use tla_engine::search::{Reporter, SearchOutcome, Settings};
+pub use tla_engine::search::{MINIMUM_SHARED_LEVEL, Reporter, SearchOutcome, Settings};
 use tla_values::transfer::{EncodedStates, StateEncoder};
 use tla_values::{Id, Store};
 
