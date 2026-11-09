@@ -563,9 +563,6 @@ pub struct Compiler<'a> {
     pub is_distinct_read: bool,
     /// Whether anything compiled may print.
     pub is_printing: bool,
-    /// Whether anything compiled ranks the strings it makes, as ToString does, in the order it
-    /// is evaluated.
-    pub is_ranking: bool,
     // The contexts of the instance scopes translated so far.
     scope_contexts: HashMap<Index, Option<Context>>,
 }
@@ -620,7 +617,6 @@ impl<'a> Compiler<'a> {
             specialisations: 0,
             is_distinct_read: false,
             is_printing: false,
-            is_ranking: false,
             scope_contexts: HashMap::new(),
         }
     }

@@ -2291,12 +2291,14 @@ On the 4-core cloud machine, with `main` at a0f66ec before the merge of #31 and 
 - **ToString** (`compile/builtins.rs`) gives TLC's text of its argument (`tla_values::print`,
   `formatValue(v, true)`), and ranks the string it makes, as `rankString` does. It stops where
   the text depends on how TLC built the value, which the store forgets (`is_printable`), as Print
-  and PrintT do. It ranks strings in the order it is evaluated, so the search doesn't pipeline a
-  model that uses it (`Compiler::is_ranking`), as it doesn't one that prints.
-- **The ranks it makes reach the interpreter.** The result of `check` carries `ranked`, the texts
-  the search ranked past the IR's, in the order ranked, and `native.ts` ranks them before it reads
-  a checkpoint, so the interpreter's string order is the one the TypeScript engine would have left
-  (ABI version 4).
+  and PrintT do.
+- **The search never orders the strings it ranks.** TLC ranks a string as it makes it, and the
+  engine may make ToString's strings in another order: across successors it pipelines, where it
+  builds every entry of a function TLC applies lazily, or for a text `\o` made earlier, which
+  the store keeps unranked. So the store freezes TLC's order when the search starts
+  (`freeze_string_order`), and comparing a string ranked since with another string stops the
+  search. A search that ranked strings hands over none of its states, so the interpreter makes
+  them again from the start, in TLC's order.
 - With it, the native engine declines no corpus model the TypeScript engine searches:
   simple_strings and UnicodeStringDiskStateQueue, the two it declined for ToString, now search in
   Rust until the stop the TypeScript engine reaches. The other 49 it declines (TLC under 20 s) the

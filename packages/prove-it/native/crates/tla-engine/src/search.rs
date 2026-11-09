@@ -110,8 +110,6 @@ pub enum SearchOutcome {
         value_count: usize,
         /// Under PROVE_IT_FP_VERIFY, how many fingerprints two different keys shared.
         collisions: u64,
-        /// The texts the search ranked, such as ToString's, in the order it ranked them.
-        ranked: Vec<Vec<u16>>,
     },
     /// The search stopped, with a checkpoint unless it stopped computing the initial states, as
     /// the TypeScript engine computes them before the part of its search that hands over a
@@ -120,7 +118,6 @@ pub enum SearchOutcome {
         reason: String,
         checkpoint: Option<Box<Checkpoint>>,
         collisions: u64,
-        ranked: Vec<Vec<u16>>,
     },
     /// The engine broke one of its own invariants, or a self-check failed
     /// (`EngineInvariantError`).
@@ -649,7 +646,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         .collect();
     let mut store = Store::new();
     store.reset(ranked.iter().map(Vec::as_slice));
-    let initial_rank_count = store.get_string_order().len();
+    store.freeze_string_order();
     let mut compiler = Compiler::new(ir, &mut store, settings.compile);
     let context = match EngineContext::build(&mut compiler, ir) {
         Ok(context) => context,
@@ -657,11 +654,9 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     };
     let is_distinct_read = compiler.is_distinct_read;
     // Checking a successor once the walk reaches the next reorders nothing anyone can see where
-    // nothing prints, ranks the strings it makes, reads the count of distinct states, or
-    // fingerprints a VIEW or symmetry's representative, which the walk would then interleave
-    // with.
+    // nothing prints, reads the count of distinct states, or fingerprints a VIEW or symmetry's
+    // representative, which the walk would then interleave with.
     let is_pipelined = !compiler.is_printing
-        && !compiler.is_ranking
         && !is_distinct_read
         && context.view.is_none()
         && model.symmetry.is_none()
@@ -918,11 +913,8 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             }),
         })
     };
-    let ranked: Vec<Vec<u16>> = machine.store.get_string_order()[initial_rank_count..]
-        .iter()
-        .map(|text| text.to_vec())
-        .collect();
-    match result {
+    let is_unordered = machine.store.has_unordered_strings();
+    let outcome = match result {
         Err(bail) if bail.0 == OTHER_STEPS => SearchOutcome::Invariant(OTHER_STEPS.into()),
         Ok(()) => {
             let count = search.states.count();
@@ -965,14 +957,12 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 value_count: machine.store.value_count(),
                 collisions,
                 fingerprints: search.states.fingerprints,
-                ranked,
             }
         }
         Err(bail) if !is_past_initial => SearchOutcome::Stopped {
             reason: bail.0.to_string(),
             checkpoint: None,
             collisions,
-            ranked,
         },
         Err(bail) => {
             let count = checkpoint_count;
@@ -1026,9 +1016,31 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 reason: bail.0.to_string(),
                 checkpoint,
                 collisions,
-                ranked,
             }
         }
+    };
+    // The strings the search ranked, such as ToString's, may rank otherwise in TLC, so the
+    // interpreter makes them again from the start rather than taking over the search.
+    match outcome {
+        SearchOutcome::Stopped {
+            reason,
+            checkpoint: Some(_),
+            collisions,
+        } if is_unordered => SearchOutcome::Stopped {
+            reason,
+            checkpoint: None,
+            collisions,
+        },
+        SearchOutcome::Complete {
+            checkpoint: Some(_),
+            collisions,
+            ..
+        } if is_unordered => SearchOutcome::Stopped {
+            reason: "a graph with strings the search ranked".into(),
+            checkpoint: None,
+            collisions,
+        },
+        outcome => outcome,
     }
 }
 

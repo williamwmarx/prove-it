@@ -158,12 +158,8 @@ const CASES: Case[] = [
     invalid: ['SubBag("a" :> 0)', 'SubBag("a" :> "b")', "SubBag({1})"],
   },
   {
-    // A set of its results orders them by rank, which ToString gives each as it makes it.
     name: "ToString",
-    valid: (random) =>
-      random() < 0.7
-        ? `ToString(${getPrintable(random)})`
-        : `{ToString(${getPrintable(random)}), "b", ToString(${getInteger(random, 8, 11)})}`,
+    valid: (random) => `ToString(${getPrintable(random)})`,
     invalid: [],
   },
   {
@@ -226,35 +222,47 @@ describe.if(ADDON !== undefined)("the native engine's bridged builtins", () => {
     }
   });
 
-  // The first successor's invariant ranks "151" before the second successor ranks "102", so the
-  // search checks each successor before it generates the next, as TLC does.
-  it("ranks ToString's strings in the order TLC evaluates them across successors", async () => {
-    const body = [
-      "EXTENDS Integers, TLC",
-      "VARIABLES n, s",
-      "Init == n = 0 /\\ s = {}",
-      "Next == n = 0 /\\ \\E i \\in 1..2 : n' = i /\\ s' = {ToString(100 + i), ToString(149 + i)}",
-      'Inv == n = 0 \\/ ToString(150 + n) # "q"',
-      "First == n # 2 \\/ (CHOOSE x \\in s : TRUE) = ToString(150 + 1)",
-    ];
-    const config = "INIT Init\nNEXT Next\nINVARIANT Inv\nINVARIANT First\nCHECK_DEADLOCK FALSE";
-    expect(await compareWithInterpreter(body, config)).toContainEqual(
-      expect.stringMatching(COMPLETE),
-    );
+  // The search ranks ToString's strings as it makes them, which may be in another order than
+  // TLC's: across successors, where it builds a function's entries TLC doesn't read, or ranking a
+  // text \o made. So it stops where it would order them, and the interpreter makes them again.
+  it("stops where it would order the strings ToString made", async () => {
+    const config = "INIT Init\nNEXT Next\nINVARIANT First\nCHECK_DEADLOCK FALSE";
+    for (const body of [
+      [
+        "VARIABLES n, s",
+        "Init == n = 0 /\\ s = {}",
+        "Next == n = 0 /\\ \\E i \\in 1..2 : n' = i /\\ s' = {ToString(100 + i), ToString(149 + i)}",
+        "First == n # 2 \\/ (CHOOSE x \\in s : ToString(150 + n) # x) = ToString(150 + 1)",
+      ],
+      [
+        "VARIABLE n",
+        "Init == n = 0",
+        "Next == UNCHANGED n",
+        "First == (CHOOSE x \\in {[i \\in 1..2 |-> ToString(100 + i + n)][2], ToString(100 + 1 + n)} : TRUE) = ToString(100 + 2 + n)",
+      ],
+      [
+        "VARIABLES n, s",
+        'Init == n = 0 /\\ s = "1" \\o ToString(n + 2)',
+        "Next == UNCHANGED <<n, s>>",
+        "First == (CHOOSE x \\in {ToString(6 + 6 + n), ToString(6 + 7 + n)} : TRUE) = ToString(6 + 6 + n)",
+      ],
+    ]) {
+      expect(
+        await compareWithInterpreter(["EXTENDS Integers, Sequences, TLC", ...body], config),
+      ).toContainEqual(expect.stringMatching(stopped("an order of strings the search ranked")));
+    }
   });
 
-  // The strings ToString makes rank in the order made: "2006", made in the guard, before "2007",
-  // which s holds first. CHOOSE takes the string of the lowest rank once the interpreter takes
-  // over.
-  it("hands the ranks of ToString's strings over to the interpreter", async () => {
+  // A search that ranked strings hands over none of its states, so the interpreter ranks them
+  // again from the start.
+  it("hands over a search that ranked strings from the start", async () => {
     const body = [
       "EXTENDS Integers, TLC",
       "VARIABLES n, s",
-      "Init == n = 0 /\\ s = {}",
-      "Next == n < 3 /\\ ToString(n + 1003 + 1003) # \"q\" /\\ n' = n + 1 /\\ s' = s \\cup {ToString(1003 + 1004 - n)}",
-      "First == n < 2 \\/ (CHOOSE x \\in s : TRUE) = ToString(1003 + 1003)",
+      'Init == n = 0 /\\ s = "a"',
+      "Next == n < 3 /\\ ToString(n + 1003 + 1003) # \"q\" /\\ n' = n + 1 /\\ s' = ToString(1003 + 1004 - n)",
     ];
-    const config = "INIT Init\nNEXT Next\nINVARIANT First\nCHECK_DEADLOCK FALSE";
+    const config = "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE";
     for (const stop of ["1", "2"]) {
       expect(await compareWithInterpreter(body, config, { PROVE_IT_STOP_AT: stop })).toContainEqual(
         expect.stringMatching(stopped("stopped where PROVE_IT_STOP_AT asked")),

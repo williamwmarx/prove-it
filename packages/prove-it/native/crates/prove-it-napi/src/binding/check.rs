@@ -20,8 +20,6 @@
 //!   with its parts by position, and each state's values by position in it (`SharedStates`), and
 //!   with temporal properties `graph`; or, for a stop that hands over no checkpoint,
 //!   `{ status: "stopped", reason, counts }` with only the collisions;
-//! - `ranked` on both, the texts the search ranked, such as ToString's, in the order it ranked
-//!   them, for the interpreter to rank before it reads the states;
 //! - `{ status: "invariant", reason }` where a self-check failed.
 //!
 //! A graph is `{ expanded, counts, edges, labels?, initialCounts, isEnabledExact, tables,
@@ -359,9 +357,7 @@ pub(super) unsafe extern "C" fn check_model(env: napi_env, info: napi_callback_i
                     fingerprints,
                     value_count,
                     collisions,
-                    ranked,
                 } => {
-                    set(env, result, c"ranked", create_texts(env, &ranked)?)?;
                     if let Some(checkpoint) = &checkpoint {
                         let mut object = null_mut();
                         status(napi_create_object(env, &mut object))?;
@@ -402,9 +398,7 @@ pub(super) unsafe extern "C" fn check_model(env: napi_env, info: napi_callback_i
                     reason,
                     checkpoint,
                     collisions,
-                    ranked,
                 } => {
-                    set(env, result, c"ranked", create_texts(env, &ranked)?)?;
                     set(env, result, c"status", create_string(env, "stopped")?)?;
                     set(env, result, c"reason", create_string(env, &reason)?)?;
                     match &checkpoint {
