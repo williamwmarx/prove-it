@@ -245,7 +245,7 @@ impl Compiler<'_> {
                 Ok(true)
             })),
             ..unary(
-                &base,
+                base,
                 |machine, set| power_set(machine, expect_set(machine, set, "expected a set")?),
                 true,
             )
