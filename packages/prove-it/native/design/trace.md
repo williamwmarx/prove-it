@@ -116,20 +116,24 @@ impl<'ir> Rebuilder<'ir> {
     /// TLC's trace recovery. `states` are the path's states as ids of `store`, in `ir.variables`
     /// order; `actions[i]` is the position in `ir.model.actions` of the step from `states[i]` to
     /// `states[i + 1]` (label_path), `None` to try each action as `Tool.getState` does. A step to
-    /// the same state stutters. `loop_start` marks a lasso, which TLC doesn't rebuild a second
-    /// time.
+    /// the same state stutters. `ending` says what the last state is to TLC.
     pub fn rebuild(
         &mut self,
         store: &Store,
         states: &[&[Id]],
         actions: &[Option<u32>],
-        loop_start: Option<usize>,
+        ending: Ending,
     ) -> Result<Trace, Unsupported>;
 
     /// Planned: evaluates again where the search failed, on a rebuilt state (and its successor),
     /// and returns TLC's error with its values in TLC's text.
     pub fn evaluate_failure(&mut self, trace: &Trace, site: Site) -> Result<Failure, Unsupported>;
 }
+
+/// What the last state is to TLC (`known` in `toTrace`): a state the search kept (a deadlock's),
+/// a violating state TLC holds as it found it (matched by value, whatever the VIEW or SYMMETRY,
+/// with the state before it not rebuilt), or a lasso's (all rebuilt, no second rebuild).
+pub enum Ending { Kept, Violation, Lasso }
 
 pub struct Trace {
     pub states: Vec<TraceState>,
@@ -194,8 +198,9 @@ after each pull request.
 
 ### The crate (`tla-trace`)
 
-- **Values** (`value.rs`, `sets.rs`). Each function keeps its class and its written order: the
-  position of each key written, until a comparison, an equality or a fingerprint sorts it. Order,
+- **Values** (`value.rs`, `sets.rs`). Each function keeps its class, its written order (the
+  position of each key written, until a comparison, an equality or a fingerprint sorts it), and
+  the interval it was built over, which DOMAIN gives back (`getDomainInterval`). Order,
   equality and membership follow the store's `compare`, `equals` and `is_member`, including where
   they fail. `from_store` reads a store's value as TLC holds it normalized, and `matches` compares a
   value with an id of the store without interning.
@@ -213,7 +218,8 @@ after each pull request.
   the search's state. Under VIEW, its view must equal the view of the search's state. Under
   SYMMETRY, some permutation of the group must map it to that state, so the two are in one orbit.
   Under both, the views of their least states in the orbit must be equal (`TLCStateMut.fingerPrint`).
-  Every state but the last is settled as `settleRecoveredState` settles it. So is the last one if
+  A violation's last state is matched by its value, as TLC holds it (`getTrace` with the last
+  successor). Every state but the last is settled as `settleRecoveredState` settles it. So is the last one if
   it satisfies the CONSTRAINTs and ACTION_CONSTRAINTs, as TLC fingerprints only such a state.
   For a plain match where nothing prints, the walk drops an assignment as soon as it differs from
   the search's state. The check sorts nothing, so it changes no value TLC prints, and a model such

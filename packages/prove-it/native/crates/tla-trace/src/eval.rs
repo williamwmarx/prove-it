@@ -276,10 +276,8 @@ impl<'ir> Evaluator<'ir> {
                 class: function_class,
                 low,
                 range,
-            } => Value::function(
-                (0..range.len() as i32)
-                    .map(|offset| Value::Int(low + offset))
-                    .collect(),
+            } => Value::over_interval(
+                *low,
                 range
                     .iter()
                     .map(|value| self.convert(value))
@@ -1038,6 +1036,26 @@ impl<'ir> Evaluator<'ir> {
         body: NodeId,
         context: &Context,
     ) -> Evaluated<Value> {
+        // A function over an interval keeps it as its domain.
+        if let [bound] = bounds
+            && let Pattern::Name(name) = bound.pattern
+        {
+            let set = self.evaluate(bound.set, context)?;
+            if let Value::Interval(low, high) = set {
+                let mut values = Vec::new();
+                for key in low..=high {
+                    values.push(self.evaluate(body, &context.bind_value(name, Value::Int(key)))?);
+                }
+                return Ok(Value::over_interval(low, values, Class::Lambda));
+            }
+            let mut keys = Vec::new();
+            let mut values = Vec::new();
+            for element in elements(&set)?.iter() {
+                keys.push(element.clone());
+                values.push(self.evaluate(body, &context.bind_value(name, element.clone()))?);
+            }
+            return sorted_function(keys, values, Class::Lambda);
+        }
         let mut keys = Vec::new();
         let mut values = Vec::new();
         self.for_each_keyed(
@@ -1191,6 +1209,7 @@ impl<'ir> Evaluator<'ir> {
             range,
             class: function.class.clone(),
             written: function.written.clone(),
+            interval: function.interval,
         })))
     }
 
@@ -1330,15 +1349,10 @@ impl<'ir> Evaluator<'ir> {
             "DOMAIN" => {
                 arity(1)?;
                 match self.operand(&operands[0])? {
-                    Value::Function(function) => {
-                        if crate::sets::as_tuple(&Value::Function(Rc::clone(&function))).is_some()
-                            && !function.domain.is_empty()
-                        {
-                            Value::Interval(1, function.domain.len() as i32)
-                        } else {
-                            Value::Set(Rc::new(function.domain.clone()))
-                        }
-                    }
+                    Value::Function(function) => match function.interval {
+                        Some((low, high)) => Value::Interval(low, high),
+                        None => Value::Set(Rc::new(function.domain.clone())),
+                    },
                     _ => return fail("DOMAIN of a non-function"),
                 }
             }

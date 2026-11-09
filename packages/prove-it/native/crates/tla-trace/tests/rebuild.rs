@@ -3,7 +3,7 @@
 //! rebuild to states equal to the search's.
 
 use tla_engine::search::{Reporter, SearchOutcome, Settings, search};
-use tla_trace::{Rebuilder, Unsupported, format_value};
+use tla_trace::{Ending, Rebuilder, Unsupported, format_value};
 use tla_values::transfer::decode_shared_states;
 use tla_values::{Id, Store};
 
@@ -113,9 +113,24 @@ fn check(path: &std::path::Path) -> Result<usize, String> {
             .map(|&position| stopped.states[position].as_slice())
             .collect();
         let trace = rebuilder
-            .rebuild(&stopped.store, &states, &vec![None; states.len() - 1], None)
+            .rebuild(
+                &stopped.store,
+                &states,
+                &vec![None; states.len() - 1],
+                Ending::Kept,
+            )
             .map_err(|Unsupported(reason)| format!("state {index}: {reason}"))?;
         assert_eq!(trace.states.len(), states.len());
+        // A violation's last state is found by its value, even where VIEW or SYMMETRY would take
+        // another state for it, so it rebuilds only as the search's own.
+        rebuilder
+            .rebuild(
+                &stopped.store,
+                &states,
+                &vec![None; states.len() - 1],
+                Ending::Violation,
+            )
+            .map_err(|Unsupported(reason)| format!("state {index} as a violation: {reason}"))?;
         let last = &trace.states[states.len() - 1];
         let text: Vec<String> = last.values.iter().map(format_value).collect();
         assert!(!text.is_empty() || ir.variables.is_empty());
@@ -197,7 +212,12 @@ fn deadlock_trace(path: &str) -> Vec<String> {
             .collect();
         let trace = Rebuilder::new(&ir)
             .and_then(|mut rebuilder| {
-                rebuilder.rebuild(&stopped.store, &states, &vec![None; states.len() - 1], None)
+                rebuilder.rebuild(
+                    &stopped.store,
+                    &states,
+                    &vec![None; states.len() - 1],
+                    Ending::Kept,
+                )
             })
             .expect("a trace the evaluator rebuilds");
         trace
