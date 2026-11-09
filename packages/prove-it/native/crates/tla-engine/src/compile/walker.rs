@@ -103,13 +103,13 @@ fn element_at(machine: &Machine<'_>, id: Id, position: u32) -> Id {
 
 /// The set an action enumerates: a set, or the tuple of a lazy set's elements in TLC's order.
 #[derive(Clone)]
-struct Ordered {
-    eval: Eval,
+pub(super) struct Ordered {
+    pub(super) eval: Eval,
     is_ordered: bool,
 }
 
 impl Ordered {
-    fn size(&self, machine: &Machine<'_>, id: Id) -> Outcome<u32> {
+    pub(super) fn size(&self, machine: &Machine<'_>, id: Id) -> Outcome<u32> {
         if self.is_ordered || machine.store.kind_of(id) == KIND_SET {
             Ok(machine.store.size_of(id))
         } else {
@@ -1411,7 +1411,7 @@ impl<'a> Compiler<'a> {
     }
 
     // A compiled set in the order TLC enumerates it, `node` naming it where TLC keeps it lazy.
-    fn order(
+    pub(super) fn order(
         &mut self,
         set: Compiled,
         node: NodeId,

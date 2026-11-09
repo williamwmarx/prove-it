@@ -1170,6 +1170,9 @@ impl<'a> Compiler<'a> {
             NodeKind::SetMap { bounds, .. } => {
                 matches!(&bounds[..], [bound] if !self.may_be_lazy(bound.set, &mut HashSet::new()))
             }
+            // TLC evaluates the body for each element in the order it enumerates the set, until
+            // one decides the quantifier, as the engine does for one bound where the body prints.
+            NodeKind::Forall { bounds, .. } | NodeKind::Exists { bounds, .. } => bounds.len() == 1,
             NodeKind::Apply { name, args } => {
                 if name.is_local
                     && let Some(found) = lookup(&context.scope, name.text)
