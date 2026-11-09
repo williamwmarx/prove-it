@@ -2441,9 +2441,10 @@ What follows for the engine and `tla-live`:
   and under SYMMETRY whenever the stored state isn't that very successor). The engine records
   that successor's ids per step, only under SYMMETRY or a VIEW, and answers the state atoms on
   it as well as on each stored state; an action atom's step is `(stored s0, real s1)`.
-- A successor set dedups entries by the real state, not by index, and late expansion reads the
-  steps the search took from the stored state, whose successors are the real ones. The order is
-  still by fingerprint, the key's.
+- A successor set dedups entries by the real state, not by index, and keeps the order by
+  fingerprint, the key's. Late expansion runs Next from the real successor, which the search may
+  never have expanded (it expanded the stored state with the same fingerprint), so the engine
+  expands those real states too, after the search, for the late nodes that need them.
 - The violated properties come from the rebuilt trace, which the CLI's trace printer builds; Rust
   returns the lasso as indices and leaves `violated` empty there.
 - The interpreter, today's oracle, canonicalizes a successor before its liveness checks see it
