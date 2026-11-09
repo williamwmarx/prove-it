@@ -16,7 +16,6 @@ import {
 import {
   getEngineBackend,
   getEngineSetting,
-  getEngineThreads,
   getEnvironmentFlag,
   isIrDumped,
   reportEngine,
@@ -28,7 +27,6 @@ import {
   EngineInvariantError,
   getErrorExitCode,
   isStackOverflow,
-  MissingBuildFileError,
   TlaConfigError,
   TlaError,
   TlaEvaluationError,
@@ -450,19 +448,12 @@ const searchStates = (
       capturedOutput.lines = outer;
     }
   };
-  // The modules the spec loads, which the engine's workers build the spec from.
-  const loadedModules = new Map<string, string | undefined>();
-  const loadModule = (name: string) => {
-    const source = options.loadModule?.(name);
-    loadedModules.set(name, source);
-    return source;
-  };
-  const order = createTlcOrder(options.source, loadModule, readings, options.version);
+  const order = createTlcOrder(options.source, options.loadModule, readings, options.version);
   setStringOrder(order.getStringOrder(config));
   setValueVersion(options.version);
   const specification = createEnvironment(config, {
     source: options.source,
-    loadModule,
+    loadModule: options.loadModule,
     order,
     loadClass: options.loadClass,
     print,
@@ -1838,10 +1829,6 @@ const searchStates = (
               properties: engineProperties,
               isRecordingGraph: liveness !== undefined,
               symmetry,
-              workers: getEngineThreads(),
-              source: options.source,
-              modules: [...loadedModules],
-              version: options.version,
               ...callbacks,
             });
       if (result.checkpoint) {
@@ -1912,8 +1899,6 @@ const searchStates = (
         ),
       };
     } catch (error) {
-      // A build without the engine's workers fails, rather than leave the search to one thread.
-      if (error instanceof MissingBuildFileError) throw error;
       // A search that stopped part way hands over the graph it found, when it recorded one for the
       // temporal properties, and the interpreter goes on from the state it stopped at.
       if (isBailout(error) && error.checkpoint) {
