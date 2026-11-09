@@ -85,6 +85,20 @@ TLC can't stop this way and the checker evaluates nothing. It still hands over w
 evaluating an atom the engine couldn't answer, a state predicate on any state or ENABLED on an
 expanded one, as on InitialLivenessEvaluationError.
 
+## An atom that fails to evaluate (as built)
+
+TLC evaluates the atoms as it adds each state to the behavior graphs, and stops at the first that
+fails, reporting it as an error in the next states, with the call stack first
+(`Worker#doNextCheckLiveness`): Github607, tla-rs liveness_error. The engine answers an atom it
+can't evaluate as UNKNOWN, so the checker records the first unanswered atom it reads as it adds
+an expanded state (`Liveness::unanswered`), in TLC's order. The engine reports it as
+`ErrorSite::Atom`: the path to the state being added, then the successor or the step's next state
+the atom reads, with the counts and out-degrees the graph holds up to that state. The binary
+evaluates the atom again with `tla-trace`, and prints TLC's report where it fails as TLC does, or
+isn't native where it holds. TLC's call stack records no node for the `<<A>>_v` of `WF_v(A)`,
+which the front writes at A, and ENABLED names the fairness condition where A leaves a variable of
+v unassigned (2148).
+
 ## Temporal formulas inside a predicate (as built)
 
 A liveness atom can be an operator whose body holds a temporal formula in a branch the run never
@@ -256,3 +270,39 @@ suite now scales TokenRing to N = 7, M = 8 (2.1 million states) instead, which t
 itself with its bound on enumerated sets at 2^24. bcastByz at N = 5 (1.07 million states) is out of
 the suite: TLC didn't finish it in 1500 s, and Rust took 284 s, nearly all of it on one action atom,
 Receive's `\E` over `SUBSET sent`, evaluated on each of 38 million steps.
+
+## Handoff (liveness session, 2026-11-09)
+
+Done on native-parity:
+- A deadlocked state that also violates a temporal property: the deadlock, then the property's
+  counterexample (Github710d).
+- A property an initial state violates (2108, DoInitFunctorProperty). The IR carries each
+  initial predicate's name.
+- An atom that fails as TLC adds a state to the behavior graphs (Github607, tla-rs
+  liveness_error): `Liveness::unanswered`, `ErrorSite::Atom`, `Site::Atom`. ENABLED names the
+  fairness condition whose action leaves a variable unassigned (2148).
+
+Open, with what is known:
+- Optional Next (NoNext, tm/AS), engine half. It was written and type-checked but neither tested
+  nor pushed. Make `EngineContext.next` an `Option<Step>`. At the top of `Search::expand`, a model
+  without one sets `Found { kind: ViolationKind::NoNextState }` (empty trace) and bails;
+  `to_violation` accepts that kind with no states. The CLI prints 2115 "No next state actions
+  defined to generate successor states from." with no statistics, and exits 75. It declines with
+  a POSTCONDITION or _POSSIBLE. With no initial states the search completes as it does today.
+- Scoped properties (MCEWD687a, tm/Github1161), engine half. Same status. Add
+  `Conjunct::Scoped(node, scope)`, checked whole, and `Compiler::compile_scoped(root, scope,
+  can_print)` beside `compile_in_scope` in walker.rs. Compile action properties and initial
+  predicates through it when a scope is given. Remove the `has_scoped_property` decline. In
+  tla-trace, `check_violation` evaluates each property in `scope_context(scope)`, and
+  `evaluate_failure` declines an implied init in a scope.
+- Test2 (TLCSet in atoms): the engine session is doing online atom evaluation through an
+  `Answers` trait in tla-live. My review notes were sent to them: pass the graph to each
+  `add_state`, give stuttering steps their own slot space, and keep `unanswered`.
+- UserModuleOverrideAnnotation: "a lasso the engine doesn't hand over". Not investigated.
+- InitialLivenessEvaluationError: it stops at an invariant violation where an atom is
+  unanswered (`accepted_at` returns None). `Liveness::unanswered` with `ErrorSite::Atom` is the
+  likely way through, applied on the safety-stop path too.
+- YoYoAllGraphs (enumerated Seq(S)) and MCEWD687a (filter of an infinite set): engine
+  enumeration limits. MCEWD687a also needs the scoped properties.
+- Periodic lasso: `PERIODIC_LASSO` gives `violation: None`. Build the violation with `to_lasso`
+  from the periodic check's verdict, as the final check does.
