@@ -840,6 +840,63 @@ fn reports_an_invariant_violated_before_atoms_the_tables_leave_unanswered() {
 }
 
 #[test]
+fn rebuilds_a_violations_trace_again_before_the_postconditions() {
+    // TLC rebuilds the trace as it prints it and once more for the counterexample the
+    // postconditions read, running Next again each time: Next prints and counts in a register
+    // both times, before the postcondition reads the register.
+    let spec = "---- MODULE Stop ----\nEXTENDS Naturals, TLC\nVARIABLE x\nASSUME TLCSet(2, 0)\nInit == x = 0\nNext == x < 5 /\\ x' = x + 1 /\\ TLCSet(2, TLCGet(2) + 1) /\\ PrintT(<<\"n\", x, TLCGet(2)>>)\nInv == x < 3\nPost == PrintT(<<TLCGet(2)>>)\nShown == [x |-> x, r |-> TLCGet(2)]\n====\n";
+    let (output, directory) = run_lowered(
+        "rebuilt-twice",
+        spec,
+        "INIT Init\nNEXT Next\nINVARIANT Inv\nPOSTCONDITION Post\n",
+    );
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(12), "{text}");
+    assert!(
+        text.contains("<<\"n\", 2, 3>>\nError: Invariant Inv is violated.\n<<\"n\", 0, 4>>\nError: The behavior up to this point is:\n"),
+        "{text}"
+    );
+    assert!(
+        text.contains("<<\"n\", 2, 6>>\nState 4: <Next line 6, col 9 to line 6, col 88 of module Stop>\nx = 3\n\n<<\"n\", 0, 7>>\n<<\"n\", 1, 8>>\n<<\"n\", 2, 9>>\n<<9>>\n4 states generated, 4 distinct states found, 0 states left on queue.\n"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+    // TLC evaluates the ALIAS of each state as it prints it, part way through those rebuilds.
+    let (output, directory) = run_lowered(
+        "rebuilt-twice",
+        spec,
+        "INIT Init\nNEXT Next\nINVARIANT Inv\nALIAS Shown\n",
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("an ALIAS that uses registers the rebuild of the trace sets"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn reports_a_bound_tlc_cant_enumerate_in_the_initial_predicate() {
+    // The shape of YoYoAllGraphs without the Java overrides: TLC fails computing the initial
+    // states, quantifying over Seq(S) in the predicate of a filter it kept lazy until a
+    // comparison enumerated it, after it found one state; the model has a temporal property.
+    let spec = "---- MODULE Stop ----\nEXTENDS Naturals, Sequences\nVARIABLES x, y\nLinked(S) == {T \\in SUBSET S : \\A m \\in T : \\E p \\in Seq(T) : p # <<>> /\\ p[1] = m}\nInit ==\n    /\\ x = 0\n    /\\ \\E T \\in SUBSET {1, 2} :\n          /\\ Linked(T) = {T}\n          /\\ y = T\nNext == x' = 1 - x /\\ y' = y\nSpec == Init /\\ [][Next]_<<x, y>> /\\ WF_x(Next)\nLive == []<>(x = 1)\n====\n";
+    let (output, directory) = run_lowered("seq-bound", spec, "SPECIFICATION Spec\nPROPERTY Live\n");
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(75), "{text}");
+    assert!(
+        text.contains("Computing initial states...\nError: TLC encountered the non-enumerable quantifier bound\nSeq({1})\nline 4, col 54 to line 4, col 59 of module Stop\nIn TLA+, Seq(S) represents"),
+        "{text}"
+    );
+    assert!(
+        text.contains("expressions at the following positions:\n0. Line 6, column 5 to line 9, column 18 in Stop\n1. Line 6, column 8 to line 6, column 12 in Stop\n2. Line 7, column 8 to line 9, column 18 in Stop\n3. Line 8, column 11 to line 9, column 18 in Stop\n4. Line 8, column 14 to line 8, column 28 in Stop\n5. Line 4, column 32 to line 4, column 82 in Stop\n6. Line 4, column 45 to line 4, column 82 in Stop\n\n\n1 states generated, 1 distinct states found, 1 states left on queue.\nThe depth of the complete state graph search is 1.\n"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
 fn reads_and_sets_tlcs_registers() {
     // TLCCache evaluates Counted once, TLCFP is TLC's fingerprint under -fp 0, which the
     // interpreter and TLC print the same, and a Java property TLC hasn't set is its key.

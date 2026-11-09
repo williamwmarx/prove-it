@@ -410,11 +410,32 @@ export const getSpecification = (config: ModelConfig, environment: Environment):
           location: item.expression.location,
           resolution: { kind: "Local" },
         };
+  // TLC keeps the body of a definition the specification names as one initial predicate, so
+  // where the conjuncts are those of such a list, the list as written is the predicate.
+  const writtenInit = (
+    definition.body.kind === "And" ? definition.body.operands : [definition.body]
+  )
+    .map((conjunct) =>
+      conjunct.kind === "Identifier" ? getDefinition(conjunct.name, environment)?.body : undefined,
+    )
+    .find(
+      (body) =>
+        body?.kind === "And" &&
+        body.operands.length === initConjuncts.length &&
+        body.operands.every(
+          (operand, index) =>
+            operand === initConjuncts[index].expression && initConjuncts[index].scope === undefined,
+        ),
+    );
   return {
     init:
       initConjuncts.length === 0
         ? undefined
-        : { kind: "And", operands: initConjuncts.map(getReference), location: START },
+        : (writtenInit ?? {
+            kind: "And",
+            operands: initConjuncts.map(getReference),
+            location: START,
+          }),
     next: nextActions.length === 0 ? undefined : getReference(nextActions[0], initConjuncts.length),
     scope,
     temporals,
