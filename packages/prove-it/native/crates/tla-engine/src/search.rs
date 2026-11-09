@@ -1067,17 +1067,17 @@ impl Search<'_, States> {
             level,
         };
         let store = Arc::new(std::mem::take(&mut machine.store));
-        for worker in workers.iter_mut() {
-            worker.attach(&store);
-        }
         let expanded: Vec<Expanded> = std::thread::scope(|scope| {
             let threads: Vec<_> = workers
                 .iter_mut()
                 .map(|worker| {
-                    let shared = &shared;
+                    let (shared, store) = (&shared, &store);
                     std::thread::Builder::new()
                         .stack_size(NESTING_STACK_BYTES)
-                        .spawn_scoped(scope, move || expand_claimed(worker, shared))
+                        .spawn_scoped(scope, move || {
+                            worker.attach(store);
+                            expand_claimed(worker, shared)
+                        })
                         .expect("a thread for the search")
                 })
                 .collect();
@@ -1313,13 +1313,23 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             if expanding == level_end {
                 search.level += 1;
                 level_end = search.states.count();
-                if is_shared && level_end - expanding >= settings.minimum_shared_level {
+                // A thread takes at least half the fewest states a level shares.
+                let threads = settings.threads.min(
+                    (level_end - expanding) / settings.minimum_shared_level.div_ceil(2).max(1),
+                );
+                if is_shared
+                    && level_end - expanding >= settings.minimum_shared_level
+                    && threads > 1
+                {
                     if workers.is_empty() {
                         workers = (0..settings.threads)
                             .map(|_| Worker {
-                                machine: machine.fork(Store::new()),
-                                fingerprints: search.fingerprints.clone(),
-                                canonicalizer: search.canonicalizer.clone(),
+                                machine: Machine::new(&program, Store::new()),
+                                fingerprints: Fingerprints::new(),
+                                canonicalizer: search
+                                    .canonicalizer
+                                    .as_ref()
+                                    .map(Canonicalizer::fresh),
                                 bound: machine.store.value_count() as Id,
                                 imported: Vec::new(),
                             })
@@ -1328,7 +1338,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     let level = Level {
                         start: expanding,
                         end: level_end,
-                        chunk: ((level_end - expanding) / (4 * workers.len())).clamp(1, CHUNK),
+                        chunk: ((level_end - expanding) / (4 * threads)).clamp(1, CHUNK),
                         number: search.level,
                         cursor: Padded(AtomicUsize::new(expanding)),
                         stop: Padded(AtomicUsize::new(
@@ -1342,7 +1352,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     };
                     let expanded = search.expand_level(
                         &mut machine,
-                        &mut workers,
+                        &mut workers[..threads],
                         &context,
                         &level,
                         settings.stop_at,
