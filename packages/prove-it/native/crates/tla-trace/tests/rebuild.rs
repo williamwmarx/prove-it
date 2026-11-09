@@ -505,3 +505,34 @@ fn records_the_parameters_of_the_counter_examples_actions() {
     });
     assert_eq!(verdict, Ok((Verdict::Holds, Verdict::False)));
 }
+
+#[test]
+fn reads_the_possible_counts_in_a_postcondition() {
+    // PossibleCountsTest's postcondition holds where TLC counted each _POSSIBLE predicate once.
+    let bytes = std::fs::read(
+        ir_directory().join("tlc/tlatools/org.lamport.tlatools/test-model/PossibleCountsTest.ir"),
+    )
+    .expect("a golden IR");
+    let ir = tla_ir::decode(&bytes).expect("an IR that decodes");
+    let verdict = |at_one: i64| {
+        Rebuilder::new(&ir)?
+            .postcondition(
+                0,
+                &PostconditionInputs {
+                    possible: &[("AtOne".to_string(), at_one), ("WrapAround".to_string(), 1)],
+                    stats: Stats {
+                        queue: 0,
+                        distinct: 3,
+                        initial: 1,
+                        generated: 4,
+                        diameter: 3,
+                        duration: 0,
+                    },
+                    counter_example: None,
+                },
+            )
+            .map(|checked| checked.verdict)
+    };
+    assert_eq!(verdict(1), Ok(Verdict::Holds));
+    assert_eq!(verdict(2), Ok(Verdict::False));
+}

@@ -38,7 +38,7 @@ pub struct LevelData {
 }
 
 impl LevelData {
-    /// Whether the level depends on declared parameters (`params`).
+    /// Whether the level depends on the parameters of an operator, `levelParams` in SANY.
     pub fn has_params(&self) -> bool {
         !self.params.is_empty()
     }

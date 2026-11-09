@@ -355,4 +355,13 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   whose text depends on how TLC built it"), was reported as TLC's failure: FastMutex2 and
   FastMutex3 reported assumptions that hold in TLC as failing. It now lists the reasons that are
   TLC's failures (`TLC_FAILURES` in `search.rs`), and every other reason is a limit, so a reason
-  it doesn't know falls back to the interpreter.
+  it doesn't know falls back to the interpreter. Enumerating an infinite set is a limit too: the
+  engine enumerates Nat where TLC keeps the set lazy, as on suite/test202's and
+  RandomSubsetEmpty's assumptions, which hold in TLC.
+
+## Len and Tail of a string
+
+- TLC's `Sequences.Len` and `Sequences.Tail` take a string too: its length in UTF-16 units, and
+  the string without its first unit, failing on the empty string as on the empty sequence. The
+  engine expected a sequence and stopped with "expected a sequence", which suite/test60's
+  assumptions reported as failing where they hold in TLC. Both now take a string.

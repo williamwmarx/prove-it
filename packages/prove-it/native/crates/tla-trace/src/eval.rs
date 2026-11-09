@@ -190,6 +190,12 @@ pub struct CallStack {
     /// fingerprint fails in, outermost first, as TLC's FingerprintException traces them, and the
     /// state's values as TLC prints them, in the IR's order of the variables.
     pub fingerprint: Option<(Vec<NodeId>, Vec<String>)>,
+    /// Whether the replay built a set enumeration TLC fails to normalize, which TLC keeps as
+    /// written until it fingerprints or prints it.
+    pub is_unsorted: bool,
+    /// TLC's error as it prints an initial state it failed to fingerprint, where printing it fails
+    /// too: TLC reports it as an exception it didn't expect.
+    pub unprintable: Option<TlcMessage>,
 }
 
 impl CallStack {
@@ -259,6 +265,9 @@ pub struct Runtime {
     pub counter_example: Value,
     /// The registers TLCSet sets by index as the postconditions evaluate.
     pub registers: HashMap<i32, Value>,
+    /// Each `_POSSIBLE` predicate's count by name, totalled over the workers, as `_Counts` gives
+    /// it.
+    pub possible_counts: Value,
 }
 
 const MAXIMUM_DEPTH: u32 = 10_000;
@@ -844,7 +853,20 @@ impl<'ir> Evaluator<'ir> {
                     .iter()
                     .map(|&item| self.evaluate(item, context))
                     .collect::<Evaluated<Vec<_>>>()?;
-                set_of(values)
+                // TLC builds a set enumeration as written and normalizes it only as it uses it,
+                // which the replay follows only as far as fingerprinting and printing the state.
+                match (set_of(values.clone()), &mut self.call_stack) {
+                    (Err(error), Some(stack))
+                        if error
+                            .message
+                            .as_ref()
+                            .is_some_and(|message| !message.is_eval_exception) =>
+                    {
+                        stack.is_unsorted = true;
+                        Ok(Value::Unsorted(Rc::new(values)))
+                    }
+                    (set, _) => set,
+                }
             }
             NodeKind::SetFilter { bound, predicate } => {
                 let set = self.evaluate(bound.set, context)?;
@@ -2378,6 +2400,15 @@ impl<'ir> Evaluator<'ir> {
                     }
                     _ => return fail(name.to_string()),
                 }
+            }
+            "_Counts" if self.runtime.is_some() => {
+                arity(0)?;
+                self.reads += 1;
+                self.runtime
+                    .as_ref()
+                    .expect("the runtime")
+                    .possible_counts
+                    .clone()
             }
             "CounterExample" if self.runtime.is_some() => {
                 arity(0)?;

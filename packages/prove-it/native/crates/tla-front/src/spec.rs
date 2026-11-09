@@ -11,6 +11,7 @@ use crate::environment::Environment;
 use crate::errors::{FrontError, describe_range};
 use crate::eval::Evaluator;
 use crate::instances::map_children;
+use crate::levels::{self, ACTION_LEVEL};
 use crate::resolve::{Result, Tables};
 
 /// `Scope`: a name bound to a value, an expression or an operator, in front of the scope it
@@ -744,6 +745,38 @@ fn find_next(
     recurse(&body, bound.as_ref(), substitution, found)
 }
 
+/// `getInvariants` (`search.ts`): TLC's checks of the invariants the configuration names, which
+/// it makes before it reads the specification.
+pub fn check_invariants(
+    config: &crate::config::ModelConfig,
+    environment: &Environment,
+    facts: &DefinitionFacts,
+    evaluator: &Evaluator,
+) -> Result<()> {
+    let analyzer = environment.create_level_analyzer(&[]);
+    for name in &config.invariants {
+        let Some(definition) =
+            get_config_predicate("invariant", name, environment, facts, Some(evaluator))?
+        else {
+            continue;
+        };
+        let levels = analyzer.analyze_definition(definition, &levels::Scope::default())?;
+        if levels.data.level >= ACTION_LEVEL {
+            // SANY's level check can give a definition levels of parameters it doesn't have
+            // (LevelNode.java, 590ff), which TLC notes.
+            let note = if levels.data.has_params() {
+                "\nNote that a bug can cause TLC to incorrectly report this error.\nIf you believe your TLA+ or PlusCal specification to be correct,\nplease check if this bug described in LevelNode.java starting at line 590ff affects you."
+            } else {
+                ""
+            };
+            return Err(FrontError::Config(format!(
+                "The invariant {name} is not a state predicate (one with no primes or temporal operators).{note}"
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// `getSpecification` (`search.ts`).
 pub fn get_specification(
     config: &crate::config::ModelConfig,
@@ -1040,37 +1073,6 @@ pub fn get_properties(
         }
     }
     Ok(properties)
-}
-
-/// `getInvariants`' checks, which `createSearch` makes first: each invariant the configuration
-/// names is a state predicate by SANY's level analysis.
-pub fn check_invariants(
-    config: &crate::config::ModelConfig,
-    environment: &Environment,
-    facts: &DefinitionFacts,
-    evaluator: &Evaluator,
-) -> Result<()> {
-    let evaluator = Some(evaluator);
-    let analyzer = environment.create_level_analyzer(&[]);
-    for name in &config.invariants {
-        let Some(definition) =
-            get_config_predicate("invariant", name, environment, facts, evaluator)?
-        else {
-            continue;
-        };
-        let levels = analyzer.analyze_definition(definition, &crate::levels::Scope::default())?;
-        if levels.data.level >= 2 {
-            let note = if levels.data.has_params() {
-                "\nNote that a bug can cause TLC to incorrectly report this error.\nIf you believe your TLA+ or PlusCal specification to be correct,\nplease check if this bug described in LevelNode.java starting at line 590ff affects you."
-            } else {
-                ""
-            };
-            return Err(FrontError::Config(format!(
-                "The invariant {name} is not a state predicate (one with no primes or temporal operators).{note}"
-            )));
-        }
-    }
-    Ok(())
 }
 
 /// `createSearch`'s checks of what the configuration names after the specification and its
