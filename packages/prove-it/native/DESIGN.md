@@ -715,9 +715,9 @@ code wins, and this records how:
   - and 2PCwithBTM stopped by `PROVE_IT_STOP_AT` at eight states, inside levels and at their ends.
 
   Commit's state logs at 1, 2 and 4 threads are byte-identical (282,251 states).
-- **Unit tests: met.** `bun test tests/unit` with `BACKEND=rust`, four threads and every level
-  shared: 3,104 pass. The 2 failures are tests that expect the TypeScript engine on more than one
-  thread, which the change to `auto` updates.
+- **Unit tests: met.** With `auto` taking the Rust search on more than one thread, `bun test
+  tests/unit` passes 3,109 tests with the addon, and with four threads and every level shared
+  (`PROVE_IT_WORKERS=4 PROVE_IT_SHARED_LEVEL=1`), 0 fail; 3,007 pass without the addon.
 - **Parity with threads: met.** Parity on Depot with `PROVE_IT_WORKERS=4`, `PROVE_IT_SHARED_LEVEL=64`
   and `auto` taking the Rust search:
   - conformance 770 match;
