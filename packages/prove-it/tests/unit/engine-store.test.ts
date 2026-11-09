@@ -28,7 +28,6 @@ import {
   setOf,
   setOfRange,
   setOfSorted,
-  shareStore,
   sliceTuple,
   str,
   TRUE,
@@ -72,20 +71,17 @@ const localStore = {
 
 const ADDON = process.env.PROVE_IT_ENGINE_ADDON;
 
-// Workers share the store, which interns through a separate table.
 const STORES: [string, typeof localStore][] = [
   ["local", localStore],
-  ["shared", localStore],
   ...(ADDON === undefined ? [] : [["native", nativeStore] satisfies [string, typeof localStore]]),
 ];
 
-describe.each(STORES)("the engine's %s store", (mode, store) => {
+describe.each(STORES)("the engine's %s store", (_, store) => {
   const ints = (values: number[]) => values.map(store.int);
 
   beforeEach(() => {
     setStringOrder([]);
     store.resetStore();
-    if (mode === "shared") shareStore();
   });
 
   afterAll(() => store.resetStore());

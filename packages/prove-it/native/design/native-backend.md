@@ -94,9 +94,9 @@ the walk knows is assigned on each path. That compiler emits a second product, a
   AAPCS64 on aarch64 (with Apple's variant on macOS arm64).
 - **Encoding.** One module per ISA with a small encoder for the instructions NIR needs (about 40
   forms on x86-64, about 35 on aarch64), and labels with fix-ups for branches. Each form is tested
-  against bytes taken from the architecture manuals and checked once against a system
-  disassembler (`objdump`, `llvm-objdump`) in a test that only runs where one is installed. None is
-  a dependency.
+  against stored bytes taken from the architecture manuals, which were checked once, by hand,
+  against a system disassembler (`objdump`, `llvm-objdump`). The tests run no external tool, so
+  they pass on every OS.
 - **No self-modifying code, no inline caches.** A function is emitted once, before the search,
   and never patched.
 

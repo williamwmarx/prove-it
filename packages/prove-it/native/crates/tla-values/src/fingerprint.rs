@@ -9,7 +9,9 @@
 
 use std::collections::HashMap;
 
-use crate::store::{Id, KIND_BOOL, KIND_INT, KIND_MODEL, KIND_SET, KIND_STRING, Store, TRUE};
+use crate::store::{
+    EMPTY_SLOT, Id, KIND_BOOL, KIND_INT, KIND_MODEL, KIND_SET, KIND_STRING, Store, TRUE,
+};
 
 /// FP64.Polys[0], which `-fp 0` selects. A fingerprint starts as the polynomial.
 pub const INITIAL: u64 = 0x911498ae0e66bad6;
@@ -122,6 +124,23 @@ pub struct Parent {
     prefixes: Vec<u64>,
 }
 
+/// The fingerprints the overlays of a parallel level computed, by the ids the store imported
+/// their values as, from the store's count of values before: what a value's fingerprint is
+/// doesn't depend on which overlay computed it, so every overlay keeps them all.
+#[derive(Default)]
+pub struct Carried {
+    bound: Id,
+    values: Vec<ValueFingerprint>,
+}
+
+impl Carried {
+    /// Empties it, for the values of overlays laid on a store of this many values.
+    pub fn reset(&mut self, bound: Id) {
+        self.bound = bound;
+        self.values.clear();
+    }
+}
+
 /// F(v) and |v| of the store's values, computed as they are first asked for, and the tables that
 /// shift by their lengths.
 #[derive(Default)]
@@ -153,6 +172,44 @@ impl Fingerprints {
     /// Forgets the fingerprints of the values from this id on, which an overlay has let go of.
     pub fn forget_from(&mut self, id: Id) {
         self.values.truncate(id as usize);
+    }
+
+    /// Adds the fingerprints this cache computed of an overlay's own values, which `imported` gives
+    /// the ids of in the store the overlay was laid on, by their position among them.
+    pub fn carry(&self, imported: &[Id], carried: &mut Carried) {
+        let bound = carried.bound;
+        let own = self.values.get(bound as usize..).unwrap_or_default();
+        for (&id, entry) in imported.iter().zip(own) {
+            if id == EMPTY_SLOT || id < bound || !entry.is_computed {
+                continue;
+            }
+            let index = (id - bound) as usize;
+            if index >= carried.values.len() {
+                carried
+                    .values
+                    .resize(index + 1, ValueFingerprint::default());
+            }
+            // A length table's number is this cache's own.
+            carried.values[index] = ValueFingerprint {
+                table: UNKNOWN_TABLE,
+                ..*entry
+            };
+        }
+    }
+
+    /// Forgets the fingerprints of the values from `bound` on, as [`Fingerprints::forget_from`]
+    /// does, then keeps those carried of the values imported from `bound` on, if they were carried
+    /// from overlays laid where this one was.
+    pub fn forget_from_carried(&mut self, bound: Id, carried: &Carried) {
+        self.values.truncate(bound as usize);
+        if carried.bound != bound {
+            return;
+        }
+        for (index, entry) in carried.values.iter().enumerate() {
+            if entry.is_computed {
+                *self.get_entry(bound + index as Id) = *entry;
+            }
+        }
     }
 
     fn get_power(&mut self, exponent: usize) -> &ShiftTable {

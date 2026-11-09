@@ -30,6 +30,15 @@ describe("subexpression references match TLC", () => {
     expect(result.violation?.trace).toHaveLength(4);
   });
 
+  it("selects a subexpression in a function's bounds", async () => {
+    const result = await check({
+      source:
+        "---- MODULE Bounds ----\nS == {1} \\cup {2}\nf[x \\in S!1] == x\nVARIABLE v\nASSUME DOMAIN f = {1}\nInit == v = f[1]\nNext == UNCHANGED v\n====",
+      config: "INIT Init\nNEXT Next",
+    });
+    expect(result.status).toBe("success");
+  });
+
   it("rejects an assumption whose selected operand differs", async () => {
     const source = SOURCE.replace("ASSUME A!Double(4)!1!<< = 4", "ASSUME A!Double(4)!1!<< = 8");
     expect((await checkSubexpressions(source, "Subexpressions.cfg")).status).toBe(

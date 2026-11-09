@@ -43,7 +43,7 @@ pub(crate) const SMALL_INT_MAX: i32 = 4096;
 const INITIAL_CAPACITY: usize = 1 << 12;
 // Each store's number, which an overlay keeps of the store it copied.
 static STORES: AtomicU64 = AtomicU64::new(0);
-const EMPTY_SLOT: Id = Id::MAX;
+pub(crate) const EMPTY_SLOT: Id = Id::MAX;
 // A short sort runs by insertion, in place; longer ones are merged from such runs.
 const INSERTION_LENGTH: usize = 16;
 // Blocks this small are searched in order. A larger one is in TLC's order and searched by halving.
@@ -680,6 +680,16 @@ impl Store {
 
     // --- TLC's order and equality ---
 
+    // Fails where either text was ranked since `freeze_string_order`, in an order that may not be
+    // TLC's.
+    fn check_ordered(&self, left: i32, right: i32, reason: &'static str) -> Outcome<()> {
+        let unordered = self.unordered_rank;
+        if self.text(left).rank >= unordered || self.text(right).rank >= unordered {
+            return Err(Bail(reason));
+        }
+        Ok(())
+    }
+
     fn check_model_types(&self, left: Id, right: Id) -> Outcome<()> {
         let left_type = self.get_model_type(left);
         let right_type = self.get_model_type(right);
@@ -706,18 +716,15 @@ impl Store {
                 }),
                 KIND_STRING => {
                     let (left, right) = (left_meta.payload, right_meta.payload);
-                    let unordered = self.unordered_rank;
-                    if self.texts[left as usize].rank >= unordered
-                        || self.texts[right as usize].rank >= unordered
-                    {
-                        return Err(Bail("an order of strings the search ranked"));
-                    }
+                    self.check_ordered(left, right, "an order of strings the search ranked")?;
                     Ok(self.compare_texts(left, right))
                 }
                 KIND_BOOL => Ok(if left < right { -1 } else { 1 }),
                 KIND_MODEL => {
                     self.check_model_types(left, right)?;
-                    Ok(self.text(left_meta.payload).rank - self.text(right_meta.payload).rank)
+                    let (left, right) = (left_meta.payload, right_meta.payload);
+                    self.check_ordered(left, right, "an order of model values the search ranked")?;
+                    Ok(self.text(left).rank - self.text(right).rank)
                 }
                 KIND_SET => self.compare_sets(left, right),
                 _ => self.compare_functions(left, right),
