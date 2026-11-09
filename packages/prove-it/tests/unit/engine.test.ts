@@ -9,25 +9,25 @@ import { getMemoStatistics, nextEpoch } from "../../src/engine/compile";
 import { EpochCache, MemoTable } from "../../src/engine/memo";
 import { getEngineThreads } from "../../src/engine/settings";
 
-const setting = process.env.PROVE_IT_ENGINE;
-const threads = process.env.PROVE_IT_WORKERS;
-const liveCheck = process.env.PROVE_IT_LIVE_CHECK;
+const settings = [
+  "PROVE_IT_ENGINE",
+  "PROVE_IT_WORKERS",
+  "PROVE_IT_LIVE_CHECK",
+  "PROVE_IT_ENGINE_BACKEND",
+].map((name) => [name, process.env[name]] as const);
 
 afterEach(() => {
-  if (setting === undefined) delete process.env.PROVE_IT_ENGINE;
-  else process.env.PROVE_IT_ENGINE = setting;
-  if (threads === undefined) delete process.env.PROVE_IT_WORKERS;
-  else process.env.PROVE_IT_WORKERS = threads;
-  if (liveCheck === undefined) delete process.env.PROVE_IT_LIVE_CHECK;
-  else process.env.PROVE_IT_LIVE_CHECK = liveCheck;
+  for (const [name, value] of settings) {
+    if (value === undefined) delete process.env[name];
+    else process.env[name] = value;
+  }
 });
 
-// Tests of the TypeScript engine's internals, which native/ts-only-tests.json lists with their Rust
-// counterparts, don't apply when the native engine searches.
-const isTypeScriptOnly = process.env.PROVE_IT_ENGINE_BACKEND === "rust";
-
 describe("the engine between checks", () => {
-  it.skipIf(isTypeScriptOnly)("keeps only the current check's memo tables", async () => {
+  // It reads the TypeScript engine's memo tables, so it pins that backend; native/ts-only-tests.json
+  // names its Rust counterpart.
+  it("keeps only the current check's memo tables", async () => {
+    process.env.PROVE_IT_ENGINE_BACKEND = "ts";
     const options = {
       source: [
         "---- MODULE M ----",
