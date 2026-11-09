@@ -6,7 +6,7 @@ use std::rc::Rc;
 use crate::print::{format_pretty, format_value};
 use crate::value::{
     Class, Evaluated, Lazy, Value, compare, elements, equals, fail, fail_coded, fail_runtime,
-    find_key, set_of, unnormalized,
+    find_key, set_of,
 };
 
 /// How many elements the evaluator enumerates of a lazy set before it gives up, as the engine
@@ -187,16 +187,6 @@ fn mistyped(value: &Value, set: &str) -> Evaluated<bool> {
 }
 
 pub fn is_member(value: &Value, set: &Value) -> Evaluated<bool> {
-    // TLC tests a set it holds unnormalized element by element, as it built it, asking each
-    // element whether it equals the value (`ValueVec.search`).
-    if let Some(written) = unnormalized(set) {
-        for element in &written {
-            if equals(element, value)? {
-                return Ok(true);
-            }
-        }
-        return Ok(false);
-    }
     match set {
         Value::Set(elements) => {
             let (mut low, mut high) = (0, elements.len());
