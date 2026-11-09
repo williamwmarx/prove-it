@@ -12,11 +12,12 @@ use tla_ir::{
     Resolution, ScopeBinding, Startup, TextId,
 };
 
+use crate::pretty::pretty_print;
 use crate::print::{format_printed, format_value};
 use crate::sets::{as_tuple, cardinality, difference, intersection, is_member, is_subset, union};
 use crate::value::{
-    Class, Evaluated, Function, Lazy, Text, Value, compare, elements, equals, fail, find_key,
-    set_of, sorted_function, written_function,
+    Class, Evaluated, Function, Lazy, Text, Value, compare, elements, equals, fail, fail_coded,
+    find_key, set_of, sorted_function, written_function,
 };
 
 /// The bindings an expression sees, innermost first.
@@ -1719,10 +1720,15 @@ impl<'ir> Evaluator<'ir> {
                     Value::Bool(true)
                 } else {
                     let message = self.operand(&operands[1])?;
-                    return fail(format!(
-                        "The first argument of Assert evaluated to FALSE; the second argument was:\n{}",
-                        format_value(&message)
-                    ));
+                    let text = format_value(&message);
+                    return fail_coded(
+                        "an assertion failed",
+                        2132,
+                        format!(
+                            "The first argument of Assert evaluated to FALSE; the second argument was:\n{}",
+                            pretty_print(&text.encode_utf16().collect::<Vec<_>>())
+                        ),
+                    );
                 }
             }
             "Print" | "PrintT" => {

@@ -3,8 +3,9 @@
 use std::cmp::Ordering;
 use std::rc::Rc;
 
+use crate::print::format_value;
 use crate::value::{
-    Class, Evaluated, Lazy, Value, compare, elements, equals, fail, find_key, set_of,
+    Class, Evaluated, Lazy, Value, compare, elements, equals, fail, fail_coded, find_key, set_of,
 };
 
 /// How many elements the evaluator enumerates of a lazy set before it gives up, as the engine
@@ -118,6 +119,19 @@ fn product(sets: &[Rc<Vec<Value>>]) -> Evaluated<Vec<Vec<Value>>> {
 }
 
 /// TLC's `member`: whether a value is in a set, failing where TLC can't tell.
+// TLC's `EC.TLC_MODULE_CHECK_MEMBER_OF`, for a value that can't be an element of a set of the
+// standard modules.
+fn mistyped(value: &Value, set: &str) -> Evaluated<bool> {
+    fail_coded(
+        format!("a mistyped membership in {set}"),
+        2158,
+        format!(
+            "Attempted to check if the value:\n{}\nis an element of {set}.",
+            format_value(value)
+        ),
+    )
+}
+
 pub fn is_member(value: &Value, set: &Value) -> Evaluated<bool> {
     match set {
         Value::Set(elements) => {
@@ -140,17 +154,17 @@ pub fn is_member(value: &Value, set: &Value) -> Evaluated<bool> {
         Value::Lazy(lazy) => match &**lazy {
             Lazy::Nat => match value {
                 Value::Int(int) => Ok(*int >= 0),
-                _ => fail("a mistyped membership in Nat"),
+                _ => mistyped(value, "Nat"),
             },
             Lazy::Int => match value {
                 Value::Int(_) => Ok(true),
-                _ => fail("a mistyped membership in Int"),
+                _ => mistyped(value, "Int"),
             },
             Lazy::Real => fail("a membership in Real"),
             Lazy::Strings => match value {
                 Value::Str(_) => Ok(true),
                 Value::Model(model) if model.model_type() == 0 => Ok(false),
-                _ => fail("a mistyped membership in STRING"),
+                _ => mistyped(value, "STRING"),
             },
             Lazy::Subset(base) => {
                 if !value.is_set() {

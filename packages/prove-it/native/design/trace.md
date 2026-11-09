@@ -125,9 +125,15 @@ impl<'ir> Rebuilder<'ir> {
         ending: Ending,
     ) -> Result<Trace, Unsupported>;
 
-    /// Planned: evaluates again where the search failed, on a rebuilt state (and its successor),
-    /// and returns TLC's error with its values in TLC's text.
-    pub fn evaluate_failure(&mut self, trace: &Trace, site: Site) -> Result<Failure, Unsupported>;
+    /// Evaluates again where the search failed, at `site`, after the path `states` (none for the
+    /// initial predicate), and returns TLC's report of the error.
+    pub fn evaluate_failure(
+        &mut self,
+        store: &Store,
+        states: &[&[Id]],
+        actions: &[Option<u32>],
+        site: Site,
+    ) -> Result<Failure, Unsupported>;
 }
 
 /// What the last state is to TLC (`known` in `toTrace`): a state the search kept (a deadlock's),
@@ -149,6 +155,14 @@ pub struct TraceState {
     /// which the caller pretty prints and joins as it does a print during the search.
     pub printed: Vec<Vec<String>>,
 }
+
+/// Where the search failed: computing the initial states, or the successors of the path's last
+/// state.
+pub enum Site { Init, Next }
+
+/// TLC's report of the error: the code of its message, the message and its -tool text, and the
+/// nested expressions it was in, which the caller prints with `format_call_stack` as message 2103.
+pub struct Failure { pub code: u32, pub message: String, pub tool_message: String, pub call_stack: Vec<SourceRange> }
 
 /// TLC's `Value.toString`; the caller pretty prints it.
 pub fn format_value(value: &Value) -> String;
@@ -254,6 +268,31 @@ Tests:
 - the deadlock traces of kafka_transactions (records) and TLCGetLevel (`TLCGet("level")`) print
   TLC's recorded text, whitespace aside;
 - unit tests on the printer and on written order.
+
+### Failures (`failure.rs`)
+
+`evaluate_failure` replays the failure as TLC's `CallStackTool` does, which `tlc/replay.ts` and the
+tracing evaluator of `evaluate.ts` port. While it replays, the evaluator keeps a call stack:
+- each node `evaluate` evaluates;
+- each node the walk visits, as `visit` and `visitUnchanged` do;
+- each prefix of an infix chain of junctions, which SANY nests as a node of its own. Its range
+  comes from the IR's prefix ends (IR 9).
+
+The first failure freezes the stack. The walk takes TLC's shortcut past assigned conjuncts only in
+the initial predicate, and in an action with warnings on, as `isAssignedShortcut` does; that also
+decides which frames a stack keeps. The report follows `getFailureMessage`:
+- an EvalException that escapes the next-state computation keeps its own code;
+- any other error there is TLC's unexpected RuntimeException;
+- in the initial predicate the code is the general one, and the -tool text marks the coded message
+  inside it.
+
+An error has TLC's message only where its kind is ported: so far a mistyped membership in Nat, Int
+or STRING (2158) and Assert (2132). Every other failure returns `Unsupported`. The pretty printer
+moved here from the CLI, since the messages need it.
+
+Tests: `tests/failure.rs` runs the engine's search on golden IRs of TLC's own tests (etest9, 10 and
+11, AssertExpressionStack and Github461) until it stops, and compares the message and the call
+stack with TLC's text.
 
 ### Parity
 

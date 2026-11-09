@@ -16,7 +16,17 @@ use tla_values::store::{KIND_BOOL, KIND_INT, KIND_MODEL, KIND_SET, KIND_STRING, 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EvalError {
     pub reason: String,
-    pub message: Option<String>,
+    pub message: Option<TlcMessage>,
+}
+
+/// TLC's message for an error: its text, the code of TLC's message it is where it is one of
+/// `tlc2.output.MP`'s, and whether TLC raises it as an EvalException rather than a
+/// RuntimeException.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TlcMessage {
+    pub text: String,
+    pub code: Option<u32>,
+    pub is_eval_exception: bool,
 }
 
 pub type Evaluated<T> = Result<T, EvalError>;
@@ -28,11 +38,15 @@ pub fn fail<T>(reason: impl Into<String>) -> Evaluated<T> {
     })
 }
 
-/// A failure with TLC's message for it.
-pub fn fail_as<T>(reason: impl Into<String>, message: String) -> Evaluated<T> {
+/// A failure TLC raises as an EvalException with the message of this code.
+pub fn fail_coded<T>(reason: impl Into<String>, code: u32, text: String) -> Evaluated<T> {
     Err(EvalError {
         reason: reason.into(),
-        message: Some(message),
+        message: Some(TlcMessage {
+            text,
+            code: Some(code),
+            is_eval_exception: true,
+        }),
     })
 }
 
