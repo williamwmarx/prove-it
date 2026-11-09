@@ -98,6 +98,27 @@ pub enum Event {
     Atom { atom: u32, slot: usize },
 }
 
+/// Adds the states the search expanded to the behavior graphs, as TLC does as it searches even
+/// under `-lncheck final`: the first whose tableau node accepts every behavior, which stops TLC's
+/// search there, as a `Verdict::Accepted`.
+pub fn find_accepted(
+    formula: &[Term],
+    properties: &[&[Term]],
+    graph: &Graph<'_>,
+    tables: &[Option<&[u8]>],
+) -> Result<Option<Verdict>, Declined> {
+    let mut terms = Terms::default();
+    let root = read_formula(&mut terms, formula)?;
+    let properties = properties
+        .iter()
+        .map(|property| read_formula(&mut terms, property))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut checker = checker::Checker::new(terms, root, graph, tables)?;
+    checker::find_accepted(&mut checker)?
+        .map(|(state, path)| checker::accepted(&checker, &properties, state, path))
+        .transpose()
+}
+
 /// What the check found.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Verdict {
@@ -113,8 +134,12 @@ pub enum Verdict {
         violated: Vec<usize>,
     },
     /// A tableau node that accepts every behavior, which TLC reports as it adds `state` to the
-    /// graph, with the path of states to it.
-    Accepted { state: u32, path: Vec<u32> },
+    /// graph, with the path of states to it and the positions of the properties it violates.
+    Accepted {
+        state: u32,
+        path: Vec<u32>,
+        violated: Vec<usize>,
+    },
     /// The checker needs the steps from the states past the stored ones that `reals` names and the
     /// graph doesn't expand yet: the engine expands them and checks again.
     Unexpanded,
@@ -165,6 +190,55 @@ fn read_formula(terms: &mut Terms, formula: &[Term]) -> Result<TermId, Declined>
         return Err(Declined::from("a formula with terms past its end"));
     }
     Ok(root)
+}
+
+/// The atoms of a formula, in the order TLC's liveness checker asks about them (`atoms` of
+/// `createLivenessChecker`): the state and ENABLED atoms of each solution's checks and then of its
+/// tableau's nodes, as `collectAtoms` meets them, then the rest the checks ask of, as
+/// `collectQuestions` does. An atom is its position in `formula`'s terms, each term standing for
+/// itself; a tautology, which has no solutions, declines.
+pub fn atom_order(formula: &[Term]) -> Result<Vec<u32>, Declined> {
+    let mut terms = Terms::default();
+    let root = read_formula(&mut terms, formula)?;
+    let solutions = terms.solutions(root)?;
+    let mut order = Vec::new();
+    let mut add = |atom: u32| {
+        if !order.contains(&atom) {
+            order.push(atom);
+        }
+    };
+    let collect = |term: TermId, is_question: bool, add: &mut dyn FnMut(u32)| {
+        let mut pending = vec![term];
+        while let Some(term) = pending.pop() {
+            match terms.kind(term) {
+                tableau::Kind::State(atom) | tableau::Kind::Enabled(atom) => add(atom),
+                tableau::Kind::Action { atom, .. } if is_question => add(atom),
+                tableau::Kind::Action {
+                    enabled: Some(enabled),
+                    ..
+                } => add(enabled),
+                tableau::Kind::Next if !is_question => {}
+                tableau::Kind::Action { .. } | tableau::Kind::Boolean(_) => {}
+                _ => pending.extend(terms.children(term).iter().rev()),
+            }
+        }
+    };
+    for solution in &solutions {
+        for &predicate in solution.state_checks.iter().chain(&solution.action_checks) {
+            collect(predicate, false, &mut add);
+        }
+        for node in solution.tableau.iter().flat_map(|tableau| &tableau.nodes) {
+            for &predicate in &node.state_predicates {
+                collect(predicate, false, &mut add);
+            }
+        }
+    }
+    for solution in &solutions {
+        for &predicate in solution.state_checks.iter().chain(&solution.action_checks) {
+            collect(predicate, true, &mut add);
+        }
+    }
+    Ok(order)
 }
 
 /// Checks the formula, the fairness and the negated properties as `createLivenessChecker` joins

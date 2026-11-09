@@ -271,6 +271,7 @@ const createOperatorTable = (name: string, arity: number, rows: [Value[], Value]
     },
     evaluateUnary: undefined,
     evaluateBinary: undefined,
+    table: rows,
   };
 };
 

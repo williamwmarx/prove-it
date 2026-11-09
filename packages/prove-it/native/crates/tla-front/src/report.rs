@@ -14,6 +14,7 @@ use crate::errors::{FrontError, SanyError};
 use crate::get_standard_module;
 use crate::hash::{FastMap, FastSet};
 use crate::parser::{extract_module, parse_sany_module};
+use crate::pcal::{PcalFatal, PcalSession, ValidationResult};
 
 type Result<T> = std::result::Result<T, Stop>;
 
@@ -24,6 +25,9 @@ enum Stop {
         location: Option<Rc<str>>,
         message: String,
     },
+    /// A Java exception of SANY's validation of PlusCal, which it prints with its parse
+    /// messages so far.
+    Pcal(String),
     Front(FrontError),
 }
 
@@ -252,15 +256,47 @@ fn has_mismatched_recursion(module: &Module) -> bool {
 }
 
 struct Loaded {
+    text: String,
     module: Rc<Module>,
     dependencies: Rc<Dependencies>,
+}
+
+/// A message of SANY's parsing phase, which come from its validation of PlusCal.
+struct ParseMessage {
+    module: Rc<str>,
+    text: String,
+    is_warning: bool,
 }
 
 struct Loader<'a> {
     options: &'a ReportOptions<'a>,
     source: &'a str,
     modules: FastMap<Rc<str>, Loaded>,
+    /// The modules in the order they loaded.
+    loaded: Vec<Rc<str>>,
     lines: Vec<String>,
+    /// The translator's state, which carries over between the modules SANY validates.
+    session: PcalSession,
+    parse_messages: Vec<ParseMessage>,
+    /// What TLC 1.7.4's SpecObj.validateParseUnit prints after the file SANY parses next.
+    validations: Vec<String>,
+    is_parse_reported: bool,
+}
+
+/// The modules a module and its inner modules extend, other than its inner modules.
+fn get_extendees(module: &Module) -> Vec<Rc<str>> {
+    fn visit(module: &Module, inner_names: &mut Vec<Rc<str>>, extendees: &mut Vec<Rc<str>>) {
+        inner_names.push(module.name.clone());
+        extendees.extend(module.extends.iter().cloned());
+        for inner in &module.modules {
+            visit(inner, inner_names, extendees);
+        }
+    }
+    let mut inner_names = Vec::new();
+    let mut extendees = Vec::new();
+    visit(module, &mut inner_names, &mut extendees);
+    extendees.retain(|extendee| !inner_names.contains(extendee));
+    extendees
 }
 
 impl Loader<'_> {
@@ -288,17 +324,17 @@ impl Loader<'_> {
                 ),
             });
         };
-        self.lines.push(format!(
+        let parsed = parse_sany_module(&text, None, self.options.version);
+        let parsing_line = format!(
             "Parsing file {}\n",
             (self.options.describe_file)(name, origin)
-        ));
-        // SANY validates the PlusCal of each module it loads.
-        if text.contains("--algorithm") || text.contains("--fair") {
-            return Err(not_yet("PlusCal"));
-        }
-        let module = parse_sany_module(&text, None, self.options.version)
-            .map_err(|_| not_yet("SANY's parse errors"))?;
+        );
+        let Ok(module) = parsed else {
+            self.lines.push(parsing_line);
+            return Err(not_yet("SANY's parse errors"));
+        };
         if module.name != *name {
+            self.lines.push(parsing_line);
             return Err(Stop::Fatal {
                 location: None,
                 message: format!(
@@ -314,13 +350,161 @@ impl Loader<'_> {
         }
         let module = Rc::new(module);
         let dependencies = Rc::new(get_dependencies(&module));
+        // SANY validates the PlusCal of the root module once it parses, and of a module each
+        // time it resolves another module's EXTENDS of it, as `loadValidatedModule` does.
+        let extenders = self
+            .loaded
+            .iter()
+            .filter(|loaded| get_extendees(&self.modules[*loaded].module).contains(name))
+            .count();
+        let extendees: Vec<Rc<str>> = get_extendees(&module)
+            .into_iter()
+            .filter(|extendee| extendee != name && self.modules.contains_key(extendee))
+            .collect();
         self.modules.insert(
             name.clone(),
             Loaded {
+                text,
                 module,
                 dependencies,
             },
         );
+        self.loaded.push(name.clone());
+        for _ in 0..extenders {
+            self.validate(name)?;
+        }
+        for extendee in &extendees {
+            self.validate(extendee)?;
+        }
+        self.lines.push(parsing_line);
+        if *name == self.root() {
+            self.validate(name)?;
+        }
+        self.print_validations();
+        Ok(())
+    }
+
+    fn root(&self) -> Rc<str> {
+        self.loaded[0].clone()
+    }
+
+    fn print_validations(&mut self) {
+        for validation in self.validations.drain(..) {
+            self.lines.push(format!("{validation}\n"));
+        }
+    }
+
+    /// `validate` in `getSanyReport`, SpecObj.validateParseUnit: SANY's validation of the
+    /// module's PlusCal, whose messages Errors.addMessage keeps once each.
+    fn validate(&mut self, name: &Rc<str>) -> Result<()> {
+        let loaded = &self.modules[name];
+        let Some(range) = &loaded.module.location.range else {
+            return Ok(());
+        };
+        let file_lines: Vec<&str> = loaded
+            .text
+            .split("\r\n")
+            .flat_map(|line| line.split(['\r', '\n']))
+            .collect();
+        let start = (range.start.line as usize)
+            .saturating_sub(1)
+            .min(file_lines.len());
+        let end = (range.end.line as usize).clamp(start, file_lines.len());
+        let outcome = self
+            .session
+            .validate(&file_lines[start..end], self.options.version);
+        for line in self.session.log.drain(..) {
+            self.lines.push(format!("{line}\n"));
+        }
+        let results = match outcome {
+            Ok(results) => results,
+            Err(PcalFatal::Runtime(message)) => return Err(Stop::Pcal(message)),
+            Err(PcalFatal::Bug(_)) => return Err(not_yet("a bug of the PlusCal translator")),
+        };
+        let is_tla_changed = results.contains(&ValidationResult::TlaDivergenceExists);
+        let is_pcal_changed = results.contains(&ValidationResult::PcalDivergenceExists);
+        let is_error = results.contains(&ValidationResult::ErrorEncountered);
+        // Both versions word a change to just one of the algorithm and its translation alike.
+        let one_change = (is_tla_changed != is_pcal_changed).then(|| {
+            let what = if is_tla_changed {
+                "TLA+ translation"
+            } else {
+                "PlusCal algorithm"
+            };
+            format!("The {what} in module {name} has changed since its last translation.")
+        });
+        if self.options.version == TlcVersion::V1_7_4 {
+            let warning = if is_tla_changed && is_pcal_changed {
+                Some(format!(
+                    "The PlusCal algorithm and its TLA+ translation in module {name} filename since the last translation."
+                ))
+            } else {
+                one_change
+            };
+            match warning {
+                Some(warning) => self.validations.push(format!("!! WARNING: {warning}")),
+                // TLC 1.7.4 prints the error to its error stream.
+                None if is_error => return Err(not_yet("TLC 1.7.4's PlusCal errors")),
+                None => {}
+            }
+            return Ok(());
+        }
+        let text = if is_tla_changed && is_pcal_changed {
+            format!(
+                "Both the PlusCal algorithm and its TLA+ translation in module {name} have changed since the last translation."
+            )
+        } else if let Some(one_change) = one_change {
+            one_change
+        } else if is_error {
+            format!(
+                "An unexpected problem was encountered attempting to validate the specification for {name}"
+            )
+        } else {
+            return Ok(());
+        };
+        if self
+            .parse_messages
+            .iter()
+            .any(|message| message.text == text)
+        {
+            return Ok(());
+        }
+        self.parse_messages.push(ParseMessage {
+            module: name.clone(),
+            text,
+            is_warning: !is_error || is_tla_changed || is_pcal_changed,
+        });
+        Ok(())
+    }
+
+    /// SANY.frontEndParse: once SANY has loaded the spec, it prints the warnings of its parsing
+    /// phase. Its errors end the run, which the front end doesn't write yet.
+    fn report_parse_messages(&mut self, file_name: &str) -> Result<()> {
+        self.print_validations();
+        if self.is_parse_reported {
+            return Ok(());
+        }
+        self.is_parse_reported = true;
+        if self
+            .parse_messages
+            .iter()
+            .any(|message| !message.is_warning)
+        {
+            return Err(not_yet("SANY's errors validating PlusCal"));
+        }
+        if self.parse_messages.is_empty() {
+            return Ok(());
+        }
+        self.lines.push(format!(
+            "Warnings ({}) during syntax parsing of {file_name}:\n\n\n",
+            self.parse_messages.len()
+        ));
+        for message in &self.parse_messages {
+            self.lines.push(format!(
+                "In module {}\n\n{}\n\n\n\n",
+                message.module, message.text
+            ));
+        }
         Ok(())
     }
 
@@ -513,11 +697,30 @@ pub fn get_sany_text(
         options,
         source: &source,
         modules: FastMap::default(),
+        loaded: Vec::new(),
         lines: Vec::new(),
+        session: PcalSession::new(),
+        parse_messages: Vec::new(),
+        validations: Vec::new(),
+        is_parse_reported: false,
     };
+    let name = options.file_name.unwrap_or(&root);
     match write_sany_text(&mut loader, &root) {
         Ok(()) => Ok(loader.lines.concat()),
         Err(Stop::Front(error)) => Err(error),
+        // SANY.frontEndParse turns a Java exception of its validation of PlusCal into a fatal
+        // error, printing the exception and its messages so far, which are warnings here.
+        Err(Stop::Pcal(_)) if !loader.parse_messages.is_empty() => Err(FrontError::NotYet(
+            "SANY's parse messages with a fatal error".to_owned(),
+        )),
+        Err(Stop::Pcal(message)) => Ok(format!(
+            "{}\nFatal errors while parsing TLA+ spec in file {name}\n\n{message}\n\n",
+            loader.lines.concat()
+        )),
+        // The fatal error follows the messages of the parsing phase.
+        Err(Stop::Fatal { .. }) if !loader.parse_messages.is_empty() => Err(FrontError::NotYet(
+            "SANY's parse messages with a fatal error".to_owned(),
+        )),
         // TLC 1.7.4's SANY aborts with an AbortException instead.
         Err(Stop::Fatal { .. }) if options.version == TlcVersion::V1_7_4 => {
             Err(FrontError::NotYet("TLC 1.7.4's fatal errors".to_owned()))
@@ -530,7 +733,6 @@ pub fn get_sany_text(
                     |module| format!("In module {module}")
                 )
             );
-            let name = options.file_name.unwrap_or(&root);
             Ok(format!(
                 "{}\nFatal errors while parsing TLA+ spec in file {name}\n\n{fatal}\n*** Errors: 1\n\n{fatal}\n\n\n\n",
                 loader.lines.concat()
@@ -560,6 +762,7 @@ fn write_sany_text(loader: &mut Loader, root: &Rc<str>) -> Result<()> {
     }
     let mut order = Vec::new();
     loader.get_analysis_order(&root, &mut Vec::new(), &mut FastSet::default(), &mut order)?;
+    loader.report_parse_messages(options.file_name.unwrap_or(&root))?;
     // SANY's messages come from linking, which reports what SANY's semantic analysis does.
     let config =
         parse_config("", options.version).map_err(|error| FrontError::Config(error.message))?;

@@ -18,6 +18,8 @@ const JAVA_MAIN_CLASSES: [&str; 2] = ["tlc2.TLC", "tla2sany.xml.XMLExporter"];
 pub struct Java {
     pub libraries: Vec<String>,
     pub class_path: Option<String>,
+    /// `java.io.tmpdir`, where TLC copies the standard modules it parses.
+    pub temporary_directory: Option<String>,
     pub is_174: bool,
 }
 
@@ -48,6 +50,8 @@ pub fn get_java_launch(args: &[String]) -> Option<Launch> {
         } else if let Some(libraries) = arg.strip_prefix("-DTLA-Library=") {
             java.libraries
                 .extend(libraries.split(PATH_DELIMITER).map(String::from));
+        } else if let Some(directory) = arg.strip_prefix("-Djava.io.tmpdir=") {
+            java.temporary_directory = Some(directory.into());
         } else if let Some(version) = arg.strip_prefix("-Dtla-ts.tlc=") {
             java.is_174 = version == "1.7.4";
         } else if !arg.starts_with("-D") && !arg.starts_with("-X") {
@@ -141,9 +145,15 @@ mod tests {
     fn reads_a_java_launch() {
         let libraries = format!("-DTLA-Library=/a{PATH_DELIMITER}/b");
         let launch = get_java_launch(&strings(&[
-            &libraries, "-Xmx4g", "tlc2.TLC", "-tool", "Spec",
+            &libraries,
+            "-Xmx4g",
+            "-Djava.io.tmpdir=/t",
+            "tlc2.TLC",
+            "-tool",
+            "Spec",
         ]))
         .expect("a launch");
+        assert_eq!(launch.java.temporary_directory.as_deref(), Some("/t"));
         assert_eq!(launch.main_class, "tlc2.TLC");
         assert_eq!(launch.args, strings(&["-tool", "Spec"]));
         assert_eq!(launch.java.libraries, strings(&["/a", "/b"]));

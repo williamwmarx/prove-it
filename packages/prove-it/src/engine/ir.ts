@@ -8,7 +8,8 @@
 //   code units. Text i below the ranked count is the string of rank i in createTlcOrder's order.
 //   The texts themselves are one UTF-8 string after the words;
 // - the variables, by name, in the engine's order, and TLC's order of them;
-// - the builtins the model names: name, arity and flags;
+// - the builtins the model names: name, arity and flags, then for a configuration's table of an
+//   operator's values its number of rows, and each row's arguments as a tuple and its value;
 // - the constants it names, each with its value, or -1 for one transfer.ts can't encode;
 // - the scopes of instances it reads, which bind a name to a value, an expression or an operator;
 // - the values: those of the constants, scopes and startup values, in transfer.ts's encoding, whose
@@ -49,6 +50,7 @@ import type { LiveExpression } from "../tableau";
 import type { TlcVersion } from "../tlc/version";
 import { createStateEncoder } from "../transfer";
 import {
+  createTuple,
   findStringRank,
   getRankedStringCount,
   getStringOrder,
@@ -144,6 +146,7 @@ const OBJECT_STARTUP_VALUE = -2;
 const BUILTIN_STATE_LEVEL = 1;
 const BUILTIN_LEVEL_CONSTANT = 2;
 const BUILTIN_LAZY = 4;
+const BUILTIN_TABLE = 8;
 
 const SCOPE_VALUE = 0;
 const SCOPE_THUNK = 1;
@@ -321,8 +324,16 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
       builtins,
       (builtin.isStateLevel ? BUILTIN_STATE_LEVEL : 0) |
         (builtin.isLevelConstant ? BUILTIN_LEVEL_CONSTANT : 0) |
-        (builtin.isLazy ? BUILTIN_LAZY : 0),
+        (builtin.isLazy ? BUILTIN_LAZY : 0) |
+        (builtin.table ? BUILTIN_TABLE : 0),
     );
+    if (builtin.table) {
+      push(builtins, builtin.table.length);
+      for (const row of builtin.table) {
+        push(builtins, getValue(createTuple(row[0])));
+        push(builtins, getValue(row[1]));
+      }
+    }
     return index;
   };
 

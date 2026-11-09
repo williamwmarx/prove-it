@@ -246,6 +246,9 @@ impl Compiler<'_> {
         if name == "RandomElement" || name == "RandomSubset" {
             return self.compile_random(name, operands, context);
         }
+        if builtin.flags & Builtin::TABLE != 0 {
+            return self.compile_table(index, operands);
+        }
         if builtin.flags & Builtin::STATE_LEVEL != 0 || IMPURE_BUILTINS.contains(&name) {
             if name == "TLCEval" && operands.len() == 1 {
                 return self.operand(&operands[0]);
@@ -301,6 +304,44 @@ impl Compiler<'_> {
             is_costly: true,
             ..leaf(evaluate, footprint)
         }
+    }
+
+    // A configuration's definition of a constant operator by its values, F(0) = 1, which TLC applies
+    // by the first row whose arguments equal the arguments, and fails to apply where none does.
+    fn compile_table(&mut self, index: Index, operands: &[Operand]) -> Compiling<Compiled> {
+        let ir = self.ir;
+        let mut rows = Vec::new();
+        for &(arguments, value) in &ir.builtins[index as usize].table {
+            let (Some(arguments), Some(value)) = (arguments, value) else {
+                return unsupported("a value of an operator's table the IR can't hold");
+            };
+            rows.push((self.intern_value(arguments)?, self.intern_value(value)?));
+        }
+        let arguments = operands
+            .iter()
+            .map(|operand| self.operand(operand))
+            .collect::<Compiling<Vec<Compiled>>>()?;
+        let footprint = Footprint::merge_all(arguments.iter().map(|argument| &argument.footprint));
+        let evals: Vec<Eval> = arguments
+            .into_iter()
+            .map(|argument| argument.eval)
+            .collect();
+        Ok(leaf(
+            eval(move |machine| {
+                let values = evals
+                    .iter()
+                    .map(|evaluate| evaluate(machine))
+                    .collect::<Outcome<Vec<Id>>>()?;
+                let tuple = machine.store.tuple_of(&values);
+                for &(key, value) in &rows {
+                    if machine.store.equals(key, tuple)? {
+                        return Ok(value);
+                    }
+                }
+                Err(Bail("an operator's table applied outside its rows"))
+            }),
+            footprint,
+        ))
     }
 
     // RandomElement(S) and RandomSubset(k, S) draw as TLC does where the engine evaluates them as
