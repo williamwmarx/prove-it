@@ -21,7 +21,7 @@ use crate::summary::{
     optimistic_probability, out_degree_summary,
 };
 use crate::time::{format_date, format_duration};
-use crate::trace::format_state;
+use crate::trace::rebuild_trace;
 use tla_front::TlcVersion;
 use tla_front::config::{ModelConfig, parse_config};
 
@@ -38,7 +38,7 @@ const GLOB_CHARACTERS: [char; 4] = ['*', '?', '[', '{'];
 
 /// How deep the search thread's stack may grow: compiled closures recurse with the expressions
 /// and the values they evaluate. It is reserved, not committed.
-const SEARCH_STACK_BYTES: usize = 256 * 1024 * 1024;
+pub(crate) const SEARCH_STACK_BYTES: usize = 256 * 1024 * 1024;
 
 pub fn run(args: &[String]) -> i32 {
     if args.first().is_some_and(|arg| arg == "tlapm") {
@@ -660,12 +660,18 @@ fn print_violation(
         };
         Some(&ir.texts[name as usize])
     };
+    // TLC prints a trace once it has rebuilt all of it, and a state that the evaluator can't
+    // rebuild as TLC built it keeps the run not native.
+    let trace = match rebuild_trace(ir, violation) {
+        Ok(trace) => trace,
+        Err(reason) => return Some(report_not_native(printer, &reason)),
+    };
     let (code, text, exit_code) = match violation.kind {
         // TLC prints the initial state that violates an invariant in the same message, and no
         // statistics, since it checks the initial states before it searches.
         ViolationKind::InitialInvariant(owner) => {
             let name = invariant_name(owner)?;
-            let state = format_state(ir, &violation.store, violation.states.first()?)?;
+            let state = &trace.states.first()?.text;
             printer.print(
                 code::INVARIANT_VIOLATED_INITIAL,
                 Level::Error,
@@ -681,10 +687,9 @@ fn print_violation(
         ),
         ViolationKind::Deadlock => (code::DEADLOCK_REACHED, "Deadlock reached.".into(), DEADLOCK),
     };
-    // TLC prints nothing of the trace until it has rebuilt all of it.
-    let mut steps = Vec::with_capacity(violation.states.len());
-    for (position, state) in violation.states.iter().enumerate() {
-        let label = match position.checked_sub(1) {
+    let mut labels = Vec::with_capacity(trace.states.len());
+    for position in 0..trace.states.len() {
+        labels.push(match position.checked_sub(1) {
             None => "Initial predicate",
             Some(step) => {
                 let action = ir
@@ -693,18 +698,33 @@ fn print_violation(
                     .get(*violation.labels.get(step)? as usize)?;
                 &ir.texts[action.label as usize]
             }
-        };
-        let state = format_state(ir, &violation.store, state)?;
-        steps.push(format!("{}: <{label}>\n{state}", position + 1));
+        });
     }
+    // What the spec printed as TLC rebuilt the trace: the first state's after the headline, each
+    // later state's before it, and the rebuild after the trace (`printViolation`).
     printer.print(code, Level::Error, &text);
+    for line in &trace.states[0].output {
+        printer.line(line);
+    }
     printer.print(
         code::BEHAVIOR_UP_TO_THIS_POINT,
         Level::Error,
         "The behavior up to this point is:",
     );
-    for step in &steps {
-        printer.print(code::STATE_PRINT_2, Level::State, step);
+    for (position, (state, label)) in trace.states.iter().zip(labels).enumerate() {
+        if position > 0 {
+            for line in &state.output {
+                printer.line(line);
+            }
+        }
+        printer.print(
+            code::STATE_PRINT_2,
+            Level::State,
+            &format!("{}: <{label}>\n{}", position + 1, state.text),
+        );
+    }
+    for line in &trace.trace_output {
+        printer.line(line);
     }
     let counts = &violation.counts;
     let statistics = Statistics {

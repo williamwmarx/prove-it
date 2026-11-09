@@ -2,7 +2,7 @@
 
 Notes on the native engine's speed work, kept out of DESIGN.md so they don't conflict with other
 workstreams. The guard and memo work through #75 is in DESIGN.md's "M7 as built (guards)". The
-native backend's plan is [native-backend.md](native-backend.md).
+native backend is shelved; [native-backend.md](native-backend.md) records why.
 
 ## Against TLC at 1, 4 and 16 threads
 
