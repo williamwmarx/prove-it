@@ -327,3 +327,30 @@ fn finds_the_successor_an_action_leaves_incomplete() {
         (Some(0), vec![1, 2], vec![Some("1".to_string()), None, None])
     );
 }
+
+#[test]
+fn reports_a_failure_in_a_lazy_filter_as_print_meets_it() {
+    // Github179c prints a filter of SUBSET {1, 2, 3, 4} whose predicate compares an integer with a
+    // set. TLC keeps the filter lazy and meets the failure as PrintT's Java method enumerates it.
+    let (failure, call_stack) = evaluate_failure(&format!("{MODELS}/Github179c"));
+    let inner = "Attempted to check equality of integer 1 with non-integer:\n{1}";
+    let text = format!(
+        "Attempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.Value tlc2.module.TLC.PrintT(tlc2.value.impl.Value),\nbut it produced the following error:\n{inner}"
+    );
+    assert_eq!(failure.code, 1000);
+    assert_eq!(
+        failure.tool_message,
+        format!(
+            "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: @!@!@STARTMSG 2154:0 @!@!@\n{text}\n@!@!@ENDMSG 2154 @!@!@"
+        )
+    );
+    assert_eq!(
+        call_stack,
+        "0. Line 16, column 9 to line 16, column 42 in Github179c\n\
+         1. Line 16, column 9 to line 16, column 33 in Github179c\n\
+         2. Line 16, column 9 to line 16, column 25 in Github179c\n\
+         3. Line 10, column 11 to line 12, column 39 in Github179c\n\
+         4. Line 10, column 24 to line 12, column 39 in Github179c\n\
+         5. Line 10, column 27 to line 10, column 36 in Github179c\n\n"
+    );
+}
