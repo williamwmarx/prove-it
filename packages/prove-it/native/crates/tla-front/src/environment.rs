@@ -124,6 +124,9 @@ pub struct InstanceAction {
     pub location: Location,
 }
 
+/// What reads the bytes of the Java class TLC loads for a module, if it has one.
+pub type ClassLoader<'a> = dyn Fn(&str) -> Option<Vec<u8>> + 'a;
+
 pub struct EnvironmentOptions<'a> {
     pub source: &'a str,
     pub load_module: &'a dyn Fn(&str) -> Option<String>,
@@ -136,7 +139,7 @@ pub struct EnvironmentOptions<'a> {
     pub is_level_checked: bool,
     /// The bytes of the Java class TLC loads for a module (`loadClass`), whose public static
     /// methods override the module's operators.
-    pub load_class: Option<&'a dyn Fn(&str) -> Option<Vec<u8>>>,
+    pub load_class: Option<&'a ClassLoader<'a>>,
 }
 
 struct LinkedModule {
