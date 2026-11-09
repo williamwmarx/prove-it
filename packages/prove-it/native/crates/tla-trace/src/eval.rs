@@ -4,7 +4,7 @@
 //! at the call site with their arguments evaluated where used, and functions TLC keeps lazy, a
 //! definition's or a LET's, are applied without building them.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use tla_ir::{
@@ -12,12 +12,11 @@ use tla_ir::{
     Resolution, ScopeBinding, Startup, TextId,
 };
 
-use crate::pretty::pretty_print;
-use crate::print::{format_printed, format_value};
+use crate::print::{format_pretty, format_printed, format_value};
 use crate::sets::{as_tuple, cardinality, difference, intersection, is_member, is_subset, union};
 use crate::value::{
     Class, Evaluated, Function, Lazy, Text, Value, compare, elements, equals, fail, fail_coded,
-    find_key, set_of, sorted_function, written_function,
+    fail_runtime, find_key, set_of, sorted_function, written_function,
 };
 
 /// The bindings an expression sees, innermost first.
@@ -141,6 +140,24 @@ type KeyedVisit<'v, 'ir> = dyn FnMut(&mut Evaluator<'ir>, &Context, &[Value]) ->
 pub struct CallStack {
     pub frames: Vec<StackFrame>,
     pub is_frozen: bool,
+    /// The values the replay built that TLC's `CallStackTool` gives a source, by their address.
+    sourced: HashSet<usize>,
+    /// The value each node of the replay last evaluated to.
+    values: HashMap<NodeId, Value>,
+    /// Whether the failure was in a method of a value with a source, which TLC reports as a
+    /// FingerprintException rather than with the nested expressions.
+    pub is_fingerprinted: bool,
+}
+
+// The address of a value TLC's `CallStackTool` can give a source: an object, as a set, a function
+// or a lazy set is.
+fn address(value: &Value) -> Option<usize> {
+    match value {
+        Value::Set(set) => Some(Rc::as_ptr(set) as usize),
+        Value::Function(function) => Some(Rc::as_ptr(function) as usize),
+        Value::Lazy(lazy) => Some(Rc::as_ptr(lazy) as *const u8 as usize),
+        _ => None,
+    }
 }
 
 /// A node TLC's call stack holds: a node of the IR, or the prefix of an infix chain of junctions,
@@ -345,10 +362,76 @@ impl<'ir> Evaluator<'ir> {
         if self.call_stack.is_none() {
             return self.evaluate_node(node, context);
         }
-        let frame = StackFrame::Node(self.node(node).0);
-        self.in_frame(frame, &mut |evaluator| {
+        let (node, _) = self.node(node);
+        let result = self.in_frame(StackFrame::Node(node), &mut |evaluator| {
             evaluator.evaluate_node(node, context)
-        })
+        });
+        let is_sourced = self.is_sourced(node);
+        if let (Some(stack), Ok(value)) = (&mut self.call_stack, &result) {
+            if is_sourced && let Some(address) = address(value) {
+                stack.sourced.insert(address);
+            }
+            stack.values.insert(node, value.clone());
+        }
+        result
+    }
+
+    // The nodes whose value TLC's `CallStackTool` gives a source (`SOURCED_KINDS` and
+    // `SOURCED_OPERATORS` in `evaluate.ts`).
+    fn is_sourced(&self, node: NodeId) -> bool {
+        match self.kind(node) {
+            NodeKind::SetEnumeration(_)
+            | NodeKind::SetFilter { .. }
+            | NodeKind::SetMap { .. }
+            | NodeKind::Tuple(_)
+            | NodeKind::FunctionSet { .. }
+            | NodeKind::Record(_)
+            | NodeKind::RecordSet(_)
+            | NodeKind::Product(_) => true,
+            NodeKind::Apply { name, .. } => {
+                !name.is_local
+                    && matches!(
+                        self.name(name.text),
+                        "SUBSET" | "UNION" | "DOMAIN" | "\\cup" | "\\cap" | "\\"
+                    )
+            }
+            _ => false,
+        }
+    }
+
+    // The operand whose method TLC calls to compute a node, as `getReceiver` in `evaluate.ts`
+    // finds it: the function applied, or the set of a membership.
+    fn receiver(&self, node: NodeId) -> Option<NodeId> {
+        match self.kind(node) {
+            NodeKind::FunctionApplication { function, .. } | NodeKind::Except { function, .. } => {
+                Some(*function)
+            }
+            NodeKind::FieldAccess { record, .. } => Some(*record),
+            NodeKind::Apply { name, args } if !name.is_local && args.len() == 2 => {
+                match self.name(name.text) {
+                    "\\in" | "\\notin" => Some(args[1]),
+                    "\\subseteq" | "=" | "#" | "\\" => Some(args[0]),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    // Marks the failure as one in a method of a value with a source, where it is.
+    fn mark_fingerprinted(&mut self, frame: StackFrame) {
+        let StackFrame::Node(node) = frame else {
+            return;
+        };
+        let receiver = self.receiver(node).map(|receiver| self.resolved(receiver));
+        let Some(stack) = &mut self.call_stack else {
+            return;
+        };
+        let is_sourced = receiver
+            .and_then(|receiver| stack.values.get(&receiver))
+            .and_then(address)
+            .is_some_and(|address| stack.sourced.contains(&address));
+        stack.is_fingerprinted |= is_sourced;
     }
 
     /// Runs `run` in a frame of the call stack, which a failure freezes, as `CallStack.push` and
@@ -362,6 +445,14 @@ impl<'ir> Evaluator<'ir> {
             stack.frames.push(frame);
         }
         let result = run(self);
+        if result.is_err()
+            && self
+                .call_stack
+                .as_ref()
+                .is_some_and(|stack| !stack.is_frozen)
+        {
+            self.mark_fingerprinted(frame);
+        }
         if let Some(stack) = &mut self.call_stack {
             stack.is_frozen |= result.is_err();
             if !stack.is_frozen {
@@ -369,6 +460,100 @@ impl<'ir> Evaluator<'ir> {
             }
         }
         result
+    }
+
+    // TLC 1.7.4, which words some messages apart.
+    fn is_174(&self) -> bool {
+        self.ir
+            .model
+            .version
+            .is_some_and(|version| &*self.ir.texts[version as usize] == "1.7.4")
+    }
+
+    /// Where a node is written, as TLC's messages say it: `line 2, col 3 to line 2, col 9 of
+    /// module M`, or its start where the IR has no range.
+    pub fn describe_range(&self, node: NodeId) -> String {
+        let node = &self.ir.nodes.arena[self.resolved(node) as usize];
+        match node.range {
+            Some(range) => format!(
+                "line {}, col {} to line {}, col {} of module {}",
+                range.start_line,
+                range.start_column,
+                range.end_line,
+                range.end_column,
+                self.ir.texts[range.module as usize]
+            ),
+            None => format!("line {}, column {}", node.line, node.column),
+        }
+    }
+
+    // `f[x]` with TLC's message where `x` isn't in the domain of `f`.
+    fn apply_checked(&self, function: &Value, key: &Value) -> Evaluated<Value> {
+        let result = apply_value(function, key);
+        match (&result, function) {
+            (Err(error), Value::Function(inner))
+                if error.message.is_none()
+                    && !self.is_174()
+                    && error.reason == "applied a function outside its domain" =>
+            {
+                match describe_missing(function, inner.class.get(), key) {
+                    Some(text) => fail_runtime(&error.reason, text),
+                    None => result,
+                }
+            }
+            _ => result,
+        }
+    }
+
+    // `r.f`, with TLC's messages as `getFieldSelector` words them.
+    fn select_field(&self, node: NodeId, record: &Value, field: &Value) -> Evaluated<Value> {
+        let Value::Str(name) = field else {
+            return fail("a field that isn't a string");
+        };
+        let name = String::from_utf16_lossy(&name.units);
+        let Value::Function(inner) = record else {
+            return fail_runtime(
+                "selected a field of a non-record",
+                format!(
+                    "Attempted to select field \"{name}\" from a non-record value {}\n{}",
+                    format_pretty(record),
+                    self.describe_range(node)
+                ),
+            );
+        };
+        if self.is_174() {
+            return apply_value(record, field);
+        }
+        match inner.class.get() {
+            Class::Tuple => fail_runtime(
+                "selected a field of a tuple",
+                format!(
+                    "Attempted to apply function with integer domain to the non-integer argument {}",
+                    format_pretty(field)
+                ),
+            ),
+            Class::Record => match find_key(inner, field)? {
+                Some(position) => Ok(inner.range[position].clone()),
+                None => fail_runtime(
+                    "selected a field a record lacks",
+                    format!(
+                        "Attempted to select nonexistent field \"{name}\" from the record\n{}\n{}",
+                        format_value(record),
+                        self.describe_range(node)
+                    ),
+                ),
+            },
+            _ => match find_key(inner, field)? {
+                Some(position) => Ok(inner.range[position].clone()),
+                None => fail_runtime(
+                    "applied a function outside its domain",
+                    format!(
+                        "Attempted to apply function:\n{}\nto argument \"{name}\", which is not in the domain of the function.",
+                        format_pretty(record)
+                    ),
+                ),
+            },
+        }
     }
 
     /// The resolved node of a reference.
@@ -567,7 +752,7 @@ impl<'ir> Evaluator<'ir> {
             NodeKind::FieldAccess { record, field } => {
                 let record = self.evaluate(*record, context)?;
                 let key = Value::Str(self.text(*field));
-                apply_value(&record, &key)
+                self.select_field(node, &record, &key)
             }
             NodeKind::Product(factors) => Ok(Value::Lazy(Rc::new(Lazy::Product(
                 factors
@@ -1207,7 +1392,7 @@ impl<'ir> Evaluator<'ir> {
             return self.nested(|evaluator| evaluator.evaluate(body, &bound_context));
         }
         let function = self.evaluate(function, context)?;
-        apply_value(&function, &argument)
+        self.apply_checked(&function, &argument)
     }
 
     /// For `f[e]` in an action where TLC keeps `f` lazy, a function constructor or a LET's
@@ -1379,7 +1564,18 @@ impl<'ir> Evaluator<'ir> {
     // `SetCupValue`, `SetCapValue` and `SetDiffValue` test it, so that an infinite operand such as
     // Nat isn't enumerated.
     fn is_member_of(&mut self, element: &Value, set: &Operand) -> Evaluated<bool> {
-        self.combined_set(set)?.has(element)
+        let combined = self.combined_set(set)?;
+        let result = combined.has(element);
+        // TLC's \\cup, \\cap and \\ have a source, so a failure in testing their members is a
+        // FingerprintException.
+        if result.is_err()
+            && matches!(combined, Combined::Operation(..))
+            && let Some(stack) = &mut self.call_stack
+            && !stack.is_frozen
+        {
+            stack.is_fingerprinted = true;
+        }
+        result
     }
 
     // A set as TLC builds it, both operands of each `\\cup`, `\\cap` or `\\` evaluated.
@@ -1720,13 +1916,12 @@ impl<'ir> Evaluator<'ir> {
                     Value::Bool(true)
                 } else {
                     let message = self.operand(&operands[1])?;
-                    let text = format_value(&message);
                     return fail_coded(
                         "an assertion failed",
                         2132,
                         format!(
                             "The first argument of Assert evaluated to FALSE; the second argument was:\n{}",
-                            pretty_print(&text.encode_utf16().collect::<Vec<_>>())
+                            format_pretty(&message)
                         ),
                     );
                 }
@@ -1883,6 +2078,35 @@ pub fn apply_value(function: &Value, key: &Value) -> Evaluated<Value> {
         Some(position) => Ok(inner.range[position].clone()),
         None => fail("applied a function outside its domain"),
     }
+}
+
+// TLC's message for a function applied outside its domain, by the class of the function, as
+// `describeMissingArgument` in `values.ts` words it after TLC 1.7.4. A lambda has none here: TLC
+// keeps a function constructor lazy only where it evaluates it so (`EvalControl.KeepLazy`), and
+// turns one of enumerable domains into a `FcnRcdValue` elsewhere, as at startup, which the
+// evaluator doesn't follow yet.
+fn describe_missing(function: &Value, class: Class, key: &Value) -> Option<String> {
+    let shown = format_pretty(function);
+    let shown_key = format_pretty(key);
+    Some(match (class, key) {
+        (Class::Lambda, _) => return None,
+        (Class::Tuple, Value::Int(index)) => {
+            format!("Attempted to access index {index} of tuple\n{shown}\nwhich is out of bounds.")
+        }
+        (Class::Tuple, _) => {
+            format!("Attempted to access tuple at a non integral index: {shown_key}")
+        }
+        (Class::Record, Value::Str(field)) => format!(
+            "Attempted to access nonexistent field '{}' of record\n{shown}",
+            String::from_utf16_lossy(&field.units)
+        ),
+        (Class::Record, _) => {
+            format!("Attempted to access record by a non-string argument: {shown_key}")
+        }
+        (Class::Plain, _) => format!(
+            "Attempted to apply function:\n{shown}\nto argument {shown_key}, which is not in the domain of the function."
+        ),
+    })
 }
 
 fn describe(kind: &NodeKind) -> &'static str {

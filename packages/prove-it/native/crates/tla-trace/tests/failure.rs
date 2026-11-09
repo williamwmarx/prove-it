@@ -139,3 +139,24 @@ fn reports_an_invariant_that_fails_to_evaluate() {
     );
     assert!(failure.call_stack.is_empty());
 }
+
+#[test]
+fn reports_a_missing_field_in_an_action_as_an_unexpected_exception() {
+    let (failure, call_stack) =
+        evaluate_failure(&format!("{MODELS}/TESpecTest/TESpecRuntimeErrorTest"));
+    let text = "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: Attempted to select nonexistent field \"val\" from the record\n[val2 |-> 4]\nline 10, col 12 to line 10, col 16 of module TESpecRuntimeErrorTest";
+    assert_eq!(
+        (
+            failure.code,
+            failure.message.as_str(),
+            failure.tool_message.as_str()
+        ),
+        (1000, text, text)
+    );
+    assert_eq!(
+        call_stack,
+        "0. Line 10, column 9 to line 11, column 35 in TESpecRuntimeErrorTest\n\
+         1. Line 10, column 12 to line 10, column 20 in TESpecRuntimeErrorTest\n\
+         2. Line 10, column 12 to line 10, column 16 in TESpecRuntimeErrorTest\n\n"
+    );
+}

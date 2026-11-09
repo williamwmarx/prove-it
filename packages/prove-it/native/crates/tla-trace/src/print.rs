@@ -13,6 +13,11 @@ const MAXIMUM_EXPANDED_PRODUCT: usize = 1999;
 const MAXIMUM_EXPANDED_SUBSET_BASE: usize = 6;
 
 /// TLC's text of a value in a state (`formatValue(value)`).
+/// A value's text, pretty printed as TLC's messages print it.
+pub fn format_pretty(value: &Value) -> String {
+    crate::pretty::pretty_print(&format_value(value).encode_utf16().collect::<Vec<_>>())
+}
+
 pub fn format_value(value: &Value) -> String {
     let mut out = String::new();
     write_value(value, false, false, &mut out);
