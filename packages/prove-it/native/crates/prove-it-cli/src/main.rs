@@ -1,4 +1,4 @@
-//! The native `prove-it` binary (native/DESIGN.md 12): checks a TLA+ spec as the TypeScript CLI
+//! The native `prove-it` binary (native/DESIGN.md 13): checks a TLA+ spec as the TypeScript CLI
 //! does and prints exactly what TLC prints.
 
 mod args;
