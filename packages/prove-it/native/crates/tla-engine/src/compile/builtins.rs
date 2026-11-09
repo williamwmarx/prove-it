@@ -553,6 +553,8 @@ impl Compiler<'_> {
                 let base_parts = Self::parts_of(&base);
                 Compiled {
                     is_normalized: false,
+                    // Its elements are set enumerations.
+                    are_elements_in_stream_order: true,
                     reference: combine_references(&[&base], |_, mut bases| {
                         Ok(Lazy::Subset(Box::new(bases.remove(0))))
                     }),
@@ -628,7 +630,7 @@ impl Compiler<'_> {
                 // streams each element of S in turn (`UnionValue.Enumerator`). An element streams
                 // as its normalized set does unless it streams apart itself, which the engine,
                 // holding it as an id, can't follow.
-                let reference = (!is_enumerated && !outer.are_elements_streamed_apart)
+                let reference = (!is_enumerated && outer.are_elements_in_stream_order)
                     .then(|| reference_of(&outer))
                     .flatten()
                     .map(|base| {
@@ -640,9 +642,6 @@ impl Compiler<'_> {
                     is_normalized: is_enumerated,
                     is_enumerated,
                     is_streamed_apart: !is_enumerated,
-                    // Its elements are those of the sets it combines, which the engine doesn't
-                    // follow.
-                    are_elements_streamed_apart: true,
                     reference,
                     member: only.as_ref().map(|only| self.member_test(only)),
                     parts: only.as_ref().map(Self::parts_of),
@@ -1108,8 +1107,8 @@ impl Compiler<'_> {
             is_normalized,
             is_streamed_apart: !is_normalized
                 && (name == "\\cup" || left.is_streamed_apart || right.is_streamed_apart),
-            are_elements_streamed_apart: left.are_elements_streamed_apart
-                || right.are_elements_streamed_apart,
+            are_elements_in_stream_order: left.are_elements_in_stream_order
+                && right.are_elements_in_stream_order,
             member: lazy_member,
             reference,
             ..binary(left, right, operation, true, false)
