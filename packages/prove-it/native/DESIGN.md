@@ -2288,3 +2288,147 @@ On the 4-core cloud machine, with `main` at a0f66ec before the merge of #31 and 
   about 40% under memo lookups, a third of that in the lookups themselves. The next step that
   could close the 1.3× gate is compiling guards and invariants to code rather than closure trees
   (3.1's later tier), not more tuning of the closures.
+
+## 12. Stage 4, the Rust front end (`tla-front`)
+
+Stage 4 ports the front end, so a Rust binary goes from `.tla` and `.cfg` files to the IR, and on
+to the engine, with no JavaScript. The TypeScript front end stays as the oracle, and is retired
+piece by piece once the Rust one matches it on the corpora. This section is the plan as built; it
+replaces the "native front door" of section 0's stage 4 that hands the unusual to the JS binary,
+since the Rust front end reproduces SANY's messages for the unusual too.
+
+### 12.1 Crate boundaries
+
+One crate, `crates/tla-front`, std only, depending on `tla-ir` (whose encoder writes the IR) and
+nothing else. Its modules follow the TypeScript files they port, one for one, so a difference
+found by the harness points at one pair of files:
+
+| Rust module | TypeScript |
+|---|---|
+| `lexer` | `src/lexer.ts` |
+| `ast`, `parser` | `src/ast.ts`, `src/parser.ts` (TLAPS proofs parse only) |
+| `modules` | `src/standard-modules.ts`, `src/bundled-modules.ts`, `src/sany/modules.ts`, the standard modules' texts |
+| `resolve`, `levels` | `src/resolve.ts`, `src/levels.ts`, `src/substitution-levels.ts`, `src/subexpressions.ts`, `src/instances.ts` |
+| `sany` | `src/sany/` (lexer, parse errors, generator, levels, linter, report) |
+| `config` | `src/config.ts` |
+| `order` | `src/tlc/order.ts` |
+| `environment` | `src/environment.ts` (startup values, constants, the model's definitions) |
+| `lower` | `src/engine/ir.ts` |
+
+`hash` is FxHash for the front end's maps, `json` writes JSON as `JSON.stringify` does for the
+harness, and `errors` holds the errors of `src/errors.ts` the front end raises, with the same
+messages. Positions are the TypeScript ones: lines from 1, columns in UTF-16 code units from 1,
+a tab reaching the next multiple of eight. The sources are `&str`; the lexer counts each
+character's UTF-16 length, so nothing converts the text.
+
+PlusCal translation (`src/pcal`) is a later step: until it is ported, a module SANY would validate
+PlusCal in, which holds a `--algorithm` or `--fair algorithm` comment, is one the front end gives
+up on (12.3).
+
+### 12.2 The API (for the Rust CLI)
+
+The CLI session calls the front end in TLC's order: the configuration first, SANY next (printing
+as it goes), then the model. Each call either succeeds, fails with what TLC prints, or gives up
+with a reason, in which case the CLI runs the JS binary with the same arguments, having printed
+nothing it can't take back (section 8.4):
+
+```rust
+pub enum TlcVersion { Master, V1_7_4 }
+
+/// Where SANY reads a module from, as `SanyModuleOrigin`.
+pub enum ModuleOrigin { File, RootFile, Standard }
+
+/// How the CLI finds a module's text: the spec's directory, then the TLA-Library directories, as
+/// `createModuleLoader`.
+pub trait ModuleLoader { fn load(&self, name: &str) -> Option<String>; }
+
+/// `parseConfig`: the model, or TLC's message for a configuration it can't parse.
+pub fn parse_config(source: &str, version: TlcVersion) -> Result<ModelConfig, ConfigError>;
+
+pub struct SanyRequest<'a> {
+    pub root_path: &'a Path,                 // the spec's .tla file
+    pub file_name: &'a str,                  // what SANY calls the spec in its messages
+    pub loader: &'a dyn ModuleLoader,
+    pub describe_file: &'a dyn Fn(&str, ModuleOrigin) -> String, // "Parsing file …"
+    pub root_extendees: &'a [String],        // _TLCTrace when TLC records the trace
+    pub version: TlcVersion,
+}
+
+pub enum Stream { Out, Err }
+
+/// `getSanyReport`: runs SANY on the spec, writing what SANY prints, byte for byte, as it goes.
+/// A rejected spec's output is complete when this returns.
+pub fn run_sany(request: &SanyRequest, print: &mut dyn FnMut(Stream, &str)) -> Result<Sany, GiveUp>;
+pub struct Sany { pub is_failed: bool, /* the modules SANY read, kept for the model */ }
+
+pub struct ModelRequest<'a> {
+    pub sany: &'a Sany,
+    pub config: &'a ModelConfig,
+    pub check_deadlock: bool,       // after -deadlock
+    pub is_warning_enabled: bool,   // -nowarning
+    pub is_trace_recorded: bool,
+}
+
+/// `createEnvironment`, `createTlcOrder` and `lowerToIr`: the IR the engine runs, byte for byte
+/// what the TypeScript lowering writes, or the TLC error the model raises before the search
+/// (for example an assumption that fails), as structured data the CLI prints.
+pub fn build_model(request: &ModelRequest) -> Result<Model, ModelFailure>;
+pub struct Model { pub ir: Vec<u8> }
+pub enum ModelFailure { Tlc(TlcError), GiveUp(GiveUp) }
+
+/// Why the front end gives up: a construct or condition it doesn't port yet. The CLI falls back.
+pub struct GiveUp { pub reason: String }
+```
+
+`TlcError` carries TLC's message code and its parameters, not text, since the CLI session owns
+how TLC prints a message. The names may change as the milestones land; the shape (configuration,
+SANY printing as it goes, then the IR, each with a give-up) won't.
+
+### 12.3 Milestones
+
+Each is one or more small PRs, and each lands with its mode of the differential harness
+(`scripts/front-differential.ts <mode>`), which runs the TypeScript front end and
+`front-dump <mode>` over every module of the fetched corpora and the test fixtures, writes each
+module's result as one canonical JSON line per side, and fails on any difference. Verification
+runs it on every pull request once the mode is in, over the corpora (the Front End job fetches
+them).
+
+- **F1. Lexer** (`lexer`): tokens with kinds, texts, synonyms' spellings and positions, and the
+  lexer's errors. Harness mode `tokens`.
+- **F2. Parser to AST** (`ast`, `parser`): the AST of `ast.ts` with source locations, the parse
+  errors' messages and failures, `extractModule`, and the TLAPS proof syntax, which only has to
+  parse. Mode `ast`: the AST as canonical JSON (fields in `ast.ts`'s order, no identities).
+- **F3. Modules** (`modules`): the standard and bundled modules, as texts compiled in with
+  `include_str!` from the same `.tla` sources the TypeScript reads, SANY's standard-module sets
+  per TLC version, and the module loader. Mode `modules`: what each name loads to.
+- **F4. Resolution and levels** (`resolve`, `levels`): symbols, resolutions, instances and
+  substitutions, the semantic errors and their messages, and levels. Mode `resolve`: each
+  identifier's resolution and each definition's level, and the errors.
+- **F5. SANY** (`sany`): SANY's lexer and parse errors (`parse-error.ts`), the semantic generator,
+  SANY's levels, the linter and the report, for both TLC versions. Mode `sany`: the report's text
+  and `isFailed` for every module, and `conformance:sany` (`scripts/proof-conformance.ts` against
+  `sany.json`) gains `--backend rust`.
+- **F6. Configuration** (`config`): `parseConfig` and `TlaConfigError`'s messages. Mode `config`
+  over every `.cfg` of the corpora.
+- **F7. TLC order and startup values** (`order`, `environment`): `createTlcOrder`'s string table,
+  the constants, and `environment.startupValues` in `transfer.ts`'s encoding. Mode `order`.
+- **F8. IR lowering** (`lower`): the IR of every corpus model. Mode `ir`: the bytes, equal to
+  what `PROVE_IT_IR_DUMP` writes (section 6.10's first check), and the same decline reasons.
+
+Speed is measured at F2, F4 and F8 on the largest corpus modules (`TE.tla`, 2.9 MB;
+`tcp_proof.tla`; `LevelSpec.tla`; btree's and 2PCwithBTM's models), parse plus analysis, against
+the TypeScript front end in Bun.
+
+#### F1 as built
+
+- `crates/tla-front` with `lexer`, `errors`, `json` and `hash`, and the `front-dump` binary.
+  `tokenize` returns the tokens with their texts interned as `Rc<str>`, as `lexer.ts` keeps each
+  name one string object, so later stages compare names by pointer where TypeScript does.
+- `scripts/front-differential.ts tokens`: 2,356 of 2,356 modules match (the 304 fixtures and the
+  2,052 corpus modules), and so do 2,400 modules made by inserting and deleting text at random in
+  800 corpus modules, 448 of which the lexer rejects, so its errors and their positions are held
+  too. `cargo test` covers tabs, UTF-16 columns, synonyms, steps and every error kind without the
+  corpora.
+- Speed, best of five in process, on this 4-core machine: `TE.tla` (2.9 MB) 50 ms against
+  95 ms for `lexer.ts` in Bun; `tcp_proof.tla` (259 KB) 3.2 ms against 12.6 ms; `LevelSpec.tla`
+  (132 KB) 0.45 ms against 5.6 ms.
