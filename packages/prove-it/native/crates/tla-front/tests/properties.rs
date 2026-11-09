@@ -51,7 +51,7 @@ fn lower(property: &str) -> FrontError {
     let path = directory.join("ActionLevelProp.tla");
     std::fs::write(&path, SPEC).expect("the spec");
     let options = ModelOptions {
-        library: None,
+        libraries: &[],
         version: None,
         is_warning_enabled: true,
     };
