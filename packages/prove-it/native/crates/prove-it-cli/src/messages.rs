@@ -6,7 +6,11 @@ use std::collections::HashSet;
 use std::io::{BufWriter, Stdout, Write};
 
 pub const COMMAND_LINE_ERROR: u32 = 1102;
+pub const STARTING: u32 = 2185;
 pub const FINISHED: u32 = 2186;
+pub const SANY_FINISHED: u32 = 2219;
+pub const STARTING_SANY: u32 = 2220;
+pub const PARSING_FAILED: u32 = 3002;
 pub const MODEL_CHECKING: u32 = 2187;
 pub const COMPUTING_INIT: u32 = 2189;
 pub const INVARIANT_VIOLATED_INITIAL: u32 = 2107;
