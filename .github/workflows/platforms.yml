@@ -61,7 +61,10 @@ jobs:
           cargo test --locked --target x86_64-apple-darwin
           cd ..
           export PATH="$tools/package/bin:$tools/node-v24.16.0-darwin-x64/bin:$PATH"
+          # Each check also has Rosetta translate the binary ahead of time, which takes seconds on a
+          # first launch and would otherwise land inside a test's time limit.
           arch -x86_64 bun --print 'process.arch' | grep -qx x64
+          arch -x86_64 node --print 'process.arch' | grep -qx x64
           PROVE_IT_ENGINE_ADDON="$PWD/native/npm/darwin-x64/prove-it-engine.node" arch -x86_64 bun test \
             tests/unit/native.test.ts tests/unit/native-search.test.ts tests/unit/engine-store.test.ts \
             tests/unit/engine-fingerprints.test.ts
