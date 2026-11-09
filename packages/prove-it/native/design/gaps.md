@@ -346,3 +346,13 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   walked the body of a function a construction gives where it branches; in the initial predicate
   it now walks only a recursive function's body. AssignmentInit (TLC's tests) now stops at the
   deadlock in Rust, as TLC.
+
+## Which stops are TLC's failures
+
+- The search reports a stop as a failure TLC reports (`ViolationKind::Error`,
+  `AssumptionFailed`) unless the reason is the engine's own limit. It listed the limits, so a
+  reason it didn't list, such as a decline that a compile defers to run time ("printing a value
+  whose text depends on how TLC built it"), was reported as TLC's failure: FastMutex2 and
+  FastMutex3 reported assumptions that hold in TLC as failing. It now lists the reasons that are
+  TLC's failures (`TLC_FAILURES` in `search.rs`), and every other reason is a limit, so a reason
+  it doesn't know falls back to the interpreter.
