@@ -3,6 +3,7 @@ members = [
   "crates/prove-it-napi",
   "crates/tla-engine",
   "crates/tla-ir",
+  "crates/tla-live",
   "crates/tla-values",
   "tools/replay",
 ]

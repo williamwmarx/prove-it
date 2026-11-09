@@ -393,6 +393,39 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     await compareStateLogs(body, "SPECIFICATION Spec\nPROPERTY Returns", false);
   });
 
+  it("checks the temporal properties itself, and the interpreter prints its counterexample", async () => {
+    const body = [
+      "EXTENDS Naturals",
+      "VARIABLES x, y",
+      "vars == <<x, y>>",
+      "Init == x = 0 /\\ y = 0",
+      "Inc == x < 3 /\\ x' = x + 1 /\\ y' = y",
+      "Flip == y' = 1 - y /\\ x' = x",
+      "Reset == x = 3 /\\ x' = 0 /\\ y' = y",
+      "Next == Inc \\/ Flip \\/ Reset",
+      "Weak == Init /\\ [][Next]_vars /\\ WF_vars(Inc) /\\ WF_vars(Reset)",
+      "Strong == Init /\\ [][Next]_vars /\\ SF_vars(Inc) /\\ SF_vars(Reset)",
+      "Unfair == Init /\\ [][Next]_vars",
+      "Returns == []<>(x = 0)",
+      "Steps == []<><<Inc>>_vars",
+      "Settles == <>[](y = 0)",
+      "Leads == (x = 3) ~> (y = 1)",
+    ];
+    for (const [config, verdict] of [
+      ["SPECIFICATION Weak\nPROPERTY Returns\nPROPERTY Steps", "holds"],
+      ["SPECIFICATION Strong\nPROPERTY Returns", "holds"],
+      ["SPECIFICATION Weak\nPROPERTY Settles", "lasso"],
+      ["SPECIFICATION Strong\nPROPERTY Leads", "lasso"],
+      ["SPECIFICATION Unfair\nPROPERTY Returns", "lasso"],
+    ] as const) {
+      const lines = await compareWithInterpreter(body, config);
+      expect(lines).toContain(`[engine] native: liveness: ${verdict}`);
+      // PROVE_IT_LIVE_CHECK has the interpreter check the properties on the graph too, and throws
+      // where it finds otherwise.
+      await compareWithInterpreter(body, config, { PROVE_IT_LIVE_CHECK: "1" });
+    }
+  });
+
   it("hands over a violated invariant, deadlock and a failed action property", async () => {
     const cases: [string[], string, string][] = [
       [

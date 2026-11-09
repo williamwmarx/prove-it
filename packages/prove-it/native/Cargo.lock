@@ -8,6 +8,7 @@ version = "0.1.0"
 dependencies = [
  "tla-engine",
  "tla-ir",
+ "tla-live",
  "tla-values",
 ]
 
@@ -25,11 +26,16 @@ name = "tla-engine"
 version = "0.1.0"
 dependencies = [
  "tla-ir",
+ "tla-live",
  "tla-values",
 ]
 
 [[package]]
 name = "tla-ir"
+version = "0.1.0"
+
+[[package]]
+name = "tla-live"
 version = "0.1.0"
 
 [[package]]

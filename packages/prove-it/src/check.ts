@@ -4,8 +4,14 @@ import { getMemoStatistics } from "./engine/compile";
 import { toEngineProperties } from "./engine/context";
 import { toValue as toEngineValue } from "./engine/convert";
 import { type IrOutcome, lowerToIr } from "./engine/ir";
-import { checkNatively, toEngineResult, toStop } from "./engine/native";
-import { type EngineCheckpoint, type EngineGraph, isBailout, runEngine } from "./engine/search";
+import { checkNatively, type NativeLiveness, toEngineResult, toStop } from "./engine/native";
+import {
+  type EngineCheckpoint,
+  type EngineGraph,
+  type EngineResult,
+  isBailout,
+  runEngine,
+} from "./engine/search";
 import {
   getEngineBackend,
   getEngineSetting,
@@ -18,6 +24,7 @@ import {
 import { createEnvironment } from "./environment";
 import {
   createStackOverflowError,
+  EngineInvariantError,
   getErrorExitCode,
   isStackOverflow,
   MissingBuildFileError,
@@ -1427,7 +1434,33 @@ const searchStates = (
     checkpoint: undefined as EngineCheckpoint | undefined,
     // TLC's fingerprints of the states of a graph the engine handed over.
     fingerprints: undefined as BigInt64Array | undefined,
+    // What the native liveness checker found, and the counterexample the interpreter prints
+    // without checking the temporal properties itself, with the search's counts.
+    liveness: undefined as NativeLiveness | undefined,
+    lasso: undefined as Lasso | undefined,
+    result: undefined as EngineResult | undefined,
   };
+  // Under PROVE_IT_LIVE_CHECK the interpreter checks the temporal properties on the engine's graph
+  // too, and throws where it finds otherwise than the native checker.
+  const isLiveChecked = getEnvironmentFlag("PROVE_IT_LIVE_CHECK");
+  const checkLiveVerdict = (
+    found: Pick<NativeLiveness, "status" | "path" | "loopStart" | "state">,
+  ) => {
+    const verdict = engineReport.liveness;
+    if (!isLiveChecked || !verdict || verdict.status === "declined") return;
+    const isSame =
+      verdict.status === found.status &&
+      verdict.loopStart === found.loopStart &&
+      verdict.state === found.state &&
+      verdict.path.length === found.path.length &&
+      verdict.path.every((state, position) => state === found.path[position]);
+    if (!isSame) {
+      throw new EngineInvariantError(
+        `the native liveness checker found ${verdict.status} [${verdict.path.join(",")}] from ${verdict.loopStart}, the interpreter ${found.status} [${found.path.join(",")}] from ${found.loopStart}`,
+      );
+    }
+  };
+  const NO_PATH = new Int32Array(0);
   // Reports the counts held back below the number of initial states generated so far.
   const releaseInitialProgress = (generated: number) => {
     const held = engineReport.heldProgress;
@@ -1503,7 +1536,7 @@ const searchStates = (
     current.candidateLevel = 1;
     unstoredState.fingerprint = taken.fingerprintState;
     try {
-      liveness?.addInitialState(index, taken.state);
+      if (!engineReport.lasso) liveness?.addInitialState(index, taken.state);
       return undefined;
     } catch (error) {
       return reportInitialFailure(error, taken.state);
@@ -1682,6 +1715,7 @@ const searchStates = (
           atom,
           actions: atom.kind === "Enabled" ? enabledActions.get(atom) : undefined,
         })),
+        liveFormula: liveness?.formula,
       });
       const milliseconds = performance.now() - loweredAt;
       if ("ir" in outcome) writeDebugBytes("PROVE_IT_IR_DUMP", outcome.ir);
@@ -1721,10 +1755,17 @@ const searchStates = (
     const backend = getEngineBackend();
     const isNative = backend === "rust" || (backend === "auto" && getEngineThreads() === 1);
     const native = isNative ? checkNatively(lowerModel, callbacks) : undefined;
+    const verdict = native?.status === "complete" ? native.liveness : undefined;
+    engineReport.liveness = verdict;
     if (native) {
       reportEngine(
         `native: ${native.status}: ${native.reason} (${(performance.now() - startedAt).toFixed(2)} ms)`,
       );
+      if (verdict) {
+        reportEngine(
+          `native: liveness: ${verdict.status}${verdict.reason === "" ? "" : `: ${verdict.reason}`}`,
+        );
+      }
       if ("counts" in native && getEnvironmentFlag("PROVE_IT_FP_VERIFY")) {
         reportEngine(`native: fingerprint collisions: ${native.counts[native.counts.length - 1]}`);
       }
@@ -1763,8 +1804,19 @@ const searchStates = (
         fingerprints.forEach((fingerprint, index) => {
           tlcFingerprints[index] = Number(BigInt.asIntN(32, fingerprint));
         });
+        const isLasso = verdict?.status === "lasso" && !isLiveChecked;
+        if (verdict && isLasso) {
+          const loopStart = verdict.loopStart;
+          const path = Array.from(verdict.path);
+          engineReport.lasso = {
+            prefix: path.slice(0, loopStart),
+            cycle: path.slice(loopStart),
+            isCycleConstrained: verdict.isCycleConstrained === 1,
+          };
+          engineReport.result = result;
+        }
         reportEngine(
-          `found ${result.distinctStates} states in ${(performance.now() - startedAt).toFixed(0)} ms; the interpreter checks the temporal properties`,
+          `found ${result.distinctStates} states in ${(performance.now() - startedAt).toFixed(0)} ms; the interpreter ${isLasso ? "prints the counterexample" : "checks the temporal properties"}`,
         );
         return undefined;
       }
@@ -1784,6 +1836,19 @@ const searchStates = (
       runtime.queueSize = 0;
       statistics.depth = result.depth;
       statistics.initialStates = result.initialStates;
+      // The native checker found that the temporal properties hold.
+      if (liveness && verdict?.status === "holds") {
+        releaseInitialProgress(Infinity);
+        reportComputed();
+        options.onProgress?.({
+          kind: "liveness-started",
+          branches: liveness.branches,
+          isComplete: true,
+          states: result.distinctStates,
+          statistics: createResult("success"),
+        });
+        options.onProgress?.({ kind: "liveness-finished" });
+      }
       const postconditionResult = checkPostconditions();
       if (postconditionResult) return postconditionResult;
       return {
@@ -2076,6 +2141,12 @@ const searchStates = (
       if (liveness && source && is174) stateWriter?.writeStuttering(source);
       const accepted = liveness?.addState(index, state, liveSuccessors);
       if (!liveness || !accepted) return undefined;
+      checkLiveVerdict({
+        status: "accepted",
+        path: Int32Array.from(accepted),
+        loopStart: 0,
+        state: index,
+      });
       const steps = getPathSteps(accepted);
       const properties = getViolatedProperties(
         liveness,
@@ -2218,6 +2289,27 @@ const searchStates = (
     periodic.time += performance.now() - now;
     return lasso;
   };
+  // The native checker found a counterexample on the engine's complete search, which the
+  // interpreter prints with the search's counts.
+  const decided = engineReport.result;
+  if (liveness && engineReport.lasso && decided) {
+    runtime.generatedStates = decided.generatedStates;
+    runtime.distinctStates = decided.distinctStates;
+    runtime.queueSize = 0;
+    statistics.depth = decided.depth;
+    runtime.diameter = decided.depth;
+    decided.outDegrees.forEach((count, degree) => {
+      outDegrees[degree] = count;
+    });
+    options.onProgress?.({
+      kind: "liveness-started",
+      branches: liveness.branches,
+      isComplete: true,
+      states: runtime.distinctStates,
+      statistics: createResult("success"),
+    });
+    return reportLasso(liveness, engineReport.lasso);
+  }
   for (let index = resumeAt; index < states.length && !runtime.isStopped; index++) {
     if (index > resumeAt) takePendingStates();
     current.index = index;
@@ -2259,6 +2351,16 @@ const searchStates = (
     });
   }
   const lasso = liveness?.findViolation();
+  checkLiveVerdict(
+    lasso
+      ? {
+          status: "lasso",
+          path: Int32Array.from([...lasso.prefix, ...lasso.cycle]),
+          loopStart: lasso.prefix.length,
+          state: 0,
+        }
+      : { status: "holds", path: NO_PATH, loopStart: 0, state: 0 },
+  );
   if (liveness && lasso) return reportLasso(liveness, lasso);
 
   // TLC finishes the check of the temporal properties before it checks the postconditions.
