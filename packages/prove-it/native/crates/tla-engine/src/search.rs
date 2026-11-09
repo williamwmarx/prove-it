@@ -1830,15 +1830,24 @@ fn run_startup(machine: &mut Machine<'_>, startup: &Startup) -> Outcome<Started>
             Err(bail) if is_engine_limit(bail.0) => return Err(bail),
             Err(_) => continue,
         };
-        let format = |machine: &Machine<'_>| tla_values::print::format_value(&machine.store, value);
+        // The store forgets how TLC built some values, whose text then depends on it.
+        let format = |machine: &Machine<'_>| {
+            if tla_values::print::is_printable(&machine.store, value) {
+                Ok(tla_values::print::format_value(&machine.store, value))
+            } else {
+                Err(Bail(
+                    "unsupported: printing a value whose text depends on how TLC built it",
+                ))
+            }
+        };
         let message = match form {
             PredicateForm::Predicate if value == TRUE => continue,
             PredicateForm::Predicate => {
-                format!("The {kind} of {name} is equal to {}", format(machine))
+                format!("The {kind} of {name} is equal to {}", format(machine)?)
             }
             PredicateForm::Definition => format!("The {kind} {name} cannot be a constant."),
             PredicateForm::Specification => {
-                format!("The value of {name} is equal to {}", format(machine))
+                format!("The value of {name} is equal to {}", format(machine)?)
             }
         };
         return Ok(Started {
