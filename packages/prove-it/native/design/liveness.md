@@ -182,6 +182,8 @@ and 2.75 GB; 49 s of it answers WF_vars(Next)'s action on each step, as TLC does
 With PROVE_IT_WORKERS above one, `answer_atoms` answers the state and action atoms on that many
 threads, each a run of the states over the search's store, as a parallel search's threads expand a
 level: an evaluation that neither prints, draws nor reads TLC's diameter is the same on any thread.
-Each thread's overlay copies the store's values, as the search's do. TokenRing at N = 8 on 4 threads
-checks in 51 s rather than 81 s, its atoms in about 19 s rather than 49, at 5.0 GB peak rather than
-2.6.
+Each extra thread's overlay copies the store's values, as the search's do, so each costs about the
+store's size in memory. TokenRing at N = 8 on 4 threads checks in 51 s rather than 81 s, its atoms in
+about 19 s rather than 49, at 5.0 GB peak rather than 2.6. Sharing the store instead slows a search
+on one thread by 9 to 18 %, so the parallel atoms stay opt-in: the engine answers them on one thread
+unless PROVE_IT_WORKERS asks for more.
