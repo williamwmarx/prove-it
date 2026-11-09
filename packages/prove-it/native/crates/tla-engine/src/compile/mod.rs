@@ -168,11 +168,11 @@ pub struct Compiled {
     /// For a set: whether TLC's value is a set enumeration, and whether each element's is.
     pub(crate) is_enumerated: bool,
     pub(crate) are_elements_enumerated: bool,
-    /// For a set: whether TLC's value streams its elements in another order than its normalized
-    /// set (`isStreamedApart`), as a UNION or `\cup` TLC keeps lazy does, and whether each of its
-    /// elements is known to stream as its normalized set does (`is_in_stream_order`).
-    pub(crate) is_streamed_apart: bool,
-    pub(crate) are_elements_in_stream_order: bool,
+    /// For a set: whether TLC's value is known to stream its elements as its normalized set does,
+    /// which a UNION or `\cup` TLC keeps lazy doesn't (`isStreamedApart`), and a value of unknown
+    /// provenance, such as a bound name's, may not; and whether each of its elements is.
+    pub(crate) is_in_order: bool,
+    pub(crate) are_elements_in_order: bool,
     /// Whether the value is always TRUE or FALSE.
     pub(crate) is_boolean: bool,
     pub(crate) is_constant: bool,
@@ -235,8 +235,8 @@ pub(crate) fn leaf(eval: Eval, footprint: Footprint) -> Compiled {
         is_normalized: true,
         is_enumerated: false,
         are_elements_enumerated: false,
-        is_streamed_apart: false,
-        are_elements_in_stream_order: false,
+        is_in_order: false,
+        are_elements_in_order: false,
         is_boolean: false,
         is_constant: false,
         infinite: None,
@@ -248,18 +248,6 @@ pub(crate) fn leaf(eval: Eval, footprint: Footprint) -> Compiled {
         predicate: None,
         reference: None,
     }
-}
-
-// Whether a value is known to stream as its normalized set does where it is a set: a set
-// enumeration or an interval, a set TLC keeps lazy that doesn't stream apart, or an unprimed
-// variable, whose sets TLC has cached. A value of unknown provenance, such as a bound name's, may
-// be a UNION or `\cup` that streams duplicates.
-pub(crate) fn is_in_stream_order(value: &Compiled) -> bool {
-    !value.is_streamed_apart
-        && (value.is_enumerated
-            || value.interval.is_some()
-            || value.reference.is_some()
-            || matches!(value.shape, Shape::Current(_)))
 }
 
 // A set's reference, or None for a set TLC keeps lazy that the engine has no reference for, such
@@ -1072,7 +1060,8 @@ impl<'a> Compiler<'a> {
         // TLC fingerprints a state, which caches each lazy set in it as its normalized set.
         Ok(Compiled {
             shape: Shape::Current(index),
-            are_elements_in_stream_order: true,
+            is_in_order: true,
+            are_elements_in_order: true,
             ..leaf(
                 eval(move |machine| machine.read_current(index)),
                 Footprint::var(index),

@@ -164,6 +164,8 @@ describe.if(ADDON !== undefined)("the native engine's lazy sets", () => {
     for (const set of [
       "UNION {(SUBSET {1}) \\cup SUBSET {2}}",
       "UNION {s : s \\in {(SUBSET {1}) \\cup SUBSET {2}}}",
+      "UNION {[{1} -> s] : s \\in {(SUBSET {1}) \\cup SUBSET {2}}}",
+      "UNION {IF s = {} THEN {} ELSE s : s \\in {(SUBSET {1}) \\cup SUBSET {2}}}",
     ]) {
       const body = ["VARIABLE x", `Init == x \\in ${set}`, "Next == UNCHANGED x"];
       const lines = await compareWithInterpreter(body, CONFIG);
