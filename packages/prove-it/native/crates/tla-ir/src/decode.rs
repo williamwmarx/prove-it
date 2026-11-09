@@ -606,6 +606,7 @@ impl Decoder<'_> {
             return self.error(format!("{} aliases", aliases.len()));
         }
         let alias = aliases.pop();
+        let postconditions = self.unprinted()?;
         let symmetry = match self.next()? {
             -1 => None,
             count if count >= 0 => Some(
@@ -693,6 +694,7 @@ impl Decoder<'_> {
             initial_predicates,
             view,
             alias,
+            postconditions,
             symmetry,
             check_deadlock,
             is_warning_enabled,
