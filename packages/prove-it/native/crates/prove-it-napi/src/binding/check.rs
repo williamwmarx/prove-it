@@ -352,9 +352,11 @@ pub(super) unsafe extern "C" fn check_model(env: napi_env, info: napi_callback_i
                 live_checked,
                 threads,
                 minimum_shared_level,
+                liveness_periodic,
+                test_live_check_at,
             ] = words[..]
             else {
-                return Err(wrong("the settings must hold seven numbers".into()));
+                return Err(wrong("the settings must hold nine numbers".into()));
             };
             if type_of(env, state_log)? != NAPI_STRING {
                 return Err(wrong("the state log must be a string".into()));
@@ -374,6 +376,8 @@ pub(super) unsafe extern "C" fn check_model(env: napi_env, info: napi_callback_i
                     .unwrap_or(MINIMUM_SHARED_LEVEL),
                 // The interpreter reports a violation itself.
                 is_violation_reported: false,
+                is_liveness_periodic: liveness_periodic != 0,
+                test_live_check_at: usize::try_from(test_live_check_at).ok(),
             };
             let mut undefined = null_mut();
             status(napi_get_undefined(env, &mut undefined))?;
@@ -383,22 +387,30 @@ pub(super) unsafe extern "C" fn check_model(env: napi_env, info: napi_callback_i
                 if is_thrown {
                     return;
                 }
-                let numbers = |values: [u64; 5]| -> Result<Vec<napi_value>, Thrown> {
+                let numbers = |values: [u64; 6]| -> Result<Vec<napi_value>, Thrown> {
                     values
                         .iter()
                         .map(|&value| create_number(env, value as f64))
                         .collect()
                 };
                 let call = match event {
-                    Event::InitialStatesStarted => numbers([0; 5]).map(|argv| (report, argv)),
+                    Event::InitialStatesStarted => numbers([0; 6]).map(|argv| (report, argv)),
                     Event::InitialStatesProgress(count) => {
-                        numbers([1, count, 0, 0, 0]).map(|argv| (report, argv))
+                        numbers([1, count, 0, 0, 0, 0]).map(|argv| (report, argv))
                     }
                     Event::InitialStates(generated, distinct) => {
-                        numbers([2, generated, distinct, 0, 0]).map(|argv| (report, argv))
+                        numbers([2, generated, distinct, 0, 0, 0]).map(|argv| (report, argv))
                     }
                     Event::Progress(generated, distinct, queued, depth) => {
-                        numbers([3, generated, distinct, queued, depth]).map(|argv| (report, argv))
+                        numbers([3, generated, distinct, queued, depth, 0])
+                            .map(|argv| (report, argv))
+                    }
+                    Event::LivenessStarted(branches, expanded, [generated, distinct, depth]) => {
+                        numbers([4, branches, expanded, generated, distinct, depth])
+                            .map(|argv| (report, argv))
+                    }
+                    Event::LivenessFinished => {
+                        numbers([5, 0, 0, 0, 0, 0]).map(|argv| (report, argv))
                     }
                     Event::Print(values, width) => (|| {
                         Ok((
@@ -473,6 +485,7 @@ pub(super) unsafe extern "C" fn check_model(env: napi_env, info: napi_callback_i
                         counts.depth,
                         value_count as u64,
                         threads as u64,
+                        counts.queued,
                         collisions,
                     ];
                     set(
