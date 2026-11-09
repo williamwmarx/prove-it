@@ -353,7 +353,7 @@ mod tests {
                     } => {
                         let (function, key) =
                             (registers[function.0 as usize], registers[key.0 as usize]);
-                        registers[into.0 as usize] = predicate::apply(machine, function, key)?;
+                        registers[into.0 as usize] = machine.store.apply(function, key)?;
                     }
                     Instruction::Equal { into, left, right } => {
                         let (left, right) =
