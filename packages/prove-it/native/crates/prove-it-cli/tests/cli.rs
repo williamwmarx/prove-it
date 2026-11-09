@@ -222,3 +222,25 @@ fn leaves_a_state_an_alias_prints_to_the_front_end() {
     assert!(String::from_utf8_lossy(&output.stderr).contains("not native yet"));
     std::fs::remove_dir_all(directory).expect("removed");
 }
+
+#[test]
+fn checks_temporal_properties_that_hold() {
+    let ir = include_bytes!(
+        "../../../../tests/conformance/ir/examples/specifications/glowingRaccoon/stages.ir"
+    );
+    let config = "CONSTANTS\n  DNA = 5\n  PRIMER = 5\nINVARIANT TypeOK\nSPECIFICATION Spec\nPROPERTIES cleanSpec primerDepleted\nCHECK_DEADLOCK FALSE\n";
+    let (output, directory) = run_golden("liveness", ir, "stages", config, &[]);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(0), "{text}");
+    // TLC reports how far the search got, without rates, before it checks the complete graph.
+    assert!(text.contains(": 93 states generated, 83 distinct states found, 0 states left on queue.\nChecking temporal properties for the complete state space with 83 total distinct states at ("), "{text}");
+    assert!(
+        text.contains("Finished checking temporal properties in 00s at "),
+        "{text}"
+    );
+    assert!(
+        text.contains("\nModel checking completed. No error has been found."),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}

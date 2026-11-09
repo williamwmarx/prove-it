@@ -650,7 +650,9 @@ impl<'c> Checker<'c> {
 
     fn add_plain_state(&mut self, behavior: usize, set: &[Step], first_step: usize, state: u32) {
         let behavior = &mut self.behaviors[behavior];
-        while behavior.node_states.len() <= state as usize {
+        // A node for the state and each successor, which stays undone until its state is added.
+        let last = set.iter().map(|step| step.target).fold(state, u32::max);
+        while behavior.node_states.len() <= last as usize {
             let next = behavior.node_states.len() as u32;
             behavior.push_node(next, NO_NODE);
         }
@@ -1405,7 +1407,9 @@ pub fn check(
             checker.add_initial_state(state as u32)?;
         }
     }
-    for state in 0..graph.count() as u32 {
+    // A check part way through the search, as TLC's periodic one, adds the states it expanded:
+    // the nodes of the others are undone, and the search for a cycle passes them by.
+    for state in 0..graph.expanded() as u32 {
         if let Some(path) = checker.add_state(state)? {
             *events = checker.take_events();
             return Ok(Verdict::Accepted { state, path });

@@ -1,9 +1,10 @@
 # Publishes packages/prove-it to npm when a commit on main changes its version, then tags the
 # commit v<version>. A push that changes package.json but not the version publishes nothing. Run
 # it by hand for a first release or to retry one that failed. The native engine's platform packages
-# for Linux x64 and arm64, macOS arm64 and x64 and Windows x64 go first, each built and tested on its
-# own system (macOS and Windows on GitHub's runners, by platforms.yml), and the main package lists
-# them as optionalDependencies, added when it is packed; other platforms get the TypeScript engine.
+# for Linux x64 and arm64 with glibc and with musl, macOS arm64 and x64 and Windows x64 go first,
+# each built and tested on its own system (musl in Alpine, macOS and Windows on GitHub's runners, by
+# platforms.yml), and the main package lists them as optionalDependencies, added when it is packed;
+# other platforms get the TypeScript engine.
 #
 # The npm token is NPM_TOKEN in the 1Password Environment prove-it-release, whose ID is below.
 # ONEPASSWORD_PROVE_IT_RELEASE_TOKEN, a Depot CI secret scoped to this repository, main and this
@@ -60,9 +61,47 @@ jobs:
           path: ${{ runner.temp }}/platform-packages/
           if-no-files-found: error
           retention-days: 7
+  # Builds the Linux musl engines' platform packages on each CPU in Alpine, with
+  # scripts/ci/alpine-package.sh: the crates' tests, the native unit tests with the addon and
+  # install-test, then the packed tarball for the publish job. It holds no credential.
+  musl:
+    name: Build the Linux ${{ matrix.cpu }} musl engine
+    if: github.ref == 'refs/heads/main'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      matrix:
+        include:
+          - cpu: x64
+            runner: depot-ubuntu-24.04
+          - cpu: arm64
+            runner: depot-ubuntu-24.04-arm
+    steps:
+      - name: Check out exactly the pushed main commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Build, test and pack on Alpine
+        run: |
+          set -euo pipefail
+          docker run --rm --volume "$PWD:/repo" \
+            alpine:3.22@sha256:49340b346798875b5592e5d420241f2f9cfba5f47e62ebb1446a1b34734e898f \
+            /repo/scripts/ci/alpine-package.sh
+          platform=$(ls platform-packages/*-linux-${{ matrix.cpu }}-musl-*.tgz)
+          echo "Packed $(basename "$platform"), sha256 $(sha256sum "$platform" | cut -d' ' -f1)" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Hand the tarball to the publish job
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: linux-${{ matrix.cpu }}-musl
+          path: platform-packages/*-linux-${{ matrix.cpu }}-musl-*.tgz
+          if-no-files-found: error
+          retention-days: 7
   release:
     name: Publish to npm
-    needs: arm64
+    needs:
+      - arm64
+      - musl
     if: github.ref == 'refs/heads/main'
     runs-on: depot-ubuntu-24.04
     timeout-minutes: 30
@@ -126,6 +165,13 @@ jobs:
         with:
           name: linux-arm64-gnu
           path: ${{ runner.temp }}/fetched
+      - name: Fetch the Linux musl engines
+        if: steps.plan.outputs.publish == 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          pattern: linux-*-musl
+          merge-multiple: true
+          path: ${{ runner.temp }}/fetched
       # platforms.yml builds, tests and packs the macOS and Windows engines on GitHub's runners, on the
       # push of this same commit. This waits for that run, which the job's timeout bounds, fails unless
       # it passed, and takes the packages it packed.
@@ -170,7 +216,7 @@ jobs:
           platform=$(bun scripts/platform-packages.ts pack "$RUNNER_TEMP/platform-packages")
           echo "platform=$platform" >> "$GITHUB_OUTPUT"
           echo "Packed $(basename "$platform"), sha256 $(sha256sum "$platform" | cut -d' ' -f1)" | tee -a "$GITHUB_STEP_SUMMARY"
-          for name in linux-arm64-gnu darwin-arm64 darwin-x64 win32-x64-msvc; do
+          for name in linux-arm64-gnu linux-x64-musl linux-arm64-musl darwin-arm64 darwin-x64 win32-x64-msvc; do
             fetched=$(ls "$RUNNER_TEMP"/fetched/*-"$name"-*.tgz)
             echo "Fetched $(basename "$fetched"), sha256 $(sha256sum "$fetched" | cut -d' ' -f1)" | tee -a "$GITHUB_STEP_SUMMARY"
           done
@@ -178,7 +224,15 @@ jobs:
             const fs = require("fs");
             const main = JSON.parse(fs.readFileSync("package.json", "utf8"));
             main.optionalDependencies = Object.fromEntries(
-              ["linux-x64-gnu", "linux-arm64-gnu", "darwin-arm64", "darwin-x64", "win32-x64-msvc"].map((name) => [
+              [
+                "linux-x64-gnu",
+                "linux-arm64-gnu",
+                "linux-x64-musl",
+                "linux-arm64-musl",
+                "darwin-arm64",
+                "darwin-x64",
+                "win32-x64-msvc",
+              ].map((name) => [
                 `${main.name}-${name}`,
                 main.version,
               ]),
@@ -216,7 +270,7 @@ jobs:
               npm publish "$tarball" --access public --ignore-scripts
           done
           rm -f "$npmrc"
-          echo "Published $PACKAGE@${{ steps.plan.outputs.version }} and its Linux, macOS and Windows engines" >> "$GITHUB_STEP_SUMMARY"
+          echo "Published $PACKAGE@${{ steps.plan.outputs.version }} and its Linux (glibc and musl), macOS and Windows engines" >> "$GITHUB_STEP_SUMMARY"
       - name: Tag the release
         env:
           GH_TOKEN: ${{ github.token }}

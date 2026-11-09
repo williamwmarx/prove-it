@@ -1143,7 +1143,7 @@ pub fn environment(
         (
             "assigned",
             Some(Json::Array(
-                environment.constants_order.iter().map(name).collect(),
+                environment.constants.keys().map(name).collect(),
             )),
         ),
         (

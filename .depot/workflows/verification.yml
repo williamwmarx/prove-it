@@ -83,16 +83,15 @@ jobs:
               bun run build
               PROVE_IT_ENGINE_BACKEND=rust PROVE_IT_ENGINE_ADDON="$PWD/native/npm/linux-x64-gnu/prove-it-engine.node" bun test tests/unit
           # The Rust front end against the TypeScript one, on every module of the corpora and the
-          # fixtures (native/DESIGN.md section 14). resolve links each module as a spec's root, and
-          # model links each corpus model with its configuration, ir lowers each environment, and
-          # order compares TLC's string, declaration and definition orders of each model.
+          # fixtures (native/DESIGN.md section 14). resolve and ir link each module as a spec's root
+          # and lower it; model, order and model-ir link, order and lower each corpus model.
           - task: Front End
             command: |
               cd packages/prove-it
               bun scripts/front-modules.ts --check
               bun scripts/fetch-corpora.ts
               cd native && cargo build --release --locked -p tla-front --bin front-dump && cd ..
-              for mode in tokens ast sany-ast config resolve model ir order; do
+              for mode in tokens ast sany-ast config resolve model ir order model-ir; do
                 bun scripts/front-differential.ts "$mode" --mutate 400 --rust native/target/release/front-dump
               done
           # Every corpus model lowered to the engine IR, which round-trips through Rust, and the
@@ -166,6 +165,31 @@ jobs:
           PATH="$(scripts/ci/bootstrap.sh bun node rust):$PATH"
           bash -euo pipefail -c "$COMMAND"
           test -z "$(git status --porcelain)"
+  # The native engine's musl packages, built and tested on Alpine by scripts/ci/alpine-package.sh,
+  # which ends with the packed packages installed with npm and searching natively.
+  musl:
+    name: ${{ matrix.task }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - task: Alpine x64
+            runner: depot-ubuntu-24.04
+          - task: Alpine arm64
+            runner: depot-ubuntu-24.04-arm
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Build, test, install and pack on Alpine
+        run: |
+          set -euo pipefail
+          docker run --rm --volume "$PWD:/repo" \
+            alpine:3.22@sha256:49340b346798875b5592e5d420241f2f9cfba5f47e62ebb1446a1b34734e898f \
+            /repo/scripts/ci/alpine-package.sh
   # fetch-depth 0 so a secret a later commit deleted is still found. The repository is public, so
   # any finding is a leaked credential to revoke, not to allowlist.
   secret-history:
@@ -189,6 +213,7 @@ jobs:
     needs:
       - checks
       - native
+      - musl
       - secret-history
     runs-on: depot-ubuntu-24.04
     timeout-minutes: 5
@@ -197,6 +222,7 @@ jobs:
         env:
           CHECKS: ${{ needs.checks.result }}
           NATIVE: ${{ needs.native.result }}
+          MUSL: ${{ needs.musl.result }}
           SECRET_HISTORY: ${{ needs.secret-history.result }}
         run: |
           set -euo pipefail
@@ -207,6 +233,7 @@ jobs:
             echo "| --- | --- |"
             echo "| checks | $CHECKS |"
             echo "| native | $NATIVE |"
+            echo "| musl | $MUSL |"
             echo "| secret-history | $SECRET_HISTORY |"
           } >> "$GITHUB_STEP_SUMMARY"
-          [[ "$CHECKS" == success && "$NATIVE" == success && "$SECRET_HISTORY" == success ]]
+          [[ "$CHECKS" == success && "$NATIVE" == success && "$MUSL" == success && "$SECRET_HISTORY" == success ]]

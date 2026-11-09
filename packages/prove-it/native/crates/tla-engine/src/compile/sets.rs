@@ -16,7 +16,8 @@ use super::{
 use crate::footprint::Footprint;
 use crate::machine::{Eval, Machine, Member, Parts};
 
-const MAXIMUM_FUNCTIONS: f64 = 1e6;
+// Past this many functions the interpreter builds the set instead, before memory runs short.
+const MAXIMUM_FUNCTIONS: f64 = (1u64 << 24) as f64;
 
 /// TLC fails to test a value other than a model value for membership in a set of another kind:
 /// an untyped model value isn't a member, and anything else, a typed model value included, fails.
