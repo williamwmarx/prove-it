@@ -40,7 +40,7 @@ pub fn rebuild_trace(ir: &Ir, violation: &Violation) -> Result<PrintedTrace, Str
                     ViolationKind::Invariant(_) | ViolationKind::InitialInvariant(_) => {
                         Ending::Violation
                     }
-                    ViolationKind::Lasso { .. } => Ending::Lasso,
+                    ViolationKind::Lasso { .. } | ViolationKind::Accepted { .. } => Ending::Lasso,
                     ViolationKind::Error { .. } => {
                         return Err("a failure evaluating the model".into());
                     }

@@ -98,6 +98,27 @@ pub enum Event {
     Atom { atom: u32, slot: usize },
 }
 
+/// Adds the states the search expanded to the behavior graphs, as TLC does as it searches even
+/// under `-lncheck final`: the first whose tableau node accepts every behavior, which stops TLC's
+/// search there, as a `Verdict::Accepted`.
+pub fn find_accepted(
+    formula: &[Term],
+    properties: &[&[Term]],
+    graph: &Graph<'_>,
+    tables: &[Option<&[u8]>],
+) -> Result<Option<Verdict>, Declined> {
+    let mut terms = Terms::default();
+    let root = read_formula(&mut terms, formula)?;
+    let properties = properties
+        .iter()
+        .map(|property| read_formula(&mut terms, property))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut checker = checker::Checker::new(terms, root, graph, tables)?;
+    checker::find_accepted(&mut checker)?
+        .map(|(state, path)| checker::accepted(&checker, &properties, state, path))
+        .transpose()
+}
+
 /// What the check found.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Verdict {
@@ -113,8 +134,12 @@ pub enum Verdict {
         violated: Vec<usize>,
     },
     /// A tableau node that accepts every behavior, which TLC reports as it adds `state` to the
-    /// graph, with the path of states to it.
-    Accepted { state: u32, path: Vec<u32> },
+    /// graph, with the path of states to it and the positions of the properties it violates.
+    Accepted {
+        state: u32,
+        path: Vec<u32>,
+        violated: Vec<usize>,
+    },
     /// The checker needs the steps from the states past the stored ones that `reals` names and the
     /// graph doesn't expand yet: the engine expands them and checks again.
     Unexpanded,

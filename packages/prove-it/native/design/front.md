@@ -259,3 +259,17 @@ The corpora exercise these errors, with SANY's wording:
 - the levels and Leibniz checks of instance substitutions.
 
 With the checks, `sany-text` reports 1,716 of 2,357 matching and 0 differing.
+
+## (d2) part 2 as built: SANY's fatal errors
+
+`get_sany_text` writes the fatal errors that stop SANY's parsing phase, other than parse errors:
+
+- a module no file holds, reported in the module that names it;
+- a circular dependency, found before semantic analysis;
+- a file named apart from the module it holds.
+
+It prints them as `getSanyReport` does, after the "Parsing file" lines so far. `ReportOptions.file_name` is the name TLC gives SANY for its "Fatal errors while parsing TLA+ spec in file" line.
+
+TLC 1.7.4's aborts and SANY's parse errors (`src/sany/parse-error.ts`) are still `NotYet`.
+
+`sany-text` reports 1,825 of 2,357 matching, and 2,117 of 3,957 with `--mutate 400`, with 0 differing.
