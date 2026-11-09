@@ -8,6 +8,7 @@
 //! parent's, one per variable that changed.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use crate::store::{
     EMPTY_SLOT, Id, KIND_BOOL, KIND_INT, KIND_MODEL, KIND_SET, KIND_STRING, Store, TRUE,
@@ -124,29 +125,21 @@ pub struct Parent {
     prefixes: Vec<u64>,
 }
 
-/// The fingerprints the overlays of a parallel level computed, by the ids the store imported
-/// their values as, from the store's count of values before: what a value's fingerprint is
-/// doesn't depend on which overlay computed it, so every overlay keeps them all.
-#[derive(Default)]
-pub struct Carried {
-    bound: Id,
-    values: Vec<ValueFingerprint>,
-}
-
-impl Carried {
-    /// Empties it, for the values of overlays laid on a store of this many values.
-    pub fn reset(&mut self, bound: Id) {
-        self.bound = bound;
-        self.values.clear();
-    }
-}
+/// The fingerprints a search computed of its store's values, which the caches of a parallel
+/// level's overlays read in place while the store doesn't change.
+pub struct SharedFingerprints(Arc<Vec<ValueFingerprint>>);
 
 /// F(v) and |v| of the store's values, computed as they are first asked for, and the tables that
 /// shift by their lengths.
 #[derive(Default)]
 pub struct Fingerprints {
     generation: Option<u32>,
+    // The values' fingerprints, from `bound` on: an overlay's cache reads those of the store's
+    // values below `bound` in `base`, and keeps those it computes that `base` hasn't in `misses`.
     values: Vec<ValueFingerprint>,
+    bound: Id,
+    base: Option<Arc<Vec<ValueFingerprint>>>,
+    misses: HashMap<Id, ValueFingerprint>,
     // Shifts by 2^j zero bytes.
     powers: Vec<Box<ShiftTable>>,
     lengths: Vec<Box<ShiftTable>>,
@@ -167,48 +160,61 @@ impl Fingerprints {
     /// forget them when the store they were computed from is reset.
     pub fn reset(&mut self) {
         self.values.clear();
+        self.misses.clear();
     }
 
     /// Forgets the fingerprints of the values from this id on, which an overlay has let go of.
     pub fn forget_from(&mut self, id: Id) {
-        self.values.truncate(id as usize);
+        self.values.truncate(id.saturating_sub(self.bound) as usize);
     }
 
-    /// Adds the fingerprints this cache computed of an overlay's own values, which `imported` gives
-    /// the ids of in the store the overlay was laid on, by their position among them.
-    pub fn carry(&self, imported: &[Id], carried: &mut Carried) {
-        let bound = carried.bound;
-        let own = self.values.get(bound as usize..).unwrap_or_default();
-        for (&id, entry) in imported.iter().zip(own) {
-            if id == EMPTY_SLOT || id < bound || !entry.is_computed {
+    /// Lends the fingerprints computed so far to the caches of a parallel level's overlays, until
+    /// [`Fingerprints::take_back`].
+    pub fn share(&mut self) -> SharedFingerprints {
+        SharedFingerprints(Arc::new(std::mem::take(&mut self.values)))
+    }
+
+    /// Takes back what [`Fingerprints::share`] lent, once the overlays' caches let go of it.
+    pub fn take_back(&mut self, shared: SharedFingerprints) {
+        self.values = Arc::into_inner(shared.0).expect("the fingerprints, once overlays let go");
+    }
+
+    /// Makes this cache an overlay's, laid on a store of `bound` values whose fingerprints so far
+    /// are `shared`, forgetting what it computed before.
+    pub fn attach(&mut self, shared: &SharedFingerprints, bound: Id) {
+        self.values.clear();
+        self.misses.clear();
+        self.bound = bound;
+        self.base = Some(Arc::clone(&shared.0));
+    }
+
+    /// Lets go of what [`Fingerprints::attach`] lent, keeping what this cache computed.
+    pub fn detach(&mut self) {
+        self.base = None;
+    }
+
+    /// Adds what an overlay's cache computed: the fingerprints of the store's values it computed,
+    /// and of its own values, which `imported` gives the ids of in the store, by their position
+    /// among them. What a value's fingerprint is doesn't depend on which cache computed it.
+    pub fn absorb(&mut self, overlay: &Fingerprints, imported: &[Id]) {
+        let own = imported
+            .iter()
+            .copied()
+            .zip(&overlay.values)
+            .filter(|&(id, _)| id != EMPTY_SLOT);
+        let misses = overlay.misses.iter().map(|(&id, entry)| (id, entry));
+        for (id, entry) in own.chain(misses) {
+            if !entry.is_computed || self.entry(id).is_computed {
                 continue;
             }
-            let index = (id - bound) as usize;
-            if index >= carried.values.len() {
-                carried
-                    .values
-                    .resize(index + 1, ValueFingerprint::default());
-            }
-            // A length table's number is this cache's own.
-            carried.values[index] = ValueFingerprint {
-                table: UNKNOWN_TABLE,
-                ..*entry
-            };
-        }
-    }
-
-    /// Forgets the fingerprints of the values from `bound` on, as [`Fingerprints::forget_from`]
-    /// does, then keeps those carried of the values imported from `bound` on, if they were carried
-    /// from overlays laid where this one was.
-    pub fn forget_from_carried(&mut self, bound: Id, carried: &Carried) {
-        self.values.truncate(bound as usize);
-        if carried.bound != bound {
-            return;
-        }
-        for (index, entry) in carried.values.iter().enumerate() {
-            if entry.is_computed {
-                *self.get_entry(bound + index as Id) = *entry;
-            }
+            // A length table's number is the overlay cache's own.
+            self.set_entry(
+                id,
+                ValueFingerprint {
+                    table: UNKNOWN_TABLE,
+                    ..*entry
+                },
+            );
         }
     }
 
@@ -298,24 +304,56 @@ impl Fingerprints {
         if self.generation != Some(store.generation()) {
             self.generation = Some(store.generation());
             self.values.clear();
+            self.misses.clear();
         }
     }
 
-    fn get_entry(&mut self, id: Id) -> &mut ValueFingerprint {
-        let index = id as usize;
+    // A value's entry, not computed if no one computed it.
+    #[inline(always)]
+    fn entry(&self, id: Id) -> ValueFingerprint {
+        match id.checked_sub(self.bound) {
+            Some(own) => self.values.get(own as usize).copied().unwrap_or_default(),
+            None => self.base_entry(id),
+        }
+    }
+
+    // A value of the store an overlay was laid on: its entry there, else this cache's.
+    fn base_entry(&self, id: Id) -> ValueFingerprint {
+        self.base
+            .as_ref()
+            .and_then(|base| base.get(id as usize))
+            .filter(|entry| entry.is_computed)
+            .map_or_else(
+                || self.misses.get(&id).copied().unwrap_or_default(),
+                // A length table's number is the base's cache's own.
+                |entry| ValueFingerprint {
+                    table: UNKNOWN_TABLE,
+                    ..*entry
+                },
+            )
+    }
+
+    fn set_entry(&mut self, id: Id, entry: ValueFingerprint) {
+        let Some(own) = id.checked_sub(self.bound) else {
+            self.misses.insert(id, entry);
+            return;
+        };
+        let index = own as usize;
         if index >= self.values.len() {
             self.values
                 .resize((2 * (index + 1)).max(1024), ValueFingerprint::default());
         }
-        &mut self.values[index]
+        self.values[index] = entry;
     }
 
     // Extends a fingerprint by a value whose F and length are known, with its table found once.
     fn extend_known(&mut self, fingerprint: u64, id: Id) -> u64 {
-        let entry = self.values[id as usize];
+        let entry = self.entry(id);
         let number = if entry.table == UNKNOWN_TABLE {
             let number = self.get_length_table(entry.length);
-            self.values[id as usize].table = number;
+            if id >= self.bound {
+                self.values[(id - self.bound) as usize].table = number;
+            }
             number
         } else {
             entry.table
@@ -344,7 +382,7 @@ impl Fingerprints {
     pub fn get_value(&mut self, store: &Store, id: Id) -> (u64, u64) {
         self.check_generation(store);
         self.compute(store, id);
-        let entry = self.values[id as usize];
+        let entry = self.entry(id);
         (entry.fingerprint, entry.length)
     }
 
@@ -353,11 +391,7 @@ impl Fingerprints {
     #[inline(always)]
     fn compute(&mut self, store: &Store, id: Id) {
         // A value met before is known, as nearly every value of a generated state is.
-        if !self
-            .values
-            .get(id as usize)
-            .is_some_and(|entry| entry.is_computed)
-        {
+        if !self.entry(id).is_computed {
             self.compute_new(store, id);
         }
     }
@@ -366,12 +400,12 @@ impl Fingerprints {
     fn compute_new(&mut self, store: &Store, id: Id) {
         let mut pending = vec![(id, false)];
         while let Some((top, is_expanded)) = pending.pop() {
-            if self.get_entry(top).is_computed {
+            if self.entry(top).is_computed {
                 continue;
             }
             if is_expanded {
                 let computed = self.compute_one(store, top);
-                *self.get_entry(top) = computed;
+                self.set_entry(top, computed);
                 continue;
             }
             pending.push((top, true));
@@ -419,7 +453,7 @@ impl Fingerprints {
                     match part {
                         Some(part) => {
                             fingerprint = self.extend_known(fingerprint, part);
-                            length += self.values[part as usize].length;
+                            length += self.entry(part).length;
                         }
                         None => {
                             fingerprint = self.shift(fingerprint, 5) ^ get_int(index as i32 + 1);
@@ -515,8 +549,7 @@ impl Fingerprints {
             self.compute(store, id);
             if id != earlier_id {
                 self.compute(store, earlier_id);
-                let (value, earlier_value) =
-                    (self.values[id as usize], self.values[earlier_id as usize]);
+                let (value, earlier_value) = (self.entry(id), self.entry(earlier_id));
                 if value.length != earlier_value.length {
                     return None;
                 }
@@ -526,7 +559,7 @@ impl Fingerprints {
                 let changed = value.fingerprint ^ earlier_value.fingerprint;
                 fingerprint ^= self.shift_by_table(tails[position].1, changed, tail);
             }
-            tail += self.values[id as usize].length;
+            tail += self.entry(id).length;
         }
         Some(fingerprint)
     }
@@ -562,7 +595,7 @@ impl Fingerprints {
                 parent.tails[position] = (tail, table);
             }
             self.compute(store, state[index]);
-            tail += self.values[state[index] as usize].length;
+            tail += self.entry(state[index]).length;
         }
     }
 
@@ -591,7 +624,7 @@ impl Fingerprints {
             first = first.min(position);
             self.compute(store, id);
             self.compute(store, parent_id);
-            let (value, parent_value) = (self.values[id as usize], self.values[parent_id as usize]);
+            let (value, parent_value) = (self.entry(id), self.entry(parent_id));
             let (tail, table) = parent.tails[position];
             is_in_place &= value.length == parent_value.length && table != NO_TABLE;
             if is_in_place {

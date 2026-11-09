@@ -362,7 +362,9 @@ impl Store {
     // The store an overlay was laid on.
     #[inline(always)]
     fn base(&self) -> &Store {
-        self.base.as_deref().expect("an id, offset or text of a base")
+        self.base
+            .as_deref()
+            .expect("an id, offset or text of a base")
     }
 
     // The base's order: an overlay ranks no text of its own.

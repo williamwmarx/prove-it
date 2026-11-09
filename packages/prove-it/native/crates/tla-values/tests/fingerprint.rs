@@ -2,7 +2,7 @@
 //! src/tlc/fingerprint.ts (DESIGN.md 10.3), and the engine's ways of fingerprinting a state against
 //! each other.
 
-use tla_values::fingerprint::{Carried, Fingerprints, INITIAL, Parent, extend_byte, extend_int};
+use tla_values::fingerprint::{Fingerprints, INITIAL, Parent, extend_byte, extend_int};
 use tla_values::store::{Id, Store, TRUE};
 
 fn utf16(text: &str) -> Vec<u16> {
@@ -240,49 +240,47 @@ fn are_the_same_from_a_parent_past_the_tables_for_tails() {
 }
 
 #[test]
-fn carry_from_an_overlay_to_the_ids_its_values_were_imported_as() {
+fn absorb_what_an_overlay_computed_by_the_ids_its_values_were_imported_as() {
     let mut store = Store::new();
     store.reset(std::iter::empty::<&[u16]>());
     let one = store.int(1).unwrap();
+    let unseen = store.set_of(&[one]).unwrap();
+    // The search fingerprints some of the store's values, and lends them to a thread's cache.
+    let mut search = Fingerprints::new();
+    search.get_value(&store, one);
     let base = std::sync::Arc::new(store);
     let bound = base.value_count() as Id;
-    // A thread's overlay makes values the store doesn't hold, and fingerprints them.
+    let shared = search.share();
     let mut overlay = Store::overlay(base.clone());
+    let mut worker = Fingerprints::new();
+    worker.attach(&shared, bound);
+    // The thread makes values the store doesn't hold, and fingerprints them and a value of the
+    // store the search hadn't.
     let made: Vec<Id> = (2..6)
         .map(|value| {
             let element = overlay.int(value).unwrap();
             overlay.set_of(&[one, element]).unwrap()
         })
         .collect();
-    let mut worker = Fingerprints::new();
     let computed: Vec<(u64, u64)> = made
         .iter()
         .map(|&id| worker.get_value(&overlay, id))
         .collect();
+    let unseen_value = worker.get_value(&overlay, unseen);
     overlay.detach();
-    // The store imports two of them, in another order.
+    worker.detach();
+    search.take_back(shared);
+    // The store imports two of them, in another order, and the search takes what the thread
+    // computed, which is what fingerprinting the values afresh gives.
     let mut store = std::sync::Arc::into_inner(base).unwrap();
     let mut imported = Vec::new();
     let ids = [made[2], made[0]].map(|id| store.import(&overlay, id, &mut imported));
-    let mut carried = Carried::default();
-    carried.reset(bound);
-    worker.carry(&imported, &mut carried);
-    // Another thread, which has fingerprinted values of the store before, keeps them, and they
-    // are what fingerprinting them afresh gives.
-    let mut other = Fingerprints::new();
-    other.get_value(&store, one);
-    other.forget_from_carried(bound, &carried);
+    search.absorb(&worker, &imported);
     let fresh = |id: Id| Fingerprints::new().get_value(&store, id);
-    assert_eq!(other.get_value(&store, ids[0]), computed[2]);
-    assert_eq!(other.get_value(&store, ids[1]), computed[0]);
-    for id in ids {
-        assert_eq!(other.get_value(&store, id), fresh(id));
-    }
-    // A carry made for another bound is left out.
-    let mut elsewhere = Fingerprints::new();
-    elsewhere.get_value(&store, one);
-    elsewhere.forget_from_carried(bound + 1, &carried);
-    for id in ids {
-        assert_eq!(elsewhere.get_value(&store, id), fresh(id));
+    assert_eq!(search.get_value(&store, ids[0]), computed[2]);
+    assert_eq!(search.get_value(&store, ids[1]), computed[0]);
+    assert_eq!(search.get_value(&store, unseen), unseen_value);
+    for id in ids.into_iter().chain([one, unseen]) {
+        assert_eq!(search.get_value(&store, id), fresh(id));
     }
 }

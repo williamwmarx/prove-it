@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 
 use tla_ir::{Ir, LiveTerm, Model};
 use tla_live::{Event, Liveness, Term, Verdict};
-use tla_values::fingerprint::{Carried, Fingerprints, Parent};
+use tla_values::fingerprint::{Fingerprints, Parent, SharedFingerprints};
 use tla_values::store::Outcome;
 use tla_values::transfer::{EncodedStates, SharedEncoder, SharedStates, StateEncoder};
 use tla_values::{Bail, Id, NESTING_STACK_BYTES, Store};
@@ -503,8 +503,6 @@ struct Search<'r, T> {
     level_id: Id,
     next_level_id: Id,
     fingerprints: Fingerprints,
-    // The fingerprints the threads of the last level shared computed of the values they made.
-    carried: Carried,
     // The state being expanded, whose successors' fingerprints follow from its own when the key is
     // the state.
     parent: Parent,
@@ -556,7 +554,6 @@ impl<'r, T: Reached> Search<'r, T> {
             level_id: 0,
             next_level_id: 0,
             fingerprints: Fingerprints::new(),
-            carried: Carried::default(),
             parent: Parent::default(),
             canonicalizer: None,
             graph: None,
@@ -1095,9 +1092,10 @@ struct Worker<'p> {
 }
 
 impl Worker<'_> {
-    fn attach(&mut self, store: &Arc<Store>, carried: &Carried) {
+    fn attach(&mut self, store: &Arc<Store>, fingerprints: &SharedFingerprints) {
         self.machine.forget_from(self.bound);
-        self.fingerprints.forget_from_carried(self.bound, carried);
+        self.fingerprints
+            .attach(fingerprints, store.value_count() as Id);
         if let Some(canonicalizer) = &mut self.canonicalizer {
             canonicalizer.forget_from(self.bound);
         }
@@ -1262,15 +1260,16 @@ impl Search<'_, States> {
             level,
         };
         let store = Arc::new(std::mem::take(&mut machine.store));
+        let fingerprints = self.fingerprints.share();
         let expanded: Vec<Expanded> = std::thread::scope(|scope| {
             let threads: Vec<_> = workers
                 .iter_mut()
                 .map(|worker| {
-                    let (shared, store, carried) = (&shared, &store, &self.carried);
+                    let (shared, store, fingerprints) = (&shared, &store, &fingerprints);
                     std::thread::Builder::new()
                         .stack_size(NESTING_STACK_BYTES)
                         .spawn_scoped(scope, move || {
-                            worker.attach(store, carried);
+                            worker.attach(store, fingerprints);
                             expand_claimed(worker, shared)
                         })
                         .expect("a thread for the search")
@@ -1287,8 +1286,10 @@ impl Search<'_, States> {
         });
         for worker in workers.iter_mut() {
             worker.machine.store.detach();
+            worker.fingerprints.detach();
         }
         machine.store = Arc::into_inner(store).expect("the store, once the threads let go of it");
+        self.fingerprints.take_back(fingerprints);
         let mut stop = level.stop.load(Ordering::Relaxed);
         let mut owners = vec![None; (level.end - level.start).div_ceil(level.chunk)];
         for (thread, found) in expanded.iter().enumerate() {
@@ -1381,13 +1382,11 @@ impl Search<'_, States> {
             machine.is_past_walk |= found.is_past_walk;
         }
         self.expanding = stop;
-        // The fingerprints each thread computed of the values it made that are now the store's,
-        // for every thread to keep at the next level.
-        self.carried.reset(workers[0].bound);
+        // The fingerprints each thread computed, of the store's values and of the values it made
+        // that are now the store's, for every thread to read at the next level.
         for worker in workers.iter() {
-            worker
-                .fingerprints
-                .carry(&worker.imported, &mut self.carried);
+            self.fingerprints
+                .absorb(&worker.fingerprints, &worker.imported);
         }
         if let Some(bail) = violated {
             return Err(bail);
