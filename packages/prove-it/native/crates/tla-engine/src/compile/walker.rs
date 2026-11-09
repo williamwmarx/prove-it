@@ -2365,7 +2365,9 @@ impl<'a> Compiler<'a> {
         if context.is_primed {
             return unsupported("expression Enabled");
         }
+        let silent = u32::from(!context.can_print);
         self.enabled_depth += 1;
+        self.silent_enabled_depth += silent;
         let compiled = self
             .compile_step(
                 action,
@@ -2377,6 +2379,7 @@ impl<'a> Compiler<'a> {
             )
             .and_then(|walk| Ok((walk, self.get_enabled_footprint(action, context)?)));
         self.enabled_depth -= 1;
+        self.silent_enabled_depth -= silent;
         let (walk, footprint) = compiled?;
         if footprint
             .slots

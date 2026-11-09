@@ -266,9 +266,10 @@ describe("the engine's Print, PrintT and TLCGet", () => {
         body,
         `INIT Init\nNEXT Next\n${check}\nCHECK_DEADLOCK FALSE`,
       );
+      // The native engine stops only where ENABLED evaluates the Print.
       expect([check, lines]).toEqual([
         check,
-        [expect.stringMatching(/handed over .*: unsupported: Print/)],
+        [expect.stringMatching(/handed over .*: (unsupported: Print|Print inside ENABLED)/)],
       ]);
     }
   });

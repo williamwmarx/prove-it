@@ -512,7 +512,7 @@ impl Compiler<'_> {
         context: &Context,
     ) -> Compiling<Compiled> {
         if !context.can_print {
-            return unsupported(name);
+            return self.decline_print(name);
         }
         let is_print = name == "Print";
         if operands.len() != if is_print { 2 } else { 1 } {

@@ -1242,7 +1242,6 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
         "",
         " where TLC evaluates it otherwise",
       ],
-      [[`A == ${prints} /\\ ${next}`, "Next == A \\/ (~ENABLED A /\\ x' = 0)"], ""],
       [[`Next == ${next}`, `Constraint == ${prints}`], "\nCONSTRAINT Constraint"],
       [[`Next == ${next}`, "Constraint == Print(x', TRUE)"], "\nACTION_CONSTRAINT Constraint"],
       [[`Next == ${next}`, "View == Print(x, x)"], "\nVIEW View"],
@@ -1254,6 +1253,17 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
         await compareWithInterpreter([...body, spec], `SPECIFICATION Spec${config}`),
       ).toContainEqual(expect.stringMatching(declined(`unsupported: Print${where}`)));
     }
+    // ENABLED evaluates its action until the first successor, so a Print inside it stops the
+    // search only where it is evaluated.
+    const enabled = ["EXTENDS Naturals, TLC", "VARIABLE x", "Init == x = 0"];
+    const reached = [`A == ${prints} /\\ ${next}`, "Next == A \\/ (~ENABLED A /\\ x' = 0)"];
+    expect(await compareWithInterpreter([...enabled, ...reached], "INIT Init\nNEXT Next")).toContainEqual(
+      expect.stringMatching(stopped("Print inside ENABLED")),
+    );
+    const passed = [`A == ${next} \\/ (${prints} /\\ x' = 5)`, "Next == A \\/ (~ENABLED A /\\ x' = 0)"];
+    expect(await compareWithInterpreter([...enabled, ...passed], "INIT Init\nNEXT Next")).toContainEqual(
+      expect.stringMatching(COMPLETE),
+    );
   });
 
   it("evaluates the guard of x' \\in S only where x' has a value", async () => {
