@@ -2915,6 +2915,16 @@ impl<'ir> Evaluator<'ir> {
                 self.set_register(key, value)?;
                 Value::Bool(true)
             }
+            // `TLCExt.tlcFingerprint`: TLC's fingerprint of the value, as an int.
+            "TLCFP" => {
+                arity(1)?;
+                let value = self.operand(&operands[0])?;
+                let mut fingerprints = tla_values::fingerprint::Fingerprints::new();
+                match crate::fingerprint::state_fingerprint(&mut fingerprints, &[&value]) {
+                    Some(fingerprint) => Value::Int(fingerprint as i32),
+                    None => return fail("TLCFP of a value the evaluator doesn't fingerprint"),
+                }
+            }
             // `TLCExt.tlcDefer`: TLC's breadth-first search never runs the deferred expression.
             "TLCDefer" => {
                 arity(1)?;
