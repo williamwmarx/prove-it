@@ -3,7 +3,7 @@
 //! tracing evaluator of `evaluate.ts` record them and `getFailureMessage` and `formatCallStack` in
 //! TypeScript print them.
 
-use tla_ir::{AtomKind, NodeId, NodeKind, SourceRange};
+use tla_ir::{AtomKind, NodeId, NodeKind, SourceRange, TextId};
 use tla_values::fingerprint::Fingerprints;
 use tla_values::{Id, Store};
 
@@ -568,29 +568,28 @@ impl<'ir> Rebuilder<'ir> {
             Site::Invariant(position) => {
                 evaluator.current = current;
                 evaluator.level = level;
-                let mut bodies = Vec::new();
-                for invariant in ir.model.invariants.iter().take(position as usize + 1) {
-                    let Some(index) = invariant.root.definition else {
-                        return Err(Unsupported("an invariant the model doesn't define".into()));
-                    };
-                    bodies.push(evaluator.definition(ir.definitions[index as usize]).body);
-                }
-                let Some(failed) = bodies.pop().filter(|_| bodies.len() == position as usize)
+                let mut checks = evaluator.tlc_invariants()?;
+                checks.truncate(position as usize + 1);
+                let Some((failed, scope, _)) =
+                    checks.pop().filter(|_| checks.len() == position as usize)
                 else {
                     return Err(Unsupported("an invariant the model doesn't have".into()));
                 };
                 // TLC checks the invariants before it in order, outside the call stack, and their
                 // comparisons sort what they reach of the state.
                 let call_stack = evaluator.call_stack.take();
-                for body in bodies {
-                    if !run(evaluator.boolean(body, &Context::default()))? {
+                for (body, scope, _) in checks {
+                    let context = run(evaluator.scope_context(scope))?;
+                    if !run(evaluator.boolean(body, &context))? {
                         return Err(Unsupported(
                             "evaluating the failure again: an earlier invariant is violated".into(),
                         ));
                     }
                 }
                 evaluator.call_stack = call_stack;
-                evaluator.boolean(failed, &Context::default())
+                evaluator
+                    .scope_context(scope)
+                    .and_then(|context| evaluator.boolean(failed, &context))
             }
         };
         let call_stack = evaluator.call_stack.take().unwrap_or_default();
@@ -795,8 +794,10 @@ impl<'ir> Rebuilder<'ir> {
         // TLC reports an invariant that fails to evaluate with a headline of its own, and no call
         // stack (`doNextEvalFailed`).
         if let Site::Invariant(position) = site {
-            let name = &ir.texts[ir.model.invariants[position as usize].root.name as usize];
-            let headline = format!("Evaluating invariant {name} failed.");
+            let Some(&(_, _, name)) = evaluator.tlc_invariants()?.get(position as usize) else {
+                return Err(Unsupported("an invariant the model doesn't have".into()));
+            };
+            let headline = format!("Evaluating invariant {} failed.", ir.texts[name as usize]);
             if !is_keyed_by_state {
                 return Err(Unsupported(
                     "replaying the expansion under a VIEW or SYMMETRY".into(),
@@ -892,7 +893,7 @@ fn replay_expansion(
 ) -> Result<Replayed, Unsupported> {
     let ir = evaluator.ir;
     let unsupported = |reason: &str| Err(Unsupported(format!("replaying the expansion: {reason}")));
-    if !ir.model.action_properties.is_empty() || !ir.model.property_invariants.is_empty() {
+    if !ir.model.action_properties.is_empty() {
         return unsupported("a property TLC checks of each step");
     }
     path.pop();
@@ -901,13 +902,7 @@ fn replay_expansion(
     };
     let predecessor: Vec<Option<Value>> = predecessor.iter().cloned().map(Some).collect();
     let level = path.len() as i32;
-    let mut invariants = Vec::new();
-    for invariant in &ir.model.invariants {
-        let Some(index) = invariant.root.definition else {
-            return unsupported("an invariant the model doesn't define");
-        };
-        invariants.push(evaluator.definition(ir.definitions[index as usize]).body);
-    }
+    let invariants = evaluator.tlc_invariants()?;
     evaluator.call_stack = Some(CallStack::default());
     let Ok(actions) = evaluator.tlc_actions() else {
         return unsupported("the next-state relation doesn't split");
@@ -967,8 +962,11 @@ fn replay_expansion(
             evaluator.current = successor.into_iter().map(Some).collect();
             evaluator.next = vec![None; width];
             evaluator.level = level + 1;
-            for &invariant in &invariants {
-                match evaluator.boolean(invariant, &Context::default()) {
+            for &(invariant, scope, _) in &invariants {
+                let Ok(context) = evaluator.scope_context(scope) else {
+                    return unsupported("an invariant's scope");
+                };
+                match evaluator.boolean(invariant, &context) {
                     Ok(true) => {}
                     Ok(false) => {
                         return Ok(Replayed {
@@ -1197,6 +1195,32 @@ impl Rebuilder<'_> {
 }
 
 impl<'ir> Evaluator<'ir> {
+    // TLC's invariants, in the order it checks them: the model's, then its properties checked as
+    // invariants, each with the scope it is read in and the name TLC reports it by.
+    fn tlc_invariants(&self) -> Result<Vec<(NodeId, Option<tla_ir::Index>, TextId)>, Unsupported> {
+        let ir = self.ir;
+        let mut invariants = Vec::new();
+        for invariant in &ir.model.invariants {
+            let Some(index) = invariant.root.definition else {
+                return Err(Unsupported("an invariant the model doesn't define".into()));
+            };
+            invariants.push((
+                self.definition(ir.definitions[index as usize]).body,
+                None,
+                invariant.root.name,
+            ));
+        }
+        let properties = ir
+            .model
+            .property_invariants
+            .iter()
+            .zip(&ir.model.property_invariant_scopes)
+            .zip(&ir.model.property_invariant_names);
+        invariants
+            .extend(properties.map(|((invariant, &scope), &name)| (invariant.root, scope, name)));
+        Ok(invariants)
+    }
+
     // TLC's actions: the IR's, or, where it has none, the next-state relation split as TLC splits
     // it.
     fn tlc_actions(&mut self) -> Evaluated<Vec<(NodeId, Context)>> {
