@@ -626,9 +626,15 @@ const results = models.map((model, index) => {
         }
       });
   }
-  const engineLine = /^\[engine\] .*$/m.exec(
-    run(getBunCommand(model), model.directory, { PROVE_IT_ENGINE: "debug" }).output,
-  )?.[0];
+  // The baseline Prove It's engine, as it ran: the last line it reports says what it did.
+  const prober = checkers.find((checker) => checker.name === baseline);
+  const engineLine = run(
+    prober?.getCommand(model, tmpdir()) ?? getBunCommand(model),
+    model.directory,
+    { ...prober?.environment, PROVE_IT_ENGINE: "debug" },
+  )
+    .output.match(/^\[engine\] .*$/gm)
+    ?.at(-1);
   const measurements = Object.fromEntries(
     checkers.map((checker) => {
       const all = measurementsByChecker.get(checker.name) ?? [];
@@ -747,7 +753,9 @@ const getEngineLabel = (engine: string | undefined) =>
     ? "?"
     : engine.startsWith("checked")
       ? "ran"
-      : engine.replace(/ after \d+ ms/, "").split(":")[0];
+      : engine.startsWith("found")
+        ? "searched"
+        : engine.replace(/ after \d+ ms/, "").split(":")[0];
 const formatCell = (result: Result, name: string) => {
   const measurement = result.measurements[name];
   const time = `${formatSeconds(measurement.wallMilliseconds)} (${formatSeconds(measurement.cpuMilliseconds)})`;
