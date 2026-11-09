@@ -20,6 +20,9 @@ pub struct PrintedTrace {
 
 pub struct PrintedState {
     pub text: String,
+    /// The position in the model's actions of the action that took the step to the state, as
+    /// TLC finds it.
+    pub action: Option<u32>,
     pub output: Vec<String>,
 }
 
@@ -31,8 +34,6 @@ pub fn rebuild_trace(ir: &Ir, violation: &Violation) -> Result<PrintedTrace, Str
             .stack_size(SEARCH_STACK_BYTES)
             .spawn_scoped(scope, || {
                 let states: Vec<&[Id]> = violation.states.iter().map(Vec::as_slice).collect();
-                let actions: Vec<Option<u32>> =
-                    violation.labels.iter().copied().map(Some).collect();
                 // TLC holds a violating state as it found it, and recovers a deadlocked one.
                 let ending = match violation.kind {
                     ViolationKind::Deadlock => Ending::Kept,
@@ -42,7 +43,7 @@ pub fn rebuild_trace(ir: &Ir, violation: &Violation) -> Result<PrintedTrace, Str
                     ViolationKind::Lasso { .. } => Ending::Lasso,
                 };
                 let trace = Rebuilder::new(ir).and_then(|mut rebuilder| {
-                    rebuilder.rebuild(&violation.store, &states, &actions, ending)
+                    rebuilder.rebuild(&violation.store, &states, &violation.labels, ending)
                 });
                 trace
                     .map(|trace| PrintedTrace {
@@ -51,6 +52,7 @@ pub fn rebuild_trace(ir: &Ir, violation: &Violation) -> Result<PrintedTrace, Str
                             .iter()
                             .map(|state| PrintedState {
                                 text: format_state(ir, &state.values),
+                                action: state.action,
                                 output: state
                                     .printed
                                     .iter()

@@ -578,7 +578,7 @@ fn check_spec(spec_path: &str, args: &Parsed, printer: &mut Printer) -> i32 {
             ..
         } => {
             return print_violation(printer, &ir, &config, &violation, None, start).unwrap_or_else(
-                |_| report_not_native(printer, &format!("the engine stopped: {reason}")),
+                |why| report_not_native(printer, &format!("the engine stopped: {reason}: {why}")),
             );
         }
         SearchOutcome::Stopped { reason, .. } => {
@@ -772,16 +772,20 @@ fn print_violation(
         }
         _ => None,
     };
-    let mut labels = vec!["Initial predicate"];
-    for &action in &violation.labels {
-        labels.push(action_label(action)?);
-    }
     // TLC prints a trace once it has rebuilt all of it, and a state that the evaluator can't
     // rebuild as TLC built it keeps the run not native.
     let trace = match rebuild_trace(ir, violation) {
         Ok(trace) => trace,
         Err(reason) => return Ok(report_not_native(printer, &reason)),
     };
+    // TLC labels each step with the action it finds taking it as it rebuilds the trace.
+    let mut labels = vec!["Initial predicate"];
+    for state in trace.states.iter().skip(1) {
+        let action = state
+            .action
+            .ok_or("a step whose action the rebuilt trace lacks")?;
+        labels.push(action_label(action)?);
+    }
     let counts = &violation.counts;
     let statistics = Statistics {
         generated: counts.generated,
