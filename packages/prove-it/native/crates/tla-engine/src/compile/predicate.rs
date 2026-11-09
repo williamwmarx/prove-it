@@ -302,7 +302,7 @@ fn build_equal(left: &Leaf, right: &Leaf, is_equal: bool) -> Test {
             test(move |machine| {
                 let left = left.read(machine)?;
                 let right = right.read(machine)?;
-                Ok(machine.store.equals(left, right)? == is_equal)
+                Ok(machine.store.equals_asked(left, right)? == is_equal)
             })
         }
     }

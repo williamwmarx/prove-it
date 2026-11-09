@@ -1324,3 +1324,115 @@ fn compares_tlcs_message_in_an_assert_error_assumption() {
     );
     std::fs::remove_dir_all(directory).expect("removed");
 }
+
+#[test]
+fn prints_a_failures_trace_through_the_alias() {
+    // TLC prints the trace to the state it was expanding through the ALIAS, each state with the
+    // one after it as its next state and the last with itself (`TLCTrace.printTrace`).
+    let spec = "---- MODULE Stop ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == IF x < 2 THEN x' = x + 1 ELSE x' = Assert(FALSE, \"boom\")\nAlias == [x |-> x, nxt |-> x', twice |-> 2 * x]\n====\n";
+    let (output, directory) =
+        run_lowered("alias-failure", spec, "INIT Init\nNEXT Next\nALIAS Alias\n");
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(14), "{text}");
+    assert!(
+        text.contains("\"boom\"\nError: The behavior up to this point is:\nState 1: <Initial predicate>\n/\\ x = 0\n/\\ nxt = 1\n/\\ twice = 0\n\nState 2: <Next line 5, col 9 to line 5, col 64 of module Stop>\n/\\ x = 1\n/\\ nxt = 2\n/\\ twice = 2\n\nState 3: <Next line 5, col 9 to line 5, col 64 of module Stop>\n/\\ x = 2\n/\\ nxt = 2\n/\\ twice = 4\n\nError: The error occurred when TLC was evaluating the nested\n"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+    // An initial state TLC was expanding is the whole trace, which TLC prints as it is.
+    let alone = spec.replace("IF x < 2 THEN x' = x + 1 ELSE ", "");
+    let (output, directory) = run_lowered(
+        "alias-failure-alone",
+        &alone,
+        "INIT Init\nNEXT Next\nALIAS Alias\n",
+    );
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(14), "{text}");
+    assert!(
+        text.contains("Error: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nError: The error occurred"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn prints_a_deadlocked_initial_state_as_it_is_under_an_alias() {
+    // TLC evaluates no ALIAS on a trace of an initial state alone (`TLCTrace.printTrace`).
+    let spec = "---- MODULE Stop ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x < 0 /\\ x' = x + 1\nAlias == [x |-> x, twice |-> 2 * x]\n====\n";
+    let (output, directory) = run_lowered(
+        "alias-deadlock",
+        spec,
+        "INIT Init\nNEXT Next\nALIAS Alias\n",
+    );
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(11), "{text}");
+    assert!(
+        text.contains("Error: Deadlock reached.\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\n1 states generated"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+    // A longer trace goes through the ALIAS.
+    let later = spec.replace("x < 0", "x < 1");
+    let (output, directory) = run_lowered(
+        "alias-deadlock-later",
+        &later,
+        "INIT Init\nNEXT Next\nALIAS Alias\n",
+    );
+    let text = stdout(&output);
+    assert!(
+        text.contains("State 1: <Initial predicate>\n/\\ x = 0\n/\\ twice = 0\n\nState 2: <Next line 5, col 9 to line 5, col 27 of module Stop>\n/\\ x = 1\n/\\ twice = 2\n\n"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn checks_the_postconditions_after_a_failure_as_tlcs_deadlock_check_does() {
+    // TLC's worker goes on to check a state for deadlock after its next-state relation failed,
+    // having generated no successor, and that check evaluates the postconditions (`Worker.run`):
+    // between the trace and the call stack, with the registers as the failure left them.
+    let spec = "---- MODULE Stop ----\nEXTENDS Naturals, TLC\nVARIABLE x\nASSUME TLCSet(0, 0)\nInit == x = 0\nNext == x' = Assert(FALSE, \"boom\")\nPost == TLCSet(42, TLCGet(\"generated\")) /\\ TLCGet(0) = 63\n====\n";
+    let config = "INIT Init\nNEXT Next\nPOSTCONDITION Post\n";
+    let (output, directory) = run_lowered("failure-postcondition", spec, config);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(14), "{text}");
+    assert!(
+        text.contains("State 1: <Initial predicate>\nx = 0\n\nError: Postcondition Post at line 7, col 9 to line 7, col 57 of module Stop is false.\nError: The error occurred when TLC was evaluating the nested\n"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+    // Without the deadlock check nothing evaluates them.
+    let directory = std::env::temp_dir().join(format!(
+        "prove-it-cli-failure-no-postcondition-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    for (file, contents) in [("Stop.tla", spec), ("Stop.cfg", config), ("Stop.front", "")] {
+        std::fs::write(directory.join(file), contents).expect("a file");
+    }
+    let output = run(&directory, &["-deadlock", "Stop"]);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(14), "{text}");
+    assert!(
+        text.contains("State 1: <Initial predicate>\nx = 0\n\nError: The error occurred when TLC was evaluating the nested\n"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+    // Nor after an invariant fails to evaluate, on a successor the worker had generated.
+    let invariant = spec.replace(
+        "Next == x' = Assert(FALSE, \"boom\")",
+        "Next == x < 3 /\\ x' = x + 1\nInv == x < 1 \\/ Assert(FALSE, \"boom\")",
+    );
+    let (output, directory) = run_lowered(
+        "failure-invariant-postcondition",
+        &invariant,
+        "INIT Init\nNEXT Next\nPOSTCONDITION Post\nINVARIANT Inv\n",
+    );
+    let text = stdout(&output);
+    assert!(
+        text.contains("State 2: <Next line 6, col 9 to line 6, col 27 of module Stop>\nx = 1\n\n2 states generated"),
+        "{text}"
+    );
+    assert!(!text.contains("Postcondition"), "{text}");
+    std::fs::remove_dir_all(directory).expect("removed");
+}
