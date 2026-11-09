@@ -706,10 +706,7 @@ impl<'ir> Evaluator<'ir> {
                 if context.is_primed {
                     return fail("UNCHANGED under a prime");
                 }
-                // The primed expression first, as TLC evaluates `e' = e`.
-                let then = self.evaluate(*inner, &context.primed(true))?;
-                let now = self.evaluate(*inner, context)?;
-                Ok(Value::Bool(equals(&then, &now)?))
+                self.unchanged(*inner, context)
             }
             NodeKind::If {
                 condition,
@@ -899,6 +896,7 @@ impl<'ir> Evaluator<'ir> {
         }
     }
 
+    // `e = e'`, the current side first, as `Tool.evalAppl` evaluates UNCHANGED and `[A]_e`.
     fn unchanged(&mut self, subscript: NodeId, context: &Context) -> Evaluated<Value> {
         let now = self.evaluate(subscript, context)?;
         let then = self.evaluate(subscript, &context.primed(true))?;
