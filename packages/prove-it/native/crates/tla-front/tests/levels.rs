@@ -21,6 +21,7 @@ fn get_level_errors(source: &str, modules: &[(&str, &str)]) -> Vec<(String, Stri
         is_unconfigured: true,
         version: TlcVersion::Master,
         is_level_checked: true,
+        load_class: None,
     });
     let Err(FrontError::Syntax(error)) = linked else {
         return Vec::new();

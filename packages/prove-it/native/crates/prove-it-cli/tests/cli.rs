@@ -1505,3 +1505,39 @@ fn checks_the_postconditions_after_a_failure_as_tlcs_deadlock_check_does() {
     assert!(!text.contains("Postcondition"), "{text}");
     std::fs::remove_dir_all(directory).expect("removed");
 }
+
+#[test]
+fn prints_an_assumption_value_as_tlc_built_it_without_a_recorded_front() {
+    // test-model/SetPredValue: the store forgets how TLC built the set PrintT prints, which the
+    // trace evaluator prints as TLC does.
+    let spec = "---- MODULE SetPredValue ----\nEXTENDS TLC, FiniteSets, Integers\n\nRange(F) == { F[x] : x \\in DOMAIN F }\nMin(n, m) == IF n < m THEN n ELSE m\n\nLP(S, T, p) == LET ss == { s \\in SUBSET S : Cardinality(s) = p}\n                          IN { e \\in [ T -> ss ] : \n                                Cardinality(Range(e)) = Min(Cardinality(T), Cardinality(ss)) }\n\nASSUME PrintT(LP(1..4, {\"a\",\"b\",\"c\"}, 2))\n\n=============================\n";
+    let directory =
+        std::env::temp_dir().join(format!("prove-it-cli-assumed-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    std::fs::write(directory.join("SetPredValue.tla"), spec).expect("the spec");
+    std::fs::write(directory.join("SetPredValue.cfg"), "").expect("the configuration");
+    let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
+        .args(["-noGenerateSpecTE", "SetPredValue"])
+        .current_dir(&directory)
+        .env_remove("PROVE_IT_FRONT")
+        .output()
+        .expect("the binary runs");
+    let text = stdout(&output);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{text}{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        text.contains(")\n{ [a |-> {1, 2}, b |-> {1, 3}, c |-> {1, 4}],\n  [a |-> {1, 2}, b |-> {1, 3}, c |-> {2, 3}],\n"),
+        "{text}"
+    );
+    assert!(
+        text.contains(
+            "  [a |-> {3, 4}, b |-> {2, 4}, c |-> {2, 3}] }\nComputing initial states...\n"
+        ),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}

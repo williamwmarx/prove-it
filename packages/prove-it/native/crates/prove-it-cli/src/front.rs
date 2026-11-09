@@ -41,6 +41,8 @@ pub enum Output {
     /// definitions and before the assumptions (the engine's `startup_done`).
     Native {
         sany: String,
+        /// What TLC prints of the Java overrides it loads, right after `Starting...`.
+        override_messages: Vec<StartupMessage>,
         startup_messages: Vec<StartupMessage>,
     },
 }
@@ -160,6 +162,7 @@ fn native_front(
                 output: Output::Native {
                     sany: sany.text,
                     startup_messages: lowered.startup_messages?,
+                    override_messages: lowered.override_messages,
                 },
             }));
         }
