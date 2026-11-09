@@ -207,18 +207,6 @@ impl<'ir> Evaluator<'ir> {
         })
     }
 
-    // The operands of a junction TLC walks as one: all of a bulleted list or a junction of two, or
-    // otherwise a prefix of an infix chain, then its last operand, as SANY nests the chain.
-    fn is_walked_whole(&self, node: NodeId, count: usize) -> bool {
-        count <= 2
-            || self
-                .ir
-                .nodes
-                .junctions
-                .get(&self.resolved(node))
-                .is_some_and(|junction| junction.is_bulleted)
-    }
-
     // The first `count` operands of an infix conjunction, as SANY's node of that prefix: the
     // prefix of one fewer, then the last.
     fn conjunction_prefix(
