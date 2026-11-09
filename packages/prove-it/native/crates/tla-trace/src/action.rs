@@ -7,7 +7,7 @@
 
 use std::collections::HashSet;
 
-use tla_ir::{Bound, Name, NodeId, NodeKind, PathStep, Resolution, Startup};
+use tla_ir::{Bound, DefinitionForm, Name, NodeId, NodeKind, PathStep, Resolution, Startup};
 
 use crate::eval::{Context, Evaluator, StackFrame, bound_expression};
 use crate::sets::is_member;
@@ -283,8 +283,15 @@ impl<'ir> Evaluator<'ir> {
             }
             NodeKind::FieldAccess { record, .. } => self.can_read_state(*record, context, visited),
             NodeKind::Definition(definition) => {
+                let sets = match &definition.form {
+                    DefinitionForm::Function(list) => bounds(list),
+                    DefinitionForm::Operator(_) => Vec::new(),
+                };
                 visited.insert(node)
-                    && self.can_read_state(definition.body, &Context::default(), visited)
+                    && sets
+                        .into_iter()
+                        .chain([definition.body])
+                        .any(|inner| self.can_read_state(inner, &Context::default(), visited))
             }
             _ => true,
         }
