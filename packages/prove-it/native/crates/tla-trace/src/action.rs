@@ -2,7 +2,8 @@
 //! engine, `action.ts` in TypeScript): conjunctions left to right, a variable assigned at its first
 //! conjunct of the form `x' = e` or `x' \in S` and tested at the others, disjunctions and `\E` in
 //! order, operators expanded, and every other conjunct evaluated as a guard. Once every variable
-//! has a value, TLC evaluates the rest of a conjunction as guards.
+//! has a value, TLC evaluates the rest of a conjunction as guards, in the initial predicate and,
+//! with warnings on, in an action.
 
 use tla_ir::{NodeId, NodeKind, Resolution, Startup};
 
@@ -426,8 +427,9 @@ impl<'ir> Evaluator<'ir> {
         let Some((&first, rest)) = operands.split_first() else {
             return then(self);
         };
-        // Once every variable has a value, TLC evaluates the rest of the conjunction as guards.
-        if !is_first && self.is_complete(is_init) {
+        // Once every variable has a value, TLC evaluates the rest of the conjunction as guards:
+        // in the initial predicate, and in an action with warnings on (`isAssignedShortcut`).
+        if !is_first && (is_init || self.ir.model.is_warning_enabled) && self.is_complete(is_init) {
             for &operand in operands {
                 if !self.boolean(operand, context)? {
                     return Ok(true);
