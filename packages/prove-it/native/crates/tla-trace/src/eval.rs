@@ -425,7 +425,6 @@ impl<'ir> Evaluator<'ir> {
             NodeKind::FunctionApplication { function, .. } | NodeKind::Except { function, .. } => {
                 Some(*function)
             }
-            NodeKind::FieldAccess { record, .. } => Some(*record),
             NodeKind::Apply { name, args } if !name.is_local && args.len() == 2 => {
                 match self.name(name.text) {
                     "\\in" | "\\notin" => Some(args[1]),

@@ -5,7 +5,9 @@
 //! has a value, TLC evaluates the rest of a conjunction as guards, in the initial predicate and,
 //! with warnings on, in an action.
 
-use tla_ir::{NodeId, NodeKind, Resolution, Startup};
+use std::collections::HashSet;
+
+use tla_ir::{Bound, Name, NodeId, NodeKind, PathStep, Resolution, Startup};
 
 use crate::eval::{Context, Evaluator, StackFrame};
 use crate::sets::is_member;
@@ -174,11 +176,19 @@ impl<'ir> Evaluator<'ir> {
     }
 
     // Whether the arguments of an operator application are constant, as `getActionsAppl` asks of
-    // them before it splits the operator's body: here, whether each evaluates without the state.
+    // them before it splits the operator's body: here, whether none can read the state, and each
+    // evaluates without it.
     fn has_constant_arguments(&mut self, node: NodeId, context: &Context) -> bool {
         let NodeKind::Apply { args, .. } = self.kind(node) else {
             return true;
         };
+        let mut visited = HashSet::new();
+        if args
+            .iter()
+            .any(|&argument| self.can_read_state(argument, &mut visited))
+        {
+            return false;
+        }
         let width = self.current.len();
         let current = std::mem::replace(&mut self.current, vec![None; width]);
         let next = std::mem::replace(&mut self.next, vec![None; width]);
@@ -188,6 +198,100 @@ impl<'ir> Evaluator<'ir> {
         self.current = current;
         self.next = next;
         is_constant
+    }
+
+    // Whether an expression may read the state, as an expression above constant level, which
+    // `getLevel` finds: a variable, a prime, UNCHANGED or ENABLED in it or in a definition it names.
+    // A form the check doesn't follow counts as one that may.
+    fn can_read_state(&self, node: NodeId, visited: &mut HashSet<NodeId>) -> bool {
+        let any = |nodes: &[NodeId], visited: &mut HashSet<NodeId>| {
+            nodes
+                .iter()
+                .any(|&inner| self.can_read_state(inner, visited))
+        };
+        let bounds = |bounds: &[Bound]| bounds.iter().map(|bound| bound.set).collect::<Vec<_>>();
+        match self.kind(node) {
+            NodeKind::Number(_)
+            | NodeKind::WideNumber(_)
+            | NodeKind::Decimal(_)
+            | NodeKind::String(_)
+            | NodeKind::ExceptAt => false,
+            NodeKind::Identifier(name) | NodeKind::OperatorReference(name) => {
+                self.can_name_read_state(name, visited)
+            }
+            NodeKind::Apply { name, args } => {
+                self.can_name_read_state(name, visited) || any(args, visited)
+            }
+            NodeKind::Lambda { body, .. }
+            | NodeKind::UnboundedQuantifier { body, .. }
+            | NodeKind::Label { body, .. } => self.can_read_state(*body, visited),
+            NodeKind::And(nodes)
+            | NodeKind::Or(nodes)
+            | NodeKind::SetEnumeration(nodes)
+            | NodeKind::Tuple(nodes)
+            | NodeKind::Bracket(nodes)
+            | NodeKind::Product(nodes) => any(nodes, visited),
+            NodeKind::If {
+                condition,
+                consequent,
+                alternative,
+            } => any(&[*condition, *consequent, *alternative], visited),
+            NodeKind::Case { arms, other } => {
+                arms.iter()
+                    .any(|&(condition, body)| any(&[condition, body], visited))
+                    || other.is_some_and(|other| self.can_read_state(other, visited))
+            }
+            NodeKind::Let {
+                definitions, body, ..
+            } => any(definitions, visited) || self.can_read_state(*body, visited),
+            NodeKind::Forall { bounds: list, body }
+            | NodeKind::Exists { bounds: list, body }
+            | NodeKind::FunctionConstruction {
+                bounds: list, body, ..
+            } => any(&bounds(list), visited) || self.can_read_state(*body, visited),
+            NodeKind::SetMap {
+                expression,
+                bounds: list,
+            } => any(&bounds(list), visited) || self.can_read_state(*expression, visited),
+            NodeKind::Choose { set, body, .. } => {
+                set.is_some_and(|set| self.can_read_state(set, visited))
+                    || self.can_read_state(*body, visited)
+            }
+            NodeKind::SetFilter { bound, predicate } => any(&[bound.set, *predicate], visited),
+            NodeKind::FunctionSet { domain, range } => any(&[*domain, *range], visited),
+            NodeKind::Record(fields) | NodeKind::RecordSet(fields) => fields
+                .iter()
+                .any(|&(_, value)| self.can_read_state(value, visited)),
+            NodeKind::Except { function, updates } => {
+                self.can_read_state(*function, visited)
+                    || updates.iter().any(|update| {
+                        self.can_read_state(update.value, visited)
+                            || update.path.iter().any(|step| match step {
+                                PathStep::Field(_) => false,
+                                PathStep::Index(indices) => any(indices, visited),
+                            })
+                    })
+            }
+            NodeKind::FunctionApplication { function, args } => {
+                self.can_read_state(*function, visited) || any(args, visited)
+            }
+            NodeKind::FieldAccess { record, .. } => self.can_read_state(*record, visited),
+            NodeKind::Definition(definition) => {
+                visited.insert(node) && self.can_read_state(definition.body, visited)
+            }
+            _ => true,
+        }
+    }
+
+    // Whether a name may read the state: a variable, or a definition whose body may.
+    fn can_name_read_state(&self, name: &Name, visited: &mut HashSet<NodeId>) -> bool {
+        match name.resolution {
+            Resolution::Variable(_) => true,
+            Resolution::Definition(index) if !name.is_local => {
+                self.can_read_state(self.ir.definitions[index as usize], visited)
+            }
+            _ => false,
+        }
     }
 
     // Walks a node in its frame of the call stack, as `visit` in `tlc/replay.ts` does.
