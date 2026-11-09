@@ -79,3 +79,11 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
 - Only the native engine counts them, so a model with `_POSSIBLE` predicates goes to the
   interpreter where the native engine doesn't take it, never to the TypeScript engine. The search
   stays on one thread with them.
+
+## `SUBSET A \subseteq SUBSET B`
+
+- TLC compares two power sets by their bases, without building either, unless it can't enumerate
+  A (`SubsetValue.isSubsetEq`), and does so again for power sets of power sets. `SUBSET` records
+  its base (`Compiled::subset_base`) for `\subseteq` to compare in its place. SubsetEq (TLC's
+  tests), which stopped building `SUBSET (1..42)`, now completes in Rust. The interpreter doesn't
+  recurse into power sets of power sets, so the unit test leaves that case out.
