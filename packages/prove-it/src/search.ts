@@ -198,7 +198,7 @@ export const reportStartup = (
   });
 };
 
-const getInvariants = (names: string[], environment: Environment) => {
+export const getInvariants = (names: string[], environment: Environment) => {
   const analyzer = createLevelAnalyzer({
     constants: new Set(environment.constants.keys()),
     variables: new Set(environment.variables),

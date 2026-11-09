@@ -14,7 +14,8 @@ use crate::hash::FastMap;
 use crate::lower::{Lowering, RankedTexts};
 use crate::order::TlcOrder;
 use crate::spec::{
-    Properties, Specification, create_identifier, get_properties, get_specification,
+    Properties, Specification, check_invariants, create_identifier, get_properties,
+    get_specification,
 };
 use crate::values::ValueOrder;
 
@@ -68,6 +69,7 @@ pub fn lower_model(
         .collect();
     let variable_order = order.get_declaration_order(true)?;
     let facts = create_definition_facts(&environment);
+    check_invariants(&config, &environment, &facts)?;
     let specification = get_specification(&config, &environment, &facts, version)?;
     let ranks: FastMap<Rc<str>, u32> = texts
         .iter()
