@@ -1680,13 +1680,17 @@ impl<'ir> Evaluator<'ir> {
                 _ => None,
             };
             if let Some(operation) = operation {
-                let left = self.combined_set(&Operand::Node(left, context.clone()))?;
-                let right = self.combined_set(&Operand::Node(right, context.clone()))?;
-                return Ok(Combined::Operation(
-                    operation,
-                    Box::new(left),
-                    Box::new(right),
-                ));
+                // The operation's operands, in its frame of the call stack, as TLC evaluates it.
+                let frame = StackFrame::Node(self.resolved(*node));
+                return self.in_frame(frame, &mut |evaluator| {
+                    let left = evaluator.combined_set(&Operand::Node(left, context.clone()))?;
+                    let right = evaluator.combined_set(&Operand::Node(right, context.clone()))?;
+                    Ok(Combined::Operation(
+                        operation,
+                        Box::new(left),
+                        Box::new(right),
+                    ))
+                });
             }
         }
         Ok(Combined::Set(self.operand(set)?))
@@ -2101,6 +2105,7 @@ fn permute(
 
 /// An argument of a builtin: an expression as written, or a value an operator argument is
 /// applied to.
+#[derive(Clone, Copy)]
 enum SetOperation {
     Union,
     Intersection,
