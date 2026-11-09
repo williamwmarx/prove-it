@@ -702,3 +702,27 @@ fn rebuilds_a_trace_of_bags_as_tlc_builds_them() {
     );
     std::fs::remove_dir_all(directory).expect("removed");
 }
+
+const SCHEDULING_ALLOCATOR_IR: &[u8] = include_bytes!(
+    "../../../../tests/conformance/ir/tlc/tlatools/org.lamport.tlatools/test-model/examples/allocator/SchedulingAllocator.ir"
+);
+
+#[test]
+fn rebuilds_a_trace_through_a_recursive_function_tlc_keeps_lazy() {
+    let (output, directory) = run_golden(
+        "recursive-function",
+        SCHEDULING_ALLOCATOR_IR,
+        "SchedulingAllocator",
+        "",
+        &[],
+    );
+    let text = stdout(&output);
+    // The schedule's permutations come from the recursive LET function perms over SUBSET S,
+    // which TLC applies to an argument without building it.
+    assert_eq!(output.status.code(), Some(13), "{text}");
+    assert!(
+        text.contains(include_str!("scheduling-allocator.txt")),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
