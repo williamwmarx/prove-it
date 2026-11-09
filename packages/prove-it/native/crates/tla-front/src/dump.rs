@@ -121,7 +121,7 @@ fn pattern(value: &BoundPattern) -> Json {
         } => object(vec![
             ("kind", Some(text("Name"))),
             ("name", Some(name(bound))),
-            ("ranges", Some(ranges(bound_ranges))),
+            ("ranges", pattern_ranges(bound_ranges)),
         ]),
         BoundPattern::Tuple {
             names: bound,
@@ -129,9 +129,14 @@ fn pattern(value: &BoundPattern) -> Json {
         } => object(vec![
             ("kind", Some(text("Tuple"))),
             ("names", Some(names(bound))),
-            ("ranges", Some(ranges(bound_ranges))),
+            ("ranges", pattern_ranges(bound_ranges)),
         ]),
     }
+}
+
+/// A pattern the front end makes, such as an instance copy's, has no ranges.
+fn pattern_ranges(values: &[Range]) -> Option<Json> {
+    (!values.is_empty()).then(|| ranges(values))
 }
 
 fn bound(value: &Bound) -> Json {
@@ -622,7 +627,7 @@ fn param(value: &OperatorParam) -> Json {
     object(vec![
         ("name", Some(name(&value.name))),
         ("arity", Some(number(value.arity))),
-        ("location", Some(location(&value.location))),
+        ("location", value.location.as_ref().map(location)),
     ])
 }
 
@@ -1108,6 +1113,17 @@ pub fn environment(
                             Json::Number(f64::from(builtin.flags)),
                         ])
                     })
+                    .collect(),
+            )),
+        ),
+        (
+            "substituted",
+            Some(Json::Array(
+                environment
+                    .definitions
+                    .iter()
+                    .filter(|(_, value)| environment.is_substituted(value))
+                    .map(|(key, _)| name(key))
                     .collect(),
             )),
         ),
