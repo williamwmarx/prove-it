@@ -242,7 +242,30 @@ pub fn as_tuple(value: &Value) -> Option<&[Value]> {
     is_tuple.then_some(&function.range[..])
 }
 
+// TLC's reducible sets, a set enumeration or an interval, which combine with another set element by
+// element.
+fn is_reducible(value: &Value) -> bool {
+    matches!(value, Value::Set(_) | Value::Interval(..))
+}
+
+fn is_empty_reducible(value: &Value) -> bool {
+    match value {
+        Value::Set(elements) => elements.is_empty(),
+        Value::Interval(low, high) => low > high,
+        _ => false,
+    }
+}
+
+/// `\cup`. TLC keeps the other operand as it is when one is an empty set enumeration or interval:
+/// the right one after an empty left one, and a lazy left one before an empty right one, as
+/// `combineReducible` does; otherwise it enumerates the union.
 pub fn union(left: &Value, right: &Value) -> Evaluated<Value> {
+    if is_empty_reducible(left) {
+        return Ok(right.clone());
+    }
+    if is_empty_reducible(right) && !is_reducible(left) {
+        return Ok(left.clone());
+    }
     let mut all = elements(left)?.to_vec();
     all.extend(elements(right)?.iter().cloned());
     set_of(all)
