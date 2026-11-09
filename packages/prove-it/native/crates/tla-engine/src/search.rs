@@ -1227,15 +1227,20 @@ fn label_path(
     let width = context.width;
     let unassigned = vec![UNASSIGNED; width];
     let ids = &search.states.ids;
+    // Each state's depth, from its parent's: the search stores a parent before its children.
+    let parents = &search.states.parents;
+    let mut depths: Vec<i64> = Vec::with_capacity(parents.len());
+    for &parent in parents {
+        depths.push(if parent == -1 {
+            1
+        } else {
+            depths[parent as usize] + 1
+        });
+    }
     let mut labels = vec![None];
     for step in path.windows(2) {
         let (state, target) = (step[0] as usize, step[1] as usize);
-        let mut depth = 0;
-        let mut ancestor = state as i32;
-        while ancestor != -1 {
-            depth += 1;
-            ancestor = search.states.parents[ancestor as usize];
-        }
+        let depth = depths[state];
         let epoch = machine.next_epoch();
         machine.set_current(&ids[state * width..(state + 1) * width], epoch);
         let level = machine.store.int(depth)?;
