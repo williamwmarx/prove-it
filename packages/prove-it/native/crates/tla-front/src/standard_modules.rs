@@ -52,3 +52,19 @@ pub const BUNDLED: &[(&str, &str)] = &[
     module!("bundled", "RealTime"),
     module!("bundled", "Toolbox"),
 ];
+
+pub const TLC_SOURCES: &[(&str, &str)] = &[
+    module!("tlc", "Naturals"),
+    module!("tlc", "Integers"),
+    module!("tlc", "Sequences"),
+    module!("tlc", "FiniteSets"),
+    module!("tlc", "TLC"),
+    module!("tlc", "TLCExt"),
+    module!("tlc", "Bags"),
+    module!("tlc", "Json"),
+    module!("tlc", "Randomization"),
+    module!("tlc", "Reals"),
+    module!("tlc", "RealTime"),
+    module!("tlc", "Toolbox"),
+    module!("tlc", "_Possible"),
+];

@@ -2,7 +2,8 @@
 // native/crates/tla-front/modules as .tla files, and the Rust index that compiles them into the
 // crate, so the Rust front end reads the same texts. It also writes the operators that tla-ts
 // implements natively for the standard modules, as getStandardModule and CORE_OPERATORS give them,
-// to src/standard_builtins.rs. With --check, it writes nothing and fails if a file differs, as
+// to src/standard_builtins.rs, and the texts SANY and TLC intern, with TLC's own module sources, to
+// src/tlc_data.rs. With --check, it writes nothing and fails if a file differs, as
 // Verification runs it.
 // Usage: bun scripts/front-modules.ts [--check]
 
@@ -15,18 +16,28 @@ import { createRuntime } from "../src/runtime";
 import { SANY_174_STANDARD_MODULES, SANY_STANDARD_MODULES } from "../src/sany/modules";
 import { getStandardRange, STANDARD_LEVELS } from "../src/standard-definitions";
 import { CORE_OPERATORS, getStandardModule, STANDARD_DEPENDENCIES } from "../src/standard-modules";
-import { USER_STANDARD_MODULES } from "../src/tlc/jar-data";
+import {
+  SANY_BUILTINS,
+  SANY_NODE_NAMES,
+  SANY_OPERATOR_SYNONYMS,
+  TLC_MODULE_SOURCES,
+  TLC_RUNTIME_STRINGS,
+  TLC_STARTUP_STRINGS,
+  USER_STANDARD_MODULES,
+} from "../src/tlc/jar-data";
 import type { TlcVersion } from "../src/tlc/version";
 
 const CRATE_DIRECTORY = join(import.meta.dirname, "../native/crates/tla-front");
 const MODULES_DIRECTORY = join(CRATE_DIRECTORY, "modules");
 const INDEX_PATH = join(CRATE_DIRECTORY, "src/standard_modules.rs");
 const BUILTINS_PATH = join(CRATE_DIRECTORY, "src/standard_builtins.rs");
+const TLC_DATA_PATH = join(CRATE_DIRECTORY, "src/tlc_data.rs");
 
 const SETS = [
   { directory: "master", constant: "MASTER", modules: SANY_STANDARD_MODULES },
   { directory: "1.7.4", constant: "TLC_174", modules: SANY_174_STANDARD_MODULES },
   { directory: "bundled", constant: "BUNDLED", modules: BUNDLED_MODULES },
+  { directory: "tlc", constant: "TLC_SOURCES", modules: TLC_MODULE_SOURCES },
 ];
 
 const files = new Map<string, string>(
@@ -145,6 +156,40 @@ files.set(
   ].join("\n"),
 );
 
+const writeTexts = (texts: readonly string[]) =>
+  texts.map((text) => `    ${JSON.stringify(text)},`);
+
+files.set(
+  TLC_DATA_PATH,
+  [
+    "//! The texts SANY and TLC intern, as `src/tlc/jar-data.ts` holds them, which TLC's string order",
+    "//! reads. `scripts/front-modules.ts` writes this file; don't edit it by hand.",
+    "",
+    "pub const SANY_BUILTINS: &[&str] = &[",
+    ...writeTexts(SANY_BUILTINS),
+    "];",
+    "",
+    "pub const SANY_NODE_NAMES: &[&str] = &[",
+    ...writeTexts(SANY_NODE_NAMES),
+    "];",
+    "",
+    "pub const SANY_OPERATOR_SYNONYMS: &[&[&str]] = &[",
+    ...SANY_OPERATOR_SYNONYMS.map(
+      (synonyms) => `    &[${synonyms.map((name) => JSON.stringify(name)).join(", ")}],`,
+    ),
+    "];",
+    "",
+    "pub const TLC_STARTUP_STRINGS: &[&str] = &[",
+    ...writeTexts(TLC_STARTUP_STRINGS),
+    "];",
+    "",
+    "pub const TLC_RUNTIME_STRINGS: &[&str] = &[",
+    ...writeTexts(TLC_RUNTIME_STRINGS),
+    "];",
+    "",
+  ].join("\n"),
+);
+
 const written = existsSync(MODULES_DIRECTORY)
   ? readdirSync(MODULES_DIRECTORY, { recursive: true, encoding: "utf8" })
       .map((path) => join(MODULES_DIRECTORY, path))
@@ -161,12 +206,12 @@ if (process.argv.includes("--check")) {
     console.log("Run bun scripts/front-modules.ts to write the standard modules again.");
     process.exit(1);
   }
-  console.log(`${files.size - 2} standard modules and their builtins are up to date`);
+  console.log(`${files.size - 3} standard modules, their builtins and TLC's texts are up to date`);
 } else {
   rmSync(MODULES_DIRECTORY, { recursive: true, force: true });
   files.forEach((text, path) => {
     mkdirSync(join(path, ".."), { recursive: true });
     writeFileSync(path, text);
   });
-  console.log(`wrote ${files.size - 2} standard modules and their builtins`);
+  console.log(`wrote ${files.size - 3} standard modules, their builtins and TLC's texts`);
 }

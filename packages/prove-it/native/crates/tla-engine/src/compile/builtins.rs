@@ -63,7 +63,7 @@ const PURE_BUILTINS: [&str; 19] = [
 
 const MAXIMUM_POWER_SET: u32 = 20;
 
-fn expect_int(machine: &Machine<'_>, id: Id) -> Outcome<i64> {
+pub(crate) fn expect_int(machine: &Machine<'_>, id: Id) -> Outcome<i64> {
     if machine.store.kind_of(id) == KIND_INT {
         Ok(i64::from(machine.store.int_of(id)))
     } else {
@@ -442,13 +442,16 @@ impl Compiler<'_> {
             },
             _ => None,
         };
-        if key != Some("level") && key != Some("distinct") {
+        if key != Some("level") && key != Some("distinct") && key != Some("diameter") {
             return unsupported("TLCGet");
         }
         if context.is_init && context.is_primed {
             return unsupported("TLCGet");
         }
-        let slot = if key == Some("distinct") {
+        let slot = if key == Some("diameter") {
+            self.is_diameter_read = true;
+            super::DIAMETER_SLOT
+        } else if key == Some("distinct") {
             self.is_distinct_read = true;
             DISTINCT_SLOT
         } else if context.is_primed {
@@ -618,7 +621,13 @@ impl Compiler<'_> {
                 let set = self.operand(&operands[1])?;
                 let is_in = name == "\\in";
                 let footprint = element.footprint.merge(&set.footprint);
-                if set.member.is_none() && set.infinite.is_none() && set.footprint.width() == 0 {
+                // An interval's membership compares with its bounds, which needs no fast path.
+                let is_interval = set.interval.is_some();
+                if set.member.is_none()
+                    && set.infinite.is_none()
+                    && !is_interval
+                    && set.footprint.width() == 0
+                {
                     return Ok(Some(predicate_node(
                         Predicate::Member {
                             element: Leaf::of(&element),
@@ -628,7 +637,10 @@ impl Compiler<'_> {
                         footprint,
                     )));
                 }
-                let evaluate = fused::member_const(&element, &set, is_in).unwrap_or_else(|| {
+                let fast = (!is_interval)
+                    .then(|| fused::member_const(&element, &set, is_in))
+                    .flatten();
+                let evaluate = fast.unwrap_or_else(|| {
                     let test = self.member_test(&set);
                     let element = element.eval.clone();
                     eval(move |machine| {
@@ -639,7 +651,7 @@ impl Compiler<'_> {
                 // A miss in a set that isn't constant compares the element with the set's elements
                 // as TLC's binary search does, to fail where it fails, so it is cached too.
                 Compiled {
-                    is_costly: set.member.is_some() || set.footprint.width() > 0,
+                    is_costly: set.member.is_some() || is_interval || set.footprint.width() > 0,
                     is_boolean: true,
                     ..leaf(evaluate, footprint)
                 }
@@ -761,7 +773,15 @@ impl Compiler<'_> {
             }
             "DOMAIN" => {
                 arity(1)?;
-                let function = self.operand(&operands[0])?;
+                // A recursive function's domain, which TLC reads without applying it.
+                let operand = &operands[0];
+                if operand.slot.is_none()
+                    && let Some(recursive) =
+                        self.get_applied_recursive_function(operand.node, &operand.context)?
+                {
+                    return Ok(Some(recursive.domain.clone()));
+                }
+                let function = self.operand(operand)?;
                 unary(
                     &function,
                     |machine, function| {

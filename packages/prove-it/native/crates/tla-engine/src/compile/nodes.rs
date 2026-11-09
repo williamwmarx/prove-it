@@ -13,8 +13,8 @@ use super::lazy;
 use super::predicate::{Predicate, Test};
 use super::{
     Binding, Compiled, Compiler, Compiling, Context, Filter, Shape, bind, bool_id,
-    call_recursive_function, combine_references, constant, eval, leaf, lookup, predicate_node,
-    reference_of, unsupported,
+    call_recursive_function, combine_references, constant, eval, leaf, lookup, member,
+    predicate_node, reference_of, unsupported,
 };
 use crate::footprint::Footprint;
 use crate::machine::{Eval, Machine};
@@ -638,9 +638,6 @@ impl Compiler<'_> {
         context: &Context,
     ) -> Compiling<Compiled> {
         let set = self.compile(bound.set, context)?;
-        if set.infinite.is_some() {
-            return unsupported("filtering an infinite set");
-        }
         let binder = self.bind_bound(&bound.pattern, context);
         let predicate = self.compile(predicate, &binder.context)?;
         let footprint = set
@@ -652,25 +649,32 @@ impl Compiler<'_> {
             tuple: binder.tuple,
             predicate: Predicate::of(&predicate).build(),
         });
+        // TLC tests membership in a filter of a set it can't enumerate, such as Nat, by the set's
+        // membership and the predicate (SetPredValue.member), and fails where it enumerates it.
+        if set.infinite.is_some() {
+            let base = self.member_test(&set);
+            let tested = Arc::clone(&filter);
+            return Ok(Compiled {
+                is_costly: true,
+                infinite: set.infinite,
+                parts: Some(Self::parts_of(&set)),
+                member: Some(member(move |machine, element| {
+                    Ok(base(machine, element)? && test_element(machine, &tested, element)?)
+                })),
+                ..leaf(
+                    eval(|_| Err(Bail("enumerated a filter of an infinite set"))),
+                    footprint,
+                )
+            });
+        }
         let parts = Arc::clone(&filter);
         // TLC filters a set it can't enumerate, such as SUBSET S, lazily, in the order of the set.
         let reference = if set.is_normalized {
             None
         } else {
             let tested = Arc::clone(&filter);
-            let test: lazy::Test = Arc::new(move |machine, element| {
-                let saved: Vec<Id> = tested
-                    .slots
-                    .iter()
-                    .map(|&slot| machine.locals[slot as usize])
-                    .collect();
-                let kept = assign_bound(machine, &tested.slots, tested.tuple, element)
-                    .and_then(|()| (tested.predicate)(machine));
-                for (&slot, &value) in tested.slots.iter().zip(&saved) {
-                    machine.locals[slot as usize] = value;
-                }
-                kept
-            });
+            let test: lazy::Test =
+                Arc::new(move |machine, element| test_element(machine, &tested, element));
             combine_references(&[&set], move |machine, mut bases| {
                 lazy::Lazy::filter(machine, bases.remove(0), Arc::clone(&test))
             })
@@ -787,20 +791,15 @@ impl Compiler<'_> {
             })
         } else {
             // A function of several arguments takes tuples, in TLC's order of the product.
-            let is_tuple = levels.iter().any(|level| level.tuple);
-            let levels: Arc<Vec<(Eval, u32)>> = Arc::new(
-                levels
-                    .into_iter()
-                    .map(|level| (level.set.eval, level.slots[0]))
-                    .collect(),
-            );
+            let levels: Arc<Vec<Level>> = Arc::new(levels);
             eval(move |machine| {
                 let mut sets = Vec::with_capacity(levels.len());
-                for (set, _) in levels.iter() {
-                    sets.push(evaluate_set(machine, set, "a function over a non-set")?);
-                }
-                if is_tuple {
-                    return Err(Bail("a tuple pattern in a function"));
+                for level in levels.iter() {
+                    sets.push(evaluate_set(
+                        machine,
+                        &level.set.eval,
+                        "a function over a non-set",
+                    )?);
                 }
                 let mut keys = Vec::new();
                 let mut values = Vec::new();
@@ -833,14 +832,23 @@ impl Compiler<'_> {
         context: &Context,
     ) -> Compiling<Compiled> {
         if let Some(recursive) = self.get_applied_recursive_function(function, context)?
-            && let [argument] = args
+            && (args.len() == 1 || args.len() == recursive.arity)
         {
-            let argument = self.compile(*argument, context)?;
-            let footprint = argument.footprint.merge(&recursive.footprint());
-            let (runtime, slot, argument) = (recursive.runtime, recursive.slot, argument.eval);
+            // f[a, b] applies f to the tuple <<a, b>>.
+            let args = args
+                .iter()
+                .map(|&argument| self.compile(argument, context))
+                .collect::<Compiling<Vec<Compiled>>>()?;
+            let footprint = Footprint::merge_all(args.iter().map(|argument| &argument.footprint))
+                .merge(&recursive.footprint());
+            let (runtime, slot) = (recursive.runtime, recursive.slot);
+            let evaluators: Vec<Eval> = args.into_iter().map(|argument| argument.eval).collect();
             return Ok(leaf(
                 eval(move |machine| {
-                    let value = argument(machine)?;
+                    let value = match &evaluators[..] {
+                        [argument] => argument(machine)?,
+                        evaluators => evaluate_tuple(machine, evaluators)?,
+                    };
                     call_recursive_function(machine, runtime, slot, value)
                 }),
                 footprint,
@@ -1058,10 +1066,25 @@ fn map_images(
     Ok(())
 }
 
+// Whether an element passes a filter's predicate, its names bound to it and then restored.
+fn test_element(machine: &mut Machine<'_>, filter: &Filter, element: Id) -> Outcome<bool> {
+    let saved: Vec<Id> = filter
+        .slots
+        .iter()
+        .map(|&slot| machine.locals[slot as usize])
+        .collect();
+    let kept = assign_bound(machine, &filter.slots, filter.tuple, element)
+        .and_then(|()| (filter.predicate)(machine));
+    for (&slot, &value) in filter.slots.iter().zip(&saved) {
+        machine.locals[slot as usize] = value;
+    }
+    kept
+}
+
 #[allow(clippy::too_many_arguments)]
 fn construct_product(
     machine: &mut Machine<'_>,
-    levels: &[(Eval, u32)],
+    levels: &[Level],
     sets: &[Id],
     level: usize,
     current: &mut Vec<Id>,
@@ -1078,7 +1101,8 @@ fn construct_product(
     for index in 0..machine.store.size_of(set) {
         let element = machine.store.element_at(set, index);
         current[level] = element;
-        machine.locals[levels[level].1 as usize] = element;
+        let bound = &levels[level];
+        assign_bound(machine, &bound.slots, bound.tuple, element)?;
         construct_product(
             machine,
             levels,
