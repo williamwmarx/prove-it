@@ -240,6 +240,7 @@ fn search_on_threads(path: &str, threads: usize, stop_at: Option<usize>) -> (Str
             reason,
             checkpoint,
             collisions,
+            ..
         } => format!(
             "{reason} {collisions} {:?}",
             checkpoint.as_ref().map(|checkpoint| (

@@ -55,6 +55,7 @@ how.
     in `search.ts`), or too few for two threads of half that each;
   - the search records a graph for liveness;
   - something prints or reads `TLCGet("distinct")`;
+  - ToString makes strings, which it ranks as it evaluates them;
   - `PROVE_IT_LIVE_CHECK` is on.
 
   Each level then still runs on the fast one-thread path. VIEW, symmetry, constraints and
