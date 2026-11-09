@@ -1140,6 +1140,22 @@ pub fn environment(
             )),
         ),
         ("facts", Some(facts(environment))),
+        (
+            "assigned",
+            Some(Json::Array(
+                environment.constants_order.iter().map(name).collect(),
+            )),
+        ),
+        (
+            "substitutions",
+            Some(Json::Array(
+                environment
+                    .substitutions
+                    .iter()
+                    .map(|(key, target)| Json::Array(vec![name(key), name(target)]))
+                    .collect(),
+            )),
+        ),
         ("variables", Some(names(&environment.variables))),
         (
             "variableIndex",
