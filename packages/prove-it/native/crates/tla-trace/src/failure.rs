@@ -498,8 +498,24 @@ impl<'ir> Rebuilder<'ir> {
                             evaluator.call_stack = call_stack;
                             return evaluator.boolean(*failed, &Context::default());
                         }
-                        let holds = constraint_holds(evaluator, *failed);
+                        // TLC's replay of the initial states evaluates the constraint with its
+                        // `CallStackTool`, which a failure in a value's method ends as a
+                        // FingerprintException, with the constraint's frames after the initial
+                        // predicate's; any other failure of a constraint it reports without
+                        // them.
                         evaluator.call_stack = call_stack;
+                        let depth = evaluator
+                            .call_stack
+                            .as_ref()
+                            .map(|stack| (stack.frames.len(), stack.is_frozen));
+                        let holds = constraint_holds(evaluator, *failed);
+                        if let (Some(stack), Some((depth, is_frozen))) =
+                            (&mut evaluator.call_stack, depth)
+                            && !stack.is_fingerprinted
+                        {
+                            stack.frames.truncate(depth);
+                            stack.is_frozen = is_frozen;
+                        }
                         holds
                     })
                 })
@@ -682,6 +698,33 @@ impl<'ir> Rebuilder<'ir> {
                 printed,
                 fingerprint: Some(fingerprint),
                 state,
+                replay: Replay::default(),
+            });
+        }
+        // A constraint that fails on an initial state in a value's method: TLC reports the error
+        // with the state, then its replay of the initial states throws the FingerprintException,
+        // whose call stack it prints.
+        if call_stack.is_fingerprinted
+            && matches!(site, Site::InitialConstraint(_))
+            && let Some(message) = &error.message
+            && !message.is_eval_exception
+            && !call_stack.fingerprinted_sources.is_empty()
+            && let Some(values) = &checked
+        {
+            return Ok(Failure {
+                code: INITIAL_STATE,
+                message: message.text.clone(),
+                tool_message: nested(message),
+                call_stack: Vec::new(),
+                exit_code: FAILURE_SPEC_EVAL,
+                printed,
+                fingerprint: Some(FingerprintFailure {
+                    sources: fingerprint_ranges(evaluator, &call_stack),
+                    reason: message.text.clone(),
+                    tool_reason: nested(message),
+                    is_replayed: true,
+                }),
+                state: Some(values.iter().map(format_value).collect()),
                 replay: Replay::default(),
             });
         }
