@@ -2192,3 +2192,98 @@ differential are left to Depot.
   `bun test tests/unit` 3,005 pass, 0 fail, and with `BACKEND=rust` 3,094 pass, 7 skip, 0 fail;
   `engine-ir` round-trips all 641 IRs. Not run here: `engine-coverage --compare-backends
   --state-logs`, `conformance --backend rust`, the differential and the 18-model suite medians.
+
+#### M7 as built (speed)
+
+Branch `native-m7-speed`, the second part of M7: four changes, each measured alone, to the walker,
+the memo tables, the fingerprint set's probe and membership. Measured on the 4-core cloud machine,
+not on Depot yet. Where the code made this design change, the code wins, and this records how:
+
+- **The walker (3.5) is compiled path by path.** A walk is compiled in continuation-passing style,
+  as `codegen.ts` writes it out: each conjunct is compiled with the rest of the walk after it as
+  its continuation, and knows which variables its path has assigned (`UNASSIGNED`, `ASSIGNED`,
+  `UNKNOWN` in `codegen.ts`). A run of guards, assignments and UNCHANGED is one segment that assigns
+  or tests without checking and, once the rest returns, unassigns what it assigned in reverse, so
+  the undo stack and the continuation closure each branch built at run time are gone. TLC's
+  shortcut past the rest of a conjunction is decided per path where the count of assigned
+  variables is known, and checked at run time only where it isn't. A continuation is compiled once
+  for each of up to four things known on the paths that reach it, and past those once for nothing
+  known, so a walk compiles in time linear in its size; after a walked `\A`, which the compiler
+  doesn't follow, a path knows only what was assigned before it. A conjunct that fails to compile
+  still fails the compile of the walk, past a shortcut too, as each conjunction compiled all of its
+  conjuncts.
+- **Memo keys (3.2).** A table of width one, once it isn't direct, or two keeps each entry as its
+  keys packed in a `u64` beside its value, so a probe reads one slot and compares once; wider
+  tables keep the value and keys of an entry in one row, compared key by key rather than through
+  `memcmp`. A recursive call's table no longer allocates its keys on each call. Sizes, lookups, hits
+  and probation are unchanged. The epoch caches cost a branch where a model has none.
+- **The probe (2.3) is read ahead.** Where nothing the search evaluates prints, reads
+  `TLCGet("distinct")`, or fingerprints a VIEW or a symmetry's representative, and
+  `PROVE_IT_LIVE_CHECK` is off, the search checks a successor once the walk reaches the next one,
+  or ends: it fingerprints the successor as soon as the walk completes it and prefetches the slot
+  its probe starts at. A walk that fails or stops has the successor waiting checked first, so the
+  search stops where, and for the reason, it stopped before, and adds states in the same order. A
+  plain load of the slot measured no gain (the stall moved to the load), so the prefetch is a real
+  one: on x86_64, `_mm_prefetch` in the crate's one `unsafe` block, which is sound because a
+  prefetch is a cache hint that reads nothing the program sees and cannot fault, and its address is
+  an element of a live slice. Stable Rust has no prefetch on aarch64, where the search pipelines
+  without it.
+- **Membership (3.1).** `x \in S` with S not constant is now costly, so it is cached by the ids it
+  reads like any other costly expression. A miss used to binary-search S with TLC's `compare`, so
+  that it fails where TLC's search of a normalized set fails, which on records costs hundreds of
+  instructions; the memo table stores answers only, never a failure, and switches off if it rarely
+  hits.
+- **Tried and dropped, measured.** Shifting fingerprints with a carry-less multiply (`pclmulqdq`,
+  one multiply and the shift table for eight bytes in place of a 16 KB table per length): level on
+  Commit and MCLamportMutex, 3% slower on btree and MCBakery. A per-parent suffix in `get_child`,
+  so values after the last one that changed length aren't extended again: 1% fewer instructions on
+  btree, whose successors change many values in place. Finding small integers by their ids in
+  `apply` and `find_in_block`: within noise. A fused `\A i \in a..b : f[i] = c`: 2% fewer
+  instructions on SimpleRegular.
+
+#### M7 acceptance, as run (speed)
+
+On the 4-core cloud machine, with `main` at a0f66ec before the merge of #31 and #32:
+- **State logs and outcomes: met.** `engine-coverage --compare-backends --state-logs` with
+  `PROVE_IT_FP_VERIFY=1`, after the walker and again after all four changes: `off`, `ts` and `rust`
+  reach the same outcome on all 733 models; the native engine completes 394, and its state logs
+  equal the TypeScript engine's on all 393 both complete, with `-nowarning` and without; no
+  fingerprint collision in 511 native searches; against a sweep of `main` (a0f66ec), no model
+  changed bucket or native outcome. The same holds after merging `main` at c97c255 (#31, #32).
+- **Conformance: met where it ran.** `conformance --check --compare-backends` before the merge:
+  763 models matched TLC with the TypeScript engine and with the Rust one, none mismatched, was
+  unsupported or crashed; the run was stopped by the machine's time limit with the last 7 of the
+  770 models, the slowest, left to run.
+- **Unit tests and Rust checks: met.** Before the merge, `bun test tests/unit` with `BACKEND=rust`
+  3,097 pass, 7 skip, 0 fail, and the default backend 3,103 pass, 1 skip, 0 fail. After merging
+  `main` at c97c255 (#31, #32): with `BACKEND=rust` 3,099 pass, 7 skip, 0 fail; with the default
+  backend, now `auto`, 3,007 pass, 84 skip, 0 fail without `PROVE_IT_ENGINE_ADDON`. With it set,
+  five tests of the TypeScript engine's memo tables and store trace fail, on `main` at c97c255 as
+  here: they don't ask for the TypeScript backend, which `auto` no longer picks. Commit's state
+  logs, TypeScript and Rust, agree on all 282,251 states. `cargo fmt --check`,
+  `clippy -D warnings` and `cargo test` clean. Each new test was checked against a deliberate break
+  of what it covers.
+- **Speed: some gates met here, not all.** Engine time alone (the search called directly, median of
+  9 interleaved runs, ms), `main`, then the walker, memo keys, the pipeline with a plain load,
+  membership, and the prefetch: Commit 780, 723, 709, 703, 529, 494, 37% less; btree 1,406,
+  1,336, 1,327, 1,279, 1,281, 1,174, 17% less. Instructions: Commit 6.71 → 4.62 billion, btree 13.15 →
+  11.99. `bench-suite.ts`, binaries, 9 interleaved rounds, wall seconds (CPU), TypeScript, then
+  Rust here, then Rust on `main`: Commit 0.65 (1.32), 0.56 (0.63), 0.87 (0.92); btree 1.36, 1.32,
+  1.57; SimpleRegular 1.22, 1.02, 1.13; MCBakery 2.05, 1.66, 1.95; MCLamportMutex 3.99, 3.72,
+  4.28; MCSingleNode 1.59, 0.89, 0.92; Paxos_MC 2.29, 1.47, 1.55; MCDisruptor_MPMC 0.54, 0.38,
+  0.44; Philosophers 0.30, 0.29, 0.30. Geomean over the 18: Rust 1.20× faster than TypeScript in
+  wall time and 2.0× in CPU (Rust on `main`: 1.09× and 1.85×). Against the gates, on this machine:
+  no model is slower than TypeScript, nor uses more CPU, except ReadersWriters (and TokenRing in
+  wall time), measured before #32 answered their liveness in Rust; the geomean gate (1.2×) is met
+  just; the 1.3× gate on each engine model over 0.25 s is met on MCSingleNode, Paxos_MC,
+  MCDisruptor_MPMC and Chameneos and not on Commit (1.16×), btree (1.03×), SimpleRegular (1.20×),
+  MCBakery (1.23×), MCLamportMutex (1.07×) or Philosophers (1.03×).
+- **What's left.** After these changes Commit's engine time is spread thin: guard predicates
+  (`phase[p] = "x"`-style compares through two dynamic calls and the store's `apply`) about 14% of
+  instructions, fingerprints 13% (`get_child`, a string's length changing on nearly every step),
+  memo lookups 7% (mostly misses to memory in the membership tables), the walker's own segments
+  about 5%. On btree, fingerprints are about a fifth of the time, nine shifts per successor because
+  its steps change many values; guards and memo lookups most of the rest. MCLamportMutex spends
+  about 40% under memo lookups, a third of that in the lookups themselves. The next step that
+  could close the 1.3× gate is compiling guards and invariants to code rather than closure trees
+  (3.1's later tier), not more tuning of the closures.
