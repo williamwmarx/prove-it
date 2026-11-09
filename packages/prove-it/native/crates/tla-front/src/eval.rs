@@ -1,6 +1,7 @@
 //! A small evaluator of the constant expressions the front end needs values of before the
 //! search, as `evaluate` in `src/evaluate.ts` computes them: the sets TLC unrolls a property's or
-//! a temporal formula's quantifier over, and the constant parts of a temporal formula. It knows
+//! a temporal formula's quantifier over, the constant parts of a temporal formula, and the
+//! substitutes for constants TLC evaluates at startup, whose failures it reports. It knows
 //! booleans, integers, strings, model values and finite sets of them, and returns `NotYet` for
 //! anything else, which TLC's own evaluation at startup handles.
 
@@ -11,7 +12,7 @@ use crate::TlcVersion;
 use crate::ast::*;
 use crate::config::ConfigValue;
 use crate::environment::Environment;
-use crate::errors::FrontError;
+use crate::errors::{FrontError, describe_range};
 use crate::resolve::Result;
 use crate::spec::{Binding, Scope, bind_definitions, get_definition, lookup_scope};
 use crate::tlc_data::SANY_OPERATOR_SYNONYMS;
@@ -19,6 +20,18 @@ use crate::values::{ValueOrder, get_model_value_type};
 
 /// The most elements the evaluator lists of a set, past which TLC's run is the engine's.
 const MAXIMUM_ELEMENTS: i64 = 100_000;
+
+/// The keys of TLCGet that TLC's model checker holds.
+const CHECKER_KEYS: [&str; 6] = [
+    "diameter",
+    "generated",
+    "distinct",
+    "queue",
+    "stats",
+    "config",
+];
+
+const TLC_GET_EVAL: &str = "public static tlc2.value.impl.Value tlc2.module.TLCGetSet.TLCGetEval(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel)";
 
 fn not_yet(reason: &str) -> FrontError {
     FrontError::NotYet(format!(
@@ -73,6 +86,8 @@ pub struct Evaluator<'a> {
     pub environment: &'a Environment,
     pub order: ValueOrder<'a>,
     pub version: TlcVersion,
+    /// Whether TLC has created its model checker, before which TLCGet reads none of its keys.
+    pub is_started: bool,
 }
 
 impl Evaluator<'_> {
@@ -253,6 +268,17 @@ impl Evaluator<'_> {
         };
         let arity = args.len();
         Ok(match (get_canonical_name(name), arity) {
+            // TLCGetSet.TLCGetEval fails on the keys TLC's model checker holds before it exists.
+            ("TLCGet", 1) if !self.is_started && self.version == TlcVersion::Master => {
+                match value(0)? {
+                    ConfigValue::String(key) if CHECKER_KEYS.contains(&key.as_str()) => {
+                        return Err(FrontError::Evaluation(format!(
+                            "Attempted to apply the operator overridden by the Java method\n{TLC_GET_EVAL},\nbut it produced the following error:\nTLCGet({key}) was undefined."
+                        )));
+                    }
+                    _ => return Err(not_yet("TLCGet")),
+                }
+            }
             ("+", 2) => {
                 let (left, right) = integers()?;
                 to_integer(left + right)?
@@ -399,6 +425,13 @@ impl Evaluator<'_> {
                         }
                         _ => Err(not_yet("an operator as a value")),
                     };
+                }
+                if self.environment.variable_index.contains_key(&name) {
+                    // TLC's Tool#evalAppl fails to look up a variable no state assigns.
+                    return Err(FrontError::Evaluation(format!(
+                        "In evaluation, the identifier {name} is either undefined or not an operator.\n{}",
+                        describe_range(expression)
+                    )));
                 }
                 self.evaluate_global(&name)
             }

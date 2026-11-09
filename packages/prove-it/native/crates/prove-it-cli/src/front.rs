@@ -9,9 +9,25 @@ use std::path::Path;
 use tla_front::TlcVersion;
 use tla_front::errors::FrontError;
 use tla_front::model::{ModelOptions, lower_model};
-use tla_front::report::{ReportOptions, get_sany_text};
+use tla_front::report::{ReportOptions, SanyText, get_sany_text};
+use tla_front::tlc_messages::CodedError;
 
 use crate::files::FileDescriber;
+
+const PROPERTY_NOT_DEFINED: u32 = 2229;
+
+/// What the front end gives a run: the model to check, or where TLC stops before it searches.
+pub enum Read {
+    Model(Front),
+    Failed(Failure),
+}
+
+/// A spec TLC stops at before the search: SANY's report, then SANY's rejection of the spec, or
+/// else the error TLC reports with its code.
+pub struct Failure {
+    pub sany: String,
+    pub error: Option<CodedError>,
+}
 
 pub struct Front {
     pub ir: Vec<u8>,
@@ -25,7 +41,8 @@ pub fn read_front(
     is_warning_enabled: bool,
     describer: &FileDescriber,
     libraries: &[String],
-) -> Result<Front, String> {
+    is_tool: bool,
+) -> Result<Read, String> {
     let name = Path::new(spec_path)
         .file_stem()
         .map_or_else(String::new, |stem| stem.to_string_lossy().into_owned());
@@ -35,39 +52,103 @@ pub fn read_front(
     let directory = Path::new(&directory);
     let read = |extension: &str| std::fs::read(directory.join(format!("{name}.{extension}")));
     let no_front = || format!("no recorded front of {name} in {}", directory.display());
-    let recorded = read("front").map_err(|_| no_front())?;
+    // Where TLC prints nothing past its startup for the differential to record, tla-front finds
+    // whether SANY rejects the spec or TLC reports an error before the search.
+    let Ok(recorded) = read("front") else {
+        let failure = Lowering {
+            spec_path,
+            config_text,
+            is_warning_enabled,
+            is_tool,
+        };
+        return native_failure(&failure, describer, libraries)
+            .map(Read::Failed)
+            .ok_or_else(no_front);
+    };
     // PROVE_IT_NATIVE_FRONT=1 prints SANY's report as tla-front writes it in place of the recorded
     // one, which the rest of the front still follows until tla-front writes it too.
     let output = match std::env::var_os("PROVE_IT_NATIVE_FRONT") {
         Some(_) => native_sany(spec_path, describer, libraries)
-            .and_then(|sany| splice_sany(&recorded, &sany))
+            .and_then(|sany| splice_sany(&recorded, &sany.text))
             .unwrap_or(recorded),
         None => recorded,
     };
     let ir = match read("ir") {
         Ok(ir) => ir,
         Err(_) => {
-            let path = if spec_path.ends_with(".tla") {
-                spec_path.to_string()
-            } else {
-                format!("{spec_path}.tla")
-            };
-            let options = ModelOptions {
-                library: None,
-                version: None,
-                is_warning_enabled,
-            };
-            lower_model(Path::new(&path), config_text, &options).map_err(|error| match error {
+            lower(spec_path, config_text, is_warning_enabled).map_err(|error| match error {
                 FrontError::NotYet(reason) => format!("{}: {reason}", no_front()),
                 _ => no_front(),
             })?
         }
     };
-    Ok(Front { ir, output })
+    Ok(Read::Model(Front { ir, output }))
 }
 
-// SANY's report of the spec's modules, or nothing where tla-front doesn't write it yet.
-fn native_sany(spec_path: &str, describer: &FileDescriber, libraries: &[String]) -> Option<String> {
+// The model's IR as tla-front lowers it.
+fn lower(
+    spec_path: &str,
+    config_text: &str,
+    is_warning_enabled: bool,
+) -> Result<Vec<u8>, FrontError> {
+    let path = if spec_path.ends_with(".tla") {
+        spec_path.to_string()
+    } else {
+        format!("{spec_path}.tla")
+    };
+    let options = ModelOptions {
+        library: None,
+        version: None,
+        is_warning_enabled,
+    };
+    lower_model(Path::new(&path), config_text, &options)
+}
+
+/// What tla-front lowers a run's model from.
+struct Lowering<'a> {
+    spec_path: &'a str,
+    config_text: &'a str,
+    is_warning_enabled: bool,
+    is_tool: bool,
+}
+
+// Where TLC stops before the search, as tla-front finds: SANY rejects the spec, or lowering the
+// model raises an error TLC reports with a code.
+fn native_failure(
+    lowering: &Lowering<'_>,
+    describer: &FileDescriber,
+    libraries: &[String],
+) -> Option<Failure> {
+    let sany = native_sany(lowering.spec_path, describer, libraries)?;
+    if sany.is_failed {
+        return Some(Failure {
+            sany: sany.text,
+            error: None,
+        });
+    }
+    let error = lower(
+        lowering.spec_path,
+        lowering.config_text,
+        lowering.is_warning_enabled,
+    )
+    .err()?;
+    let coded = error.get_coded(lowering.is_tool)?;
+    // HACK: tla-front doesn't yet check that an invariant is a state predicate (2146), which TLC
+    // checks before it looks up the properties, so its "not defined" (2229) may not be TLC's.
+    if coded.code == PROPERTY_NOT_DEFINED {
+        return None;
+    }
+    Some(Failure {
+        sany: sany.text,
+        error: Some(coded),
+    })
+}
+
+fn native_sany(
+    spec_path: &str,
+    describer: &FileDescriber,
+    libraries: &[String],
+) -> Option<SanyText> {
     let spec = Path::new(spec_path);
     let directory = spec.parent().unwrap_or(Path::new("."));
     let load_module = |name: &str| {
@@ -89,7 +170,7 @@ fn native_sany(spec_path: &str, describer: &FileDescriber, libraries: &[String])
         load_module: &load_module,
         describe_file: &|name, origin| describer.describe(name, origin),
     };
-    get_sany_text(spec, &options).ok().map(|sany| sany.text)
+    get_sany_text(spec, &options).ok()
 }
 
 // The recorded front with SANY's report in it replaced: under -tool between "Starting SANY..."

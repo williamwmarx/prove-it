@@ -9,15 +9,16 @@ use std::rc::Rc;
 use crate::TlcVersion;
 use crate::ast::*;
 use crate::config::{ConfigValue, ModelConfig};
-use crate::dependencies::create_definition_facts;
 use crate::errors::{FrontError, SanyError, SanyReport, SyntaxError, format_range};
+use crate::eval::Evaluator;
 use crate::hash::{FastMap, FastSet};
 use crate::instances::{
     AddDefinition, Instantiation, Instantiator, apply, identifier, let_expression, local_arguments,
     local_identifier, operator_definition, param, rename_locals, with_let_instances,
 };
 use crate::levels::{
-    InstanceCheck, LevelAnalyzer, LevelContext, ModuleLevelContext, check_instance, get_level_units,
+    InstanceCheck, LevelAnalyzer, LevelContext, ModuleLevelContext, Scope, check_instance,
+    get_level_units,
 };
 use crate::lexer::tokenize;
 use crate::order::TlcOrder;
@@ -29,11 +30,13 @@ use crate::resolve::{
     get_arity, get_param_arities, is_before, is_theorem_definition, resolve_module,
     resolve_substitutions,
 };
+use crate::spec::get_definition;
 use crate::standard_builtins::{
     self, CORE_OPERATORS, STANDARD_DEPENDENCIES, StandardModule, USER_STANDARD_MODULES,
 };
 use crate::standard_modules;
 use crate::subexpressions::{resolve_instance_subexpressions, resolve_module_subexpressions};
+use crate::values::ValueOrder;
 
 /// A builtin the environment holds: its name, arity and flags (state-level, level-constant,
 /// lazy), which the IR writes.
@@ -65,6 +68,11 @@ pub struct Environment {
     pub root_symbols: Rc<Symbols>,
     /// The copies an INSTANCE with substitutions makes (`substitutedDefinitions`), by address.
     pub substituted_definitions: FastMap<usize, Rc<Definition>>,
+    /// The copies an INSTANCE with substitutions makes, by key, with the name and location TLC
+    /// gives an action that applies one (`instanceActions`).
+    pub instance_actions: OrderedMap<Name, InstanceAction>,
+    /// The name TLC gives each copy a named INSTANCE makes, by key: `I!Foo` (`instanceNames`).
+    pub instance_names: OrderedMap<Name, Name>,
     /// What linking prints: SANY's warnings.
     pub printed: Vec<String>,
     /// The definitions TLC computes when it starts, each module's in the order TLC computes them,
@@ -73,6 +81,14 @@ pub struct Environment {
     pub startup_definitions: Vec<Rc<Definition>>,
     /// The assumptions of the root module and the modules it extends, an extended module's first.
     pub assumptions: Vec<Rc<Assumption>>,
+}
+
+/// The name and location TLC gives an action that applies a definition an INSTANCE with
+/// substitutions copies: the name the instance exports it by, at the INSTANCE.
+#[derive(Clone)]
+pub struct InstanceAction {
+    pub name: Name,
+    pub location: Location,
 }
 
 pub struct EnvironmentOptions<'a> {
@@ -296,6 +312,8 @@ struct Linker<'a> {
     checked_modules: RefCell<FastMap<Name, Rc<LinkedModule>>>,
     /// The qualified name, such as I!Foo, of each copy a named INSTANCE makes.
     qualified_names: RefCell<FastMap<Name, Name>>,
+    instance_actions: RefCell<OrderedMap<Name, InstanceAction>>,
+    instance_names: RefCell<OrderedMap<Name, Name>>,
     /// Whether linking goes on after a module's errors, as SANY's semantic analysis does,
     /// keeping each module's messages and level checks in `collected`.
     is_collecting: Cell<bool>,
@@ -1336,6 +1354,7 @@ impl Linker<'_> {
         let has_declarations = !declarations.is_empty();
         let prefix = instance.params.len();
         let module_name = module.name.clone();
+        let instance_name = instance.name.clone();
         let instantiator = self.instantiation(
             instance
                 .params
@@ -1372,6 +1391,14 @@ impl Linker<'_> {
                 self.copy_sources
                     .borrow_mut()
                     .insert(key.clone(), (source.clone(), prefix));
+                if let Some(instance_name) = &instance_name {
+                    let mut instance_names = self.instance_names.borrow_mut();
+                    let source_name = instance_names.get(source).cloned().unwrap_or(name.clone());
+                    instance_names.insert(
+                        key.clone(),
+                        Rc::from(format!("{instance_name}!{source_name}")),
+                    );
+                }
                 Ok(key)
             }),
         );
@@ -1380,13 +1407,24 @@ impl Linker<'_> {
             &linked.exported,
             &declarations,
             &mut |key, name| {
-                if instance.name.is_none() {
-                    return instantiator.get_key(key);
+                let copy = match instance.name {
+                    None => instantiator.get_key(key)?,
+                    Some(_) => instantiator.get_qualified_key(key)?,
+                };
+                if has_declarations {
+                    self.instance_actions.borrow_mut().insert(
+                        copy.clone(),
+                        InstanceAction {
+                            name: name.clone(),
+                            location: instance.location.clone(),
+                        },
+                    );
                 }
-                let copy = instantiator.get_qualified_key(key)?;
-                self.qualified_names
-                    .borrow_mut()
-                    .insert(copy.clone(), name.clone());
+                if instance.name.is_some() {
+                    self.qualified_names
+                        .borrow_mut()
+                        .insert(copy.clone(), name.clone());
+                }
                 Ok(copy)
             },
         )
@@ -1790,6 +1828,8 @@ fn create_linker<'a>(options: &'a EnvironmentOptions<'a>, root: &Rc<Module>) -> 
         instance_checks: RefCell::default(),
         checked_modules: RefCell::default(),
         qualified_names: RefCell::default(),
+        instance_actions: RefCell::default(),
+        instance_names: RefCell::default(),
         is_collecting: Cell::new(false),
         collected: RefCell::default(),
     }
@@ -2238,28 +2278,66 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
         root_constants: linked_root.constants.clone(),
         root_symbols: linked_root.visible.clone(),
         substituted_definitions: linker.substituted_definitions.take(),
+        instance_actions: linker.instance_actions.take(),
+        instance_names: linker.instance_names.take(),
         printed,
     };
-    // TLC evaluates a substitute for a constant at startup, and rejects it only when that fails
-    // and the level it bounds is above constant: the engine's startup phase will evaluate it.
-    let substitutes: Vec<&Rc<Definition>> = environment
-        .substitutions
-        .iter()
-        .filter(|(name, _)| declared_constants.contains(name))
-        .filter_map(|(_, target)| environment.definitions.get(target))
-        .filter(|definition| {
-            matches!(&definition.kind, DefinitionKind::Operator { params, .. } if params.is_empty())
-        })
-        .collect();
-    if !substitutes.is_empty() {
-        let facts = create_definition_facts(&environment);
-        if substitutes
-            .iter()
-            .any(|definition| !facts.is_constant_level(definition, &environment))
-        {
-            return Err(FrontError::NotYet(
-                "a substitute TLC evaluates at startup".to_owned(),
-            ));
+    // TLC evaluates a substitute for a constant at startup and rejects it only when that fails and
+    // the level bound it computes is above constant. The bound counts the operators that TLC's
+    // Java code overrides with a minimum level as state-level, so the analyzer takes them for
+    // variables.
+    {
+        let analyzer = LevelAnalyzer::new(
+            LevelContext {
+                constants: environment.constants.keys().cloned().collect(),
+                variables: environment
+                    .variables
+                    .iter()
+                    .cloned()
+                    .chain(
+                        ["TLCGet", "Trace", "CounterExample"]
+                            .into_iter()
+                            .map(Name::from)
+                            .filter(|name| environment.builtins.contains_key(name)),
+                    )
+                    .collect(),
+                get_definition: Box::new(|name| get_definition(name, &environment).cloned()),
+                get_qualified_name: Box::new(|_| None),
+            },
+            &linker.tables,
+        );
+        let ranks = FastMap::default();
+        let evaluator = Evaluator {
+            environment: &environment,
+            order: ValueOrder { ranks: &ranks },
+            version: options.version,
+            is_started: false,
+        };
+        for (name, target) in environment.substitutions.iter() {
+            let Some(definition) = environment.definitions.get(target) else {
+                continue;
+            };
+            let is_parameterless = matches!(&definition.kind, DefinitionKind::Operator { params, .. } if params.is_empty());
+            if !declared_constants.contains(name)
+                || !is_parameterless
+                || analyzer
+                    .analyze_definition(definition, &Scope::default())?
+                    .data
+                    .level
+                    == 0
+            {
+                continue;
+            }
+            match evaluator.evaluate(&definition.body, None) {
+                // TLC's SpecProcessor adds the message of a TLCRuntimeException, which these are.
+                Err(FrontError::Evaluation(message)) => {
+                    return Err(FrontError::Config(format!(
+                        "The configuration file substitutes constant {name} with non-constant {target} - specifically: {message}"
+                    )));
+                }
+                Err(error) => return Err(error),
+                Ok(_) => {}
+            }
         }
     }
     Ok(environment)
