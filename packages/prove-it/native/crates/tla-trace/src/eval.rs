@@ -1046,6 +1046,24 @@ impl<'ir> Evaluator<'ir> {
         }
     }
 
+    /// Computes the model's startup definitions as TLC does when it starts, after the
+    /// substitutes, drawing from the generator TLC seeds then, and keeps them as their values.
+    pub(crate) fn compute_startup(&mut self) -> Evaluated<()> {
+        let ir = self.ir;
+        self.random = Some(JavaRandom::seeded(ir.model.random_seed));
+        let substitutes = ir.model.startup.substitutes.iter().map(|&(_, index)| index);
+        for index in substitutes.chain(ir.model.startup.definitions.iter().copied()) {
+            let node = ir.definitions[index as usize];
+            let value = self.evaluate(self.definition(node).body, &Context::default())?;
+            if ir.model.startup.definitions.contains(&index) {
+                self.cache.insert((node, false), value.clone());
+                self.cache.insert((node, true), value);
+            }
+        }
+        self.random = None;
+        Ok(())
+    }
+
     /// Takes the values the search computed at startup for the model's startup definitions,
     /// ids of `store` in their order, as the values of those definitions.
     pub fn set_startup(&mut self, store: &Store, values: &[Id]) {

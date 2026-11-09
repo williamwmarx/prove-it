@@ -485,6 +485,22 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
     if args.has("-deadlock") {
         ir.model.check_deadlock = false;
     }
+    // The front end evaluates nothing, so the IR it lowers has none of TLC's actions, which the
+    // trace evaluator finds as check.ts does. A model it can't split keeps none, and its traces
+    // name no actions natively. The evaluator recurses, so it runs with the search's stack.
+    if ir.model.actions.is_empty() {
+        let split = std::thread::scope(|scope| {
+            std::thread::Builder::new()
+                .stack_size(SEARCH_STACK_BYTES)
+                .spawn_scoped(scope, || tla_trace::add_actions(&ir).ok())
+                .expect("a thread to split the next-state relation")
+                .join()
+                .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+        });
+        if let Some(split) = split {
+            ir = split;
+        }
+    }
     // TLC checks the temporal properties as the search goes, unless -lncheck asks for one check at
     // the end.
     let is_liveness_periodic = !args
@@ -679,8 +695,15 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
         SearchOutcome::Declined(reason) => {
             return report_not_native(printer, &format!("the engine declined: {reason}"));
         }
-        SearchOutcome::AssumptionViolated { .. } => {
-            return report_not_native(printer, "an assumption that is false");
+        // TLC reports a false assumption with no statistics, since it hasn't searched.
+        SearchOutcome::AssumptionViolated { name } => {
+            printer.print(
+                code::ASSUMPTION_FALSE,
+                Level::Error,
+                &format!("Assumption {name} is false."),
+            );
+            print_finished(printer, start);
+            return ASSUMPTION_VIOLATION;
         }
         SearchOutcome::Stopped {
             violation: Some(violation),
@@ -863,6 +886,11 @@ fn print_violation(
 ) -> Result<i32, &'static str> {
     // TLC reports a _POSSIBLE predicate the search never witnessed, which a search that stopped
     // doesn't count yet, before it checks the postconditions on the trace.
+    // HACK: under SYMMETRY without a VIEW, the rebuilt trace sorts records TLC prints as they were
+    // built (mongodb-txns Storage), until tla-trace settles them as TLC does.
+    if ir.model.startup.symmetry.is_some() && ir.model.view.is_none() {
+        return Err("a trace under SYMMETRY, whose records TLC may print unsorted");
+    }
     let possible = postconditions.map_or(&[][..], |run| &run.possible[..]);
     if possible.len() != ir.model.possible.len() || possible.iter().any(|(_, count)| *count <= 0) {
         return Err("a _POSSIBLE predicate");

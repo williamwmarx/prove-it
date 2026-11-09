@@ -33,7 +33,8 @@ use std::rc::{Rc, Weak};
 use std::sync::Arc;
 
 use tla_ir::{
-    Definition, DefinitionForm, Index, Ir, Name, NodeId, NodeKind, Param, Resolution, TextId, Value,
+    Bound, Definition, DefinitionForm, Index, Ir, Name, NodeId, NodeKind, Param, Resolution,
+    TextId, Value,
 };
 use tla_values::store::{FALSE, Outcome, TRUE};
 use tla_values::{Bail, Id, Store};
@@ -599,6 +600,9 @@ pub(crate) struct RecursiveFunction {
     /// How many bounds it has: TLC's domain is their product.
     arity: usize,
     domain: Compiled,
+    /// Where its body is a function construction, which TLC keeps lazy (`FcnLambdaValue`), the
+    /// runtime that applies f[a] to b without building f[a], and the slot of b.
+    element: Option<(usize, u32)>,
     assumed: RefCell<Footprint>,
     body_footprint: RefCell<Option<Footprint>>,
     fixed_point: Rc<FixedPoint>,
@@ -2248,13 +2252,15 @@ impl<'a> Compiler<'a> {
         let DefinitionForm::Function(bounds) = &definition.form else {
             unreachable!("a recursive function that isn't one");
         };
-        let mut params = Vec::with_capacity(bounds.len());
-        for bound in bounds {
-            let tla_ir::Pattern::Name(param) = bound.pattern else {
-                return unsupported("a recursive function over a tuple pattern");
-            };
-            params.push(param);
-        }
+        let Some(params) = names_of(bounds) else {
+            return unsupported("a recursive function over a tuple pattern");
+        };
+        let construction = match self.node(definition.body).1 {
+            NodeKind::FunctionConstruction { bounds, body, .. } => {
+                names_of(bounds).map(|names| (bounds, *body, names))
+            }
+            _ => None,
+        };
         let outer = Context {
             scope: base_scope.clone(),
             can_print: false,
@@ -2278,6 +2284,9 @@ impl<'a> Compiler<'a> {
             slot,
             arity: params.len(),
             domain,
+            element: construction
+                .is_some()
+                .then(|| (self.allocate_runtime(), self.allocate_slot())),
             assumed: RefCell::new(Footprint::default()),
             body_footprint: RefCell::new(None),
             fixed_point: Rc::new(FixedPoint {
@@ -2289,32 +2298,40 @@ impl<'a> Compiler<'a> {
             .entry(key)
             .or_insert_with(|| (base_scope.clone(), [None, None]))
             .1[index] = Some(Rc::clone(&record));
-        // With several bounds, each name is its element of the tuple the function is applied to.
-        let scope = match &params[..] {
-            [param] => bind(&base_scope, *param, Binding::Slot(slot)),
-            params => {
-                params
-                    .iter()
-                    .enumerate()
-                    .fold(base_scope.clone(), |scope, (index, &param)| {
-                        let element = leaf(
-                            eval(move |machine| {
-                                let argument = machine.locals[slot as usize];
-                                Ok(machine.store.get_range_value(argument, index as u32))
-                            }),
-                            Footprint::slot(slot),
-                        );
-                        let binding = Binding::Value {
-                            compiled: Box::new(element),
-                            lazy: None,
-                        };
-                        bind(&scope, param, binding)
-                    })
-            }
-        };
+        let scope = bind_parameters(&base_scope, &params, slot);
         let body_context = outer.with_scope(scope);
-        let settled = self.settle_function(&record, definition.body, &body_context, &mut read);
-        let (body, slot_start, slot_end) = match settled {
+        let settled = self
+            .settle_function(&record, definition.body, &body_context, &mut read)
+            .and_then(|settled| {
+                let element = match (record.element, &construction) {
+                    (Some((_, element_slot)), Some((bounds, body, names))) => {
+                        let element_context = body_context.with_scope(bind_parameters(
+                            &body_context.scope,
+                            names,
+                            element_slot,
+                        ));
+                        Some(self.tracking(&mut read, |compiler| {
+                            let slot_start = compiler.program.slot_count as u32;
+                            let element = compiler.compile(*body, &element_context)?;
+                            let slot_end = compiler.program.slot_count as u32;
+                            let domain = match &bounds[..] {
+                                [bound] => compiler.compile(bound.set, &body_context)?,
+                                bounds => {
+                                    let factors = bounds
+                                        .iter()
+                                        .map(|bound| compiler.compile(bound.set, &body_context))
+                                        .collect::<Compiling<Vec<Compiled>>>()?;
+                                    compiler.product_of(&factors)
+                                }
+                            };
+                            Ok((element, slot_start, slot_end, compiler.member_test(&domain)))
+                        })?)
+                    }
+                    _ => None,
+                };
+                Ok((settled, element))
+            });
+        let ((body, slot_start, slot_end), element) = match settled {
             Ok(settled) => settled,
             Err(error) => {
                 if let Some((_, entries)) = self.recursive_functions.get_mut(&key)
@@ -2351,6 +2368,23 @@ impl<'a> Compiler<'a> {
             slot_end,
             Some(domain_member),
         );
+        if let (Some((runtime, element_slot)), Some((element, slot_start, slot_end, member))) =
+            (record.element, element)
+        {
+            let footprint = element.footprint.clone();
+            let key_slots = Footprint::slot(slot)
+                .merge(&Footprint::slot(element_slot))
+                .merge(&slots_footprint(footprint.slots.clone()));
+            self.settle_runtime(
+                runtime,
+                element,
+                &footprint,
+                &key_slots.slots,
+                slot_start,
+                slot_end,
+                Some(member),
+            );
+        }
         Ok(record)
     }
 
@@ -2455,6 +2489,41 @@ impl<'a> Compiler<'a> {
     }
 }
 
+fn names_of(bounds: &[Bound]) -> Option<Vec<TextId>> {
+    bounds
+        .iter()
+        .map(|bound| match bound.pattern {
+            tla_ir::Pattern::Name(name) => Some(name),
+            tla_ir::Pattern::Tuple(_) => None,
+        })
+        .collect()
+}
+
+// The scope binding a function's parameters to the argument in a slot: with several bounds, each
+// name is its element of the tuple the function is applied to.
+fn bind_parameters(base: &Option<Rc<Scope>>, params: &[TextId], slot: u32) -> Option<Rc<Scope>> {
+    match params {
+        [param] => bind(base, *param, Binding::Slot(slot)),
+        params => params
+            .iter()
+            .enumerate()
+            .fold(base.clone(), |scope, (index, &param)| {
+                let element = leaf(
+                    eval(move |machine| {
+                        let argument = machine.locals[slot as usize];
+                        Ok(machine.store.get_range_value(argument, index as u32))
+                    }),
+                    Footprint::slot(slot),
+                );
+                let binding = Binding::Value {
+                    compiled: Box::new(element),
+                    lazy: None,
+                };
+                bind(&scope, param, binding)
+            }),
+    }
+}
+
 fn slots_footprint(slots: Vec<u32>) -> Footprint {
     Footprint {
         slots,
@@ -2481,5 +2550,33 @@ pub(crate) fn call_recursive_function(
     machine.locals[slot as usize] = argument;
     let result = machine.call_recursive(runtime);
     machine.locals[slot as usize] = saved;
+    result
+}
+
+// f[a][b] where f's body is a function construction, with a in f's domain: TLC applies f to a,
+// keeping the construction lazy, and then applies that to b, evaluating its body for b alone.
+pub(crate) fn call_recursive_element(
+    machine: &mut Machine<'_>,
+    slot: u32,
+    (element_runtime, element_slot): (usize, u32),
+    argument: Id,
+    element: Id,
+) -> Outcome<Id> {
+    let saved = (
+        machine.locals[slot as usize],
+        machine.locals[element_slot as usize],
+    );
+    machine.locals[slot as usize] = argument;
+    let element_domain = machine.recursive_domain(element_runtime);
+    let result = match element_domain(machine, element) {
+        Ok(true) => {
+            machine.locals[element_slot as usize] = element;
+            machine.call_recursive(element_runtime)
+        }
+        Ok(false) => Err(Bail("applied a function outside its domain")),
+        Err(bail) => Err(bail),
+    };
+    machine.locals[slot as usize] = saved.0;
+    machine.locals[element_slot as usize] = saved.1;
     result
 }

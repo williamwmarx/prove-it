@@ -1722,10 +1722,11 @@ const searchStates = (
     };
     return checkpoint.graph ? 0 : checkpoint.expanding;
   };
-  const tryEngine = (): CheckResult | undefined => {
+  // With isLoweredOnly, the engine IR is lowered for PROVE_IT_IR_DUMP and nothing runs.
+  const tryEngine = (isLoweredOnly = false): CheckResult | undefined => {
     const reason = getEngineIneligibility();
     if (reason !== undefined) {
-      reportEngine(`skipped: ${reason}`);
+      if (!isLoweredOnly) reportEngine(`skipped: ${reason}`);
       return undefined;
     }
     const init = spec.init;
@@ -1844,6 +1845,7 @@ const searchStates = (
       return outcome;
     };
     if (isIrDumped()) lowerModel();
+    if (isLoweredOnly) return undefined;
     const callbacks = {
       onProgress: (progress: CheckProgress) => {
         engineReport.isReported = true;
@@ -2065,7 +2067,11 @@ const searchStates = (
   // TLC checks the assumptions once it has built the liveness checker in ModelChecker's
   // constructor.
   const assumptionViolation = findViolatedAssumption();
-  if (assumptionViolation) return createResult("assumption-violation", assumptionViolation);
+  if (assumptionViolation) {
+    // The native binary checks the assumptions itself, from the IR.
+    if (isIrDumped()) tryEngine(true);
+    return createResult("assumption-violation", assumptionViolation);
+  }
   const engineOutcome = tryEngine();
   if (engineOutcome) return engineOutcome;
   if (!engineReport.isReported) options.onProgress?.({ kind: "initial-states-started" });

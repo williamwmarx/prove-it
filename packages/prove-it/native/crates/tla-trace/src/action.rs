@@ -201,6 +201,11 @@ impl<'ir> Evaluator<'ir> {
         is_constant
     }
 
+    /// Whether an expression may read the state, as `getLevel` finds it above constant level.
+    pub(crate) fn can_read(&self, node: NodeId, context: &Context) -> bool {
+        self.can_read_state(node, context, &mut HashSet::new())
+    }
+
     // Whether an expression may read the state, as an expression above constant level, which
     // `getLevel` finds: a variable, a prime, UNCHANGED or ENABLED in it or in a definition it names.
     // A form the check doesn't follow counts as one that may.

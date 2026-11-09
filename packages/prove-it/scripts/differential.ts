@@ -153,8 +153,16 @@ const getFront = (stdout: string) => {
   const start = isTool
     ? bannerAt + banner.length
     : stdout.indexOf("\n", bannerAt + banner.length) + 1;
-  const end = stdout.indexOf(isTool ? "@!@!@STARTMSG 2189:" : "\nComputing initial states...\n");
-  return bannerAt === -1 || end === -1 ? undefined : stdout.slice(start, end + (isTool ? 0 : 1));
+  // The front ends where TLC computes the initial states, or where it reports an assumption false.
+  const ends = isTool
+    ? ["@!@!@STARTMSG 2189:", "@!@!@STARTMSG 2104:"]
+    : ["\nComputing initial states...\n", "\nError: Assumption "];
+  const end = Math.min(
+    ...ends.map((marker) => stdout.indexOf(marker)).filter((index) => index !== -1),
+  );
+  return bannerAt === -1 || end === Infinity
+    ? undefined
+    : stdout.slice(start, end + (isTool ? 0 : 1));
 };
 
 // Runs the native binary on a model, with the front the TypeScript CLI recorded for it.

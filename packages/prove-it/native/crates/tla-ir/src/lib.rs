@@ -559,6 +559,123 @@ pub enum NodeKind {
     Reference(NodeId),
 }
 
+impl NodeKind {
+    /// The expressions directly inside a node, as `collectChildren` finds them. A reference has
+    /// none: it stands for the node it names.
+    pub fn children(&self) -> Vec<NodeId> {
+        let mut children = Vec::new();
+        match self {
+            NodeKind::Number(_)
+            | NodeKind::WideNumber(_)
+            | NodeKind::Decimal(_)
+            | NodeKind::String(_)
+            | NodeKind::Identifier(_)
+            | NodeKind::OperatorReference(_)
+            | NodeKind::ExceptAt
+            | NodeKind::Reference(_) => {}
+            NodeKind::Apply { args, .. } => children.extend(args),
+            NodeKind::Lambda { body, .. } => children.push(*body),
+            NodeKind::And(operands)
+            | NodeKind::Or(operands)
+            | NodeKind::SetEnumeration(operands)
+            | NodeKind::Tuple(operands)
+            | NodeKind::Bracket(operands)
+            | NodeKind::Product(operands) => children.extend(operands),
+            NodeKind::Prime(inner)
+            | NodeKind::Unchanged(inner)
+            | NodeKind::Enabled(inner)
+            | NodeKind::Always(inner)
+            | NodeKind::Eventually(inner) => children.push(*inner),
+            NodeKind::If {
+                condition,
+                consequent,
+                alternative,
+            } => children.extend([*condition, *consequent, *alternative]),
+            NodeKind::Case { arms, other } => {
+                for (condition, body) in arms {
+                    children.extend([*condition, *body]);
+                }
+                children.extend(other);
+            }
+            NodeKind::Let {
+                definitions, body, ..
+            } => {
+                children.extend(definitions);
+                children.push(*body);
+            }
+            NodeKind::Forall { bounds, body }
+            | NodeKind::Exists { bounds, body }
+            | NodeKind::FunctionConstruction { bounds, body, .. } => {
+                children.extend(bounds.iter().map(|bound| bound.set));
+                children.push(*body);
+            }
+            NodeKind::SetMap { expression, bounds } => {
+                children.push(*expression);
+                children.extend(bounds.iter().map(|bound| bound.set));
+            }
+            NodeKind::UnboundedQuantifier { body, .. } => children.push(*body),
+            NodeKind::Choose { set, body, .. } => {
+                children.extend(set);
+                children.push(*body);
+            }
+            NodeKind::SetFilter { predicate, .. } => children.push(*predicate),
+            NodeKind::FunctionSet { domain, range } => children.extend([*domain, *range]),
+            NodeKind::Record(fields) | NodeKind::RecordSet(fields) => {
+                children.extend(fields.iter().map(|(_, value)| *value))
+            }
+            NodeKind::Except { function, updates } => {
+                children.push(*function);
+                for update in updates {
+                    for step in &update.path {
+                        if let PathStep::Index(indices) = step {
+                            children.extend(indices);
+                        }
+                    }
+                    children.push(update.value);
+                }
+            }
+            NodeKind::FunctionApplication { function, args } => {
+                children.push(*function);
+                children.extend(args);
+            }
+            NodeKind::FieldAccess { record, .. } => children.push(*record),
+            NodeKind::BoxAction { action, subscript }
+            | NodeKind::AngleAction { action, subscript } => children.extend([*action, *subscript]),
+            NodeKind::WeakFairness {
+                subscript,
+                action,
+                enabled,
+            }
+            | NodeKind::StrongFairness {
+                subscript,
+                action,
+                enabled,
+            } => {
+                children.extend([*subscript, *action]);
+                children.extend(enabled);
+            }
+            NodeKind::Label { body, .. } => children.push(*body),
+            NodeKind::Subexpression(selectors) => {
+                for selector in selectors {
+                    match selector {
+                        Selector::Name { args, .. } | Selector::Bound(args) => {
+                            children.extend(args)
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            NodeKind::Definition(definition) => {
+                if let DefinitionForm::Function(bounds) = &definition.form {
+                    children.extend(bounds.iter().map(|bound| bound.set));
+                }
+                children.push(definition.body);
+            }
+        }
+        children
+    }
+}
+
 // The tags of the blob, the positions of NODE_KINDS in ir.ts.
 pub(crate) mod tag {
     pub const NUMBER: i32 = 0;

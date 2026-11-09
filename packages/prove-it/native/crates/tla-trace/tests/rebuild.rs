@@ -8,7 +8,7 @@ use common::{Quiet, ir_directory, path_to, stop_search};
 use tla_engine::search::{SearchOutcome, Settings, ViolationKind, search};
 use tla_trace::{
     Alias, CounterExample, Ending, PostconditionInputs, Rebuilder, Stats, Trace, TraceState,
-    Unsupported, Value, Verdict, format_value,
+    Unsupported, Value, Verdict, add_actions, format_value,
 };
 use tla_values::Id;
 
@@ -154,11 +154,20 @@ fn tlc_labels(trace: &str) -> Vec<String> {
 }
 
 // A rebuilt trace's states, without whitespace, and, where the IR carries TLC's actions, the label
-// of each, from the action the evaluator found for its step.
-fn deadlock_trace(path: &str) -> (Vec<String>, Option<Vec<String>>) {
+// of each, from the action the evaluator found for its step. With `is_split`, the actions are
+// those the trace evaluator splits the next-state relation into, as for an IR the front end
+// lowers, in place of those check.ts wrote.
+fn deadlock_trace(path: &str, is_split: bool) -> (Vec<String>, Option<Vec<String>>) {
     let bytes = std::fs::read(ir_directory().join(format!("{path}.ir"))).expect("a golden IR");
-    let ir = tla_ir::decode(&bytes).expect("an IR that decodes");
+    let written = tla_ir::decode(&bytes).expect("an IR that decodes");
     tla_values::on_nesting_stack(|| {
+        let ir = if is_split {
+            let mut stripped = written.clone();
+            stripped.model.actions.clear();
+            add_actions(&stripped).expect("actions the evaluator splits")
+        } else {
+            written.clone()
+        };
         let stopped =
             tla_engine::on_nesting_stack(|| stop_search(&ir, None)).expect("a search that stops");
         assert_eq!(stopped.reason, "deadlock");
@@ -216,10 +225,12 @@ fn rebuilds_deadlock_traces_as_tlc_prints_them() {
     ] {
         // The IR carries TLC's actions only where nothing the spec evaluates has an effect, which
         // TLCGet has, so TLCGetLevel's trace is checked without its labels.
-        let (states, labels) = deadlock_trace(path);
-        assert_eq!(states, tlc_states(expected), "{path}");
-        if let Some(labels) = labels {
-            assert_eq!(labels, tlc_labels(expected), "{path}");
+        for is_split in [false, true] {
+            let (states, labels) = deadlock_trace(path, is_split);
+            assert_eq!(states, tlc_states(expected), "{path}");
+            if let Some(labels) = labels {
+                assert_eq!(labels, tlc_labels(expected), "{path}");
+            }
         }
     }
 }
@@ -228,8 +239,10 @@ fn rebuilds_deadlock_traces_as_tlc_prints_them() {
 fn sorts_the_records_of_built_lambdas_under_view_and_symmetry() {
     // TLC permutes the state under SYMMETRY, which builds each lambda into the function it
     // enumerates, and deep-normalizes it under the VIEW, so the records within print sorted.
-    let (states, _) =
-        deadlock_trace("raft/specifications/standard-raft/RaftWithReconfigJointConsensus");
+    let (states, _) = deadlock_trace(
+        "raft/specifications/standard-raft/RaftWithReconfigJointConsensus",
+        false,
+    );
     assert_eq!(states[0], tlc_states(RAFT_RECONFIG_INITIAL_STATE)[0]);
 }
 
