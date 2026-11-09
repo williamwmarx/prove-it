@@ -203,3 +203,22 @@ corpus (the 641 IRs `bun scripts/run.ts engine-ir` writes, and the 30 goldens in
 - With TLC's orders in, a configuration that leaves several constants unassigned is reported as
   TLC reports it, by the first in SANY's order of declarations: `model` now matches 2,694 of
   2,711 with `--mutate 400`, up from 2,682.
+
+## F8 slice 4 in progress (the model section, on `native-parity`)
+
+- The environment lists the definitions TLC computes at startup, in `environment.ts`'s order, and
+  the assumptions of the root module and those it extends; `describe_range` names an assumption as
+  TLC prints it. `front-differential model` compares both.
+- `spec` ports `getLevel` (`liveness.ts`), the scopes an instance or an operator's arguments give a
+  formula (thunks, closures, a LET's own scope, and literal or configured values),
+  `getSpecification` and `expandTemporal`, and `getProperties`. The `spec` mode compares the split
+  of SPECIFICATION (1,093 of 1,111 models) and the `properties` mode the sorted properties (1,032
+  of 1,111), none differing. What TLC evaluates there (a constant conjunct or definition, a `\A`
+  a property unrolls over a constant set) is `NotYet`.
+- `Lowering::write_model` writes the model section in `lowerToIr`'s order, and the scopes
+  interleaved with the definitions as `ir.ts` writes them. `model::lower_model` lowers a model
+  from its files for the native binary. The `model-full` mode compares the whole IR with
+  `lowerToIr`'s, without TLC's actions, which the engine's startup phase splits: 676 of 1,111
+  models are byte-identical, none differ. Still `NotYet`: temporal properties and fairness (the
+  liveness formula and atoms), SYMMETRY (the engine's startup phase), scoped properties, and the
+  evaluations above.
