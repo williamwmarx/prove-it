@@ -9,7 +9,8 @@ use tla_values::store::{
 };
 use tla_values::{Bail, Id};
 
-use super::lazy;
+use super::lazy::{self, Lazy, Reference};
+use super::lazy_function::{self, LambdaDefinition, is_lazy_domain};
 use super::predicate::{Predicate, Test};
 use super::{
     Binding, Compiled, Compiler, Compiling, Context, Filter, Shape, bind, bool_id,
@@ -186,6 +187,8 @@ impl Compiler<'_> {
                     are_elements_in_order: consequent.are_elements_in_order
                         && alternative.are_elements_in_order,
                     is_boolean: consequent.is_boolean && alternative.is_boolean,
+                    has_infinite_part: consequent.may_be_infinite()
+                        || alternative.may_be_infinite(),
                     // The reference evaluates the condition again, which mustn't print twice.
                     reference: if [&condition, &consequent, &alternative]
                         .iter()
@@ -703,6 +706,7 @@ impl Compiler<'_> {
         Ok(Compiled {
             is_costly: true,
             is_normalized: set.is_normalized,
+            has_infinite_part: set.has_infinite_part,
             reference,
             is_enumerated: set.is_enumerated,
             are_elements_enumerated: set.are_elements_enumerated,
@@ -787,7 +791,13 @@ impl Compiler<'_> {
         let body = self.compile(body, &inner)?;
         let footprint = Footprint::merge_all(levels.iter().map(|level| &level.set.footprint))
             .merge(&body.footprint.without_slots(&bound));
+        let body_footprint = body.footprint.clone();
         let body = body.eval;
+        let body_for_lambda = body.clone();
+        let levels_for_lambda: Vec<(Compiled, Vec<u32>, bool)> = levels
+            .iter()
+            .map(|level| (level.set.clone(), level.slots.clone(), level.tuple))
+            .collect();
         // A function of one bound, a tuple pattern included, takes each element of its set.
         let evaluate = if let [Level { set, slots, tuple }] = &levels[..] {
             let (set, slots, tuple) = (set.eval.clone(), slots.clone(), *tuple);
@@ -837,6 +847,51 @@ impl Compiler<'_> {
                 )?;
                 machine.store.function_of(&keys, &values)
             })
+        };
+        // TLC keeps a function lazy where it can't enumerate a bound's set
+        // (`FcnLambdaValue`), as it can't Nat.
+        let is_lambda_possible = levels_for_lambda
+            .iter()
+            .any(|(set, ..)| set.may_be_infinite());
+        let domains: Vec<(Option<&'static str>, Option<Reference>, Eval)> = levels_for_lambda
+            .iter()
+            .map(|(set, ..)| (set.infinite, set.reference.clone(), set.eval.clone()))
+            .collect();
+        let evaluate = if is_lambda_possible {
+            self.is_lambda_built = true;
+            let definition = Arc::new(LambdaDefinition {
+                levels: levels_for_lambda
+                    .into_iter()
+                    .map(|(_, slots, tuple)| (slots, tuple))
+                    .collect(),
+                body: body_for_lambda,
+                captured: body_footprint
+                    .slots
+                    .iter()
+                    .copied()
+                    .filter(|slot| !bound.contains(slot))
+                    .collect(),
+                vars: body_footprint.vars.clone(),
+                primes: body_footprint.primes.clone(),
+            });
+            eval(move |machine| {
+                let mut lazy = Vec::with_capacity(domains.len());
+                for (infinite, reference, set) in &domains {
+                    lazy.push(match (infinite, reference) {
+                        (Some(name), _) => Lazy::Infinite(name),
+                        (None, Some(reference)) => reference(machine)?,
+                        (None, None) => {
+                            Lazy::Set(evaluate_set(machine, set, "a function over a non-set")?)
+                        }
+                    });
+                }
+                if lazy.iter().any(is_lazy_domain) {
+                    return lazy_function::build(machine, &definition, lazy);
+                }
+                evaluate(machine)
+            })
+        } else {
+            evaluate
         };
         Ok(Compiled {
             is_costly: true,
@@ -942,7 +997,7 @@ impl Compiler<'_> {
             eval(move |machine| {
                 let key = evaluate_tuple(machine, &evaluators)?;
                 let value = function(machine)?;
-                machine.store.apply(value, key)
+                lazy_function::apply(machine, value, key)
             }),
             footprint,
         ))
@@ -1201,6 +1256,9 @@ fn find_position(machine: &mut Machine<'_>, function: Id, key: Id) -> Outcome<u3
 fn except_many(base: Eval, updates: Vec<(Eval, Eval, Option<u32>)>) -> Eval {
     eval(move |machine| {
         let function = base(machine)?;
+        if lazy_function::is_lazy(machine, function) {
+            return except_each(machine, function, &updates);
+        }
         if !is_function_kind(machine.store.kind_of(function)) {
             return Err(Bail("EXCEPT on a non-function"));
         }
@@ -1230,18 +1288,35 @@ fn except_many(base: Eval, updates: Vec<(Eval, Eval, Option<u32>)>) -> Eval {
 
 fn except_flat(base: Eval, updates: Vec<(Eval, Eval, Option<u32>)>) -> Eval {
     eval(move |machine| {
-        let mut result = base(machine)?;
-        for (key, value, at_slot) in &updates {
-            let key = key(machine)?;
-            if let Some(at_slot) = at_slot {
-                let position = find_position(machine, result, key)?;
-                machine.locals[*at_slot as usize] = machine.store.get_range_value(result, position);
-            }
-            let value = value(machine)?;
-            result = machine.store.except(result, key, value)?;
-        }
-        Ok(result)
+        let function = base(machine)?;
+        except_each(machine, function, &updates)
     })
+}
+
+fn except_each(
+    machine: &mut Machine<'_>,
+    function: Id,
+    updates: &[(Eval, Eval, Option<u32>)],
+) -> Outcome<Id> {
+    let mut result = function;
+    for (key, value, at_slot) in updates {
+        let key = key(machine)?;
+        if let Some(at_slot) = at_slot {
+            machine.locals[*at_slot as usize] = get_at(machine, result, key)?;
+        }
+        let value = value(machine)?;
+        result = lazy_function::except(machine, result, key, value)?;
+    }
+    Ok(result)
+}
+
+// @: the value a function gives the key an EXCEPT updates.
+fn get_at(machine: &mut Machine<'_>, function: Id, key: Id) -> Outcome<Id> {
+    if lazy_function::is_lazy(machine, function) {
+        return lazy_function::apply(machine, function, key);
+    }
+    let position = find_position(machine, function, key)?;
+    Ok(machine.store.get_range_value(function, position))
 }
 
 // Each update walks its path down, keeping each key and the function it indexes, then writes the
@@ -1257,14 +1332,13 @@ fn except_nested(base: Eval, updates: Vec<(Vec<Eval>, u32, Eval)>) -> Eval {
             let mut functions = Vec::with_capacity(steps.len());
             let mut current = result;
             for &key in &keys {
-                let position = find_position(machine, current, key)?;
                 functions.push(current);
-                current = machine.store.get_range_value(current, position);
+                current = get_at(machine, current, key)?;
             }
             machine.locals[*at_slot as usize] = current;
             let mut value = value(machine)?;
             for (function, key) in functions.iter().zip(&keys).rev() {
-                value = machine.store.except(*function, *key, value)?;
+                value = lazy_function::except(machine, *function, *key, value)?;
             }
             result = value;
         }

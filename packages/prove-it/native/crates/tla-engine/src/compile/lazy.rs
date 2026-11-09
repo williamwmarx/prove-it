@@ -58,6 +58,18 @@ impl Lazy {
         !matches!(self, Lazy::Infinite(_))
     }
 
+    /// Whether the set is or is built of a set TLC can't enumerate.
+    pub(crate) fn is_infinite(&self) -> bool {
+        match self {
+            Lazy::Set(_) => false,
+            Lazy::Infinite(_) => true,
+            Lazy::Subset(base) | Lazy::Filtered(base, _) | Lazy::Union(base) => base.is_infinite(),
+            Lazy::FunctionSet(domain, range) => domain.is_infinite() || range.is_infinite(),
+            Lazy::RecordSet(_, sets) | Lazy::Product(sets) => sets.iter().any(Lazy::is_infinite),
+            Lazy::Operation(_, left, right) => left.is_infinite() || right.is_infinite(),
+        }
+    }
+
     fn set(machine: &Machine<'_>, id: Id) -> Outcome<Id> {
         if machine.store.kind_of(id) == KIND_SET {
             Ok(id)

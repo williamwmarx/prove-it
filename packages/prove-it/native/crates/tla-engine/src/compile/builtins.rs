@@ -16,6 +16,7 @@ use tla_values::{Bail, Id, Store};
 
 use super::fused;
 use super::lazy::{Lazy, Operator, Reference};
+use super::lazy_function;
 use super::nodes::{evaluate_set, expect_set};
 use super::predicate::{Leaf, Predicate};
 use super::random;
@@ -229,6 +230,7 @@ impl Compiler<'_> {
             // TLC enumerates SUBSET S in the normalized order of S's elements, whatever S's
             // own order (SubsetValue.elementsNormalized), so S's value does where S has no
             // reference.
+            has_infinite_part: base.may_be_infinite(),
             reference: combine_references(&[base], |_, mut bases| {
                 Ok(Lazy::Subset(Box::new(bases.remove(0))))
             })
@@ -1134,6 +1136,9 @@ impl Compiler<'_> {
                 unary(
                     &function,
                     |machine, function| {
+                        if lazy_function::is_lazy(machine, function) {
+                            return Err(lazy_function::DOMAIN);
+                        }
                         if !is_function_kind(machine.store.kind_of(function)) {
                             return Err(Bail("DOMAIN of a non-function"));
                         }
