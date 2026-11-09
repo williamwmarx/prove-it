@@ -56,5 +56,14 @@ name = "tla-live"
 version = "0.1.0"
 
 [[package]]
+name = "tla-trace"
+version = "0.1.0"
+dependencies = [
+ "tla-engine",
+ "tla-ir",
+ "tla-values",
+]
+
+[[package]]
 name = "tla-values"
 version = "0.1.0"
