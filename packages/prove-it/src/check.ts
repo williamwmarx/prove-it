@@ -1493,7 +1493,8 @@ const searchStates = (
     return state;
   };
   const toEngineKey = (checkpoint: EngineCheckpoint, index: number, state: Value[]) => {
-    const keys = checkpoint.keys;
+    // With wide strings the interpreter's key is TLC's fingerprint, whatever the engine's key.
+    const keys = search.isFingerprintedLikeTlc ? undefined : checkpoint.keys;
     const keyWidth = checkpoint.keyWidth ?? checkpoint.width;
     return keys
       ? Array.from({ length: keyWidth }, (_, position) =>
@@ -1565,7 +1566,10 @@ const searchStates = (
     // Without a graph, the interpreter takes over only the states up to the one it expands again,
     // which is all it reads of them when it finds what the engine stopped at, and asks the engine
     // whether a successor is among the others.
-    const findState = checkpoint.graph ? undefined : checkpoint.findState;
+    // With wide strings the interpreter tells states apart by TLC's fingerprints of them, which the
+    // engine's lookup by key doesn't take, so it takes every state over at once.
+    const findState =
+      checkpoint.graph || search.isFingerprintedLikeTlc ? undefined : checkpoint.findState;
     const onPath = new Set<number>();
     for (
       let position = findState ? checkpoint.expanding : -1;
@@ -1806,11 +1810,12 @@ const searchStates = (
         reportEngine(`native: fingerprint collisions: ${native.counts[native.counts.length - 1]}`);
       }
     }
+    const nativeOnlyReason = getNativeOnlyReason();
     if (
-      config.possible.length > 0 &&
+      nativeOnlyReason &&
       (native === undefined || native.status === "declined" || native.status === "unavailable")
     ) {
-      reportEngine("skipped: _POSSIBLE predicates");
+      reportEngine(`skipped: ${nativeOnlyReason}`);
       return undefined;
     }
     try {
@@ -1922,6 +1927,14 @@ const searchStates = (
     const backend = getEngineBackend();
     return backend === "rust" || backend === "auto";
   };
+  // What only the native engine searches as TLC does: it fingerprints a string by the low byte of
+  // each character, as TLC does, and tells states apart by their fingerprints alone, and it counts
+  // the _POSSIBLE predicates.
+  const getNativeOnlyReason = () => {
+    if (search.isFingerprintedLikeTlc) return "wide strings";
+    if (config.possible.length > 0) return "_POSSIBLE predicates";
+    return undefined;
+  };
   const getEngineIneligibility = () => {
     if (getEngineSetting() === "0") return "disabled";
     if (liveness && (search.isSymmetric || config.view !== undefined)) {
@@ -1929,9 +1942,8 @@ const searchStates = (
     }
     if (stateWriter) return "-dump";
     if (options.isContinued) return "-continue";
-    if (search.isFingerprintedLikeTlc) return "wide strings";
-    // Only the native engine counts the _POSSIBLE predicates.
-    if (config.possible.length > 0 && !isNativeBackend()) return "_POSSIBLE predicates";
+    const nativeOnlyReason = getNativeOnlyReason();
+    if (nativeOnlyReason && !isNativeBackend()) return nativeOnlyReason;
     if (config.periodic !== undefined) return "periodic";
     if (is174) return "TLC 1.7.4";
     if (!toEngineProperties(search.properties)) return "properties in an instance";
