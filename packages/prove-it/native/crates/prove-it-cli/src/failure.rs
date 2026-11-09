@@ -10,6 +10,7 @@ use tla_values::{Id, Store};
 
 use crate::check::{SEARCH_STACK_BYTES, Statistics, print_finished, print_statistics};
 use crate::messages::{self as code, Level, Printer};
+use crate::summary::out_degree_summary;
 
 // The status TLC exits with after a failure evaluating the spec (`EC.ExitStatus`).
 const FAILURE_SPEC_EVAL: i32 = 75;
@@ -26,6 +27,9 @@ pub struct ErrorStop<'a> {
     pub actions: Vec<Option<u32>>,
     pub site: Site,
     pub statistics: Statistics,
+    /// The outdegree buckets of the state graph TLC reports after an invariant that fails to
+    /// evaluate.
+    pub out_degrees: &'a [u64],
 }
 
 // The failure and the trace's states as TLC prints them, each with its label and what the spec
@@ -51,10 +55,6 @@ pub fn print_failure(
     stop: &ErrorStop<'_>,
     start: Instant,
 ) -> Result<i32, String> {
-    // TLC prints the outdegree of the state graph after an invariant that fails to evaluate.
-    if matches!(stop.site, Site::Invariant(_)) {
-        return Err("an invariant that fails to evaluate".into());
-    }
     // TLC's worker adds the state to the behavior graph before it replays a failure in its next
     // states, which can fail or print in turn.
     if !ir.model.live_properties.is_empty() {
@@ -146,6 +146,8 @@ pub fn print_failure(
                 ),
             );
         }
+        // TLC reports an invariant that fails to evaluate without its call stack.
+        None if matches!(stop.site, Site::Invariant(_)) => {}
         None => printer.print(
             code::NESTED_EXPRESSION,
             Level::Error,
@@ -169,6 +171,11 @@ pub fn print_failure(
         (None, _) => stop.statistics,
     };
     print_statistics(printer, &statistics, start);
+    if matches!(stop.site, Site::Invariant(_))
+        && let Some(summary) = out_degree_summary(stop.out_degrees)
+    {
+        printer.print(code::STATE_GRAPH_OUTDEGREE, Level::None, &summary);
+    }
     print_finished(printer, start);
     Ok(failure.exit_code)
 }
@@ -179,7 +186,12 @@ fn evaluate(ir: &Ir, stop: &ErrorStop<'_>) -> Result<Report, String> {
         let mut rebuilder = Rebuilder::new(ir)?;
         let failure =
             rebuilder.evaluate_failure(stop.store, &stop.states, &stop.actions, stop.site)?;
-        let trace = rebuilder.rebuild(stop.store, &stop.states, &stop.actions, Ending::Kept)?;
+        // TLC holds a successor that fails an invariant as it found it.
+        let ending = match stop.site {
+            Site::Invariant(_) => Ending::Violation,
+            _ => Ending::Kept,
+        };
+        let trace = rebuilder.rebuild(stop.store, &stop.states, &stop.actions, ending)?;
         // TLC rebuilds the trace once more after it prints it, then replays the failure.
         let after = trace
             .trace_output

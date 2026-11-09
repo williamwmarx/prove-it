@@ -294,3 +294,22 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   that puts the caller's slots back and goes on with the rest of the walk. A body that assigns a
   variable still declines. VoteProof (Examples, and TLC's tests), declined before, now searches
   in Rust: `SafeAt`'s `SA[b]`.
+
+## The out-degrees after an invariant fails to evaluate
+
+- After an invariant that fails to evaluate, TLC prints the state graph's out-degrees: those of
+  the expansions it completed, and the one it was running, counted with the new states it had
+  found, the failing one included (TLC counts a new state before it checks the invariants). The
+  stop (`ViolationKind::Error` at `ErrorSite::Invariant`) now carries them in
+  `StopCounts::out_degrees`; other stops leave them empty.
+
+## A failure on an initial state
+
+- TLC evaluates the constraints and the invariants on each initial state as it computes the
+  initial states (`DoInitFunctor`), and reports a failure there with the state ("While working on
+  the initial state") and the counts so far, the state counted as generated. The engine reported
+  it as a failure in the initial predicate, without the state. It now stops at
+  `ErrorSite::InitialConstraint(n)` or `ErrorSite::InitialInvariant(n)`, n the position in the
+  model's constraints or invariants, with the state as the violation's one state and TLC's
+  counts: 1/0/0 at depth 1 on DoInitFunctorEvalException and 1/1/1 on
+  DoInitFunctorMinimalErrorStack. The CLI leaves both to the interpreter until it prints them.

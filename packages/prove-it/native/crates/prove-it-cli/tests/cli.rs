@@ -386,3 +386,27 @@ fn reports_a_postcondition_that_is_false() {
     );
     std::fs::remove_dir_all(directory).expect("removed");
 }
+
+const EVALUATING_VALUE_IR: &[u8] = include_bytes!(
+    "../../../../tests/conformance/ir/tlc/tlatools/org.lamport.tlatools/test-model/EvaluatingValueTest.ir"
+);
+
+#[test]
+fn prints_an_invariant_that_fails_to_evaluate() {
+    let (output, directory) = run_golden(
+        "invariant-failure",
+        EVALUATING_VALUE_IR,
+        "EvaluatingValueTest",
+        "",
+        &[],
+    );
+    let text = stdout(&output);
+    // TLC prints the trace to the state it failed on, no call stack, and the outdegree of the
+    // state graph with the failing state counted.
+    assert_eq!(output.status.code(), Some(76), "{text}");
+    assert!(
+        text.contains("Error: Evaluating invariant Inv failed.\nAttempted to check if the value:\nFALSE\nis an element of Nat.\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 1\n\nState 2: <A line 8, col 6 to line 8, col 15 of module EvaluatingValueTest>\nx = FALSE\n\n2 states generated, 2 distinct states found, 0 states left on queue.\nThe depth of the complete state graph search is 2.\nThe average outdegree of the complete state graph is 1 (minimum is 1, the maximum 1 and the 95th percentile is 1).\nFinished in "),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
