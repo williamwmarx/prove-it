@@ -606,11 +606,14 @@ fn print_violation(
     if config.alias.is_some() || !config.postconditions.is_empty() || !config.possible.is_empty() {
         return None;
     }
+    // An owner past the configuration's invariants is a property checked as one.
+    let model = &ir.model;
     let invariant_name = |owner: usize| {
-        ir.model
-            .invariants
-            .get(owner)
-            .map(|invariant| &ir.texts[invariant.root.name as usize])
+        let name = match owner.checked_sub(model.invariants.len()) {
+            None => model.invariants[owner].root.name,
+            Some(property) => *model.property_invariant_names.get(property)?,
+        };
+        Some(&ir.texts[name as usize])
     };
     // TLC prints a trace once it has rebuilt all of it, and a state that the evaluator can't
     // rebuild as TLC built it keeps the run not native.

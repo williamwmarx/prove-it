@@ -13,12 +13,12 @@
 // - the scopes of instances it reads, which bind a name to a value, an expression or an operator;
 // - the values: those of the constants, scopes and startup values, in transfer.ts's encoding, whose
 //   strings are indices into the texts;
-// - the model: Init, Next, TLC's actions, the configuration's names, the properties, the VIEW, the
-//   symmetry group, the settings, the liveness checker's atoms, each action atom with the
-//   position of the ENABLED atom of its fairness, or -1, and the formula the checker solves, as
-//   its number of words and its terms in prefix order, each atom by its position among the atoms,
-//   or past them for one the checker asks nothing of, then the properties, each its name and its
-//   formula the same way;
+// - the model: Init, Next, TLC's actions, the configuration's names, the properties (each checked as
+//   an invariant with the name TLC reports it by), the VIEW, the symmetry group, the settings, the
+//   liveness checker's atoms, each action atom with the position of the ENABLED atom of its
+//   fairness, or -1, and the formula the checker solves, as its number of words and its terms in
+//   prefix order, each atom by its position among the atoms, or past them for one the checker asks
+//   nothing of, then the properties, each its name and its formula the same way;
 // - the definitions the model reaches, as the offsets of their records among the nodes;
 // - the nodes: expressions and definitions in prefix order, each its tag, its line and column, then
 //   its fields and children. A node met again is a reference to its first offset.
@@ -40,7 +40,7 @@ import type { EngineProperties, EngineSpec } from "./context";
 import type { NamedPermutation } from "./symmetry";
 
 // The version of the layout below, which the decoder checks. Any change to it changes this.
-export const IR_VERSION = 5;
+export const IR_VERSION = 6;
 
 // "PIIR" read as a little-endian word.
 const MAGIC = 0x52494950;
@@ -676,12 +676,9 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
   };
   const hasRepeatedEffectOfName = (name: string) =>
     hasRepeatedEffect({ kind: "Identifier", name, location: { line: 0, column: 0 } }, environment);
-  const writeRoots = (expressions: readonly Expression[], isPrinted = false) => {
+  const writeRoots = (expressions: readonly Expression[]) => {
     push(model, expressions.length);
-    for (const expression of expressions) {
-      push(model, writeRoot(expression));
-      if (isPrinted) push(model, hasRepeatedEffect(expression, environment) ? 1 : 0);
-    }
+    for (const expression of expressions) push(model, writeRoot(expression));
   };
 
   const spec = input.spec;
@@ -696,7 +693,12 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
   }
   push(model, spec.actions ? 1 : 0);
   writeConfigNames(config.invariants, true);
-  writeRoots(input.properties.invariants, true);
+  push(model, input.properties.invariants.length);
+  input.properties.invariants.forEach((invariant, index) => {
+    push(model, writeRoot(invariant));
+    push(model, hasRepeatedEffect(invariant, environment) ? 1 : 0);
+    push(model, getText(input.properties.invariantNames[index]));
+  });
   writeConfigNames(config.constraints);
   writeConfigNames(config.actionConstraints);
   push(model, input.properties.actionProperties.length);
