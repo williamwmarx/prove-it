@@ -526,6 +526,31 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     expect(lines).toContainEqual(expect.stringMatching(COMPLETE));
   });
 
+  it("checks the temporal properties on the states a step reached under a VIEW", async () => {
+    // The view tells (0, 1) apart from (0, 0) by x alone, so the step back to x = 0 reaches a
+    // state the search doesn't store, on which TLC checks the properties.
+    const body = [
+      "EXTENDS Naturals",
+      "VARIABLES x, t",
+      "vars == <<x, t>>",
+      "Init == x = 0 /\\ t = 0",
+      "Next == x' = (x + 1) % 3 /\\ t' = 1 - t",
+      "Spec == Init /\\ [][Next]_vars /\\ WF_vars(Next)",
+      "View == x",
+      "Settles == <>[](t = 0)",
+      "Visits == []<>(t = 1)",
+    ];
+    for (const [property, verdict] of [
+      ["Settles", "lasso"],
+      ["Visits", "holds"],
+    ] as const) {
+      const config = `SPECIFICATION Spec\nVIEW View\nPROPERTY ${property}`;
+      const lines = await compareWithInterpreter(body, config);
+      expect(lines).toContain(`[engine] native: liveness: ${verdict}`);
+      await compareWithInterpreter(body, config, { PROVE_IT_LIVE_CHECK: "1" });
+    }
+  });
+
   it("compiles a predicate that holds a temporal formula in a branch it never takes", async () => {
     // TLC's test model Github1389ViolatedB: the liveness checker's atom is Reach(0), whose body
     // holds <> in the branch for n > 0.
@@ -540,6 +565,31 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
       "PropViolated == Reach(3)",
     ];
     const config = "SPECIFICATION Spec\nCHECK_DEADLOCK FALSE\nPROPERTY PropViolated";
+    const lines = await compareWithInterpreter(body, config);
+    expect(lines).toContain("[engine] native: liveness: lasso");
+    await compareWithInterpreter(body, config, { PROVE_IT_LIVE_CHECK: "1" });
+  });
+
+  it("takes the steps from a state a step reached but the search didn't store", async () => {
+    // TLC's ChooseTableauSymmetry: a late node of the tableau is of a state the search told apart
+    // from the one stored for it only under SYMMETRY, so TLC runs Next from that state.
+    const body = [
+      "EXTENDS TLC",
+      "CONSTANTS a, b",
+      "VARIABLE arr",
+      "Val == {a, b}",
+      'Init == arr = [v \\in Val |-> "ready"]',
+      `Ready(v) == arr[v] = "ready" /\\ arr' = [arr EXCEPT ![v] = "busy"]`,
+      `Busy(v) == arr[v] = "busy" /\\ arr' = [arr EXCEPT ![v] = "done"]`,
+      `Done(v) == arr[v] = "done" /\\ arr' = [arr EXCEPT ![v] = "ready"]`,
+      "Next == \\E v \\in Val : Ready(v) \\/ Busy(v) \\/ Done(v)",
+      "Spec == Init /\\ [][Next]_<<arr>> /\\ WF_<<arr>>(Next)",
+      "Symmetry == Permutations(Val)",
+      'Liveness == LET v == CHOOSE e \\in Val : TRUE IN (arr[v] = "busy") ~> (arr[v] = "ready")',
+      "Negated == ~Liveness",
+    ];
+    const config =
+      "CONSTANTS a = a\nb = b\nSYMMETRY Symmetry\nSPECIFICATION Spec\nPROPERTY Negated";
     const lines = await compareWithInterpreter(body, config);
     expect(lines).toContain("[engine] native: liveness: lasso");
     await compareWithInterpreter(body, config, { PROVE_IT_LIVE_CHECK: "1" });

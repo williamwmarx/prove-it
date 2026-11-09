@@ -36,12 +36,18 @@ pub enum Term {
 
 /// A complete search: each state's parent, -1 for an initial state, its steps, those from state
 /// i in `edges[edge_offsets[i]..edge_offsets[i + 1]]` in the order generated, and TLC's
-/// fingerprint of each state.
+/// fingerprint of each state. Under SYMMETRY or a VIEW, `edge_offsets` goes on past the states
+/// stored with the steps from the states past them that `reals` names, as many as the engine
+/// expanded.
 pub struct Graph<'g> {
     pub parents: &'g [i32],
     pub edge_offsets: &'g [u32],
     pub edges: &'g [u32],
     pub fingerprints: &'g [u64],
+    /// Under SYMMETRY or a VIEW, the state each step reached, which TLC checks: the state stored for
+    /// it, by its index, or a state past them that the search told apart from it by its key. The
+    /// tables of state predicates have an answer for each.
+    pub reals: Option<&'g [u32]>,
 }
 
 impl Graph<'_> {
@@ -75,9 +81,15 @@ pub enum Verdict {
     /// A tableau node that accepts every behavior, which TLC reports as it adds `state` to the
     /// graph, with the path of states to it.
     Accepted { state: u32, path: Vec<u32> },
+    /// The checker needs the steps from the states past the stored ones that `reals` names and the
+    /// graph doesn't expand yet: the engine expands them and checks again.
+    Unexpanded,
     /// The interpreter checks the properties: why.
     Declined(Declined),
 }
+
+/// Why the checker declines where it needs steps the engine doesn't take.
+pub const UNEXPANDED: &str = "a late node of a state the engine didn't expand";
 
 /// Why the native checker leaves the properties to the interpreter.
 #[derive(Debug, PartialEq, Eq)]
@@ -132,7 +144,7 @@ pub fn check(
 ) -> Liveness {
     let mut branches = None;
     let mut run = || {
-        if graph.edge_offsets.len() != graph.count() + 1 {
+        if graph.edge_offsets.len() <= graph.count() {
             return Err(Declined::from("a search that didn't expand every state"));
         }
         let mut terms = Terms::default();
@@ -145,6 +157,12 @@ pub fn check(
         branches = Some(checker.branches());
         checker::check(&mut checker, &properties)
     };
-    let verdict = run().unwrap_or_else(Verdict::Declined);
+    let verdict = run().unwrap_or_else(|declined| {
+        if declined.0 == UNEXPANDED {
+            Verdict::Unexpanded
+        } else {
+            Verdict::Declined(declined)
+        }
+    });
     Liveness { branches, verdict }
 }
