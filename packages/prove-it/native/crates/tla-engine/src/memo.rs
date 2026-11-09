@@ -218,7 +218,7 @@ impl MemoTable {
     }
 
     /// The value stored for the keys, or [`EMPTY`].
-    #[inline]
+    #[inline(always)]
     pub fn get(&mut self, keys: &[Id]) -> Id {
         if !self.open() {
             return EMPTY;
