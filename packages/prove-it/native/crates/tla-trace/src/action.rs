@@ -4,7 +4,7 @@
 //! order, operators expanded, and every other conjunct evaluated as a guard. Once every variable
 //! has a value, TLC evaluates the rest of a conjunction as guards.
 
-use tla_ir::{NodeId, NodeKind, Resolution};
+use tla_ir::{NodeId, NodeKind, Resolution, Startup};
 
 use crate::eval::{Context, Evaluator};
 use crate::sets::is_member;
@@ -166,8 +166,16 @@ impl<'ir> Evaluator<'ir> {
             NodeKind::And(operands) => self.conjunction(operands, true, context, is_init, then),
             NodeKind::Or(operands) => self.disjunction(operands, context, is_init, then),
             NodeKind::Exists { bounds, body } => {
+                let mut is_in_order = true;
+                for bound in bounds {
+                    is_in_order &= self.is_in_normalized_order(bound.set, context, 0)?;
+                }
+                let mut position = 0;
                 self.for_each_binding(bounds, context, &mut |evaluator, inner| {
-                    evaluator.walk(*body, inner, is_init, then)
+                    position += 1;
+                    evaluator.choose(position, is_in_order, &mut |evaluator| {
+                        evaluator.walk(*body, inner, is_init, then)
+                    })
                 })
             }
             NodeKind::If {
@@ -220,10 +228,16 @@ impl<'ir> Evaluator<'ir> {
                 })
             }
             NodeKind::BoxAction { action, subscript } => {
-                if !self.walk(*action, context, is_init, then)? {
+                let action = *action;
+                let subscript = *subscript;
+                if !self.choose(0, true, &mut |evaluator| {
+                    evaluator.walk(action, context, is_init, then)
+                })? {
                     return Ok(false);
                 }
-                self.walk_unchanged(*subscript, context, then)
+                self.choose(1, true, &mut |evaluator| {
+                    evaluator.walk_unchanged(subscript, context, then)
+                })
             }
             NodeKind::Label { body, .. } => self.walk(*body, context, is_init, then),
             NodeKind::FunctionApplication { function, args } if args.len() == 1 => {
@@ -267,8 +281,11 @@ impl<'ir> Evaluator<'ir> {
                         }
                         "\\in" => {
                             let set = self.evaluate(args[1], context)?;
-                            for element in elements(&set)?.iter() {
-                                if !self.assign(variable, element.clone(), is_init, then)? {
+                            let is_in_order = self.is_in_normalized_order(args[1], context, 0)?;
+                            for (position, element) in elements(&set)?.iter().enumerate() {
+                                if !self.choose(position as u32, is_in_order, &mut |evaluator| {
+                                    evaluator.assign(variable, element.clone(), is_init, then)
+                                })? {
                                     return Ok(false);
                                 }
                             }
@@ -304,12 +321,69 @@ impl<'ir> Evaluator<'ir> {
         is_init: bool,
         then: &mut Visit<'_, 'ir>,
     ) -> Evaluated<bool> {
-        for &operand in operands {
-            if !self.walk(operand, context, is_init, then)? {
+        for (position, &operand) in operands.iter().enumerate() {
+            if !self.choose(position as u32, true, &mut |evaluator| {
+                evaluator.walk(operand, context, is_init, then)
+            })? {
                 return Ok(false);
             }
         }
         Ok(true)
+    }
+
+    // Walks on with a choice made, at a position in TLC's order or, `!is_in_order`, in this
+    // evaluator's.
+    fn choose(
+        &mut self,
+        position: u32,
+        is_in_order: bool,
+        then: &mut Visit<'_, 'ir>,
+    ) -> Evaluated<bool> {
+        let depth = self.choices.len();
+        self.choices.push((position, is_in_order));
+        let result = then(self);
+        self.choices.truncate(depth);
+        result
+    }
+
+    // Whether TLC enumerates the set an expression gives in normalized order, as this evaluator
+    // does: a set enumeration, an interval, a variable of the current state (whose values TLC
+    // normalized when it fingerprinted the state), a constant or a definition TLC evaluates at
+    // startup (which it normalizes). TLC streams any other set, such as a union or SUBSET built
+    // during the walk, in an order of its own.
+    fn is_in_normalized_order(
+        &mut self,
+        node: NodeId,
+        context: &Context,
+        depth: u32,
+    ) -> Evaluated<bool> {
+        if depth > MAXIMUM_DEPTH {
+            return Ok(false);
+        }
+        match self.kind(node) {
+            NodeKind::SetEnumeration(_) => return Ok(true),
+            NodeKind::Apply { name, args }
+                if !name.is_local && args.len() == 2 && self.name(name.text) == ".." =>
+            {
+                return Ok(true);
+            }
+            NodeKind::Identifier(name) if !name.is_local => match name.resolution {
+                Resolution::Variable(_) => return Ok(!context.is_primed),
+                Resolution::Constant(_) => return Ok(true),
+                Resolution::Definition(index) => {
+                    let definition = self.definition(self.ir.definitions[index as usize]);
+                    if !matches!(definition.startup, Startup::None) {
+                        return Ok(true);
+                    }
+                }
+                _ => {}
+            },
+            _ => {}
+        }
+        match self.resolve_action(node, context)? {
+            Some((body, inner)) => self.is_in_normalized_order(body, &inner, depth + 1),
+            None => Ok(false),
+        }
     }
 
     fn conjunction(
