@@ -9,6 +9,7 @@ dependencies = [
  "tla-engine",
  "tla-front",
  "tla-ir",
+ "tla-live",
  "tla-values",
 ]
 
