@@ -584,7 +584,12 @@ impl<'ir> Evaluator<'ir> {
             return then(self);
         };
         self.walk(body, first, is_init, &mut |evaluator| {
-            if is_init && !rest.is_empty() && evaluator.is_complete(true) {
+            // TLC puts the other bindings at the front of the conjuncts left, so the shortcut past
+            // assigned conjuncts applies to them as it does to a conjunction's.
+            if (is_init || evaluator.ir.model.is_warning_enabled)
+                && !rest.is_empty()
+                && evaluator.is_complete(is_init)
+            {
                 for context in rest {
                     if !evaluator.boolean(body, context)? {
                         return Ok(true);
