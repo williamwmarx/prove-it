@@ -33,6 +33,9 @@ pub struct Failure {
     pub call_stack: Vec<SourceRange>,
     /// The status TLC exits with (`EC.ExitStatus.errorConstantToExitStatus`).
     pub exit_code: i32,
+    /// What the spec printed as TLC replayed the failure, each print's values as `Trace` holds
+    /// them.
+    pub printed: Vec<Vec<String>>,
 }
 
 const GENERAL: u32 = 1000;
@@ -203,7 +206,7 @@ impl<'ir> Rebuilder<'ir> {
             }
         };
         let call_stack = evaluator.call_stack.take().unwrap_or_default();
-        evaluator.printed.clear();
+        let printed = std::mem::take(&mut evaluator.printed);
         let Err(error) = result else {
             return Err(Unsupported(
                 "evaluating the failure again: it didn't fail".into(),
@@ -237,6 +240,7 @@ impl<'ir> Rebuilder<'ir> {
                 tool_message: format!("{headline}\n{}", nested(&message)),
                 call_stack: Vec::new(),
                 exit_code: FAILURE_SAFETY_EVAL,
+                printed,
             });
         }
         let (code, text, tool_text) = report(&message, site == Site::Next);
@@ -251,6 +255,7 @@ impl<'ir> Rebuilder<'ir> {
                 Some(ASSERT_FAILED) => VIOLATION_ASSERT,
                 _ => FAILURE_SPEC_EVAL,
             },
+            printed,
         })
     }
 }
