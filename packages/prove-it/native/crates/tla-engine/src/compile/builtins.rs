@@ -275,6 +275,7 @@ impl Compiler<'_> {
         if operands.len() != if is_print { 2 } else { 1 } {
             return unsupported("an operator applied to the wrong number of arguments");
         }
+        self.is_printing = true;
         let compiled = operands
             .iter()
             .map(|operand| self.compile(operand.node, &operand.context.without_print()))
@@ -500,8 +501,10 @@ impl Compiler<'_> {
                         Ok(bool_id(test(machine, value)? == is_in))
                     })
                 });
+                // A miss in a set that isn't constant compares the element with the set's elements
+                // as TLC's binary search does, to fail where it fails, so it is cached too.
                 Compiled {
-                    is_costly: set.member.is_some(),
+                    is_costly: set.member.is_some() || set.footprint.width() > 0,
                     is_boolean: true,
                     ..leaf(evaluate, footprint)
                 }

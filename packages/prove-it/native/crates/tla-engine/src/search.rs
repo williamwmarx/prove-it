@@ -171,6 +171,21 @@ impl FingerprintSet {
         }
     }
 
+    /// Reads the slot a fingerprint's probe starts at, so that the probe finds it in the cache:
+    /// the read goes on while the search does other work.
+    #[inline(always)]
+    fn touch(&self, fingerprint: u64) {
+        let slot: *const u64 = &self.fingerprints[self.home(fingerprint)];
+        #[cfg(target_arch = "x86_64")]
+        // SAFETY: a prefetch is a hint to the cache. It reads nothing the program sees and never
+        // faults, and the address is an element of a live slice.
+        unsafe {
+            std::arch::x86_64::_mm_prefetch::<{ std::arch::x86_64::_MM_HINT_T0 }>(slot.cast());
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        let _ = slot;
+    }
+
     #[inline(always)]
     fn home(&self, fingerprint: u64) -> usize {
         (fingerprint.wrapping_mul(0x9e37_79b9_7f4a_7c15) >> 32) as usize & self.mask
@@ -325,6 +340,12 @@ struct Search<'r> {
     action: u32,
     // Under PROVE_IT_LIVE_CHECK, the steps the next-state relation took from the state.
     checked: Option<Vec<Vec<Id>>>,
+    // Whether a successor is checked once the walk reaches the next, when nothing the search
+    // evaluates can tell: then the probe of its fingerprint, read ahead, doesn't wait on memory.
+    is_pipelined: bool,
+    // The successor waiting to be checked, and its fingerprint.
+    pending: Vec<Id>,
+    pending_fingerprint: Option<u64>,
 }
 
 impl Search<'_> {
@@ -464,10 +485,55 @@ impl Search<'_> {
         machine.set_slot(LEVEL_SLOT, level);
     }
 
+    // A successor the walk completed: checked now, or, pipelined, once the walk reaches the next
+    // successor or ends, with its fingerprint computed and its slot read now.
     fn visit_successor(
         &mut self,
         machine: &mut Machine<'_>,
         context: &EngineContext,
+    ) -> Outcome<()> {
+        if !self.is_pipelined {
+            return self.check_successor(machine, context, None);
+        }
+        // The search checks the successor waiting to be checked before it stops.
+        if machine.next().contains(&UNASSIGNED) {
+            return Err(Bail("a successor that isn't complete"));
+        }
+        let fingerprint = self.fingerprints.get_child(
+            &machine.store,
+            &mut self.parent,
+            &self.current,
+            machine.next(),
+            &self.states.order,
+        );
+        self.states.set.touch(fingerprint);
+        self.check_pending(machine, context)?;
+        self.pending.clear();
+        self.pending.extend_from_slice(machine.next());
+        self.pending_fingerprint = Some(fingerprint);
+        Ok(())
+    }
+
+    // Checks the successor waiting to be checked, as the walk would have when it completed it. The
+    // search calls it once a walk returns, before it stops for anything the walk did since, so a
+    // stop has the reason it would have had.
+    fn check_pending(&mut self, machine: &mut Machine<'_>, context: &EngineContext) -> Outcome<()> {
+        let Some(fingerprint) = self.pending_fingerprint.take() else {
+            return Ok(());
+        };
+        std::mem::swap(&mut machine.next, &mut self.pending);
+        let result = self.check_successor(machine, context, Some(fingerprint));
+        std::mem::swap(&mut machine.next, &mut self.pending);
+        result
+    }
+
+    // Checks the successor that is the machine's next state; its fingerprint is `known` when the
+    // pipeline computed it already.
+    fn check_successor(
+        &mut self,
+        machine: &mut Machine<'_>,
+        context: &EngineContext,
+        known: Option<u64>,
     ) -> Outcome<()> {
         if machine.next().contains(&UNASSIGNED) {
             return Err(Bail("a successor that isn't complete"));
@@ -491,7 +557,10 @@ impl Search<'_> {
             &self.current,
         );
         let fingerprint = match is_state_in_model {
-            Ok(true) => self.compute_key(machine, context, true).map(Some),
+            Ok(true) => match known {
+                Some(fingerprint) => Ok(Some(fingerprint)),
+                None => self.compute_key(machine, context, true).map(Some),
+            },
             Ok(false) => Ok(None),
             Err(bail) => Err(bail),
         };
@@ -583,6 +652,14 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         Err(error) => return SearchOutcome::Declined(describe(error)),
     };
     let is_distinct_read = compiler.is_distinct_read;
+    // Checking a successor once the walk reaches the next reorders nothing anyone can see where
+    // nothing prints, reads the count of distinct states, or fingerprints a VIEW or symmetry's
+    // representative, which the walk would then interleave with.
+    let is_pipelined = !compiler.is_printing
+        && !is_distinct_read
+        && context.view.is_none()
+        && model.symmetry.is_none()
+        && !settings.is_live_checked;
     let program = compiler.finish();
     let mut machine = Machine::new(&program, store);
     let canonicalizer = model.symmetry.as_ref().map(|group| {
@@ -647,6 +724,9 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         }),
         action: 0,
         checked: None,
+        is_pipelined,
+        pending: Vec::with_capacity(width),
+        pending_fingerprint: None,
     };
     // The actions take each state's steps when the search labels them for ENABLED.
     let actions = context
@@ -723,9 +803,13 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 );
             }
             match actions {
-                None => (context.next)(&mut machine, &mut |machine: &mut Machine<'_>| {
-                    search.visit_successor(machine, &context)
-                })?,
+                None => {
+                    let walked = (context.next)(&mut machine, &mut |machine: &mut Machine<'_>| {
+                        search.visit_successor(machine, &context)
+                    });
+                    search.check_pending(&mut machine, &context)?;
+                    walked?;
+                }
                 Some(actions) => {
                     if is_live_checked {
                         let mut checked = Vec::new();
@@ -737,9 +821,11 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     }
                     for (position, action) in actions.iter().enumerate() {
                         search.action = position as u32;
-                        action(&mut machine, &mut |machine: &mut Machine<'_>| {
+                        let walked = action(&mut machine, &mut |machine: &mut Machine<'_>| {
                             search.visit_successor(machine, &context)
-                        })?;
+                        });
+                        search.check_pending(&mut machine, &context)?;
+                        walked?;
                     }
                     if let Some(checked) = search.checked.take()
                         && checked.len() as u64 != search.successors

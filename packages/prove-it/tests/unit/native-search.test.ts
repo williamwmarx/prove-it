@@ -95,6 +95,141 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     );
   });
 
+  it("assigns or tests where a path may or may not have assigned a variable", async () => {
+    // The walk is compiled path by path, knowing which variables each has assigned. Past more
+    // paths than it compiles apart, or a walked \A, it knows only what every path assigned, and
+    // decides at run time whether x' = e and UNCHANGED assign or test, and whether TLC's shortcut
+    // applies.
+    const paths = [
+      "EXTENDS Naturals",
+      "VARIABLES x, y, z",
+      "Init == x = 0 /\\ y = 0 /\\ z = 0",
+      "Next ==",
+      "  /\\ \\/ x' = (x + 1) % 3",
+      "     \\/ y' = (y + 1) % 3",
+      "     \\/ z' = (z + 1) % 3",
+      "     \\/ x' = x /\\ y' = (y + 2) % 3",
+      "     \\/ y' = y /\\ z' = z",
+      "     \\/ x' = (x + 2) % 3 /\\ z' = (z + 2) % 3",
+      "     \\/ TRUE",
+      "  /\\ x' \\in {x, (x + 1) % 3}",
+      "  /\\ y' = y",
+      "  /\\ UNCHANGED <<y, z>>",
+      "  /\\ x' + y' + z' # 5",
+      "  /\\ x' = 2 \\/ z' = 1 \\/ y' = 0",
+    ];
+    const walked = [
+      "EXTENDS Naturals",
+      "VARIABLES x, y, z",
+      "Init == x = 0 /\\ y = 0 /\\ z \\in {0, 1}",
+      "Next == /\\ \\A i \\in {1, 2} : x' = i \\/ y' = (y + i) % 3",
+      "        /\\ x' \\in {0, 1, 2}",
+      "        /\\ y' = y \\/ y' = 2",
+      "        /\\ UNCHANGED z",
+      "        /\\ x' = 1 \\/ y' = 2",
+    ];
+    const config = "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE";
+    for (const body of [paths, walked]) {
+      for (const isWarningEnabled of [false, true]) {
+        expect(await compareStateLogs(body, config, isWarningEnabled)).toContainEqual(
+          expect.stringMatching(COMPLETE),
+        );
+        expect(await compareWithInterpreter(body, config, {}, isWarningEnabled)).toContainEqual(
+          expect.stringMatching(COMPLETE),
+        );
+      }
+    }
+  });
+
+  it("compiles a walk of many independent branches in time linear in its size", async () => {
+    // Each conjunct has a path that assigns its variable and one that doesn't, so the paths into
+    // the rest of the walk double with each conjunct. Only one is ever walked, as the guard fails.
+    const variables = Array.from({ length: 40 }, (_, index) => `x${index}`);
+    const body = [
+      `VARIABLES flag, ${variables.join(", ")}`,
+      `Init == flag = 0 /\\ ${variables.map((name) => `${name} = 0`).join(" /\\ ")}`,
+      "Next ==",
+      ...variables.map((name) => `  /\\ \\/ flag = 1 /\\ ${name}' = 1\n     \\/ flag = 0`),
+      `  /\\ UNCHANGED <<flag, ${variables.join(", ")}>>`,
+    ];
+    const config = "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE";
+    expect(await compareStateLogs(body, config, false)).toContainEqual(
+      expect.stringMatching(COMPLETE),
+    );
+  });
+
+  it("checks a successor before what the walk does after it, as it hands over", async () => {
+    // Where nothing prints, the search checks a successor once the walk reaches the next one, so
+    // its fingerprint's probe doesn't wait on memory. A successor the walk completed is still
+    // checked before the walk's next failure or incomplete successor, so the search stops where
+    // it did: at the first successor's invariant.
+    const config = "INIT Init\nNEXT Next\nINVARIANT Inv";
+    const failing = [
+      "EXTENDS Naturals",
+      "VARIABLE x",
+      "Init == x = 0",
+      "Next == \\/ x' = x + 1",
+      "        \\/ x' = x + 2 /\\ 1 \\div (x - x) = 1",
+      "Inv == x < 1",
+    ];
+    const incomplete = [
+      "EXTENDS Naturals",
+      "VARIABLES x, y",
+      "Init == x = 0 /\\ y = 0",
+      "Next == \\/ x' = x + 1 /\\ y' = y",
+      "        \\/ x' = x + 2",
+      "Inv == x < 1",
+    ];
+    for (const body of [failing, incomplete]) {
+      expect(await compareWithInterpreter(body, config)).toContainEqual(
+        expect.stringMatching(stopped("an invariant violated")),
+      );
+    }
+    // A walk that reads the count of distinct states sees each new successor added at once.
+    const counting = [
+      "EXTENDS Naturals, TLC",
+      "VARIABLE x",
+      "Init == x = 0",
+      "Next == \\/ x' = (x + 1) % 5",
+      '        \\/ x\' = (10 + TLCGet("distinct")) % 20',
+    ];
+    await compareStateLogs(counting, "INIT Init\nNEXT Next", false);
+    expect(await compareWithInterpreter(counting, "INIT Init\nNEXT Next")).toContainEqual(
+      expect.stringMatching(COMPLETE),
+    );
+  });
+
+  it("caches membership in a set that isn't constant by the element and the set", async () => {
+    // x \in S is cached by the ids it reads when S isn't constant: a miss would compare x with
+    // S's elements, as TLC's binary search does, to fail where TLC fails, which isn't cached.
+    const body = [
+      "EXTENDS Naturals",
+      "VARIABLES sent, n",
+      "Init == sent = {} /\\ n = 0",
+      "Next == \\E p \\in 1..3 :",
+      '  /\\ [kind |-> "ack", from |-> p] \\notin sent',
+      '  /\\ \\/ [kind |-> "req", from |-> p] \\in sent',
+      "     \\/ p = n + 1",
+      '  /\\ sent\' = sent \\cup {[kind |-> IF [kind |-> "req", from |-> p] \\in sent',
+      '                                   THEN "ack" ELSE "req", from |-> p]}',
+      "  /\\ n' = (n + p) % 3",
+    ];
+    const config = "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE";
+    await compareStateLogs(body, config, false);
+    expect(await compareWithInterpreter(body, config)).toContainEqual(
+      expect.stringMatching(COMPLETE),
+    );
+    const incomparable = [
+      "EXTENDS Naturals, FiniteSets",
+      "VARIABLE s",
+      "Init == s = {[a |-> 1]}",
+      'Next == s\' = s \\cup {[a |-> Cardinality(s) + 1]} /\\ (Cardinality(s) < 3 \\/ "x" \\in s)',
+    ];
+    expect(await compareWithInterpreter(incomparable, config)).toContainEqual(
+      expect.stringMatching(stopped("values TLC can't compare")),
+    );
+  });
+
   it("walks a universal quantifier with 2^32 bindings, and doesn't skip its body", async () => {
     // The product of the sizes doesn't fit 32 bits, and the first binding already rules out every
     // successor. The interpreter builds the product of the sets, so this compares with the
