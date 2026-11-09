@@ -1568,4 +1568,25 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
       ),
     ).toContainEqual(expect.stringMatching(COMPLETE));
   });
+  it("applies a function a recursive body builds to one argument, as TLC keeps it lazy", async () => {
+    const body = [
+      "EXTENDS Naturals",
+      "VARIABLE x",
+      "f[i \\in 0..5] == [j \\in 0..5 |->",
+      "  IF j = 0 THEN [k \\in 0..i |-> IF k = 0 THEN i ELSE f[i][1] + 1]",
+      "  ELSE IF i = 0 THEN j ELSE f[i - 1][j] + 1]",
+      "g[i \\in 0..5] == [j \\in 0..i |->",
+      "  IF j = 0 THEN IF i = 0 THEN 0 ELSE g[i - 1][i - 1] ELSE g[i][j - 1] + x]",
+      "Init == x = 2",
+      "Next == x < 4 /\\ x' = x + 1",
+      "Inv == /\\ f[4][3] = 7 /\\ f[4][0][2] = 6 /\\ DOMAIN f[5][0] = 0..5",
+      "       /\\ g[3][3] = 6 * x /\\ DOMAIN g[3] = 0..3",
+    ];
+    expect(
+      await compareWithInterpreter(
+        body,
+        "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
+      ),
+    ).toContainEqual(expect.stringMatching(COMPLETE));
+  });
 });

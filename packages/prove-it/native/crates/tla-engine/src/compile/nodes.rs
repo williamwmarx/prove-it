@@ -13,8 +13,8 @@ use super::lazy;
 use super::predicate::{Predicate, Test};
 use super::{
     Binding, Compiled, Compiler, Compiling, Context, Filter, Shape, bind, bool_id,
-    call_recursive_function, combine_references, constant, eval, leaf, lookup, member,
-    predicate_node, reference_of, unsupported,
+    call_recursive_element, call_recursive_function, combine_references, constant, eval, leaf,
+    lookup, member, predicate_node, reference_of, unsupported,
 };
 use crate::footprint::Footprint;
 use crate::machine::{Eval, Machine};
@@ -852,6 +852,54 @@ impl Compiler<'_> {
         args: &[NodeId],
         context: &Context,
     ) -> Compiling<Compiled> {
+        if let NodeKind::FunctionApplication {
+            function: applied,
+            args: applied_args,
+        } = self.node(function).1
+            && let Some(recursive) = self.get_applied_recursive_function(*applied, context)?
+            && let Some(element) = recursive.element
+            && (applied_args.len() == 1 || applied_args.len() == recursive.arity)
+        {
+            let applied_args = applied_args
+                .iter()
+                .map(|&argument| self.compile(argument, context))
+                .collect::<Compiling<Vec<Compiled>>>()?;
+            let args = args
+                .iter()
+                .map(|&argument| self.compile(argument, context))
+                .collect::<Compiling<Vec<Compiled>>>()?;
+            let footprint = Footprint::merge_all(
+                applied_args
+                    .iter()
+                    .chain(&args)
+                    .map(|argument| &argument.footprint),
+            )
+            .merge(&recursive.footprint());
+            let recursive = (recursive.runtime, recursive.slot);
+            let applied_args: Vec<Eval> = applied_args
+                .into_iter()
+                .map(|argument| argument.eval)
+                .collect();
+            let args: Vec<Eval> = args.into_iter().map(|argument| argument.eval).collect();
+            return Ok(leaf(
+                eval(move |machine| {
+                    let argument = match &applied_args[..] {
+                        [argument] => argument(machine)?,
+                        evaluators => evaluate_tuple(machine, evaluators)?,
+                    };
+                    let domain = machine.recursive_domain(recursive.0);
+                    if !domain(machine, argument)? {
+                        return Err(Bail("applied a recursive function outside its domain"));
+                    }
+                    let key = match &args[..] {
+                        [argument] => argument(machine)?,
+                        evaluators => evaluate_tuple(machine, evaluators)?,
+                    };
+                    call_recursive_element(machine, recursive.1, element, argument, key)
+                }),
+                footprint,
+            ));
+        }
         if let Some(recursive) = self.get_applied_recursive_function(function, context)?
             && (args.len() == 1 || args.len() == recursive.arity)
         {
