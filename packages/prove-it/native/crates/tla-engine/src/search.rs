@@ -64,9 +64,9 @@ pub struct Settings {
     /// Whether the temporal properties are checked as the search goes, as TLC does unless
     /// `-lncheck final`.
     pub is_liveness_periodic: bool,
-    /// PROVE_IT_PERIODIC_AT: the number of expanded states after which the search checks the
-    /// temporal properties the first time, rather than after FIRST_PROGRESS.
-    pub periodic_at: Option<usize>,
+    /// PROVE_IT_TEST_LIVE_CHECK_AT, for tests: the number of expanded states after which the
+    /// search checks the temporal properties the first time, rather than after FIRST_PROGRESS.
+    pub test_live_check_at: Option<usize>,
 }
 
 /// A level of fewer states runs on one thread, as `MINIMUM_SHARED_LEVEL` in `search.ts`, unless
@@ -91,7 +91,7 @@ impl Default for Settings {
             threads: 1,
             minimum_shared_level: MINIMUM_SHARED_LEVEL,
             is_liveness_periodic: false,
-            periodic_at: None,
+            test_live_check_at: None,
         }
     }
 }
@@ -103,7 +103,8 @@ pub trait Reporter {
     fn initial_states(&mut self, generated: u64, distinct: u64);
     fn progress(&mut self, generated: u64, distinct: u64, queued: u64, depth: u64);
     /// TLC starts to check the temporal properties of its `branches` on the graph of the first
-    /// `expanded` states, part way through the search, with the states generated, the states found and the depth so far.
+    /// `expanded` states, part way through the search: `counts` are the states generated, the
+    /// states found and the depth so far.
     fn liveness_started(&mut self, _branches: u64, _expanded: u64, _counts: [u64; 3]) {}
     /// The check part way through the search found the properties hold so far.
     fn liveness_finished(&mut self) {}
@@ -1616,7 +1617,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     // The graph's size at the last check, from 1 as TLC's, and the time the checks took.
     let mut periodic_size = 1usize;
     let mut periodic_time = Duration::ZERO;
-    let mut periodic_at = settings.periodic_at.filter(|_| is_periodic);
+    let mut test_live_check_at = settings.test_live_check_at.filter(|_| is_periodic);
     // What the check that found a counterexample answered and found, and the states it took.
     let mut periodic_lasso: Option<(Vec<Table>, Liveness, usize)> = None;
     let result = (|| -> Outcome<()> {
@@ -1770,8 +1771,8 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     checkpoint_count = search.states.count();
                     checkpoint_generated = search.generated;
                     expanded?;
-                    if periodic_at.is_some_and(|at| search.expanding >= at) {
-                        periodic_at = None;
+                    if test_live_check_at.is_some_and(|at| search.expanding >= at) {
+                        test_live_check_at = None;
                         check_periodically(&mut machine, &mut search)?;
                     }
                     if Instant::now() >= progress_at {
@@ -1820,8 +1821,8 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             }
             out_degrees[(search.new_states as usize).min(OUT_DEGREE_BUCKETS - 1)] += 1;
             search.flush(&mut machine);
-            if periodic_at.is_some_and(|at| expanding + 1 >= at) {
-                periodic_at = None;
+            if test_live_check_at.is_some_and(|at| expanding + 1 >= at) {
+                test_live_check_at = None;
                 check_periodically(&mut machine, &mut search)?;
             }
             if expanding & 0xff == 0 && Instant::now() >= progress_at {

@@ -162,12 +162,12 @@ tenth since the last check (`livenessThreshold`) and the checks took less than a
 a cycle passes by the nodes of states not yet expanded (`LiveWorker#checkSccs`), and on a
 counterexample it stops at once with the counts so far, states left on the queue and all.
 
-The engine does the same at its progress points: `tla-live` checks the graph of the states
-expanded so far, its successors' nodes undone, which is the graph TLC built in the same order. The
-engine reports the check's start and end, as the interpreter does, and where it finds a lasso the
-search stops and the interpreter prints it with the search's counts and queue. It checks this way
-where the checker takes the graph so far as TLC does: not under SYMMETRY or a VIEW, where anything
-prints, under `PROVE_IT_LIVE_CHECK=1`, or where an atom reads TLC's diameter. Whatever a check
-leaves undecided, the check of the complete graph decides. `PROVE_IT_PERIODIC_AT=n` makes the
-first check after `n` states for the engine and the interpreter alike, for the tests, since the
-time a check happens at isn't deterministic.
+The engine does the same at its progress points: `tla-live` checks the graph of the states expanded
+so far, its successors' nodes undone, which is the graph TLC built in the same order. The engine
+reports the check's start and end, as the interpreter does, and where it finds a lasso the search
+stops and the interpreter prints it with the search's counts and queue. It checks this way where the
+checker takes the graph so far as TLC does: not under SYMMETRY or a VIEW, where anything prints,
+under `PROVE_IT_LIVE_CHECK=1`, or where an atom reads TLC's diameter. Whatever a check leaves
+undecided, the check of the complete graph decides. `PROVE_IT_TEST_LIVE_CHECK_AT=n` makes the first
+check after `n` states for the engine and the interpreter alike, for the tests, since the time a
+check happens at isn't deterministic.

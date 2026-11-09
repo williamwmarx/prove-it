@@ -27,8 +27,8 @@ import {
   getEngineThreads,
   getEnvironmentFlag,
   getMinimumSharedLevel,
-  getPeriodicAt,
   getStopAt,
+  getTestLiveCheckAt,
   reportEngine,
 } from "./settings";
 import {
@@ -252,7 +252,7 @@ export const checkNatively = (
     getEngineThreads(),
     getMinimumSharedLevel(),
     isLivenessPeriodic ? 1 : 0,
-    getPeriodicAt(),
+    getTestLiveCheckAt(),
   );
   return addon.check(
     lowered.ir,

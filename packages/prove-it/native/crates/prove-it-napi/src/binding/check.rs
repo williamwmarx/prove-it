@@ -353,7 +353,7 @@ pub(super) unsafe extern "C" fn check_model(env: napi_env, info: napi_callback_i
                 threads,
                 minimum_shared_level,
                 liveness_periodic,
-                periodic_at,
+                test_live_check_at,
             ] = words[..]
             else {
                 return Err(wrong("the settings must hold nine numbers".into()));
@@ -377,7 +377,7 @@ pub(super) unsafe extern "C" fn check_model(env: napi_env, info: napi_callback_i
                 // The interpreter reports a violation itself.
                 is_violation_reported: false,
                 is_liveness_periodic: liveness_periodic != 0,
-                periodic_at: usize::try_from(periodic_at).ok(),
+                test_live_check_at: usize::try_from(test_live_check_at).ok(),
             };
             let mut undefined = null_mut();
             status(napi_get_undefined(env, &mut undefined))?;

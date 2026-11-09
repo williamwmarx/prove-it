@@ -43,12 +43,12 @@ export const getStopAt = () => {
   return Number.isInteger(stopAt) && stopAt >= 0 ? stopAt : -1;
 };
 
-// PROVE_IT_PERIODIC_AT: after how many expanded states the search checks the temporal properties
-// the first time, rather than after three seconds, so that a test sees the check TLC makes part
-// way through the search. -1 without it.
-export const getPeriodicAt = () => {
-  const periodicAt = Number(getEnvironment()?.PROVE_IT_PERIODIC_AT ?? -1);
-  return Number.isInteger(periodicAt) && periodicAt > 0 ? periodicAt : -1;
+// PROVE_IT_TEST_LIVE_CHECK_AT: after how many expanded states the search checks the temporal
+// properties the first time, rather than after three seconds, so that a test sees the check TLC
+// makes part way through the search. -1 without it.
+export const getTestLiveCheckAt = () => {
+  const testLiveCheckAt = Number(getEnvironment()?.PROVE_IT_TEST_LIVE_CHECK_AT ?? -1);
+  return Number.isInteger(testLiveCheckAt) && testLiveCheckAt > 0 ? testLiveCheckAt : -1;
 };
 
 // How many threads the native engine searches with: PROVE_IT_WORKERS, else one. The TypeScript

@@ -17,7 +17,7 @@ import {
   getEngineBackend,
   getEngineSetting,
   getEnvironmentFlag,
-  getPeriodicAt,
+  getTestLiveCheckAt,
   isIrDumped,
   reportEngine,
   writeDebugBytes,
@@ -2447,7 +2447,7 @@ const searchStates = (
     }
     return reportLasso(liveness, engineReport.lasso);
   }
-  const periodicAt = getPeriodicAt();
+  const testLiveCheckAt = getTestLiveCheckAt();
   for (let index = resumeAt; index < states.length && !runtime.isStopped; index++) {
     if (index > resumeAt) takePendingStates();
     current.index = index;
@@ -2468,7 +2468,7 @@ const searchStates = (
     expansion.newStates = 0;
     // TLC's AbstractChecker#runTLC checks the liveness properties on the state graph so far, then
     // reports how far the search got.
-    if (isPeriodic && index + 1 === periodicAt) {
+    if (isPeriodic && index + 1 === testLiveCheckAt) {
       const lasso = findPeriodicViolation(index + 1);
       if (liveness && lasso) return reportLasso(liveness, lasso);
     }

@@ -712,9 +712,12 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
       const native = await run(options, {
         PROVE_IT_ENGINE: "debug",
         PROVE_IT_ENGINE_BACKEND: "rust",
-        PROVE_IT_PERIODIC_AT: "2",
+        PROVE_IT_TEST_LIVE_CHECK_AT: "2",
       });
-      const interpreter = await run(options, { PROVE_IT_ENGINE: "0", PROVE_IT_PERIODIC_AT: "2" });
+      const interpreter = await run(options, {
+        PROVE_IT_ENGINE: "0",
+        PROVE_IT_TEST_LIVE_CHECK_AT: "2",
+      });
       expect(native.lines).toContainEqual(expect.stringMatching(COMPLETE));
       expect(native.result.status).toBe(status);
       expect(native.result).toEqual(interpreter.result);
