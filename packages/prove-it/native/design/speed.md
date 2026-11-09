@@ -104,3 +104,33 @@ Callgrind on the 18 suite models after #137, every model native. Each figure is 
 | Allocation and copies | ~3.5% | `memcpy`, `malloc`, `free` |
 
 In `segment` the cost is spread across closure entry and exit, the match on each op, and the bookkeeping and undo of assignments. No line stands out.
+
+## Memory of the parallel search
+
+Each thread of a shared level works in an overlay of the store. `Store::attach` copies the base's
+values, blocks and texts into the overlay, and each thread also keeps its own fingerprint cache and
+memo tables, so memory grows with the threads.
+
+MCLamportMutex on Depot's 16-core runner, with 724,274 states and about 296k values:
+
+| Threads | Peak memory on main | With overlays reading the base in place |
+| ---: | ---: | ---: |
+| 1 | 219 MB | 220 MB |
+| 4 | 305 MB | 249 MB |
+| 16 | 627 MB | 368 MB |
+
+Each thread's share at 4 threads, about 187k values: the store copy is about 8.5 MB, the fingerprint
+cache 11 to 18 MB, and the memo tables 12 to 20 MB.
+
+Reading the base in place, with an own-or-base test on each access, slowed one thread down:
+- Commit took 3.43B → 3.74B instructions, MCbtree 10.23B → 11.85B, and SimpleRegular 3.67B → 4.32B.
+- On SimpleRegular, the store accessors (`meta`, `word`, `words`, `text`) cost most of it: 4.10B with
+  only the store changed.
+- Indexing past the base by wrapping subtraction, with one bounds check, still gave 4.10B. Moving the
+  base's reads out of line gave 4.27B.
+- They are the engine's hottest code, so any test on each access shows.
+
+Reading the base store in place without that cost needs an overlay type of its own, with the machine
+and the compiled code generic over the store. That is shelved until a model with millions of values
+shows the copies dominating; the copy grows with the store. The branch is `overlay-memory`, at
+207b2ec.
