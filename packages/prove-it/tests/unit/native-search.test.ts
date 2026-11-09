@@ -1430,6 +1430,28 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     ).toContainEqual(expect.stringMatching(COMPLETE));
   });
 
+  // From TLC's ConstantOperatorConfiguration: a configuration defines a constant operator by its
+  // values, which TLC applies by the row whose arguments equal the arguments, and fails to apply
+  // outside its rows.
+  it("applies an operator the configuration defines by its values", async () => {
+    const body = [
+      "EXTENDS Naturals",
+      "CONSTANT F(_, _)",
+      "VARIABLE x",
+      "Init == x = 0",
+      "Next == x' = F(x, x + 1)",
+    ];
+    const rows = "CONSTANT\nF(0, 1) = 1\nF(1, 2) = 2\nF(2, 3) = 2";
+    expect(await compareWithInterpreter(body, `INIT Init\nNEXT Next\n${rows}`)).toContainEqual(
+      expect.stringMatching(COMPLETE),
+    );
+    expect(
+      await compareWithInterpreter(body, "INIT Init\nNEXT Next\nCONSTANT\nF(0, 1) = 1"),
+    ).toContainEqual(
+      expect.stringMatching(stopped("an operator's table applied outside its rows")),
+    );
+  });
+
   it("applies recursive functions as TLC keeps them lazy", async () => {
     const body = [
       "EXTENDS Naturals, FiniteSets",

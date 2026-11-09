@@ -258,3 +258,14 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   such a stop isn't a failure TLC reports. It now fails on a base of 31 elements or more as TLC
   does, and stops at its limit only below that. FingerprintExceptionInit and
   FingerprintExceptionNext (TLC's tests) now stop on that failure in Rust.
+
+## An operator the configuration defines by its values
+
+- A configuration may define a constant operator by its values, `F(0) = 1`, which TLC applies by
+  the row whose arguments equal the arguments and fails to apply outside its rows. The IR carried
+  the operator as a builtin of that name, which the engines didn't know. A builtin now carries
+  such a table (`Builtin::TABLE`): its rows, each its arguments as a tuple and its value. The
+  native engine applies it, and fails outside its rows as TLC does; the TypeScript engine applies
+  it as the interpreter does. ConstantOperatorConfiguration (TLC's tests), declined before, now
+  searches in Rust, and the TypeScript engine searches it too. The Rust front end lowers no table
+  yet (`tla-front`'s `get_builtin_index`).
