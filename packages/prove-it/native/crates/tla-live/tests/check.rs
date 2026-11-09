@@ -13,6 +13,8 @@ fn graph() -> Graph<'static> {
         edge_offsets: &OFFSETS,
         edges: &EDGES,
         fingerprints: &FINGERPRINTS,
+        reals: None,
+        diameters: None,
     }
 }
 
@@ -26,6 +28,7 @@ fn verdict(answers: Option<&[u8]>) -> Verdict {
         &[&INFINITELY_OFTEN],
         &graph(),
         &[answers],
+        false,
     );
     if let Verdict::Declined(_) = liveness.verdict {
     } else {

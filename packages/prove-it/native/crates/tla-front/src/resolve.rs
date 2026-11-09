@@ -123,18 +123,20 @@ pub struct InstancedModule {
     pub instancer: Name,
 }
 
-pub type GetInstance = Rc<dyn Fn(&Rc<Instance>) -> Result<InstancedModule>>;
+pub type GetInstance<'a> = Rc<dyn Fn(&Rc<Instance>) -> Result<InstancedModule> + 'a>;
 pub type GetKey = Rc<dyn Fn(&Definition) -> Name>;
 
 /// A name that selects nothing, the arguments SANY analyzes before it, and the error it reports.
 type SelectionError = (Expr, Vec<Expr>, SanyError);
 
-/// What a name that selects a subexpression is to resolution, as `selections` and
-/// `selectionErrors` in `resolve.ts` hold them, by node. A table keeps each node it names, so no
-/// other node takes its address.
+/// What the TypeScript front end keeps in `WeakSet`s and `WeakMap`s by node: the names that select
+/// a subexpression (`selections`, `selectionErrors`), the arities of the names resolution renamed
+/// (`renamedArities`), and the names of the definitions instances copy (`sourceNames`). A table
+/// keeps each node it names, so no other node takes its address.
 #[derive(Default)]
-pub struct Selections {
+pub struct Tables {
     selected: RefCell<FastMap<usize, Expr>>,
+    source_names: RefCell<FastMap<usize, (Rc<Definition>, Name)>>,
     errors: RefCell<FastMap<usize, SelectionError>>,
     renamed_arities: RefCell<FastMap<usize, (Expr, usize)>>,
 }
@@ -143,7 +145,30 @@ fn address(expression: &Expr) -> usize {
     Rc::as_ptr(expression) as usize
 }
 
-impl Selections {
+impl Tables {
+    /// `getSourceName`.
+    pub fn get_source_name(&self, definition: &Rc<Definition>) -> Name {
+        self.source_names
+            .borrow()
+            .get(&(Rc::as_ptr(definition) as usize))
+            .map_or_else(|| definition.name.clone(), |entry| entry.1.clone())
+    }
+
+    /// `withSourceName`: a copy of a definition keeps the name of the definition it copies.
+    pub fn with_source_name(
+        &self,
+        definition: Rc<Definition>,
+        source: &Rc<Definition>,
+    ) -> Rc<Definition> {
+        let name = self.get_source_name(source);
+        if name != definition.name {
+            self.source_names
+                .borrow_mut()
+                .insert(Rc::as_ptr(&definition) as usize, (definition.clone(), name));
+        }
+        definition
+    }
+
     pub fn add_selection(&self, expression: &Expr) {
         self.selected
             .borrow_mut()
@@ -173,9 +198,9 @@ impl Selections {
 /// What SANY reports while it goes on analyzing a unit of a module, and the scope it analyzes it
 /// in (`Unit`).
 #[derive(Clone)]
-struct Unit {
+struct Unit<'a> {
     imported: Rc<Symbols>,
-    get_instance: GetInstance,
+    get_instance: GetInstance<'a>,
     definitions: Rc<OrderedMap<Name, Rc<Definition>>>,
     get_key: GetKey,
     location: Position,
@@ -196,17 +221,17 @@ struct Unit {
     /// In a definition generated for a LET INSTANCE, or a subexpression analyzed where it is
     /// defined.
     is_generated: bool,
-    selections: Rc<Selections>,
+    tables: Rc<Tables>,
 }
 
-impl Unit {
+impl Unit<'_> {
     fn error(&self, location: String, message: String) {
         self.errors
             .borrow_mut()
             .push(SanyError { location, message });
     }
 
-    fn with_label_params(&self, names: &[Name]) -> Unit {
+    fn with_label_params(&self, names: &[Name]) -> Self {
         let mut params = (*self.label_params).clone();
         params.extend(names.iter().cloned());
         Unit {
@@ -401,7 +426,13 @@ fn bind_params(scope: &Scope, params: &[OperatorParam], unit: &Unit) -> Scope {
         bind_name(
             &parent,
             &param.name,
-            parameter(param.arity, param.location.range.clone()),
+            parameter(
+                param.arity,
+                param
+                    .location
+                    .as_ref()
+                    .and_then(|location| location.range.clone()),
+            ),
             unit,
         )
     })
@@ -485,7 +516,7 @@ fn get_spelling(expression: &Expression) -> Option<Name> {
     }
 }
 
-fn get_selector_ranges(expression: &Expression) -> Option<&[Range]> {
+pub fn get_selector_ranges(expression: &Expression) -> Option<&[Range]> {
     match &expression.kind {
         ExpressionKind::Identifier {
             selector_ranges, ..
@@ -1187,7 +1218,7 @@ fn get_symbol_arity(
         return Ok(None);
     }
     if let Some(renamed) = unit
-        .selections
+        .tables
         .renamed_arities
         .borrow()
         .get(&address(expression))
@@ -1217,7 +1248,7 @@ fn get_symbol_arity(
     }
     if let Some(symbol) = find_symbol(name, unit) {
         *expression.resolved.key.borrow_mut() = Some(symbol.key.clone());
-        unit.selections
+        unit.tables
             .renamed_arities
             .borrow_mut()
             .insert(address(expression), (expression.clone(), symbol.arity));
@@ -1640,7 +1671,7 @@ fn resolve_apply(expression: &Expr, scope: &Scope, unit: &Unit) -> Result<()> {
         {
             resolve_expression(arg, scope, unit)?;
             let is_matched = lambda_params.len() == expected;
-            if !is_matched && unit.selections.is_selection(arg) {
+            if !is_matched && unit.tables.is_selection(arg) {
                 report(
                     range,
                     format!(
@@ -1755,7 +1786,7 @@ fn resolve_argument(arg: &Expr, scope: &Scope, unit: &Unit) -> Result<()> {
 
 /// Reports the error of a name that selects nothing, after the arguments SANY analyzes before it.
 fn is_selection_reported(expression: &Expr, scope: &Scope, unit: &Unit) -> Result<bool> {
-    let Some((args, error)) = unit.selections.get_error(expression) else {
+    let Some((args, error)) = unit.tables.get_error(expression) else {
         return Ok(false);
     };
     for arg in &args {
@@ -1773,7 +1804,7 @@ fn resolve_all(expressions: &[Expr], scope: &Scope, unit: &Unit) -> Result<()> {
 }
 
 fn resolve_expression(expression: &Expr, scope: &Scope, unit: &Unit) -> Result<()> {
-    if !unit.is_generated && unit.selections.is_selection(expression) {
+    if !unit.is_generated && unit.tables.is_selection(expression) {
         return resolve_expression(
             expression,
             scope,
@@ -2315,9 +2346,9 @@ pub struct ModuleReport {
 
 /// What resolution reads of the modules a module links to (`ModuleUnit` in `resolve.ts`).
 #[derive(Clone)]
-pub struct ModuleContext {
+pub struct ModuleContext<'a> {
     pub imported: Rc<Symbols>,
-    pub get_instance: GetInstance,
+    pub get_instance: GetInstance<'a>,
     /// The built-in operators and the names of the enclosing and extended modules.
     pub bound: Rc<Symbols>,
     pub definitions: Rc<OrderedMap<Name, Rc<Definition>>>,
@@ -2328,7 +2359,7 @@ pub struct ModuleContext {
     pub facts: Rc<RefCell<FastSet<Name>>>,
     pub reports: Rc<RefCell<Vec<ModuleReport>>>,
     pub warnings: ErrorList,
-    pub selections: Rc<Selections>,
+    pub tables: Rc<Tables>,
 }
 
 /// A named theorem or assumption is linked as a definition too.
@@ -2551,7 +2582,7 @@ pub fn resolve_substitutions(
             label_params: Rc::default(),
             labels: Rc::default(),
             is_generated: false,
-            selections: unit.selections.clone(),
+            tables: unit.tables.clone(),
         },
     )
 }
@@ -2695,7 +2726,7 @@ pub fn resolve_module(module: &Module, unit: &ModuleContext) -> Result<Vec<SanyE
         label_params: Rc::default(),
         labels: Rc::default(),
         is_generated: false,
-        selections: unit.selections.clone(),
+        tables: unit.tables.clone(),
     };
     let create_unit = &create_unit;
     let mut units: Vec<SemanticUnit<'_>> = Vec::new();
