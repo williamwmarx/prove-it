@@ -949,7 +949,7 @@ impl<'ir> Evaluator<'ir> {
                 };
                 let inner = own_context(bound, frame, *is_self)
                     .primed(context.is_primed || bound.is_primed);
-                self.construct_function(bounds, definition.body, &inner)
+                self.defined_function(bounds, definition.body, &inner)
             }
             Binding::Operator(_) => fail("an operator used as a value"),
         }
@@ -972,7 +972,7 @@ impl<'ir> Evaluator<'ir> {
         let printed = self.printed.len();
         let value = match &definition.form {
             DefinitionForm::Function(bounds) => {
-                self.construct_function(bounds, definition.body, &context.global())?
+                self.defined_function(bounds, definition.body, &context.global())?
             }
             DefinitionForm::Operator(params) if params.is_empty() => {
                 self.evaluate(definition.body, &context.global())?
@@ -1390,6 +1390,25 @@ impl<'ir> Evaluator<'ir> {
     }
 
     // --- functions ---
+
+    // A function a definition or a LET defines. TLC builds it in the frame of the definition,
+    // which the replay doesn't record, so a failure building it isn't one the replay follows.
+    fn defined_function(
+        &mut self,
+        bounds: &[Bound],
+        body: NodeId,
+        context: &Context,
+    ) -> Evaluated<Value> {
+        let result = self.construct_function(bounds, body, context);
+        if result.is_err()
+            && let Some(stack) = &mut self.call_stack
+        {
+            stack
+                .unfollowed
+                .get_or_insert("building a function a definition defines");
+        }
+        result
+    }
 
     fn construct_function(
         &mut self,
