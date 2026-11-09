@@ -185,6 +185,7 @@ fn encode_here(ir: &Ir) -> Vec<u8> {
         words.push(property.name as i32);
         push_live(&mut words, &property.formula);
     }
+    words.extend(range_words(model.specification));
     let startup = &model.startup;
     words.push(startup.substitutes.len() as i32);
     for &(name, definition) in &startup.substitutes {

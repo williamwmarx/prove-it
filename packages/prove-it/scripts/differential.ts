@@ -153,10 +153,15 @@ const getFront = (stdout: string) => {
   const start = isTool
     ? bannerAt + banner.length
     : stdout.indexOf("\n", bannerAt + banner.length) + 1;
-  // The front ends where TLC computes the initial states, or where it reports an assumption false.
+  // The front ends where TLC computes the initial states, or where it reports an assumption that is
+  // false or fails to evaluate.
   const ends = isTool
-    ? ["@!@!@STARTMSG 2189:", "@!@!@STARTMSG 2104:"]
-    : ["\nComputing initial states...\n", "\nError: Assumption "];
+    ? ["@!@!@STARTMSG 2189:", "@!@!@STARTMSG 2104:", "@!@!@STARTMSG 2105:"]
+    : [
+        "\nComputing initial states...\n",
+        "\nError: Assumption ",
+        "\nError: Evaluating assumption ",
+      ];
   const end = Math.min(
     ...ends.map((marker) => stdout.indexOf(marker)).filter((index) => index !== -1),
   );

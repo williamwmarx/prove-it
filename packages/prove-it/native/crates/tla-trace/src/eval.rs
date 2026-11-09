@@ -10,8 +10,8 @@ use std::rc::Rc;
 use tla_values::random::JavaRandom;
 
 use tla_ir::{
-    Bound, Definition, DefinitionForm, Index, Ir, Name, NodeId, NodeKind, Param, PathStep, Pattern,
-    Resolution, ScopeBinding, TextId,
+    Bound, Builtin, Definition, DefinitionForm, Index, Ir, Name, NodeId, NodeKind, Param, PathStep,
+    Pattern, Resolution, ScopeBinding, TextId,
 };
 
 use tla_values::{Id, Store};
@@ -190,6 +190,12 @@ pub struct CallStack {
     /// fingerprint fails in, outermost first, as TLC's FingerprintException traces them, and the
     /// state's values as TLC prints them, in the IR's order of the variables.
     pub fingerprint: Option<(Vec<NodeId>, Vec<String>)>,
+    /// Whether the replay built a set enumeration TLC fails to normalize, which TLC keeps as
+    /// written until it fingerprints or prints it.
+    pub is_unsorted: bool,
+    /// TLC's error as it prints an initial state it failed to fingerprint, where printing it fails
+    /// too: TLC reports it as an exception it didn't expect.
+    pub unprintable: Option<TlcMessage>,
 }
 
 impl CallStack {
@@ -290,6 +296,9 @@ pub struct Runtime {
     pub named: Value,
     pub stats: Value,
     pub counter_example: Value,
+    /// Each `_POSSIBLE` predicate's count by name, totalled over the workers, as `_Counts` gives
+    /// it.
+    pub possible_counts: Value,
 }
 
 const MAXIMUM_DEPTH: u32 = 10_000;
@@ -895,7 +904,20 @@ impl<'ir> Evaluator<'ir> {
                     .iter()
                     .map(|&item| self.evaluate(item, context))
                     .collect::<Evaluated<Vec<_>>>()?;
-                set_of(values)
+                // TLC builds a set enumeration as written and normalizes it only as it uses it,
+                // which the replay follows only as far as fingerprinting and printing the state.
+                match (set_of(values.clone()), &mut self.call_stack) {
+                    (Err(error), Some(stack))
+                        if error
+                            .message
+                            .as_ref()
+                            .is_some_and(|message| !message.is_eval_exception) =>
+                    {
+                        stack.is_unsorted = true;
+                        Ok(Value::Unsorted(Rc::new(values)))
+                    }
+                    (set, _) => set,
+                }
             }
             NodeKind::SetFilter { bound, predicate } => {
                 let set = self.evaluate(bound.set, context)?;
@@ -1497,6 +1519,18 @@ impl<'ir> Evaluator<'ir> {
             let operator = Rc::clone(operator);
             return self.call_operator(&operator, &frame, args, context);
         }
+        // TLC refuses action composition unless a Java property enables its incomplete
+        // implementation.
+        if self.name(name.text) == "\\cdot" && args.len() == 2 {
+            return fail_runtime(
+                "action composition",
+                if self.is_174() {
+                    "The current version of TLC does not support action composition.".into()
+                } else {
+                    "The current version of TLC does not support action composition.  An incomplete implementation can be enabled via the tlc2.tool.impl.Tool.cdot=true java property.".into()
+                },
+            );
+        }
         fail(format!("the operator {}", self.name(name.text)))
     }
 
@@ -2065,7 +2099,26 @@ impl<'ir> Evaluator<'ir> {
         operands: &[Operand],
         context: &Context,
     ) -> Evaluated<Value> {
-        let name = self.name(self.ir.builtins[index as usize].name);
+        let builtin = &self.ir.builtins[index as usize];
+        // An operator the configuration defines by a table of its values, each row's arguments as
+        // a tuple.
+        if builtin.flags & Builtin::TABLE != 0 {
+            let mut arguments = Vec::with_capacity(operands.len());
+            for operand in operands {
+                arguments.push(self.operand(operand)?);
+            }
+            let arguments = Value::tuple(arguments);
+            for &(row, value) in &builtin.table {
+                let (Some(row), Some(value)) = (row, value) else {
+                    return fail("a value of an operator's table the IR can't hold");
+                };
+                if equals(&self.value(row)?, &arguments)? {
+                    return self.value(value);
+                }
+            }
+            return fail("an operator's table applied outside its rows");
+        }
+        let name = self.name(builtin.name);
         let arity = |count: usize| {
             if operands.len() == count {
                 Ok(())
@@ -2240,10 +2293,13 @@ impl<'ir> Evaluator<'ir> {
                 arity(1)?;
                 Value::Lazy(Rc::new(Lazy::Seq(self.operand(&operands[0])?)))
             }
+            // A string is as long as its characters (`Sequences.Len`).
             "Len" => {
                 arity(1)?;
-                let sequence = self.operand(&operands[0])?;
-                int(sequence_of(&sequence)?.len() as i64)?
+                match self.operand(&operands[0])? {
+                    Value::Str(text) => int(text.units.len() as i64)?,
+                    sequence => int(sequence_of(&sequence)?.len() as i64)?,
+                }
             }
             "Head" => {
                 arity(1)?;
@@ -2256,6 +2312,13 @@ impl<'ir> Evaluator<'ir> {
             "Tail" => {
                 arity(1)?;
                 let sequence = self.operand(&operands[0])?;
+                // A string's tail is the string of the characters past its first.
+                if let Value::Str(text) = &sequence {
+                    if text.units.is_empty() {
+                        return fail("Tail of the empty string");
+                    }
+                    return Ok(Value::Str(self.text_of(text.units[1..].into())));
+                }
                 let elements = sequence_of(&sequence)?;
                 if elements.is_empty() {
                     return fail("Tail of the empty sequence");
@@ -2441,6 +2504,15 @@ impl<'ir> Evaluator<'ir> {
                     _ => return fail(name.to_string()),
                 }
             }
+            "_Counts" if self.runtime.is_some() => {
+                arity(0)?;
+                self.reads += 1;
+                self.runtime
+                    .as_ref()
+                    .expect("the runtime")
+                    .possible_counts
+                    .clone()
+            }
             "CounterExample" if self.runtime.is_some() => {
                 arity(0)?;
                 self.reads += 1;
@@ -2449,6 +2521,35 @@ impl<'ir> Evaluator<'ir> {
                     .expect("the runtime")
                     .counter_example
                     .clone()
+            }
+            // The states of a CounterExample as a sequence, each at its number
+            // (`CounterExample.toTrace`).
+            "ToTrace" => {
+                arity(1)?;
+                let counter_example = self.operand(&operands[0])?;
+                let key = Value::Str(self.text_of("state".encode_utf16().collect()));
+                let states = match &counter_example {
+                    Value::Function(record) => match find_key(record, &key)? {
+                        Some(position) => record.range[position].clone(),
+                        None => return fail("ToTrace of a record without states"),
+                    },
+                    _ => return fail("ToTrace of a value that isn't a CounterExample"),
+                };
+                let states = elements(&states)?;
+                let mut trace = vec![None; states.len()];
+                for state in states.iter() {
+                    let Some([Value::Int(number), record]) = as_tuple(state) else {
+                        return fail("ToTrace of a state that isn't numbered");
+                    };
+                    match trace.get_mut((*number as usize).wrapping_sub(1)) {
+                        Some(slot) => *slot = Some(record.clone()),
+                        None => return fail("ToTrace of a state numbered past the trace"),
+                    }
+                }
+                match trace.into_iter().collect::<Option<Vec<_>>>() {
+                    Some(trace) => Value::tuple(trace),
+                    None => return fail("ToTrace of a trace missing a state"),
+                }
             }
             "TLCEval" => {
                 arity(1)?;
@@ -2459,6 +2560,21 @@ impl<'ir> Evaluator<'ir> {
                 let value = self.operand(&operands[0])?;
                 let units: Box<[u16]> = format_value(&value).encode_utf16().collect();
                 Value::Str(self.text_of(units))
+            }
+            // TLC's empty bag is the empty function (`Bags.EmptyBag`).
+            "EmptyBag" => {
+                arity(0)?;
+                Value::tuple(Vec::new())
+            }
+            // The model value of a name (`TLCExt.tlcModelValue`), which compares by the name's
+            // rank, as TLC ranks it.
+            "TLCModelValue" => {
+                arity(1)?;
+                match self.operand(&operands[0])? {
+                    Value::Str(name) if name.rank >= 0 => Value::Model(name),
+                    Value::Str(_) => return fail("TLCModelValue of a name TLC ranks as it runs"),
+                    _ => return fail("TLCModelValue of a value that isn't a string"),
+                }
             }
             "TLCSet" => {
                 arity(2)?;

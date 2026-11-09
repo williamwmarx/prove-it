@@ -75,12 +75,6 @@ impl Rebuilder<'_> {
         else {
             return unsupported("the IR doesn't define");
         };
-        // The module the postcondition is defined in, the spec's.
-        let module = ir.nodes.arena[evaluator
-            .definition(ir.definitions[definition as usize])
-            .body as usize]
-            .range
-            .map(|range| range.module);
         // The values TLC binds the parameters of each action of the trace's steps to.
         let mut parameters = HashMap::new();
         if let Some(counter_example) = &inputs.counter_example {
@@ -151,7 +145,9 @@ impl Rebuilder<'_> {
             .iter()
             .map(|(name, value)| (name.clone(), Value::tuple(vec![value.clone()])))
             .unzip();
-        if !counted.is_empty() {
+        let possible_counts = if counted.is_empty() {
+            run(sorted_function(Vec::new(), Vec::new(), Class::Plain))?
+        } else {
             let mut counts = Vec::with_capacity(counted.len());
             for (_, count) in &counted {
                 let Ok(count) = int(*count) else {
@@ -162,8 +158,9 @@ impl Rebuilder<'_> {
             let counted_names = counted.iter().map(|(name, _)| text(name)).collect();
             let counts = run(sorted_function(counted_names, counts, Class::Plain))?;
             names.push(text("s:_possible"));
-            values.push(Value::tuple(vec![counts]));
-        }
+            values.push(Value::tuple(vec![counts.clone()]));
+            counts
+        };
         let named = run(sorted_function(names, values, Class::Plain))?;
         let counter_example = match &inputs.counter_example {
             None => run(record(vec![
@@ -204,19 +201,11 @@ impl Rebuilder<'_> {
                     else {
                         return unsupported("of a step whose action the trace lacks");
                     };
-                    let label = &ir.texts[action.label as usize];
-                    // A label names an action with the values of its parameters, which the
-                    // record holds apart.
-                    let name = label.split(['(', ' ']).next().unwrap_or(label);
-                    let Some(range) = ir.nodes.arena[action.expression as usize].range else {
-                        return unsupported("of an action without a range");
+                    // TLC records the name and location its action holds (`TLCStateInfo`).
+                    let name = &ir.texts[action.name as usize];
+                    let Some(range) = action.location else {
+                        return unsupported("of an action without a location");
                     };
-                    // TLC records an action another module defines, as through an INSTANCE, as
-                    // the unnamed action of the statement that brings it in, which the IR
-                    // doesn't carry.
-                    if Some(range.module) != module {
-                        return unsupported("of an action another module defines");
-                    }
                     let location = run(record(vec![
                         ("beginLine", Value::Int(range.start_line)),
                         ("beginColumn", Value::Int(range.start_column)),
@@ -274,6 +263,7 @@ impl Rebuilder<'_> {
             named,
             stats,
             counter_example,
+            possible_counts,
         });
         let result = evaluator.evaluate(body, &Context::default());
         evaluator.runtime = None;
@@ -298,10 +288,12 @@ fn action_parameters<'ir>(
     action: &tla_ir::Action,
 ) -> Result<Vec<(&'ir str, Value)>, Unsupported> {
     let ir = evaluator.ir;
-    let label = &ir.texts[action.label as usize];
-    let Some((name, _)) = label.split_once('(') else {
+    // A label names the values of an action's parameters, and an action of no operator has
+    // none.
+    let name = &*ir.texts[action.name as usize];
+    if !ir.texts[action.label as usize].contains('(') || name == "UnnamedAction" {
         return Ok(Vec::new());
-    };
+    }
     let operators: Vec<_> = ir
         .definitions
         .iter()

@@ -1117,7 +1117,12 @@ impl Compiler<'_> {
                 let sequence = self.operand(&operands[0])?;
                 unary(
                     &sequence,
+                    // Sequences.Len takes a string too, by its UTF-16 units.
                     |machine, sequence| {
+                        if machine.store.kind_of(sequence) == KIND_STRING {
+                            let length = machine.store.text_of(sequence).len();
+                            return machine.store.int(length as i64);
+                        }
                         let size = machine.store.size_of(expect_sequence(machine, sequence)?);
                         machine.store.int(i64::from(size))
                     },
@@ -1144,7 +1149,16 @@ impl Compiler<'_> {
                 let sequence = self.operand(&operands[0])?;
                 unary(
                     &sequence,
+                    // Sequences.Tail takes a string too, dropping its first UTF-16 unit.
                     |machine, sequence| {
+                        if machine.store.kind_of(sequence) == KIND_STRING {
+                            let text = machine.store.text_of(sequence);
+                            if text.is_empty() {
+                                return Err(Bail("Tail of an empty sequence"));
+                            }
+                            let tail = text[1..].to_vec();
+                            return Ok(machine.store.str(&tail));
+                        }
                         let tuple = expect_sequence(machine, sequence)?;
                         let size = machine.store.size_of(tuple);
                         if size == 0 {

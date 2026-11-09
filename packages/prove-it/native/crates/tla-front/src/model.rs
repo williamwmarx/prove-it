@@ -14,7 +14,8 @@ use crate::hash::FastMap;
 use crate::lower::{Lowering, RankedTexts};
 use crate::order::TlcOrder;
 use crate::spec::{
-    Properties, Specification, create_identifier, get_properties, get_specification,
+    Properties, Specification, check_invariants, create_identifier, get_properties,
+    get_specification,
 };
 use crate::values::ValueOrder;
 
@@ -68,6 +69,7 @@ pub fn lower_model(
         .collect();
     let variable_order = order.get_declaration_order(true)?;
     let facts = create_definition_facts(&environment);
+    check_invariants(&config, &environment, &facts)?;
     let specification = get_specification(&config, &environment, &facts, version)?;
     let ranks: FastMap<Rc<str>, u32> = texts
         .iter()
@@ -78,6 +80,7 @@ pub fn lower_model(
         environment: &environment,
         order: ValueOrder { ranks: &ranks },
         version,
+        is_started: true,
     };
     let properties = get_properties(&config, &environment, &facts, version, Some(&evaluator))?;
     // `getTlcOrder`: the variables in TLC's order of declarations.
@@ -97,6 +100,7 @@ pub fn lower_model(
             ranks: ranks.clone(),
         },
     );
+    lowering.evaluator = Some(&evaluator);
     let version_text = options.version.map(|version| match version {
         TlcVersion::V1_7_4 => "1.7.4",
         TlcVersion::Master => "master",

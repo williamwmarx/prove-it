@@ -312,6 +312,32 @@ fn prints_a_lasso_it_rebuilds_under_a_view() {
 }
 
 #[test]
+fn warns_of_a_stuttering_counterexample_without_fairness() {
+    // No recorded IR, so tla-front lowers the model, and TLC prints its warnings.
+    let directory =
+        std::env::temp_dir().join(format!("prove-it-cli-stuttering-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    for (file, contents) in [
+        (
+            "Stutter.tla",
+            "---- MODULE Stutter ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = 1 - x\nSpec == Init /\\ [][Next]_x\nLive == []<>(x = 1)\n====\n",
+        ),
+        ("Stutter.cfg", "SPECIFICATION Spec\nPROPERTY Live\n"),
+        ("Stutter.front", ""),
+    ] {
+        std::fs::write(directory.join(file), contents).expect("a file");
+    }
+    let output = run(&directory, &["Stutter"]);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(13), "{text}");
+    assert!(
+        text.contains("State 2: Stuttering\nWarning: The stuttering counterexample above may be caused by the absence of a fairness constraint in the behavior specification Spec defined at line 6, col 1 to line 6, col 26 of module Stutter. To rule out such counterexamples, conjoin a suitable fairness constraint to Spec (compare Chapter 8, page 87ff of Specifying Systems at https://lamport.azurewebsites.net/tla/book.html).\n"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
 fn prints_a_temporal_propertys_lasso() {
     let ir = include_bytes!(
         "../../../../tests/conformance/ir/tlc/tlatools/org.lamport.tlatools/test-model/Github1389ViolatedB.ir"
@@ -485,6 +511,41 @@ fn prints_an_assumption_that_fails_to_evaluate() {
     }
 }
 
+const CDOT_IR: &[u8] = include_bytes!(
+    "../../../../tests/conformance/ir/tlc/tlatools/org.lamport.tlatools/test-model/cdot/CdotWithContextA.ir"
+);
+
+#[test]
+fn prints_action_composition_as_tlc_refuses_it() {
+    let (output, directory) = run_golden("cdot", CDOT_IR, "CdotWithContextA", "", &[]);
+    let text = stdout(&output);
+    // TLC fails on \cdot unless a Java property enables it, as an exception it didn't expect in
+    // the next states, with the call stack down to the composition.
+    assert_eq!(output.status.code(), Some(75), "{text}");
+    assert!(text.contains("Error: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: The current version of TLC does not support action composition.  An incomplete implementation can be enabled via the tlc2.tool.impl.Tool.cdot=true java property.\nError: The behavior up to this point is:\nState 1: <Initial predicate>\n/\\ S = {1, 2}\n/\\ x = 0\n\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 19, column 9 to line 22, column 28 in CdotWithContextA\n1. Line 19, column 9 to line 19, column 16 in CdotWithContextA\n2. Line 19, column 12 to line 19, column 16 in CdotWithContextA\n3. Line 20, column 8 to line 22, column 28 in CdotWithContextA\n4. Line 21, column 11 to line 22, column 28 in CdotWithContextA\n5. Line 21, column 14 to line 21, column 20 in CdotWithContextA\n6. Line 22, column 14 to line 22, column 28 in CdotWithContextA\n\n\n1 states generated, 1 distinct states found, 0 states left on queue.\nThe depth of the complete state graph search is 1.\n"), "{text}");
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+const OPERATOR_TABLE_IR: &[u8] = include_bytes!(
+    "../../../../tests/conformance/ir/tlc/tlatools/org.lamport.tlatools/test-model/ConstantOperatorConfiguration.ir"
+);
+
+#[test]
+fn rebuilds_a_trace_through_an_operator_the_configuration_defines() {
+    let (output, directory) = run_golden(
+        "operator-table",
+        OPERATOR_TABLE_IR,
+        "ConstantOperatorConfiguration",
+        "",
+        &[],
+    );
+    let text = stdout(&output);
+    // F(0) = 1, F(1) = 2 in the configuration take x from 0 to 2, which Inv forbids.
+    assert_eq!(output.status.code(), Some(12), "{text}");
+    assert!(text.contains("Error: Invariant Inv is violated.\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nState 2: <Next line 7, col 9 to line 7, col 17 of module ConstantOperatorConfiguration>\nx = 1\n\nState 3: <Next line 7, col 9 to line 7, col 17 of module ConstantOperatorConfiguration>\nx = 2\n\n3 states generated, 3 distinct states found, 0 states left on queue.\nThe depth of the complete state graph search is 3.\n"), "{text}");
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
 // Runs the binary on a spec of the test's own, with no recorded front.
 fn run_unrecorded(test: &str, spec: &str, config: &str) -> (Output, PathBuf) {
     let directory =
@@ -565,6 +626,31 @@ fn rebuilds_a_trace_that_sets_registers() {
     assert_eq!(output.status.code(), Some(11), "{text}");
     assert!(
         text.contains("State 2: <Next line 5, col 9 to line 5, col 73 of module Stop>\n/\\ x = 1\n/\\ y = 1\n\nState 3: <Next line 5, col 9 to line 5, col 73 of module Stop>\n/\\ x = 2\n/\\ y = 2\n\n"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn reports_an_initial_state_tlc_fails_to_print() {
+    // TLC's Github696b: TLC keeps the set as written, then fails to compare its model values as it
+    // fingerprints the state and again as it prints it.
+    let spec = "---- MODULE Stop ----\nEXTENDS Integers, TLCExt\nVARIABLE v\nInit == v = {TLCModelValue(\"A_a\"), TLCModelValue(\"B_a\")}\nNext == UNCHANGED v\nInv == TLCModelValue(\"B_a\") \\in v\n====\n";
+    let directory =
+        std::env::temp_dir().join(format!("prove-it-cli-unprintable-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    for (extension, contents) in [
+        ("tla", spec),
+        ("cfg", "INIT Init\nNEXT Next\nINVARIANT Inv\n"),
+        ("front", ""),
+    ] {
+        std::fs::write(directory.join(format!("Stop.{extension}")), contents).expect("a file");
+    }
+    let output = run(&directory, &["Stop"]);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(255), "{text}");
+    assert!(
+        text.contains("Computing initial states...\nError: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: Attempted to compare the differently-typed model values B_a and A_a\nFinished in "),
         "{text}"
     );
     std::fs::remove_dir_all(directory).expect("removed");

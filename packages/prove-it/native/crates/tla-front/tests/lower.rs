@@ -54,6 +54,7 @@ fn lower(source: &str, name: &str) -> Ir {
             atoms: Vec::new(),
             live_formula: Vec::new(),
             live_properties: Vec::new(),
+            specification: None,
             startup: Startup::default(),
             next_substitution: None,
             instance_actions: Vec::new(),
