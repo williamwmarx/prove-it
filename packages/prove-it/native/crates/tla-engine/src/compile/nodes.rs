@@ -435,6 +435,16 @@ impl Compiler<'_> {
             }
             NodeKind::Enabled(action) => self.compile_enabled(*action, context),
             NodeKind::Label { body, .. } => self.compile(*body, context),
+            // TLC can't evaluate a temporal formula in a state, but a predicate may hold one in a
+            // branch it never takes, such as a recursive operator's: the interpreter reports where
+            // a run reaches one.
+            NodeKind::Always(_)
+            | NodeKind::Eventually(_)
+            | NodeKind::WeakFairness { .. }
+            | NodeKind::StrongFairness { .. } => Ok(leaf(
+                eval(|_| Err(Bail("a temporal formula in a state"))),
+                Footprint::default(),
+            )),
             kind => unsupported(format!("expression {}", kind_name(kind))),
         }
     }
