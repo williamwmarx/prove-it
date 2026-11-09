@@ -651,11 +651,22 @@ impl<'ir> Evaluator<'ir> {
     }
 
     // Marks the failure as one in a method of a value with a source, where it is.
-    fn mark_fingerprinted(&mut self, frame: StackFrame) {
+    fn mark_fingerprinted(&mut self, frame: StackFrame, reason: &str) {
         let StackFrame::Node(node) = frame else {
             return;
         };
-        let receiver = self.receiver(node).map(|receiver| self.resolved(receiver));
+        // CHOOSE enumerates its set by the set's own method, which fails where TLC can't
+        // enumerate the set.
+        let chosen = match self.kind(node) {
+            NodeKind::Choose { set: Some(set), .. } if reason == "enumerated an infinite set" => {
+                Some(*set)
+            }
+            _ => None,
+        };
+        let receiver = self
+            .receiver(node)
+            .or(chosen)
+            .map(|receiver| self.resolved(receiver));
         // The element a membership tests, whose failure passes through the sets nested in the
         // receiver that test their own members.
         let element = match self.kind(node) {
@@ -709,13 +720,13 @@ impl<'ir> Evaluator<'ir> {
             stack.frames.push(frame);
         }
         let result = run(self);
-        if result.is_err()
+        if let Err(error) = &result
             && self
                 .call_stack
                 .as_ref()
                 .is_some_and(|stack| !stack.is_frozen)
         {
-            self.mark_fingerprinted(frame);
+            self.mark_fingerprinted(frame, &error.reason);
         }
         if let Some(stack) = &mut self.call_stack {
             stack.is_frozen |= result.is_err();
