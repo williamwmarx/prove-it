@@ -628,6 +628,148 @@ fn run_lowered(test: &str, spec: &str, config: &str) -> (Output, PathBuf) {
 }
 
 #[test]
+fn stops_at_initial_states_without_a_next_state_relation() {
+    // TLC reports 2115 with no statistics, and a model with no initial states either succeeds.
+    let spec = "---- MODULE Stop ----\nVARIABLE x\nInit == x = 0\nNone == x \\in {}\n====\n";
+    let (output, directory) = run_lowered("no-next", spec, "INIT Init\n");
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(75), "{text}");
+    assert!(
+        text.contains("Finished computing initial states: 1 distinct state generated at "),
+        "{text}"
+    );
+    assert!(
+        text.contains(".\nError: No next state actions defined to generate successor states from.\nFinished in "),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+    let (output, directory) = run_lowered("no-next-empty", spec, "INIT None\n");
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(0), "{text}");
+    assert!(
+        text.contains("0 states generated, 0 distinct states found, 0 states left on queue."),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn checks_properties_in_the_scope_of_their_instance() {
+    // A property an INSTANCE with substitutions exports reads its names in the instance: the
+    // invariant of `[]`, checked on the trace's last state again, and the implied init.
+    let inner = "---- MODULE Abs ----\nEXTENDS Naturals\nVARIABLE s\nCONSTANT K\nSafe == [](s < K)\nStart == s = K /\\ [](s >= 0)\nSafe2 == Safe\n====\n";
+    let spec = "---- MODULE Stop ----\nEXTENDS Naturals\nVARIABLE t\nA == INSTANCE Abs WITH s <- t * 2, K <- 6\nInit == t = 0\nNext == t' = (t + 1) % 5\nSpec == Init /\\ [][Next]_t\nPStart == A!Start\nPSafe2 == A!Safe2\n====\n";
+    let directory =
+        std::env::temp_dir().join(format!("prove-it-cli-scoped-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    std::fs::write(directory.join("Abs.tla"), inner).expect("a module");
+    let (output, _) = run_lowered("scoped", spec, "SPECIFICATION Spec\nPROPERTY PSafe2\n");
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(12), "{text}");
+    assert!(
+        text.contains(
+            "Error: Invariant Safe is violated.\nError: The behavior up to this point is:\n"
+        ),
+        "{text}"
+    );
+    assert!(
+        text.contains(
+            "t = 3\n\n4 states generated, 4 distinct states found, 0 states left on queue.\n"
+        ),
+        "{text}"
+    );
+    let (output, _) = run_lowered("scoped", spec, "SPECIFICATION Spec\nPROPERTY PStart\n");
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(13), "{text}");
+    assert!(
+        text.contains("Error: Property line 6, col 10 to line 6, col 14 of module Abs is violated by the initial state:\nt = 0\n\nFinished in "),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn prints_what_the_atoms_print_naming_a_lassos_properties() {
+    // TLC's UserModuleOverrideAnnotation: the atom prints as TLC adds the state to the behavior
+    // graphs, and again as it evaluates the property on the lasso it found.
+    let spec = "---- MODULE Stop ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = FALSE\nNext == x' = FALSE\nSpec == Init /\\ [][Next]_x\nProp == <>[](Print(x, x = TRUE) /\\ TLCGet(\"diameter\") > 0)\n====\n";
+    let (output, directory) = run_lowered(
+        "printing-lasso",
+        spec,
+        "SPECIFICATION Spec\nPROPERTY Prop\n",
+    );
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(13), "{text}");
+    assert!(text.contains(".\nFALSE  FALSE\nProgress(1) at "), "{text}");
+    assert!(
+        text.contains(")\nFALSE  FALSE\nError: Temporal property Prop was violated.\n\nError: The following behavior constitutes a counter-example:\n\nState 1: <Initial predicate>\nx = FALSE\n\nState 2: Stuttering\nWarning: "),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn reports_an_atom_that_fails_on_an_initial_state() {
+    // TLC's InitialLivenessEvaluationError: TLC adds the initial state to the behavior graphs
+    // before it reports the initial states or checks the invariant, and ENABLED of an action
+    // that reads a primed variable it never assigns fails there.
+    let spec = "---- MODULE Stop ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == (x = 0 /\\ x' = 1) \\/ UNCHANGED x\nSpec == Init /\\ [][Next]_x\nInv == x = 0\nProp == <>~ENABLED (x' > x)\n====\n";
+    let (output, directory) = run_lowered(
+        "initial-atom",
+        spec,
+        "SPECIFICATION Spec\nINVARIANT Inv\nPROPERTY Prop\n",
+    );
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(151), "{text}");
+    assert!(
+        text.contains("Computing initial states...\nError: In evaluation, the identifier x is either undefined or not an operator.\nline 8, col 21 to line 8, col 21 of module Stop\nWhile working on the initial state:\nx = 0\n\n1 states generated, 1 distinct states found, 1 states left on queue.\nThe depth of the complete state graph search is 1.\nFinished in "),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn prints_a_lasso_a_check_part_way_through_the_search_finds() {
+    // Without fairness x stutters, which a check after two states finds with a state left to
+    // expand: TLC reports the check's start, the counterexample and the counts so far.
+    let spec = "---- MODULE Stop ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 10\nUnfair == Init /\\ [][Next]_x\nReaches == <>(x = 9)\n====\n";
+    let directory = std::env::temp_dir().join(format!(
+        "prove-it-cli-periodic-lasso-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    for (file, contents) in [
+        ("Stop.tla", spec),
+        ("Stop.cfg", "SPECIFICATION Unfair\nPROPERTY Reaches\n"),
+        ("Stop.front", ""),
+    ] {
+        std::fs::write(directory.join(file), contents).expect("a file");
+    }
+    let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
+        .arg("Stop")
+        .current_dir(&directory)
+        .env("PROVE_IT_FRONT", &directory)
+        .env("PROVE_IT_TEST_LIVE_CHECK_AT", "2")
+        .output()
+        .expect("the binary runs");
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(13), "{text}");
+    assert!(
+        text.contains(".\nChecking temporal properties for the current state space with 2 total distinct states at ("),
+        "{text}"
+    );
+    assert!(
+        text.contains(")\nError: Temporal property Reaches was violated.\n\nError: The following behavior constitutes a counter-example:\n\nState 1: <Initial predicate>\nx = 0\n\nState 2: <Next line 5, col 9 to line 5, col 25 of module Stop>\nx = 1\n\nState 3: Stuttering\n"),
+        "{text}"
+    );
+    assert!(
+        text.contains("\n3 states generated, 3 distinct states found, 1 states left on queue.\nThe depth of the complete state graph search is 3.\n"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
 fn reads_and_sets_tlcs_registers() {
     // TLCCache evaluates Counted once, TLCFP is TLC's fingerprint under -fp 0, which the
     // interpreter and TLC print the same, and a Java property TLC hasn't set is its key.

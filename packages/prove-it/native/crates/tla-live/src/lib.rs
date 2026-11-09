@@ -87,12 +87,14 @@ pub struct Liveness {
 }
 
 /// An atom the engine didn't answer, at the position `slot` in its table, which TLC evaluates as
-/// it adds `state` to the behavior graphs.
+/// it adds `state` to the behavior graphs: as an initial state, `is_initial`, or once the search
+/// expanded it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Unanswered {
     pub state: u32,
     pub atom: u32,
     pub slot: u32,
+    pub is_initial: bool,
 }
 
 /// Where the atoms' evaluations have effects, such as what Print prints, TLC has them each time it
@@ -108,6 +110,9 @@ pub enum Event {
     Late(u32),
     /// TLC evaluates an atom: on the state at the position in its table, or on the step.
     Atom { atom: u32, slot: usize },
+    /// TLC has a lasso, and evaluates each property on it to find those it violates
+    /// (`Liveness.findViolatedProperties`): the evaluations follow.
+    Lasso,
 }
 
 /// Adds the states the search expanded to the behavior graphs, as TLC does as it searches even
@@ -129,6 +134,20 @@ pub fn find_accepted(
     checker::find_accepted(&mut checker)?
         .map(|(state, path)| checker::accepted(&checker, &properties, state, path))
         .transpose()
+}
+
+/// The first atom the engine didn't answer that TLC evaluates as it adds the states the search
+/// expanded to the behavior graphs, where it may fail, unless TLC stops first at a node that
+/// accepts every behavior.
+pub fn find_unanswered(
+    formula: &[Term],
+    graph: &Graph<'_>,
+    tables: &[Option<&[u8]>],
+) -> Option<Unanswered> {
+    let mut terms = Terms::default();
+    let root = read_formula(&mut terms, formula).ok()?;
+    let mut checker = checker::Checker::new(terms, root, graph, tables).ok()?;
+    checker::find_unanswered(&mut checker)
 }
 
 /// What the check found.

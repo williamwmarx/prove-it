@@ -39,6 +39,7 @@ const DEADLOCK: i32 = 11;
 const ASSUMPTION_VIOLATION: i32 = 10;
 const SAFETY_VIOLATION: i32 = 12;
 const LIVENESS_VIOLATION: i32 = 13;
+const NO_NEXT_ACTION: i32 = 75;
 const SPEC_PARSE_ERROR: i32 = 150;
 const CONFIG_PARSE_ERROR: i32 = 151;
 
@@ -320,18 +321,9 @@ impl Reporter for Relay<'_> {
     // Print and PrintT print each value as TLC's normalized text, pretty printed, two spaces
     // apart, unless the store has forgotten how TLC built one.
     fn print(&mut self, store: &Store, values: &[Id]) {
-        let printed = values.iter().all(|&id| is_printable(store, id)).then(|| {
-            values
-                .iter()
-                .map(|&id| {
-                    let mut text = Vec::new();
-                    write_value(store, id, &mut text);
-                    pretty_print(&text)
-                })
-                .collect::<Vec<_>>()
-                .join("  ")
-        });
-        let _ = self.sender.send(Event::Print(printed));
+        let _ = self
+            .sender
+            .send(Event::Print(format_printed(store, values)));
     }
 
     fn startup_print(&mut self, store: &Store, values: &[Id]) {
@@ -364,6 +356,21 @@ impl Reporter for Relay<'_> {
                 .send(Event::SymmetrySetsTooSmall(names.to_vec()));
         }
     }
+}
+
+// What Print or PrintT prints of the values, unless the store has forgotten how TLC built one.
+fn format_printed(store: &Store, values: &[Id]) -> Option<String> {
+    values.iter().all(|&id| is_printable(store, id)).then(|| {
+        values
+            .iter()
+            .map(|&id| {
+                let mut text = Vec::new();
+                write_value(store, id, &mut text);
+                pretty_print(&text)
+            })
+            .collect::<Vec<_>>()
+            .join("  ")
+    })
 }
 
 /// The counts a Progress line reports.
@@ -593,6 +600,9 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
     let is_tool = printer.is_tool;
     // How many initial states TLC generated, which TLCGet("stats") reports.
     let mut initial_generated = 0;
+    // When the check of the temporal properties part way through the search that found a
+    // counterexample started.
+    let mut checking = None;
     let outcome = std::thread::scope(|scope| {
         let ir = &ir;
         let searching = std::thread::Builder::new()
@@ -607,7 +617,6 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                 search(ir, &settings, &mut relay)
             })
             .expect("a thread for the search");
-        let mut checking = None;
         for event in receiver {
             match event {
                 Event::InitialStatesStarted => printer.print(
@@ -686,7 +695,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                         &Statistics {
                             generated: counts.generated,
                             distinct: counts.distinct,
-                            queued: 0,
+                            queued: counts.queued,
                             depth: counts.depth,
                         },
                         counts.initial_generated,
@@ -697,7 +706,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                         &ir,
                         &config,
                         &violation,
-                        is_lasso.then_some(&liveness),
+                        is_lasso.then_some((&liveness, checking)),
                         Some(&run),
                         start,
                     )
@@ -813,6 +822,16 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
             ..
         } => {
             let printed = match violation.kind {
+                // TLC stops with no statistics, before it would search.
+                ViolationKind::NoNextState => {
+                    printer.print(
+                        code::NO_NEXT_ACTION,
+                        Level::Error,
+                        "No next state actions defined to generate successor states from.",
+                    );
+                    print_finished(printer, start);
+                    Ok(NO_NEXT_ACTION)
+                }
                 // TLC's report of a failure evaluating the model, which it replays.
                 // TLC prints the trace through the ALIAS and checks the postconditions after it,
                 // which the printing doesn't follow yet.
@@ -844,6 +863,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                                 Site::InitialPredicate(position)
                             }
                             ErrorSite::Atom { atom, is_extra } => Site::Atom { atom, is_extra },
+                            ErrorSite::InitialAtom(atom) => Site::InitialAtom(atom),
                         },
                         statistics: Statistics {
                             generated: counts.generated,
@@ -1000,10 +1020,12 @@ fn print_violation(
     ir: &tla_ir::Ir,
     config: &ModelConfig,
     violation: &Violation,
-    liveness: Option<&Liveness>,
+    liveness: Option<(&Liveness, Option<Instant>)>,
     postconditions: Option<&PostconditionRun>,
     start: Instant,
 ) -> Result<i32, &'static str> {
+    let started = liveness.and_then(|(_, started)| started);
+    let liveness = liveness.map(|(liveness, _)| liveness);
     // TLC reports a _POSSIBLE predicate the search didn't witness before it stopped, which the
     // printing doesn't follow yet, before it checks the postconditions on the trace.
     let possible = postconditions.map_or(&[][..], |run| &run.possible[..]);
@@ -1080,7 +1102,7 @@ fn print_violation(
         ViolationKind::Deadlock { .. } => {
             (code::DEADLOCK_REACHED, "Deadlock reached.".into(), DEADLOCK)
         }
-        ViolationKind::Error { .. } => return Err(NOT_IN_IR),
+        ViolationKind::NoNextState | ViolationKind::Error { .. } => return Err(NOT_IN_IR),
         // Under SYMMETRY or a VIEW, TLC names the properties the lasso it rebuilt violates.
         ViolationKind::Lasso { .. } => (
             code::TEMPORAL_PROPERTY_VIOLATED,
@@ -1107,6 +1129,7 @@ fn print_violation(
         ViolationKind::Lasso {
             loop_start,
             loop_label,
+            ..
         } => {
             let is_stuttering = loop_start + 1 == violation.states.len();
             // TLC warns of a stuttering counterexample where the solution constrains the cycle,
@@ -1170,14 +1193,28 @@ fn print_violation(
         print_finished(printer, start);
         return Ok(exit_code);
     }
-    let checking =
-        liveness.map(|liveness| print_liveness_started(printer, &statistics, liveness.branches));
+    let lasso_printed = match &violation.kind {
+        ViolationKind::Lasso { printed, .. } => printed
+            .iter()
+            .map(|values| format_printed(&violation.store, values))
+            .collect::<Option<Vec<_>>>()
+            .ok_or("printing a value whose text depends on how TLC built it")?,
+        _ => Vec::new(),
+    };
+    // A check part way through the search reported its start as it began.
+    let checking = liveness.map(|liveness| {
+        started.unwrap_or_else(|| print_liveness_started(printer, &statistics, liveness.branches))
+    });
     // What the spec printed as TLC rebuilt the trace: the first state's after the headline, each
     // later state's before it, and the rebuild after the trace. TLC rebuilds a counterexample
     // before it reports it, all of it as it recovers the first state (`printViolation`).
     let first_output = trace.states[0].output.iter();
     let (heading_code, heading) = if is_counterexample {
         for line in first_output.clone().chain(&trace.trace_output) {
+            printer.line(line);
+        }
+        // What the atoms print as TLC finds the properties the lasso it rebuilt violates.
+        for line in &lasso_printed {
             printer.line(line);
         }
         printer.print(code, Level::Error, &text);
