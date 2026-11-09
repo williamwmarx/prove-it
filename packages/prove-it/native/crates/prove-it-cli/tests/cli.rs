@@ -435,3 +435,27 @@ fn prints_an_invariant_that_fails_to_evaluate() {
     );
     std::fs::remove_dir_all(directory).expect("removed");
 }
+
+const INIT_EVAL_EXCEPTION_IR: &[u8] = include_bytes!(
+    "../../../../tests/conformance/ir/tlc/tlatools/org.lamport.tlatools/test-model/DoInitFunctor/DoInitFunctorEvalException.ir"
+);
+
+#[test]
+fn prints_a_constraint_that_fails_on_an_initial_state() {
+    let (output, directory) = run_golden(
+        "initial-constraint",
+        INIT_EVAL_EXCEPTION_IR,
+        "DoInitFunctorEvalException",
+        "",
+        &[],
+    );
+    let text = stdout(&output);
+    // TLC reports the state it was checking with the error, and the call stack of the initial
+    // predicate that found it, which the constraint's evaluation leaves.
+    assert_eq!(output.status.code(), Some(75), "{text}");
+    assert!(
+        text.contains("Computing initial states...\nError: TLC expected a boolean value, but did not find one. line 15, col 15 to line 15, col 18 of module DoInitFunctorEvalException\nWhile working on the initial state:\nx = 1\n\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 7, column 9 to line 7, column 19 in DoInitFunctorEvalException\n\n\n1 states generated, 0 distinct states found, 0 states left on queue.\nThe depth of the complete state graph search is 1.\nFinished in "),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
