@@ -138,15 +138,20 @@ impl Rebuilder<'_> {
             .chain([("worker", Value::Int(0))])
             .collect(),
         ))?;
-        // The named registers hold each `_POSSIBLE` count TLC took, by name.
+        // The named registers, each the tuple of one worker's value: those TLCSet set, and each
+        // `_POSSIBLE` count TLC took, by name.
         let counted: Vec<_> = inputs
             .possible
             .iter()
             .filter(|(_, count)| *count >= 0)
             .collect();
-        let named = if counted.is_empty() {
-            run(sorted_function(Vec::new(), Vec::new(), Class::Plain))?
-        } else {
+        let (mut names, mut values): (Vec<_>, Vec<_>) = evaluator
+            .registers
+            .named
+            .iter()
+            .map(|(name, value)| (name.clone(), Value::tuple(vec![value.clone()])))
+            .unzip();
+        if !counted.is_empty() {
             let mut counts = Vec::with_capacity(counted.len());
             for (_, count) in &counted {
                 let Ok(count) = int(*count) else {
@@ -154,14 +159,12 @@ impl Rebuilder<'_> {
                 };
                 counts.push(count);
             }
-            let names = counted.iter().map(|(name, _)| text(name)).collect();
-            let counts = run(sorted_function(names, counts, Class::Plain))?;
-            run(sorted_function(
-                vec![text("s:_possible")],
-                vec![Value::tuple(vec![counts])],
-                Class::Plain,
-            ))?
-        };
+            let counted_names = counted.iter().map(|(name, _)| text(name)).collect();
+            let counts = run(sorted_function(counted_names, counts, Class::Plain))?;
+            names.push(text("s:_possible"));
+            values.push(Value::tuple(vec![counts]));
+        }
+        let named = run(sorted_function(names, values, Class::Plain))?;
         let counter_example = match &inputs.counter_example {
             None => run(record(vec![
                 ("action", Value::empty_set()),

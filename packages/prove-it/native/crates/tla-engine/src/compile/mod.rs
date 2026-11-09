@@ -53,12 +53,15 @@ pub const DISTINCT_SLOT: u32 = 2;
 const PRINT_SLOT: u32 = 3;
 /// TLCGet("diameter"), which only the liveness checker's atoms read.
 pub const DIAMETER_SLOT: u32 = 4;
-const SEARCH_SLOTS: [u32; 5] = [
+/// What reads a TLC register, which nothing sets either, so nothing caches it.
+const REGISTER_SLOT: u32 = 5;
+const SEARCH_SLOTS: [u32; 6] = [
     LEVEL_SLOT,
     NEXT_LEVEL_SLOT,
     DISTINCT_SLOT,
     PRINT_SLOT,
     DIAMETER_SLOT,
+    REGISTER_SLOT,
 ];
 
 const MAXIMUM_MEMO_WIDTH: usize = 6;
@@ -230,6 +233,11 @@ impl Compiled {
             .slots
             .iter()
             .any(|&slot| slot == LEVEL_SLOT || slot == NEXT_LEVEL_SLOT || slot == DISTINCT_SLOT)
+    }
+
+    /// Whether the expression sets or reads TLC's registers.
+    pub fn uses_registers(&self) -> bool {
+        self.footprint.slots.contains(&REGISTER_SLOT)
     }
 
     /// Whether the expression reads TLCGet("diameter").
@@ -673,6 +681,11 @@ pub struct Compiler<'a> {
     /// Whether anything compiled may print, and whether it uses ToString, which ranks strings.
     pub is_printing: bool,
     pub is_ranking: bool,
+    /// What an expression uses that only the native checker follows, such as TLC's registers,
+    /// which the interpreter wouldn't take over.
+    pub native_only: Option<&'static str>,
+    /// How many workers TLC runs with (`-workers`), which TLCGet("config") reports.
+    pub workers: usize,
     // The contexts of the instance scopes translated so far.
     scope_contexts: HashMap<Index, Option<Context>>,
 }
@@ -739,6 +752,8 @@ impl<'a> Compiler<'a> {
             is_diameter_read: false,
             is_printing: false,
             is_ranking: false,
+            native_only: None,
+            workers: 1,
             scope_contexts: HashMap::new(),
         }
     }
@@ -935,7 +950,7 @@ impl<'a> Compiler<'a> {
     // Caches a costly expression by the ids it reads, and evaluates one that reads nothing only
     // once.
     fn cached(&mut self, compiled: Compiled) -> Compiled {
-        if compiled.is_printing() || self.options.is_memo_off {
+        if compiled.is_printing() || compiled.uses_registers() || self.options.is_memo_off {
             return compiled;
         }
         let width = compiled.footprint.width();
@@ -1149,7 +1164,7 @@ impl<'a> Compiler<'a> {
                     }
                     Resolution::Builtin(index) => match self.builtin_name(index) {
                         "Print" | "PrintT" | "RandomElement" | "RandomSubset" | "TLCEval" | "="
-                        | "#" | "~" => true,
+                        | "#" | "~" | "TLCSet" | "TLCGet" | "TLCFP" | "TLCCache" => true,
                         // TLC evaluates the operands, then builds the set, which the engine
                         // builds the same way unless an operand is a set TLC keeps lazy.
                         "\\cup" | "\\cap" | "\\" | "UNION" => !args
