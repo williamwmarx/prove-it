@@ -317,10 +317,7 @@ mod tests {
         assert_eq!(format_value(&normalized), "<<[a |-> 1, b |-> 1]>>");
         let fingerprinted = lambda();
         settle(&fingerprinted);
-        assert_eq!(
-            format_value(&fingerprinted),
-            "<<[b |-> 2, a |-> 1]>>".replace('2', "1")
-        );
+        assert_eq!(format_value(&fingerprinted), "<<[b |-> 1, a |-> 1]>>");
     }
 
     #[test]
