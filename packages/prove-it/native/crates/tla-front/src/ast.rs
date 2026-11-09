@@ -322,11 +322,12 @@ pub enum ExpressionKind {
     },
 }
 
+/// A parameter the front end makes, such as an instance copy's, has no `location`.
 #[derive(Clone, Debug)]
 pub struct OperatorParam {
     pub name: Name,
     pub arity: usize,
-    pub location: Location,
+    pub location: Option<Location>,
 }
 
 #[derive(Clone, Debug)]

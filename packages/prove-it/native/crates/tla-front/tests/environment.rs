@@ -116,9 +116,46 @@ fn reports_a_missing_module_in_its_importer() {
 }
 
 #[test]
-fn leaves_an_instance_for_later() {
-    let error = link("---- MODULE Main ----\nI == INSTANCE Naturals\n====", &[])
-        .err()
-        .expect("an error");
-    assert_eq!(error, FrontError::NotYet("an INSTANCE".to_owned()));
+fn copies_the_definitions_an_instance_substitutes_into() {
+    let environment = link(
+        "---- MODULE Main ----\nVARIABLE y\nC == INSTANCE Counter WITH x <- y\nNext == C!Step\n====",
+        &[(
+            "Counter",
+            "---- MODULE Counter ----\nVARIABLE x\nStep == x' = x\n====",
+        )],
+    )
+    .expect("an environment");
+    assert_eq!(
+        keys(&environment),
+        ["Step@Counter", "Step@Main#1", "Next", "C!Step"]
+    );
+    let copy = environment
+        .definitions
+        .get("Step@Main#1")
+        .expect("the copy");
+    assert!(environment.is_substituted(copy));
+    let ExpressionKind::Apply { args, .. } = &copy.body.kind else {
+        panic!("an application");
+    };
+    let ExpressionKind::Prime(primed) = &args[0].kind else {
+        panic!("a primed variable");
+    };
+    assert_eq!(primed.reference().as_deref(), Some("y"));
+    let next = environment.definitions.get("Next").expect("Next");
+    assert_eq!(next.body.reference().as_deref(), Some("Step@Main#1"));
+}
+
+#[test]
+fn selects_the_labeled_part_of_a_definition() {
+    let environment = link(
+        "---- MODULE Main ----\nEXTENDS Naturals\nInv == lab :: 1 + 2\nPart == Inv!lab\n====",
+        &[],
+    )
+    .expect("an environment");
+    let part = environment.definitions.get("Part").expect("Part");
+    let ExpressionKind::Apply { args, .. } = &part.body.kind else {
+        panic!("the selected sum, not {:?}", part.body.kind);
+    };
+    assert_eq!(args.len(), 2);
+    assert_eq!(part.body.reference().as_deref(), Some("+"));
 }
