@@ -1107,6 +1107,11 @@ impl<'a> Compiler<'a> {
                         "\\cup" | "\\cap" | "\\" | "UNION" => !args
                             .iter()
                             .any(|&arg| self.may_be_lazy(arg, &mut HashSet::new())),
+                        // TLC evaluates the element, then the set, and asks the set whether it
+                        // holds the element, which a set TLC keeps lazy answers its own way.
+                        "\\in" | "\\notin" => !args
+                            .last()
+                            .is_some_and(|&set| self.may_be_lazy(set, &mut HashSet::new())),
                         _ => false,
                     },
                     _ => false,

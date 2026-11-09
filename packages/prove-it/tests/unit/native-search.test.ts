@@ -360,7 +360,7 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
   // TLC evaluates a record's fields in the order written (Tool's OPCODE_rc), a set map's body for
   // each element of its normalized set, and a union's operands left to right, so what they print
   // comes in that order.
-  it("prints in records, set maps and unions in the order TLC evaluates them", async () => {
+  it("prints in records, set maps, unions and membership in the order TLC evaluates them", async () => {
     const body = [
       "EXTENDS Naturals, TLC",
       "VARIABLE x",
@@ -369,7 +369,8 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
       'Record == [zeta |-> PrintT(<<"zeta", x>>), alpha |-> PrintT(<<"alpha", x>>)]',
       'Mapped == {PrintT(<<"map", n, x>>) : n \\in {3, 1, 2}}',
       'Joined == UNION {{PrintT(<<"left", x>>)} \\cup {PrintT(<<"right", x>>)}}',
-      "Inv == Record.alpha /\\ Mapped = {TRUE} /\\ Joined = {TRUE}",
+      'Held == PrintT(<<"element", x>>) \\in {PrintT(<<"set", x>>)}',
+      "Inv == Record.alpha /\\ Mapped = {TRUE} /\\ Joined = {TRUE} /\\ Held",
     ];
     const config = "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE";
     expect(await compareWithInterpreter(body, config)).toContainEqual(
@@ -1056,10 +1057,10 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     expect(await compareWithInterpreter(body, "INIT Init\nNEXT Next")).toContainEqual(
       expect.stringMatching(COMPLETE),
     );
-    // With x' assigned, x' \in S is a guard, whose S the engine doesn't evaluate as TLC does.
+    // With x' assigned, x' \in S is a guard: TLC evaluates S once and asks it for x'.
     const assigned = body.map((line) => line.replace("Next == ", "Next == x' = (x + 1) % 3 /\\ "));
     expect(await compareWithInterpreter(assigned, "INIT Init\nNEXT Next")).toContainEqual(
-      expect.stringMatching(stopped("unsupported: Print")),
+      expect.stringMatching(COMPLETE),
     );
   });
 
