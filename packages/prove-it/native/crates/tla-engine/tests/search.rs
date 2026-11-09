@@ -361,7 +361,7 @@ fn finds_on_any_number_of_threads_what_one_thread_finds() {
             );
         }
     }
-    assert_eq!(logged.len(), 7);
+    assert_eq!(logged.len(), 9);
 }
 
 // A search stopped where PROVE_IT_STOP_AT asks, inside a level the threads share or at its end,
