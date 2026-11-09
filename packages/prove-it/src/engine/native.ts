@@ -145,6 +145,8 @@ export type NativeOutcome =
       outDegrees: Float64Array;
       fingerprints: BigInt64Array;
       liveness?: NativeLiveness;
+      // The position among TLC's actions of the action of each step of a lasso, or -1.
+      lassoActions: Int32Array;
       checkpoint?: NativeCheckpoint;
     }
   | ({ status: "stopped"; reason: string } & NativeCheckpoint);

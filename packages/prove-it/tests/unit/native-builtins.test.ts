@@ -9,7 +9,9 @@ import {
   compareStateLogs,
   compareWithInterpreter,
   COMPLETE,
+  declined,
   restoreSettings,
+  stopped,
 } from "./native-runs";
 
 afterEach(restoreSettings);
@@ -44,6 +46,25 @@ const getBag = (random: Random) => {
   return keys.length === 0
     ? "EmptyBag"
     : keys.map((key) => `("${key}" :> ${getInteger(random, 1, 3)})`).join(" @@ ");
+};
+
+// A value whose text doesn't depend on how TLC built it: no set of consecutive integers, which
+// may be an interval, and no record of several fields, whose order may be as written.
+const getPrintable = (random: Random, depth = 0): string => {
+  const choice = getInteger(random, 0, depth > 1 ? 2 : 6);
+  if (choice === 0) return String(getInteger(random, -3, 12));
+  if (choice === 1) {
+    return `"${listOf(random, 3, () => pick(random, ["a", "é", '\\"', "\\\\", "\\n", "\\t"])).join("")}"`;
+  }
+  if (choice === 2) return pick(random, ["TRUE", "FALSE"]);
+  if (choice === 3) {
+    return `<<${listOf(random, 3, () => getPrintable(random, depth + 1)).join(", ")}>>`;
+  }
+  if (choice === 4)
+    return pick(random, ["{}", "{0, 2}", "{-1, 3, 4}", '{"b", "a"}', "{{}, {1, 5}}"]);
+  if (choice === 5)
+    return `[${pick(random, ["a", "f1", "x_y"])} |-> ${getPrintable(random, depth + 1)}]`;
+  return `(0 :> ${getPrintable(random, depth + 1)} @@ 2 :> ${getPrintable(random, depth + 1)})`;
 };
 
 interface Case {
@@ -138,6 +159,11 @@ const CASES: Case[] = [
     invalid: ['SubBag("a" :> 0)', 'SubBag("a" :> "b")', "SubBag({1})"],
   },
   {
+    name: "ToString",
+    valid: (random) => `ToString(${getPrintable(random)})`,
+    invalid: [],
+  },
+  {
     name: "BagToSet and SetToBag",
     valid: (random) =>
       random() < 0.5 ? `BagToSet(${getBag(random)})` : `SetToBag(${getSet(random)})`,
@@ -178,4 +204,117 @@ describe.if(ADDON !== undefined)("the native engine's bridged builtins", () => {
       });
     }
   }
+
+  it("stops on ToString of a value whose text depends on how TLC built it", async () => {
+    for (const application of [
+      "ToString(1..3)",
+      "ToString({2})",
+      "ToString([a |-> 1, b |-> 2])",
+      'ToString(("a b" :> 1))',
+      'ToString(SUBSET {"a", "b", "c", "d", "e", "f", "g"})',
+      "ToString([1..3 -> 1..17])",
+    ]) {
+      const lines = await compareWithInterpreter(toSpec([application]), CONFIG);
+      expect(lines).toContainEqual(
+        expect.stringMatching(
+          stopped("ToString of a value whose text depends on how TLC built it"),
+        ),
+      );
+    }
+  });
+
+  // The search ranks ToString's strings as it makes them, which may be in another order than
+  // TLC's: across successors, where it builds a function's entries TLC doesn't read, or ranking a
+  // text \o made. So it stops where it would order them, and the interpreter makes them again.
+  it("stops where it would order the strings ToString made", async () => {
+    const config = "INIT Init\nNEXT Next\nINVARIANT First\nCHECK_DEADLOCK FALSE";
+    for (const body of [
+      [
+        "VARIABLES n, s",
+        "Init == n = 0 /\\ s = {}",
+        "Next == n = 0 /\\ \\E i \\in 1..2 : n' = i /\\ s' = {ToString(100 + i), ToString(149 + i)}",
+        "First == n # 2 \\/ (CHOOSE x \\in s : ToString(150 + n) # x) = ToString(150 + 1)",
+      ],
+      [
+        "VARIABLE n",
+        "Init == n = 0",
+        "Next == UNCHANGED n",
+        "First == (CHOOSE x \\in {[i \\in 1..2 |-> ToString(100 + i + n)][2], ToString(100 + 1 + n)} : TRUE) = ToString(100 + 2 + n)",
+      ],
+      [
+        "VARIABLES n, s",
+        'Init == n = 0 /\\ s = "1" \\o ToString(n + 2)',
+        "Next == UNCHANGED <<n, s>>",
+        "First == (CHOOSE x \\in {ToString(6 + 6 + n), ToString(6 + 7 + n)} : TRUE) = ToString(6 + 6 + n)",
+      ],
+    ]) {
+      expect(
+        await compareWithInterpreter(["EXTENDS Integers, Sequences, TLC", ...body], config),
+      ).toContainEqual(
+        expect.stringMatching(
+          stopped(
+            "(an order of strings the search ranked|ToString of a text the engine made unranked)",
+          ),
+        ),
+      );
+    }
+  });
+
+  // A search that ranked strings hands over none of its states, so the interpreter ranks them
+  // again from the start.
+  it("hands over a search that ranked strings from the start", async () => {
+    const body = [
+      "EXTENDS Integers, TLC",
+      "VARIABLES n, s",
+      'Init == n = 0 /\\ s = "a"',
+      "Next == n < 3 /\\ ToString(n + 1003 + 1003) # \"q\" /\\ n' = n + 1 /\\ s' = ToString(1003 + 1004 - n)",
+    ];
+    const config = "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE";
+    for (const stop of ["1", "2"]) {
+      expect(await compareWithInterpreter(body, config, { PROVE_IT_STOP_AT: stop })).toContainEqual(
+        expect.stringMatching(stopped("stopped where PROVE_IT_STOP_AT asked")),
+      );
+    }
+  });
+  // The temporal atoms the search answers rank strings too, which never order them.
+  it("checks a property whose atoms use ToString", async () => {
+    const body = [
+      "EXTENDS Integers, TLC",
+      "VARIABLE n",
+      "Init == n = 0",
+      "Next == n' = (n + 1) % 3",
+      "Spec == Init /\\ [][Next]_n /\\ WF_n(Next)",
+      'Live == []<>(ToString(n + 1000 + 7) = "1007")',
+    ];
+    expect(await compareWithInterpreter(body, "SPECIFICATION Spec\nPROPERTY Live")).toContainEqual(
+      expect.stringMatching(COMPLETE),
+    );
+  });
+  // A search that ranked strings may start over, which would print again what it printed.
+  it("leaves a model that prints and uses ToString", async () => {
+    const body = [
+      "EXTENDS Integers, TLC",
+      "VARIABLE n",
+      "Init == n = 0",
+      'Next == n < 3 /\\ PrintT(n) /\\ ToString(100 + n) # "q" /\\ n\' = n + 1',
+    ];
+    const config = "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE";
+    expect(await compareWithInterpreter(body, config, { PROVE_IT_STOP_AT: "1" })).toContainEqual(
+      expect.stringMatching(declined("unsupported: Print with ToString")),
+    );
+  });
+  // The engine builds every entry of the function, making "12" and "13" with \o before
+  // ToString does, where the interpreter makes neither.
+  it("stops on ToString of a text the engine made unranked", async () => {
+    const body = [
+      "EXTENDS Integers, Sequences, TLC",
+      "VARIABLES n, s",
+      'Init == n = 0 /\\ s = [i \\in 1..3 |-> IF i = 3 THEN "q" ELSE "1" \\o ToString(n + i + 1)][3]',
+      "Next == UNCHANGED <<n, s>>",
+      "First == (CHOOSE x \\in {ToString(6 + 7 + n), ToString(6 + 6 + n)} : TRUE) = ToString(6 + 6 + n)",
+    ];
+    expect(
+      await compareWithInterpreter(body, "INIT Init\nNEXT Next\nINVARIANT First"),
+    ).toContainEqual(expect.stringMatching(stopped("ToString of a text the engine made unranked")));
+  });
 });

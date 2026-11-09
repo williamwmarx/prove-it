@@ -1439,6 +1439,9 @@ const searchStates = (
     // What the native liveness checker found, and the counterexample the interpreter prints
     // without checking the temporal properties itself, with the search's counts.
     liveness: undefined as NativeLiveness | undefined,
+    // The actions the native engine found for a lasso's steps, and the labels of TLC's actions.
+    lassoActions: undefined as Int32Array | undefined,
+    actionLabels: [] as string[],
     lasso: undefined as Lasso | undefined,
     result: undefined as EngineResult | undefined,
   };
@@ -1727,11 +1730,11 @@ const searchStates = (
         config,
         environment,
         spec: engineSpec,
-        traceActions: (isLabelled ? getSpecNextActions() : getTraceActions()).map((action) => ({
-          expression: action.expression,
-          scope: action.scope,
-          label: getActionLabel(action, options.version),
-        })),
+        traceActions: (isLabelled ? getSpecNextActions() : getTraceActions()).map((action) => {
+          const label = getActionLabel(action, options.version);
+          engineReport.actionLabels.push(label);
+          return { expression: action.expression, scope: action.scope, label };
+        }),
         isWarningEnabled: runtime.isWarningEnabled,
         tlcOrder,
         properties: engineProperties,
@@ -1785,6 +1788,7 @@ const searchStates = (
     const native = isNative ? checkNatively(lowerModel, callbacks) : undefined;
     const verdict = native?.status === "complete" ? native.liveness : undefined;
     engineReport.liveness = verdict;
+    engineReport.lassoActions = native?.status === "complete" ? native.lassoActions : undefined;
     if (isLiveChecked && liveness && verdict && verdict.branches !== -1) {
       if (verdict.branches !== liveness.branches) {
         throw new EngineInvariantError(
@@ -2266,6 +2270,22 @@ const searchStates = (
       text: `The stuttering counterexample above may be caused by the absence of a fairness constraint in the behavior specification ${name} defined at ${formatRange(range)}. To rule out such counterexamples, conjoin a suitable fairness constraint to ${name} ${book}`,
     };
   };
+  // Under PROVE_IT_LIVE_CHECK, the labels of a lasso's steps the native engine found must be the
+  // interpreter's: each step's, then the loop's.
+  const getCheckedLoopLabel = (trace: TraceStep[], loopLabel: string | undefined) => {
+    const actions = engineReport.lassoActions;
+    if (!isLiveChecked || engineReport.liveness?.status !== "lasso" || !actions?.length) {
+      return loopLabel;
+    }
+    const native = Array.from(actions, (action) => engineReport.actionLabels[action]);
+    const interpreted = [...trace.slice(1).map((step) => step.label), loopLabel];
+    if (native.join("\n") !== interpreted.join("\n")) {
+      throw new EngineInvariantError(
+        `the native engine labels a lasso's steps ${native.join(", ")}, the interpreter ${interpreted.join(", ")}`,
+      );
+    }
+    return loopLabel;
+  };
   // TLC names the properties and the step back into the cycle from the states it prints.
   const reportLasso = (checker: LivenessChecker, lasso: Lasso) => {
     const path = [...lasso.prefix, ...lasso.cycle];
@@ -2304,7 +2324,10 @@ const searchStates = (
         trace,
         traceOutput: loop.lines,
         loopStart,
-        loopLabel: loop.result && getActionLabel(loop.result, options.version),
+        loopLabel: getCheckedLoopLabel(
+          trace,
+          loop.result && getActionLabel(loop.result, options.version),
+        ),
         warning: isStutteringWarned ? getStutteringWarning() : undefined,
       },
       () =>

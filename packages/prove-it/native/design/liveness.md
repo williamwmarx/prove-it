@@ -40,3 +40,13 @@ What follows for the engine and `tla-live`:
 - The interpreter, today's oracle, canonicalizes a successor before its liveness checks see it
   (`isCanonicalizedFirst` in `check.ts`), which is not what TLC does. Where it and TLC differ on
   the corpus, TLC's recordings decide, and the interpreter is fixed to match.
+
+## Labels of a lasso's steps (as built)
+
+After a lasso, the engine finds the action of each of its steps as TLC's `Tool#getState` does:
+from each state, the first of TLC's actions (`Model.actions`, compiled whether or not the search
+walks them) with a step to the next state of the lasso, and from the last state to the cycle's
+first. `SearchOutcome::Complete::lasso_actions` holds their positions, `None` for the stuttering
+step of a lasso whose cycle is its last state, and is empty when the engine has no walk of TLC's
+actions. Under `PROVE_IT_LIVE_CHECK=1` the interpreter compares their labels with the trace's: no
+difference on the 30 corpus lassos.

@@ -380,6 +380,21 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     }
   });
 
+  it("searches a spec that ranks the strings ToString makes on one thread", async () => {
+    const body = [
+      "EXTENDS Naturals, TLC",
+      "VARIABLES x, text",
+      'Init == x \\in 1..3000 /\\ text = ""',
+      "Next == \\/ x < 3002 /\\ x' = x + 1 /\\ text' = ToString(x)",
+      "        \\/ x = 3002 /\\ UNCHANGED <<x, text>>",
+    ];
+    const config = "INIT Init\nNEXT Next";
+    const settings = { PROVE_IT_WORKERS: "4", PROVE_IT_SHARED_LEVEL: "1" };
+    expect(await compareWithInterpreter(body, config, settings)).toContainEqual(
+      expect.stringMatching(COMPLETE),
+    );
+  });
+
   it("reduces by symmetry, with and without a VIEW, and hands over representatives", async () => {
     const body = [
       "EXTENDS Naturals, FiniteSets, TLC",
@@ -763,19 +778,14 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     );
   });
 
-  it("leaves a model it can't search yet to the TypeScript engine", async () => {
-    // ToString prints a value as TLC would, which the native engine doesn't.
-    const body = [
-      "EXTENDS TLC",
-      "VARIABLE x",
-      "Init == x \\in {ToString(1), ToString(2)}",
-      "Next == UNCHANGED x",
-    ];
+  it("leaves a model it can't search to the TypeScript engine", async () => {
+    // TLC assigns x' \subseteq S as x' \in SUBSET S, which neither engine does.
+    const body = ["VARIABLE x", "Init == x = {}", "Next == x' \\subseteq {1, 2}"];
     const lines = await compareWithInterpreter(body, "INIT Init\nNEXT Next");
     expect(lines).toEqual([
       expect.stringMatching(/^\[engine\] native: ir: /),
-      expect.stringMatching(/^\[engine\] native: declined: the builtin ToString, /),
-      expect.stringMatching(/^\[engine\] checked 2 states on 1 thread /),
+      expect.stringMatching(declined("unsupported: x' \\\\subseteq S")),
+      expect.stringMatching(/^\[engine\] handed over after \d+ ms: x' \\subseteq S$/),
     ]);
   });
 

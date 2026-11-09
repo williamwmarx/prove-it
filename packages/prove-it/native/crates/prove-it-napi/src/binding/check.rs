@@ -359,6 +359,8 @@ pub(super) unsafe extern "C" fn check_model(env: napi_env, info: napi_callback_i
                 threads: usize::try_from(threads).unwrap_or(1).max(1),
                 minimum_shared_level: usize::try_from(minimum_shared_level)
                     .unwrap_or(MINIMUM_SHARED_LEVEL),
+                // The interpreter reports a violation itself.
+                is_violation_reported: false,
             };
             let mut undefined = null_mut();
             status(napi_get_undefined(env, &mut undefined))?;
@@ -424,6 +426,7 @@ pub(super) unsafe extern "C" fn check_model(env: napi_env, info: napi_callback_i
                     counts,
                     checkpoint,
                     liveness,
+                    lasso_actions,
                     fingerprints,
                     value_count,
                     collisions,
@@ -431,6 +434,11 @@ pub(super) unsafe extern "C" fn check_model(env: napi_env, info: napi_callback_i
                     if let Some(verdict) = &liveness {
                         set(env, result, c"liveness", create_verdict(env, verdict)?)?;
                     }
+                    let actions: Vec<i32> = lasso_actions
+                        .iter()
+                        .map(|action| action.map_or(-1, |position| position as i32))
+                        .collect();
+                    set(env, result, c"lassoActions", create_int32s(env, &actions)?)?;
                     if let Some(checkpoint) = &checkpoint {
                         let mut object = null_mut();
                         status(napi_create_object(env, &mut object))?;
@@ -471,6 +479,7 @@ pub(super) unsafe extern "C" fn check_model(env: napi_env, info: napi_callback_i
                     reason,
                     checkpoint,
                     collisions,
+                    ..
                 } => {
                     set(env, result, c"status", create_string(env, "stopped")?)?;
                     set(env, result, c"reason", create_string(env, &reason)?)?;

@@ -152,6 +152,8 @@ pub struct Store {
     string_ids: HashMap<Box<[u16]>, Id>,
     model_ids: HashMap<Box<[u16]>, Id>,
     order: StringOrder,
+    // The first rank of the strings ranked since `freeze_string_order`, which aren't ordered.
+    unordered_rank: i32,
     small_ints: Vec<Id>,
     generation: u32,
     scratch: Vec<u32>,
@@ -192,6 +194,7 @@ impl Store {
             string_ids: HashMap::new(),
             model_ids: HashMap::new(),
             order: StringOrder::default(),
+            unordered_rank: i32::MAX,
             small_ints: Vec::with_capacity((SMALL_INT_MAX - SMALL_INT_MIN + 1) as usize),
             generation: 0,
             scratch: vec![0; 64],
@@ -291,6 +294,7 @@ impl Store {
         self.text_base = 0;
         self.copied = None;
         self.order.ranks.clear();
+        self.unordered_rank = i32::MAX;
         for text in order {
             self.order.rank(text);
         }
@@ -317,6 +321,18 @@ impl Store {
         for text in texts {
             self.order.rank(text);
         }
+    }
+
+    /// Makes the strings ranked from now on unordered: comparing one with another string bails.
+    /// A search ranks what ToString makes as it evaluates it, which may be in another order than
+    /// TLC's, so their order is TLC's only when the interpreter makes them again.
+    pub fn freeze_string_order(&mut self) {
+        self.unordered_rank = self.order.ranks.len() as i32;
+    }
+
+    /// Whether a string has been ranked since `freeze_string_order`.
+    pub fn has_unordered_strings(&self) -> bool {
+        (self.order.ranks.len() as i32) > self.unordered_rank
     }
 
     /// TLC's rank of a text, ranking it if it has none, as `getStringRank` does.
@@ -391,6 +407,11 @@ impl Store {
     /// The text of a string or a model value.
     pub fn text_of(&self, id: Id) -> &[u16] {
         &self.text(self.meta(id).payload).units
+    }
+
+    /// The string of a text, if the store holds one, without interning it.
+    pub fn find_str(&self, units: &[u16]) -> Option<Id> {
+        self.string_ids.get(units).copied()
     }
 
     /// The rank a string or a model value's text had when the store interned it, or -1.
@@ -683,7 +704,16 @@ impl Store {
                 } else {
                     1
                 }),
-                KIND_STRING => Ok(self.compare_texts(left_meta.payload, right_meta.payload)),
+                KIND_STRING => {
+                    let (left, right) = (left_meta.payload, right_meta.payload);
+                    let unordered = self.unordered_rank;
+                    if self.texts[left as usize].rank >= unordered
+                        || self.texts[right as usize].rank >= unordered
+                    {
+                        return Err(Bail("an order of strings the search ranked"));
+                    }
+                    Ok(self.compare_texts(left, right))
+                }
                 KIND_BOOL => Ok(if left < right { -1 } else { 1 }),
                 KIND_MODEL => {
                     self.check_model_types(left, right)?;

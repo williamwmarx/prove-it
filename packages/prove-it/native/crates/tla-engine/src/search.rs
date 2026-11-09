@@ -18,7 +18,7 @@ use tla_values::transfer::{EncodedStates, SharedEncoder, SharedStates, StateEnco
 use tla_values::{Bail, Id, NESTING_STACK_BYTES, Store};
 
 use crate::compile::{CompileError, Compiler, DISTINCT_SLOT, LEVEL_SLOT, NEXT_LEVEL_SLOT, Options};
-use crate::context::{EngineContext, holds_all, holds_all_changed};
+use crate::context::{EngineContext, first_failing, holds_all, holds_all_changed};
 use crate::live::{LiveGraph, Table, answer_atoms};
 use crate::machine::{Machine, Printed, Step, UNASSIGNED};
 use crate::symmetry::Canonicalizer;
@@ -41,6 +41,9 @@ pub struct Settings {
     /// through TLC's actions, and run each ENABLED answered from the steps, and fail where the two
     /// differ.
     pub is_live_checked: bool,
+    /// Whether the caller reports a violation the search stops at itself, once the search has
+    /// passed on what the spec printed before it.
+    pub is_violation_reported: bool,
     /// PROVE_IT_WORKERS: how many threads expand a level of states, at most as many as the
     /// machine runs at once.
     pub threads: usize,
@@ -60,6 +63,7 @@ impl Default for Settings {
             is_fingerprint_verified: false,
             state_log: None,
             is_live_checked: false,
+            is_violation_reported: false,
             threads: 1,
             minimum_shared_level: MINIMUM_SHARED_LEVEL,
         }
@@ -133,6 +137,10 @@ pub enum SearchOutcome {
         checkpoint: Option<Box<Checkpoint>>,
         /// With temporal properties, what checking them found.
         liveness: Option<Liveness>,
+        /// For each state of a lasso the check found, the position of the first of TLC's actions
+        /// that takes it to the next state of the lasso (from the last, the cycle's first), or
+        /// `None` where none does or it stutters; empty without a lasso or a walk of the actions.
+        lasso_actions: Vec<Option<u32>>,
         /// TLC's fingerprint of each state's key, in the order found.
         fingerprints: Vec<u64>,
         value_count: usize,
@@ -146,10 +154,32 @@ pub enum SearchOutcome {
         reason: String,
         checkpoint: Option<Box<Checkpoint>>,
         collisions: u64,
+        /// What TLC reports for the stop, when the engine knows it.
+        violation: Option<Box<Violation>>,
     },
     /// The engine broke one of its own invariants, or a self-check failed
     /// (`EngineInvariantError`).
     Invariant(String),
+}
+
+/// A violation the search stopped at, with the states TLC prints for it.
+pub struct Violation {
+    pub kind: ViolationKind,
+    /// The states, each as its variables' values in the engine's order, ids of `store`.
+    pub states: Vec<Vec<Id>>,
+    pub store: Store,
+}
+
+pub enum ViolationKind {
+    /// An initial state violates an invariant: its position in the model's invariants, then
+    /// past them in its properties checked as invariants.
+    InitialInvariant(usize),
+}
+
+// What a search found stopping it, before it hands over the store.
+struct Found {
+    kind: ViolationKind,
+    states: Vec<Vec<Id>>,
 }
 
 /// What PROVE_IT_LIVE_CHECK finds when TLC's actions take other steps than the next-state relation.
@@ -424,6 +454,8 @@ struct Search<'r, T> {
     // Whether a successor is checked once the walk reaches the next, when nothing the search
     // evaluates can tell: then the probe of its fingerprint, read ahead, doesn't wait on memory.
     is_pipelined: bool,
+    // The violation the search stops at, when it knows what TLC reports for it.
+    violation: Option<Found>,
     // The successor waiting to be checked, and its fingerprint.
     pending: Vec<Id>,
     pending_fingerprint: Option<u64>,
@@ -462,6 +494,7 @@ impl<'r, T: Reached> Search<'r, T> {
             checked: None,
             is_pipelined,
             pending: Vec::with_capacity(width),
+            violation: None,
             pending_fingerprint: None,
         }
     }
@@ -565,7 +598,13 @@ impl<'r, T: Reached> Search<'r, T> {
             if is_in_model {
                 self.set_distinct(machine, self.states.count() + 1)?;
             }
-            if !holds_all(machine, &context.initial_invariants)? {
+            if let Some(failing) = first_failing(machine, &context.initial_invariants)? {
+                self.violation = Some(Found {
+                    kind: ViolationKind::InitialInvariant(
+                        context.initial_invariant_owners[failing],
+                    ),
+                    states: vec![machine.current().to_vec()],
+                });
                 return Err(Bail("an invariant violated in an initial state"));
             }
             if !holds_all(machine, &context.initial_predicates)? {
@@ -1262,11 +1301,17 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         .collect();
     let mut store = Store::new();
     store.reset(ranked.iter().map(Vec::as_slice));
+    store.freeze_string_order();
     let mut compiler = Compiler::new(ir, &mut store, settings.compile);
     let context = match EngineContext::build(&mut compiler, ir) {
         Ok(context) => context,
         Err(error) => return SearchOutcome::Declined(describe(error)),
     };
+    // A search that ranked strings may start over in the interpreter, which would print again
+    // what the search printed.
+    if compiler.is_printing && compiler.is_ranking {
+        return SearchOutcome::Declined("unsupported: Print with ToString".into());
+    }
     let is_distinct_read = compiler.is_distinct_read;
     // Checking a successor once the walk reaches the next reorders nothing anyone can see where
     // nothing prints, reads the count of distinct states, or fingerprints a VIEW or symmetry's
@@ -1283,7 +1328,9 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     let thread_count = settings
         .threads
         .min(std::thread::available_parallelism().map_or(1, std::num::NonZero::get));
+    // ToString ranks the strings it makes as it evaluates, which threads would do in no order.
     let is_shared = thread_count > 1
+        && !compiler.is_ranking
         && !compiler.is_printing
         && !is_distinct_read
         && !model.is_recording_graph
@@ -1330,14 +1377,18 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     search.canonicalizer = canonicalizer;
     search.graph = model.is_recording_graph.then(|| Graph {
         edge_offsets: vec![0],
-        labels: context.actions.as_ref().map(|_| Vec::new()),
+        labels: context
+            .actions
+            .as_ref()
+            .filter(|_| model.is_labelled)
+            .map(|_| Vec::new()),
         ..Graph::default()
     });
     // The actions take each state's steps when the search labels them for ENABLED.
     let actions = context
         .actions
         .as_ref()
-        .filter(|_| model.is_recording_graph);
+        .filter(|_| model.is_recording_graph && model.is_labelled);
     let is_live_checked = settings.is_live_checked && actions.is_some();
     let mut out_degrees = [0u64; OUT_DEGREE_BUCKETS];
     let mut checkpoint_count = 0usize;
@@ -1548,7 +1599,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             }),
         }
     };
-    match result {
+    let outcome = match result {
         Err(bail) if bail.0 == OTHER_STEPS => SearchOutcome::Invariant(OTHER_STEPS.into()),
         Ok(()) => {
             let count = search.states.count();
@@ -1569,7 +1620,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             // The temporal properties are checked here, and the interpreter takes the graph over
             // only to print a counterexample, to check them itself, or under PROVE_IT_LIVE_CHECK
             // to check them again.
-            let (checkpoint, liveness) = match search.graph {
+            let (checkpoint, liveness, lasso_actions) = match search.graph {
                 Some(_) => {
                     let tables = match graph_tables(&mut machine, &search, count, count) {
                         Ok(tables) => tables,
@@ -1588,9 +1639,16 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                                 tables,
                             ))
                         });
-                    (checkpoint, Some(liveness))
+                    let lasso_actions = match &liveness.verdict {
+                        Verdict::Lasso {
+                            path, loop_start, ..
+                        } => label_lasso(&mut machine, &context, &search, path, *loop_start)
+                            .unwrap_or_default(),
+                        _ => Vec::new(),
+                    };
+                    (checkpoint, Some(liveness), lasso_actions)
                 }
-                None => (None, None),
+                None => (None, None, Vec::new()),
             };
             let counts = Counts {
                 generated: search.generated,
@@ -1608,16 +1666,34 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 counts: Box::new(counts),
                 checkpoint,
                 liveness,
+                lasso_actions,
                 value_count: machine.store.value_count(),
                 collisions,
                 fingerprints: search.states.fingerprints,
             }
         }
-        Err(bail) if !is_past_initial => SearchOutcome::Stopped {
-            reason: bail.0.to_string(),
-            checkpoint: None,
-            collisions,
-        },
+        Err(bail) if !is_past_initial => {
+            let violation = search
+                .violation
+                .take()
+                .filter(|_| settings.is_violation_reported);
+            // Otherwise the interpreter starts from scratch and prints it all again.
+            if violation.is_some() {
+                search.flush(&mut machine);
+            }
+            SearchOutcome::Stopped {
+                reason: bail.0.to_string(),
+                checkpoint: None,
+                collisions,
+                violation: violation.map(|found| {
+                    Box::new(Violation {
+                        kind: found.kind,
+                        states: found.states,
+                        store: std::mem::replace(&mut machine.store, Store::new()),
+                    })
+                }),
+            }
+        }
         Err(bail) => {
             let count = checkpoint_count;
             let is_kept = search.graph.is_none() || count <= MAXIMUM_GRAPH_STATES;
@@ -1677,8 +1753,37 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 reason: bail.0.to_string(),
                 checkpoint,
                 collisions,
+                violation: None,
             }
         }
+    };
+    // The strings the search ranked, such as ToString's, the temporal atoms' included, may rank
+    // otherwise in TLC, so the interpreter makes them again from the start rather than taking
+    // over the search.
+    let is_unordered = machine.store.has_unordered_strings();
+    match outcome {
+        SearchOutcome::Stopped {
+            reason,
+            checkpoint: Some(_),
+            collisions,
+            ..
+        } if is_unordered => SearchOutcome::Stopped {
+            reason,
+            checkpoint: None,
+            collisions,
+            violation: None,
+        },
+        SearchOutcome::Complete {
+            checkpoint: Some(_),
+            collisions,
+            ..
+        } if is_unordered => SearchOutcome::Stopped {
+            reason: "a graph with strings the search ranked".into(),
+            checkpoint: None,
+            collisions,
+            violation: None,
+        },
+        outcome => outcome,
     }
 }
 
@@ -1819,6 +1924,87 @@ fn write_state_log(
     }
     let _ = writer.write_all(line.as_bytes());
     let _ = writer.flush();
+}
+
+// The action of each step of a path of the search's states, as TLC's `Tool#getState` finds it:
+// for the step from path[i - 1] to path[i], the first of TLC's actions with a step from the one to
+// the other, or `None` for the first state or where none does. Empty when the engine has no walk
+// of TLC's actions.
+fn label_path(
+    machine: &mut Machine<'_>,
+    context: &EngineContext,
+    search: &Search<'_, States>,
+    path: &[u32],
+) -> Outcome<Vec<Option<u32>>> {
+    let Some(actions) = &context.actions else {
+        return Ok(Vec::new());
+    };
+    let width = context.width;
+    let unassigned = vec![UNASSIGNED; width];
+    let ids = &search.states.ids;
+    // Each state's depth, from its parent's: the search stores a parent before its children.
+    let parents = &search.states.parents;
+    let mut depths: Vec<i64> = Vec::with_capacity(parents.len());
+    for &parent in parents {
+        depths.push(if parent == -1 {
+            1
+        } else {
+            depths[parent as usize] + 1
+        });
+    }
+    let mut labels = vec![None];
+    for step in path.windows(2) {
+        let (state, target) = (step[0] as usize, step[1] as usize);
+        let depth = depths[state];
+        let epoch = machine.next_epoch();
+        machine.set_current(&ids[state * width..(state + 1) * width], epoch);
+        let level = machine.store.int(depth)?;
+        let next_level = machine.store.int(depth + 1)?;
+        machine.set_slot(LEVEL_SLOT, level);
+        machine.set_slot(NEXT_LEVEL_SLOT, next_level);
+        let target = &ids[target * width..(target + 1) * width];
+        let mut found = None;
+        for (index, action) in actions.iter().enumerate() {
+            machine.set_next(&unassigned);
+            machine.reset_assigned();
+            let mut is_found = false;
+            action(machine, &mut |machine: &mut Machine<'_>| {
+                is_found |= machine.next() == target;
+                Ok(())
+            })?;
+            if is_found {
+                found = Some(index as u32);
+                break;
+            }
+        }
+        labels.push(found);
+    }
+    Ok(labels)
+}
+
+// The actions of a lasso's steps: from each state to the next, and from the last to the cycle's
+// first, `None` for that step when the cycle is the last state alone, which stutters.
+fn label_lasso(
+    machine: &mut Machine<'_>,
+    context: &EngineContext,
+    search: &Search<'_, States>,
+    path: &[u32],
+    loop_start: usize,
+) -> Outcome<Vec<Option<u32>>> {
+    let is_stuttering = loop_start + 1 == path.len();
+    let mut closed = path.to_vec();
+    if !is_stuttering {
+        closed.push(path[loop_start]);
+    }
+    let mut labels = label_path(machine, context, search, &closed)?;
+    if labels.is_empty() {
+        return Ok(labels);
+    }
+    labels.remove(0);
+    if is_stuttering {
+        labels.push(None);
+    }
+    Ok(labels)
 }
 
 // Checks the temporal properties on a complete search's graph from the answers to the atoms.
