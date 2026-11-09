@@ -42,6 +42,10 @@ fn check(path: &std::path::Path) -> Result<usize, String> {
         Ok(rebuilder) => rebuilder,
         Err(Unsupported(reason)) => return Err(reason),
     };
+    rebuilder.set_startup(&stopped.store, &stopped.startup, stopped.startup_random);
+    if let Some(group) = &stopped.symmetry {
+        rebuilder.set_symmetry(group);
+    }
     let count = stopped.states.len();
     let mut rebuilt = 0;
     for index in count.saturating_sub(3)..count {
@@ -165,6 +169,10 @@ fn deadlock_trace(path: &str) -> (Vec<String>, Option<Vec<String>>) {
             .collect();
         let trace = Rebuilder::new(&ir)
             .and_then(|mut rebuilder| {
+                rebuilder.set_startup(&stopped.store, &stopped.startup, stopped.startup_random);
+                if let Some(group) = &stopped.symmetry {
+                    rebuilder.set_symmetry(group);
+                }
                 rebuilder.rebuild(
                     &stopped.store,
                     &states,
@@ -264,6 +272,11 @@ fn rebuild_violation<T: Send>(
         };
         let states: Vec<&[Id]> = violation.states.iter().map(Vec::as_slice).collect();
         let mut rebuilder = Rebuilder::new(&ir)?;
+        rebuilder.set_startup(
+            &violation.store,
+            &violation.startup,
+            violation.startup_random,
+        );
         let trace = rebuilder.rebuild(&violation.store, &states, &violation.labels, ending)?;
         then(&ir, &mut rebuilder, &trace, cycle_start)
     })

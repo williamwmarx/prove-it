@@ -814,14 +814,19 @@ export const getStartupValue = (definition: Definition, environment: Environment
   return id === undefined ? undefined : environment.startupValues[id];
 };
 
+// Whether TLC computes a definition when it starts: one with no parameters, of constant level,
+// whose name the configuration doesn't replace. Nothing but linking decides it.
+export const isStartupDefinition = (definition: Definition, environment: Environment) =>
+  (definition.kind !== "Operator" || definition.params.length === 0) &&
+  !environment.constants.has(definition.name) &&
+  !environment.substitutions.has(definition.name) &&
+  isConstantLevel(definition, environment);
+
 // TLC computes each constant definition the configuration doesn't replace when it starts, and
 // leaves one it fails to compute to evaluate where the spec uses it.
 export const evaluateStartupDefinitions = (definitions: Definition[], environment: Environment) =>
   definitions.forEach((definition) => {
-    if (definition.kind === "Operator" && definition.params.length > 0) return;
-    const name = definition.name;
-    if (environment.constants.has(name) || environment.substitutions.has(name)) return;
-    if (!isConstantLevel(definition, environment)) return;
+    if (!isStartupDefinition(definition, environment)) return;
     const id = environment.facts.ids.get(definition);
     if (id === undefined || environment.startupValues[id] !== undefined) return;
     const context = { environment, scope: undefined, state: undefined, next: undefined };

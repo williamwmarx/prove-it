@@ -594,7 +594,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                 let why = match &liveness.verdict {
                     Verdict::Holds => None,
                     Verdict::Lasso { .. }
-                        if ir.model.symmetry.is_some() || ir.model.view.is_some() =>
+                        if ir.model.startup.symmetry.is_some() || ir.model.view.is_some() =>
                     {
                         Some(
                             "a temporal property's counterexample: under SYMMETRY or a VIEW".into(),
@@ -630,6 +630,9 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
         }
         SearchOutcome::Declined(reason) => {
             return report_not_native(printer, &format!("the engine declined: {reason}"));
+        }
+        SearchOutcome::AssumptionViolated { .. } => {
+            return report_not_native(printer, "an assumption that is false");
         }
         SearchOutcome::Stopped {
             violation: Some(violation),

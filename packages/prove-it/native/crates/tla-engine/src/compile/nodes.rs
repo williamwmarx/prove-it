@@ -280,7 +280,7 @@ impl Compiler<'_> {
                 definitions,
                 body,
             } => {
-                let inner = self.bind_let_definitions(*instances, definitions, context)?;
+                let inner = self.bind_let_definitions(*instances, definitions, *body, context)?;
                 self.compile(*body, &inner)
             }
             NodeKind::Forall { bounds, body } => {
@@ -329,27 +329,47 @@ impl Compiler<'_> {
                     let key = self.store.str(&units);
                     compiled.push((key, self.compile(value, context)?));
                 }
-                // The fields in TLC's order of their names, which strings compare without fail.
+                // TLC evaluates the fields in the order written, and keeps them in its order of
+                // their names, which strings compare without fail.
+                let mut order: Vec<usize> = (0..compiled.len()).collect();
                 let mut sort_error = None;
-                compiled.sort_by(|left, right| match self.store.compare(left.0, right.0) {
-                    Ok(order) => order.cmp(&0),
-                    Err(bail) => {
-                        sort_error = Some(bail);
-                        std::cmp::Ordering::Equal
+                order.sort_by(|&left, &right| {
+                    match self.store.compare(compiled[left].0, compiled[right].0) {
+                        Ok(order) => order.cmp(&0),
+                        Err(bail) => {
+                            sort_error = Some(bail);
+                            std::cmp::Ordering::Equal
+                        }
                     }
                 });
                 if let Some(bail) = sort_error {
                     return Err(bail.into());
                 }
-                let keys: Vec<Id> = compiled.iter().map(|field| field.0).collect();
+                let keys: Vec<Id> = order.iter().map(|&field| compiled[field].0).collect();
                 let shape = self.store.create_record_shape(&keys);
-                let evaluators: Vec<Eval> =
-                    compiled.iter().map(|field| field.1.eval.clone()).collect();
+                // Each field as written, with its place among the fields in TLC's order.
+                let mut evaluators: Vec<(Eval, usize)> = compiled
+                    .iter()
+                    .map(|field| (field.1.eval.clone(), 0))
+                    .collect();
+                for (place, &field) in order.iter().enumerate() {
+                    evaluators[field].1 = place;
+                }
                 Ok(Compiled {
                     is_costly: true,
                     ..leaf(
                         eval(move |machine| {
-                            let at = push_all(machine, &evaluators)?;
+                            let at = machine.stack.len();
+                            machine.stack.resize(at + evaluators.len(), 0);
+                            for (evaluate, place) in &evaluators {
+                                match evaluate(machine) {
+                                    Ok(value) => machine.stack[at + place] = value,
+                                    Err(bail) => {
+                                        machine.stack.truncate(at);
+                                        return Err(bail);
+                                    }
+                                }
+                            }
                             let values = machine.stack.split_off(at);
                             Ok(machine.store.record_of(&shape, &values))
                         }),

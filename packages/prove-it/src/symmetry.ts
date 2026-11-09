@@ -1,4 +1,4 @@
-import type { Expression } from "./ast";
+import type { Expression, OperatorDefinition } from "./ast";
 import type { Substitution } from "./config";
 import { TlaConfigError, TlaEvaluationError, UNEXPECTED_EXCEPTION } from "./errors";
 import { type Environment, evaluate } from "./evaluate";
@@ -19,6 +19,11 @@ import {
   toFiniteSet,
   type Value,
 } from "./values";
+
+export interface PermutedSet {
+  name: string;
+  operand: Expression | undefined;
+}
 
 // The image of each model value a permutation moves, by name.
 type Images = Map<string, ModelValue>;
@@ -75,6 +80,31 @@ const isPermutations = (
   expression.operator === "Permutations" &&
   expression.args.length === 1;
 
+// The sets a SYMMETRY definition permutes, which Tool#getSymmetryPerms warns about where they hold
+// fewer than two elements: each by the name the configuration substitutes for it or the text of
+// its expression, and, for Permutations(S) of a constant or definition S, S. TLC binds a constant
+// the configuration substitutes with <- to the definition, which it skips.
+export const getPermutedSets = (
+  definition: OperatorDefinition,
+  substitutions: Substitution[],
+): PermutedSet[] => {
+  const configNames = new Map(
+    substitutions
+      .filter((substitution) => substitution.module === undefined)
+      .map((substitution) => [substitution.target, substitution.name]),
+  );
+  const substitutedNames = new Set(substitutions.map((substitution) => substitution.name));
+  return (definition.body.kind === "Apply" ? definition.body.args : []).map((permuted) => {
+    const image = getExpressionImage(isPermutations(permuted) ? permuted.args[0] : permuted);
+    const operand = isPermutations(permuted) ? permuted.args[0] : undefined;
+    return {
+      name: configNames.get(image) ?? image,
+      operand:
+        operand?.kind === "Identifier" && !substitutedNames.has(operand.name) ? operand : undefined,
+    };
+  });
+};
+
 export const getSymmetryGroup = (
   name: string,
   environment: Environment,
@@ -100,26 +130,16 @@ export const getSymmetryGroup = (
     throw createSymmetryError("The symmetry values must be function records.");
   }
   const permutations = elements.map(toImages);
-  // Tool#getSymmetryPerms warns about each permuted set with fewer than two elements, by the name
-  // the config substitutes for it. As many permuted sets as permutations means none has two.
-  const permutedSets = definition.body.kind === "Apply" ? definition.body.args : [];
-  const configNames = new Map(
-    substitutions
-      .filter((substitution) => substitution.module === undefined)
-      .map((substitution) => [substitution.target, substitution.name]),
-  );
-  const warnSmallSets = (offenders: Expression[]) => {
+  const permutedSets = getPermutedSets(definition, substitutions);
+  const warnSmallSets = (offenders: PermutedSet[]) => {
     if (offenders.length === 0) return;
-    const names = offenders.map((offender) => {
-      const image = getExpressionImage(isPermutations(offender) ? offender.args[0] : offender);
-      return configNames.get(image) ?? image;
-    });
     const isPlural = offenders.length > 1;
     environment.runtime.warn(
       MESSAGE_CODE.symmetrySetTooSmall,
-      `The set${isPlural ? "s" : ""} ${names.join(", and ")} ${isPlural ? "have" : "has"} been defined to be a symmetry set but contain${isPlural ? "" : "s"} less than two elements.`,
+      `The set${isPlural ? "s" : ""} ${offenders.map((offender) => offender.name).join(", and ")} ${isPlural ? "have" : "has"} been defined to be a symmetry set but contain${isPlural ? "" : "s"} less than two elements.`,
     );
   };
+  // As many permuted sets as permutations means none has two elements.
   if (permutedSets.length >= elements.length) {
     warnSmallSets(permutedSets);
     return undefined;
@@ -145,15 +165,11 @@ export const getSymmetryGroup = (
   const movedNames = new Set(
     [...group.values()].flatMap((images) => [...images.values()].map((image) => image.name)),
   );
-  // Only a permutation of a constant that TLC holds as an enumerated set is checked. TLC binds a
-  // constant the config substitutes with <- to the definition, which it skips.
-  const substitutedNames = new Set(substitutions.map((substitution) => substitution.name));
+  // Only a permutation of a set TLC holds as an enumerated set is checked.
   warnSmallSets(
-    permutedSets.filter((node) => {
-      if (!isPermutations(node)) return false;
-      const operand = node.args[0];
-      if (operand.kind !== "Identifier" || substitutedNames.has(operand.name)) return false;
-      const set = evaluateConstant(operand);
+    permutedSets.filter((permuted) => {
+      if (permuted.operand === undefined) return false;
+      const set = evaluateConstant(permuted.operand);
       return (
         typeof set === "object" &&
         set.kind === "Set" &&

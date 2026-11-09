@@ -11,15 +11,18 @@ use tla_values::random::JavaRandom;
 
 use tla_ir::{
     Bound, Definition, DefinitionForm, Index, Ir, Name, NodeId, NodeKind, Param, PathStep, Pattern,
-    Resolution, ScopeBinding, Startup, TextId,
+    Resolution, ScopeBinding, TextId,
 };
+
+use tla_values::{Id, Store};
 
 use crate::print::{format_pretty, format_printed, format_value};
 use crate::random::{random_element, random_subset};
 use crate::sets::{as_tuple, cardinality, difference, intersection, is_member, is_subset, union};
 use crate::value::{
     Class, Evaluated, Function, Lazy, Text, TlcMessage, Value, compare, elements, equals, fail,
-    fail_coded, fail_runtime, fail_with, find_key, set_of, sorted_function, written_function,
+    fail_coded, fail_runtime, fail_with, find_key, from_store, set_of, sorted_function,
+    written_function,
 };
 
 /// The bindings an expression sees, innermost first.
@@ -997,18 +1000,33 @@ impl<'ir> Evaluator<'ir> {
         }
     }
 
+    /// Takes the values the search computed at startup for the model's startup definitions,
+    /// ids of `store` in their order, as the values of those definitions.
+    pub fn set_startup(&mut self, store: &Store, values: &[Id]) {
+        for (&index, &id) in self.ir.model.startup.definitions.iter().zip(values) {
+            let node = self.ir.definitions[index as usize];
+            let value = from_store(store, id);
+            self.cache.insert((node, false), value.clone());
+            self.cache.insert((node, true), value);
+        }
+    }
+
     fn definition_value(&mut self, node: NodeId, context: &Context) -> Evaluated<Value> {
         let definition = self.definition(node);
-        match definition.startup {
-            Startup::Value(Some(value)) => return self.value(value),
-            Startup::Value(None) | Startup::Object => {
-                return fail("a value TLC computed at startup with effects");
-            }
-            Startup::None => {}
-        }
         let key = (node, context.is_primed);
         if let Some(value) = self.cache.get(&key) {
             return Ok(value.clone());
+        }
+        // The value TLC computed at startup, which the search computed and hands on.
+        if self
+            .ir
+            .model
+            .startup
+            .definitions
+            .iter()
+            .any(|&index| self.ir.definitions[index as usize] == node)
+        {
+            return fail("a value TLC computed at startup with effects");
         }
         let reads = self.reads;
         let printed = self.printed.len();
@@ -1141,8 +1159,9 @@ impl<'ir> Evaluator<'ir> {
                     return Ok(None);
                 };
                 let definition = self.definition(self.ir.definitions[index as usize]);
-                Ok(match (&definition.form, &definition.startup) {
-                    (DefinitionForm::Operator(params), Startup::None) if params.is_empty() => {
+                let is_startup = self.ir.model.startup.definitions.contains(&index);
+                Ok(match &definition.form {
+                    DefinitionForm::Operator(params) if params.is_empty() && !is_startup => {
                         Some((definition.body, context.global()))
                     }
                     _ => None,
@@ -1640,7 +1659,7 @@ impl<'ir> Evaluator<'ir> {
                     return Ok(None);
                 };
                 if definition.flags & (Definition::RECURSIVE | Definition::SELF_REFERENTIAL) != 0
-                    || !matches!(definition.startup, Startup::None)
+                    || self.ir.model.startup.definitions.contains(&index)
                 {
                     return Ok(None);
                 }
@@ -1692,8 +1711,9 @@ impl<'ir> Evaluator<'ir> {
             return Ok(None);
         };
         let definition = self.definition(self.ir.definitions[index as usize]);
-        Ok(match (&definition.form, &definition.startup) {
-            (DefinitionForm::Function(bounds), Startup::None) => {
+        let is_startup = self.ir.model.startup.definitions.contains(&index);
+        Ok(match &definition.form {
+            DefinitionForm::Function(bounds) if !is_startup => {
                 Some((&bounds[..], definition.body, context.global()))
             }
             _ => None,

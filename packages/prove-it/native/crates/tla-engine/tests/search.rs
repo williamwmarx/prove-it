@@ -28,6 +28,7 @@ fn run(path: &str, settings: &Settings) -> SearchOutcome {
 fn describe(outcome: &SearchOutcome) -> String {
     match outcome {
         SearchOutcome::Declined(reason) => format!("declined: {reason}"),
+        SearchOutcome::AssumptionViolated { name } => format!("assumption {name} is false"),
         SearchOutcome::Invariant(reason) => format!("invariant: {reason}"),
         SearchOutcome::Complete { counts, .. } => format!(
             "complete: {} generated, {} distinct, depth {}",
@@ -78,6 +79,13 @@ fn completes_with_tlc_counts() {
             5,
         ),
         ("spectacle/specs/with_state_graphs/simple_folds", 6, 3, 1),
+        // A graph drawn at random at startup, from the seed the IR carries.
+        (
+            "tlc/tlatools/org.lamport.tlatools/test-model/Github648",
+            1332,
+            36,
+            1,
+        ),
     ];
     for (path, generated, distinct, depth) in models {
         assert_eq!(
@@ -86,6 +94,65 @@ fn completes_with_tlc_counts() {
             "{path}"
         );
     }
+}
+
+// What a search reported of TLC's startup and of the search after it, in order.
+#[derive(Default)]
+struct Recorded(Vec<String>);
+
+impl Reporter for Recorded {
+    fn initial_states_started(&mut self) {
+        self.0.push("initial states".into());
+    }
+    fn initial_states_progress(&mut self, _count: u64) {}
+    fn initial_states(&mut self, _generated: u64, _distinct: u64) {}
+    fn progress(&mut self, _generated: u64, _distinct: u64, _queued: u64, _depth: u64) {}
+    fn print(&mut self, store: &tla_values::Store, values: &[tla_values::Id]) {
+        self.0
+            .push(format!("print {}", format_values(store, values)));
+    }
+    fn startup_print(&mut self, store: &tla_values::Store, values: &[tla_values::Id]) {
+        self.0
+            .push(format!("startup {}", format_values(store, values)));
+    }
+    fn startup_done(&mut self) {
+        self.0.push("startup done".into());
+    }
+}
+
+fn format_values(store: &tla_values::Store, values: &[tla_values::Id]) -> String {
+    values
+        .iter()
+        .map(|&value| tla_values::print::format_value(store, value))
+        .collect::<Vec<_>>()
+        .join("  ")
+}
+
+// TLC's Euclid prints from its assumptions, which TLC checks after it prints what it prints
+// itself, and before it computes the initial states.
+#[test]
+fn prints_what_the_assumptions_print_after_the_constant_definitions() {
+    let bytes = std::fs::read(format!(
+        "{}/../../../tests/conformance/ir/tlc/tlatools/org.lamport.tlatools/test-model/pcal/Euclid.ir",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .expect("a golden IR");
+    let ir = tla_ir::decode(&bytes).expect("an IR that decodes");
+    let mut recorded = Recorded::default();
+    let outcome = tla_engine::on_nesting_stack(|| search(&ir, &Settings::default(), &mut recorded));
+    assert_eq!(
+        describe(&outcome),
+        "complete: 6752 generated, 6352 distinct, depth 42"
+    );
+    assert_eq!(
+        recorded.0,
+        [
+            "startup done",
+            "startup <<\"Testing Euclid's algorithm on all numbers between 1 and \", 20>>  TRUE",
+            "startup \"Most time spent evaluating naive definition of GCD for test\"  TRUE",
+            "initial states",
+        ]
+    );
 }
 
 #[test]
