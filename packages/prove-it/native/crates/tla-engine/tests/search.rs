@@ -11,7 +11,7 @@ impl Reporter for Quiet {
     fn initial_states_progress(&mut self, _count: u64) {}
     fn initial_states(&mut self, _generated: u64, _distinct: u64) {}
     fn progress(&mut self, _generated: u64, _distinct: u64, _queued: u64, _depth: u64) {}
-    fn print(&mut self, _values: tla_values::transfer::EncodedStates, _width: usize) {}
+    fn print(&mut self, _store: &tla_values::Store, _values: &[tla_values::Id]) {}
 }
 
 fn run(path: &str, settings: &Settings) -> SearchOutcome {
