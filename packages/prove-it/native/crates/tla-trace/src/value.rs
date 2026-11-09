@@ -279,11 +279,6 @@ pub fn compare(left: &Value, right: &Value) -> Evaluated<Ordering> {
         }
         (Value::Function(left), Value::Function(right)) => compare_functions(left, right),
         _ if left.is_set() && right.is_set() => {
-            if let (Value::Set(left), Value::Set(right)) = (left, right)
-                && Rc::ptr_eq(left, right)
-            {
-                return Ok(Ordering::Equal);
-            }
             let (left, right) = (elements(left)?, elements(right)?);
             if left.len() != right.len() {
                 return Ok(left.len().cmp(&right.len()));
@@ -303,9 +298,6 @@ pub fn compare(left: &Value, right: &Value) -> Evaluated<Ordering> {
 fn compare_functions(left: &Rc<Function>, right: &Rc<Function>) -> Evaluated<Ordering> {
     sort(left);
     sort(right);
-    if Rc::ptr_eq(left, right) {
-        return Ok(Ordering::Equal);
-    }
     let size = left.domain.len();
     if size != right.domain.len() {
         if size > 0 && !right.domain.is_empty() && is_record(left) != is_record(right) {
@@ -349,9 +341,6 @@ pub fn equals(left: &Value, right: &Value) -> Evaluated<bool> {
         (Value::Function(left), Value::Function(right)) => {
             sort(left);
             sort(right);
-            if Rc::ptr_eq(left, right) {
-                return Ok(true);
-            }
             let size = left.domain.len();
             if size > 0 && !right.domain.is_empty() && is_record(left) != is_record(right) {
                 return fail("record compared with a function");
