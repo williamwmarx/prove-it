@@ -188,3 +188,51 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   up, and stopped on one too large to build, such as RandomSubset's invariant
   `x \in 1..100000000`. Elsewhere the interval is as before, so a set operation or a set of
   functions over one still evaluates it, and its bounds, as TLC does.
+
+## Definitions reached again through an argument
+
+- Both engines took a definition they reached again while expanding it for recursion, and declined
+  it as "a recursive higher-order operator". A definition is also reached again through an
+  argument, as mongodb-txns' ClientCentric folds in the operator it passes to Community Modules'
+  FoldFunction, which is no recursion: SANY rejects a definition that calls itself without
+  RECURSIVE. The definitions being expanded now travel with the context (`expanding`), so an
+  argument compiles with those of the place it is written, and only a cycle through definitions
+  is taken for recursion. ClientCentricTests and MCMultiShardTxn (mongodb-txns), declined before,
+  now search in Rust, and the TypeScript engine searches them too.
+
+## The order UNCHANGED evaluates in
+
+- TLC evaluates `UNCHANGED e`, `[A]_e` and `<<A>>_e` in the current state before the next one
+  (`Tool.evalAppl`, `verifyUnchanged`), so where both sides fail it reports the current state's
+  failure. The interpreter (`codegen.ts`, `evaluate.ts`) and both engines' UNCHANGED evaluated the
+  next state's side first; each now evaluates the current state's first. The engines' `[A]_e` and
+  `<<A>>_e` already did.
+
+## A value substituted for an operator with parameters
+
+- A configuration may substitute a value for an operator with parameters, as mongodb-txns'
+  Storage.cfg substitutes FALSE for its actions. TLC applies the operator by taking the value,
+  without evaluating the arguments (`Tool.evalAppl`), so `A(1 \div 0)` under `A <- FALSE` is FALSE
+  (checked with TLC 1.8.0). The interpreter evaluated the arguments and failed on them, and both
+  engines declined the builtin applied to arguments. All three now take the value. Storage
+  (mongodb-txns), declined before, now searches in Rust, and the TypeScript engine searches it too.
+
+## A primed variable a LET names
+
+- TLC's `getPrimedVar` looks through a LET and a label to the primed variable an `=` or `\in`
+  assigns, so `(LET y == x' IN y) = 0` assigns x', in the next-state relation and in ENABLED.
+  Both engines' walkers stopped at the LET and declined it as "an assignment the engine can't
+  resolve statically". They now bind the LET's definitions and look through it, and through a
+  label. Github725d (TLC's tests), declined before, now searches in Rust, and the TypeScript
+  engine searches it too.
+
+## SUBSET of a set with no order
+
+- TLC enumerates `SUBSET S` in the normalized order of S's elements, whatever S's own order
+  (`SubsetValue.elementsNormalized`). Both engines enumerated a power set only where its base had
+  an order of its own, and declined `x' \in SUBSET S` for any other S as "enumerating a set TLC
+  keeps lazy". The power set now enumerates its base's value in that order. test46 (TLC's tests),
+  declined before, now searches in Rust, and the TypeScript engine searches it too.
+- Comparing the results in full, where the native engine stops on a violation whose trace holds
+  sets of records, the interpreter's trace marks a record as fingerprinted and the native engine's
+  doesn't. What either prints is the same.

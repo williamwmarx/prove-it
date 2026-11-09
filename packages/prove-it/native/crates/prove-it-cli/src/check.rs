@@ -538,8 +538,20 @@ fn check_spec(spec_path: &str, args: &Parsed, printer: &mut Printer) -> i32 {
             fingerprints,
             liveness,
             violation,
+            possible,
             ..
         } => {
+            // Once the search completes, TLC checks the postconditions, which the binary doesn't
+            // evaluate yet, and reports a _POSSIBLE predicate the search never witnessed.
+            if !config.postconditions.is_empty() {
+                return report_not_native(printer, "a POSTCONDITION");
+            }
+            if possible.iter().any(|&count| count <= 0) {
+                return report_not_native(
+                    printer,
+                    "a _POSSIBLE predicate the search didn't witness",
+                );
+            }
             if let Some(liveness) = liveness {
                 if let (Some(violation), Verdict::Lasso { .. }) = (violation, &liveness.verdict) {
                     return print_violation(
@@ -730,10 +742,9 @@ fn print_violation(
     liveness: Option<&Liveness>,
     start: Instant,
 ) -> Result<i32, &'static str> {
-    // TLC prints a state through the ALIAS when there is one, which the IR doesn't carry yet, and
-    // checks the postconditions on the trace after it prints it.
-    if config.alias.is_some() || !config.postconditions.is_empty() || !config.possible.is_empty() {
-        return Err("ALIAS, POSTCONDITION or _POSSIBLE");
+    // TLC checks the postconditions on the trace after it prints it.
+    if !config.postconditions.is_empty() || !config.possible.is_empty() {
+        return Err("POSTCONDITION or _POSSIBLE");
     }
     // An owner past the configuration's invariants is a property checked as one.
     let model = &ir.model;

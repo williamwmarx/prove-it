@@ -714,7 +714,19 @@ interface Context {
   // Whether the engine evaluates the expression exactly when TLC does, as often and in the same
   // order, so that it may print.
   canPrint?: boolean;
+  // The definitions whose bodies the expression is written in, innermost first. An argument keeps
+  // its caller's, so a definition reached again through an argument isn't taken for recursion.
+  expanding?: Expansion;
 }
+
+interface Expansion {
+  definition: Definition;
+  outer: Expansion | undefined;
+}
+
+const isExpanding = (expansion: Expansion | undefined, definition: Definition): boolean =>
+  expansion !== undefined &&
+  (expansion.definition === definition || isExpanding(expansion.outer, definition));
 
 type Binding =
   | { kind: "slot"; slot: number }
@@ -874,7 +886,6 @@ export const createCompiler = (environment: Environment): Compiler => {
   const definitionCache = new Map<Definition, Compiled[]>();
   // A RECURSIVE operator's body, for its unprimed and its primed calls.
   const recursiveOperators = new Map<object, RecursiveOperator[]>();
-  const expanding = new Set<Definition>();
   let depth = 0;
 
   // --- fixed points ---
@@ -978,7 +989,9 @@ export const createCompiler = (environment: Environment): Compiler => {
         const definition = environment.definitions.get(target);
         if (definition) {
           return (
-            definition.kind === "Operator" && !definition.isRecursive && !expanding.has(definition)
+            definition.kind === "Operator" &&
+            !definition.isRecursive &&
+            !isExpanding(context.expanding, definition)
           );
         }
         return PRINT_TRANSPARENT_BUILTINS.has(target);
@@ -1071,30 +1084,28 @@ export const createCompiler = (environment: Environment): Compiler => {
       noteCachedRead(known);
       return known;
     }
-    if (expanding.has(definition)) return unsupported("a recursive zero-arity definition");
-    expanding.add(definition);
-    try {
-      const compiled = compileForCache(
-        () =>
-          cached(
-            markCostly(
-              compile(definition.body, {
-                scope: undefined,
-                isPrimed: context.isPrimed,
-                isInit: context.isInit,
-                canPrint: context.canPrint,
-              }),
-            ),
-          ),
-        (dropped) => dropDefinition(definition, index, dropped),
-      );
-      const entries = definitionCache.get(definition) ?? [];
-      entries[index] = compiled;
-      definitionCache.set(definition, entries);
-      return compiled;
-    } finally {
-      expanding.delete(definition);
+    if (isExpanding(context.expanding, definition)) {
+      return unsupported("a recursive zero-arity definition");
     }
+    const compiled = compileForCache(
+      () =>
+        cached(
+          markCostly(
+            compile(definition.body, {
+              scope: undefined,
+              isPrimed: context.isPrimed,
+              isInit: context.isInit,
+              canPrint: context.canPrint,
+              expanding: { definition, outer: context.expanding },
+            }),
+          ),
+        ),
+      (dropped) => dropDefinition(definition, index, dropped),
+    );
+    const entries = definitionCache.get(definition) ?? [];
+    entries[index] = compiled;
+    definitionCache.set(definition, entries);
+    return compiled;
   };
 
   const dropDefinition = (definition: Definition, index: number, compiled: Compiled) => {
@@ -1334,7 +1345,11 @@ export const createCompiler = (environment: Environment): Compiler => {
         const nowEvaluate = now.evaluate;
         const nextEvaluate = next.evaluate;
         return leaf(
-          () => bool(equals(nextEvaluate(), nowEvaluate())),
+          () => {
+            // TLC evaluates the current state's side first (Tool.evalAppl's OPCODE_unchanged).
+            const value = nowEvaluate();
+            return bool(equals(value, nextEvaluate()));
+          },
           mergeFootprints(now.footprint, next.footprint),
         );
       }
@@ -1587,24 +1602,23 @@ export const createCompiler = (environment: Environment): Compiler => {
     const target = environment.substitutions.get(name) ?? name;
     const definition = environment.definitions.get(target);
     if (definition?.kind === "Operator") {
-      if (definition.isRecursive || expanding.has(definition)) {
+      if (definition.isRecursive || isExpanding(context.expanding, definition)) {
         return compileRecursiveCall(definition, expression.args, context);
       }
-      expanding.add(definition);
-      try {
-        const callee = bindArguments(definition.params, expression.args, context, {
-          scope: undefined,
-          isPrimed: context.isPrimed,
-          isInit: context.isInit,
-          canPrint: context.canPrint,
-        });
-        return cached(compile(definition.body, callee));
-      } finally {
-        expanding.delete(definition);
-      }
+      const callee = bindArguments(definition.params, expression.args, context, {
+        scope: undefined,
+        isPrimed: context.isPrimed,
+        isInit: context.isInit,
+        canPrint: context.canPrint,
+        expanding: { definition, outer: context.expanding },
+      });
+      return cached(compile(definition.body, callee));
     }
     if (definition) return unsupported("applying a function definition as an operator");
     const builtin = environment.builtins.get(target);
+    // A configuration may substitute a value such as FALSE for an operator with parameters, and
+    // TLC then takes the value, without evaluating the arguments (Tool.evalAppl).
+    if (builtin?.arity === 0) return compileNullaryBuiltin(target, builtin);
     if (builtin) return compileBuiltin(target, builtin, expression, context);
     const binding = lookup(context.scope, name);
     if (binding?.kind === "operator")
@@ -1685,10 +1699,16 @@ export const createCompiler = (environment: Environment): Compiler => {
       definition.params.forEach((param, index) => {
         scope = bind(scope, param.name, { kind: "slot", slot: slots[index] });
       });
-      if (!local) expanding.add(definition as OperatorDefinition);
       const read = new Set<FixedPoint>();
       try {
-        const bodyContext = { scope, isPrimed, isInit: context.isInit };
+        const bodyContext = {
+          scope,
+          isPrimed,
+          isInit: context.isInit,
+          expanding: local
+            ? local.context.expanding
+            : { definition: definition as OperatorDefinition, outer: context.expanding },
+        };
         const compileBody = () => {
           created.slotStart = slotCount;
           const body = tracking(read, () => compile(definition.body, bodyContext));
@@ -1716,8 +1736,6 @@ export const createCompiler = (environment: Environment): Compiler => {
         if (entries[index] === created) delete entries[index];
         dropDependents(created.fixedPoint);
         throw error;
-      } finally {
-        if (!local) expanding.delete(definition as OperatorDefinition);
       }
       created.fixedPoint.isSettled = true;
       created.fixedPoint.dependents = [];
@@ -1808,6 +1826,7 @@ export const createCompiler = (environment: Environment): Compiler => {
                 scope: undefined,
                 isPrimed: context.isPrimed,
                 isInit: context.isInit,
+                expanding: context.expanding,
               }),
             ),
           ),
@@ -1890,7 +1909,12 @@ export const createCompiler = (environment: Environment): Compiler => {
     if (definition.bounds.length !== 1 || bound.pattern.kind !== "Name") {
       return unsupported("a recursive function of several arguments");
     }
-    const outer = { scope: baseScope, isPrimed: context.isPrimed, isInit: context.isInit };
+    const outer = {
+      scope: baseScope,
+      isPrimed: context.isPrimed,
+      isInit: context.isInit,
+      expanding: context.expanding,
+    };
     const slot = allocateSlot();
     const read = new Set<FixedPoint>();
     const record: RecursiveFunction = {
@@ -3032,10 +3056,14 @@ export const createCompiler = (environment: Environment): Compiler => {
         return {
           ...unary(base, (set) => powerSet(expectSet(set)), true),
           isNormalized: false,
-          reference: combineReferences([base], ([baseReference]) => () => ({
-            kind: "Subset",
-            base: baseReference(),
-          })),
+          // TLC enumerates SUBSET S in the normalized order of S's elements, whatever S's own
+          // order (SubsetValue.elementsNormalized), so S's value does where S has no reference.
+          reference:
+            combineReferences([base], ([baseReference]) => () => ({
+              kind: "Subset",
+              base: baseReference(),
+            })) ??
+            ((evaluate) => () => ({ kind: "Subset", base: toValue(evaluate()) }))(base.evaluate),
           parts: partsOf(base),
           member: ((baseMember, baseParts) => (element: number) => {
             runParts(baseParts);
@@ -3491,6 +3519,7 @@ export const createCompiler = (environment: Environment): Compiler => {
             isPrimed: context.isPrimed,
             isInit: context.isInit,
             canPrint: context.canPrint,
+            expanding: context.expanding,
           },
           name: definition.name,
         };
@@ -3526,6 +3555,7 @@ export const createCompiler = (environment: Environment): Compiler => {
           isPrimed: context.isPrimed,
           isInit: context.isInit,
           canPrint: context.canPrint,
+          expanding: context.expanding,
         }),
         name: definition.name,
       };
@@ -3667,6 +3697,7 @@ export const createCompiler = (environment: Environment): Compiler => {
         scope: undefined,
         isPrimed: context.isPrimed,
         isInit: context.isInit,
+        expanding: context.expanding,
       }),
     }),
     resolveAction,

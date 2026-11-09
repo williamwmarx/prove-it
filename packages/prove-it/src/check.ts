@@ -551,6 +551,36 @@ const searchStates = (
     findAssumptionViolation(specification.assumptions, environment);
   if (!search) {
     runtime.isStarted = true;
+    // The engine IR of a spec without variables, for the native binary: its initial predicate and
+    // next-state relation are FALSE, so it finds no state, as TLC does.
+    if (isIrDumped()) {
+      const noBehavior: Expression = {
+        kind: "Identifier",
+        name: "FALSE",
+        location: { line: 0, column: 0 },
+      };
+      const outcome = lowerToIr({
+        config,
+        environment,
+        spec: { init: noBehavior, next: noBehavior, scope: undefined },
+        traceActions: [],
+        isWarningEnabled: environment.runtime.isWarningEnabled,
+        tlcOrder: [],
+        properties: {
+          invariants: [],
+          invariantNames: [],
+          actionProperties: [],
+          initialPredicates: [],
+        },
+        symmetry: undefined,
+        isRecordingGraph: false,
+        version: options.version,
+        atoms: [],
+        liveFormula: undefined,
+        liveProperties: [],
+      });
+      if ("ir" in outcome) writeDebugBytes("PROVE_IT_IR_DUMP", outcome.ir);
+    }
     const assumptionViolation = findViolatedAssumption();
     if (assumptionViolation) return createResult("assumption-violation", assumptionViolation);
     // TLC computes the initial states of a spec without variables, of which there are none.
