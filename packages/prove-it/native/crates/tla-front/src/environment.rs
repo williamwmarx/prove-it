@@ -81,6 +81,34 @@ pub struct Environment {
     pub startup_definitions: Vec<Rc<Definition>>,
     /// The assumptions of the root module and the modules it extends, an extended module's first.
     pub assumptions: Vec<Rc<Assumption>>,
+    /// The resolution tables SANY's level analysis reads.
+    pub tables: Rc<Tables>,
+}
+
+impl Environment {
+    /// `createLevelAnalyzer` over the model: its assigned constants, and its variables with the
+    /// builtins of `state_builtins` the spec has.
+    pub fn create_level_analyzer(&self, state_builtins: &[&str]) -> LevelAnalyzer<'_> {
+        LevelAnalyzer::new(
+            LevelContext {
+                constants: self.constants.keys().cloned().collect(),
+                variables: self
+                    .variables
+                    .iter()
+                    .cloned()
+                    .chain(
+                        state_builtins
+                            .iter()
+                            .map(|name| Name::from(*name))
+                            .filter(|name| self.builtins.contains_key(name)),
+                    )
+                    .collect(),
+                get_definition: Box::new(|name| get_definition(name, self).cloned()),
+                get_qualified_name: Box::new(|_| None),
+            },
+            &self.tables,
+        )
+    }
 }
 
 /// The name and location TLC gives an action that applies a definition an INSTANCE with
@@ -2269,6 +2297,7 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
     let environment = Environment {
         startup_definitions,
         assumptions,
+        tables: linker.tables.clone(),
         definitions,
         builtins,
         substitutions,
@@ -2287,32 +2316,14 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
     // Java code overrides with a minimum level as state-level, so the analyzer takes them for
     // variables.
     {
-        let analyzer = LevelAnalyzer::new(
-            LevelContext {
-                constants: environment.constants.keys().cloned().collect(),
-                variables: environment
-                    .variables
-                    .iter()
-                    .cloned()
-                    .chain(
-                        ["TLCGet", "Trace", "CounterExample"]
-                            .into_iter()
-                            .map(Name::from)
-                            .filter(|name| environment.builtins.contains_key(name)),
-                    )
-                    .collect(),
-                get_definition: Box::new(|name| get_definition(name, &environment).cloned()),
-                get_qualified_name: Box::new(|_| None),
-            },
-            &linker.tables,
-        );
+        let analyzer = environment.create_level_analyzer(&["TLCGet", "Trace", "CounterExample"]);
         let ranks = FastMap::default();
-        let evaluator = Evaluator {
-            environment: &environment,
-            order: ValueOrder { ranks: &ranks },
-            version: options.version,
-            is_started: false,
-        };
+        let evaluator = Evaluator::new(
+            &environment,
+            ValueOrder { ranks: &ranks },
+            options.version,
+            false,
+        );
         for (name, target) in environment.substitutions.iter() {
             let Some(definition) = environment.definitions.get(target) else {
                 continue;
