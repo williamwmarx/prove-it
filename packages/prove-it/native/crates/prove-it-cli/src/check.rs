@@ -289,6 +289,7 @@ struct Relay<'ir> {
     is_startup_printed: bool,
     ir: &'ir tla_ir::Ir,
     is_tool: bool,
+    workers: usize,
     /// What the substitutes and constant definitions printed as the store words it, where it
     /// does, until `startup_done`.
     startup_worded: Option<Vec<Option<String>>>,
@@ -387,7 +388,10 @@ impl Reporter for Relay<'_> {
     // search's thread, with its stack.
     fn check_assumption(&mut self, position: u32) -> Result<Delegated, String> {
         let checked = Rebuilder::new(self.ir)
-            .and_then(|mut rebuilder| rebuilder.check_assumption(position, self.is_tool))
+            .and_then(|mut rebuilder| {
+                rebuilder.set_workers(self.workers);
+                rebuilder.check_assumption(position, self.is_tool)
+            })
             .map_err(|Unsupported(reason)| format!("checking an assumption again: {reason}"))?;
         if self.is_startup_printed {
             for print in &checked.printed {
@@ -584,6 +588,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
         ),
         &java.libraries,
         printer.is_tool,
+        seed,
     ) {
         Ok(Read::Model(front)) => front,
         Ok(Read::Failed(failure)) => return print_failed_front(printer, &failure, start),
@@ -600,7 +605,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
             printer.raw(output);
             false
         }
-        Output::Native { sany } => {
+        Output::Native { sany, .. } => {
             if is_trace_recorded(args) {
                 return report_not_native(
                     printer,
@@ -666,6 +671,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                     is_startup_printed,
                     ir,
                     is_tool,
+                    workers,
                     startup_worded: Some(Vec::new()),
                     startup_texts: None,
                 };
@@ -846,12 +852,13 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
             return report_not_native(printer, &format!("the engine declined: {reason}"));
         }
         SearchOutcome::AssumptionFailed { position } => {
-            return print_assumption_failure(printer, &ir, position, start).unwrap_or_else(|why| {
-                report_not_native(
-                    printer,
-                    &format!("an assumption that fails to evaluate: {why}"),
-                )
-            });
+            return print_assumption_failure(printer, &ir, position, workers, start)
+                .unwrap_or_else(|why| {
+                    report_not_native(
+                        printer,
+                        &format!("an assumption that fails to evaluate: {why}"),
+                    )
+                });
         }
         // TLC rejects the value of a constant definition the configuration names as it reads
         // the configuration.
