@@ -128,3 +128,16 @@ what each milestone built and measured, in the order they landed.
 - `front-differential.ts model` links each corpus model, a `.cfg` file and the spec beside it:
   1,092 of 1,111 match and none differ; with `--mutate 400` (variants of the configurations),
   2,682 of 2,711. Verification's Front End job runs it.
+
+## F8 slice 2 as built (nodes and definitions)
+
+- `lower` ports the core of `lowerToIr` into `tla_ir`'s structures: each node in prefix order as
+  the blob holds it, a node met again as a reference, LET definitions inline and the others in
+  the order the model reaches them, names with their resolutions and caches, builtins, and texts
+  in the order of their first use after the ranked ones. A constant's value (slice 3) and a
+  startup value (the startup phase) aren't written yet.
+- `front-differential.ts ir` lowers each module's environment, on both sides, as a model whose
+  Init and Next are a placeholder and whose configuration names every definition by key as an
+  invariant, with no text ranked, and compares the IRs byte for byte: 2,331 of 2,356 modules
+  match and none differ; with `--mutate 400`, 3,931 of 3,956. Verification's Front End job runs
+  it. Slices 3 and 4 add TLC's string order, the values and the model's own roots.
