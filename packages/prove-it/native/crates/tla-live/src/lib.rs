@@ -74,6 +74,88 @@ impl Graph<'_> {
     }
 }
 
+/// Where the checker asks an atom: of a state, of the step at a position of the graph's edges, from
+/// its state, or of a state's stuttering step.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Slot {
+    State(u32),
+    Step { state: u32, edge: u32 },
+    Stutter(u32),
+}
+
+/// The engine's answers to the atoms, each asked as TLC evaluates it, with TLC's diameter then.
+pub trait Answers {
+    /// The atom's answer, or why the engine doesn't answer it.
+    fn answer(&self, atom: u32, slot: Slot, diameter: u32) -> Result<bool, Declined>;
+
+    /// Where the answer is among the atom's, as the evaluations logged and an unanswered atom
+    /// name it.
+    fn position(&self, atom: u32, slot: Slot, diameter: u32) -> usize;
+
+    /// Whether the ENABLED atom of an action's fairness is known false of the state, where the
+    /// checker asks about no step from it.
+    fn is_disabled(&self, _enabled: u32, _state: u32) -> bool {
+        false
+    }
+}
+
+/// What the checker reads as it adds a state: the search's graph so far, and the atoms' answers.
+#[derive(Clone, Copy)]
+pub struct Source<'s> {
+    pub graph: &'s Graph<'s>,
+    pub answers: &'s dyn Answers,
+}
+
+/// The answers of a search that is over, one table per atom (`None` for an atom the engine doesn't
+/// answer): a state predicate's or ENABLED's answer per state, an action's per step and then per
+/// state for its stuttering step, 0 or 1, and for an atom that reads TLCGet("diameter") the
+/// answers for each diameter one after another.
+struct Tables<'t> {
+    tables: &'t [Option<&'t [u8]>],
+    graph: &'t Graph<'t>,
+}
+
+impl Answers for Tables<'_> {
+    fn answer(&self, atom: u32, slot: Slot, diameter: u32) -> Result<bool, Declined> {
+        let position = self.position(atom, slot, diameter);
+        let answer = self
+            .tables
+            .get(atom as usize)
+            .copied()
+            .map(|table| table.map(|answers| answers.get(position).copied()));
+        match answer {
+            Some(Some(Some(0))) => Ok(false),
+            Some(Some(Some(1))) => Ok(true),
+            Some(Some(_)) => Err(Declined::from(
+                "a predicate the engine leaves to the interpreter",
+            )),
+            _ => Err(Declined::from("an atom the engine doesn't answer")),
+        }
+    }
+
+    fn position(&self, atom: u32, slot: Slot, diameter: u32) -> usize {
+        let position = match slot {
+            Slot::State(state) => state as usize,
+            Slot::Step { edge, .. } => edge as usize,
+            Slot::Stutter(state) => self.graph.edges.len() + state as usize,
+        };
+        match &self.graph.diameters {
+            Some(diameters) if diameters.atoms.get(atom as usize) == Some(&true) => {
+                let length = self.tables[atom as usize].map_or(0, <[u8]>::len);
+                length / diameters.last as usize * (diameter as usize - 1) + position
+            }
+            _ => position,
+        }
+    }
+
+    fn is_disabled(&self, enabled: u32, state: u32) -> bool {
+        matches!(
+            self.tables.get(enabled as usize),
+            Some(Some(table)) if table.get(state as usize) == Some(&0)
+        )
+    }
+}
+
 /// What the check found, and how many solutions of the formula TLC checks, which it calls branches,
 /// unless it declined before it knew, with the evaluations of the atoms where they have effects.
 #[derive(Debug, PartialEq, Eq)]
@@ -130,9 +212,14 @@ pub fn find_accepted(
         .iter()
         .map(|property| read_formula(&mut terms, property))
         .collect::<Result<Vec<_>, _>>()?;
-    let mut checker = checker::Checker::new(terms, root, graph, tables)?;
-    checker::find_accepted(&mut checker)?
-        .map(|(state, path)| checker::accepted(&checker, &properties, state, path))
+    let mut checker = checker::Checker::new(terms, root)?;
+    let answers = Tables { tables, graph };
+    let source = Source {
+        graph,
+        answers: &answers,
+    };
+    checker::find_accepted(&mut checker, &source)?
+        .map(|(state, path)| checker::accepted(&checker, &source, &properties, state, path))
         .transpose()
 }
 
@@ -146,8 +233,15 @@ pub fn find_unanswered(
 ) -> Option<Unanswered> {
     let mut terms = Terms::default();
     let root = read_formula(&mut terms, formula).ok()?;
-    let mut checker = checker::Checker::new(terms, root, graph, tables).ok()?;
-    checker::find_unanswered(&mut checker)
+    let mut checker = checker::Checker::new(terms, root).ok()?;
+    let answers = Tables { tables, graph };
+    checker::find_unanswered(
+        &mut checker,
+        &Source {
+            graph,
+            answers: &answers,
+        },
+    )
 }
 
 /// What the check found.
@@ -393,12 +487,17 @@ pub fn check(
             .iter()
             .map(|property| read_formula(&mut terms, property))
             .collect::<Result<Vec<_>, _>>()?;
-        let mut checker = checker::Checker::new(terms, root, graph, tables)?;
+        let mut checker = checker::Checker::new(terms, root)?;
         branches = Some(checker.branches());
         if is_effectful {
             checker.log_effects();
         }
-        let verdict = checker::check(&mut checker, &properties, &mut events);
+        let answers = Tables { tables, graph };
+        let source = Source {
+            graph,
+            answers: &answers,
+        };
+        let verdict = checker::check(&mut checker, &source, &properties, &mut events);
         unanswered = verdict.is_err().then(|| checker.unanswered.get()).flatten();
         verdict
     };
