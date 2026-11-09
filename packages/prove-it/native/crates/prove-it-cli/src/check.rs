@@ -992,6 +992,17 @@ fn print_violation(
             ),
             SAFETY_VIOLATION,
         ),
+        ViolationKind::InitialPredicate(position) => (
+            code::PROPERTY_VIOLATED_INITIAL,
+            format!(
+                "Property {} is violated by the initial state:",
+                ir.texts[*model
+                    .initial_predicate_names
+                    .get(position)
+                    .ok_or(NOT_IN_IR)? as usize]
+            ),
+            LIVENESS_VIOLATION,
+        ),
         ViolationKind::Invariant(owner) => (
             code::INVARIANT_VIOLATED_BEHAVIOR,
             format!("Invariant {} is violated.", invariant_name(owner)?),
@@ -1080,9 +1091,10 @@ fn print_violation(
         queued: counts.queued,
         depth: counts.depth,
     };
-    // TLC prints the initial state that violates an invariant in the same message, and no
-    // statistics, since it checks the initial states before it searches.
-    if let ViolationKind::InitialInvariant(_) = violation.kind {
+    // TLC prints the initial state that violates an invariant or a property in the same message,
+    // and no statistics, since it checks the initial states before it searches.
+    if let ViolationKind::InitialInvariant(_) | ViolationKind::InitialPredicate(_) = violation.kind
+    {
         let state = &trace.states.first().ok_or(NOT_IN_IR)?.text;
         printer.print(code, Level::Error, &format!("{text}\n{state}"));
         print_postcondition_failure(printer, ir, trace.postconditions.as_ref());
