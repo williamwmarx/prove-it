@@ -611,3 +611,20 @@ fn reports_an_initial_state_tlc_fails_to_print() {
     );
     std::fs::remove_dir_all(directory).expect("removed");
 }
+
+const ETCDRAFT_IR: &[u8] =
+    include_bytes!("../../../../tests/conformance/ir/etcd-raft/tla/etcdraft.ir");
+
+#[test]
+fn rebuilds_a_trace_of_bags_as_tlc_builds_them() {
+    let (output, directory) = run_golden("bags", ETCDRAFT_IR, "etcdraft", "", &[]);
+    let text = stdout(&output);
+    // The messages are bags, which (+) and (-) build and SetToBag starts, and applying the empty
+    // bag fails as applying TLC's empty function does.
+    assert_eq!(output.status.code(), Some(75), "{text}");
+    assert!(
+        text.contains(include_str!("etcdraft-failure.txt")),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
