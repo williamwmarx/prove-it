@@ -4,39 +4,61 @@
 use std::rc::Rc;
 
 use crate::ast::*;
+use crate::config::ConfigValue;
 use crate::dependencies::{DefinitionFacts, Level};
 use crate::environment::Environment;
 use crate::instances::map_children;
 use crate::resolve::Tables;
 
-/// `Scope`: a name bound to an expression or an operator, in front of the scope it extends. The
-/// front end evaluates nothing, so it holds no value.
+/// `Scope`: a name bound to a value, an expression or an operator, in front of the scope it
+/// extends. The front end evaluates nothing, so a value is a literal or a configuration's.
 pub struct Scope {
     pub name: Name,
     pub binding: Binding,
     pub parent: Option<Rc<Scope>>,
 }
 
+/// The scope a thunk or a closure is read in: a LET definition's is the node that binds it.
+#[derive(Clone)]
+pub enum ScopeOf {
+    Own,
+    Other(Option<Rc<Scope>>),
+}
+
 pub enum Binding {
-    /// `Thunk`: an expression read in its own scope.
+    Value(ConfigValue),
+    /// `Thunk`: an expression read in a scope.
     Thunk {
         expression: Expr,
-        scope: Option<Rc<Scope>>,
+        scope: ScopeOf,
     },
     /// An operator `Closure`.
     Closure {
         name: Name,
         params: Vec<OperatorParam>,
         body: Expr,
-        scope: Option<Rc<Scope>>,
+        scope: ScopeOf,
     },
 }
 
-/// `lookupScope`.
-pub fn lookup_scope<'a>(mut scope: Option<&'a Rc<Scope>>, name: &str) -> Option<&'a Binding> {
+impl ScopeOf {
+    /// The scope this reads, from the node whose binding holds it.
+    pub fn resolve(&self, node: &Rc<Scope>) -> Option<Rc<Scope>> {
+        match self {
+            ScopeOf::Own => Some(node.clone()),
+            ScopeOf::Other(scope) => scope.clone(),
+        }
+    }
+}
+
+/// `lookupScope`: the binding of a name, with the node that holds it.
+pub fn lookup_scope<'a>(
+    mut scope: Option<&'a Rc<Scope>>,
+    name: &str,
+) -> Option<(&'a Rc<Scope>, &'a Binding)> {
     while let Some(current) = scope {
         if &*current.name == name {
-            return Some(&current.binding);
+            return Some((current, &current.binding));
         }
         scope = current.parent.as_ref();
     }
@@ -62,12 +84,18 @@ pub fn get_level(
     shadowed: &[Name],
 ) -> Level {
     let get_binding_level = |name: &str| {
-        Some(match lookup_scope(scope, name)? {
-            Binding::Thunk { expression, scope } => {
-                get_level(expression, scope.as_ref(), environment, facts, &[])
-            }
+        let (node, binding) = lookup_scope(scope, name)?;
+        Some(match binding {
+            Binding::Value(_) => Level::Constant,
+            Binding::Thunk { expression, scope } => get_level(
+                expression,
+                scope.resolve(node).as_ref(),
+                environment,
+                facts,
+                &[],
+            ),
             Binding::Closure { body, scope, .. } => {
-                get_level(body, scope.as_ref(), environment, facts, &[])
+                get_level(body, scope.resolve(node).as_ref(), environment, facts, &[])
             }
         })
     };
