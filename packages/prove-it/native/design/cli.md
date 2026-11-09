@@ -149,8 +149,9 @@ the implementing PR, with the front end's review.
     last state alone;
   - 2267, then the statistics and exit code 13.
 - Still not native:
-  - a stuttering counterexample TLC warns of (2257, 2259), which names the definition of the
-    specification;
+  - a stuttering counterexample TLC warns of under a SPECIFICATION (2259), which names where the
+    specification is defined. Without one, the binary prints TLC's 2257 warning after the
+    `Stuttering` line;
   - a lasso whose cycle steps back to an earlier state in a spec that prints, since TLC prints as it
     finds that step's action;
   - an accepting node, which TLC reports as it builds the behavior graph.
