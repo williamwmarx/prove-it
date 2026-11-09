@@ -188,7 +188,16 @@ fn cores() -> usize {
 
 /// TLC.printStartupBanner, with what runs Prove It in place of the JVM.
 fn print_startup_banner(printer: &mut Printer, seed: i64, workers: usize) {
-    let system = read_trimmed("/proc/sys/kernel/ostype").unwrap_or_else(|| "Linux".into());
+    // Node's os.type(): the kernel's name.
+    let system = read_trimmed("/proc/sys/kernel/ostype").unwrap_or_else(|| {
+        match std::env::consts::OS {
+            "macos" => "Darwin",
+            "windows" => "Windows_NT",
+            "linux" => "Linux",
+            other => other,
+        }
+        .into()
+    });
     let release = read_trimmed("/proc/sys/kernel/osrelease").unwrap_or_default();
     let arch = match std::env::consts::ARCH {
         "x86_64" => "x64",
