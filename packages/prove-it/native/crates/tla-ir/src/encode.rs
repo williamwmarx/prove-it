@@ -141,7 +141,7 @@ fn encode_here(ir: &Ir) -> Vec<u8> {
     for atom in &model.atoms {
         let (kind, unchanged, actions) = match &atom.kind {
             AtomKind::State => (code::ATOM_STATE, None, &EnabledActions::Unknown),
-            AtomKind::Action { unchanged } => {
+            AtomKind::Action { unchanged, .. } => {
                 (code::ATOM_ACTION, *unchanged, &EnabledActions::Unknown)
             }
             AtomKind::Enabled { actions } => (code::ATOM_ENABLED, None, actions),
@@ -159,6 +159,9 @@ fn encode_here(ir: &Ir) -> Vec<u8> {
                 words.push(positions.len() as i32);
                 words.extend(positions);
             }
+        }
+        if let AtomKind::Action { enabled, .. } = &atom.kind {
+            words.push(optional(*enabled));
         }
     }
     words.push(ir.definitions.len() as i32);

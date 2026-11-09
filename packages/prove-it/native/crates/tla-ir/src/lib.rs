@@ -32,7 +32,7 @@ pub use decode::{DecodeError, decode};
 pub use encode::encode;
 
 /// The version of the layout, `IR_VERSION` in `ir.ts`.
-pub const IR_VERSION: u32 = 1;
+pub const IR_VERSION: u32 = 2;
 
 /// "PIIR" as a little-endian word.
 pub const MAGIC: u32 = 0x5249_4950;
@@ -176,8 +176,14 @@ pub struct ActionProperty {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AtomKind {
     State,
-    Action { unchanged: Option<NodeId> },
-    Enabled { actions: EnabledActions },
+    /// An action, with the atom of its fairness's ENABLED, which the checker asks first.
+    Action {
+        unchanged: Option<NodeId>,
+        enabled: Option<Index>,
+    },
+    Enabled {
+        actions: EnabledActions,
+    },
 }
 
 /// The positions of TLC's actions an ENABLED atom splits into.

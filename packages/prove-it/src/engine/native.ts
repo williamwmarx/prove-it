@@ -23,7 +23,17 @@ import type { IrOutcome } from "./ir";
 import type { LiveOracle } from "./live";
 import type { EngineCheckpoint, EngineInput, EngineResult } from "./search";
 import { getEngineAddon, getEnvironmentFlag, getStopAt, reportEngine } from "./settings";
-import { Bailout, FALSE, functionOf, int, model, resetStore, setOf, str, TRUE } from "./store";
+import {
+  Bailout,
+  FALSE,
+  functionOfSorted,
+  int,
+  model,
+  resetStore,
+  setOfSorted,
+  str,
+  TRUE,
+} from "./store";
 
 // The addon's test hooks into its store, which native-store.ts calls (binding/store.rs).
 export interface NativeStoreHooks {
@@ -89,10 +99,13 @@ interface NativeCheckpoint {
   counts: Float64Array;
   outDegrees?: Float64Array;
   parents?: Int32Array;
+  // The values of the states, each once, and each state's values by position among them.
   words?: Int32Array;
   strings?: string[];
+  states?: Int32Array;
   keyWords?: Int32Array;
   keyStrings?: string[];
+  keyStates?: Int32Array;
   keyWidth?: number;
   graph?: NativeGraph;
 }
@@ -114,7 +127,7 @@ export type NativeOutcome =
   | ({ status: "stopped"; reason: string } & NativeCheckpoint);
 
 // The contract between this loader and the addon, ABI_VERSION in its lib.rs.
-const ABI_VERSION = 2;
+const ABI_VERSION = 3;
 
 export const ADDON_FILE = "prove-it-engine.node";
 
@@ -229,18 +242,25 @@ export const checkNatively = (
 };
 
 // The states the native engine found, as ids of this process's engine store, which the
-// interpreter's hand-over reads.
-// The states interned straight from their encoding, with the ids fromValue gives each value, but
-// without building it: a search can hand over millions of states.
-const decodeStates = (words: Int32Array, strings: string[], width: number, count: number) => {
-  const ids = new Int32Array(count * width);
+// interpreter's hand-over reads. The checkpoint holds each value once, after its parts, which are
+// positions of values before it, and each state as the positions of its values (SharedStates in
+// transfer.rs), so this interns each value with the id fromValue gives it, in the order decoding
+// each state's values would, but neither builds it nor reads it twice: a search can hand over
+// millions of states. The parts come from the native store, a set's elements and a function's
+// keys in TLC's order, so they are interned as they are, through scratch arrays.
+const decodeStates = (words: Int32Array, strings: string[], positions: Int32Array) => {
+  // Each value takes a word at least.
+  const values = new Int32Array(words.length);
+  const scratch = { keys: new Int32Array(64), values: new Int32Array(64) };
+  let count = 0;
   let cursor = 0;
-  const decodeAll = (length: number) => {
-    const decoded: number[] = new Array(length);
-    for (let index = 0; index < length; index++) decoded[index] = decodeValue();
-    return decoded;
+  const readParts = (target: "keys" | "values", length: number) => {
+    if (scratch[target].length < length) scratch[target] = new Int32Array(2 * length);
+    const parts = scratch[target];
+    for (let index = 0; index < length; index++) parts[index] = values[words[cursor++]];
+    return parts;
   };
-  const decodeValue = (): number => {
+  const readValue = (): number => {
     const tag = words[cursor++];
     switch (tag) {
       case FALSE_TAG:
@@ -253,26 +273,29 @@ const decodeStates = (words: Int32Array, strings: string[], width: number, count
         return str(strings[words[cursor++]]);
       case MODEL_VALUE_TAG:
         return model(strings[words[cursor++]]);
-      case SET_TAG:
-        return setOf(decodeAll(words[cursor++]));
+      case SET_TAG: {
+        const length = words[cursor++];
+        return setOfSorted(readParts("keys", length), length);
+      }
       case INTERVAL_FUNCTION_TAG: {
         cursor++;
         const low = words[cursor++];
         const length = words[cursor++];
-        const keys: number[] = new Array(length);
-        for (let index = 0; index < length; index++) keys[index] = int(low + index);
-        return functionOf(keys, decodeAll(length));
+        if (scratch.keys.length < length) scratch.keys = new Int32Array(2 * length);
+        for (let index = 0; index < length; index++) scratch.keys[index] = int(low + index);
+        return functionOfSorted(scratch.keys, readParts("values", length), length);
       }
       default: {
         if (tag !== FUNCTION_TAG) throw new EngineInvariantError(`a transfer tag ${tag}`);
         cursor++;
-        const keys = decodeAll(words[cursor++]);
-        return functionOf(keys, decodeAll(keys.length));
+        const length = words[cursor++];
+        const keys = readParts("keys", length);
+        return functionOfSorted(keys, readParts("values", length), length);
       }
     }
   };
-  for (let index = 0; index < count * width; index++) ids[index] = decodeValue();
-  return ids;
+  while (cursor < words.length) values[count++] = readValue();
+  return Int32Array.from(positions, (position) => values[position]);
 };
 
 // Answers the liveness checker from the native engine's tables, as live.ts's oracle answers it
@@ -285,22 +308,26 @@ const createNativeOracle = (
 ): LiveOracle => {
   const positions = new Map(atoms.map((atom, position) => [atom, position]));
   const edgeCount = graph.edges.length;
-  const reported = new Set<number>();
+  const reported = new Set<number | string>();
   const report = { isReported: false };
+  // Reports, once each, why the interpreter answers a question.
+  const leave = (reason: number | string) => {
+    if (!reported.has(reason)) {
+      reported.add(reason);
+      reportEngine(
+        `leaves a temporal predicate to the interpreter: ${typeof reason === "string" ? reason : graph.unknown[reason]}`,
+      );
+    }
+    return undefined;
+  };
   const toAnswer = (answer: number | undefined) =>
     answer === 1 ? true : answer === 0 ? false : undefined;
   return (expression, state, next) => {
     const position = positions.get(expression);
-    const index = position === undefined ? undefined : getIndex(state);
-    if (position === undefined || index === undefined) return undefined;
-    const unknown = graph.unknown[position];
-    if (unknown !== "") {
-      if (!reported.has(position)) {
-        reported.add(position);
-        reportEngine(`leaves a temporal predicate to the interpreter: ${unknown}`);
-      }
-      return undefined;
-    }
+    if (position === undefined) return leave("not among the atoms");
+    const index = getIndex(state);
+    if (index === undefined) return undefined;
+    if (graph.unknown[position] !== "") return leave(position);
     const table = graph.tables[position];
     if (expression.kind !== "Action") {
       const isFromSteps = graph.fromSteps[position] === 1;
@@ -322,11 +349,11 @@ const createNativeOracle = (
     const nextIndex = next && getIndex(next);
     if (nextIndex === undefined) return undefined;
     if (nextIndex === index) return toAnswer(table[edgeCount + index]);
-    if (index >= graph.expanded) return undefined;
+    if (index >= graph.expanded) return leave("a step from a state the search didn't expand");
     for (let edge = edgeOffsets[index]; edge < edgeOffsets[index + 1]; edge++) {
       if (graph.edges[edge] === nextIndex) return toAnswer(table[edge]);
     }
-    return undefined;
+    return leave("a step the search didn't take");
   };
 };
 
@@ -337,12 +364,14 @@ const toCheckpoint = (
   width: number,
   atoms: LiveExpression[],
 ): EngineCheckpoint | undefined => {
-  if (!native.parents || !native.words || !native.strings || !native.outDegrees) return undefined;
+  if (!native.parents || !native.words || !native.strings || !native.states || !native.outDegrees) {
+    return undefined;
+  }
   resetStore();
   resetFingerprints();
   const counts = native.counts;
   const count = counts[1];
-  const states = decodeStates(native.words, native.strings, width, count);
+  const states = decodeStates(native.words, native.strings, native.states);
   const base = {
     expanding: counts[0],
     count,
@@ -375,7 +404,7 @@ const toCheckpoint = (
   const keys =
     keyWidth === undefined
       ? undefined
-      : decodeStates(native.keyWords!, native.keyStrings!, keyWidth, count);
+      : decodeStates(native.keyWords!, native.keyStrings!, native.keyStates!);
   const stored = keys ?? states;
   const storedWidth = keyWidth ?? width;
   // The index of each state's key, built when the interpreter first asks whether a successor is

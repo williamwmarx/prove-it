@@ -241,6 +241,9 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
         expect.stringMatching(/^\[engine\] found 8 states in \d+ ms; the interpreter checks/),
       );
       expect(lines).toContain("[engine] answers ENABLED from the steps its search took");
+      // The native engine answers every predicate, the action ones too, so the interpreter
+      // evaluates none.
+      expect(lines.filter((line) => line.includes("to the interpreter"))).toEqual([]);
       const stopped = await compareWithInterpreter(body, config, { PROVE_IT_STOP_AT: "3" });
       expect(stopped).toContainEqual(
         expect.stringMatching(/^\[engine\] native: stopped: stopped where PROVE_IT_STOP_AT asked/),

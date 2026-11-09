@@ -14,7 +14,8 @@
 // - the values: those of the constants, scopes and startup values, in transfer.ts's encoding, whose
 //   strings are indices into the texts;
 // - the model: Init, Next, TLC's actions, the configuration's names, the properties, the VIEW, the
-//   symmetry group, the settings, and the liveness checker's atoms;
+//   symmetry group, the settings, and the liveness checker's atoms, each action atom with the
+//   position of the ENABLED atom of its fairness, or -1;
 // - the definitions the model reaches, as the offsets of their records among the nodes;
 // - the nodes: expressions and definitions in prefix order, each its tag, its line and column, then
 //   its fields and children. A node met again is a reference to its first offset.
@@ -36,7 +37,7 @@ import type { EngineProperties, EngineSpec } from "./context";
 import type { NamedPermutation } from "./symmetry";
 
 // The version of the layout below, which the decoder checks. Any change to it changes this.
-export const IR_VERSION = 1;
+export const IR_VERSION = 2;
 
 // "PIIR" read as a little-endian word.
 const MAGIC = 0x52494950;
@@ -697,6 +698,7 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
   push(model, input.isRecordingGraph ? 1 : 0);
   push(model, input.version === undefined ? -1 : getText(input.version));
   push(model, input.atoms.length);
+  const atomPositions = new Map(input.atoms.map((entry, position) => [entry.atom, position]));
   for (const entry of input.atoms) {
     const atom = entry.atom;
     if (atom.kind === "State") {
@@ -723,6 +725,9 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
           : positions.length,
     );
     if (Array.isArray(positions)) for (const position of positions) push(model, position);
+    if (atom.kind === "Action") {
+      push(model, atom.enabled ? (atomPositions.get(atom.enabled) ?? -1) : -1);
+    }
   }
 
   // Definitions and scopes reach more of each, in the order they are first met.
