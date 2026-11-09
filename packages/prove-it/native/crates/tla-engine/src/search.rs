@@ -306,7 +306,8 @@ fn is_engine_limit(reason: &str) -> bool {
 
 // The reasons a search stops for that are failures TLC reports evaluating the model. Every other
 // reason is the engine's own limit, for the interpreter to take over from, so a model the engine
-// can't follow never reports a failure TLC doesn't.
+// can't follow never reports a failure TLC doesn't. Enumerating an infinite set is among the
+// limits: the engine enumerates some sets TLC keeps lazy.
 const TLC_FAILURES: &[&str] = &[
     "@@ of non-functions",
     "BagCardinality of a non-bag",
@@ -355,7 +356,6 @@ const TLC_FAILURES: &[&str] = &[
     "an IF condition that isn't a boolean",
     "an action quantified over a non-set",
     "an assertion failed",
-    "an enumerated infinite set",
     "an initial state that isn't complete",
     "an operator's table applied outside its rows",
     "applied a function outside its domain",
@@ -365,19 +365,7 @@ const TLC_FAILURES: &[&str] = &[
     "differently typed model values",
     "division by zero",
     "drew from a value that isn't a set",
-    "enumerated Int",
-    "enumerated Nat",
-    "enumerated STRING",
-    "enumerated Seq(S)",
-    "enumerated UNION of an infinite set",
-    "enumerated [D -> R] with D infinite",
-    "enumerated [D -> R] with R infinite",
-    "enumerated a filter of an infinite set",
     "enumerated a non-set",
-    "enumerated a product of an infinite set",
-    "enumerated a union with an infinite set",
-    "enumerated an infinite set",
-    "enumerated an operation on infinite sets",
     "equality of values TLC can't compare",
     "expected a bag",
     "expected a boolean",
@@ -386,7 +374,6 @@ const TLC_FAILURES: &[&str] = &[
     "expected a set",
     "expected an integer",
     "filtered a non-set",
-    "filtered an infinite set",
     "integer overflow",
     "mapped a non-set",
     "membership in a non-set",
@@ -3607,6 +3594,8 @@ mod tests {
         assert!(is_engine_limit("a power set too large to build"));
         assert!(!is_engine_limit("an assertion failed"));
         assert!(!is_engine_limit("a mistyped membership in Nat"));
+        // suite/test202's assumption, which TLC evaluates without enumerating Nat.
+        assert!(is_engine_limit("enumerated Nat"));
     }
 
     fn verified_states() -> States {

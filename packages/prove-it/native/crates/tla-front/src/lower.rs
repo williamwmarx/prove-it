@@ -906,6 +906,13 @@ impl<'a> Lowering<'a> {
             Some(liveness) => self.write_liveness(liveness)?,
             None => (Vec::new(), Vec::new(), Vec::new()),
         };
+        let definition = config
+            .specification
+            .as_deref()
+            .and_then(|name| crate::spec::get_definition(name, self.environment))
+            .cloned();
+        let specification =
+            definition.and_then(|definition| self.write_range(definition.location.range.as_ref()));
         let startup = self.write_startup(config)?;
         Ok(Model {
             init,
@@ -933,6 +940,7 @@ impl<'a> Lowering<'a> {
             atoms,
             live_formula,
             live_properties,
+            specification,
             startup,
             next_substitution: None,
             instance_actions: Vec::new(),
