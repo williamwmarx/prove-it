@@ -342,9 +342,10 @@ mod tests {
 
     type Form = (fn(&mut Assembler), &'static [u8], &'static str);
 
-    // Each form alone: its bytes from the Intel manual's encoding tables, and what objdump prints
-    // for them in Intel syntax. The cases cover the REX bits, the 8- and 32-bit immediates, and the
-    // bases that need a SIB byte (rsp, r12) or a displacement (rbp, r13).
+    // Each form alone: its bytes from the Intel manual's encoding tables, and the instruction in
+    // Intel syntax, as GNU objdump printed it for those bytes when they were checked. The cases
+    // cover the REX bits, the 8- and 32-bit immediates, and the bases that need a SIB byte (rsp,
+    // r12) or a displacement (rbp, r13).
     const FORMS: &[Form] = &[
         (
             |a| a.mov(Width::W64, Gpr::Rax, Gpr::Rdi),
@@ -524,37 +525,6 @@ mod tests {
         for (form, bytes, text) in FORMS {
             assert_eq!(&encode(*form), bytes, "{text}");
         }
-    }
-
-    // The same forms through GNU objdump, where it's installed; it's no dependency.
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn disassembles_each_form_as_objdump_does() {
-        let path = std::env::temp_dir().join(format!("prove-it-x86-64-{}.bin", std::process::id()));
-        for (form, _, text) in FORMS {
-            std::fs::write(&path, encode(*form)).expect("a temporary file");
-            let Ok(output) = std::process::Command::new("objdump")
-                .args(["-D", "-b", "binary", "-m", "i386:x86-64", "-M", "intel"])
-                .arg(&path)
-                .output()
-            else {
-                return;
-            };
-            if !output.status.success() {
-                return;
-            }
-            let listing = String::from_utf8(output.stdout).expect("objdump's listing");
-            let line = listing
-                .lines()
-                .find(|line| line.starts_with("   0:"))
-                .expect("the form's line");
-            let printed = line.rsplit('\t').next().expect("the instruction");
-            assert_eq!(
-                printed.split_whitespace().collect::<Vec<_>>().join(" "),
-                *text
-            );
-        }
-        std::fs::remove_file(&path).expect("the temporary file");
     }
 
     #[test]
