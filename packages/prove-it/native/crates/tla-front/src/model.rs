@@ -78,6 +78,7 @@ pub fn lower_model(
         environment: &environment,
         order: ValueOrder { ranks: &ranks },
         version,
+        is_started: true,
     };
     let properties = get_properties(&config, &environment, &facts, version, Some(&evaluator))?;
     // `getTlcOrder`: the variables in TLC's order of declarations.
@@ -97,6 +98,7 @@ pub fn lower_model(
             ranks: ranks.clone(),
         },
     );
+    lowering.evaluator = Some(&evaluator);
     let version_text = options.version.map(|version| match version {
         TlcVersion::V1_7_4 => "1.7.4",
         TlcVersion::Master => "master",

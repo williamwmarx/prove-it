@@ -358,3 +358,31 @@ initial predicate and the next-state relation, no properties, no liveness and an
 but with the startup section, so the binary still evaluates its assumptions and finds no initial
 state. `lower_model` does the same; the configuration errors of such a spec stay not yet. The
 TS side is `lowerConstantSpec`, which both the dump path and the model-full gate call.
+
+## Substitutes TLC evaluates at startup
+
+TLC evaluates a parameterless substitute for a declared constant at startup and rejects it only
+when that fails and the level bound `createLevelAnalyzer` computes is above constant, with TLCGet,
+Trace and CounterExample read as variables. `create_environment` runs the same analyzer from
+`levels.rs`, and evaluates such a substitute with the constant evaluator before TLC starts
+(`is_started: false`, with no string ranks). Two failures are TLC's:
+
+- a variable, which no state assigns: TLC's "is either undefined or not an operator";
+- TLCGet of a key TLC's model checker holds (diameter, generated, distinct, queue, stats, config),
+  which `TLCGetSet.TLCGetEval` reports as its own failure on master.
+
+Either becomes TLC's configuration error "substitutes constant C with non-constant D -
+specifically: …". Anything else the evaluator can't compute is still `NotYet`.
+
+## Constant parts of the liveness formula
+
+`live.rs` evaluates what `toLiveExpression` evaluates, with the constant evaluator:
+
+- a constant atom becomes TRUE or FALSE;
+- a quantifier whose bound sets are all constant is expanded over their bindings, in the order
+  `get_bindings` gives them, into a conjunction or disjunction of the body's conversions, or
+  TRUE or FALSE over no bindings;
+- an IF whose condition is a constant boolean converts only the branch it chooses.
+
+Where the evaluator fails, TLC's handling (an atom, or "cannot handle" with the failure's message)
+isn't followed yet, so it stays `NotYet`, as does a constant atom that isn't a boolean.

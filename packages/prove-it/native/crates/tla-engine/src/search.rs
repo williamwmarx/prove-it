@@ -298,36 +298,97 @@ pub enum ErrorSite {
 }
 
 // The stops that are the engine's own limits, not a failure TLC reports: what it doesn't
-// support, what it won't build, and what its search and printing can't reproduce.
+// support, what it won't build, what its search and printing can't reproduce, and the violations
+// the search reports otherwise.
 fn is_engine_limit(reason: &str) -> bool {
-    reason.starts_with("unsupported: ")
-        || reason.starts_with("printing where ")
-        || reason.contains("too large")
-        || [
-            "stopped where PROVE_IT_STOP_AT asked",
-            "recursion too deep",
-            "an action quantified over more bindings than the engine counts",
-            "drew from a set whose shape the engine forgets",
-            "ToString of a text the engine made unranked",
-            "a lazy set inside a value",
-            "an unknown lazy set",
-            "an unknown token",
-            "an integer token",
-            "a request too short",
-            "a step to a state the search didn't find",
-            "an order of strings the search ranked",
-            "an order of model values the search ranked",
-            "deadlock",
-            "an invariant violated",
-            "an invariant violated in an initial state",
-            "a property violated in an initial state",
-            "an action property violated",
-            OTHER_STEPS,
-            PERIODIC_LASSO,
-            crate::live::ENABLED_DIFFERS,
-        ]
-        .contains(&reason)
+    !TLC_FAILURES.contains(&reason)
 }
+
+// The reasons a search stops for that are failures TLC reports evaluating the model. Every other
+// reason is the engine's own limit, for the interpreter to take over from, so a model the engine
+// can't follow never reports a failure TLC doesn't. Enumerating an infinite set is among the
+// limits: the engine enumerates some sets TLC keeps lazy.
+const TLC_FAILURES: &[&str] = &[
+    "@@ of non-functions",
+    "BagCardinality of a non-bag",
+    "CHOOSE found no element",
+    "CHOOSE from a non-set",
+    "DOMAIN of a non-function",
+    "EXCEPT on a non-function",
+    "EXCEPT outside the domain",
+    "Head of an empty sequence",
+    "IsFiniteSet of a non-set",
+    "RandomElement of the empty set",
+    "SortSeq of a non-sequence",
+    "SubBag of a non-bag",
+    "SubSeq of a non-sequence",
+    "SubSeq outside the sequence's domain",
+    "TLCModelValue of a value that isn't a string",
+    "Tail of an empty sequence",
+    "a CASE condition that isn't a boolean",
+    "a SelectSeq test that isn't a boolean",
+    "a SelectSeq test that isn't an operator",
+    "a conjunct that isn't a boolean",
+    "a count that isn't a number",
+    "a function over a non-set",
+    "a function set of non-sets",
+    "a function set over a non-set domain",
+    "a guard that isn't a boolean",
+    "a membership in SUBSET of a non-set",
+    "a mistyped membership in Int",
+    "a mistyped membership in Nat",
+    "a mistyped membership in STRING",
+    "a mistyped membership in Seq",
+    "a mistyped membership in a set of functions",
+    "a mistyped membership in a set of records",
+    "a mistyped membership in a set of tuples",
+    "a mistyped membership in an infinite set",
+    "a predicate that isn't a boolean",
+    "a product of a non-set",
+    "a record set of a non-set",
+    "a set with too many elements for TLC 1.7.4",
+    "a successor that isn't complete",
+    "a symmetry function of values that aren't model values",
+    "a symmetry that isn't a set of functions",
+    "a symmetry value that isn't a function",
+    "a tuple pattern that doesn't match",
+    "action composition",
+    "an IF condition that isn't a boolean",
+    "an action quantified over a non-set",
+    "an assertion failed",
+    "an initial state that isn't complete",
+    "an operator's table applied outside its rows",
+    "applied a function outside its domain",
+    "applied a non-function",
+    "applied a recursive function outside its domain",
+    "concatenation of a string and a sequence",
+    "differently typed model values",
+    "division by zero",
+    "drew from a value that isn't a set",
+    "enumerated a non-set",
+    "equality of values TLC can't compare",
+    "expected a bag",
+    "expected a boolean",
+    "expected a function",
+    "expected a sequence",
+    "expected a set",
+    "expected an integer",
+    "filtered a non-set",
+    "integer overflow",
+    "mapped a non-set",
+    "membership in a non-set",
+    "membership of a value TLC can't compare",
+    "modulus by a non-positive number",
+    "negative exponent",
+    "no CASE arm holds",
+    "primed variable not assigned",
+    "quantified over a non-set",
+    "record compared with a function",
+    "the left side of => isn't a boolean",
+    "values TLC can't compare",
+    "variable not assigned",
+    crate::compile::lazy::SUBSET_OVERFLOW,
+];
 
 /// The counts of a search that stopped, as TLC reports them.
 #[derive(Clone, Copy, Default)]
@@ -3521,6 +3582,21 @@ fn check_liveness(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn takes_only_tlc_failures_for_failures_tlc_reports() {
+        // A run-time decline, such as a Print of a value the engine can't print as TLC does, is
+        // the engine's own limit; a failed Assert is TLC's.
+        assert!(is_engine_limit(
+            "printing a value whose text depends on how TLC built it"
+        ));
+        assert!(is_engine_limit("unsupported: Print"));
+        assert!(is_engine_limit("a power set too large to build"));
+        assert!(!is_engine_limit("an assertion failed"));
+        assert!(!is_engine_limit("a mistyped membership in Nat"));
+        // suite/test202's assumption, which TLC evaluates without enumerating Nat.
+        assert!(is_engine_limit("enumerated Nat"));
+    }
 
     fn verified_states() -> States {
         States {
