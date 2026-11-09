@@ -16,7 +16,7 @@ use crate::machine::Machine;
 
 // Beyond these the interpreter would list more elements than a search can use.
 const MAXIMUM_SUBSET_BASE: usize = 20;
-const MAXIMUM_ELEMENTS: f64 = 1e6;
+const MAXIMUM_ELEMENTS: f64 = (1u64 << 24) as f64;
 
 /// What a set expression's value is, as the interpreter builds it.
 pub(crate) type Reference = Arc<dyn Fn(&mut Machine<'_>) -> Outcome<Lazy> + Send + Sync>;
@@ -191,33 +191,27 @@ impl Lazy {
                 }
                 let choices = range.elements(machine, is_streamed)?;
                 let lists = vec![choices; keys.len()];
-                let mut functions = Vec::new();
-                for values in cartesian(&lists)? {
-                    functions.push(if is_sorted {
-                        machine.store.function_of_sorted(&keys, &values)
+                cartesian(&lists, |values| {
+                    if is_sorted {
+                        Ok(machine.store.function_of_sorted(&keys, values))
                     } else {
-                        machine.store.function_of(&keys, &values)?
-                    });
-                }
-                Ok(functions)
+                        machine.store.function_of(&keys, values)
+                    }
+                })
             }
             Lazy::RecordSet(keys, sets) => {
                 let Some(lists) = self.components(machine, sets, is_streamed)? else {
                     return Ok(Vec::new());
                 };
-                cartesian(&lists)?
-                    .iter()
-                    .map(|values| Ok(machine.store.function_of_sorted(keys, values)))
-                    .collect()
+                cartesian(&lists, |values| {
+                    Ok(machine.store.function_of_sorted(keys, values))
+                })
             }
             Lazy::Product(factors) => {
                 let Some(lists) = self.components(machine, factors, is_streamed)? else {
                     return Ok(Vec::new());
                 };
-                Ok(cartesian(&lists)?
-                    .iter()
-                    .map(|values| machine.store.tuple_of(values))
-                    .collect())
+                cartesian(&lists, |values| Ok(machine.store.tuple_of(values)))
             }
             Lazy::Filtered(base, test) => {
                 if !base.is_enumerable() {
@@ -487,22 +481,25 @@ fn advance_combination(indices: &mut [usize], length: usize) -> bool {
     false
 }
 
-// Every combination of one element from each list, the last list turning fastest.
-fn cartesian(lists: &[Vec<Id>]) -> Outcome<Vec<Vec<Id>>> {
+// The value `build` makes of every combination of one element from each list, the last list
+// turning fastest.
+fn cartesian(lists: &[Vec<Id>], mut build: impl FnMut(&[Id]) -> Outcome<Id>) -> Outcome<Vec<Id>> {
     let total: f64 = lists.iter().map(|list| list.len() as f64).product();
     if total > MAXIMUM_ELEMENTS {
         return Err(Bail("a lazy set too large to enumerate"));
     }
     let mut combinations = Vec::with_capacity(total as usize);
     let mut positions = vec![0usize; lists.len()];
+    let mut values = Vec::with_capacity(lists.len());
     for _ in 0..total as usize {
-        combinations.push(
+        values.clear();
+        values.extend(
             lists
                 .iter()
                 .zip(&positions)
-                .map(|(list, &position)| list[position])
-                .collect(),
+                .map(|(list, &position)| list[position]),
         );
+        combinations.push(build(&values)?);
         for index in (0..lists.len()).rev() {
             positions[index] += 1;
             if positions[index] < lists[index].len() {

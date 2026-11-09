@@ -117,3 +117,19 @@ Open before the layout is final:
 
 The front-end session reviewed this layout (points above). The IR fields' exact order is fixed in
 the implementing PR, with the front end's review.
+
+## Temporal properties that hold (#134)
+
+- A model that records the state graph goes through the native search. When the search completes
+  and the engine's liveness check says the properties hold, the binary prints what check.ts prints
+  once the Rust backend reports `holds`:
+  - `Progress(depth)` without rates, the counts at the end of the search with 0 left on queue
+    (`liveness-started`, `isComplete`);
+  - 2192 `Checking [N branches of ]temporal properties for the complete state space with
+    branches × distinct total distinct states at (…)`;
+  - 2267 `Finished checking temporal properties in … at …`;
+  - then the summary, as for any search.
+- A counterexample (a lasso, or an accepting node) stays not native ("a temporal property's
+  counterexample") until the binary prints it with the trace evaluator's states and labels.
+- Measured on Depot: 798 of 1466 runs print what TLC prints. That count includes main's own gains
+  since #84. Of the 264 temporal runs, 132 remain counterexamples. Nothing native differs.
