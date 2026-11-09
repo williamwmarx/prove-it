@@ -50,6 +50,10 @@ pub struct TraceState {
     /// Each variable's value, in the IR's order of the variables, as TLC holds it when it prints
     /// the state: sorted where TLC fingerprinted the state.
     pub values: Vec<Value>,
+    /// The position in the model's actions of the action that took the step to this state, as
+    /// `Tool.getState` finds it: the first whose walk reaches a state TLC takes for this one.
+    /// `None` for the first state, a stuttering step, or a model whose IR carries no actions.
+    pub action: Option<u32>,
     /// What TLC prints before the state.
     pub printed: Vec<Vec<String>>,
 }
