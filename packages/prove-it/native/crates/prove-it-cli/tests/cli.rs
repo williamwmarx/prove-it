@@ -887,6 +887,30 @@ fn checks_a_postcondition_on_a_lasso_stuttering_at_its_initial_state() {
     std::fs::remove_dir_all(directory).expect("removed");
 }
 
+const CDOT_IMPLIED_INIT_IR: &[u8] = include_bytes!(
+    "../../../../tests/conformance/ir/tlc/tlatools/org.lamport.tlatools/test-model/cdot/CdotWithContextB.ir"
+);
+
+#[test]
+fn reports_an_implied_init_that_fails_on_an_initial_state() {
+    let (output, directory) = run_golden(
+        "implied-init",
+        CDOT_IMPLIED_INIT_IR,
+        "CdotWithContextB",
+        "",
+        &[],
+    );
+    let text = stdout(&output);
+    // ENABLED Next, a property's initial predicate, reaches A(n) \cdot B(n): TLC reports the
+    // state, and the call stack from the initial predicate's infix conjunction through ENABLED.
+    assert_eq!(output.status.code(), Some(75), "{text}");
+    assert!(
+        text.contains(include_str!("cdot-implied-init.txt")),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
 #[test]
 fn rejects_a_constant_invariant_the_front_end_leaves_to_the_startup() {
     // tla-front's evaluator computes no records, so the engine evaluates Bad as TLC starts.

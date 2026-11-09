@@ -1117,6 +1117,17 @@ impl<'a> Compiler<'a> {
         is_streamed: bool,
     ) -> Compiling<Ordered> {
         let set = self.compile(node, context)?;
+        self.order(set, node, context, is_streamed)
+    }
+
+    // A compiled set in the order TLC enumerates it, `node` naming it where TLC keeps it lazy.
+    fn order(
+        &mut self,
+        set: Compiled,
+        node: NodeId,
+        context: &Context,
+        is_streamed: bool,
+    ) -> Compiling<Ordered> {
         if set.is_normalized {
             return Ok(Ordered {
                 eval: set.eval,
@@ -1459,9 +1470,15 @@ impl<'a> Compiler<'a> {
                     if let Some(variable) = self.get_assignable_index(args[0], context, is_init)? {
                         return match operator {
                             "=" => self.walk_conjunction(&[node], context, options, known, then),
-                            "\\subseteq" => unsupported("x' \\subseteq S"),
+                            // TLC assigns x' each subset of S, as x' \in SUBSET S.
                             _ => self.walk_membership(
-                                variable, args[1], node, context, options, known, then,
+                                variable,
+                                (args[1], operator == "\\subseteq"),
+                                node,
+                                context,
+                                options,
+                                known,
+                                then,
                             ),
                         };
                     }
@@ -1930,10 +1947,11 @@ impl<'a> Compiler<'a> {
     }
 
     #[allow(clippy::too_many_arguments)]
+    // `x \in S`, or, where `is_power_set`, `x \subseteq S`, which assigns x each subset of S.
     fn walk_membership(
         &mut self,
         variable: u32,
-        set: NodeId,
+        (set, is_power_set): (NodeId, bool),
         guard: NodeId,
         context: &Context,
         options: WalkOptions,
@@ -1956,7 +1974,13 @@ impl<'a> Compiler<'a> {
                 },
             )));
         }
-        let set = self.compile_ordered(set, context, true)?;
+        let set = if is_power_set {
+            let base = self.compile(set, context)?;
+            let subsets = self.compile_subset(&base);
+            self.order(subsets, set, context, true)?
+        } else {
+            self.compile_ordered(set, context, true)?
+        };
         let guard = (state == EITHER).then(|| deferred(self.compile(guard, context)));
         let mut shared = Shared::new(then);
         let assigned = shared.call(self, &known.with(variable, SET))?;
