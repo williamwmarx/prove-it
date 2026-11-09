@@ -1332,6 +1332,23 @@ fn is_referenced(expression: &Expression, name: &str) -> bool {
             .any(|child| is_referenced(child, name))
 }
 
+/// Gives each reference to name in the expression the arity given.
+fn set_reference_arities(expression: &Expr, name: &str, arity: usize, tables: &Tables) {
+    if matches!(
+        expression.kind,
+        ExpressionKind::Identifier { .. } | ExpressionKind::Apply { .. }
+    ) && expression.reference().as_deref() == Some(name)
+    {
+        tables
+            .renamed_arities
+            .borrow_mut()
+            .insert(address(expression), (expression.clone(), arity));
+    }
+    for child in expression.children() {
+        set_reference_arities(&child, name, arity, tables);
+    }
+}
+
 fn mark_recursive_constructions(expression: &Expression, name: &str) {
     if let ExpressionKind::FunctionConstruction { body, .. } = &expression.kind
         && is_referenced(body, name)
@@ -1396,6 +1413,19 @@ fn resolve_definition(
         } else {
             format!("Operator {name} already defined or declared.")
         });
+    }
+    // SANY analyzes the body with the arity of the RECURSIVE declaration, and compares only the
+    // arity of the last parameter.
+    if let (Some(current), DefinitionKind::Operator { params, .. }, true) = (
+        current.as_ref().filter(|_| is_declared),
+        &definition.kind,
+        unit.tables.is_collecting.get(),
+    ) && (current.arity != params.len() || params.last().is_some_and(|param| param.arity != 0))
+    {
+        report(format!(
+            "Definition of {name} has different arity than its RECURSIVE declaration."
+        ));
+        set_reference_arities(&definition.body, name, current.arity, &unit.tables);
     }
     if is_function {
         let own = Local::new(name.clone(), parameter(0, range.cloned()), inner);
