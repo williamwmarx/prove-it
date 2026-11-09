@@ -525,9 +525,13 @@ fn find_global_name(name: &str, environment: &Environment) -> Result<Option<Glob
         return Ok(Some(GlobalName::Other));
     }
     match environment.builtins.get(name) {
-        Some(builtin) if builtin.arity == 0 && builtin.flags & 1 == 0 => Err(not_yet(
-            "a builtin's value as an argument to a temporal formula",
-        )),
+        Some(builtin) if builtin.arity == 0 && builtin.flags & 1 == 0 => match name {
+            "TRUE" => Ok(Some(GlobalName::Value(ConfigValue::Boolean(true)))),
+            "FALSE" => Ok(Some(GlobalName::Value(ConfigValue::Boolean(false)))),
+            _ => Err(not_yet(
+                "a builtin's value as an argument to a temporal formula",
+            )),
+        },
         _ => Ok(None),
     }
 }
