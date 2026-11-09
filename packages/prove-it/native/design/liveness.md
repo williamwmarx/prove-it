@@ -73,3 +73,24 @@ takes, such as TLC's Github1389ViolatedB/C, where the atom is `Reach(0)` of a re
 whose other branch is `<>(Reach(n - 1))`. The engine compiled none of it; it now compiles `[]`,
 `<>`, `WF` and `SF` to a stop at run time ("a temporal formula in a state"), so the native checker
 decides both models, and where a run does reach one the interpreter reports the error as TLC does.
+
+## Liveness under SYMMETRY and VIEW (as built)
+
+Under SYMMETRY or a VIEW the search records the successor each step generated, and
+`graph_tables` answers the atoms on the stored states and then on each successor a step reached
+that differs from the state stored for its fingerprint, once. `tla-live` takes those positions as
+`Graph::reals`: a state's own checks and the tableau's consistency read the real successor, an
+action atom the step `(stored s0, real s1)`, and a successor set dedups on the stored index and the
+real state. A late node of a real state the search didn't store declines ("a late node of a state
+the search didn't store"), so expanding those states is the next step.
+
+The checker names no violated property there: TLC names them from the trace it rebuilds, which the
+interpreter's printer rebuilds as TLC does. The labels of a lasso's steps come from that rebuilt
+trace too: from each rebuilt state, the first successor of TLC's actions with the fingerprint of
+the next state of the lasso, as `Tool#getState` takes it.
+
+A replay of the graph would hand the interpreter's checker the stored states, so when the native
+checker declines, or under `PROVE_IT_LIVE_CHECK=1`, the interpreter searches again from the start.
+On the 26 corpus models with temporal properties under SYMMETRY or a VIEW, 20 are decided natively
+and 6 decline on a late node; the outputs of all 26 match TLC's recordings, and under
+`PROVE_IT_LIVE_CHECK=1` the verdicts, lassos, branches and labels match the interpreter's.
