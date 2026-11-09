@@ -2517,25 +2517,20 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 out_degrees,
             };
             let value_count = machine.store.value_count();
-            // Under SYMMETRY or a VIEW the lasso's states are the stored ones, not those TLC
-            // rebuilds and prints.
+            // Under SYMMETRY or a VIEW the lasso's states are the stored ones, from which the
+            // caller rebuilds those TLC prints.
             let violation = match liveness.as_ref().map(|liveness| &liveness.verdict) {
                 Some(Verdict::Lasso {
                     path, loop_start, ..
-                }) if settings.is_violation_reported
-                    && search.states.key_width.is_none()
-                    && !is_symmetric =>
-                {
-                    to_lasso(
-                        &mut machine,
-                        &context,
-                        &search,
-                        path,
-                        *loop_start,
-                        &lasso_actions,
-                        &counts,
-                    )
-                }
+                }) if settings.is_violation_reported => to_lasso(
+                    &mut machine,
+                    &context,
+                    &search,
+                    path,
+                    *loop_start,
+                    &lasso_actions,
+                    &counts,
+                ),
                 Some(Verdict::Accepted {
                     state,
                     path,
@@ -3159,12 +3154,26 @@ fn to_lasso(
     actions: &[Option<u32>],
     counts: &Counts,
 ) -> Option<Box<Violation>> {
-    let (&loop_label, steps) = actions.split_last()?;
-    let labels = steps.to_vec();
-    let is_stuttering = loop_start + 1 == path.len();
-    let is_labelled = actions.len() == path.len() && (is_stuttering || loop_label.is_some());
+    // Under SYMMETRY or a VIEW the stored states aren't those TLC prints, and the caller's rebuild
+    // finds the steps' actions, the step back into the cycle's too, as TLC does.
+    let is_reduced = search.states.key_width.is_some() || search.canonicalizer.is_some();
+    let (labels, loop_label) = if is_reduced {
+        (vec![None; path.len().saturating_sub(1)], None)
+    } else {
+        let (&loop_label, steps) = actions.split_last()?;
+        let is_stuttering = loop_start + 1 == path.len();
+        let is_labelled = actions.len() == path.len() && (is_stuttering || loop_label.is_some());
+        if !is_labelled {
+            return None;
+        }
+        (steps.to_vec(), loop_label)
+    };
     let startup = startup_values(machine, context).ok()?;
-    (is_labelled && !machine.store.has_unordered_strings()).then(|| {
+    let symmetry = search
+        .canonicalizer
+        .as_ref()
+        .map(|canonicalizer| name_group(&machine.store, canonicalizer.group()));
+    (!machine.store.has_unordered_strings()).then(|| {
         Box::new(Violation {
             kind: ViolationKind::Lasso {
                 loop_start,
@@ -3185,7 +3194,7 @@ fn to_lasso(
             store: std::mem::replace(&mut machine.store, Store::new()),
             startup,
             startup_random: machine.startup_random,
-            symmetry: None,
+            symmetry,
         })
     })
 }

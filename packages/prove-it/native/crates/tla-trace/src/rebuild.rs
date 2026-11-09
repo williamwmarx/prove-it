@@ -5,7 +5,7 @@
 //! state it keeps, so every state but the last prints sorted. The last state of a violation is
 //! one the search didn't keep, and TLC fingerprinted it only if it satisfies the constraints.
 
-use tla_ir::{Ir, NodeId};
+use tla_ir::{AtomKind, Ir, NodeId};
 use tla_values::fingerprint::Fingerprints;
 use tla_values::random::JavaRandom;
 use tla_values::{Id, Store};
@@ -74,6 +74,43 @@ impl<'ir> Rebuilder<'ir> {
     pub fn set_startup(&mut self, store: &Store, values: &[Id], random: u64) {
         self.evaluator.set_startup(store, values);
         self.startup_random = random;
+    }
+
+    /// What a state of a rebuilt lasso, or its step to the next, answers of the liveness checker's
+    /// atom at `atom` (`evaluateLive`), as TLC's `Liveness.findViolatedProperties` asks it: a
+    /// state predicate or ENABLED of the state, an action of the step, false where the step leaves
+    /// the action's subscript unchanged.
+    pub fn answer_atom(
+        &mut self,
+        atom: u32,
+        state: &[Value],
+        next: &[Value],
+    ) -> Result<bool, Unsupported> {
+        let evaluator = &mut self.evaluator;
+        let Some(atom) = evaluator.ir.model.atoms.get(atom as usize) else {
+            return unsupported("an atom the checker asks nothing of");
+        };
+        let context = run(evaluator.scope_context(atom.scope))?;
+        let values = |values: &[Value]| values.iter().cloned().map(Some).collect();
+        evaluator.printed.clear();
+        evaluator.current = values(state);
+        evaluator.next = vec![None; state.len()];
+        match &atom.kind {
+            AtomKind::State => run(evaluator.boolean(atom.expression, &context)),
+            AtomKind::Enabled { .. } => Ok(matches!(
+                run(evaluator.enabled(atom.expression, &context))?,
+                Value::Bool(true)
+            )),
+            AtomKind::Action { unchanged, .. } => {
+                evaluator.next = values(next);
+                if let Some(unchanged) = unchanged
+                    && run(evaluator.boolean(*unchanged, &context))?
+                {
+                    return Ok(false);
+                }
+                run(evaluator.boolean(atom.expression, &context))
+            }
+        }
     }
 
     /// Takes the symmetry group the search reduced by, each permutation as the names of the model
