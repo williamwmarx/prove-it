@@ -728,6 +728,22 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     }
   });
 
+  it("keeps the graph past four million states where it checks the properties as it goes", async () => {
+    const body = [
+      "EXTENDS Naturals",
+      "VARIABLE x",
+      "Init == x \\in 0..4000000",
+      "Spec == Init /\\ [][x' = x]_x",
+      "Holds == <>(x >= 0)",
+    ];
+    const native = await run(
+      { source: toModule(body), config: "SPECIFICATION Spec\nPROPERTY Holds" },
+      { PROVE_IT_ENGINE: "debug", PROVE_IT_ENGINE_BACKEND: "rust" },
+    );
+    expect(native.lines).toContainEqual(expect.stringMatching(COMPLETE));
+    expect([native.result.status, native.result.distinctStates]).toEqual(["success", 4_000_001]);
+  });
+
   it("reports a tableau node that accepts every behavior as TLC finds it", async () => {
     // TLC's test model Github1389Counting: x becomes TRUE at most twice.
     const body = [

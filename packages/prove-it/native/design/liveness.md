@@ -171,3 +171,10 @@ under `PROVE_IT_LIVE_CHECK=1`, or where an atom reads TLC's diameter. Whatever a
 undecided, the check of the complete graph decides. `PROVE_IT_TEST_LIVE_CHECK_AT=n` makes the first
 check after `n` states for the engine and the interpreter alike, for the tests, since the time a
 check happens at isn't deterministic.
+
+Where it checks this way, or under `-lncheck final`, the search keeps its graph however large it
+grows: the 4 million states past which it handed the graph over (`MAXIMUM_GRAPH_STATES`) were for
+the interpreter to check as the graph grows, which only the searches the engine doesn't check this
+way still need. TokenRing at N = 8, M = 7 (5.8 million states, 41 million steps) then checks in 92 s
+at 2.6 GB peak on 4 cores, where the interpreter took 135 s and 9.1 GB on Depot's 16 and TLC 149 s
+and 2.75 GB; 49 s of it answers WF_vars(Next)'s action on each step, as TLC does.

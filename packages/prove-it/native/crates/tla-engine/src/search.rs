@@ -249,9 +249,10 @@ struct Found {
 /// What PROVE_IT_LIVE_CHECK finds when TLC's actions take other steps than the next-state relation.
 const OTHER_STEPS: &str = "the actions took other steps than the next-state relation";
 
-// Past this many states the search hands its graph over and the interpreter goes on, since the
-// interpreter checks temporal properties on the graph as it grows and may find a violation early
-// in a state space the engine would search without end.
+// Past this many states a search that doesn't check the temporal properties as it goes, where TLC
+// would, hands its graph over and the interpreter goes on, since the interpreter checks them on the
+// graph as it grows and may find a violation early in a state space the engine would search
+// without end; and a hand-over past it starts the interpreter from scratch.
 const MAXIMUM_GRAPH_STATES: usize = 4_000_000;
 
 // The steps recorded so far.
@@ -1618,6 +1619,8 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     let mut periodic_size = 1usize;
     let mut periodic_time = Duration::ZERO;
     let mut test_live_check_at = settings.test_live_check_at.filter(|_| is_periodic);
+    let is_graph_bounded =
+        model.is_recording_graph && settings.is_liveness_periodic && !is_periodic;
     // What the check that found a counterexample answered and found, and the states it took.
     let mut periodic_lasso: Option<(Vec<Table>, Liveness, usize)> = None;
     let result = (|| -> Outcome<()> {
@@ -1797,7 +1800,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             if Some(expanding) == settings.stop_at {
                 return Err(Bail("stopped where PROVE_IT_STOP_AT asked"));
             }
-            if search.graph.is_some() && search.states.count() > MAXIMUM_GRAPH_STATES {
+            if is_graph_bounded && search.states.count() > MAXIMUM_GRAPH_STATES {
                 return Err(Bail("a state graph too large to keep"));
             }
             search.current.clear();
