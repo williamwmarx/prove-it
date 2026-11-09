@@ -95,6 +95,9 @@ impl Builtin {
     pub const LEVEL_CONSTANT: i32 = 2;
     pub const LAZY: i32 = 4;
     pub const TABLE: i32 = 8;
+    /// `>=` of `tlc2.module.Naturals`, which names itself `>` in its errors, where the `>=` of
+    /// Integers names itself.
+    pub const NATURALS_GEQ: i32 = 16;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
