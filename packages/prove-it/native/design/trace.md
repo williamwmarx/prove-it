@@ -424,6 +424,36 @@ TLC builds them:
 The test checks Github1389Counting's postcondition on its ten-state counterexample, and on one a
 state short.
 
+## Lazy sets, as TLC's value classes
+
+The replay follows TLC's set classes where a set has an infinite part, so an assumption the
+engine leaves to it (AssertError) and a replayed failure read what TLC reads:
+- `\cap`, `\cup` and `\` keep a reducible operand's eager result (a set enumeration or an
+  interval, `Tool`'s OPCODE_cap, OPCODE_cup and OPCODE_setdiff) and are otherwise
+  `Lazy::Cap`, `Lazy::Cup` and `Lazy::Diff`, with `SetCapValue`'s, `SetCupValue`'s and
+  `SetDiffValue`'s membership, `isFinite`, enumeration and messages. A `\cup` whose reducible
+  operand is on the right puts it first, as `arg2.cup(arg1)` does. Printing expands them
+  (`TLCGlobals.expand`) and shows the operation where that fails.
+- Nat, Int, STRING and Seq(S) are `UserValue`s: they compare only with another, by their
+  module's `compareTo` (Nat before Int, Seq(S) by its range), and fail with any other set.
+- Sets of functions, records and tuples compare with their own class by emptiness and the sets
+  they are built from (`equals` of `SetOfFcnsValue`, `SetOfRcdsValue`, `SetOfTuplesValue`).
+- `isFinite` and `isEmpty` follow each class, and fail on a value that isn't a set as TLC does;
+  IsFiniteSet and Cardinality report a failure, but an EvalException, as their Java method's.
+- TLCFP fingerprints a value as the engine does; TLCDefer is TRUE; an interval past 2^24
+  elements is declined rather than built.
+
+Still apart from TLC (ValueSemanticsAssume: 48 of 510 assumptions, EmptySetEqAssume: 64):
+- `{x \in Nat : P}` (`SetPredValue`), `UNION` of infinite sets (`UnionValue`) and functions
+  over an infinite domain (`FcnLambdaValue`: `[x \in Nat |-> e][0]`, EXCEPT, DOMAIN) are
+  enumerated, so they fail where TLC tests them lazily;
+- a set enumeration TLC normalizes only as it uses it, as inside Cardinality, which wraps a
+  comparison's failure as its Java method's (the replay keeps it unsorted only as it replays a
+  failure's call stack);
+- ToString prints with `toStringUnchecked`, where a lazy set's expansion that fails fails;
+- two integer overflows in ValueSemanticsAssume.
+An AssertError assumption the replay finds false stays not native until these match TLC.
+
 ## Sets TLC holds unnormalized
 
 TLC builds a set enumeration as written (`SetEnumValue` with `isNorm` false) and normalizes it in
@@ -437,15 +467,6 @@ drop the entry, as TLC's `normalize` would. `\cap` and `\` of a recorded set tes
 as written and give a recorded set, as `SetEnumValue.cap` and `diff` keep `isNorm`. Not followed
 yet: `\cup` normalizes its left operand, where TLC's `cup` doesn't, and DOMAIN of a lambda over a
 recorded set.
-
-## Unions TLC keeps lazy
-
-A union with an operand that isn't a set is a `SetCupValue` in TLC, with the operand TLC calls
-`cup` on first: the left one if it is a set enumeration or an interval, else the right one if it
-is, else the left. The evaluator keeps it as `Lazy::Cup`. Its members are either operand's, and
-enumerating or fingerprinting it fails with TLC's "Attempted to enumerate S \cup T when S: ...
-are not both enumerable". It prints as written. Its finiteness returns `Unsupported`. A union of
-two sets, lazy ones included, is still enumerated at once.
 
 ## Handoff
 
