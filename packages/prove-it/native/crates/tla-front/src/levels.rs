@@ -1568,6 +1568,11 @@ pub fn get_level_units<'b>(
     analyzer: &'b LevelAnalyzer<'b>,
     mut units: Vec<SemanticUnit<'b>>,
 ) -> Vec<SemanticUnit<'b>> {
+    // `ModuleNode.levelCheck` checks the recursive sections before the rest of the module.
+    units.push(SemanticUnit {
+        location: module.location.position(),
+        check: Box::new(move |_, _| check_recursive_arguments(module, analyzer)),
+    });
     for definition in &module.definitions {
         if definition.name.contains('!') {
             continue;
@@ -1606,6 +1611,135 @@ pub fn get_level_units<'b>(
         });
     }
     units
+}
+
+// The names of the operators an expression applies or names.
+fn collect_names(expression: &Expr, names: &mut FastSet<Name>) {
+    match &expression.kind {
+        ExpressionKind::Identifier { name, .. } => {
+            names.insert(name.clone());
+        }
+        ExpressionKind::Apply { operator, .. }
+        | ExpressionKind::OperatorReference { operator, .. } => {
+            names.insert(operator.clone());
+        }
+        _ => {}
+    }
+    for child in expression.children() {
+        collect_names(&child, names);
+    }
+}
+
+// The definitions of the LETs in an expression, outermost first.
+fn collect_let_definitions(expression: &Expr, definitions: &mut Vec<Rc<Definition>>) {
+    if let ExpressionKind::Let {
+        definitions: defined,
+        ..
+    } = &expression.kind
+    {
+        definitions.extend(defined.iter().cloned());
+    }
+    for child in expression.children() {
+        collect_let_definitions(&child, definitions);
+    }
+}
+
+/// `ModuleNode.levelCheck`'s check of the recursive operators: SANY rejects one whose argument
+/// its body takes at a level below an action's, as a primed parameter. SANY reads each recursive
+/// operator a recursive section applies with arguments of action level; the analyzer reads the
+/// operator it is analyzing so, but another of the section with its levels, so a recursive
+/// operator that applies another stays `NotYet` where it would be rejected, as do errors of both a
+/// module's and a LET's recursive operators, whose order isn't checked.
+fn check_recursive_arguments(module: &Module, analyzer: &LevelAnalyzer) -> Result<()> {
+    // Each recursive operator with the levels of its arguments, or none where it or its LET's
+    // definition fails to analyze, which its own unit reports.
+    let mut recursive: Vec<(Rc<Definition>, Option<Rc<OperatorLevels>>, bool)> = Vec::new();
+    for definition in &module.definitions {
+        if definition.is_recursive {
+            // A level error is its own unit's to report.
+            let levels = analyzer
+                .analyze_definition(definition, &Scope::default())
+                .ok();
+            recursive.push((definition.clone(), levels, false));
+        }
+    }
+    for definition in &module.definitions {
+        let mut lets = Vec::new();
+        collect_let_definitions(&definition.body, &mut lets);
+        lets.retain(|defined| defined.is_recursive);
+        if lets.is_empty() {
+            continue;
+        }
+        let is_analyzed = analyzer
+            .analyze_definition(definition, &Scope::default())
+            .is_ok();
+        for defined in lets {
+            let levels = is_analyzed
+                .then(|| {
+                    analyzer
+                        .definition_levels
+                        .borrow()
+                        .get(&(Rc::as_ptr(&defined) as usize))
+                        .cloned()
+                })
+                .flatten();
+            recursive.push((defined, levels, true));
+        }
+    }
+    let names: FastSet<Name> = recursive
+        .iter()
+        .map(|(definition, _, _)| definition.name.clone())
+        .collect();
+    let mut errors = Vec::new();
+    let mut kinds = FastSet::default();
+    for (definition, levels, is_in_let) in &recursive {
+        let Some(levels) = levels else {
+            return Err(FrontError::NotYet(
+                "a recursive operator whose levels fail to analyze".to_owned(),
+            ));
+        };
+        let primed: Vec<usize> = (0..levels.max_levels.len())
+            .filter(|&index| levels.max_levels[index] < ACTION_LEVEL)
+            .collect();
+        if primed.is_empty() {
+            continue;
+        }
+        let mut applied = FastSet::default();
+        collect_names(&definition.body, &mut applied);
+        if applied
+            .iter()
+            .any(|name| *name != definition.name && names.contains(name))
+        {
+            return Err(FrontError::NotYet(
+                "a primed argument of a recursive operator that applies another".to_owned(),
+            ));
+        }
+        let Some(range) = &definition.location.range else {
+            return Err(FrontError::NotYet(
+                "a recursive operator without a range".to_owned(),
+            ));
+        };
+        kinds.insert(*is_in_let);
+        for index in primed {
+            errors.push(SanyError {
+                location: format_range(range),
+                message: format!(
+                    "Argument {} of recursive operator {} is primed",
+                    index + 1,
+                    definition.name
+                ),
+            });
+        }
+    }
+    if kinds.len() > 1 {
+        return Err(FrontError::NotYet(
+            "primed arguments of both a module's and a LET's recursive operators".to_owned(),
+        ));
+    }
+    if errors.is_empty() {
+        return Ok(());
+    }
+    Err(FrontError::Syntax(SyntaxError::sany(errors)))
 }
 
 /// What the instance checker reads of a module: its declarations, definitions and facts.
