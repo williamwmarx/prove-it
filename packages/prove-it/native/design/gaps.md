@@ -90,3 +90,13 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   its base (`Compiled::subset_base`) for `\subseteq` to compare in its place. SubsetEq (TLC's
   tests), which stopped building `SUBSET (1..42)`, now completes in Rust. The interpreter doesn't
   recurse into power sets of power sets, so the unit test leaves that case out.
+
+## Values computed at startup
+
+- TLC computes each constant definition once when it starts (`SpecProcessor.processConstantDefns`),
+  one with effects such as RandomElement included, and reads that value from then on. The IR
+  carried the value for a definition with effects only when it was a string, number or boolean,
+  and the native engine declined any other. It now carries any value the interpreter holds settled
+  (`isSettledValue`), which TLC doesn't keep lazy, so the search reads it in place of the
+  definition. One TLC may keep lazy, such as SUBSET or `\cup`, still declines. Github648 (TLC's
+  tests) now completes in Rust.

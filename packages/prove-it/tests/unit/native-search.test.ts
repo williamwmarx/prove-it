@@ -885,4 +885,32 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     expect(native.lines).toContainEqual(expect.stringMatching(COMPLETE));
     expect(native.result.distinctStates).toBe(3);
   });
+
+  // From TLC's Github648: TLC computes a constant definition once when it starts, a random one too,
+  // and the search reads that value unless TLC may keep it lazy.
+  it("reads the value TLC computed at startup for a definition with effects", async () => {
+    const body = [
+      "EXTENDS TLC, Naturals",
+      "Graph == TLCEval(LET g == RandomElement([edge : SUBSET ({1, 2} \\X {1, 2})])",
+      "                 IN [edge |-> g.edge \\cup {<<1, 1>>}])",
+      "VARIABLE v",
+      "Init == v \\in Graph.edge",
+      "Next == v' \\in Graph.edge",
+      "Inv == v \\in Graph.edge",
+    ];
+    expect(
+      await compareWithInterpreter(body, "INIT Init\nNEXT Next\nINVARIANT Inv"),
+    ).toContainEqual(expect.stringMatching(COMPLETE));
+    const lazy = [
+      "VARIABLE v",
+      "S == IF RandomElement({TRUE}) THEN SUBSET {1, 2} ELSE {}",
+      "Init == v \\in S",
+      "Next == UNCHANGED v",
+    ];
+    expect(
+      await compareWithInterpreter(["EXTENDS TLC", ...lazy], "INIT Init\nNEXT Next"),
+    ).toContainEqual(
+      expect.stringMatching(declined("unsupported: a value TLC computed at startup with effects")),
+    );
+  });
 });
