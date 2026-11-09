@@ -36,3 +36,8 @@ finding them would change what the run does.
   an initial state's records in the order they were written, not sorted: Walgit's
   `manifest = [logSegments |-> {}, headSeq |-> 0, ...]`. So the normalized check would print the
   wrong text there.
+- The search passes on what the spec printed before the violation, but only when the caller reports
+  violations itself (`Settings::is_violation_reported`). Under N-API the interpreter starts over
+  and prints everything again. A POSTCONDITION or POSSIBLE keeps a violation not native, since TLC
+  checks those on the trace after it prints it.
+- Measured on Depot: 600 of 1466 runs print what TLC prints, up from 586. Nothing new differs.
