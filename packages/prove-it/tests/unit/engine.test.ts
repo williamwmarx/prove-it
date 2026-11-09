@@ -135,6 +135,22 @@ describe("the engine", () => {
     expect(lines).toEqual([expect.stringMatching(/^\[engine\] checked 4 states/)]);
   });
 
+  it("assigns a primed variable a LET names, as TLC's getPrimedVar looks through the LET", async () => {
+    // From TLC's Github725d, in the next-state relation and in ENABLED.
+    const { result, lines } = await checkInEngine(
+      [
+        "EXTENDS Naturals",
+        "VARIABLE x",
+        "Init == x = 0",
+        "Next == x < 3 /\\ (LET y == x' IN y) = x + 1",
+        "Inv == ENABLED ((LET y == x' IN y) = 0)",
+      ].join("\n"),
+      "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
+    );
+    expect([result.status, result.distinctStates]).toEqual(["success", 4]);
+    expect(lines).toEqual([expect.stringMatching(/^\[engine\] checked 4 states/)]);
+  });
+
   it("keeps the names a recursive function binds apart in each call", async () => {
     const { result, lines } = await checkInEngine(
       [

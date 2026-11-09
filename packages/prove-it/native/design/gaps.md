@@ -197,3 +197,12 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   (checked with TLC 1.8.0). The interpreter evaluated the arguments and failed on them, and both
   engines declined the builtin applied to arguments. All three now take the value. Storage
   (mongodb-txns), declined before, now searches in Rust, and the TypeScript engine searches it too.
+
+## A primed variable a LET names
+
+- TLC's `getPrimedVar` looks through a LET and a label to the primed variable an `=` or `\in`
+  assigns, so `(LET y == x' IN y) = 0` assigns x', in the next-state relation and in ENABLED.
+  Both engines' walkers stopped at the LET and declined it as "an assignment the engine can't
+  resolve statically". They now bind the LET's definitions and look through it, and through a
+  label. Github725d (TLC's tests), declined before, now searches in Rust, and the TypeScript
+  engine searches it too.

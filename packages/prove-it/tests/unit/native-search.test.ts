@@ -1292,6 +1292,24 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     ).toContainEqual(expect.stringMatching(COMPLETE));
   });
 
+  // From TLC's Github725d: TLC's getPrimedVar looks through a LET to the primed variable it
+  // assigns, in the next-state relation and in ENABLED.
+  it("assigns a primed variable a LET names", async () => {
+    const body = [
+      "EXTENDS Naturals",
+      "VARIABLE x",
+      "Init == x = 0",
+      "Next == x < 3 /\\ (LET y == x' IN y) = x + 1",
+      "Inv == ENABLED ((LET y == x' IN y) = 0)",
+    ];
+    expect(
+      await compareWithInterpreter(
+        body,
+        "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
+      ),
+    ).toContainEqual(expect.stringMatching(COMPLETE));
+  });
+
   it("applies recursive functions as TLC keeps them lazy", async () => {
     const body = [
       "EXTENDS Naturals, FiniteSets",
