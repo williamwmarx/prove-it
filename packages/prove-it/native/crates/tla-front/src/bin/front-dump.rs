@@ -103,6 +103,17 @@ fn link(
     library: Option<&Path>,
     config: Option<&str>,
 ) -> Result<Environment, FrontError> {
+    link_checked(source, path, library, config, false)
+}
+
+/// Links the spec at `path`, checking its levels when `is_level_checked`.
+fn link_checked(
+    source: &str,
+    path: &Path,
+    library: Option<&Path>,
+    config: Option<&str>,
+    is_level_checked: bool,
+) -> Result<Environment, FrontError> {
     let load_module = |name: &str| load(path, library, name);
     let parsed = match config {
         None => parse_config("", TlcVersion::Master),
@@ -117,6 +128,7 @@ fn link(
                 config: &model,
                 is_unconfigured: config.is_none(),
                 version: TlcVersion::Master,
+                is_level_checked,
             })
         })
 }
@@ -231,6 +243,7 @@ fn write_model_ir(out: &mut String, config: &str, spec_path: &Path, library: Opt
                 config: &model,
                 is_unconfigured: false,
                 version: TlcVersion::Master,
+                is_level_checked: false,
             })?;
             let ranks = texts
                 .iter()
@@ -344,7 +357,7 @@ fn main() -> ExitCode {
         .map(PathBuf::from);
     let write: fn(&mut String, &str) = match mode.as_str() {
         "resolve" | "model" | "ir" | "order" | "model-ir" | "model-full" | "spec"
-        | "properties" | "sany-text" => |_, _| {},
+        | "properties" | "sany-text" | "levels" => |_, _| {},
         "tokens" => write_tokens,
         "ast" => |out, source| write_module(out, source, false),
         "sany-ast" => |out, source| write_module(out, source, true),
@@ -358,7 +371,7 @@ fn main() -> ExitCode {
         },
         _ => {
             eprintln!(
-                "usage: front-dump tokens|ast|sany-ast|config|resolve|model|ir|order|model-ir|model-full|spec|properties|sany-text|time < paths"
+                "usage: front-dump tokens|ast|sany-ast|config|resolve|model|ir|order|model-ir|model-full|spec|properties|sany-text|levels|time < paths"
             );
             return ExitCode::from(2);
         }
@@ -374,7 +387,12 @@ fn main() -> ExitCode {
             }
         };
         let mut line = String::new();
-        if mode == "sany-text" {
+        if mode == "levels" {
+            match link_checked(&source, Path::new(&path), library.as_deref(), None, true) {
+                Ok(_) => line.push_str("{\"isLevelChecked\":true}"),
+                Err(error) => dump::environment(&Err(error)).write(&mut line),
+            }
+        } else if mode == "sany-text" {
             write_sany_text(&mut line, Path::new(&path), library.as_deref());
         } else if mode == "model-full" {
             write_model_full(&mut line, &source, Path::new(spec_path), library.as_deref());
