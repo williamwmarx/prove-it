@@ -19,7 +19,8 @@ use tla_values::{Bail, Id, NESTING_STACK_BYTES, Store};
 
 use crate::compile::{CompileError, Compiler, DISTINCT_SLOT, LEVEL_SLOT, NEXT_LEVEL_SLOT, Options};
 use crate::context::{
-    EngineContext, first_failing, first_failing_changed, holds_all, holds_all_changed,
+    EngineContext, count_possible, first_failing, first_failing_changed, holds_all,
+    holds_all_changed,
 };
 use crate::live::{LiveGraph, Table, answer_atoms};
 use crate::machine::{Machine, Printed, Step, UNASSIGNED};
@@ -109,6 +110,9 @@ pub struct Checkpoint {
     /// The steps of the states expanded, for the interpreter to replay and check temporal
     /// properties on, when the search records them.
     pub graph: Option<GraphCheckpoint>,
+    /// What each `_POSSIBLE` predicate counted before the expansion the interpreter goes on
+    /// from, or -1 where it wasn't evaluated.
+    pub possible: Vec<i64>,
 }
 
 /// The steps of a search (`EngineGraph`): for each of the first `expanded` states, how many
@@ -148,6 +152,8 @@ pub enum SearchOutcome {
         value_count: usize,
         /// Under PROVE_IT_FP_VERIFY, how many fingerprints two different keys shared.
         collisions: u64,
+        /// What each `_POSSIBLE` predicate counted, or -1 where it wasn't evaluated.
+        possible: Vec<i64>,
     },
     /// The search stopped, with a checkpoint unless it stopped computing the initial states, as
     /// the TypeScript engine computes them before the part of its search that hands over a
@@ -498,6 +504,9 @@ struct Search<'r, T> {
     // The successor waiting to be checked, and its fingerprint.
     pending: Vec<Id>,
     pending_fingerprint: Option<u64>,
+    // For each _POSSIBLE predicate, how many states or steps it has held of, or -1 before TLC has
+    // evaluated it.
+    possible: Vec<i64>,
 }
 
 impl<'r, T: Reached> Search<'r, T> {
@@ -535,6 +544,7 @@ impl<'r, T: Reached> Search<'r, T> {
             pending: Vec::with_capacity(width),
             violation: None,
             pending_fingerprint: None,
+            possible: Vec::new(),
         }
     }
 
@@ -623,6 +633,9 @@ impl<'r, T: Reached> Search<'r, T> {
         self.generated += 1;
         self.initial_generated += 1;
         let is_in_model = holds_all_changed_none(machine, context)?;
+        if is_in_model {
+            count_possible(machine, &context.possible, false, &mut self.possible)?;
+        }
         let found = if is_in_model {
             let fingerprint = self.compute_key(machine, context, false)?;
             let key = self
@@ -748,7 +761,13 @@ impl<'r, T: Reached> Search<'r, T> {
             &context.constraints,
             &self.successor,
             &self.current,
-        );
+        )
+        .and_then(|is_state_in_model| {
+            if is_state_in_model {
+                count_possible(machine, &context.possible, false, &mut self.possible)?;
+            }
+            Ok(is_state_in_model)
+        });
         let fingerprint = match is_state_in_model {
             Ok(true) => match known {
                 Some(fingerprint) => Ok(Some(fingerprint)),
@@ -760,6 +779,9 @@ impl<'r, T: Reached> Search<'r, T> {
         self.swap_successor(machine, self.expansion_epoch, self.level_id);
         let (is_state_in_model, fingerprint) = (is_state_in_model?, fingerprint?);
         let is_in_model = is_state_in_model && holds_all(machine, &context.action_constraints)?;
+        if is_in_model {
+            count_possible(machine, &context.possible, true, &mut self.possible)?;
+        }
         let found = match fingerprint {
             Some(fingerprint) if is_in_model => {
                 let key = self
@@ -1406,7 +1428,8 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         && !compiler.is_printing
         && !is_distinct_read
         && !model.is_recording_graph
-        && !settings.is_live_checked;
+        && !settings.is_live_checked
+        && context.possible.is_empty();
     let program = compiler.finish();
     let mut machine = Machine::new(&program, store);
     let canonicalizer = model.symmetry.as_ref().map(|group| {
@@ -1446,6 +1469,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         collisions: 0,
     };
     let mut search = Search::new(states, reporter, is_distinct_read, is_pipelined);
+    search.possible = vec![-1; context.possible.len()];
     search.canonicalizer = canonicalizer;
     search.graph = model.is_recording_graph.then(|| Graph {
         edge_offsets: vec![0],
@@ -1465,6 +1489,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     let mut out_degrees = [0u64; OUT_DEGREE_BUCKETS];
     let mut checkpoint_count = 0usize;
     let mut checkpoint_generated = 0u64;
+    let mut checkpoint_possible = search.possible.clone();
     let mut initial_states = (0, 0);
     let mut is_past_initial = false;
     let mut workers: Vec<Worker<'_>> = Vec::new();
@@ -1566,6 +1591,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             }
             checkpoint_count = search.states.count();
             checkpoint_generated = search.generated;
+            checkpoint_possible.clone_from(&search.possible);
             if Some(expanding) == settings.stop_at {
                 return Err(Bail("stopped where PROVE_IT_STOP_AT asked"));
             }
@@ -1641,7 +1667,8 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                             expanded: usize,
                             count: usize,
                             expanding: usize,
-                            tables: Vec<Table>|
+                            tables: Vec<Table>,
+                            possible: Vec<i64>|
      -> Checkpoint {
         let graph = search.graph.as_ref().expect("a graph");
         let states = &search.states;
@@ -1669,6 +1696,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 is_enabled_exact,
                 tables,
             }),
+            possible,
         }
     };
     let outcome = match result {
@@ -1709,6 +1737,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                                 count,
                                 0,
                                 tables,
+                                search.possible.clone(),
                             ))
                         });
                     let lasso_actions = match &liveness.verdict {
@@ -1741,6 +1770,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 lasso_actions,
                 value_count: machine.store.value_count(),
                 collisions,
+                possible: search.possible.clone(),
                 fingerprints: search.states.fingerprints,
             }
         }
@@ -1796,6 +1826,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                         )
                     }),
                     graph: None,
+                    possible: checkpoint_possible.clone(),
                 }))
             } else if !is_kept {
                 // The interpreter searches a graph too large to keep from the start, since its
@@ -1812,6 +1843,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                         count,
                         expanding,
                         tables,
+                        checkpoint_possible.clone(),
                     ))),
                     Err(reason) => return SearchOutcome::Invariant(reason.into()),
                 }

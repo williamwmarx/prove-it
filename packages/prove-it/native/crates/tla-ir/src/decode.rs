@@ -5,8 +5,8 @@ use std::fmt;
 use crate::{
     Action, ActionProperty, Atom, AtomKind, Bound, Builtin, ConfigName, Constant, Definition,
     DefinitionForm, EnabledActions, IR_VERSION, Index, Ir, LiveProperty, LiveTerm, MAGIC, Model,
-    Name, Node, NodeId, NodeKind, Nodes, Param, PathStep, Pattern, Printed, Resolution, Scope,
-    ScopeBinding, Selector, Startup, TextId, Update, Value, Values, code, tag,
+    Name, Node, NodeId, NodeKind, Nodes, Param, PathStep, Pattern, Possible, Printed, Resolution,
+    Scope, ScopeBinding, Selector, Startup, TextId, Update, Value, Values, code, tag,
 };
 
 /// Why a blob isn't an IR this decoder reads: where it stopped, in words, and what it found.
@@ -541,6 +541,14 @@ impl Decoder<'_> {
             .collect::<Decoded<_>>()?;
         let constraints = self.unprinted()?;
         let action_constraints = self.unprinted()?;
+        let possible = self
+            .config_names(true)?
+            .into_iter()
+            .map(|named| Possible {
+                name: named.root,
+                is_action: named.has_repeated_effect,
+            })
+            .collect();
         let count = self.count()?;
         let action_properties = (0..count)
             .map(|_| {
@@ -636,6 +644,7 @@ impl Decoder<'_> {
             property_invariants,
             constraints,
             action_constraints,
+            possible,
             action_properties,
             initial_predicates,
             view,

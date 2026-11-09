@@ -104,6 +104,9 @@ interface NativeCheckpoint {
   // The state being expanded, the states before it, the generated and initial generated counts,
   // and the collisions; only the collisions where nothing is handed over.
   counts: Float64Array;
+  // What each _POSSIBLE predicate counted before the expansion the interpreter goes on from, or -1
+  // where it wasn't evaluated.
+  possible?: Float64Array;
   outDegrees?: Float64Array;
   parents?: Int32Array;
   // The values of the states, each once, and each state's values by position among them.
@@ -142,6 +145,8 @@ export type NativeOutcome =
       reason: string;
       // The generated, distinct and initial counts, the depth, the values and the collisions.
       counts: Float64Array;
+      // What each _POSSIBLE predicate counted, or -1 where it wasn't evaluated.
+      possible: Float64Array;
       outDegrees: Float64Array;
       fingerprints: BigInt64Array;
       liveness?: NativeLiveness;
@@ -152,7 +157,7 @@ export type NativeOutcome =
   | ({ status: "stopped"; reason: string } & NativeCheckpoint);
 
 // The contract between this loader and the addon, ABI_VERSION in its lib.rs.
-const ABI_VERSION = 7;
+const ABI_VERSION = 8;
 
 export const ADDON_FILE = "prove-it-engine.node";
 
@@ -405,6 +410,7 @@ const toCheckpoint = (
     generated: counts[2],
     initialGenerated: counts[3],
     outDegrees: Array.from(native.outDegrees),
+    possible: Array.from(native.possible ?? []),
     states,
     parents: native.parents,
     width,
@@ -508,6 +514,7 @@ export const toEngineResult = (
     depth: counts[4],
     valueCount: counts[5],
     outDegrees: Array.from(outcome.outDegrees),
+    possible: Array.from(outcome.possible),
     getFingerprints: () => outcome.fingerprints,
     threads: 1,
     checkpoint: outcome.checkpoint && toCheckpoint(outcome.checkpoint, width, atoms),
