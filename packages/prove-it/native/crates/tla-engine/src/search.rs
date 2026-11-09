@@ -4,6 +4,7 @@
 //! error, a feature it doesn't implement) ends the run with a checkpoint, from which the reference
 //! interpreter goes on.
 
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::io::Write as _;
@@ -23,7 +24,7 @@ use crate::context::{
     EngineContext, count_possible, first_failing, first_failing_changed, holds_all,
     holds_all_changed,
 };
-use crate::live::{LiveGraph, Table, answer_atoms};
+use crate::live::{Diameters, LiveGraph, Table, answer_atoms};
 use crate::machine::{Machine, Printed, Step, UNASSIGNED};
 use crate::symmetry::Canonicalizer;
 
@@ -249,9 +250,10 @@ struct Found {
 /// What PROVE_IT_LIVE_CHECK finds when TLC's actions take other steps than the next-state relation.
 const OTHER_STEPS: &str = "the actions took other steps than the next-state relation";
 
-// Past this many states the search hands its graph over and the interpreter goes on, since the
-// interpreter checks temporal properties on the graph as it grows and may find a violation early
-// in a state space the engine would search without end.
+// Past this many states a search that doesn't check the temporal properties as it goes, where TLC
+// would, hands its graph over and the interpreter goes on, since the interpreter checks them on the
+// graph as it grows and may find a violation early in a state space the engine would search
+// without end; and a hand-over past it starts the interpreter from scratch.
 const MAXIMUM_GRAPH_STATES: usize = 4_000_000;
 
 // The steps recorded so far.
@@ -1491,6 +1493,8 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         && !model.is_recording_graph
         && !settings.is_live_checked
         && context.possible.is_empty();
+    // The liveness checker's atoms are answered on the threads too, unless ToString ranks strings.
+    let atom_threads = if compiler.is_ranking { 1 } else { thread_count };
     let program = compiler.finish();
     let mut machine = Machine::new(&program, store);
     let canonicalizer = model.symmetry.as_ref().map(|group| {
@@ -1598,8 +1602,14 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             &context.atoms,
             settings.is_live_checked,
             context.is_live_printing,
-            &context.diameter_atoms,
-            last_diameter,
+            &Diameters {
+                atoms: &context.diameter_atoms,
+                last: last_diameter,
+            },
+            &mut (0..atom_threads)
+                .filter(|_| atom_threads > 1)
+                .map(|_| Machine::new(&program, Store::new()))
+                .collect::<Vec<_>>(),
         )
     };
     // The most threads a level was shared between.
@@ -1618,6 +1628,10 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     let mut periodic_size = 1usize;
     let mut periodic_time = Duration::ZERO;
     let mut test_live_check_at = settings.test_live_check_at.filter(|_| is_periodic);
+    // Where the engine doesn't check as the graph grows, or a check couldn't decide, it hands a
+    // large graph to the interpreter, which checks as it grows and, even under `-lncheck final`,
+    // stops at a state whose tableau node accepts every behavior.
+    let is_graph_bounded = Cell::new(model.is_recording_graph && !is_periodic);
     // What the check that found a counterexample answered and found, and the states it took.
     let mut periodic_lasso: Option<(Vec<Table>, Liveness, usize)> = None;
     let result = (|| -> Outcome<()> {
@@ -1679,10 +1693,12 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 let liveness =
                     check_liveness(model, search, &tables, None, false, &context.diameter_atoms);
                 periodic_time += at.elapsed();
-                // Whatever the checker leaves undecided, the check of the complete graph decides.
+                // Whatever the checker leaves undecided, the check of the complete graph decides,
+                // and the graph is bounded again for the interpreter, which checks as it grows.
                 let (Some(branches), Verdict::Holds | Verdict::Lasso { .. }) =
                     (liveness.branches, &liveness.verdict)
                 else {
+                    is_graph_bounded.set(true);
                     return Ok(());
                 };
                 search.reporter.liveness_started(
@@ -1797,7 +1813,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             if Some(expanding) == settings.stop_at {
                 return Err(Bail("stopped where PROVE_IT_STOP_AT asked"));
             }
-            if search.graph.is_some() && search.states.count() > MAXIMUM_GRAPH_STATES {
+            if is_graph_bounded.get() && search.states.count() > MAXIMUM_GRAPH_STATES {
                 return Err(Bail("a state graph too large to keep"));
             }
             search.current.clear();

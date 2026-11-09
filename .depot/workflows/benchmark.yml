@@ -20,6 +20,12 @@ name: Benchmark
       timeout:
         description: Seconds before one run of a checker is stopped
         default: "300"
+      suite:
+        description: The list of models beside bench-suite.ts, such as bench-liveness.json
+        default: bench-suite.json
+      runner:
+        description: The machine, such as depot-ubuntu-24.04-16 for the scaled liveness models
+        default: depot-ubuntu-24.04-4
   schedule:
     - cron: "37 6 * * 1"
 permissions:
@@ -38,9 +44,10 @@ env:
 jobs:
   benchmark:
     name: Benchmark
-    # Four cores: one for each single-worker checker with room for its compiler and collector
-    # threads, and four workers for TLC on every core.
-    runs-on: depot-ubuntu-24.04-4
+    # Four cores by default: one for each single-worker checker with room for its compiler and
+    # collector threads, and four workers for TLC on every core. The scaled liveness models take more
+    # memory than four cores come with.
+    runs-on: ${{ inputs.runner || 'depot-ubuntu-24.04-4' }}
     timeout-minutes: 180
     steps:
       - name: Check out repository
@@ -92,6 +99,7 @@ jobs:
           FILTER: ${{ inputs.filter || '' }}
           CHECKERS: ${{ inputs.checkers || 'tlc,tlc-auto,tla-ts,tla-rs,prove-it,prove-it-aot,prove-it-rust,prove-it-rust-aot,prove-it-node' }}
           TIMEOUT: ${{ inputs.timeout || '300' }}
+          SUITE: ${{ inputs.suite || 'bench-suite.json' }}
         run: |
           set -euo pipefail
           PATH="$(scripts/ci/bootstrap.sh bun node java):$PATH"
@@ -102,6 +110,7 @@ jobs:
           cd packages/prove-it
           status=0
           bun scripts/bench-suite.ts --runs "$RUNS" --checkers "$CHECKERS" --timeout "$TIMEOUT" \
+            --suite "$SUITE" \
             ${FILTER:+--filter "$FILTER"} \
             --out "$RUNNER_TEMP/benchmark/results.json" \
             --markdown "$RUNNER_TEMP/benchmark/results.md" || status=$?

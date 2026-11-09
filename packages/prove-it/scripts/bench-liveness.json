@@ -1,0 +1,130 @@
+[
+  {
+    "id": "tlc/tlatools/org.lamport.tlatools/test-model/pcal/StarkMutex.cfg",
+    "directory": "tests/conformance/.corpora/tlc/tlatools/org.lamport.tlatools/test-model/pcal",
+    "spec": "StarkMutex.tla",
+    "config": "StarkMutex.cfg",
+    "style": "mutual exclusion, starvation freedom under fairness",
+    "isUsingLibrary": true
+  },
+  {
+    "id": "examples/specifications/ewd426/TokenRing.cfg",
+    "directory": "tests/conformance/.corpora/examples/specifications/ewd426",
+    "spec": "TokenRing.tla",
+    "config": "TokenRing.cfg",
+    "style": "Dijkstra token ring with liveness",
+    "isUsingLibrary": true
+  },
+  {
+    "id": "examples/specifications/nbacg_guer01/nbacg_guer01.cfg",
+    "directory": "tests/conformance/.corpora/examples/specifications/nbacg_guer01",
+    "spec": "nbacg_guer01.tla",
+    "config": "nbacg_guer01.cfg",
+    "style": "non-blocking atomic commitment",
+    "isUsingLibrary": true
+  },
+  {
+    "id": "examples/specifications/Disruptor/MCDisruptor_SPMC.cfg",
+    "directory": "tests/conformance/.corpora/examples/specifications/Disruptor",
+    "spec": "MCDisruptor_SPMC.tla",
+    "config": "MCDisruptor_SPMC.cfg",
+    "style": "ring buffer, single producer and many consumers",
+    "isUsingLibrary": true
+  },
+  {
+    "id": "tlc/tlatools/org.lamport.tlatools/test-model/pcal/MacroQuicksort.cfg",
+    "directory": "tests/conformance/.corpora/tlc/tlatools/org.lamport.tlatools/test-model/pcal",
+    "spec": "MacroQuicksort.tla",
+    "config": "MacroQuicksort.cfg",
+    "style": "PlusCal quicksort with termination",
+    "isUsingLibrary": true
+  },
+  {
+    "id": "examples/specifications/ReadersWriters/MC.cfg",
+    "directory": "tests/conformance/.corpora/examples/specifications/ReadersWriters",
+    "spec": "MC.tla",
+    "config": "MC.cfg",
+    "style": "readers-writers with liveness",
+    "isUsingLibrary": true
+  },
+  {
+    "id": "tlc/tlatools/org.lamport.tlatools/test-model/examples/cf1s-folklore/cf1s_folklore.cfg",
+    "directory": "tests/conformance/.corpora/tlc/tlatools/org.lamport.tlatools/test-model/examples/cf1s-folklore",
+    "spec": "cf1s_folklore.tla",
+    "config": "cf1s_folklore.cfg",
+    "style": "one-step consensus",
+    "isUsingLibrary": true
+  },
+  {
+    "id": "tlc/tlatools/org.lamport.tlatools/test-model/examples/SingleLaneBridge/MC.cfg",
+    "directory": "tests/conformance/.corpora/tlc/tlatools/org.lamport.tlatools/test-model/examples/SingleLaneBridge",
+    "spec": "MC.tla",
+    "config": "MC.cfg",
+    "style": "single lane bridge",
+    "isUsingLibrary": true
+  },
+  {
+    "id": "tlc/tlatools/org.lamport.tlatools/test-model/pcal/FastMutexWithGoto2.cfg",
+    "directory": "tests/conformance/.corpora/tlc/tlatools/org.lamport.tlatools/test-model/pcal",
+    "spec": "FastMutexWithGoto2.tla",
+    "config": "FastMutexWithGoto2.cfg",
+    "style": "fast mutex with goto",
+    "isUsingLibrary": true
+  },
+  {
+    "id": "tlc/tlatools/org.lamport.tlatools/test-model/pcal/Dijkstra1.cfg",
+    "directory": "tests/conformance/.corpora/tlc/tlatools/org.lamport.tlatools/test-model/pcal",
+    "spec": "Dijkstra1.tla",
+    "config": "Dijkstra1.cfg",
+    "style": "Dijkstra's mutual exclusion",
+    "isUsingLibrary": true
+  },
+  {
+    "id": "tlc/tlatools/org.lamport.tlatools/test-model/pcal/Euclid.cfg",
+    "directory": "tests/conformance/.corpora/tlc/tlatools/org.lamport.tlatools/test-model/pcal",
+    "spec": "Euclid.tla",
+    "config": "Euclid.cfg",
+    "style": "Euclid's algorithm with termination",
+    "isUsingLibrary": true
+  },
+  {
+    "id": "examples/specifications/barriers/Barriers.cfg",
+    "directory": "tests/conformance/.corpora/examples/specifications/barriers",
+    "spec": "Barriers.tla",
+    "config": "Barriers.cfg",
+    "style": "barrier synchronisation",
+    "isUsingLibrary": true
+  },
+  {
+    "id": "examples/specifications/bcastByz/bcastByz.cfg",
+    "directory": "tests/conformance/.corpora/examples/specifications/bcastByz",
+    "spec": "bcastByz.tla",
+    "config": "bcastByz.cfg",
+    "style": "Byzantine reliable broadcast",
+    "isUsingLibrary": true
+  },
+  {
+    "id": "benchmarks/liveness/TokenRing.cfg",
+    "directory": "tests/conformance/.corpora/examples/specifications/ewd426",
+    "spec": "TokenRing.tla",
+    "config": "benchmarks/liveness/TokenRing.cfg",
+    "style": "Dijkstra token ring, N = 7, M = 8",
+    "isUsingLibrary": true
+  },
+  {
+    "id": "benchmarks/liveness/StarkMutex.cfg",
+    "directory": "tests/conformance/.corpora/tlc/tlatools/org.lamport.tlatools/test-model/pcal",
+    "spec": "StarkMutex.tla",
+    "config": "benchmarks/liveness/StarkMutex.cfg",
+    "style": "mutual exclusion, N = 4",
+    "isUsingLibrary": true
+  },
+  {
+    "id": "benchmarks/liveness/Barriers.cfg",
+    "directory": "tests/conformance/.corpora/examples/specifications/barriers",
+    "spec": "Barriers.tla",
+    "config": "benchmarks/liveness/Barriers.cfg",
+    "style": "barrier synchronisation, N = 8",
+    "isUsingLibrary": true
+  }
+]
