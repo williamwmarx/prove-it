@@ -282,3 +282,15 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   `I!f[3]` and `Scaled(2)[3]`. They now see through LET, an applied operator and an instance's
   definition to the function, and bind its name to itself in a scope kept per definition.
   function_instance (TLC's tests), declined before, now searches in Rust.
+
+## A recursive function an action applies
+
+- TLC walks the body of a function it keeps lazy where an action applies it (`getNextStates` on
+  `FcnLambdaValue`), a recursive function's body too, so each path through its `\/` and `\E` that
+  holds goes on with the rest of the action and makes a successor. A body that applies the
+  function again recurses as the search runs, which a walk compiled path by path can't unroll.
+  The engine declined it. The body's walk is now compiled once for what the walk knows where the
+  action applies the function, and each application runs it a level deeper with a continuation
+  that puts the caller's slots back and goes on with the rest of the walk. A body that assigns a
+  variable still declines. VoteProof (Examples, and TLC's tests), declined before, now searches
+  in Rust: `SafeAt`'s `SA[b]`.
