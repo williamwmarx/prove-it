@@ -208,3 +208,19 @@ fn reports_an_equality_of_values_tlc_cant_compare() {
          6. Line 50, column 29 to line 50, column 36 in bfs\n\n"
     );
 }
+
+#[test]
+fn reports_a_non_function_applied_as_a_function() {
+    let (failure, call_stack) = evaluate_failure(&format!("{MODELS}/suite/etest4"));
+    let text = "A non-function (a model value) was applied as a function.\nline 15, col 12 to line 15, col 22 of module etest4";
+    assert_eq!(failure.code, 1000);
+    assert_eq!(failure.message, text);
+    assert_eq!(failure.tool_message, text);
+    assert_eq!(
+        call_stack,
+        "0. Line 13, column 9 to line 16, column 51 in etest4\n\
+         1. Line 13, column 12 to line 13, column 16 in etest4\n\
+         2. Line 15, column 12 to line 15, column 26 in etest4\n\
+         3. Line 15, column 12 to line 15, column 22 in etest4\n\n"
+    );
+}
