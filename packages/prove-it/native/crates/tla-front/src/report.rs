@@ -52,6 +52,14 @@ pub enum ModuleOrigin {
     Standard,
 }
 
+/// What SANY prints while TLC runs it on a spec, and whether SANY rejects the spec, as
+/// `getSanyReport`'s `text` and `isFailed`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SanyText {
+    pub text: String,
+    pub is_failed: bool,
+}
+
 /// How the run reads and names the spec's modules.
 pub struct ReportOptions<'a> {
     pub version: TlcVersion,
@@ -257,6 +265,8 @@ struct Loader<'a> {
     /// What TLC 1.7.4's SpecObj.validateParseUnit prints after the file SANY parses next.
     validations: Vec<String>,
     is_parse_reported: bool,
+    /// Whether SANY's semantic analysis found errors.
+    is_failed: bool,
 }
 
 /// The modules a module and its inner modules extend, other than its inner modules.
@@ -606,7 +616,7 @@ impl Loader<'_> {
 pub fn get_sany_text(
     spec_path: &Path,
     options: &ReportOptions,
-) -> std::result::Result<String, FrontError> {
+) -> std::result::Result<SanyText, FrontError> {
     let root: Rc<str> = Rc::from(
         spec_path
             .file_stem()
@@ -625,20 +635,27 @@ pub fn get_sany_text(
         parse_messages: Vec::new(),
         validations: Vec::new(),
         is_parse_reported: false,
+        is_failed: false,
     };
     let name = options.file_name.unwrap_or(&root);
     match write_sany_text(&mut loader, &root) {
-        Ok(()) => Ok(loader.lines.concat()),
+        Ok(()) => Ok(SanyText {
+            text: loader.lines.concat(),
+            is_failed: loader.is_failed,
+        }),
         Err(Stop::Front(error)) => Err(error),
         // SANY.frontEndParse turns a Java exception of its validation of PlusCal into a fatal
         // error, printing the exception and its messages so far, which are warnings here.
         Err(Stop::Pcal(_)) if !loader.parse_messages.is_empty() => Err(FrontError::NotYet(
             "SANY's parse messages with a fatal error".to_owned(),
         )),
-        Err(Stop::Pcal(message)) => Ok(format!(
-            "{}\nFatal errors while parsing TLA+ spec in file {name}\n\n{message}\n\n",
-            loader.lines.concat()
-        )),
+        Err(Stop::Pcal(message)) => Ok(SanyText {
+            text: format!(
+                "{}\nFatal errors while parsing TLA+ spec in file {name}\n\n{message}\n\n",
+                loader.lines.concat()
+            ),
+            is_failed: true,
+        }),
         // The fatal error follows the messages of the parsing phase.
         Err(Stop::Fatal { .. }) if !loader.parse_messages.is_empty() => Err(FrontError::NotYet(
             "SANY's parse messages with a fatal error".to_owned(),
@@ -660,10 +677,13 @@ pub fn get_sany_text(
                 )
             );
             let parse_error = parse_error.map_or_else(String::new, |text| format!("{text}\n"));
-            Ok(format!(
-                "{}{parse_error}\nFatal errors while parsing TLA+ spec in file {name}\n\n{fatal}\n*** Errors: 1\n\n{fatal}\n\n\n\n",
-                loader.lines.concat()
-            ))
+            Ok(SanyText {
+                text: format!(
+                    "{}{parse_error}\nFatal errors while parsing TLA+ spec in file {name}\n\n{fatal}\n*** Errors: 1\n\n{fatal}\n\n\n\n",
+                    loader.lines.concat()
+                ),
+                is_failed: true,
+            })
         }
     }
 }
@@ -748,6 +768,7 @@ fn write_sany_text(loader: &mut Loader, root: &Rc<str>) -> Result<()> {
             }
         }
     }
+    loader.is_failed = !errors.is_empty();
     // SANY.frontEndLinting: when SANY accepts the spec, it lints the modules. TLC 1.7.4's SANY
     // has no linter.
     if errors.is_empty() && options.version != TlcVersion::V1_7_4 {
