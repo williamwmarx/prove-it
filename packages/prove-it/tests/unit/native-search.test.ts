@@ -357,6 +357,37 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     );
   });
 
+  // TLC evaluates a record's fields in the order written (Tool's OPCODE_rc), a set map's body for
+  // each element of its normalized set, and a union's operands left to right, so what they print
+  // comes in that order.
+  it("prints in records, set maps and unions in the order TLC evaluates them", async () => {
+    const body = [
+      "EXTENDS Naturals, TLC",
+      "VARIABLE x",
+      "Init == x = 0",
+      "Next == x < 2 /\\ x' = x + 1",
+      'Record == [zeta |-> PrintT(<<"zeta", x>>), alpha |-> PrintT(<<"alpha", x>>)]',
+      'Mapped == {PrintT(<<"map", n, x>>) : n \\in {3, 1, 2}}',
+      'Joined == UNION {{PrintT(<<"left", x>>)} \\cup {PrintT(<<"right", x>>)}}',
+      "Inv == Record.alpha /\\ Mapped = {TRUE} /\\ Joined = {TRUE}",
+    ];
+    const config = "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE";
+    expect(await compareWithInterpreter(body, config)).toContainEqual(
+      expect.stringMatching(COMPLETE),
+    );
+    // TLC evaluates a definition each time it is named, in a set enumeration too.
+    const named = [
+      "EXTENDS Naturals, TLC",
+      "VARIABLE x",
+      "Init == x = 0",
+      "P == Print(x, TRUE)",
+      "Next == P /\\ {P} # {} /\\ x' = (x + 1) % 3",
+    ];
+    expect(await compareWithInterpreter(named, "INIT Init\nNEXT Next")).toContainEqual(
+      expect.stringMatching(COMPLETE),
+    );
+  });
+
   it("checks invariants, constraints, action constraints and action properties", async () => {
     const body = [
       "EXTENDS Naturals, TLC",
@@ -995,10 +1026,9 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
       [[`Next == LET p == ${prints} IN p /\\ ${next}`], ""],
       [["Op(a) == a", `Next == Op(${prints}) /\\ ${next}`], ""],
       [[`Next == {i \\in {1} : ${prints}} # {} /\\ ${next}`], ""],
-      [[`P == ${prints}`, `Next == P /\\ {P} # {} /\\ ${next}`], ""],
       // A definition compiled where it may print, then named where it may not.
       [
-        [`P == ${prints}`, `Next == (P = TRUE) /\\ {P} # {} /\\ ${next}`],
+        [`P == ${prints}`, `Next == (P = TRUE) /\\ {i \\in {1} : P} # {} /\\ ${next}`],
         "",
         " where TLC evaluates it otherwise",
       ],
