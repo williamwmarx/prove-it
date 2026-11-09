@@ -40,11 +40,7 @@ import type { EngineProperties, EngineSpec } from "./context";
 import type { NamedPermutation } from "./symmetry";
 
 // The version of the layout below, which the decoder checks. Any change to it changes this.
-<<<<<<< HEAD
 export const IR_VERSION = 5;
-=======
-export const IR_VERSION = 4;
->>>>>>> origin/main
 
 // "PIIR" read as a little-endian word.
 const MAGIC = 0x52494950;
