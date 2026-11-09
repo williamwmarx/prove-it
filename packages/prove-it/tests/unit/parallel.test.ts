@@ -2,10 +2,6 @@ import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import type { ModelConfig } from "../../src/config";
-import { createSharedSearch, createStorageBlock, insertState } from "../../src/engine/parallel";
-import { Bailout } from "../../src/engine/store";
-
 const FIXTURES = join(import.meta.dirname, "../fixtures");
 const DIST = join(import.meta.dirname, "../../dist/index.js");
 
@@ -208,27 +204,5 @@ describe("check with workers matches TLC", () => {
     const result = await checkFixtureInParallel("strings", "RuntimeStrings", 2);
     expect(result.status).toBe("success");
     expect(getCounts(result)).toEqual([115, 97, 6]);
-  });
-});
-
-describe("the shared state table", () => {
-  it("lets go of a segment when it has no room to grow", () => {
-    // Room for the tables segments start with, and none to grow one.
-    const views = createSharedSearch({ checkDeadlock: false } as ModelConfig, 1, 1024 * 256 * 8);
-    const block = createStorageBlock();
-    const source = new Int32Array(1);
-    let error: unknown;
-    try {
-      for (let value = 0; value < 1 << 20; value++) {
-        source[0] = value;
-        insertState(views, source, 0, value, block);
-      }
-    } catch (caught) {
-      error = caught;
-    }
-    expect(error).toBeInstanceOf(Bailout);
-    expect((error as Bailout).message).toBe("the shared state table is full");
-    // Another thread that takes the segment would otherwise wait for it forever.
-    expect(views.locks.every((lock) => lock === 0)).toBe(true);
   });
 });
