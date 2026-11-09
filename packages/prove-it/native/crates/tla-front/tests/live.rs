@@ -11,6 +11,8 @@ Init == x = 0
 Next == x' = (x + 1) % 3
 Spec == Init /\\ [][Next]_x /\\ WF_x(Next)
 Returns == []<>(x = 0)
+Visits == \\E v \\in {0, 1} : []<>(x = v)
+Chosen == IF 1 > 0 THEN []<>(x = 0) ELSE <>(x = 1)
 ====
 ";
 
@@ -81,4 +83,27 @@ fn checks_nothing_of_fairness_without_a_temporal_property() {
     let model = lower("fairness", "SPECIFICATION Spec\n");
     assert!(!model.is_recording_graph);
     assert!(model.atoms.is_empty() && model.live_formula.is_empty());
+}
+
+#[test]
+fn expands_a_quantifier_over_a_constant_set_and_chooses_a_constant_branch() {
+    let model = lower("constant", "SPECIFICATION Spec\nPROPERTIES Visits Chosen\n");
+    assert_eq!(model.live_properties.len(), 2);
+    let visits = &model.live_properties[0].formula;
+    assert!(matches!(
+        visits[..],
+        [
+            LiveTerm::Or(2),
+            LiveTerm::Always,
+            LiveTerm::Eventually,
+            LiveTerm::State(first),
+            LiveTerm::Always,
+            LiveTerm::Eventually,
+            LiveTerm::State(second),
+        ] if first != second
+    ));
+    assert!(matches!(
+        model.live_properties[1].formula[..],
+        [LiveTerm::Always, LiveTerm::Eventually, LiveTerm::State(_)]
+    ));
 }

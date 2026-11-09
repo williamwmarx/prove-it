@@ -7,9 +7,11 @@ use std::rc::Rc;
 
 use crate::TlcVersion;
 use crate::ast::*;
+use crate::config::ConfigValue;
 use crate::dependencies::{DefinitionFacts, Level};
 use crate::environment::Environment;
 use crate::errors::FrontError;
+use crate::eval::Evaluator;
 use crate::resolve::Result;
 use crate::spec::{
     Binding, Expanded, Property, Scope, ScopeOf, bind_definitions, bind_operator_arguments,
@@ -104,12 +106,33 @@ fn live_level(live: &Live) -> Level {
 struct Converter<'a> {
     environment: &'a Environment,
     facts: &'a DefinitionFacts,
+    evaluator: Option<&'a Evaluator<'a>>,
     depth: usize,
 }
 
 impl Converter<'_> {
     fn level(&self, expression: &Expr, scope: Option<&Rc<Scope>>) -> Level {
         get_level(expression, scope, self.environment, self.facts, &[])
+    }
+
+    /// The evaluator, whose failures TLC words in ways the front end doesn't follow yet.
+    fn get_evaluator(&self, reason: &str) -> Result<&Evaluator<'_>> {
+        self.evaluator.ok_or_else(|| not_yet(reason))
+    }
+
+    /// A constant formula's value, or `None` where it isn't a boolean.
+    fn evaluate_boolean(
+        &self,
+        expression: &Expr,
+        scope: Option<&Rc<Scope>>,
+        reason: &str,
+    ) -> Result<Option<bool>> {
+        match self.get_evaluator(reason)?.evaluate(expression, scope) {
+            Ok(ConfigValue::Boolean(value)) => Ok(Some(value)),
+            Ok(_) => Ok(None),
+            Err(FrontError::Evaluation(_)) => Err(not_yet(reason)),
+            Err(error) => Err(error),
+        }
     }
 
     /// `toAtom`: TLC bounds the level of a formula whose parts are constant by the formula's own.
@@ -120,7 +143,15 @@ impl Converter<'_> {
             level
         };
         Ok(Rc::new(match level {
-            Level::Constant => return Err(not_yet("a constant part of a temporal formula")),
+            Level::Constant => {
+                let reason = "a constant part of a temporal formula";
+                return match self.evaluate_boolean(expression, scope, reason)? {
+                    Some(value) => Ok(Rc::new(Live::Boolean(value))),
+                    None => Err(not_yet(
+                        "a constant part of a temporal formula that isn't a boolean",
+                    )),
+                };
+            }
             Level::Variable => Live::State {
                 expression: expression.clone(),
                 scope: scope.cloned(),
@@ -262,18 +293,35 @@ impl Converter<'_> {
                     .collect::<Result<Vec<_>>>()?;
                 self.whole(expression, scope, junction(*is_and, parts))
             }
-            ExpressionKind::Quantified { bounds, .. } => {
+            ExpressionKind::Quantified {
+                quantifier,
+                bounds,
+                body,
+            } => {
+                let is_forall = *quantifier == Quantifier::Forall;
                 let is_constant = bounds
                     .iter()
                     .all(|bound| self.level(&bound.set, scope) == Level::Constant);
-                if is_constant {
-                    return Err(not_yet("a temporal quantifier over a constant set"));
+                if !is_constant {
+                    return if level <= Level::Action {
+                        self.atom(expression, scope, level)
+                    } else {
+                        Err(not_yet("a temporal formula TLC can't handle"))
+                    };
                 }
-                if level <= Level::Action {
-                    self.atom(expression, scope, level)
-                } else {
-                    Err(not_yet("a temporal formula TLC can't handle"))
+                let reason = "a temporal quantifier over a set TLC fails to list";
+                let bindings = match self.get_evaluator(reason)?.get_bindings(bounds, scope) {
+                    Err(FrontError::Evaluation(_)) => return Err(not_yet(reason)),
+                    bindings => bindings?,
+                };
+                let operands = bindings
+                    .iter()
+                    .map(|bound| self.convert(body, bound.as_ref()))
+                    .collect::<Result<Vec<_>>>()?;
+                if operands.is_empty() {
+                    return Ok(Rc::new(Live::Boolean(is_forall)));
                 }
+                self.whole(expression, scope, junction(is_forall, operands))
             }
             ExpressionKind::If {
                 condition,
@@ -281,7 +329,10 @@ impl Converter<'_> {
                 alternative,
             } => {
                 if self.level(condition, scope) == Level::Constant {
-                    return Err(not_yet("a temporal IF with a constant condition"));
+                    let reason = "a temporal IF whose condition TLC fails to evaluate";
+                    if let Some(value) = self.evaluate_boolean(condition, scope, reason)? {
+                        return self.convert(if value { consequent } else { alternative }, scope);
+                    }
                 }
                 let condition = self.convert(condition, scope)?;
                 let consequent = self.convert(consequent, scope)?;
@@ -349,6 +400,7 @@ pub fn get_liveness(
     properties: &[Property],
     environment: &Environment,
     facts: &DefinitionFacts,
+    evaluator: Option<&Evaluator>,
     version: TlcVersion,
 ) -> Result<Option<Liveness>> {
     if properties.is_empty() {
@@ -360,6 +412,7 @@ pub fn get_liveness(
     let mut converter = Converter {
         environment,
         facts,
+        evaluator,
         depth: 0,
     };
     let fairness = temporals
