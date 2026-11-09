@@ -113,6 +113,13 @@ jobs:
               PROVE_IT_ENGINE=debug PROVE_IT_ENGINE_BACKEND=rust npx --no prove-it Commit.cfg 2> engine.log > /dev/null
               grep -q '^\[engine\] native: complete: ' engine.log
               grep -q '^\[engine\] checked 251 states on 1 thread ' engine.log
+              # The platform package's native binary runs with an empty environment, no node or bun.
+              binary=node_modules/@atemp/prove-it-linux-x64-gnu/bin/prove-it
+              test -x "$binary"
+              status=0
+              env -i "$binary" 2> usage.log || status=$?
+              test "$status" -eq 1
+              grep -q '^Usage: tla-ts ' usage.log
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
