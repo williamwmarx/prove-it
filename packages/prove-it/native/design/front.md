@@ -345,3 +345,16 @@ A property's `\A` over constant sets is now unrolled, as `expandTemporal` does f
 model-full: 842 of 1,111 with 0 differing, and 2,355 of 2,711 with `--mutate 400`.
 
 The liveness session wires the evaluator into `live.rs`: the temporal quantifiers over constant sets, the constant parts and the constant IF conditions.
+
+## SYMMETRY in the startup section
+
+`lower.rs` writes the SYMMETRY entry of `model.startup` as `getIrStartup` does: the definition, then `getPermutedSets` of its body. That is each argument the body's operator applies to, named by the configuration's substitution for its image or by the image (`getHumanReadableImage`, over the resolved keys as TypeScript's AST holds them). For `Permutations(S)` of an identifier the configuration doesn't replace with `<-`, it also writes S. The engine evaluates the group. model-full: 918 of 1,111 with 0 differing, and 2,441 of 2,711 with `--mutate 400`.
+
+## A spec without variables
+
+TLC searches no states of a spec without variables. `check.ts` lowers its model, once
+`createSearch`'s configuration checks pass, with the identifier `FALSE` at (0,0) as both the
+initial predicate and the next-state relation, no properties, no liveness and an empty TLC order,
+but with the startup section, so the binary still evaluates its assumptions and finds no initial
+state. `lower_model` does the same; the configuration errors of such a spec stay not yet. The
+TS side is `lowerConstantSpec`, which both the dump path and the model-full gate call.

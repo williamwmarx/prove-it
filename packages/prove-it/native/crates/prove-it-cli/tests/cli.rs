@@ -461,3 +461,52 @@ fn prints_an_invariant_that_fails_to_evaluate() {
     );
     std::fs::remove_dir_all(directory).expect("removed");
 }
+
+const INIT_EVAL_EXCEPTION_IR: &[u8] = include_bytes!(
+    "../../../../tests/conformance/ir/tlc/tlatools/org.lamport.tlatools/test-model/DoInitFunctor/DoInitFunctorEvalException.ir"
+);
+
+#[test]
+fn prints_a_constraint_that_fails_on_an_initial_state() {
+    let (output, directory) = run_golden(
+        "initial-constraint",
+        INIT_EVAL_EXCEPTION_IR,
+        "DoInitFunctorEvalException",
+        "",
+        &[],
+    );
+    let text = stdout(&output);
+    // TLC reports the state it was checking with the error, and the call stack of the initial
+    // predicate that found it, which the constraint's evaluation leaves.
+    assert_eq!(output.status.code(), Some(75), "{text}");
+    assert!(
+        text.contains("Computing initial states...\nError: TLC expected a boolean value, but did not find one. line 15, col 15 to line 15, col 18 of module DoInitFunctorEvalException\nWhile working on the initial state:\nx = 1\n\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 7, column 9 to line 7, column 19 in DoInitFunctorEvalException\n\n\n1 states generated, 0 distinct states found, 0 states left on queue.\nThe depth of the complete state graph search is 1.\nFinished in "),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+const ETEST14_IR: &[u8] = include_bytes!(
+    "../../../../tests/conformance/ir/tlc/tlatools/org.lamport.tlatools/test-model/suite/etest14.ir"
+);
+
+#[test]
+fn prints_an_assumption_that_fails_to_evaluate() {
+    for (args, expected) in [
+        (
+            &[][..],
+            "Error: Evaluating assumption line 5, col 3 to line 5, col 56 of module etest14 failed.\nAttempted to compute the value of an expression of form\nCHOOSE x \\in S: P, but no element of S satisfied P.\nline 5, col 7 to line 5, col 28 of module etest14\nFinished in ",
+        ),
+        (
+            &["-tool"][..],
+            "@!@!@STARTMSG 2105:1 @!@!@\nEvaluating assumption line 5, col 3 to line 5, col 56 of module etest14 failed.\nAttempted to compute the value of an expression of form\nCHOOSE x \\in S: P, but no element of S satisfied P.\nline 5, col 7 to line 5, col 28 of module etest14\n@!@!@ENDMSG 2105 @!@!@\n@!@!@STARTMSG 2186:0 @!@!@\nFinished in ",
+        ),
+    ] {
+        let (output, directory) = run_golden("assumption-failure", ETEST14_IR, "etest14", "", args);
+        let text = stdout(&output);
+        // TLC reports the assumption by where it is written, and no statistics.
+        assert_eq!(output.status.code(), Some(10), "{text}");
+        assert!(text.contains(expected), "{text}");
+        std::fs::remove_dir_all(directory).expect("removed");
+    }
+}

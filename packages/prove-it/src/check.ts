@@ -446,6 +446,36 @@ export const getIrStartup = (
   };
 };
 
+// The engine IR of a spec without variables, for the native binary: its initial predicate and
+// next-state relation are FALSE, so it finds no state, as TLC does.
+export const lowerConstantSpec = (
+  config: ModelConfig,
+  specification: ReturnType<typeof createEnvironment>,
+  version: TlcVersion | undefined,
+) => {
+  const environment = specification.environment;
+  const noBehavior: Expression = {
+    kind: "Identifier",
+    name: "FALSE",
+    location: { line: 0, column: 0 },
+  };
+  return lowerToIr({
+    config,
+    environment,
+    spec: { init: noBehavior, next: noBehavior, scope: undefined },
+    traceActions: [],
+    isWarningEnabled: environment.runtime.isWarningEnabled,
+    tlcOrder: [],
+    properties: { invariants: [], invariantNames: [], actionProperties: [], initialPredicates: [] },
+    isRecordingGraph: false,
+    version,
+    atoms: [],
+    liveFormula: undefined,
+    liveProperties: [],
+    startup: getIrStartup(config, specification),
+  });
+};
+
 export const checkSequentially = (
   options: CheckOptions,
   readings?: ReadonlyMap<string, SanyReading>,
@@ -600,31 +630,7 @@ const searchStates = (
     // The engine IR of a spec without variables, for the native binary: its initial predicate and
     // next-state relation are FALSE, so it finds no state, as TLC does.
     if (isIrDumped()) {
-      const noBehavior: Expression = {
-        kind: "Identifier",
-        name: "FALSE",
-        location: { line: 0, column: 0 },
-      };
-      const outcome = lowerToIr({
-        config,
-        environment,
-        spec: { init: noBehavior, next: noBehavior, scope: undefined },
-        traceActions: [],
-        isWarningEnabled: environment.runtime.isWarningEnabled,
-        tlcOrder: [],
-        properties: {
-          invariants: [],
-          invariantNames: [],
-          actionProperties: [],
-          initialPredicates: [],
-        },
-        isRecordingGraph: false,
-        version: options.version,
-        atoms: [],
-        liveFormula: undefined,
-        liveProperties: [],
-        startup: getIrStartup(config, specification),
-      });
+      const outcome = lowerConstantSpec(config, specification, options.version);
       if ("ir" in outcome) writeDebugBytes("PROVE_IT_IR_DUMP", outcome.ir);
     }
     const assumptionViolation = findViolatedAssumption();

@@ -28,14 +28,16 @@ import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 
 import type { Definition, Expression } from "../src/ast";
-import { getIrStartup } from "../src/check";
+import { getIrStartup, lowerConstantSpec } from "../src/check";
 import { type ModelConfig, parseConfig } from "../src/config";
 import { toEngineProperties } from "../src/engine/context";
 import { lowerToIr } from "../src/engine/ir";
 import { createEnvironment } from "../src/environment";
 import {
+  isStackOverflow,
   PcalBugError,
   PcalRuntimeError,
+  STACK_OVERFLOW_MESSAGE,
   TlaConfigError,
   TlaEvaluationError,
   TlaModuleError,
@@ -52,7 +54,7 @@ import { validatePcalModule } from "../src/pcal/validate";
 import { getSany174LexicalError } from "../src/sany/lexer";
 import { getSanyParseError } from "../src/sany/parse-error";
 import { getSanyReport } from "../src/sany/report";
-import { getProperties, getSpecification } from "../src/search";
+import { createSearch, getProperties, getSpecification } from "../src/search";
 import { createTlcOrder } from "../src/tlc/order";
 import type { TlcVersion } from "../src/tlc/version";
 import { setStringOrder } from "../src/values";
@@ -72,6 +74,8 @@ const BATCH = 50;
 const TIMED_RUNS = 5;
 
 const describe = (error: unknown) => {
+  // TLC overflows its stack where the TypeScript front end does.
+  if (isStackOverflow(error)) return { error: STACK_OVERFLOW_MESSAGE };
   if (
     error instanceof TlaConfigError ||
     error instanceof TlaEvaluationError ||
@@ -230,6 +234,13 @@ const lowerFullModel = (source: string, _path: string, spec: string) => {
   const specification = getSpecification(config, environment);
   const search = getProperties(config, environment, () => {});
   const properties = toEngineProperties(search);
+  // createSearch checks the configuration, and gives no search for a spec without variables,
+  // whose IR check.ts lowers with FALSE for Init and Next.
+  if (environment.variables.length === 0) {
+    createSearch(config, environment, () => [], undefined);
+    const constant = lowerConstantSpec(config, linked, undefined);
+    return "ir" in constant ? { ir: Buffer.from(constant.ir).toString("hex") } : constant;
+  }
   if (!specification.init || !specification.next) return { reason: "no Init or Next" };
   if (!properties) return { reason: "a property read in a scope" };
   const variableOrder = order.getDeclarationOrder("variable");
@@ -367,13 +378,13 @@ const MODES: Record<string, (source: string, path: string, spec: string) => stri
   }),
   // What SANY prints, with each file described by its module's name and origin, as front-dump
   // describes it.
-  "sany-text": (_source, path) =>
-    JSON.stringify({
-      text: getSanyReport(path, createLoader(path), {
-        describeFile: (name, origin) =>
-          `${name}|${{ file: "File", "root file": "RootFile", standard: "Standard" }[origin]}`,
-      }).text,
-    }),
+  "sany-text": (_source, path) => {
+    const report = getSanyReport(path, createLoader(path), {
+      describeFile: (name, origin) =>
+        `${name}|${{ file: "File", "root file": "RootFile", standard: "Standard" }[origin]}`,
+    });
+    return JSON.stringify({ text: report.text, isFailed: report.isFailed });
+  },
   model: writeResult((source, _path, spec) =>
     readEnvironment(readFileSync(spec, "utf8"), spec, parseConfig(source)),
   ),

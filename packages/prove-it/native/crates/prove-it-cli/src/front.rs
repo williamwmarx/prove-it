@@ -89,7 +89,7 @@ fn native_sany(spec_path: &str, describer: &FileDescriber, libraries: &[String])
         load_module: &load_module,
         describe_file: &|name, origin| describer.describe(name, origin),
     };
-    get_sany_text(spec, &options).ok()
+    get_sany_text(spec, &options).ok().map(|sany| sany.text)
 }
 
 // The recorded front with SANY's report in it replaced: under -tool between "Starting SANY..."
