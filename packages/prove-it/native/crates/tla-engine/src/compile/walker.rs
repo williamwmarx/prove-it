@@ -18,6 +18,7 @@ use tla_ir::{Index, NodeId, NodeKind, Pattern, Resolution, ScopeBinding};
 use tla_values::store::{FALSE, KIND_SET, KIND_TUPLE, Outcome, TRUE};
 use tla_values::{Bail, Id};
 
+use super::nodes::assign_bound;
 use super::{
     Binding, CompileError, Compiled, Compiler, Compiling, Context, Definition, DefinitionForm,
     OperatorBody, SEARCH_SLOTS, Scope, decline, eval, leaf, lookup, unsupported,
@@ -1145,13 +1146,10 @@ impl<'a> Compiler<'a> {
                 let mut inner = context.clone();
                 let mut levels = Vec::new();
                 for bound in bounds {
-                    if !matches!(bound.pattern, Pattern::Name(_)) {
-                        return unsupported("a tuple pattern in an action's \\E");
-                    }
                     let set = self.compile_ordered(bound.set, &inner, false)?;
                     let binder = self.bind_bound(&bound.pattern, &inner);
                     inner = binder.context;
-                    levels.push((set, binder.slots[0]));
+                    levels.push((set, binder.slots, binder.tuple));
                 }
                 let body = self.walk(*body, &inner, options, known, then)?;
                 Ok(Some(exists_step(levels, body)))
@@ -1847,14 +1845,18 @@ impl<'a> Compiler<'a> {
     }
 }
 
-fn exists_step(levels: Vec<(Ordered, u32)>, body: Rest) -> Step {
-    if let [(set, slot)] = &levels[..] {
-        let (set, slot) = (set.clone(), *slot as usize);
+// A bound of `\E`: its set, and the slots its name or tuple of names binds (`assign_bound`).
+type Level = (Ordered, Vec<u32>, bool);
+
+fn exists_step(levels: Vec<Level>, body: Rest) -> Step {
+    if let [(set, slots, tuple)] = &levels[..] {
+        let (set, slots, tuple) = (set.clone(), slots.clone(), *tuple);
         return step(move |machine, on_complete| {
             let id = (set.eval)(machine)?;
             let size = set.size(machine, id)?;
             for position in 0..size {
-                machine.locals[slot] = machine.store.element_at(id, position);
+                let element = machine.store.element_at(id, position);
+                assign_bound(machine, &slots, tuple, element)?;
                 run_rest(&body, machine, on_complete)?;
             }
             Ok(())
@@ -1864,7 +1866,7 @@ fn exists_step(levels: Vec<(Ordered, u32)>, body: Rest) -> Step {
     step(move |machine, on_complete| {
         let mut sets = Vec::with_capacity(levels.len());
         let mut is_empty = false;
-        for (set, _) in &levels {
+        for (set, ..) in &levels {
             let id = (set.eval)(machine)?;
             if set.size(machine, id)? == 0 {
                 is_empty = true;
@@ -1876,9 +1878,9 @@ fn exists_step(levels: Vec<(Ordered, u32)>, body: Rest) -> Step {
         }
         let mut positions = vec![0u32; levels.len()];
         loop {
-            for (level, &(_, slot)) in levels.iter().enumerate() {
-                machine.locals[slot as usize] =
-                    machine.store.element_at(sets[level], positions[level]);
+            for (level, (_, slots, tuple)) in levels.iter().enumerate() {
+                let element = machine.store.element_at(sets[level], positions[level]);
+                assign_bound(machine, slots, *tuple, element)?;
             }
             run_rest(&body, machine, on_complete)?;
             let mut level = 0;
