@@ -374,6 +374,9 @@ pub(super) unsafe extern "C" fn check_model(env: napi_env, info: napi_callback_i
                 threads: usize::try_from(threads).unwrap_or(1).max(1),
                 // The engine declines TLCGet("config") here.
                 workers: 1,
+                // The interpreter reads and writes the Json module's files, through the files
+                // the caller gives it.
+                is_io_allowed: false,
                 minimum_shared_level: usize::try_from(minimum_shared_level)
                     .unwrap_or(MINIMUM_SHARED_LEVEL),
                 // The interpreter reports a violation itself.

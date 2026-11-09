@@ -521,6 +521,9 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
         .is_some_and(|check| ["final", "seqfinal", "off"].contains(&check.to_lowercase().as_str()));
     let settings = Settings {
         is_violation_reported: true,
+        // No interpreter runs beside the binary's engine, so it reads and writes the Json
+        // module's files itself.
+        is_io_allowed: true,
         workers,
         is_liveness_periodic,
         test_live_check_at: std::env::var("PROVE_IT_TEST_LIVE_CHECK_AT")
