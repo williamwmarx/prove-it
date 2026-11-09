@@ -225,7 +225,8 @@ impl MemoTable {
         if self.largest < bound {
             return;
         }
-        self.largest = 0;
+        // What is kept is below the bound, which a later, lower bound may still have to forget.
+        self.largest = bound.saturating_sub(1);
         if self.is_direct {
             self.direct.truncate(bound as usize);
             for value in self.direct.iter_mut().filter(|value| **value >= bound) {
@@ -488,6 +489,12 @@ mod tests {
                 assert_eq!(table.get(&keys(key)), expected, "width {width}, key {key}");
             }
             assert_eq!(table.size(), 20);
+            // Each entry kept reads or holds an id from 50 on.
+            table.forget_from(50);
+            for key in 0..100u32 {
+                assert_eq!(table.get(&keys(key)), EMPTY, "width {width}, key {key}");
+            }
+            assert_eq!(table.size(), 0);
         }
     }
 
