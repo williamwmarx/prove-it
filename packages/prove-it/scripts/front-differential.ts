@@ -28,6 +28,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 
 import type { Definition, Expression } from "../src/ast";
+import { getIrStartup } from "../src/check";
 import { type ModelConfig, parseConfig } from "../src/config";
 import { toEngineProperties } from "../src/engine/context";
 import { lowerToIr } from "../src/engine/ir";
@@ -217,14 +218,15 @@ const lowerFullModel = (source: string, _path: string, spec: string) => {
   const loadModule = createLoader(spec);
   const order = createTlcOrder(specSource, loadModule);
   setStringOrder(order.getStringOrder(config));
-  const environment = createEnvironment(config, {
+  const linked = createEnvironment(config, {
     source: specSource,
     loadModule,
     order,
     print: () => {},
     files: { readFile: () => undefined, writeFile: () => {} },
     isSanyAccepted: true,
-  }).environment;
+  });
+  const environment = linked.environment;
   const specification = getSpecification(config, environment);
   const search = getProperties(config, environment, () => {});
   const properties = toEngineProperties(search);
@@ -256,8 +258,7 @@ const lowerFullModel = (source: string, _path: string, spec: string) => {
     atoms: (liveness?.atoms ?? []).map((atom) => ({ atom, actions: undefined })),
     liveFormula: liveness?.formula,
     liveProperties: liveness?.properties ?? [],
-    // The startup section, which tla-front doesn't write yet.
-    startup: { substitutes: [], definitions: [], symmetry: undefined, assumptions: [] },
+    startup: getIrStartup(config, linked),
   });
   return "ir" in outcome ? { ir: Buffer.from(outcome.ir).toString("hex") } : outcome;
 };
