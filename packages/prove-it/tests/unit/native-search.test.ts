@@ -835,6 +835,11 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     expect(await compareWithInterpreter(body, config, { PROVE_IT_STOP_AT: "2" })).toContainEqual(
       expect.stringMatching(stopped("stopped where PROVE_IT_STOP_AT asked")),
     );
+    // Under a VIEW the interpreter takes the states over by TLC's fingerprint of the view.
+    const viewed = [...body, "View == y"];
+    expect(
+      await compareWithInterpreter(viewed, `${config}\nVIEW View`, { PROVE_IT_STOP_AT: "2" }),
+    ).toContainEqual(expect.stringMatching(stopped("stopped where PROVE_IT_STOP_AT asked")));
   });
 
   it("stops where TLC fails on action composition, with the states before", async () => {

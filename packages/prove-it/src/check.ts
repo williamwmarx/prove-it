@@ -1500,7 +1500,8 @@ const searchStates = (
     return state;
   };
   const toEngineKey = (checkpoint: EngineCheckpoint, index: number, state: Value[]) => {
-    const keys = checkpoint.keys;
+    // With wide strings the interpreter's key is TLC's fingerprint, whatever the engine's key.
+    const keys = search.isFingerprintedLikeTlc ? undefined : checkpoint.keys;
     const keyWidth = checkpoint.keyWidth ?? checkpoint.width;
     return keys
       ? Array.from({ length: keyWidth }, (_, position) =>
