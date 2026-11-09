@@ -1,0 +1,50 @@
+name: Trace measure
+"on":
+  workflow_dispatch: {}
+permissions:
+  contents: read
+jobs:
+  differential:
+    name: Differential ${{ matrix.ref }}
+    runs-on: depot-ubuntu-24.04-16
+    timeout-minutes: 150
+    strategy:
+      matrix:
+        ref: ["main", "trace-wiring"]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          ref: ${{ matrix.ref }}
+      - name: Build
+        run: |
+          set -euo pipefail
+          PATH="$(scripts/ci/bootstrap.sh bun node rust):$PATH"
+          bun install --frozen-lockfile --ignore-scripts
+          bun run build
+          cd packages/prove-it
+          bun scripts/platform-packages.ts build
+          (cd native && cargo build --release --locked -p prove-it-cli)
+          bun scripts/fetch-corpora.ts
+      - name: Differential
+        env:
+          EVALUATOR: "0"
+        run: |
+          set -euo pipefail
+          PATH="$(scripts/ci/bootstrap.sh bun node):$PATH"
+          cd packages/prove-it
+          mkdir -p "$RUNNER_TEMP/parity"
+          printf '#!/bin/sh\nPROVE_IT_TRACE_EVALUATOR=%s exec %s "$@"\n' "$EVALUATOR" "$PWD/native/target/release/prove-it" > "$RUNNER_TEMP/native.sh"
+          chmod +x "$RUNNER_TEMP/native.sh"
+          export PROVE_IT_ENGINE_ADDON="$PWD/native/npm/linux-x64-gnu/prove-it-engine.node"
+          bun scripts/run.ts differential --concurrency 12 --max-tlc-ms 20000 \
+            --native "$RUNNER_TEMP/native.sh" --out "$RUNNER_TEMP/parity/differential.json" \
+            | tee "$RUNNER_TEMP/parity/differential.log" || true
+      - name: Keep the results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: measure-${{ matrix.ref }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/parity/
+          retention-days: 7
