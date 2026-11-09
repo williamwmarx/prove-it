@@ -152,7 +152,7 @@ fn encode_here(ir: &Ir) -> Vec<u8> {
         .zip(&model.initial_predicate_scopes)
         .zip(&model.initial_predicate_names)
     {
-        words.extend([offset(predicate), optional(scope), name as i32]);
+        words.extend([offset(predicate), name as i32, optional(scope)]);
     }
     words.push(model.view.is_some() as i32);
     words.extend(model.view.iter().flat_map(config_name));
