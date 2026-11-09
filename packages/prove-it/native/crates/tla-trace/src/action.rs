@@ -469,9 +469,12 @@ impl<'ir> Evaluator<'ir> {
                 let Some((bound, body, base)) = self.walked_function(*function, context)? else {
                     return self.guard(node, context, then);
                 };
-                // The argument once, as TLC evaluates it, then the body walked at it.
+                // The function first, its domain in its frame, as TLC builds the FcnLambdaValue;
+                // then the argument once, and the body walked at it.
+                let frame = StackFrame::Node(self.resolved(*function));
+                let set =
+                    self.in_frame(frame, &mut |evaluator| evaluator.evaluate(bound.set, &base))?;
                 let argument = self.evaluate(args[0], context)?;
-                let set = self.evaluate(bound.set, &base)?;
                 if !is_member(&argument, &set)? {
                     return fail("applied a function outside its domain");
                 }
