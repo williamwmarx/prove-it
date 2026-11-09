@@ -3,7 +3,7 @@
 // Usage: bun scripts/front-differential.ts <mode> [--fixtures] [--filter text] [--mutate count]
 //   [--rust <front-dump>]
 // The modes are tokens, ast, sany-ast, config (over the .cfg files), resolve, model, ir, order,
-// model-ir, pcal, and time, which
+// model-ir, pcal, sany-parse-error, and time, which
 // compares how long each side takes to parse each module instead. resolve links each module as the
 // root of a spec without a model, reading the modules it imports beside it and from the corpora's
 // library, and compares the environment: each definition by key, with every name resolved, the
@@ -15,7 +15,9 @@
 // model-ir lowers each model's environment as ir does, with its constants' values and the texts
 // ranked in TLC's string order. pcal validates each module with a PlusCal algorithm against the
 // checksums of its translation, as SANY does under TLC master and 1.7.4, and compares the
-// results, what the translator logs and the exception it throws. --fixtures reads only the
+// results, what the translator logs and the exception it throws. sany-parse-error compares
+// SANY's report of a module its lexer or parser rejects, for TLC master and 1.7.4, and TLC
+// 1.7.4's lexical error. --fixtures reads only the
 // fixtures, so it runs without the corpora. --mutate adds four variants of each of the first count modules, with syntax inserted and text
 // deleted at places a fixed seed picks, so the two sides' errors are compared too. Without --rust,
 // it builds front-dump with cargo first.
@@ -45,6 +47,8 @@ import { parseModule, parseSanyModule } from "../src/parser";
 import { createPcalParams } from "../src/pcal/ast";
 import { createPcalSession } from "../src/pcal/parse";
 import { validatePcalModule } from "../src/pcal/validate";
+import { getSany174LexicalError } from "../src/sany/lexer";
+import { getSanyParseError } from "../src/sany/parse-error";
 import { getSanyReport } from "../src/sany/report";
 import { getProperties, getSpecification } from "../src/search";
 import { createTlcOrder } from "../src/tlc/order";
@@ -363,6 +367,12 @@ const MODES: Record<string, (source: string, path: string, spec: string) => stri
   model: writeResult((source, _path, spec) =>
     readEnvironment(readFileSync(spec, "utf8"), spec, parseConfig(source)),
   ),
+  "sany-parse-error": (source) =>
+    JSON.stringify({
+      master: getSanyParseError(source, "master") ?? null,
+      v174: getSanyParseError(source, "1.7.4") ?? null,
+      lexical174: getSany174LexicalError(source) ?? null,
+    }),
   pcal: (source) =>
     JSON.stringify(
       { master: readPcal(source, "master"), v174: readPcal(source, "1.7.4") },
