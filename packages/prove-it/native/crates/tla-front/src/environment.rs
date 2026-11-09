@@ -8,6 +8,8 @@ use std::rc::Rc;
 
 use crate::TlcVersion;
 use crate::ast::*;
+use crate::config::{ConfigValue, ModelConfig};
+use crate::dependencies::create_definition_facts;
 use crate::errors::{FrontError, SanyError, SanyReport, SyntaxError, format_range};
 use crate::hash::{FastMap, FastSet};
 use crate::instances::{
@@ -45,8 +47,9 @@ pub struct Environment {
     pub builtins: OrderedMap<Name, Builtin>,
     /// The configuration's substitutions, by the key of what it substitutes for.
     pub substitutions: OrderedMap<Name, Name>,
-    /// The keys the configuration assigns values to.
+    /// The keys the configuration assigns values to, and the same in their order.
     pub constants: FastSet<Name>,
+    pub constants_order: Vec<Name>,
     pub variables: Vec<Name>,
     pub variable_index: OrderedMap<Name, usize>,
     pub root_constants: Vec<Rc<Declaration>>,
@@ -60,6 +63,9 @@ pub struct Environment {
 pub struct EnvironmentOptions<'a> {
     pub source: &'a str,
     pub load_module: &'a dyn Fn(&str) -> Option<String>,
+    pub config: &'a ModelConfig,
+    /// Links the modules without a model, as SANY does, so a declared constant needs no value.
+    pub is_unconfigured: bool,
     pub version: TlcVersion,
 }
 
@@ -1488,6 +1494,23 @@ fn get_substitution_body(
     (params, body)
 }
 
+const BUILTIN_LAZY: u32 = 4;
+
+/// `toValue` fails with an unexpected exception on a configuration number too big for TLC.
+fn check_value(value: &ConfigValue) -> Result<()> {
+    match value {
+        ConfigValue::Number(number) if !is_tlc_integer(*number) => {
+            let mut text = String::new();
+            crate::json::write_js_number(&mut text, *number);
+            Err(FrontError::Evaluation(format!(
+                "Integer overflow: {text} is outside TLC's 32-bit range"
+            )))
+        }
+        ConfigValue::Set(elements) => elements.iter().try_for_each(check_value),
+        _ => Ok(()),
+    }
+}
+
 /// `formatSanyWarnings`.
 pub fn format_sany_warnings(warnings: &[SanyError]) -> String {
     format!(
@@ -1570,7 +1593,275 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
             definitions.insert(name.clone(), definition);
         }
     }
+    let config = options.config;
+    let get_root_key = |name: &str| -> Name {
+        linked_root
+            .visible
+            .get(name)
+            .map_or_else(|| Rc::from(name), |symbol| symbol.key.clone())
+    };
+    let declared_constants: Vec<Name> = linked_root
+        .constants
+        .iter()
+        .map(|constant| constant.name.clone())
+        .collect();
     let variables = linked_root.variables.clone();
+    let get_scoped_keys = |name: &str, module: Option<&str>| -> Vec<Name> {
+        let Some(module) = module else {
+            return vec![Rc::from(name), get_root_key(name)];
+        };
+        if module == &*root.name
+            || declared_constants
+                .iter()
+                .any(|constant| &**constant == name)
+        {
+            return Vec::new();
+        }
+        let linked = linker
+            .linked_modules
+            .borrow()
+            .get(module)
+            .cloned()
+            .or_else(|| linker.nested_modules.borrow().get(module).cloned());
+        vec![
+            linked
+                .and_then(|linked| linked.visible.get(name).map(|symbol| symbol.key.clone()))
+                .unwrap_or_else(|| Rc::from(name)),
+        ]
+    };
+    let mut builtins = linker.builtins.take();
+    let get_key_arity =
+        |definitions: &OrderedMap<Name, Rc<Definition>>, key: &str| match definitions
+            .get(key)
+            .map(|definition| &definition.kind)
+        {
+            Some(DefinitionKind::Operator { params, .. }) => params.len(),
+            _ => linked_root
+                .constants
+                .iter()
+                .find(|constant| &*constant.name == key)
+                .map_or(0, |constant| constant.arity),
+        };
+    let mut constants: OrderedMap<Name, ConfigValue> = OrderedMap::new();
+    let mut operator_keys: FastSet<Name> = FastSet::default();
+    let mut set_operator =
+        |key: &Name,
+         builtin: Builtin,
+         definitions: &mut OrderedMap<Name, Rc<Definition>>,
+         constants: &mut OrderedMap<Name, ConfigValue>| {
+            builtins.insert(key.clone(), builtin);
+            definitions.remove(key);
+            constants.remove(key);
+            operator_keys.insert(key.clone());
+        };
+    for assignment in config
+        .constants
+        .iter()
+        .filter(|assignment| assignment.args.is_none())
+    {
+        check_value(&assignment.value)?;
+        for key in get_scoped_keys(&assignment.name, assignment.module.as_deref()) {
+            let arity = get_key_arity(&definitions, &key);
+            if arity == 0 {
+                constants.insert(key, assignment.value.clone());
+            } else {
+                set_operator(
+                    &key,
+                    Builtin {
+                        name: key.clone(),
+                        arity,
+                        flags: BUILTIN_LAZY,
+                    },
+                    &mut definitions,
+                    &mut constants,
+                );
+            }
+        }
+    }
+    // The rows of each operator the configuration gives by its values, as a table.
+    let mut tables: OrderedMap<String, (Name, Option<String>, usize)> = OrderedMap::new();
+    for assignment in &config.constants {
+        let Some(args) = &assignment.args else {
+            continue;
+        };
+        let table_key = format!(
+            "{}!{}",
+            assignment.module.as_deref().unwrap_or(""),
+            assignment.name
+        );
+        if let Some(table) = tables.get(&table_key)
+            && table.2 != args.len()
+        {
+            return Err(FrontError::Config(format!(
+                "The arity of the operator {} is inconsistent in the configuration file.",
+                assignment.name
+            )));
+        }
+        for value in args.iter().chain([&assignment.value]) {
+            check_value(value)?;
+        }
+        if !tables.contains_key(&table_key) {
+            tables.insert(
+                table_key,
+                (
+                    Rc::from(assignment.name.as_str()),
+                    assignment.module.clone(),
+                    args.len(),
+                ),
+            );
+        }
+    }
+    for (name, module, row_arity) in tables.values() {
+        for key in get_scoped_keys(name, module.as_deref()) {
+            let arity = match get_key_arity(&definitions, &key) {
+                0 => *row_arity,
+                arity => arity,
+            };
+            set_operator(
+                &key,
+                Builtin {
+                    name: name.clone(),
+                    arity,
+                    flags: 0,
+                },
+                &mut definitions,
+                &mut constants,
+            );
+        }
+    }
+    let substitutions: OrderedMap<Name, Name> = config
+        .substitutions
+        .iter()
+        .flat_map(|substitution| {
+            get_scoped_keys(&substitution.name, substitution.module.as_deref())
+                .into_iter()
+                .map(|key| (key, get_root_key(&substitution.target)))
+        })
+        .collect();
+    for substitution in config
+        .substitutions
+        .iter()
+        .filter(|substitution| substitution.module.is_none())
+    {
+        let name = substitution.name.as_str();
+        let target = substitution.target.as_str();
+        let is_declared = |name: &str| {
+            declared_constants
+                .iter()
+                .any(|constant| &**constant == name)
+        };
+        if !is_declared(name) && !linked_root.visible.contains_key(name) {
+            return Err(FrontError::Config(format!(
+                "In the configuration file, the identifier {name} does not appear in the specification."
+            )));
+        }
+        if config
+            .substitutions
+            .iter()
+            .any(|other| other.name == target)
+        {
+            return Err(FrontError::Config(format!(
+                "In the configuration file, the identifier {target} appears\non the right-hand side of a <- after already appearing on the\nleft-hand side of one."
+            )));
+        }
+        let target_key = get_root_key(target);
+        let definition = definitions.get(&target_key).cloned();
+        let is_defined = definition.is_some()
+            || builtins.contains_key(&target_key)
+            || constants.contains_key(&target_key)
+            || is_declared(target)
+            || variables.iter().any(|variable| &**variable == target);
+        if !is_defined {
+            return Err(FrontError::Config(format!(
+                "The configuration file substitutes for {name} with the undefined identifier {target}."
+            )));
+        }
+        if let Some(DefinitionKind::Operator { params, .. }) =
+            definition.as_ref().map(|definition| &definition.kind)
+        {
+            let arity = linked_root
+                .constants
+                .iter()
+                .find(|constant| &*constant.name == name)
+                .map(|constant| constant.arity)
+                .or_else(|| linked_root.visible.get(name).map(|symbol| symbol.arity));
+            if Some(params.len()) != arity {
+                return Err(FrontError::Config(format!(
+                    "The configuration file substitutes for {name} with {target} of different number of arguments."
+                )));
+            }
+        }
+    }
+    // TLC sets a module-scoped entry on the body of the module's definition, which every
+    // instance of the module shares.
+    let scoped_keys: FastSet<Name> = config
+        .constants
+        .iter()
+        .filter_map(|item| item.module.as_deref().map(|module| (&item.name, module)))
+        .chain(
+            config
+                .substitutions
+                .iter()
+                .filter_map(|item| item.module.as_deref().map(|module| (&item.name, module))),
+        )
+        .flat_map(|(name, module)| get_scoped_keys(name, Some(module)))
+        .collect();
+    let copy_sources = linker.copy_sources.take();
+    let get_override = |key: &Name, prefix: usize| -> Option<(Name, usize)> {
+        let mut current = (key.clone(), prefix);
+        loop {
+            if scoped_keys.contains(&current.0) {
+                return Some(current);
+            }
+            let (source, added) = copy_sources.get(&current.0)?;
+            current = (source.clone(), current.1 + added);
+        }
+    };
+    for (key, (source, prefix)) in copy_sources.iter() {
+        let (Some((target, skipped)), Some(definition)) =
+            (get_override(source, *prefix), definitions.get(key).cloned())
+        else {
+            continue;
+        };
+        let params = match &definition.kind {
+            DefinitionKind::Operator { params, .. } => params.clone(),
+            DefinitionKind::Function { .. } => Vec::new(),
+        };
+        let alias = create_local_alias(
+            key.clone(),
+            target,
+            params.clone(),
+            params.get(skipped..).unwrap_or(&[]),
+            &definition.location,
+        );
+        definitions.insert(key.clone(), alias.clone());
+        for (name, symbol) in linked_root.visible.iter() {
+            if symbol.key == *key && name != key {
+                definitions.insert(name.clone(), alias.clone());
+            }
+        }
+    }
+    let unassigned: Vec<&Name> = declared_constants
+        .iter()
+        .filter(|name| {
+            !constants.contains_key(*name)
+                && !substitutions.contains_key(*name)
+                && !operator_keys.contains(*name)
+        })
+        .collect();
+    if !unassigned.is_empty() && !options.is_unconfigured {
+        // TLC reports the first constant it finds unassigned in SANY's order of declarations,
+        // which F7 ports.
+        if unassigned.len() > 1 {
+            return Err(FrontError::NotYet(
+                "constants that TLC reports in SANY's order".to_owned(),
+            ));
+        }
+        return Err(FrontError::Config(format!(
+            "The constant parameter {} is not assigned a value by the configuration file.",
+            unassigned[0]
+        )));
+    }
     let mut variable_index: OrderedMap<Name, usize> = variables
         .iter()
         .enumerate()
@@ -1591,16 +1882,40 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
             .unwrap_or(variable_index.len());
         variable_index.insert(get_enabled_variable_name(&name), index);
     }
-    Ok(Environment {
+    let environment = Environment {
         definitions,
-        builtins: linker.builtins.take(),
-        substitutions: OrderedMap::new(),
-        constants: FastSet::default(),
+        builtins,
+        substitutions,
+        constants: constants.keys().cloned().collect(),
+        constants_order: constants.keys().cloned().collect(),
         variables,
         variable_index,
         root_constants: linked_root.constants.clone(),
         root_symbols: linked_root.visible.clone(),
         substituted_definitions: linker.substituted_definitions.take(),
         printed,
-    })
+    };
+    // TLC evaluates a substitute for a constant at startup, and rejects it only when that fails
+    // and the level it bounds is above constant: the engine's startup phase will evaluate it.
+    let substitutes: Vec<&Rc<Definition>> = environment
+        .substitutions
+        .iter()
+        .filter(|(name, _)| declared_constants.contains(name))
+        .filter_map(|(_, target)| environment.definitions.get(target))
+        .filter(|definition| {
+            matches!(&definition.kind, DefinitionKind::Operator { params, .. } if params.is_empty())
+        })
+        .collect();
+    if !substitutes.is_empty() {
+        let facts = create_definition_facts(&environment);
+        if substitutes
+            .iter()
+            .any(|definition| !facts.is_constant_level(definition, &environment))
+        {
+            return Err(FrontError::NotYet(
+                "a substitute TLC evaluates at startup".to_owned(),
+            ));
+        }
+    }
+    Ok(environment)
 }
