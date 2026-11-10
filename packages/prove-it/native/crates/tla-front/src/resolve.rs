@@ -1940,6 +1940,15 @@ fn resolve_apply(expression: &Expr, scope: &Scope, unit: &Unit) -> Result<()> {
             continue;
         }
         let name = arg.reference().unwrap_or_default();
+        // `get_symbol_arity` words a theorem, a step or an INSTANCE named as an expression, which
+        // SANY checks against the expected arity first.
+        if find_current(scope, &name, unit, None)
+            .is_some_and(|local| matches!(local.kind, SymbolKind::Theorem | SymbolKind::Instance))
+        {
+            return Err(FrontError::NotYet(format!(
+                "the theorem, step or instance {name} where an operator is required"
+            )));
+        }
         let arg_params = find_binding(&name, scope, unit).and_then(|binding| binding.params);
         let arg_arity = get_symbol_arity(arg, &name, scope, unit)?;
         if matches!(arg.kind, ExpressionKind::Identifier { .. })
@@ -2375,6 +2384,17 @@ fn check_defs(defs: &[Fact], scope: &Scope, unit: &Unit) -> Result<bool> {
                 "a module named in a DEF clause".to_owned(),
             ));
         };
+        // SANY's parser rejects an entry in parentheses, which the front end doesn't word.
+        if def
+            .location
+            .range
+            .as_ref()
+            .is_some_and(|range| range.start != def.location.position())
+        {
+            return Err(FrontError::NotYet(
+                "a DEF clause entry in parentheses".to_owned(),
+            ));
+        }
         let name = match &def.kind {
             ExpressionKind::Identifier { name, .. } => name,
             // An operator symbol a module defines, such as Naturals' +, is kept; SANY's report of

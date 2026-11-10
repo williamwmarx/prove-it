@@ -2148,7 +2148,17 @@ impl Parser {
     }
 
     fn parse_defs(&mut self) -> Parsed<Vec<Fact>> {
-        let defs = self.separated(Self::parse_fact)?;
+        // A DEF entry in parentheses keeps them in its range, as SANY's parser rejects them.
+        let defs = self.separated(|parser| {
+            let start = parser.index;
+            let is_parenthesized = parser.is_at("(", 0);
+            Ok(match parser.parse_fact()? {
+                Fact::Expression(expression) if is_parenthesized => {
+                    Fact::Expression(Rc::new(parser.with_range((*expression).clone(), start)))
+                }
+                fact => fact,
+            })
+        })?;
         if self.mode != Mode::Tlc {
             return Ok(defs);
         }

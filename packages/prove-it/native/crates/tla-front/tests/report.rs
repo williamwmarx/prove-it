@@ -261,6 +261,14 @@ fn reports_a_theorem_or_step_that_asserts_no_expression_named_as_one() {
         ),
         "Parsing file Main File\nSemantic processing of module Main\nSemantic errors:\n\n*** Errors: 5\n\nline 4, col 6 to line 4, col 6 of module Main\n\nASSUME/PROVE used where an expression is required.\n\n\nline 10, col 9 to line 10, col 12 of module Main\n\nHAVE proof step selected instead of expression.\n\n\nline 10, col 21 to line 10, col 24 of module Main\n\nSUFFICES proof step selected instead of expression.\n\n\nline 10, col 33 to line 10, col 36 of module Main\n\nASSUME/PROVE used where an expression is required.\n\n\nline 10, col 45 to line 10, col 48 of module Main\n\nCASE proof step selected instead of expression.\n\n\n"
     );
+    // Where an operator is required, SANY checks the expected arity first.
+    assert!(matches!(
+        get_report(
+            "selected-argument",
+            "---- MODULE Main ----\nTHEOREM T == ASSUME TRUE PROVE TRUE\nOp(F(_)) == 0\nA == Op(T)\n====\n",
+        ),
+        Err(FrontError::NotYet(_))
+    ));
 }
 
 // E4293: a definition at a deeper LET of an operator or function a LET declares RECURSIVE, and at
@@ -316,6 +324,10 @@ fn reports_def_entries_that_name_no_defined_operator() {
         (
             "defs-module",
             "---- MODULE Main ----\nUSE DEF Nope, MODULE Gone\n====\n",
+        ),
+        (
+            "defs-parenthesized",
+            "---- MODULE Main ----\nUSE DEF (Missing)\n====\n",
         ),
         (
             "facts-module",
