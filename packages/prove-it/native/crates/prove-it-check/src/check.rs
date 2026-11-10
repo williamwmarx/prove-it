@@ -28,6 +28,7 @@ use crate::trace::{
     PostconditionRun, Postconditions, PrintedTrace, check_postconditions, format_print,
     format_texts, rebuild_accepted, rebuild_trace,
 };
+use crate::xml_exporter::run_xml_exporter;
 use tla_front::TlcVersion;
 use tla_front::config::{ModelConfig, parse_config};
 use tla_front::errors::FrontError;
@@ -70,7 +71,13 @@ pub fn run(args: &[String], output: &mut Output<'_>) -> i32 {
             Some(property) => not_native(output, &format!("the system property {property}")),
             None => check_specs(&launch.args, &launch.java, true, output),
         },
-        "tla2sany.xml.XMLExporter" => not_native(output, "tla2sany.xml.XMLExporter"),
+        "tla2sany.xml.XMLExporter" => match &launch.java.unmodelled_property {
+            Some(property) => not_native(output, &format!("the system property {property}")),
+            // TLC 1.7.4's XMLExporter is retired, and only master's is ported.
+            None if launch.java.is_174 => not_native(output, "TLC 1.7.4"),
+            None => run_xml_exporter(&launch.args, output)
+                .unwrap_or_else(|reason| not_native(output, &reason)),
+        },
         other => {
             let _ = writeln!(
                 output.err,
@@ -215,14 +222,19 @@ fn get_number(host: &dyn Host, name: &str) -> Option<usize> {
 }
 
 /// TLC.printStartupBanner, with what runs Prove It in place of the JVM.
-fn print_startup_banner(printer: &mut Printer, seed: i64, workers: usize) {
+fn print_startup_banner(
+    printer: &mut Printer,
+    fingerprint_index: usize,
+    seed: i64,
+    workers: usize,
+) {
     let machine = printer.host.machine();
     let (system, release, arch) = (&machine.system, &machine.release, &machine.arch);
     printer.print(
         code::MODEL_CHECKING,
         Level::None,
         &format!(
-            "Running breadth-first search Model-Checking with fp 0 and seed {seed} with {workers} worker{} on {} cores with {}MB heap and 0MB offheap memory [pid: {}] ({system} {release} {arch}, prove-it native {}bit, MemFPSet, MemStateQueue).",
+            "Running breadth-first search Model-Checking with fp {fingerprint_index} and seed {seed} with {workers} worker{} on {} cores with {}MB heap and 0MB offheap memory [pid: {}] ({system} {release} {arch}, prove-it native {}bit, MemFPSet, MemStateQueue).",
             if workers == 1 { "" } else { "s" },
             machine.cores,
             machine.memory_megabytes,
@@ -603,6 +615,11 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
         .first("-seed")
         .and_then(|seed| seed.parse::<i64>().ok())
         .unwrap_or(0);
+    // Without -fp, TLC picks a polynomial at random; Prove It picks the first.
+    let fingerprint_index = args
+        .first("-fp")
+        .and_then(|index| index.parse().ok())
+        .unwrap_or(0);
     let dump = args.get("-dump");
     let workers = match args.first("-workers") {
         Some(workers) if is_auto(workers) => printer.host.machine().cores,
@@ -610,7 +627,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
         None => 1,
     };
     print_welcome(printer);
-    print_startup_banner(printer, seed, workers);
+    print_startup_banner(printer, fingerprint_index, seed, workers);
     // TLC opens the file before it reads the configuration, and names it with a suffix of .dump
     // unless it has one.
     let dump = match dump {
@@ -756,6 +773,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
     }
     // TLC seeds its generator with -seed, which an IR tla-front lowers doesn't hold.
     ir.model.random_seed = seed as u64;
+    ir.model.fingerprint_index = fingerprint_index;
     if args.has("-deadlock") {
         ir.model.check_deadlock = false;
     }

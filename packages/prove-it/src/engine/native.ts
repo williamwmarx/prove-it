@@ -81,11 +81,18 @@ export type NativeSanyText =
   | { kind: "needed"; keys: string[] }
   | { kind: "declined"; reason: string };
 
-// What the native binary prints for a TLC command line, and its exit code, or the keys of what the
-// check still reads (prove-it-host's check.rs).
+// What SANY's XMLExporter prints for a spec, as tla-front writes it (prove-it-host's sany.rs).
+export type NativeSanyXml =
+  | { kind: "exported"; stdout: string; stderr: string; exitCode: number }
+  | { kind: "needed"; keys: string[] }
+  | { kind: "declined"; reason: string };
+
+// What the native binary prints for a TLC command line, and its exit code, the keys of what the
+// check still reads, or why the binary declines the model (prove-it-host's check.rs).
 export type NativeCheckSources =
   | { kind: "checked"; exitCode: number; out: string; err: string }
-  | { kind: "needed"; keys: string[] };
+  | { kind: "needed"; keys: string[] }
+  | { kind: "declined"; reason: string };
 
 // What the check prints of the machine it runs on and of the time: `now` in milliseconds since the
 // epoch, `zone` a POSIX TZ rule, and the environment variables it reads. A tuple, since neither
@@ -129,6 +136,13 @@ export interface NativeAddon extends NativeStoreHooks {
     fileName: string | undefined,
     known: [string, string | undefined][],
   ) => NativeSanyText;
+  sanyXml: (
+    root: string,
+    source: string,
+    fileName: string,
+    flags: string,
+    known: [string, string | undefined][],
+  ) => NativeSanyXml;
   check: (
     ir: Uint8Array,
     settings: Int32Array,
@@ -291,7 +305,7 @@ export interface EngineResult {
 }
 
 // The contract between this loader and the addon, ABI_VERSION in its lib.rs.
-const ABI_VERSION = 13;
+const ABI_VERSION = 14;
 
 export const ADDON_FILE = "prove-it-engine.node";
 export const WASM_FILE = "prove-it-engine.wasm";

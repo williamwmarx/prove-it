@@ -49,6 +49,7 @@ interface Exports {
   prove_it_check: Call;
   prove_it_decide: Call;
   prove_it_sany_text: Call;
+  prove_it_sany_xml: Call;
   prove_it_check_sources: Call;
   prove_it_store_perform: Call;
   prove_it_store_decode: Call;
@@ -278,10 +279,17 @@ export const instantiateEngine = (module: WebAssembly.Module): NativeAddon => {
         running.check = undefined;
       }
     },
-    checkSources: (args, known, machine) =>
-      callCurrent("prove_it_check_sources", [args, known, machine]) as ReturnType<
-        NativeAddon["checkSources"]
-      >,
+    // A check that runs out of the host's stack declines, for the TypeScript check to check it.
+    checkSources: (args, known, machine) => {
+      try {
+        return callCurrent("prove_it_check_sources", [args, known, machine]) as ReturnType<
+          NativeAddon["checkSources"]
+        >;
+      } catch (error) {
+        if (!isStackOverflow(error)) throw error;
+        return { kind: "declined", reason: "WebAssembly ran out of stack" };
+      }
+    },
     // A decision runs on this thread, so nothing can set a cancel cell while it runs.
     decide: (prover, text, timeLimitMs, stepLimit) =>
       callCurrent("prove_it_decide", [prover, text, timeLimitMs, stepLimit]) as ReturnType<
@@ -290,6 +298,10 @@ export const instantiateEngine = (module: WebAssembly.Module): NativeAddon => {
     sanyText: (root, source, fileName, known) =>
       callCurrent("prove_it_sany_text", [root, source, fileName, known]) as ReturnType<
         NativeAddon["sanyText"]
+      >,
+    sanyXml: (root, source, fileName, flags, known) =>
+      callCurrent("prove_it_sany_xml", [root, source, fileName, flags, known]) as ReturnType<
+        NativeAddon["sanyXml"]
       >,
     storePerform: (name, args) =>
       callCurrent("prove_it_store_perform", [name, args as Argument[]]) as

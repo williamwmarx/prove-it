@@ -1,0 +1,13 @@
+theory tlapm_edb34c
+const isReal :: c = PredicateLogic.c
+const isa_slas_a :: [c,c] => c = (PredicateLogic.c => (PredicateLogic.c => PredicateLogic.c))
+const isa_bksl_diva :: [c,c] => c = (PredicateLogic.c => (PredicateLogic.c => PredicateLogic.c))
+const isa_perc_a :: [c,c] => c = (PredicateLogic.c => (PredicateLogic.c => PredicateLogic.c))
+const isa_peri_peri_a :: [c,c] => c = (PredicateLogic.c => (PredicateLogic.c => PredicateLogic.c))
+const isInfinity :: c = PredicateLogic.c
+const isa_lbrk_rbrk_a :: [c] => c = (PredicateLogic.c => PredicateLogic.c)
+const isa_less_more_a :: [c] => c = (PredicateLogic.c => PredicateLogic.c)
+shows (((fapply (([ a_CONSTANTunde_yunde_a \\<in> ({((succ[0]))})  \\<mapsto> ((0))]), ((0)))) = ((0))))
+  = ('PredicateLogic.Trueprop (('PredicateLogic.eq ((fapply (('Functions.Fcn (('SetTheory.addElt (('Functions.fapply succ) 'Integers.zero)) 'SetTheory.emptyset)) (%a_CONSTANTunde_yunde_a. 'Integers.zero))) 'Integers.zero)) 'Integers.zero))
+using assms false
+method word:auto

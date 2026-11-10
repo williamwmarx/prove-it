@@ -1,0 +1,6 @@
+fixes a_CONSTANTunde_Punde_a
+assumes v'5
+assumes v'6
+assumption v'5: (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) (a_CONSTANTunde_Punde_a:fun(PredicateLogic.c,PredicateLogic.c) Integers.zero::PredicateLogic.c))
+assumption v'6: (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) ((SetTheory.bAll::fun(PredicateLogic.c,fun(fun(PredicateLogic.c,PredicateLogic.c),PredicateLogic.c)) Integers.Nat::PredicateLogic.c) (%a_CONSTANTunde_nunde_a:PredicateLogic.c. ((PredicateLogic.imp::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) (a_CONSTANTunde_Punde_a:fun(PredicateLogic.c,PredicateLogic.c) B0)) (a_CONSTANTunde_Punde_a:fun(PredicateLogic.c,PredicateLogic.c) ((IntegerArithmetic.addint::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) B0) ((Functions.fapply::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) Integers.succ::PredicateLogic.c) Integers.zero::PredicateLogic.c)))))))
+conclusion: (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) ((SetTheory.bAll::fun(PredicateLogic.c,fun(fun(PredicateLogic.c,PredicateLogic.c),PredicateLogic.c)) Integers.Nat::PredicateLogic.c) (%a_CONSTANTunde_nunde_a:PredicateLogic.c. (a_CONSTANTunde_Punde_a:fun(PredicateLogic.c,PredicateLogic.c) B0))))
