@@ -1224,7 +1224,7 @@ fn declines_a_trace_through_a_set_tlc_streams_in_an_order_of_its_own() {
         "an effect under an assignment from a set TLC streams",
     );
     // Under the VIEW TLC keeps the first state it streams, x = {3}, whether a definition or a
-    // variable holds the union.
+    // variable holds the union: the engine declines the second as it starts.
     let reason = "several states TLC may take for the search's under VIEW or SYMMETRY";
     declines(
         "streamed-definition",
@@ -1236,7 +1236,7 @@ fn declines_a_trace_through_a_set_tlc_streams_in_an_order_of_its_own() {
         "streamed-variable",
         "---- MODULE Stop ----\nEXTENDS Integers, FiniteSets\nVARIABLES x, n, s\nInit == x = {} /\\ n = 0 /\\ s = (SUBSET {1, 2}) \\cup {{3}}\nNext == n < 3 /\\ x' \\in s /\\ Cardinality(x') = 1 /\\ n' = n + 1 /\\ s' = s\nInv == n < 2\nV == <<n>>\n====\n",
         "INIT Init\nNEXT Next\nINVARIANT Inv\nVIEW V\n",
-        reason,
+        "enumerating a lazy set of the state under a VIEW",
     );
 }
 
