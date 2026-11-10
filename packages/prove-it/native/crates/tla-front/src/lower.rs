@@ -1169,7 +1169,12 @@ impl<'a> Lowering<'a> {
                 continue;
             }
             let root = self.write_root(&assumption.expression)?;
-            let name = self.get_text(&describe_range(&assumption.expression));
+            // SANY's `toString` of the assumption, which TLC's messages print: a numeral's text,
+            // else where the assumption is written.
+            let name = match &assumption.expression.kind {
+                ExpressionKind::Number { text, .. } => self.get_text(text),
+                _ => self.get_text(&describe_range(&assumption.expression)),
+            };
             assumptions.push((root, name));
         }
         Ok(Startup {

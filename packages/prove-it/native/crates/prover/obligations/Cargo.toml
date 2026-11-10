@@ -6,3 +6,6 @@ edition.workspace = true
 rust-version.workspace = true
 license = "MIT AND BSD-2-Clause AND LGPL-2.1-only WITH OCaml-LGPL-linking-exception"
 publish.workspace = true
+
+[dependencies]
+tla-front = { path = "../../tla-front" }

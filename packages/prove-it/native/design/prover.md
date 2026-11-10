@@ -784,6 +784,19 @@ session:
 - It needs only P3a: from `lp` it takes `dependency.ts` alone.
 - First gate: `tests/unit/smt-nlsat.test.ts`, all but the `nra …` groups (those wait for
   `nra-solver`, P3b-lp's last file).
+- Status: ported, one `.rs` per TS file under `smt/src/nlsat/`; every non-`nra` group of
+  `smt-nlsat.test.ts` passes as Rust tests that read the same fixtures
+  (`tests/fixtures/nlsat/*.json`, through `nlsat/test_util.rs`). Representation: monomials are
+  ids into the manager's table, which `rename` rewrites in place as the TS does; a `Polynomial`
+  is an `Rc` node whose term order sits in a `RefCell`, since `lex_sort` and
+  `make_first_maximal` reorder shared polynomials; an `Anum` is a shared `Rc<RefCell>` handle,
+  since refinement changes it in place; atoms and clauses are `Rc`s with their mutable fields in
+  `Cell`s. No module stores another's state: the solver owns the managers, the cache, the atom
+  table and the assignment and passes them into each call; the atom table's `BoolVarHooks`
+  (`on_mk`, `on_delete`, `bvalues`) reach the solver's per-variable vectors, from `Explain` too.
+  TS throws are `Err(SmtError::…)`; `AddAllCoeffsRestart` is an internal error variant of
+  `explain`. The `ResourceLimit` is passed to `check`/`check_assignment`, not stored. Next:
+  `nra-solver` (P3b-lp) on top of it, then the decider differential once `core` calls `lp`.
 
 **P3c SMT core** (`prove-smt`, modules `util` from P3a and `core`):
 - In scope: `smt/solver/*.ts` (23,254 lines) but P3a's files; the `theory-lra-*` files (2,141)
@@ -924,3 +937,53 @@ is next.
   fixture under a step limit into `tests/fixtures/zenon/decisions.txt`, which the Rust matches in
   verdict, steps, every statistic and the proof's digest. Malformed input is declined. Next: the
   decider differential on the corpus's `.znn` inputs, then the flip commit.
+- P3b-lp (`prove-smt` module `lp`): every file of `smt/solver/lp/` is ported except `nra-solver.ts`,
+  which is ported on top of the nlsat port and lands after it. Until then `NraSolver::check` and
+  `check_assignment` decline with `SmtError::Unsupported`, so a check that reaches nlsat is
+  declined, never answered. The architecture, written at the top of `lar_solver.rs` and
+  `nla_core.rs`, is as follows.
+  - **Owners:** the theory owns `LarSolver` (which owns `CoreSolver`, which owns `LpSettings`),
+    `IntSolver` and `NlaCore`.
+  - **Back-pointers:** the TypeScript's back-pointers are borrowed views, `Lia { lia, lra }` and
+    `Nla { core, lra, limit, is_relevant }`, built per call. The nla helper classes are state
+    structs inside `NlaCore`, with associated functions that take the view.
+  - **LarSolver's callbacks:** each TypeScript callback becomes owned state of `LarSolver`, an
+    event buffer, or a plain parameter.
+    - The Diophantine solver's hooks and their undo are `LarSolver::dio_hooks`, run where the
+      callbacks fired.
+    - The throttle's lemma signatures are `LarSolver::nla_throttle_seen`, undone on LarSolver's
+      trail.
+    - `onChangedBounds` is `changed_bounds_pending`, which NLA drains at the start of each entry
+      point and after its own `find_feasible_solution`. The TypeScript callback only writes NLA
+      state that only NLA reads, so this is equivalent.
+    - `isCanceled` is a closure. The cross-nested search's `inc` and the PDD solver's cancel
+      check are parameters, called at the TypeScript's points.
+  - **Trails and identity:** closure trails are undo enums. Monics, nexes, PDD nodes and
+    equations are indices into arenas.
+  - **Tests:** the first gate passes: all 16 tests of `smt-intervals.test.ts` and all 17 of
+    `smt-pdd.test.ts` run as Rust tests. The other modules have Rust tests whose expected
+    values come from running the TypeScript on the same setups: lemma texts, LIA move sequences,
+    statistics counters, and counts of `is_canceled` calls.
+  - **The LP call trace:** `tests/lp_trace.rs` replays the TypeScript's traces (`lp-trace.ts`,
+    `scripts/lp-trace.ts`) against the Rust lp. On the 45 `tests/fixtures/smt` inputs and 7
+    nonlinear ones it gives 47 same and 0 differs. The other 5 are declined at `NlaCore`,
+    whose replay is next.
+  - **Next:** run the trace on every SMT input of the decider corpus once its record is on
+    `main`. Then nra-solver, after nlsat. Then P3c's theory-lra glue, which calls lp exactly as
+    the trace does.
+- P5a tlapm parse mode: `tla-front`'s `Mode::Tlapm` and `parse_tlapm_module` (#226), held equal to
+  `parseTlapmModule` by `front-differential.ts tlapm-ast` (2,367 of 2,367 corpus modules, every
+  mutation), the other modes byte-identical to before.
+- P5b obligations: `prove-obligations` ports all of `src/obligations/` on `tla-front`'s AST, one
+  module per TS file, `regroup` included; `index.rs` is `getObligations`. `scripts/
+  obligation-differential.ts` runs the TypeScript and `obligations-dump` (the crate's binary) on
+  every module of `proofs.json` and compares each module's obligations (id, location, kind, method,
+  printed text), summary, warnings in order and error: 304 of 304 match. Each module has unit tests
+  whose expected values come from running the TypeScript under Bun. Ported ahead of P5c, with the
+  same tests: `ocaml`, the SMT encoder (`smt/`), `first_order`, the Zenon and Isabelle encoders,
+  `prep/{md5, methods, fingerprint, level_comparison, enabled_axioms, normalize}` and
+  `tlaps_module`. Next (P5c): `prep/action` and the PTL encoder; Prep's context maps held per run,
+  not per thread (they keep their keys alive, where the TypeScript's `WeakMap`s let them go); the
+  encoder half of the differential (every method's text and the fingerprint, by `prover/digest`
+  against `prover-inputs.json`); then the `prove_obligations` boundary of 3.2, agreed with the
+  prover lead first.

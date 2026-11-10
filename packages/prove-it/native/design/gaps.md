@@ -1070,3 +1070,13 @@ and then evaluates again at each progress point: a `PrintT` in one prints again 
 - **What removes it:** evaluating the expression at each progress point, as TLC does: printing
   what it prints, and, where it is FALSE, stopping with TLC's statistics, work left on the queue,
   and exit 10. It comes after -dump and -continue.
+
+## The tokens of a dumped trace
+
+- A `.bin` trace dump (`tla-trace`'s `TraceDump::to_tlc`, cli.md's "-dumpTrace") equals TLC's but
+  for the token each `UniqueString` carries, TLC's intern number of the text in that run, which no
+  other run reproduces. TLC's reader skips it and interns the characters again:
+  `_TLCTrace.ioDeserialize` reads with `ValueInputStream.read(Map)`, which calls `readExternal`
+  (ValueInputStream.java 110-111, 118), whose strings and record names go through
+  `UniqueString.readExternal` (UniqueString.java 336-342: the token and the slot skipped as
+  "invalid for the given internTbl"). The dump numbers each text in the order it first writes it.

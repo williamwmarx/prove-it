@@ -175,6 +175,7 @@ fn native_sany(
         file_name,
         load_module: sources.load_module,
         describe_file,
+        is_xml_export: false,
     };
     get_sany_text_of(root, sources.source, &options)
 }
