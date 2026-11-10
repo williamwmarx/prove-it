@@ -27,6 +27,7 @@ pub mod mam_compiler;
 pub mod mam_interpreter;
 pub mod maximize_ac_sharing;
 pub mod model_checker;
+pub mod model_evaluator;
 pub mod model_finder;
 pub mod model_generator;
 pub mod nnf;
