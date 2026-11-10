@@ -1426,18 +1426,19 @@ fn prints_the_counterexample_records_in_tlcs_order() {
         text.contains("[ parameters |-> <<\"n\">>,\n       context |-> [n |-> 1],\n       name |-> \"A\",\n       location |->\n           [ endLine |-> 5,\n             beginLine |-> 5,\n             beginColumn |-> 9,\n             endColumn |-> 18,\n             module |-> \"Stop\" ] ]"),
         "{text}"
     );
-    // TLC builds the counterexample's states from an ALIAS, which the binary doesn't follow.
-    let aliased = spec.replace("Inv ==", "Al == [x |-> x, z |-> 0]\nInv ==");
+    // TLC builds a safety violation's counterexample from the ALIAS of each state.
+    let aliased = spec
+        .replace("Inv ==", "Al == [x |-> x, z |-> 0]\nInv ==")
+        .replace("CounterExample.action", "CounterExample.state");
     let (output, aliased_directory) = run_lowered(
         "counterexample-alias",
         &aliased,
         "INIT Init\nNEXT Next\nINVARIANT Inv\nPOSTCONDITION Post\nALIAS Al\n",
     );
+    let text = stdout(&output);
     assert!(
-        String::from_utf8_lossy(&output.stderr)
-            .contains("reads the counterexample of a model with an ALIAS"),
-        "{}",
-        stdout(&output)
+        text.contains("{<<1, [x |-> 0, z |-> 0]>>, <<2, [x |-> 1, z |-> 0]>>}\n"),
+        "{text}"
     );
     std::fs::remove_dir_all(directory).expect("removed");
     std::fs::remove_dir_all(aliased_directory).expect("removed");
