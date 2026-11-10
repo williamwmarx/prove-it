@@ -572,6 +572,9 @@ pub struct Module {
     pub theorems: Vec<Rc<Theorem>>,
     pub uses: Vec<Rc<UseOrHide>>,
     pub units: Vec<ModuleUnit>,
+    /// Whether a LET of the module declares RECURSIVE an operator it doesn't define, whose errors
+    /// SANY reports at the LET's level, which the front end doesn't follow.
+    pub has_undefined_let_recursive: bool,
 }
 
 impl Expression {
