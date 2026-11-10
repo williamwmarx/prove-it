@@ -105,6 +105,9 @@ pub enum Atom {
         action: Eval,
         subscript: Option<Eval>,
         enabled: Option<usize>,
+        /// Whether the action is the next-state relation itself, which holds of every step the
+        /// search took where TLC's predicate evaluation of it can't fail.
+        is_next: bool,
     },
     /// ENABLED, run, or answered from the steps the search took when the action is made of TLC's
     /// actions of the next-state relation.
@@ -803,6 +806,26 @@ struct CompiledAtom {
     uses_registers: bool,
 }
 
+// Whether an atom's action is the next-state relation, named as the specification names it in the
+// same scope, and TLC evaluates it as a predicate as it walks it but for the comparisons of the
+// primed variables.
+fn is_next(compiler: &Compiler<'_>, ir: &Ir, atom: &tla_ir::Atom) -> bool {
+    let Some(next) = ir.model.next else {
+        return false;
+    };
+    let is_named = atom.expression == next
+        || matches!(
+            (resolve(ir, atom.expression), resolve(ir, next)),
+            (NodeKind::Identifier(action), NodeKind::Identifier(relation))
+                if !action.is_local
+                    && matches!(action.resolution, Resolution::Definition(_))
+                    && action.resolution == relation.resolution
+        );
+    is_named
+        && atom.scope == ir.model.scope
+        && compiler.is_walk_repeatable(next, &mut HashSet::new())
+}
+
 fn compile_atom(compiler: &mut Compiler<'_>, ir: &Ir, atom: &tla_ir::Atom) -> CompiledAtom {
     let scope = atom.scope;
     let mut is_printing = false;
@@ -830,6 +853,7 @@ fn compile_atom(compiler: &mut Compiler<'_>, ir: &Ir, atom: &tla_ir::Atom) -> Co
             uses_registers =
                 action.uses_registers() || subscript.as_ref().is_some_and(Compiled::uses_registers);
             Ok(Atom::Action {
+                is_next: !action.reads_search() && is_next(compiler, ir, atom),
                 action: action.eval,
                 subscript: subscript.map(|subscript| subscript.eval),
                 enabled: enabled.map(|position| position as usize),
