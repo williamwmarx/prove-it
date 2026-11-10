@@ -562,7 +562,12 @@ struct Graph {
 /// to verify a fingerprint. 0 marks an empty slot, so a state whose fingerprint is 0 is kept apart.
 struct FingerprintSet {
     fingerprints: Vec<u64>,
-    indices: Vec<u32>,
+    // The index of the state in each slot, kept only where the search reads it back: for a graph's
+    // edges, or to tell a collision.
+    indices: Option<Vec<u32>>,
+    // A fingerprint's home slot is the top bits of its hash, so that growing the table moves each
+    // fingerprint to about twice its slot, and the table is rewritten in order.
+    shift: u32,
     mask: usize,
     len: usize,
     zero: Option<u32>,
@@ -574,11 +579,13 @@ const ZERO_SLOT: usize = usize::MAX;
 impl FingerprintSet {
     const INITIAL_CAPACITY: usize = 1 << 12;
 
-    fn new() -> FingerprintSet {
+    fn new(is_indexed: bool) -> FingerprintSet {
+        let capacity = Self::INITIAL_CAPACITY;
         FingerprintSet {
-            fingerprints: vec![0; Self::INITIAL_CAPACITY],
-            indices: vec![0; Self::INITIAL_CAPACITY],
-            mask: Self::INITIAL_CAPACITY - 1,
+            fingerprints: vec![0; capacity],
+            indices: is_indexed.then(|| vec![0; capacity]),
+            shift: u64::BITS - capacity.trailing_zeros(),
+            mask: capacity - 1,
             len: 0,
             zero: None,
         }
@@ -601,7 +608,7 @@ impl FingerprintSet {
 
     #[inline(always)]
     fn home(&self, fingerprint: u64) -> usize {
-        (fingerprint.wrapping_mul(0x9e37_79b9_7f4a_7c15) >> 32) as usize & self.mask
+        (fingerprint.wrapping_mul(0x9e37_79b9_7f4a_7c15) >> self.shift) as usize
     }
 
     /// The slot that holds this fingerprint, or the slot to put it in.
@@ -622,9 +629,10 @@ impl FingerprintSet {
 
     /// The index of the state whose fingerprint is in a slot.
     fn index(&self, slot: usize) -> u32 {
-        match self.zero {
-            Some(index) if slot == ZERO_SLOT => index,
-            _ => self.indices[slot],
+        match (self.zero, &self.indices) {
+            (Some(index), _) if slot == ZERO_SLOT => index,
+            (_, Some(indices)) => indices[slot],
+            (_, None) => unreachable!("a search that reads its states' indices keeps them"),
         }
     }
 
@@ -634,23 +642,31 @@ impl FingerprintSet {
             return;
         }
         self.fingerprints[slot] = fingerprint;
-        self.indices[slot] = index;
+        if let Some(indices) = &mut self.indices {
+            indices[slot] = index;
+        }
         self.len += 1;
         // At most half full: a third full measured slower, the larger table missing the cache
         // more often than a probe leaves its cache line, and 70% no faster.
         if self.len * 2 > self.fingerprints.len() {
             let capacity = self.fingerprints.len() * 2;
             let fingerprints = std::mem::replace(&mut self.fingerprints, vec![0; capacity]);
-            let indices = std::mem::replace(&mut self.indices, vec![0; capacity]);
+            let indices = self
+                .indices
+                .as_mut()
+                .map(|indices| std::mem::replace(indices, vec![0; capacity]));
+            self.shift -= 1;
             self.mask = capacity - 1;
-            for (stored, index) in fingerprints.into_iter().zip(indices) {
+            for (old, stored) in fingerprints.into_iter().enumerate() {
                 if stored != 0 {
                     let mut slot = self.home(stored);
                     while self.fingerprints[slot] != 0 {
                         slot = (slot + 1) & self.mask;
                     }
                     self.fingerprints[slot] = stored;
-                    self.indices[slot] = index;
+                    if let (Some(indices), Some(old_indices)) = (&mut self.indices, &indices) {
+                        indices[slot] = old_indices[old];
+                    }
                 }
             }
         }
@@ -1719,7 +1735,7 @@ fn expand_claimed(worker: &mut Worker<'_>, shared: &Shared<'_>) -> Expanded {
     let (before, level) = (shared.before, shared.level);
     let candidates = Candidates {
         before,
-        seen: FingerprintSet::new(),
+        seen: FingerprintSet::new(before.set.indices.is_some()),
         ids: Vec::new(),
         keys: Vec::new(),
         fingerprints: Vec::new(),
@@ -2465,7 +2481,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         keys: Vec::new(),
         parents: Vec::new(),
         fingerprints: Vec::new(),
-        set: FingerprintSet::new(),
+        set: FingerprintSet::new(settings.is_fingerprint_verified || model.is_recording_graph),
         order,
         is_verified: settings.is_fingerprint_verified,
         collisions: 0,
@@ -4753,7 +4769,7 @@ mod tests {
             keys: Vec::new(),
             parents: Vec::new(),
             fingerprints: Vec::new(),
-            set: FingerprintSet::new(),
+            set: FingerprintSet::new(true),
             order: vec![0],
             is_verified: true,
             collisions: 0,
