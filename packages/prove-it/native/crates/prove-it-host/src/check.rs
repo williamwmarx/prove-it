@@ -2,8 +2,9 @@
 //! `checkSources(args, known, machine)` checks the spec the TLC command line `args` names as the
 //! binary does, reading its files from what JavaScript knows (`sources`), and returns one of:
 //!
-//! - `{ kind: "checked", exitCode, out, err }`, what the binary prints to stdout and stderr, and its
-//!   exit code;
+//! - `{ kind: "checked", exitCode, out, err, outcome }`, what the binary prints to stdout and
+//!   stderr, its exit code, and what the check found where it searched, as the library reports it
+//!   (`get_outcome`);
 //! - `{ kind: "needed", keys }`, what the check reads that isn't known yet (`sources`). It asks for
 //!   everything before it searches, so a round never searches;
 //! - `{ kind: "declined", reason }`, where the binary prints `not native yet`, without what it
@@ -12,16 +13,18 @@
 //! The keys it reads, besides SANY's `module:` and `file:`, are `text:<path>`, the text of the file
 //! at a path the command line names (the spec and its configuration), `bytes:<path>`, the bytes of
 //! the tla2tools.jar on a Java launch's class path, and `class:<name>`, the Java override for a
-//! module, both as a Uint8Array. `machine` gives what TLC's banner and dates
-//! describe: `[system, release, arch, cores, memoryMegabytes, pid, now, zone, variables]`, with
-//! `now` in milliseconds since the epoch, `zone` a POSIX TZ rule, and `variables` the
-//! environment's `[name, value]` pairs the check reads.
+//! module, both as a Uint8Array. `machine` gives what TLC's banner and dates describe, and what the
+//! check may use of it:
+//! `[system, release, arch, cores, memoryMegabytes, pid, now, zone, variables, isFileSystem]`, with
+//! `now` in milliseconds since the epoch, `zone` a POSIX TZ rule, `variables` the environment's
+//! `[name, value]` pairs the check reads, and `isFileSystem` whether the Json module's operators
+//! may read and write the machine's files, which the library, answering for files itself, denies.
 
 use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use prove_it_check::zone::{Zone, parse_rule};
-use prove_it_check::{FileDescription, Files, Host, Machine, Output};
+use prove_it_check::{FileDescription, Files, Host, Machine, Outcome, Output};
 use tla_engine::clock::Instant;
 use tla_front::report::ModuleOrigin;
 
@@ -41,6 +44,7 @@ struct SourcesHost {
     started: Instant,
     zone: Zone,
     variables: Vec<(String, String)>,
+    is_file_system: bool,
 }
 
 impl SourcesHost {
@@ -102,6 +106,10 @@ impl Host for SourcesHost {
 
     fn machine(&self) -> &Machine {
         &self.machine
+    }
+
+    fn is_file_system(&self) -> bool {
+        self.is_file_system
     }
 
     fn is_complete(&self) -> bool {
@@ -170,9 +178,13 @@ fn check(arguments: &[HostValue]) -> HookResult {
         now,
         zone,
         variables,
+        is_file_system,
     ] = machine.as_slice()
     else {
-        return Err("the machine must be [system, release, arch, cores, memoryMegabytes, pid, now, zone, variables]".into());
+        return Err("the machine must be [system, release, arch, cores, memoryMegabytes, pid, now, zone, variables, isFileSystem]".into());
+    };
+    let HostValue::Bool(is_file_system) = *is_file_system else {
+        return Err("isFileSystem must be a boolean".into());
     };
     let HostValue::Array(variables) = variables else {
         return Err("the variables must be an array of [name, value] pairs".into());
@@ -198,16 +210,17 @@ fn check(arguments: &[HostValue]) -> HookResult {
         started: Instant::now(),
         zone: parse_rule(&get_text(zone, "the zone")?).map_or(Zone::UTC, Zone::from_rule),
         variables,
+        is_file_system,
     };
     let (mut out, mut err) = (Vec::new(), Vec::new());
-    let exit_code = prove_it_check::run(
-        &args,
-        &mut Output {
-            out: &mut out,
-            err: &mut err,
-            host: &host,
-        },
-    );
+    let mut output = Output {
+        out: &mut out,
+        err: &mut err,
+        host: &host,
+        outcome: Outcome::default(),
+    };
+    let exit_code = prove_it_check::run(&args, &mut output);
+    let outcome = output.outcome;
     if let Some(needed) = host.sources.get_needed() {
         return Ok(needed);
     }
@@ -227,7 +240,63 @@ fn check(arguments: &[HostValue]) -> HookResult {
         ("exitCode", HostValue::Number(f64::from(exit_code))),
         ("out", HostValue::text(&String::from_utf8_lossy(&out))),
         ("err", HostValue::text(&err)),
+        ("outcome", get_outcome(outcome)),
     ]))
+}
+
+/// The outcome the library reads, or undefined where the check stopped before it searched.
+fn get_outcome(outcome: Outcome) -> HostValue {
+    let Some(status) = outcome.status else {
+        return HostValue::Undefined;
+    };
+    let counts = outcome.counts;
+    let violations = outcome.violations.into_iter().map(|reported| {
+        let states = reported.states.into_iter().map(|state| {
+            let variables = state.variables.into_iter().map(|variable| {
+                HostValue::Array(vec![
+                    HostValue::text(&variable.name),
+                    HostValue::text(&variable.text),
+                    HostValue::text(&variable.data),
+                ])
+            });
+            HostValue::Object(vec![
+                ("label", HostValue::text(&state.label)),
+                ("variables", HostValue::Array(variables.collect())),
+            ])
+        });
+        HostValue::Object(vec![
+            ("code", HostValue::Number(f64::from(reported.code))),
+            ("headline", HostValue::text(&reported.headline)),
+            ("states", HostValue::Array(states.collect())),
+            (
+                "loopStart",
+                reported.loop_start.map_or(HostValue::Undefined, |start| {
+                    HostValue::Number(start as f64)
+                }),
+            ),
+        ])
+    });
+    HostValue::Object(vec![
+        ("status", HostValue::text(status)),
+        (
+            "generatedStates",
+            HostValue::Number(counts.generated as f64),
+        ),
+        ("distinctStates", HostValue::Number(counts.distinct as f64)),
+        ("queuedStates", HostValue::Number(counts.queued as f64)),
+        ("depth", HostValue::Number(counts.depth as f64)),
+        (
+            "prints",
+            HostValue::Array(
+                outcome
+                    .prints
+                    .iter()
+                    .map(|text| HostValue::text(text))
+                    .collect(),
+            ),
+        ),
+        ("violations", HostValue::Array(violations.collect())),
+    ])
 }
 
 #[cfg(test)]
@@ -252,6 +321,7 @@ mod tests {
             started: Instant::now(),
             zone: Zone::UTC,
             variables: Vec::new(),
+            is_file_system: true,
         };
         let first = host.now();
         std::thread::sleep(Duration::from_millis(5));

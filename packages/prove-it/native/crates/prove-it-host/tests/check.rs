@@ -33,6 +33,7 @@ fn machine() -> HostValue {
         HostValue::Number(1_794_312_000_000.0),
         HostValue::text("UTC0"),
         HostValue::Array(Vec::new()),
+        HostValue::Bool(true),
     ])
 }
 
@@ -110,6 +111,10 @@ fn checks_a_spec_once_it_has_the_files_it_names() {
     );
     assert_eq!(text(&get(&result, "err")), "");
     assert!(rounds <= 4, "{rounds} rounds");
+    let outcome = get(&result, "outcome");
+    assert_eq!(text(&get(&outcome, "status")), "success");
+    assert_eq!(get(&outcome, "generatedStates"), HostValue::Number(4.0));
+    assert_eq!(get(&outcome, "violations"), HostValue::Array(Vec::new()));
 }
 
 #[test]
@@ -124,6 +129,8 @@ fn reports_a_missing_configuration_as_tlc_does() {
         out.contains("the configuration file /specs/Spec.cfg:\nFile not found."),
         "{out}"
     );
+    // TLC stops before it searches, which the library reports as the error it throws.
+    assert_eq!(get(&result, "outcome"), HostValue::Undefined);
 }
 
 #[test]

@@ -87,6 +87,9 @@ pub struct Settings {
     /// and not yet touched, its address and length in bytes: the state table, from 32 MB, whose
     /// probes land anywhere in it. The CLI asks Linux to back it with huge pages.
     pub large_region_advice: Option<Advice>,
+    /// Whether the Json module's operators may read and write the machine's files, which a host
+    /// that answers for the files itself, as the library does, doesn't let them.
+    pub is_file_system: bool,
 }
 
 /// See [`Settings::large_region_advice`].
@@ -122,6 +125,7 @@ impl Default for Settings {
             is_dumped: false,
             is_continued: false,
             large_region_advice: None,
+            is_file_system: true,
         }
     }
 }
@@ -2670,6 +2674,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     let mut compiler = Compiler::new(ir, &mut store, settings.compile);
     compiler.workers = settings.workers;
     compiler.is_native = settings.is_violation_reported;
+    compiler.is_file_system = settings.is_file_system;
     let context = match EngineContext::build(&mut compiler, ir) {
         Ok(context) => context,
         Err(error) => return SearchOutcome::Declined(describe(error)),

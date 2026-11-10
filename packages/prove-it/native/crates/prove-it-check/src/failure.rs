@@ -21,9 +21,10 @@ use crate::summary::out_degree_summary;
 // expect (`EC.ExitStatus`).
 pub(crate) const FAILURE_SPEC_EVAL: i32 = 75;
 pub(crate) const ERROR: i32 = 255;
+use crate::plain::Variable;
 use crate::trace::{
-    PostconditionRun, Postconditions, check, format_fields, format_partial_state, format_print,
-    format_state, format_texts,
+    PostconditionRun, Postconditions, check, format_print, format_texts, get_field_variables,
+    get_partial_variables, get_state_variables,
 };
 
 /// Where the search stopped on an error: the path to the state it was expanding, as ids of
@@ -63,7 +64,7 @@ struct Report {
 
 struct PrintedStep {
     label: String,
-    text: String,
+    variables: Vec<Variable>,
     output: Vec<String>,
 }
 
@@ -129,16 +130,16 @@ pub fn print_failure(
         &failure.message
     };
     // TLC names the initial state it failed to fingerprint in the message.
+    printer.outcome.status = Some("error");
     match &failure.state {
-        Some(state) => printer.print(
+        Some(state) => printer.report(
             failure.code,
-            Level::Error,
             &format!(
                 "{message}\nWhile working on the initial state:\n{}",
                 format_texts(ir, state)
             ),
         ),
-        None => printer.print(failure.code, Level::Error, message),
+        None => printer.report(failure.code, message),
     }
     // TLC reports an exception it didn't expect without the call stack or statistics, but for one
     // adding a state to the behavior graphs, an initial one too, or one its replay of an
@@ -170,11 +171,7 @@ pub fn print_failure(
                     printer.line(line);
                 }
             }
-            printer.print(
-                code::STATE_PRINT_2,
-                Level::State,
-                &format!("{}: <{}>\n{}", position + 1, step.label, step.text),
-            );
+            printer.state(position + 1, &step.label, step.variables.clone());
         }
     }
     // A successor TLC can't fingerprint fails again as TLC prints it with the trace.
@@ -377,14 +374,15 @@ pub fn print_assumption_failure(
         return Err("the assumptions printing other than TLC prints".into());
     }
     for text in &expected.split_off(printed.len()) {
-        printer.line(text);
+        printer.printed(text);
     }
     let message = if printer.is_tool {
         &failure.tool_message
     } else {
         &failure.message
     };
-    printer.print(failure.code, Level::Error, message);
+    printer.outcome.status = Some("assumption-violation");
+    printer.report(failure.code, message);
     print_finished(printer, start);
     Ok(failure.exit_code)
 }
@@ -514,13 +512,13 @@ fn labelled(
         };
         states.push(PrintedStep {
             label,
-            text: match aliases.map(|aliases| &aliases[position]) {
-                Some(Alias::Record(fields)) => format_fields(
+            variables: match aliases.map(|aliases| &aliases[position]) {
+                Some(Alias::Record(fields)) => get_field_variables(
                     fields
                         .iter()
                         .map(|(name, value)| (name.as_str(), Some(value))),
                 ),
-                _ => format_state(ir, &state.values),
+                _ => get_state_variables(ir, &state.values),
             },
             output: state
                 .printed
@@ -571,7 +569,7 @@ fn print_incomplete(
             (
                 incomplete.action,
                 incomplete.missing,
-                format_partial_state(ir, &partial),
+                get_partial_variables(ir, &partial),
             ),
         ))
     })?;
@@ -595,9 +593,9 @@ fn print_incomplete(
     } else {
         ("variable", "is")
     };
-    printer.print(
+    printer.outcome.status = Some("error");
+    printer.report(
         code::INCOMPLETE_SUCCESSOR,
-        Level::Error,
         &format!(
             "Successor state is not completely specified by {subject}. The following {noun} {verb} not defined: {}.\n",
             names.join(", ")
@@ -610,15 +608,11 @@ fn print_incomplete(
     );
     let successor = PrintedStep {
         label: label.to_string(),
-        text: partial,
+        variables: partial,
         output: Vec::new(),
     };
-    for (position, step) in states.iter().chain([&successor]).enumerate() {
-        printer.print(
-            code::STATE_PRINT_2,
-            Level::State,
-            &format!("{}: <{}>\n{}", position + 1, step.label, step.text),
-        );
+    for (position, step) in states.into_iter().chain([successor]).enumerate() {
+        printer.state(position + 1, &step.label, step.variables);
     }
     // TLC counts the incomplete successor as generated, which the search stopped before counting.
     let statistics = Statistics {

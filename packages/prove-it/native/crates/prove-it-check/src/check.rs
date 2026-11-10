@@ -20,6 +20,7 @@ use crate::front::{Failure, Read, read_front};
 use crate::host::{Files, Host};
 use crate::jar::{get_tools_jar, is_174};
 use crate::messages::{self as code, Level, Output, Printer};
+use crate::outcome::{Counts, Reported, ReportedState};
 use crate::stack::{alongside, on_search_stack};
 use crate::summary::{
     actual_probability, fingerprint_distance, format_count, format_probability,
@@ -27,8 +28,9 @@ use crate::summary::{
 };
 use crate::time::format_duration;
 use crate::trace::{
-    PostconditionRun, Postconditions, PrintedTrace, check_postconditions, format_print,
-    format_texts, rebuild_accepted, rebuild_continued, rebuild_trace,
+    PostconditionRun, Postconditions, PrintedState, PrintedTrace, check_postconditions,
+    format_print, format_texts, format_variables, rebuild_accepted, rebuild_continued,
+    rebuild_trace,
 };
 use crate::xml_exporter::run_xml_exporter;
 use tla_front::TlcVersion;
@@ -666,6 +668,17 @@ pub(crate) struct Statistics {
     pub depth: u64,
 }
 
+impl Statistics {
+    pub fn counts(&self) -> Counts {
+        Counts {
+            generated: self.generated,
+            distinct: self.distinct,
+            queued: self.queued,
+            depth: self.depth,
+        }
+    }
+}
+
 /// TLC reports a depth of at least 1, even before it finds a state, and rates a minute only once
 /// the search has started.
 fn print_progress(printer: &mut Printer, statistics: &Statistics, start: Option<Instant>) {
@@ -958,6 +971,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
         is_dumped,
         is_continued,
         large_region_advice: printer.host.large_region_advice(),
+        is_file_system: printer.host.is_file_system(),
         ..Settings::default()
     };
     let threads = settings.threads;
@@ -1033,7 +1047,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                             print_liveness_finished(printer, checking);
                         }
                     }
-                    Event::Print(Some(text)) => printer.line(&text),
+                    Event::Print(Some(text)) => printer.printed(&text),
                     Event::StartupMessage(message) => print_startup_message(printer, &message),
                     Event::SymmetrySetsTooSmall(names) => print_small_sets(printer, &names),
                     // Nothing more this run prints can be right, so it prints nothing more, and the
@@ -1233,9 +1247,10 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                 // What the postconditions print comes as TLC evaluates them; TLC reports one that
                 // doesn't hold in place of the success, with the statistics.
                 for line in &checked.printed {
-                    printer.line(line);
+                    printer.printed(line);
                 }
                 if checked.failure.is_some() {
+                    printer.outcome.status = Some("postcondition-violation");
                     print_postcondition_failure(printer, &ir, Some(&checked));
                     print_statistics(printer, &statistics, start);
                     print_finished(printer, start);
@@ -1273,9 +1288,9 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
         }
         // TLC reports a false assumption with no statistics, since it hasn't searched.
         SearchOutcome::AssumptionViolated { name } => {
-            printer.print(
+            printer.outcome.status = Some("assumption-violation");
+            printer.report(
                 code::ASSUMPTION_FALSE,
-                Level::Error,
                 &format!("Assumption {name} is false."),
             );
             print_finished(printer, start);
@@ -1287,7 +1302,8 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
             ..
         } => {
             let printed = match violation.kind {
-                // TLC stops with no statistics, before it would search.
+                // TLC stops with no statistics, before it would search, as at an error the
+                // library throws, so the outcome has no status.
                 ViolationKind::NoNextState => {
                     printer.print(
                         code::NO_NEXT_ACTION,
@@ -1425,6 +1441,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
             )
         })
         .unwrap_or_default();
+    printer.outcome.status = Some("success");
     printer.print(
         code::SUCCESS,
         Level::None,
@@ -1502,6 +1519,7 @@ fn print_liveness_finished(printer: &mut Printer, checking: Instant) {
 /// After a search, TLC prints how many states it found and how deep it went, after the progress
 /// with -tool.
 pub(crate) fn print_statistics(printer: &mut Printer, statistics: &Statistics, start: Instant) {
+    printer.outcome.counts = statistics.counts();
     if printer.is_tool {
         print_progress(printer, statistics, Some(start));
     }
@@ -1585,7 +1603,7 @@ fn print_violation(
         _ => None,
     };
     let model = &ir.model;
-    let (code, text, exit_code) = match violation.kind {
+    let (code, text, exit_code, status) = match violation.kind {
         ViolationKind::InitialInvariant(owner) => (
             code::INVARIANT_VIOLATED_INITIAL,
             format!(
@@ -1593,6 +1611,7 @@ fn print_violation(
                 invariant_name(ir, owner)?
             ),
             SAFETY_VIOLATION,
+            "invariant-violation",
         ),
         ViolationKind::InitialPredicate(position) => (
             code::PROPERTY_VIOLATED_INITIAL,
@@ -1604,20 +1623,26 @@ fn print_violation(
                     .ok_or(NOT_IN_IR)? as usize]
             ),
             LIVENESS_VIOLATION,
+            "liveness-violation",
         ),
         ViolationKind::Invariant(owner) => (
             code::INVARIANT_VIOLATED_BEHAVIOR,
             format!("Invariant {} is violated.", invariant_name(ir, owner)?),
             SAFETY_VIOLATION,
+            "invariant-violation",
+        ),
+        ViolationKind::Deadlock { .. } => (
+            code::DEADLOCK_REACHED,
+            "Deadlock reached.".into(),
+            DEADLOCK,
+            "deadlock",
         ),
         ViolationKind::ActionProperty(position) => (
             code::ACTION_PROPERTY_VIOLATED_BEHAVIOR,
             action_property_headline(ir, position)?,
             LIVENESS_VIOLATION,
+            "liveness-violation",
         ),
-        ViolationKind::Deadlock { .. } => {
-            (code::DEADLOCK_REACHED, "Deadlock reached.".into(), DEADLOCK)
-        }
         ViolationKind::NoNextState | ViolationKind::Error { .. } => return Err(NOT_IN_IR),
         // Under SYMMETRY or a VIEW, TLC names the properties the lasso it rebuilt violates.
         ViolationKind::Lasso { .. } => (
@@ -1628,6 +1653,7 @@ fn print_violation(
             }
             .ok_or(NOT_IN_IR)?,
             LIVENESS_VIOLATION,
+            "liveness-violation",
         ),
         // A tableau node that accepts every behavior: TLC reports it as it does a safety
         // violation.
@@ -1635,6 +1661,7 @@ fn print_violation(
             code::TEMPORAL_PROPERTY_VIOLATED,
             properties_headline(ir, violated).ok_or(NOT_IN_IR)?,
             SAFETY_VIOLATION,
+            "property-violation",
         ),
     };
     let is_counterexample = matches!(
@@ -1694,6 +1721,7 @@ fn print_violation(
         queued: counts.queued,
         depth: counts.depth,
     };
+    printer.outcome.status = Some(status);
     // TLC prints the initial state that violates an invariant or a property in the same message,
     // and no statistics, since it checks the initial states before it searches.
     if let ViolationKind::InitialInvariant(_) | ViolationKind::InitialPredicate(_) = violation.kind
@@ -1703,8 +1731,21 @@ fn print_violation(
         if !ir.model.postconditions.is_empty() {
             return Err("a POSTCONDITION after an initial state's violation");
         }
-        let state = &trace.states.first().ok_or(NOT_IN_IR)?.text;
-        printer.print(code, Level::Error, &format!("{text}\n{state}"));
+        let state = trace.states.into_iter().next().ok_or(NOT_IN_IR)?;
+        printer.print(
+            code,
+            Level::Error,
+            &format!("{text}\n{}", format_variables(&state.variables)),
+        );
+        printer.outcome.violations.push(Reported {
+            code,
+            headline: text,
+            states: vec![ReportedState {
+                label: "Initial predicate".into(),
+                variables: state.variables,
+            }],
+            loop_start: None,
+        });
         print_finished(printer, start);
         return Ok(exit_code);
     }
@@ -1742,13 +1783,13 @@ fn print_violation(
         for line in &lasso_printed {
             printer.line(line);
         }
-        printer.print(code, Level::Error, &text);
+        printer.report(code, &text);
         (
             code::COUNTER_EXAMPLE,
             "The following behavior constitutes a counter-example:\n",
         )
     } else {
-        printer.print(code, Level::Error, &text);
+        printer.report(code, &text);
         for line in first_output {
             printer.line(line);
         }
@@ -1758,7 +1799,11 @@ fn print_violation(
         )
     };
     printer.print(heading_code, Level::Error, heading);
-    print_states(printer, &trace, &labels);
+    print_states(printer, &trace.states, &labels);
+    if let (Some(reported), Some((loop_start, ..))) = (printer.outcome.violations.last_mut(), lasso)
+    {
+        reported.loop_start = Some(loop_start);
+    }
     // TLC rebuilds a violation's trace again for the counterexample the postconditions read,
     // so what that prints comes before what they print. TLC checks them on a lasso once it has
     // printed where the lasso closes (`LiveWorker.printTrace`).
@@ -1845,13 +1890,13 @@ fn print_violation(
         {
             printer.line(line);
         }
-        printer.print(code::TEMPORAL_PROPERTY_VIOLATED, Level::Error, &headline);
+        printer.report(code::TEMPORAL_PROPERTY_VIOLATED, &headline);
         printer.print(
             code::COUNTER_EXAMPLE,
             Level::Error,
             "The following behavior constitutes a counter-example:\n",
         );
-        print_states(printer, &accepted, &labels);
+        print_states(printer, &accepted.states, &labels);
     }
     print_postcondition_failure(printer, ir, trace.postconditions.as_ref());
     if let Some(checking) = checking {
@@ -1911,15 +1956,27 @@ fn trace_labels<'i>(
 fn print_continued(printer: &mut Printer, report: &ContinuedReport) {
     let trace = &report.trace;
     if report.is_initial {
-        let state = trace.states.first().map_or("", |state| &state.text);
+        let variables = trace
+            .states
+            .first()
+            .map_or_else(Vec::new, |state| state.variables.clone());
         printer.print(
             report.code,
             Level::Error,
-            &format!("{}\n{state}", report.headline),
+            &format!("{}\n{}", report.headline, format_variables(&variables)),
         );
+        printer.outcome.violations.push(Reported {
+            code: report.code,
+            headline: report.headline.clone(),
+            states: vec![ReportedState {
+                label: "Initial predicate".into(),
+                variables,
+            }],
+            loop_start: None,
+        });
         return;
     }
-    printer.print(report.code, Level::Error, &report.headline);
+    printer.report(report.code, &report.headline);
     for line in trace
         .states
         .first()
@@ -1934,24 +1991,20 @@ fn print_continued(printer: &mut Printer, report: &ContinuedReport) {
         "The behavior up to this point is:",
     );
     let labels: Vec<&str> = report.labels.iter().map(String::as_str).collect();
-    print_states(printer, trace, &labels);
+    print_states(printer, &trace.states, &labels);
     for line in &trace.trace_output {
         printer.line(line);
     }
 }
 
-fn print_states(printer: &mut Printer, trace: &PrintedTrace, labels: &[&str]) {
-    for (position, (state, label)) in trace.states.iter().zip(labels).enumerate() {
+fn print_states(printer: &mut Printer, states: &[PrintedState], labels: &[&str]) {
+    for (position, (state, label)) in states.iter().zip(labels).enumerate() {
         if position > 0 {
             for line in &state.output {
                 printer.line(line);
             }
         }
-        printer.print(
-            code::STATE_PRINT_2,
-            Level::State,
-            &format!("{}: <{label}>\n{}", position + 1, state.text),
-        );
+        printer.state(position + 1, label, state.variables.clone());
     }
 }
 
@@ -2065,7 +2118,7 @@ pub(crate) fn print_postcondition_failure(
             format!("Postcondition {name}{location} is false."),
         ),
     };
-    printer.print(code, Level::Error, &text);
+    printer.report(code, &text);
 }
 
 /// A spec TLC stops at before it searches: SANY's report, framed by SANY's start and finish under

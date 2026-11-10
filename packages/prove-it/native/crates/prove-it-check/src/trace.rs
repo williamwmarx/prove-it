@@ -13,6 +13,7 @@ use tla_trace::{
 };
 use tla_values::{Id, Store};
 
+use crate::plain::{Variable, to_plain};
 use crate::stack::on_search_stack;
 use tla_trace::pretty_print;
 
@@ -45,7 +46,7 @@ pub struct Postconditions {
 }
 
 pub struct PrintedState {
-    pub text: String,
+    pub variables: Vec<Variable>,
     /// The position in the model's actions of the action that took the step to the state, as
     /// TLC finds it.
     pub action: Option<u32>,
@@ -280,13 +281,13 @@ fn rebuild(
                         .iter()
                         .enumerate()
                         .map(|(position, state)| PrintedState {
-                            text: match aliases.as_ref().map(|aliases| &aliases[position]) {
-                                Some(Alias::Record(fields)) => format_fields(
+                            variables: match aliases.as_ref().map(|aliases| &aliases[position]) {
+                                Some(Alias::Record(fields)) => get_field_variables(
                                     fields
                                         .iter()
                                         .map(|(name, value)| (name.as_str(), Some(value))),
                                 ),
-                                _ => format_state(ir, &state.values),
+                                _ => get_state_variables(ir, &state.values),
                             },
                             action: state.action,
                             output: state
@@ -437,13 +438,13 @@ pub(crate) fn format_print(texts: &[String]) -> String {
 }
 
 /// A state's values, in the engine's order of the variables, as TLC prints the state.
-pub(crate) fn format_state(ir: &Ir, values: &[Value]) -> String {
-    format_partial_state(ir, &values.iter().map(Some).collect::<Vec<_>>())
+pub(crate) fn get_state_variables(ir: &Ir, values: &[Value]) -> Vec<Variable> {
+    get_partial_variables(ir, &values.iter().map(Some).collect::<Vec<_>>())
 }
 
 /// A state some of whose variables are unassigned, which TLC prints as null.
-pub(crate) fn format_partial_state(ir: &Ir, values: &[Option<&Value>]) -> String {
-    format_fields(ir.tlc_order.iter().map(|&position| {
+pub(crate) fn get_partial_variables(ir: &Ir, values: &[Option<&Value>]) -> Vec<Variable> {
+    get_field_variables(ir.tlc_order.iter().map(|&position| {
         (
             ir.texts[ir.variables[position as usize] as usize].as_ref(),
             values[position as usize],
@@ -466,17 +467,25 @@ pub(crate) fn format_texts(ir: &Ir, texts: &[String]) -> String {
     text
 }
 
-/// Named values as TLC prints a state (`TLCStateMut.toString`): a line each, as a conjunction when
+/// Named values as TLC prints them in a state, null where unassigned.
+pub(crate) fn get_field_variables<'v>(
+    fields: impl Iterator<Item = (&'v str, Option<&'v Value>)>,
+) -> Vec<Variable> {
+    fields
+        .map(|(name, value)| Variable {
+            name: name.to_string(),
+            text: value.map_or_else(|| "null".to_string(), |value| pretty(&format_value(value))),
+            data: value.map_or_else(|| "null".to_string(), to_plain),
+        })
+        .collect()
+}
+
+/// A state as TLC prints it (`TLCStateMut.toString`): a line per variable, as a conjunction when
 /// there are several.
-pub(crate) fn format_fields<'v>(
-    fields: impl ExactSizeIterator<Item = (&'v str, Option<&'v Value>)>,
-) -> String {
-    let is_conjunction = fields.len() > 1;
-    let mut text = String::new();
-    for (name, value) in fields {
-        let conjunct = if is_conjunction { "/\\ " } else { "" };
-        let value = value.map_or_else(|| "null".to_string(), |value| pretty(&format_value(value)));
-        text.push_str(&format!("{conjunct}{name} = {value}\n"));
-    }
-    text
+pub(crate) fn format_variables(variables: &[Variable]) -> String {
+    let conjunct = if variables.len() > 1 { "/\\ " } else { "" };
+    variables
+        .iter()
+        .map(|variable| format!("{conjunct}{} = {}\n", variable.name, variable.text))
+        .collect()
 }

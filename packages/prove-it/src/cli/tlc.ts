@@ -26,8 +26,8 @@ import type {
   Violation,
 } from "../check";
 import { parseConfig } from "../config";
-import { getNativeAddon, loadWasmEngine, type NativeCheckSources } from "../engine/native";
-import { getEngineSetting, getEnvironmentSetting, reportEngine } from "../engine/settings";
+import { checkAllSources, getNativeAddon, loadWasmEngine } from "../engine/native";
+import { getEngineVariables, isTypeScriptCheckAsked, reportEngine } from "../engine/settings";
 import {
   getErrorExitCode,
   getUnexpectedException,
@@ -952,21 +952,6 @@ const getZoneRule = () => {
   return `<${offset < 0 ? "-" : "+"}${String(hours).padStart(2, "0")}${minutes}>${offset > 0 ? "-" : ""}${hours}:${minutes}`;
 };
 
-// The debug settings only the TypeScript check honours, which leave the command line to it:
-// PROVE_IT_STOP_AT tests its hand-over from the engine, the IR dump, the state log and the
-// fingerprint setting are written or checked there, and the memo, epoch, fingerprint and liveness
-// self-checks are the engine settings it passes, which the binary doesn't read.
-const TYPESCRIPT_SETTINGS = [
-  "PROVE_IT_STOP_AT",
-  "PROVE_IT_IR_DUMP",
-  "PROVE_IT_STATE_LOG",
-  "PROVE_IT_FINGERPRINT",
-  "PROVE_IT_MEMO",
-  "PROVE_IT_EPOCH_CHECK",
-  "PROVE_IT_FP_VERIFY",
-  "PROVE_IT_LIVE_CHECK",
-];
-
 // The check the native binary runs for the command line, run in-process: its exit code, once it
 // printed what the binary prints, or undefined where it declines the model or no engine loads, for
 // the TypeScript check to check it. The command line is TLC's as given, the Java launch's included;
@@ -978,12 +963,7 @@ export const checkNatively = async (
   args: string[],
   java: JavaProperties,
 ) => {
-  if (
-    getEngineSetting() === "0" ||
-    TYPESCRIPT_SETTINGS.some((name) => Boolean(getEnvironmentSetting(name)))
-  ) {
-    return undefined;
-  }
+  if (isTypeScriptCheckAsked()) return undefined;
   const startedAt = performance.now();
   await loadWasmEngine();
   const addon = getNativeAddon();
@@ -1014,32 +994,23 @@ export const checkNatively = async (
     const [origin, ...moduleName] = rest;
     return describeFile(moduleName.join(":"), origin as SanyModuleOrigin);
   };
-  const variables = Object.entries(process.env).filter(
-    (entry): entry is [string, string] =>
-      entry[0].startsWith("PROVE_IT_") && entry[1] !== undefined,
+  const result = checkAllSources(
+    addon,
+    commandLine,
+    [
+      type(),
+      release(),
+      arch(),
+      availableParallelism(),
+      Math.floor(totalmem() / 1024 / 1024),
+      process.pid,
+      Date.now(),
+      getZoneRule(),
+      getEngineVariables(),
+      true,
+    ],
+    readKey,
   );
-  const known = new Map<string, string | Uint8Array | undefined>();
-  const check = (): Exclude<NativeCheckSources, { kind: "needed" }> => {
-    const result = addon.checkSources(
-      commandLine,
-      [...known],
-      [
-        type(),
-        release(),
-        arch(),
-        availableParallelism(),
-        Math.floor(totalmem() / 1024 / 1024),
-        process.pid,
-        Date.now(),
-        getZoneRule(),
-        variables,
-      ],
-    );
-    if (result.kind !== "needed") return result;
-    result.keys.forEach((key) => known.set(key, readKey(key)));
-    return check();
-  };
-  const result = check();
   if (result.kind === "declined") {
     reportEngine(`native: checkSources declined: ${result.reason}`);
     return undefined;

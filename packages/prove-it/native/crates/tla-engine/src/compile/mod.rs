@@ -795,6 +795,8 @@ pub struct Compiler<'a> {
     /// take a search over with, such as TLC's registers, and otherwise declines it as the
     /// TypeScript engine does.
     pub is_native: bool,
+    /// Whether the Json module's operators may read and write files (`Settings::is_file_system`).
+    pub is_file_system: bool,
     /// How many workers TLC runs with (`-workers`), which TLCGet("config") reports.
     pub workers: usize,
     /// Whether anything compiled may build a function TLC keeps lazy, which only the machine that
@@ -883,6 +885,7 @@ impl<'a> Compiler<'a> {
                 .collect(),
             unsorted_slots: HashMap::new(),
             is_native: false,
+            is_file_system: true,
             workers: 1,
             is_lambda_built: false,
             is_cached: false,

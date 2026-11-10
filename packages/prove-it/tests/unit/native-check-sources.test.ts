@@ -12,7 +12,7 @@ import { getTranscript } from "../../scripts/normalize-output";
 import { getBuiltAddon } from "../../scripts/platform-packages";
 import { createModuleLoader } from "../../src/cli/shared";
 import { createFileDescriber } from "../../src/cli/tlc";
-import { getNativeAddon, type NativeCheckSources } from "../../src/engine/native";
+import { checkAllSources, getNativeAddon } from "../../src/engine/native";
 import type { SanyModuleOrigin } from "../../src/sany/report";
 
 const FIXTURES = join(import.meta.dirname, "..", "fixtures");
@@ -117,31 +117,30 @@ const readKey = (directory: string, args: string[], key: string) => {
   )(moduleName.join(":"), origin as SanyModuleOrigin);
 };
 
-const checkInProcess = (directory: string, args: string[]) => {
+const getAddon = () => {
   const addon = getNativeAddon();
   if (typeof addon === "string") throw new Error(addon);
-  const known = new Map<string, string | Uint8Array | undefined>();
-  const check = (): Exclude<NativeCheckSources, { kind: "needed" }> => {
-    const result = addon.checkSources(
-      args.map((arg) => (arg.endsWith(".tla") ? getSpecPath(directory, [arg]) : arg)),
-      [...known],
-      [
-        type(),
-        release(),
-        process.arch,
-        cpus().length,
-        Math.floor(totalmem() / 1024 / 1024),
-        process.pid,
-        Date.now(),
-        "UTC0",
-        [],
-      ],
-    );
-    if (result.kind !== "needed") return result;
-    result.keys.forEach((key) => known.set(key, readKey(directory, args, key)));
-    return check();
-  };
-  const result = check();
+  return addon;
+};
+
+const checkInProcess = (directory: string, args: string[]) => {
+  const result = checkAllSources(
+    getAddon(),
+    args.map((arg) => (arg.endsWith(".tla") ? getSpecPath(directory, [arg]) : arg)),
+    [
+      type(),
+      release(),
+      process.arch,
+      cpus().length,
+      Math.floor(totalmem() / 1024 / 1024),
+      process.pid,
+      Date.now(),
+      "UTC0",
+      [],
+      true,
+    ],
+    (key) => readKey(directory, args, key),
+  );
   return result.kind === "declined"
     ? `declined: ${result.reason}`
     : getTranscript(String(result.exitCode), result.out, result.err);
@@ -165,6 +164,32 @@ describe("checkSources", () => {
     const args = [...(test.java ?? []), "-noGenerateSpecTE", ...test.args];
     expect(checkInProcess(directory, args)).toBe(checkWithBinary(directory, args));
     rmSync(directory, { recursive: true, force: true });
+  });
+
+  it("returns what it found beside what it prints, where it searched", () => {
+    const getOutcome = (test: Case) => {
+      const directory = getDirectory(test);
+      const result = checkAllSources(
+        getAddon(),
+        ["-noGenerateSpecTE", getSpecPath(directory, test.args)],
+        ["", "", "", 1, 0, 0, 0, "UTC0", [], false],
+        (key) => readKey(directory, test.args, key),
+      );
+      rmSync(directory, { recursive: true, force: true });
+      if (result.kind === "declined") throw new Error(result.reason);
+      return result.outcome;
+    };
+    const outcome = getOutcome(CASES[1]);
+    expect([outcome?.status, outcome?.violations.map((violation) => violation.headline)]).toEqual([
+      "invariant-violation",
+      ["Invariant Below is violated."],
+    ]);
+    expect(outcome?.violations[0].states.map((state) => [state.label, state.variables])).toEqual([
+      ["Initial predicate", [["count", "0", "0"]]],
+      [expect.stringMatching(/^Increment line /), [["count", "1", "1"]]],
+      [expect.stringMatching(/^Increment line /), [["count", "2", "2"]]],
+    ]);
+    expect(getOutcome(CASES[3])).toBeUndefined();
   });
 
   // WebAssembly's frames are on the host's stack, so its engine stops recursing sooner.
