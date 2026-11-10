@@ -18,8 +18,10 @@
 // is dist/prove-it (bun run build:binary), and the one Bun compiled ahead of time dist/prove-it-aot
 // (build-binary.ts --aot, prove-it-aot). prove-it-rust, prove-it-rust-aot and prove-it-base-rust run
 // those binaries with PROVE_IT_ENGINE_BACKEND=rust, where the binary embeds the native engine
-// (scripts/platform-packages.ts build, before build-binary.ts). A checker whose file is missing is
-// left out.
+// (scripts/platform-packages.ts build, before build-binary.ts). native and native-auto run the
+// native binary (cargo build --release -p prove-it-cli in native) on one worker and on every core,
+// and native-base PROVE_IT_BASE_NATIVE, another build of it, on one worker. A checker whose file is
+// missing is left out.
 
 import { spawnSync } from "node:child_process";
 import {
@@ -98,6 +100,9 @@ const PACKAGE_DIRECTORY = join(import.meta.dirname, "..");
 const CLI_PATH = join(PACKAGE_DIRECTORY, "dist/cli.js");
 const BINARY_PATH = join(PACKAGE_DIRECTORY, "dist/prove-it");
 const AOT_BINARY_PATH = join(PACKAGE_DIRECTORY, "dist/prove-it-aot");
+// PROVE_IT_NATIVE names another native binary, such as a build with symbols for perf.
+const NATIVE_PATH =
+  process.env.PROVE_IT_NATIVE ?? join(PACKAGE_DIRECTORY, "native/target/release/prove-it");
 // build-binary.ts embeds the native engine from beside the binary, when it was built for this
 // platform.
 const getAddonPath = (binaryPath: string) => join(dirname(binaryPath), "embedded", ADDON_FILE);
@@ -120,6 +125,8 @@ const tlaRsPath = process.env.TLA_RS_BIN ?? "";
 const baseBinaryPath = process.env.PROVE_IT_BASE_BINARY ?? "";
 // And that build's ahead-of-time binary.
 const baseAotBinaryPath = process.env.PROVE_IT_BASE_AOT_BINARY ?? "";
+// And another build's native binary.
+const baseNativePath = process.env.PROVE_IT_BASE_NATIVE ?? "";
 
 if (
   !Number.isInteger(runs) ||
@@ -222,6 +229,31 @@ const parseTlaRsOutput = (stdout: string, stderr: string): Outcome => {
   }
 };
 
+// TLC's options, which the native binary takes too: the differential's, so the binary prints what
+// TLC prints, without its seed.
+const getTlcOptions = (workers: string, model: SuiteModel, metadataDirectory: string) => [
+  "-workers",
+  workers,
+  "-nowarning",
+  "-fp",
+  "0",
+  "-lncheck",
+  "final",
+  "-noGenerateSpecTE",
+  "-metadir",
+  metadataDirectory,
+  "-config",
+  model.config,
+  model.spec,
+];
+
+const getNativeCommand =
+  (binaryPath: string, workers: string) => (model: SuiteModel, metadataDirectory: string) => [
+    binaryPath,
+    ...(model.isUsingLibrary ? [LIBRARY_OPTION, "tlc2.TLC"] : []),
+    ...getTlcOptions(workers, model, metadataDirectory),
+  ];
+
 const getTlcCommand = (workers: string) => (model: SuiteModel, metadataDirectory: string) => [
   "java",
   ...(model.isUsingLibrary ? [LIBRARY_OPTION] : []),
@@ -230,14 +262,7 @@ const getTlcCommand = (workers: string) => (model: SuiteModel, metadataDirectory
   "-cp",
   jarPath,
   "tlc2.TLC",
-  "-workers",
-  workers,
-  "-nowarning",
-  "-metadir",
-  metadataDirectory,
-  "-config",
-  model.config,
-  model.spec,
+  ...getTlcOptions(workers, model, metadataDirectory),
 ];
 
 // tla-ts's own benchmark runs both checkers under Node with this heap.
@@ -356,6 +381,25 @@ const ALL_CHECKERS: (Checker & { isAvailable: boolean })[] = [
     ...TLC_STYLE,
     isAvailable: baseAotBinaryPath !== "" && existsSync(baseAotBinaryPath),
   },
+  {
+    name: "native",
+    getCommand: getNativeCommand(NATIVE_PATH, "1"),
+    ...TLC_STYLE,
+    isAvailable: existsSync(NATIVE_PATH),
+  },
+  {
+    name: "native-auto",
+    getCommand: getNativeCommand(NATIVE_PATH, "auto"),
+    ...TLC_STYLE,
+    isDepthExact: false,
+    isAvailable: existsSync(NATIVE_PATH),
+  },
+  {
+    name: "native-base",
+    getCommand: getNativeCommand(baseNativePath, "1"),
+    ...TLC_STYLE,
+    isAvailable: baseNativePath !== "" && existsSync(baseNativePath),
+  },
   { name: "prove-it-bun", getCommand: getBunCommand, ...TLC_STYLE, isAvailable: true },
   {
     name: "prove-it-node",
@@ -377,7 +421,7 @@ const missing = ALL_CHECKERS.filter(
 );
 missing.forEach((checker) =>
   console.warn(
-    `Leaving out ${checker.name}: set TLA2TOOLS_JAR, TLA_TS_CLI, TLA_RS_BIN, PROVE_IT_BASE_BINARY and PROVE_IT_BASE_AOT_BINARY, and build dist/prove-it and dist/prove-it-aot, with the native engine for the -rust ones`,
+    `Leaving out ${checker.name}: set TLA2TOOLS_JAR, TLA_TS_CLI, TLA_RS_BIN, PROVE_IT_BASE_BINARY, PROVE_IT_BASE_AOT_BINARY and PROVE_IT_BASE_NATIVE, and build dist/prove-it and dist/prove-it-aot, with the native engine for the -rust ones, and the native binary`,
   ),
 );
 if (requested !== undefined && missing.length > 0) process.exit(1);
@@ -386,10 +430,10 @@ const checkers = ALL_CHECKERS.filter(
 );
 // The speedups are over this Prove It, and the counts are checked against TLC on one worker, or
 // against TLC's recording in expected.json when TLC isn't run.
-const baseline = ["prove-it", "prove-it-bun", "prove-it-node", "prove-it-rust"].find((name) =>
-  checkers.some((checker) => checker.name === name),
+const baseline = ["native", "prove-it", "prove-it-bun", "prove-it-node", "prove-it-rust"].find(
+  (name) => checkers.some((checker) => checker.name === name),
 );
-const isProveIt = (name: string) => name.startsWith("prove-it");
+const isProveIt = (name: string) => name.startsWith("prove-it") || name.startsWith("native");
 
 // The engine is on, on its default backend, unless a checker says otherwise, so the runs don't
 // inherit a setting from the shell.
@@ -626,15 +670,18 @@ const results = models.map((model, index) => {
         }
       });
   }
-  // The baseline Prove It's engine, as it ran: the last line it reports says what it did.
+  // The baseline Prove It's engine, as it ran: the last line it reports says what it did. The
+  // native binary has one engine and reports none.
   const prober = checkers.find((checker) => checker.name === baseline);
-  const engineLine = run(
-    prober?.getCommand(model, tmpdir()) ?? getBunCommand(model),
-    model.directory,
-    { ...prober?.environment, PROVE_IT_ENGINE: "debug" },
-  )
-    .output.match(/^\[engine\] .*$/gm)
-    ?.at(-1);
+  const engineLine =
+    baseline === "native"
+      ? undefined
+      : run(prober?.getCommand(model, tmpdir()) ?? getBunCommand(model), model.directory, {
+          ...prober?.environment,
+          PROVE_IT_ENGINE: "debug",
+        })
+          .output.match(/^\[engine\] .*$/gm)
+          ?.at(-1);
   const measurements = Object.fromEntries(
     checkers.map((checker) => {
       const all = measurementsByChecker.get(checker.name) ?? [];
