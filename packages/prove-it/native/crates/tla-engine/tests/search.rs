@@ -323,6 +323,21 @@ fn search_on_threads(path: &str, threads: usize, stop_at: Option<usize>) -> (Str
                 &checkpoint.parents,
                 &checkpoint.states.states,
                 checkpoint.keys.as_ref().map(|keys| &keys.0.states),
+                checkpoint.graph.as_ref().map(|graph| (
+                    graph.expanded,
+                    &graph.successor_counts,
+                    &graph.new_counts,
+                    &graph.edge_offsets,
+                    &graph.edges,
+                    &graph.labels,
+                    &graph.initial_counts,
+                    graph.is_enabled_exact,
+                    graph
+                        .tables
+                        .iter()
+                        .map(|table| &table.answers)
+                        .collect::<Vec<_>>(),
+                )),
             ))
         ),
         other => describe(other),
@@ -365,18 +380,30 @@ fn finds_on_any_number_of_threads_what_one_thread_finds() {
 }
 
 // A search stopped where PROVE_IT_STOP_AT asks, inside a level the threads share or at its end,
-// hands over the states one thread found before that state.
+// hands over the states one thread found before that state, and the graph of their steps where it
+// records one.
 #[test]
 fn stops_on_any_number_of_threads_where_one_thread_stops() {
-    let path = "examples/specifications/transaction_commit/2PCwithBTM";
-    for stop_at in [0, 1, 7, 100, 333, 1000, 1244, 1245] {
-        let one = search_on_threads(path, 1, Some(stop_at));
-        for threads in [2, 4] {
-            assert_eq!(
-                search_on_threads(path, threads, Some(stop_at)),
-                one,
-                "stopped at {stop_at} on {threads} threads"
-            );
+    let stops = [
+        (
+            "examples/specifications/transaction_commit/2PCwithBTM",
+            &[0, 1, 7, 100, 333, 1000, 1244, 1245][..],
+        ),
+        (
+            "examples/specifications/ReadersWriters/MC",
+            &[1, 7, 100, 1000, 4321, 21_526][..],
+        ),
+    ];
+    for (path, stops) in stops {
+        for &stop_at in stops {
+            let one = search_on_threads(path, 1, Some(stop_at));
+            for threads in [2, 4] {
+                assert_eq!(
+                    search_on_threads(path, threads, Some(stop_at)),
+                    one,
+                    "{path} stopped at {stop_at} on {threads} threads"
+                );
+            }
         }
     }
 }

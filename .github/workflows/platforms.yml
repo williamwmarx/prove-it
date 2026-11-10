@@ -2,20 +2,23 @@
 # silicon runner builds the arm64 and x64 packages, tests arm64 natively and x64 under Rosetta, and
 # packs both for release.yml to publish, and Windows x64, which builds, tests and packs its package
 # the same way. It publishes nothing and holds no credential.
+#
+# It runs on pushes to main and by hand, not on pull requests: the macOS job is the slowest check a
+# pull request had, and Verification covers the same code on Linux. Dispatch it on a branch that
+# changes what differs by system, such as packaging, the command line or the bindings.
 name: Platforms
 "on":
-  pull_request: null
   push:
     branches:
       - main
   workflow_dispatch: null
 permissions:
   contents: read
-# A push to main is never cancelled: release.yml takes the macOS and Windows packages from the run of
-# the commit it releases.
+# A run is never cancelled: release.yml takes the macOS and Windows packages from the run of the
+# commit it releases.
 concurrency:
-  group: platforms-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.sha }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: platforms-${{ github.sha }}
+  cancel-in-progress: false
 jobs:
   # One Apple silicon runner builds and tests both macOS packages: arm64 natively, and x64 built
   # for x86_64-apple-darwin and tested under Rosetta 2 with x64 builds of Bun and Node.

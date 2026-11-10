@@ -392,6 +392,13 @@ const ALL_CHECKERS: (Checker & { isAvailable: boolean })[] = [
     ...TLC_STYLE,
     isAvailable: baseNativePath !== "" && existsSync(baseNativePath),
   },
+  {
+    name: "native-base-auto",
+    getCommand: getNativeCommand(baseNativePath, "auto"),
+    ...TLC_STYLE,
+    isDepthExact: false,
+    isAvailable: baseNativePath !== "" && existsSync(baseNativePath),
+  },
   { name: "prove-it-bun", getCommand: getBunCommand, ...TLC_STYLE, isAvailable: true },
   {
     name: "prove-it-node",

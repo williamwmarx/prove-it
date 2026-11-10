@@ -1502,6 +1502,10 @@ impl<T: Reached, E: Entries> Search<'_, T, E> {
 // The most states of a level a thread claims at once (`CHUNK` in `parallel.ts`).
 const CHUNK: usize = 32;
 
+// Marks a slot of a thread's own states, which `Candidates::find` returns apart from the slots of
+// the states found before the level.
+const SEEN: usize = 1 << (usize::BITS - 1);
+
 // A thread expanding part of a level reports nothing: what it would report, Print's output, makes
 // the search run on one thread.
 struct Quiet;
@@ -1571,7 +1575,7 @@ impl Reached for Candidates<'_> {
         {
             self.collisions += 1;
         }
-        found
+        found.map(|slot| slot | SEEN)
     }
 
     fn add(&mut self, state: &[Id], key: &[Id], fingerprint: u64, slot: usize, parent: i32) {
@@ -1585,8 +1589,14 @@ impl Reached for Candidates<'_> {
         self.seen.insert(slot, fingerprint, index);
     }
 
-    fn index(&self, _slot: usize) -> u32 {
-        unreachable!("a search that records its graph runs on one thread")
+    // A state found before the level by its index, and one the thread found by the index it would
+    // have if the thread's states all joined the store after the level's first: the merge gives
+    // each the index it does take.
+    fn index(&self, slot: usize) -> u32 {
+        if slot & SEEN == 0 {
+            return self.before.set.index(slot);
+        }
+        (self.before.count() + self.seen.index(slot & !SEEN) as usize) as u32
     }
 
     // Where the key isn't the state, a thread that takes a state for new may have missed another
@@ -1641,6 +1651,9 @@ struct Claimed {
 struct Expanded {
     claimed: Vec<Claimed>,
     successors: Vec<u32>,
+    // The steps of each state it expanded, where the search records its graph, each to a state
+    // by the index `Candidates::index` gives it.
+    graph: Option<Graph>,
     ids: Vec<Id>,
     keys: Vec<Id>,
     fingerprints: Vec<u64>,
@@ -1663,6 +1676,10 @@ struct Level {
     stop: Padded<AtomicUsize>,
     is_pipelined: bool,
     check_deadlock: bool,
+    // Whether the search hands its graph over past MAXIMUM_GRAPH_STATES.
+    is_graph_bounded: bool,
+    // PROVE_IT_STOP_AT: where the search stops, as if it failed there.
+    stop_at: Option<usize>,
 }
 
 // A value on cache lines of its own, so that writing it doesn't move what threads read beside it.
@@ -1682,6 +1699,18 @@ struct Shared<'s> {
     context: &'s EngineContext,
     before: &'s States,
     level: &'s Level,
+    // The actions that label the steps, where the search records a graph that labels them.
+    actions: Option<&'s [Step]>,
+    // Where the search records its graph, what each thread records of its steps.
+    recording: Option<Recording>,
+}
+
+// What a graph keeps of each step besides its target: the action that took it, and the state it
+// reached under SYMMETRY or a VIEW.
+#[derive(Clone, Copy)]
+struct Recording {
+    is_labelled: bool,
+    is_real: bool,
 }
 
 // Expands runs of a level's states on a thread, until none are left before the first state not to
@@ -1701,6 +1730,12 @@ fn expand_claimed(worker: &mut Worker<'_>, shared: &Shared<'_>) -> Expanded {
     let mut quiet = Quiet;
     let mut search = Search::new(candidates, &mut quiet, false, level.is_pipelined);
     search.level = level.number;
+    search.graph = shared.recording.map(|recording| Graph {
+        edge_offsets: vec![0],
+        labels: recording.is_labelled.then(Vec::new),
+        reals: recording.is_real.then(Vec::new),
+        ..Graph::default()
+    });
     search.fingerprints = std::mem::take(&mut worker.fingerprints);
     search.canonicalizer = worker.canonicalizer.take();
     let (mut claimed, mut successors) = (Vec::new(), Vec::new());
@@ -1731,11 +1766,16 @@ fn expand_claimed(worker: &mut Worker<'_>, shared: &Shared<'_>) -> Expanded {
                 machine,
                 context,
                 fingerprint,
-                None,
+                shared.actions,
                 false,
                 level.check_deadlock,
             ) {
-                Ok(()) => successors.push(search.successors as u32),
+                Ok(()) => {
+                    successors.push(search.successors as u32);
+                    if let Some(graph) = &mut search.graph {
+                        graph.edge_offsets.push(graph.edges.len() as u32);
+                    }
+                }
                 Err(_) => {
                     level.stop.fetch_min(expanding, Ordering::Relaxed);
                     break 'claiming;
@@ -1749,6 +1789,7 @@ fn expand_claimed(worker: &mut Worker<'_>, shared: &Shared<'_>) -> Expanded {
     Expanded {
         claimed,
         successors,
+        graph: search.graph,
         ids: found.ids,
         keys: found.keys,
         fingerprints: found.fingerprints,
@@ -1771,13 +1812,18 @@ impl Search<'_, States> {
         workers: &mut [Worker<'_>],
         context: &EngineContext,
         level: &Level,
-        stop_at: Option<usize>,
+        actions: Option<&[Step]>,
         out_degrees: &mut [u64; OUT_DEGREE_BUCKETS],
     ) -> Outcome<()> {
         let shared = Shared {
             context,
             before: &self.states,
             level,
+            actions,
+            recording: self.graph.as_ref().map(|graph| Recording {
+                is_labelled: graph.labels.is_some(),
+                is_real: graph.reals.is_some(),
+            }),
         };
         let store = Arc::new(std::mem::take(&mut machine.store));
         let fingerprints = self.fingerprints.share();
@@ -1822,6 +1868,17 @@ impl Search<'_, States> {
         let is_verified = self.states.is_verified;
         let mut new_counts = vec![0u32; level.end - level.start];
         let (mut state, mut key) = (Vec::with_capacity(width), Vec::with_capacity(width));
+        // Where the search records its graph, the index each thread's states took, by the order
+        // it found them in: their own where they joined the states, or that of the state with
+        // their key found first.
+        let before_count = self.states.count();
+        let mut resolved: Vec<Vec<u32>> = expanded
+            .iter()
+            .map(|found| match self.graph {
+                Some(_) => vec![u32::MAX; found.parents.len()],
+                None => Vec::new(),
+            })
+            .collect();
         // The states in order, each run by the thread that claimed it: what each state's expansion
         // found joins the states found, unless an invariant it deferred fails of a state that is
         // new, which stops the search there.
@@ -1860,6 +1917,16 @@ impl Search<'_, States> {
                 if parent == stop {
                     break 'states;
                 }
+                // The bounds the one-thread search checks before it expands a state of a graph it
+                // records stop it there, on the one-thread path.
+                if self.graph.as_ref().is_some_and(|graph| {
+                    level.is_graph_bounded && self.states.count() > MAXIMUM_GRAPH_STATES
+                        || self.states.count() >= i32::MAX as usize
+                        || graph.edges.len() >= i32::MAX as usize
+                }) {
+                    stop = parent;
+                    break 'states;
+                }
                 self.generated += u64::from(found.successors[claimed.successors + offset]);
                 let candidates =
                     candidate..next.map_or(found.parents.len(), |next| next.candidates);
@@ -1880,9 +1947,18 @@ impl Search<'_, States> {
                     if is_verified {
                         import(keys.unwrap_or(ids), &mut key);
                     }
-                    let Err(slot) = self.states.find(&key, fingerprint) else {
-                        continue;
+                    let slot = match self.states.find(&key, fingerprint) {
+                        Ok(slot) => {
+                            if let Some(index) = resolved[thread].get_mut(index) {
+                                *index = self.states.index(slot);
+                            }
+                            continue;
+                        }
+                        Err(slot) => slot,
                     };
+                    if let Some(index) = resolved[thread].get_mut(index) {
+                        *index = self.states.count() as u32;
+                    }
                     import(ids, &mut state);
                     if let Some(keys) = keys {
                         import(keys, &mut key);
@@ -1890,15 +1966,44 @@ impl Search<'_, States> {
                     self.states
                         .add(&state, &key, fingerprint, slot, parent as i32);
                     new_counts[parent - level.start] += 1;
+                    self.depth = self.depth.max(level.number + 1);
+                }
+                if let Some(graph) = &mut self.graph {
+                    let steps_of = found.graph.as_ref().expect("a thread's steps");
+                    let at = claimed.successors + offset;
+                    let steps =
+                        steps_of.edge_offsets[at] as usize..steps_of.edge_offsets[at + 1] as usize;
+                    let resolved = &resolved[thread];
+                    graph
+                        .edges
+                        .extend(steps_of.edges[steps.clone()].iter().map(|&target| {
+                            let target = target as usize;
+                            if target < before_count {
+                                target as u32
+                            } else {
+                                resolved[target - before_count]
+                            }
+                        }));
+                    if let (Some(labels), Some(labels_of)) = (&mut graph.labels, &steps_of.labels) {
+                        labels.extend_from_slice(&labels_of[steps.clone()]);
+                    }
+                    if let (Some(reals), Some(reals_of)) = (&mut graph.reals, &steps_of.reals) {
+                        import(
+                            &reals_of[steps.start * width..steps.end * width],
+                            &mut state,
+                        );
+                        reals.extend_from_slice(&state);
+                    }
+                    graph.successor_counts.push(found.successors[at]);
+                    graph.new_counts.push(new_counts[parent - level.start]);
+                    graph.edge_offsets.push(graph.edges.len() as u32);
+                    graph.diameters.push(self.depth.max(1) as u32);
                 }
             }
         }
         new_counts.truncate(stop - level.start);
         for &count in &new_counts {
             out_degrees[(count as usize).min(OUT_DEGREE_BUCKETS - 1)] += 1;
-        }
-        if new_counts.iter().any(|&count| count > 0) {
-            self.depth = level.number + 1;
         }
         for found in &expanded {
             self.states.collisions += found.collisions;
@@ -1911,7 +2016,7 @@ impl Search<'_, States> {
             self.fingerprints
                 .absorb(&worker.fingerprints, &worker.imported);
         }
-        if stop < level.end && stop_at == Some(stop) {
+        if stop < level.end && level.stop_at == Some(stop) {
             return Err(Bail("stopped where PROVE_IT_STOP_AT asked"));
         }
         // A level stopped part way, by a violation, an error or a limit at the state `stop`, ends
@@ -2194,8 +2299,9 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         && model.startup.symmetry.is_none()
         && !settings.is_live_checked;
     // A level's states are shared between threads where the order of the steps across states
-    // shows nowhere but in the states found: nothing prints or reads the count of distinct states,
-    // and no graph records the steps.
+    // shows nowhere but in the states found and the graph the merge records in that order: nothing
+    // prints or reads the count of distinct states, and no test asks for a check of the graph at
+    // a state inside a level.
     // More threads than the machine runs at once would only take turns.
     let thread_count = settings
         .threads
@@ -2207,7 +2313,10 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         && !is_lambda_built
         && !compiler.is_cached
         && !is_distinct_read
-        && !model.is_recording_graph
+        && !(model.is_recording_graph && settings.test_live_check_at.is_some())
+        // The online checker adds each state as it is expanded, between the expansions, and the
+        // held prints come out between them: neither may meet a level the threads share.
+        && !(model.is_recording_graph && (context.is_live_registered || compiler.is_printing))
         && !settings.is_live_checked
         && context.possible.is_empty();
     // The liveness checker's atoms are answered on the threads too, unless ToString ranks strings,
@@ -2674,11 +2783,19 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     if is_shared { threads.max(1) as u32 } else { 1 },
                 );
                 if is_shared && threads > 1 {
+                    debug_assert!(online.is_none() && search.held.is_none());
                     threads_used = threads_used.max(threads);
                     if workers.is_empty() {
+                        // The memo tables of the search's machine and its workers' share one
+                        // machine's room, so that memory doesn't grow with the threads.
+                        machine.share_memo(thread_count);
                         workers = (0..thread_count)
                             .map(|_| Worker {
-                                machine: Machine::new(&program, Store::new()),
+                                machine: {
+                                    let mut worker = Machine::new(&program, Store::new());
+                                    worker.share_memo(thread_count);
+                                    worker
+                                },
                                 fingerprints: Fingerprints::default(),
                                 canonicalizer: search
                                     .canonicalizer
@@ -2703,13 +2820,15 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                         )),
                         is_pipelined,
                         check_deadlock: model.check_deadlock,
+                        is_graph_bounded: is_graph_bounded.get(),
+                        stop_at: settings.stop_at,
                     };
                     let expanded = search.expand_level(
                         &mut machine,
                         &mut workers[..threads],
                         &context,
                         &level,
-                        settings.stop_at,
+                        actions.map(Vec::as_slice),
                         &mut out_degrees,
                     );
                     checkpoint_count = search.states.count();

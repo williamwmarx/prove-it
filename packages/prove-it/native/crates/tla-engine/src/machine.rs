@@ -13,7 +13,7 @@ use tla_values::store::{FALSE, Outcome, TRUE};
 use tla_values::{Bail, Id, Store};
 
 use crate::compile::Lambda;
-use crate::memo::{EMPTY, EPOCH_KEYS, EpochCache, MemoTable};
+use crate::memo::{EMPTY, EPOCH_KEYS, EpochCache, MAXIMUM_ENTRIES, MemoTable};
 use tla_values::random::JavaRandom;
 
 /// A compiled expression: its value, or where TLC would fail, or the engine hands over.
@@ -191,6 +191,14 @@ impl<'p> Machine<'p> {
     }
 
     /// Forgets what the caches hold of ids from `bound` on, which the store has let go of.
+    /// Shares each memo table's room with the other machines of a search on `threads` threads,
+    /// so that the tables of all of them take about what one machine's do.
+    pub fn share_memo(&mut self, threads: usize) {
+        for table in &mut self.tables {
+            table.limit(MAXIMUM_ENTRIES / threads);
+        }
+    }
+
     pub fn forget_from(&mut self, bound: Id) {
         for table in &mut self.tables {
             table.forget_from(bound);
