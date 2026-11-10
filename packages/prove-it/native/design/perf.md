@@ -582,6 +582,25 @@ table's growth 4%. Keeping freed memory in the allocator (`glibc.malloc.mmap_thr
 `trim_threshold`) changed nothing, so the faults are memory that is new, which huge pages for the
 state table (PR 199) address.
 
+**A parallel merge, bounded.** Its parts at 4 threads, on the search thread:
+
+| Model | Kernel | Import | Merge loop | Fill and growth | Copying | Other |
+|---|---:|---:|---:|---:|---:|---:|
+| MCbtree | 31% | 7% | 9% | 8% | 4% | 40% |
+| Detlefs | 25% | 18% | 18% | 4% | 5% | ~30% |
+| MCLamportMutex | 25% | 23% | 14% | 7% | 11% | 21% |
+| MCExactInitialSync | 42% | 12% | 21% | 14% | 6% | 5% |
+
+Threads could take only the import, the loop and the copying: page faults on one address space
+serialize on its locks, as the table grown on threads showed. Projected to 16 threads (the serial
+part scaled from the 4-core split, the rest the 16-core wall less it), a merge on threads would
+take MCbtree from 170 to about 156 ms (1.09×), Detlefs 440 → 340 (1.29×), MCLamportMutex
+480 → 419 (1.15×) and MCExactInitialSync 1,950 → 1,487 (1.31×). Its first step, the states'
+arrays reserved for the level's new states before the merge, with or without `MADV_HUGEPAGE`, was
+within noise at 4 threads (MCExactInitialSync 6.81 / 6.76 / 7.47 s, Detlefs 1.13 / 1.15 / 1.16,
+MCbtree 0.370 / 0.377 / 0.368, MCLamportMutex 1.25 / 1.25 / 1.25). Not built: the store's import
+rewritten for at most 1.3×. Huge pages on the state table, which cut the kernel's part, come first.
+
 ### Membership by id (plan item 3)
 
 The store gives each value a shape (`tla-values/src/store/shapes.rs`): a class of values any two
