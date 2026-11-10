@@ -173,7 +173,9 @@ fn report(message: &TlcMessage, is_next_state: bool) -> (u32, String, String) {
 /// An assumption as TLC checks it, where the engine checked those before it.
 pub struct Assumption {
     pub holds: bool,
-    /// What it printed, each print's values as `Trace` holds them.
+    /// What the assumptions before it printed, each print's values as `Trace` holds them.
+    pub printed_before: Vec<Vec<String>>,
+    /// What it printed.
     pub printed: Vec<Vec<String>>,
     /// The state it leaves TLC's generator in.
     pub random: u64,
@@ -204,6 +206,7 @@ impl<'ir> Rebuilder<'ir> {
         evaluator.level = 0;
         evaluator.is_tool = Some(is_tool);
         run(evaluator.compute_startup_drawing())?;
+        evaluator.printed.clear();
         for &(node, _) in &startup.assumptions[..position as usize] {
             if !matches!(
                 evaluator.evaluate(node, &Context::default()),
@@ -218,7 +221,7 @@ impl<'ir> Rebuilder<'ir> {
             return Err(Unsupported("an assumption the model doesn't have".into()));
         };
         let writes = evaluator.register_writes;
-        evaluator.printed.clear();
+        let printed_before = std::mem::take(&mut evaluator.printed);
         let holds = match evaluator.evaluate(node, &Context::default()) {
             Ok(Value::Bool(holds)) => holds,
             Ok(_) => return Err(Unsupported("an assumption that isn't a boolean".into())),
@@ -239,6 +242,7 @@ impl<'ir> Rebuilder<'ir> {
             .state();
         Ok(Assumption {
             holds,
+            printed_before,
             printed: std::mem::take(&mut evaluator.printed),
             random,
         })

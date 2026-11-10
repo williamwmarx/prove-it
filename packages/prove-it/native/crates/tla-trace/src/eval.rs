@@ -24,7 +24,7 @@ use crate::value::{
     Class, EvalError, Evaluated, Function, Lazy, Search, Text, TlcMessage, Value, compare,
     elements, equals, fail, fail_coded, fail_runtime, fail_with, find_key, from_store,
     is_enumerable, mark_unnormalized, note_sorted, set_of, sorted_function, unnormalized,
-    written_function,
+    unsorted_failure, written_function,
 };
 
 /// The bindings an expression sees, innermost first.
@@ -454,6 +454,9 @@ fn is_text(text: &Text, word: &str) -> bool {
 }
 const TO_STRING: &str =
     "public static tlc2.value.impl.Value tlc2.module.TLC.ToString(tlc2.value.impl.Value)";
+const PRINT: &str = "public static tlc2.value.impl.Value tlc2.module.TLC.Print(tlc2.value.impl.Value,tlc2.value.impl.Value)";
+const PRINT_T: &str =
+    "public static tlc2.value.impl.Value tlc2.module.TLC.PrintT(tlc2.value.impl.Value)";
 
 /// TLC's `enumBound`: the most elements a lazy set's text is expanded to.
 const ENUM_BOUND: i64 = 2000;
@@ -463,9 +466,9 @@ const ENUM_BOUND: i64 = 2000;
 // The evaluator declines a lazy set it doesn't follow there.
 fn check_unchecked(value: &Value) -> Evaluated<()> {
     match value {
-        Value::Set(elements) | Value::Unsorted(elements) => {
-            elements.iter().try_for_each(check_unchecked)
-        }
+        Value::Set(elements) => elements.iter().try_for_each(check_unchecked),
+        // `SetEnumValue.toString` normalizes the set first.
+        Value::Unsorted(elements) => Err(unsorted_failure(elements)),
         Value::Function(function) => function
             .domain
             .iter()
@@ -500,7 +503,14 @@ fn check_unchecked(value: &Value) -> Evaluated<()> {
                 | Lazy::Diff(..)
                 | Lazy::Union(_)
                 | Lazy::Filter(..) => 0,
-                Lazy::Subset(_) => return fail("ToString of a power set"),
+                // `SubsetValue.toString`: expanded where its base has fewer than 7 elements, and
+                // otherwise `SUBSET` its base.
+                Lazy::Subset(base) => {
+                    if cardinality(base)? < 7 {
+                        return elements(value)?.iter().try_for_each(check_unchecked);
+                    }
+                    return check_unchecked(base);
+                }
                 _ => return fail("ToString of a lazy set"),
             };
             if size < ENUM_BOUND {
@@ -2999,7 +3009,7 @@ impl<'ir> Evaluator<'ir> {
             "SUBSET" => {
                 arity(1)?;
                 let base = self.operand(&operands[0])?;
-                if !base.is_set() {
+                if !base.is_set() && !matches!(base, Value::Unsorted(_)) {
                     return fail("SUBSET of a non-set");
                 }
                 Value::Lazy(Rc::new(Lazy::Subset(base)))
@@ -3405,6 +3415,19 @@ impl<'ir> Evaluator<'ir> {
                 if values.len() != expected {
                     return fail("an operator applied to the wrong number of arguments");
                 }
+                // TLC prints each value with `toStringUnchecked`, which fails where a lazy set's
+                // expansion fails.
+                let checked = values.iter().try_for_each(check_unchecked);
+                if let Err(EvalError {
+                    message: Some(message),
+                    ..
+                }) = &checked
+                    && !message.is_eval_exception
+                {
+                    let signature = if name == "Print" { PRINT } else { PRINT_T };
+                    return as_java_failure(signature, checked.map(|()| Value::Bool(true)));
+                }
+                checked?;
                 self.printed
                     .push(values.iter().map(format_printed).collect());
                 if name == "Print" {

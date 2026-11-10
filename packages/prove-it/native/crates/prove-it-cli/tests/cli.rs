@@ -570,6 +570,54 @@ fn prints_what_an_assumption_printed_before_it_failed_once() {
     std::fs::remove_dir_all(directory).expect("removed");
 }
 
+#[test]
+fn prints_once_what_an_assumption_printed_before_the_engine_left_it() {
+    // The search prints the first print, then leaves the assumption to the trace evaluator, which
+    // prints it again as it evaluates the assumption whole.
+    let spec = "---- MODULE Left ----\nEXTENDS TLC, Naturals\nVARIABLE x\nASSUME PrintT(1)\nASSUME Print(SUBSET (1..10), TRUE) /\\ PrintT(ToString(SUBSET (1..10)))\nInit == x = 0\nNext == x' = x\n====\n";
+    let (output, directory) = run_front("left", spec, "INIT Init\nNEXT Next\n", &[]);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(0), "{text}");
+    assert!(
+        text.contains(
+            ")\n1\nSUBSET (1..10)  TRUE\n\"SUBSET (1..10)\"\nComputing initial states...\n"
+        ),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn fails_to_print_a_lazy_set_whose_expansion_fails() {
+    // PrintT prints with `toStringUnchecked`, which fails where TLC can't expand a lazy set.
+    for (set, error) in [
+        (
+            "Nat \\cup {-1}",
+            "Attempted to enumerate S \\cup T when S:\n{-1}\nand T:\nNat\nare not both enumerable",
+        ),
+        (
+            "UNION {Nat, {1}}",
+            "Attempted to compare the set {1} with the value:\nNat",
+        ),
+        (
+            "SUBSET Nat",
+            "Attempted to compute the number of elements in the overridden value Nat.",
+        ),
+    ] {
+        let spec = format!(
+            "---- MODULE Lazy ----\nEXTENDS TLC, Integers\nVARIABLE x\nASSUME PrintT({set})\nInit == x = 0\nNext == x' = x\n====\n"
+        );
+        let (output, directory) = run_front("lazy-print", &spec, "INIT Init\nNEXT Next\n", &[]);
+        let text = stdout(&output);
+        assert_eq!(output.status.code(), Some(10), "{text}");
+        assert!(
+            text.contains(&format!("of module Lazy failed.\nAttempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.Value tlc2.module.TLC.PrintT(tlc2.value.impl.Value),\nbut it produced the following error:\n{error}\nFinished in ")),
+            "{text}"
+        );
+        std::fs::remove_dir_all(directory).expect("removed");
+    }
+}
+
 const CDOT_IR: &[u8] = include_bytes!(
     "../../../../tests/conformance/ir/tlc/tlatools/org.lamport.tlatools/test-model/cdot/CdotWithContextA.ir"
 );
