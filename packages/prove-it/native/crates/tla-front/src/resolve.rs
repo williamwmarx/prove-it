@@ -1596,18 +1596,27 @@ fn bind_let_recursive(
     if recursive.is_empty() {
         return Ok((declared, locals));
     }
-    // SANY reads the declaration where it appears, which a definition before it doesn't see.
+    // SANY reads the declaration where it appears, which a definition before it neither sees nor
+    // satisfies.
     let is_named_before = recursive.iter().any(|declaration| {
         definitions.iter().any(|definition| {
+            let bounds = match &definition.kind {
+                DefinitionKind::Function { bounds } => bounds.as_slice(),
+                DefinitionKind::Operator { .. } => &[],
+            };
             is_before(
                 definition.location.position(),
                 declaration.location.position(),
-            ) && is_named_in(&definition.body, &declaration.name)
+            ) && (definition.name == declaration.name
+                || is_named_in(&definition.body, &declaration.name)
+                || bounds
+                    .iter()
+                    .any(|bound| is_named_in(&bound.set, &declaration.name)))
         })
     });
     if is_named_before {
         return Err(FrontError::NotYet(
-            "a LET definition that names an operator the LET declares RECURSIVE after it"
+            "a LET definition that defines or names an operator the LET declares RECURSIVE after it"
                 .to_owned(),
         ));
     }

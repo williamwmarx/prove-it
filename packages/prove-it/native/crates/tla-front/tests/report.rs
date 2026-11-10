@@ -251,3 +251,15 @@ fn reports_a_let_recursive_function_with_operator_arguments_among_undefined_decl
         "Parsing file Main File\nSemantic processing of module Main\nSemantic errors:\n\n*** Errors: 3\n\nline 3, col 10 to line 3, col 25 of module Main\n\nFunction F has operator arguments in its RECURSIVE declaration.\n\n\nline 2, col 20 to line 2, col 23 of module Main\n\nSymbol F declared in RECURSIVE statement but not defined.\n\n\nline 2, col 26 to line 2, col 26 of module Main\n\nSymbol K declared in RECURSIVE statement but not defined.\n\n\n"
     );
 }
+
+#[test]
+fn leaves_a_recursive_function_with_operator_arguments_after_a_module_not_native() {
+    // `processFunction` leaves F undefined, so its definition doesn't make the generator throw.
+    assert!(matches!(
+        get_report(
+            "exception-function",
+            "---- MODULE Main ----\nRECURSIVE F(_)\n---- MODULE Inner ----\n====\nF[x \\in {}] == 0\n====\n",
+        ),
+        Err(FrontError::NotYet(_))
+    ));
+}

@@ -325,3 +325,15 @@ fn leaves_a_recursive_declaration_an_enclosing_let_leaves_undefined_not_native()
         "---- MODULE Main ----\nA == LET RECURSIVE F\n         G == LET RECURSIVE F\n                  F == 1\n              IN F\n     IN 0\n===="
     ));
 }
+
+#[test]
+fn leaves_a_let_definition_before_a_recursive_declaration_it_names_not_native() {
+    // SANY reads a declaration where it appears: a function's bounds before it don't see it, and a
+    // definition before it doesn't satisfy it.
+    assert!(is_not_yet(
+        "---- MODULE Main ----\nA == LET G[x \\in F] == 0\n         RECURSIVE F\n     IN 0\n===="
+    ));
+    assert!(is_not_yet(
+        "---- MODULE Main ----\nA == LET F == 1\n         RECURSIVE F, K\n     IN 0\n===="
+    ));
+}

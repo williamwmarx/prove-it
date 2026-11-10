@@ -5,7 +5,9 @@ use std::path::Path;
 use std::rc::Rc;
 
 use crate::TlcVersion;
-use crate::ast::{Assumed, Expr, ExpressionKind, Module, ModuleUnit, Statement};
+use crate::ast::{
+    Assumed, Declaration, DefinitionKind, Expr, ExpressionKind, Module, ModuleUnit, Statement,
+};
 use crate::config::parse_config;
 use crate::environment::{EnvironmentOptions, get_sany_messages};
 use crate::errors::{FrontError, SanyError};
@@ -747,7 +749,7 @@ pub fn get_sany_text(
 /// an operator the section declared drives the total below zero (`endOpDefNode`). `NotYet` where
 /// the count is off in a way that throws nothing, or elsewhere.
 fn get_generator_exception(module: &Module) -> Result<Option<&'static str>> {
-    let mut pending: Vec<Rc<str>> = Vec::new();
+    let mut pending: Vec<Rc<Declaration>> = Vec::new();
     let mut is_cleared = false;
     for unit in &module.units {
         match unit {
@@ -757,13 +759,23 @@ fn get_generator_exception(module: &Module) -> Result<Option<&'static str>> {
                     declared.first().map_or("", |declaration| &declaration.name)
                 )));
             }
-            ModuleUnit::Recursive(declared) => {
-                pending.extend(declared.iter().map(|declaration| declaration.name.clone()));
-            }
+            ModuleUnit::Recursive(declared) => pending.extend(declared.iter().cloned()),
             ModuleUnit::Definition(definition) => {
-                let Some(index) = pending.iter().position(|name| *name == definition.name) else {
+                let Some(index) = pending
+                    .iter()
+                    .position(|declaration| declaration.name == definition.name)
+                else {
                     continue;
                 };
+                // `processFunction` leaves a function whose declaration takes operator arguments
+                // undefined, so it doesn't count down.
+                if pending[index].arity != 0
+                    && matches!(definition.kind, DefinitionKind::Function { .. })
+                {
+                    return Err(not_yet(
+                        "a function declared RECURSIVE with operator arguments in a recursive section",
+                    ));
+                }
                 if is_cleared {
                     return Ok(Some(
                         "util.WrongInvocationException: Defined more recursive operators than were declared in RECURSIVE statements.",
