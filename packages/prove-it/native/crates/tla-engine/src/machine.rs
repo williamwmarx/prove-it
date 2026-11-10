@@ -134,6 +134,9 @@ pub struct Machine<'p> {
 pub struct Registers {
     pub numbered: Vec<Option<Id>>,
     pub named: Vec<(Id, Id)>,
+    /// Whether TLCSet("exit", TRUE) ran, which stops TLC's search once the worker finishes the
+    /// state it is expanding (`ModelChecker.stop`).
+    pub is_exit: bool,
 }
 
 impl Registers {

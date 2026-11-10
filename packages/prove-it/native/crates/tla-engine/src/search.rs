@@ -500,6 +500,7 @@ struct Found {
     counts: StopCounts,
 }
 
+const EXIT_UNFOLLOWED: &str = "unsupported: TLCSet(\"exit\", TRUE) outside an invariant";
 const LAZY_FUNCTION_HELD: Bail = Bail("unsupported: a state holding a function TLC keeps lazy");
 /// Where an atom sets or reads TLC's registers, the search answers the atoms as TLC evaluates
 /// them, which it follows only so far.
@@ -821,6 +822,8 @@ struct Search<'r, T, E = Dense> {
     // With temporal properties, what the search printed computing the initial states and then
     // expanding each state, held until the liveness checker's atoms have printed between them.
     held: Option<Vec<Vec<Printed>>>,
+    // Whether the search reported TLC's progress as TLCSet("exit", TRUE) stopped it.
+    is_exit_reported: bool,
 }
 
 impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
@@ -861,6 +864,7 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
             pending_fingerprint: None,
             possible: Vec::new(),
             held: None,
+            is_exit_reported: false,
         }
     }
 
@@ -1107,6 +1111,34 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
         result
     }
 
+    // TLCSet("exit", TRUE) wakes TLC's main thread, which prints its progress as the worker goes on
+    // (`AbstractChecker.runTLC`): the counts as the invariant that set it left them, the new state
+    // found and not yet queued. The search follows it where an invariant sets it.
+    fn report_exit(&mut self, machine: &mut Machine<'_>, is_new: bool) {
+        self.is_exit_reported = true;
+        self.flush(machine);
+        let count = self.states.count() as u64;
+        let depth = if is_new {
+            self.depth.max(self.level + 1)
+        } else {
+            self.depth
+        };
+        self.reporter.progress(
+            self.generated,
+            count + u64::from(is_new),
+            count - self.expanding as u64 - 1,
+            depth.max(1),
+        );
+    }
+
+    // Where TLCSet("exit", TRUE) ran outside an invariant, TLC's progress then isn't followed.
+    fn check_exit_followed(&self, machine: &Machine<'_>) -> Outcome<()> {
+        if machine.registers.is_exit && !self.is_exit_reported {
+            return Err(Bail(EXIT_UNFOLLOWED));
+        }
+        Ok(())
+    }
+
     // Checks the successor that is the machine's next state; its fingerprint is `known` when the
     // pipeline computed it already.
     fn check_successor(
@@ -1118,6 +1150,7 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
         if machine.next().contains(&UNASSIGNED) {
             return Err(Bail("a successor that isn't complete"));
         }
+        self.check_exit_followed(machine)?;
         if let Some(checked) = &self.checked
             && checked.get(self.successors as usize).map(Vec::as_slice) != Some(machine.next())
         {
@@ -1170,11 +1203,15 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
         if is_new {
             self.set_distinct(machine, self.states.count() + 1)?;
         }
+        self.check_exit_followed(machine)?;
         if !is_in_model || is_new {
             self.swap_successor(machine, successor_epoch, self.next_level_id);
             let failing =
                 first_failing_changed(machine, &context.invariants, &self.successor, &self.current);
             self.swap_successor(machine, self.expansion_epoch, self.level_id);
+            if machine.registers.is_exit && !self.is_exit_reported {
+                self.report_exit(machine, is_new);
+            }
             let failed = match failing {
                 Ok(None) => None,
                 Ok(Some(failing)) => {
@@ -2408,6 +2445,12 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         })?;
         search.flush(&mut machine);
         initial_states = (search.initial_generated, search.states.count() as u64);
+        // TLC stops before it expands a state, at a time of its threads' choosing.
+        if machine.registers.is_exit {
+            return Err(Bail(
+                "unsupported: TLCSet(\"exit\", TRUE) as TLC starts or computes the initial states",
+            ));
+        }
         // TLC adds each initial state to the behavior graphs as it finds it, and stops where an
         // atom fails to evaluate. It then replays the initial states, checking each again and
         // adding those after the one it failed at, which the engine follows where there is but
@@ -2670,6 +2713,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             }
             out_degrees[(search.new_states as usize).min(OUT_DEGREE_BUCKETS - 1)] += 1;
             search.flush(&mut machine);
+            search.check_exit_followed(&machine)?;
             if let Some(online) = &mut online {
                 add_online(
                     &mut machine,
@@ -2699,6 +2743,15 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 );
             }
             search.expanding += 1;
+            // TLC's worker finishes the state, then finds the queue finished (`stop`).
+            if search.is_exit_reported {
+                if search.graph.is_some() || online.is_some() {
+                    return Err(Bail(
+                        "unsupported: TLCSet(\"exit\", TRUE) with temporal properties",
+                    ));
+                }
+                break;
+            }
         }
         Ok(())
     })();
@@ -3052,7 +3105,8 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             let counts = Counts {
                 generated: search.generated,
                 distinct: count as u64,
-                queued: 0,
+                // None but where TLCSet("exit", TRUE) stopped the search.
+                queued: (count - search.expanding) as u64,
                 depth: if search.generated == 0 {
                     0
                 } else {

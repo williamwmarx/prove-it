@@ -879,7 +879,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                 let statistics = Statistics {
                     generated: counts.generated,
                     distinct: counts.distinct,
-                    queued: 0,
+                    queued: counts.queued,
                     depth: counts.depth,
                 };
                 let checking = print_liveness_started(printer, &statistics, liveness.branches);
@@ -892,7 +892,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                 let statistics = Statistics {
                     generated: counts.generated,
                     distinct: counts.distinct,
-                    queued: 0,
+                    queued: counts.queued,
                     depth: counts.depth,
                 };
                 let run = postcondition_run(
@@ -1104,7 +1104,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
     let statistics = Statistics {
         generated: counts.generated,
         distinct: counts.distinct,
-        queued: 0,
+        queued: counts.queued,
         depth: counts.depth,
     };
     print_statistics(printer, &statistics, start);
