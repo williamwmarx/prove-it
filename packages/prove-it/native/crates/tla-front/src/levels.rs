@@ -1589,8 +1589,23 @@ pub fn get_level_units<'b>(
         units.push(SemanticUnit {
             location: assumption.location.position(),
             check: Box::new(move |_, _| {
-                analyzer.analyze(&assumption.expression, &Scope::default())?;
-                Ok(())
+                let data = analyzer.analyze(&assumption.expression, &Scope::default())?;
+                if data.level == CONSTANT_LEVEL {
+                    return Ok(());
+                }
+                // `AssumeNode.levelCheck`, at the assumption.
+                let Some(range) = &assumption.location.range else {
+                    return Err(FrontError::NotYet(
+                        "an assumption without a range".to_owned(),
+                    ));
+                };
+                Err(FrontError::Syntax(SyntaxError::sany(vec![SanyError {
+                    location: format_range(range),
+                    message: format!(
+                        "Level error: assumptions must be level 0 (Constant), \nbut this one has level {}.",
+                        data.level
+                    ),
+                }])))
             }),
         });
     }

@@ -105,7 +105,10 @@ const writeResult =
   };
 
 const getBuiltinFlags = (builtin: Builtin) =>
-  (builtin.isStateLevel ? 1 : 0) | (builtin.isLevelConstant ? 2 : 0) | (builtin.isLazy ? 4 : 0);
+  (builtin.isStateLevel ? 1 : 0) |
+  (builtin.isLevelConstant ? 2 : 0) |
+  (builtin.isLazy ? 4 : 0) |
+  (builtin.isNaturalsGeq ? 16 : 0);
 
 // The spec whose root module is the file, linked with the model's configuration, or without a
 // model, and what linking prints.

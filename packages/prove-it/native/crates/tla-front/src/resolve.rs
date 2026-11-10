@@ -221,6 +221,9 @@ struct Unit<'a> {
     /// In the scope of a NEW in a nested ASSUME.
     is_label_forbidden: bool,
     is_in_except: bool,
+    /// The @ of an assertion step that continues the infix assertion of the step before it, which
+    /// stands for that step's right side.
+    step_at: Option<usize>,
     /// The names bound since the innermost definition, label, or step, which a label must take.
     label_params: Rc<Vec<Name>>,
     labels: Rc<RefCell<FastSet<Name>>>,
@@ -1407,6 +1410,13 @@ fn resolve_definition(
             "Recursive {} {name} defined at wrong LET/IN level.",
             if is_function { "function" } else { "operator" }
         ));
+    } else if is_function
+        && is_declared
+        && current.as_ref().is_some_and(|current| current.arity != 0)
+    {
+        report(format!(
+            "Function {name} has operator arguments in its RECURSIVE declaration."
+        ));
     } else if current.is_some() && !is_declared {
         report(if is_function {
             format!("Function name `{name}' already defined or declared.")
@@ -1437,8 +1447,10 @@ fn resolve_definition(
     } else {
         resolve_expression(&definition.body, &inner, &unit)?;
     }
+    // A function whose RECURSIVE declaration has parameters leaves it undefined.
     if let Some(current) = &current
         && is_declared
+        && !(is_function && current.arity != 0)
     {
         current.is_pending.set(false);
         *current.range.borrow_mut() = range.cloned();
@@ -1862,8 +1874,20 @@ fn resolve_expression(expression: &Expr, scope: &Scope, unit: &Unit) -> Result<(
     match &expression.kind {
         ExpressionKind::Number { .. }
         | ExpressionKind::Decimal { .. }
-        | ExpressionKind::String { .. }
-        | ExpressionKind::ExceptAt => Ok(()),
+        | ExpressionKind::String { .. } => Ok(()),
+        // SANY's generator defines @ only in an EXCEPT's new value.
+        ExpressionKind::ExceptAt => {
+            if !unit.is_in_except
+                && unit.step_at != Some(Rc::as_ptr(expression) as usize)
+                && let Some(range) = &expression.location.range
+            {
+                unit.error(
+                    format_range(range),
+                    "@ used where its meaning is not defined.".to_owned(),
+                );
+            }
+            Ok(())
+        }
         ExpressionKind::Identifier { .. } => {
             if is_instance_arity_reported(expression, scope, unit) {
                 return Ok(());
@@ -2174,13 +2198,58 @@ fn resolve_proof(proof: Option<&Proof>, scope: &Scope, outer: &Unit) -> Result<(
         Some(ProofKind::By { facts, .. }) => check_facts(facts, scope, &unit),
         Some(ProofKind::Steps { steps, .. }) => {
             let mut current = scope.clone();
+            // Whether the assertion step before is infix, which an @ step continues.
+            let mut is_previous_infix = false;
             for step in steps {
-                current = resolve_step(step, &current, &unit)?;
+                let asserted = match &step.body {
+                    StepBody::Assert {
+                        is_suffices,
+                        statement: Statement::Expression(expression),
+                    } => Some((*is_suffices, expression)),
+                    _ => None,
+                };
+                let step_at = match asserted {
+                    Some((false, expression)) if is_previous_infix => get_step_at(expression),
+                    _ => None,
+                };
+                let step_unit = Unit {
+                    step_at,
+                    ..unit.clone()
+                };
+                current = resolve_step(step, &current, &step_unit)?;
+                is_previous_infix = match asserted {
+                    Some((true, _)) => is_previous_infix,
+                    Some((false, expression)) => is_infix_expression(expression),
+                    None => false,
+                };
             }
             Ok(())
         }
         _ => Ok(()),
     }
+}
+
+// `isInfixExpression`, as the expression's form gives it: an unbulleted junction, or an infix
+// operator applied to two arguments.
+fn is_infix_expression(expression: &Expression) -> bool {
+    match &expression.kind {
+        ExpressionKind::Junction { is_bulleted, .. } => !is_bulleted,
+        ExpressionKind::Apply { operator, args, .. } => {
+            args.len() == 2 && crate::parser::is_infix(operator)
+        }
+        _ => false,
+    }
+}
+
+// The @ an assertion step `@ op e` takes for the right side of the infix step before it.
+fn get_step_at(expression: &Expression) -> Option<usize> {
+    if !is_infix_expression(expression) {
+        return None;
+    }
+    let ExpressionKind::Apply { args, .. } = &expression.kind else {
+        return None;
+    };
+    matches!(args[0].kind, ExpressionKind::ExceptAt).then(|| Rc::as_ptr(&args[0]) as usize)
 }
 
 /// A LET or a step binds the name of the INSTANCE after the names it adds.
@@ -2650,6 +2719,7 @@ pub fn resolve_substitutions(
             has_label_scope: false,
             is_label_forbidden: false,
             is_in_except: false,
+            step_at: None,
             label_params: Rc::default(),
             labels: Rc::default(),
             is_generated: false,
@@ -2722,6 +2792,11 @@ type RecursiveDeclaration = (Rc<Declaration>, Option<Rc<Local>>);
 /// SANY binds the names of a module in the order of its units, and reports a RECURSIVE declaration
 /// that no definition follows at the end. Returns the errors.
 pub fn resolve_module(module: &Module, unit: &ModuleContext) -> Result<Vec<SanyError>> {
+    if module.has_undefined_let_recursive {
+        return Err(FrontError::NotYet(
+            "a LET that declares RECURSIVE an operator it doesn't define".to_owned(),
+        ));
+    }
     let symbols = Rc::new(create_symbols(module, &unit.imported));
     let facts: Rc<RefCell<FastSet<Name>>> = Rc::new(RefCell::new(
         unit.facts
@@ -2796,6 +2871,7 @@ pub fn resolve_module(module: &Module, unit: &ModuleContext) -> Result<Vec<SanyE
         has_label_scope,
         is_label_forbidden: false,
         is_in_except: false,
+        step_at: None,
         label_params: Rc::default(),
         labels: Rc::default(),
         is_generated: false,
@@ -2814,6 +2890,57 @@ pub fn resolve_module(module: &Module, unit: &ModuleContext) -> Result<Vec<SanyE
                 warnings
                     .borrow_mut()
                     .extend(report.warnings.borrow().iter().cloned());
+                Ok(())
+            }),
+        });
+    }
+    // Generator.checkIfInRecursiveSection: only definitions and instances may come between a
+    // RECURSIVE declaration and the definition of what it declares. SANY reports it before the
+    // unit's own errors.
+    let mut pending: Vec<Name> = Vec::new();
+    for item in &module.units {
+        let (location, kind) = match item {
+            ModuleUnit::Recursive(declared) => {
+                pending.extend(declared.iter().map(|declaration| declaration.name.clone()));
+                continue;
+            }
+            ModuleUnit::Definition(definition) => {
+                if let Some(index) = pending.iter().position(|name| *name == definition.name) {
+                    pending.remove(index);
+                }
+                continue;
+            }
+            ModuleUnit::Instance(_) => continue,
+            ModuleUnit::Constants { location, .. } => (location, "A declaration"),
+            ModuleUnit::Variables { location, .. } => (location, "A VARIABLE declaration"),
+            ModuleUnit::Assumption(assumption) => (&assumption.location, "An ASSUME"),
+            ModuleUnit::Theorem(theorem) => (&theorem.location, "A THEOREM"),
+            ModuleUnit::Use(use_or_hide) => (&use_or_hide.location, "A USE or HIDE"),
+            ModuleUnit::Module(inner) => (&inner.location, "A MODULE "),
+        };
+        if pending.is_empty() {
+            continue;
+        }
+        // SANY's generator fails there with an exception TLC prints as it is.
+        if matches!(item, ModuleUnit::Module(_)) {
+            return Err(FrontError::NotYet(
+                "a module in a recursive section".to_owned(),
+            ));
+        }
+        let Some(range) = location.range.clone() else {
+            return Err(FrontError::NotYet(
+                "a unit in a recursive section without a range".to_owned(),
+            ));
+        };
+        units.push(SemanticUnit {
+            location: location.position(),
+            check: Box::new(move |errors, _| {
+                errors.borrow_mut().push(SanyError {
+                    location: format_range(&range),
+                    message: format!(
+                        "{kind} may not appear within a recursive definition section."
+                    ),
+                });
                 Ok(())
             }),
         });
