@@ -8,7 +8,17 @@ pub mod util;
 
 use prove_decide::{DecideError, Decision, Limits};
 
-/// Declines every input until the port lands, so that the TypeScript backend decides it.
-pub fn decide(_text: &str, _limits: &Limits) -> Result<Decision, DecideError> {
-    Err(DecideError::Declined("Z3 isn't ported to Rust yet".into()))
+use crate::util::error::SmtError;
+
+/// Z3's verdict on an SMT-LIB script: `decideZ3` of `deciders.ts`. Z3 rejects malformed input with
+/// an error, and tlapm counts that as a failure, so a parse error is `DecideError::Prover` with its
+/// message. Input that reaches the arithmetic theory, still a stub (`core::solver`'s header), is
+/// declined, and so is a broken invariant of the port, where the TypeScript may go on
+/// (design/smt-core.md, "Where the port refuses what the TS accepts"), so that the TypeScript
+/// decides both.
+pub fn decide(text: &str, limits: &Limits) -> Result<Decision, DecideError> {
+    core::solver::decide_smt(text, limits).map_err(|error| match error {
+        SmtError::Parse(message) => DecideError::Prover(message),
+        error => DecideError::Declined(error.to_string()),
+    })
 }
