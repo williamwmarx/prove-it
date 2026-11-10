@@ -279,8 +279,11 @@ pub fn is_key(name: &str) -> bool {
         .is_some_and(|index| index > 0 && index < name.len() - 1)
 }
 
+/// The operators SANY's symbol table holds before any module, beside `CORE_OPERATORS`.
+pub const CORE_SYMBOLS: [&str; 3] = ["~>", "-+->", "\\cdot"];
+
 fn core_symbols() -> Vec<(Name, ModuleSymbol)> {
-    ["~>", "-+->", "\\cdot"]
+    CORE_SYMBOLS
         .into_iter()
         .map(|name| {
             let name: Name = Rc::from(name);

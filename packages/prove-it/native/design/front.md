@@ -610,10 +610,11 @@ E4351, E4355) are now written, from `Generator.java` and `SymbolTable.java` at d
   at the current LET/IN level (`curLevel`), `processOperator` and `processFunction` define it,
   `checkForUndefinedRecursiveOps` reports it at the end of its LET or module if nothing has, and
   `SymbolTable.addSymbol` decides what any other binding of its name means. The front end follows
-  a declaration of N with k arguments, at module level or in a LET, only where nothing before it
-  in its module or LET names or binds N, and nothing after it in its scope binds N but one
-  definition of N in the same module or LET (or, for a LET, one LET definition of N within a
-  later definition of that LET, "defined at wrong LET/IN level"). That definition is an operator
+  a declaration of N with k arguments, at module level or in a LET, only where N is no built-in,
+  nothing before it in its module or LET names or binds N, and nothing after it in its scope binds
+  N but one definition of N in the same module or LET (or, for a LET, one LET definition of N
+  within a later definition of that LET, "defined at wrong LET/IN level"). That definition is an
+  operator
   with k parameters that take no arguments, or a function when k is 0; at module level it may
   instead have another number of such parameters ("Definition of N has different arity than its
   RECURSIVE declaration.") or be a function when k isn't 0 ("Function N has operator arguments in

@@ -9,7 +9,7 @@
 //!
 //! A declaration of N with k arguments, at module level or in a LET, is analyzed only if:
 //!
-//! - nothing before it in its module or LET names N or binds it;
+//! - N is no built-in, and nothing before it in its module or LET names N or binds it;
 //! - nothing after it in its scope binds N other than one definition of N in the same module or LET,
 //!   or, for a LET's declaration, one LET definition of N within a later definition of that LET;
 //! - its definition, if any, is an operator definition with k parameters that take no arguments,
@@ -32,7 +32,8 @@ use crate::ast::{
     Statement, StepBody,
 };
 use crate::errors::FrontError;
-use crate::resolve::is_before;
+use crate::resolve::{CORE_SYMBOLS, is_before};
+use crate::standard_builtins::CORE_OPERATORS;
 
 type Result<T> = std::result::Result<T, FrontError>;
 
@@ -64,6 +65,12 @@ impl Mentions {
     fn is_any(self) -> bool {
         self.is_referenced || self.is_bound || self.definitions != 0
     }
+}
+
+/// A name SANY's symbol table holds from the start, whose RECURSIVE declaration `addSymbol`
+/// rejects before the generator's exception could count it.
+fn is_builtin(name: &str) -> bool {
+    CORE_SYMBOLS.contains(&name) || CORE_OPERATORS.iter().any(|operator| operator.0 == name)
 }
 
 fn not_yet(reason: &str, name: &str) -> FrontError {
@@ -359,6 +366,15 @@ pub fn check_recursive(module: &Module) -> Result<()> {
     for (index, unit) in module.units.iter().enumerate() {
         match unit {
             ModuleUnit::Recursive(declarations) => {
+                if let Some(declaration) = declarations
+                    .iter()
+                    .find(|declaration| is_builtin(&declaration.name))
+                {
+                    return Err(not_yet(
+                        "a RECURSIVE declaration of the built-in",
+                        &declaration.name,
+                    ));
+                }
                 for declaration in declarations {
                     check_module_declaration(module, index, &declaration.name, declaration.arity)?;
                 }
@@ -473,6 +489,15 @@ fn check_lets(expression: &Expression, is_in_recursive: bool) -> Result<()> {
     };
     if !recursive.is_empty() {
         let name = &recursive[0].name;
+        if let Some(declaration) = recursive
+            .iter()
+            .find(|declaration| is_builtin(&declaration.name))
+        {
+            return Err(not_yet(
+                "a RECURSIVE declaration of the built-in",
+                &declaration.name,
+            ));
+        }
         if instances.is_some() {
             return Err(not_yet(
                 "a LET with an INSTANCE and RECURSIVE declarations:",
