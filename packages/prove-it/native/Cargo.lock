@@ -15,12 +15,28 @@ dependencies = [
 ]
 
 [[package]]
-name = "prove-it-napi"
+name = "prove-it-host"
 version = "0.1.0"
 dependencies = [
  "tla-engine",
  "tla-ir",
  "tla-live",
+ "tla-values",
+]
+
+[[package]]
+name = "prove-it-napi"
+version = "0.1.0"
+dependencies = [
+ "prove-it-host",
+ "tla-values",
+]
+
+[[package]]
+name = "prove-it-wasm"
+version = "0.1.0"
+dependencies = [
+ "prove-it-host",
  "tla-values",
 ]
 

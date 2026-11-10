@@ -1,7 +1,9 @@
 [workspace]
 members = [
   "crates/prove-it-cli",
+  "crates/prove-it-host",
   "crates/prove-it-napi",
+  "crates/prove-it-wasm",
   "crates/tla-engine",
   "crates/tla-front",
   "crates/tla-ir",

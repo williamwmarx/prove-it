@@ -18,22 +18,6 @@
   {
     "id": "spectacle/specs/with_state_graphs/semantic_error1.cfg",
     "mode": "default",
-    "pair": "tlc/ts",
-    "reason": "TLC fails with a NullPointerException in its own code while it reports the error; Prove It reports the error itself. This is a bug in TLC, not in Prove It.",
-    "diff": [
-      "-The exception was a java.lang.NullPointerException",
-      "-: Cannot read field \"state\" because \"currentStateInfo\" is null",
-      "+The exception was a java.lang.RuntimeException",
-      "+: Attempted to enumerate S \\cup T when S:",
-      "+{6}",
-      "+and T:",
-      "+0",
-      "+are not both enumerable"
-    ]
-  },
-  {
-    "id": "spectacle/specs/with_state_graphs/semantic_error1.cfg",
-    "mode": "default",
     "pair": "tlc/native",
     "reason": "TLC fails with a NullPointerException in its own code while it reports the error; Prove It reports the error itself. This is a bug in TLC, not in Prove It.",
     "diff": [
@@ -51,22 +35,6 @@
     "id": "spectacle/specs/with_state_graphs/semantic_error1.cfg",
     "mode": "tool",
     "pair": "tlc/rust",
-    "reason": "TLC fails with a NullPointerException in its own code while it reports the error; Prove It reports the error itself. This is a bug in TLC, not in Prove It.",
-    "diff": [
-      "-The exception was a java.lang.NullPointerException",
-      "-: Cannot read field \"state\" because \"currentStateInfo\" is null",
-      "+The exception was a java.lang.RuntimeException",
-      "+: Attempted to enumerate S \\cup T when S:",
-      "+{6}",
-      "+and T:",
-      "+0",
-      "+are not both enumerable"
-    ]
-  },
-  {
-    "id": "spectacle/specs/with_state_graphs/semantic_error1.cfg",
-    "mode": "tool",
-    "pair": "tlc/ts",
     "reason": "TLC fails with a NullPointerException in its own code while it reports the error; Prove It reports the error itself. This is a bug in TLC, not in Prove It.",
     "diff": [
       "-The exception was a java.lang.NullPointerException",
@@ -129,37 +97,6 @@
   {
     "id": "tla-rs/test_cases/should_pass/function_syntax/function_syntax.cfg",
     "mode": "default",
-    "pair": "tlc/ts",
-    "reason": "TLC overflows the Java stack on the recursive definition, with its default stack size; Prove It evaluates it. This depends on TLC's runtime, not on Prove It.",
-    "diff": [
-      "-exit 75",
-      "+exit 0",
-      "-Error: This was a Java StackOverflowError. It was probably the result",
-      "-of an incorrect recursive function definition that caused TLC to enter",
-      "-an infinite loop when trying to compute the function or its application",
-      "-to an element in its putative domain.",
-      "-While working on the initial state:",
-      "-x = 0",
-      "-",
-      "-Error: The error occurred when TLC was evaluating the nested",
-      "-expressions at the following positions:",
-      "-    The error call stack is empty.",
-      "-",
-      "-1 states generated, 1 distinct states found, 1 states left on queue.",
-      "-The depth of the complete state graph search is 1.",
-      "+Finished computing initial states: 1 distinct state generated at _.",
-      "+Model checking completed. No error has been found.",
-      "+  Estimates of the probability that TLC did not check all reachable states",
-      "+  because two distinct states had the same fingerprint:",
-      "+  calculated (optimistic):  val = 0.0",
-      "+3 states generated, 3 distinct states found, 0 states left on queue.",
-      "+The depth of the complete state graph search is 3.",
-      "+The average outdegree of the complete state graph is 1 (minimum is 0, the maximum 1 and the 95th percentile is 1)."
-    ]
-  },
-  {
-    "id": "tla-rs/test_cases/should_pass/function_syntax/function_syntax.cfg",
-    "mode": "default",
     "pair": "tlc/native",
     "reason": "TLC overflows the Java stack on the recursive definition, with its default stack size; Prove It evaluates it. This depends on TLC's runtime, not on Prove It.",
     "diff": [
@@ -192,47 +129,6 @@
     "id": "tla-rs/test_cases/should_pass/function_syntax/function_syntax.cfg",
     "mode": "tool",
     "pair": "tlc/rust",
-    "reason": "TLC overflows the Java stack on the recursive definition, with its default stack size; Prove It evaluates it. This depends on TLC's runtime, not on Prove It.",
-    "diff": [
-      "-exit 75",
-      "+exit 0",
-      "-@!@!@STARTMSG 2102:1 @!@!@",
-      "-This was a Java StackOverflowError. It was probably the result",
-      "-of an incorrect recursive function definition that caused TLC to enter",
-      "-an infinite loop when trying to compute the function or its application",
-      "-to an element in its putative domain.",
-      "-While working on the initial state:",
-      "-x = 0",
-      "-",
-      "-@!@!@ENDMSG 2102 @!@!@",
-      "-@!@!@STARTMSG 2103:1 @!@!@",
-      "-The error occurred when TLC was evaluating the nested",
-      "-expressions at the following positions:",
-      "-    The error call stack is empty.",
-      "-",
-      "-@!@!@ENDMSG 2103 @!@!@",
-      "+@!@!@STARTMSG 2190:0 @!@!@",
-      "+Finished computing initial states: 1 distinct state generated at _.",
-      "+@!@!@ENDMSG 2190 @!@!@",
-      "+@!@!@STARTMSG 2193:0 @!@!@",
-      "+Model checking completed. No error has been found.",
-      "+  Estimates of the probability that TLC did not check all reachable states",
-      "+  because two distinct states had the same fingerprint:",
-      "+  calculated (optimistic):  val = 0.0",
-      "+@!@!@ENDMSG 2193 @!@!@",
-      "-1 states generated, 1 distinct states found, 1 states left on queue.",
-      "+3 states generated, 3 distinct states found, 0 states left on queue.",
-      "-The depth of the complete state graph search is 1.",
-      "+The depth of the complete state graph search is 3.",
-      "+@!@!@STARTMSG 2268:0 @!@!@",
-      "+The average outdegree of the complete state graph is 1 (minimum is 0, the maximum 1 and the 95th percentile is 1).",
-      "+@!@!@ENDMSG 2268 @!@!@"
-    ]
-  },
-  {
-    "id": "tla-rs/test_cases/should_pass/function_syntax/function_syntax.cfg",
-    "mode": "tool",
-    "pair": "tlc/ts",
     "reason": "TLC overflows the Java stack on the recursive definition, with its default stack size; Prove It evaluates it. This depends on TLC's runtime, not on Prove It.",
     "diff": [
       "-exit 75",
@@ -315,21 +211,6 @@
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/qlearning/Counter.cfg",
     "mode": "default",
     "pair": "tlc/rust",
-    "reason": "TLCGet(\"config\") holds where TLC is installed and the fingerprint setting, which TLC prints from its own runtime. This depends on TLC's runtime, not on Prove It.",
-    "diff": [
-      "-[ mode |-> \"bfs\",",
-      "-  deadlock |-> TRUE,",
-      "-  worker |-> 1,",
-      "-  seed |-> \"4\",",
-      "-  fingerprint |-> \"-7992595565342442794\",",
-      "-  install |-> \"/tmp/tlaplus/tlatools/org.lamport.tlatools/dist/tla2tools.jar\" ]",
-      "+[install |-> \"unknown\", mode |-> \"bfs\", deadlock |-> TRUE, seed |-> \"4\", fingerprint |-> \"0\", worker |-> 1]"
-    ]
-  },
-  {
-    "id": "tlc/tlatools/org.lamport.tlatools/test-model/qlearning/Counter.cfg",
-    "mode": "default",
-    "pair": "tlc/ts",
     "reason": "TLCGet(\"config\") holds where TLC is installed and the fingerprint setting, which TLC prints from its own runtime. This depends on TLC's runtime, not on Prove It.",
     "diff": [
       "-[ mode |-> \"bfs\",",
@@ -355,21 +236,6 @@
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/qlearning/Counter.cfg",
     "mode": "tool",
     "pair": "tlc/rust",
-    "reason": "TLCGet(\"config\") holds where TLC is installed and the fingerprint setting, which TLC prints from its own runtime. This depends on TLC's runtime, not on Prove It.",
-    "diff": [
-      "-[ mode |-> \"bfs\",",
-      "-  deadlock |-> TRUE,",
-      "-  worker |-> 1,",
-      "-  seed |-> \"4\",",
-      "-  fingerprint |-> \"-7992595565342442794\",",
-      "-  install |-> \"/tmp/tlaplus/tlatools/org.lamport.tlatools/dist/tla2tools.jar\" ]",
-      "+[install |-> \"unknown\", mode |-> \"bfs\", deadlock |-> TRUE, seed |-> \"4\", fingerprint |-> \"0\", worker |-> 1]"
-    ]
-  },
-  {
-    "id": "tlc/tlatools/org.lamport.tlatools/test-model/qlearning/Counter.cfg",
-    "mode": "tool",
-    "pair": "tlc/ts",
     "reason": "TLCGet(\"config\") holds where TLC is installed and the fingerprint setting, which TLC prints from its own runtime. This depends on TLC's runtime, not on Prove It.",
     "diff": [
       "-[ mode |-> \"bfs\",",

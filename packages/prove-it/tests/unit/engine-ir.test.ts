@@ -1,6 +1,6 @@
 // The engine IR that src/engine/ir.ts lowers a model to, for the native engine. It is lowered only
-// when the native engine or PROVE_IT_IR_DUMP asks for it, and lowering changes nothing the
-// TypeScript engine does. native/crates/tla-ir decodes it, and its tests hold the corpus's golden
+// when the native engine or PROVE_IT_IR_DUMP asks for it, and lowering changes nothing a check
+// does. native/crates/tla-ir decodes it, and its tests hold the corpus's golden
 // files to it.
 
 import { afterEach, describe, expect, it, spyOn } from "bun:test";
@@ -18,7 +18,7 @@ const COMMIT = join(import.meta.dirname, "../fixtures/commit");
 const SOURCE = readFileSync(join(COMMIT, "Commit.tla"), "utf8");
 const CONFIG = readFileSync(join(COMMIT, "Commit.cfg"), "utf8");
 
-const settings = ["PROVE_IT_ENGINE", "PROVE_IT_IR_DUMP", "PROVE_IT_ENGINE_BACKEND"].map(
+const settings = ["PROVE_IT_ENGINE", "PROVE_IT_IR_DUMP"].map(
   (name) => [name, process.env[name]] as const,
 );
 const directory = mkdtempSync(join(tmpdir(), "prove-it-ir-"));
@@ -32,11 +32,10 @@ afterEach(() => {
 
 process.on("exit", () => rmSync(directory, { recursive: true, force: true }));
 
-// Checks Commit on the TypeScript engine with the engine's lines collected, writing its IR to `dump`
+// Checks Commit on the engine with the engine's lines collected, writing its IR to `dump`
 // if given.
 const checkCommit = async (dump?: string) => {
   process.env.PROVE_IT_ENGINE = "debug";
-  process.env.PROVE_IT_ENGINE_BACKEND = "ts";
   if (dump === undefined) delete process.env.PROVE_IT_IR_DUMP;
   else process.env.PROVE_IT_IR_DUMP = dump;
   const lines: string[] = [];
@@ -72,15 +71,18 @@ const readIr = (ir: Uint8Array) => {
 };
 
 describe("the engine IR", () => {
-  it("is lowered only when PROVE_IT_IR_DUMP or the native engine asks for it", async () => {
+  it("is lowered once, before the native engine searches, and is what PROVE_IT_IR_DUMP writes", async () => {
     const run = await checkCommit();
-    expect(run.lines.filter((line) => line.startsWith("[engine] native: "))).toEqual([]);
     const dump = join(directory, "asked.ir");
     const dumped = await checkCommit(dump);
     const size = readFileSync(dump).length;
-    expect(dumped.lines[0]).toMatch(
-      new RegExp(`^\\[engine\\] native: ir: ${size} bytes in \\d+\\.\\d\\d ms$`),
-    );
+    for (const lines of [run.lines, dumped.lines]) {
+      expect(lines.filter((line) => line.startsWith("[engine] native: ir: "))).toEqual([
+        expect.stringMatching(
+          new RegExp(`^\\[engine\\] native: ir: ${size} bytes in \\d+\\.\\d\\d ms$`),
+        ),
+      ]);
+    }
   });
 
   it("is the same every time, and changes nothing the engine does", async () => {
@@ -92,8 +94,9 @@ describe("the engine IR", () => {
     const plain = await checkCommit();
     expect(dumped.result).toEqual(plain.result);
     expect(again.result).toEqual(plain.result);
-    const withoutTimes = (lines: string[]) => lines.map((line) => line.replace(/ \d+ ms/, ""));
-    expect(withoutTimes(dumped.lines.slice(1))).toEqual(withoutTimes(plain.lines));
+    const withoutTimes = (lines: string[]) =>
+      lines.map((line) => line.replaceAll(/ \(?\d+(\.\d+)? ms\)?/g, ""));
+    expect(withoutTimes(dumped.lines)).toEqual(withoutTimes(plain.lines));
     process.env.PROVE_IT_ENGINE = "0";
     expect(await check({ source: SOURCE, config: CONFIG, onPrint: () => {} })).toEqual(
       plain.result,
@@ -135,7 +138,6 @@ describe("the engine IR", () => {
   it("names the definitions of a module a Java class overrides by their names", async () => {
     // test-model/UserModuleOverride: the override copies the root module, whose definitions are
     // still the spec's own, not an instance's.
-    process.env.PROVE_IT_ENGINE_BACKEND = "ts";
     const dump = join(directory, "overridden.ir");
     process.env.PROVE_IT_IR_DUMP = dump;
     const overrides = join(import.meta.dirname, "../fixtures/overrides");
@@ -166,7 +168,6 @@ describe("the engine IR", () => {
     const source =
       "---- MODULE R ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = RandomElement(1..100)\nStep(v) == UNCHANGED x\nNext == Step(RandomElement(1..100))\nInv == x = 74\n====";
     const run = async (dump?: string) => {
-      process.env.PROVE_IT_ENGINE_BACKEND = "ts";
       if (dump === undefined) delete process.env.PROVE_IT_IR_DUMP;
       else process.env.PROVE_IT_IR_DUMP = dump;
       const result = await check({
@@ -184,7 +185,6 @@ describe("the engine IR", () => {
     const source =
       "---- MODULE S ----\nEXTENDS Naturals, TLC\nVARIABLE x\nC == RandomElement(1..100) > 0\nInit == x = RandomElement(1..100)\nNext == UNCHANGED x\nSpec == C /\\ Init /\\ [][Next]_x\nInv == x = 42\n====";
     const run = async (dump?: string) => {
-      process.env.PROVE_IT_ENGINE_BACKEND = "ts";
       if (dump === undefined) delete process.env.PROVE_IT_IR_DUMP;
       else process.env.PROVE_IT_IR_DUMP = dump;
       const result = await check({

@@ -1284,11 +1284,13 @@ impl<'a> Compiler<'a> {
     // Whether TLC may keep the value of an expression lazy, a set it enumerates in its own order
     // or a function it applies anew each time, rather than normalize it as the engine's value is:
     // through the branches and bodies that give the value, any set or function it builds lazily.
+    // `seen` holds the nodes being looked through: one met again is a recursion, which may build
+    // anything, while one looked through before, as an operator applied twice, answers again.
     fn may_be_lazy(&self, node: NodeId, seen: &mut HashSet<NodeId>) -> bool {
         if !seen.insert(node) {
             return true;
         }
-        match self.node(node).1 {
+        let is_lazy = match self.node(node).1 {
             NodeKind::FunctionConstruction { .. }
             | NodeKind::Lambda { .. }
             | NodeKind::FunctionSet { .. }
@@ -1344,7 +1346,9 @@ impl<'a> Compiler<'a> {
             },
             NodeKind::Apply { .. } => true,
             _ => false,
-        }
+        };
+        seen.remove(&node);
+        is_lazy
     }
 
     fn builtin_name(&self, index: Index) -> &'a str {

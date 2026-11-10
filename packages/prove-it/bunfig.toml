@@ -1,0 +1,3 @@
+[test]
+# Points the tests at the native engine built for this system (tests/setup.ts).
+preload = ["./tests/setup.ts"]

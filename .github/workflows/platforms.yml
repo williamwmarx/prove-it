@@ -44,7 +44,7 @@ jobs:
           addon="$PWD/native/npm/darwin-arm64/prove-it-engine.node"
           PROVE_IT_ENGINE_ADDON="$addon" bun test tests/unit/native.test.ts tests/unit/native-search.test.ts \
             tests/unit/engine-store.test.ts tests/unit/engine-fingerprints.test.ts
-          PROVE_IT_ENGINE_BACKEND=rust PROVE_IT_ENGINE_ADDON="$addon" bun test tests/unit
+          PROVE_IT_ENGINE_ADDON="$addon" bun test tests/unit
           bun scripts/platform-packages.ts pack "$RUNNER_TEMP/platform-packages"
       - name: Test x64 under Rosetta
         run: |
