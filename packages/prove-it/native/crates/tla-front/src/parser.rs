@@ -1399,10 +1399,11 @@ impl Parser {
             "LET" => {
                 let mut definitions = Vec::new();
                 let mut instances = Vec::new();
+                let mut recursive = Vec::new();
                 self.recursive_scopes.push(FastSet::default());
                 while !self.accept("IN") {
                     if self.accept("RECURSIVE") {
-                        self.declare_recursive()?;
+                        recursive.extend(self.declare_recursive()?.into_iter().map(Rc::new));
                         continue;
                     }
                     match self.parse_definition(false)? {
@@ -1410,19 +1411,13 @@ impl Parser {
                         DefinitionUnit::Definition(definition) => definitions.push(definition),
                     }
                 }
-                let declared = self.recursive_scopes.pop().unwrap_or_default();
-                if declared.iter().any(|name| {
-                    definitions
-                        .iter()
-                        .all(|definition: &Rc<Definition>| definition.name != *name)
-                }) {
-                    self.current_module().has_undefined_let_recursive = true;
-                }
+                self.recursive_scopes.pop();
                 let body = Rc::new(self.parse_expression(0)?);
                 Ok(located(
                     ExpressionKind::Let {
                         definitions,
                         instances: (!instances.is_empty()).then_some(instances),
+                        recursive,
                         body,
                     },
                     location,
@@ -2153,7 +2148,17 @@ impl Parser {
     }
 
     fn parse_defs(&mut self) -> Parsed<Vec<Fact>> {
-        let defs = self.separated(Self::parse_fact)?;
+        // A DEF entry in parentheses keeps them in its range, as SANY's parser rejects them.
+        let defs = self.separated(|parser| {
+            let start = parser.index;
+            let is_parenthesized = parser.is_at("(", 0);
+            Ok(match parser.parse_fact()? {
+                Fact::Expression(expression) if is_parenthesized => {
+                    Fact::Expression(Rc::new(parser.with_range((*expression).clone(), start)))
+                }
+                fact => fact,
+            })
+        })?;
         if self.mode != Mode::Tlc {
             return Ok(defs);
         }
@@ -2169,42 +2174,18 @@ impl Parser {
             },
             Fact::Module { .. } => false,
         };
-        let (invalid, valid): (Vec<Fact>, Vec<Fact>) = defs.into_iter().partition(is_invalid);
-        let Some(Fact::Expression(first)) = invalid.first() else {
-            return Ok(valid);
+        // SANY's report words them where its generator meets them (`resolve.rs`).
+        if self.sany_errors.is_some() {
+            return Ok(defs);
+        }
+        let Some(Fact::Expression(first)) = defs.iter().find(|def| is_invalid(def)) else {
+            return Ok(defs);
         };
-        let Some(errors) = &mut self.sany_errors else {
-            return Err(self.error_at(
-                "DEF clause entry should describe a defined operator",
-                first.location.line,
-                first.location.column,
-            ));
-        };
-        for def in &invalid {
-            if let Fact::Expression(expression) = def
-                && let Some(range) = &expression.location.range
-            {
-                errors.push(SanyError {
-                    location: format_range(range),
-                    message: "DEF clause entry should describe a defined operator.".to_owned(),
-                });
-            }
-        }
-        Ok(valid)
-    }
-
-    /// SANY reports a BY, USE or HIDE that the DEF clause entries it leaves out leave empty.
-    fn check_empty(&mut self, facts: &[Fact], defs: &[Fact], start: usize, message: &str) {
-        if !facts.is_empty() || !defs.is_empty() {
-            return;
-        }
-        let range = self.get_range(start);
-        if let Some(errors) = &mut self.sany_errors {
-            errors.push(SanyError {
-                location: format_range(&range),
-                message: message.to_owned(),
-            });
-        }
+        Err(self.error_at(
+            "DEF clause entry should describe a defined operator",
+            first.location.line,
+            first.location.column,
+        ))
     }
 
     fn parse_facts(&mut self) -> Parsed<(Vec<Fact>, Vec<Fact>)> {
@@ -2228,7 +2209,6 @@ impl Parser {
         let is_only = !is_hide && self.accept("ONLY");
         let keyword_range = self.get_range(start);
         let (facts, defs) = self.parse_facts()?;
-        self.check_empty(&facts, &defs, start, "Empty USE or HIDE statement.");
         if is_hide && self.mode == Mode::Tlc {
             let errors: Vec<SanyError> = facts
                 .iter()
@@ -2543,13 +2523,11 @@ impl Parser {
     fn parse_proof_body(&mut self) -> Parsed<Proof> {
         let location = self.peek_location();
         if self.is_at("BY", 0) || (self.is_at("PROOF", 0) && self.is_at("BY", 1)) {
-            let start = self.index;
             self.accept("PROOF");
             self.advance()?;
             let keyword = self.get_range(self.index - 1);
             let is_only = self.accept("ONLY");
             let (facts, defs) = self.parse_facts()?;
-            self.check_empty(&facts, &defs, start, "Empty BY");
             return Ok(Proof {
                 kind: ProofKind::By {
                     is_only,
@@ -2724,7 +2702,6 @@ impl Parser {
             theorems: Vec::new(),
             uses: Vec::new(),
             units: Vec::new(),
-            has_undefined_let_recursive: false,
         });
         self.recursive_scopes.push(FastSet::default());
         if self.accept("EXTENDS") {

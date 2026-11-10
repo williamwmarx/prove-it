@@ -362,6 +362,7 @@ pub fn expression(value: &Expression) -> Json {
             definitions,
             instances,
             body,
+            ..
         } => with_kind(
             "Let",
             value,

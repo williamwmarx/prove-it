@@ -569,6 +569,7 @@ fn resolve_subexpressions(
         let ExpressionKind::Let {
             definitions,
             instances: Some(instances),
+            recursive,
             body,
         } = &mapped.kind
         else {
@@ -583,6 +584,7 @@ fn resolve_subexpressions(
             ExpressionKind::Let {
                 definitions: definitions.clone(),
                 instances: Some(instances),
+                recursive: recursive.clone(),
                 body: body.clone(),
             },
         ));

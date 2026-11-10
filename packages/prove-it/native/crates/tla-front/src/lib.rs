@@ -23,6 +23,7 @@ pub mod order;
 pub mod ordered_map;
 pub mod parser;
 pub mod pcal;
+pub mod recursive;
 pub mod report;
 pub mod resolve;
 pub mod sany_parse_error;

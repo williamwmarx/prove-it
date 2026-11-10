@@ -338,16 +338,77 @@ const isRecordId = (id: number) => {
   return true;
 };
 
+// TLC holds a function over a run of integers either over an interval (FcnRcdValue.intv, as
+// [i \in 0..n |-> e] makes one, and a tuple compared with a function) or over the run's elements
+// (as [i \in {0, 1} |-> e] makes one), which the store doesn't tell apart. Against a function of its
+// size with an untyped model value among its keys, the first fails (FcnRcdValue.compareToInterval,
+// compareOtherInterval and equals), and the second compares the keys, which the model value passes.
+// The store fails as TLC may, and the evaluator, which knows how TLC built the function, finds
+// whether it does.
+const isIntRunId = (id: number) => {
+  if (kinds[id] === KIND_TUPLE) return true;
+  if (kinds[id] !== KIND_FUNCTION) return false;
+  const first = heap[payloads[id]];
+  const last = heap[payloads[id] + sizes[id] - 1];
+  return (
+    kinds[first] === KIND_INT &&
+    kinds[last] === KIND_INT &&
+    payloads[last] - payloads[first] === sizes[id] - 1
+  );
+};
+
+// An untyped model value comes before any value that isn't a model value in TLC's order, so a
+// function holds one among its keys only if its first key is a model value: the keys of any other
+// function aren't read.
+const hasUntypedModelKey = (id: number) => {
+  const offset = payloads[id];
+  if (kinds[id] !== KIND_FUNCTION || sizes[id] === 0 || kinds[heap[offset]] !== KIND_MODEL) {
+    return false;
+  }
+  for (let index = 0; index < sizes[id]; index++) {
+    const key = heap[offset + index];
+    if (kinds[key] === KIND_MODEL && getModelType(key) === 0) return true;
+  }
+  return false;
+};
+
+// Whether `record` is a record and `fn` has an untyped model value among its keys. A record's
+// first key is a string, and such a function's a model value, so the first keys decide most pairs
+// without reading the rest.
+const isRecordBesideModelKey = (fn: number, record: number) =>
+  kinds[heap[payloads[fn]]] === KIND_MODEL &&
+  kinds[heap[payloads[record]]] === KIND_STRING &&
+  isRecordId(record) &&
+  hasUntypedModelKey(fn);
+
+const checkIntervalKeys = (left: number, right: number) => {
+  if (
+    sizes[left] > 0 &&
+    ((isIntRunId(left) && hasUntypedModelKey(right)) ||
+      (isIntRunId(right) && hasUntypedModelKey(left)))
+  ) {
+    bail("a function over an interval compared with one over other keys");
+  }
+};
+
 const compareFunctions = (left: number, right: number) => {
   const size = sizes[left];
   const rightSize = sizes[right];
+  // TLC compares a record only with a record (RecordValue.compareTo), which may fail before the
+  // sizes decide. Of one size, a function asking compares by its keys, which fail against strings
+  // unless they are untyped model values: the evaluator, which knows which TLC built as a record,
+  // finds whether it fails. A function over a model value is no record, and the first key tells
+  // whether one has a model value, so a record is looked for only beside one.
   if (size !== rightSize) {
-    // TLC compares a record only with a record, which may fail before the sizes decide.
     if (size > 0 && rightSize > 0 && isRecordId(left) !== isRecordId(right)) {
       return bail("record compared with a function");
     }
     return size - rightSize;
   }
+  if (isRecordBesideModelKey(left, right) || isRecordBesideModelKey(right, left)) {
+    return bail("a record compared with a function of its size over a model value");
+  }
+  checkIntervalKeys(left, right);
   for (let index = 0; index < size; index++) {
     const comparison = compare(getKey(left, index), getKey(right, index));
     if (comparison !== 0) return comparison;
@@ -412,6 +473,7 @@ const equalsFunctions = (left: number, right: number) => {
     return bail("record compared with a function");
   }
   if (size !== rightSize) return false;
+  checkIntervalKeys(left, right);
   for (let index = 0; index < size; index++) {
     const leftKey = getKey(left, index);
     const rightKey = getKey(right, index);
@@ -645,11 +707,26 @@ const computeIsSafe = (left: Structure, right: Structure) => {
   const size = left.parts.length;
   if (size === 0 || right.parts.length === 0) return true;
   if (isRecordStructure(left) !== isRecordStructure(right)) return false;
-  return (
-    size !== right.parts.length ||
-    left.parts.every((part, index) => isSafe(part, right.parts[index]))
-  );
+  if (size !== right.parts.length) return true;
+  // A function over integers, which TLC may hold over an interval, fails against an untyped model
+  // value among the other's keys.
+  if (
+    (hasIntKeysOnly(left) && hasUntypedModelKeyStructure(right)) ||
+    (hasIntKeysOnly(right) && hasUntypedModelKeyStructure(left))
+  ) {
+    return false;
+  }
+  return left.parts.every((part, index) => isSafe(part, right.parts[index]));
 };
+
+const getKeyStructures = (structure: Structure) =>
+  structure.parts.slice(0, structure.parts.length / 2).map((part) => structures[part - 1]);
+
+const hasIntKeysOnly = (structure: Structure) =>
+  getKeyStructures(structure).every((key) => key.kind === KIND_INT);
+
+const hasUntypedModelKeyStructure = (structure: Structure) =>
+  getKeyStructures(structure).some((key) => key.kind === KIND_MODEL && key.modelType === 0);
 
 const isComparableWithMembers = (element: number, set: number) => {
   const size = sizes[set];

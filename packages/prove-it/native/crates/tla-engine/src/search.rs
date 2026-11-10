@@ -9,7 +9,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 use std::io::Write as _;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use crate::clock::Instant;
@@ -467,6 +467,8 @@ const TLC_FAILURES: &[&str] = &[
     "enumerated a filter of an infinite set",
     "enumerated a non-set",
     crate::compile::INFINITE_BOUND,
+    tla_values::store::INTERVAL_KEYS.0,
+    tla_values::store::RECORD_KEYS.0,
     "equality of values TLC can't compare",
     "expected a bag",
     "expected a boolean",
@@ -608,7 +610,7 @@ impl FingerprintSet {
 
     #[inline(always)]
     fn home(&self, fingerprint: u64) -> usize {
-        (fingerprint.wrapping_mul(0x9e37_79b9_7f4a_7c15) >> self.shift) as usize
+        home_slot(fingerprint, self.shift)
     }
 
     /// The slot that holds this fingerprint, or the slot to put it in.
@@ -649,28 +651,96 @@ impl FingerprintSet {
         // At most half full: a third full measured slower, the larger table missing the cache
         // more often than a probe leaves its cache line, and 70% no faster.
         if self.len * 2 > self.fingerprints.len() {
-            let capacity = self.fingerprints.len() * 2;
-            let fingerprints = std::mem::replace(&mut self.fingerprints, vec![0; capacity]);
-            let indices = self
-                .indices
-                .as_mut()
-                .map(|indices| std::mem::replace(indices, vec![0; capacity]));
-            self.shift -= 1;
-            self.mask = capacity - 1;
-            for (old, stored) in fingerprints.into_iter().enumerate() {
-                if stored != 0 {
-                    let mut slot = self.home(stored);
-                    while self.fingerprints[slot] != 0 {
-                        slot = (slot + 1) & self.mask;
-                    }
-                    self.fingerprints[slot] = stored;
-                    if let (Some(indices), Some(old_indices)) = (&mut self.indices, &indices) {
-                        indices[slot] = old_indices[old];
-                    }
+            self.grow();
+        }
+    }
+
+    // Grows the table until it takes `additional` more fingerprints without growing.
+    fn reserve(&mut self, additional: usize) {
+        while (self.len + additional) * 2 > self.fingerprints.len() {
+            self.grow();
+        }
+    }
+
+    fn grow(&mut self) {
+        let capacity = self.fingerprints.len() * 2;
+        let fingerprints = std::mem::replace(&mut self.fingerprints, vec![0; capacity]);
+        let indices = self
+            .indices
+            .as_mut()
+            .map(|indices| std::mem::replace(indices, vec![0; capacity]));
+        self.shift -= 1;
+        self.mask = capacity - 1;
+        for (old, stored) in fingerprints.into_iter().enumerate() {
+            if stored != 0 {
+                let mut slot = self.home(stored);
+                while self.fingerprints[slot] != 0 {
+                    slot = (slot + 1) & self.mask;
+                }
+                self.fingerprints[slot] = stored;
+                if let (Some(indices), Some(old_indices)) = (&mut self.indices, &indices) {
+                    indices[slot] = old_indices[old];
                 }
             }
         }
     }
+
+    /// Adds the fingerprints of the runs, as `insert` would one by one in their order, but on
+    /// threads that each own a range of the table's slots, and without their indices: of each,
+    /// whether it was `FILL_SEEN` before, `FILL_NEW`, or `FILL_LEFT` to `insert`, which 0 and a
+    /// fingerprint whose probe runs past its thread's range are. The table grows first to take
+    /// every one.
+    fn fill(&mut self, runs: &[&[u64]], threads: usize) -> Vec<u8> {
+        let count = runs.iter().map(|run| run.len()).sum();
+        self.reserve(count);
+        let statuses: Vec<AtomicU8> = (0..count).map(|_| AtomicU8::new(FILL_LEFT)).collect();
+        let span = self.fingerprints.len() / threads.next_power_of_two();
+        let shift = self.shift;
+        let added = AtomicUsize::new(0);
+        std::thread::scope(|scope| {
+            for (shard, slots) in self.fingerprints.chunks_mut(span).enumerate() {
+                let (statuses, added) = (&statuses, &added);
+                scope.spawn(move || {
+                    let start = shard * span;
+                    let mut count = 0;
+                    let fingerprints = runs.iter().flat_map(|run| run.iter());
+                    for (status, &fingerprint) in statuses.iter().zip(fingerprints) {
+                        let home = home_slot(fingerprint, shift);
+                        if fingerprint == 0 || home / span != shard {
+                            continue;
+                        }
+                        let mut slot = home - start;
+                        while let Some(&stored) = slots.get(slot) {
+                            if stored == fingerprint {
+                                status.store(FILL_SEEN, Ordering::Relaxed);
+                                break;
+                            }
+                            if stored == 0 {
+                                slots[slot] = fingerprint;
+                                count += 1;
+                                status.store(FILL_NEW, Ordering::Relaxed);
+                                break;
+                            }
+                            slot += 1;
+                        }
+                    }
+                    added.fetch_add(count, Ordering::Relaxed);
+                });
+            }
+        });
+        self.len += added.into_inner();
+        statuses.into_iter().map(AtomicU8::into_inner).collect()
+    }
+}
+
+// What `FingerprintSet::fill` did with a fingerprint.
+const FILL_SEEN: u8 = 0;
+const FILL_NEW: u8 = 1;
+const FILL_LEFT: u8 = 2;
+
+#[inline(always)]
+fn home_slot(fingerprint: u64, shift: u32) -> usize {
+    (fingerprint.wrapping_mul(0x9e37_79b9_7f4a_7c15) >> shift) as usize
 }
 
 // The states found so far and how the search tells them apart.
@@ -729,13 +799,18 @@ impl States {
 
     fn add(&mut self, state: &[Id], key: &[Id], fingerprint: u64, slot: usize, parent: i32) {
         let index = self.count() as u32;
+        self.push(state, key, fingerprint, parent);
+        self.set.insert(slot, fingerprint, index);
+    }
+
+    // Adds a state whose fingerprint the set holds already.
+    fn push(&mut self, state: &[Id], key: &[Id], fingerprint: u64, parent: i32) {
         self.ids.extend_from_slice(state);
         if self.key_width.is_some() {
             self.keys.extend_from_slice(key);
         }
         self.parents.push(parent);
         self.fingerprints.push(fingerprint);
-        self.set.insert(slot, fingerprint, index);
     }
 
     fn encode(&self, store: &Store, ids: &[Id], width: usize, count: usize) -> EncodedStates {
@@ -1519,8 +1594,11 @@ impl<T: Reached, E: Entries> Search<'_, T, E> {
 const CHUNK: usize = 32;
 
 // Marks a slot of a thread's own states, which `Candidates::find` returns apart from the slots of
-// the states found before the level.
+// the states found before the level. A table's slots are below half of the address space, so the
+// mark is free on each but the slot of the fingerprint 0, ZERO_SLOT, which already has it: that of
+// the thread's own states stays ZERO_SLOT, and that of the states before the level is BEFORE_ZERO.
 const SEEN: usize = 1 << (usize::BITS - 1);
+const BEFORE_ZERO: usize = SEEN - 1;
 
 // A thread expanding part of a level reports nothing: what it would report, Print's output, makes
 // the search run on one thread.
@@ -1582,7 +1660,7 @@ impl Reached for Candidates<'_> {
             if before.is_verified && before.key_of(before.set.index(slot) as usize) != key {
                 self.collisions += 1;
             }
-            return Ok(slot);
+            return Ok(if slot == ZERO_SLOT { BEFORE_ZERO } else { slot });
         }
         let found = self.seen.find(fingerprint);
         if before.is_verified
@@ -1609,10 +1687,12 @@ impl Reached for Candidates<'_> {
     // have if the thread's states all joined the store after the level's first: the merge gives
     // each the index it does take.
     fn index(&self, slot: usize) -> u32 {
-        if slot & SEEN == 0 {
-            return self.before.set.index(slot);
+        match slot {
+            BEFORE_ZERO => self.before.set.index(ZERO_SLOT),
+            ZERO_SLOT => (self.before.count() + self.seen.index(ZERO_SLOT) as usize) as u32,
+            slot if slot & SEEN == 0 => self.before.set.index(slot),
+            slot => (self.before.count() + self.seen.index(slot & !SEEN) as usize) as u32,
         }
-        (self.before.count() + self.seen.index(slot & !SEEN) as usize) as u32
     }
 
     // Where the key isn't the state, a thread that takes a state for new may have missed another
@@ -1882,6 +1962,35 @@ impl Search<'_, States> {
         let width = self.states.width;
         let key_width = self.states.key_width;
         let is_verified = self.states.is_verified;
+        // Where the set keeps no indices, no graph is recorded and no invariant waits on the merge,
+        // which candidates are new is found first on the threads, each filling a range of the
+        // set's slots, so that the merge reads none of the set but for the few the threads leave
+        // it. A graph's edges need the index of each state a step reached, found or new, which the
+        // threads don't keep.
+        let statuses = (self.states.set.indices.is_none()
+            && self.graph.is_none()
+            && expanded.iter().all(|found| found.deferred.is_empty()))
+        .then(|| {
+            let runs: Vec<&[u64]> = owners
+                .iter()
+                .map_while(Option::as_ref)
+                .map_while(|&(thread, run)| {
+                    let found = &expanded[thread];
+                    let claimed = &found.claimed[run];
+                    let end = found
+                        .claimed
+                        .get(run + 1)
+                        .map_or(found.parents.len(), |next| next.candidates);
+                    let parents = &found.parents[claimed.candidates..end];
+                    let count = parents.partition_point(|&parent| (parent as usize) < stop);
+                    (claimed.start < stop).then(|| {
+                        &found.fingerprints[claimed.candidates..claimed.candidates + count]
+                    })
+                })
+                .collect();
+            self.states.set.fill(&runs, workers.len())
+        });
+        let mut position = 0;
         let mut new_counts = vec![0u32; level.end - level.start];
         let (mut state, mut key) = (Vec::with_capacity(width), Vec::with_capacity(width));
         // Where the search records its graph, the index each thread's states took, by the order
@@ -1951,26 +2060,40 @@ impl Search<'_, States> {
                         break;
                     }
                     candidate += 1;
-                    // The probe for a candidate further on, so that its slot is in the cache by its
-                    // turn: the table is far larger than the cache, and the merge runs alone.
-                    if let Some(&ahead) = found.fingerprints.get(index + MERGE_PREFETCH) {
-                        self.states.set.touch(ahead);
+                    let status = statuses
+                        .as_ref()
+                        .map_or(FILL_LEFT, |statuses| statuses[position]);
+                    position += 1;
+                    if status == FILL_SEEN {
+                        continue;
                     }
                     let fingerprint = found.fingerprints[index];
                     let ids = &found.ids[index * width..(index + 1) * width];
                     let keys = key_width
                         .map(|key_width| &found.keys[index * key_width..(index + 1) * key_width]);
-                    if is_verified {
-                        import(keys.unwrap_or(ids), &mut key);
-                    }
-                    let slot = match self.states.find(&key, fingerprint) {
-                        Ok(slot) => {
-                            if let Some(index) = resolved[thread].get_mut(index) {
-                                *index = self.states.index(slot);
-                            }
-                            continue;
+                    let slot = if status == FILL_NEW {
+                        None
+                    } else {
+                        // The probe for a candidate further on, so that its slot is in the cache by
+                        // its turn: the table is far larger than the cache, and the merge runs
+                        // alone.
+                        if statuses.is_none()
+                            && let Some(&ahead) = found.fingerprints.get(index + MERGE_PREFETCH)
+                        {
+                            self.states.set.touch(ahead);
                         }
-                        Err(slot) => slot,
+                        if is_verified {
+                            import(keys.unwrap_or(ids), &mut key);
+                        }
+                        match self.states.find(&key, fingerprint) {
+                            Ok(slot) => {
+                                if let Some(index) = resolved[thread].get_mut(index) {
+                                    *index = self.states.index(slot);
+                                }
+                                continue;
+                            }
+                            Err(slot) => Some(slot),
+                        }
                     };
                     if let Some(index) = resolved[thread].get_mut(index) {
                         *index = self.states.count() as u32;
@@ -1979,8 +2102,13 @@ impl Search<'_, States> {
                     if let Some(keys) = keys {
                         import(keys, &mut key);
                     }
-                    self.states
-                        .add(&state, &key, fingerprint, slot, parent as i32);
+                    match slot {
+                        Some(slot) => {
+                            self.states
+                                .add(&state, &key, fingerprint, slot, parent as i32);
+                        }
+                        None => self.states.push(&state, &key, fingerprint, parent as i32),
+                    }
                     new_counts[parent - level.start] += 1;
                     self.depth = self.depth.max(level.number + 1);
                 }
@@ -1997,7 +2125,13 @@ impl Search<'_, States> {
                             if target < before_count {
                                 target as u32
                             } else {
-                                resolved[target - before_count]
+                                let index = resolved[target - before_count];
+                                debug_assert_ne!(
+                                    index,
+                                    u32::MAX,
+                                    "a step to a state not yet taken"
+                                );
+                                index
                             }
                         }));
                     if let (Some(labels), Some(labels_of)) = (&mut graph.labels, &steps_of.labels) {
@@ -4769,6 +4903,9 @@ mod tests {
         // TLC fails only where a value it built as a record meets a function, which the store,
         // knowing a value by its domain, can't tell from a function over strings.
         assert!(is_engine_limit("record compared with a function"));
+        // TLC fails where it holds a function over an interval, which the evaluator knows.
+        assert!(!is_engine_limit(tla_values::store::INTERVAL_KEYS.0));
+        assert!(!is_engine_limit(tla_values::store::RECORD_KEYS.0));
     }
 
     fn verified_states() -> States {
@@ -4845,6 +4982,56 @@ mod tests {
         assert_eq!(states.set.len, 1);
     }
 
+    // A thread of a shared level tells a state found before the level from one it found itself,
+    // the fingerprint 0 included, whose slot stands apart from the table's in each set.
+    #[test]
+    fn tells_the_states_of_a_thread_from_those_before_its_level_whatever_their_fingerprints() {
+        let mut before = verified_states();
+        for (state, fingerprint) in [(5, 0), (6, 1)] {
+            let Err(slot) = before.find(&[state], fingerprint) else {
+                panic!("a fingerprint found before it was added");
+            };
+            before.add(&[state], &[], fingerprint, slot, -1);
+        }
+        let mut thread = Candidates {
+            before: &before,
+            seen: FingerprintSet::new(true),
+            ids: Vec::new(),
+            keys: Vec::new(),
+            fingerprints: Vec::new(),
+            parents: Vec::new(),
+            deferred: Vec::new(),
+            collisions: 0,
+        };
+        for (state, fingerprint, index) in [(5, 0, 0), (6, 1, 1)] {
+            let slot = Reached::find(&mut thread, &[state], fingerprint).expect("a state before");
+            assert_eq!(Reached::index(&thread, slot), index);
+        }
+        // A thread's own states, after none before the level, in the order it found them.
+        let own = verified_states();
+        let mut thread = Candidates {
+            before: &own,
+            seen: FingerprintSet::new(true),
+            ids: Vec::new(),
+            keys: Vec::new(),
+            fingerprints: Vec::new(),
+            parents: Vec::new(),
+            deferred: Vec::new(),
+            collisions: 0,
+        };
+        for (state, fingerprint) in [(7, 2), (8, 0)] {
+            let Err(slot) = Reached::find(&mut thread, &[state], fingerprint) else {
+                panic!("a thread found a state before it reached it");
+            };
+            Reached::add(&mut thread, &[state], &[state], fingerprint, slot, 0);
+        }
+        for (state, fingerprint, index) in [(7, 2, 0), (8, 0, 1)] {
+            let slot = Reached::find(&mut thread, &[state], fingerprint).expect("a state found");
+            assert_eq!(Reached::index(&thread, slot), index);
+        }
+        assert_eq!(thread.collisions, 0);
+    }
+
     // Under a VIEW or symmetry the key is kept beside the state, and compared for a collision.
     #[test]
     fn compares_the_key_when_it_isnt_the_state() {
@@ -4862,5 +5049,59 @@ mod tests {
             (states.ids.as_slice(), states.keys.as_slice()),
             (&[7][..], &[70][..])
         );
+    }
+
+    #[test]
+    fn fills_on_threads_what_inserting_one_by_one_adds() {
+        let mut random = 0x2545_f491_4f6c_dd1d_u64;
+        let mut next = || {
+            random ^= random << 13;
+            random ^= random >> 7;
+            random ^= random << 17;
+            random % 3000
+        };
+        let scattered: Vec<u64> = (0..5000).map(|_| next()).collect();
+        let mut set = FingerprintSet::new(false);
+        set.reserve(scattered.len() + 3);
+        // Three fingerprints whose probes start at the last slot of the first thread's range: the
+        // second and third run past it.
+        let last = set.fingerprints.len() / 4 - 1;
+        let crowded: Vec<u64> = (1..)
+            .filter(|&fingerprint| set.home(fingerprint) == last)
+            .take(3)
+            .collect();
+        let statuses = set.fill(&[&scattered, &crowded], 4);
+        let mut expected = FingerprintSet::new(false);
+        for (&status, &fingerprint) in statuses.iter().zip(scattered.iter().chain(&crowded)) {
+            let is_new = match expected.find(fingerprint) {
+                Ok(_) => false,
+                Err(slot) => {
+                    expected.insert(slot, fingerprint, 0);
+                    true
+                }
+            };
+            let status = match (status, set.find(fingerprint)) {
+                (FILL_LEFT, Ok(_)) => FILL_SEEN,
+                (FILL_LEFT, Err(slot)) => {
+                    set.insert(slot, fingerprint, 0);
+                    FILL_NEW
+                }
+                (status, _) => status,
+            };
+            assert_eq!(
+                status,
+                if is_new { FILL_NEW } else { FILL_SEEN },
+                "{fingerprint}"
+            );
+        }
+        assert!(
+            statuses
+                .iter()
+                .filter(|&&status| status == FILL_LEFT)
+                .count()
+                >= 2
+        );
+        assert_eq!(set.len, expected.len);
+        assert_eq!(set.zero.is_some(), expected.zero.is_some());
     }
 }

@@ -815,6 +815,65 @@ fn unites_and_compares_sets_and_functions_by_tlc_classes() {
     );
 }
 
+// TLC holds [i \in 0..1 |-> 1] over an interval, whose keys it compares as integers, failing at a
+// model value (`FcnRcdValue.compareToInterval` and `equals`), and [i \in {0, 1} |-> 1] over its
+// keys, which it compares with the model value without failing. The store can't tell them apart:
+// it stops, and the evaluator reports TLC's failure, or finds none and declines.
+#[test]
+fn compares_functions_over_intervals_with_functions_over_model_values_as_tlc() {
+    let unexpected = "Error: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: ";
+    for (test, init, failure) in [
+        (
+            "interval",
+            "{[i \\in 0..1 |-> 1], [k \\in {m, 0} |-> 1]}",
+            Some(format!(
+                "{unexpected}Attempted to compare integer with non-integer\nm.\n"
+            )),
+        ),
+        (
+            "interval-equality",
+            "([i \\in 0..1 |-> 1] = [k \\in {m, 0} |-> 1])",
+            Some("Error: Attempted to compare an integer with non-integer:\nm.\n".to_string()),
+        ),
+        (
+            "enumerated",
+            "{[i \\in {0, 1} |-> 1], [k \\in {m, 0} |-> 1]}",
+            None,
+        ),
+        // A membership, which the store answers by id only where no comparison can fail, compares
+        // and stops: TLC reports these as a FingerprintException, which the evaluator declines.
+        (
+            "interval-member",
+            "([i \\in 0..1 |-> 1] \\in {[k \\in {m, 0} |-> j] : j \\in 1..40})",
+            None,
+        ),
+        (
+            "tuple-member",
+            "(<<1, 1>> \\in {[k \\in {m, 0} |-> 1]})",
+            None,
+        ),
+    ] {
+        let spec = format!(
+            "---- MODULE Keys ----\nEXTENDS Integers\nCONSTANT m\nVARIABLE x\nInit == x = {init}\nNext == UNCHANGED x\n====\n"
+        );
+        let (output, directory) =
+            run_front(test, &spec, "CONSTANT m = m\nINIT Init\nNEXT Next\n", &[]);
+        let text = stdout(&output);
+        std::fs::remove_dir_all(directory).expect("removed");
+        assert!(!text.contains("Model checking completed"), "{test}: {text}");
+        match failure {
+            Some(failure) => assert!(
+                text.contains(&format!("Computing initial states...\n{failure}")),
+                "{test}: {text}"
+            ),
+            None => assert!(
+                String::from_utf8_lossy(&output.stderr).contains("not native yet"),
+                "{test}: {text}"
+            ),
+        }
+    }
+}
+
 #[test]
 fn compares_model_values_with_lazy_sets_as_tlc() {
     for (model, assumption, expected) in [
@@ -946,6 +1005,34 @@ fn reports_a_spec_sany_rejects() {
         text.contains(")\nError: Parsing or semantic analysis failed.\nFinished in "),
         "{text}"
     );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn reports_the_exception_sanys_generator_throws_as_a_failed_parse() {
+    // TLC's tla2sany error corpus, E4294_Module_Test, as TLC at d8fb231 prints it.
+    let spec = "---- MODULE Stop ----\nRECURSIVE op\n---- MODULE Inner ----\n====\nop == 0\n====\n";
+    let exception = "util.WrongInvocationException: Defined more recursive operators than were declared in RECURSIVE statements.";
+    let (output, directory) = run_spec("exception", spec, "");
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(150), "{text}");
+    assert!(
+        text.contains(&format!("Semantic processing of module Stop\n{exception}\nError: Parsing or semantic analysis failed.Parsing or semantic analysis failed.{exception}\nFinished in ")),
+        "{text}"
+    );
+    assert!(!text.contains("Starting..."), "{text}");
+    let tool = Command::new(env!("CARGO_BIN_EXE_prove-it"))
+        .args(["-tool", "Stop"])
+        .current_dir(&directory)
+        .output()
+        .expect("the binary runs");
+    let text = stdout(&tool);
+    assert_eq!(tool.status.code(), Some(150), "{text}");
+    assert!(
+        text.contains(&format!("{exception}\n@!@!@STARTMSG 2171:1 @!@!@\nParsing or semantic analysis failed.@!@!@STARTMSG 2171:0 @!@!@\nParsing or semantic analysis failed.{exception}\n@!@!@ENDMSG 2171 @!@!@\n@!@!@ENDMSG 2171 @!@!@\n@!@!@STARTMSG 2186:0 @!@!@\nFinished in ")),
+        "{text}"
+    );
+    assert!(!text.contains("SANY finished."), "{text}");
     std::fs::remove_dir_all(directory).expect("removed");
 }
 

@@ -4,7 +4,10 @@
 mod common;
 
 use common::workload;
-use tla_values::store::{Bail, EMPTY_SET, EMPTY_TUPLE, FALSE, Id, KIND_INT, KIND_SET, Store, TRUE};
+use tla_values::store::{
+    Bail, EMPTY_SET, EMPTY_TUPLE, FALSE, INTERVAL_KEYS, Id, KIND_INT, KIND_SET, RECORD_KEYS, Store,
+    TRUE,
+};
 
 fn utf16(text: &str) -> Vec<u16> {
     text.encode_utf16().collect()
@@ -339,6 +342,94 @@ fn stops_a_membership_where_tlcs_search_of_the_set_fails_to_compare() {
     for (element, set, reason) in cases {
         assert_eq!(store.is_member(element, set), Err(Bail(reason)));
     }
+}
+
+// TLC holds [i \in 0..1 |-> 1] over an interval and [i \in {0, 1} |-> 1] over its keys, which the
+// store doesn't tell apart. Against a function of its size with an untyped model value among its
+// keys, the first fails and the second compares the keys, which the model value passes. A tuple,
+// which TLC compares with a function over 1..n, is the same. Both orders fail, and so does
+// equality, for the evaluator to find whether TLC does.
+#[test]
+fn stops_comparing_a_run_of_integers_with_a_function_over_a_model_value() {
+    let mut store = Store::new();
+    let (m, n) = (store.model(&utf16("m")), store.model(&utf16("n")));
+    let [zero, one] = [0, 1].map(|value| store.int(value).unwrap());
+    let run = store.function_of(&[zero, one], &[one, one]).unwrap();
+    let tuple = store.tuple_of(&[one, one]);
+    let models = store.function_of(&[m, n], &[one, one]).unwrap();
+    // Given after the integer, the model value still comes first among the keys, as TLC orders
+    // an untyped model value before any value that isn't one (`ModelValue.compareTo`).
+    let mixed = store.function_of(&[zero, m], &[one, one]).unwrap();
+    for integers in [run, tuple] {
+        for other in [models, mixed] {
+            assert_eq!(store.compare(integers, other), Err(INTERVAL_KEYS));
+            assert_eq!(store.compare(other, integers), Err(INTERVAL_KEYS));
+            assert_eq!(store.equals(integers, other), Err(INTERVAL_KEYS));
+            assert_eq!(store.equals(other, integers), Err(INTERVAL_KEYS));
+            assert_eq!(store.set_of(&[integers, other]), Err(INTERVAL_KEYS));
+        }
+    }
+    // A miss compares too: TLC's search compares <<m>> with a function over n.
+    let tuple_of_model = store.tuple_of(&[m]);
+    let over_n = store.function_of(&[n], &[one]).unwrap();
+    let functions = store.set_of(&[over_n]).unwrap();
+    assert_eq!(
+        store.is_member(tuple_of_model, functions),
+        Err(INTERVAL_KEYS)
+    );
+    // Functions of other sizes compare by size, and functions over model values by their keys.
+    let single = store.function_of(&[m], &[one]).unwrap();
+    assert_eq!(store.compare(run, single).map(i32::signum), Ok(1));
+    assert_eq!(store.equals(single, tuple), Ok(false));
+    assert!(store.compare(models, mixed).is_ok());
+    assert!(store.compare(run, tuple).is_ok());
+}
+
+// Membership by id answers only where no comparison of TLC's search can fail: a run of integers or a
+// tuple asked of a set of functions over model values compares, short set or long, and fails.
+#[test]
+fn compares_a_membership_of_a_run_of_integers_in_functions_over_model_values() {
+    let mut store = Store::new();
+    let one = store.int(1).unwrap();
+    let [zero, two] = [0, 2].map(|value| store.int(value).unwrap());
+    let run = store.function_of(&[zero, one], &[one, one]).unwrap();
+    let tuple = store.tuple_of(&[one, one]);
+    let models: Vec<Id> = (0..40)
+        .map(|index| store.model(&utf16(&format!("m{index}"))))
+        .collect();
+    let functions: Vec<Id> = (0..40)
+        .map(|index| {
+            let keys = [models[index], models[(index + 1) % 40]];
+            store.function_of(&keys, &[one, two]).unwrap()
+        })
+        .collect();
+    for length in [1, 40] {
+        let set = store.set_of(&functions[..length]).unwrap();
+        for element in [run, tuple] {
+            assert_eq!(store.is_member(element, set), Err(INTERVAL_KEYS));
+        }
+        // Functions over model values are found by id.
+        assert_eq!(store.is_member(functions[0], set), Ok(true));
+    }
+}
+
+// RecordValue.compareTo fails on a function of its size, which, asking, compares by its keys: an
+// untyped model value among them passes, so either may happen.
+#[test]
+fn stops_comparing_a_record_with_a_function_of_its_size_over_a_model_value() {
+    let mut store = Store::new();
+    let keys = [str(&mut store, "a"), str(&mut store, "b")];
+    let (m, n) = (store.model(&utf16("m")), store.model(&utf16("n")));
+    let one = store.int(1).unwrap();
+    let shape = store.create_record_shape(&keys);
+    let record = store.record_of(&shape, &[one, one]);
+    let models = store.function_of(&[m, n], &[one, one]).unwrap();
+    assert_eq!(store.compare(record, models), Err(RECORD_KEYS));
+    assert_eq!(store.compare(models, record), Err(RECORD_KEYS));
+    assert_eq!(
+        store.equals(models, record),
+        Err(Bail("record compared with a function"))
+    );
 }
 
 #[test]
@@ -716,6 +807,32 @@ fn base_store() -> Store {
     let small = ints(&mut store, &[1, 2]);
     store.record_of(&shape, &small);
     store
+}
+
+// A string the base ranked after it froze its order, as ToString ranks one, compares with no other
+// string in an overlay laid on it either, as on one thread.
+#[test]
+fn an_overlay_keeps_its_bases_frozen_order_of_strings() {
+    let mut store = Store::new();
+    store.reset([&utf16("a")[..]]);
+    store.freeze_string_order();
+    let a = str(&mut store, "a");
+    store.get_string_rank(&utf16("u"));
+    let late = str(&mut store, "u");
+    assert!(store.compare(a, late).is_err());
+    let base = std::sync::Arc::new(store);
+    for mut overlay in [Store::overlay(base.clone()), {
+        let mut other = Store::new();
+        other.attach(base.clone());
+        other
+    }] {
+        assert!(overlay.has_unordered_strings());
+        assert!(overlay.compare(a, late).is_err());
+        assert!(overlay.set_of(&[a, late]).is_err());
+        // A string the overlay makes takes the base's rank of its text.
+        assert_eq!(overlay.str(&utf16("u")), late);
+        assert_eq!(overlay.compare(late, late), Ok(0));
+    }
 }
 
 #[test]
