@@ -838,6 +838,7 @@ impl Decoder<'_> {
             is_recording_graph,
             version,
             random_seed,
+            fingerprint_index: 0,
             atoms,
             live_formula,
             live_properties,

@@ -3,6 +3,7 @@
 //! that tools running TLC with Java use.
 
 use tla_front::TlcVersion;
+use tla_values::fingerprint::POLYNOMIALS;
 
 pub const USAGE: &str = "Usage: tla-ts <Spec.tla|Spec.cfg|glob>... [-config <Spec.cfg>] [-continue] [-deadlock] [-dump [<format>] <file>] [-fp <num>] [-lncheck <final|default>] [-metadir <directory>] [-nowarning] [-seed <num>] [-tool] [-workers <count|auto>]
        tla-ts tlapm [-N] [--summary] [--strict] [--toolbox <start> <end>] [--line <num>] [--printallobs] [--threads <num>] [--version] [-I <directory>]... [-k] [--noproving] [--nofp] [--nofpl <start> <end>] [--safefp] [--cleanfp] [--usefp <file>] [--cache-dir <directory>] <Module.tla|glob>...
@@ -138,9 +139,6 @@ const UNMODELLED: [&str; 26] = [
     "-fpbits",
 ];
 const UNMODELLED_IN_ANY_CASE: [&str; 3] = ["-loadTrace", "-dumpTrace", "-postCondition"];
-
-/// How many polynomials `tlc2.util.FP64.Polys` holds for -fp to pick from.
-const FINGERPRINT_POLYNOMIALS: i32 = 131;
 
 /// The options and specs of a check, as `TLC.handleParameters` reads them.
 #[derive(Debug, Default)]
@@ -281,17 +279,14 @@ impl Parsed {
                             is_tool,
                         ));
                     };
-                    if !(0..FINGERPRINT_POLYNOMIALS).contains(&number) {
+                    if !(0..POLYNOMIALS.len() as i32).contains(&number) {
                         return Err(error(
                             format!(
                                 "Error: The number for -fp must be between 0 and {} (inclusive).",
-                                FINGERPRINT_POLYNOMIALS - 1
+                                POLYNOMIALS.len() - 1
                             ),
                             is_tool,
                         ));
-                    }
-                    if number != 0 {
-                        return Err(Stop::NotNative(format!("-fp {number}")));
                     }
                     vec![polynomial]
                 }
@@ -546,7 +541,6 @@ mod tests {
             &["-maxSetSize", "10", "Spec"],
             &["-dfid", "3", "Spec"],
             &["-DUMPTRACE", "json", "out.json", "Spec"],
-            &["-fp", "1", "Spec"],
             &["-lncheck", "OFF", "Spec"],
             &["-dump"],
             &["-dump", "class,Writer", "Spec"],
