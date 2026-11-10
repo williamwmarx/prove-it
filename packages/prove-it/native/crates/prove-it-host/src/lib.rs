@@ -2,12 +2,13 @@
 //! that `src/engine/native.ts` loads, or the WebAssembly module its loader instantiates where
 //! there is no `process.dlopen`. It decodes the engine IR, compiles the model and searches it, or
 //! declines a model it can't search before producing any state, so that the TypeScript engine
-//! checks it. It also writes SANY's report as tla-front does (`sany`). The bindings marshal what
-//! `outcome`, `hooks` and `sany` build.
+//! checks it. It also writes SANY's report as tla-front does (`sany`), and decides the prover's
+//! obligations (`prover`). The bindings marshal what `outcome`, `hooks`, `sany` and `prover` build.
 
 pub mod check;
 pub mod hooks;
 pub mod outcome;
+pub mod prover;
 pub mod sany;
 pub mod sources;
 pub mod value;
@@ -18,7 +19,7 @@ use tla_values::{Id, Store};
 
 /// The version of the contract between the loader and the addon: the exports, their arguments
 /// and the engine IR. The loader uses the TypeScript engine when it expects another.
-pub const ABI_VERSION: i32 = 12;
+pub const ABI_VERSION: i32 = 13;
 
 /// How deep the search thread's stack may grow: compiled closures recurse with the expressions
 /// and the values they evaluate. It is reserved, not committed.

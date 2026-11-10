@@ -28,6 +28,7 @@ pub(crate) mod random;
 mod sets;
 mod walker;
 
+pub(crate) use builtins::NON_SET_OPERAND;
 pub use walker::ActionOptions;
 pub(crate) use walker::INFINITE_BOUND;
 

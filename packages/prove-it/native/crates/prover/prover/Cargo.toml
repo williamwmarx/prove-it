@@ -1,0 +1,15 @@
+[package]
+name = "prove-it-prover"
+description = "Prove It's prover: the backend each prover name selects"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license = "MIT"
+publish.workspace = true
+
+[dependencies]
+prove-decide = { path = "../decide" }
+prove-isabelle = { path = "../isabelle" }
+prove-ptl = { path = "../ptl" }
+prove-smt = { path = "../smt" }
+prove-zenon = { path = "../zenon" }

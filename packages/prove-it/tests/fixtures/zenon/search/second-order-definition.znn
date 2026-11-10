@@ -1,0 +1,4 @@
+$def "s" (Sub A B) (A. ((x) (=> (in x A) (in x B))))
+$hyp "h1" (Sub a b)
+$hyp "h2" (Sub b c)
+$goal (Sub a c)

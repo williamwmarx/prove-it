@@ -933,7 +933,16 @@ impl<'a> Lowering<'a> {
             },
         )
         // `createLivenessChecker` runs inside `withUnexpectedException`.
-        .map_err(crate::tlc_messages::with_unexpected_exception)?;
+        .map_err(crate::tlc_messages::with_unexpected_exception)
+        // TLC warns that a symmetry is dangerous for liveness as it starts the liveness checker,
+        // before it fails here, which the front end's failure doesn't print.
+        .map_err(|error| match error {
+            FrontError::NotYet(_) => error,
+            _ if config.symmetry.is_some() && is_warning_enabled => {
+                not_yet("a temporal property TLC rejects after it warns about the symmetry")
+            }
+            _ => error,
+        })?;
         let init = self.write_root(init)?;
         let next = match &specification.next {
             Some(next) => Some(self.write_root(next)?),
