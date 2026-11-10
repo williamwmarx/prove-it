@@ -19,7 +19,7 @@ use tla_values::store::{FALSE, KIND_SET, Outcome, TRUE};
 use tla_values::{Bail, Id};
 
 use super::nodes::assign_bound;
-use super::predicate::{Leaf, Predicate, Test};
+use super::predicate::{Leaf, Predicate, Reject, Test};
 use super::{
     Argument, Binding, CompileError, Compiled, Compiler, Compiling, Context, Definition,
     DefinitionForm, Operator, OperatorBody, Root, SEARCH_SLOTS, Scope, bind, decline, eval, leaf,
@@ -1596,7 +1596,14 @@ impl<'a> Compiler<'a> {
                     levels.push((set, binder.slots, binder.tuple));
                 }
                 let body = self.walk(*body, &inner, options, known, then)?;
-                Ok(Some(exists_step(levels, body)))
+                let reject = match (&levels[..], &body) {
+                    ([(_, slots, false)], Some(step)) => self
+                        .first_guards
+                        .get(&step_address(step))
+                        .and_then(|(_, predicate)| Reject::of(predicate, slots[0])),
+                    _ => None,
+                };
+                Ok(Some(exists_step(levels, body, reject)))
             }
             NodeKind::Forall { bounds, body } => {
                 if !self.is_walked_body(*body, context, is_init)? {
@@ -1894,10 +1901,19 @@ impl<'a> Compiler<'a> {
 
     // Notes a walk whose first step is a guard `f[k] = c` of a variable and a bound name, keeping
     // the step alive so that its address names it alone.
-    fn led(&mut self, rest: Rest, leading: Option<Leading>) -> Rest {
+    fn led(
+        &mut self,
+        rest: Rest,
+        leading: Option<Leading>,
+        first_guard: &Option<Predicate>,
+    ) -> Rest {
         if let (Some(step), Some(leading)) = (&rest, leading) {
             self.leading_guards
                 .insert(step_address(step), (step.clone(), leading));
+        }
+        if let (Some(step), Some(predicate)) = (&rest, first_guard) {
+            self.first_guards
+                .insert(step_address(step), (step.clone(), predicate.clone()));
         }
         rest
     }
@@ -2070,6 +2086,7 @@ impl<'a> Compiler<'a> {
         let mut index = start;
         let mut first_variable = start_variable;
         let mut leading = None;
+        let mut first_guard = None;
         while index < items.len() {
             if index > 0 && first_variable == 0 && options.is_shortcut {
                 match known.shortcut(width) {
@@ -2077,7 +2094,7 @@ impl<'a> Compiler<'a> {
                     Shortcut::Always => {
                         ops.extend(self.shortcut_guards(items, context, options, index)?);
                         let rest = then(self, &known)?;
-                        return Ok(self.led(segment(ops, rest, is_init), leading));
+                        return Ok(self.led(segment(ops, rest, is_init), leading, &first_guard));
                     }
                     Shortcut::Maybe => {
                         let guards = self.shortcut_guards(items, context, options, index)?;
@@ -2100,7 +2117,11 @@ impl<'a> Compiler<'a> {
                                 run_rest(&walked, machine, on_complete)
                             }
                         });
-                        return Ok(self.led(segment(ops, Some(shortcut), is_init), leading));
+                        return Ok(self.led(
+                            segment(ops, Some(shortcut), is_init),
+                            leading,
+                            &first_guard,
+                        ));
                     }
                 }
             }
@@ -2110,6 +2131,7 @@ impl<'a> Compiler<'a> {
                     let compiled = self.compile(item.node, context)?;
                     if index == 0 && ops.is_empty() {
                         leading = Leading::of(&compiled);
+                        first_guard = compiled.predicate.as_deref().cloned();
                     }
                     ops.push(guard(compiled));
                 }
@@ -2136,7 +2158,11 @@ impl<'a> Compiler<'a> {
                                 then,
                             )?;
                             let either = either_step(variable, value, rest, is_init);
-                            return Ok(self.led(segment(ops, Some(either), is_init), leading));
+                            return Ok(self.led(
+                                segment(ops, Some(either), is_init),
+                                leading,
+                                &first_guard,
+                            ));
                         }
                     }
                 }
@@ -2160,21 +2186,25 @@ impl<'a> Compiler<'a> {
                                     then,
                                 )?;
                                 let either = either_step(variable, Source::Current, rest, is_init);
-                                return Ok(self.led(segment(ops, Some(either), is_init), leading));
+                                return Ok(self.led(
+                                    segment(ops, Some(either), is_init),
+                                    leading,
+                                    &first_guard,
+                                ));
                             }
                         }
                     }
                 }
                 Shape::Branch => {
                     let rest = self.conjunct(items, context, options, index, 0, known, then)?;
-                    return Ok(self.led(segment(ops, rest, is_init), leading));
+                    return Ok(self.led(segment(ops, rest, is_init), leading, &first_guard));
                 }
             }
             first_variable = 0;
             index += 1;
         }
         let rest = then(self, &known)?;
-        Ok(self.led(segment(ops, rest, is_init), leading))
+        Ok(self.led(segment(ops, rest, is_init), leading, &first_guard))
     }
 
     // The walk of one conjunct that branches, or of the conjunction from it on, its rest the
@@ -2441,7 +2471,7 @@ impl<'a> Compiler<'a> {
 // A bound of `\E`: its set, and the slots its name or tuple of names binds (`assign_bound`).
 type Level = (Ordered, Vec<u32>, bool);
 
-fn exists_step(levels: Vec<Level>, body: Rest) -> Step {
+fn exists_step(levels: Vec<Level>, body: Rest, reject: Option<Reject>) -> Step {
     if let [(set, slots, tuple)] = &levels[..] {
         let (set, slots, tuple) = (set.clone(), slots.clone(), *tuple);
         return step(move |machine, on_complete| {
@@ -2449,6 +2479,11 @@ fn exists_step(levels: Vec<Level>, body: Rest) -> Step {
             let size = set.size(machine, id)?;
             for position in 0..size {
                 let element = machine.store.element_at(id, position);
+                if let Some(reject) = &reject
+                    && reject.rejects(machine, element)
+                {
+                    continue;
+                }
                 assign_bound(machine, &slots, tuple, element)?;
                 run_rest(&body, machine, on_complete)?;
             }

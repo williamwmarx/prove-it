@@ -7,9 +7,13 @@
 //! the nodes it replaces evaluate, in the same order and with the same short circuits, and checks
 //! a boolean where `compileBoolean` does.
 
-use tla_values::store::{FALSE, Outcome, TRUE, is_tested_set_kind};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
+
+use tla_values::store::{FALSE, KIND_STRING, Outcome, TRUE, is_tested_set_kind};
 use tla_values::{Bail, Id};
 
+use super::nodes::field_of;
 use super::{Compiled, Shape, bool_id, eval};
 use crate::machine::{Eval, Machine};
 
@@ -38,6 +42,12 @@ pub(crate) enum Leaf {
         variable: u32,
         slot: u32,
         second: u32,
+    },
+    /// `r.f` of a bound name, with the position the field was last found at.
+    Field {
+        slot: u32,
+        key: Id,
+        hint: Arc<AtomicU32>,
     },
     Eval(Eval),
 }
@@ -106,6 +116,11 @@ impl Leaf {
                 slot,
                 second,
             },
+            Shape::Field { slot, key } => Leaf::Field {
+                slot,
+                key,
+                hint: Arc::new(AtomicU32::new(0)),
+            },
             Shape::Other => Leaf::Eval(compiled.eval.clone()),
         }
     }
@@ -126,6 +141,10 @@ impl Leaf {
                 slot,
                 second,
             } => apply_var2(machine, *variable, *slot, *second),
+            Leaf::Field { slot, key, hint } => {
+                let record = machine.locals[*slot as usize];
+                field_of(machine, record, *key, hint)
+            }
             Leaf::Eval(eval) => eval(machine),
         }
     }
@@ -289,6 +308,19 @@ fn build_equal(left: &Leaf, right: &Leaf, is_equal: bool) -> Test {
                 Ok(machine.store.equals(value, other)? == is_equal)
             })
         }
+        // FieldEqConst: r.f = c of a bound name r. Distinct ids of one kind of scalar are unequal
+        // values, as `equals` finds them.
+        (Leaf::Field { slot, key, hint }, Leaf::Constant(constant)) => {
+            let (slot, key, hint, constant) = (*slot as usize, *key, hint.clone(), *constant);
+            test(move |machine| {
+                let record = machine.locals[slot];
+                let value = field_of(machine, record, key, &hint)?;
+                if is_other_scalar(machine, value, constant) {
+                    return Ok(!is_equal);
+                }
+                Ok(machine.store.equals_asked(value, constant)? == is_equal)
+            })
+        }
         // VarEqConst: x = c.
         (Leaf::Current(variable), Leaf::Constant(constant)) => {
             let (variable, constant) = (*variable, *constant);
@@ -305,6 +337,58 @@ fn build_equal(left: &Leaf, right: &Leaf, is_equal: bool) -> Test {
                 Ok(machine.store.equals_asked(left, right)? == is_equal)
             })
         }
+    }
+}
+
+// Whether two values are distinct scalars of one kind, which `equals` finds unequal without
+// failing.
+#[inline(always)]
+fn is_other_scalar(machine: &Machine<'_>, value: Id, constant: Id) -> bool {
+    let kind = machine.store.kind_of(constant);
+    value != constant && kind <= KIND_STRING && machine.store.kind_of(value) == kind
+}
+
+/// A body whose first conjunct is `r.f = c` of the name a loop binds: an element whose field `f`
+/// is found by its id and is another scalar of `c`'s kind makes the body FALSE, as evaluating it
+/// would, without failing or evaluating more, so the loop passes it without binding the name.
+pub(crate) struct Reject {
+    key: Id,
+    constant: Id,
+    hint: AtomicU32,
+}
+
+impl Reject {
+    pub(crate) fn of(predicate: &Predicate, bound: u32) -> Option<Reject> {
+        let first = match predicate {
+            Predicate::And(operands) => operands.first()?,
+            predicate => predicate,
+        };
+        match first {
+            Predicate::Equal {
+                left: Leaf::Field { slot, key, .. },
+                right: Leaf::Constant(constant),
+                is_equal: true,
+            } if *slot == bound => Some(Reject {
+                key: *key,
+                constant: *constant,
+                hint: AtomicU32::new(0),
+            }),
+            _ => None,
+        }
+    }
+
+    /// Whether the body is FALSE for the element.
+    #[inline(always)]
+    pub(crate) fn rejects(&self, machine: &Machine<'_>, element: Id) -> bool {
+        let hinted = self.hint.load(Ordering::Relaxed);
+        let mut position = hinted;
+        let Some(value) = machine.store.field_by_id(element, self.key, &mut position) else {
+            return false;
+        };
+        if position != hinted {
+            self.hint.store(position, Ordering::Relaxed);
+        }
+        is_other_scalar(machine, value, self.constant)
     }
 }
 
