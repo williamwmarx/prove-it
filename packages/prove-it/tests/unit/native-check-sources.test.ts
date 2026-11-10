@@ -17,12 +17,15 @@ import type { SanyModuleOrigin } from "../../src/sany/report";
 
 const FIXTURES = join(import.meta.dirname, "..", "fixtures");
 const BINARY = join(dirname(getBuiltAddon() ?? ""), "bin", "prove-it");
+const JARS = join(import.meta.dirname, "../../native/crates/prove-it-check/fixtures");
 
 interface Case {
   name: string;
   fixture: string;
   files?: Record<string, string>;
   removed?: string[];
+  // The Java launch in front of TLC's options, such as the tla2tools.jar on the class path.
+  java?: string[];
   args: string[];
 }
 
@@ -59,6 +62,18 @@ const CASES: Case[] = [
     files: { "Overrides.cfg": "" },
     args: ["Overrides.tla"],
   },
+  {
+    name: "a Java launch with a tla2tools.jar on the class path",
+    fixture: "counter",
+    java: ["-cp", join(JARS, "tla2tools.jar"), "tlc2.TLC"],
+    args: ["-deadlock", "Counter.tla"],
+  },
+  {
+    name: "a Java launch with TLC 1.7.4's jar, which both decline",
+    fixture: "counter",
+    java: ["-cp", join(JARS, "tla2tools-1.7.4.jar"), "tlc2.TLC"],
+    args: ["-deadlock", "Counter.tla"],
+  },
 ];
 
 // The fixture copied into a directory of its own, with the case's files written and removed.
@@ -83,15 +98,20 @@ const readKey = (directory: string, args: string[], key: string) => {
     return existsSync(path) ? readFileSync(path, "utf8") : undefined;
   }
   if (kind === "module") return createModuleLoader([directory])(name);
-  if (kind === "class") {
-    const path = join(directory, `${name}.class`);
+  if (kind === "class" || kind === "bytes") {
+    const path = kind === "class" ? join(directory, `${name}.class`) : resolve(directory, name);
     return existsSync(path) ? new Uint8Array(readFileSync(path)) : undefined;
   }
   const [origin, ...moduleName] = rest;
+  const classPathIndex = args.indexOf("-cp");
   return createFileDescriber(
     getSpecPath(directory, args),
     [directory],
-    { libraries: [], properties: new Map() },
+    {
+      libraries: [],
+      properties: new Map(),
+      classPath: classPathIndex === -1 ? undefined : args[classPathIndex + 1],
+    },
     undefined,
     "master",
   )(moduleName.join(":"), origin as SanyModuleOrigin);
@@ -130,10 +150,7 @@ const checkInProcess = (directory: string, args: string[]) => {
 const checkWithBinary = (directory: string, args: string[]) => {
   const run = spawnSync(
     BINARY,
-    [
-      "-noGenerateSpecTE",
-      ...args.map((arg) => (arg.endsWith(".tla") ? getSpecPath(directory, [arg]) : arg)),
-    ],
+    args.map((arg) => (arg.endsWith(".tla") ? getSpecPath(directory, [arg]) : arg)),
     { cwd: directory, encoding: "utf8", env: { ...process.env, TZ: "UTC" } },
   );
   const declined = /^prove-it: not native yet: (.*)$/m.exec(run.stderr);
@@ -145,8 +162,8 @@ const checkWithBinary = (directory: string, args: string[]) => {
 describe("checkSources", () => {
   it.each(CASES)("prints what the binary prints, or declines as it does, for $name", (test) => {
     const directory = getDirectory(test);
-    const args = ["-noGenerateSpecTE", ...test.args];
-    expect(checkInProcess(directory, args)).toBe(checkWithBinary(directory, test.args));
+    const args = [...(test.java ?? []), "-noGenerateSpecTE", ...test.args];
+    expect(checkInProcess(directory, args)).toBe(checkWithBinary(directory, args));
     rmSync(directory, { recursive: true, force: true });
   });
 

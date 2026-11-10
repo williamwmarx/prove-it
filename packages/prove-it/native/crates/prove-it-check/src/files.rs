@@ -1,6 +1,6 @@
 //! The paths TLC names the files SANY parses by, as `createFileDescriber` in `src/cli/tlc.ts` writes
 //! them: a module's own file, the root module's file copied into a directory named for it, or a
-//! standard module copied into a directory named for the spec.
+//! standard module copied into a directory named for the spec, from the jar on the class path.
 
 use std::path::{Component, Path, PathBuf};
 
@@ -8,6 +8,7 @@ use tla_front::report::ModuleOrigin;
 use tla_values::fingerprint::{INITIAL, extend_byte, extend_int};
 
 use crate::host::Files;
+use crate::jar::get_standard_modules_url;
 
 const STRING_VALUE: u8 = 3;
 
@@ -16,6 +17,8 @@ pub struct FileDescriber {
     directories: Vec<PathBuf>,
     temporary: PathBuf,
     metadir: Option<PathBuf>,
+    /// The URL TLC names the standard modules in the jar by.
+    standard_modules: Option<String>,
     is_174: bool,
 }
 
@@ -33,6 +36,9 @@ impl FileDescriber {
             directories,
             temporary: std::fs::canonicalize(&temporary).unwrap_or_else(|_| resolve(&temporary)),
             metadir: files.metadir.map(|metadir| resolve(Path::new(metadir))),
+            standard_modules: files
+                .jar
+                .map(|jar| get_standard_modules_url(&resolve(Path::new(jar)))),
             is_174: files.is_174,
         }
     }
@@ -66,15 +72,19 @@ impl FileDescriber {
                     .join(&file_name);
                 format!("{} ({root})", copy.display())
             }
-            ModuleOrigin::Standard => self
-                .temporary
-                .join(format!(
-                    "tlc-{}",
-                    temporary_name(&self.spec.display().to_string())
-                ))
-                .join(&file_name)
-                .display()
-                .to_string(),
+            ModuleOrigin::Standard => {
+                let copy = self
+                    .temporary
+                    .join(format!(
+                        "tlc-{}",
+                        temporary_name(&self.spec.display().to_string())
+                    ))
+                    .join(&file_name);
+                match &self.standard_modules {
+                    Some(url) => format!("{} ({url}{file_name})", copy.display()),
+                    None => copy.display().to_string(),
+                }
+            }
         }
     }
 }
