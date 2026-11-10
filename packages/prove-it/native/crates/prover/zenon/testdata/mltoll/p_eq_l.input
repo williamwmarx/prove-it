@@ -1,7 +1,0 @@
-(exprs (v "a") (a "P" #0) (a "=" #1 #1) (not #2) (v "b") (a "Q" #4) (not #5) (a "=" #1 #5) (v "r") (not #8) (imply #5 #8))
-(next "zenon_Vk")
-(hyps #1 #7 #10 #9)
-(phrases #1 #7 #10 #9)
-(defs)
-(nodes (node 0 0 "close_refl" "=" nil (#1) (#3) (#3) ()) (node 1 0 "close" nil nil (#5) (#6 #5) (#5 #6) ()) (node 2 0 "p_eq_l" nil nil (#1 #7 #3 #5 #1 #1 #5) (#7 #1 #6) (#1 #7) (0 1)) (node 3 0 "close" nil nil (#8) (#9 #8) (#8 #9) ()) (node 4 0 "impl" nil nil (#5 #8) (#10 #9 #1 #7) (#10) (2 3)))
-(root 4)

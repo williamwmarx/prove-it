@@ -1,7 +1,0 @@
-(exprs (v "a") (v "b") (a "TLA.tuple" #0 #1) (v "c") (a "TLA.tuple" #3) (a "=" #2 #4) (v "p") (not #6))
-(next "zenon_Vh")
-(hyps #5 #7)
-(phrases #5 #7)
-(defs)
-(nodes (node 0 0 "tuple_eq_mismatch" nil nil (#5 #5) (#5) (#5) ()))
-(root 0)

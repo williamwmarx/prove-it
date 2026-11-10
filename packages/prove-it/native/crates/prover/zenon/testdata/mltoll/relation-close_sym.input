@@ -1,7 +1,0 @@
-(exprs (v "a") (a "f" #0) (v "b") (a "R" #2 #1) (not #3) (a "R" #1 #2) (v "x") (v "y") (a "R" #6 #7) (a "R" #7 #6) (imply #8 #9) (all "zenon_U" #7 #10) (all "zenon_U" #6 #11) (not #5))
-(next "zenon_Vg")
-(hyps #12 #5 #4)
-(phrases #12 #5 #4)
-(defs)
-(nodes (node 0 0 "close_sym" "R" nil (#1 #2) (#4 #5) (#5 #4) ()))
-(root 0)

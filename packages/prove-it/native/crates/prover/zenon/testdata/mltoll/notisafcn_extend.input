@@ -1,7 +1,0 @@
-(exprs (v "f") (v "g") (a "TLA.extend" #0 #1) (a "TLA.isAFcn" #2) (not #3))
-(next "zenon_Vh")
-(hyps #4)
-(phrases #4)
-(defs)
-(nodes (node 0 0 "notisafcn_extend" nil nil (#4 #0 #1) (#4) (#4) ()))
-(root 0)

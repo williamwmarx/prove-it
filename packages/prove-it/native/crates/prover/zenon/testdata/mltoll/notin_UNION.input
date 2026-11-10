@@ -1,7 +1,0 @@
-(exprs (v "b") (v "s") (a "TLA.in" #0 #1) (not #2) (v "a") (a "TLA.in" #4 #0) (not #5) (and #2 #5) (not #7) (v "zenon_Vh") (a "TLA.in" #9 #1) (a "TLA.in" #4 #9) (and #10 #11) (ex "" #9 #12) (not #13) (a "TLA.UNION" #1) (a "TLA.in" #4 #15) (not #16))
-(next "zenon_Vs")
-(hyps #2 #5 #17)
-(phrases #2 #5 #17)
-(defs)
-(nodes (node 0 0 "close" nil nil (#2) (#2 #3) (#3 #2) ()) (node 1 0 "close" nil nil (#5) (#5 #6) (#6 #5) ()) (node 2 0 "not_and" nil nil (#2 #5) (#8 #5 #2) (#8) (0 1)) (node 3 0 "not_ex" nil nil (#14 #0) (#14 #2 #5) (#14) (2)) (node 4 0 "notin_UNION" nil nil (#17 #14 #4 #1) (#17 #5 #2) (#17) (3)))
-(root 4)

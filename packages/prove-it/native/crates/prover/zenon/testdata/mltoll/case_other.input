@@ -1,7 +1,0 @@
-(exprs (v "a") (a "P" #0) (not #1) (v "b") (a "P" #3) (not #4) (v "c1") (a "TLA.CASE" #6 #0 #3) (a "P" #7) (not #8) (v "zenon_Vf") (a "P" #10) (not #11) (lam "" #10 #12) (not #6) T (and #14 #15))
-(next "zenon_Vl")
-(hyps #1 #4 #9)
-(phrases #1 #4 #9)
-(defs)
-(nodes (node 0 0 "close" nil nil (#1) (#1 #2) (#2 #1) ()) (node 1 0 "close" nil nil (#4) (#4 #5) (#5 #4) ()) (node 2 0 "case" nil nil (#9 #13 #6 #2 #16 #5) (#9 #9 #4 #1) (#9 #9) (0 1)))
-(root 2)

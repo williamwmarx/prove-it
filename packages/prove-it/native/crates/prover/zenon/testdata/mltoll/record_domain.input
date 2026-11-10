@@ -1,7 +1,0 @@
-(exprs (v "\"a\"") (a "$string" #0) (v "\"b\"") (a "$string" #2) (a "TLA.set" #1 #3) (a "=" #4 #4) (not #5) (v "x") (v "y") (a "TLA.record" #1 #7 #3 #8) (a "TLA.DOMAIN" #9) (a "=" #10 #4) (not #11) (v "zenon_Vf") (a "=" #13 #4) (not #14) (lam "" #13 #15))
-(next "zenon_Vh")
-(hyps #12)
-(phrases #12)
-(defs)
-(nodes (node 0 0 "close_refl" "=" nil (#4) (#6) (#6) ()) (node 1 0 "record_domain" nil nil (#12 #6 #16 #10 #4) (#12) (#12) (0)))
-(root 1)

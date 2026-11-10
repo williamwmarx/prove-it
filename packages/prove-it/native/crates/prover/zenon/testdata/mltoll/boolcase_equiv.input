@@ -1,7 +1,0 @@
-(exprs T (a "P" #0) (not #1) (v "p") (not #3) (v "q") (not #5) (equiv #3 #5) (not #7) F (a "=" #7 #9) (a "P" #7) (a "=" #7 #0) (a "P" #9) (v "zenon_Vi") (a "P" #14) (lam "" #14 #15))
-(next "zenon_Vo")
-(hyps #11 #3 #5 #2)
-(phrases #11 #3 #5 #2)
-(defs)
-(nodes (node 0 0 "close" nil nil (#1) (#2 #1) (#1 #2) ()) (node 1 0 "close" nil nil (#3) (#3 #4) (#4 #3) ()) (node 2 0 "close" nil nil (#5) (#5 #6) (#6 #5) ()) (node 3 0 "not_equiv" nil nil (#3 #5) (#8 #5 #3) (#8) (1 2)) (node 4 0 "eq_x_false" nil nil (#10 #8 #7) (#10 #3 #5) (#10) (3)) (node 5 0 "boolcase_equiv" nil nil (#11 #12 #1 #10 #13 #16 #3 #5) (#11 #5 #3 #2) (#11) (0 4)))
-(root 5)

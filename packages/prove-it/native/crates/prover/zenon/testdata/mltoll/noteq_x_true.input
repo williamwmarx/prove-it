@@ -1,7 +1,0 @@
-(exprs (v "p") (not #0) T (a "=" #0 #2) (not #3))
-(next "zenon_Vh")
-(hyps #0 #4)
-(phrases #0 #4)
-(defs)
-(nodes (node 0 0 "close" nil nil (#0) (#0 #1) (#1 #0) ()) (node 1 0 "noteq_x_true" nil nil (#4 #1 #0) (#4 #0) (#4) (0)))
-(root 1)

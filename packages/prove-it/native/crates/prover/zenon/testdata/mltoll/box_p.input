@@ -1,7 +1,0 @@
-(exprs (v "p") (not #0) (a "TLA.box" #0))
-(next "zenon_Vh")
-(hyps #2 #1)
-(phrases #2 #1)
-(defs)
-(nodes (node 0 0 "close" nil nil (#0) (#1 #0) (#0 #1) ()) (node 1 0 "box_p" nil nil (#2 #0) (#2 #1) (#2) (0)))
-(root 1)

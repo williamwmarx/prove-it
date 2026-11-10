@@ -1,7 +1,0 @@
-(exprs (v "b") (a "=" #0 #0) (not #1) (v "c") (a "TLA.upair" #3 #0) (a "TLA.in" #0 #4) (not #5) (a "=" #0 #3) (not #7))
-(next "zenon_Vi")
-(hyps #6)
-(phrases #6)
-(defs)
-(nodes (node 0 0 "close_refl" "=" nil (#0) (#2) (#2) ()) (node 1 0 "notin_upair" nil nil (#6 #8 #2 #0 #3 #0) (#6) (#6) (0)))
-(root 1)
