@@ -372,11 +372,13 @@ fn json_value(value: &Value, out: &mut String) -> Result<(), Unsupported> {
             }
             let order = print_order(function, false);
             // A JSON object keeps a key's first place and its last value.
-            let mut fields: Vec<(String, String)> = Vec::with_capacity(order.len());
+            // Keys stay UTF-16, as Java's do, so an unpaired surrogate is neither merged with
+            // another key nor written but as `json_string` writes it.
+            let mut fields: Vec<(Vec<u16>, String)> = Vec::with_capacity(order.len());
             for position in order {
                 let key = match &function.domain[position] {
-                    Value::Str(text) => String::from_utf16_lossy(&text.units),
-                    key => format_value(key),
+                    Value::Str(text) => text.units.to_vec(),
+                    key => format_value(key).encode_utf16().collect(),
                 };
                 let mut field = String::new();
                 json_value(&function.range[position], &mut field)?;
@@ -390,7 +392,7 @@ fn json_value(value: &Value, out: &mut String) -> Result<(), Unsupported> {
                 if position > 0 {
                     out.push(',');
                 }
-                json_string(&key.encode_utf16().collect::<Vec<_>>(), out);
+                json_string(key, out);
                 out.push(':');
                 out.push_str(field);
             }

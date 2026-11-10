@@ -193,3 +193,10 @@ fn dumps_nested_values() {
     // action's parameters, over a violation three states long.
     check("DumpNested");
 }
+
+#[test]
+fn dumps_function_keys_with_unpaired_surrogates() {
+    // Two keys that are each half of a different character stay apart, written as `?`, as TLC
+    // keeps them as Java strings.
+    check("DumpSurrogate");
+}
