@@ -1862,8 +1862,19 @@ fn resolve_expression(expression: &Expr, scope: &Scope, unit: &Unit) -> Result<(
     match &expression.kind {
         ExpressionKind::Number { .. }
         | ExpressionKind::Decimal { .. }
-        | ExpressionKind::String { .. }
-        | ExpressionKind::ExceptAt => Ok(()),
+        | ExpressionKind::String { .. } => Ok(()),
+        // SANY's generator defines @ only in an EXCEPT's new value.
+        ExpressionKind::ExceptAt => {
+            if !unit.is_in_except
+                && let Some(range) = &expression.location.range
+            {
+                unit.error(
+                    format_range(range),
+                    "@ used where its meaning is not defined.".to_owned(),
+                );
+            }
+            Ok(())
+        }
         ExpressionKind::Identifier { .. } => {
             if is_instance_arity_reported(expression, scope, unit) {
                 return Ok(());

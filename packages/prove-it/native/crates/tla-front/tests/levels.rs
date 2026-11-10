@@ -123,3 +123,22 @@ fn rejects_an_assumption_above_constant_level() {
         )]
     );
 }
+
+#[test]
+fn rejects_an_at_outside_an_except_value() {
+    // TLC's tla2sany error corpus, E4261_Test.
+    assert_eq!(
+        get_level_errors("---- MODULE E4261_Test ----\nop == @\n====", &[]),
+        [(
+            "line 2, col 7 to line 2, col 7 of module E4261_Test".to_owned(),
+            "@ used where its meaning is not defined.".to_owned()
+        )]
+    );
+    assert!(
+        get_level_errors(
+            "---- MODULE At ----\nf == [i \\in {1} |-> i]\nop == [f EXCEPT ![1] = LET g == @ IN g]\n====",
+            &[]
+        )
+        .is_empty()
+    );
+}
