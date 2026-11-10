@@ -695,12 +695,13 @@ walker-hook shape guard and the fallbacks below.
   evaluation tests `t[x]` against S itself. That is covered where S is a set of values, an
   interval, a declared constant, or the functions, records or tuples of such sets
   (`is_membership_covered`), which are empty where a part is: TLC then compares `t[x]` only with
-  values a walk assigned, or tests its kind against a non-empty set of that kind. Two Codex
+  values a walk assigned, or tests its kind against a non-empty set of that kind. Codex's
   findings on #197 showed the rest. An empty S (`[a : {}]` still tests the kind, with no element
   to join), a union, SUBSET or UNION (which may hold such an empty part, as `[a : {}] \cup {1}`
-  and `SUBSET [a : {}]` do), and a filter, an intersection or a difference (whose dropped
-  elements TLC still compares with) set `Machine::is_membership_unsafe`, which turns the shortcut
-  off.
+  and `SUBSET [a : {}]` do), the base of `x' \subseteq S` (the walk enumerates SUBSET S, which
+  isn't empty where S is; a third finding), and a filter, an intersection or a difference (whose
+  dropped elements TLC still compares with) set `Machine::is_membership_unsafe`, which turns the
+  shortcut off.
 - `LiveGraph::is_next_taken` holds where no walk took the shortcut (`is_enabled_exact`), no string
   was ranked since the order froze (which can take a string out of its class after its shape was
   joined), and every variable's join is comparable. TLC's `equals` fails only where `compareTo`

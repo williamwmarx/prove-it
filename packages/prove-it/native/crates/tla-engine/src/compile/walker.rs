@@ -2388,7 +2388,8 @@ impl<'a> Compiler<'a> {
                 },
             )));
         }
-        let is_covered = self.is_membership_covered(set, &mut HashSet::new());
+        // `x' \subseteq S` enumerates SUBSET S, which isn't empty where S is.
+        let is_covered = !is_power_set && self.is_membership_covered(set, &mut HashSet::new());
         let set = if is_power_set {
             let base = self.compile(set, context)?;
             let subsets = self.compile_subset(&base);

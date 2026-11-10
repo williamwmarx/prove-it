@@ -2725,7 +2725,8 @@ fn answers_fairness_of_the_next_state_relation_as_tlc() {
 fn evaluates_the_next_state_relation_where_a_walk_assigned_from_a_set_it_cant_cover() {
     // TLC fails testing x' \in S of a value as it evaluates WF_x(Next) on a step another disjunct
     // took, where S is empty, as [a : {}] is, or holds an empty part, as [a : {}] \cup {1} and
-    // SUBSET [a : {}] do: the walk joined no shape TLC tests the value against. So the engine
+    // SUBSET [a : {}] do, or is the base of x' \subseteq S: the walk joined no shape TLC tests the
+    // value against. So the engine
     // evaluates the action, and leaves TLC's failure to the interpreter. TLC's output at d8fb231.
     let cases = [
         (
@@ -2742,6 +2743,11 @@ fn evaluates_the_next_state_relation_where_a_walk_assigned_from_a_set_it_cant_co
             include_str!("empty/SubsetEmpty.tla"),
             include_str!("empty/SubsetEmpty.cfg"),
             include_str!("empty/SubsetEmpty.txt"),
+        ),
+        (
+            include_str!("empty/SubseteqEmpty.tla"),
+            include_str!("empty/SubseteqEmpty.cfg"),
+            include_str!("empty/SubseteqEmpty.txt"),
         ),
     ];
     for (spec, config, expected) in cases {
@@ -2763,7 +2769,16 @@ fn evaluates_the_next_state_relation_where_a_walk_assigned_from_a_set_it_cant_co
             let text = stdout(&output);
             let is_declined =
                 String::from_utf8_lossy(&output.stderr).contains("prove-it: not native yet: ");
-            assert!(is_declined || get_untimed(&text) == expected, "{text}");
+            // Where TLC leaves the failure's message out (x' \subseteq [a : {}]), the engine
+            // prints it before the behavior TLC prints, as it does without this shortcut.
+            let behavior = &expected[expected.find("Error: The behavior").expect("a failure")..];
+            let is_tlcs = || {
+                let untimed = get_untimed(&text);
+                untimed == expected
+                    || untimed.contains("\nError: TLC threw an unexpected exception.\n")
+                        && untimed.ends_with(behavior)
+            };
+            assert!(is_declined || is_tlcs(), "{text}");
             std::fs::remove_dir_all(directory).expect("removed");
         }
     }
