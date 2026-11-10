@@ -230,6 +230,20 @@ unsafe fn export(
     unsafe { set_property(env, exports, name, function) }
 }
 
+// sanyText(root: string, source: string, fileName: string | undefined, known: [string,
+// string | undefined][]): { kind, ... }, as prove-it-host's `sany` describes it.
+unsafe extern "C" fn sany_text(env: napi_env, info: napi_callback_info) -> napi_value {
+    unsafe {
+        guard(env, || {
+            let arguments = store::get_arguments::<4>(env, info)?
+                .into_iter()
+                .map(|argument| store::get_host(env, argument))
+                .collect::<Result<Vec<_>, _>>()?;
+            store::create_result(env, prove_it_host::sany::sany_text(&arguments))
+        })
+    }
+}
+
 /// Node and Bun call this when they load the addon.
 ///
 /// # Safety
@@ -250,6 +264,7 @@ pub unsafe extern "C" fn napi_register_module_v1(env: napi_env, exports: napi_va
         guard(env, || {
             export(env, exports, c"abiVersion", abi_version)?;
             export(env, exports, c"check", check::check_model)?;
+            export(env, exports, c"sanyText", sany_text)?;
             store::export_hooks(env, exports)?;
             Ok(exports)
         })

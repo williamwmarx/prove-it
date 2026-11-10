@@ -2,11 +2,11 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 
-import { CORPORA_DIRECTORY, getCorpora, getOption } from "./corpora";
+import { CORPORA_DIRECTORY, getAllCorpora, getOption } from "./corpora";
 
 // Usage: bun scripts/fetch-corpora.ts [--only examples,tlc,...]
 const only = getOption("--only")?.split(",");
-const known = new Set(getCorpora().map((corpus) => corpus.name));
+const known = new Set(getAllCorpora().map((corpus) => corpus.name));
 const unknown = (only ?? []).filter((name) => !known.has(name));
 if (
   process.argv.includes("--only") &&
@@ -22,7 +22,7 @@ const git = (directory: string, args: string[]) =>
 
 mkdirSync(CORPORA_DIRECTORY, { recursive: true });
 
-getCorpora()
+getAllCorpora()
   .filter((corpus) => only === undefined || only.includes(corpus.name))
   .forEach((corpus) => {
     const directory = join(CORPORA_DIRECTORY, corpus.name);

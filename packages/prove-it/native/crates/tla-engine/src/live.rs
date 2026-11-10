@@ -5,6 +5,7 @@
 //! failing where TLC fails.
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use tla_live::{Answers, Declined, Slot};
@@ -12,7 +13,7 @@ use tla_values::store::{FALSE, Outcome, TRUE};
 use tla_values::{Id, NESTING_STACK_BYTES};
 
 use crate::compile::DIAMETER_SLOT;
-use crate::context::{Atom, EnabledSteps};
+use crate::context::{Atom, EnabledSteps, SubscriptKey};
 use crate::machine::{Eval, Machine, Printed, UNASSIGNED};
 
 pub const UNKNOWN: u8 = 2;
@@ -162,6 +163,37 @@ impl Evaluator<'_, '_, '_> {
         self.machine
             .set_next(&graph.states[next * graph.width..(next + 1) * graph.width]);
         answer(action(self.machine))
+    }
+
+    // The actions, as bits of `words` words for each expanded state, that took a step from the
+    // state changing the subscript, and the states where the subscript failed on a step, which
+    // `enabled_from_steps` scans instead. A step of an action already found isn't evaluated.
+    fn changed_actions(
+        &mut self,
+        values: &mut [Id],
+        subscript: &Eval,
+        words: usize,
+    ) -> (Vec<u64>, Vec<bool>) {
+        let graph = self.graph;
+        let mut changed = vec![0; graph.expanded * words];
+        let mut failed = vec![false; graph.expanded];
+        for (index, is_failed) in failed.iter_mut().enumerate() {
+            let start = graph.edge_offsets[index] as usize;
+            let end = graph.edge_offsets[index + 1] as usize;
+            for edge in start..end {
+                let label = graph.labels.map_or(0, |labels| labels[edge] as usize);
+                let (word, bit) = (index * words + label / 64, 1 << (label % 64));
+                if changed[word] & bit != 0 {
+                    continue;
+                }
+                match self.is_unchanged(values, subscript, index, graph.edges[edge] as usize) {
+                    Ok(false) => changed[word] |= bit,
+                    Ok(true) => {}
+                    Err(_) => *is_failed = true,
+                }
+            }
+        }
+        (changed, failed)
     }
 
     // Whether a step from the state that the steps' actions take changes the subscript, scanning
@@ -332,6 +364,14 @@ fn on_helpers(
     parts.concat()
 }
 
+/// A subscript's values on the states and, for each expanded state, the actions that took a step
+/// changing it, as bits, unless it failed on one of the state's steps.
+struct Changes {
+    values: Vec<Id>,
+    actions: Vec<u64>,
+    failed: Vec<bool>,
+}
+
 /// Which atoms read TLCGet("diameter"), and the last diameter of a complete search, which they are
 /// answered for each diameter up to.
 pub struct Diameters<'d> {
@@ -360,6 +400,13 @@ pub fn answer_atoms(
         current: None,
     };
     let mut tables = Vec::with_capacity(atoms.len());
+    // For each subscript the steps answer ENABLED with, its values on the states and the actions
+    // that changed it from each, which atoms with the same subscript share.
+    let mut changes: HashMap<SubscriptKey, Changes> = HashMap::new();
+    let words = graph
+        .labels
+        .and_then(|labels| labels.iter().max())
+        .map_or(1, |&last| last as usize / 64 + 1);
     for (position, atom) in atoms.iter().enumerate() {
         // An atom that reads TLCGet("diameter") is answered for each diameter from 1 to the last,
         // and left to the interpreter where the search isn't complete or the answers for every
@@ -542,11 +589,40 @@ pub fn answer_atoms(
                             && graph.is_enabled_exact
                             && (steps.actions.is_none() || graph.labels.is_some())
                     });
+                    let mut changed = steps.map(|steps| {
+                        changes.remove(&steps.key).unwrap_or_else(|| {
+                            let (actions, failed) =
+                                evaluator.changed_actions(&mut values, &steps.subscript, words);
+                            Changes {
+                                values: std::mem::take(&mut values),
+                                actions,
+                                failed,
+                            }
+                        })
+                    });
+                    // The actions A splits into, as bits, or all of them.
+                    let mask: Vec<u64> = match steps.and_then(|steps| steps.actions.as_ref()) {
+                        Some(actions) => (0..words)
+                            .map(|word| {
+                                (0..64)
+                                    .filter(|bit| actions.get(word * 64 + bit) == Some(&true))
+                                    .fold(0, |mask, bit| mask | 1 << bit)
+                            })
+                            .collect(),
+                        None => vec![u64::MAX; words],
+                    };
                     let mut answers = Vec::with_capacity(graph.count);
                     for index in 0..graph.count {
-                        let from_steps = match steps {
-                            Some(steps) if index < graph.expanded => {
-                                evaluator.enabled_from_steps(&mut values, steps, index)
+                        let from_steps = match (steps, &mut changed) {
+                            (Some(steps), Some(changed)) if index < graph.expanded => {
+                                if changed.failed[index] {
+                                    evaluator.enabled_from_steps(&mut changed.values, steps, index)
+                                } else {
+                                    let row = &changed.actions[index * words..(index + 1) * words];
+                                    u8::from(
+                                        row.iter().zip(&mask).any(|(row, mask)| row & mask != 0),
+                                    )
+                                }
                             }
                             _ => UNKNOWN,
                         };
@@ -565,6 +641,9 @@ pub fn answer_atoms(
                         } else {
                             from_steps
                         });
+                    }
+                    if let (Some(steps), Some(changed)) = (steps, changed) {
+                        changes.insert(steps.key, changed);
                     }
                     Table {
                         answers,

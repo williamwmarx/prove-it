@@ -670,17 +670,26 @@ pub fn get_sany_text(
     spec_path: &Path,
     options: &ReportOptions,
 ) -> std::result::Result<SanyText, FrontError> {
-    let root: Rc<str> = Rc::from(
-        spec_path
-            .file_stem()
-            .and_then(|stem| stem.to_str())
-            .unwrap_or_default(),
-    );
+    let root = spec_path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or_default();
     let source = std::fs::read_to_string(spec_path)
         .map_err(|_| FrontError::NotYet("a spec without a file".to_owned()))?;
+    get_sany_text_of(root, &source, options)
+}
+
+/// What SANY prints for the root module `root` of the text `source`, which `options` read the
+/// other modules for, as for a spec of that file.
+pub fn get_sany_text_of(
+    root: &str,
+    source: &str,
+    options: &ReportOptions,
+) -> std::result::Result<SanyText, FrontError> {
+    let root: Rc<str> = Rc::from(root);
     let mut loader = Loader {
         options,
-        source: &source,
+        source,
         modules: FastMap::default(),
         loaded: Vec::new(),
         lines: Vec::new(),

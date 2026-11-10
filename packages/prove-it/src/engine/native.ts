@@ -73,8 +73,21 @@ export interface EncodedIds {
   count: number;
 }
 
+// What SANY prints for a spec as tla-front writes it, the keys of what it still reads, or why it
+// doesn't write it (prove-it-host's sany.rs).
+export type NativeSanyText =
+  | { kind: "text"; text: string; isFailed: boolean; exception: string | null }
+  | { kind: "needed"; keys: string[] }
+  | { kind: "declined"; reason: string };
+
 export interface NativeAddon extends NativeStoreHooks {
   abiVersion: () => number;
+  sanyText: (
+    root: string,
+    source: string,
+    fileName: string | undefined,
+    known: [string, string | undefined][],
+  ) => NativeSanyText;
   check: (
     ir: Uint8Array,
     settings: Int32Array,
@@ -237,7 +250,7 @@ export interface EngineResult {
 }
 
 // The contract between this loader and the addon, ABI_VERSION in its lib.rs.
-const ABI_VERSION = 10;
+const ABI_VERSION = 11;
 
 export const ADDON_FILE = "prove-it-engine.node";
 export const WASM_FILE = "prove-it-engine.wasm";
