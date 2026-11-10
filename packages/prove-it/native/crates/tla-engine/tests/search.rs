@@ -11,7 +11,7 @@ impl Reporter for Quiet {
     fn initial_states_progress(&mut self, _count: u64) {}
     fn initial_states(&mut self, _generated: u64, _distinct: u64) {}
     fn progress(&mut self, _generated: u64, _distinct: u64, _queued: u64, _depth: u64) {}
-    fn print(&mut self, _store: &tla_values::Store, _values: &[tla_values::Id]) {}
+    fn print(&mut self, _store: &tla_values::Store, _prints: &tla_engine::Prints) {}
 }
 
 fn run(path: &str, settings: &Settings) -> SearchOutcome {
@@ -111,13 +111,13 @@ impl Reporter for Recorded {
     fn initial_states_progress(&mut self, _count: u64) {}
     fn initial_states(&mut self, _generated: u64, _distinct: u64) {}
     fn progress(&mut self, _generated: u64, _distinct: u64, _queued: u64, _depth: u64) {}
-    fn print(&mut self, store: &tla_values::Store, values: &[tla_values::Id]) {
+    fn print(&mut self, store: &tla_values::Store, prints: &tla_engine::Prints) {
         self.0
-            .push(format!("print {}", format_values(store, values)));
+            .push(format!("print {}", format_values(store, &prints.values)));
     }
-    fn startup_print(&mut self, store: &tla_values::Store, values: &[tla_values::Id]) {
+    fn startup_print(&mut self, store: &tla_values::Store, prints: &tla_engine::Prints) {
         self.0
-            .push(format!("startup {}", format_values(store, values)));
+            .push(format!("startup {}", format_values(store, &prints.values)));
     }
     fn startup_done(&mut self) {
         self.0.push("startup done".into());
@@ -471,7 +471,7 @@ impl Reporter for Dumped {
     fn initial_states_progress(&mut self, _count: u64) {}
     fn initial_states(&mut self, _generated: u64, _distinct: u64) {}
     fn progress(&mut self, _generated: u64, _distinct: u64, _queued: u64, _depth: u64) {}
-    fn print(&mut self, _store: &tla_values::Store, _values: &[tla_values::Id]) {}
+    fn print(&mut self, _store: &tla_values::Store, _prints: &tla_engine::Prints) {}
     fn dumped(&mut self, store: &tla_values::Store, states: &[tla_values::Id], width: usize) {
         self.calls += 1;
         self.states = states

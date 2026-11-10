@@ -3312,9 +3312,9 @@ fn searches_a_functions_keys_as_tlc_does_where_one_cant_compare() {
 
 #[test]
 fn declines_a_search_that_prints_a_value_as_tlc_built_it() {
-    // TLC prints 1..2 as written, which the store forgets. The search, which never ends, stops
-    // once the print is known to differ, on one thread and on several.
-    let spec = "---- MODULE Misprinted ----\nEXTENDS TLC, Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = x + 1 /\\ PrintT(1..2)\n====\n";
+    // TLC prints 1..2 as written, which the store forgets where a LET names it. The search, which
+    // never ends, stops once the print is known to differ, on one thread and on several.
+    let spec = "---- MODULE Misprinted ----\nEXTENDS TLC, Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = x + 1 /\\ LET s == 1..2 IN PrintT(s)\n====\n";
     let directory =
         std::env::temp_dir().join(format!("prove-it-cli-misprinted-{}", std::process::id()));
     std::fs::create_dir_all(&directory).expect("a directory");
@@ -3333,6 +3333,85 @@ fn declines_a_search_that_prints_a_value_as_tlc_built_it() {
             "prove-it: not native yet: printing a value whose text depends on how TLC built it\n"
         );
     }
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn prints_a_value_as_tlc_built_it_where_the_spec_writes_it() {
+    // TLC prints an interval, a SUBSET and a set of functions as written, a record's fields in
+    // the order written unless it has normalized the record, as PrintT does, and a function over
+    // strings that aren't field names with :>, which the store forgets and the expression says.
+    // The texts are those TLC prints for this spec.
+    let lines = [
+        ("PrintT(1..3)", "1..3"),
+        ("PrintT({2})", "{2}"),
+        ("PrintT({1..2})", "{1..2}"),
+        ("PrintT(<<3..2, {}>>)", "<<{}, {}>>"),
+        ("PrintT([z \\in {\"a b\"} |-> 1])", "(\"a b\" :> 1)"),
+        ("PrintT([yy |-> 1, zz |-> 2])", "[yy |-> 1, zz |-> 2]"),
+        (
+            "PrintT(ToString([zz |-> 1, yy |-> 2]))",
+            "\"[zz |-> 1, yy |-> 2]\"",
+        ),
+        (
+            "PrintT(ToString({<<1, [yy |-> 1, zz |-> 2]>>}))",
+            "\"{<<1, [yy |-> 1, zz |-> 2]>>}\"",
+        ),
+        (
+            "PrintT(ToString([i \\in {\"p q\", \"r\"} |-> i]))",
+            "\"(\\\"p q\\\" :> \\\"p q\\\" @@ \\\"r\\\" :> \\\"r\\\")\"",
+        ),
+        ("PrintT(ToString(SUBSET (1..7)))", "\"SUBSET (1..7)\""),
+        (
+            "PrintT(ToString(SUBSET {1..2, 3..3}))",
+            "\"{{}, {3..3}, {1..2}, {3..3, 1..2}}\"",
+        ),
+        (
+            "PrintT(ToString(SUBSET {\"a\", \"b\", \"c\", \"d\", \"e\", \"f\", \"g\"}))",
+            "\"SUBSET {\\\"d\\\", \\\"e\\\", \\\"f\\\", \\\"g\\\", \\\"a\\\", \\\"b\\\", \\\"c\\\"}\"",
+        ),
+        ("PrintT(ToString([{} -> {1}]))", "\"{<<>>}\""),
+        (
+            "PrintT(ToString([{\"a\", \"b\"} -> 1..2]))",
+            "\"{[a |-> 1, b |-> 1], [a |-> 1, b |-> 2], [a |-> 2, b |-> 1], [a |-> 2, b |-> 2]}\"",
+        ),
+        ("PrintT(ToString([1..3 -> 1..17]))", "\"[1..3 -> 1..17]\""),
+        ("PrintT([2..12 -> 0..1])", "[2..12 -> 0..1]"),
+        (
+            "PrintT(ToString([i \\in 0..1 |-> {i}]))",
+            "\"(0 :> {0} @@ 1 :> {1})\"",
+        ),
+        ("Print(<<1..2, {1..2}>>, TRUE)", "<<1..2, {1..2}>>  TRUE"),
+    ];
+    let next = lines
+        .iter()
+        .map(|(print, _)| format!("  /\\ {print}\n"))
+        .collect::<String>();
+    let spec = format!(
+        "---- MODULE Constructed ----\nEXTENDS TLC, Naturals\nVARIABLE x\nInit == x = 0\nNext == x < 1\n{next}  /\\ x' = x + 1\n====\n"
+    );
+    let directory =
+        std::env::temp_dir().join(format!("prove-it-cli-constructed-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    std::fs::write(directory.join("Constructed.tla"), spec).expect("the spec");
+    std::fs::write(
+        directory.join("Constructed.cfg"),
+        "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE\n",
+    )
+    .expect("the configuration");
+    let output = run(&directory, &["-noGenerateSpecTE", "Constructed"]);
+    let text = stdout(&output);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{text}{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let printed = lines
+        .iter()
+        .map(|(_, text)| format!("{text}\n"))
+        .collect::<String>();
+    assert!(text.contains(&printed), "{text}");
     std::fs::remove_dir_all(directory).expect("removed");
 }
 
