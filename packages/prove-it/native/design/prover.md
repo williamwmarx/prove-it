@@ -917,7 +917,25 @@ the first flip; the projection is redone then.
 Kept current by whoever holds the next stage: what is built, what the differential reports, what
 is next.
 
-- Phase 1: this document.
+- Phase 1: this document (#211).
+- P0, the harness (#218): the step counters and statistics of 2.3 and 4a; `prover-inputs.ts`,
+  `prover-differential.ts` and the resumable journal; the `prover/` crates; the `decide` export
+  (ABI 13); `PROVE_IT_PROVER`. The record, `tests/conformance/prover-inputs.json`, holds 12,100
+  inputs from all 304 modules, taken on the 4-core container under Node with tlapm's time limits
+  for the step limits:
+
+  | Prover | Inputs | unsat | sat | unknown at the step limit | other unknown |
+  |---|---|---|---|---|---|
+  | `smt` | 10,320 | 9,993 | 13 | 312 | 2 |
+  | `z3` | 56 | 50 | 1 | 5 | — |
+  | `zenon` | 949 | 796 | — | 102 | 48 exhausted, 3 memory limit |
+  | `isabelle` | 478 | 371 | — | 44 (`Interrupt`) | 63 |
+  | `ls4` | 297 | 296 | 1 | — | — |
+
+  None stopped for a runtime limit (`unstable`), and none threw.
+- P1, PTL (#231): `prove-ptl` gives the reference LS4's verdict on the 26 formulas of
+  `tests/conformance/ptl`, and on the 297 LS4 inputs of the record the TypeScript's verdict and
+  step count on every one (297 same, 0 differs, declined or crash). Rust decides PTL by default.
 - P2 Zenon: `prove-zenon` ports all of `zenon/` but `encode.ts`, one module per TS file, behind
   `PROVE_IT_PROVER`. `tests/zenon.rs` ports `zenon.test.ts` on its fixtures (the checker's tests
   are in `src/check.rs`); `scripts/zenon-fixtures.ts` records what the TypeScript decides on each
