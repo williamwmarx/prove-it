@@ -133,9 +133,9 @@ const NO_PARTS: fn(&mut Machine<'_>) -> Outcome<()> = |_| Ok(());
 
 impl Compiler<'_> {
     /// A membership test for a compiled set, which builds the set only when it must.
-    pub(crate) fn member_test(&self, set: &Compiled) -> Member {
+    pub(crate) fn member_test(&mut self, set: &Compiled) -> Member {
         if let Some(test) = &set.member {
-            return test.clone();
+            return self.memoized_member(set, test.clone());
         }
         // IntervalValue.member compares an integer with the bounds, building nothing.
         if let Some((low, high)) = set.interval.clone() {
@@ -165,6 +165,17 @@ impl Compiler<'_> {
                 })
             }
         }
+    }
+
+    // A set that reads no variable and no bound name tests an element the same way whenever it is
+    // asked, so its own membership test is cached by the element, as `cached` caches such an
+    // expression's value. A failure isn't cached: it fails again, in the same place.
+    fn memoized_member(&mut self, set: &Compiled, test: Member) -> Member {
+        if set.footprint.width() != 0 || self.options.is_memo_off {
+            return test;
+        }
+        let table = self.allocate_table(1);
+        member(move |machine, element| machine.member_lookup(table, element, &test))
     }
 
     // The parts of a set TLC evaluates to make its value: a lazy set's own, none for a set such

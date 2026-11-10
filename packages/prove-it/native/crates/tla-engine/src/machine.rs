@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use tla_ir::NodeId;
 use tla_values::fingerprint::Fingerprints;
-use tla_values::store::Outcome;
+use tla_values::store::{FALSE, Outcome, TRUE};
 use tla_values::{Bail, Id, Store};
 
 use crate::compile::Lambda;
@@ -314,6 +314,24 @@ impl<'p> Machine<'p> {
         let value = inner(self)?;
         self.tables[table].set(&read, value);
         Ok(value)
+    }
+
+    pub(crate) fn member_lookup(
+        &mut self,
+        table: usize,
+        element: Id,
+        test: &Member,
+    ) -> Outcome<bool> {
+        if !self.tables[table].is_enabled() {
+            return test(self, element);
+        }
+        let known = self.tables[table].get(&[element]);
+        if known != EMPTY {
+            return Ok(known == TRUE);
+        }
+        let is_member = test(self, element)?;
+        self.tables[table].set(&[element], if is_member { TRUE } else { FALSE });
+        Ok(is_member)
     }
 
     pub(crate) fn epoch_lookup(
