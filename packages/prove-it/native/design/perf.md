@@ -440,7 +440,6 @@ MCbtree) it needs more cores. These items are independent of each other and of t
 - A JIT or native code: the backend is shelved (native-backend.md), and the workspace stays std
   only.
 - Hashing ids with a cheaper hash in the state table: it is already a multiply-shift.
-<<<<<<< HEAD
 
 ## Results
 
@@ -462,5 +461,217 @@ no failure of TLC's that the store misses.
 | TLCSailfish1 | 16.64 (16.33–17.02) | 5.13 (5.11–5.40) | 3.24× |
 | PaxosCommit | 35.45 (34.35–36.91) | 33.30 (32.76–33.53) | 1.06× |
 | MCabs | 18.34 (17.77–18.71) | 17.48 (16.92–17.64) | 1.05× |
-=======
->>>>>>> origin/main
+
+## Measured and dropped
+
+Tried on the symmetry and evaluator tracks, measured with the suite on the 4-core container, and
+dropped because they did not move it. Recorded so that nobody repeats them.
+
+| Idea | Model | Result | Why it lost |
+|---|---|---|---|
+| Scan a small set's parts instead of marking them in a table by id (`compare_parts`) | FastPaxos | 2.33/2.41 s before, 2.40/2.35 s after | The marks were not the cost the profile attributed to them. |
+| Fingerprint the symmetric representative incrementally from its parent's (`get_child` on the canonical keys) | Detlefs | 2.7–2.9 s → 3.2–3.5 s | Canonicalizing the parent again, or reading its key back, costs more than the shifts saved. The canonical keys of a parent and its successors often differ in many slots. |
+| Skip the step memo for values the symmetry group fixes | Detlefs | 3.05/3.08 s → 3.21/3.28 s | Few of Detlefs' 31 variables are fixed, and the extra test costs on every variable. |
+| Rank the orbit images of a set's parts once per step miss and compare permutations by integer ranks | FastPaxos | Estimated only: about 40 µs per miss against about 20 µs today | Sorting the images takes 100–200 record comparisons per miss. |
+| A table from label to walks for PlusCal's `switch` (string labels compare by id) | Detlefs | 4.70 → 4.63 s, within noise | The `switch`'s self time is the walks inlined into it, not the 49-label scan. |
+| An index, per (quantifier, set id), of the elements whose leading `m.f = c` holds | PaxosCommit | 33.1–35.0 s → 36.0–37.0 s | `msgs` is a new set in nearly every state, so the index is used only by that state's 3 acceptor scans. |
+| Fuse a whole PlusCal step into one closure | MCbtree, MCExactInitialSync | Not built: estimated 5–10% | `walker::segments`' self time is spread over the per-op dispatch, 1–2% a line, with no hot spot. |
+
+Counts behind the quantifier index, from an instrumentation build that counted every quantifier,
+set filter or action-level `\E` whose body starts with `m.f = e` on the bound name:
+- PaxosCommit (17.0M states generated): about 178M element visits, of which about 140M fail the
+  leading test.
+- FastPaxos: 6.3M visits.
+- MCMultiNode and cf1s_folklore: no site of this shape.
+
+## Designs ready, not built
+
+### Pruning `x' \in [S -> T]` by per-key constraints (MCabs)
+
+MCabs enumerates `cLogs' \in [Servers -> Seq(Terms)]`: 64,000 candidate functions per
+enumeration, filtered by `IsPrefix(cLogs[i], cLogs'[i])` and
+`\A j \in Servers \ {i} : cLogs'[j] = cLogs[j]`. Pruning to the candidates the per-key constraint
+admits would turn 64,000 into about 40.
+
+**TLC's order** (tlaplus d8fb231):
+- `Tool#getNextStates`, `OPCODE_in` on a primed variable (`Tool.java:1422-1466`), evaluates the
+  right side once. For each element of `Enumerable.elements()` it binds `x'` and evaluates the rest
+  of the conjunction, left to right. A FALSE guard abandons the candidate; an error aborts the run
+  at that candidate.
+- `SetOfFcnsValue.Enumerator` (and `DomIVEnumerator` for an interval domain) is an odometer over
+  the domain sorted by TLC's order. The last key varies fastest, and each key's values come in T's
+  order.
+- Under `-coverage` it counts `cm.incSecondary(|S|)` per candidate.
+
+**The shape.** `x' \in [S -> T] /\ C1 /\ … /\ Ck /\ …`, where Ck is a per-key constraint,
+`x'[a] = e` or `\A j \in D : x'[j] = e(j)`, with D and e not mentioning x'. The survivors are the
+candidates with f[j] = e(j) for every constrained j.
+
+**When skipping is exact.** Every skipped candidate must evaluate to FALSE at some conjunct up to
+Ck, without an error or an effect. C1 … C(k-1) must be free of effects, and must read x' only as
+x'[b] for keys b that Ck leaves free.
+
+Errors are positional: TLC raises at the first candidate in its order whose chain errors, which may
+be a skipped candidate that comes before every survivor. To stay exact, run a pre-pass per state:
+- Evaluate C1 … C(k-1) once for each combination of values of the free keys: |T| evaluations for
+  one free key, 40 on MCabs.
+- Evaluate Ck's targets e(j), and check each one's equality with every element of T.
+- If nothing errors, skipping is exact. If anything errors, enumerate in full, as today.
+
+D must be a subset of S; otherwise fall back.
+
+**What stays the same.** With the constrained keys fixed, the odometer visits the survivors in the
+order of the free keys' values. Successor order, state numbering, traces, and any later Print or
+error therefore stay TLC's. The states-generated and distinct counts count successors only, so
+they are unchanged. Under `-coverage`, don't prune.
+
+**Why it isn't built.** A grep of the corpus, tlaplus/Examples included, finds the shape in an
+action only in MCabs (`ccf/tla/consensus/abs.tla`). Every other `x' \in [S -> T]` is a TypeOK' in a
+`*_proof.tla` or a TLC test model. The 18 `\E f \in [S -> T]` outside proofs are in Init, in
+invariants or ASSUMEs, or constrain the whole function. Build it only if axiomatic actions
+(`x' \in TypeSet /\ constraints`) turn out to matter beyond the suite.
+
+Tests to write if it is built: an error at the first, a middle and the last block of the odometer,
+compared with TLC.
+
+### Answering liveness action atoms from the steps the search took
+
+On cf1s_folklore, `answer_atoms` is about 12.5 s of about 21 s at one worker. Most of it, about
+11.4 s, is one action atom, `<<A>>_vars` of `WF_vars(\E self \in Proc : Receive(self) \/
+Propose(self) \/ Decide(self))`, evaluated as a predicate on each of 22.4M steps. SpanTreeRandom
+has the same shape.
+
+**Ceiling.** A prototype on main ad7ca16, 1 worker, reduced each step's answer to the subscript
+test, without evaluating A:
+
+| Model | Now | Prototype | Ceiling |
+|---|---|---|---|
+| cf1s_folklore | 18.5 / 19.3 s | 10.1 / 10.6 s | about 1.8× |
+| SpanTreeRandom (`WF_vars(Next)`) | 2.9 / 3.5 s | 0.8 / 0.8 s | about 4× |
+| StarkMutex (`benchmarks/liveness`) | 7.3 / 7.9 s | 6.0 / 6.5 s | about 1.2× |
+
+**TLC** (d8fb231):
+- `ModelChecker` runs `oos.checkAction(tool, s0, s1, …)` on every successor in `nextStates`
+  (`LiveCheck.java:121-128`). `nextStates` holds the in-model successors (after CONSTRAINT and
+  ACTION_CONSTRAINT), one per fingerprint. The checks run on the actual successor, not on the
+  symmetric representative.
+- `LNAction#eval` (`LNAction.java:66-85`) evaluates the subscript in both states first. If they are
+  equal, `<<A>>_v` is FALSE (and `[A]_v` TRUE) without evaluating A. Otherwise it evaluates A as a
+  boolean with both states bound, `Tool.eval(body, con, s1, s2)`: predicate mode.
+- Generation (`Tool#getNextStates`) walks the disjuncts and `\E`s:
+  - `x' = e` assigns when x' is unbound and tests otherwise;
+  - `x' \in S` enumerates S;
+  - UNCHANGED assigns.
+- `Tool#getActions` (`Tool.java:269-417`) splits Next for TLC's actions only at `\E` over an
+  enumerable set (`OPCODE_be`) and at disjunctions (`OPCODE_dl`, `OPCODE_lor`), through operator
+  applications. Anything else is one action, a conjunction list (`OPCODE_cl`) included.
+
+**Findings.**
+1. **The native front end matches no atom onto TLC's split.** `tla-front` lowers every ENABLED atom
+   with `EnabledActions::Unknown` and `is_labelled: false` (`lower.rs`). Only the deleted
+   TypeScript checker did the matching (`findActionPositions` in `spec-description.ts`, gated by
+   `!isConstrained && !hasRepeatedEffects` in `check.ts`). Branch `atom-actions` ports it into
+   `tla_trace::add_actions`:
+   - each atom's action is split with the same `Splitter` as Next;
+   - pieces are matched in order by node, and by scope chain with `is_same` bound values;
+   - ENABLED positions are filled in where there is no CONSTRAINT and no Print, PrintT, TLCSet,
+     TLCGet or JavaTime;
+   - `is_labelled` is set where some ENABLED atom needs a proper subset.
+
+   On SpanTreeRandom, ENABLED of `WF_vars(Next)` then maps to all of Next and is answered from
+   steps, but the time does not move: ENABLED is not the cost. So it was not opened as a PR alone.
+2. **cf1s's Next is one TLC action.** It is `/\ \E self \in Proc : …`, a one-item conjunction list,
+   which `getActions` does not split. Labels by TLC action carry no information there. cf1s needs
+   the engine's own finer labels: plan (ii).
+3. **The error guard needs the walker.** Predicate mode differs from generation only in three
+   comparisons:
+   - `x' = e` becomes equality of t[x] with e;
+   - `x' \in S` becomes membership of t[x] in S;
+   - `UNCHANGED x` becomes t[x] = s[x].
+
+   Every other read of x' happens only after x' has compared equal to the value generation assigned
+   on that branch. Generation would have failed on a read before an assignment, and a membership
+   that holds means generation enumerated that element. TLC's `equals` and `member` can raise across
+   kinds: IntValue with a string, typed model values, records against functions, unranked strings.
+
+   The operands of those comparisons need not appear in any recorded state: a disjunct can assign
+   `x' = e` and then fail a later conjunct. So the guard must join the shape (the comparability
+   classes of #168 and #176) of every value the walker assigns to a primed variable, in Init and in
+   every successor, kept or not. The sites:
+   - `Op::Assign` in `Segment::apply`;
+   - `either_step`;
+   - the membership enumeration (`walk_memberships`);
+   - Init's assignments.
+
+   If every variable's joined shape is safe, no comparison can raise.
+
+**The claim.** Let A split, by the same split as the steps' labels, into a subset of Next's pieces.
+Then for a recorded step s→t, A(s,t) is TRUE iff some recorded step s→t carries a label in A's set.
+Why:
+- On the fragment generation handles without error, generation produces exactly
+  {t : D(s,t)} for each piece D.
+- The split is logically the disjunction.
+- t is recorded only when in the model, which is the only case where TLC checks it.
+
+Predicate mode stops at the first TRUE piece, which changes nothing when nothing can raise. Where
+several steps s→t carry different labels, the answer is TRUE if any label is in the set.
+
+**Plan (i): an atom whose action is all of Next** (SpanTreeRandom's `WF_vars(Next)`). Every recorded
+step is a step of A, so `<<A>>_v` is the subscript test alone, with no labels at all. Needs the
+walker-hook shape guard and the fallbacks below.
+
+**Plan (ii): cf1s-shaped atoms.**
+- Record per step the path of disjuncts and `\E` values the walker took, through conjunctions too.
+- Split each atom's action by the walker's own split, not TLC's. Match by node and bound values.
+- Answer from the labels.
+
+The argument to write down: the walker's split refines the predicate. Each path is a conjunction of
+the walk's guards and assignments, so A is the disjunction of its paths. This goes beyond TLC's
+`getActions` granularity, so it must be argued on its own.
+
+**Fallbacks** (evaluate as today). Fall back where:
+- the atom's action does not map exactly onto the split;
+- it prints, draws, sets or reads registers, or reads TLCGet;
+- it contains ENABLED, `\cdot`, or `[B]_w` inside;
+- a step from the state took the shortcut past a walk (`is_enabled_exact` false);
+- A is under another context than Next's instance (INSTANCE substitutions, a property in another
+  module), unless the split matches exactly;
+- the guard's shape is unsafe;
+- the search stopped early or declined.
+
+CONSTRAINT and ACTION_CONSTRAINT are fine for action atoms: TLC checks only in-model steps, and
+those are the steps recorded. They are not fine for ENABLED from steps.
+
+**Constraints from the lead** (`answer_atoms` owner):
+- the table must be identical on the helper path (`on_helpers`/`Run::action`) and on the one-thread
+  `Evaluator`, UNKNOWN included;
+- an atom whose evaluation can fail still comes out UNKNOWN, then `atom_failure`, then the
+  interpreter's report;
+- labels decide only A's truth; the subscript test stays as it is on both paths.
+
+**Constraints from the liveness climber** (branch `live-shared-levels`): threads record edges and
+the merge resolves them, so labels must be appended wherever edges are and merged in the same
+order. Agree the layout before building. One label (or one bit per atom) per edge costs about
+90 MB on cf1s's 22.4M steps. Record it only when an atom uses it, and measure the non-liveness path.
+
+**Tests, against TLC itself and not only the interpreter:**
+- WF and SF over Next, over a sub-disjunction, and over a non-subset (falls back);
+- a type-mixed spec on which predicate evaluation must raise, and one on which it must not;
+- a successor generated first by a piece outside A and then by one inside A;
+- a successor already seen from another parent;
+- at 1 and 4 threads.
+
+**TLC for those tests.** The Maven build of tlaplus needs the Toolbox target platform, so build the
+jar from d8fb231 with `javac` instead:
+
+```sh
+cd tlaplus/tlatools/org.lamport.tlatools
+find src -name '*.java' > sources.txt
+javac -nowarn -encoding UTF-8 -proc:none -cp "$(find lib -name '*.jar' | tr '\n' :)" -d classes @sources.txt
+(cd src && find . -type f ! -name '*.java' -exec cp --parents {} ../classes \;)
+(cd classes && for jar in ../lib/*.jar ../lib/*/*.jar; do unzip -qo "$jar" -x 'META-INF/*'; done)
+printf 'Main-Class: tlc2.TLC\n' > manifest.txt && jar cfm tla2tools.jar manifest.txt -C classes .
+```
+
+Leave the test libraries (junit, easymock, hamcrest, jacoco, javacc, cglib, objenesis, jgit) out of
+the unzip.
