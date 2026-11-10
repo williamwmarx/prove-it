@@ -18,6 +18,7 @@ pub mod pragma;
 pub mod prep;
 pub mod printer;
 pub mod proof;
+pub mod simplify;
 pub mod ptl;
 pub mod smt;
 pub mod subexpression;
