@@ -1726,7 +1726,7 @@ fn caches_tlccache_by_its_key_alone_as_tlc() {
 #[test]
 fn declines_what_tlc_fails_to_enumerate_where_it_writes_or_reads_a_value() {
     // TLC fails on a function it keeps lazy, or on Nat, where it writes JSON, tests a bag, or
-    // reads a register; and on a tuple as a quantifier's bound.
+    // reads a register. A tuple as a quantifier's bound is `words_a_value_that_isnt_a_set_as_tlc`'s.
     for (test, definitions, config) in [
         (
             "json-lazy",
@@ -1747,11 +1747,6 @@ fn declines_what_tlc_fails_to_enumerate_where_it_writes_or_reads_a_value() {
             "register-lazy",
             "Init == x = 0\nNext == x < 3 /\\ x' = x + 1 /\\ TLCSet(1, [i \\in Nat |-> i])\nPost == 3 \\in DOMAIN TLCGet(1)",
             "POSTCONDITION Post\n",
-        ),
-        (
-            "tuple-bound",
-            "Init == \\A i \\in <<1>> : x = i\nNext == x' = x",
-            "",
         ),
     ] {
         let spec = format!(
@@ -4319,6 +4314,129 @@ fn applies_a_function_tlc_keeps_lazy_in_the_initial_predicate() {
             ),
             "on {threads}: {text}"
         );
+    }
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn words_a_value_that_isnt_a_set_as_tlc() {
+    // Where TLC demands a set of a value that isn't one, each place words it apart: Permutations
+    // (`EC.TLC_MODULE_APPLYING_TO_WRONG_VALUE`), and the bound of a quantifier or a set of all
+    // (`Value.getNonEnumerableErrorMsg`) in an invariant, an action and the initial predicate.
+    // Each text is what TLC at d8fb231 prints, and with -tool.
+    // Its name, definitions, configuration, arguments, and what TLC prints, and with -tool.
+    type Case<'a> = (&'a str, &'a str, &'a str, &'a [&'a str], &'a str, &'a str);
+    let cases: [Case; 9] = [
+        (
+            "Permutations of an integer",
+            "Init == x = Permutations(3)\nNext == x' = x",
+            "INIT Init\nNEXT Next\n",
+            &[],
+            "Error: Applying Permutations to the following value,\nwhich is not a finite set:\n3\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 27 in M\n1. Line 4, column 13 to line 4, column 27 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\n@!@!@STARTMSG 2176:0 @!@!@\nApplying Permutations to the following value,\nwhich is not a finite set:\n3\n@!@!@ENDMSG 2176 @!@!@\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 27 in M\n1. Line 4, column 13 to line 4, column 27 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "Permutations of a tuple",
+            "Init == x = Permutations(<<1, 2>>)\nNext == x' = x",
+            "INIT Init\nNEXT Next\n",
+            &[],
+            "Error: Applying Permutations to the following value,\nwhich is not a finite set:\n<<1, 2>>\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 34 in M\n1. Line 4, column 13 to line 4, column 34 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\n@!@!@STARTMSG 2176:0 @!@!@\nApplying Permutations to the following value,\nwhich is not a finite set:\n<<1, 2>>\n@!@!@ENDMSG 2176 @!@!@\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 34 in M\n1. Line 4, column 13 to line 4, column 34 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "Permutations of a string in an invariant",
+            "Init == x = 0\nNext == x' = x\nInv == x = 0 /\\ Permutations(\"ab\") = {}",
+            "INIT Init\nNEXT Next\nINVARIANT Inv\n",
+            &[],
+            "Error: Applying Permutations to the following value,\nwhich is not a finite set:\n\"ab\"\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 13 in M\n1. Line 6, column 8 to line 6, column 39 in M\n2. Line 6, column 17 to line 6, column 39 in M\n3. Line 6, column 17 to line 6, column 34 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\n@!@!@STARTMSG 2176:0 @!@!@\nApplying Permutations to the following value,\nwhich is not a finite set:\n\"ab\"\n@!@!@ENDMSG 2176 @!@!@\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 13 in M\n1. Line 6, column 8 to line 6, column 39 in M\n2. Line 6, column 17 to line 6, column 39 in M\n3. Line 6, column 17 to line 6, column 34 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "a bound a variable gives",
+            "Init == x = 0\nNext == x < 1 /\\ x' = x + 1\nInv == \\A i \\in {}, j \\in x : FALSE",
+            "INIT Init\nNEXT Next\nINVARIANT Inv\n",
+            &[],
+            "Error: TLC encountered a non-enumerable quantifier bound\n0.\nline 6, col 27 to line 6, col 27 of module M\nWhile working on the initial state:\nx = 0\n\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 13 in M\n1. Line 6, column 8 to line 6, column 35 in M\n\n\n",
+            "@!@!@STARTMSG 2102:1 @!@!@\nTLC encountered a non-enumerable quantifier bound\n0.\nline 6, col 27 to line 6, col 27 of module M\nWhile working on the initial state:\nx = 0\n\n@!@!@ENDMSG 2102 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 13 in M\n1. Line 6, column 8 to line 6, column 35 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "a bound written as a numeral",
+            "Init == x = 0\nNext == x' = x\nInv == x = 0 /\\ \\E j \\in 3 : TRUE",
+            "INIT Init\nNEXT Next\nINVARIANT Inv\n",
+            &[],
+            "Error: TLC encountered a non-enumerable quantifier bound\n3.\n3\nWhile working on the initial state:\nx = 0\n\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 13 in M\n1. Line 6, column 8 to line 6, column 33 in M\n2. Line 6, column 17 to line 6, column 33 in M\n\n\n",
+            "@!@!@STARTMSG 2102:1 @!@!@\nTLC encountered a non-enumerable quantifier bound\n3.\n3\nWhile working on the initial state:\nx = 0\n\n@!@!@ENDMSG 2102 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 13 in M\n1. Line 6, column 8 to line 6, column 33 in M\n2. Line 6, column 17 to line 6, column 33 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "a record the bound of a set of all",
+            "Init == x = 0\nNext == x' = x\nInv == x = 0 /\\ {j : j \\in [a |-> 1]} = {}",
+            "INIT Init\nNEXT Next\nINVARIANT Inv\n",
+            &[],
+            "Error: TLC encountered a non-enumerable quantifier bound\n[a |-> 1].\nline 6, col 28 to line 6, col 36 of module M\nWhile working on the initial state:\nx = 0\n\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 13 in M\n1. Line 6, column 8 to line 6, column 42 in M\n2. Line 6, column 17 to line 6, column 42 in M\n3. Line 6, column 17 to line 6, column 37 in M\n\n\n",
+            "@!@!@STARTMSG 2102:1 @!@!@\nTLC encountered a non-enumerable quantifier bound\n[a |-> 1].\nline 6, col 28 to line 6, col 36 of module M\nWhile working on the initial state:\nx = 0\n\n@!@!@ENDMSG 2102 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 13 in M\n1. Line 6, column 8 to line 6, column 42 in M\n2. Line 6, column 17 to line 6, column 42 in M\n3. Line 6, column 17 to line 6, column 37 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "a bound in an action",
+            "Init == x = 0\nNext == \\E j \\in x : x' = j",
+            "INIT Init\nNEXT Next\n",
+            &[],
+            "Error: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: TLC encountered a non-enumerable quantifier bound\n0.\nline 5, col 18 to line 5, col 18 of module M\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 27 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\nTLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: TLC encountered a non-enumerable quantifier bound\n0.\nline 5, col 18 to line 5, col 18 of module M\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2121:1 @!@!@\nThe behavior up to this point is:\n@!@!@ENDMSG 2121 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n1: <Initial predicate>\nx = 0\n\n@!@!@ENDMSG 2217 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 27 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "a string bound in the initial predicate",
+            "Init == \\E j \\in \"a\" : x = j\nNext == x' = x",
+            "INIT Init\nNEXT Next\n",
+            &[],
+            "Error: TLC encountered a non-enumerable quantifier bound\n\"a\".\nline 4, col 18 to line 4, col 20 of module M\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 28 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\nTLC encountered a non-enumerable quantifier bound\n\"a\".\nline 4, col 18 to line 4, col 20 of module M\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 28 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "a tuple bound in the initial predicate",
+            "Init == \\A i \\in <<1>> : x = i\nNext == x' = x",
+            "INIT Init\nNEXT Next\n",
+            &[],
+            "Error: TLC encountered a non-enumerable quantifier bound\n<<1>>.\nline 4, col 18 to line 4, col 22 of module M\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 30 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\nTLC encountered a non-enumerable quantifier bound\n<<1>>.\nline 4, col 18 to line 4, col 22 of module M\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 30 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+    ];
+    let directory =
+        std::env::temp_dir().join(format!("prove-it-cli-non-set-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    for (name, definitions, config, args, printed, tool) in cases {
+        std::fs::write(
+            directory.join("M.tla"),
+            format!(
+                "---- MODULE M ----
+EXTENDS Naturals, TLC
+VARIABLE x
+{definitions}
+====
+"
+            ),
+        )
+        .expect("a spec");
+        std::fs::write(directory.join("M.cfg"), config).expect("a configuration");
+        for threads in ["1", "4"] {
+            for (flags, expected) in [(&[][..], printed), (&["-tool"][..], tool)] {
+                let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
+                    .arg("-noGenerateSpecTE")
+                    .args(args)
+                    .args(flags)
+                    .arg("M")
+                    .current_dir(&directory)
+                    .env("PROVE_IT_WORKERS", threads)
+                    .env("PROVE_IT_SHARED_LEVEL", "1")
+                    .output()
+                    .expect("the binary runs");
+                let text = stdout(&output);
+                assert!(
+                    text.contains(expected),
+                    "{name} on {threads} {flags:?}:
+{text}"
+                );
+            }
+        }
     }
     std::fs::remove_dir_all(directory).expect("removed");
 }

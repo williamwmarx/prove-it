@@ -458,6 +458,8 @@ const ARGUMENT_ERROR_AN: u32 = 2266;
 /// `EC.TLC_MODULE_DIVISION_BY_ZERO`.
 const DIVISION_BY_ZERO: u32 = 2179;
 const ONE_ARGUMENT_ERROR: u32 = 2283;
+/// `EC.TLC_MODULE_APPLYING_TO_WRONG_VALUE`.
+const APPLYING_TO_WRONG_VALUE: u32 = 2176;
 /// `EC.TLC_EXPECTED_EXPRESSION_IN_COMPUTING`, its `2` and `EC.TLC_EXPECTED_VALUE`.
 const EXPECTED_EXPRESSION_IN_COMPUTING: u32 = 2247;
 const EXPECTED_EXPRESSION_IN_COMPUTING2: u32 = 2248;
@@ -2445,9 +2447,21 @@ impl<'ir> Evaluator<'ir> {
         }
     }
 
-    // TLC's failure quantifying over a set it implements in Java and can't enumerate
-    // (`Tool.contexts`), which it explains for all but STRING since 1.7.4.
+    // TLC's failure quantifying over a value it can't enumerate (`Tool.contexts`): one that isn't
+    // a set (`Value.getNonEnumerableErrorMsg`), or a set it implements in Java, which it explains
+    // for all but STRING since 1.7.4.
     fn check_enumerable(&self, set: &Value, node: NodeId) -> Evaluated<()> {
+        if is_non_set(set)
+            && let Some(bound) = self.describe_node(node)
+        {
+            return fail_runtime(
+                "quantified over a non-set",
+                format!(
+                    "TLC encountered a non-enumerable quantifier bound\n{}.\n{bound}",
+                    format_pretty(set)
+                ),
+            );
+        }
         let Value::Lazy(lazy) = set else {
             return Ok(());
         };
@@ -4284,6 +4298,17 @@ impl<'ir> Evaluator<'ir> {
             "Permutations" => {
                 arity(1)?;
                 let set = self.operand(&operands[0])?;
+                // `TLC.Permutations` converts its argument with `toSetEnum`.
+                if is_non_set(&set) {
+                    return fail_coded(
+                        "Permutations of a value that isn't a set",
+                        APPLYING_TO_WRONG_VALUE,
+                        format!(
+                            "Applying Permutations to the following value,\nwhich is not a finite set:\n{}",
+                            format_pretty(&set)
+                        ),
+                    );
+                }
                 let elements = elements(&set)?;
                 if elements.len() > 8 {
                     return fail("Permutations of a set too large to build");
@@ -4572,6 +4597,16 @@ pub(crate) fn is_empty(value: &Value) -> Evaluated<bool> {
             );
         }
     })
+}
+
+// A value that isn't a set, which TLC prints as the evaluator does: not a `FcnLambdaValue`, which
+// TLC prints by building it again.
+fn is_non_set(value: &Value) -> bool {
+    match value {
+        Value::Bool(_) | Value::Int(_) | Value::Str(_) | Value::Model(_) => true,
+        Value::Function(function) => function.class.get() != Class::Lambda,
+        _ => false,
+    }
 }
 
 // TLC's `getKindString` of a value that isn't a function, whose class the evaluator knows: a
