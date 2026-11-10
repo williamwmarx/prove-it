@@ -1426,6 +1426,25 @@ fn prints_the_counterexample_records_in_tlcs_order() {
 }
 
 #[test]
+fn declines_a_postcondition_after_an_initial_states_violation() {
+    // TLC checks the postconditions after an initial state violates an invariant, with counts of
+    // the initial states the binary doesn't follow (TLC prints <<"post", 2>> here).
+    let spec = "---- MODULE Stop ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x \\in {0, 1}\nNext == x' = x + 1\nInv == x < 1\nPost == PrintT(<<\"post\", TLCGet(\"distinct\")>>)\n====\n";
+    let (output, directory) = run_lowered(
+        "initial-post",
+        spec,
+        "INIT Init\nNEXT Next\nINVARIANT Inv\nPOSTCONDITION Post\n",
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("a POSTCONDITION after an initial state's violation"),
+        "{}",
+        stdout(&output)
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
 fn prints_what_the_expansion_printed_before_its_violation() {
     // TLC checks each successor as it finds it, so it prints what finding the violating one
     // printed before it reports the violation, as TLC 1.8 prints this spec's 1.

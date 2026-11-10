@@ -1389,9 +1389,13 @@ fn print_violation(
     // and no statistics, since it checks the initial states before it searches.
     if let ViolationKind::InitialInvariant(_) | ViolationKind::InitialPredicate(_) = violation.kind
     {
+        // TLC checks the postconditions then, with the counts of the initial states it found,
+        // which the binary doesn't follow.
+        if !ir.model.postconditions.is_empty() {
+            return Err("a POSTCONDITION after an initial state's violation");
+        }
         let state = &trace.states.first().ok_or(NOT_IN_IR)?.text;
         printer.print(code, Level::Error, &format!("{text}\n{state}"));
-        print_postcondition_failure(printer, ir, trace.postconditions.as_ref());
         print_finished(printer, start);
         return Ok(exit_code);
     }
