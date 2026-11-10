@@ -1033,7 +1033,7 @@ const equalsSetLikeTlc = (left: ObjectValue, right: Value): boolean => {
   if (!isSetValue(right)) {
     if (isModelValue(right)) return equalsModelValueWith(right, left);
     throw new TlaEvaluationError(
-      `Attempted to check equality of the set ${formatValue(left)} with the value:\n${formatValue(right)}`,
+      `Attempted to check equality of the set ${prettyPrint(formatValue(left))} with the value:\n${prettyPrint(formatValue(right))}`,
     );
   }
   const sets = getSetElementsLikeTlc(left, right);
