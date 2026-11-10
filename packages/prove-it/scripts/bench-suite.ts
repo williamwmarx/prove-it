@@ -179,6 +179,7 @@ const parseTlcOutput = (stdout: string, stderr: string): Outcome => {
     /Error: Invariant (\S+) is violated/.exec(output) ??
     /Error: Action property (\S+) is violated/.exec(output) ??
     /Error: Temporal properties were violated/.exec(output) ??
+    /Error: Temporal property (\S+) was violated/.exec(output) ??
     /Error: Deadlock reached/.exec(output);
   if (output.includes("No error has been found")) return { verdict: "success", ...counts };
   if (violation === null) return { verdict: "error", message: getFailureLines(output) };
