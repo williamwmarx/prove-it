@@ -10,7 +10,7 @@
 //! The keys it reads, besides SANY's `module:` and `file:`, are `text:<path>`, the text of the file
 //! at a path the command line names (the spec and its configuration), and `class:<name>`, the
 //! Java override for a module, as a Uint8Array. `machine` gives what TLC's banner and dates
-//! describe: `{ system, release, arch, cores, memoryMegabytes, pid, now, zone, variables }`, with
+//! describe: `[system, release, arch, cores, memoryMegabytes, pid, now, zone, variables]`, with
 //! `now` in milliseconds since the epoch, `zone` a POSIX TZ rule, and `variables` the
 //! environment's `[name, value]` pairs the check reads.
 
@@ -96,28 +96,11 @@ impl Host for SourcesHost {
     }
 }
 
-fn get_property<'v>(object: &'v HostValue, name: &str) -> Option<&'v HostValue> {
-    match object {
-        HostValue::Object(properties) => properties
-            .iter()
-            .find(|(property, _)| *property == name)
-            .map(|(_, value)| value),
-        _ => None,
+fn get_number(value: &HostValue, what: &str) -> Result<f64, String> {
+    match value {
+        HostValue::Number(number) => Ok(*number),
+        _ => Err(format!("{what} must be a number")),
     }
-}
-
-fn get_number(machine: &HostValue, name: &str) -> Result<f64, String> {
-    match get_property(machine, name) {
-        Some(HostValue::Number(number)) => Ok(*number),
-        _ => Err(format!("machine.{name} must be a number")),
-    }
-}
-
-fn get_string(machine: &HostValue, name: &str) -> Result<String, String> {
-    get_text(
-        get_property(machine, name).unwrap_or(&HostValue::Undefined),
-        &format!("machine.{name}"),
-    )
 }
 
 fn get_strings(value: &HostValue, what: &str) -> Result<Vec<String>, String> {
@@ -155,29 +138,45 @@ fn check(arguments: &[HostValue]) -> HookResult {
         return Err("checkSources takes the arguments, what is known and the machine".into());
     };
     let args = get_strings(args, "the arguments")?;
-    let variables = match get_property(machine, "variables") {
-        Some(HostValue::Array(pairs)) => pairs
-            .iter()
-            .map(|pair| match get_strings(pair, "a variable")?.as_slice() {
-                [name, value] => Ok((name.clone(), value.clone())),
-                _ => Err("a variable must be a [name, value] pair".to_owned()),
-            })
-            .collect::<Result<_, String>>()?,
-        _ => return Err("machine.variables must be an array of [name, value] pairs".into()),
+    let HostValue::Array(machine) = machine else {
+        return Err("the machine must be an array".into());
     };
-    let zone = get_string(machine, "zone")?;
+    let [
+        system,
+        release,
+        arch,
+        cores,
+        memory,
+        pid,
+        now,
+        zone,
+        variables,
+    ] = machine.as_slice()
+    else {
+        return Err("the machine must be [system, release, arch, cores, memoryMegabytes, pid, now, zone, variables]".into());
+    };
+    let HostValue::Array(variables) = variables else {
+        return Err("the variables must be an array of [name, value] pairs".into());
+    };
+    let variables = variables
+        .iter()
+        .map(|pair| match get_strings(pair, "a variable")?.as_slice() {
+            [name, value] => Ok((name.clone(), value.clone())),
+            _ => Err("a variable must be a [name, value] pair".to_owned()),
+        })
+        .collect::<Result<_, String>>()?;
     let host = SourcesHost {
         sources: Sources::new(known)?,
         machine: Machine {
-            system: get_string(machine, "system")?,
-            release: get_string(machine, "release")?,
-            arch: get_string(machine, "arch")?,
-            cores: get_number(machine, "cores")?.max(1.0) as usize,
-            memory_megabytes: get_number(machine, "memoryMegabytes")? as u64,
-            pid: get_number(machine, "pid")? as u32,
+            system: get_text(system, "the system")?,
+            release: get_text(release, "the release")?,
+            arch: get_text(arch, "the architecture")?,
+            cores: get_number(cores, "the cores")?.max(1.0) as usize,
+            memory_megabytes: get_number(memory, "the memory")? as u64,
+            pid: get_number(pid, "the pid")? as u32,
         },
-        now: UNIX_EPOCH + Duration::from_millis(get_number(machine, "now")? as u64),
-        zone: parse_rule(&zone).map_or(Zone::UTC, Zone::from_rule),
+        now: UNIX_EPOCH + Duration::from_millis(get_number(now, "now")? as u64),
+        zone: parse_rule(&get_text(zone, "the zone")?).map_or(Zone::UTC, Zone::from_rule),
         variables,
     };
     let (mut out, mut err) = (Vec::new(), Vec::new());

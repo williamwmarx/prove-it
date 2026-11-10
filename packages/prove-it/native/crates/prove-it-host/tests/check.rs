@@ -22,17 +22,17 @@ fn text(value: &HostValue) -> String {
 }
 
 fn machine() -> HostValue {
-    HostValue::Object(vec![
-        ("system", HostValue::text("Linux")),
-        ("release", HostValue::text("6.0")),
-        ("arch", HostValue::text("x64")),
-        ("cores", HostValue::Number(4.0)),
-        ("memoryMegabytes", HostValue::Number(1024.0)),
-        ("pid", HostValue::Number(7.0)),
+    HostValue::Array(vec![
+        HostValue::text("Linux"),
+        HostValue::text("6.0"),
+        HostValue::text("x64"),
+        HostValue::Number(4.0),
+        HostValue::Number(1024.0),
+        HostValue::Number(7.0),
         // 2026-11-10 12:00:00 UTC.
-        ("now", HostValue::Number(1_794_312_000_000.0)),
-        ("zone", HostValue::text("UTC0")),
-        ("variables", HostValue::Array(Vec::new())),
+        HostValue::Number(1_794_312_000_000.0),
+        HostValue::text("UTC0"),
+        HostValue::Array(Vec::new()),
     ])
 }
 
