@@ -32,7 +32,7 @@ pub struct LpStats {
     pub nra_calls: u64,
 }
 
-pub struct LpSettings {
+pub struct LpSettings<'l> {
     random: RandomGen,
     pub stats: LpStats,
     pub max_row_length_for_bound_propagation: usize,
@@ -55,11 +55,11 @@ pub struct LpSettings {
     // lp.dio_ignore_big_nums and lp.dio_undo_max_work.
     pub is_dio_ignoring_big_nums: bool,
     pub dio_undo_max_work: u64,
-    is_canceled: Box<dyn Fn() -> bool>,
+    is_canceled: Box<dyn Fn() -> bool + 'l>,
 }
 
-impl LpSettings {
-    pub fn new(is_canceled: Box<dyn Fn() -> bool>) -> LpSettings {
+impl<'l> LpSettings<'l> {
+    pub fn new(is_canceled: Box<dyn Fn() -> bool + 'l>) -> LpSettings<'l> {
         LpSettings {
             random: RandomGen::new(0),
             stats: LpStats::default(),
