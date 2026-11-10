@@ -14,6 +14,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 mod shapes;
 
+pub use shapes::ShapeJoin;
+
 /// The name of an interned value.
 pub type Id = u32;
 
