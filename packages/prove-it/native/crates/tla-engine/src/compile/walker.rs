@@ -713,7 +713,8 @@ impl<'a> Compiler<'a> {
                     let operator = Rc::clone(operator);
                     let base = super::operator_context(&operator)
                         .primed(context.is_primed || operator.context.is_primed);
-                    let callee = self.bind_arguments(&operator.params, args, context, base)?;
+                    let callee =
+                        self.bind_arguments(&operator.params, args, Some(body), context, base)?;
                     return Ok(Some((body, callee)));
                 }
                 let Resolution::Definition(index) = name.resolution else {
@@ -726,8 +727,13 @@ impl<'a> Compiler<'a> {
                 if definition.flags & Definition::RECURSIVE != 0 && !is_recursive_taken {
                     return Ok(None);
                 }
-                let callee =
-                    self.bind_arguments(params, args, context, context.global(context.can_print))?;
+                let callee = self.bind_arguments(
+                    params,
+                    args,
+                    Some(definition.body),
+                    context,
+                    context.global(context.can_print),
+                )?;
                 Ok(Some((definition.body, callee)))
             }
             _ => Ok(None),
@@ -1308,6 +1314,7 @@ impl<'a> Compiler<'a> {
                             slots.push(None);
                             Binding::Argument(Rc::new(Argument {
                                 expression: argument,
+                                is_each_use_alike: false,
                                 context: argument_context.clone(),
                                 compiled: RefCell::new([None, None]),
                                 own_scope: RefCell::new(std::rc::Weak::new()),
@@ -2533,6 +2540,7 @@ impl<'a> Compiler<'a> {
                 };
                 Binding::Argument(Rc::new(super::Argument {
                     expression: *expression,
+                    is_each_use_alike: false,
                     context,
                     compiled: RefCell::new([None, None]),
                     own_scope: RefCell::new(std::rc::Weak::new()),
