@@ -2,16 +2,16 @@
 // PROVE_IT_CHECK_LOG (src/parallel.ts), and each distinct check runs as TLC's command line would
 // run it, on one thread and with every level shared between four. Prints how many the binary
 // checks natively, and each reason it gives for the rest with the tests that reach it, as
-// native/design/fallback.md records them, and how many it checks natively in TLC's default mode,
-// which generates the trace exploration spec. --log reads a log a run wrote before instead of running
-// the tests; --json writes each check with its answers.
+// native/design/fallback.md records them, with what of a check the log keeps, and how many it
+// checks natively in TLC's default mode, which generates the trace exploration spec. --log reads a
+// log a run wrote before instead of running the tests; --json writes each check with its answers.
 // Usage: bun scripts/run.ts check-log [--binary path] [--log path] [--json path]
 
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { availableParallelism, tmpdir } from "node:os";
-import { join, relative } from "node:path";
+import { dirname, isAbsolute, join, relative } from "node:path";
 
 interface LoggedCheck {
   id: string;
@@ -19,11 +19,15 @@ interface LoggedCheck {
   config: string;
   seed?: string;
   livenessCheck?: "default" | "final";
+  workers?: number;
+  systemProperties?: [string, string][];
+  dump?: { dot?: boolean; colorize?: boolean; actionLabels?: boolean; snapshot?: boolean };
   isTool: boolean;
-  isDumped: boolean;
   isContinued: boolean;
   isWarningEnabled: boolean;
   version?: string;
+  // PROVE_IT_TEST_LIVE_CHECK_AT, which has the search check the temporal properties at that state.
+  testLiveCheckAt: number;
   caller?: string;
 }
 
@@ -39,11 +43,18 @@ interface LoggedClass {
   bytes: string;
 }
 
+interface LoggedFile {
+  id: string;
+  file: string;
+  text: string;
+}
+
 interface Run {
   key: string;
   check: LoggedCheck;
   modules: Map<string, string>;
   classes: Map<string, string>;
+  files: Map<string, string>;
   test: string;
 }
 
@@ -80,10 +91,13 @@ if (!getArgument("--log")) {
 }
 
 const lines = readFileSync(logPath, "utf8").split("\n").filter(Boolean);
-const entries: (LoggedCheck | LoggedModule | LoggedClass)[] = lines.map((line) => JSON.parse(line));
-// The modules each check loaded, by name, and its classes in base64.
+const entries: (LoggedCheck | LoggedModule | LoggedClass | LoggedFile)[] = lines.map((line) =>
+  JSON.parse(line),
+);
+// The modules each check loaded, by name, its classes in base64, and the files it read, by path.
 const modulesById = new Map<string, Map<string, string>>();
 const classesById = new Map<string, Map<string, string>>();
+const filesById = new Map<string, Map<string, string>>();
 for (const entry of entries) {
   if ("module" in entry) {
     modulesById.set(
@@ -95,6 +109,8 @@ for (const entry of entries) {
       entry.id,
       (classesById.get(entry.id) ?? new Map()).set(entry.class, entry.bytes),
     );
+  } else if ("file" in entry) {
+    filesById.set(entry.id, (filesById.get(entry.id) ?? new Map()).set(entry.file, entry.text));
   }
 }
 
@@ -107,6 +123,7 @@ const getTest = (caller: string | undefined) => {
 
 // TLC's command line, but the spec, for a check's options: Java's properties, then TLC's options.
 const getOptions = (check: LoggedCheck) => [
+  ...(check.systemProperties ?? []).map(([name, value]) => `-D${name}=${value}`),
   ...(check.version === "1.7.4" ? ["-Dtla-ts.tlc=1.7.4"] : []),
   "tlc2.TLC",
   "-fp",
@@ -114,39 +131,67 @@ const getOptions = (check: LoggedCheck) => [
   "-noGenerateSpecTE",
   ...(check.seed ? ["-seed", check.seed] : []),
   ...(check.livenessCheck === "final" ? ["-lncheck", "final"] : []),
+  ...(check.workers === undefined ? [] : ["-workers", String(check.workers)]),
   ...(check.isTool ? ["-tool"] : []),
   ...(check.isWarningEnabled ? [] : ["-nowarning"]),
-  ...(check.isDumped ? ["-dump", "states"] : []),
+  ...(check.dump
+    ? [
+        "-dump",
+        ...(check.dump.dot
+          ? [
+              [
+                "dot",
+                check.dump.colorize && "colorize",
+                check.dump.actionLabels && "actionlabels",
+                check.dump.snapshot && "snapshot",
+              ]
+                .filter(Boolean)
+                .join(","),
+            ]
+          : []),
+        "states",
+      ]
+    : []),
   ...(check.isContinued ? ["-continue"] : []),
 ];
 
 const runs = new Map<string, Run>();
 for (const entry of entries) {
-  if ("module" in entry || "class" in entry) continue;
+  if ("module" in entry || "class" in entry || "file" in entry) continue;
   const modules = modulesById.get(entry.id) ?? new Map<string, string>();
   const classes = classesById.get(entry.id) ?? new Map<string, string>();
+  const files = filesById.get(entry.id) ?? new Map<string, string>();
   const key = createHash("sha256")
     .update(
       JSON.stringify([
         entry.source,
         entry.config,
         getOptions(entry),
+        entry.testLiveCheckAt,
         [...modules].sort(),
         [...classes].sort(),
+        [...files].sort(),
       ]),
     )
     .digest("hex")
     .slice(0, 16);
   if (!runs.has(key)) {
-    runs.set(key, { key, check: entry, modules, classes, test: getTest(entry.caller) });
+    runs.set(key, { key, check: entry, modules, classes, files, test: getTest(entry.caller) });
   }
 }
 
-const runBinary = (directory: string, name: string, options: string[], threads: string) =>
+const runBinary = (run: Run, directory: string, name: string, options: string[], threads: string) =>
   new Promise<string>((resolve) => {
+    // Node leaves out a variable whose value is undefined.
     const child = spawn(binary, [...options, name], {
       cwd: directory,
-      env: { ...process.env, PROVE_IT_WORKERS: threads, PROVE_IT_SHARED_LEVEL: "1" },
+      env: {
+        ...process.env,
+        PROVE_IT_WORKERS: threads,
+        PROVE_IT_SHARED_LEVEL: "1",
+        PROVE_IT_TEST_LIVE_CHECK_AT:
+          run.check.testLiveCheckAt > 0 ? String(run.check.testLiveCheckAt) : undefined,
+      },
     });
     const stderr: Buffer[] = [];
     child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
@@ -172,13 +217,20 @@ const answer = async (run: Run): Promise<Answer> => {
   for (const [className, bytes] of run.classes) {
     writeFileSync(join(directory, `${className}.class`), Buffer.from(bytes, "base64"));
   }
+  // The binary reads a file outside the check's directory where it is, if the test left it there.
+  for (const [path, text] of run.files) {
+    if (isAbsolute(path) || path.startsWith("..")) continue;
+    mkdirSync(dirname(join(directory, path)), { recursive: true });
+    writeFileSync(join(directory, path), text);
+  }
   writeFileSync(join(directory, `${name}.tla`), run.check.source);
   writeFileSync(join(directory, `${name}.cfg`), run.check.config);
   const options = getOptions(run.check);
   const answers: Record<string, string> = {};
   for (const threads of THREADS)
-    answers[threads] = await runBinary(directory, name, options, threads);
+    answers[threads] = await runBinary(run, directory, name, options, threads);
   answers.default = await runBinary(
+    run,
     directory,
     name,
     options.filter((option) => option !== "-noGenerateSpecTE"),
