@@ -94,6 +94,12 @@ impl Host for SourcesHost {
     fn is_complete(&self) -> bool {
         !self.sources.has_needed()
     }
+
+    // `module:`, `class:` and `file:` name a module by its name alone, which several specs in
+    // different directories could each resolve to another file.
+    fn is_checking_several(&self) -> bool {
+        false
+    }
 }
 
 fn get_number(value: &HostValue, what: &str) -> Result<f64, String> {

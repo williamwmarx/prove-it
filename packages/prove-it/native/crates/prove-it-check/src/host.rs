@@ -53,6 +53,11 @@ pub trait Host {
     fn is_complete(&self) -> bool {
         true
     }
+    /// Whether the host answers for several specs in one run, each from its own directories. A
+    /// host that names a module only by its name can't.
+    fn is_checking_several(&self) -> bool {
+        true
+    }
 }
 
 /// The file system and the process the binary runs in.

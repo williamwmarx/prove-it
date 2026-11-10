@@ -156,6 +156,12 @@ fn check_specs(args: &[String], java: &Java, is_tlc: bool, output: &mut Output<'
             paths.push(found);
         }
     }
+    if paths.len() > 1 && !output.host.is_checking_several() {
+        return not_native(
+            output,
+            "several specifications in one check of a host's sources",
+        );
+    }
     let mut exit_codes = Vec::new();
     for (index, path) in paths.iter().enumerate() {
         let mut printer = Printer::new(parsed.has("-tool"), !parsed.has("-nowarning"), output);

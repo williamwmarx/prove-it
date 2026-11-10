@@ -125,3 +125,15 @@ fn reports_a_missing_configuration_as_tlc_does() {
         "{out}"
     );
 }
+
+#[test]
+fn declines_several_specs_whose_modules_it_would_name_alike() {
+    let (result, _) = check(&["-noGenerateSpecTE", "/a/One.tla", "/b/Two.tla"], |key| {
+        key.strip_prefix("text:").map(|_| String::new())
+    });
+    assert_eq!(get(&result, "exitCode"), HostValue::Number(1.0));
+    assert_eq!(
+        text(&get(&result, "err")),
+        "prove-it: not native yet: several specifications in one check of a host's sources\n"
+    );
+}
