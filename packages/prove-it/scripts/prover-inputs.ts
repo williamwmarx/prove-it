@@ -14,14 +14,7 @@
 // modules:
 //   NODE_OPTIONS=--max-old-space-size=4500 bun scripts/run.ts prover-inputs [--record] [--jobs n]
 
-import {
-  appendFileSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { TlaError, TlaProverError } from "../src/errors";
@@ -29,6 +22,7 @@ import { decide } from "../src/prover/deciders";
 import { proveObligations } from "../src/prover/prove";
 import type { Decision } from "../src/prover/verdict";
 import { CORPORA_DIRECTORY, getOption } from "./corpora";
+import { appendJournal, readJournal, repairJournal } from "./journal";
 import { runModuleWorkers } from "./module-workers";
 import {
   getModuleObligations,
@@ -85,14 +79,14 @@ interface RecordedModule {
   inputs: Record<string, InputRecord>;
 }
 
-// The modules this recording has finished, which a stop may have left the last line of unfinished.
+// The modules this recording has finished. The parent cuts what a stop left unfinished, before
+// any worker appends.
 const readRecording = () =>
   new Map(
-    (existsSync(RECORDING_PATH) ? readFileSync(RECORDING_PATH, "utf8").split("\n") : [])
-      .filter((line) => line.endsWith("}"))
-      .map((line): RecordedModule => JSON.parse(line))
-      .map((recorded) => [recorded.id, recorded.inputs]),
+    readJournal<RecordedModule>(RECORDING_PATH).map((recorded) => [recorded.id, recorded.inputs]),
   );
+
+if (isRecording && !process.argv.includes("--worker")) repairJournal(RECORDING_PATH);
 
 // The inputs of a module's proofs, by digest.
 const writeModuleInputs = async (module: ModuleProofRecord) => {
@@ -122,7 +116,7 @@ const writeModuleInputs = async (module: ModuleProofRecord) => {
   });
   if (isRecording) {
     mkdirSync(PROVER_INPUTS_DIRECTORY, { recursive: true });
-    appendFileSync(RECORDING_PATH, `${JSON.stringify({ id: module.id, inputs })}\n`);
+    appendJournal(RECORDING_PATH, { id: module.id, inputs });
   }
   return inputs;
 };
