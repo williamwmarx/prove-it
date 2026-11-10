@@ -36,18 +36,21 @@ how.
     memo tables, fingerprints and symmetry images stay warm from level to level.
 - **Stops (4.2).** A thread that stops at state `p` lowers an atomic `stop` to `p` and quits. The
   others finish every state before `stop` and skip the rest.
-  - The merge keeps the candidates and generated counts of the states before `stop`, so the
-    checkpoint is the one-thread search's, with the reason the one-thread search gives for `p`. A
-    state earlier in the level that would stop it stops it first.
+  - The merge keeps the candidates and generated counts of the states before `stop`. The rest of
+    the level then runs on one thread, from `p`: it expands `p` again and stops there as the
+    one-thread search does, with the violation's trace and counts, or the error's place, that TLC
+    reports. A thread keeps none of that, so a stop that ended the level at once left the native
+    binary nothing to print, and the TypeScript CLI an interpreter to hand over to. A state earlier
+    in the level that would stop it stops it first.
   - `PROVE_IT_STOP_AT` inside a shared level is a stop at that state.
   - Where the key is the state, an invariant that fails of a successor a thread takes for new
     stops it at once: if another thread found that state first, its parent is earlier and stops
     the search first. Under a VIEW or symmetry the state another thread found first can be another
     state with the same key, whose invariant TLC checks instead, so the thread only records the
-    failure, an invariant false or one that fails to evaluate, with its reason, and the merge stops
-    there only if that successor's key is still new when its parent's turn comes.
-- **How many threads.** `PROVE_IT_WORKERS`, at most `available_parallelism`, since more threads
-  than the machine runs at once only take turns. The coordinator waits on the threads it spawned,
+    failure, an invariant false or one that fails to evaluate, and the merge stops there only if
+    that successor's key is still new when its parent's turn comes.
+- **How many threads.** `PROVE_IT_WORKERS`, in the binding and in the native binary, at most
+  `available_parallelism`, since more threads than the machine runs at once only take turns. The coordinator waits on the threads it spawned,
   and no thread spins.
 - **The first level** is the initial states, and is shared like any other.
 - **Where it runs on one thread.** A level runs on one thread when:
@@ -60,6 +63,12 @@ how.
 
   Each level then still runs on the fast one-thread path. VIEW, symmetry, constraints and
   `PROVE_IT_FP_VERIFY` all share levels.
+- **The liveness checker's atoms** are answered on helper threads, each on an overlay of the store
+  (`on_helpers`), unless something prints, draws, reads or sets TLC's registers, ranks strings
+  with ToString, caches with TLCCache or builds a function TLC keeps lazy: a helper has none of
+  the search machine's registers, generator, cache or functions. A helper starts with the search
+  machine's values of the definitions TLC computed once at startup, so it never computes one again:
+  SpanTreeRandom's `Edges`, drawn with RandomElement, gave each helper a graph of its own.
 - **Contention.** Two things threads wrote to that they all read made two threads each run at half
   speed on Commit: the record-field position hint, now written only when it changes, and a
   thread's registers next to another's, now on cache lines of their own.
