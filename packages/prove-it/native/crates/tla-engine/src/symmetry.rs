@@ -63,8 +63,13 @@ const UNKNOWN: u32 = u32::MAX;
 /// with each other without failing.
 #[derive(Clone, PartialEq, Eq, Hash)]
 enum Shape {
-    // The parts of an empty value, and an untyped model value, which compares with any value.
+    // The parts of an empty value.
     Any,
+    // Untyped model values, which compare with any value, with values of the inner shape. TLC
+    // compares a function with keys of such a mix with one over an interval only where the keys
+    // are integers (`FcnRcdValue.compareOtherInterval`), failing at a model value, so keys of
+    // untyped model values mixed with other than model values make no shape.
+    Untyped(u32),
     Bool,
     Int,
     Str,
@@ -516,6 +521,19 @@ impl Canonicalizer {
         index
     }
 
+    // The shape of a function that isn't a record, by its keys' and values' shapes.
+    fn function_shape(&mut self, key: u32, value: u32) -> u32 {
+        if key == UNSAFE || value == UNSAFE {
+            return UNSAFE;
+        }
+        if let Shape::Untyped(inner) = self.shapes[key as usize]
+            && !matches!(self.shapes[inner as usize], Shape::Any | Shape::Model(_))
+        {
+            return UNSAFE;
+        }
+        self.intern_shape(Shape::Function(key, value))
+    }
+
     // The shape that compares as both do, or UNSAFE where a comparison of the two could fail.
     fn join(&mut self, left: u32, right: u32) -> u32 {
         if left == right || left == UNSAFE || right == UNSAFE {
@@ -524,6 +542,11 @@ impl Canonicalizer {
         let joined = match (&self.shapes[left as usize], &self.shapes[right as usize]) {
             (Shape::Any, _) => return right,
             (_, Shape::Any) => return left,
+            (&Shape::Untyped(left), &Shape::Untyped(right)) => {
+                Shape::Untyped(self.join(left, right))
+            }
+            (&Shape::Untyped(inner), _) => Shape::Untyped(self.join(inner, right)),
+            (_, &Shape::Untyped(inner)) => Shape::Untyped(self.join(left, inner)),
             (Shape::EmptyFunction, Shape::Record(_) | Shape::Tuple(_) | Shape::Function(..)) => {
                 return right;
             }
@@ -537,7 +560,7 @@ impl Canonicalizer {
             (&Shape::Function(left_key, left_value), &Shape::Function(right_key, right_value)) => {
                 let key = self.join(left_key, right_key);
                 let value = self.join(left_value, right_value);
-                Shape::Function(key, value)
+                return self.function_shape(key, value);
             }
             (Shape::Tuple(left), Shape::Tuple(right)) => {
                 let (left, right) = (left.clone(), right.clone());
@@ -564,8 +587,7 @@ impl Canonicalizer {
             _ => return UNSAFE,
         };
         let is_unsafe = match &joined {
-            Shape::Set(element) => *element == UNSAFE,
-            Shape::Function(key, value) => *key == UNSAFE || *value == UNSAFE,
+            Shape::Set(element) | Shape::Untyped(element) => *element == UNSAFE,
             Shape::Tuple(positions) => positions.contains(&UNSAFE),
             Shape::Record(fields) => fields.iter().any(|&(_, shape)| shape == UNSAFE),
             _ => false,
@@ -592,7 +614,10 @@ impl Canonicalizer {
             KIND_STRING | KIND_MODEL if !store.is_text_ordered(id) => UNSAFE,
             KIND_STRING => self.intern_shape(Shape::Str),
             KIND_MODEL => match store.get_model_type(id) {
-                0 => self.intern_shape(Shape::Any),
+                0 => {
+                    let any = self.intern_shape(Shape::Any);
+                    self.intern_shape(Shape::Untyped(any))
+                }
                 model_type => self.intern_shape(Shape::Model(model_type)),
             },
             KIND_SET => {
@@ -649,11 +674,7 @@ impl Canonicalizer {
                     let value_shape = self.shape_of(store, store.get_range_value(id, position));
                     value = self.join(value, value_shape);
                 }
-                if key == UNSAFE || value == UNSAFE {
-                    UNSAFE
-                } else {
-                    self.intern_shape(Shape::Function(key, value))
-                }
+                self.function_shape(key, value)
             }
             _ => UNSAFE,
         };
@@ -997,6 +1018,38 @@ mod tests {
         );
         let mut state = [c, y];
         assert!(canonicalizer.canonicalize(&mut store, &mut state).is_err());
+    }
+
+    #[test]
+    fn keeps_untyped_model_keys_from_mixing_with_other_keys() {
+        // TLC compares a function with one over an interval by integer keys only
+        // (`FcnRcdValue.compareOtherInterval`), failing at a model value, which the store's order
+        // passes: functions whose keys could meet that way go to TLC's loop.
+        let mut store = Store::new();
+        let [a, b, c] = ["a", "b", "c"].map(|name| model(&mut store, name));
+        let typed = model(&mut store, "A_1");
+        let swaps = vec![HashMap::from([(a, b), (b, a)])];
+        let mut canonicalizer = Canonicalizer::new(&store, close_group(swaps), vec![0]);
+        let [one, two] = [1, 2].map(|value| store.int(value).expect("an int"));
+        let mixed = store
+            .function_of(&[a, two], &[one, one])
+            .expect("a function");
+        let by_model = store.function_of(&[a], &[one]).expect("a function");
+        let by_int = store.function_of(&[two], &[one]).expect("a function");
+        let ranging = store
+            .function_of(&[a, b, c], &[by_model, by_int, a])
+            .expect("a function");
+        for value in [mixed, ranging] {
+            assert_eq!(canonicalizer.shape_of(&mut store, value), UNSAFE);
+        }
+        let by_models = store.function_of(&[a, b], &[one, two]).expect("a function");
+        let by_any_models = store
+            .function_of(&[a, typed], &[one, two])
+            .expect("a function");
+        let of_models = store.function_of(&[c], &[by_models]).expect("a function");
+        for value in [by_models, by_any_models, of_models] {
+            assert_ne!(canonicalizer.shape_of(&mut store, value), UNSAFE);
+        }
     }
 
     // A value of mixed kinds, built from `next`, or none where the store refuses one.
