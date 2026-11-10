@@ -689,6 +689,20 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
     // `getPostConditionSpecs`), which the binary doesn't report: it declines one that may be.
     let configured = ir.model.postconditions.iter().chain(&ir.model.alias);
     let definitions: Vec<u32> = configured.filter_map(|name| name.definition).collect();
+    // TLC names a postcondition with where its definition's body is written.
+    let is_postcondition_unplaced = ir.model.postconditions.iter().any(|postcondition| {
+        postcondition.definition.is_none_or(|definition| {
+            match &ir.nodes.arena[ir.definitions[definition as usize] as usize].kind {
+                tla_ir::NodeKind::Definition(definition) => {
+                    ir.nodes.arena[definition.body as usize].range.is_none()
+                }
+                _ => true,
+            }
+        })
+    });
+    if is_postcondition_unplaced {
+        return report_not_native(printer, "a POSTCONDITION without a place in the source");
+    }
     if !definitions.is_empty() {
         let is_precomputed = Rebuilder::new(&ir).map_or(true, |mut rebuilder| {
             definitions
@@ -1670,9 +1684,12 @@ pub(crate) fn print_postcondition_failure(
         })
         .unwrap_or_default();
     let (code, text) = match verdict {
-        PostconditionVerdict::Failed(message) => (
+        PostconditionVerdict::Failed { text, tool_text } => (
             code::POSTCONDITION_FAILED,
-            format!("Evaluating postcondition {name}{location} failed.\n{message}"),
+            format!(
+                "Evaluating postcondition {name}{location} failed.\n{}",
+                if printer.is_tool { tool_text } else { text }
+            ),
         ),
         _ => (
             code::POSTCONDITION_FALSE,
