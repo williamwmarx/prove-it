@@ -18,7 +18,7 @@ use tla_ir::{Ir, LiveTerm, Model, PredicateForm};
 use tla_live::{Event, Liveness, Term, Verdict};
 use tla_values::fingerprint::{Dense, Entries, Fingerprints, Overlaid, Parent, SharedFingerprints};
 use tla_values::random::JavaRandom;
-use tla_values::store::{KIND_SET, Outcome, TRUE};
+use tla_values::store::{KIND_SET, Outcome, ShapeJoin, TRUE};
 use tla_values::transfer::{EncodedStates, SharedEncoder, SharedStates, StateEncoder};
 use tla_values::{Bail, Id, NESTING_STACK_BYTES, Store};
 
@@ -75,6 +75,9 @@ pub struct Settings {
     /// PROVE_IT_TEST_LIVE_CHECK_AT, for tests: the number of expanded states after which the
     /// search checks the temporal properties the first time, rather than after FIRST_PROGRESS.
     pub test_live_check_at: Option<usize>,
+    /// Whether the search hands every state it found to [`Reporter::dumped`] as it ends, for
+    /// `-dump`.
+    pub is_dumped: bool,
     /// What the caller tells the system of a large region of memory the search has just allocated
     /// and not yet touched, its address and length in bytes: the state table, from 32 MB, whose
     /// probes land anywhere in it. The CLI asks Linux to back it with huge pages.
@@ -111,6 +114,7 @@ impl Default for Settings {
             minimum_shared_level: MINIMUM_SHARED_LEVEL,
             is_liveness_periodic: false,
             test_live_check_at: None,
+            is_dumped: false,
             large_region_advice: None,
         }
     }
@@ -153,6 +157,11 @@ pub trait Reporter {
     fn is_cancelled(&self) -> bool {
         false
     }
+    /// Every state the search found, in the order it found them, `width` ids of `store` each, as
+    /// TLC's `-dump` writes them (`StateWriter`): once, as the search ends, where
+    /// `Settings::is_dumped`. A search that ends without calling it, such as one stopped computing
+    /// its initial states, leaves the dump to its caller.
+    fn dumped(&mut self, _store: &Store, _states: &[Id], _width: usize) {}
 }
 
 /// Why the engine leaves an assumption to its caller.
@@ -505,6 +514,7 @@ const TLC_FAILURES: &[&str] = &[
     "variable not assigned",
     "zero to the power of zero",
     crate::compile::lazy::SUBSET_OVERFLOW,
+    crate::compile::NON_SET_OPERAND,
 ];
 
 /// The counts of a search that stopped, as TLC reports them.
@@ -1789,6 +1799,7 @@ struct Expanded {
     deferred: Vec<(u32, u64)>,
     collisions: u64,
     is_past_walk: bool,
+    is_membership_unsafe: bool,
 }
 
 // A level the threads share: the states `[start, end)`, the next run to claim, and the first
@@ -1923,6 +1934,7 @@ fn expand_claimed(worker: &mut Worker<'_>, shared: &Shared<'_>) -> Expanded {
         deferred: found.deferred,
         collisions: found.collisions,
         is_past_walk: worker.machine.is_past_walk,
+        is_membership_unsafe: worker.machine.is_membership_unsafe,
     }
 }
 
@@ -2188,6 +2200,24 @@ impl Search<'_, States> {
         for found in &expanded {
             self.states.collisions += found.collisions;
             machine.is_past_walk |= found.is_past_walk;
+            machine.is_membership_unsafe |= found.is_membership_unsafe;
+        }
+        // The shapes each thread's walks assigned, joined into the store's from the values that
+        // widened them, which the thread's overlay forgets at the next level.
+        if let Some(joins) = &mut machine.assigned_shapes {
+            for worker in workers.iter_mut() {
+                let overlay = &worker.machine.store;
+                for (join, found) in joins
+                    .iter_mut()
+                    .zip(worker.machine.assigned_shapes.iter_mut().flatten())
+                {
+                    for &id in found.widening() {
+                        let id = machine.store.import(overlay, id, &mut worker.imported);
+                        machine.store.join_shape(join, id);
+                    }
+                    *found = ShapeJoin::default();
+                }
+            }
         }
         self.expanding = stop;
         // The fingerprints each thread computed, of the store's values and of the values it made
@@ -2362,13 +2392,15 @@ fn check_assumptions(
             // TLC further, as where TLC compares two sets it can't enumerate part by part. So
             // is one that enumerates a set the engine takes for one TLC can't enumerate, which
             // TLC fails at only where it enumerates such a set itself: it compares two sets of
-            // functions over Nat by their parts, and enumerates `Nat \cap S` by S.
+            // functions over Nat by their parts, and enumerates `Nat \cap S` by S. So is a set
+            // operation on a value that isn't a set, which TLC may never test for an element.
             Err(bail)
                 if is_native
                     && (is_engine_limit(bail.0)
                         || [
                             crate::compile::lazy::INFINITE_DOMAIN,
                             crate::compile::INFINITE_BOUND,
+                            crate::compile::NON_SET_OPERAND,
                         ]
                         .contains(&bail.0)) =>
             {
@@ -2725,6 +2757,17 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         // Read as the tables are answered, since taking the steps from the states the search
         // didn't store may take a shortcut past a walk too.
         let is_enabled_exact = !machine.is_past_walk;
+        // Where no walk took the shortcut or enumerated an empty set for an assignment, no
+        // comparison of an assigned value can fail, and no string was ranked since (which may take
+        // a string out of its class), TLC's predicate evaluation of the next-state relation holds
+        // of every step the walks took.
+        let is_next_taken = is_enabled_exact
+            && !machine.is_membership_unsafe
+            && !machine.store.has_unordered_strings()
+            && machine
+                .assigned_shapes
+                .as_ref()
+                .is_some_and(|joins| joins.iter().all(ShapeJoin::is_comparable));
         let live = match reals {
             Some(reals) => LiveGraph {
                 states: &reals.states,
@@ -2735,6 +2778,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 edges: &reals.edges,
                 labels: reals.labels.as_deref(),
                 is_enabled_exact,
+                is_next_taken,
             },
             None => LiveGraph {
                 states: &search.states.ids[..count * width],
@@ -2745,6 +2789,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 edges: &graph.edges[..edge_count],
                 labels: graph.labels.as_ref().map(|labels| &labels[..edge_count]),
                 is_enabled_exact,
+                is_next_taken,
             },
         };
         answer_atoms(
@@ -2798,6 +2843,14 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         machine.set_slot(LEVEL_SLOT, zero);
         search.set_distinct(&mut machine, 0)?;
         search.reporter.initial_states_started();
+        // An action atom answered from the steps needs the shapes of what the walks assign.
+        if context
+            .atoms
+            .iter()
+            .any(|atom| matches!(atom, Atom::Action { is_next: true, .. }))
+        {
+            machine.assigned_shapes = Some((0..width).map(|_| ShapeJoin::default()).collect());
+        }
         (context.init)(&mut machine, &mut |machine: &mut Machine<'_>| {
             search.visit_initial(machine, &context)
         })?;
@@ -2984,6 +3037,10 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                                 machine: {
                                     let mut worker = Machine::new(&program, Store::new());
                                     worker.share_memo(thread_count);
+                                    worker.assigned_shapes =
+                                        machine.assigned_shapes.as_ref().map(|joins| {
+                                            joins.iter().map(|_| ShapeJoin::default()).collect()
+                                        });
                                     worker
                                 },
                                 fingerprints: Fingerprints::default(),
@@ -3218,6 +3275,11 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     },
                 );
             }
+            if settings.is_dumped {
+                search
+                    .reporter
+                    .dumped(&machine.store, &search.states.ids[..count * width], width);
+            }
             let lasso_actions = match &liveness.verdict {
                 Verdict::Lasso {
                     path, loop_start, ..
@@ -3286,6 +3348,11 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                         graph: search.graph.as_ref(),
                     },
                 );
+            }
+            if settings.is_dumped {
+                search
+                    .reporter
+                    .dumped(&machine.store, &search.states.ids[..count * width], width);
             }
             // The temporal properties are checked here, and the interpreter takes the graph over
             // only to print a counterexample, to check them itself, or under PROVE_IT_LIVE_CHECK
@@ -3645,6 +3712,22 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                         graph: None,
                     },
                 );
+            }
+            if settings.is_dumped {
+                // TLC writes a state as it adds it to its set: the states the stopping expansion
+                // found too, and the state that stopped it where TLC counted that one as found.
+                let found = search.states.count();
+                let mut states = search.states.ids[..found * width].to_vec();
+                if let Some(Found {
+                    last: Some(last),
+                    counts,
+                    ..
+                }) = &search.violation
+                    && counts.distinct == found as u64 + 1
+                {
+                    states.extend_from_slice(last);
+                }
+                search.reporter.dumped(&machine.store, &states, width);
             }
             let checkpoint = if search.graph.is_none() {
                 let states = &search.states;
