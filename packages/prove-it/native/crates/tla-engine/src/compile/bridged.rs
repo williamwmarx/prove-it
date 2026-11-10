@@ -154,31 +154,45 @@ fn pairs_of(machine: &mut Machine<'_>, function: Id) -> (Vec<Id>, Vec<Id>) {
     (keys, values)
 }
 
-fn sub_seq(machine: &mut Machine<'_>, args: &[Id], _: &[Applier]) -> Outcome<Id> {
-    let sequence = args[0];
+/// The positions `SubSeq(sequence, start, end)` takes, from and to, where TLC's SubSeq takes them,
+/// failing where it fails.
+pub(crate) fn sub_seq_bounds(
+    machine: &Machine<'_>,
+    sequence: Id,
+    start: Id,
+    end: Id,
+) -> Outcome<(u32, u32)> {
     let is_text = machine.store.kind_of(sequence) == KIND_STRING;
     if !is_text && machine.store.kind_of(sequence) != KIND_TUPLE {
         return Err(Bail("SubSeq of a non-sequence"));
     }
-    let start = expect_int(machine, args[1])?;
-    let end = expect_int(machine, args[2])?;
+    let start = expect_int(machine, start)?;
+    let end = expect_int(machine, end)?;
     let length = if is_text {
         machine.store.text_of(sequence).len() as i64
     } else {
         i64::from(machine.store.size_of(sequence))
     };
-    let (from, to) = if start > end {
-        (0, 0)
+    if start > end {
+        Ok((0, 0))
     } else if start < 1 || start > length || end > length {
-        return Err(Bail("SubSeq outside the sequence's domain"));
+        Err(Bail("SubSeq outside the sequence's domain"))
     } else {
-        (start - 1, end)
-    };
-    if is_text {
-        let text = machine.store.text_of(sequence)[from as usize..to as usize].to_vec();
-        return Ok(machine.store.str(&text));
+        Ok(((start - 1) as u32, end as u32))
     }
-    Ok(machine.store.slice_tuple(sequence, from as u32, to as u32))
+}
+
+pub(crate) fn sub_seq_of(machine: &mut Machine<'_>, sequence: Id, from: u32, to: u32) -> Id {
+    if machine.store.kind_of(sequence) == KIND_STRING {
+        let text = machine.store.text_of(sequence)[from as usize..to as usize].to_vec();
+        return machine.store.str(&text);
+    }
+    machine.store.slice_tuple(sequence, from, to)
+}
+
+fn sub_seq(machine: &mut Machine<'_>, args: &[Id], _: &[Applier]) -> Outcome<Id> {
+    let (from, to) = sub_seq_bounds(machine, args[0], args[1], args[2])?;
+    Ok(sub_seq_of(machine, args[0], from, to))
 }
 
 // TLC inserts each element before the first one sorted so far that it precedes.
