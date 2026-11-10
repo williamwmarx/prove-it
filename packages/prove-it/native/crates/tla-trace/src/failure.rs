@@ -308,24 +308,43 @@ impl<'ir> Rebuilder<'ir> {
         let result = evaluator.evaluate(node, &Context::default());
         let call_stack = evaluator.call_stack.take().unwrap_or_default();
         let printed = std::mem::take(&mut evaluator.printed);
-        let Err(error) = result else {
-            return Err(Unsupported(
-                "evaluating the assumption again: it didn't fail".into(),
-            ));
-        };
-        if let Some(reason) = call_stack
-            .unfollowed
-            .filter(|reason| !UNFOLLOWED_FRAMES.contains(reason))
-        {
-            return Err(Unsupported(format!(
-                "evaluating the assumption again: {reason}"
-            )));
-        }
-        let Some(message) = error.message else {
-            return Err(Unsupported(format!(
-                "evaluating the assumption again: {}",
-                error.reason
-            )));
+        let message = match result {
+            Ok(Value::Bool(_)) => {
+                return Err(Unsupported(
+                    "evaluating the assumption again: it didn't fail".into(),
+                ));
+            }
+            // `Tool.isValid` fails on an assumption that is no boolean, naming its place.
+            Ok(_) if ir.nodes.arena[node as usize].range.is_some() => TlcMessage {
+                text: format!(
+                    "TLC expected a boolean value, but did not find one. {}",
+                    evaluator.describe_range(node)
+                ),
+                code: Some(EXPECTED_VALUE),
+                is_eval_exception: false,
+            },
+            Ok(_) => {
+                return Err(Unsupported(
+                    "an assumption that is no boolean, without a range".into(),
+                ));
+            }
+            Err(error) => {
+                if let Some(reason) = call_stack
+                    .unfollowed
+                    .filter(|reason| !UNFOLLOWED_FRAMES.contains(reason))
+                {
+                    return Err(Unsupported(format!(
+                        "evaluating the assumption again: {reason}"
+                    )));
+                }
+                let Some(message) = error.message else {
+                    return Err(Unsupported(format!(
+                        "evaluating the assumption again: {}",
+                        error.reason
+                    )));
+                };
+                message
+            }
         };
         let headline = format!("Evaluating assumption {} failed.", ir.texts[name as usize]);
         Ok(Failure {

@@ -315,11 +315,69 @@ read-only memo snapshots.
   on before it probes for the current one. MCExactInitialSync at 4 threads: 9.15 → 8.36 s
   (medians of 9, ranges 8.66–9.58 and 8.07–9.09). Neutral where the table fits the cache
   (MCbtree, Detlefs). One thread doesn't merge.
-- **Next: fill the table in parallel.** A serial pass numbers the level's new states in
-  (parent, step) order, deduplicating them in a small table of the level's own; then each thread
-  inserts the winners of its shard of a table split by the fingerprint's top bits. That needs the
-  layout of `perf-state-table` (the one-thread probe path, owned by that track) and its
-  `find`/`insert` at a slot.
+- **Done: the threads fill the table.** After the threads expand a level, they fill the state table
+  too: each owns a range of its slots, split by the fingerprint's top bits (the home slot), and
+  walks the level's candidates in (parent, step) order, probing and inserting those whose home is in
+  its range. The merge then only numbers and imports the new states; a fingerprint whose probe runs
+  past its thread's range, and 0, it probes itself, in order as before. That takes a table without
+  indices, which is the binary's (no fingerprint verification), no graph recorded, and no invariant
+  deferred to the merge (a VIEW or SYMMETRY whose new state fails one); those still merge serially. On 4 cores, medians
+  of 5 interleaved runs at 4 threads against `perf-state-table`, every count unchanged:
+  MCExactInitialSync 7.63 → 7.08 s (−7%), MCbtree 0.398 → 0.371 (−7%), MCMultiNode 2.75 → 2.62
+  (−5%), PaxosCommit 9.02 → 8.66 (−4%), Detlefs 1.13 → 1.09 (−4%). The rest is within noise
+  (TLCSailfish1, FastPaxos and MCLamportMutex checked over 9 runs each), and the models that record
+  a graph or run on one thread don't fill.
+- **Measured, not done: growing the table on threads.** Doubling the table takes 220–350 ms at the
+  last doubling on MCExactInitialSync, nearly all of it the kernel faulting in 4 KB pages
+  (transparent huge pages are `madvise` on the machine measured). Threads rewriting ranges of it
+  fault in parallel and contend: 0.6 s slower at 4 threads. With `MADV_HUGEPAGE` on the table it
+  takes 55–120 ms and the run 7.21 → 6.25 s at 4 threads; that is track 8's next change.
+- **Memory with threads, measured on PaxosCommit.** Each thread's overlay of the store holds about
+  82 MB (meta 16 MB, heap 64 MB, its table 2 MB), against the base store's 16 MB table and the
+  states' 40 MB. Reusing the level's candidate buffers from level to level changed neither peak RSS
+  (2,135–2,158 MB against 2,074–2,187 MB) nor time. The rest is the memo tables each thread doubles
+  (track 4's per-thread budget, #187) and what glibc keeps in each thread's arena once they free.
+- **Measured, not done: an overlay that reads the base in place.** Rather than copy the store's
+  values, blocks and texts, an overlay read those below its base's counts from the store itself.
+  Peak RSS at 4 threads fell on PaxosCommit 1,427 → 1,202 MB, but one thread ran 11–15% slower
+  (PaxosCommit 20.0 → 23.0 s, MCExactInitialSync 15.3 → 17.0 s), with the store's path out of line
+  and cold: the test of which store holds a value, on every read in `compare_functions`,
+  `find_in_block` and `compare`. Only a store generic over the two kinds would avoid it.
+- **Measured, not done, each within noise at 4 threads:** prefetching a thread's own table of the
+  level's states with the state table's; importing the values a thread computed once, a constant's,
+  into the store after each level (they are nearly all computed at startup); inlining the lookup
+  of a length's shift table. Keeping the threads from level to level isn't worth building: the
+  suite's searches are at most 82 levels deep, a few milliseconds of starts.
+- **Where the threads' time goes.** At 4 threads the threads take 50–64% more CPU than one thread
+  does, spread evenly over evaluation, the memo tables, the store and the fingerprints: the cores
+  contend for memory and cache, rather than any part doing more. Of what is the threads' own, their
+  probes of the state table miss the TLB (track 8's huge pages), and each thread's memo tables and
+  overlay are working sets of their own (track 4).
+- **16 cores, `main` at d7c8b5d** (before #168, #183, #178 and #182), medians of 3, every run
+  agreeing with TLC: one worker, then 16 threads.
+
+  | Model | 1 thread | 16 threads | Speedup | RSS MB, 1 → 16 |
+  |---|---:|---:|---:|---|
+  | MCExactInitialSync | 12.86 | 3.68 | 3.5× | 1,093 → 1,694 |
+  | PaxosCommit | 17.80 | 3.00 | 5.9× | 744 → 3,231 |
+  | MCMultiNode | 4.43 | 1.03 | 4.3× | 538 → 1,812 |
+  | MCLamportMutex | 1.76 | 0.54 | 3.3× | 141 → 392 |
+  | MCbtree | 0.65 | 0.20 | 3.3× | 50 → 123 |
+  | Detlefs | 3.20 | 0.69 | 4.6× | 279 → 379 |
+  | FastPaxos | 2.54 | 0.48 | 5.3× | 175 → 1,278 |
+  | TLCSailfish1 | 9.40 | 0.96 | 9.8× | 146 → 484 |
+  | MCabs | 10.07 | 1.15 | 8.8× | 34 → 205 |
+  | GameOfLife | 1.18 | 0.15 | 7.9× | 47 → 218 |
+  | BufferedRandomAccessFile | 1.47 | 0.16 | 9.2× | 34 → 69 |
+  | StarkMutex, N = 4 | 4.18 | 3.87 | 1.08× | 591 → 751 |
+  | cf1s_folklore | 12.44 | 8.58 | 1.45× | 553 → 2,244 |
+  | SpanTreeRandom | 1.61 | 1.61 | 1.0× | 71 → 71 |
+
+  The run took 1.66× the CPU of one worker overall. The weak scalers are the models with a large
+  state table and cheap states (MCExactInitialSync, MCbtree, MCLamportMutex), whose serial merge
+  this track's fill shortens. Memory grows most on FastPaxos (7×: each thread's symmetry tables of
+  images, 73 MB with 3% of their slots used, which #172's rows by id cut to 79 → 127 MB at 4
+  threads), cf1s_folklore (4×) and PaxosCommit (4.3×; 2,566 MB with #187's budget).
 
 ### 7. Interning long blocks (`perf-intern`), independent
 
@@ -494,6 +552,7 @@ dropped because they did not move it. Recorded so that nobody repeats them.
 | Cache membership in a set that reads nothing (a type's record sets) by the element | PaxosCommit, MCExactInitialSync | PaxosCommit 21.85 → 21.63 s; MCExactInitialSync 18.41 → 20.94 s, 190 MB more | `msgs \in SUBSET Message` falls from 14% to 1% of the profile but not in wall time, and the tables of elements cost the fast model. |
 | Search a long set's ids in a sorted copy instead of scanning them | TLCSailfish1 | 4.15, 4.41, 3.88 s → 4.16, 4.38, 3.83 s | Its sets are new in most states, so each copy is sorted for few tests. |
 | Read a key's metadata only where a short domain doesn't hold its id | MCabs | 12.22, 11.21 s → 11.68, 11.48 s | The misses are on the function's own words, which are read either way. |
+| Share one parse between SANY's report and the lowering | 2PCwithBTM, TCommit, TwoPhase, DieHard (`-workers 1`) | Not built: tokenizing and parsing a spec and its standard modules takes 0.26–0.66 ms of 7.9–16.7 ms runs, 3–5% at most | The report's resolution, level checks and linting stay, and the run goes to lowering (25–33%), the process (about 2 ms) and the engine's setup; such a run is already far below TLC's startup. |
 
 Counts behind the quantifier index, from an instrumentation build that counted every quantifier,
 set filter or action-level `\E` whose body starts with `m.f = e` on the bound name:
