@@ -305,6 +305,8 @@ pub struct Evaluator<'ir> {
     /// Builtins that `can_read` counts as reading the state, as `is_precomputed` asks.
     pub(crate) state_builtins: &'static [&'static str],
     texts: Vec<Option<Rc<Text>>>,
+    /// The value of each string literal, by its node.
+    literals: HashMap<NodeId, Rc<Text>>,
     ranks: HashMap<Box<[u16]>, i32>,
     /// The texts ranked past the IR's, in order, while the startup ranks what it makes as TLC
     /// interns it; none otherwise.
@@ -576,6 +578,7 @@ impl<'ir> Evaluator<'ir> {
             state_builtins: &[],
             ir,
             texts: vec![None; ir.texts.len()],
+            literals: HashMap::new(),
             ranks,
             startup_ranked: None,
             constants: vec![None; ir.values.list.len()],
@@ -626,11 +629,14 @@ impl<'ir> Evaluator<'ir> {
         self.text_of(units)
     }
 
-    /// A text with TLC's rank of it, or -1 for one the IR doesn't rank.
     /// A field name of the records TLC builds of its counterexample (`RecordValue`'s statics):
     /// interned as its class loads, after the spec's strings, in the order declared, unless the
-    /// spec has the string.
-    pub(crate) fn counterexample_field(&self, name: &str) -> Rc<Text> {
+    /// spec has the string. Where TLC dumps the trace (`is_dumped`), the trace modules it parses
+    /// after the spec's (`_TLCTrace.tla`, `_JsonTrace.tla`) intern `state`, `vars` and
+    /// `counterexample`, in that order, before SANY's semantic prelude, whose first text the IR
+    /// ranks; `action` they write as a string, which TLC interns as it runs.
+    pub(crate) fn counterexample_field(&self, name: &str, is_dumped: bool) -> Rc<Text> {
+        const PARSED: [&str; 3] = ["state", "vars", "counterexample"];
         const FIELDS: [&str; 9] = [
             "beginLine",
             "beginColumn",
@@ -646,12 +652,28 @@ impl<'ir> Evaluator<'ir> {
         if let Some(&rank) = self.ranks.get(&units) {
             return Rc::new(Text { units, rank });
         }
+        // Ranks of the prelude's texts, which no field is compared with, may be shared.
+        let prelude: Box<[u16]> = "$$InAssume".encode_utf16().collect();
+        let parsed = PARSED.iter().position(|field| *field == name);
+        if let (true, Some(position), Some(&prelude)) =
+            (is_dumped, parsed, self.ranks.get(&prelude))
+        {
+            return Rc::new(Text {
+                units,
+                rank: prelude + position as i32,
+            });
+        }
         let last = self.ranks.values().copied().max().unwrap_or(-1);
-        let position = FIELDS.iter().position(|field| *field == name);
+        let fields = if is_dumped { &PARSED[..] } else { &[] };
+        let position = fields
+            .iter()
+            .chain(&FIELDS)
+            .position(|field| *field == name);
         let rank = position.map_or(-1, |position| last + 1 + position as i32);
         Rc::new(Text { units, rank })
     }
 
+    /// A text with TLC's rank of it, or -1 for one the IR doesn't rank.
     pub fn text_of(&self, units: Box<[u16]>) -> Rc<Text> {
         let rank = self.ranks.get(&units).copied().unwrap_or(-1);
         Rc::new(Text { units, rank })
@@ -1144,7 +1166,17 @@ impl<'ir> Evaluator<'ir> {
             NodeKind::Number(int) => Ok(Value::Int(*int)),
             NodeKind::WideNumber(_) => fail("an integer outside 32 bits"),
             NodeKind::Decimal(_) => fail("a real number"),
-            NodeKind::String(text) => Ok(Value::Str(self.text(*text))),
+            // TLC makes a string literal's value once, as the node's tool object, so each
+            // evaluation of the node gives the same object (`Tool.evalAppl`'s `StringKind`).
+            NodeKind::String(text) => {
+                let node = self.node(node).0;
+                if let Some(literal) = self.literals.get(&node) {
+                    return Ok(Value::Str(Rc::clone(literal)));
+                }
+                let literal = self.text_of(self.ir.get_text_units(*text).into());
+                self.literals.insert(node, Rc::clone(&literal));
+                Ok(Value::Str(literal))
+            }
             NodeKind::Identifier(name) => self.identifier(node, name, context),
             NodeKind::Apply { name, args } => match (name.resolution, &args[..]) {
                 (Resolution::Builtin(index), &[left, right])
