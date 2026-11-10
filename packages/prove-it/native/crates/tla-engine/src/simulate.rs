@@ -120,6 +120,7 @@ pub fn simulate(
         context: &context,
         reporter,
         simulation,
+        order: ir.tlc_order.iter().map(|&index| index as usize).collect(),
         check_deadlock: model.check_deadlock,
         generated: 0,
         traces: 0,
@@ -179,6 +180,8 @@ struct Run<'r, 'c> {
     context: &'c EngineContext,
     reporter: &'r mut dyn Reporter,
     simulation: &'c Simulation,
+    // TLC's order of the variables.
+    order: Vec<usize>,
     check_deadlock: bool,
     generated: u64,
     traces: u64,
@@ -346,7 +349,7 @@ impl Run<'_, '_> {
                         trace.push(successor);
                         labels.push(Some(index as u32));
                         let kind = ViolationKind::Invariant(owner);
-                        self.stop(machine, trace, labels, kind);
+                        self.stop(machine, trace, labels, kind)?;
                         return Ok(true);
                     }
                     Err(bail) => return Err(bail),
@@ -359,7 +362,7 @@ impl Run<'_, '_> {
             if self.next_states.is_empty() {
                 if self.check_deadlock {
                     let kind = ViolationKind::Deadlock { accepted: None };
-                    self.stop(machine, states, labels, kind);
+                    self.stop(machine, states, labels, kind)?;
                     return Ok(true);
                 }
                 break;
@@ -377,25 +380,48 @@ impl Run<'_, '_> {
     // (`SimulationWorker.getTrace`).
     fn stop(
         &mut self,
-        machine: &Machine<'_>,
+        machine: &mut Machine<'_>,
         states: Vec<Vec<Id>>,
         labels: Vec<Option<u32>>,
         kind: ViolationKind,
-    ) {
-        let mut kept_states: Vec<Vec<Id>> = Vec::with_capacity(states.len());
-        let mut kept_labels = Vec::with_capacity(labels.len());
-        for (state, label) in states.into_iter().zip(labels) {
-            if kept_states.last() != Some(&state) {
-                kept_states.push(state);
-                kept_labels.push(label);
+    ) -> Outcome<()> {
+        // From the last state back, a state equal to the one before it is dropped. TLC compares
+        // the states' values in its order of the variables, up to the first that differs, which
+        // fails where TLC can't compare them.
+        let mut kept = Vec::with_capacity(states.len());
+        for position in (0..states.len()).rev() {
+            let is_stuttering =
+                position > 0 && self.is_equal(machine, &states[position], &states[position - 1])?;
+            if !is_stuttering {
+                kept.push(position);
             }
         }
+        kept.reverse();
         self.stopped = Some(Stopped {
             kind,
-            states: kept_states,
-            labels: kept_labels.into_iter().skip(1).collect(),
+            states: kept
+                .iter()
+                .map(|&position| states[position].clone())
+                .collect(),
+            labels: kept
+                .iter()
+                .skip(1)
+                .map(|&position| labels[position])
+                .collect(),
             registers: machine.registers.clone(),
         });
+        Ok(())
+    }
+
+    // `TLCStateMut.equals`.
+    fn is_equal(&self, machine: &mut Machine<'_>, left: &[Id], right: &[Id]) -> Outcome<bool> {
+        for &variable in &self.order {
+            let (left, right) = (left[variable], right[variable]);
+            if left != right && !machine.store.equals_asked(left, right)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     // `SimulationWorker.addElement`: a successor the walk completed, checked against the

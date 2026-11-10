@@ -45,6 +45,29 @@ Inv == x < 3
 ====
 ";
 
+const STUTTERING: &str = "---- MODULE Stut ----
+EXTENDS Naturals, TLC
+VARIABLE x
+Init == x = 0
+A == x' = x + 1
+B == UNCHANGED x
+Next == A \\/ B
+Inv == TLCGet(\"level\") < 9 \\/ x < 3
+====
+";
+
+// TLC's Github743: a step from x = TRUE to x = "foo", which TLC fails to compare as it drops the
+// trace's stuttering steps.
+const INCOMPARABLE: &str = "---- MODULE Github743 ----
+EXTENDS Integers
+VARIABLES x, y
+Init == x = \"foo\" /\\ y = 0
+Next == \\/ x' = \"foo\" /\\ y' = y + 1
+        \\/ x' = TRUE /\\ y' = y + 2
+Inv == y < 5
+====
+";
+
 const INVARIANT_CONFIG: &str = "INIT Init\nNEXT Next\nINVARIANT Inv\n";
 
 // Each date, yyyy-mm-dd hh:mm:ss, as `_`.
@@ -333,4 +356,58 @@ fn declines_what_races_tlcs_worker() {
             "{error}"
         );
     }
+}
+
+// TLCGet("level") counts the stuttering steps, which the trace TLC prints drops.
+#[test]
+fn drops_the_stuttering_steps_as_tlc() {
+    let (code, text) = simulate(
+        "simulate-stuttering",
+        "Stut",
+        (STUTTERING, INVARIANT_CONFIG),
+        &["-seed", "4", "-simulate", "num=1", "-depth", "50"],
+    );
+    assert_eq!(code, Some(12), "{text}");
+    assert_eq!(
+        text,
+        "Computed 1 initial states...
+Finished computing initial states: 1 distinct state generated at _.
+Error: Invariant Inv is violated.
+Error: The behavior up to this point is:
+State 1: <Init line 4, col 9 to line 4, col 13 of module Stut>
+x = 0
+
+State 2: <A line 5, col 6 to line 5, col 15 of module Stut>
+x = 1
+
+State 3: <A line 5, col 6 to line 5, col 15 of module Stut>
+x = 2
+
+State 4: <A line 5, col 6 to line 5, col 15 of module Stut>
+x = 3
+
+State 5: <A line 5, col 6 to line 5, col 15 of module Stut>
+x = 4
+
+The number of states generated: 9
+Simulation using seed 4 and aril 0
+Progress: 9 states checked, 1 traces generated (trace length: mean=0, var(x)=0, sd=0)"
+    );
+}
+
+// TLC reports the exception it throws comparing the states, which the binary doesn't print yet.
+#[test]
+fn declines_a_trace_tlc_fails_to_compare() {
+    let (output, directory) = run_spec_with(
+        "simulate-incomparable",
+        "Github743",
+        (INCOMPARABLE, INVARIANT_CONFIG),
+        &["-noTE", "-seed", "4", "-simulate", "num=1", "Github743"],
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("a failure evaluating the model in a simulation")
+    );
 }

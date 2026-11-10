@@ -11,6 +11,8 @@ use tla_front::config::ModelConfig;
 use tla_front::errors::FrontError;
 use tla_front::model::StartupMessage;
 use tla_values::print::{format_value, is_printable};
+use tla_values::store::{KIND_FUNCTION, KIND_SET, KIND_TUPLE};
+use tla_values::{Id, Store};
 
 use crate::args::Parsed;
 use crate::check::{
@@ -367,8 +369,40 @@ fn get_state_texts(
             })
             .collect();
     }
+    // The trace evaluator sorts a record's fields as TLC's fingerprints do, where TLC's
+    // simulation fingerprints no state and sorts a record only where it happens to compare it.
+    if violation
+        .states
+        .iter()
+        .flatten()
+        .any(|&value| holds_record(store, value))
+    {
+        return Err("a record of several fields, which TLC may or may not have sorted".into());
+    }
     let trace = rebuild_trace(ir, violation, None, is_tool)?;
     Ok(trace.states.into_iter().map(|state| state.text).collect())
+}
+
+// Whether a value holds a record of more than one field, whose fields TLC prints in the order
+// it holds them.
+fn holds_record(store: &Store, value: Id) -> bool {
+    let size = store.size_of(value);
+    match store.kind_of(value) {
+        KIND_SET => (0..size).any(|index| holds_record(store, store.element_at(value, index))),
+        KIND_TUPLE => {
+            (0..size).any(|index| holds_record(store, store.get_range_value(value, index)))
+        }
+        KIND_FUNCTION => {
+            (size > 1 && store.is_record(value))
+                || (0..size).any(|index| {
+                    store
+                        .peek_key(value, index)
+                        .is_some_and(|key| holds_record(store, key))
+                        || holds_record(store, store.get_range_value(value, index))
+                })
+        }
+        _ => false,
+    }
 }
 
 /// `Simulator.printSummary`: with -tool the progress, then the states generated and the seed.

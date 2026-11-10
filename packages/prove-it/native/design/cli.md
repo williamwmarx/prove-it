@@ -395,8 +395,12 @@ its headline and the trace without its finite stuttering (`getTrace`), each stat
 its action, the first with the last of TLC's initial predicates (`initial_label`, which
 tla-front finds as `initPredVec`); with `-depth -1` the error state alone. Then the summary
 (`The number of states generated`, the seed and aril) and the final progress line, in TLC's order.
-A trace's states print from the store where no value's text depends on how TLC built it, and else
-as the trace evaluator rebuilds them along the actions taken.
+`getTrace` drops a state equal to the one before it, from the last state back, comparing the
+values in TLC's order of the variables up to the first that differs, which fails where TLC can't
+compare them (TLC's Github743). A trace's states print from the store where no value's text depends
+on how TLC built it, and else as the trace evaluator rebuilds them along the actions taken, unless
+a state holds a record of several fields: the evaluator sorts its fields as TLC's fingerprints do,
+and the simulation fingerprints no state, sorting a record only where it happens to compare it.
 
 Declined, each with its reason:
 
@@ -408,7 +412,10 @@ Declined, each with its reason:
   as the main thread prints the trace, and is stopped at no particular one, so the counts race;
 - a failure evaluating the model, an incomplete state, an action property violated, an initial
   state outside a constraint or none;
-- a trace the trace evaluator can't rebuild, such as one that drew at random under an ALIAS.
+- a trace the trace evaluator can't rebuild, such as one that drew at random under an ALIAS, or
+  that holds a record of several fields where the store can't print it;
+- a temporal formula TLC's model checker rejects as it builds its liveness checker (a tautology),
+  which the simulation builds only as it checks a trace.
 
 ## Handoff
 
