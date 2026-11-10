@@ -203,3 +203,87 @@ fn takes_the_at_of_a_step_that_continues_an_infix_step() {
         )]
     );
 }
+
+#[test]
+fn words_level_errors_of_operator_arguments_and_bounds_as_sany_does() {
+    // TLC's tla2sany error corpus, E4272_Test, E4313_ConjList_Test and E4315_Existential_Test.
+    assert_eq!(
+        get_level_errors(
+            "---- MODULE E4272_Test ----\nVARIABLE v\nop(F(_)) == F(v')\nop2 == op(')\n====",
+            &[]
+        ),
+        [(
+            "line 4, col 8 to line 4, col 12 of module E4272_Test".to_owned(),
+            "Level error in applying operator op:\nThe permitted level of argument 1 of the operator argument 1 \nmust be at least 2.".to_owned()
+        )]
+    );
+    assert_eq!(
+        get_level_errors(
+            "---- MODULE E4313_ConjList_Test ----\nVARIABLE v\nop ==\n  /\\ v'\n  /\\ []v\n====",
+            &[]
+        ),
+        [(
+            "line 4, col 3 to line 5, col 8 of module E4313_ConjList_Test".to_owned(),
+            "Conjunction list has both temporal formula and action as arguments.".to_owned()
+        )]
+    );
+    assert_eq!(
+        get_level_errors(
+            "---- MODULE E4315_Existential_Test ----\nVARIABLE v\nop == \\E x \\in []v : TRUE\n====",
+            &[]
+        ),
+        [(
+            "line 3, col 7 to line 3, col 25 of module E4315_Existential_Test".to_owned(),
+            "Level error in applying operator $BoundedExists:\nThe level of the range for the bounded variable line 3, col 10 to line 3, col 10 of module E4315_Existential_Test \nexceeds the maximum level allowed by the operator.".to_owned()
+        )]
+    );
+}
+
+#[test]
+fn rejects_a_temporal_formula_a_new_symbol_ranges_over() {
+    // TLC's tla2sany error corpus, E4356_Test.
+    assert_eq!(
+        get_level_errors(
+            "---- MODULE E4356_Test ----\nVARIABLE v\nTHEOREM\n  ASSUME NEW x \\in []v\n  PROVE TRUE\n====",
+            &[]
+        ),
+        [(
+            "line 4, col 10 to line 4, col 22 of module E4356_Test".to_owned(),
+            "Level error:\nTemporal formula used as set.".to_owned()
+        )]
+    );
+}
+
+fn is_not_yet(source: &str) -> bool {
+    let config = parse_config("", TlcVersion::Master).expect("a configuration");
+    matches!(
+        create_environment(&EnvironmentOptions {
+            source,
+            load_module: &|_| None,
+            config: &config,
+            is_unconfigured: true,
+            version: TlcVersion::Master,
+            is_level_checked: true,
+            load_class: None,
+        }),
+        Err(FrontError::NotYet(_))
+    )
+}
+
+#[test]
+fn leaves_what_sanys_selectors_word_not_native() {
+    // TLC's tla2sany error corpus: E4203_Test, E4355_Test and E4351_Test, and a DEF entry that
+    // names nothing (E4200_Use_Test).
+    assert!(is_not_yet(
+        "---- MODULE E4203_Test ----\nimport == INSTANCE Naturals\nop == import\n===="
+    ));
+    assert!(is_not_yet(
+        "---- MODULE E4355_Test ----\nTHEOREM thm == ASSUME TRUE PROVE TRUE\nop == thm\n===="
+    ));
+    assert!(is_not_yet(
+        "---- MODULE E4351_Test ----\nop(x) == x\nTHEOREM TRUE\nPROOF\n<1>a TRUE\n<1>b HAVE TRUE\n<1>c op(<1>a)\n<1>d op(<1>b)\n<1> QED\n===="
+    ));
+    assert!(is_not_yet(
+        "---- MODULE E4200_Use_Test ----\nUSE DEF DoesNotExist\n===="
+    ));
+}

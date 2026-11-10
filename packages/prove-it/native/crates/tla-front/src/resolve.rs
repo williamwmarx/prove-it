@@ -224,6 +224,8 @@ struct Unit<'a> {
     /// The @ of an assertion step that continues the infix assertion of the step before it, which
     /// stands for that step's right side.
     step_at: Option<usize>,
+    /// Resolving a fact, which may name any step.
+    is_fact: bool,
     /// The names bound since the innermost definition, label, or step, which a label must take.
     label_params: Rc<Vec<Name>>,
     labels: Rc<RefCell<FastSet<Name>>>,
@@ -1254,6 +1256,19 @@ fn get_symbol_arity(
         );
         return Ok(None);
     }
+    // SANY's selectors reject a step that asserts no expression, or a SUFFICES, named as an
+    // expression (`HAVE proof step selected instead of expression.`), which the front end doesn't
+    // word yet.
+    if !unit.is_fact
+        && is_step_name(name)
+        && local
+            .as_ref()
+            .is_some_and(|local| local.goal.as_ref().is_none_or(|goal| goal.is_suffices))
+    {
+        return Err(FrontError::NotYet(format!(
+            "the step {name} that asserts no expression named as an expression"
+        )));
+    }
     if check_reference(expression, scope, unit, false) || (is_step_name(name) && local.is_some()) {
         return Ok(Some(apply_arity(expression)));
     }
@@ -1294,6 +1309,21 @@ fn get_symbol_arity(
     } else {
         get_spelled_name_range(expression, name)
     });
+    // SANY's selectors word a theorem's, an assumption's or an instance's name used as an
+    // expression otherwise (`Operator name M is incomplete.`, `ASSUME/PROVE used where an
+    // expression is required.`), which the front end doesn't follow.
+    let is_named = unit.facts.borrow().contains(name)
+        || find_current(scope, name, unit, None).is_some_and(|local| {
+            matches!(
+                local.binding().kind,
+                SymbolKind::Instance | SymbolKind::Theorem
+            )
+        });
+    if is_named {
+        return Err(FrontError::NotYet(format!(
+            "the name {name} of a theorem, an assumption or an instance as an expression"
+        )));
+    }
     if !is_operator_symbol(name) || is_step_name(name) {
         unit.error(range, format!("Unknown operator: `{name}'."));
         return Ok(None);
@@ -2115,7 +2145,44 @@ fn check_facts(facts: &[Fact], scope: &Scope, unit: &Unit) -> Result<()> {
                 "Step number of non-fact used as a fact".to_owned(),
             );
         } else if !unit.facts.borrow().contains(&name) {
-            resolve_expression(fact, scope, unit)?;
+            resolve_expression(
+                fact,
+                scope,
+                &Unit {
+                    is_fact: true,
+                    ..unit.clone()
+                },
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// SANY's `generateDefs` rejects a DEF entry that names no defined operator, theorem or
+/// assumption, which the front end doesn't word yet: an entry that names something else, or
+/// nothing, stays `NotYet`.
+fn check_defs(defs: &[Fact], scope: &Scope, unit: &Unit) -> Result<()> {
+    for def in defs {
+        let Fact::Expression(def) = def else {
+            continue;
+        };
+        let ExpressionKind::Identifier { name, .. } = &def.kind else {
+            continue;
+        };
+        // A step's name, which SANY takes when the step defines, and a selection.
+        if name.contains('!') || name.starts_with('<') {
+            continue;
+        }
+        let kind = find_current(scope, name, unit, def.location.range.as_ref())
+            .map(|local| local.binding().kind);
+        let is_defined = matches!(
+            kind,
+            Some(SymbolKind::Definition | SymbolKind::Instance | SymbolKind::Theorem)
+        );
+        if !is_defined {
+            return Err(FrontError::NotYet(format!(
+                "a DEF clause entry {name} SANY may reject"
+            )));
         }
     }
     Ok(())
@@ -2195,7 +2262,10 @@ fn resolve_proof(proof: Option<&Proof>, scope: &Scope, outer: &Unit) -> Result<(
         outer.clone()
     };
     match proof.map(|proof| &proof.kind) {
-        Some(ProofKind::By { facts, .. }) => check_facts(facts, scope, &unit),
+        Some(ProofKind::By { facts, defs, .. }) => {
+            check_facts(facts, scope, &unit)?;
+            check_defs(defs, scope, &unit)
+        }
         Some(ProofKind::Steps { steps, .. }) => {
             let mut current = scope.clone();
             // Whether the assertion step before is infix, which an @ step continues.
@@ -2343,6 +2413,7 @@ fn resolve_step(step: &ProofStep, scope: &Scope, unit: &Unit) -> Result<Scope> {
         }
         StepBody::UseOrHide(use_or_hide) => {
             check_facts(&use_or_hide.facts, scope, unit)?;
+            check_defs(&use_or_hide.defs, scope, unit)?;
             Ok(bind_non_fact_step(scope))
         }
         StepBody::Instance(instance) => Ok(bind_non_fact_step(&resolve_local_instance(
@@ -2720,6 +2791,7 @@ pub fn resolve_substitutions(
             is_label_forbidden: false,
             is_in_except: false,
             step_at: None,
+            is_fact: false,
             label_params: Rc::default(),
             labels: Rc::default(),
             is_generated: false,
@@ -2872,6 +2944,7 @@ pub fn resolve_module(module: &Module, unit: &ModuleContext) -> Result<Vec<SanyE
         is_label_forbidden: false,
         is_in_except: false,
         step_at: None,
+        is_fact: false,
         label_params: Rc::default(),
         labels: Rc::default(),
         is_generated: false,
@@ -3142,17 +3215,15 @@ pub fn resolve_module(module: &Module, unit: &ModuleContext) -> Result<Vec<SanyE
         units.push(SemanticUnit {
             location: use_or_hide.location.position(),
             check: Box::new(move |errors, warnings| {
-                check_facts(
-                    &use_or_hide.facts,
-                    &None,
-                    &create_unit(
-                        use_or_hide.location.position(),
-                        None,
-                        errors,
-                        warnings,
-                        false,
-                    ),
-                )
+                let unit = create_unit(
+                    use_or_hide.location.position(),
+                    None,
+                    errors,
+                    warnings,
+                    false,
+                );
+                check_facts(&use_or_hide.facts, &None, &unit)?;
+                check_defs(&use_or_hide.defs, &None, &unit)
             }),
         });
     }
