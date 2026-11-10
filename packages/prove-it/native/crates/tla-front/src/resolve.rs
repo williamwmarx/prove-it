@@ -84,6 +84,8 @@ struct Local {
     goal: Option<Rc<Goal>>,
     is_pending: Cell<bool>,
     is_non_fact: bool,
+    /// The name of a DEFINE step, which a DEF clause may name.
+    is_definition_step: bool,
     unselectable: Option<&'static str>,
     position: Position,
     /// The parameters of a function a LET defines, which SANY checks its applications against.
@@ -104,6 +106,7 @@ impl Local {
             goal: None,
             is_pending: Cell::new(false),
             is_non_fact: false,
+            is_definition_step: false,
             unselectable: None,
             position: MODULE_START,
             function_params: None,
@@ -2323,8 +2326,10 @@ fn resolve_expression(expression: &Expr, scope: &Scope, unit: &Unit) -> Result<(
 /// or assumption, and analyzes any other fact as an expression.
 fn check_facts(facts: &[Fact], scope: &Scope, unit: &Unit) -> Result<()> {
     for fact in facts {
+        // `generateUseOrHide` reports a module its symbol table doesn't hold, which the front
+        // end doesn't track.
         let Fact::Expression(fact) = fact else {
-            continue;
+            return Err(FrontError::NotYet("a module named as a fact".to_owned()));
         };
         if is_instance_arity_reported(fact, scope, unit) || check_reference(fact, scope, unit, true)
         {
@@ -2363,9 +2368,12 @@ fn check_facts(facts: &[Fact], scope: &Scope, unit: &Unit) -> Result<()> {
 fn check_defs(defs: &[Fact], scope: &Scope, unit: &Unit) -> Result<bool> {
     let mut is_kept = false;
     for def in defs {
+        // `generateUseOrHide` reports a module its symbol table doesn't hold, which the front
+        // end doesn't track.
         let Fact::Expression(def) = def else {
-            is_kept = true;
-            continue;
+            return Err(FrontError::NotYet(
+                "a module named in a DEF clause".to_owned(),
+            ));
         };
         let name = match &def.kind {
             ExpressionKind::Identifier { name, .. } => name,
@@ -2388,8 +2396,19 @@ fn check_defs(defs: &[Fact], scope: &Scope, unit: &Unit) -> Result<bool> {
                 ));
             }
         };
-        // A step's name, which SANY takes when the step defines, and a selection.
-        if name.contains('!') || name.starts_with('<') {
+        // SANY takes the name of a DEFINE step (`selectorToNode`), and a selection that names a
+        // definition; the front end follows no other.
+        if name.starts_with('<') || name.contains('!') {
+            let local = find_current(scope, name, unit, def.location.range.as_ref());
+            let is_defined = local.is_some_and(|local| {
+                local.is_definition_step
+                    || (!name.starts_with('<') && local.kind == SymbolKind::Definition)
+            });
+            if !is_defined {
+                return Err(FrontError::NotYet(format!(
+                    "a DEF clause entry {name} that is no DEFINE step and selects no definition"
+                )));
+            }
             is_kept = true;
             continue;
         }
@@ -2733,7 +2752,23 @@ fn resolve_step(step: &ProofStep, scope: &Scope, unit: &Unit) -> Result<Scope> {
                     )?,
                 };
             }
-            Ok(bind_non_fact_step(&current))
+            Ok(match &step.name {
+                None => current,
+                Some(name) => Some(Rc::new(Local {
+                    is_non_fact: true,
+                    is_definition_step: true,
+                    ..Local::new(
+                        name.clone(),
+                        Binding {
+                            kind: SymbolKind::Theorem,
+                            arity: 0,
+                            params: None,
+                            range: None,
+                        },
+                        current,
+                    )
+                })),
+            })
         }
         StepBody::Have(expression) | StepBody::Case(expression) => {
             resolve_expression(expression, scope, &step_unit)?;

@@ -295,6 +295,38 @@ fn reports_def_entries_that_name_no_defined_operator() {
         ),
         "Parsing file Main File\nParsing file Naturals Standard\nSemantic processing of module Naturals\nSemantic processing of module Main\nLinting of module Main\n"
     );
+    // A DEFINE step and a selection of a definition are kept; another step, a selection of
+    // nothing, and a module named in a fact or DEF clause are not followed.
+    assert_eq!(
+        get_text(
+            "defs-kept",
+            "---- MODULE Main ----\n---- MODULE Inner ----\nH == 0\n====\nV == INSTANCE Inner\nTHEOREM TRUE\n<1>1 DEFINE G == 2\n<1> QED BY DEF <1>1, V!H\n====\n"
+        ),
+        "Parsing file Main File\nSemantic processing of module Main\nLinting of module Main\n"
+    );
+    for (name, source) in [
+        (
+            "defs-step",
+            "---- MODULE Main ----\nTHEOREM TRUE\n<1>1 TRUE\n<1> QED BY DEF <1>1\n====\n",
+        ),
+        (
+            "defs-selection",
+            "---- MODULE Main ----\n---- MODULE Inner ----\nH == 0\n====\nV == INSTANCE Inner\nUSE DEF V!Missing\n====\n",
+        ),
+        (
+            "defs-module",
+            "---- MODULE Main ----\nUSE DEF MODULE Gone\n====\n",
+        ),
+        (
+            "facts-module",
+            "---- MODULE Main ----\nUSE MODULE Gone\n====\n",
+        ),
+    ] {
+        assert!(
+            matches!(get_report(name, source), Err(FrontError::NotYet(_))),
+            "{name}"
+        );
+    }
     assert!(matches!(
         get_report(
             "defs-unknown-symbol",
