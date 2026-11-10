@@ -63,6 +63,7 @@ import {
 import type { TlcVersion } from "../tlc/version";
 import { formatState } from "../values";
 import { CHECK_COMMAND, type ParsedArgs, USAGE } from "./options";
+import { getNativeSanyReport } from "./sany-text";
 import {
   createModuleLoader,
   findModuleFile,
@@ -809,27 +810,41 @@ const checkSpec = async (
       [...(isAbsoluteSpec || directory === "." ? [] : [directory]), ...java.libraries],
     );
   }
-  // TLC prints what SANY prints as it parses the spec, and the errors it rejects the spec for.
-  const sany = getSanyReport(
+  const describeFile = createFileDescriber(
     specPath,
-    reportMissingFile ? reportMissingModules174(loadModule, reportMissingFile) : loadModule,
-    {
-      fileName: specName,
-      describeFile: createFileDescriber(
-        specPath,
-        directories,
-        java,
-        args.get("-metadir")?.[0],
-        version,
-      ),
-      version,
-      // TLC's trace exploration spec records the trace with the post condition of _TLCTrace.
-      rootExtendees: isRecorded ? ["_TLCTrace"] : undefined,
-      precomputed: version === "master" ? readSanySnapshot() : undefined,
-      onPrint: (text) => writeOutput(1, text),
-      onPrintError: (text) => writeOutput(2, text),
-    },
+    directories,
+    java,
+    args.get("-metadir")?.[0],
+    version,
   );
+  // TLC prints what SANY prints as it parses the spec, and the errors it rejects the spec for, as
+  // tla-front writes them where it does. It doesn't write TLC 1.7.4's, nor the trace exploration
+  // spec's TLC parses with the spec, which the TypeScript report does.
+  const nativeSany =
+    version === "master" && !isRecorded && existsSync(specPath)
+      ? getNativeSanyReport(specPath, readFileSync(specPath, "utf8"), version, {
+          fileName: specName,
+          loadModule,
+          describeFile,
+        })
+      : undefined;
+  if (nativeSany) writeOutput(1, nativeSany.text);
+  const sany =
+    nativeSany ??
+    getSanyReport(
+      specPath,
+      reportMissingFile ? reportMissingModules174(loadModule, reportMissingFile) : loadModule,
+      {
+        fileName: specName,
+        describeFile,
+        version,
+        // TLC's trace exploration spec records the trace with the post condition of _TLCTrace.
+        rootExtendees: isRecorded ? ["_TLCTrace"] : undefined,
+        precomputed: version === "master" ? readSanySnapshot() : undefined,
+        onPrint: (text) => writeOutput(1, text),
+        onPrintError: (text) => writeOutput(2, text),
+      },
+    );
   if (sany.isFailed) {
     printCheckProgress(printer, { kind: "parsed" }, timing, directory);
     printParsingFailed();

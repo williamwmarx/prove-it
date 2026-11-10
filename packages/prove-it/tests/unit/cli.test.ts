@@ -1,6 +1,14 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import {
+  cpSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -859,6 +867,29 @@ const XML_EXPORT_FAILURES = [
 
 const exportXml = (args: string[]) =>
   runCliWith("xml-export", ["tla2sany.xml.XMLExporter", "-o", ...args]);
+
+describe("the CLI prints SANY's report as tla-front writes it", () => {
+  // SANY's error corpus E4243_1_Required_0_Provided: TLC reports the substitute's arity, then the
+  // constant it must substitute for, which the TypeScript report leaves out. The spec isn't among
+  // the fixtures, which front-differential.ts holds the TypeScript report to.
+  it.each([[[]], [["-tool"]]])("with %p", (args) => {
+    const directory = mkdtempSync(join(tmpdir(), "prove-it-sany-"));
+    copies.push(directory);
+    writeFileSync(
+      join(directory, "Substitute.tla"),
+      "---- MODULE Substitute ----\n---- MODULE Inner ----\nCONSTANT F(_)\n====\nop == 0\nINSTANCE Inner WITH F <- op\n====\n",
+    );
+    writeFileSync(join(directory, "Substitute.cfg"), "");
+    const result = spawnSync("bun", [CLI, "Substitute.tla", "-noGenerateSpecTE", ...args], {
+      cwd: directory,
+      encoding: "utf8",
+    });
+    expect(result.status).toBe(150);
+    expect(result.stdout).toContain(
+      "Expected arity 1 but found operator of arity 0.\n\n\nIn module --TLA+ BUILTINS--\n\nAn operator must be substituted for symbol 'F', and it must have arity 1.\n",
+    );
+  });
+});
 
 describe("the CLI exports XML like SANY's XMLExporter", () => {
   it.each(XML_EXPORT_FAILURES)("fails on %s", (file, code, lines) => {

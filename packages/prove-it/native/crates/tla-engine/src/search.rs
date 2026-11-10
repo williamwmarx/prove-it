@@ -139,6 +139,12 @@ pub trait Reporter {
     fn check_assumption(&mut self, _position: u32) -> Result<Delegated, String> {
         Err(DELEGATED_ASSUMPTION.into())
     }
+    /// Whether the caller wants the search to end, as when nothing more it prints can be right.
+    /// The search asks where it checks its progress, so it ends within 256 states or one level's
+    /// share of the workers, and declines the model.
+    fn is_cancelled(&self) -> bool {
+        false
+    }
 }
 
 /// Why the engine leaves an assumption to its caller.
@@ -534,6 +540,8 @@ const ATOM_FAILED: &str = "an atom of the temporal properties that may fail to e
 
 /// What PROVE_IT_LIVE_CHECK finds when TLC's actions take other steps than the next-state relation.
 const OTHER_STEPS: &str = "the actions took other steps than the next-state relation";
+// The search ended at its caller's request (`Reporter::is_cancelled`).
+const CANCELLED: &str = "the caller cancelled the search";
 
 // Past this many states a search that doesn't check the temporal properties as it goes, where TLC
 // would, hands its graph over and the interpreter goes on, since the interpreter checks them on the
@@ -3036,6 +3044,9 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     checkpoint_count = search.states.count();
                     checkpoint_generated = search.generated;
                     expanded?;
+                    if search.reporter.is_cancelled() {
+                        return Err(Bail(CANCELLED));
+                    }
                     if test_live_check_at.is_some_and(|at| search.expanding >= at) {
                         test_live_check_at = None;
                         check_periodically(&mut machine, &mut search)?;
@@ -3127,6 +3138,9 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 test_live_check_at = None;
                 check_periodically(&mut machine, &mut search)?;
             }
+            if expanding & 0xff == 0 && search.reporter.is_cancelled() {
+                return Err(Bail(CANCELLED));
+            }
             if expanding & 0xff == 0 && Instant::now() >= progress_at {
                 progress_at = Instant::now() + PROGRESS_INTERVAL;
                 if is_periodic {
@@ -3203,6 +3217,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     };
     let outcome = match result {
         Err(bail) if bail.0 == OTHER_STEPS => SearchOutcome::Invariant(OTHER_STEPS.into()),
+        Err(bail) if bail.0 == CANCELLED => SearchOutcome::Declined(CANCELLED.into()),
         // The interpreter prints the counterexample with the counts so far, as TLC does.
         Err(bail) if bail.0 == PERIODIC_LASSO => {
             let (tables, liveness, expanded) = periodic_lasso

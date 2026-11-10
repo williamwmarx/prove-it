@@ -47,6 +47,7 @@ interface Exports {
   prove_it_free: (pointer: number, length: number) => void;
   prove_it_abi_version: () => number;
   prove_it_check: Call;
+  prove_it_sany_text: Call;
   prove_it_store_perform: Call;
   prove_it_store_decode: Call;
   prove_it_store_encode: Call;
@@ -275,6 +276,10 @@ export const instantiateEngine = (module: WebAssembly.Module): NativeAddon => {
         running.check = undefined;
       }
     },
+    sanyText: (root, source, fileName, known) =>
+      callCurrent("prove_it_sany_text", [root, source, fileName, known]) as ReturnType<
+        NativeAddon["sanyText"]
+      >,
     storePerform: (name, args) =>
       callCurrent("prove_it_store_perform", [name, args as Argument[]]) as
         number | boolean | null | string,

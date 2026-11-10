@@ -52,6 +52,19 @@ fails to compile or instantiate, a build of `dist/` without it (`bun run build` 
 `platform-packages.ts build --target wasm32-unknown-unknown`), and a platform package from another
 release (an ABI mismatch) where the addon is named or embedded.
 
+### Decision: SANY's report needs the engine too
+
+Settled on 2026-11-10, as the TypeScript SANY front end is retired (front.md): the CLI prints
+SANY's report as tla-front writes it, through the addon or the WebAssembly engine. Once
+`src/sany` is deleted, `PROVE_IT_ENGINE=0` means that the interpreter searches, not that no native
+code runs: SANY's report still needs the addon or the WebAssembly engine. Where neither loads, the
+CLI throws `EngineUnavailableError` for the report, worded for the front end, as `check` does for
+the search. Until then, the CLI prints the TypeScript report where no engine loads.
+
+The engine reads nothing itself: an export that reads what JavaScript holds, such as a spec's
+modules, names what it needs and is called again with it (`prove-it-host`'s `sources`), so the
+WebAssembly engine needs no file system and calls nothing in JavaScript.
+
 ### Decision: the WebAssembly engine ships in the main package
 
 Settled on 2026-11-10 (#166): the engine as WebAssembly ships inside `@atemp/prove-it` as

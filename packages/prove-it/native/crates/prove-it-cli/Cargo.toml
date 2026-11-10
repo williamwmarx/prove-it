@@ -12,9 +12,8 @@ name = "prove-it"
 path = "src/main.rs"
 
 [dependencies]
-tla-engine = { path = "../tla-engine" }
-tla-ir = { path = "../tla-ir" }
-tla-values = { path = "../tla-values" }
+prove-it-check = { path = "../prove-it-check" }
+
+[dev-dependencies]
 tla-front = { path = "../tla-front" }
-tla-live = { path = "../tla-live" }
-tla-trace = { path = "../tla-trace" }
+tla-ir = { path = "../tla-ir" }

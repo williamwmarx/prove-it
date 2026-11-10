@@ -3175,6 +3175,32 @@ fn searches_a_functions_keys_as_tlc_does_where_one_cant_compare() {
 }
 
 #[test]
+fn declines_a_search_that_prints_a_value_as_tlc_built_it() {
+    // TLC prints 1..2 as written, which the store forgets. The search, which never ends, stops
+    // once the print is known to differ, on one thread and on several.
+    let spec = "---- MODULE Misprinted ----\nEXTENDS TLC, Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = x + 1 /\\ PrintT(1..2)\n====\n";
+    let directory =
+        std::env::temp_dir().join(format!("prove-it-cli-misprinted-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    std::fs::write(directory.join("Misprinted.tla"), spec).expect("the spec");
+    std::fs::write(directory.join("Misprinted.cfg"), "INIT Init\nNEXT Next\n")
+        .expect("the configuration");
+    for workers in ["1", "4"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
+            .args(["-noGenerateSpecTE", "-workers", workers, "Misprinted"])
+            .current_dir(&directory)
+            .output()
+            .expect("the binary runs");
+        assert_eq!(output.status.code(), Some(1), "{}", stdout(&output));
+        assert_eq!(
+            String::from_utf8_lossy(&output.stderr),
+            "prove-it: not native yet: printing a value whose text depends on how TLC built it\n"
+        );
+    }
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
 fn prints_an_assumption_value_as_tlc_built_it() {
     // test-model/SetPredValue: the store forgets how TLC built the set PrintT prints, which the
     // trace evaluator prints as TLC does.
@@ -3850,6 +3876,78 @@ fn passes_the_elements_a_leading_field_test_rejects_where_tlc_does() {
         }
     }
     std::fs::remove_dir_all(directory).expect("removed");
+}
+
+// Fairness whose ENABLED the search's steps answer, or don't, against what TLC built at d8fb231
+// prints for each spec, on one thread and with every level shared between four.
+#[test]
+fn answers_enabled_from_the_steps_as_tlc_does() {
+    let specs = [
+        (
+            // ENABLED <<A>>_x holds at x = 2, where no step takes A: A is a conjunct of the action
+            // TLC splits, not the action, so ENABLED runs, and WF_x(A) rules out stuttering there.
+            "Guarded",
+            "---- MODULE Guarded ----\nEXTENDS Naturals\nVARIABLE x\nA == x' = x + 1\nNext == (x < 2 /\\ A) \\/ (x = 2 /\\ x' = 0)\nSpec == x = 0 /\\ [][Next]_x /\\ WF_x(A)\nLive == []<>(x = 0)\n====\n",
+            "SPECIFICATION Spec\nPROPERTY Live\n",
+            "Model checking completed. No error has been found.\n",
+            "4 states generated, 3 distinct states found, 0 states left on queue.\n",
+        ),
+        (
+            // TLC's ENABLED ignores the constraint that drops A's step from x = 2, so ENABLED runs.
+            "Constrained",
+            "---- MODULE Constrained ----\nEXTENDS Naturals\nVARIABLE x\nA == x' = x + 1\nB == x = 2 /\\ x' = 0\nNext == A \\/ B\nSpec == x = 0 /\\ [][Next]_x /\\ WF_x(A)\nLive == []<>(x = 0)\nSmall == x <= 2\n====\n",
+            "SPECIFICATION Spec\nCONSTRAINT Small\nPROPERTY Live\n",
+            "Model checking completed. No error has been found.\n",
+            "5 states generated, 3 distinct states found, 0 states left on queue.\n",
+        ),
+        (
+            // Inc(1) and Reset are TLC's actions, which label the steps that answer their ENABLED.
+            "Counters",
+            "---- MODULE Counters ----\nEXTENDS Naturals\nCONSTANT P\nVARIABLE x\nInc(p) == x[p] < 2 /\\ x' = [x EXCEPT ![p] = x[p] + 1]\nReset == (\\A p \\in P : x[p] = 2) /\\ x' = [p \\in P |-> 0]\nNext == (\\E p \\in P : Inc(p)) \\/ Reset\nSpec == x = [p \\in P |-> 0] /\\ [][Next]_x /\\ WF_x(Inc(1)) /\\ WF_x(Reset)\nDone == \\A p \\in P : <>(x[p] = 2)\n====\n",
+            "CONSTANT P = {1, 2}\nSPECIFICATION Spec\nPROPERTY Done\n",
+            concat!(
+                "Error: Temporal property Done was violated.\n\n",
+                "Error: The following behavior constitutes a counter-example:\n\n",
+                "State 1: <Initial predicate>\nx = <<0, 0>>\n\n",
+                "State 2: <Inc(2) line 5, col 11 to line 5, col 53 of module Counters>\nx = <<0, 1>>\n\n",
+                "State 3: <Inc(1) line 5, col 11 to line 5, col 53 of module Counters>\nx = <<1, 1>>\n\n",
+                "State 4: <Inc(1) line 5, col 11 to line 5, col 53 of module Counters>\nx = <<2, 1>>\n\n",
+                "State 5: Stuttering\n",
+            ),
+            "14 states generated, 9 distinct states found, 0 states left on queue.\n",
+        ),
+        (
+            // The labelled search counts and orders the states as the next-state relation's walk
+            // does, which the POSTCONDITION reads.
+            "Stats",
+            "---- MODULE Stats ----\nEXTENDS Naturals, TLC\nCONSTANT P\nVARIABLE x\nInc(p) == x[p] < 2 /\\ x' = [x EXCEPT ![p] = x[p] + 1]\nReset == (\\A p \\in P : x[p] = 2) /\\ x' = [p \\in P |-> 0]\nNext == (\\E p \\in P : Inc(p)) \\/ Reset\nSpec == x = [p \\in P |-> 0] /\\ [][Next]_x /\\ \\A p \\in P : WF_x(Inc(p))\nDone == \\A p \\in P : []<>(x[p] = 2)\nPost == PrintT(<<TLCGet(\"stats\"), TLCGet(\"distinct\"), TLCGet(\"queue\"), TLCGet(\"level\")>>)\n====\n",
+            "CONSTANT P = {1, 2}\nSPECIFICATION Spec\nPROPERTY Done\nPOSTCONDITION Post\n",
+            "<< [ distinct |-> 9,\n     queue |-> 0,\n     worker |-> 0,\n     duration |-> 0,\n     generated |-> 14,\n     diameter |-> 5,\n     initial |-> 1 ],\n   9,\n   0,\n   0 >>\nModel checking completed. No error has been found.\n",
+            "14 states generated, 9 distinct states found, 0 states left on queue.\n",
+        ),
+    ];
+    for (name, spec, config, printed, count) in specs {
+        let directory = std::env::temp_dir().join(format!(
+            "prove-it-cli-enabled-{name}-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&directory).expect("a directory");
+        std::fs::write(directory.join(format!("{name}.tla")), spec).expect("a spec");
+        std::fs::write(directory.join(format!("{name}.cfg")), config).expect("a configuration");
+        for threads in ["1", "4"] {
+            let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
+                .args(["-noTE", name])
+                .current_dir(&directory)
+                .env("PROVE_IT_WORKERS", threads)
+                .env("PROVE_IT_SHARED_LEVEL", "1")
+                .output()
+                .expect("the binary runs");
+            let text = stdout(&output);
+            assert!(text.contains(printed), "{name} on {threads}: {text}");
+            assert!(text.contains(count), "{name} on {threads}: {text}");
+        }
+        std::fs::remove_dir_all(directory).expect("removed");
+    }
 }
 
 #[test]
