@@ -143,7 +143,7 @@ interface SearchStatistics {
   reusedProofs: Set<Proof>;
 }
 
-export type SearchFailure = "exhausted" | "time limit" | "memory limit" | "aborted";
+export type SearchFailure = "exhausted" | "time limit" | "step limit" | "memory limit" | "aborted";
 
 // Zenon gives up once its heap passes 1 GB. The port bounds the nodes that the queues of the
 // current branch hold instead. On the corpus files where Zenon runs out of memory, its heap passes

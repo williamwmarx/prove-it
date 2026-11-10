@@ -5,13 +5,13 @@
 // Zenon is still reading, searching or printing the proof.
 
 import { TlaZenonError } from "../../errors";
-import type { DecideOptions } from "../verdict";
+import { createSteps, type DecideOptions, getTextDigest } from "../verdict";
 import { checkProof } from "./check/check";
 import { createRelations } from "./eqrel";
 import { createExpressions } from "./expr";
 import { createIndex } from "./index-table";
 import { printIsar } from "./isar";
-import { getLimitFailure } from "./limits";
+import { getStopReason } from "./limits";
 import { parseZenon } from "./parse";
 import { separate } from "./phrase";
 import type { Proof } from "./proof";
@@ -35,7 +35,11 @@ interface ZenonRun {
 // The search and its statistics, which match the -stats output of the OCaml Zenon. Throws
 // TlaZenonError when the text isn't a valid .znn file.
 export const runZenon = (text: string, options: DecideOptions): ZenonRun => {
-  const limits = { deadline: Date.now() + options.timeLimitMs, signal: options.signal };
+  const limits = {
+    deadline: Date.now() + options.timeLimitMs,
+    signal: options.signal,
+    steps: options.steps ?? createSteps(),
+  };
   const exprs = createExpressions();
   const parsed = parseZenon(exprs, text);
   const phrases = [...getBuiltInDefinitions(exprs), ...parsed];
@@ -87,7 +91,7 @@ export const runZenon = (text: string, options: DecideOptions): ZenonRun => {
       typeof outcome === "string"
         ? outcome
         : isar === undefined
-          ? getLimitFailure(limits)
+          ? getStopReason(limits)
           : undefined,
     isar,
     nodesSearched: statistics.inferences,
@@ -100,8 +104,20 @@ export const runZenon = (text: string, options: DecideOptions): ZenonRun => {
 type ZenonDecision = { verdict: "unsat"; proof: string } | { verdict: "unknown" };
 
 // Zenon's verdict on a .znn file: "unsat" with the Isar proof that tlapm writes, when Zenon refutes
-// the hypotheses with a proof that the checker accepts and prints it within the time limit.
+// the hypotheses with a proof that the checker accepts and prints it within the limits. The
+// statistics are -stats's, the steps, why Zenon gave up, and a digest of the proof.
 export const decideZenon = (text: string, options: DecideOptions): ZenonDecision => {
-  const isar = runZenon(text, options).isar;
-  return isar === undefined ? { verdict: "unknown" } : { verdict: "unsat", proof: isar };
+  const steps = options.steps ?? createSteps();
+  const run = runZenon(text, { ...options, steps });
+  if (options.statistics !== undefined)
+    Object.assign(options.statistics, {
+      steps: steps.count,
+      nodesSearched: run.nodesSearched,
+      maxBranchFormulas: run.maxBranchFormulas,
+      proofNodes: run.proofNodes,
+      formulasCreated: run.formulasCreated,
+      ...(run.failure !== undefined && { stop: run.failure }),
+      ...(run.isar !== undefined && { proof: getTextDigest(run.isar) }),
+    });
+  return run.isar === undefined ? { verdict: "unknown" } : { verdict: "unsat", proof: run.isar };
 };

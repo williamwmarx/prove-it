@@ -283,6 +283,36 @@ impl Shapes {
     }
 }
 
+/// The join of the shapes of values, as a walk joins those it assigns to a variable, and the values
+/// that widened it: their shapes join to the same class in any store, so another store joins them
+/// to take the join over.
+pub struct ShapeJoin {
+    shape: Shape,
+    widening: Vec<Id>,
+}
+
+impl Default for ShapeJoin {
+    fn default() -> ShapeJoin {
+        ShapeJoin {
+            shape: BOTTOM,
+            widening: Vec::new(),
+        }
+    }
+}
+
+impl ShapeJoin {
+    /// Whether any two of the values compare without failing: in `equals` and `compareTo`, and so
+    /// in a membership test of one in a set of others.
+    pub fn is_comparable(&self) -> bool {
+        self.shape != NONE
+    }
+
+    /// The values that widened the join, in its store: the last one, where it is no class.
+    pub fn widening(&self) -> &[Id] {
+        &self.widening
+    }
+}
+
 impl Store {
     /// Whether TLC's test of `element`'s membership in `set`, a set of the store's own, compares
     /// values that may fail: if not, its answer is whether the set holds the element's id.
@@ -325,6 +355,23 @@ impl Store {
         };
         let key = self.shape_of(key);
         self.shapes.join(key, keys) != NONE
+    }
+
+    /// Joins a value's shape into a join, which stays no class once it is one.
+    #[inline]
+    pub fn join_shape(&mut self, join: &mut ShapeJoin, id: Id) {
+        if join.shape == NONE {
+            return;
+        }
+        let shape = self.shape_of(id);
+        if shape == join.shape {
+            return;
+        }
+        let joined = self.shapes.join(join.shape, shape);
+        if joined != join.shape {
+            join.shape = joined;
+            join.widening.push(id);
+        }
     }
 
     fn shape_of(&mut self, id: Id) -> Shape {
