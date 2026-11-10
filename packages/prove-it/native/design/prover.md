@@ -416,8 +416,12 @@ port keeps each one's semantics, including where sharing is observable:
 - **Isabelle:** de Bruijn lambda terms whose rebuilders return the same object when nothing
   changes, with cached `maxidx`, loose-bound and flag summaries. In Rust: `Rc<Term>` with
   `Rc::ptr_eq` as the fast path, the summaries in the node. Terms are immutable and never shared
-  across threads, so `Rc`, not `Arc`. Blast's prototerms with mutable variables become arena
-  indices into a per-search variable table (undo trail as now).
+  across threads, so `Rc`, not `Arc`. Blast's prototerms keep their mutable variables as shared
+  cells (`Rc<RefCell<Option<BlastTerm>>>`, compared by pointer), with the undo trail as now: an
+  arena would put a variable table into the signature of every term function, so the files
+  would no longer port literally, and it would only grow over a search, while the cells are freed
+  as JavaScript frees them. Unification checks occurrence before every assignment, so no cell
+  can reach itself and nothing leaks.
 - **Obligations:** tlapm's E_t with de Bruijn indices and the `Sequent`/`Hyp` context. In Rust:
   `Rc`-shared trees like `tla-front`'s AST, which already uses `Rc` for definitions and theorems.
   Several `WeakMap` caches keyed by object identity (`prove.ts` `incompleteCaseHyps`, five in
