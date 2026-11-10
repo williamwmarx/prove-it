@@ -365,6 +365,21 @@ Done on native-parity:
   registers and TLC would evaluate it of an initial state, the search now declines only once
   it has an initial state to add, so a failure before the first one is reported.
 
+Declined after the pre-PR review (infinite-sets session, 2026-11-10), each with a test in
+`prove-it-cli/tests/cli.rs`:
+- A stop, a deadlock or an invariant, in a model with behavior graphs where an expansion
+  printed: TLC runs Next again from a state it adds a tableau node of late, printing again what
+  Next prints, which the search doesn't place before its stop.
+- A late node's prints where Next has several actions: TLC runs it action by action there, with
+  the atoms of each action's successors between (`LiveCheck.addNextState`); `order_printed`
+  places them only where Next is one action.
+- A lasso whose last state is its cycle's first and which isn't the stuttering shape: TLC ends
+  it "State N+1: Stuttering" (`LiveWorker.printTrace`), which the binary doesn't follow.
+- Fixed with them: an atom that fails adding a state exits by the error's own status (255, 14
+  for an assertion, 151 for an undefined identifier), one that fails on the initial state is
+  followed by the statistics, and the brackets of `<<A>>_v` have no frame.
+The TypeScript checker differs from TLC on the second and third alone: see `gaps.md`.
+
 Open, with what is known:
 - The front names a property an instance exports by the definition's own name (`Safe`) where
   TLC names it as the configuration's property refers to it (`A!Safe`, `opNode.getName()` in

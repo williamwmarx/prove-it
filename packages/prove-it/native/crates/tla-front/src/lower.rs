@@ -69,6 +69,52 @@ fn is_startup_definition(
         && facts.is_constant_level(definition, environment)
 }
 
+/// The builtins whose effects show each time TLC evaluates them again: they print, set a
+/// register, draw at random, or read the clock or TLC's registers. Reading a file or the process's
+/// environment again reads the same.
+const SHOWN_EFFECTS: [&str; 9] = [
+    "Print",
+    "PrintT",
+    "TLCSet",
+    "TLCGet",
+    "JavaTime",
+    "RandomElement",
+    "RandomSubset",
+    "RandomSetOfSubsets",
+    "RandomSubsetSet",
+];
+
+/// Whether evaluating the definition again can show, as by printing twice, other than through
+/// `cached`, whose value TLC keeps.
+fn reaches_shown_effect(
+    definition: &Rc<Definition>,
+    environment: &Environment,
+    cached: Option<&Rc<Definition>>,
+) -> bool {
+    let mut seen: FastSet<usize> = cached
+        .map(|cached| Rc::as_ptr(cached) as usize)
+        .into_iter()
+        .collect();
+    let mut pending = vec![definition.body.clone()];
+    while let Some(expression) = pending.pop() {
+        if let Some(name) = expression.reference()
+            && !expression.is_locally_resolved()
+        {
+            if SHOWN_EFFECTS.contains(&&*name) && !environment.definitions.contains_key(&name) {
+                return true;
+            }
+            let target = environment.substitutions.get(&name).unwrap_or(&name);
+            if let Some(callee) = environment.definitions.get(target)
+                && seen.insert(Rc::as_ptr(callee) as usize)
+            {
+                pending.push(callee.body.clone());
+            }
+        }
+        pending.extend(expression.children());
+    }
+    false
+}
+
 pub struct Lowering<'a> {
     environment: &'a Environment,
     /// How many branches TLC's liveness checker has, once the model is written with one.
@@ -1029,10 +1075,33 @@ impl<'a> Lowering<'a> {
             let Some(definition) = environment.definitions.get(target) else {
                 continue;
             };
-            let is_checked = environment
+            // TLC evaluates a substitute before the constant definitions and again wherever the
+            // name it replaces is read, which repeats its effects; the IR evaluates it once, in
+            // definition order. TLC keeps the value of a constant TLCEval in the semantic graph
+            // (`tlcEvalConst`), which then shows its effects once, in TLC's order where no other
+            // constant definition shows any.
+            let is_constant = environment
                 .root_constants
                 .iter()
-                .any(|constant| constant.name == *name)
+                .any(|constant| constant.name == *name);
+            let is_cached = || {
+                matches!(
+                    &definition.body.kind,
+                    ExpressionKind::Apply { operator, args, .. } if &**operator == "TLCEval" && args.len() == 1
+                ) && self.facts.is_constant_level(definition, environment)
+                    && !environment.startup_definitions.iter().any(|other| {
+                        !Rc::ptr_eq(other, definition)
+                            && is_startup_definition(other, environment, &self.facts)
+                            && reaches_shown_effect(other, environment, Some(definition))
+                    })
+            };
+            if is_constant && reaches_shown_effect(definition, environment, None) && !is_cached() {
+                return Err(FrontError::NotYet(format!(
+                    "a configuration substitute with effects, which TLC evaluates at every use: \
+                     {name} <- {target}"
+                )));
+            }
+            let is_checked = is_constant
                 && matches!(&definition.kind, DefinitionKind::Operator { params, .. } if params.is_empty())
                 && !self.facts.is_constant_level(definition, environment);
             if is_checked {

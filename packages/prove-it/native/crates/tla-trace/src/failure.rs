@@ -676,14 +676,15 @@ impl<'ir> Rebuilder<'ir> {
             }
         };
         let call_stack = evaluator.call_stack.take().unwrap_or_default();
-        // The front writes <<A>>_v of WF_v(A) and SF_v(A) at A, where TLC records no node.
+        // TLC evaluates the action of <<A>>_v, and records no node for the brackets, whether
+        // the property writes them or the front does for WF_v(A) and SF_v(A).
         let mut call_stack = call_stack;
         if let Site::Atom { atom, .. } = site
             && let Some(atom) = ir.model.atoms.get(atom as usize)
-            && let NodeKind::AngleAction { action, .. } =
-                &ir.nodes.arena[atom.expression as usize].kind
-            && ir.nodes.arena[atom.expression as usize].range
-                == ir.nodes.arena[*action as usize].range
+            && matches!(
+                ir.nodes.arena[atom.expression as usize].kind,
+                NodeKind::AngleAction { .. }
+            )
             && call_stack.frames.first() == Some(&StackFrame::Node(atom.expression))
         {
             call_stack.frames.remove(0);
@@ -952,15 +953,18 @@ impl<'ir> Rebuilder<'ir> {
             // A failed assertion in the next states exits as one, and any other error, or any
             // in the initial predicate, as the failure of the replay (`getFailureExitCode`).
             exit_code: match (site, message.code) {
-                (Site::Next, Some(ASSERT_FAILED)) => VIOLATION_ASSERT,
-                // TLC's replay of the expansion exits by an EvalException's code
-                // (`errorConstantToExitStatus`): an undefined identifier is among the
-                // configuration's errors, and the others are general ones.
-                (Site::Next, Some(UNDEFINED_IDENTIFIER)) if message.is_eval_exception => {
+                (Site::Next | Site::Atom { .. }, Some(ASSERT_FAILED)) => VIOLATION_ASSERT,
+                // TLC's replay of the expansion, and an error adding a state to the behavior
+                // graphs, exit by an EvalException's code (`errorConstantToExitStatus`): an
+                // undefined identifier is among the configuration's errors, and the others are
+                // general ones.
+                (Site::Next | Site::Atom { .. }, Some(UNDEFINED_IDENTIFIER))
+                    if message.is_eval_exception =>
+                {
                     ERROR_CONFIG_PARSE
                 }
                 (Site::Next, _) if message.is_eval_exception => FAILURE_ERROR,
-                _ if is_atom && !message.is_eval_exception => FAILURE_ERROR,
+                _ if is_atom => FAILURE_ERROR,
                 _ => FAILURE_SPEC_EVAL,
             },
             printed,

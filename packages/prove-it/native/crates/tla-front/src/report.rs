@@ -302,6 +302,12 @@ impl Loader<'_> {
         if self.modules.contains_key(name) {
             return Ok(());
         }
+        // TLC's jar bundles the CommunityModules, which the front end doesn't have.
+        if text.is_none() && COMMUNITY_MODULES.contains(&&**name) {
+            return Err(not_yet(
+                "a module of the CommunityModules TLC's jar bundles",
+            ));
+        }
         let Some(text) = text else {
             return Err(Stop::Fatal {
                 location: Some(importer.clone()),
@@ -610,6 +616,46 @@ impl Loader<'_> {
         Ok(())
     }
 }
+
+/// The modules of `lib/CommunityModules.jar`, which TLC's jar bundles and finds after the spec's
+/// directory and the library path.
+const COMMUNITY_MODULES: &[&str] = &[
+    "BagsExt",
+    "Bitwise",
+    "CBOR",
+    "CSV",
+    "Combinatorics",
+    "DifferentialEquations",
+    "DyadicRationals",
+    "FiniteSetsExt",
+    "FiniteSetsExtTheorems",
+    "FiniteSetsExtTheorems_proofs",
+    "Folds",
+    "FoldsTheorems",
+    "FoldsTheorems_proofs",
+    "FunctionTheorems",
+    "FunctionTheorems_proofs",
+    "Functions",
+    "GraphTheorems",
+    "GraphTheorems_proofs",
+    "GraphViz",
+    "Graphs",
+    "HTML",
+    "IOUtils",
+    "Json",
+    "Quorum",
+    "QuorumTheorems",
+    "QuorumTheorems_proofs",
+    "Relation",
+    "SVG",
+    "SequencesExt",
+    "SequencesExtTheorems",
+    "SequencesExtTheorems_proofs",
+    "ShiViz",
+    "Statistics",
+    "UndirectedGraphs",
+    "VectorClocks",
+];
 
 /// What SANY prints for the spec at `spec_path` while TLC runs it: when SANY accepts the spec
 /// without a message, or stops at a fatal error other than a parse error. `NotYet` for SANY's
