@@ -2163,14 +2163,19 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     if compiler.is_printing && compiler.is_ranking && !settings.is_violation_reported {
         return SearchOutcome::Declined("unsupported: Print with ToString".into());
     }
+    // The liveness checker evaluates its atoms in an order of its own.
+    if compiler.is_cached && settings.is_live_checked {
+        return SearchOutcome::Declined("unsupported: TLCCache with a liveness check".into());
+    }
     let is_distinct_read = compiler.is_distinct_read;
     let is_printing = compiler.is_printing;
     // Checking a successor once the walk reaches the next reorders nothing anyone can see where
-    // nothing prints, reads the count of distinct states, or fingerprints a VIEW or symmetry's
-    // representative, which the walk would then interleave with.
+    // nothing prints, reads the count of distinct states, caches what TLC first evaluates, or
+    // fingerprints a VIEW or symmetry's representative, which the walk would then interleave with.
     let is_lambda_built = compiler.is_lambda_built;
     let is_pipelined = !is_printing
         && !is_lambda_built
+        && !compiler.is_cached
         && !is_distinct_read
         && context.view.is_none()
         && model.startup.symmetry.is_none()
@@ -2187,6 +2192,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         && !compiler.is_ranking
         && !compiler.is_printing
         && !is_lambda_built
+        && !compiler.is_cached
         && !is_distinct_read
         && !model.is_recording_graph
         && !settings.is_live_checked

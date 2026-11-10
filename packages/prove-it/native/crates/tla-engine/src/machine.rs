@@ -121,9 +121,9 @@ pub struct Machine<'p> {
     pub(crate) startup_random: u64,
     /// TLC's registers, which TLCSet sets and TLCGet reads.
     pub registers: Registers,
-    /// TLCCache's values of each expression it caches, by the expression's node: each key with
-    /// the value cached for it (`tlcEval2`).
-    pub(crate) tlc_caches: HashMap<NodeId, Vec<(Id, Id)>>,
+    /// TLCCache's value of each expression it caches, by the expression's node and the key's
+    /// fingerprint (`tlcEval2`).
+    pub(crate) tlc_caches: HashMap<(NodeId, u64), Id>,
     /// The functions TLC keeps lazy that the machine built, which the store's ids of them number.
     pub(crate) lazy_functions: Vec<Lambda>,
 }
