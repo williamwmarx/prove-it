@@ -508,6 +508,8 @@ pub fn compare(left: &Value, right: &Value) -> Evaluated<Ordering> {
                 typed_model_failure(left, right, false)
             }
         }
+        // `UserValue.compareTo` puts any model value first.
+        (Value::Lazy(lazy), Value::Model(_)) if lazy.is_overridden() => Ok(Ordering::Greater),
         (_, Value::Model(model)) => {
             if model.model_type() == 0 {
                 Ok(Ordering::Greater)
@@ -556,30 +558,126 @@ pub fn compare(left: &Value, right: &Value) -> Evaluated<Ordering> {
 fn compare_functions(left: &Rc<Function>, right: &Rc<Function>) -> Evaluated<Ordering> {
     sort(left);
     sort(right);
-    let size = left.domain.len();
-    if size != right.domain.len() {
-        if size > 0 && !right.domain.is_empty() && is_record(left) != is_record(right) {
-            return non_record(
-                &Value::Function(Rc::clone(left)),
-                &Value::Function(Rc::clone(right)),
-                false,
-            );
+    match left.class.get() {
+        // `RecordValue.compareTo`: the other as a record, by its fields' names, then their values.
+        Class::Record if !is_record_like(right) => non_record(
+            &Value::Function(Rc::clone(left)),
+            &Value::Function(Rc::clone(right)),
+            false,
+        ),
+        // `TupleValue.compareTo`: the other as a tuple, by its elements.
+        Class::Tuple if is_tuple_like(right) => {
+            let size = left.range.len();
+            if size != right.range.len() {
+                return Ok(size.cmp(&right.range.len()));
+            }
+            compare_all(&left.range, &right.range)
         }
-        return Ok(size.cmp(&right.domain.len()));
-    }
-    for (left, right) in left.domain.iter().zip(&right.domain) {
-        let comparison = compare(left, right)?;
-        if comparison != Ordering::Equal {
-            return Ok(comparison);
+        Class::Record => {
+            let size = left.domain.len();
+            if size != right.domain.len() {
+                return Ok(size.cmp(&right.domain.len()));
+            }
+            match compare_all(&left.domain, &right.domain)? {
+                Ordering::Equal => compare_all(&left.range, &right.range),
+                comparison => Ok(comparison),
+            }
         }
+        _ => compare_function_records(left, right),
     }
-    for (left, right) in left.range.iter().zip(&right.range) {
+}
+
+// `FcnRcdValue.compareTo`, the other as a function: their sizes, then the keys of one over an
+// interval as integers against the other's (`compareToInterval`, `compareOtherInterval`), then
+// their values.
+fn compare_function_records(left: &Function, right: &Function) -> Evaluated<Ordering> {
+    let size = left.range.len();
+    if size != right.range.len() {
+        return Ok(size.cmp(&right.range.len()));
+    }
+    let integer_key = |key: &Value, separator: &str| match key {
+        Value::Int(int) => Ok(i64::from(*int)),
+        _ => fail_runtime(
+            "a function over an interval compared with one over other keys",
+            format!(
+                "Attempted to compare integer with non-integer{separator}\n{}.",
+                format_pretty(key)
+            ),
+        ),
+    };
+    let keys = match (function_interval(left), function_interval(right)) {
+        (Some(_), _) if size == 0 => return Ok(Ordering::Equal),
+        (Some(low), Some(other)) => low.cmp(&other),
+        (Some(low), None) => {
+            let mut comparison = Ordering::Equal;
+            for (index, key) in right.domain.iter().enumerate() {
+                comparison = (i64::from(low) + index as i64).cmp(&integer_key(key, ":")?);
+                if comparison != Ordering::Equal {
+                    break;
+                }
+            }
+            comparison
+        }
+        (None, Some(other)) => {
+            let mut comparison = Ordering::Equal;
+            for (index, key) in left.domain.iter().enumerate() {
+                comparison = integer_key(key, "")?.cmp(&(i64::from(other) + index as i64));
+                if comparison != Ordering::Equal {
+                    break;
+                }
+            }
+            comparison
+        }
+        (None, None) => compare_all(&left.domain, &right.domain)?,
+    };
+    match keys {
+        Ordering::Equal => compare_all(&left.range, &right.range),
+        comparison => Ok(comparison),
+    }
+}
+
+// The first of the comparisons of two lists of values, element by element, that isn't equal.
+fn compare_all(left: &[Value], right: &[Value]) -> Evaluated<Ordering> {
+    for (left, right) in left.iter().zip(right) {
         let comparison = compare(left, right)?;
         if comparison != Ordering::Equal {
             return Ok(comparison);
         }
     }
     Ok(Ordering::Equal)
+}
+
+// The low end of the interval TLC holds a function over, as `toFcnRcd` makes it: a tuple's 1..n.
+fn function_interval(function: &Function) -> Option<i32> {
+    match function.class.get() {
+        Class::Tuple => Some(1),
+        _ => function.interval.map(|(low, _)| low),
+    }
+}
+
+// Whether `toRcd` gives a record of a function: a record, the empty tuple, and a function over
+// strings TLC holds without an interval.
+fn is_record_like(function: &Function) -> bool {
+    match function.class.get() {
+        Class::Record => true,
+        Class::Tuple => function.domain.is_empty(),
+        _ => function.interval.is_none() && is_record(function),
+    }
+}
+
+// Whether `toTuple` gives a tuple of a function: a tuple, the empty record, and a function over
+// 1..n.
+fn is_tuple_like(function: &Function) -> bool {
+    match function.class.get() {
+        Class::Tuple => true,
+        Class::Record => function.domain.is_empty(),
+        _ => match function.interval {
+            Some((low, _)) => low == 1 || function.domain.is_empty(),
+            None => function.domain.iter().enumerate().all(
+                |(index, key)| matches!(key, Value::Int(int) if *int as i64 == index as i64 + 1),
+            ),
+        },
+    }
 }
 
 /// TLC's `equals`, as the store's: values of kinds TLC can't compare fail, but a model value
@@ -595,6 +693,8 @@ pub fn equals(left: &Value, right: &Value) -> Evaluated<bool> {
             check_model_types(left, right, true)?;
             Ok(left_text.units == right_text.units)
         }
+        // `UserValue.equals` compares, which puts any model value first.
+        (Value::Lazy(lazy), Value::Model(_)) if lazy.is_overridden() => Ok(false),
         (Value::Model(model), _) | (_, Value::Model(model)) => {
             if model.model_type() == 0 {
                 Ok(false)
@@ -776,6 +876,23 @@ pub fn lambda_as_function<T>(lambda: &crate::eval::Lambda) -> Evaluated<T> {
             ),
         ),
         _ => fail("built a function over an infinite set"),
+    }
+}
+
+/// `FcnLambdaValue.toTuple`, which a membership in a set of tuples or sequences takes: a domain
+/// TLC's module overrides has no set enumeration, and the evaluator declines any other.
+pub fn lambda_as_tuple<T>(lambda: &crate::eval::Lambda) -> Evaluated<T> {
+    match lambda.domain() {
+        Value::Lazy(lazy)
+            if matches!(**lazy, Lazy::Nat | Lazy::Int | Lazy::Strings | Lazy::Seq(_)) =>
+        {
+            fail_runtime(
+                "made a tuple of a function over a set TLC doesn't enumerate",
+                "To convert a function of form [x \\in S |-> f(x)] to a tuple, the set S must be enumerable."
+                    .into(),
+            )
+        }
+        _ => fail("made a tuple of a function over an infinite set"),
     }
 }
 

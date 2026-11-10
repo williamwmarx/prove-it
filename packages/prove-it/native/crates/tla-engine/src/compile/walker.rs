@@ -1429,6 +1429,14 @@ impl<'a> Compiler<'a> {
                 is_ordered: false,
             });
         }
+        self.is_held_set_enumerated |= !set.footprint.vars.is_empty()
+            && match &self.ir.nodes.arena[node as usize].kind {
+                NodeKind::Identifier(name) => {
+                    !name.is_local && matches!(name.resolution, Resolution::Variable(_))
+                }
+                NodeKind::FunctionApplication { .. } | NodeKind::FieldAccess { .. } => true,
+                _ => false,
+            };
         if set.is_normalized {
             return Ok(Ordered {
                 eval: set.eval,
@@ -2105,7 +2113,9 @@ impl<'a> Compiler<'a> {
                 }
                 Shape::Assign(variable, value) => {
                     let variable = *variable;
-                    let value = Source::Value(self.compile(*value, context)?.eval);
+                    let compiled = self.compile(*value, context)?;
+                    self.is_lazy_set_held |= !compiled.is_normalized;
+                    let value = Source::Value(compiled.eval);
                     match known.get(variable) {
                         UNSET => {
                             ops.push(Op::Assign(variable, value));

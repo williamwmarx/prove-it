@@ -555,11 +555,42 @@ impl<'ir> Rebuilder<'ir> {
                         .into_iter()
                         .try_for_each(|(expression, context)| {
                             evaluator.next = vec![None; width];
-                            evaluator
-                                .walk_action(expression, &context, false, &mut |evaluator| {
-                                    evaluator.fingerprint_found(false)
-                                })
-                                .map(|_| ())
+                            // TLC's worker fingerprints each successor as the action gives it,
+                            // but its replay takes all of the action's successors first, so
+                            // the replay follows a successor that fails to fingerprint only
+                            // where the rest of the action evaluates, and prints nothing.
+                            let mut failure = None;
+                            let printed = evaluator.printed.len();
+                            let walked = evaluator.walk_action(
+                                expression,
+                                &context,
+                                false,
+                                &mut |evaluator| {
+                                    if failure.is_some() {
+                                        return Ok(true);
+                                    }
+                                    let found = evaluator.fingerprint_found(false);
+                                    match found {
+                                        Err(error) => {
+                                            failure = Some((error, evaluator.call_stack.take()));
+                                            Ok(true)
+                                        }
+                                        found => found,
+                                    }
+                                },
+                            );
+                            let Some((error, call_stack)) = failure else {
+                                return walked.map(|_| ());
+                            };
+                            evaluator.call_stack = call_stack;
+                            if (walked.is_err() || evaluator.printed.len() != printed)
+                                && let Some(stack) = &mut evaluator.call_stack
+                            {
+                                stack.unfollowed.get_or_insert(
+                                    "an action that fails or prints after a successor TLC can't fingerprint",
+                                );
+                            }
+                            Err(error)
                         })
                         .map(|()| true)
                 })
@@ -1287,44 +1318,42 @@ impl<'ir> Evaluator<'ir> {
         Ok(invariants)
     }
 
-    // TLC's actions: the IR's, or, where it has none, the next-state relation split as TLC splits
-    // it.
+    // TLC's actions, which the IR holds.
     fn tlc_actions(&mut self) -> Evaluated<Vec<(NodeId, Context)>> {
-        let ir = self.ir;
-        if !ir.model.actions.is_empty() {
-            return ir
-                .model
-                .actions
-                .iter()
-                .map(|action| {
-                    self.scope_context(action.scope)
-                        .map(|context| (action.expression, context))
-                })
-                .collect();
+        let actions = &self.ir.model.actions;
+        // `add_actions` splits the relation as TLC does; a model it couldn't split has none.
+        if actions.is_empty() {
+            return fail("a next-state relation the IR holds no actions of");
         }
-        // TLC splits the relation at startup, without a state and outside the call stack, as
-        // `getActions` does.
-        let width = ir.variables.len();
-        self.current = vec![None; width];
-        self.next = vec![None; width];
-        let call_stack = self.call_stack.take();
-        let mut actions = Vec::new();
-        let split = self
-            .scope_context(ir.model.scope)
-            .and_then(|context| {
-                // A failure computing successors comes from a next-state relation.
-                let next = ir.model.next.expect("a next-state relation");
-                self.split_actions(next, &context, &mut actions)
+        actions
+            .iter()
+            .map(|action| {
+                self.scope_context(action.scope)
+                    .map(|context| (action.expression, context))
             })
-            .map(|()| actions);
-        self.call_stack = call_stack;
-        split
+            .collect()
     }
 
     // TLC fingerprints each state its replay finds (`fingerprintReplayed`), outside any
     // evaluation: where that fails, the failure is the FingerprintException of the values it
     // fails in. A state whose fingerprint the evaluator can't tell stops the replay.
     fn fingerprint_found(&mut self, is_init: bool) -> Evaluated<bool> {
+        let found = self.fingerprint_state(is_init);
+        // TLC fingerprints a state only where the constraints hold of it (`isInModel`), which
+        // the replay doesn't evaluate here.
+        let model = &self.ir.model;
+        if found.is_err()
+            && (!model.constraints.is_empty() || !is_init && !model.action_constraints.is_empty())
+            && let Some(stack) = &mut self.call_stack
+        {
+            stack
+                .unfollowed
+                .get_or_insert("a state TLC fingerprints only where its constraints hold");
+        }
+        found
+    }
+
+    fn fingerprint_state(&mut self, is_init: bool) -> Evaluated<bool> {
         let ir = self.ir;
         let state = if is_init { &self.current } else { &self.next };
         if let Some(stack) = &mut self.call_stack

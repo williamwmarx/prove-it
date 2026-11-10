@@ -1740,6 +1740,29 @@ describe("evaluation errors match TLC", () => {
     expect(ranges?.at(-1)).toBe("34-41");
   });
 
+  // SpecProcessor.processConfigSpec keeps a definition that is a state predicate whole, so TLC's
+  // call stack starts at the list the definition wrote (TLC's own run of this model).
+  it("records the specification's initial predicate as the definition wrote it", async () => {
+    const result = await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit ==\n  /\\ x \\in {0, 1, 2}\n  /\\ 3 \\div (x - 1) >= 0\n  /\\ Assert(x # 2, "two")\nNext == x\' = (x + 1) % 3\nSpec == Init /\\ [][Next]_x\n====',
+      config: "SPECIFICATION Spec",
+    });
+    const ranges = result.failure?.callStack?.map((expression) => {
+      const range = expression.location.range;
+      return range
+        ? `${range.start.line}:${range.start.column}-${range.end.line}:${range.end.column}`
+        : "";
+    });
+    // TLC prints a node its stack holds twice in a row once.
+    expect(ranges?.filter((range, index) => range !== ranges[index - 1])).toEqual([
+      "5:3-7:25",
+      "5:6-5:20",
+      "6:6-6:24",
+      "6:6-6:19",
+    ]);
+  });
+
   // Tool.processUnchangedImplTuple puts the elements after the first in front of the conjuncts left,
   // in order.
   it("records the variables of an UNCHANGED tuple in order", async () => {
@@ -2092,6 +2115,55 @@ describe("evaluation errors match TLC", () => {
     );
   });
 
+  // TLC fingerprints a state only once the constraints hold of it (isInModel), so one they
+  // exclude never fails to fingerprint (TLC's own run of this model finds no error).
+  it("doesn't fingerprint a state the constraints exclude", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers\nVARIABLES x, y\nInit == \\/ (x = SUBSET (1..31) /\\ y = 0) \\/ (x = 0 /\\ y = 1)\nNext == UNCHANGED <<x, y>>\nC == y = 1\n====",
+      config: "INIT Init\nNEXT Next\nCONSTRAINT C",
+    });
+    expect([result.status, result.generatedStates, result.distinctStates]).toEqual([
+      "success",
+      3,
+      1,
+    ]);
+  });
+
+  // TLC's replay, and Tool.getState as it prints the trace, take all of the action's successors
+  // before they fingerprint one, so both meet the assertion that fails after the successor TLC
+  // couldn't fingerprint (TLC's own run of this model, which exits 14).
+  it("reports what fails after a successor TLC can't fingerprint", async () => {
+    const result = await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0\nNext == x = 0 /\\ \\E i \\in {1, 2} : x\' = IF i = 1 THEN SUBSET (1..31) ELSE Assert(FALSE, "boom")\n====',
+      config: "INIT Init\nNEXT Next",
+    });
+    const failure = result.failure;
+    expect([failure?.message, failure?.traceFailure?.message, failure?.exitCode]).toEqual([
+      `${getUnexpectedException("java.lang.RuntimeException")}Overflow when computing the number of elements in:\nSUBSET (1..31)`,
+      `${getUnexpectedException("tlc2.tool.EvalException")}The first argument of Assert evaluated to FALSE; the second argument was:\n"boom"`,
+      14,
+    ]);
+    expect(failure?.callStack?.at(-1)?.location.range?.start.column).toBe(75);
+    expect(failure?.fingerprint).toBeUndefined();
+  });
+
+  // Under a VIEW TLC fingerprints the view's value alone, so the union a variable holds is never
+  // normalized and streams {3} first each time (TLC's own run of this model).
+  it("streams a set a variable holds as the spec built it under a VIEW", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers, FiniteSets\nVARIABLES x, n, s\nInit == x = {} /\\ n = 0 /\\ s = (SUBSET {1, 2}) \\cup {{3}}\nNext == n < 3 /\\ x' \\in s /\\ Cardinality(x') = 1 /\\ n' = n + 1 /\\ s' = s\nInv == n < 2\nV == <<n>>\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv\nVIEW V",
+    });
+    expect(result.violation?.trace.map((step) => formatValue(step.state.x))).toEqual([
+      "{}",
+      "{3}",
+      "{3}",
+    ]);
+  });
+
   it("fails on zero to the power of zero in an invariant of a later state", async () => {
     const result = await check({
       source:
@@ -2099,6 +2171,30 @@ describe("evaluation errors match TLC", () => {
       config: "INIT Init\nNEXT Next\nINVARIANT Inv",
     });
     expect(result.failure?.message).toBe("Evaluating invariant Inv failed.\n0^0 is undefined.");
+  });
+
+  it.each([
+    [
+      "ASSUME {1} \\in {s \\in SUBSET {1} : 1 \\div 0 = 0}",
+      "Cannot decide if element:\n{1}\n is element of:\n{{}, {1}}\nand satisfies the predicate line 6, col 36 to line 6, col 47 of module M",
+    ],
+    [
+      "ASSUME [n \\in Nat |-> n].a = 1",
+      "Attempted to compute the number of elements in the overridden value Nat.",
+    ],
+    [
+      "ASSUME [n \\in Nat |-> n] \\in Seq(Nat)",
+      "To convert a function of form [x \\in S |-> f(x)] to a tuple, the set S must be enumerable.",
+    ],
+  ])("words %s as TLC's lazy values do", async (assumption, message) => {
+    const result = await checkModule(assumption);
+    expect(result.status).toBe("assumption-violation");
+    expect(result.violation?.message).toBe(message);
+  });
+
+  it("puts a typed model value before an overridden set", async () => {
+    const result = await checkModule("CONSTANT m\nASSUME ~(Nat = m)", "CONSTANT m = A_b");
+    expect(result.status).toBe("success");
   });
 
   it("words arithmetic, sequence, and membership errors like TLC", async () => {

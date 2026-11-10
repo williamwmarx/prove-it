@@ -132,7 +132,7 @@ const evaluate = (specPath: string, configPath: string, logPath: string, limit: 
   resetStore();
   resetCompileState();
   resetFingerprints();
-  const compiler = createEngineCompiler(environment);
+  const compiler = createEngineCompiler(environment, false);
   const named = (
     kind: string,
     name: string,

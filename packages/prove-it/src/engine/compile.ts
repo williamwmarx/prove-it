@@ -881,7 +881,7 @@ export const getStartupEffectValue = (definition: Definition, environment: Envir
     ? getStartupValue(definition, environment)
     : undefined;
 
-export const createCompiler = (environment: Environment): Compiler => {
+export const createCompiler = (environment: Environment, isViewed: boolean): Compiler => {
   const variableCount = environment.variables.length;
   const definitionCache = new Map<Definition, Compiled[]>();
   // A RECURSIVE operator's body, for its unprimed and its primed calls.
@@ -3621,6 +3621,19 @@ export const createCompiler = (environment: Environment): Compiler => {
     mode: "quantifier" | "streamed",
   ): Compiled => {
     const set = compile(expression, context);
+    // Under a VIEW TLC fingerprints the view's value alone, so a set a variable holds stays as
+    // the spec built it, in an order the engine's states don't keep.
+    if (
+      isViewed &&
+      set.footprint.vars.length > 0 &&
+      ((expression.kind === "Identifier" &&
+        !isLocallyResolved(expression) &&
+        environment.variables.includes(expression.name)) ||
+        expression.kind === "FunctionApplication" ||
+        expression.kind === "FieldAccess")
+    ) {
+      return unsupported("enumerating a set of the state under a VIEW");
+    }
     if (set.isNormalized) return set;
     const reference = set.reference;
     if (!reference) {

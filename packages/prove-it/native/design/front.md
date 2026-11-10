@@ -579,3 +579,59 @@ Declines left: 9 of the error corpus's SANY errors (E4200, E4203, E4204, E4223, 
 E4351, E4355), whose reports `report.rs` doesn't write; AssumeProveTest's labeled ASSUME/PROVE and
 ProofsTest's DEFINE step; and four corpus specs whose failing assumptions the engine declines to
 replay (AssumeTest, BasicTest, InnerModuleTest, Semantics).
+
+`bun scripts/sany-corpus.ts --tlaplus <clone> --classpath <tla2tools>` runs TLC live against the
+binary over both directories and counts them: 138 of 153 print what TLC prints (116 of the 125
+errors, 22 of the 28 accepted specs), 15 decline and none differ. The recorded gate, with the
+directories in `corpora.json` and TLC's output recorded, comes with the generator's port below.
+
+### Next milestone: SANY's generator in tla-front (after native-parity)
+
+The binary's SANY report comes from `report.rs`, over `resolve.rs` and `levels.rs`, which port
+`src/resolve.ts` and `src/levels.ts` and cover a subset of SANY; the TypeScript CLI writes its
+report with `src/sany/` (`generator.ts`, `levels.ts`, `selectors.ts`), a port of SANY's whole
+semantic analysis. Porting `src/sany` to tla-front replaces `report.rs`'s semantic checks as the
+source of the native report, so no TypeScript is in its path, and can land a check at a time
+behind the existing report. It must keep `front-differential.ts sany-text` at 2,359 of 2,359,
+the error corpus at 116 of 125 with none differing, and write the 9 SANY errors `report.rs`
+declines (E4200, E4203, E4204, E4223, E4293 ×2, E4294, E4351, E4355).
+
+### Open
+
+- The 9 SANY errors above, which the native report declines.
+- A RECURSIVE operator that applies another of its section (mutual recursion): SANY's first pass
+  reads the section's operators with action-level arguments, which `levels.rs` declines.
+- Labeled ASSUME/PROVE (AssumeProveTest) and a DEFINE step's operator (ProofsTest), which the
+  native front declines.
+- The TypeScript front end's differences from TLC, below.
+
+### Where the TypeScript front end differs from TLC
+
+The TypeScript CLI's report still differs from TLC on these, which the native front writes or
+declines:
+
+- E4243 ×3 (an explicit substitute's arity, two errors in SANY) and E4260 ×2 (a function applied
+  to another number of arguments).
+- E4294_Module and E4350_Plus/Star (a named `<*>` or `<+>` step, which it rejects as a parse
+  error).
+- AssumeProveTest (a labeled ASSUME/PROVE among the assumptions) and FairnessTest (`WF_B(A)(Act)`),
+  which it rejects as parse errors.
+- NumbersTest: a decimal or a number TLC can't hold, which it reports with code 1000 and exit 75
+  for TLC's 2244 (exit 151) and 2265 (exit 255).
+- ProofsTest (a DEFINE step's operator), which the native front declines too.
+
+## The strings TLC interns as it starts
+
+TLC orders strings and model values by when it interns their texts, and it interns those
+ToString, `\o`, Tail and SubSeq make as it computes the constant definitions
+(`processConstantDefns`). `check.ts` lowers its IR after it has computed them, so a recorded IR
+ranks them; `lower_front` ranks only the spec's. The binary lowers with `lower_front_ranking`:
+`tla_trace::get_startup_texts` evaluates the substitutes and every startup definition the IR holds,
+in TLC's order, ranking what those operators make as `rankString` does, and where it finds some, the
+model is lowered again with them ranked (test-model/Github696, whose search compares `A_31` with
+`B_a`). `lower_front` and the model-full gate keep the spec's ranks, as the TypeScript side of that
+gate computes no startup.
+
+No-recording mode on the whole corpus after it and after the split of a LET's operator
+(test-model/CyclicRedefineInstance): 1,460 of 1,466 runs print what TLC prints, and the 6 others
+are listed known differences.

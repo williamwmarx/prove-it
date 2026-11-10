@@ -714,7 +714,24 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   otherwise than the sorted search does. `evaluate_failure` declines an invariant's failure
   whose membership passes through such a set (`CallStack::is_member_followed`); the replay of the
   expansion after it is done.
+- **A typed model value in an empty interval** (`m \in 3..1` with `m = A_b`) declines on
+  purpose: TLC's `IntervalValue.member` answers FALSE for an empty interval whatever the value,
+  where the engine fails as it does for a non-empty one, and the replay, which answers FALSE,
+  finds no failure to report.
 - **ccf TraceMultiNodeReads** was done by the liveness session: see `liveness.md`.
+
+## A set the state holds under a VIEW
+
+- Under a VIEW TLC fingerprints the view's value alone, so a state's other values are never
+  normalized: a set TLC keeps lazy that a variable holds, as `(SUBSET S) \cup T`, streams in its
+  own order in every later state. The store keeps sets normalized, so the engine declines a
+  model with a VIEW where a variable is assigned a set that isn't normalized and a set read out
+  of the state (a variable, or a field or an element of one) is enumerated in TLC's order
+  (`is_lazy_set_held`, `is_held_set_enumerated`). The TypeScript engine declines wherever such
+  a set is enumerated under a VIEW, and the interpreter marks only the view's value
+  fingerprinted.
+- `0 ^ 0` stops as a failure of TLC's ("0^0 is undefined.", `Integers.Expt`), where both
+  compiled engines gave 1.
 
 ## Test2, liveness atoms answered as the search goes (as built)
 
