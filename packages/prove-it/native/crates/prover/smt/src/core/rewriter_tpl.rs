@@ -24,7 +24,9 @@
 //!   passes its own m_r, and a configuration that applies another one's `reduce_app` passes it on.
 //! - `mkNested` returns a rewriter with the same configuration for a constant that rewrites to a
 //!   term with arguments. Here it returns the configuration, `None` for the default one (the
-//!   TypeScript's base `new RewriterTpl(manager)`), and the engine builds the nested rewriter.
+//!   TypeScript's base `new RewriterTpl(manager)`), and [`RewriterConfig::rewrite_nested`] runs
+//!   it with [`rewrite_nested_with`]. A configuration whose nested one borrows what it borrows
+//!   (the model evaluator's model) cannot return it, so it overrides `rewrite_nested` instead.
 //! - A configuration's `release`, which runs before the engine's caches are released (`~imp`), is
 //!   [`RewriterConfig::release`].
 //! - The depth of a rewrite, `Infinity` in the TypeScript, is [`UNBOUNDED_DEPTH`].
@@ -168,10 +170,47 @@ pub trait RewriterConfig: Sized {
         Ok(None)
     }
 
+    /// mkNested and its use: a rewriter like this one rewrites target, the result of the constant
+    /// expr, with blocked and expr blocked, and is released. The default runs `mk_nested`'s
+    /// configuration with [`rewrite_nested_with`]; a configuration that borrows what its nested one
+    /// must borrow too (the model evaluator's model) overrides this instead. The result comes with
+    /// a reference.
+    fn rewrite_nested(
+        &mut self,
+        m: &mut AstManager,
+        blocked: &OrderedSet<Expr>,
+        expr: Expr,
+        target: Expr,
+    ) -> Result<Expr, SmtError> {
+        match self.mk_nested(m)? {
+            Some(nested) => rewrite_nested_with(m, nested, blocked, expr, target),
+            None => rewrite_nested_with(m, DefaultRewriterConfig, blocked, expr, target),
+        }
+    }
+
     /// The configuration's part of `~imp`, before the caches of rewriter_tpl.
     fn release(&mut self, _m: &mut AstManager) -> Result<(), SmtError> {
         Ok(())
     }
+}
+
+/// rewriteConstResult's nested rewriter: a rewriter with the configuration cfg rewrites target, with
+/// blocked and expr blocked, and is released. The result comes with a reference.
+pub fn rewrite_nested_with<N: RewriterConfig>(
+    m: &mut AstManager,
+    cfg: N,
+    blocked: &OrderedSet<Expr>,
+    expr: Expr,
+    target: Expr,
+) -> Result<Expr, SmtError> {
+    let mut nested = RewriterTpl::new(m, cfg);
+    for inner_blocked in blocked.iter() {
+        nested.engine.blocked.insert(*inner_blocked);
+    }
+    nested.engine.blocked.insert(expr);
+    let result = nested.rewrite(m, target)?;
+    nested.release(m)?;
+    Ok(result)
 }
 
 /// default_rewriter_cfg, which overrides nothing.
@@ -1012,10 +1051,7 @@ impl RewriterEngine {
                     "the rewriter nests too deeply".into(),
                 ));
             }
-            let result = match cfg.mk_nested(m)? {
-                Some(nested) => self.rewrite_nested(m, nested, expr)?,
-                None => self.rewrite_nested(m, DefaultRewriterConfig, expr)?,
-            };
+            let result = cfg.rewrite_nested(m, &self.blocked, expr, self.last_result.get())?;
             self.last_result.set(m, result)?;
             m.dec_ref(result)?;
         }
@@ -1023,22 +1059,6 @@ impl RewriterEngine {
         let last = self.last_result.get();
         self.core.push_result(m, last);
         Ok(())
-    }
-
-    fn rewrite_nested<N: RewriterConfig>(
-        &mut self,
-        m: &mut AstManager,
-        cfg: N,
-        expr: Expr,
-    ) -> Result<Expr, SmtError> {
-        let mut nested = RewriterTpl::new(m, cfg);
-        for blocked in self.blocked.iter() {
-            nested.engine.blocked.insert(*blocked);
-        }
-        nested.engine.blocked.insert(expr);
-        let result = nested.rewrite(m, self.last_result.get())?;
-        nested.release(m)?;
-        Ok(result)
     }
 
     // process_var: a bound variable becomes its binding, shifted over the quantifiers entered since

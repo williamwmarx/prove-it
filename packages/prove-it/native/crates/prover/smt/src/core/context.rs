@@ -1884,6 +1884,17 @@ impl Context {
         Ok(model)
     }
 
+    /// The model generator's last model, for the tests.
+    #[cfg(test)]
+    pub(crate) fn get_generated_model(&self) -> Option<Rc<GeneratedModel>> {
+        match &self.model_state {
+            ModelState::None => None,
+            ModelState::Generated(generated)
+            | ModelState::Proto(generated)
+            | ModelState::Final { generated, .. } => Some(generated.clone()),
+        }
+    }
+
     /// validate_model: every relevant ground literal of the assignment holds in the model.
     pub fn validate_model(&mut self, model: &ProtoModelRef) -> Result<bool, SmtError> {
         for index in 0..self.assigned_literals.len() {
@@ -2218,12 +2229,13 @@ mod tests {
         context.internalize_assertion(expr, 0).unwrap();
     }
 
-    /// The steps the TypeScript counts in what is still stubbed here: one in the model finder's
-    /// constructor (`AufSolver`) and two in the empty theory's first propagation, which a problem
-    /// refuted before that propagation does not take, and two in each of the theory's final
-    /// checks. Once the stubs are replaced, these are 0 and the counts are the TypeScript's.
-    const STUBBED_STEPS: u64 = 3;
-    const STUBBED_BASE_LEVEL_STEPS: u64 = 1;
+    /// The steps the TypeScript counts in what is still stubbed here: two in the empty theory's
+    /// first propagation, which a problem refuted before that propagation does not take, and two
+    /// in each of the theory's final checks. Once the stub is replaced, these are 0 and the counts
+    /// are the TypeScript's. (The model finder's constructor takes its step here too, since
+    /// `auf_solver` is ported.)
+    const STUBBED_STEPS: u64 = 2;
+    const STUBBED_BASE_LEVEL_STEPS: u64 = 0;
     const STUBBED_FINAL_CHECK_STEPS: u64 = 2;
 
     /// The result, the conflicts and the steps of a search, with the steps that the stubs do not

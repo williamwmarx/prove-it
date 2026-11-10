@@ -17,6 +17,7 @@ use crate::core::ast::{AstManager, Expr};
 use crate::core::context::{Context, FC_DONE};
 use crate::core::enode::EnodeId;
 use crate::core::literal::BoolVar;
+use crate::core::proto_model::ProtoModel;
 use crate::util::error::SmtError;
 
 #[derive(Clone, Debug, Default)]
@@ -93,6 +94,19 @@ impl Context {
     /// STUB: inert.
     pub fn theory_init_search_eh(&mut self) -> Result<(), SmtError> {
         Ok(())
+    }
+
+    /// init_model: the values of the theory variables, which fresh numbers avoid. STUB: inert.
+    pub fn theory_init_model(&mut self, _model: &mut ProtoModel) -> Result<(), SmtError> {
+        Ok(())
+    }
+
+    /// mk_value: the value of the class of a root, none for a node without a theory variable.
+    pub fn theory_mk_value(&mut self, node: EnodeId) -> Result<Option<Expr>, SmtError> {
+        if self.node(node).th_var < 0 {
+            return Ok(None);
+        }
+        todo!("theory_lra: not ported yet")
     }
 
     /// Whether the theory took the atom.
