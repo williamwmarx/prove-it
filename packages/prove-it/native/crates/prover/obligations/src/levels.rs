@@ -98,6 +98,11 @@ thread_local! {
         RefCell::new(IdentityCache::new());
 }
 
+/// Forgets the hypotheses' levels.
+pub(crate) fn reset_caches() {
+    HYP_LEVELS.with(|cache| *cache.borrow_mut() = IdentityCache::new());
+}
+
 fn compute_hyp_level(scope: &Rc<Scope>) -> Result<LevelInfo> {
     match &scope.hyp.core {
         HypCore::Flex { .. } => Ok(get_info(1, 0)),

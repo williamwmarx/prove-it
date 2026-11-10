@@ -893,6 +893,20 @@ thread_local! {
     ));
 }
 
+/// Forgets the mapped contexts and the operators' substitutive arguments.
+pub(crate) fn reset_caches() {
+    for context_map in [
+        &EXPAND_ACTION_SEQUENT,
+        &EXPAND_UNCHANGED_SEQUENT,
+        &COMMUTE_SEQUENT,
+        &COALESCE_SEQUENT,
+    ] {
+        context_map.with(|shared| shared.borrow_mut().clear());
+    }
+    RENAME_CONTEXT.with(|shared| shared.borrow_mut().clear());
+    SUBSTITUTIVE_ARGS.with(|cache| *cache.borrow_mut() = IdentityCache::new());
+}
+
 /// process_eob, on an obligation's sequent.
 pub fn process_obligation(sequent: &Sequent) -> Result<Sequent> {
     let keys = &sequent.context;
