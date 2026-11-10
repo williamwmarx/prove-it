@@ -52,6 +52,16 @@ fails to compile or instantiate, a build of `dist/` without it (`bun run build` 
 `platform-packages.ts build --target wasm32-unknown-unknown`), and a platform package from another
 release (an ABI mismatch) where the addon is named or embedded.
 
+### Decision: the WebAssembly engine ships in the main package
+
+Settled on 2026-11-10 (#166): the engine as WebAssembly ships inside `@atemp/prove-it` as
+`dist/prove-it-engine.wasm`, not as a separate `@atemp/prove-it-wasm32` package. A browser bundler
+copies only an asset a literal `new URL("./…", import.meta.url)` names beside the module that names
+it, as it copies the workers, and a browser can't resolve a bare package specifier without an
+import map, so a separate package was never found once bundled. It costs every install about
+1.3 MB, and in return every install has an engine: the browser's, and Node's or Bun's where no
+platform addon loads.
+
 ## Where the interpreter remains a fallback
 
 - **A decline.** The engine declined before producing any state.
