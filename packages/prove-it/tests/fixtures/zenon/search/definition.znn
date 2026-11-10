@@ -1,0 +1,3 @@
+$def "d" (Double x) (/\ (P x) (P x))
+$hyp "h" (Double a)
+$goal (\/ (P a) (Q a))

@@ -1,0 +1,5 @@
+$hyp "h" (\/ (P a) (Q a) (R a))
+$hyp "h2" (=> (P a) (S a))
+$hyp "h3" (=> (Q a) (S a))
+$hyp "h4" (<=> (R a) (S a))
+$goal (S a)

@@ -1,0 +1,11 @@
+$hyp "p1" (\/ (p a) (p b) (p c))
+$hyp "p2" (\/ (q a) (q b) (q c))
+$hyp "p3" (\/ (r a) (r b) (r c))
+$hyp "p4" (\/ (s a) (s b) (s c))
+$hyp "c1" (A. ((x) (-. (/\ (p x) (q x)))))
+$hyp "c2" (A. ((x) (-. (/\ (p x) (r x)))))
+$hyp "c3" (A. ((x) (-. (/\ (p x) (s x)))))
+$hyp "c4" (A. ((x) (-. (/\ (q x) (r x)))))
+$hyp "c5" (A. ((x) (-. (/\ (q x) (s x)))))
+$hyp "c6" (A. ((x) (-. (/\ (r x) (s x)))))
+$goal F.
