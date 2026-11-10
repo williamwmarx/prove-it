@@ -7,6 +7,7 @@
 //! throw of the TypeScript generator, or an error `report.rs` didn't report, is `NotYet`.
 
 pub mod export;
+pub mod levels;
 pub mod nodes;
 pub mod selectors;
 pub mod xml;

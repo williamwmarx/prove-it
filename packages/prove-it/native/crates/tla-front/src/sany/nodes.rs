@@ -98,7 +98,7 @@ pub struct ArgLevelConstraint {
 /// The fields of SANY's LevelNode. `level_checked` is 0 until levelCheck runs, and SANY exports a
 /// level only for the nodes it has level-checked. The keys of `arg_level_params` are TypeScript's
 /// `${op.id}:${index}:${param.id}`, and those of `arg_level_constraints` `${param.id}:${position}`.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct LevelFields {
     pub level_checked: u32,
     pub level: u8,
@@ -110,6 +110,23 @@ pub struct LevelFields {
     /// SetOfLevelConstraints: the highest level each parameter may have.
     pub level_constraints: OrderedMap<NodeId, u8>,
     pub arg_level_constraints: OrderedMap<(NodeId, usize), ArgLevelConstraint>,
+}
+
+impl Default for LevelFields {
+    /// `createLevelFields`: a node is level-correct until its check finds otherwise.
+    fn default() -> Self {
+        LevelFields {
+            level_checked: 0,
+            level: 0,
+            level_params: NodeSet::default(),
+            all_params: NodeSet::default(),
+            non_leibniz_params: NodeSet::default(),
+            arg_level_params: OrderedMap::default(),
+            level_correct: true,
+            level_constraints: OrderedMap::default(),
+            arg_level_constraints: OrderedMap::default(),
+        }
+    }
 }
 
 /// SANY's kinds of declared symbols, from `tla2sany.semantic.ASTConstants`.
