@@ -653,6 +653,13 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
     if args.has("-continue") {
         return report_not_native(printer, "-continue");
     }
+    // TLC checks no temporal property at the end under -lncheck off, which the binary doesn't follow.
+    if args
+        .first("-lncheck")
+        .is_some_and(|check| check.eq_ignore_ascii_case("off"))
+    {
+        return report_not_native(printer, "-lncheck off");
+    }
     let front = match read_front(
         spec_path,
         config_text.as_deref().unwrap_or_default(),
@@ -1210,9 +1217,6 @@ const NO_SPECIFICATION_WARNING: &str = "The stuttering counterexample above may 
 /// Why `print_violation` can't print a violation yet, where the IR doesn't name what it reports.
 const NOT_IN_IR: &str = "a name the IR doesn't carry";
 
-/// Prints a violation the engine stopped at, or the lasso the liveness checker found, as
-/// `printViolation` in `src/cli/tlc.ts` does, and returns the exit code, or why it can't print
-/// it yet.
 // Whether a failure is among the initial states, before TLC has taken a step.
 fn is_initial_site(site: ErrorSite) -> bool {
     matches!(
@@ -1225,6 +1229,9 @@ fn is_initial_site(site: ErrorSite) -> bool {
     )
 }
 
+/// Prints a violation the engine stopped at, or the lasso the liveness checker found, as
+/// `printViolation` in `src/cli/tlc.ts` does, and returns the exit code, or why it can't print
+/// it yet.
 fn print_violation(
     printer: &mut Printer,
     ir: &tla_ir::Ir,
