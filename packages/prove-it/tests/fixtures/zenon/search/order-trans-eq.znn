@@ -1,0 +1,6 @@
+$hyp "le" (A. ((x y z) (=> (/\ (le x y) (le y z)) (le x z))))
+$hyp "refl" (A. ((x) (le x x)))
+$hyp "l1" (le a b)
+$hyp "l2" (le b c)
+$hyp "eq" (= c d)
+$goal (/\ (le a d) (le e e))

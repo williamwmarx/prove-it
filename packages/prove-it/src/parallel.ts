@@ -8,7 +8,7 @@ import {
 } from "./check";
 import { type ModelConfig, parseConfig } from "./config";
 import { loadWasmEngine } from "./engine/native";
-import { getEngineSetting } from "./engine/settings";
+import { getCheckLog, getEngineSetting, getTestLiveCheckAt } from "./engine/settings";
 import { createEnvironment } from "./environment";
 import { TlaEvaluationError } from "./errors";
 import { isImpure } from "./evaluate";
@@ -75,12 +75,69 @@ export type CoordinatorMessage =
 
 export const check = (options: CheckOptions): Promise<CheckResult> => checkParsed(options);
 
+// The options with the check written to PROVE_IT_CHECK_LOG, and each module, class and file it
+// reads as it reads it, where the configuration is text.
+const logCheck = (options: CheckOptions): CheckOptions => {
+  const append = getCheckLog();
+  if (!append || typeof options.config !== "string") return options;
+  const id = crypto.randomUUID();
+  append({
+    id,
+    source: options.source,
+    config: options.config,
+    seed: options.seed?.toString(),
+    livenessCheck: options.livenessCheck,
+    isTool: options.isTool === true,
+    workers: options.workers,
+    systemProperties: options.systemProperties && [...options.systemProperties],
+    dump: options.dump,
+    isContinued: options.isContinued === true,
+    isWarningEnabled: options.isWarningEnabled !== false,
+    version: options.version,
+    testLiveCheckAt: getTestLiveCheckAt(),
+    caller: new Error().stack,
+  });
+  const loadModule = options.loadModule;
+  const loadClass = options.loadClass;
+  const readFile = options.readFile;
+  return {
+    ...options,
+    loadModule:
+      loadModule &&
+      ((name) => {
+        const text = loadModule(name);
+        if (text !== undefined) append({ id, module: name, source: text });
+        return text;
+      }),
+    loadClass:
+      loadClass &&
+      ((name) => {
+        const bytes = loadClass(name);
+        if (bytes !== undefined)
+          append({
+            id,
+            class: name,
+            bytes: btoa(Array.from(bytes, (byte) => String.fromCharCode(byte)).join("")),
+          });
+        return bytes;
+      }),
+    readFile:
+      readFile &&
+      ((path) => {
+        const text = readFile(path);
+        if (text !== undefined) append({ id, file: path, text });
+        return text;
+      }),
+  };
+};
+
 // Checks a spec as check does. The readings are those of a spec SANY accepted, which the check
 // reads its modules from.
 export const checkParsed = async (
-  options: CheckOptions,
+  unlogged: CheckOptions,
   readings?: ReadonlyMap<string, SanyReading>,
 ): Promise<CheckResult> => {
+  const options = logCheck(unlogged);
   await loadWasmEngine();
   const config =
     typeof options.config === "string"
