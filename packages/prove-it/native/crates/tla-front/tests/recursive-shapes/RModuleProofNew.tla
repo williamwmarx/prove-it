@@ -1,0 +1,5 @@
+---- MODULE RModuleProofNew ----
+RECURSIVE F(_)
+F(n) == 0
+THEOREM ASSUME NEW F PROVE TRUE
+====

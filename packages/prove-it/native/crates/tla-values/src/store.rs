@@ -45,6 +45,16 @@ pub const STRINGS: i32 = 2;
 /// Why the store stops at a function TLC keeps lazy, an engine limit.
 pub const LAZY_FUNCTION: Bail = Bail("unsupported: comparing a function TLC keeps lazy");
 
+/// Why the store stops comparing a function over a run of integers with one over an untyped
+/// model value, where TLC fails if it holds the first over an interval.
+pub const INTERVAL_KEYS: Bail =
+    Bail("a function over an interval compared with one over other keys");
+
+/// Why the store stops comparing a record with a function of its size over an untyped model
+/// value, where TLC fails if the record asks.
+pub const RECORD_KEYS: Bail =
+    Bail("a record compared with a function of its size over a model value");
+
 pub const FALSE: Id = 0;
 pub const TRUE: Id = 1;
 pub const EMPTY_SET: Id = 2;
@@ -266,6 +276,8 @@ impl Store {
         self.text_base = base.texts.len();
         self.generation = base.generation;
         self.copied = Some((base.serial, base.generation));
+        // The strings the base ranked since it froze its order compare with no other here either.
+        self.unordered_rank = base.unordered_rank;
         self.small_ints.clone_from(&base.small_ints);
         self.table.fill([0, EMPTY_SLOT]);
         self.string_ids.clear();
@@ -364,7 +376,7 @@ impl Store {
 
     /// Whether a string has been ranked since `freeze_string_order`.
     pub fn has_unordered_strings(&self) -> bool {
-        (self.order.ranks.len() as i32) > self.unordered_rank
+        (self.get_order().ranks.len() as i32) > self.unordered_rank
     }
 
     /// TLC's rank of a text, ranking it if it has none, as `getStringRank` does.
@@ -869,13 +881,27 @@ impl Store {
     fn compare_functions(&mut self, left: Id, right: Id) -> Outcome<i32> {
         let (left_meta, right_meta) = (*self.meta(left), *self.meta(right));
         let size = left_meta.size;
-        if size != right_meta.size {
-            // TLC compares a record only with a record, which may fail before the sizes decide.
-            if size > 0 && right_meta.size > 0 && self.is_record(left) != self.is_record(right) {
+        if size > 0 && right_meta.size > 0 && self.is_record(left) != self.is_record(right) {
+            // TLC compares a record only with a record (`RecordValue.compareTo`), which may fail
+            // before the sizes decide. Of one size, a function asking compares by its keys, which
+            // fail against strings unless they are untyped model values: the evaluator, which
+            // knows which TLC built as a record, finds whether it fails.
+            let function = if self.is_record(left) {
+                &right_meta
+            } else {
+                &left_meta
+            };
+            if size != right_meta.size {
                 return Err(Bail("record compared with a function"));
             }
+            if self.has_untyped_model_key(function) {
+                return Err(RECORD_KEYS);
+            }
+        }
+        if size != right_meta.size {
             return Ok(size as i32 - right_meta.size as i32);
         }
+        self.check_interval_keys(&left_meta, &right_meta)?;
         // A value compares as 0 with itself, and with no side effect, so equal ids are skipped.
         for index in 0..size {
             let left_key = self.key_of(&left_meta, index);
@@ -900,6 +926,41 @@ impl Store {
             }
         }
         Ok(0)
+    }
+
+    // TLC holds a function over a run of integers either over an interval (`FcnRcdValue.intv`, as
+    // `[i \in 0..n |-> e]` makes one, and a tuple compared with a function) or over the run's
+    // elements (as `[i \in {0, 1} |-> e]` makes one), which the store doesn't tell apart. Against
+    // a function of its size with an untyped model value among its keys, the first fails
+    // (`FcnRcdValue.compareToInterval`, `compareOtherInterval` and `equals`), and the second
+    // compares the keys, which the model value passes. The store fails as TLC may, and the
+    // evaluator, which knows how TLC built the function, finds whether it does.
+    fn check_interval_keys(&self, left: &Meta, right: &Meta) -> Outcome<()> {
+        if left.size > 0
+            && (self.is_int_run(left) && self.has_untyped_model_key(right)
+                || self.is_int_run(right) && self.has_untyped_model_key(left))
+        {
+            return Err(INTERVAL_KEYS);
+        }
+        Ok(())
+    }
+
+    fn is_int_run(&self, meta: &Meta) -> bool {
+        meta.kind == KIND_TUPLE || meta.flags & IS_INT_RUN != 0
+    }
+
+    // An untyped model value comes before any value that isn't a model value in TLC's order, so a
+    // function holds one among its keys only if its first key is a model value: the keys of any
+    // other function aren't read.
+    fn has_untyped_model_key(&self, meta: &Meta) -> bool {
+        let keys = self.words(meta.payload as usize, meta.size as usize);
+        meta.kind == KIND_FUNCTION
+            && keys
+                .first()
+                .is_some_and(|&first| self.kind_of(first) == KIND_MODEL)
+            && keys
+                .iter()
+                .any(|&key| self.kind_of(key) == KIND_MODEL && self.get_model_type(key) == 0)
     }
 
     // get_key and get_range_value of a function whose meta is read already.
@@ -1042,6 +1103,7 @@ impl Store {
         if size != right_meta.size {
             return Ok(false);
         }
+        self.check_interval_keys(&left_meta, &right_meta)?;
         for index in 0..size {
             let left_key = self.key_of(&left_meta, index);
             let right_key = self.key_of(&right_meta, index);

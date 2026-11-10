@@ -1736,6 +1736,30 @@ fn print_small_sets(printer: &mut Printer, names: &[String]) {
 }
 
 fn print_failed_front(printer: &mut Printer, failure: &Failure, start: Instant) -> i32 {
+    // SpecProcessor reports an exception of SANY's with `Assert.fail(EC.TLC_PARSING_FAILED2, e)`,
+    // whose message TLC words with the code again (`MP.getMessage`), before SANY finishes.
+    if let Some(exception) = &failure.exception {
+        if printer.is_tool {
+            printer.print(code::STARTING_SANY, Level::None, "Starting SANY...");
+        }
+        printer.raw(failure.sany.as_bytes());
+        let message = format!("Parsing or semantic analysis failed.{exception}");
+        let cause = if printer.is_tool {
+            format!(
+                "@!@!@STARTMSG {code}:0 @!@!@\n{message}\n@!@!@ENDMSG {code} @!@!@",
+                code = code::PARSING_FAILED_EXCEPTION
+            )
+        } else {
+            message
+        };
+        printer.print(
+            code::PARSING_FAILED_EXCEPTION,
+            Level::Error,
+            &format!("Parsing or semantic analysis failed.{cause}"),
+        );
+        print_finished(printer, start);
+        return SPEC_PARSE_ERROR;
+    }
     print_sany(printer, &failure.sany);
     match &failure.error {
         Some(coded) => print_coded_failure(printer, coded, start),
