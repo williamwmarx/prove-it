@@ -5,7 +5,7 @@
 //! nothing does by the end of its LET or module, and `SymbolTable.addSymbol` decides what any other
 //! binding of its name means. The front end follows these only for the shapes below, and declines
 //! any other module with a RECURSIVE declaration (native/design/front.md, and the grid in
-//! tests/fixtures/recursive-shapes).
+//! crates/tla-front/tests/recursive-shapes).
 //!
 //! A declaration of N with k arguments, at module level or in a LET, is analyzed only if:
 //!

@@ -3,7 +3,7 @@
 // an empty configuration, and counts the specs on which the binary prints what TLC prints, declines,
 // or differs. TLC runs live, from the classpath of a tla2tools build; the recorded gate comes with
 // the port of SANY's generator to tla-front (native/design/front.md). `--specs` runs the specs of
-// another directory instead, such as tests/fixtures/recursive-shapes.
+// another directory instead, such as native/crates/tla-front/tests/recursive-shapes.
 // Usage: bun scripts/sany-corpus.ts (--tlaplus <clone> | --specs <directory>) --classpath <tla2tools>
 //   [--native <binary>]
 

@@ -626,11 +626,12 @@ E4351, E4355) are now written, from `Generator.java` and `SymbolTable.java` at d
   declaration's arity, and at the end of the LET's definitions, before its body, which is a level
   up, SANY reports "Symbol S declared in RECURSIVE statement but not defined." for every
   declaration of that level it has read and left undefined (`recursiveDecls` is the module's),
-  each once, as `Errors.addMessage` drops a message it holds. `tests/fixtures/recursive-shapes`
-  holds a grid of declarations at module level, in a LET and in a LET within a definition of
-  another, against everything else that can bind or name what they declare; the `report.rs` test
-  lists the cells the front end reports, and `scripts/sany-corpus.ts --specs` runs the grid
-  through TLC.
+  each once, as `Errors.addMessage` drops a message it holds.
+  `crates/tla-front/tests/recursive-shapes` holds a grid of declarations at module level, in a LET
+  and in a LET within a definition of another, against everything else that can bind or name what
+  they declare; the `report.rs` test lists the cells the front end reports, and
+  `scripts/sany-corpus.ts --specs` runs the grid through TLC. The grid isn't among the fixtures
+  `front-differential.ts` reads, as the TypeScript resolver doesn't follow these declarations.
 - `generateUseOrHide` and `generateLeafProof`: the parser keeps every DEF entry in the SANY run,
   and `check_defs` reports, where SANY meets it, an unknown name ("Unknown operator: `X'." then
   "DEF clause entry should describe a defined operator.") and a built-in operator, a constant, a

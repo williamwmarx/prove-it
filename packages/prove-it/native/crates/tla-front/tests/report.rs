@@ -31,7 +31,7 @@ fn get_report(name: &str, source: &str) -> Result<SanyText, FrontError> {
     text
 }
 
-// tests/fixtures/recursive-shapes: RECURSIVE declarations at module level, in a LET and in a LET
+// tests/recursive-shapes: RECURSIVE declarations at module level, in a LET and in a LET
 // within a definition of another, against everything else that can bind or name what they declare
 // (src/recursive.rs). The front end writes SANY's report of these, and declines the rest.
 #[test]
@@ -96,7 +96,7 @@ fn reports_only_the_recursive_shapes_it_follows() {
         "RecursiveHelper",
     ];
     let directory =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../tests/fixtures/recursive-shapes");
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/recursive-shapes");
     let mut paths: Vec<_> = std::fs::read_dir(&directory)
         .expect("the grid")
         .map(|entry| entry.expect("an entry").path())
