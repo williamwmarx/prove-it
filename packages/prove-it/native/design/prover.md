@@ -292,11 +292,25 @@ The whole corpus was not run under Bun: at these ratios it takes one to two hour
 machine, and the three modules show what matters, that the runtime already changes verdicts at
 the limits.
 
-What the baseline does not yet separate is time spent on decisions that end `unknown` at the
-limit (SMT 5 s, Zenon 10 s, Isabelle 30 s, LS4 10 s) from time on decisions that succeed; the
-upper bounds (316 × 5 s, 157 × 10 s, 110 × 30 s) say that a large share of the Zenon and
-Isabelle time, and a smaller one of the SMT time, is spent waiting for limits. P0's decider
-corpus records each decision's time, which settles it.
+Time by verdict, from a second run of the same corpus with each decision's time kept
+(*measured*; 5,649 s of per-module wall time in all):
+
+| Back end | unsat: count, time, mean | unknown: count, time, mean |
+|---|---|---|
+| SMT (`smt`) | 10,282, 498 s, 0.05 s | 303, 1,622 s, 5.35 s (limit 5 s) |
+| SMT (`z3` method) | 55, 61 s, 1.1 s | 5, 140 s, 28 s |
+| Zenon | 803, 301 s, 0.37 s | 143, 957 s, 6.7 s (limit 10 s) |
+| Isabelle | 370, 152 s, 0.41 s | 98, 1,352 s, 13.8 s (limit 30 s) |
+| LS4 | 345, 3 s, 0.01 s | — |
+
+So successful decisions take about 1,015 s and decisions that end `unknown` about 4,071 s: 80% of
+the deciding is spent on obligations that are not proved, most of it waiting for a limit. (SMT's
+mean `unknown` exceeds its 5 s limit because the clock is read every 256th step.)
+
+**The runs disagree.** The second run proved 10,875 obligations with SMT and failed 132; the
+first proved 10,862 and failed 143. About a dozen obligations sit near a limit and fall either way
+with the machine's load. That is the case for 2.3's step budgets: the oracle must not be a
+wall-clock run.
 
 ---
 
@@ -699,10 +713,24 @@ JavaScriptCore, and there it loses proofs at the limits that Node finds.
 
 ### 5.3 Projection
 
-Per-module wall time on one thread, the corpus as above, *projected*:
+Per-module wall time on one thread, from the second run of 2.4, *projected*:
 
 | Part | TypeScript (Node) | Rust | Basis |
 |---|---|---|---|
+| Generating obligations | ≈27 s | 10–15 s | 2× on tree code |
+| Prep and encoding | ≈535 s | 150–250 s | 2× plus no GC (5.1) |
+| Successful decisions | 1,015 s | 350–500 s | 2× plus no GC |
+| Decisions ending `unknown` | 4,071 s | about the same, less what Rust proves in time | tlapm's limits |
+| **Total** | 5,649 s | ≈4,600–4,850 s | |
+
+So about 1.2× end to end on one thread on this corpus, because 72% of the time is limits. On the
+part that is not (proofs, Prep, generation: about 1,580 s) it is 2–3×, and Prep and generation
+spread over threads in Rust. For a user, who mostly proves what is provable, that part is what
+they wait for; the limits are tlapm's choice and stay. Users on Bun gain another 1.4–2.5×. The
+P0 decider corpus measures every decision on both sides and the projection is redone before the
+first flip.
+
+---|---|---|---|
 | Generating obligations | 27 s | 10–15 s | 2× on tree code |
 | Prep and encoding | 520 s | 150–250 s | 2× plus no GC |
 | Successful decisions | at most ≈2,000 s (2.4's upper bounds) | 700–1,000 s | 2× plus no GC |
