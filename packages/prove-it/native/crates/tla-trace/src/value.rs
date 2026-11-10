@@ -453,6 +453,8 @@ pub fn elements(value: &Value) -> Evaluated<Rc<Vec<Value>>> {
         // TLC finds a set its parts empty to be empty before it enumerates any of them.
         Value::Lazy(_) if crate::sets::is_empty_by_argument(value) => Ok(Rc::new(Vec::new())),
         Value::Lazy(lazy) => crate::sets::enumerate(lazy).map(Rc::new),
+        // `SetEnumValue.Enumerator` normalizes the set first.
+        Value::Unsorted(values) => Err(unsorted_failure(values)),
         _ => fail(format!("expected a set, not a {}", value.kind_name())),
     }
 }
@@ -866,6 +868,14 @@ pub fn set_of(mut elements: Vec<Value>) -> Evaluated<Value> {
 
 /// Where TLC fails to normalize a set enumeration: the first comparison that fails as
 /// `ValueVec.sort` inserts each element, in the order written, into those it sorted before it.
+/// The failure of normalizing a set enumeration TLC keeps unnormalized.
+pub fn unsorted_failure(elements: &[Value]) -> EvalError {
+    normalize_failure(elements).unwrap_or_else(|| EvalError {
+        reason: "normalized a set enumeration that sorts".into(),
+        message: None,
+    })
+}
+
 pub fn normalize_failure(elements: &[Value]) -> Option<EvalError> {
     let mut sorted: Vec<&Value> = Vec::with_capacity(elements.len());
     for element in elements {

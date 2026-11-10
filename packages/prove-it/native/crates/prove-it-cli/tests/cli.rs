@@ -570,6 +570,37 @@ fn prints_what_an_assumption_printed_before_it_failed_once() {
     std::fs::remove_dir_all(directory).expect("removed");
 }
 
+#[test]
+fn fails_to_print_a_lazy_set_whose_expansion_fails() {
+    // PrintT prints with `toStringUnchecked`, which fails where TLC can't expand a lazy set.
+    for (set, error) in [
+        (
+            "Nat \\cup {-1}",
+            "Attempted to enumerate S \\cup T when S:\n{-1}\nand T:\nNat\nare not both enumerable",
+        ),
+        (
+            "UNION {Nat, {1}}",
+            "Attempted to compare the set {1} with the value:\nNat",
+        ),
+        (
+            "SUBSET Nat",
+            "Attempted to compute the number of elements in the overridden value Nat.",
+        ),
+    ] {
+        let spec = format!(
+            "---- MODULE Lazy ----\nEXTENDS TLC, Integers\nVARIABLE x\nASSUME PrintT({set})\nInit == x = 0\nNext == x' = x\n====\n"
+        );
+        let (output, directory) = run_front("lazy-print", &spec, "INIT Init\nNEXT Next\n", &[]);
+        let text = stdout(&output);
+        assert_eq!(output.status.code(), Some(10), "{text}");
+        assert!(
+            text.contains(&format!("of module Lazy failed.\nAttempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.Value tlc2.module.TLC.PrintT(tlc2.value.impl.Value),\nbut it produced the following error:\n{error}\nFinished in ")),
+            "{text}"
+        );
+        std::fs::remove_dir_all(directory).expect("removed");
+    }
+}
+
 const CDOT_IR: &[u8] = include_bytes!(
     "../../../../tests/conformance/ir/tlc/tlatools/org.lamport.tlatools/test-model/cdot/CdotWithContextA.ir"
 );
