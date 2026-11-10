@@ -840,8 +840,9 @@ Gates, run by Verification's Front End job:
 
 - `front-differential.ts sany-xml`: the TypeScript and Rust exporters on every module of the
   corpora and fixtures, with `-o` and each of `-r`, `-u`, `-t` and `-tru`: the error stream, the
-  XML's hash and the exit code (`--xml` compares the XML itself). 2,363 of 2,367 modules match and
-  none differ; the 4 left are RECURSIVE declarations the front end declines.
+  XML's hash and the exit code (`--xml` compares the XML itself). 2,362 of 2,367 modules match and
+  none differ; of the 5 left, 4 are RECURSIVE declarations the front end declines and 1 is the
+  DEFINE step XMLExporter prints Java's stack traces for.
 - `sany-corpus.ts --recorded` on `tests/conformance/sany-stdout/xml-*.json`, the real exporter at
   d8fb231: with each of the five flag sets, 150 of SANY's 153 corpus specs print what it printed
   and 3 decline (AssumeProveTest and LetInTest, which the front end declines, and E4294_Module);
