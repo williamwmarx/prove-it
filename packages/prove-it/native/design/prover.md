@@ -935,7 +935,9 @@ is next.
   | `isabelle` | 478 | 371 | — | 44 (`Interrupt`) | 63 |
   | `ls4` | 297 | 296 | 1 | — | — |
 
-  None stopped for a runtime limit (`unstable`), and none threw.
+  None stopped for a runtime limit (`unstable`), and none threw. Decided again by the TypeScript
+  under the recorded step limits and no time limit (`prover-differential --side ts`), all 12,100
+  give the recorded verdict and statistics, so the record reproduces.
 - P1, PTL (#231): `prove-ptl` gives the reference LS4's verdict on the 26 formulas of
   `tests/conformance/ptl`, and on the 297 LS4 inputs of the record the TypeScript's verdict and
   step count on every one (297 same, 0 differs, declined or crash). Rust decides PTL by default.
