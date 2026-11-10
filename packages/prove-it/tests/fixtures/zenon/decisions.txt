@@ -103,3 +103,4 @@ zenon/search/modus-ponens.znn 28 steps=29 nodesSearched=7 maxBranchFormulas=8 pr
 zenon/search/modus-ponens.znn 20 steps=21 nodesSearched=7 maxBranchFormulas=8 proofNodes=4 formulasCreated=66 stop="step limit"
 zenon/search/case-six.znn 300 steps=303 nodesSearched=55 maxBranchFormulas=16 proofNodes=55 formulasCreated=214 stop="step limit"
 zenon/search/case-six.znn 150 steps=151 nodesSearched=46 maxBranchFormulas=16 proofNodes=45 formulasCreated=189 stop="step limit"
+zenon/search/nullary-application.znn 100000 steps=23 nodesSearched=4 maxBranchFormulas=5 proofNodes=4 formulasCreated=36 proof="471:89376d21"
