@@ -297,6 +297,9 @@ export interface EvaluationFailure {
 interface ReplayFailure {
   callStack: Expression[];
   fingerprint: FingerprintFailure | undefined;
+  // What the replay failed with, which may come after the failure it replays: the replay takes
+  // all of an action's successors before it fingerprints one.
+  replayError?: TlaEvaluationError;
 }
 
 export interface InitialStates {
@@ -350,6 +353,7 @@ interface FailureOptions {
   isNextState?: boolean;
   isCallStackFirst?: boolean;
   traceFailure?: FailureMessage;
+  replayError?: TlaEvaluationError;
   // Whether the call stack is of adding the state to the behavior graph, which TLC prints instead
   // of replaying the error.
   isLiveCallStack?: boolean;
@@ -750,7 +754,11 @@ const searchStates = (
       // A replay that overflows the stack again has an empty call stack.
       if (isStackOverflow(error)) return { callStack: [], fingerprint: undefined };
       if (!(error instanceof TlaEvaluationError) || !callStack) return undefined;
-      return { callStack: callStack.expressions, fingerprint: callStack.fingerprint };
+      return {
+        callStack: callStack.expressions,
+        fingerprint: callStack.fingerprint,
+        replayError: error,
+      };
     }
   };
   // The sources of the values a fingerprint fails inside, outermost first: each value fails as it
@@ -1174,7 +1182,7 @@ const searchStates = (
     // it does for a replay that fails to fingerprint.
     return failureOptions.isInitial || failureOptions.fingerprint
       ? EXIT_STATUS.specEvaluationFailure
-      : getReplayExitCode(error);
+      : getReplayExitCode(failureOptions.replayError ?? error);
   };
   const createFailureResult = (
     failed: unknown,
@@ -2279,7 +2287,11 @@ const searchStates = (
   const replayFailedNext = (index: number, liveSuccessors: LiveSuccessor[]) => {
     const live = captureOutput(() => addFailedLiveState(index, liveSuccessors));
     if (live.result) {
-      const result = { callStack: live.result, fingerprint: undefined, isLiveCallStack: true };
+      const result: ReplayFailure & { isLiveCallStack: boolean } = {
+        callStack: live.result,
+        fingerprint: undefined,
+        isLiveCallStack: true,
+      };
       return { result, lines: live.lines };
     }
     const replay = captureOutput(() => replayNext(index));
@@ -2355,12 +2367,18 @@ const searchStates = (
             const isTraceFailed = getFingerprintState(successor.state).some(
               (value) => getFingerprintError(value) !== undefined,
             );
+            // Tool.getState takes all of the action's successors to find the one to print, so a
+            // later successor that fails to evaluate fails there first, as it fails the replay.
+            const traceError =
+              replay.result?.fingerprint === undefined
+                ? (replay.result?.replayError ?? error)
+                : error;
             const traceFailure =
-              isTraceFailed && error instanceof TlaEvaluationError
+              isTraceFailed && traceError instanceof TlaEvaluationError
                 ? getFailureMessage(
-                    isEvalException(error)
-                      ? new TlaEvaluationError(`${UNEXPECTED_EVAL_EXCEPTION}${error.message}`)
-                      : error,
+                    isEvalException(traceError)
+                      ? new TlaEvaluationError(`${UNEXPECTED_EVAL_EXCEPTION}${traceError.message}`)
+                      : traceError,
                     true,
                   )
                 : undefined;

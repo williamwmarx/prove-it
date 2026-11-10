@@ -2107,6 +2107,25 @@ describe("evaluation errors match TLC", () => {
     ]);
   });
 
+  // TLC's replay, and Tool.getState as it prints the trace, take all of the action's successors
+  // before they fingerprint one, so both meet the assertion that fails after the successor TLC
+  // couldn't fingerprint (TLC's own run of this model, which exits 14).
+  it("reports what fails after a successor TLC can't fingerprint", async () => {
+    const result = await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0\nNext == x = 0 /\\ \\E i \\in {1, 2} : x\' = IF i = 1 THEN SUBSET (1..31) ELSE Assert(FALSE, "boom")\n====',
+      config: "INIT Init\nNEXT Next",
+    });
+    const failure = result.failure;
+    expect([failure?.message, failure?.traceFailure?.message, failure?.exitCode]).toEqual([
+      `${getUnexpectedException("java.lang.RuntimeException")}Overflow when computing the number of elements in:\nSUBSET (1..31)`,
+      `${getUnexpectedException("tlc2.tool.EvalException")}The first argument of Assert evaluated to FALSE; the second argument was:\n"boom"`,
+      14,
+    ]);
+    expect(failure?.callStack?.at(-1)?.location.range?.start.column).toBe(75);
+    expect(failure?.fingerprint).toBeUndefined();
+  });
+
   it("fails on zero to the power of zero in an invariant of a later state", async () => {
     const result = await check({
       source:
