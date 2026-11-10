@@ -161,6 +161,37 @@ across atoms, on the helpers, and only for the states asked about.
   only expected difference from the recording is the banner's worker count (normalized), or the
   coordinator runs Parity with `PROVE_IT_WORKERS=4`.
 - **Depends on:** nothing. Everything below then measures at 1 and 4 workers.
+- **As built.** `-workers N` sets the threads (`auto` is every core); `PROVE_IT_WORKERS`
+  overrides it, so Parity also runs the native differential on four threads under the recordings'
+  `-workers 1`. The atoms' helpers evaluate a step's subscript only for the states asked about.
+  Turning threads on found three faults on the threaded paths, fixed first (#171): helpers that
+  computed the startup's definitions again (SpanTreeRandom's `Edges`, drawn), atoms on helpers
+  where something draws or uses TLC's registers, and a shared level that stopped and kept no trace.
+  On the suite, `-workers 4` against `main` on one worker, medians of 5 runs on the 4-core
+  container:
+
+  | Model | `main`, 1 | 4 threads | Speedup | RSS MB |
+  |---|---:|---:|---:|---|
+  | MCExactInitialSync | 17.19 | 8.76 | 1.96× | 1,093 → 1,328 |
+  | PaxosCommit | 26.81 | 10.43 | 2.57× | 744 → 2,120 |
+  | MCMultiNode | 7.39 | 3.14 | 2.36× | 539 → 1,117 |
+  | MCLamportMutex | 2.83 | 1.41 | 2.01× | 143 → 194 |
+  | MCbtree | 0.91 | 0.45 | 2.05× | 50 → 73 |
+  | Detlefs | 4.05 | 1.65 | 2.46× | 278 → 322 |
+  | FastPaxos | 3.08 | 1.39 | 2.22× | 175 → 360 |
+  | TLCSailfish1 | 11.14 | 3.55 | 3.14× | 146 → 205 |
+  | MCabs | 11.44 | 4.20 | 2.72× | 35 → 73 |
+  | GameOfLife | 1.16 | 0.40 | 2.86× | 47 → 87 |
+  | BufferedRandomAccessFile | 1.56 | 0.48 | 3.25× | 35 → 35 |
+  | StarkMutex, N = 4 | 8.08 | 8.18 | 0.99× | 588 → 678 |
+  | cf1s_folklore | 16.01 | 13.21 | 1.21× | 547 → 943 |
+  | SpanTreeRandom | 2.00 | 2.01 | 1.00× | 71 → 71 |
+  | 2PCwithBTM | 0.012 | 0.011 | — | 35 → 35 |
+
+  Geomean 1.98× over the suite and 2.4× over the eleven models without a recorded graph. Every
+  run agrees with TLC. On one worker the branch is `main`'s speed (1.00×). The liveness models
+  stay near one thread: their search records a graph and runs on one thread, and SpanTreeRandom's
+  atoms draw. That is track 2's and track 6's work, as is the memory four threads take.
 
 ### 2. Liveness (`perf-liveness`), independent
 
