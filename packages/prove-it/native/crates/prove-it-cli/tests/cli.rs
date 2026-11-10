@@ -5376,17 +5376,19 @@ fn sorts_as_tlcs_sort_seq() {
 
 #[test]
 fn stops_where_tlcs_sort_seq_fails() {
-    // TLC's SortSeq fails on a comparison that isn't a boolean, and on an operator whose body is a
-    // literal, which TLC passes as the literal. The engine stops there, and either prints what TLC
-    // at d8fb231 prints, and with -tool, or declines.
-    for (definitions, printed, tool) in [
+    // TLC's SortSeq fails on a comparison that isn't a boolean, which the engine stops at and the
+    // replay prints as TLC at d8fb231 does, and with -tool; and on an operator whose body is a
+    // literal, which TLC passes as the literal and the replay declines.
+    for (definitions, is_printed, printed, tool) in [
         (
             "Init == x = SortSeq(<<1, 2>>, LAMBDA u, v : u + 7)",
+            true,
             "Error: The second argument of SortSeq should be a boolean function, but instead it is:\n9\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 50 in M\n1. Line 5, column 13 to line 5, column 50 in M\n\n\n",
             "@!@!@STARTMSG 1000:1 @!@!@\n@!@!@STARTMSG 2169:0 @!@!@\nThe second argument of SortSeq should be a boolean function, but instead it is:\n9\n@!@!@ENDMSG 2169 @!@!@\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 50 in M\n1. Line 5, column 13 to line 5, column 50 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
         ),
         (
             "Init == x = SortSeq(<<2, 1>>, LAMBDA u, v : \"a\")",
+            false,
             "Error: The second argument of SortSeq should be a operator, but instead it is:\n\"a\"\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 48 in M\n1. Line 5, column 13 to line 5, column 48 in M\n\n\n",
             "@!@!@STARTMSG 1000:1 @!@!@\n@!@!@STARTMSG 2169:0 @!@!@\nThe second argument of SortSeq should be a operator, but instead it is:\n\"a\"\n@!@!@ENDMSG 2169 @!@!@\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 48 in M\n1. Line 5, column 13 to line 5, column 48 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
         ),
@@ -5398,7 +5400,8 @@ fn stops_where_tlcs_sort_seq_fails() {
             let expected = if run.ends_with("[]") { printed } else { tool };
             assert!(
                 text.contains(expected)
-                    || String::from_utf8_lossy(&output.stderr).contains("not native yet"),
+                    || !is_printed
+                        && String::from_utf8_lossy(&output.stderr).contains("not native yet"),
                 "{definitions} on {run}:\n{text}"
             );
             assert!(
