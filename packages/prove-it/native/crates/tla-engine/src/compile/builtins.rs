@@ -650,10 +650,11 @@ impl Compiler<'_> {
     // and TLCGet of a number or of a name that starts with "s:" reads a register.
     fn compile_tlc_get(&mut self, operands: &[Operand], context: &Context) -> Compiling<Compiled> {
         let key = match operands {
-            [operand] if !operand.is_param => match self.node(operand.node).1 {
-                NodeKind::String(text) => Some(self.text(*text)),
-                _ => None,
-            },
+            // An operand bound to a parameter (TLC's TLCGet through an INSTANCE of TLC) is its
+            // argument, unless the builtin is itself an operator argument.
+            [operand] if operand.slot.is_none() => {
+                self.string_literal(operand.node, &operand.context)
+            }
             _ => None,
         };
         // The interpreter would take a search over without TLC's registers, so under the
@@ -711,6 +712,24 @@ impl Compiler<'_> {
                 Footprint::slot(slot),
             )
         })
+    }
+
+    // The string an expression is written as, through the parameters bound to it, as TLC's
+    // TLC.tla binds TLCGet's to the key an INSTANCE of TLC passes it.
+    fn string_literal(&self, node: tla_ir::NodeId, context: &Context) -> Option<&str> {
+        match self.node(node).1 {
+            NodeKind::String(text) => Some(self.text(*text)),
+            NodeKind::Identifier(name) if name.is_local => {
+                let found = super::lookup(&context.scope, name.text)?;
+                match &found.binding {
+                    super::Binding::Argument(argument) => {
+                        self.string_literal(argument.expression, &argument.context)
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
     }
 
     // TLCGet("config"), the run's settings as TLC's model checker records them
@@ -1818,7 +1837,9 @@ fn set_register(machine: &mut Machine<'_>, key: Id, value: Id) -> Outcome<()> {
         }
         None if machine.store.kind_of(key) == KIND_STRING => {
             let text = String::from_utf16_lossy(machine.store.text_of(key));
-            if !(matches!(text.as_str(), "exit" | "pause") && value != TRUE) {
+            if text == "exit" && value == TRUE {
+                registers.is_exit = true;
+            } else if !(matches!(text.as_str(), "exit" | "pause") && value != TRUE) {
                 return Err(Bail(
                     "unsupported: TLCSet of a key that stops or configures TLC",
                 ));
