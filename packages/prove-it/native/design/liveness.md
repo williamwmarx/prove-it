@@ -354,6 +354,16 @@ Done on native-parity:
   evaluate; and the call stack's first frame is the list a definition wrote, as both front ends
   keep a definition that is a state predicate whole as one of the specification's initial
   predicates (`gaps.md`, "The specification's initial predicates, as TLC keeps them").
+- TraceMultiNodeReads: without the Java overrides its CONSTRAINT chooses from
+  [STRING -> STRING] on the first initial state. Enumerating a set of functions whose domain
+  TLC can't enumerate is one of TLC's failures (`INFINITE_DOMAIN`); `tla-trace` marks a failed
+  enumeration by CHOOSE as one in a value's method, and for a constraint of an initial state
+  gives TLC's report: the error with the state, then the FingerprintException of TLC's replay
+  of the initial states, with the initial predicate's frames and the constraint's
+  (`Site::InitialConstraint`); the binary reports a failure among the initial states whatever
+  the ALIAS and the postconditions, which TLC doesn't reach there. Where an atom uses the
+  registers and TLC would evaluate it of an initial state, the search now declines only once
+  it has an initial state to add, so a failure before the first one is reported.
 
 Open, with what is known:
 - The front names a property an instance exports by the definition's own name (`Safe`) where

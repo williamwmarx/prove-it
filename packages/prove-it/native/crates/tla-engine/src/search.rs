@@ -416,6 +416,7 @@ const TLC_FAILURES: &[&str] = &[
     "a count that isn't a number",
     "a function over a non-set",
     "a function set of non-sets",
+    crate::compile::lazy::INFINITE_DOMAIN,
     "a function set over a non-set domain",
     "a guard that isn't a boolean",
     "a membership in SUBSET of a non-set",
@@ -503,6 +504,7 @@ const LAZY_FUNCTION_HELD: Bail = Bail("unsupported: a state holding a function T
 /// Where an atom sets or reads TLC's registers, the search answers the atoms as TLC evaluates
 /// them, which it follows only so far.
 const ONLINE_DECLINED: &str = "the liveness checker declined as the search went";
+const ONLINE_INITIAL: &str = "TLC's registers in atoms of the initial states";
 const ONLINE_LATE: &str = "a late node where the atoms use TLC's registers";
 const ONLINE_ACCEPTED: &str = "an accepting node where the atoms use TLC's registers";
 const NO_NEXT_STATE: &str = "initial states and no next-state relation";
@@ -2292,11 +2294,6 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             Ok(_) if context.diameter_atoms.contains(&true) => {
                 Some("TLC's registers and TLCGet(\"diameter\") in the atoms")
             }
-            // TLC evaluates those as it finds each initial state, among the initial predicate's
-            // own evaluations.
-            Ok(checker) if checker.asks_initial_states() => {
-                Some("TLC's registers in atoms of the initial states")
-            }
             Ok(_) => None,
         };
         if let Some(reason) = declined {
@@ -2451,6 +2448,11 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         }
         is_past_initial = true;
         if let Some(online) = &mut online {
+            // TLC evaluates an atom of an initial state as it finds the state, among the initial
+            // predicate's own evaluations, which the search doesn't follow.
+            if online.asks_initial_states() && search.states.count() > 0 {
+                return Err(Bail(ONLINE_INITIAL));
+            }
             for state in 0..search.states.count() as u32 {
                 add_online(
                     &mut machine,
@@ -3136,15 +3138,29 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 .take()
                 .filter(|_| settings.is_violation_reported)
                 .filter(|found| {
-                    search.graph.is_none()
-                        || online.is_some()
-                        || matches!(
-                            found.kind,
-                            ViolationKind::Error {
-                                site: ErrorSite::InitialAtom(_)
-                            }
-                        )
-                        || answers_initial_atoms(&mut machine, &context, &search, found)
+                    // Where TLC evaluates atoms that use the registers as it adds an initial
+                    // state, the search follows it only up to the first state it would add.
+                    let is_before_states = search.states.count() == 0
+                        && (found.last.is_none()
+                            || matches!(
+                                found.kind,
+                                ViolationKind::Error {
+                                    site: ErrorSite::InitialConstraint(_)
+                                }
+                            ));
+                    match &online {
+                        Some(online) => !online.asks_initial_states() || is_before_states,
+                        None => {
+                            search.graph.is_none()
+                                || matches!(
+                                    found.kind,
+                                    ViolationKind::Error {
+                                        site: ErrorSite::InitialAtom(_)
+                                    }
+                                )
+                                || answers_initial_atoms(&mut machine, &context, &search, found)
+                        }
+                    }
                 });
             // Otherwise the interpreter starts from scratch and prints it all again.
             if violation.is_some() {
