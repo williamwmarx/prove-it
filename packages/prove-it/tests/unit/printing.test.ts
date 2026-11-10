@@ -153,6 +153,21 @@ describe("functions over infinite domains print like TLC", () => {
       "ASSUME PrintT(ToString([n \\in Nat \\ {1} |-> n]))",
       '"[n \\\\in Nat \\\\ ({1}) |-> <expression line 3, col 45 to line 3, col 45 of module M>]"',
     ],
+    // TLC builds a \cup with a set enumeration as the second operand as that enumeration's cup,
+    // so it comes first (OPCODE_cup in Tool.java), and parenthesizes each operand that is
+    // enumerable or itself a set operation (toStringForCupCapDiff). The texts are TLC's.
+    [
+      "ASSUME PrintT(ToString([n \\in Nat \\cup {0} |-> n]))",
+      '"[n \\\\in ({0}) \\\\cup Nat |-> <expression line 3, col 48 to line 3, col 48 of module M>]"',
+    ],
+    [
+      "ASSUME PrintT(ToString([n \\in {1} \\cup Nat |-> n]))",
+      '"[n \\\\in ({1}) \\\\cup Nat |-> <expression line 3, col 48 to line 3, col 48 of module M>]"',
+    ],
+    [
+      "ASSUME PrintT(ToString([n \\in (Nat \\ {1}) \\cup {0} |-> n]))",
+      '"[n \\\\in ({0}) \\\\cup (Nat \\\\ ({1})) |-> <expression line 3, col 56 to line 3, col 56 of module M>]"',
+    ],
   ])("prints %s with its parameters and body location", async (body, text) => {
     expect((await checkPrinting(body)).printed).toEqual([text]);
   });
