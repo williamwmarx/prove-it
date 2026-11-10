@@ -23,6 +23,7 @@ use crate::core::clause::{
 };
 use crate::core::conflict_resolution::ConflictResolution;
 use crate::core::dyn_ack::DynAckManager;
+use crate::core::e_matching::MamClosure;
 use crate::core::enode::{Enode, EnodeId, Enodes, EqJustification, Justification, Justifications};
 use crate::core::internalizer::{
     BV_ENODE, BV_EQ, BV_PHASE, BV_PHASE_AVAILABLE, BV_QUANTIFIER, BV_THEORY, BV_TRUE_FIRST,
@@ -126,6 +127,8 @@ pub enum TrailClosure {
     ThVar { node: EnodeId, old_var: i32 },
     /// quantifier-manager.ts finalCheckEh: `() => { this.lazyMatchingIndex = saved; }`.
     LazyMatchingIndex { saved: u32 },
+    /// The closures of the matchers and their compilers (`e_matching.rs`).
+    Mam(MamClosure),
 }
 
 /// The CaseSplitContext of `internalizer.ts`'s constructor, over the context's fields.
@@ -492,6 +495,7 @@ impl Context {
         match closure {
             TrailClosure::ThVar { node, old_var } => self.node_mut(node).th_var = old_var,
             TrailClosure::LazyMatchingIndex { saved } => self.qmanager.lazy_matching_index = saved,
+            TrailClosure::Mam(closure) => self.mam_undo_closure(closure),
         }
     }
 
