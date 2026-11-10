@@ -271,3 +271,28 @@ fn reports_an_initial_invariant_once_under_continue_as_tlc() {
     );
     std::fs::remove_dir_all(directory).expect("removed");
 }
+
+// As TLC ran it at d8fb231 with `-workers 1`: TLC checks each invariant whole, so one that shares a
+// conjunct with an invariant before it is violated with it, and its own conjuncts past the shared
+// one go unevaluated.
+#[test]
+fn reports_invariants_sharing_a_conjunct_under_continue_as_tlc() {
+    let spec = "---- MODULE Stop ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = x\nCommon == x # 0\nInv1 == Common\nInv2 == Common /\\ (1 \\div x > 0)\nInv3 == Common\n====\n";
+    let (output, directory) = run_spec_with(
+        "continue-shared",
+        spec,
+        "INIT Init\nNEXT Next\nINVARIANT Inv1 Inv2 Inv3\n",
+        &["-continue"],
+    );
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(0), "{text}");
+    assert!(
+        text.contains("Computing initial states...\nError: Invariant Inv1 is violated by the initial state:\nx = 0\n\nError: Invariant Inv2 is violated by the initial state:\nx = 0\n\nError: Invariant Inv3 is violated by the initial state:\nx = 0\n\nFinished computing initial states: 1 distinct state generated at "),
+        "{text}"
+    );
+    assert!(
+        text.contains("Model checking completed. No error has been found.\n"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}

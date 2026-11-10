@@ -515,7 +515,7 @@ impl EngineContext {
                     }),
             )
             .collect::<Result<Vec<_>, CompileError>>()?;
-        for (owner, (root, has_repeated_effect)) in roots.into_iter().enumerate() {
+        for (owner, &(root, has_repeated_effect)) in roots.iter().enumerate() {
             if has_repeated_effect && can_print {
                 printed.insert(root);
                 conjuncts.add(root);
@@ -708,12 +708,31 @@ impl EngineContext {
         let is_live_registered = compiled.iter().any(|atom| atom.uses_registers);
         let diameter_atoms = compiled.iter().map(|atom| atom.reads_diameter).collect();
         let atoms = compiled.into_iter().map(|atom| atom.atom).collect();
-        let (initial_invariants, initial_invariant_owners) = invariants
+        // TLC checks each invariant whole in an initial state, and under -continue goes on past
+        // one violated, so each keeps the conjuncts it shares with an invariant before it.
+        let (initial_invariants, initial_invariant_owners) = roots
             .iter()
-            .zip(&invariant_conjuncts)
-            .zip(&invariant_owners)
-            .filter(|((_, conjunct), _)| !init_conjuncts.contains(conjunct))
-            .map(|((compiled, _), &owner)| (compiled.eval.clone(), owner))
+            .enumerate()
+            .flat_map(|(owner, &(root, _))| {
+                let mut owned = Conjuncts::new(ir);
+                if printed.contains(&root) {
+                    owned.add(root);
+                } else {
+                    owned.collect(root);
+                }
+                owned
+                    .found
+                    .into_iter()
+                    .map(move |conjunct| (conjunct, owner))
+            })
+            .filter(|(conjunct, _)| !init_conjuncts.contains(conjunct))
+            .map(|(conjunct, owner)| {
+                let position = invariant_conjuncts
+                    .iter()
+                    .position(|&found| found == conjunct)
+                    .expect("an invariant's conjunct the invariants hold");
+                (invariants[position].eval.clone(), owner)
+            })
             .unzip();
         // Under a VIEW TLC fingerprints the view's value alone, so a set TLC keeps lazy that a
         // variable holds stays as the spec built it, in an order the store doesn't keep.
