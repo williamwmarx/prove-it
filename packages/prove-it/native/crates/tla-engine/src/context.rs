@@ -412,9 +412,17 @@ impl EngineContext {
                 .assumptions
                 .iter()
                 .map(|&(node, name)| {
-                    compiler
-                        .compile_root_printing(Root::Expression(node), true)
-                        .map(|compiled| (compiled.eval, ir.texts[name as usize].to_string()))
+                    let eval = match compiler.compile_root_printing(Root::Expression(node), true) {
+                        Ok(compiled) => compiled.eval,
+                        // The native checker leaves one the engine doesn't compile to its
+                        // caller, as it does one it stops at a limit of: RandomSubset in an
+                        // operator's argument draws once where TLC first uses the argument.
+                        Err(CompileError::Bail(_)) if compiler.is_native => {
+                            crate::compile::eval(|_| Err(Bail(UNCOMPILED_ASSUMPTION)))
+                        }
+                        Err(error) => return Err(error),
+                    };
+                    Ok((eval, ir.texts[name as usize].to_string()))
                 })
                 .collect::<Result<_, CompileError>>()?,
         };
@@ -697,6 +705,7 @@ fn resolve(ir: &Ir, node: NodeId) -> &NodeKind {
 }
 
 /// Why the engine doesn't search a model that reads TLC's diameter.
+const UNCOMPILED_ASSUMPTION: &str = "unsupported: an assumption the engine doesn't compile";
 pub const DIAMETER_SEARCHED: &str = "unsupported: TLCGet(\"diameter\") in the search";
 pub const VIEW_SEARCH_READ: &str = "unsupported: TLCGet in a VIEW";
 

@@ -5358,6 +5358,17 @@ describe("check matches TLC 1.7.4", () => {
     );
   });
 
+  it("overflows on an initial predicate the configuration redefines by itself", async () => {
+    // The shape of TLC's CyclicRedefineVars: Init <- ReInit, whose body names Init.
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nVARIABLE x\nInit == x = FALSE\nNext == x' = ~x\nSpec == Init /\\ [][Next]_x\nReInit == x \\in BOOLEAN /\\ Init\n====",
+        config: "SPECIFICATION Spec\nCONSTANT Init <- ReInit",
+      }),
+    ).rejects.toThrow(new TlaStackOverflowError());
+  });
+
   it("doesn't expect an EvalException in the values a property quantifies over", async () => {
     const error = await check({
       source:

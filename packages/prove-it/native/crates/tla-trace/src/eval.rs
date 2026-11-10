@@ -307,6 +307,9 @@ pub struct Evaluator<'ir> {
     pub next: Vec<Option<Value>>,
     /// How many times the evaluator read the state, so a definition that read none is cached.
     reads: u64,
+    /// The value of each binding whose evaluation drew from the generator, by the address of the
+    /// frame that binds it, which it keeps alive.
+    drawn: HashMap<usize, (Rc<Frame>, Value)>,
     /// TLCGet("level") of the current state.
     pub level: i32,
     /// What Print and PrintT printed, each as the texts of its values.
@@ -425,6 +428,8 @@ const JAVA_METHOD_FAILED: u32 = 2154;
 
 const TLC_EVAL: &str = "public static tlc2.value.impl.Value tlc2.module.TLCEval.tlcEval(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel)";
 
+const RANDOM_SUBSET: &str = "public static tlc2.value.impl.Value tlc2.module.Randomization.RandomSubset(tlc2.value.impl.Value,tlc2.value.impl.Value)";
+
 // `reportAsJavaFailure`: a failure with TLC's message, reported as the failure of the Java method
 // that TLC overrides an operator with.
 fn as_java_failure<T>(signature: &str, result: Evaluated<T>) -> Evaluated<T> {
@@ -524,6 +529,7 @@ fn parts_size<'v>(parts: impl Iterator<Item = &'v Value>) -> Evaluated<i64> {
 
 /// `EC.TLC_MODULE_COMPUTING_CARDINALITY`.
 const COMPUTING_CARDINALITY: u32 = 2181;
+const MODULE_OVERFLOW: u32 = 2178;
 const IS_FINITE_SET: &str =
     "public static tlc2.value.IBoolValue tlc2.module.FiniteSets.IsFiniteSet(tlc2.value.impl.Value)";
 const CARDINALITY: &str = "public static tlc2.value.impl.IntValue tlc2.module.FiniteSets.Cardinality(tlc2.value.impl.Value)";
@@ -544,6 +550,7 @@ impl<'ir> Evaluator<'ir> {
             current: vec![None; width],
             next: vec![None; width],
             reads: 0,
+            drawn: HashMap::new(),
             level: 0,
             printed: Vec::new(),
             target: None,
@@ -1408,9 +1415,20 @@ impl<'ir> Evaluator<'ir> {
                 context: bound,
                 is_self,
             } => {
+                // TLC keeps the value of an argument or a LET definition once it has evaluated
+                // it (`LazyValue`), so what it drew from the generator isn't drawn again.
+                let key = Rc::as_ptr(frame) as usize;
+                if let Some((_, value)) = self.drawn.get(&key) {
+                    return Ok(value.clone());
+                }
                 let inner = own_context(bound, frame, *is_self)
                     .primed(context.is_primed || bound.is_primed);
-                self.evaluate(*node, &inner)
+                let state = self.random.as_ref().map(JavaRandom::state);
+                let value = self.evaluate(*node, &inner)?;
+                if self.random.as_ref().map(JavaRandom::state) != state {
+                    self.drawn.insert(key, (Rc::clone(frame), value.clone()));
+                }
+                Ok(value)
             }
             Binding::Function {
                 definition,
@@ -3414,6 +3432,16 @@ impl<'ir> Evaluator<'ir> {
                     ("RandomSubset", [Value::Int(count), set]) if *count >= 0 && !is_174 => {
                         random_subset(random, *count as u64, set)?
                     }
+                    // `SetEnumValue.getRandomSubset` and `IntervalValue.getRandomSubset` make room
+                    // for the subset first, which Java refuses for a negative count.
+                    ("RandomSubset", [Value::Int(count), Value::Set(_) | Value::Interval(..)])
+                        if *count < 0 && !is_174 =>
+                    {
+                        return as_java_failure(
+                            RANDOM_SUBSET,
+                            fail_runtime("RandomSubset of a negative count", count.to_string()),
+                        );
+                    }
                     _ => return fail(name.to_string()),
                 }
             }
@@ -3530,7 +3558,7 @@ impl<'ir> Evaluator<'ir> {
                 for (element, count) in &left {
                     let other = count_in(&right, element)?.unwrap_or(0);
                     let total = if name == "\\oplus" {
-                        count.checked_add(other)
+                        Some(add_counts(*count, other)?)
                     } else {
                         count.checked_sub(other)
                     };
@@ -3559,6 +3587,33 @@ impl<'ir> Evaluator<'ir> {
                 let keys = elements(&set)?.to_vec();
                 let values = vec![Value::Int(1); keys.len()];
                 sorted_function(keys, values, Class::Plain)?
+            }
+            // The copies a bag holds (`Bags.BagCardinality`), which TLC adds in an int.
+            "BagCardinality" => {
+                arity(1)?;
+                let bag = self.operand(&operands[0])?;
+                let mut size = 0;
+                for (_, count) in positive_counts(&bag)? {
+                    size = add_counts(size, count)?;
+                }
+                Value::Int(size)
+            }
+            // The sum of a set's bags in the set's order (`Bags.BagUnion`).
+            "BagUnion" => {
+                arity(1)?;
+                let set = self.operand(&operands[0])?;
+                let bags = elements(&set)?;
+                match bags.as_slice() {
+                    [] => Value::function(Vec::new(), Vec::new(), Class::Plain),
+                    [bag] => bag.clone(),
+                    [first, rest @ ..] => {
+                        let mut counts = bag_counts(first)?;
+                        for bag in rest {
+                            merge_counts(&mut counts, bag_counts(bag)?)?;
+                        }
+                        counted_bag(counts)?
+                    }
+                }
             }
             // The elements a bag holds (`Bags.BagToSet`).
             "BagToSet" => {
@@ -4084,6 +4139,54 @@ fn describe(kind: &NodeKind) -> &'static str {
         NodeKind::Bracket(_) => "a bracket",
         _ => "node",
     }
+}
+
+// TLC's sum of two counts (`Bags.addCounts`), which fails where an int overflows.
+fn add_counts(left: i32, right: i32) -> Evaluated<i32> {
+    match left.checked_add(right) {
+        Some(sum) => Ok(sum),
+        None => fail_coded(
+            "an overflow adding the counts of a bag",
+            MODULE_OVERFLOW,
+            format!("Overflow when computing {left}+{right}"),
+        ),
+    }
+}
+
+// The counts of a bag, each of which TLC requires to be positive (`Bags.IsABag`).
+fn positive_counts(bag: &Value) -> Evaluated<Vec<(Value, i32)>> {
+    let counts = bag_counts(bag)?;
+    if counts.iter().any(|&(_, count)| count <= 0) {
+        return fail("a bag with a count that isn't positive");
+    }
+    Ok(counts)
+}
+
+// Adds a bag's counts to those gathered, a new element after them.
+fn merge_counts(counts: &mut Vec<(Value, i32)>, added: Vec<(Value, i32)>) -> Evaluated<()> {
+    for (key, count) in added {
+        let mut held = None;
+        for (index, (inner_key, _)) in counts.iter().enumerate() {
+            if equals(inner_key, &key)? {
+                held = Some(index);
+                break;
+            }
+        }
+        match held {
+            Some(index) => counts[index].1 = add_counts(counts[index].1, count)?,
+            None => counts.push((key, count)),
+        }
+    }
+    Ok(())
+}
+
+// The bag of the counts gathered, in their order, as TLC builds it before it normalizes it.
+fn counted_bag(counts: Vec<(Value, i32)>) -> Evaluated<Value> {
+    let (keys, values) = counts
+        .into_iter()
+        .map(|(key, count)| (key, Value::Int(count)))
+        .unzip();
+    written_function(keys, values, Class::Plain)
 }
 
 // A bag's elements with their counts, in the order of its domain, as TLC reads a bag's function.

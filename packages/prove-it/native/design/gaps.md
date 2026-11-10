@@ -689,6 +689,12 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   (`INFINITE_BOUND`, as `Nat \cap S`) is delegated like a limit, since TLC compares such sets
   and enumerates such a bound by rules of its own. Where the caller can't check a delegated one,
   it is reported as failing, as before.
+- **ModuleSemanticsAssume** now prints what TLC prints. The engine declined the model compiling
+  RandomSubset in an operator's argument. The native checker now leaves an assumption the engine
+  doesn't compile to its caller, as it does one it stops at a limit of, and `tla-trace` follows
+  TLC there: a drawn argument keeps its value, `(+)`, BagCardinality and BagUnion add counts in
+  an int and fail with TLC's overflow message (`Bags.addCounts`), and RandomSubset of a
+  negative count fails as the Java method does.
 - **MCEWD687a** (both copies) stops where TLC fails (`SetPredValue.elements`: "Attempted to
   enumerate { x \in S : p(x) } when S: ... is not enumerable") evaluating the property
   TreeWithRoot as an invariant. The engine and the CLI now follow TLC there: the stop is among

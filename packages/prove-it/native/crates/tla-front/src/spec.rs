@@ -308,6 +308,16 @@ impl Expansion<'_> {
                         // TLC recurses until its stack overflows.
                         return Err(FrontError::StackOverflow);
                     }
+                    let expanding = [expanding, &[Rc::as_ptr(definition)]].concat();
+                    let expanded = self.expand(
+                        &definition.body,
+                        None,
+                        &expanding,
+                        is_substituted || self.is_substituted(definition),
+                        // `opNode.getName()`: the name as written, `A!Safe` for an instance's.
+                        Some(written.clone()),
+                    )?;
+                    // The body is walked all the same, so one that names itself overflows.
                     if self.is_specification
                         && self.facts.get_definition_level(definition, self.environment)
                             == Level::Variable
@@ -318,15 +328,7 @@ impl Expansion<'_> {
                             name: Some(written.clone()),
                         }]);
                     }
-                    let expanding = [expanding, &[Rc::as_ptr(definition)]].concat();
-                    return self.expand(
-                        &definition.body,
-                        None,
-                        &expanding,
-                        is_substituted || self.is_substituted(definition),
-                        // `opNode.getName()`: the name as written, `A!Safe` for an instance's.
-                        Some(written.clone()),
-                    );
+                    return Ok(expanded);
                 }
             }
             ExpressionKind::Apply { operator, args, .. }
