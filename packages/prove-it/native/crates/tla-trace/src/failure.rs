@@ -67,7 +67,7 @@ pub struct Failure {
     /// The status TLC exits with (`EC.ExitStatus.errorConstantToExitStatus`).
     pub exit_code: i32,
     /// What the spec printed as TLC replayed the failure, each print's values as `Trace` holds
-    /// them.
+    /// them: of an assumption, from the first assumption on.
     pub printed: Vec<Vec<String>>,
     /// Where a state the replay found fails to fingerprint, which TLC reports in place of the
     /// call stack: the ranges of the expressions that built the values it fails in, outermost
@@ -277,7 +277,8 @@ impl<'ir> Rebuilder<'ir> {
 
     /// Evaluates again the assumption at `position` of the model's assumptions, which failed to
     /// evaluate as TLC started, after the startup's definitions, and returns TLC's report of it
-    /// (`checkAssumptions`), with what it printed before it failed.
+    /// (`checkAssumptions`), with what the assumptions before it printed and what it printed
+    /// before it failed.
     pub fn evaluate_assumption(&mut self, position: u32) -> Result<Failure, Unsupported> {
         let evaluator = self.evaluator();
         let ir = evaluator.ir;
@@ -291,6 +292,7 @@ impl<'ir> Rebuilder<'ir> {
         // The startup printed its definitions and the assumptions before this one already, and
         // those set what the registers hold when TLC evaluates this one.
         run(evaluator.compute_startup())?;
+        evaluator.printed.clear();
         for &(earlier, _) in &ir.model.startup.assumptions[..position as usize] {
             if !matches!(
                 evaluator.evaluate(earlier, &Context::default()),
@@ -301,7 +303,6 @@ impl<'ir> Rebuilder<'ir> {
                 ));
             }
         }
-        evaluator.printed.clear();
         clear_unnormalized();
         evaluator.call_stack = Some(CallStack::default());
         let result = evaluator.evaluate(node, &Context::default());
