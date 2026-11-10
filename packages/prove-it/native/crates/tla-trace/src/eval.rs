@@ -3247,13 +3247,13 @@ impl<'ir> Evaluator<'ir> {
                 arity(1)?;
                 match self.operand(&operands[0])? {
                     Value::Str(text) => int(text.units.len() as i64)?,
-                    sequence => int(sequence_of(&sequence)?.len() as i64)?,
+                    sequence => int(argument_sequence("Len", &sequence)?.len() as i64)?,
                 }
             }
             "Head" => {
                 arity(1)?;
                 let sequence = self.operand(&operands[0])?;
-                match sequence_of(&sequence)?.first() {
+                match argument_sequence("Head", &sequence)?.first() {
                     Some(head) => head.clone(),
                     None => return fail("Head of the empty sequence"),
                 }
@@ -3268,7 +3268,7 @@ impl<'ir> Evaluator<'ir> {
                     }
                     return Ok(Value::Str(self.text_of(text.units[1..].into())));
                 }
-                let elements = sequence_of(&sequence)?;
+                let elements = argument_sequence("Tail", &sequence)?;
                 if elements.is_empty() {
                     return fail("Tail of the empty sequence");
                 }
@@ -4104,6 +4104,21 @@ fn scalar_kind(value: &Value) -> Option<&'static str> {
         Value::Str(_) => Some("a string"),
         Value::Model(_) => Some("a model value"),
         _ => None,
+    }
+}
+
+// The sequence the argument of Len, Head or Tail must be (`EC.TLC_MODULE_ONE_ARGUMENT_ERROR`).
+fn argument_sequence<'v>(name: &str, value: &'v Value) -> Evaluated<&'v [Value]> {
+    match as_tuple(value) {
+        Some(elements) => Ok(elements),
+        None => fail_coded(
+            format!("{name} of a non-sequence"),
+            ONE_ARGUMENT_ERROR,
+            format!(
+                "The argument of {name} should be a sequence, but instead it is:\n{}",
+                format_pretty(value)
+            ),
+        ),
     }
 }
 

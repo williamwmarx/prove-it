@@ -588,6 +588,45 @@ fn prints_once_what_an_assumption_printed_before_the_engine_left_it() {
 }
 
 #[test]
+fn words_failed_memberships_and_sequence_arguments_as_tlc() {
+    for (assumption, error) in [
+        (
+            "m \\in Seq({1})",
+            "Attempted to check if the typed model value A_b is an element of\nSeq({1})",
+        ),
+        (
+            "1 \\in SUBSET Nat",
+            "Attempted to check if the non-enumerable value\n1\nis element of\nSUBSET Nat",
+        ),
+        (
+            "{1} \\in Seq(Nat)",
+            "Attempted to check if the value:\n{1}\nis an element of Seq(Nat).",
+        ),
+        (
+            "Len(Nat) = 1",
+            "The argument of Len should be a sequence, but instead it is:\nNat",
+        ),
+    ] {
+        let spec = format!(
+            "---- MODULE Member ----\nEXTENDS Naturals, Sequences\nCONSTANT m\nVARIABLE x\nASSUME {assumption}\nInit == x = 0\nNext == x' = x\n====\n"
+        );
+        let (output, directory) = run_front(
+            "member",
+            &spec,
+            "CONSTANT m = A_b\nINIT Init\nNEXT Next\n",
+            &[],
+        );
+        let text = stdout(&output);
+        assert_eq!(output.status.code(), Some(10), "{text}");
+        assert!(
+            text.contains(&format!("of module Member failed.\n{error}\n")),
+            "{text}"
+        );
+        std::fs::remove_dir_all(directory).expect("removed");
+    }
+}
+
+#[test]
 fn fails_to_print_a_lazy_set_whose_expansion_fails() {
     // PrintT prints with `toStringUnchecked`, which fails where TLC can't expand a lazy set.
     for (set, error) in [
