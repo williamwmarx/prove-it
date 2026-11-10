@@ -274,6 +274,8 @@ impl Store {
         self.text_base = base.texts.len();
         self.generation = base.generation;
         self.copied = Some((base.serial, base.generation));
+        // The strings the base ranked since it froze its order compare with no other here either.
+        self.unordered_rank = base.unordered_rank;
         self.small_ints.clone_from(&base.small_ints);
         self.table.fill([0, EMPTY_SLOT]);
         self.string_ids.clear();
@@ -372,7 +374,7 @@ impl Store {
 
     /// Whether a string has been ranked since `freeze_string_order`.
     pub fn has_unordered_strings(&self) -> bool {
-        (self.order.ranks.len() as i32) > self.unordered_rank
+        (self.get_order().ranks.len() as i32) > self.unordered_rank
     }
 
     /// TLC's rank of a text, ranking it if it has none, as `getStringRank` does.
