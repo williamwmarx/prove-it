@@ -3,6 +3,7 @@
 //! Zenon is Copyright INRIA, under the licence in `LICENSE` beside this crate; `ocaml` ports parts
 //! of OCaml's standard library under the LGPL with OCaml's linking exception.
 
+pub mod check;
 pub mod eqrel;
 pub mod equality_rules;
 pub mod expr;
