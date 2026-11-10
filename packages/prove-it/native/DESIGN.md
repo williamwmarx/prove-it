@@ -1064,8 +1064,9 @@ check, and `PROVE_IT_ENGINE_WASM` loads it in Node or Bun for testing.
   in Bun and 2,000 to 4,000 in Node, against the addon's 20,000 before "recursion too deep". A
   check that exhausts the stack traps; the loader replaces the instance and returns a stop that
   hands nothing over, so the interpreter searches from the start.
-- **Output.** On the differential's models that TLC checks within 3 seconds (657 runs, one worker),
-  every transcript matches the addon's.
+- **Output.** On the differential's models that TLC checks within 3 seconds, in both output modes
+  (1,314 runs, one worker), every transcript matches the addon's, and the engine ends each run as
+  the addon does: 838 complete, 226 stop and hand over, 28 decline, and none traps.
 
 ---
 
