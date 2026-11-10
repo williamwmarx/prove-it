@@ -6,6 +6,7 @@ import { TheoryJustification } from "./enode";
 import { getIdentityHash, ObjMap } from "./hashtable";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import { Literal, negate } from "./literal";
+import { traceLp } from "./lp-trace";
 import { BoundPropagator, getImpliedKind, ImpliedBound } from "./lp/bound-propagator";
 import { type ConstraintKind, KIND_GE, KIND_GT, KIND_LE, KIND_LT } from "./lp/constraints";
 import { LP_INFEASIBLE } from "./lp/core-solver";
@@ -26,7 +27,7 @@ interface TermBound {
 export abstract class TheoryLraPropagate extends TheoryLraBounds {
   protected abstract propagateNla(isIncremental: boolean): void;
 
-  private bp = new BoundPropagator(this.solver, {
+  private bp = traceLp("bp", BoundPropagator, this.solver, {
     columnIsInteresting: (column) => this.columnIsInteresting(column),
     boundIsInteresting: (column, kind, value) => this.boundIsInteresting(column, kind, value),
     isEqual: (first, second) => this.isEqual(first, second),

@@ -24,10 +24,24 @@ what each milestone built and measured, in the order they landed.
   definition its name makes, a module's definitions and its units. Later stages that key on
   identity, as the IR lowering does, see the same sharing. Ranges are values, not `Rc`s.
 - `parser` ports the `tlc` and `sany` modes of `parser.ts` (`parse_module`,
-  `parse_module_tokens`, `parse_sany_module`) and `extractModule`. The `tlapm` mode, which reads
-  proof obligations as tlapm does, is left out: the checker never uses it. A module named by a
+  `parse_module_tokens`, `parse_sany_module`) and `extractModule`. A module named by a
   keyword makes `parser.ts` run SANY's own parser (`getSanyParseError`), which F5 ports; until then
-  the Rust parser returns an `unsupported:` error there, and no corpus module reaches it.
+  the Rust parser returns an `unsupported:` error there in these modes, and no corpus module
+  reaches it.
+- The prover's stage P5a adds the `tlapm` mode (`parse_tlapm_module`): every `isTlapm` branch of
+  `parser.ts`, behind `Mode::Tlapm`, with the lexer untouched. `@` stays an operator token, a
+  string is located at its closing quote, `TRUE`, `FALSE`, `BOOLEAN`, `STRING` and the keywords
+  are only keywords, brackets lift the junction list's alignment, `LAMBDA` is an expression, a
+  prefix operator argument or a `\B`, `\O` or `\H` numeral is an `incomplete expression`,
+  `RECURSIVE` inside `LET` is rejected, `DEF` takes tlapm's definables, and SANY's precedence and
+  label fix-ups are skipped. A failure carries the reason and position tlapm prints: `Unexpected
+  EOF` after the unit's `==`, or `Unexpected <token>` at the end of the token before it. The
+  Rust-only readings the checker relies on (a fairness subscript applied to arguments) stay out of
+  this mode, and a keyword module name runs the ported `get_sany_parse_error` as `parser.ts` does.
+  `front-differential.ts tlapm-ast` compares the AST, or the error and its failure, with
+  `parseTlapmModule`: all 2,367 modules match (the corpora, with the 304 modules of `proofs.json`
+  and the error corpus of `tlapm.json`, and the fixtures), and so do the 9,468 variants of
+  `--mutate 2400`.
 - `dump` writes the AST and errors as canonical JSON: keys sorted, `undefined` fields left out, so
   the harness compares the two ASTs as text without either side building objects in the other's
   order. `scripts/front-differential.ts` gains the modes `ast` and `sany-ast`, `--mutate <n>`
