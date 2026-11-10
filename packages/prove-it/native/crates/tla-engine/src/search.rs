@@ -3052,7 +3052,9 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                                     &held,
                                     &tables,
                                     &liveness,
-                                    context.is_invariant_printing || is_distinct_read,
+                                    context.is_invariant_printing
+                                        || is_distinct_read
+                                        || model.actions.len() > 1,
                                 )
                             })
                             .flatten();
@@ -3348,6 +3350,16 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 // deadlock, with what its atoms set, which the engine doesn't follow.
                 Some(found) if online.is_some() => {
                     (!matches!(found.kind, ViolationKind::Deadlock { .. })).then_some(found)
+                }
+                // TLC runs Next again from a state it adds a tableau node of late, printing
+                // again what Next prints, which the search doesn't place before its stop.
+                Some(_)
+                    if search.graph.is_some()
+                        && search.held.as_ref().is_some_and(|held| {
+                            held.iter().skip(1).any(|printed| !printed.is_empty())
+                        }) =>
+                {
+                    None
                 }
                 Some(mut found) if search.graph.is_some() => {
                     let mut expanded = search.expanding;
@@ -4310,9 +4322,10 @@ fn order_printed<'p>(
             }
             // TLC runs Next again from a stored state it adds a node of late, and prints what
             // the search printed expanding it.
-            // TLC checks no invariant then, and the count of distinct states has grown since, so
-            // where an invariant may print among Next's prints or anything reads that count, the
-            // interpreter checks from the start.
+            // TLC checks no invariant then, the count of distinct states has grown since, and
+            // it runs Next action by action with the atoms of each action's successors between,
+            // so where an invariant may print among Next's prints, anything reads that count or
+            // Next has several actions, the interpreter checks from the start.
             Event::Late(state) => {
                 if let Some(printed) = expansions.get(state as usize) {
                     if is_replay_inexact && !printed.is_empty() {

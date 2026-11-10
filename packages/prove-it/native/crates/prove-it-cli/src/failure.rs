@@ -141,9 +141,11 @@ pub fn print_failure(
         None => printer.print(failure.code, Level::Error, message),
     }
     // TLC reports an exception it didn't expect without the call stack or statistics, but for one
-    // adding a state to the behavior graphs, or one its replay of an expansion threw.
+    // adding a state to the behavior graphs, an initial one too, or one its replay of an
+    // expansion threw.
     if failure.exit_code == ERROR
         && !is_atom
+        && !is_initial_atom
         && !failure.replay.is_failed
         && !matches!(stop.site, Site::Next)
     {
