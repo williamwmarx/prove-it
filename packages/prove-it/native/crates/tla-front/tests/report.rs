@@ -95,8 +95,7 @@ fn reports_only_the_recursive_shapes_it_follows() {
         "RNestedWrongLevelFunction",
         "RecursiveHelper",
     ];
-    let directory =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/recursive-shapes");
+    let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/recursive-shapes");
     let mut paths: Vec<_> = std::fs::read_dir(&directory)
         .expect("the grid")
         .map(|entry| entry.expect("an entry").path())
