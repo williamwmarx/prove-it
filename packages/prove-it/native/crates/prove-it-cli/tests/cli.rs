@@ -3532,6 +3532,85 @@ fn prints_a_value_as_tlc_built_it_where_the_spec_writes_it() {
 }
 
 #[test]
+fn streams_a_union_of_sets_tlc_keeps_lazy_as_tlc_does() {
+    // TLC sorts a set enumeration as it first enumerates it, which caches each element after the
+    // first as its normalized set (`ValueVec.sort`), and UNION streams the first as built,
+    // duplicates and all. The counts are TLC's for these models.
+    let models = [
+        (
+            "y = 0",
+            "y' \\in UNION {UNION {0..2, {1}}, {7}}",
+            "21 states generated, 4 distinct states found",
+        ),
+        (
+            "y = 0",
+            "\\E e \\in UNION {UNION {0..2, {1}}, {7}} : y' = e",
+            "17 states generated, 4 distinct states found",
+        ),
+        (
+            "y = 0",
+            "y' \\in {1} \\X UNION {UNION {0..2, {1}}, {1, 2}}",
+            "25 states generated, 4 distinct states found",
+        ),
+        (
+            "y \\in UNION {UNION (SUBSET {{1}, {1, 2}}), {1}}",
+            "UNCHANGED y",
+            "8 states generated, 3 distinct states found",
+        ),
+        (
+            "y \\in UNION {{1}, UNION (SUBSET {{1}, {1, 2}})}",
+            "UNCHANGED y",
+            "6 states generated, 3 distinct states found",
+        ),
+        (
+            "y \\in UNION {(SUBSET {1}) \\cup SUBSET {2}}",
+            "UNCHANGED y",
+            "7 states generated, 3 distinct states found",
+        ),
+        (
+            "y \\in UNION UNION (SUBSET {{}, {{}}})",
+            "UNCHANGED y",
+            "3 states generated, 1 distinct states found",
+        ),
+    ];
+    let directory =
+        std::env::temp_dir().join(format!("prove-it-cli-unions-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    std::fs::write(
+        directory.join("Unions.cfg"),
+        "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE\n",
+    )
+    .expect("the configuration");
+    for (init, next, counts) in models {
+        let spec = format!(
+            "---- MODULE Unions ----\nEXTENDS Naturals\nVARIABLE y\nInit == {init}\nNext == {next}\n====\n"
+        );
+        std::fs::write(directory.join("Unions.tla"), spec).expect("the spec");
+        let output = run(&directory, &["-noGenerateSpecTE", "Unions"]);
+        let text = stdout(&output);
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "{next}: {text}{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(text.contains(counts), "{next}: {text}");
+    }
+    // TLC keeps an operator's argument for its later uses, and Cardinality sorted it here, so it
+    // streams as its normalized set (17 states generated), which the engine declines.
+    let spec = "---- MODULE Unions ----\nEXTENDS Naturals, FiniteSets\nVARIABLE y\nOp(u) == Cardinality(u) > 0 /\\ y' \\in u\nInit == y = 0\nNext == Op(UNION {UNION {0..2, {1}}, {7}})\n====\n";
+    std::fs::write(directory.join("Unions.tla"), spec).expect("the spec");
+    let output = run(&directory, &["-noGenerateSpecTE", "Unions"]);
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "prove-it: not native yet: the engine stopped: unsupported: streaming a lazy set with duplicates TLC may have normalized at an earlier use\n",
+        "{}",
+        stdout(&output)
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
 fn prints_an_assumption_value_as_tlc_built_it() {
     // test-model/SetPredValue: the store forgets how TLC built the set PrintT prints, which the
     // trace evaluator prints as TLC does.

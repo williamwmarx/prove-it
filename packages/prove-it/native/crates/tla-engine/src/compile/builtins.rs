@@ -249,9 +249,10 @@ impl Compiler<'_> {
         Compiled {
             is_normalized: false,
             subset_base: Some(Box::new(base.clone())),
-            // It streams in its order, and its elements are set enumerations.
+            // It streams in its order, its elements are set enumerations, and theirs are S's.
             is_in_order: true,
             are_elements_in_order: true,
+            are_elements_of_elements_in_order: base.are_elements_in_order,
             // TLC enumerates SUBSET S in the normalized order of S's elements, whatever S's
             // own order (SubsetValue.elementsNormalized), so S's value does where S has no
             // reference.
@@ -1432,18 +1433,35 @@ impl Compiler<'_> {
                 // TLC keeps UNION S lazy unless S and its elements are set enumerations, and then
                 // streams each element of S in turn (`UnionValue.Enumerator`). An element streams
                 // as its normalized set does unless it streams apart itself, which the engine,
-                // holding it as an id, can't follow.
-                let reference = (!is_enumerated && outer.are_elements_in_order)
-                    .then(|| reference_of(&outer))
-                    .flatten()
-                    .map(|base| {
-                        Arc::new(move |machine: &mut Machine<'_>| {
-                            Ok(Lazy::Union(Box::new(base(machine)?)))
-                        }) as Reference
-                    });
+                // holding it as an id, follows only where S is a set enumeration that holds it as
+                // written.
+                let base = match &outer.element_references {
+                    Some(elements) => {
+                        let elements = elements.clone();
+                        Some(Arc::new(move |machine: &mut Machine<'_>| {
+                            let mut lazies = Vec::with_capacity(elements.len());
+                            for element in &elements {
+                                lazies.push(element(machine)?);
+                            }
+                            Ok(Lazy::Enumeration(lazies))
+                        }) as Reference)
+                    }
+                    None => outer
+                        .are_elements_in_order
+                        .then(|| reference_of(&outer))
+                        .flatten(),
+                };
+                let reference = base.filter(|_| !is_enumerated).map(|base| {
+                    Arc::new(move |machine: &mut Machine<'_>| {
+                        Ok(Lazy::Union(Box::new(base(machine)?)))
+                    }) as Reference
+                });
                 Compiled {
                     is_normalized: is_enumerated,
                     is_enumerated,
+                    // Its elements are those of S's elements.
+                    are_elements_in_order: outer.are_elements_of_elements_in_order,
+                    is_reference_exact: reference.is_some(),
                     reference,
                     member: only.as_ref().map(|only| self.member_test(only)),
                     parts: only.as_ref().map(Self::parts_of),
@@ -2067,6 +2085,12 @@ impl Compiler<'_> {
                 && left.is_in_order
                 && right.is_in_order,
             are_elements_in_order: left.are_elements_in_order && right.are_elements_in_order,
+            are_elements_of_elements_in_order: left.are_elements_of_elements_in_order
+                && right.are_elements_of_elements_in_order,
+            is_reference_exact: reference.is_some()
+                && [left, right]
+                    .iter()
+                    .all(|set| set.is_in_order || set.is_reference_exact),
             member: lazy_member,
             reference,
             ..binary(left, right, operation, true, false)
