@@ -119,6 +119,19 @@ describe("the native engine", () => {
     SPAWN_LIMIT_MS,
   );
 
+  // As the addon does, the engine writes no state log where it can't create the file, and checks.
+  it.if(WASM !== undefined)(
+    "checks the model as WebAssembly where it can't write the state log",
+    () => {
+      const lines = getEngineLines("bun", SOURCE_CLI, {
+        PROVE_IT_ENGINE_WASM: WASM,
+        PROVE_IT_STATE_LOG: join(COMMIT, "missing", "states.jsonl"),
+      });
+      expect(lines).toContainEqual(expect.stringMatching(/^\[engine\] native: complete: /));
+    },
+    SPAWN_LIMIT_MS,
+  );
+
   // A recursion as deep as this exhausts the stack the engine has as WebAssembly, and the
   // interpreter searches again from the start, after the search had printed.
   it.if(WASM !== undefined)(
