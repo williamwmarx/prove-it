@@ -6,9 +6,10 @@
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::hash::{BuildHasherDefault, Hasher};
+use std::sync::Arc;
 
 use crate::tableau::{Kind, Model, Solution, Tableau, TermId, Terms};
-use crate::{Declined, Event, Graph, Slot, Source, Unanswered, Verdict};
+use crate::{Answers, Declined, Event, Graph, Slot, Source, Unanswered, Verdict};
 
 const NO_NODE: u32 = u32::MAX;
 /// The most words of a state's row of consistency the checker reads from the tables: tableaux of
@@ -127,6 +128,24 @@ impl StepResults {
         }
     }
 
+    /// Copies a row of another's, of the same width, into a row of this one's that has nothing
+    /// set.
+    fn copy_row(&mut self, row: usize, from: &StepResults, from_row: usize) {
+        let (bit, from_bit) = (row * self.stride, from_row * from.stride);
+        if self.stride >= 64 {
+            let words = self.stride / 64;
+            for word in 0..words {
+                self.checked[bit / 64 + word] = from.checked[from_bit / 64 + word];
+                self.values[bit / 64 + word] = from.values[from_bit / 64 + word];
+            }
+            return;
+        }
+        let mask = (1 << self.stride) - 1;
+        let read = |words: &[u64]| words[from_bit / 64] >> (from_bit % 64) & mask;
+        self.checked[bit / 64] |= read(&from.checked) << (bit % 64);
+        self.values[bit / 64] |= read(&from.values) << (bit % 64);
+    }
+
     fn mask(&self, ids: impl Iterator<Item = usize>) -> Vec<u64> {
         let mut mask = vec![0; self.stride.div_ceil(64)];
         for id in ids {
@@ -138,6 +157,13 @@ impl StepResults {
 
 /// A counterexample's states: the prefix, then the cycle.
 type Lasso = (Vec<u32>, Vec<u32>);
+
+/// A lasso's states, where its cycle starts, and whether its solution constrains the cycle.
+type Violation = (Vec<u32>, usize, bool);
+
+/// The stack of a thread that builds behavior graphs, whose late nodes it adds by recursion:
+/// reserved, not committed, as the engine's search thread.
+const STACK_BYTES: usize = 256 * 1024 * 1024;
 
 type IntegerMap<Key, Value> = HashMap<Key, Value, BuildHasherDefault<IntegerHasher>>;
 
@@ -228,6 +254,11 @@ pub struct Checker {
     solutions: Vec<Solution>,
     behaviors: Vec<Behavior>,
     steps: StepResults,
+    /// Each action check, by its id.
+    action_terms: Vec<TermId>,
+    /// The action checks' results on each step of the graph, by its position, which a checker
+    /// that shares the behaviors with others reads rather than checks again.
+    positions: Option<Arc<StepResults>>,
     /// TLC's SetOfStates grows its capacity with every set that outgrows it.
     capacity_multiplier: usize,
     slots: Vec<u32>,
@@ -242,6 +273,12 @@ pub struct Checker {
     /// unanswered while adding one.
     adding: Cell<Option<(u32, bool)>>,
     pub(crate) unanswered: Cell<Option<Unanswered>>,
+    /// The position among all the behaviors of each this checker builds, which a checker that
+    /// shares them with others builds only some of.
+    global: Vec<usize>,
+    /// Where adding the states got to, in TLC's order: whether past the initial states, the
+    /// state, and the behavior.
+    at: Cell<(bool, u32, usize)>,
 }
 
 /// The evaluations of atoms so far, and the atoms' answers within the evaluation of one check, as
@@ -266,11 +303,7 @@ impl Checker {
                     *action_ids.entry(check).or_insert(next)
                 })
                 .collect();
-            let is_covered = ids.iter().all(|id| {
-                behaviors
-                    .iter()
-                    .any(|behavior| behavior.action_ids.contains(id))
-            });
+            let is_covered = is_covered(&behaviors, &ids);
             behaviors.push(Behavior {
                 solution: position,
                 action_ids: ids,
@@ -308,11 +341,20 @@ impl Checker {
                     })
             })
             .collect();
+        let global = (0..behaviors.len()).collect();
         Ok(Self {
             terms,
             solutions,
             behaviors,
             steps: StepResults::new(action_ids.len()),
+            action_terms: {
+                let mut terms = vec![0; action_ids.len()];
+                for (&term, &id) in &action_ids {
+                    terms[id] = term;
+                }
+                terms
+            },
+            positions: None,
             capacity_multiplier: 1,
             slots: Vec::new(),
             scratch: Scratch::default(),
@@ -321,6 +363,8 @@ impl Checker {
             diameter: Cell::new(1),
             adding: Cell::new(None),
             unanswered: Cell::new(None),
+            global,
+            at: Cell::new((false, 0, 0)),
         })
     }
 
@@ -445,8 +489,6 @@ impl Checker {
         self.evaluate(source, term, state, step)
     }
 
-    // `evaluate` on the tables, or None where it reads an atom without an answer there or would
-    // fail: `evaluate` then finds what fails, in its order.
     fn read(
         &self,
         tables: &[Option<&[u8]>],
@@ -455,45 +497,7 @@ impl Checker {
         state: u32,
         step: Option<Step>,
     ) -> Option<bool> {
-        let answer =
-            |atom: u32, position: usize| match tables.get(atom as usize)?.as_ref()?.get(position) {
-                Some(0) => Some(false),
-                Some(1) => Some(true),
-                _ => None,
-            };
-        match self.terms.kind(term) {
-            Kind::Boolean(value) => Some(value),
-            Kind::State(atom) | Kind::Enabled(atom) => answer(atom, state as usize),
-            Kind::Action { atom, enabled } => {
-                if let Some(enabled) = enabled
-                    && let Some(Some(table)) = tables.get(enabled as usize)
-                    && table.get(state as usize) == Some(&0)
-                {
-                    return Some(false);
-                }
-                answer(atom, graph.position(step?.slot))
-            }
-            Kind::Not => self
-                .read(tables, graph, self.terms.body(term), state, step)
-                .map(|value| !value),
-            Kind::And | Kind::Or => {
-                let is_and = self.terms.kind(term) == Kind::And;
-                for &operand in self.terms.children(term) {
-                    if self.read(tables, graph, operand, state, step)? != is_and {
-                        return Some(!is_and);
-                    }
-                }
-                Some(is_and)
-            }
-            Kind::Next => self.read(
-                tables,
-                graph,
-                self.terms.body(term),
-                step.map_or(state, |step| step.real),
-                None,
-            ),
-            Kind::Always | Kind::Eventually => None,
-        }
+        read(&self.terms, tables, graph, term, state, step)
     }
 
     // Starts the evaluation of a check, which TLC evaluates without the atoms' answers so far: the
@@ -579,20 +583,7 @@ impl Checker {
     }
 
     fn edge_step(source: &Source<'_>, state: u32, edge: usize) -> Step {
-        let target = source.graph.edges[edge];
-        let real = source.graph.reals.map_or(target, |reals| reals[edge]);
-        if target == state && real == state {
-            Self::self_step(state, state)
-        } else {
-            Step {
-                target,
-                real,
-                slot: Slot::Step {
-                    state,
-                    edge: edge as u32,
-                },
-            }
-        }
+        edge_step(source.graph, state, edge)
     }
 
     fn add_steps(&mut self, count: usize) -> usize {
@@ -676,48 +667,8 @@ impl Checker {
         is_complete
     }
 
-    // `read` of a check without its step: its value where that doesn't depend on the step.
     fn read_partially(&self, tables: &[Option<&[u8]>], term: TermId, state: u32) -> Partial {
-        let answer = |atom: u32| match tables
-            .get(atom as usize)
-            .and_then(|table| table.as_ref()?.get(state as usize))
-        {
-            Some(0) => Partial::Known(false),
-            Some(1) => Partial::Known(true),
-            _ => Partial::Unknown,
-        };
-        match self.terms.kind(term) {
-            Kind::Boolean(value) => Partial::Known(value),
-            Kind::State(atom) | Kind::Enabled(atom) => answer(atom),
-            Kind::Action {
-                enabled: Some(enabled),
-                ..
-            } if matches!(
-                tables.get(enabled as usize),
-                Some(Some(table)) if table.get(state as usize) == Some(&0)
-            ) =>
-            {
-                Partial::Known(false)
-            }
-            Kind::Action { .. } | Kind::Next => Partial::Stepped,
-            Kind::Not => match self.read_partially(tables, self.terms.body(term), state) {
-                Partial::Known(value) => Partial::Known(!value),
-                other => other,
-            },
-            // An operand that reads the step comes first, so the others decide nothing alone.
-            Kind::And | Kind::Or => {
-                let is_and = self.terms.kind(term) == Kind::And;
-                for &operand in self.terms.children(term) {
-                    match self.read_partially(tables, operand, state) {
-                        Partial::Known(value) if value == is_and => {}
-                        Partial::Known(_) => return Partial::Known(!is_and),
-                        other => return other,
-                    }
-                }
-                Partial::Known(is_and)
-            }
-            Kind::Always | Kind::Eventually => Partial::Unknown,
-        }
+        read_partially(&self.terms, tables, term, state)
     }
 
     fn check_action(
@@ -979,6 +930,7 @@ impl Checker {
         self.log(Event::Initial(state));
         self.diameter.set(1);
         for behavior in 0..self.behaviors.len() {
+            self.at.set((false, state, self.global[behavior]));
             let Some(initial_count) = self.tableau(behavior).map(|tableau| tableau.initial_count)
             else {
                 self.behaviors[behavior].initial.push(state);
@@ -1009,7 +961,18 @@ impl Checker {
         // With effects, each behavior checks its actions on each step anew, as TLC does.
         let is_effectful = self.is_effectful();
         let shared_step = self.add_steps(if is_effectful { 0 } else { set.len() });
+        if let Some(positions) = self.positions.take() {
+            for (offset, step) in set.iter().enumerate() {
+                self.steps.copy_row(
+                    shared_step + offset,
+                    &positions,
+                    source.graph.position(step.slot),
+                );
+            }
+            self.positions = Some(positions);
+        }
         for behavior in 0..self.behaviors.len() {
+            self.at.set((true, state, self.global[behavior]));
             let first_step = if is_effectful {
                 self.add_steps(set.len())
             } else {
@@ -1411,24 +1374,262 @@ impl Checker {
         Ok(violated)
     }
 
-    pub fn find_violation(&self) -> Result<Option<(Vec<u32>, usize, bool)>, Declined> {
+    pub fn find_violation(&self) -> Result<Option<Violation>, Declined> {
+        self.first_violation().1
+    }
+
+    // The search of the behaviors in order up to the first that finds a lasso or fails, with its
+    // position among all the behaviors.
+    fn first_violation(&self) -> (usize, Result<Option<Violation>, Declined>) {
         for behavior in 0..self.behaviors.len() {
             let solution = &self.solutions[self.behaviors[behavior].solution];
             for model in &solution.models {
-                if let Some(lasso) = Search::new(self, behavior, model).find_lasso()? {
-                    let (prefix, cycle) = lasso;
-                    let loop_start = prefix.len();
-                    let mut path = prefix;
-                    path.extend(cycle);
-                    return Ok(Some((
-                        path,
-                        loop_start,
-                        self.is_cycle_constrained[self.behaviors[behavior].solution],
-                    )));
+                let found = match Search::new(self, behavior, model).find_lasso() {
+                    Ok(None) => continue,
+                    Ok(Some((prefix, cycle))) => {
+                        let loop_start = prefix.len();
+                        let mut path = prefix;
+                        path.extend(cycle);
+                        Ok(Some((
+                            path,
+                            loop_start,
+                            self.is_cycle_constrained[self.behaviors[behavior].solution],
+                        )))
+                    }
+                    Err(declined) => Err(declined),
+                };
+                return (self.global[behavior], found);
+            }
+        }
+        (self.behaviors.len(), Ok(None))
+    }
+
+    /// Keeps only the behaviors at these positions, in order, for a checker that builds them
+    /// while others build the rest.
+    fn keep(&mut self, positions: Vec<usize>) {
+        let mut kept: Vec<Behavior> = Vec::with_capacity(positions.len());
+        for (position, mut behavior) in std::mem::take(&mut self.behaviors).into_iter().enumerate()
+        {
+            if positions.contains(&position) {
+                behavior.is_covered = is_covered(&kept, &behavior.action_ids);
+                kept.push(behavior);
+            }
+        }
+        self.behaviors = kept;
+        self.global = positions;
+    }
+}
+
+/// Whether the behaviors before one have every action check of it.
+fn is_covered(before: &[Behavior], ids: &[usize]) -> bool {
+    ids.iter().all(|id| {
+        before
+            .iter()
+            .any(|behavior| behavior.action_ids.contains(id))
+    })
+}
+
+// `evaluate` on the tables, or None where it reads an atom without an answer there or would
+// fail: `evaluate` then finds what fails, in its order.
+fn read(
+    terms: &Terms,
+    tables: &[Option<&[u8]>],
+    graph: &Graph<'_>,
+    term: TermId,
+    state: u32,
+    step: Option<Step>,
+) -> Option<bool> {
+    let answer =
+        |atom: u32, position: usize| match tables.get(atom as usize)?.as_ref()?.get(position) {
+            Some(0) => Some(false),
+            Some(1) => Some(true),
+            _ => None,
+        };
+    match terms.kind(term) {
+        Kind::Boolean(value) => Some(value),
+        Kind::State(atom) | Kind::Enabled(atom) => answer(atom, state as usize),
+        Kind::Action { atom, enabled } => {
+            if let Some(enabled) = enabled
+                && let Some(Some(table)) = tables.get(enabled as usize)
+                && table.get(state as usize) == Some(&0)
+            {
+                return Some(false);
+            }
+            answer(atom, graph.position(step?.slot))
+        }
+        Kind::Not => read(terms, tables, graph, terms.body(term), state, step).map(|value| !value),
+        Kind::And | Kind::Or => {
+            let is_and = terms.kind(term) == Kind::And;
+            for &operand in terms.children(term) {
+                if read(terms, tables, graph, operand, state, step)? != is_and {
+                    return Some(!is_and);
+                }
+            }
+            Some(is_and)
+        }
+        Kind::Next => read(
+            terms,
+            tables,
+            graph,
+            terms.body(term),
+            step.map_or(state, |step| step.real),
+            None,
+        ),
+        Kind::Always | Kind::Eventually => None,
+    }
+}
+
+// `read` of a check without its step: its value where that doesn't depend on the step.
+fn read_partially(terms: &Terms, tables: &[Option<&[u8]>], term: TermId, state: u32) -> Partial {
+    let answer = |atom: u32| match tables
+        .get(atom as usize)
+        .and_then(|table| table.as_ref()?.get(state as usize))
+    {
+        Some(0) => Partial::Known(false),
+        Some(1) => Partial::Known(true),
+        _ => Partial::Unknown,
+    };
+    match terms.kind(term) {
+        Kind::Boolean(value) => Partial::Known(value),
+        Kind::State(atom) | Kind::Enabled(atom) => answer(atom),
+        Kind::Action {
+            enabled: Some(enabled),
+            ..
+        } if matches!(
+            tables.get(enabled as usize),
+            Some(Some(table)) if table.get(state as usize) == Some(&0)
+        ) =>
+        {
+            Partial::Known(false)
+        }
+        Kind::Action { .. } | Kind::Next => Partial::Stepped,
+        Kind::Not => match read_partially(terms, tables, terms.body(term), state) {
+            Partial::Known(value) => Partial::Known(!value),
+            other => other,
+        },
+        // An operand that reads the step comes first, so the others decide nothing alone.
+        Kind::And | Kind::Or => {
+            let is_and = terms.kind(term) == Kind::And;
+            for &operand in terms.children(term) {
+                match read_partially(terms, tables, operand, state) {
+                    Partial::Known(value) if value == is_and => {}
+                    Partial::Known(_) => return Partial::Known(!is_and),
+                    other => return other,
+                }
+            }
+            Partial::Known(is_and)
+        }
+        Kind::Always | Kind::Eventually => Partial::Unknown,
+    }
+}
+
+/// The action checks' results that the tables answer on each step of the graph, by its position:
+/// each step from a state the search expanded, then each state's stuttering step. Threads read
+/// them, each a run of the states, and the runs follow one another.
+fn read_positions(
+    terms: &Terms,
+    action_terms: &[TermId],
+    graph: &Graph<'_>,
+    tables: &[Option<&[u8]>],
+    threads: usize,
+) -> StepResults {
+    let (count, expanded) = (graph.count(), graph.expanded());
+    let share = count.div_ceil(threads.max(1)).max(1);
+    // A run's steps from its states and its states' stuttering steps.
+    let read_run = |start: usize| {
+        let end = (start + share).min(count);
+        let first_edge = graph.edge_offsets[start.min(expanded)] as usize;
+        let last_edge = graph.edge_offsets[end.min(expanded)] as usize;
+        let mut edges = StepResults::new(action_terms.len());
+        edges.add(last_edge - first_edge);
+        let mut stutters = StepResults::new(action_terms.len());
+        stutters.add(end - start);
+        for state in start..end {
+            let mut steps: Vec<Step> = Vec::new();
+            if state < expanded {
+                let from = graph.edge_offsets[state] as usize;
+                let to = graph.edge_offsets[state + 1] as usize;
+                steps.extend((from..to).map(|edge| edge_step(graph, state as u32, edge)));
+            }
+            steps.push(Checker::self_step(state as u32, state as u32));
+            for (id, &term) in action_terms.iter().enumerate() {
+                let partial = read_partially(terms, tables, term, state as u32);
+                for &step in &steps {
+                    let value = match partial {
+                        Partial::Known(value) => value,
+                        Partial::Stepped => {
+                            match read(terms, tables, graph, term, state as u32, Some(step)) {
+                                Some(value) => value,
+                                None => continue,
+                            }
+                        }
+                        Partial::Unknown => break,
+                    };
+                    match graph.position(step.slot) {
+                        position if position < graph.edges.len() => {
+                            edges.set(position - first_edge, id, value);
+                        }
+                        position => stutters.set(position - graph.edges.len() - start, id, value),
+                    }
                 }
             }
         }
-        Ok(None)
+        (edges, stutters)
+    };
+    let runs: Vec<(StepResults, StepResults)> = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..count)
+            .step_by(share)
+            .map(|start| {
+                std::thread::Builder::new()
+                    .stack_size(STACK_BYTES)
+                    .spawn_scoped(scope, move || read_run(start))
+                    .expect("a thread for the liveness checker")
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|handle| {
+                handle
+                    .join()
+                    .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+            })
+            .collect()
+    });
+    let mut positions = StepResults::new(action_terms.len());
+    positions.add(graph.edges.len() + count);
+    let mut row = 0;
+    for (edges, _) in &runs {
+        for from_row in 0..edges.count {
+            positions.copy_row(row, edges, from_row);
+            row += 1;
+        }
+    }
+    row = graph.edges.len();
+    for (_, stutters) in &runs {
+        for from_row in 0..stutters.count {
+            positions.copy_row(row, stutters, from_row);
+            row += 1;
+        }
+    }
+    positions
+}
+
+// The step of an edge of the search's graph from a state, its stuttering step where it leads back
+// to the very state.
+fn edge_step(graph: &Graph<'_>, state: u32, edge: usize) -> Step {
+    let target = graph.edges[edge];
+    let real = graph.reals.map_or(target, |reals| reals[edge]);
+    if target == state && real == state {
+        Checker::self_step(state, state)
+    } else {
+        Step {
+            target,
+            real,
+            slot: Slot::Step {
+                state,
+                edge: edge as u32,
+            },
+        }
     }
 }
 
@@ -1921,6 +2122,102 @@ pub fn check(
         return accepted(checker, source, properties, state, path);
     }
     finish(checker, source, properties, events, is_effectful)
+}
+
+/// What one thread of `check_shared` found: its checker, what adding the states stopped at, and
+/// what the search of its graphs found.
+struct Part {
+    checker: Checker,
+    added: Result<Option<(u32, Vec<u32>)>, Declined>,
+    violation: Option<(usize, Result<Option<Violation>, Declined>)>,
+}
+
+/// `check` where nothing has effects, with the behaviors shared between threads: each thread
+/// builds and searches the graphs of some of them in a checker of its own, made by `build`. Each
+/// behavior's graph depends on no other's, so what the check finds is what the thread found first
+/// in TLC's order: the first state and behavior where adding the states stopped, or else the lasso
+/// of the first behavior that has one.
+pub fn check_shared(
+    checker: &mut Checker,
+    build: &(dyn Fn() -> Result<Checker, Declined> + Sync),
+    graph: &Graph<'_>,
+    answers: &(dyn Answers + Sync),
+    properties: &[TermId],
+    threads: usize,
+) -> Result<Verdict, Declined> {
+    let count = checker.behaviors.len();
+    let groups = threads.clamp(1, count.max(1));
+    let positions = answers.tables().map(|tables| {
+        Arc::new(read_positions(
+            &checker.terms,
+            &checker.action_terms,
+            graph,
+            tables,
+            threads,
+        ))
+    });
+    let positions = &positions;
+    let parts = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..groups)
+            .map(|group| {
+                std::thread::Builder::new()
+                    .stack_size(STACK_BYTES)
+                    .spawn_scoped(scope, move || -> Result<Part, Declined> {
+                        let mut checker = build()?;
+                        checker.keep((group..count).step_by(groups).collect());
+                        checker.positions.clone_from(positions);
+                        let source = Source { graph, answers };
+                        let added = add_states(&mut checker, &source);
+                        let violation =
+                            matches!(added, Ok(None)).then(|| checker.first_violation());
+                        Ok(Part {
+                            checker,
+                            added,
+                            violation,
+                        })
+                    })
+                    .expect("a thread for the liveness checker")
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|handle| {
+                handle
+                    .join()
+                    .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+            })
+            .collect::<Result<Vec<_>, _>>()
+    })?;
+    let source = Source { graph, answers };
+    let stopped = parts
+        .iter()
+        .enumerate()
+        .filter(|(_, part)| !matches!(part.added, Ok(None)))
+        .min_by_key(|(_, part)| part.checker.at.get())
+        .map(|(position, _)| position);
+    if let Some(position) = stopped {
+        let part = parts.into_iter().nth(position).expect("the part");
+        checker.unanswered.set(part.checker.unanswered.get());
+        let (state, path) = part.added?.expect("a state adding stopped at");
+        return accepted(&part.checker, &source, properties, state, path);
+    }
+    let Some(part) = parts
+        .into_iter()
+        .filter(|part| matches!(&part.violation, Some((_, found)) if !matches!(found, Ok(None))))
+        .min_by_key(|part| part.violation.as_ref().map(|violation| violation.0))
+    else {
+        return Ok(Verdict::Holds);
+    };
+    let (_, found) = part.violation.expect("a violation");
+    let (path, loop_start, is_cycle_constrained) = found?.expect("a lasso");
+    Ok(Verdict::Lasso {
+        violated: part
+            .checker
+            .violated(&source, properties, &path, loop_start)?,
+        path,
+        loop_start,
+        is_cycle_constrained,
+    })
 }
 
 /// TLC's check of the behavior graphs once the states are added: the search of each for a

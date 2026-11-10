@@ -3379,3 +3379,125 @@ fn reads_what_tlc_drew_at_startup_on_every_thread() {
     assert_eq!(untimed(&four), untimed(&one));
     std::fs::remove_dir_all(directory).expect("removed");
 }
+
+#[test]
+fn passes_the_elements_a_leading_field_test_rejects_where_tlc_does() {
+    // Loops whose body starts with `m.type = c`: an action's \E, \A, ~\E and a set filter, over
+    // records whose type is another string, records of which a later one lacks the field, a
+    // model value and integers, as TLC at d8fb231 prints them: an element is passed only where the
+    // test is FALSE without failing, so a later element still fails where TLC fails, and \A
+    // stops at the first element whose test is FALSE.
+    let directory =
+        std::env::temp_dir().join(format!("prove-it-cli-fields-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    let mut module = String::from(
+        "---- MODULE Fields ----\nEXTENDS Integers\nCONSTANT M\nVARIABLE x\n\
+         Msgs(c) == CASE c = 1 -> {[type |-> \"a\", v |-> 1], [type |-> \"b\", v |-> 2], [typo |-> \"c\", v |-> 3]}\n\
+         \x20            [] c = 2 -> {[type |-> \"b\", v |-> 1], [type |-> \"a\", v |-> 2]}\n\
+         \x20            [] c = 3 -> {[type |-> M, v |-> 1]}\n\
+         \x20            [] OTHER -> {[type |-> 3, v |-> 1], [type |-> 4, v |-> 2]}\n\
+         Init == x = 0\n\
+         Act(c) == \\E m \\in Msgs(c) : m.type = \"z\" /\\ x' = m.v\n\
+         All(c) == \\A m \\in Msgs(c) : m.type = \"b\" /\\ m.v > 0\n\
+         None(c) == ~\\E m \\in Msgs(c) : m.type = \"z\" /\\ m.v = 7\n\
+         Kept(c) == {m \\in Msgs(c) : m.type = \"a\" /\\ m.v > 0} # {}\n\
+         Stay == UNCHANGED x\n",
+    );
+    for c in 1..=4 {
+        module.push_str(&format!(
+            "Next{c} == Act({c})\nInvAll{c} == All({c})\nInvNone{c} == None({c})\nInvKept{c} == Kept({c})\n"
+        ));
+    }
+    module.push_str("====\n");
+    std::fs::write(directory.join("Fields.tla"), module).expect("a file");
+    let missing = "Attempted to select nonexistent field \"type\" from the record\n[v |-> 3, typo |-> \"c\"]\n";
+    let cases: [(&str, &[&str]); 16] = [
+        (
+            "NEXT Next1",
+            &[
+                missing,
+                "line 10, col 30 to line 10, col 35 of module Fields\n",
+            ],
+        ),
+        (
+            "INVARIANT InvAll1",
+            &["Error: The invariant of InvAll1 is equal to FALSE\n"],
+        ),
+        (
+            "INVARIANT InvNone1",
+            &[
+                missing,
+                "line 12, col 32 to line 12, col 37 of module Fields\n",
+            ],
+        ),
+        (
+            "INVARIANT InvKept1",
+            &[
+                missing,
+                "line 13, col 29 to line 13, col 34 of module Fields\n",
+            ],
+        ),
+        ("NEXT Next2", &["Error: Deadlock reached.\n"]),
+        (
+            "INVARIANT InvAll2",
+            &["Error: The invariant of InvAll2 is equal to FALSE\n"],
+        ),
+        (
+            "INVARIANT InvNone2",
+            &["Model checking completed. No error has been found.\n"],
+        ),
+        (
+            "INVARIANT InvKept2",
+            &["Model checking completed. No error has been found.\n"],
+        ),
+        ("NEXT Next3", &["Error: Deadlock reached.\n"]),
+        (
+            "INVARIANT InvAll3",
+            &["Error: The invariant of InvAll3 is equal to FALSE\n"],
+        ),
+        (
+            "INVARIANT InvNone3",
+            &["Model checking completed. No error has been found.\n"],
+        ),
+        (
+            "INVARIANT InvKept3",
+            &["Error: The invariant of InvKept3 is equal to FALSE\n"],
+        ),
+        (
+            "NEXT Next4",
+            &[
+                "Attempted to check equality of integer 3 with non-integer:\n\"z\"\n",
+                "0. Line 10, column 30 to line 10, column 53 in Fields\n1. Line 10, column 30 to line 10, column 41 in Fields\n",
+            ],
+        ),
+        (
+            "INVARIANT InvAll4",
+            &["Attempted to check equality of integer 3 with non-integer:\n\"b\"\n"],
+        ),
+        (
+            "INVARIANT InvNone4",
+            &["Attempted to check equality of integer 3 with non-integer:\n\"z\"\n"],
+        ),
+        (
+            "INVARIANT InvKept4",
+            &["Attempted to check equality of integer 3 with non-integer:\n\"a\"\n"],
+        ),
+    ];
+    for (clause, expected) in cases {
+        let config = if clause.starts_with("NEXT") {
+            format!("CONSTANT M = M\nINIT Init\n{clause}\n")
+        } else {
+            format!("CONSTANT M = M\nINIT Init\nNEXT Stay\n{clause}\n")
+        };
+        std::fs::write(directory.join("Fields.cfg"), config).expect("a file");
+        let output = run(
+            &directory,
+            &["-nowarning", "-fp", "0", "-noGenerateSpecTE", "Fields"],
+        );
+        let text = stdout(&output);
+        for line in expected {
+            assert!(text.contains(line), "{clause}: {line}\n{text}");
+        }
+    }
+    std::fs::remove_dir_all(directory).expect("removed");
+}

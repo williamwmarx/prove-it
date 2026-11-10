@@ -158,6 +158,11 @@ pub(crate) enum Shape {
         slot: u32,
         second: u32,
     },
+    /// `r.f`, with `r` a bound name.
+    Field {
+        slot: u32,
+        key: Id,
+    },
 }
 
 impl Shape {
@@ -176,6 +181,7 @@ pub(crate) struct Filter {
     pub slots: Vec<u32>,
     pub tuple: bool,
     pub predicate: predicate::Test,
+    pub reject: Option<predicate::Reject>,
 }
 
 /// A compiled expression, with what `compile.ts`'s `Compiled` and `LazySet` say of it.
@@ -691,6 +697,8 @@ pub struct Compiler<'a> {
     /// The walks whose first step is a guard `f[k] = c`, by the address of their step, each kept
     /// alive so no other step takes its address (`walker::Leading`).
     leading_guards: HashMap<usize, (Step, walker::Leading)>,
+    // The fused predicate of each walk whose first step is a guard, by the walk's address.
+    first_guards: HashMap<usize, (Step, predicate::Predicate)>,
     /// The bodies of recursive functions an action applies, each walked once for what the walk
     /// knows where it applies it (`walker::WalkedFunction`).
     walked_functions: Vec<walker::WalkedFunction>,
@@ -788,6 +796,7 @@ impl<'a> Compiler<'a> {
             depth: 0,
             reads: None,
             leading_guards: HashMap::new(),
+            first_guards: HashMap::new(),
             walked_functions: Vec::new(),
             walked_operators: Vec::new(),
             provisional: HashMap::new(),
