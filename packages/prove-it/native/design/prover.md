@@ -702,12 +702,15 @@ in the SMT kernel) adds it to both sides in its own commit, inert in TS as P0's 
 addon (`bun scripts/platform-packages.ts build`):
 
 ```
-bun scripts/run.ts prover-inputs                     # writes .prover-inputs/ from the record, minutes
+NODE_OPTIONS=--max-old-space-size=4500 bun scripts/run.ts prover-inputs   # writes .prover-inputs/, minutes
 bun scripts/run.ts prover-differential --side rust --prover zenon --jobs 4
 ```
 
-`--side ts` checks the record against the TypeScript (it reproduces), `--filter` keeps inputs by
-digest, and `.prover-differential.json` holds every result. Outcomes: `same`, `differs`,
+The heap flag is needed: without it the solver's heap fills on two modules, their workers die,
+and `prover-inputs` exits with an error, naming how many modules it lost.
+
+`--side ts` checks the record against the TypeScript (it reproduces), `--filter` keeps the inputs
+whose key, `prover/digest`, contains the text (`--filter /0` keeps about a sixteenth), and `.prover-differential.json` holds every result. Outcomes: `same`, `differs`,
 `unstable` (2.3), `declined` (not covered by the port yet), `crash`. With
 `PROVE_IT_ENGINE_WASM=dist/prove-it-engine.wasm` the Rust side is the WebAssembly module. A track
 that changes a TypeScript decider (it should not need to) re-records with `prover-inputs --record`
@@ -722,7 +725,7 @@ recorded step limits: zero `differs`, zero `declined` and zero `crash`, every `u
 why; the
 ported unit tests pass; the TS unit tests pass with `PROVE_IT_PROVER_<NAME>=rust`;
 `conformance:prove` gives the same counts as on `main`; the wasm build passes the differential on
-a sample (`--filter tlapm/library`); the size row is recorded (3.9); and the full local gate of
+a sample (`--prover <name> --filter /0`); the size row is recorded (3.9); and the full local gate of
 AGENTS.md passes. The flip itself is a separate commit that changes only the default, so it can
 be reverted alone.
 
