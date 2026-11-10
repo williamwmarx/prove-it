@@ -572,7 +572,13 @@ oracle, so P0 lands them inert: with no budget set, no counter is compared and n
 change. P0's PR shows `prove` on all 304 corpus modules before and after, identical per
 obligation (33,137 obligations; tlapm's counts are 20,502 trivial, 12,523 proved, 112 failed, and
 the TypeScript's own counts are in 2.4), and the `rlimit` counts and Zenon statistics identical
-on the decider corpus.
+on the decider corpus. The recorded TypeScript side of the decider corpus is produced under step
+budgets, so it is reproducible: P0 records it twice and shows the two recordings identical (every
+verdict and every statistic) before any Rust is compared against it. The two existing defects of
+2.4, the verdicts that move near a wall-clock limit and the out-of-memory crash with Node's default
+heap, are recorded there and not fixed in TypeScript beyond what the budgets need. The
+per-obligation `setTimeout` yield of 5.1 is removed only if the whole corpus gives identical
+results without it; otherwise it stays.
 
 **P5a and the shared crates.** P5a is the only stage inside a crate another session owns. It is
 announced to the coordinator before it starts. It builds on what the front session lands for
