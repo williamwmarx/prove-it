@@ -64,3 +64,40 @@ fn names_each_module_sany_parses_analyzes_and_lints() {
         "Parsing file Main File\nParsing file Naturals Standard\nParsing file Counter RootFile\nSemantic processing of module Naturals\nSemantic processing of module Counter\nSemantic processing of module Main\nLinting of module Counter\nLinting of module Main\n"
     );
 }
+
+#[test]
+fn reports_the_arity_of_an_operator_substituted_explicitly_and_implicitly() {
+    // TLC's tla2sany error corpus, E4243_1_Required_0_Provided_Test: SANY's selector rejects an
+    // explicit substitute, so it reports the substitution in the builtins' module; an implicit
+    // one it reports at the INSTANCE, as TLC at d8fb231 does.
+    let inner = "---- MODULE Inner ----\nCONSTANT F(_)\n====\n";
+    let explicit = get_text(
+        "explicit",
+        &format!("---- MODULE Main ----\n{inner}op == 0\nINSTANCE Inner WITH F <- op\n====\n"),
+    );
+    assert!(
+        explicit.ends_with("*** Errors: 2\n\nline 6, col 26 to line 6, col 27 of module Main\n\nExpected arity 1 but found operator of arity 0.\n\n\nIn module --TLA+ BUILTINS--\n\nAn operator must be substituted for symbol 'F', and it must have arity 1.\n\n\n"),
+        "{explicit}"
+    );
+    let implicit = get_text(
+        "implicit",
+        &format!("---- MODULE Main ----\n{inner}F == 0\nINSTANCE Inner\n====\n"),
+    );
+    assert!(
+        implicit.ends_with("*** Errors: 1\n\nline 6, col 1 to line 6, col 14 of module Main\n\nAn operator must be substituted for symbol 'F', and it must have arity 1.\n\n\n"),
+        "{implicit}"
+    );
+}
+
+#[test]
+fn reports_a_named_step_of_an_implicit_level_as_a_semantic_error() {
+    // TLC's tla2sany error corpus, E4350_Plus_Test.
+    let text = get_text(
+        "named",
+        "---- MODULE Main ----\nTHEOREM TRUE\nPROOF\n<+>a. QED\n====\n",
+    );
+    assert!(
+        text.ends_with("Semantic errors:\n\n*** Errors: 1\n\nline 4, col 1 to line 4, col 5 of module Main\n\n<*> and <+> cannot be used for a named step.\n\n\n"),
+        "{text}"
+    );
+}

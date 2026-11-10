@@ -287,3 +287,32 @@ fn leaves_what_sanys_selectors_word_not_native() {
         "---- MODULE E4200_Use_Test ----\nUSE DEF DoesNotExist\n===="
     ));
 }
+
+#[test]
+fn rejects_a_function_applied_to_another_number_of_arguments() {
+    // TLC's tla2sany error corpus, E4260_1_Expected_2_Provided_Test, and as TLC reports a
+    // function a LET defines; one argument may be a tuple of the parameters.
+    let message = |count: usize| {
+        format!("Function 'f' is defined with 1 parameters, but is applied to {count} arguments.")
+    };
+    assert_eq!(
+        get_level_errors(
+            "---- MODULE Main ----\nf[x \\in {}] == 0\nop == f[0, 0]\ntuple == f[<<0, 0>>]\n====",
+            &[]
+        ),
+        [(
+            "line 3, col 7 to line 3, col 13 of module Main".to_owned(),
+            message(2)
+        )]
+    );
+    assert_eq!(
+        get_level_errors(
+            "---- MODULE Fl ----\nop == LET f[x \\in {1}] == 0 IN f[1, 2]\n====",
+            &[]
+        ),
+        [(
+            "line 2, col 32 to line 2, col 38 of module Fl".to_owned(),
+            message(2)
+        )]
+    );
+}
