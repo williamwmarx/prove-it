@@ -12,6 +12,11 @@ const PROBATION: u64 = 1 << 13;
 const MINIMUM_HIT_RATE: f64 = 0.2;
 /// The most entries a table holds, shared out between the machines of a search on threads.
 pub const MAXIMUM_ENTRIES: usize = 1 << 22;
+// A full table takes no more entries, so a miss costs a lookup, mostly a miss to memory in a table
+// that size, on top of the evaluation, and saves nothing later. A full table fewer than
+// FULL_MINIMUM_HITS of whose FULL_WINDOW lookups hit turns off, and lets its memory go.
+const FULL_WINDOW: u64 = 1 << 16;
+const FULL_MINIMUM_HITS: u64 = FULL_WINDOW / 2;
 // A table of width 1 indexes its values by its key while it has at least one entry for every
 // DIRECT_SPARSITY ids its array spans past the first DIRECT_MINIMUM, and never past
 // DIRECT_MAXIMUM ids.
@@ -105,6 +110,9 @@ pub struct MemoTable {
     largest: Id,
     // The most entries it takes.
     maximum: usize,
+    // The lookups of the current window since the table filled up, and their hits.
+    full_lookups: u64,
+    full_hits: u64,
 }
 
 const INITIAL_CAPACITY: usize = 64;
@@ -139,6 +147,8 @@ impl MemoTable {
             can_cluster: width > 1,
             largest: 0,
             maximum: MAXIMUM_ENTRIES,
+            full_lookups: 0,
+            full_hits: 0,
         }
     }
 
@@ -267,12 +277,34 @@ impl MemoTable {
         self.lookups += 1;
         if self.lookups == PROBATION && (self.hits as f64) < self.lookups as f64 * MINIMUM_HIT_RATE
         {
-            self.is_enabled = false;
-            self.direct = Vec::new();
-            self.packed = Vec::new();
-            self.wide = Vec::new();
+            self.turn_off();
         }
         self.is_enabled
+    }
+
+    fn turn_off(&mut self) {
+        self.is_enabled = false;
+        self.direct = Vec::new();
+        self.packed = Vec::new();
+        self.wide = Vec::new();
+    }
+
+    // Counts a full table's lookup, and turns the table off at the end of a window in which too
+    // few of them hit.
+    #[inline(always)]
+    fn review_full(&mut self, is_hit: bool) {
+        if self.size < self.maximum {
+            return;
+        }
+        self.full_lookups += 1;
+        self.full_hits += u64::from(is_hit);
+        if self.full_lookups == FULL_WINDOW {
+            if self.full_hits < FULL_MINIMUM_HITS {
+                self.turn_off();
+            }
+            self.full_lookups = 0;
+            self.full_hits = 0;
+        }
     }
 
     // Makes room for a new entry, or says the table takes no more.
@@ -367,6 +399,7 @@ impl MemoTable {
         if value != EMPTY {
             self.hits += 1;
         }
+        self.review_full(value != EMPTY);
         value
     }
 
@@ -596,6 +629,30 @@ mod tests {
             assert_eq!(table.size(), 100, "width {width}");
             assert_eq!(table.get(&vec![99; width]), 99);
             assert_eq!(table.get(&vec![100; width]), EMPTY);
+        }
+    }
+
+    #[test]
+    fn a_full_table_turns_off_once_half_its_lookups_miss() {
+        for (hit_every, is_kept) in [(1, true), (3, false)] {
+            let mut table = MemoTable::new(2);
+            table.limit(100);
+            for key in 0..100u32 {
+                table.set(&[key, 0], key);
+            }
+            for lookup in 0..FULL_WINDOW as u32 {
+                let key = if lookup % hit_every == 0 {
+                    lookup % 100
+                } else {
+                    1000 + lookup
+                };
+                table.get(&[key, 0]);
+            }
+            assert_eq!(
+                table.is_enabled(),
+                is_kept,
+                "a hit every {hit_every} lookups"
+            );
         }
     }
 
