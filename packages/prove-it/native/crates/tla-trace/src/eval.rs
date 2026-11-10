@@ -2195,7 +2195,8 @@ impl<'ir> Evaluator<'ir> {
         body: NodeId,
         context: &Context,
     ) -> Evaluated<Value> {
-        let result = self.construct_function(bounds, body, context);
+        // A function whose definition reaches itself as it is built recurses as an operator does.
+        let result = self.nested(|evaluator| evaluator.construct_function(bounds, body, context));
         if result.is_err()
             && let Some(stack) = &mut self.call_stack
         {

@@ -2231,3 +2231,27 @@ fn ranks_the_strings_the_startup_makes_without_a_recorded_front() {
     );
     std::fs::remove_dir_all(directory).expect("removed");
 }
+
+#[test]
+fn ranks_the_startup_of_a_recursive_function_of_two_arguments_without_a_recorded_front() {
+    // tla-rs function_syntax: building add again for each of its arguments recursed until the
+    // stack overflowed, which aborted the binary as it ranked the startup's strings.
+    let (output, directory) = run_front(
+        "recursive-function",
+        "---- MODULE Add ----\nEXTENDS Naturals\nVARIABLE x\nadd[a \\in 0..3, b \\in 0..3] == IF b = 0 THEN a ELSE add[a, b - 1] + 1\nInit == x = 0\nNext == x' = x\nInv == add[2, 3] = 5\n====\n",
+        "INIT Init\nNEXT Next\nINVARIANT Inv\n",
+        &["-nowarning"],
+    );
+    let text = stdout(&output);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{text}{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        text.contains("Model checking completed. No error has been found.\n"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
