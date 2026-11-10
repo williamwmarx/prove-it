@@ -2193,6 +2193,11 @@ describe("evaluation errors match TLC", () => {
       ],
       ["{{}} \\cup {1} = {}", "Attempted to check equality of the set {} with the value:\n1"],
       ["{1} \\ {{}} = {}", "Attempted to check equality of the set {} with the value:\n1"],
+      ["Nat = 1", "Attempted to compare overridden value Nat with non-overridden value:\n1"],
+      [
+        "Seq({1}) = <<1>>",
+        "Attempted to compare overridden value Seq({1}) with non-overridden value:\n<<1>>",
+      ],
       [
         "(1..30) = <<1>>",
         "Attempted to check equality of the set { 1,\n  2,\n  3,\n  4,\n  5,\n  6,\n  7,\n  8,\n  9,\n  10,\n  11,\n  12,\n  13,\n  14,\n  15,\n  16,\n  17,\n  18,\n  19,\n  20,\n  21,\n  22,\n  23,\n  24,\n  25,\n  26,\n  27,\n  28,\n  29,\n  30 } with the value:\n<<1>>",
@@ -2668,6 +2673,26 @@ describe("evaluation errors match TLC", () => {
       "CONSTANT m = m",
     );
     expect(result.status).toBe("success");
+  });
+
+  it.each([
+    ["Nat", "Nat"],
+    ["Seq({1})", "Seq({1})"],
+    ["[a : {1}]", "{[a |-> 1]}"],
+    ["{1} \\X {1}", "{<<1, 1>>}"],
+  ])("rejects a typed model value's membership in %s", async (set, shown) => {
+    const result = await checkModule(`CONSTANT m\nASSUME m \\in ${set}`, "CONSTANT m = A_b");
+    expect(result.status).toBe("assumption-violation");
+    expect(result.violation?.message).toBe(
+      `Attempted to check if the typed model value A_b is an element of\n${shown}`,
+    );
+  });
+
+  it("rejects a typed model value's membership in an interval", async () => {
+    const result = await checkModule("CONSTANT m\nASSUME m \\in 1..3", "CONSTANT m = A_b");
+    expect(result.violation?.message).toBe(
+      "Attempted to check if the value:\nA_b\nis in the integer interval 1..3",
+    );
   });
 
   it.each(['"a" \\in Nat', "1 \\in STRING", "{} \\in 1..4", "FALSE \\in Int"])(
