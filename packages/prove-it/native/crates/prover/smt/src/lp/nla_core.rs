@@ -12,8 +12,8 @@
 //   `LarSolver`. NlaCore holds neither the lar_solver, the resource limit nor the theory's
 //   is_relevant closure, which TS keeps on it.
 // - `Nla<'a, 'l>` is the short-lived view that holds the borrows TS reaches through `this`:
-//   `core: &mut NlaCore`, `lra: &mut LarSolver<'l>`, `limit: &ResourceLimit<'a>` (its own lifetime
-//   shortened to the call's, so it need not outlive the solver) and `is_relevant`. It
+//   `core: &mut NlaCore`, `lra: &mut LarSolver<'l>`, `limit: &ResourceLimit` (the
+//   manager's resource limit) and `is_relevant`. It
 //   derefs to `NlaCore`, so TS's `this.x` stays `self.x`, and `this.lra` is `self.lra`. The theory
 //   builds one per call: `Nla { core: &mut nla, lra: &mut solver, limit, is_relevant: &|lp_var|
 //   … }.check(level)`. When a borrow through the deref conflicts with another field (a method of
@@ -242,7 +242,7 @@ pub struct NlaCore {
 pub struct Nla<'a, 'l> {
     pub core: &'a mut NlaCore,
     pub lra: &'a mut LarSolver<'l>,
-    pub limit: &'a ResourceLimit<'a>,
+    pub limit: &'a ResourceLimit,
     pub is_relevant: &'a dyn Fn(usize) -> bool,
 }
 

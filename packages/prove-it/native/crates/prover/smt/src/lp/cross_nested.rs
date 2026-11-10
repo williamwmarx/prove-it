@@ -16,7 +16,6 @@ use crate::lp::nex::{
 };
 use crate::lp::nex_creator::{NexCreator, NexFactor, Occ};
 use crate::util::random_gen::RandomGen;
-use crate::util::rlimit::ResourceLimit;
 
 pub trait CrossNestedCallbacks {
     // call_on_result: whether to stop at this form.
@@ -73,25 +72,25 @@ fn has_common_factor(nexes: &[Nex], expr: NexId) -> bool {
     false
 }
 
-pub struct CrossNested<'a, 'l, Callbacks: CrossNestedCallbacks> {
+pub struct CrossNested<'a, Callbacks: CrossNestedCallbacks> {
     root: NexId,
     is_done: bool,
     is_limit_exceeded: bool,
     reported: u32,
     is_random_bit: bool,
     callbacks: Callbacks,
-    limit: &'a ResourceLimit<'l>,
+    limit: &'a dyn Fn() -> bool,
     random: RandomGen,
     pub nex_creator: &'a mut NexCreator,
 }
 
-impl<'a, 'l, Callbacks: CrossNestedCallbacks> CrossNested<'a, 'l, Callbacks> {
+impl<'a, Callbacks: CrossNestedCallbacks> CrossNested<'a, Callbacks> {
     pub fn new(
         callbacks: Callbacks,
-        limit: &'a ResourceLimit<'l>,
+        limit: &'a dyn Fn() -> bool,
         random_seed: u32,
         nex_creator: &'a mut NexCreator,
-    ) -> CrossNested<'a, 'l, Callbacks> {
+    ) -> CrossNested<'a, Callbacks> {
         let root = nex_creator.mk_sum(&[]);
         CrossNested {
             root,
@@ -297,7 +296,7 @@ impl<'a, 'l, Callbacks: CrossNestedCallbacks> CrossNested<'a, 'l, Callbacks> {
         if self.is_done || self.is_limit_exceeded {
             return;
         }
-        if !self.limit.inc() {
+        if !(self.limit)() {
             self.is_limit_exceeded = true;
             return;
         }
@@ -329,7 +328,7 @@ impl<'a, 'l, Callbacks: CrossNestedCallbacks> CrossNested<'a, 'l, Callbacks> {
         if self.is_done || self.is_limit_exceeded {
             return;
         }
-        if !self.limit.inc() {
+        if !(self.limit)() {
             self.is_limit_exceeded = true;
             return;
         }
