@@ -796,7 +796,9 @@ type PrefixTable<State> = HashMap<*const HypNode, (Hyp, Rc<MappedPrefix<State>>)
 struct MappedPrefix<State> {
     state: State,
     hyp: Option<Hyp>,
-    parent: Option<Rc<MappedPrefix<State>>>,
+    /// Weak, since the parent's `next` holds this prefix: the map owns its prefixes from the empty
+    /// one down, so a parent outlives its children and dropping the map frees them all.
+    parent: Option<Weak<MappedPrefix<State>>>,
     /// Keyed by the key hypothesis's pointer. The key is kept alive beside the entry, so the
     /// pointer cannot be reused while the entry exists, which a `WeakMap` gives the TypeScript.
     next: RefCell<PrefixTable<State>>,
@@ -848,7 +850,7 @@ impl<State: Clone, Step: FnMut(&State, &Hyp, &Hyp) -> Result<(State, Option<Hyp>
             let mapped = Rc::new(MappedPrefix {
                 state,
                 hyp,
-                parent: Some(prefix.clone()),
+                parent: Some(Rc::downgrade(&prefix)),
                 next: RefCell::new(HashMap::new()),
             });
             prefix
@@ -863,7 +865,7 @@ impl<State: Clone, Step: FnMut(&State, &Hyp, &Hyp) -> Result<(State, Option<Hyp>
             if let Some(hyp) = &node.hyp {
                 context.push(hyp.clone());
             }
-            current = node.parent.clone();
+            current = node.parent.as_ref().and_then(Weak::upgrade);
         }
         context.reverse();
         Ok(MappedContext {
@@ -1444,5 +1446,35 @@ impl<Key, Value: Clone> IdentityCache<Key, Value> {
 impl<Key, Value: Clone> Default for IdentityCache<Key, Value> {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn context_map_shares_prefixes_and_frees_them_when_dropped() -> Result<()> {
+        let first = get_fresh("x", Level::Constant, 0);
+        let second = get_fresh("y", Level::Constant, 0);
+        let initial = Rc::new(0);
+        let initial_watch = Rc::downgrade(&initial);
+        let mut steps = 0;
+        let mut map = ContextMap::new(initial, |state: &Rc<usize>, input: &Hyp, _key: &Hyp| {
+            steps += 1;
+            Ok((Rc::new(**state + 1), Some(input.clone())))
+        });
+        let mapped = map.map(&[first.clone(), second.clone()], None)?;
+        assert_eq!(*mapped.state, 2);
+        let names = mapped.context.iter().map(|hyp| get_hyp_name(hyp));
+        assert_eq!(names.collect::<Vec<_>>(), [Some("x"), Some("y")]);
+        let shared = map.map(std::slice::from_ref(&first), None)?;
+        assert_eq!(*shared.state, 1);
+        drop((mapped, shared, map));
+        assert_eq!(steps, 2);
+        assert!(initial_watch.upgrade().is_none());
+        assert_eq!(Rc::strong_count(&first), 1);
+        assert_eq!(Rc::strong_count(&second), 1);
+        Ok(())
     }
 }
