@@ -11,9 +11,13 @@ pub mod list;
 pub mod logic;
 pub mod name;
 pub mod net;
+pub mod object_logic;
 pub mod pattern;
+pub mod raw_simplifier;
+pub mod rewriter;
 pub mod search;
 pub mod seq;
+pub mod simplifier;
 pub mod table;
 pub mod tactic;
 pub mod tactical;
@@ -24,5 +28,7 @@ pub mod types;
 pub mod unify;
 pub mod variable;
 
+#[cfg(test)]
+pub(crate) mod simp_testing;
 #[cfg(test)]
 pub(crate) mod testing;
