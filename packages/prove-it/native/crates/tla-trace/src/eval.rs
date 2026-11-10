@@ -460,6 +460,8 @@ const PRINT: &str = "public static tlc2.value.impl.Value tlc2.module.TLC.Print(t
 const PRINT_T: &str =
     "public static tlc2.value.impl.Value tlc2.module.TLC.PrintT(tlc2.value.impl.Value)";
 
+const DOMAIN_OF_NON_FUNCTION: &str = "DOMAIN of a non-function";
+
 /// TLC's `enumBound`: the most elements a lazy set's text is expanded to.
 const ENUM_BOUND: i64 = 2000;
 
@@ -1080,6 +1082,19 @@ impl<'ir> Evaluator<'ir> {
                     if self.name(self.ir.builtins[index as usize].name) == "\\subseteq" =>
                 {
                     self.subset(node, left, right, context)
+                }
+                (Resolution::Builtin(index), &[_])
+                    if self.name(self.ir.builtins[index as usize].name) == "DOMAIN" =>
+                {
+                    self.apply(name, args, context).map_err(|mut error| {
+                        if let Some(message) = &mut error.message
+                            && error.reason == DOMAIN_OF_NON_FUNCTION
+                        {
+                            message.text =
+                                format!("{}\n{}", message.text, self.describe_range(node));
+                        }
+                        error
+                    })
                 }
                 _ => self.apply(name, args, context),
             },
@@ -2307,7 +2322,7 @@ impl<'ir> Evaluator<'ir> {
         // `evalAppl` checks that it applies a function before it evaluates the argument.
         let function_node = function;
         let function = self.evaluate(function, context)?;
-        if let Some(kind) = scalar_kind(&function) {
+        if let Some(kind) = non_function_kind(&function) {
             return fail_runtime(
                 "applied a non-function",
                 format!(
@@ -3042,7 +3057,18 @@ impl<'ir> Evaluator<'ir> {
                         Some((low, high)) => Value::Interval(low, high),
                         None => Value::Set(Rc::new(function.domain.clone())),
                     },
-                    _ => return fail("DOMAIN of a non-function"),
+                    // `Tool`'s OPCODE_domain, whose message the application ends with where it is.
+                    value => match non_function_kind(&value) {
+                        Some(kind) => {
+                            return fail_runtime(
+                                DOMAIN_OF_NON_FUNCTION,
+                                format!(
+                                    "Attempted to apply the operator DOMAIN to a non-function\n({kind})"
+                                ),
+                            );
+                        }
+                        None => return fail(DOMAIN_OF_NON_FUNCTION),
+                    },
                 }
             }
             ".." => {
@@ -4098,14 +4124,27 @@ pub(crate) fn is_empty(value: &Value) -> Evaluated<bool> {
     })
 }
 
-// TLC's `getKindString` of a value that isn't a set or a function, whose class the evaluator
-// knows: a set it may hold as another class than TLC does.
-fn scalar_kind(value: &Value) -> Option<&'static str> {
+// TLC's `getKindString` of a value that isn't a function, whose class the evaluator knows: a
+// scalar or a lazy set, but not a set enumeration, which TLC may hold as another class.
+fn non_function_kind(value: &Value) -> Option<&'static str> {
     match value {
         Value::Bool(_) => Some("a Boolean value"),
         Value::Int(_) => Some("an integer"),
         Value::Str(_) => Some("a string"),
         Value::Model(_) => Some("a model value"),
+        Value::Lazy(lazy) => match &**lazy {
+            Lazy::Nat | Lazy::Int | Lazy::Strings | Lazy::Seq(_) => Some("a special set constant"),
+            Lazy::Filter(..) => Some("a set of the form {x \\in S : expr}"),
+            Lazy::FunctionSet(..) => Some("a set of the form [S -> T]"),
+            Lazy::RecordSet(..) => Some("a set of the form [d1 : S1, ... , dN : SN]"),
+            Lazy::Product(_) => Some("a cartesian product"),
+            Lazy::Subset(_) => Some("a set of the form SUBSET S"),
+            Lazy::Diff(..) => Some("a set of the form S \\ T"),
+            Lazy::Cap(..) => Some("a set of the form S \\cap T"),
+            Lazy::Cup(..) => Some("a set of the form S \\cup T"),
+            Lazy::Union(_) => Some("a set of the form UNION  S"),
+            _ => None,
+        },
         _ => None,
     }
 }
