@@ -397,3 +397,68 @@ pub(crate) fn evaluate(predicate: &Predicate) -> Eval {
     let test = predicate.build();
     eval(move |machine| test(machine).map(bool_id))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::machine::Program;
+    use tla_values::Store;
+
+    fn units(text: &str) -> Vec<u16> {
+        text.encode_utf16().collect()
+    }
+
+    // `m.type = "phase1a"` of a name bound at slot 0.
+    fn type_test(store: &mut Store, constant: Id) -> Predicate {
+        Predicate::And(vec![
+            Predicate::Equal {
+                left: Leaf::Field {
+                    slot: 0,
+                    key: store.str(&units("type")),
+                    hint: Arc::new(AtomicU32::new(0)),
+                },
+                right: Leaf::Constant(constant),
+                is_equal: true,
+            },
+            Predicate::Eval {
+                eval: eval(|_| Err(Bail("evaluated past the leading test"))),
+                is_checked: true,
+            },
+        ])
+    }
+
+    #[test]
+    fn rejects_only_records_whose_field_is_another_scalar_of_the_constants_kind() {
+        let mut store = Store::new();
+        store.reset(std::iter::empty::<&[u16]>());
+        let (kind, other, number) = (units("type"), units("other"), units("number"));
+        let phase1a = store.str(&units("phase1a"));
+        let phase2a = store.str(&units("phase2a"));
+        let one = store.int(1).expect("an integer");
+        let model = store.model(&units("m1"));
+        let typed = {
+            let keys = [store.str(&kind), store.str(&number)];
+            store.create_record_shape(&keys)
+        };
+        let untyped = {
+            let keys = [store.str(&other)];
+            store.create_record_shape(&keys)
+        };
+        let elements = [
+            (store.record_of(&typed, &[phase2a, one]), true),
+            (store.record_of(&typed, &[phase1a, one]), false),
+            (store.record_of(&typed, &[one, one]), false),
+            (store.record_of(&typed, &[model, one]), false),
+            (store.record_of(&untyped, &[phase2a]), false),
+            (store.tuple_of(&[phase2a]), false),
+            (phase2a, false),
+        ];
+        let reject = Reject::of(&type_test(&mut store, phase1a), 0).expect("a leading field test");
+        assert!(Reject::of(&type_test(&mut store, phase1a), 1).is_none());
+        let program = Program::default();
+        let machine = crate::machine::Machine::new(&program, store);
+        for (element, is_rejected) in elements {
+            assert_eq!(reject.rejects(&machine, element), is_rejected, "{element}");
+        }
+    }
+}
