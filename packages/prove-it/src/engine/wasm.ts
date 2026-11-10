@@ -7,7 +7,9 @@
 // A trap leaves the instance's stack pointer and borrows where they were, so it is replaced with
 // a new one. The engine runs on the host's call stack, which is shallower than the addon's search
 // thread's, so a check that exhausts it stops without handing anything over, and the interpreter
-// searches from the start, as for any such stop.
+// searches from the start, as for any such stop. So that what the search reported and printed
+// before then isn't reported again, its events are held until the check returns, and dropped where
+// it ran out of stack. The call blocks the thread throughout, so nothing sees them sooner either way.
 
 import { isStackOverflow } from "../errors";
 import type { NativeAddon } from "./native";
@@ -58,12 +60,11 @@ type CallName = {
   [Name in keyof Exports]: Exports[Name] extends Call ? Name : never;
 }[keyof Exports];
 
-// The callbacks of the check that is running, and what one of them threw, after which the rest
-// aren't called, as with the addon.
+// The events of the check that is running, each a call of its callbacks, in the order it made them.
 interface Running {
   report: Parameters<NativeAddon["check"]>[3];
   print: Parameters<NativeAddon["check"]>[4];
-  thrown?: { error: unknown };
+  events: (() => void)[];
 }
 
 const getSize = (value: Argument): number =>
@@ -181,32 +182,32 @@ const callExport = (exports: Exports, call: Call, args: Argument[]) => {
   return value;
 };
 
-// What a check returned, or a stop that hands nothing over where it ran out of stack.
-const getChecked = (call: () => unknown): ReturnType<NativeAddon["check"]> => {
-  try {
-    return call() as ReturnType<NativeAddon["check"]>;
-  } catch (error) {
-    if (!isStackOverflow(error)) throw error;
+// What a check returned, after its events, or a stop that hands nothing over and drops them where
+// it ran out of stack. Once a callback throws, the rest aren't called, as with the addon, and the
+// check throws that.
+const getChecked = (check: Running, call: () => unknown): ReturnType<NativeAddon["check"]> => {
+  const outcome = (() => {
+    try {
+      return call() as ReturnType<NativeAddon["check"]>;
+    } catch (error) {
+      if (!isStackOverflow(error)) throw error;
+      return undefined;
+    }
+  })();
+  if (outcome === undefined) {
     return {
       status: "stopped",
       reason: "WebAssembly ran out of stack",
       counts: Float64Array.of(0),
     };
   }
+  check.events.forEach((event) => event());
+  return outcome;
 };
 
 // The addon's functions over a compiled module of the engine.
 export const instantiateEngine = (module: WebAssembly.Module): NativeAddon => {
   const running: { check?: Running } = {};
-  const relay = (call: (check: Running) => void) => {
-    const check = running.check;
-    if (check === undefined || check.thrown !== undefined) return;
-    try {
-      call(check);
-    } catch (error) {
-      check.thrown = { error };
-    }
-  };
   const imports = {
     env: {
       prove_it_now: () => performance.now(),
@@ -228,18 +229,22 @@ export const instantiateEngine = (module: WebAssembly.Module): NativeAddon => {
         if (isAppended === 1) fs.appendFileSync(path, bytes);
         else fs.writeFileSync(path, bytes);
       },
-      prove_it_report: (kind: number, a: number, b: number, c: number, d: number, e: number) =>
-        relay((check) => check.report(kind, a, b, c, d, e)),
-      prove_it_print: (pointer: number) =>
-        relay((check) => {
-          const [memory, view] = getMemory(current.exports);
-          const [width, words, strings] = read(memory, view, pointer)[0] as [
-            number,
-            Int32Array,
-            string[],
-          ];
-          check.print(width, words, strings);
-        }),
+      prove_it_report: (kind: number, a: number, b: number, c: number, d: number, e: number) => {
+        const check = running.check;
+        check?.events.push(() => check.report(kind, a, b, c, d, e));
+      },
+      // The values are read now, while the memory holds them.
+      prove_it_print: (pointer: number) => {
+        const check = running.check;
+        if (check === undefined) return;
+        const [memory, view] = getMemory(current.exports);
+        const [width, words, strings] = read(memory, view, pointer)[0] as [
+          number,
+          Int32Array,
+          string[],
+        ];
+        check.events.push(() => check.print(width, words, strings));
+      },
     },
   };
   const instantiate = () => new WebAssembly.Instance(module, imports).exports as unknown as Exports;
@@ -257,12 +262,13 @@ export const instantiateEngine = (module: WebAssembly.Module): NativeAddon => {
   return {
     abiVersion: () => current.exports.prove_it_abi_version(),
     check: (ir, settings, stateLog, report, print) => {
-      const check: Running = { report, print };
+      const check: Running = { report, print, events: [] };
       running.check = check;
-      const outcome = getChecked(() => callCurrent("prove_it_check", [ir, settings, stateLog]));
-      running.check = undefined;
-      if (check.thrown !== undefined) throw check.thrown.error;
-      return outcome;
+      try {
+        return getChecked(check, () => callCurrent("prove_it_check", [ir, settings, stateLog]));
+      } finally {
+        running.check = undefined;
+      }
     },
     storePerform: (name, args) =>
       callCurrent("prove_it_store_perform", [name, args as Argument[]]) as
