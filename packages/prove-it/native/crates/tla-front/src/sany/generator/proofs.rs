@@ -2,9 +2,6 @@
 //! HIDE, NEW, ASSUME/PROVE, theorem definitions, leaf and non-leaf proofs, step bodies, theorems
 //! and assumptions.
 
-// HACK: process_units in definitions.rs, which calls these, is a stub.
-#![allow(dead_code)]
-
 use std::rc::Rc;
 
 use crate::ast::{

@@ -103,7 +103,6 @@ struct LabelGoal {
 }
 
 /// `NEW_SYMBOL_KINDS`: the declaration kind and level of a NEW symbol of each level.
-#[expect(dead_code, reason = "generate_new_symbol in proofs.rs is a stub")]
 fn get_new_symbol_kind(level: SymbolLevel) -> (u32, u8) {
     match level {
         SymbolLevel::Constant => (NEW_CONSTANT_KIND, 0),
@@ -167,7 +166,6 @@ enum ContextSlot {
 #[derive(Clone, Debug, Default)]
 struct LocalContext {
     context: Context,
-    #[expect(dead_code, reason = "generate_assume_prove in proofs.rs is a stub")]
     is_assume: bool,
 }
 
@@ -515,7 +513,6 @@ fn is_operator_argument(argument: &Expr) -> bool {
 /// `DefEntryParts`: the parts of a DEF clause entry that isn't a name, as Generator.genIdToSelector
 /// reads them. `last_kind` is the kind of SANY's syntax node for the last part, or for a token its
 /// text.
-#[expect(dead_code, reason = "get_def_entry_parts in proofs.rs is a stub")]
 #[derive(Clone, Debug)]
 struct DefEntryParts {
     has_childless_first_child: Option<bool>,
@@ -524,7 +521,6 @@ struct DefEntryParts {
 }
 
 /// `SYNTAX_KINDS`: the kind of the syntax node SANY's parser builds for an expression of each kind.
-#[expect(dead_code, reason = "get_syntax_kind in proofs.rs is a stub")]
 fn get_syntax_kind_of(expression: &Expression) -> Option<&'static str> {
     Some(match &expression.kind {
         ExpressionKind::Identifier { .. } | ExpressionKind::Subexpression { .. } => "N_GeneralId",
@@ -560,7 +556,6 @@ fn get_syntax_kind_of(expression: &Expression) -> Option<&'static str> {
 
 /// `NESTED_FIRST_CHILD_KINDS`: the syntax nodes whose first child is a node with children of its
 /// own. The first child of any other is a token, or a node without children.
-#[expect(dead_code, reason = "has_childless_first_child in proofs.rs is a stub")]
 const NESTED_FIRST_CHILD_KINDS: &[&str] = &[
     "N_GeneralId",
     "N_OpApplication",
@@ -1143,7 +1138,6 @@ impl<'a> ModuleGenerator<'a> {
     }
 
     /// `endProof`.
-    #[expect(dead_code, reason = "the proofs in proofs.rs are stubs")]
     fn end_proof(&mut self, statement: NodeId) {
         if let Some(&scope) = self.assume_prove_scopes.get(&statement) {
             self.scopes[scope.0].is_in_proof = false;
