@@ -315,11 +315,56 @@ read-only memo snapshots.
   on before it probes for the current one. MCExactInitialSync at 4 threads: 9.15 → 8.36 s
   (medians of 9, ranges 8.66–9.58 and 8.07–9.09). Neutral where the table fits the cache
   (MCbtree, Detlefs). One thread doesn't merge.
-- **Next: fill the table in parallel.** A serial pass numbers the level's new states in
-  (parent, step) order, deduplicating them in a small table of the level's own; then each thread
-  inserts the winners of its shard of a table split by the fingerprint's top bits. That needs the
-  layout of `perf-state-table` (the one-thread probe path, owned by that track) and its
-  `find`/`insert` at a slot.
+- **Done: the threads fill the table.** After the threads expand a level, they fill the state table
+  too: each owns a range of its slots, split by the fingerprint's top bits (the home slot), and
+  walks the level's candidates in (parent, step) order, probing and inserting those whose home is in
+  its range. The merge then only numbers and imports the new states; a fingerprint whose probe runs
+  past its thread's range, and 0, it probes itself, in order as before. That takes a table without
+  indices, which is the binary's (no fingerprint
+  verification, no graph), and no invariant deferred to the merge
+  (a VIEW or SYMMETRY whose new state fails one), which still merges serially. On 4 cores, medians
+  of 5 interleaved runs at 4 threads against `perf-state-table`, every count unchanged:
+  MCExactInitialSync 7.63 → 7.08 s (−7%), MCbtree 0.398 → 0.371 (−7%), MCMultiNode 2.75 → 2.62
+  (−5%), PaxosCommit 9.02 → 8.66 (−4%), Detlefs 1.13 → 1.09 (−4%). The rest is within noise
+  (TLCSailfish1, FastPaxos and MCLamportMutex checked over 9 runs each), and the models that record
+  a graph or run on one thread don't fill.
+- **Measured, not done: growing the table on threads.** Doubling the table takes 220–350 ms at the
+  last doubling on MCExactInitialSync, nearly all of it the kernel faulting in 4 KB pages
+  (transparent huge pages are `madvise` on the machine measured). Threads rewriting ranges of it
+  fault in parallel and contend: 0.6 s slower at 4 threads. With `MADV_HUGEPAGE` on the table it
+  takes 55–120 ms and the run 7.21 → 6.25 s at 4 threads; that is track 8's next change.
+- **Memory with threads, measured on PaxosCommit.** Each thread's overlay of the store holds about
+  82 MB (meta 16 MB, heap 64 MB, its table 2 MB), against the base store's 16 MB table and the
+  states' 40 MB. Reusing the level's candidate buffers from level to level changed neither peak RSS
+  (2,135–2,158 MB against 2,074–2,187 MB) nor time. The rest is the memo tables each thread doubles
+  (track 4's per-thread budget, #187) and what glibc keeps in each thread's arena once they free. An
+  overlay that reads the base in place rather than copying its meta and heap would save the 82 MB a
+  thread; it is a large change, to judge after #187.
+- **16 cores, `main` at d7c8b5d** (before #168, #183, #178 and #182), medians of 3, every run
+  agreeing with TLC: one worker, then 16 threads.
+
+  | Model | 1 thread | 16 threads | Speedup | RSS MB, 1 → 16 |
+  |---|---:|---:|---:|---|
+  | MCExactInitialSync | 12.86 | 3.68 | 3.5× | 1,093 → 1,694 |
+  | PaxosCommit | 17.80 | 3.00 | 5.9× | 744 → 3,231 |
+  | MCMultiNode | 4.43 | 1.03 | 4.3× | 538 → 1,812 |
+  | MCLamportMutex | 1.76 | 0.54 | 3.3× | 141 → 392 |
+  | MCbtree | 0.65 | 0.20 | 3.3× | 50 → 123 |
+  | Detlefs | 3.20 | 0.69 | 4.6× | 279 → 379 |
+  | FastPaxos | 2.54 | 0.48 | 5.3× | 175 → 1,278 |
+  | TLCSailfish1 | 9.40 | 0.96 | 9.8× | 146 → 484 |
+  | MCabs | 10.07 | 1.15 | 8.8× | 34 → 205 |
+  | GameOfLife | 1.18 | 0.15 | 7.9× | 47 → 218 |
+  | BufferedRandomAccessFile | 1.47 | 0.16 | 9.2× | 34 → 69 |
+  | StarkMutex, N = 4 | 4.18 | 3.87 | 1.08× | 591 → 751 |
+  | cf1s_folklore | 12.44 | 8.58 | 1.45× | 553 → 2,244 |
+  | SpanTreeRandom | 1.61 | 1.61 | 1.0× | 71 → 71 |
+
+  The run took 1.66× the CPU of one worker overall. The weak scalers are the models with a large
+  state table and cheap states (MCExactInitialSync, MCbtree, MCLamportMutex), whose serial merge
+  this track's fill shortens. Memory grows most on FastPaxos (7×, not its memo tables; the
+  symmetry's tables of images, one per thread, are the suspect), cf1s_folklore (4×) and PaxosCommit
+  (4.3×; 2,566 MB with #187's budget).
 
 ### 7. Interning long blocks (`perf-intern`), independent
 
