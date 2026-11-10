@@ -5,7 +5,7 @@ import { SmtParseError, TlaProverError } from "../errors";
 import { decideIsabelle } from "./isabelle/decide";
 import { decidePtl } from "./ptl/decide";
 import { decideSmt } from "./smt/solver/solver";
-import type { DecideOptions, Decision, Verdict } from "./verdict";
+import { createSteps, type DecideOptions, type Decision, type Verdict } from "./verdict";
 import { decideZenon } from "./zenon/decide";
 
 // Z3 rejects malformed input with an error, and tlapm counts that as a failure.
@@ -26,8 +26,16 @@ export const DECIDERS: Record<string, (text: string, options: DecideOptions) => 
   ls4: decidePtl,
 };
 
-export const decide = (prover: string, text: string, options: DecideOptions): Decision => {
+// The decision, with the backend's statistics. A step limit, which only scripts set, stops the
+// backend after that many steps.
+export const decide = (
+  prover: string,
+  text: string,
+  options: DecideOptions,
+  stepLimit?: number,
+): Decision => {
+  const statistics = {};
   const start = performance.now();
-  const verdict = DECIDERS[prover](text, options);
-  return { verdict, timeUsedMs: performance.now() - start };
+  const verdict = DECIDERS[prover](text, { ...options, steps: createSteps(stepLimit), statistics });
+  return { verdict, timeUsedMs: performance.now() - start, statistics };
 };
