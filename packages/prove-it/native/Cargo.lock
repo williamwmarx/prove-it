@@ -3,7 +3,7 @@
 version = 4
 
 [[package]]
-name = "prove-it-cli"
+name = "prove-it-check"
 version = "0.1.0"
 dependencies = [
  "tla-engine",
@@ -15,10 +15,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "prove-it-cli"
+version = "0.1.0"
+dependencies = [
+ "prove-it-check",
+ "tla-front",
+ "tla-ir",
+]
+
+[[package]]
 name = "prove-it-host"
 version = "0.1.0"
 dependencies = [
  "tla-engine",
+ "tla-front",
  "tla-ir",
  "tla-live",
  "tla-values",

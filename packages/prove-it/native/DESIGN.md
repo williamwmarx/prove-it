@@ -7,7 +7,9 @@ identical to TLC and to the TypeScript checker before it is switched on.
 Status: M1 to M7 built (their outcomes are in section 11). Section 12 supersedes the fallback
 chain described in sections 0, 1 and 8.4: the target is now an all-Rust checker, with no
 TypeScript fallback. The TypeScript engine is deleted; [design/fallback.md](design/fallback.md)
-records what `check` does now where the native engine declines or doesn't load. The sections below
+records what `check` does now where the native engine declines or doesn't load. The port of the
+prover (`src/prover`, `src/obligations`) is planned apart, in [design/prover.md](design/prover.md).
+The sections below
 that compare with the TypeScript engine are the record of when it was the oracle. Every number marked *measured*
 comes from the prototypes that were under `native/prototypes/` until 1916b69 (section 10) on a
 local 4-core cloud machine (Rust 1.97.0, Bun 1.4.4, Node 22.23.4). Those timings vary by about 10%
@@ -1024,7 +1026,8 @@ packages/prove-it/native/           Cargo workspace; rust-toolchain.toml pins 1.
   crates/prove-it-host   what the engine hands its host, built once for both bindings
   crates/prove-it-napi   cdylib: the N-API binding
   crates/prove-it-wasm   cdylib: the WebAssembly binding, for hosts without process.dlopen
-  crates/prove-it-cli    stages 4–5: the native binary (13)
+  crates/prove-it-check stages 4–5: the binary's check, writing to a sink (13)
+  crates/prove-it-cli    stages 4–5: the native binary, which runs prove-it-check on stdout (13)
   oracle/ValueOracle.java, tools/replay, fuzz/
 ```
 `Cargo.lock` is committed and builds use `--locked`, with no network in `build.rs`. Release
