@@ -892,6 +892,26 @@ describe("the CLI prints SANY's report as tla-front writes it", () => {
 });
 
 describe("the CLI exports XML like SANY's XMLExporter", () => {
+  // SANY reads WF_B(A)(Act) with the subscript B(A), which the TypeScript front end rejects: the
+  // export comes from tla-front, through the native engine.
+  it("exports a spec only tla-front reads, as SANY's corpus FairnessTest", () => {
+    const directory = mkdtempSync(join(tmpdir(), "prove-it-xml-"));
+    copies.push(directory);
+    writeFileSync(
+      join(directory, "Fair.tla"),
+      "---- MODULE Fair ----\nVARIABLE x\nB(a) == a\nF == WF_B(x)(x' = x)\n====\n",
+    );
+    const result = spawnSync("bun", [CLI, "tla2sany.xml.XMLExporter", "-o", "-t", "Fair.tla"], {
+      cwd: directory,
+      encoding: "utf8",
+    });
+    expect(result.stderr).toBe("");
+    expect(result.status).toBe(0);
+    expect(result.stdout).toStartWith(
+      '<?xml version="1.0" encoding="UTF-8" standalone="no"?><modules><RootModule>Fair</RootModule>',
+    );
+  });
+
   it.each(XML_EXPORT_FAILURES)("fails on %s", (file, code, lines) => {
     const result = exportXml([file]);
     expect(result.status).toBe(code);

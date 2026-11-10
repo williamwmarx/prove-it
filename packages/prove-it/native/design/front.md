@@ -854,3 +854,13 @@ Gates, run by Verification's Front End job:
 Known approximation: `levels.rs` copies a source's level sets where `levels.ts` shares them
 (`shareLevels`, for OpArg, Label, Assume and NewSymb nodes); the two differ only if the source's
 sets grow after the copy, which no gate has shown.
+
+### The CLI calls the native exporter
+
+`prove-it-host`'s `sanyXml(root, source, fileName, flags, known)` runs `export_xml` on the
+`Sources` convention (`module:<name>`, as `sanyText`), through the addon and the WebAssembly
+engine (ABI 14), and the JavaScript CLI's XMLExporter calls it first, keeping the TypeScript
+exporter where it declines (or where no engine loads). With the addon, `sany-corpus.ts --recorded
+--cli` on `xml-o.json` prints what the real exporter printed on 150 of 153 specs, up from 142; the
+3 others are those the native exporter declines, where the TypeScript one differs, so `--cli`
+joins the gate once the TypeScript exporter is deleted.
