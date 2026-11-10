@@ -81,6 +81,9 @@ version = "0.1.0"
 [[package]]
 name = "prove-obligations"
 version = "0.1.0"
+dependencies = [
+ "tla-front",
+]
 
 [[package]]
 name = "prove-ptl"
