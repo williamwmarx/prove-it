@@ -1,7 +1,66 @@
-//! What the ported tests of `tests/unit/smt-nlsat.test.ts` share: reading its fixtures.
+//! What the ported tests of `tests/unit/smt-nlsat.test.ts` share: reading its fixtures, and its
+//! harness helpers.
 
 use std::fs;
 use std::path::PathBuf;
+
+use super::Int;
+use super::polynomial::{Polynomial, PolynomialManager, Var};
+
+// The harness syntax: terms separated by spaces, each coeff:var^degree,var^degree.
+pub fn parse_polynomial(pm: &mut PolynomialManager, text: &str) -> Polynomial {
+    let terms: Vec<&str> = text.split_whitespace().collect();
+    let as_: Vec<Int> = terms
+        .iter()
+        .map(|term| {
+            term[..term.find(':').expect("a term has a colon")]
+                .parse::<Int>()
+                .expect("a coefficient")
+        })
+        .collect();
+    let ms: Vec<_> = terms
+        .iter()
+        .map(|term| {
+            let powers: Vec<Vec<u32>> = term[term.find(':').expect("a term has a colon") + 1..]
+                .split(',')
+                .filter(|power| !power.is_empty())
+                .map(|power| {
+                    power
+                        .split('^')
+                        .map(|part| part.parse::<u32>().expect("a number"))
+                        .collect()
+                })
+                .collect();
+            let vars: Vec<Var> = powers
+                .iter()
+                .map(|power| Var::try_from(power[0]).expect("a variable"))
+                .collect();
+            let degrees: Vec<u32> = powers.iter().map(|power| power[1]).collect();
+            pm.mk_monomial(&vars, &degrees)
+        })
+        .collect();
+    pm.mk_polynomial(&as_, &ms)
+}
+
+// Prints the monomials in the polynomial's own order, as the harness does.
+pub fn show_polynomial(pm: &PolynomialManager, polynomial: &Polynomial) -> String {
+    let terms = polynomial.terms();
+    let shown: Vec<String> = terms
+        .ms
+        .iter()
+        .enumerate()
+        .map(|(index, monomial)| {
+            let powers: Vec<String> = pm
+                .monomial_vars(*monomial)
+                .iter()
+                .zip(pm.monomial_degrees(*monomial))
+                .map(|(variable, degree)| format!("{variable}^{degree}"))
+                .collect();
+            format!("{}:{}", terms.as_[index], powers.join(","))
+        })
+        .collect();
+    format!("[{}]", shown.join(" "))
+}
 
 /// The `[input, expected]` pairs of `tests/fixtures/nlsat/<name>`.
 pub fn read_fixture(name: &str) -> Vec<(String, String)> {
