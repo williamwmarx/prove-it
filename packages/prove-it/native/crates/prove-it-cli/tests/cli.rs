@@ -1646,6 +1646,21 @@ fn tests_the_domain_of_a_function_tlc_keeps_lazy_as_it_was_built() {
         "{text}"
     );
     std::fs::remove_dir_all(directory).expect("removed");
+    // Op(3)[0] tests its domain by applying Op(2)[0], whose domain is the same filter with other
+    // values of n and k, and then reads n and k again: each application restores them.
+    let spec = "---- MODULE Stop ----\nEXTENDS Integers\nVARIABLE x\nRECURSIVE Op(_)\nOp(k) == [i \\in {n \\in Nat : k = 0 \\/ (n < k /\\ Op(k - 1)[n] = n + k - 1)} |-> i + k]\nInit == x = 0\nNext == x' = x\nInv == Op(2)[0] = 2 /\\ Op(3)[0] = 3 /\\ ~(5 \\in DOMAIN Op(2)) /\\ ~(1 \\in DOMAIN Op(1))\n====\n";
+    let (output, directory) = run_lowered(
+        "lazy-reentered",
+        spec,
+        "INIT Init\nNEXT Next\nINVARIANT Inv\n",
+    );
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(0), "{text}");
+    assert!(
+        text.contains("2 states generated, 1 distinct states found, 0 states left on queue."),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
     // F[0] has an empty domain, which TLC reports applying; the engine stops there, and TLC fails
     // to compare a lazy function even with itself, or a record that holds one. No run may report
     // success.
