@@ -357,7 +357,9 @@ fn stops_comparing_a_run_of_integers_with_a_function_over_a_model_value() {
     let run = store.function_of(&[zero, one], &[one, one]).unwrap();
     let tuple = store.tuple_of(&[one, one]);
     let models = store.function_of(&[m, n], &[one, one]).unwrap();
-    let mixed = store.function_of(&[m, zero], &[one, one]).unwrap();
+    // Given after the integer, the model value still comes first among the keys, as TLC orders
+    // an untyped model value before any value that isn't one (`ModelValue.compareTo`).
+    let mixed = store.function_of(&[zero, m], &[one, one]).unwrap();
     for integers in [run, tuple] {
         for other in [models, mixed] {
             assert_eq!(store.compare(integers, other), Err(INTERVAL_KEYS));
