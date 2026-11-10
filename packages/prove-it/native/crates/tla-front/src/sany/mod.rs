@@ -15,3 +15,15 @@ pub type Result<T> = std::result::Result<T, crate::errors::FrontError>;
 pub fn not_yet<T>(reason: impl Into<String>) -> Result<T> {
     Err(crate::errors::FrontError::NotYet(reason.into()))
 }
+
+/// `SanySpecification`: the graph SANY builds for a specification, its root module, every module
+/// in the order SANY analyzes them, the messages it reports, and the builtins of the
+/// specification.
+#[derive(Clone, Debug)]
+pub struct SanySpecification {
+    pub graph: nodes::Graph,
+    pub root: nodes::NodeId,
+    pub modules: Vec<nodes::NodeId>,
+    pub messages: Vec<nodes::SanyMessage>,
+    pub builtins: Vec<nodes::NodeId>,
+}
