@@ -509,7 +509,7 @@ impl Explain {
                 continue;
             }
             is_modified = true;
-            let division = ctx.pm.pseudo_remainder(factor, &info.eq, info.variable);
+            let division = ctx.pm.pseudo_remainder(factor, &info.eq, info.variable)?;
             if division.steps % 2 == 1 && !is_factor_even && info.lc_sign < 0 {
                 atom_sign = -atom_sign;
             }
@@ -850,20 +850,20 @@ impl Explain {
         let a = ctx.pm.coeff(polynomial, variable, 2);
         let b = ctx.pm.coeff(polynomial, variable, 1);
         let c = ctx.pm.coeff(polynomial, variable, 0);
-        let b_squared = ctx.pm.mul(&b, &b);
+        let b_squared = ctx.pm.mul(&b, &b)?;
         let four_a = ctx.pm.mul_const(&Int::from(4_i64), &a);
-        let four_a_c = ctx.pm.mul(&four_a, &c);
+        let four_a_c = ctx.pm.mul(&four_a, &c)?;
         let discriminant = ctx.pm.sub(&b_squared, &four_a_c);
         let y = ctx.pm.mk_var(variable, 1);
         let two_a = ctx.pm.mul_const(&Int::from(2_i64), &a);
-        let two_a_y = ctx.pm.mul(&two_a, &y);
+        let two_a_y = ctx.pm.mul(&two_a, &y)?;
         let sum = ctx.pm.add(&two_a_y, &b);
         let derivative = ctx.pm.normalize(&sum);
         if self.ensure_sign_quad(ctx, &discriminant)? < 0 {
             return Ok(false);
         }
         if self.ensure_sign_quad(ctx, &a)? == 0 {
-            let b_y = ctx.pm.mul(&b, &y);
+            let b_y = ctx.pm.mul(&b, &y)?;
             let linear = ctx.pm.add(&b_y, &c);
             return self.mk_plinear_root(ctx, kind, variable, &linear);
         }

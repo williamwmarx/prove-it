@@ -739,7 +739,7 @@ impl Levelwise<'_> {
         };
         let den = self.pm.mk_const(value.den());
         let variable = self.pm.mk_var(self.level, 1);
-        let product = self.pm.mul(&den, &variable);
+        let product = self.pm.mul(&den, &variable)?;
         let num = self.pm.mk_const(value.num());
         let polynomial = self.pm.sub(&product, &num);
         let level = self.get_level();

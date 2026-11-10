@@ -14,9 +14,10 @@
 // - A lemma literal of check_assignment is always linear, because the cell bounds are, so
 //   add_mul_def, which defines a fresh monomial column, is left out. A nonlinear literal would
 //   answer unknown.
-// - nlsat counts against the budget of a check only its own steps, not those of the polynomial and
-//   algebraic number managers, so a long search stops at a different point than Z3's. Like Z3's,
-//   it then throws, which ends the whole check as unknown.
+// - nlsat's polynomial and algebraic number managers count their steps in the calls that the port
+//   shares with Z3, but where the port computes the same result along other calls, such as
+//   eval_sign_at's first evaluation, it can take other steps, so a long search stops at a
+//   different point than Z3's. Like Z3's, it then throws, which ends the whole check as unknown.
 // - Transcendental functions are not supported, so none are registered with nlsat.
 import { NlsatUnsupportedError, SmtInvariantError } from "../../../../errors";
 import { L_FALSE, L_TRUE, L_UNDEF } from "../lbool";
@@ -222,6 +223,14 @@ export class NraSolver {
   // becomes nla's, when it satisfies every constraint and monomial, and a refutation becomes the
   // lemma that the constraints of its core are inconsistent.
   check(maxConflicts: number, budget: number) {
+    const result = this.checkInScope(maxConflicts, budget);
+    // nla's scoped_limits and scoped_rlimit end with the check, so the model's arithmetic later
+    // counts against neither.
+    this.solver.limit.detach();
+    return result;
+  }
+
+  private checkInScope(maxConflicts: number, budget: number) {
     const core = this.core;
     const lra = core.lra;
     this.solver = new NlsatSolver(core.limit, budget);
@@ -363,8 +372,14 @@ export class NraSolver {
     return { clause: result.clause, literalConstraints };
   }
 
-  // check_assignment
+  // check_assignment, in nla's scoped_limits.
   checkAssignment() {
+    const result = this.checkAssignmentInScope();
+    this.solver.limit.detach();
+    return result;
+  }
+
+  private checkAssignmentInScope() {
     const clause = (() => {
       try {
         return this.getClause();
