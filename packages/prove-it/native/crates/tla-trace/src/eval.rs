@@ -3950,8 +3950,23 @@ impl<'ir> Evaluator<'ir> {
                                 "The second argument of \\div is 0.".into(),
                             );
                         }
-                        int(left.div_euclid(right)
-                            - i64::from(right < 0 && left.rem_euclid(right) != 0))?
+                        // `Naturals#Divide` floors only a quotient Java truncates below 0, and
+                        // lets -2147483648 \\div -1 wrap.
+                        if builtin.flags & Builtin::NATURALS_METHOD != 0 {
+                            let (left, right) = (left as i32, right as i32);
+                            let quotient = left.wrapping_div(right);
+                            let is_floored = quotient < 0 && quotient.wrapping_mul(right) != left;
+                            Value::Int(quotient - i32::from(is_floored))
+                        } else if left == i64::from(i32::MIN) && right == -1 {
+                            return fail_coded(
+                                "integer overflow",
+                                MODULE_OVERFLOW,
+                                "Overflow when computing -2147483648 \\div -1".into(),
+                            );
+                        } else {
+                            int(left.div_euclid(right)
+                                - i64::from(right < 0 && left.rem_euclid(right) != 0))?
+                        }
                     }
                     "%" => {
                         if right <= 0 {

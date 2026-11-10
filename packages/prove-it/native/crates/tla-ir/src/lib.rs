@@ -40,7 +40,7 @@ pub use decode::{DecodeError, decode};
 pub use encode::encode;
 
 /// The version of the layout, `IR_VERSION` in `ir.ts`.
-pub const IR_VERSION: u32 = 13;
+pub const IR_VERSION: u32 = 14;
 
 /// "PIIR" as a little-endian word.
 pub const MAGIC: u32 = 0x5249_4950;
@@ -103,6 +103,9 @@ impl Builtin {
     /// `>=` of `tlc2.module.Naturals`, which names itself `>` in its errors, where the `>=` of
     /// Integers names itself.
     pub const NATURALS_GEQ: i32 = 16;
+    /// An operator a method of `tlc2.module.Naturals` computes rather than one of
+    /// `tlc2.module.Integers`, which TLC loads over it where the spec uses Integers.
+    pub const NATURALS_METHOD: i32 = 32;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
