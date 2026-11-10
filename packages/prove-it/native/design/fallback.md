@@ -630,10 +630,26 @@ now run natively; the rest decline at `-dump`, TLC 1.7.4 and the trace evaluator
 `check` and its option, progress, result and status types, `prove` and its types, `parseConfig`,
 and the errors stay. `parseModule` and `Module` are the front end's to decide.
 
-`Value`, `formatValue` and the values in `TraceStep` and `Violation` are the interpreter's classes.
-The owner decided to break them: a trace step carries each variable as TLC prints it, from the
-native printer, and as plain decoded data with no classes. `Value` and `formatValue` go. That is its
-own change, after this one.
+`Value`, `formatValue` and the values in `TraceStep` and `Violation` were the interpreter's
+classes. The owner decided to break them, and they broke after the CLI's flip:
+
+- `check` runs `checkSources` as the CLI does, with the spec and its configuration as the files
+  `<Module>.tla` and `<Module>.cfg`, its modules through `loadModule`, and `-seed`, `-workers`,
+  `-lncheck`, `-tool`, `-nowarning` and `-continue` from its options. The Json module's operators
+  decline there, since the library answers for files through `readFile` and `writeFile`.
+- The check records what it found as it prints (`prove-it-check`'s `outcome.rs`), and
+  `checkSources` returns it as `outcome` (ABI 13): the status, the counts of TLC's statistics, what
+  the spec printed, and each violation or error TLC reports, as its message's code and text with
+  the states TLC prints after it. A state carries each variable as TLC prints it and as plain data.
+- Where the native check declines, stops before it searches (a spec or configuration TLC rejects,
+  which the TypeScript check throws for), or the options ask for what only the TypeScript check
+  does (`onProgress`, `onPause`, `dump`, `systemProperties`, a `ModelConfig`, TLC 1.7.4), the
+  TypeScript check runs and its result converts (`src/check-result.ts`).
+- `Value` and `formatValue` are no longer exported.
+
+Of the 385 calls of the library's `check` in `bun run test` at the change, 198 ran natively. Of
+the 187 others, 114 stopped before the search, 44 were declined and 29 asked for the TypeScript
+check. The tests of the interpreter's own results run `checkParsed`, the TypeScript check.
 
 ### What changes for users
 

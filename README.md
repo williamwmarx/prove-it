@@ -23,7 +23,12 @@ Small == x < 3
 });
 
 result.status; // "invariant-violation"
+const violation = result.violations[0];
+violation.headline; // "Invariant Small is violated."
+violation.states.map((state) => state.variables.x.text); // ["0", "1", "2", "3"]
 ```
+
+Each violation or error TLC reports carries its message's code and text, and the behavior TLC prints with it. Each state gives every variable as TLC prints it (`text`) and as plain data (`value`): booleans, integers and strings as themselves, a sequence or tuple as an array, a record as an object, and, tagged, a set as `{ "@set": [...] }`, any other function as `{ "@function": [[key, value], ...] }`, a model value as `{ "@model": name }` and a set or function TLC keeps lazy, such as `Nat`, as `{ "@lazy": text }`.
 
 The command line takes TLC's options, and `prove-it tlapm` takes tlapm's:
 
@@ -32,7 +37,7 @@ prove-it Spec.tla
 prove-it tlapm Module.tla
 ```
 
-`check` searches with a native engine written in Rust. npm installs it as an optional package for Linux (x64 and arm64, glibc and musl), macOS (arm64 and x64) and Windows (x64), and the main package carries it as WebAssembly for the browser, for any other platform and for an install without optional dependencies. Where no engine loads, `check` throws `EngineUnavailableError` and the command line exits with 255; `PROVE_IT_ENGINE=0` checks with the interpreter instead, which needs no engine and is much slower.
+`check` runs the native check written in Rust, as the command line does, and checks the models it doesn't handle yet with the interpreter. npm installs it as an optional package for Linux (x64 and arm64, glibc and musl), macOS (arm64 and x64) and Windows (x64), and the main package carries it as WebAssembly for the browser, for any other platform and for an install without optional dependencies. Where no engine loads, `check` throws `EngineUnavailableError` and the command line exits with 255; `PROVE_IT_ENGINE=0` checks with the interpreter instead, which needs no engine and is much slower.
 
 ## Development
 
