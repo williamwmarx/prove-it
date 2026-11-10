@@ -385,17 +385,23 @@ const checkIntervalKeys = (left: number, right: number) => {
 const compareFunctions = (left: number, right: number) => {
   const size = sizes[left];
   const rightSize = sizes[right];
-  if (size > 0 && rightSize > 0 && isRecordId(left) !== isRecordId(right)) {
-    // TLC compares a record only with a record (RecordValue.compareTo), which may fail before the
-    // sizes decide. Of one size, a function asking compares by its keys, which fail against
-    // strings unless they are untyped model values: the evaluator, which knows which TLC built as
-    // a record, finds whether it fails.
-    if (size !== rightSize) return bail("record compared with a function");
-    if (hasUntypedModelKey(isRecordId(left) ? right : left)) {
-      return bail("a record compared with a function of its size over a model value");
+  // TLC compares a record only with a record (RecordValue.compareTo), which may fail before the
+  // sizes decide. Of one size, a function asking compares by its keys, which fail against strings
+  // unless they are untyped model values: the evaluator, which knows which TLC built as a record,
+  // finds whether it fails. A function over a model value is no record, and the first key tells
+  // whether one has a model value, so a record is looked for only beside one.
+  if (size !== rightSize) {
+    if (size > 0 && rightSize > 0 && isRecordId(left) !== isRecordId(right)) {
+      return bail("record compared with a function");
     }
+    return size - rightSize;
   }
-  if (size !== rightSize) return size - rightSize;
+  if (
+    (hasUntypedModelKey(left) && isRecordId(right)) ||
+    (hasUntypedModelKey(right) && isRecordId(left))
+  ) {
+    return bail("a record compared with a function of its size over a model value");
+  }
   checkIntervalKeys(left, right);
   for (let index = 0; index < size; index++) {
     const comparison = compare(getKey(left, index), getKey(right, index));
