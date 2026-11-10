@@ -1,0 +1,135 @@
+[
+  {
+    "id": "mongodb/src/mongo/tla_plus/Streams/ExactInitialSync/MCExactInitialSync.cfg",
+    "directory": "tests/conformance/.corpora/mongodb/src/mongo/tla_plus/Streams/ExactInitialSync",
+    "spec": "MCExactInitialSync.tla",
+    "config": "MCExactInitialSync.cfg",
+    "style": "safety, 9.6M cheap states: fingerprints, the state table, the walker",
+    "isUsingLibrary": true
+  },
+  {
+    "id": "examples/specifications/transaction_commit/PaxosCommit.cfg",
+    "directory": "tests/conformance/.corpora/examples/specifications/transaction_commit",
+    "spec": "PaxosCommit.tla",
+    "config": "PaxosCommit.cfg",
+    "style": "safety, 17M successors of records and sets: memo tables, guards",
+    "isUsingLibrary": true
+  },
+  {
+    "id": "ccf/tla/consistency/MCMultiNode.cfg",
+    "directory": "tests/conformance/.corpora/ccf/tla/consistency",
+    "spec": "MCMultiNode.tla",
+    "config": "MCMultiNode.cfg",
+    "style": "safety, 1.5M states of sequences of records: memo tables",
+    "isUsingLibrary": true
+  },
+  {
+    "id": "examples/specifications/lamport_mutex/MCLamportMutex.cfg",
+    "directory": "tests/conformance/.corpora/examples/specifications/lamport_mutex",
+    "spec": "MCLamportMutex.tla",
+    "config": "MCLamportMutex.cfg",
+    "style": "safety, 724k states of nested functions and message bags",
+    "isUsingLibrary": true
+  },
+  {
+    "id": "examples/specifications/btree/MCbtree.cfg",
+    "directory": "tests/conformance/.corpora/examples/specifications/btree",
+    "spec": "MCbtree.tla",
+    "config": "MCbtree.cfg",
+    "style": "safety, records and sequences: fingerprints, recursion",
+    "isUsingLibrary": true
+  },
+  {
+    "id": "tlc/tlatools/org.lamport.tlatools/test-model/pcal/Detlefs.cfg",
+    "directory": "tests/conformance/.corpora/tlc/tlatools/org.lamport.tlatools/test-model/pcal",
+    "spec": "Detlefs.tla",
+    "config": "Detlefs.cfg",
+    "style": "PlusCal with SYMMETRY: canonicalization",
+    "isUsingLibrary": true
+  },
+  {
+    "id": "examples/specifications/SimplifiedFastPaxos/FastPaxos.cfg",
+    "directory": "tests/conformance/.corpora/examples/specifications/SimplifiedFastPaxos",
+    "spec": "FastPaxos.tla",
+    "config": "FastPaxos.cfg",
+    "style": "SYMMETRY over sets of message records",
+    "isUsingLibrary": true
+  },
+  {
+    "id": "examples/specifications/dag-consensus/TLCSailfish1.cfg",
+    "directory": "tests/conformance/.corpora/examples/specifications/dag-consensus",
+    "spec": "TLCSailfish1.tla",
+    "config": "TLCSailfish1.cfg",
+    "style": "value-heavy: comparing and testing membership in large sets of records",
+    "isUsingLibrary": true
+  },
+  {
+    "id": "ccf/tla/consensus/MCabs.cfg",
+    "directory": "tests/conformance/.corpora/ccf/tla/consensus",
+    "spec": "MCabs.tla",
+    "config": "MCabs.cfg",
+    "style": "value-heavy: 349 states of large logs, interning",
+    "isUsingLibrary": true
+  },
+  {
+    "id": "examples/specifications/GameOfLife/GameOfLife.cfg",
+    "directory": "tests/conformance/.corpora/examples/specifications/GameOfLife",
+    "spec": "GameOfLife.tla",
+    "config": "GameOfLife.cfg",
+    "style": "value-heavy: a function over a grid, recursion",
+    "isUsingLibrary": true
+  },
+  {
+    "id": "examples/specifications/braf/BufferedRandomAccessFile.cfg",
+    "directory": "tests/conformance/.corpora/examples/specifications/braf",
+    "spec": "BufferedRandomAccessFile.tla",
+    "config": "BufferedRandomAccessFile.cfg",
+    "style": "value-heavy: sequences of bytes, builtins",
+    "isUsingLibrary": true
+  },
+  {
+    "id": "benchmarks/liveness/StarkMutex.cfg",
+    "directory": "tests/conformance/.corpora/tlc/tlatools/org.lamport.tlatools/test-model/pcal",
+    "spec": "StarkMutex.tla",
+    "config": "benchmarks/liveness/StarkMutex.cfg",
+    "style": "liveness, 400k states under fairness: the liveness checker",
+    "isUsingLibrary": true,
+    "expected": {
+      "id": "benchmarks/liveness/StarkMutex.cfg",
+      "status": "success",
+      "generatedStates": 1194504,
+      "distinctStates": 399763,
+      "depth": 115
+    }
+  },
+  {
+    "id": "examples/specifications/cf1s-folklore/cf1s_folklore.cfg",
+    "directory": "tests/conformance/.corpora/examples/specifications/cf1s-folklore",
+    "spec": "cf1s_folklore.tla",
+    "config": "cf1s_folklore.cfg",
+    "style": "liveness over 2M states: answering atoms, the graph",
+    "isUsingLibrary": true
+  },
+  {
+    "id": "tlc/tlatools/org.lamport.tlatools/test-model/examples/SpanningTree/SpanTreeRandom.cfg",
+    "directory": "tests/conformance/.corpora/tlc/tlatools/org.lamport.tlatools/test-model/examples/SpanningTree",
+    "spec": "SpanTreeRandom.tla",
+    "config": "SpanTreeRandom.cfg",
+    "style": "a liveness violation: the lasso and its trace",
+    "isUsingLibrary": true,
+    "expected": {
+      "id": "tlc/tlatools/org.lamport.tlatools/test-model/examples/SpanningTree/SpanTreeRandom.cfg",
+      "status": "liveness-violation",
+      "generatedStates": 1044320,
+      "distinctStates": 65396,
+      "depth": 6
+    }
+  },
+  {
+    "id": "examples/specifications/transaction_commit/2PCwithBTM.cfg",
+    "directory": "tests/conformance/.corpora/examples/specifications/transaction_commit",
+    "spec": "2PCwithBTM.tla",
+    "config": "2PCwithBTM.cfg",
+    "style": "start-up: a PlusCal model that checks in milliseconds"
+  }
+]
