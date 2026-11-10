@@ -19,7 +19,6 @@ import type {
   CheckResult,
   CheckStatus,
   InitialStates,
-  InitialStateViolation,
   OutputLine,
   SearchStatistics,
   TraceStep,
@@ -33,13 +32,11 @@ import {
   getUnexpectedException,
   TlaConfigError,
   TlaError,
-  TlaEvaluationError,
   TlaSanyFatalError,
   TlaSyntaxError,
-  UNEXPECTED_EXCEPTION,
 } from "../errors";
 import { describeRange } from "../evaluate";
-import { EXIT_STATUS, setExitCode } from "../exit-codes";
+import { EXIT_STATUS } from "../exit-codes";
 import { checkParsed } from "../parallel";
 import { SANY_174_STANDARD_MODULES, SANY_STANDARD_MODULES } from "../sany/modules";
 import { getSanyReport, type SanyModuleOrigin } from "../sany/report";
@@ -47,8 +44,13 @@ import { readSanySnapshot } from "../sany/snapshot";
 import type { StateDump } from "../state-graph";
 import { getTlcFingerprint } from "../tlc/fingerprint";
 import {
+  getFailureHeadline,
+  getInitialViolationHeadline,
+  getViolationHeadline,
+  isInitialViolation,
+} from "../tlc/headlines";
+import {
   createMessagePrinter,
-  formatInnerMessage,
   formatNestedMessage,
   formatTlcDate,
   formatTlcDuration,
@@ -141,20 +143,6 @@ const printInitialStatesProgress = (printer: MessagePrinter, count: number) =>
     `Computed ${count} initial states...`,
   );
 
-const getInitialViolationHeadline = (
-  status: InitialStateViolation["status"],
-  name: string | undefined,
-) =>
-  status === "invariant-violation"
-    ? {
-        code: MESSAGE_CODE.invariantViolatedInitial,
-        text: `Invariant ${name} is violated by the initial state:`,
-      }
-    : {
-        code: MESSAGE_CODE.propertyViolatedInitial,
-        text: `Property ${name} is violated by the initial state:`,
-      };
-
 // What the spec prints as TLC rebuilds a trace, before it prints the states or after.
 const printTraceOutput = (printer: MessagePrinter, lines: OutputLine[] | undefined) =>
   lines?.forEach((line) => {
@@ -194,14 +182,6 @@ const COUNTER_EXAMPLE = {
   code: MESSAGE_CODE.counterExample,
   text: "The following behavior constitutes a counter-example:\n",
 };
-
-// TLC 1.7.4 doesn't name the properties, and later versions name none when they can't tell which.
-const getTemporalHeadline = (names: string[], version: TlcVersion) =>
-  version === "1.7.4" || names.length === 0
-    ? "Temporal properties were violated.\n"
-    : names.length === 1
-      ? `Temporal property ${names[0]} was violated.\n`
-      : `Temporal properties ${names.slice(0, -1).join(", ")}${names.length > 2 ? "," : ""} and ${names[names.length - 1]} were violated.\n`;
 
 // TLC's FingerprintException#getTrace: the range of each source, innermost first, skipping a
 // source the same as the one inside it.
@@ -389,49 +369,9 @@ const printLivenessEnd = (printer: MessagePrinter, timing: Timing) => {
 // Prints a violation, and returns whether TLC goes on to print the statistics of the search.
 const printViolation = (status: CheckStatus, violation: Violation, printer: MessagePrinter) => {
   const print = printer.print;
-  const name = violation.name;
   const loopStart = violation.loopStart;
-  // TLC prints a violation by an initial state without the behavior or the statistics.
-  const isInitial =
-    loopStart === undefined &&
-    violation.trace.length === 1 &&
-    (status === "invariant-violation" || status === "liveness-violation");
-  const temporal = {
-    code: MESSAGE_CODE.temporalPropertyViolated,
-    text: getTemporalHeadline(violation.properties ?? [name], printer.version),
-  };
-  const headline = {
-    success: undefined,
-    error: undefined,
-    "assumption-violation": violation.message
-      ? {
-          code: MESSAGE_CODE.assumptionEvaluationError,
-          text: formatInnerMessage(
-            MESSAGE_CODE.assumptionEvaluationError,
-            `Evaluating assumption ${name} failed.\n${violation.message}`,
-            printer.isTool,
-          ),
-        }
-      : { code: MESSAGE_CODE.assumptionFalse, text: `Assumption ${name} is false.` },
-    deadlock: { code: MESSAGE_CODE.deadlockReached, text: "Deadlock reached." },
-    "invariant-violation": isInitial
-      ? getInitialViolationHeadline("invariant-violation", name)
-      : { code: MESSAGE_CODE.invariantViolatedBehavior, text: `Invariant ${name} is violated.` },
-    "property-violation": temporal,
-    "liveness-violation":
-      loopStart !== undefined
-        ? temporal
-        : isInitial
-          ? getInitialViolationHeadline("liveness-violation", name)
-          : {
-              code: MESSAGE_CODE.actionPropertyViolatedBehavior,
-              text: `Action property ${name} is violated.`,
-            },
-    "postcondition-violation": {
-      code: violation.postcondition?.code ?? MESSAGE_CODE.general,
-      text: violation.message ?? `Postcondition ${name} is false.`,
-    },
-  }[status];
+  const isInitial = isInitialViolation(status, violation);
+  const headline = getViolationHeadline(status, violation, printer.isTool, printer.version);
   // A safety property's counterexample ends where it breaks, and a liveness one loops back.
   const isProperty = status === "property-violation";
   const isLasso = loopStart !== undefined && !isProperty;
@@ -494,7 +434,6 @@ const printResult = (result: CheckResult, printer: MessagePrinter, timing: Timin
   const print = printer.print;
   if (result.failure) {
     const failure = result.failure;
-    const message = printer.isTool ? failure.toolMessage : failure.message;
     const printCallStack = () => {
       const fingerprint = failure.fingerprint;
       if (fingerprint) {
@@ -514,27 +453,8 @@ const printResult = (result: CheckResult, printer: MessagePrinter, timing: Timin
       if (failure.callStack) printNestedExpressions(printer, failure.callStack);
     };
     if (failure.isCallStackFirst) printCallStack();
-    // TLC prints the state as it reports the error, so a state it can't print fails outside the
-    // checker, which TLC reports as an exception it did not expect.
-    const initialState =
-      failure.initialState &&
-      (() => {
-        try {
-          return `While working on the initial state:\n${formatState(failure.initialState)}`;
-        } catch (error) {
-          if (!(error instanceof TlaEvaluationError)) throw error;
-          throw setExitCode(
-            new TlaEvaluationError(`${UNEXPECTED_EXCEPTION}${error.message}`),
-            EXIT_STATUS.error,
-          );
-        }
-      })();
-    // TLC prints an error on an initial state and the state as one message.
-    print(
-      initialState ? MESSAGE_CODE.initialState : failure.code,
-      MESSAGE_LEVEL.error,
-      initialState ? `${message}\n${initialState}` : message,
-    );
+    const headline = getFailureHeadline(failure, printer.isTool);
+    print(headline.code, MESSAGE_LEVEL.error, headline.text);
     printTraceOutput(printer, failure.trace[0]?.output);
     printTrace(printer, failure.trace);
     const traceFailure = failure.traceFailure;
