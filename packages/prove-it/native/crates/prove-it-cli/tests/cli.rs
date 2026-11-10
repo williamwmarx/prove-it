@@ -686,6 +686,83 @@ fn reports_an_assumption_that_is_no_boolean() {
     }
 }
 
+// SANY's `NumeralNode.toString` is the numeral as written, so TLC names an assumption that is a
+// numeral by its text, not by where it is written (`Tool.checkAssumptions`, `Tool.isValid`). And
+// `TLCGetSet.TLCGetEval` is an `EvaluatingValue`, whose `eval` reports any failure within it, its
+// argument's included, as the failure of the Java method. TLC's output for each at d8fb231.
+#[test]
+fn names_assumptions_and_fails_tlcget_as_tlc() {
+    const TLC_GET: &str = "Attempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.Value tlc2.module.TLCGetSet.TLCGetEval(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel),\nbut it produced the following error:\n";
+    let module = |name: &str, assumption: &str, invariant: &str| {
+        format!(
+            "---- MODULE {name} ----\nEXTENDS Integers, TLC\nVARIABLE x\nASSUME {assumption}\nInv == {invariant}\nInit == x = 0\nNext == x' = 1 - x\n====\n"
+        )
+    };
+    for (name, assumption, invariant, expected) in [
+        ("Parenthesized", "((2))", "x < 2", "Error: Evaluating assumption 2 failed.\nTLC expected a boolean value, but did not find one. 2\nFinished in ".to_string()),
+        ("Binary", "\\b101", "x < 2", "Error: Evaluating assumption \\b101 failed.\nTLC expected a boolean value, but did not find one. \\b101\nFinished in ".to_string()),
+        ("Padded", "007", "x < 2", "Error: Evaluating assumption 007 failed.\nTLC expected a boolean value, but did not find one. 007\nFinished in ".to_string()),
+        ("Negated", "-1", "x < 2", "Error: Evaluating assumption line 4, col 8 to line 4, col 9 of module Negated failed.\nTLC expected a boolean value, but did not find one. line 4, col 8 to line 4, col 9 of module Negated\nFinished in ".to_string()),
+        ("Unset", "TLCGet(3) = 0", "x < 2", format!("Error: Evaluating assumption line 4, col 8 to line 4, col 20 of module Unset failed.\n{TLC_GET}TLCGet(3) was undefined.\nFinished in ")),
+        ("Divided", "TRUE", "TLCGet(1 \\div 0) = 0", format!("Computing initial states...\nError: {TLC_GET}The second argument of \\div is 0.\nWhile working on the initial state:\nx = 0\n\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 6, column 9 to line 6, column 13 in Divided\n1. Line 5, column 8 to line 5, column 27 in Divided\n2. Line 5, column 8 to line 5, column 23 in Divided\n3. Line 5, column 15 to line 5, column 22 in Divided\n\n\n1 states generated, 1 distinct states found, 1 states left on queue.\nThe depth of the complete state graph search is 1.\nFinished in ")),
+    ] {
+        let (output, directory) = run_front(
+            name,
+            &module(name, assumption, invariant),
+            "INIT Init\nNEXT Next\nINVARIANT Inv\n",
+            &["-workers", "1"],
+        );
+        let text = stdout(&output);
+        let untimed = text
+            .split_once("Starting... (")
+            .and_then(|(_, rest)| rest.split_once('\n'))
+            .map_or(text.as_str(), |(_, rest)| rest);
+        assert!(untimed.starts_with(&expected), "{name}:\n{text}");
+        std::fs::remove_dir_all(directory).expect("removed");
+    }
+}
+
+// `Tool.eval` gives a literal the value its tool object holds, which `processModelConstraints`
+// replaced with the constraint's `OpDefNode`, so TLC fails a constraint that is a numeral or a
+// string with a ClassCastException, whose message names the JVM's classes: the engine declines it.
+// A constraint that isn't a boolean otherwise fails as `Tool.isInModel` says. TLC's output at
+// d8fb231.
+#[test]
+fn declines_a_constraint_that_is_a_literal() {
+    let module = |name: &str, constraint: &str| {
+        format!(
+            "---- MODULE {name} ----\nEXTENDS Naturals\nVARIABLE x\nQ == {constraint}\nInit == x = 0\nNext == x' = 1 - x\n====\n"
+        )
+    };
+    for (name, constraint) in [("Numeral", "7"), ("Text", "\"yes\"")] {
+        let (output, directory) = run_front(
+            name,
+            &module(name, constraint),
+            "INIT Init\nNEXT Next\nCONSTRAINT Q\n",
+            &[],
+        );
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            error.contains("not native yet") && error.contains("a constraint that is a literal"),
+            "{name}:\n{}{error}",
+            stdout(&output)
+        );
+        std::fs::remove_dir_all(directory).expect("removed");
+    }
+    let (output, directory) = run_front(
+        "Summed",
+        &module("Summed", "x + 7"),
+        "INIT Init\nNEXT Next\nCONSTRAINT Q\n",
+        &["-workers", "1"],
+    );
+    let text = stdout(&output);
+    assert!(
+        text.contains("Computing initial states...\nError: TLC expected a boolean value, but did not find one. line 4, col 6 to line 4, col 10 of module Summed\nWhile working on the initial state:\nx = 0\n\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 13 in Summed\n\n\n1 states generated, 0 distinct states found, 0 states left on queue.\nThe depth of the complete state graph search is 1.\nFinished in "),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
 #[test]
 fn prints_once_what_an_assumption_printed_before_the_engine_left_it() {
     // The search prints the first print, then leaves the assumption to the trace evaluator, which
