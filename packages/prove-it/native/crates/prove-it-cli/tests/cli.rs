@@ -1596,6 +1596,59 @@ fn applies_the_functions_tlc_keeps_lazy() {
 }
 
 #[test]
+fn tests_the_domain_of_a_function_tlc_keeps_lazy_as_it_was_built() {
+    // TLC tests the domain as it applies the function, in the context the function was built in
+    // (`FcnLambdaValue.apply`), where a filter's predicate reads k, and tests Seq(S) and a union
+    // with Nat as they are.
+    let spec = "---- MODULE Stop ----\nEXTENDS Integers, Sequences\nVARIABLE x\nF == [k \\in {0, 1} |-> [i \\in {n \\in Nat : n < k} |-> i + k]]\nLengths == [s \\in Seq({1}) |-> Len(s)]\nWide == [n \\in Nat \\cup {-1} |-> n]\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1\nInv == F[1][0] = 1 /\\ ~(0 \\in DOMAIN F[0]) /\\ 0 \\in DOMAIN F[1] /\\ Lengths[<<1, 1>>] = 2 /\\ Wide[-1] = -1 /\\ \\A k \\in {1} : LET g == [i \\in {n \\in Nat : n < k + x} |-> i] IN g[x] = x\n====\n";
+    let (output, directory) = run_lowered(
+        "lazy-domain",
+        spec,
+        "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE\nINVARIANT Inv\n",
+    );
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(0), "{text}");
+    assert!(
+        text.contains("3 states generated, 3 distinct states found, 0 states left on queue."),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+    // F[0] has an empty domain, which TLC reports applying; the engine stops there, and TLC fails
+    // to compare a lazy function even with itself, or a record that holds one. No run may report
+    // success.
+    for (test, init, reason) in [
+        (
+            "lazy-outside",
+            "F[0][0]",
+            "applied a function outside its domain",
+        ),
+        (
+            "lazy-itself",
+            "LET g == F[1] IN g = g",
+            "comparing a function TLC keeps lazy",
+        ),
+        (
+            "lazy-record",
+            "([a |-> F[1], b |-> 1] = [a |-> F[1], b |-> 2])",
+            "comparing a function TLC keeps lazy",
+        ),
+    ] {
+        let spec = format!(
+            "---- MODULE Stop ----\nEXTENDS Integers\nVARIABLE x\nF == [k \\in {{0, 1}} |-> [i \\in {{n \\in Nat : n < k}} |-> i]]\nInit == x = {init}\nNext == x' = x\n====\n"
+        );
+        let (output, directory) = run_lowered(test, &spec, "INIT Init\nNEXT Next\n");
+        let text = stdout(&output);
+        assert!(!text.contains("No error has been found"), "{text}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(reason),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        std::fs::remove_dir_all(directory).expect("removed");
+    }
+}
+
+#[test]
 fn rebuilds_a_trace_that_sets_registers() {
     // TLC rebuilds the trace from the initial predicate, which sets the register again (as on
     // TLC's TLCGetNonDeterminism).

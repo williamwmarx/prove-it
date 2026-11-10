@@ -43,6 +43,9 @@ pub(crate) enum Lazy {
     Set(Id),
     /// Nat, Int or STRING, which TLC tests for membership and can't enumerate.
     Infinite(&'static str),
+    /// Another set TLC can't enumerate, such as `{n \in Nat : p}` or `Seq(S)`, with the
+    /// engine's test of membership in it.
+    Tested(Test),
     Subset(Box<Lazy>),
     FunctionSet(Box<Lazy>, Box<Lazy>),
     /// The keys in TLC's order, each with its set.
@@ -57,14 +60,14 @@ pub(crate) enum Lazy {
 
 impl Lazy {
     fn is_enumerable(&self) -> bool {
-        !matches!(self, Lazy::Infinite(_))
+        !matches!(self, Lazy::Infinite(_) | Lazy::Tested(_))
     }
 
     /// Whether the set is or is built of a set TLC can't enumerate.
     pub(crate) fn is_infinite(&self) -> bool {
         match self {
             Lazy::Set(_) => false,
-            Lazy::Infinite(_) => true,
+            Lazy::Infinite(_) | Lazy::Tested(_) => true,
             Lazy::Subset(base) | Lazy::Filtered(base, _) | Lazy::Union(base) => base.is_infinite(),
             Lazy::FunctionSet(domain, range) => domain.is_infinite() || range.is_infinite(),
             Lazy::RecordSet(_, sets) | Lazy::Product(sets) => sets.iter().any(Lazy::is_infinite),
@@ -172,7 +175,7 @@ impl Lazy {
                 .store
                 .set_elements(Self::set(machine, *set)?)
                 .to_vec()),
-            Lazy::Infinite(_) => Err(Bail("enumerated an infinite set")),
+            Lazy::Infinite(_) | Lazy::Tested(_) => Err(Bail("enumerated an infinite set")),
             Lazy::Subset(base) => {
                 // SubsetValue sizes and lists its base, never streaming it.
                 let base = base.elements(machine, false)?;
@@ -352,7 +355,7 @@ impl Lazy {
                 }
                 true
             }
-            Lazy::Filtered(..) | Lazy::Operation(..) | Lazy::Union(_) => {
+            Lazy::Tested(_) | Lazy::Filtered(..) | Lazy::Operation(..) | Lazy::Union(_) => {
                 self.enumerate(machine)?.is_empty()
             }
         })
@@ -373,7 +376,9 @@ impl Lazy {
         };
         match self {
             Lazy::Set(set) => Ok(u64::from(machine.store.size_of(Self::set(machine, *set)?))),
-            Lazy::Infinite(_) => Err(Bail("counted the elements of an infinite set")),
+            Lazy::Infinite(_) | Lazy::Tested(_) => {
+                Err(Bail("counted the elements of an infinite set"))
+            }
             Lazy::Subset(base) => {
                 let size = base.size(machine)?;
                 if size >= 31 {
@@ -427,6 +432,7 @@ impl Lazy {
                 _ if is_model => Ok(false),
                 _ => Err(Bail("a mistyped membership in an infinite set")),
             },
+            Lazy::Tested(test) => test(machine, element),
             Lazy::Subset(base) => {
                 if kind != KIND_SET {
                     return Err(Bail("a membership in SUBSET of a non-set"));

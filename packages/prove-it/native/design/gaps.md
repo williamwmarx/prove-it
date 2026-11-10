@@ -464,6 +464,18 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   with `has_infinite_part` for sets built from others). Where it compiles, it turns off pipelining
   and level sharing, since only the machine that built a function can apply it.
 - suite/test3, test5, test10, test12, test17 and test202 now print what TLC prints.
+- TLC tests the domain as it applies the function, and as it asks `x \in DOMAIN f`, in the
+  context it built the function in. So the function captures what its domains read as well as
+  what its body reads, and both restore it before they test the key (`in_built_context`):
+  `[k \in {0, 1} |-> [i \in {n \in Nat : n < k} |-> i]][0]` has an empty domain, which a test
+  reading the last k missed. A domain the engine only tests, such as a filter of Nat, `Seq(S)` or
+  `Nat \cup {-1}`, is tested by its membership test (`Lazy::Tested`); it was taken as Nat, which
+  dropped the filter.
+- TLC compares the elements of two sets, functions or records up to the first that differ, and
+  fails at one that holds a lazy function, even where both are the same. The store skipped
+  elements with equal ids, so `[a |-> f, b |-> 1] = [a |-> f, b |-> 2]` was FALSE; it now
+  compares an element that holds one (`is_kept_lazy`), as it does in `\cup`, `\cap`, `\` and
+  `with_element`, and stops there.
 
 ## ENABLED in the initial predicate
 
