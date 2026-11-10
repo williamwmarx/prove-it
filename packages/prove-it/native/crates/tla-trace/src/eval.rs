@@ -460,6 +460,9 @@ const DIVISION_BY_ZERO: u32 = 2179;
 const ONE_ARGUMENT_ERROR: u32 = 2283;
 /// `EC.TLC_MODULE_APPLYING_TO_WRONG_VALUE`.
 const APPLYING_TO_WRONG_VALUE: u32 = 2176;
+/// `EC.TLC_MODULE_ARGUMENT_NOT_IN_DOMAIN` and `EC.TLC_MODULE_APPLY_EMPTY_SEQ`.
+const ARGUMENT_NOT_IN_DOMAIN: u32 = 2183;
+const APPLY_EMPTY_SEQ: u32 = 2184;
 /// `EC.TLC_EXPECTED_EXPRESSION_IN_COMPUTING`, its `2` and `EC.TLC_EXPECTED_VALUE`.
 const EXPECTED_EXPRESSION_IN_COMPUTING: u32 = 2247;
 const EXPECTED_EXPRESSION_IN_COMPUTING2: u32 = 2248;
@@ -509,6 +512,21 @@ fn as_java_failure<T>(signature: &str, result: Evaluated<T>) -> Evaluated<T> {
         None => error,
     })
 }
+
+// `MethodValue.apply` reports what fails in the Java method, but an EvalException, as the
+// method's failure, such as what fails in an operator argument the method applies.
+fn as_java_runtime_failure<T>(signature: &str, result: Evaluated<T>) -> Evaluated<T> {
+    match &result {
+        Err(EvalError {
+            message: Some(message),
+            ..
+        }) if !message.is_eval_exception => as_java_failure(signature, result),
+        _ => result,
+    }
+}
+
+const SELECT_SEQ: &str = "public static tlc2.value.impl.Value tlc2.module.Sequences.SelectSeq(tlc2.value.impl.Value,tlc2.value.impl.Value)";
+const SORT_SEQ: &str = "public static tlc2.value.impl.Value tlc2.module.TLC.SortSeq(tlc2.value.impl.Value,tlc2.value.impl.Value)";
 
 fn is_text(text: &Text, word: &str) -> bool {
     text.units.iter().copied().eq(word.encode_utf16())
@@ -2336,6 +2354,15 @@ impl<'ir> Evaluator<'ir> {
         }
     }
 
+    // Whether an operator's body is a number or a string, whose value TLC takes for the operator
+    // where it is an argument (`lookup` finds the body's tool object).
+    fn is_literal_body(&self, operator: &Operator) -> bool {
+        matches!(operator.body, Body::Node(body) if matches!(
+            self.kind(body),
+            NodeKind::Number(_) | NodeKind::WideNumber(_) | NodeKind::Decimal(_) | NodeKind::String(_)
+        ))
+    }
+
     // Applies an operator argument, such as SelectSeq's test, to values.
     fn call_with_values(&mut self, operator: &Operator, values: &[Value]) -> Evaluated<Value> {
         if operator.params.len() != values.len() {
@@ -3764,7 +3791,7 @@ impl<'ir> Evaluator<'ir> {
                 let sequence = self.operand(&operands[0])?;
                 match argument_sequence("Head", &sequence)?.first() {
                     Some(head) => head.clone(),
-                    None => return fail("Head of the empty sequence"),
+                    None => return empty_sequence("Head"),
                 }
             }
             "Tail" => {
@@ -3773,13 +3800,13 @@ impl<'ir> Evaluator<'ir> {
                 // A string's tail is the string of the characters past its first.
                 if let Value::Str(text) = &sequence {
                     if text.units.is_empty() {
-                        return fail("Tail of the empty string");
+                        return empty_sequence("Tail");
                     }
                     return Ok(Value::Str(self.made_text(text.units[1..].into())));
                 }
                 let elements = argument_sequence("Tail", &sequence)?;
                 if elements.is_empty() {
-                    return fail("Tail of the empty sequence");
+                    return empty_sequence("Tail");
                 }
                 Value::tuple(elements[1..].to_vec())
             }
@@ -3808,20 +3835,52 @@ impl<'ir> Evaluator<'ir> {
                 elements.extend(sequence_of(&right)?.iter().cloned());
                 Value::tuple(elements)
             }
+            // `Sequences.SubSeq` tests the sequence, then each bound is an integer, then each is in
+            // the sequence's domain, from the first.
             "SubSeq" => {
                 arity(3)?;
                 let sequence = self.operand(&operands[0])?;
-                let from = self.operand_int(&operands[1])?;
-                let to = self.operand_int(&operands[2])?;
+                let from = self.operand(&operands[1])?;
+                let to = self.operand(&operands[2])?;
                 // A string slices as the sequence of its characters, and stays a string.
                 let length = match &sequence {
                     Value::Str(text) => text.units.len(),
-                    _ => sequence_of(&sequence)?.len(),
+                    _ => sequence_argument("SubSeq", "sequence", &sequence)?.len(),
+                } as i64;
+                let mut bounds = [0; 2];
+                for ((bound, value), position) in
+                    bounds.iter_mut().zip([&from, &to]).zip(["second", "third"])
+                {
+                    let Value::Int(int) = value else {
+                        return fail_coded(
+                            "SubSeq of a bound that isn't an integer",
+                            ARGUMENT_ERROR,
+                            format!(
+                                "The {position} argument of SubSeq should be a natural number, but instead it is:\n{}",
+                                format_pretty(value)
+                            ),
+                        );
+                    };
+                    *bound = i64::from(*int);
+                }
+                let [from, to] = bounds;
+                // `EC.TLC_MODULE_ARGUMENT_NOT_IN_DOMAIN`.
+                let outside = |position: &str, bound: i64| {
+                    fail_coded(
+                        "SubSeq outside the sequence's domain",
+                        ARGUMENT_NOT_IN_DOMAIN,
+                        format!(
+                            "The {position} argument of SubSeq must be in the domain of its first argument:\n{}\n, but instead it is\n{bound}",
+                            format_pretty(&sequence)
+                        ),
+                    )
                 };
                 let range = if from > to {
                     0..0
-                } else if from < 1 || to > length as i64 {
-                    return fail("SubSeq outside the sequence's domain");
+                } else if from < 1 || from > length {
+                    return outside("second", from);
+                } else if to > length {
+                    return outside("third", to);
                 } else {
                     from as usize - 1..to as usize
                 };
@@ -3835,14 +3894,62 @@ impl<'ir> Evaluator<'ir> {
                 let sequence = self.operand(&operands[0])?;
                 let test = self.operand_operator(&operands[1])?;
                 let mut kept = Vec::new();
-                for element in sequence_of(&sequence)? {
-                    match self.call_with_values(&test, std::slice::from_ref(element))? {
+                for element in sequence_argument("SelectSeq", "sequence", &sequence)? {
+                    let tested = self.call_with_values(&test, std::slice::from_ref(element));
+                    match as_java_runtime_failure(SELECT_SEQ, tested)? {
                         Value::Bool(true) => kept.push(element.clone()),
                         Value::Bool(false) => {}
-                        _ => return fail("a SelectSeq test that isn't a boolean"),
+                        _ => {
+                            // TLC holds a LAMBDA as an `OpLambdaValue`, which prints as its name.
+                            let is_lambda = matches!(&operands[1], Operand::Node(node, _)
+                                if matches!(self.kind(*node), NodeKind::Lambda { .. }));
+                            if !is_lambda || self.is_literal_body(&test) {
+                                return fail("a SelectSeq test that isn't a boolean");
+                            }
+                            return fail_coded(
+                                "a SelectSeq test that isn't a boolean",
+                                ARGUMENT_ERROR,
+                                "The second argument of SelectSeq should be a boolean-valued operator, but instead it is:\n<Operator LAMBDA>".into(),
+                            );
+                        }
                     }
                 }
                 Value::tuple(kept)
+            }
+            // `TLC.SortSeq`: an insertion sort, which moves each element before those it is less
+            // than, `Op(element, other)`, from the last sorted on.
+            "SortSeq" => {
+                arity(2)?;
+                let sequence = self.operand(&operands[0])?;
+                let less = self.operand_operator(&operands[1])?;
+                let elements = sequence_argument("SortSeq", "natural number", &sequence)?;
+                if self.is_literal_body(&less) {
+                    return fail("SortSeq of an operator TLC takes for its body's value");
+                }
+                let mut sorted: Vec<Value> = Vec::with_capacity(elements.len());
+                for element in elements {
+                    let mut position = sorted.len();
+                    while position > 0 {
+                        let pair = [element.clone(), sorted[position - 1].clone()];
+                        let compared = self.call_with_values(&less, &pair);
+                        match as_java_runtime_failure(SORT_SEQ, compared)? {
+                            Value::Bool(true) => position -= 1,
+                            Value::Bool(false) => break,
+                            other => {
+                                return fail_coded(
+                                    "a SortSeq comparison that isn't a boolean",
+                                    ARGUMENT_ERROR,
+                                    format!(
+                                        "The second argument of SortSeq should be a boolean function, but instead it is:\n{}",
+                                        format_pretty(&other)
+                                    ),
+                                );
+                            }
+                        }
+                    }
+                    sorted.insert(position, element.clone());
+                }
+                Value::tuple(sorted)
             }
             ":>" => {
                 arity(2)?;
@@ -4661,6 +4768,33 @@ fn argument_sequence<'v>(name: &str, value: &'v Value) -> Evaluated<&'v [Value]>
             ),
         ),
     }
+}
+
+// A sequence argument of an operator TLC overrides (`EC.TLC_MODULE_ARGUMENT_ERROR`), which
+// SortSeq names a natural number. TLC fails otherwise to make a sequence of a function it keeps
+// lazy (`FcnLambdaValue.toTuple`).
+fn sequence_argument<'v>(name: &str, expected: &str, value: &'v Value) -> Evaluated<&'v [Value]> {
+    match (as_tuple(value), value) {
+        (Some(elements), _) => Ok(elements),
+        (None, Value::Lambda(_)) => fail(format!("{name} of a function TLC keeps lazy")),
+        (None, _) => fail_coded(
+            format!("{name} of a non-sequence"),
+            ARGUMENT_ERROR,
+            format!(
+                "The first argument of {name} should be a {expected}, but instead it is:\n{}",
+                format_pretty(value)
+            ),
+        ),
+    }
+}
+
+// `EC.TLC_MODULE_APPLY_EMPTY_SEQ`.
+fn empty_sequence<T>(name: &str) -> Evaluated<T> {
+    fail_coded(
+        format!("{name} of the empty sequence"),
+        APPLY_EMPTY_SEQ,
+        format!("Attempted to apply {name} to the empty sequence."),
+    )
 }
 
 fn sequence_of(value: &Value) -> Evaluated<&[Value]> {

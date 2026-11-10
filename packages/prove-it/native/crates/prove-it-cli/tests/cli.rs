@@ -4440,3 +4440,143 @@ VARIABLE x
     }
     std::fs::remove_dir_all(directory).expect("removed");
 }
+
+#[test]
+fn words_the_sequence_operators_as_tlc() {
+    // Where SubSeq, SelectSeq, SortSeq, Head or Tail fails, TLC words each failure apart: an
+    // argument that isn't a sequence or an integer, a bound outside the sequence's domain, a test
+    // or a comparison that isn't a boolean, what fails in an operator argument as the failure of
+    // the Java method, and the empty sequence. SortSeq sorts as TLC's insertion does. Each text is
+    // what TLC at d8fb231 prints, and with -tool.
+    // Its name, definitions, and what TLC prints, and with -tool.
+    let cases: [(&str, &str, &str, &str); 15] = [
+        (
+            "SubSeq from below the sequence's domain",
+            "Init == x = SubSeq(<<1, 2>>, 0, 1)\nNext == x' = x",
+            "Error: The second argument of SubSeq must be in the domain of its first argument:\n<<1, 2>>\n, but instead it is\n0\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 34 in M\n1. Line 4, column 13 to line 4, column 34 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\n@!@!@STARTMSG 2183:0 @!@!@\nThe second argument of SubSeq must be in the domain of its first argument:\n<<1, 2>>\n, but instead it is\n0\n@!@!@ENDMSG 2183 @!@!@\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 34 in M\n1. Line 4, column 13 to line 4, column 34 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "SubSeq to past the sequence's domain",
+            "Init == x = SubSeq(<<1, 2>>, 1, 3)\nNext == x' = x",
+            "Error: The third argument of SubSeq must be in the domain of its first argument:\n<<1, 2>>\n, but instead it is\n3\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 34 in M\n1. Line 4, column 13 to line 4, column 34 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\n@!@!@STARTMSG 2183:0 @!@!@\nThe third argument of SubSeq must be in the domain of its first argument:\n<<1, 2>>\n, but instead it is\n3\n@!@!@ENDMSG 2183 @!@!@\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 34 in M\n1. Line 4, column 13 to line 4, column 34 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "SubSeq past a string's domain",
+            "Init == x = SubSeq(\"ab\", 2, 3)\nNext == x' = x",
+            "Error: The third argument of SubSeq must be in the domain of its first argument:\n\"ab\"\n, but instead it is\n3\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 30 in M\n1. Line 4, column 13 to line 4, column 30 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\n@!@!@STARTMSG 2183:0 @!@!@\nThe third argument of SubSeq must be in the domain of its first argument:\n\"ab\"\n, but instead it is\n3\n@!@!@ENDMSG 2183 @!@!@\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 30 in M\n1. Line 4, column 13 to line 4, column 30 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "SubSeq of a set",
+            "Init == x = SubSeq({1}, 1, 1)\nNext == x' = x",
+            "Error: The first argument of SubSeq should be a sequence, but instead it is:\n{1}\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 29 in M\n1. Line 4, column 13 to line 4, column 29 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\n@!@!@STARTMSG 2169:0 @!@!@\nThe first argument of SubSeq should be a sequence, but instead it is:\n{1}\n@!@!@ENDMSG 2169 @!@!@\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 29 in M\n1. Line 4, column 13 to line 4, column 29 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "SubSeq from a string",
+            "Init == x = SubSeq(<<1, 2>>, \"a\", 1)\nNext == x' = x",
+            "Error: The second argument of SubSeq should be a natural number, but instead it is:\n\"a\"\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 36 in M\n1. Line 4, column 13 to line 4, column 36 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\n@!@!@STARTMSG 2169:0 @!@!@\nThe second argument of SubSeq should be a natural number, but instead it is:\n\"a\"\n@!@!@ENDMSG 2169 @!@!@\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 36 in M\n1. Line 4, column 13 to line 4, column 36 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "SelectSeq of a string",
+            "Init == x = SelectSeq(\"ab\", LAMBDA e : TRUE)\nNext == x' = x",
+            "Error: The first argument of SelectSeq should be a sequence, but instead it is:\n\"ab\"\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 44 in M\n1. Line 4, column 13 to line 4, column 44 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\n@!@!@STARTMSG 2169:0 @!@!@\nThe first argument of SelectSeq should be a sequence, but instead it is:\n\"ab\"\n@!@!@ENDMSG 2169 @!@!@\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 44 in M\n1. Line 4, column 13 to line 4, column 44 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "SelectSeq of a test that isn't a boolean",
+            "Init == x = SelectSeq(<<1, 2>>, LAMBDA e : e)\nNext == x' = x",
+            "Error: The second argument of SelectSeq should be a boolean-valued operator, but instead it is:\n<Operator LAMBDA>\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 45 in M\n1. Line 4, column 13 to line 4, column 45 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\n@!@!@STARTMSG 2169:0 @!@!@\nThe second argument of SelectSeq should be a boolean-valued operator, but instead it is:\n<Operator LAMBDA>\n@!@!@ENDMSG 2169 @!@!@\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 45 in M\n1. Line 4, column 13 to line 4, column 45 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "SelectSeq of a test that fails",
+            "Init == x = SelectSeq(<<1, 2>>, LAMBDA e : CHOOSE y \\in {} : TRUE)\nNext == x' = x",
+            "Error: Attempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.Value tlc2.module.Sequences.SelectSeq(tlc2.value.impl.Value,tlc2.value.impl.Value),\nbut it produced the following error:\nAttempted to compute the value of an expression of form\nCHOOSE x \\in S: P, but no element of S satisfied P.\nline 4, col 44 to line 4, col 65 of module M\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 66 in M\n1. Line 4, column 13 to line 4, column 66 in M\n2. Line 4, column 44 to line 4, column 65 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\n@!@!@STARTMSG 2154:0 @!@!@\nAttempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.Value tlc2.module.Sequences.SelectSeq(tlc2.value.impl.Value,tlc2.value.impl.Value),\nbut it produced the following error:\nAttempted to compute the value of an expression of form\nCHOOSE x \\in S: P, but no element of S satisfied P.\nline 4, col 44 to line 4, col 65 of module M\n@!@!@ENDMSG 2154 @!@!@\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 66 in M\n1. Line 4, column 13 to line 4, column 66 in M\n2. Line 4, column 44 to line 4, column 65 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "SortSeq of a set",
+            "Init == x = SortSeq({1}, LAMBDA u, v : TRUE)\nNext == x' = x",
+            "Error: The first argument of SortSeq should be a natural number, but instead it is:\n{1}\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 44 in M\n1. Line 4, column 13 to line 4, column 44 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\n@!@!@STARTMSG 2169:0 @!@!@\nThe first argument of SortSeq should be a natural number, but instead it is:\n{1}\n@!@!@ENDMSG 2169 @!@!@\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 44 in M\n1. Line 4, column 13 to line 4, column 44 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "SortSeq of a comparison of a string",
+            "Init == x = SortSeq(<<1, \"a\">>, LAMBDA u, v : u < v)\nNext == x' = x",
+            "Error: The first argument of < should be an integer, but instead it is:\n\"a\"\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 52 in M\n1. Line 4, column 13 to line 4, column 52 in M\n2. Line 4, column 47 to line 4, column 51 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\n@!@!@STARTMSG 2266:0 @!@!@\nThe first argument of < should be an integer, but instead it is:\n\"a\"\n@!@!@ENDMSG 2266 @!@!@\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 52 in M\n1. Line 4, column 13 to line 4, column 52 in M\n2. Line 4, column 47 to line 4, column 51 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "SortSeq of a comparison that fails",
+            "Init == x = SortSeq(<<1, 2>>, LAMBDA u, v : CHOOSE y \\in {} : TRUE)\nNext == x' = x",
+            "Error: Attempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.Value tlc2.module.TLC.SortSeq(tlc2.value.impl.Value,tlc2.value.impl.Value),\nbut it produced the following error:\nAttempted to compute the value of an expression of form\nCHOOSE x \\in S: P, but no element of S satisfied P.\nline 4, col 45 to line 4, col 66 of module M\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 67 in M\n1. Line 4, column 13 to line 4, column 67 in M\n2. Line 4, column 45 to line 4, column 66 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\n@!@!@STARTMSG 2154:0 @!@!@\nAttempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.Value tlc2.module.TLC.SortSeq(tlc2.value.impl.Value,tlc2.value.impl.Value),\nbut it produced the following error:\nAttempted to compute the value of an expression of form\nCHOOSE x \\in S: P, but no element of S satisfied P.\nline 4, col 45 to line 4, col 66 of module M\n@!@!@ENDMSG 2154 @!@!@\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 67 in M\n1. Line 4, column 13 to line 4, column 67 in M\n2. Line 4, column 45 to line 4, column 66 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "SortSeq in TLC's order",
+            "Init == x = 0 /\\ Assert(FALSE, SortSeq(<<x + 1, 2, x + 1, 3>>, LAMBDA u, v : u = v))\nNext == x' = x",
+            "Error: The first argument of Assert evaluated to FALSE; the second argument was:\n<<1, 2, 1, 3>>\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 84 in M\n1. Line 4, column 9 to line 4, column 13 in M\n2. Line 4, column 18 to line 4, column 84 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\n@!@!@STARTMSG 2132:0 @!@!@\nThe first argument of Assert evaluated to FALSE; the second argument was:\n<<1, 2, 1, 3>>\n@!@!@ENDMSG 2132 @!@!@\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 84 in M\n1. Line 4, column 9 to line 4, column 13 in M\n2. Line 4, column 18 to line 4, column 84 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "Head of the empty sequence",
+            "Init == x = Head(<<>>)\nNext == x' = x",
+            "Error: Attempted to apply Head to the empty sequence.\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 22 in M\n1. Line 4, column 13 to line 4, column 22 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\n@!@!@STARTMSG 2184:0 @!@!@\nAttempted to apply Head to the empty sequence.\n@!@!@ENDMSG 2184 @!@!@\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 22 in M\n1. Line 4, column 13 to line 4, column 22 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "Tail of the empty sequence",
+            "Init == x = Tail(<<>>)\nNext == x' = x",
+            "Error: Attempted to apply Tail to the empty sequence.\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 22 in M\n1. Line 4, column 13 to line 4, column 22 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\n@!@!@STARTMSG 2184:0 @!@!@\nAttempted to apply Tail to the empty sequence.\n@!@!@ENDMSG 2184 @!@!@\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 22 in M\n1. Line 4, column 13 to line 4, column 22 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "Tail of the empty string",
+            "Init == x = Tail(\"\")\nNext == x' = x",
+            "Error: Attempted to apply Tail to the empty sequence.\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 20 in M\n1. Line 4, column 13 to line 4, column 20 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\n@!@!@STARTMSG 2184:0 @!@!@\nAttempted to apply Tail to the empty sequence.\n@!@!@ENDMSG 2184 @!@!@\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 20 in M\n1. Line 4, column 13 to line 4, column 20 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+    ];
+    let directory =
+        std::env::temp_dir().join(format!("prove-it-cli-sequences-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    for (name, definitions, printed, tool) in cases {
+        std::fs::write(
+            directory.join("M.tla"),
+            format!(
+                "---- MODULE M ----
+EXTENDS Integers, Sequences, TLC
+VARIABLE x
+{definitions}
+====
+"
+            ),
+        )
+        .expect("a spec");
+        std::fs::write(directory.join("M.cfg"), "INIT Init\nNEXT Next\n").expect("a configuration");
+        for threads in ["1", "4"] {
+            for (flags, expected) in [(&[][..], printed), (&["-tool"][..], tool)] {
+                let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
+                    .arg("-noGenerateSpecTE")
+                    .args(flags)
+                    .arg("M")
+                    .current_dir(&directory)
+                    .env("PROVE_IT_WORKERS", threads)
+                    .env("PROVE_IT_SHARED_LEVEL", "1")
+                    .output()
+                    .expect("the binary runs");
+                let text = stdout(&output);
+                assert!(
+                    text.contains(expected),
+                    "{name} on {threads} {flags:?}:
+{text}"
+                );
+            }
+        }
+    }
+    std::fs::remove_dir_all(directory).expect("removed");
+}
