@@ -4,8 +4,10 @@
 use std::fs;
 use std::path::PathBuf;
 
-use super::Int;
+use super::algebraic::{AlgebraicManager, Anum, AnumValue};
 use super::polynomial::{Polynomial, PolynomialManager, Var};
+use super::types::{Atom, IneqAtom, IneqKind, RootAtom, RootKind};
+use super::{Int, Rational};
 
 // The harness syntax: terms separated by spaces, each coeff:var^degree,var^degree.
 pub fn parse_polynomial(pm: &mut PolynomialManager, text: &str) -> Polynomial {
@@ -92,9 +94,6 @@ pub fn read_fixture(name: &str) -> Vec<(String, String)> {
     }
 }
 
-use super::Rational;
-use super::algebraic::{AlgebraicManager, Anum, AnumValue};
-
 /// parseRational: `n` or `n/d`.
 pub fn parse_rational(text: &str) -> Rational {
     let mut parts = text.split('/');
@@ -125,6 +124,71 @@ pub fn show_anum(am: &mut AlgebraicManager, anum: &Anum) -> String {
         cell.lower,
         cell.upper
     )
+}
+
+/// Rebuilds an atom from the harness's print of it: the solver normalizes atoms, which is not
+/// the evaluator's job.
+pub fn parse_atom(pm: &mut PolynomialManager, text: &str) -> Atom {
+    let words: Vec<&str> = text.trim().split(' ').collect();
+    let bool_var: u32 = words[0][1..].parse().expect("a Boolean variable");
+    let max_var: Var = words[2].parse().expect("a variable");
+    // The matches of /([eoi]\d*) ?\[([^\]]*)\]/g: a tag and the polynomial in brackets.
+    let mut factors: Vec<(&str, &str)> = Vec::new();
+    let bytes = text.as_bytes();
+    let mut start = 0;
+    while start < bytes.len() {
+        if !matches!(bytes[start], b'e' | b'o' | b'i') {
+            start += 1;
+            continue;
+        }
+        let mut end = start + 1;
+        while end < bytes.len() && bytes[end].is_ascii_digit() {
+            end += 1;
+        }
+        let mut open = end;
+        if open < bytes.len() && bytes[open] == b' ' {
+            open += 1;
+        }
+        let close = text[open..].find(']').map(|offset| open + offset);
+        match close {
+            Some(close) if bytes[open] == b'[' => {
+                factors.push((&text[start..end], &text[open + 1..close]));
+                start = close + 1;
+            }
+            _ => start += 1,
+        }
+    }
+    if words[1].starts_with("ROOT") {
+        let kind = match words[1] {
+            "ROOT_EQ" => RootKind::RootEq,
+            "ROOT_LT" => RootKind::RootLt,
+            "ROOT_GT" => RootKind::RootGt,
+            "ROOT_LE" => RootKind::RootLe,
+            _ => RootKind::RootGe,
+        };
+        return Atom::Root(RootAtom {
+            kind,
+            bool_var,
+            max_var: max_var.into(),
+            index: factors[0].0[1..].parse().expect("a root index"),
+            polynomial: parse_polynomial(pm, factors[0].1),
+        });
+    }
+    let kind = match words[1] {
+        "EQ" => IneqKind::Eq,
+        "LT" => IneqKind::Lt,
+        _ => IneqKind::Gt,
+    };
+    Atom::Ineq(IneqAtom {
+        kind,
+        bool_var,
+        max_var: max_var.into(),
+        polynomials: factors
+            .iter()
+            .map(|factor| parse_polynomial(pm, factor.1))
+            .collect(),
+        is_even: factors.iter().map(|factor| factor.0 == "e").collect(),
+    })
 }
 
 struct JsonParser<'text> {

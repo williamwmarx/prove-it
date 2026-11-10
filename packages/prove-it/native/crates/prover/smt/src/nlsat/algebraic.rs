@@ -857,7 +857,10 @@ impl AlgebraicManager {
         let mut high = if is_non_positive {
             Mpbq::zero()
         } else {
-            Mpbq::of(&Int::one() << u64::from(self.um.knuth_positive_root_upper_bound(p)), 0)
+            Mpbq::of(
+                &Int::one() << u64::from(self.um.knuth_positive_root_upper_bound(p)),
+                0,
+            )
         };
         let mut low_variations = if is_non_positive { minus_inf } else { at_zero };
         let mut high_variations = if is_non_positive {
