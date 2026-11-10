@@ -75,8 +75,8 @@ export type CoordinatorMessage =
 
 export const check = (options: CheckOptions): Promise<CheckResult> => checkParsed(options);
 
-// The options with the check written to PROVE_IT_CHECK_LOG, and each module it loads as it loads
-// it, where the configuration is text.
+// The options with the check written to PROVE_IT_CHECK_LOG, and each module and class it loads as
+// it loads it, where the configuration is text.
 const logCheck = (options: CheckOptions): CheckOptions => {
   const append = getCheckLog();
   if (!append || typeof options.config !== "string") return options;
@@ -90,20 +90,34 @@ const logCheck = (options: CheckOptions): CheckOptions => {
     isTool: options.isTool === true,
     isDumped: options.dump !== undefined,
     isContinued: options.isContinued === true,
+    isWarningEnabled: options.isWarningEnabled !== false,
     version: options.version,
     caller: new Error().stack,
   });
   const loadModule = options.loadModule;
-  return loadModule
-    ? {
-        ...options,
-        loadModule: (name) => {
-          const text = loadModule(name);
-          if (text !== undefined) append({ id, module: name, source: text });
-          return text;
-        },
-      }
-    : options;
+  const loadClass = options.loadClass;
+  return {
+    ...options,
+    loadModule:
+      loadModule &&
+      ((name) => {
+        const text = loadModule(name);
+        if (text !== undefined) append({ id, module: name, source: text });
+        return text;
+      }),
+    loadClass:
+      loadClass &&
+      ((name) => {
+        const bytes = loadClass(name);
+        if (bytes !== undefined)
+          append({
+            id,
+            class: name,
+            bytes: btoa(Array.from(bytes, (byte) => String.fromCharCode(byte)).join("")),
+          });
+        return bytes;
+      }),
+  };
 };
 
 // Checks a spec as check does. The readings are those of a spec SANY accepted, which the check

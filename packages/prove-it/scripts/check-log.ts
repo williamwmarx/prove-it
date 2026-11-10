@@ -2,7 +2,8 @@
 // PROVE_IT_CHECK_LOG (src/parallel.ts), and each distinct check runs as TLC's command line would
 // run it, on one thread and with every level shared between four. Prints how many the binary
 // checks natively, and each reason it gives for the rest with the tests that reach it, as
-// native/design/fallback.md records them. --log reads a log a run wrote before instead of running
+// native/design/fallback.md records them, and how many it checks natively in TLC's default mode,
+// which generates the trace exploration spec. --log reads a log a run wrote before instead of running
 // the tests; --json writes each check with its answers.
 // Usage: bun scripts/run.ts check-log [--binary path] [--log path] [--json path]
 
@@ -21,6 +22,7 @@ interface LoggedCheck {
   isTool: boolean;
   isDumped: boolean;
   isContinued: boolean;
+  isWarningEnabled: boolean;
   version?: string;
   caller?: string;
 }
@@ -31,10 +33,17 @@ interface LoggedModule {
   source: string;
 }
 
+interface LoggedClass {
+  id: string;
+  class: string;
+  bytes: string;
+}
+
 interface Run {
   key: string;
   check: LoggedCheck;
   modules: Map<string, string>;
+  classes: Map<string, string>;
   test: string;
 }
 
@@ -71,13 +80,22 @@ if (!getArgument("--log")) {
 }
 
 const lines = readFileSync(logPath, "utf8").split("\n").filter(Boolean);
-const entries: (LoggedCheck | LoggedModule)[] = lines.map((line) => JSON.parse(line));
+const entries: (LoggedCheck | LoggedModule | LoggedClass)[] = lines.map((line) => JSON.parse(line));
+// The modules each check loaded, by name, and its classes in base64.
 const modulesById = new Map<string, Map<string, string>>();
+const classesById = new Map<string, Map<string, string>>();
 for (const entry of entries) {
-  if (!("module" in entry)) continue;
-  const modules = modulesById.get(entry.id) ?? new Map<string, string>();
-  modules.set(entry.module, entry.source);
-  modulesById.set(entry.id, modules);
+  if ("module" in entry) {
+    modulesById.set(
+      entry.id,
+      (modulesById.get(entry.id) ?? new Map()).set(entry.module, entry.source),
+    );
+  } else if ("class" in entry) {
+    classesById.set(
+      entry.id,
+      (classesById.get(entry.id) ?? new Map()).set(entry.class, entry.bytes),
+    );
+  }
 }
 
 // The test a check comes from: the first frame of its caller in a test file.
@@ -97,19 +115,31 @@ const getOptions = (check: LoggedCheck) => [
   ...(check.seed ? ["-seed", check.seed] : []),
   ...(check.livenessCheck === "final" ? ["-lncheck", "final"] : []),
   ...(check.isTool ? ["-tool"] : []),
+  ...(check.isWarningEnabled ? [] : ["-nowarning"]),
   ...(check.isDumped ? ["-dump", "states"] : []),
   ...(check.isContinued ? ["-continue"] : []),
 ];
 
 const runs = new Map<string, Run>();
 for (const entry of entries) {
-  if ("module" in entry) continue;
+  if ("module" in entry || "class" in entry) continue;
   const modules = modulesById.get(entry.id) ?? new Map<string, string>();
+  const classes = classesById.get(entry.id) ?? new Map<string, string>();
   const key = createHash("sha256")
-    .update(JSON.stringify([entry.source, entry.config, getOptions(entry), [...modules].sort()]))
+    .update(
+      JSON.stringify([
+        entry.source,
+        entry.config,
+        getOptions(entry),
+        [...modules].sort(),
+        [...classes].sort(),
+      ]),
+    )
     .digest("hex")
     .slice(0, 16);
-  if (!runs.has(key)) runs.set(key, { key, check: entry, modules, test: getTest(entry.caller) });
+  if (!runs.has(key)) {
+    runs.set(key, { key, check: entry, modules, classes, test: getTest(entry.caller) });
+  }
 }
 
 const runBinary = (directory: string, name: string, options: string[], threads: string) =>
@@ -121,12 +151,14 @@ const runBinary = (directory: string, name: string, options: string[], threads: 
     const stderr: Buffer[] = [];
     child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
     child.stdout.resume();
-    child.on("close", (code) => {
+    // A run a signal ends checked nothing, whatever it printed.
+    child.on("close", (code, signal) => {
       const declined = Buffer.concat(stderr)
         .toString()
         .split("\n")
         .find((line) => line.startsWith(NOT_NATIVE));
-      resolve(declined ? declined.slice(NOT_NATIVE.length) : `exit ${code}`);
+      if (signal) resolve(`ended by ${signal}`);
+      else resolve(declined ? declined.slice(NOT_NATIVE.length) : `exit ${code}`);
     });
   });
 
@@ -134,14 +166,24 @@ const answer = async (run: Run): Promise<Answer> => {
   const name = run.check.source.match(/MODULE\s+(\w+)/)?.[1] ?? "Spec";
   const directory = join(workDirectory, run.key);
   mkdirSync(directory, { recursive: true });
-  for (const [module, source] of run.modules)
+  for (const [module, source] of run.modules) {
     writeFileSync(join(directory, `${module}.tla`), source);
+  }
+  for (const [className, bytes] of run.classes) {
+    writeFileSync(join(directory, `${className}.class`), Buffer.from(bytes, "base64"));
+  }
   writeFileSync(join(directory, `${name}.tla`), run.check.source);
   writeFileSync(join(directory, `${name}.cfg`), run.check.config);
   const options = getOptions(run.check);
   const answers: Record<string, string> = {};
   for (const threads of THREADS)
     answers[threads] = await runBinary(directory, name, options, threads);
+  answers.default = await runBinary(
+    directory,
+    name,
+    options.filter((option) => option !== "-noGenerateSpecTE"),
+    "1",
+  );
   return {
     key: run.key,
     test: run.test,
@@ -177,6 +219,9 @@ for (const entry of declined) {
 }
 console.log(
   `${answers.length} checks: ${answers.length - declined.length} native, ${declined.length} not native yet, ${differing.length} answered differently on 1 and 4 threads.`,
+);
+console.log(
+  `In TLC's default mode, which generates the trace exploration spec: ${answers.filter((entry) => isNative(entry.answers.default)).length} native.`,
 );
 console.log(
   [...exits]
