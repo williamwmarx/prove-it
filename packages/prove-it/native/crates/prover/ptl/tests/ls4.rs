@@ -7,7 +7,7 @@ use std::path::Path;
 use prove_decide::{DecideError, Limits, Statistic, Verdict};
 
 fn decide(text: &str, step_limit: Option<u64>) -> Result<prove_decide::Decision, DecideError> {
-    prove_ptl::decide(text, &mut Limits::new(f64::INFINITY, step_limit, None))
+    prove_ptl::decide(text, &Limits::new(f64::INFINITY, step_limit, None))
 }
 
 #[test]
@@ -58,9 +58,8 @@ fn counts_its_steps_and_gives_up_past_its_step_limit() {
 
 #[test]
 fn a_canceled_decision_is_unknown() {
-    let cell = std::sync::atomic::AtomicI32::new(1);
-    let mut limits = Limits::new(f64::INFINITY, None, Some(&cell));
-    let decision = prove_ptl::decide("always p -> p", &mut limits).expect("a decision");
+    let limits = Limits::new(f64::INFINITY, None, Some(std::sync::Arc::new(|| true)));
+    let decision = prove_ptl::decide("always p -> p", &limits).expect("a decision");
     assert_eq!(decision.verdict, Verdict::Unknown);
 }
 

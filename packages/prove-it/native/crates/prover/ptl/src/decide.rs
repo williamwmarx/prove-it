@@ -169,7 +169,7 @@ fn parse_ls4(text: &str) -> Result<Formulas, DecideError> {
 }
 
 /// The verdict, with the steps as its one statistic, each a check of the limits.
-pub fn decide(text: &str, limits: &mut Limits) -> Result<Decision, DecideError> {
+pub fn decide(text: &str, limits: &Limits) -> Result<Decision, DecideError> {
     let formulas = parse_ls4(text)?;
     let verdict: Verdict = get_satisfiability(&formulas, &mut || {
         limits.is_step_limit_reached() || limits.is_canceled() || limits.is_past_deadline()

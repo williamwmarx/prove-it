@@ -3,7 +3,9 @@
 //! reports, which are the same in every port of a backend so that two ports can be shown to make
 //! the same search.
 
-use std::sync::atomic::{AtomicI32, Ordering};
+use std::cell::Cell;
+use std::rc::Rc;
+use std::sync::Arc;
 
 /// A backend's answer. tlapm frames an obligation as unsat when the backend proves it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -46,47 +48,63 @@ pub enum DecideError {
     Declined(String),
 }
 
-/// The limits a decision runs within: a deadline, a number of steps, and a cell another thread
-/// sets to cancel it. Each check of the limits is a step, as in the TypeScript backends; past the
-/// step limit a backend gives up as it does at the deadline. Scripts set a step limit and no
-/// deadline, so that what a backend answers doesn't depend on the machine; prove sets a deadline.
-pub struct Limits<'a> {
+/// Whether another thread has canceled the decision. The N-API binding reads it from a cell of
+/// shared memory that JavaScript sets.
+pub type Cancel = Arc<dyn Fn() -> bool + Send + Sync>;
+
+/// The limits a decision runs within: a deadline, a number of steps, and whether another thread
+/// canceled it. Each check of the limits is a step, as in the TypeScript backends; past the step
+/// limit a backend gives up as it does at the deadline. Scripts set a step limit and no deadline,
+/// so that what a backend answers doesn't depend on the machine; prove sets a deadline.
+///
+/// A handle that clones cheaply and has no lifetime, so that what a backend keeps beyond a borrow,
+/// such as Isabelle's lazy sequences and tactics, can hold one; every clone counts the same steps.
+/// It is not `Send`: a decision runs on one thread. A backend must not keep one once `decide`
+/// returns.
+#[derive(Clone)]
+pub struct Limits(Rc<Inner>);
+
+struct Inner {
     deadline: f64,
     step_limit: u64,
-    steps: u64,
-    cancel: Option<&'a AtomicI32>,
+    steps: Cell<u64>,
+    cancel: Option<Cancel>,
 }
 
-impl<'a> Limits<'a> {
-    /// `time_limit` in milliseconds from now, which may be infinite; `cancel` is canceled once it
-    /// holds anything but 0.
-    pub fn new(time_limit: f64, step_limit: Option<u64>, cancel: Option<&'a AtomicI32>) -> Self {
-        Limits {
+impl Limits {
+    /// `time_limit` in milliseconds from now, which may be infinite.
+    pub fn new(time_limit: f64, step_limit: Option<u64>, cancel: Option<Cancel>) -> Self {
+        Limits(Rc::new(Inner {
             deadline: now() + time_limit,
             step_limit: step_limit.unwrap_or(u64::MAX),
-            steps: 0,
+            steps: Cell::new(0),
             cancel,
-        }
+        }))
     }
 
     /// The steps taken so far.
     pub fn steps(&self) -> u64 {
-        self.steps
+        self.0.steps.get()
     }
 
     /// Counts a step, and returns whether the step limit is reached: `isStepLimitReached`.
-    pub fn is_step_limit_reached(&mut self) -> bool {
-        self.steps += 1;
-        self.steps > self.step_limit
+    pub fn is_step_limit_reached(&self) -> bool {
+        self.0.steps.set(self.0.steps.get() + 1);
+        self.is_step_limit_passed()
+    }
+
+    /// Whether more steps than the limit have been taken, without counting one, as Zenon's
+    /// `getStopReason` asks.
+    pub fn is_step_limit_passed(&self) -> bool {
+        self.0.steps.get() > self.0.step_limit
     }
 
     pub fn is_past_deadline(&self) -> bool {
-        now() > self.deadline
+        now() > self.0.deadline
     }
 
     pub fn is_canceled(&self) -> bool {
-        self.cancel
-            .is_some_and(|cancel| cancel.load(Ordering::Relaxed) != 0)
+        self.0.cancel.as_ref().is_some_and(|cancel| cancel())
     }
 }
 
@@ -117,19 +135,35 @@ mod tests {
 
     #[test]
     fn the_step_limit_is_reached_on_the_step_past_it() {
-        let mut limits = Limits::new(f64::INFINITY, Some(2), None);
+        let limits = Limits::new(f64::INFINITY, Some(2), None);
         assert!(!limits.is_step_limit_reached());
         assert!(!limits.is_step_limit_reached());
+        assert!(!limits.is_step_limit_passed());
         assert!(limits.is_step_limit_reached());
+        assert!(limits.is_step_limit_passed());
         assert_eq!(limits.steps(), 3);
     }
 
     #[test]
-    fn a_cell_that_holds_anything_but_zero_cancels() {
-        let cell = AtomicI32::new(0);
-        let limits = Limits::new(f64::INFINITY, None, Some(&cell));
+    fn clones_count_the_same_steps() {
+        let limits = Limits::new(f64::INFINITY, Some(1), None);
+        let clone = limits.clone();
+        assert!(!clone.is_step_limit_reached());
+        assert!(limits.is_step_limit_reached());
+        assert_eq!(clone.steps(), 2);
+    }
+
+    #[test]
+    fn cancels_once_the_cancel_says_so() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let flag = Arc::new(AtomicBool::new(false));
+        let cancel: Cancel = {
+            let flag = Arc::clone(&flag);
+            Arc::new(move || flag.load(Ordering::Relaxed))
+        };
+        let limits = Limits::new(f64::INFINITY, None, Some(cancel));
         assert!(!limits.is_canceled());
-        cell.store(1, Ordering::Relaxed);
+        flag.store(true, Ordering::Relaxed);
         assert!(limits.is_canceled());
         assert!(!limits.is_past_deadline());
     }
