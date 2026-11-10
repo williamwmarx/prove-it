@@ -2161,8 +2161,12 @@ fn check_level(graph: &mut Graph, node: NodeId, iteration: u32, check: &mut Leve
 mod tests {
     use std::rc::Rc;
 
-    use super::*;
-    use crate::sany::nodes::{Context, FormalParam, Module, OpDecl, OpDef};
+    use super::{ACTION_LEVEL, LevelCheck, TEMPORAL_LEVEL, VARIABLE_LEVEL, check_module_levels};
+    use crate::ordered_map::OrderedMap;
+    use crate::sany::nodes::{
+        Context, DefKind, FormalParam, Graph, Module, NodeId, NodeKind, OpAppl, OpDecl, OpDef,
+        SanyLocation, SanyMessage, VARIABLE_DECL_KIND,
+    };
 
     fn get_location() -> SanyLocation {
         SanyLocation {
