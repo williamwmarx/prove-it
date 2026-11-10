@@ -1,5 +1,6 @@
 //! What the binary's test files share: running it on a spec of the test's own, and reading what
 //! it printed.
+#![allow(dead_code)]
 
 use std::path::PathBuf;
 use std::process::{Command, Output};

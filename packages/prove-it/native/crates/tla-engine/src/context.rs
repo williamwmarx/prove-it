@@ -524,6 +524,24 @@ impl EngineContext {
             }
             invariant_owners.resize(conjuncts.found.len(), owner);
         }
+        // TLC checks each invariant whole in an initial state, and under -continue goes on past
+        // one violated, so each keeps the conjuncts it shares with an invariant before it.
+        let owned_conjuncts: Vec<(Conjunct, usize)> = roots
+            .iter()
+            .enumerate()
+            .flat_map(|(owner, &(root, _))| {
+                let mut owned = Conjuncts::new(ir);
+                if printed.contains(&root) {
+                    owned.add(root);
+                } else {
+                    owned.collect(root);
+                }
+                owned
+                    .found
+                    .into_iter()
+                    .map(move |conjunct| (conjunct, owner))
+            })
+            .collect();
         let invariant_conjuncts = conjuncts.found;
         let invariants = invariant_conjuncts
             .iter()
@@ -708,23 +726,8 @@ impl EngineContext {
         let is_live_registered = compiled.iter().any(|atom| atom.uses_registers);
         let diameter_atoms = compiled.iter().map(|atom| atom.reads_diameter).collect();
         let atoms = compiled.into_iter().map(|atom| atom.atom).collect();
-        // TLC checks each invariant whole in an initial state, and under -continue goes on past
-        // one violated, so each keeps the conjuncts it shares with an invariant before it.
-        let (initial_invariants, initial_invariant_owners) = roots
-            .iter()
-            .enumerate()
-            .flat_map(|(owner, &(root, _))| {
-                let mut owned = Conjuncts::new(ir);
-                if printed.contains(&root) {
-                    owned.add(root);
-                } else {
-                    owned.collect(root);
-                }
-                owned
-                    .found
-                    .into_iter()
-                    .map(move |conjunct| (conjunct, owner))
-            })
+        let (initial_invariants, initial_invariant_owners) = owned_conjuncts
+            .into_iter()
             .filter(|(conjunct, _)| !init_conjuncts.contains(conjunct))
             .map(|(conjunct, owner)| {
                 let position = invariant_conjuncts
