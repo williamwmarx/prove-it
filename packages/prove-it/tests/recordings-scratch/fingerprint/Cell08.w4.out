@@ -1,0 +1,37 @@
+TLC2 Version 2026.11.10.112638 (rev: ${git.shortRevision})
+Running breadth-first search Model-Checking with fp 0 and seed -421835862832295566 with 4 workers on 4 cores with 3420MB heap and 64MB offheap memory [pid: 3953] (Linux 6.18.44-fc-v378 amd64, Ubuntu 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /tmp/claude-0/-home-user-prove-it/d23a8f1a-3c7f-5ee4-9283-0787f4c6a63d/scratchpad/tlc-records/fingerprint/Cell08.tla
+Parsing file /tmp/tlc-6105248589010841260/Naturals.tla (jar:file:/tmp/claude-0/-home-user-prove-it/d23a8f1a-3c7f-5ee4-9283-0787f4c6a63d/scratchpad/sany-run/tlaplus/tlatools/org.lamport.tlatools/dist/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-6105248589010841260/Sequences.tla (jar:file:/tmp/claude-0/-home-user-prove-it/d23a8f1a-3c7f-5ee4-9283-0787f4c6a63d/scratchpad/sany-run/tlaplus/tlatools/org.lamport.tlatools/dist/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module Cell08
+Linting of module Cell08
+Starting... (2026-11-10 21:27:55)
+Computing initial states...
+Error: Attempted to check if non-record
+<<1>>
+is in the set of records:
+[a: Nat]
+While working on the initial state:
+x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 5, column 9 to line 5, column 13 in Cell08
+1. Line 7, column 8 to line 7, column 47 in Cell08
+2. Line 7, column 18 to line 7, column 47 in Cell08
+3. Line 7, column 20 to line 7, column 46 in Cell08
+4. Line 7, column 30 to line 7, column 46 in Cell08
+5. Line 7, column 37 to line 7, column 45 in Cell08
+
+
+Reason:
+Attempted to check if non-record
+<<1>>
+is in the set of records:
+[a: Nat]
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
+Finished in 00s at (2026-11-10 21:27:55)

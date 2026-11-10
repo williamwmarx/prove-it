@@ -1,0 +1,29 @@
+TLC2 Version 2026.11.10.112638 (rev: ${git.shortRevision})
+Running breadth-first search Model-Checking with fp 0 and seed -1224670609467649671 with 1 worker on 4 cores with 3420MB heap and 64MB offheap memory [pid: 4040] (Linux 6.18.44-fc-v378 amd64, Ubuntu 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /tmp/claude-0/-home-user-prove-it/d23a8f1a-3c7f-5ee4-9283-0787f4c6a63d/scratchpad/tlc-records/fingerprint/Cell10.tla
+Parsing file /tmp/tlc-12049872321432504530/Naturals.tla (jar:file:/tmp/claude-0/-home-user-prove-it/d23a8f1a-3c7f-5ee4-9283-0787f4c6a63d/scratchpad/sany-run/tlaplus/tlatools/org.lamport.tlatools/dist/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Semantic processing of module Naturals
+Semantic processing of module Cell10
+Linting of module Cell10
+Starting... (2026-11-10 21:27:57)
+Computing initial states...
+Error: Attempted to compare integer with non-integer:
+"a".
+While working on the initial state:
+x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 6, column 9 to line 6, column 13 in Cell10
+1. Line 5, column 8 to line 5, column 25 in Cell10
+2. Line 5, column 8 to line 5, column 16 in Cell10
+3. Line 5, column 10 to line 5, column 14 in Cell10
+
+
+Reason:
+Attempted to compare integer with non-integer:
+"a".
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
+Finished in 00s at (2026-11-10 21:27:57)

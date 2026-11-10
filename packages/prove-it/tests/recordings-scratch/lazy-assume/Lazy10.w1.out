@@ -1,0 +1,17 @@
+TLC2 Version 2026.11.10.112638 (rev: ${git.shortRevision})
+Warning: Please run the Java VM, which executes TLC with a throughput optimized garbage collector, by passing the "-XX:+UseParallelGC" property.
+(Use the -nowarning option to disable this warning.)
+Running breadth-first search Model-Checking with fp 13 and seed 6588034937892214911 with 1 worker on 4 cores with 3420MB heap and 64MB offheap memory [pid: 3394] (Linux 6.18.44-fc-v378 amd64, Ubuntu 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /tmp/claude-0/-home-user-prove-it/d23a8f1a-3c7f-5ee4-9283-0787f4c6a63d/scratchpad/tlc-records/lazy-assume/Lazy10.tla
+Parsing file /tmp/tlc-6432361732169901154/Integers.tla (jar:file:/tmp/claude-0/-home-user-prove-it/d23a8f1a-3c7f-5ee4-9283-0787f4c6a63d/scratchpad/sany-run/tlaplus/tlatools/org.lamport.tlatools/dist/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Parsing file /tmp/tlc-6432361732169901154/Naturals.tla (jar:file:/tmp/claude-0/-home-user-prove-it/d23a8f1a-3c7f-5ee4-9283-0787f4c6a63d/scratchpad/sany-run/tlaplus/tlatools/org.lamport.tlatools/dist/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module Lazy10
+Linting of module Lazy10
+Starting... (2026-11-10 21:27:44)
+Error: Evaluating assumption line 4, col 8 to line 4, col 25 of module Lazy10 failed.
+Attempted to check if the value:
+2
+is an element of the integer 0
+Finished in 00s at (2026-11-10 21:27:45)
