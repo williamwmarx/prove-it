@@ -1,4 +1,5 @@
-//! Runs the binary as a user would, on TCommit's engine IR as a recorded front.
+//! Runs the binary as a user would: on specs of the tests' own, which tla-front reads, and on
+//! golden engine IRs, such as TCommit's, which PROVE_IT_TEST_IR names in place of a spec's.
 
 use std::path::PathBuf;
 use std::process::{Command, Output};
@@ -11,7 +12,17 @@ fn run(directory: &PathBuf, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_prove-it"))
         .args(args)
         .current_dir(directory)
-        .env("PROVE_IT_FRONT", directory)
+        .output()
+        .expect("the binary runs")
+}
+
+// Runs the binary on the engine IR `<name>.ir` in the directory, in place of the one tla-front
+// lowers.
+fn run_ir(directory: &PathBuf, name: &str, args: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_prove-it"))
+        .args(args)
+        .current_dir(directory)
+        .env("PROVE_IT_TEST_IR", directory.join(format!("{name}.ir")))
         .output()
         .expect("the binary runs")
 }
@@ -28,7 +39,6 @@ fn commit_directory_with(name: &str, ir: &[u8]) -> PathBuf {
         ("TCommit.tla", &b""[..]),
         ("TCommit.cfg", b""),
         ("TCommit.ir", ir),
-        ("TCommit.front", b"Starting... (2026-11-09 00:00:00)\n"),
     ] {
         std::fs::write(directory.join(file), contents).expect("a file");
     }
@@ -42,7 +52,11 @@ fn stdout(output: &Output) -> String {
 #[test]
 fn checks_commit_as_tlc_prints_it() {
     let directory = commit_directory("default");
-    let output = run(&directory, &["-workers", "1", "-noTE", "TCommit"]);
+    let output = run_ir(
+        &directory,
+        "TCommit",
+        &["-workers", "1", "-noTE", "TCommit"],
+    );
     let text = stdout(&output);
     let lines: Vec<&str> = text.lines().collect();
     assert_eq!(output.status.code(), Some(0), "{text}");
@@ -50,13 +64,13 @@ fn checks_commit_as_tlc_prints_it() {
     assert!(lines[1].starts_with(
         "Running breadth-first search Model-Checking with fp 0 and seed 0 with 1 worker on "
     ));
-    assert_eq!(lines[2], "Starting... (2026-11-09 00:00:00)");
-    assert_eq!(lines[3], "Computing initial states...");
+    // With an IR in place of a spec, nothing comes before the search.
+    assert_eq!(lines[2], "Computing initial states...");
     assert!(
-        lines[4].starts_with("Finished computing initial states: 1 distinct state generated at ")
+        lines[3].starts_with("Finished computing initial states: 1 distinct state generated at ")
     );
     assert_eq!(
-        lines[5..lines.len() - 1].join("\n"),
+        lines[4..lines.len() - 1].join("\n"),
         "Model checking completed. No error has been found.
   Estimates of the probability that TLC did not check all reachable states
   because two distinct states had the same fingerprint:
@@ -72,7 +86,11 @@ The average outdegree of the complete state graph is 1 (minimum is 0, the maximu
 #[test]
 fn marks_messages_with_tool() {
     let directory = commit_directory("tool");
-    let output = run(&directory, &["-tool", "-seed", "+12", "TCommit.tla"]);
+    let output = run_ir(
+        &directory,
+        "TCommit",
+        &["-tool", "-seed", "+12", "TCommit.tla"],
+    );
     let text = stdout(&output);
     assert_eq!(output.status.code(), Some(0), "{text}");
     assert!(text.starts_with("@!@!@STARTMSG 2262:0 @!@!@\nTLC2 Version "));
@@ -87,17 +105,17 @@ fn marks_messages_with_tool() {
 #[test]
 fn reports_what_tlc_reports_before_the_search() {
     let directory = commit_directory("errors");
-    let seed = run(&directory, &["-seed", "x", "TCommit"]);
+    let seed = run_ir(&directory, "TCommit", &["-seed", "x", "TCommit"]);
     assert_eq!(seed.status.code(), Some(1));
     assert!(stdout(&seed).ends_with(
         "Error: Error: An integer for seed required. But encountered x\nUsage: java tlc2.TLC [-help] [-option] inputfile\n"
     ));
-    let config = run(&directory, &["Missing.tla"]);
+    let config = run_ir(&directory, "TCommit", &["Missing.tla"]);
     assert_eq!(config.status.code(), Some(151));
     assert!(stdout(&config).ends_with(
         "Error: TLC encountered the following error when trying to read the configuration file Missing.cfg:\nFile not found.\n"
     ));
-    let usage = run(&directory, &[]);
+    let usage = run_ir(&directory, "TCommit", &[]);
     assert_eq!(usage.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&usage.stderr).starts_with("Usage: tla-ts "));
     std::fs::remove_dir_all(directory).expect("removed");
@@ -124,7 +142,7 @@ fn reads_the_command_line_as_tlc() {
             "expect a file name for -config option.",
         ),
     ] {
-        let output = run(&directory, &[&["tlc2.TLC"], args].concat());
+        let output = run_ir(&directory, "TCommit", &[&["tlc2.TLC"], args].concat());
         assert_eq!(output.status.code(), Some(1), "{args:?}");
         let text = stdout(&output);
         assert!(text.starts_with("TLC2 Version "), "{text}");
@@ -133,12 +151,20 @@ fn reads_the_command_line_as_tlc() {
             "{text}"
         );
     }
-    let marked = run(&directory, &["tlc2.TLC", "-tool", "-fp", "131", "TCommit"]);
+    let marked = run_ir(
+        &directory,
+        "TCommit",
+        &["tlc2.TLC", "-tool", "-fp", "131", "TCommit"],
+    );
     assert!(stdout(&marked).ends_with(&format!(
         "@!@!@STARTMSG 1102:1 @!@!@\nError: The number for -fp must be between 0 and 130 (inclusive).{usage}@!@!@ENDMSG 1102 @!@!@\n"
     )));
     // TLC names the configuration file with or without its extension.
-    let configured = run(&directory, &["tlc2.TLC", "-config", "TCommit", "TCommit"]);
+    let configured = run_ir(
+        &directory,
+        "TCommit",
+        &["tlc2.TLC", "-config", "TCommit", "TCommit"],
+    );
     assert_eq!(configured.status.code(), Some(0), "{}", stdout(&configured));
     for (args, what) in [
         (&["-difftrace", "TCommit"][..], "the TLC option -difftrace"),
@@ -148,7 +174,7 @@ fn reads_the_command_line_as_tlc() {
         (&["-lncheck", "off", "TCommit"], "-lncheck off"),
         (&["TCommit.cfg"], "a module named as a configuration file"),
     ] {
-        let output = run(&directory, &[&["tlc2.TLC"], args].concat());
+        let output = run_ir(&directory, "TCommit", &[&["tlc2.TLC"], args].concat());
         assert_eq!(output.status.code(), Some(1), "{args:?}");
         assert_eq!(stdout(&output), "", "{args:?}");
         assert_eq!(
@@ -156,8 +182,9 @@ fn reads_the_command_line_as_tlc() {
             format!("prove-it: not native yet: {what}\n")
         );
     }
-    let property = run(
+    let property = run_ir(
         &directory,
+        "TCommit",
         &[
             "-Dtlc2.tool.ModelChecker.BAQueue=true",
             "tlc2.TLC",
@@ -168,8 +195,9 @@ fn reads_the_command_line_as_tlc() {
         String::from_utf8_lossy(&property.stderr),
         "prove-it: not native yet: the system property tlc2.tool.ModelChecker.BAQueue\n"
     );
-    let silent = run(
+    let silent = run_ir(
         &directory,
+        "TCommit",
         &["-Dtlc2.TLC.ide=vscode", "tlc2.TLC", "TCommit"],
     );
     assert_eq!(silent.status.code(), Some(0), "{}", stdout(&silent));
@@ -182,7 +210,7 @@ fn prints_a_deadlock_unless_deadlock_turns_it_off() {
     let mut ir = tla_ir::decode(COMMIT_IR).expect("an IR");
     ir.model.check_deadlock = true;
     let directory = commit_directory_with("deadlock", &tla_ir::encode(&ir));
-    let checked = run(&directory, &["TCommit"]);
+    let checked = run_ir(&directory, "TCommit", &["TCommit"]);
     let text = stdout(&checked);
     assert_eq!(checked.status.code(), Some(11), "{text}");
     assert!(
@@ -203,7 +231,7 @@ fn prints_a_deadlock_unless_deadlock_turns_it_off() {
         )),
         "{text}"
     );
-    let tool = run(&directory, &["-tool", "TCommit"]);
+    let tool = run_ir(&directory, "TCommit", &["-tool", "TCommit"]);
     let text = stdout(&tool);
     assert_eq!(tool.status.code(), Some(11), "{text}");
     assert!(text.contains(concat!(
@@ -211,29 +239,24 @@ fn prints_a_deadlock_unless_deadlock_turns_it_off() {
         "@!@!@STARTMSG 2121:1 @!@!@\nThe behavior up to this point is:\n@!@!@ENDMSG 2121 @!@!@\n",
         "@!@!@STARTMSG 2217:4 @!@!@\n1: <Initial predicate>\n",
     )), "{text}");
-    let unchecked = run(&directory, &["-deadlock", "TCommit"]);
+    let unchecked = run_ir(&directory, "TCommit", &["-deadlock", "TCommit"]);
     assert_eq!(unchecked.status.code(), Some(0));
     assert!(stdout(&unchecked).contains("94 states generated, 34 distinct states found"));
     std::fs::remove_dir_all(directory).expect("removed");
 }
 
-// Runs the binary on a golden model's IR as the recorded front of a spec of that name, with no
-// output before the search and the given configuration, in a directory of the test's own.
+// Runs the binary on a golden model's IR as the IR of a spec of that name, with the given
+// configuration, in a directory of the test's own.
 fn run_golden(test: &str, ir: &[u8], name: &str, config: &str, args: &[&str]) -> (Output, PathBuf) {
     let directory =
         std::env::temp_dir().join(format!("prove-it-cli-{test}-{}", std::process::id()));
     std::fs::create_dir_all(&directory).expect("a directory");
-    for (extension, contents) in [
-        ("tla", &b""[..]),
-        ("cfg", config.as_bytes()),
-        ("ir", ir),
-        ("front", b""),
-    ] {
+    for (extension, contents) in [("tla", &b""[..]), ("cfg", config.as_bytes()), ("ir", ir)] {
         std::fs::write(directory.join(format!("{name}.{extension}")), contents).expect("a file");
     }
     let mut all = args.to_vec();
     all.push(name);
-    (run(&directory, &all), directory)
+    (run_ir(&directory, name, &all), directory)
 }
 
 const TEST57_IR: &[u8] = include_bytes!(
@@ -386,7 +409,7 @@ fn prints_a_lasso_it_rebuilds_under_a_view() {
 
 #[test]
 fn warns_of_a_stuttering_counterexample_without_fairness() {
-    // No recorded IR, so tla-front lowers the model, and TLC prints its warnings.
+    // TLC prints its warnings of the model tla-front lowers.
     let directory =
         std::env::temp_dir().join(format!("prove-it-cli-stuttering-{}", std::process::id()));
     std::fs::create_dir_all(&directory).expect("a directory");
@@ -396,11 +419,10 @@ fn warns_of_a_stuttering_counterexample_without_fairness() {
             "---- MODULE Stutter ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = 1 - x\nSpec == Init /\\ [][Next]_x\nLive == []<>(x = 1)\n====\n",
         ),
         ("Stutter.cfg", "SPECIFICATION Spec\nPROPERTY Live\n"),
-        ("Stutter.front", ""),
     ] {
         std::fs::write(directory.join(file), contents).expect("a file");
     }
-    let output = run(&directory, &["Stutter"]);
+    let output = run(&directory, &["-noTE", "Stutter"]);
     let text = stdout(&output);
     assert_eq!(output.status.code(), Some(13), "{text}");
     assert!(
@@ -477,7 +499,7 @@ fn checks_temporal_properties_part_way_through_the_search() {
     let periodic = Command::new(env!("CARGO_BIN_EXE_prove-it"))
         .arg("stages")
         .current_dir(&directory)
-        .env("PROVE_IT_FRONT", &directory)
+        .env("PROVE_IT_TEST_IR", directory.join("stages.ir"))
         .env("PROVE_IT_TEST_LIVE_CHECK_AT", "10")
         .output()
         .expect("the binary runs");
@@ -493,18 +515,17 @@ fn checks_temporal_properties_part_way_through_the_search() {
 }
 
 #[test]
-fn lowers_a_model_without_a_recorded_ir() {
+fn checks_a_model_tla_front_lowers() {
     let directory = std::env::temp_dir().join(format!("prove-it-cli-lower-{}", std::process::id()));
     std::fs::create_dir_all(&directory).expect("a directory");
     let spec = "---- MODULE Count ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x < 3 /\\ x' = x + 1\n====\n";
     for (file, contents) in [
         ("Count.tla", spec),
         ("Count.cfg", "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE\n"),
-        ("Count.front", ""),
     ] {
         std::fs::write(directory.join(file), contents).expect("a file");
     }
-    let output = run(&directory, &["Count"]);
+    let output = run(&directory, &["-noTE", "Count"]);
     let text = stdout(&output);
     assert_eq!(output.status.code(), Some(0), "{text}");
     assert!(
@@ -525,11 +546,10 @@ fn reports_a_postcondition_that_is_false() {
             "Post.cfg",
             "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE\nPOSTCONDITION Enough\n",
         ),
-        ("Post.front", ""),
     ] {
         std::fs::write(directory.join(file), contents).expect("a file");
     }
-    let output = run(&directory, &["Post"]);
+    let output = run(&directory, &["-noTE", "Post"]);
     let text = stdout(&output);
     // TLC reports the postcondition, named with where its body is written, in place of the
     // success, and exits as for an assumption.
@@ -618,28 +638,11 @@ fn prints_an_assumption_that_fails_to_evaluate() {
 fn prints_what_an_assumption_printed_before_it_failed_once() {
     let spec = "---- MODULE Printed ----\nEXTENDS TLC, Integers\nVARIABLE x\nASSUME PrintT(1)\nASSUME PrintT(3) /\\ PrintT(2) /\\ 1 \\div 0 = 1\nInit == x = 0\nNext == x' = x\n====\n";
     let expected = "\n1\n3\n2\nError: Evaluating assumption line 5, col 8 to line 5, col 45 of module Printed failed.\nThe second argument of \\div is 0.\nFinished in ";
-    // tla-front as the whole front end, where the search prints the assumptions as it evaluates
-    // them.
+    // The search prints the assumptions as it evaluates them.
     let (output, directory) = run_front("printed-native", spec, "INIT Init\nNEXT Next\n", &[]);
     let text = stdout(&output);
     assert_eq!(output.status.code(), Some(10), "{text}");
     assert!(text.contains(expected), "{text}");
-    std::fs::remove_dir_all(directory).expect("removed");
-    // A recorded front, which holds what TLC printed before the error.
-    let directory =
-        std::env::temp_dir().join(format!("prove-it-cli-printed-front-{}", std::process::id()));
-    std::fs::create_dir_all(&directory).expect("a directory");
-    for (extension, contents) in [
-        ("tla", spec),
-        ("cfg", "INIT Init\nNEXT Next\n"),
-        ("front", "Starting... (2026-11-10 00:00:00)\n1\n3\n2\n"),
-    ] {
-        std::fs::write(directory.join(format!("Printed.{extension}")), contents).expect("a file");
-    }
-    let output = run(&directory, &["-noTE", "Printed"]);
-    let text = stdout(&output);
-    assert_eq!(output.status.code(), Some(10), "{text}");
-    assert!(text.contains(&format!("00:00:00){expected}")), "{text}");
     std::fs::remove_dir_all(directory).expect("removed");
 }
 
@@ -895,21 +898,21 @@ fn rebuilds_a_trace_through_an_operator_the_configuration_defines() {
     std::fs::remove_dir_all(directory).expect("removed");
 }
 
-// Runs the binary on a spec of the test's own, with no recorded front.
-fn run_unrecorded(test: &str, spec: &str, config: &str) -> (Output, PathBuf) {
+// Runs the binary on a spec of the test's own, where TLC stops before the search.
+fn run_spec(test: &str, spec: &str, config: &str) -> (Output, PathBuf) {
     let directory =
         std::env::temp_dir().join(format!("prove-it-cli-{test}-{}", std::process::id()));
     std::fs::create_dir_all(&directory).expect("a directory");
     std::fs::write(directory.join("Stop.tla"), spec).expect("a spec");
     std::fs::write(directory.join("Stop.cfg"), config).expect("a configuration");
-    (run(&directory, &["Stop"]), directory)
+    (run(&directory, &["-noTE", "Stop"]), directory)
 }
 
 #[test]
 fn reports_a_constant_the_configuration_leaves_unassigned() {
     let spec =
         "---- MODULE Stop ----\nCONSTANT N\nVARIABLE x\nInit == x = N\nNext == x' = x\n====\n";
-    let (output, directory) = run_unrecorded("unassigned", spec, "INIT Init\nNEXT Next\n");
+    let (output, directory) = run_spec("unassigned", spec, "INIT Init\nNEXT Next\n");
     let text = stdout(&output);
     assert_eq!(output.status.code(), Some(151), "{text}");
     assert!(
@@ -926,7 +929,7 @@ fn reports_a_constant_the_configuration_leaves_unassigned() {
 #[test]
 fn reports_a_spec_sany_rejects() {
     let spec = "---- MODULE Stop ----\nVARIABLE x\nInit == x =\n====\n";
-    let (output, directory) = run_unrecorded("rejected", spec, "INIT Init\n");
+    let (output, directory) = run_spec("rejected", spec, "INIT Init\n");
     let text = stdout(&output);
     assert_eq!(output.status.code(), Some(150), "{text}");
     assert!(
@@ -936,14 +939,10 @@ fn reports_a_spec_sany_rejects() {
     std::fs::remove_dir_all(directory).expect("removed");
 }
 
-// Runs the binary on a spec of the test's own, which tla-front lowers, as TLC prints nothing
-// before the search for it.
+// Runs the binary on a spec of the test's own, which tla-front lowers, without the trace
+// exploration spec TLC would parse with it.
 fn run_lowered(test: &str, spec: &str, config: &str) -> (Output, PathBuf) {
-    let directory =
-        std::env::temp_dir().join(format!("prove-it-cli-{test}-{}", std::process::id()));
-    std::fs::create_dir_all(&directory).expect("a directory");
-    std::fs::write(directory.join("Stop.front"), "").expect("a front");
-    run_unrecorded(test, spec, config)
+    run_front(test, spec, config, &[])
 }
 
 #[test]
@@ -1060,14 +1059,12 @@ fn prints_a_lasso_a_check_part_way_through_the_search_finds() {
     for (file, contents) in [
         ("Stop.tla", spec),
         ("Stop.cfg", "SPECIFICATION Unfair\nPROPERTY Reaches\n"),
-        ("Stop.front", ""),
     ] {
         std::fs::write(directory.join(file), contents).expect("a file");
     }
     let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
-        .arg("Stop")
+        .args(["-noTE", "Stop"])
         .current_dir(&directory)
-        .env("PROVE_IT_FRONT", &directory)
         .env("PROVE_IT_TEST_LIVE_CHECK_AT", "2")
         .output()
         .expect("the binary runs");
@@ -1393,15 +1390,13 @@ fn declines_what_it_doesnt_follow_of_the_behavior_graphs() {
         let directory =
             std::env::temp_dir().join(format!("prove-it-cli-{test}-{}", std::process::id()));
         std::fs::create_dir_all(&directory).expect("a directory");
-        std::fs::write(directory.join("Stop.front"), "").expect("a front");
         std::fs::write(directory.join("Stop.tla"), spec).expect("the spec");
         std::fs::write(directory.join("Stop.cfg"), config).expect("the configuration");
         let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
-            .args(["tlc2.TLC", "-workers", "1", "-lncheck", "final"])
+            .args(["tlc2.TLC", "-noTE", "-workers", "1", "-lncheck", "final"])
             .args(arguments)
             .arg("Stop")
             .current_dir(&directory)
-            .env("PROVE_IT_FRONT", &directory)
             .output()
             .expect("the binary runs");
         let error = String::from_utf8_lossy(&output.stderr).into_owned();
@@ -1641,12 +1636,12 @@ fn declines_to_fingerprint_what_tlc_fails_to() {
         ),
         (
             "fp-nested",
-            "Init == x = 0\nNext == x' = x\nInv == TLCFP(<<1, [r |-> [i \\in Int |-> i]]>>) = 0",
+            "Init == x = 0\nNext == x' = x\nInv == TLCFP(<<1, [r |-> [i \\in Int |-> i]]>>) = x",
             "INVARIANT Inv\n",
         ),
         (
             "fp-set",
-            "Init == x = 0\nNext == x' = x\nInv == TLCFP({Nat}) = 0",
+            "Init == x = 0\nNext == x' = x\nInv == TLCFP({Nat}) = x",
             "INVARIANT Inv\n",
         ),
         (
@@ -1906,7 +1901,7 @@ fn tests_the_domain_of_a_function_tlc_keeps_lazy_as_it_was_built() {
     std::fs::remove_dir_all(directory).expect("removed");
     // Op(3)[0] tests its domain by applying Op(2)[0], whose domain is the same filter with other
     // values of n and k, and then reads n and k again: each application restores them.
-    let spec = "---- MODULE Stop ----\nEXTENDS Integers\nVARIABLE x\nRECURSIVE Op(_)\nOp(k) == [i \\in {n \\in Nat : k = 0 \\/ (n < k /\\ Op(k - 1)[n] = n + k - 1)} |-> i + k]\nInit == x = 0\nNext == x' = x\nInv == Op(2)[0] = 2 /\\ Op(3)[0] = 3 /\\ ~(5 \\in DOMAIN Op(2)) /\\ ~(1 \\in DOMAIN Op(1))\n====\n";
+    let spec = "---- MODULE Stop ----\nEXTENDS Integers\nVARIABLE x\nRECURSIVE Op(_)\nOp(k) == [i \\in {n \\in Nat : k = 0 \\/ (n < k /\\ Op(k - 1)[n] = n + k - 1)} |-> i + k]\nInit == x = 0\nNext == x' = x\nInv == Op(2)[0] = 2 /\\ Op(3)[0] = 3 /\\ ~(5 \\in DOMAIN Op(2)) /\\ ~(1 \\in DOMAIN Op(1)) /\\ x = 0\n====\n";
     let (output, directory) = run_lowered(
         "lazy-reentered",
         spec,
@@ -1980,11 +1975,10 @@ fn reports_an_initial_state_tlc_fails_to_print() {
     for (extension, contents) in [
         ("tla", spec),
         ("cfg", "INIT Init\nNEXT Next\nINVARIANT Inv\n"),
-        ("front", ""),
     ] {
         std::fs::write(directory.join(format!("Stop.{extension}")), contents).expect("a file");
     }
-    let output = run(&directory, &["Stop"]);
+    let output = run(&directory, &["-noTE", "Stop"]);
     let text = stdout(&output);
     assert_eq!(output.status.code(), Some(255), "{text}");
     assert!(
@@ -2300,11 +2294,10 @@ fn checks_the_possible_counts_after_a_deadlock() {
             "cfg",
             "SPECIFICATION Spec\nPOSTCONDITIONS PossibleCounts\n_POSSIBLE AtTwo LastStep\n",
         ),
-        ("front", ""),
     ] {
         std::fs::write(directory.join(format!("Stop.{extension}")), contents).expect("a file");
     }
-    let output = run(&directory, &["Stop"]);
+    let output = run(&directory, &["-noTE", "Stop"]);
     let text = stdout(&output);
     assert_eq!(output.status.code(), Some(11), "{text}");
     assert!(
@@ -2320,14 +2313,10 @@ fn reports_a_division_by_zero_after_what_the_expansion_printed() {
         std::env::temp_dir().join(format!("prove-it-cli-divide-{}", std::process::id()));
     std::fs::create_dir_all(&directory).expect("a directory");
     let spec = "---- MODULE D ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 1\nNext == /\\ PrintT(\"step\") /\\ x' = x \\div 0\n====\n";
-    for (file, contents) in [
-        ("D.tla", spec),
-        ("D.cfg", "INIT Init\nNEXT Next\n"),
-        ("D.front", ""),
-    ] {
+    for (file, contents) in [("D.tla", spec), ("D.cfg", "INIT Init\nNEXT Next\n")] {
         std::fs::write(directory.join(file), contents).expect("a file");
     }
-    let output = run(&directory, &["-workers", "1", "D"]);
+    let output = run(&directory, &["-noTE", "-workers", "1", "D"]);
     let text = stdout(&output);
     // As TLC prints it: the EvalException's message after the expansion's print, the trace, the
     // replay's print and the call stack, exiting by the EvalException's code (255, as TLC
@@ -2351,11 +2340,10 @@ fn reports_a_property_an_initial_state_violates() {
     for (file, contents) in [
         ("P.tla", spec),
         ("P.cfg", "SPECIFICATION Spec\nPROPERTY NotNine\n"),
-        ("P.front", ""),
     ] {
         std::fs::write(directory.join(file), contents).expect("a file");
     }
-    let output = run(&directory, &["-workers", "1", "P"]);
+    let output = run(&directory, &["-noTE", "-workers", "1", "P"]);
     let text = stdout(&output);
     // As TLC's DoInitFunctorProperty: the state in the message, and no statistics.
     assert_eq!(output.status.code(), Some(13), "{text}");
@@ -2398,14 +2386,10 @@ fn checks_a_model_whose_assumption_prints_a_record() {
     let directory =
         std::env::temp_dir().join(format!("prove-it-cli-printed-{}", std::process::id()));
     std::fs::create_dir_all(&directory).expect("a directory");
-    for (extension, contents) in [
-        ("tla", spec),
-        ("cfg", "INIT Init\nNEXT Next\n"),
-        ("front", ""),
-    ] {
+    for (extension, contents) in [("tla", spec), ("cfg", "INIT Init\nNEXT Next\n")] {
         std::fs::write(directory.join(format!("Stop.{extension}")), contents).expect("a file");
     }
-    let output = run(&directory, &["Stop"]);
+    let output = run(&directory, &["-noTE", "Stop"]);
     let text = stdout(&output);
     assert_eq!(output.status.code(), Some(0), "{text}");
     assert!(
@@ -2539,7 +2523,7 @@ fn reports_a_fingerprint_failure_tlcs_replay_throws() {
     std::fs::remove_dir_all(directory).expect("removed");
 }
 
-// Runs the binary on a spec of its own with tla-front as its whole front end.
+// Runs the binary on a spec of its own, without the trace exploration spec TLC would parse.
 fn run_front(test: &str, spec: &str, config: &str, args: &[&str]) -> (Output, PathBuf) {
     let directory =
         std::env::temp_dir().join(format!("prove-it-cli-{test}-{}", std::process::id()));
@@ -2554,7 +2538,6 @@ fn run_front(test: &str, spec: &str, config: &str, args: &[&str]) -> (Output, Pa
     let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
         .args(["-noTE"].iter().chain(args).chain([&name.as_str()]))
         .current_dir(&directory)
-        .env_remove("PROVE_IT_FRONT")
         .output()
         .expect("the binary runs");
     (output, directory)
@@ -2571,7 +2554,7 @@ fn get_startup(text: &str) -> &str {
 }
 
 #[test]
-fn prints_what_tlc_prints_as_it_starts_without_a_recorded_front() {
+fn prints_what_tlc_prints_as_it_starts() {
     let (output, directory) = run_front(
         "startup",
         "---- MODULE Sym ----\nEXTENDS TLC, Naturals\nCONSTANTS A, B\nVARIABLE x\nPerms == Permutations(A) \\cup Permutations(B)\nShown == Print(\"startup\", TRUE)\nInit == x \\in A /\\ Shown\nNext == x' \\in A\n====\n",
@@ -2703,10 +2686,10 @@ fn checks_the_postconditions_after_a_failure_as_tlcs_deadlock_check_does() {
         std::process::id()
     ));
     std::fs::create_dir_all(&directory).expect("a directory");
-    for (file, contents) in [("Stop.tla", spec), ("Stop.cfg", config), ("Stop.front", "")] {
+    for (file, contents) in [("Stop.tla", spec), ("Stop.cfg", config)] {
         std::fs::write(directory.join(file), contents).expect("a file");
     }
-    let output = run(&directory, &["-deadlock", "Stop"]);
+    let output = run(&directory, &["-noTE", "-deadlock", "Stop"]);
     let text = stdout(&output);
     assert_eq!(output.status.code(), Some(14), "{text}");
     assert!(
@@ -2785,7 +2768,7 @@ fn searches_a_functions_keys_as_tlc_does_where_one_cant_compare() {
 }
 
 #[test]
-fn prints_an_assumption_value_as_tlc_built_it_without_a_recorded_front() {
+fn prints_an_assumption_value_as_tlc_built_it() {
     // test-model/SetPredValue: the store forgets how TLC built the set PrintT prints, which the
     // trace evaluator prints as TLC does.
     let spec = "---- MODULE SetPredValue ----\nEXTENDS TLC, FiniteSets, Integers\n\nRange(F) == { F[x] : x \\in DOMAIN F }\nMin(n, m) == IF n < m THEN n ELSE m\n\nLP(S, T, p) == LET ss == { s \\in SUBSET S : Cardinality(s) = p}\n                          IN { e \\in [ T -> ss ] : \n                                Cardinality(Range(e)) = Min(Cardinality(T), Cardinality(ss)) }\n\nASSUME PrintT(LP(1..4, {\"a\",\"b\",\"c\"}, 2))\n\n=============================\n";
@@ -2797,7 +2780,6 @@ fn prints_an_assumption_value_as_tlc_built_it_without_a_recorded_front() {
     let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
         .args(["-noGenerateSpecTE", "SetPredValue"])
         .current_dir(&directory)
-        .env_remove("PROVE_IT_FRONT")
         .output()
         .expect("the binary runs");
     let text = stdout(&output);
@@ -2821,7 +2803,7 @@ fn prints_an_assumption_value_as_tlc_built_it_without_a_recorded_front() {
 }
 
 #[test]
-fn labels_a_step_of_a_next_state_relation_that_instantiates_in_a_let_without_a_recorded_front() {
+fn labels_a_step_of_a_next_state_relation_that_instantiates_in_a_let() {
     // test-model/CyclicRedefineInstance: TLC splits B!Next, which the LET's INSTANCE defines,
     // into its body, and labels the step of the other disjunct.
     let (output, directory) = run_front(
@@ -2845,7 +2827,7 @@ fn labels_a_step_of_a_next_state_relation_that_instantiates_in_a_let_without_a_r
 }
 
 #[test]
-fn ranks_the_strings_the_startup_makes_without_a_recorded_front() {
+fn ranks_the_strings_the_startup_makes() {
     // test-model/Github696: TLC interns the names ToString and \o make as it computes MVS, which
     // orders the model values the search then compares.
     let (output, directory) = run_front(
@@ -2869,7 +2851,7 @@ fn ranks_the_strings_the_startup_makes_without_a_recorded_front() {
 }
 
 #[test]
-fn ranks_the_startup_of_a_recursive_function_of_two_arguments_without_a_recorded_front() {
+fn ranks_the_startup_of_a_recursive_function_of_two_arguments() {
     // tla-rs function_syntax: building add again for each of its arguments recursed until the
     // stack overflowed, which aborted the binary as it ranked the startup's strings.
     let (output, directory) = run_front(
@@ -3136,7 +3118,7 @@ fn declines_a_violating_successor_tlc_fails_to_draw_again() {
 }
 
 #[test]
-fn declines_a_substitute_with_effects_without_a_recorded_front() {
+fn declines_a_substitute_with_effects() {
     // TLC evaluates QDef before K and L, and again wherever Q is read, printing "subst" each time.
     let config = "CONSTANTS Q <- QDef\nINIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE\n";
     let spec = |name: &str, definitions: &str, assumption: &str| {
@@ -3207,7 +3189,6 @@ fn reads_a_system_property_as_tlc_or_declines() {
         Command::new(env!("CARGO_BIN_EXE_prove-it"))
             .args([property, "tlc2.TLC", "-noTE", "Property"])
             .current_dir(&directory)
-            .env_remove("PROVE_IT_FRONT")
             .output()
             .expect("the binary runs")
     };

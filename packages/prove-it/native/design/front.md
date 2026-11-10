@@ -489,10 +489,10 @@ compared:
 | 10 | SANY's parse errors: TLC itself fails to parse these specs ("Precedence conflict" in ccfraft, KVsnap, Linearizability, Bodega, NormalizationCases, and the two fixtures' `Base`), so no model is lowered. The native binary's SANY report owns their output. |
 | 1 | `tlc-174/Unhandled`, TLC 1.7.4 only. |
 
-## The end-state front (no recorded front)
+## The binary's front (tla-front alone)
 
-Without `PROVE_IT_FRONT`, `front.rs` reads the whole front from tla-front: `Output::Native` holds
-SANY's report and `LoweredModel::startup_messages`,
+`front.rs` reads the whole front from tla-front, the binary's only front end since the recorded
+front was removed: `Front` holds SANY's report and `LoweredModel::startup_messages`,
 what TLC prints itself after the constant definitions and before the assumptions, in its order:
 
 - 2149, each invariant that is a constant equal to TRUE (`check_invariants`), and 2255, each
@@ -539,7 +539,7 @@ startup's, as long as every print before it the store worded alike.
 `ModelOptions::random_seed` carries `-seed` into the model, as `runtime.seed` does.
 
 `bun scripts/run.ts differential --native native/target/release/prove-it --native-only` runs the
-binary alone this way (as `--native-front` does, without the TypeScript runs) on the whole corpus,
+binary alone this way, without the TypeScript runs, on the whole corpus,
 against TLC's recordings, in minutes. Measured before the hooks were wired, with `check.rs` printing
 the messages after `Starting...` and no startup Prints: 1,298 of 1,466 runs printed what TLC prints,
 and the 80 that differed each lacked a startup Print, which the hooks now report.
