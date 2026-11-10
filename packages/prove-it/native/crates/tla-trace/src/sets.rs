@@ -6,7 +6,7 @@ use std::rc::Rc;
 use crate::print::{format_pretty, format_value};
 use crate::value::{
     Class, Evaluated, Lazy, Value, compare, elements, equals, fail, fail_coded, fail_runtime,
-    find_key, is_enumerable, mark_unnormalized, set_of, unnormalized,
+    failing_comparison, find_key, is_enumerable, mark_unnormalized, set_of, unnormalized,
 };
 
 /// How many elements the evaluator enumerates of a lazy set before it gives up, as the engine
@@ -382,6 +382,29 @@ pub fn failing_sets(value: &Value, set: &Value) -> Option<Vec<Value>> {
         }
     }
     None
+}
+
+/// The values in whose `compareTo` TLC's binary search of a sorted set for `value` fails
+/// (`ValueVec.search`, `elem.compareTo`), outermost first, or none where the search doesn't fail
+/// so. A set TLC holds unnormalized it searches with its elements' `equals`.
+pub fn failing_search(value: &Value, set: &Value) -> Vec<Value> {
+    let Value::Set(elements) = set else {
+        return Vec::new();
+    };
+    if unnormalized(set).is_some() {
+        return Vec::new();
+    }
+    let (mut low, mut high) = (0, elements.len());
+    while low < high {
+        let middle = low + (high - low) / 2;
+        match compare(value, &elements[middle]) {
+            Ok(Ordering::Equal) => return Vec::new(),
+            Ok(Ordering::Less) => high = middle,
+            Ok(Ordering::Greater) => low = middle + 1,
+            Err(_) => return failing_comparison(value, &elements[middle]),
+        }
+    }
+    Vec::new()
 }
 
 pub fn is_member(value: &Value, set: &Value) -> Evaluated<bool> {

@@ -896,15 +896,24 @@ impl<'ir> Evaluator<'ir> {
         let Some(received) = receiver.and_then(|receiver| stack.values.get(&receiver)) else {
             return;
         };
-        let Some(source) = stack.source(received) else {
-            return;
-        };
         if stack.is_fingerprinted {
             return;
         }
-        let nested = element
-            .and_then(|element| stack.values.get(&element))
-            .and_then(|element| crate::sets::failing_sets(element, received));
+        let element = element.and_then(|element| stack.values.get(&element));
+        // The search of a sorted set fails in the element's `compareTo`, and in those of its parts
+        // it compares, which have sources where the evaluation gave them: the set's, which a
+        // definition TLC computed as it started has none of, is outside them.
+        let compared: Vec<NodeId> = element
+            .map(|element| crate::sets::failing_search(element, received))
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|value| stack.source(value))
+            .collect();
+        let source = stack.source(received);
+        if source.is_none() && compared.is_empty() {
+            return;
+        }
+        let nested = element.and_then(|element| crate::sets::failing_sets(element, received));
         // TLC searches a set enumeration it hasn't normalized, as one an evaluation just built,
         // element by element with `equals`, which fails otherwise than the search of a sorted one.
         // The evaluator searches so the sets it records as TLC holds them unnormalized.
@@ -916,7 +925,7 @@ impl<'ir> Evaluator<'ir> {
             })
         });
         let sources = nested.iter().flatten().filter_map(|set| stack.source(set));
-        let sources: Vec<NodeId> = std::iter::once(source).chain(sources).collect();
+        let sources: Vec<NodeId> = source.into_iter().chain(sources).chain(compared).collect();
         stack.is_fingerprinted = true;
         stack.is_member_followed = is_followed;
         stack.fingerprinted_sources = sources;
@@ -1640,6 +1649,27 @@ impl<'ir> Evaluator<'ir> {
         }
         let reads = self.reads;
         let printed = self.printed.len();
+        // TLC computes a definition of constant level as it starts, with its plain `Tool`, whose
+        // values have no source (`processConstantDefns`). One that fails then it evaluates again
+        // where it is used.
+        if self.call_stack.is_some()
+            && matches!(&definition.form, DefinitionForm::Operator(params) if params.is_empty())
+            && self.is_precomputed(node)
+        {
+            let call_stack = self.call_stack.take();
+            let computed = self.evaluate(definition.body, &context.global());
+            self.call_stack = call_stack;
+            if let Ok(value) = computed
+                && self.reads == reads
+                && self.printed.len() == printed
+            {
+                note_sorted(&value);
+                self.cache.insert(key, value.clone());
+                return Ok(value);
+            }
+            self.reads = reads;
+            self.printed.truncate(printed);
+        }
         let value = match &definition.form {
             DefinitionForm::Function(bounds) => {
                 self.defined_function(bounds, definition.body, &context.global())?
