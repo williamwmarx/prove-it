@@ -107,3 +107,19 @@ fn rejects_a_primed_argument_of_a_recursive_operator() {
     let plain = "---- MODULE Plain ----\nEXTENDS Naturals\nRECURSIVE Sum(_)\nSum(n) == IF n = 0 THEN 0 ELSE n + Sum(n - 1)\n====";
     assert!(get_level_errors(plain, &[]).is_empty());
 }
+
+#[test]
+fn rejects_an_assumption_above_constant_level() {
+    // TLC's tla2sany error corpus, E4206_Test.
+    assert_eq!(
+        get_level_errors(
+            "---- MODULE E4206_Test ----\nVARIABLE v\nASSUME v\n====",
+            &[]
+        ),
+        [(
+            "line 3, col 1 to line 3, col 8 of module E4206_Test".to_owned(),
+            "Level error: assumptions must be level 0 (Constant), \nbut this one has level 1."
+                .to_owned()
+        )]
+    );
+}
