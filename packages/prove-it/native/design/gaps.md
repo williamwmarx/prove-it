@@ -716,6 +716,19 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   expansion after it is done.
 - **ccf TraceMultiNodeReads** was done by the liveness session: see `liveness.md`.
 
+## A set the state holds under a VIEW
+
+- Under a VIEW TLC fingerprints the view's value alone, so a state's other values are never
+  normalized: a set TLC keeps lazy that a variable holds, as `(SUBSET S) \cup T`, streams in its
+  own order in every later state. The store keeps sets normalized, so the engine declines a
+  model with a VIEW where a variable is assigned a set that isn't normalized and a set read out
+  of the state (a variable, or a field or an element of one) is enumerated in TLC's order
+  (`is_lazy_set_held`, `is_held_set_enumerated`). The TypeScript engine declines wherever such
+  a set is enumerated under a VIEW, and the interpreter marks only the view's value
+  fingerprinted.
+- `0 ^ 0` stops as a failure of TLC's ("0^0 is undefined.", `Integers.Expt`), where both
+  compiled engines gave 1.
+
 ## Test2, liveness atoms answered as the search goes (as built)
 
 Built by the liveness session: see "Atoms that use TLC's registers" in `liveness.md`.
