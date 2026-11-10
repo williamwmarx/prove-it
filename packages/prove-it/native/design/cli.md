@@ -213,6 +213,9 @@ Still to do:
   `liveness-started` and `liveness-finished`.
 - PROVE_IT_TEST_LIVE_CHECK_AT sets the number of expanded states after which the first check comes,
   as for the TypeScript CLI, so a test can reach one on a small model.
+- PROVE_IT_TEST_PROGRESS_EVERY sets the number of expanded states between the binary's progress
+  reports, the first after that many, in place of its clock, so a test can reach progress points,
+  and the `_PERIODIC` expression TLC evaluates there, on a small model.
 - A counterexample a check part way through finds stays not native: the interpreter prints it with
   the counts so far.
 

@@ -80,6 +80,7 @@ pub fn get_settings(words: &[i32], state_log: String) -> Result<Settings, String
         test_memo_entries: None,
         test_evaluations: None,
         test_progress_at: None,
+        test_progress_every: None,
         // The interpreter writes -dump itself.
         is_dumped: false,
         // The interpreter goes on past violations itself.
