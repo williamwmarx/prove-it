@@ -471,6 +471,11 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   reading the last k missed. A domain the engine only tests, such as a filter of Nat, `Seq(S)` or
   `Nat \cup {-1}`, is tested by its membership test (`Lazy::Tested`); it was taken as Nat, which
   dropped the filter.
+- TLC compares the elements of two sets, functions or records up to the first that differ, and
+  fails at one that holds a lazy function, even where both are the same. The store skipped
+  elements with equal ids, so `[a |-> f, b |-> 1] = [a |-> f, b |-> 2]` was FALSE; it now
+  compares an element that holds one (`is_kept_lazy`), as it does in `\cup`, `\cap`, `\` and
+  `with_element`, and stops there.
 
 ## ENABLED in the initial predicate
 

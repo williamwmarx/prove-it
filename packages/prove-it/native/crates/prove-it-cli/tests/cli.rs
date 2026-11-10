@@ -1516,7 +1516,8 @@ fn tests_the_domain_of_a_function_tlc_keeps_lazy_as_it_was_built() {
     );
     std::fs::remove_dir_all(directory).expect("removed");
     // F[0] has an empty domain, which TLC reports applying; the engine stops there, and TLC fails
-    // to compare a lazy function even with itself. Neither run may report success.
+    // to compare a lazy function even with itself, or a record that holds one. No run may report
+    // success.
     for (test, init, reason) in [
         (
             "lazy-outside",
@@ -1526,6 +1527,11 @@ fn tests_the_domain_of_a_function_tlc_keeps_lazy_as_it_was_built() {
         (
             "lazy-itself",
             "LET g == F[1] IN g = g",
+            "comparing a function TLC keeps lazy",
+        ),
+        (
+            "lazy-record",
+            "([a |-> F[1], b |-> 1] = [a |-> F[1], b |-> 2])",
             "comparing a function TLC keeps lazy",
         ),
     ] {

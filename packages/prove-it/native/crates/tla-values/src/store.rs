@@ -751,7 +751,7 @@ impl Store {
     /// numbers the TypeScript store does, not only their signs. A tuple's keys are interned as
     /// they are compared, as they are there.
     pub fn compare(&mut self, left: Id, right: Id) -> Outcome<i32> {
-        if left == right {
+        if left == right && !self.is_kept_lazy(left) {
             return Ok(0);
         }
         let (left_meta, right_meta) = (*self.meta(left), *self.meta(right));
@@ -856,7 +856,7 @@ impl Store {
         for index in 0..size {
             let left_key = self.key_of(&left_meta, index);
             let right_key = self.key_of(&right_meta, index);
-            if left_key == right_key {
+            if left_key == right_key && !self.is_kept_lazy(left_key) {
                 continue;
             }
             let comparison = self.compare(left_key, right_key)?;
@@ -867,7 +867,7 @@ impl Store {
         for index in 0..size {
             let left_value = self.range_value_of(&left_meta, index);
             let right_value = self.range_value_of(&right_meta, index);
-            if left_value == right_value {
+            if left_value == right_value && !self.is_kept_lazy(left_value) {
                 continue;
             }
             let comparison = self.compare(left_value, right_value)?;
@@ -998,7 +998,7 @@ impl Store {
         for index in 0..size {
             let left_element = self.word((left_offset + index) as usize);
             let right_element = self.word((right_offset + index) as usize);
-            if left_element != right_element {
+            if left_element != right_element || self.is_kept_lazy(left_element) {
                 return self.equals(left_element, right_element);
             }
         }
@@ -1019,14 +1019,14 @@ impl Store {
         for index in 0..size {
             let left_key = self.key_of(&left_meta, index);
             let right_key = self.key_of(&right_meta, index);
-            if left_key != right_key {
+            if left_key != right_key || self.is_kept_lazy(left_key) {
                 return self.equals(left_key, right_key);
             }
         }
         for index in 0..size {
             let left_value = self.range_value_of(&left_meta, index);
             let right_value = self.range_value_of(&right_meta, index);
-            if left_value != right_value {
+            if left_value != right_value || self.is_kept_lazy(left_value) {
                 return self.equals(left_value, right_value);
             }
         }
@@ -1248,7 +1248,7 @@ impl Store {
         while left_index < left_size && right_index < right_size {
             let left_element = self.word(left_offset + left_index);
             let right_element = self.word(right_offset + right_index);
-            if left_element == right_element {
+            if left_element == right_element && !self.is_kept_lazy(left_element) {
                 if keep != Merge::Difference {
                     merged[length] = left_element;
                     length += 1;
@@ -1309,7 +1309,7 @@ impl Store {
         if left_size == 0 {
             return Ok(right);
         }
-        if right_size == 0 || left == right {
+        if right_size == 0 || left == right && !self.is_kept_lazy(left) {
             return Ok(left);
         }
         let capacity = (left_size + right_size) as usize;
@@ -1319,7 +1319,7 @@ impl Store {
 
     pub fn intersection(&mut self, left: Id, right: Id) -> Outcome<Id> {
         let (left_size, right_size) = (self.size_of(left), self.size_of(right));
-        if left_size == 0 || left == right {
+        if left_size == 0 || left == right && !self.is_kept_lazy(left) {
             return Ok(left);
         }
         if right_size == 0 {
@@ -1334,7 +1334,7 @@ impl Store {
         if left_size == 0 || right_size == 0 {
             return Ok(left);
         }
-        if left == right {
+        if left == right && !self.is_kept_lazy(left) {
             return Ok(EMPTY_SET);
         }
         let (merged, length) = self.merge(left, right, left_size as usize, Merge::Difference)?;
@@ -1367,7 +1367,7 @@ impl Store {
         let mut is_inserted = false;
         for index in 0..size {
             let current = self.word(offset + index);
-            if current == element {
+            if current == element && !self.is_kept_lazy(element) {
                 self.scratch = merged;
                 return Ok(set);
             }
@@ -1620,6 +1620,11 @@ impl Store {
         let meta = *self.meta(block);
         let (offset, size) = (meta.payload as usize, meta.size as usize);
         let key_meta = *self.meta(key);
+        // TLC compares a key that is or holds a function it keeps lazy, which fails, where the
+        // store would find it by its id.
+        if size > 0 && self.is_kept_lazy(key) {
+            return Err(LAZY_FUNCTION);
+        }
         // A block of consecutive integers, such as 0..n, finds its key by subtraction.
         if meta.flags & IS_INT_RUN != 0 && key_meta.kind == KIND_INT {
             let low = self.meta(self.word(offset)).payload;
