@@ -16,6 +16,9 @@ pub mod nla_backoff;
 pub mod nla_emonics;
 pub mod nla_var_eqs;
 pub mod numeric_pair;
+pub mod pdd;
+pub mod pdd_simplifier;
+pub mod pdd_solver;
 pub mod union_find;
 
 #[cfg(test)]
