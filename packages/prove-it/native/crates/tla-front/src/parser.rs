@@ -2449,14 +2449,20 @@ impl Parser {
             };
             return Err(self.error_at(message, step.line, step.column));
         }
-        if Self::get_step_level(&step.text) < 0 && self.get_step_name(&step.text).is_some() {
-            return Err(self.error_at(
-                "<*> and <+> cannot be used for a named step",
-                step.line,
-                step.column,
-            ));
-        }
+        let is_named_unnumbered =
+            Self::get_step_level(&step.text) < 0 && self.get_step_name(&step.text).is_some();
         self.index += 1;
+        // SANY's generator rejects it at the step, a semantic error.
+        if is_named_unnumbered && self.mode == Mode::Tlc {
+            let error = SanyError {
+                location: format_range(&self.get_range(start)),
+                message: "<*> and <+> cannot be used for a named step.".to_owned(),
+            };
+            match &mut self.sany_errors {
+                Some(errors) => errors.push(error),
+                None => return Err(SyntaxError::sany(vec![error])),
+            }
+        }
         let name = self.get_step_name(&step.text);
         let mut location = location_of(&self.tokens[start]);
         let statement_start = self.index;
