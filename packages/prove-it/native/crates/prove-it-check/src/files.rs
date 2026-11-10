@@ -7,6 +7,8 @@ use std::path::{Component, Path, PathBuf};
 use tla_front::report::ModuleOrigin;
 use tla_values::fingerprint::{INITIAL, extend_byte, extend_int};
 
+use crate::host::Files;
+
 const STRING_VALUE: u8 = 3;
 
 pub struct FileDescriber {
@@ -18,24 +20,20 @@ pub struct FileDescriber {
 }
 
 impl FileDescriber {
-    /// `temporary` is the JVM's `java.io.tmpdir` when the launch sets it.
-    pub fn new(
-        spec: &Path,
-        libraries: &[String],
-        temporary: Option<&str>,
-        metadir: Option<&str>,
-        is_174: bool,
-    ) -> FileDescriber {
-        let spec = resolve(spec);
+    /// The temporary directory is the JVM's `java.io.tmpdir` where the launch sets it.
+    pub fn new(files: &Files) -> FileDescriber {
+        let spec = resolve(files.spec);
         let mut directories = vec![spec.parent().map(Path::to_path_buf).unwrap_or_default()];
-        directories.extend(libraries.iter().map(PathBuf::from));
-        let temporary = temporary.map_or_else(std::env::temp_dir, PathBuf::from);
+        directories.extend(files.libraries.iter().map(PathBuf::from));
+        let temporary = files
+            .temporary
+            .map_or_else(std::env::temp_dir, PathBuf::from);
         FileDescriber {
             spec,
             directories,
             temporary: std::fs::canonicalize(&temporary).unwrap_or_else(|_| resolve(&temporary)),
-            metadir: metadir.map(|metadir| resolve(Path::new(metadir))),
-            is_174,
+            metadir: files.metadir.map(|metadir| resolve(Path::new(metadir))),
+            is_174: files.is_174,
         }
     }
 

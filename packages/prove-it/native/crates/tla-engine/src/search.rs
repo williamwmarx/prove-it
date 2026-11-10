@@ -18,7 +18,7 @@ use tla_ir::{Ir, LiveTerm, Model, PredicateForm};
 use tla_live::{Event, Liveness, Term, Verdict};
 use tla_values::fingerprint::{Dense, Entries, Fingerprints, Overlaid, Parent, SharedFingerprints};
 use tla_values::random::JavaRandom;
-use tla_values::store::{KIND_SET, Outcome, TRUE};
+use tla_values::store::{KIND_SET, Outcome, ShapeJoin, TRUE};
 use tla_values::transfer::{EncodedStates, SharedEncoder, SharedStates, StateEncoder};
 use tla_values::{Bail, Id, NESTING_STACK_BYTES, Store};
 
@@ -1801,6 +1801,7 @@ struct Expanded {
     deferred: Vec<(u32, u64)>,
     collisions: u64,
     is_past_walk: bool,
+    is_membership_unsafe: bool,
 }
 
 // A level the threads share: the states `[start, end)`, the next run to claim, and the first
@@ -1935,6 +1936,7 @@ fn expand_claimed(worker: &mut Worker<'_>, shared: &Shared<'_>) -> Expanded {
         deferred: found.deferred,
         collisions: found.collisions,
         is_past_walk: worker.machine.is_past_walk,
+        is_membership_unsafe: worker.machine.is_membership_unsafe,
     }
 }
 
@@ -2200,6 +2202,24 @@ impl Search<'_, States> {
         for found in &expanded {
             self.states.collisions += found.collisions;
             machine.is_past_walk |= found.is_past_walk;
+            machine.is_membership_unsafe |= found.is_membership_unsafe;
+        }
+        // The shapes each thread's walks assigned, joined into the store's from the values that
+        // widened them, which the thread's overlay forgets at the next level.
+        if let Some(joins) = &mut machine.assigned_shapes {
+            for worker in workers.iter_mut() {
+                let overlay = &worker.machine.store;
+                for (join, found) in joins
+                    .iter_mut()
+                    .zip(worker.machine.assigned_shapes.iter_mut().flatten())
+                {
+                    for &id in found.widening() {
+                        let id = machine.store.import(overlay, id, &mut worker.imported);
+                        machine.store.join_shape(join, id);
+                    }
+                    *found = ShapeJoin::default();
+                }
+            }
         }
         self.expanding = stop;
         // The fingerprints each thread computed, of the store's values and of the values it made
@@ -2737,6 +2757,17 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         // Read as the tables are answered, since taking the steps from the states the search
         // didn't store may take a shortcut past a walk too.
         let is_enabled_exact = !machine.is_past_walk;
+        // Where no walk took the shortcut or enumerated an empty set for an assignment, no
+        // comparison of an assigned value can fail, and no string was ranked since (which may take
+        // a string out of its class), TLC's predicate evaluation of the next-state relation holds
+        // of every step the walks took.
+        let is_next_taken = is_enabled_exact
+            && !machine.is_membership_unsafe
+            && !machine.store.has_unordered_strings()
+            && machine
+                .assigned_shapes
+                .as_ref()
+                .is_some_and(|joins| joins.iter().all(ShapeJoin::is_comparable));
         let live = match reals {
             Some(reals) => LiveGraph {
                 states: &reals.states,
@@ -2747,6 +2778,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 edges: &reals.edges,
                 labels: reals.labels.as_deref(),
                 is_enabled_exact,
+                is_next_taken,
             },
             None => LiveGraph {
                 states: &search.states.ids[..count * width],
@@ -2757,6 +2789,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 edges: &graph.edges[..edge_count],
                 labels: graph.labels.as_ref().map(|labels| &labels[..edge_count]),
                 is_enabled_exact,
+                is_next_taken,
             },
         };
         answer_atoms(
@@ -2810,6 +2843,14 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         machine.set_slot(LEVEL_SLOT, zero);
         search.set_distinct(&mut machine, 0)?;
         search.reporter.initial_states_started();
+        // An action atom answered from the steps needs the shapes of what the walks assign.
+        if context
+            .atoms
+            .iter()
+            .any(|atom| matches!(atom, Atom::Action { is_next: true, .. }))
+        {
+            machine.assigned_shapes = Some((0..width).map(|_| ShapeJoin::default()).collect());
+        }
         (context.init)(&mut machine, &mut |machine: &mut Machine<'_>| {
             search.visit_initial(machine, &context)
         })?;
@@ -3020,6 +3061,10 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                                 machine: {
                                     let mut worker = Machine::new(&program, Store::new());
                                     worker.share_memo(thread_count);
+                                    worker.assigned_shapes =
+                                        machine.assigned_shapes.as_ref().map(|joins| {
+                                            joins.iter().map(|_| ShapeJoin::default()).collect()
+                                        });
                                     worker
                                 },
                                 fingerprints: Fingerprints::default(),

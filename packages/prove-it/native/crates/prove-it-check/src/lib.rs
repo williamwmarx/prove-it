@@ -7,11 +7,15 @@ mod check;
 mod failure;
 mod files;
 mod front;
+mod host;
 mod messages;
+mod stack;
 mod summary;
 mod time;
 mod trace;
-mod zone;
+pub mod zone;
 
 pub use check::run;
+pub use host::{FileDescription, Files, Host, Machine, SystemHost};
 pub use messages::Output;
+pub use zone::Zone;

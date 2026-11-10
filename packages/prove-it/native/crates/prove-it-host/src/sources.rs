@@ -7,7 +7,10 @@
 //!
 //! - `module:<name>`, a module's text from a file of its own, beside the spec or in a library;
 //! - `file:<origin>:<name>`, the file TLC prints that it parses a module from, for the origins
-//!   `file`, `root file` and `standard`.
+//!   `file`, `root file` and `standard`;
+//! - `text:<path>`, the text of a file the command line names, such as the spec or its
+//!   configuration (`checkSources`);
+//! - `class:<name>`, the Java override TLC loads for a module, as a Uint8Array (`checkSources`).
 //!
 //! An export that reads something else names it by a key of a new kind, which this list gains.
 
@@ -18,8 +21,15 @@ use crate::value::HostValue;
 
 /// What JavaScript has answered, and the keys asked for that it hasn't.
 pub struct Sources {
-    known: HashMap<String, Option<String>>,
+    known: HashMap<String, Option<Known>>,
     needed: RefCell<Vec<String>>,
+}
+
+/// A value JavaScript answered: a string, or a Uint8Array.
+#[derive(Clone)]
+enum Known {
+    Text(String),
+    Bytes(Vec<u8>),
 }
 
 /// A string argument, or the message of the TypeError for another.
@@ -43,7 +53,8 @@ impl Sources {
                 HostValue::Array(pair) if pair.len() == 2 => {
                     let value = match &pair[1] {
                         HostValue::Undefined | HostValue::Null => None,
-                        value => Some(get_text(value, "a known value")?),
+                        HostValue::Uint8s(bytes) => Some(Known::Bytes(bytes.clone())),
+                        value => Some(Known::Text(get_text(value, "a known value")?)),
                     };
                     Ok((get_text(&pair[0], "a known key")?, value))
                 }
@@ -59,11 +70,31 @@ impl Sources {
     /// The value of the key, or None, where it is known to have none or isn't known yet, which
     /// `get_needed` then asks for.
     pub fn get(&self, key: String) -> Option<String> {
+        match self.get_known(key)? {
+            Known::Text(text) => Some(text),
+            Known::Bytes(_) => None,
+        }
+    }
+
+    /// `get` of a key JavaScript answers with a Uint8Array.
+    pub fn get_bytes(&self, key: String) -> Option<Vec<u8>> {
+        match self.get_known(key)? {
+            Known::Bytes(bytes) => Some(bytes),
+            Known::Text(_) => None,
+        }
+    }
+
+    fn get_known(&self, key: String) -> Option<Known> {
         let value = self.known.get(&key).cloned();
         if value.is_none() {
             self.needed.borrow_mut().push(key);
         }
         value.flatten()
+    }
+
+    /// Whether a key was read that isn't known.
+    pub fn has_needed(&self) -> bool {
+        !self.needed.borrow().is_empty()
     }
 
     /// `{ kind: "needed", keys }` where the export read a key that isn't known, in place of its
