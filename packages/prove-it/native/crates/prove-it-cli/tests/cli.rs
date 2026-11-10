@@ -2722,24 +2722,50 @@ fn answers_fairness_of_the_next_state_relation_as_tlc() {
 }
 
 #[test]
-fn evaluates_the_next_state_relation_where_a_walk_found_an_empty_set_to_assign_from() {
-    // TLC fails testing x' \in [a : {}] of an integer as it evaluates WF_x(Next) on the step 0 -> 1,
-    // though the walk enumerated no record whose shape the guard could join: so the engine
-    // evaluates the action, and leaves TLC's failure to the interpreter.
-    let spec = "---- MODULE EmptyRecords ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' \\in [a : {}] \\/ x' = (x + 1) % 3\nSpec == Init /\\ [][Next]_x /\\ WF_x(Next)\nLive == []<>(x = 2)\n====\n";
-    for workers in ["1", "4"] {
-        let test = format!("next-fair-empty-{workers}");
-        let args = ["-workers", workers];
-        let (output, directory) =
-            run_front(&test, spec, "SPECIFICATION Spec\nPROPERTY Live\n", &args);
-        let text = stdout(&output);
-        let is_declined =
-            String::from_utf8_lossy(&output.stderr).contains("prove-it: not native yet: ");
-        assert!(
-            is_declined || get_untimed(&text) == include_str!("next-fair-empty.txt"),
-            "{text}"
-        );
-        std::fs::remove_dir_all(directory).expect("removed");
+fn evaluates_the_next_state_relation_where_a_walk_assigned_from_a_set_it_cant_cover() {
+    // TLC fails testing x' \in S of a value as it evaluates WF_x(Next) on a step another disjunct
+    // took, where S is empty, as [a : {}] is, or holds an empty part, as [a : {}] \cup {1} and
+    // SUBSET [a : {}] do: the walk joined no shape TLC tests the value against. So the engine
+    // evaluates the action, and leaves TLC's failure to the interpreter. TLC's output at d8fb231.
+    let cases = [
+        (
+            include_str!("empty/EmptyRecords.tla"),
+            include_str!("empty/EmptyRecords.cfg"),
+            include_str!("empty/EmptyRecords.txt"),
+        ),
+        (
+            include_str!("empty/UnionEmpty.tla"),
+            include_str!("empty/UnionEmpty.cfg"),
+            include_str!("empty/UnionEmpty.txt"),
+        ),
+        (
+            include_str!("empty/SubsetEmpty.tla"),
+            include_str!("empty/SubsetEmpty.cfg"),
+            include_str!("empty/SubsetEmpty.txt"),
+        ),
+    ];
+    for (spec, config, expected) in cases {
+        for workers in ["1", "4"] {
+            let name = spec.split_whitespace().nth(2).expect("the module's name");
+            let test = format!("empty-{name}-{workers}");
+            let args = [
+                "-workers",
+                workers,
+                "-nowarning",
+                "-seed",
+                "4",
+                "-fp",
+                "0",
+                "-lncheck",
+                "final",
+            ];
+            let (output, directory) = run_front(&test, spec, config, &args);
+            let text = stdout(&output);
+            let is_declined =
+                String::from_utf8_lossy(&output.stderr).contains("prove-it: not native yet: ");
+            assert!(is_declined || get_untimed(&text) == expected, "{text}");
+            std::fs::remove_dir_all(directory).expect("removed");
+        }
     }
 }
 

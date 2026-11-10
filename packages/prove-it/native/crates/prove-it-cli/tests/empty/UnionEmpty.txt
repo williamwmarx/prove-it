@@ -1,0 +1,12 @@
+Implied-temporal checking--satisfiability problem has 1 branches.
+Computing initial states...
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+State 2: <Next line 5, col 9 to line 5, col 34 of module UnionEmpty>
+x = 1
+
+5 states generated, 3 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 3.
+The average outdegree of the complete state graph is 1 (minimum is 1, the maximum 1 and the 95th percentile is 1).

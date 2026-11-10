@@ -2319,9 +2319,13 @@ impl<'a> Compiler<'a> {
 
     // Whether TLC's membership of a value in a set, which it tests as it evaluates `x' \in S` as a
     // predicate, compares the value only with values a walk that enumerates the set assigns, or
-    // tests its kind: a set of values, an interval, a declared constant, and the sets of
-    // functions, records, tuples and subsets and the unions built of such sets. Not a filter, an
-    // intersection or a difference, whose dropped elements TLC still compares the value with.
+    // tests its kind against a set the walk found elements of: a set of values, an interval, a
+    // declared constant, and the sets of functions, records and tuples built of such sets, which
+    // are empty where a part of them is (but for a function set's domain, whose elements TLC
+    // compares with the function's only by size first). Not a filter, an intersection or a
+    // difference, whose dropped elements TLC still compares the value with, nor a union, a
+    // SUBSET or a UNION, which may hold an empty part, such as `[a : {}] \cup {1}`, whose kind TLC
+    // still tests the value against.
     fn is_membership_covered(&self, set: NodeId, seen: &mut HashSet<NodeId>) -> bool {
         if !seen.insert(set) {
             return false;
@@ -2348,16 +2352,10 @@ impl<'a> Compiler<'a> {
                 }
                 _ => false,
             },
-            NodeKind::Apply { name, args } if !name.is_local => match name.resolution {
-                Resolution::Builtin(index) => {
-                    matches!(self.text(self.ir.builtins[index as usize].name), "..")
-                        || matches!(
-                            self.text(self.ir.builtins[index as usize].name),
-                            "SUBSET" | "\\cup" | "UNION"
-                        ) && is_covered(self, args, seen)
-                }
-                _ => false,
-            },
+            NodeKind::Apply { name, .. } if !name.is_local => matches!(
+                name.resolution,
+                Resolution::Builtin(index) if self.text(self.ir.builtins[index as usize].name) == ".."
+            ),
             _ => false,
         }
     }
