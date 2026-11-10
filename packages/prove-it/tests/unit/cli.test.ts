@@ -860,6 +860,18 @@ const XML_EXPORT_FAILURES = [
 const exportXml = (args: string[]) =>
   runCliWith("xml-export", ["tla2sany.xml.XMLExporter", "-o", ...args]);
 
+describe("the CLI prints SANY's report as tla-front writes it", () => {
+  // SANY's error corpus E4243_1_Required_0_Provided: TLC reports the substitute's arity, then the
+  // constant it must substitute for, which the TypeScript report leaves out.
+  it.each([[[]], [["-tool"]]])("with %p", (args) => {
+    const result = runCli("sany-report", "Substitute", ["-noGenerateSpecTE", ...args]);
+    expect(result.status).toBe(150);
+    expect(result.stdout).toContain(
+      "Expected arity 1 but found operator of arity 0.\n\n\nIn module --TLA+ BUILTINS--\n\nAn operator must be substituted for symbol 'F', and it must have arity 1.\n",
+    );
+  });
+});
+
 describe("the CLI exports XML like SANY's XMLExporter", () => {
   it.each(XML_EXPORT_FAILURES)("fails on %s", (file, code, lines) => {
     const result = exportXml([file]);

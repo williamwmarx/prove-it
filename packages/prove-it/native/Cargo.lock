@@ -19,6 +19,7 @@ name = "prove-it-host"
 version = "0.1.0"
 dependencies = [
  "tla-engine",
+ "tla-front",
  "tla-ir",
  "tla-live",
  "tla-values",
