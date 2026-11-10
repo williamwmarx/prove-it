@@ -1,5 +1,6 @@
 // Writes every text tla-ts's prove sends a backend on the recorded modules to .prover-inputs, one
-// file per distinct input, named by its digest, for prover-differential.ts to decide again.
+// file per distinct input of each prover, named by its digest, for prover-differential.ts to decide
+// again.
 //
 // Which backends prove tries on an obligation depends on what the earlier ones answered, so the
 // texts come from proving each module. By default the answers come from prover-inputs.json, which
@@ -31,6 +32,7 @@ import {
   readProofRecords,
 } from "./proof-records";
 import {
+  getInputKey,
   getInputPath,
   type InputRecord,
   PROVER_INPUTS_DIRECTORY,
@@ -88,7 +90,7 @@ const readRecording = () =>
 
 if (isRecording && !process.argv.includes("--worker")) repairJournal(RECORDING_PATH);
 
-// The inputs of a module's proofs, by digest.
+// The inputs of a module's proofs, by key.
 const writeModuleInputs = async (module: ModuleProofRecord) => {
   const finished = isRecording ? readRecording().get(module.id) : undefined;
   if (finished !== undefined) return finished;
@@ -103,15 +105,15 @@ const writeModuleInputs = async (module: ModuleProofRecord) => {
   })();
   await proveObligations(obligations, {
     decide: async (prover, text, options) => {
-      const digest = getDigest(text);
-      const path = getInputPath(prover, digest);
+      const key = getInputKey(prover, getDigest(text));
+      const path = getInputPath(key);
       mkdirSync(join(path, ".."), { recursive: true });
       writeFileSync(path, text);
-      const recorded = inputs[digest] ?? (isRecording ? undefined : records[digest]);
+      const recorded = inputs[key] ?? (isRecording ? undefined : records[key]);
       if (!isRecording && recorded === undefined)
-        throw new Error(`${module.id}: ${prover} input ${digest} isn't in prover-inputs.json`);
-      inputs[digest] = recorded ?? record(prover, text, options.timeLimitMs);
-      return replay(inputs[digest]);
+        throw new Error(`${module.id}: input ${key} isn't in prover-inputs.json`);
+      inputs[key] = recorded ?? record(prover, text, options.timeLimitMs);
+      return replay(inputs[key]);
     },
   });
   if (isRecording) {

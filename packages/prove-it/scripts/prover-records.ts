@@ -32,8 +32,14 @@ const EXTENSIONS: Record<string, string> = {
   ls4: "ls4",
 };
 
-export const getInputPath = (prover: string, digest: string) =>
-  join(PROVER_INPUTS_DIRECTORY, prover, `${digest}.${EXTENSIONS[prover]}`);
+// An input by its prover and the digest of its text. Two provers can be sent the same text, as the
+// smt and z3 methods are, each with its own time limit and so its own step limit.
+export const getInputKey = (prover: string, digest: string) => `${prover}/${digest}`;
+
+export const getInputPath = (key: string) => {
+  const [prover, digest] = key.split("/");
+  return join(PROVER_INPUTS_DIRECTORY, prover, `${digest}.${EXTENSIONS[prover]}`);
+};
 
 export const readInputRecords = (): Record<string, InputRecord> => {
   if (!existsSync(PROVER_INPUTS_PATH)) {
@@ -43,13 +49,13 @@ export const readInputRecords = (): Record<string, InputRecord> => {
   return JSON.parse(readFileSync(PROVER_INPUTS_PATH, "utf8"));
 };
 
-// One input to a line, by digest, so that a new recording's diff shows what changed.
+// One input to a line, by key, so that a new recording's diff shows what changed.
 export const writeInputRecords = (records: Record<string, InputRecord>) =>
   writeFileSync(
     PROVER_INPUTS_PATH,
     `{\n${Object.keys(records)
       .sort()
-      .map((digest) => `${JSON.stringify(digest)}: ${JSON.stringify(records[digest])}`)
+      .map((key) => `${JSON.stringify(key)}: ${JSON.stringify(records[key])}`)
       .join(",\n")}\n}\n`,
   );
 
