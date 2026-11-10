@@ -193,6 +193,34 @@ across atoms, on the helpers, and only for the states asked about.
   stay near one thread: their search records a graph and runs on one thread, and SpanTreeRandom's
   atoms draw. That is track 2's and track 6's work, as is the memory four threads take.
 
+  On 16 cores (`depot-ubuntu-24.04-16`, AMD EPYC 9R45), the Benchmark workflow on this branch at
+  419c7eb, medians of 3 runs, with TLC at d8fb231 on the same machine. MCExactInitialSync didn't
+  run: the workflow didn't fetch its corpus (#180).
+
+  | Model | 1 thread | 16 threads | Speedup | TLC, 16 workers | Over TLC, 16 | RSS MB, 1 → 16 |
+  |---|---:|---:|---:|---:|---:|---|
+  | PaxosCommit | 22.70 | 3.28 | 6.9× | 10.33 | 3.1× | 744 → 3,227 |
+  | MCMultiNode | 6.14 | 1.07 | 5.7× | 6.82 | 6.4× | 538 → 1,851 |
+  | MCLamportMutex | 2.26 | 0.58 | 3.9× | 3.44 | 5.9× | 141 → 385 |
+  | MCbtree | 0.71 | 0.21 | 3.4× | 3.94 | 18.8× | 50 → 123 |
+  | Detlefs | 3.27 | 0.71 | 4.6× | 5.07 | 7.1× | 279 → 379 |
+  | FastPaxos | 2.82 | 0.46 | 6.1× | 2.69 | 5.8× | 175 → 1,280 |
+  | TLCSailfish1 | 9.12 | 0.93 | 9.8× | 3.16 | 3.4× | 146 → 482 |
+  | MCabs | 10.64 | 1.37 | 7.8× | 3.63 | 2.6× | 35 → 205 |
+  | GameOfLife | 1.27 | 0.16 | 7.9× | 1.58 | 9.9× | 47 → 219 |
+  | BufferedRandomAccessFile | 1.53 | 0.17 | 9.0× | 3.46 | 20× | 37 → 69 |
+  | StarkMutex, N = 4 | 7.35 | 6.62 | 1.11× | 12.96 | 2.0× | 589 → 759 |
+  | cf1s_folklore | 13.81 | 11.36 | 1.22× | 15.12 | 1.3× | 545 → 2,233 |
+  | SpanTreeRandom | 1.79 | 1.77 | 1.0× | 3.32 | 1.9× | 71 → 71 |
+  | 2PCwithBTM | 0.01 | 0.01 | — | 0.48 | — | 38 → 38 |
+
+  The models with large levels and costly states scale best (TLCSailfish1, BufferedRandomAccessFile,
+  GameOfLife, MCabs: 7.8–9.8×); those with cheap states scale least (MCbtree, MCLamportMutex), as
+  the serial merge of each level takes a larger share. Memory grows with the threads, by up to
+  150 MB a thread on PaxosCommit and 70 MB on FastPaxos: each thread keeps a copy of the store in
+  its overlay, its own memo tables and, under SYMMETRY, its own canonicalizer's tables of images,
+  each sized to the store. Both are track 6's.
+
 ### 2. Liveness (`perf-liveness`), independent
 
 Liveness models spend 73–93% of their time in liveness, on one thread.
