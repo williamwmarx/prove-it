@@ -2173,6 +2173,30 @@ describe("evaluation errors match TLC", () => {
     expect(result.failure?.message).toBe("Evaluating invariant Inv failed.\n0^0 is undefined.");
   });
 
+  it.each([
+    [
+      "ASSUME {1} \\in {s \\in SUBSET {1} : 1 \\div 0 = 0}",
+      "Cannot decide if element:\n{1}\n is element of:\n{{}, {1}}\nand satisfies the predicate line 6, col 36 to line 6, col 47 of module M",
+    ],
+    [
+      "ASSUME [n \\in Nat |-> n].a = 1",
+      "Attempted to compute the number of elements in the overridden value Nat.",
+    ],
+    [
+      "ASSUME [n \\in Nat |-> n] \\in Seq(Nat)",
+      "To convert a function of form [x \\in S |-> f(x)] to a tuple, the set S must be enumerable.",
+    ],
+  ])("words %s as TLC's lazy values do", async (assumption, message) => {
+    const result = await checkModule(assumption);
+    expect(result.status).toBe("assumption-violation");
+    expect(result.violation?.message).toBe(message);
+  });
+
+  it("puts a typed model value before an overridden set", async () => {
+    const result = await checkModule("CONSTANT m\nASSUME ~(Nat = m)", "CONSTANT m = A_b");
+    expect(result.status).toBe("success");
+  });
+
   it("words arithmetic, sequence, and membership errors like TLC", async () => {
     const cases = [
       ["1 \\div 0 = 0", "The second argument of \\div is 0."],
