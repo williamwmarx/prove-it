@@ -351,12 +351,9 @@ Done on native-parity:
   `tla-trace` follows a filter TLC kept lazy into the comparison that enumerates it
   (`follow_lazy_filter`); the binary reports a failure among the initial states of a model with
   temporal properties, which the search hands over only where the atoms of the initial states
-  evaluate; and both front ends keep the list a definition wrote as the specification's
-  initial predicate where its conjuncts are that list's, so the call stack's first frame is the
-  list's, as TLC keeps the body of a definition the specification names whole (the
-  infinite-sets session is replacing that rule of `getSpecification` with its own lowering of
-  the initial predicate; the test `reports_a_bound_tlc_cant_enumerate_in_the_initial_predicate`
-  and YoYoAllGraphs hold either way).
+  evaluate; and the call stack's first frame is the list a definition wrote, as both front ends
+  keep a definition that is a state predicate whole as one of the specification's initial
+  predicates (`gaps.md`, "The specification's initial predicates, as TLC keeps them").
 - TraceMultiNodeReads: without the Java overrides its CONSTRAINT chooses from
   [STRING -> STRING] on the first initial state. Enumerating a set of functions whose domain
   TLC can't enumerate is one of TLC's failures (`INFINITE_DOMAIN`); `tla-trace` marks a failed
