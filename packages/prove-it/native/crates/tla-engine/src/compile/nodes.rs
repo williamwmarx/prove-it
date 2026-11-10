@@ -921,6 +921,14 @@ impl Compiler<'_> {
             .iter()
             .map(|(set, ..)| -> Reference {
                 match (set.infinite, &set.member, &set.reference) {
+                    // TLC evaluates the operands of such a set as it builds the function, and
+                    // the test evaluates them as it applies it: where they read a register,
+                    // TLC's search, or draw, what they read may have changed by then.
+                    (Some(_), Some(_), _) if set.reads_search() => Arc::new(|_| {
+                        Err(Bail(
+                            "unsupported: a domain TLC keeps lazy that reads what may change before it is applied",
+                        ))
+                    }),
                     (Some(_), Some(member), _) => {
                         let member = Arc::clone(member);
                         Arc::new(move |_| Ok(Lazy::Tested(Arc::clone(&member))))
