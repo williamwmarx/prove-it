@@ -1,0 +1,4 @@
+$hyp "h" (A. ((x) (=> (P x) (P (f x)))))
+$hyp "h2" (P a)
+$hyp "h3" (A. ((x y) (=> (/\ (P x) (P y)) (P (g x y)))))
+$goal (P b)

@@ -91,6 +91,12 @@ describe("the Rust ports", () => {
     );
   });
 
+  it("decides Zenon", () => {
+    expect(getAddon().decide("zenon", INPUTS[1][1], Infinity, undefined, undefined).kind).toBe(
+      "decided",
+    );
+  });
+
   it("declines a prover without a backend", () => {
     expect(getAddon().decide("cvc4", "", 1000, 10, undefined)).toEqual({
       kind: "declined",
