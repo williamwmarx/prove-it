@@ -8,10 +8,11 @@
 use std::sync::Arc;
 
 use tla_values::store::{
-    EMPTY_SET, KIND_INT, KIND_MODEL, KIND_SET, KIND_STRING, KIND_TUPLE, Outcome, is_function_kind,
+    EMPTY_SET, KIND_INT, KIND_SET, KIND_STRING, KIND_TUPLE, Outcome, is_function_kind,
 };
 use tla_values::{Bail, Id};
 
+use super::sets::{is_in_named, not_in};
 use crate::machine::Machine;
 
 // Beyond these the interpreter would list more elements than a search can use.
@@ -419,20 +420,13 @@ impl Lazy {
     /// Membership as the interpreter tests it (`isElementOf`), failing where it fails.
     pub(crate) fn contains(&self, machine: &mut Machine<'_>, element: Id) -> Outcome<bool> {
         let kind = machine.store.kind_of(element);
-        let is_model = kind == KIND_MODEL;
         match self {
             Lazy::Set(set) => {
                 let set = Self::set(machine, *set)?;
                 machine.store.is_member(element, set)
             }
-            Lazy::Infinite(name) => match (*name, kind) {
-                ("Nat", KIND_INT) => Ok(machine.store.int_of(element) >= 0),
-                ("Int", KIND_INT) | ("STRING", KIND_STRING) => Ok(true),
-                // Seq(S) holds sequences of S's elements, which this reference doesn't keep.
-                ("Seq", _) => Err(Bail("unsupported: membership in Seq(S) by its name alone")),
-                _ if is_model => Ok(false),
-                _ => Err(Bail("a mistyped membership in an infinite set")),
-            },
+            // Seq(S) holds sequences of S's elements, which its reference doesn't keep.
+            Lazy::Infinite(name) => is_in_named(machine, name, element),
             Lazy::Tested(test) => test(machine, element),
             Lazy::Subset(base) => {
                 if kind != KIND_SET {
@@ -448,11 +442,11 @@ impl Lazy {
             }
             Lazy::FunctionSet(domain, range) => {
                 if !is_function_kind(kind) {
-                    return if is_model {
-                        Ok(false)
-                    } else {
-                        Err(Bail("a mistyped membership in a set of functions"))
-                    };
+                    return not_in(
+                        machine,
+                        element,
+                        "a mistyped membership in a set of functions",
+                    );
                 }
                 let keys = domain.enumerate(machine)?;
                 let domain = machine.store.set_of(&keys)?;
@@ -483,11 +477,11 @@ impl Lazy {
                         machine.store.kind_of(key) == KIND_STRING
                     });
                 if !is_record {
-                    return if is_model {
-                        Ok(false)
-                    } else {
-                        Err(Bail("a mistyped membership in a set of records"))
-                    };
+                    return not_in(
+                        machine,
+                        element,
+                        "a mistyped membership in a set of records",
+                    );
                 }
                 if size as usize != keys.len() {
                     return Ok(false);
@@ -514,10 +508,10 @@ impl Lazy {
                             let key = machine.store.get_key(element, index);
                             machine.store.kind_of(key) == KIND_INT
                         });
-                    return if is_integer_function || is_model {
+                    return if is_integer_function {
                         Ok(false)
                     } else {
-                        Err(Bail("a mistyped membership in a set of tuples"))
+                        not_in(machine, element, "a mistyped membership in a set of tuples")
                     };
                 }
                 if machine.store.size_of(element) as usize != factors.len() {

@@ -1782,6 +1782,37 @@ fn evaluates_a_lazy_functions_domain_as_tlc_builds_it() {
 }
 
 #[test]
+fn tests_a_typed_model_value_against_a_lazy_domain_as_tlc_does() {
+    // TLC fails to test a typed model value for membership in Nat, in DOMAIN of a function it
+    // keeps lazy as anywhere, where an untyped one is simply not in it. The run stops there and
+    // must not find x FALSE.
+    let spec = "---- MODULE Stop ----\nEXTENDS Integers\nCONSTANTS Ma, Mu\nVARIABLE x\nInit == x = (Ma \\in DOMAIN [i \\in Nat |-> 1])\nNext == UNCHANGED x\n====\n";
+    let (output, directory) = run_lowered(
+        "typed-domain",
+        spec,
+        "CONSTANTS Ma = a_a\nCONSTANTS Mu = Mu\nINIT Init\nNEXT Next\n",
+    );
+    let text = stdout(&output);
+    assert!(!text.contains("No error has been found"), "{text}");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("a mistyped membership in Nat"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+    // A failing test of a domain TLC built of other sets is reported as a value TLC can't
+    // fingerprint, which the run declines rather than word otherwise.
+    let spec = "---- MODULE Stop ----\nEXTENDS Integers\nVARIABLE x\nInit == x = ([i \\in Nat \\ {0} |-> 1][\"s\"])\nNext == UNCHANGED x\n====\n";
+    let (output, directory) = run_lowered("typed-composite", spec, "INIT Init\nNEXT Next\n");
+    let text = stdout(&output);
+    assert!(
+        !text.contains("The error occurred when TLC was evaluating the nested"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
 fn keeps_a_definitions_value_as_tlc_does() {
     // TLC evaluates a LET definition or an argument once, at its first use, and keeps the value
     // (`LazyValue`), so `a` is 0 both times though TLCSet writes the register between its uses.

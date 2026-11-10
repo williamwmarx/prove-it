@@ -22,6 +22,22 @@ const MAXIMUM_FUNCTIONS: f64 = (1u64 << 24) as f64;
 
 /// TLC fails to test a value other than a model value for membership in a set of another kind:
 /// an untyped model value isn't a member, and anything else, a typed model value included, fails.
+/// Membership in Nat, Int or STRING (`IntValue`'s and `StringValue`'s `member`), which fails for
+/// a value of another kind but an untyped model value.
+pub(crate) fn is_in_named(machine: &Machine<'_>, name: &str, element: Id) -> Outcome<bool> {
+    let kind = machine.store.kind_of(element);
+    match (name, kind) {
+        ("Nat", KIND_INT) => Ok(machine.store.int_of(element) >= 0),
+        ("Int", KIND_INT) | ("STRING", KIND_STRING) => Ok(true),
+        ("Nat", _) => not_in(machine, element, "a mistyped membership in Nat"),
+        ("Int", _) => not_in(machine, element, "a mistyped membership in Int"),
+        ("STRING", _) => not_in(machine, element, "a mistyped membership in STRING"),
+        _ => Err(Bail(
+            "unsupported: membership in an infinite set by its name alone",
+        )),
+    }
+}
+
 pub(crate) fn not_in(machine: &Machine<'_>, element: Id, reason: &'static str) -> Outcome<bool> {
     if machine.store.kind_of(element) == KIND_MODEL && machine.store.get_model_type(element) == 0 {
         Ok(false)
@@ -134,27 +150,10 @@ impl Compiler<'_> {
             });
         }
         match set.infinite {
-            Some("Nat") => member(|machine, element| {
-                if machine.store.kind_of(element) == KIND_INT {
-                    Ok(machine.store.int_of(element) >= 0)
-                } else {
-                    not_in(machine, element, "a mistyped membership in Nat")
-                }
-            }),
-            Some("Int") => member(|machine, element| {
-                if machine.store.kind_of(element) == KIND_INT {
-                    Ok(true)
-                } else {
-                    not_in(machine, element, "a mistyped membership in Int")
-                }
-            }),
-            Some(_) => member(|machine, element| {
-                if machine.store.kind_of(element) == KIND_STRING {
-                    Ok(true)
-                } else {
-                    not_in(machine, element, "a mistyped membership in STRING")
-                }
-            }),
+            Some(name @ ("Nat" | "Int")) => {
+                member(move |machine, element| is_in_named(machine, name, element))
+            }
+            Some(_) => member(|machine, element| is_in_named(machine, "STRING", element)),
             None => {
                 let evaluate = set.eval.clone();
                 member(move |machine, element| {

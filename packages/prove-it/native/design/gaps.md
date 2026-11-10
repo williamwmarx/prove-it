@@ -488,6 +488,19 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   intersection or a difference with an infinite set has its operands as parts. A domain whose
   parts may print, set a register or draw is not native, since the reference evaluates them
   again.
+- Membership in a lazy domain shares the ordinary test of Nat, Int and STRING (`is_in_named`), and
+  each of its other tests goes through `not_in`: only an untyped model value is simply not in
+  the set. A typed one fails, as TLC fails `a_a \in DOMAIN [i \in Nat |-> 1]` ("Attempted to check
+  if the typed model value a_a is an element of Nat"); the domain had answered FALSE for every
+  model value. A kinds sweep (2026-11-10) tested typed and untyped model values, a string, an
+  integer, a tuple, a record, a set, a lazy function and Nat against the domains Nat, Int,
+  STRING, Seq({1}), Nat \X Nat, SUBSET Nat, Nat \ {0}, Nat \cup {-1} and a filter of Nat, by
+  `\in DOMAIN`, application, EXCEPT then application and plain membership, and the function sets
+  `[S -> Nat]`: each prints what TLC prints or is not native.
+- TLC reports a failing test of a lazy domain built of other sets (`Nat \ {0}`, `Nat \X Nat`, a
+  filter, ...) as a value it can't fingerprint, with the domain's source in the stack; the trace
+  evaluator worded it as the failure itself. It now declines there. Nat, Int, STRING and Seq(S)
+  report the failure itself, as it words them.
 - The trace evaluator follows a lazy function of one named bound only. For several bounds or a
   tuple pattern over a set it can't enumerate it enumerated the domain, and the binary printed
   "Attempted to enumerate a set of the form s1 \X s2 ..." where TLC reports a key outside the
@@ -926,6 +939,10 @@ and FiniteSets and has `VARIABLE x`, `Init == x = 0` unless shown.
   `<expression line 4, col 65 to line 4, col 65 of module P14>`; with
   `F == [k \in {0, 1} |-> [i \in Nat \ {k} |-> i]]` and `Init == x = F[0][0]`, TLC prints the
   domain `Nat \ ({0})`, the interpreter `Nat \ {0}`. The native binary declines both.
+- **Lazy domains in the interpreter.** `[i \in Nat |-> 1]["s"]` and the like print the body as
+  `<expression line …>` where TLC prints `<expression 1>`; `[[i \in Nat |-> 1] EXCEPT ![Mu] =
+  2][Mu]` with an untyped model value prints one of TLC's two EXCEPT warnings; `([i \in Nat \X Nat
+  |-> Ma] \in [Nat \X Nat -> Nat])` misses the last frame of TLC's stack.
 - **The heap of the interpreter's run.** mongodb's MCTxnsMoveRange, run as the differential
   runs it (`PROVE_IT_ENGINE=0 node dist/cli.js -workers 1 -nowarning -seed 0 -fp 0 -lncheck final
   -noGenerateSpecTE -metadir <dir> -config MCTxnsMoveRange.cfg MCTxnsMoveRange.tla`), stops after
