@@ -271,21 +271,22 @@ fn is_not_yet(source: &str) -> bool {
 }
 
 #[test]
-fn leaves_what_sanys_selectors_word_not_native() {
+fn rejects_what_sanys_selectors_reject_and_takes_a_theorem_named_as_an_expression() {
     // TLC's tla2sany error corpus: E4203_Test, E4355_Test and E4351_Test, and a DEF entry that
-    // names nothing (E4200_Use_Test).
-    assert!(is_not_yet(
-        "---- MODULE E4203_Test ----\nimport == INSTANCE Naturals\nop == import\n===="
-    ));
-    assert!(is_not_yet(
-        "---- MODULE E4355_Test ----\nTHEOREM thm == ASSUME TRUE PROVE TRUE\nop == thm\n===="
-    ));
-    assert!(is_not_yet(
-        "---- MODULE E4351_Test ----\nop(x) == x\nTHEOREM TRUE\nPROOF\n<1>a TRUE\n<1>b HAVE TRUE\n<1>c op(<1>a)\n<1>d op(<1>b)\n<1> QED\n===="
-    ));
-    assert!(is_not_yet(
-        "---- MODULE E4200_Use_Test ----\nUSE DEF DoesNotExist\n===="
-    ));
+    // names nothing (E4200_Use_Test), which `tests/report.rs` words.
+    for source in [
+        "---- MODULE E4203_Test ----\nimport == INSTANCE Naturals\nop == import\n====",
+        "---- MODULE E4355_Test ----\nTHEOREM thm == ASSUME TRUE PROVE TRUE\nop == thm\n====",
+        "---- MODULE E4351_Test ----\nop(x) == x\nTHEOREM TRUE\nPROOF\n<1>a TRUE\n<1>b HAVE TRUE\n<1>c op(<1>a)\n<1>d op(<1>b)\n<1> QED\n====",
+        "---- MODULE E4200_Use_Test ----\nUSE DEF DoesNotExist\n====",
+    ] {
+        assert!(!is_not_yet(source), "{source}");
+        assert!(!get_level_errors(source, &[]).is_empty(), "{source}");
+    }
+    // SANY takes a theorem whose statement is an expression as one.
+    let source = "---- MODULE Main ----\nTHEOREM thm == TRUE\nop == thm\n====";
+    assert!(!is_not_yet(source));
+    assert!(get_level_errors(source, &[]).is_empty());
 }
 
 #[test]
@@ -315,4 +316,32 @@ fn rejects_a_function_applied_to_another_number_of_arguments() {
             message(2)
         )]
     );
+}
+
+#[test]
+fn leaves_a_recursive_declaration_an_enclosing_let_leaves_undefined_not_native() {
+    // SANY adds the inner declaration of F as a second one, which the front end doesn't follow.
+    assert!(is_not_yet(
+        "---- MODULE Main ----\nA == LET RECURSIVE F\n         G == LET RECURSIVE F\n                  F == 1\n              IN F\n     IN 0\n===="
+    ));
+}
+
+#[test]
+fn leaves_a_let_definition_before_a_recursive_declaration_it_names_not_native() {
+    // SANY reads a declaration where it appears: a function's bounds before it don't see it, and a
+    // definition before it doesn't satisfy it.
+    assert!(is_not_yet(
+        "---- MODULE Main ----\nA == LET G[x \\in F] == 0\n         RECURSIVE F\n     IN 0\n===="
+    ));
+    assert!(is_not_yet(
+        "---- MODULE Main ----\nA == LET F == 1\n         RECURSIVE F, K\n     IN 0\n===="
+    ));
+}
+
+#[test]
+fn leaves_a_parameter_named_like_a_let_recursive_operator_not_native() {
+    // `SymbolTable.addSymbol` rejects the parameter, which the front end doesn't follow.
+    assert!(is_not_yet(
+        "---- MODULE Main ----\nA == LET RECURSIVE F, K\n         F(F) == 0\n     IN 0\n===="
+    ));
 }

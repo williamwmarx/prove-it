@@ -718,6 +718,32 @@ fn base_store() -> Store {
     store
 }
 
+// A string the base ranked after it froze its order, as ToString ranks one, compares with no other
+// string in an overlay laid on it either, as on one thread.
+#[test]
+fn an_overlay_keeps_its_bases_frozen_order_of_strings() {
+    let mut store = Store::new();
+    store.reset([&utf16("a")[..]]);
+    store.freeze_string_order();
+    let a = str(&mut store, "a");
+    store.get_string_rank(&utf16("u"));
+    let late = str(&mut store, "u");
+    assert!(store.compare(a, late).is_err());
+    let base = std::sync::Arc::new(store);
+    for mut overlay in [Store::overlay(base.clone()), {
+        let mut other = Store::new();
+        other.attach(base.clone());
+        other
+    }] {
+        assert!(overlay.has_unordered_strings());
+        assert!(overlay.compare(a, late).is_err());
+        assert!(overlay.set_of(&[a, late]).is_err());
+        // A string the overlay makes takes the base's rank of its text.
+        assert_eq!(overlay.str(&utf16("u")), late);
+        assert_eq!(overlay.compare(late, late), Ok(0));
+    }
+}
+
 #[test]
 fn an_overlay_names_its_bases_values_by_their_ids_and_its_own_after_them() {
     let base = std::sync::Arc::new(base_store());

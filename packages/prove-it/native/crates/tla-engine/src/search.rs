@@ -1541,8 +1541,11 @@ impl<T: Reached, E: Entries> Search<'_, T, E> {
 const CHUNK: usize = 32;
 
 // Marks a slot of a thread's own states, which `Candidates::find` returns apart from the slots of
-// the states found before the level.
+// the states found before the level. A table's slots are below half of the address space, so the
+// mark is free on each but the slot of the fingerprint 0, ZERO_SLOT, which already has it: that of
+// the thread's own states stays ZERO_SLOT, and that of the states before the level is BEFORE_ZERO.
 const SEEN: usize = 1 << (usize::BITS - 1);
+const BEFORE_ZERO: usize = SEEN - 1;
 
 // A thread expanding part of a level reports nothing: what it would report, Print's output, makes
 // the search run on one thread.
@@ -1604,7 +1607,7 @@ impl Reached for Candidates<'_> {
             if before.is_verified && before.key_of(before.set.index(slot) as usize) != key {
                 self.collisions += 1;
             }
-            return Ok(slot);
+            return Ok(if slot == ZERO_SLOT { BEFORE_ZERO } else { slot });
         }
         let found = self.seen.find(fingerprint);
         if before.is_verified
@@ -1631,10 +1634,12 @@ impl Reached for Candidates<'_> {
     // have if the thread's states all joined the store after the level's first: the merge gives
     // each the index it does take.
     fn index(&self, slot: usize) -> u32 {
-        if slot & SEEN == 0 {
-            return self.before.set.index(slot);
+        match slot {
+            BEFORE_ZERO => self.before.set.index(ZERO_SLOT),
+            ZERO_SLOT => (self.before.count() + self.seen.index(ZERO_SLOT) as usize) as u32,
+            slot if slot & SEEN == 0 => self.before.set.index(slot),
+            slot => (self.before.count() + self.seen.index(slot & !SEEN) as usize) as u32,
         }
-        (self.before.count() + self.seen.index(slot & !SEEN) as usize) as u32
     }
 
     // Where the key isn't the state, a thread that takes a state for new may have missed another
@@ -2019,7 +2024,13 @@ impl Search<'_, States> {
                             if target < before_count {
                                 target as u32
                             } else {
-                                resolved[target - before_count]
+                                let index = resolved[target - before_count];
+                                debug_assert_ne!(
+                                    index,
+                                    u32::MAX,
+                                    "a step to a state not yet taken"
+                                );
+                                index
                             }
                         }));
                     if let (Some(labels), Some(labels_of)) = (&mut graph.labels, &steps_of.labels) {
@@ -4868,6 +4879,56 @@ mod tests {
         assert_eq!(states.set.index(found), 0);
         assert_eq!(states.collisions, 0);
         assert_eq!(states.set.len, 1);
+    }
+
+    // A thread of a shared level tells a state found before the level from one it found itself,
+    // the fingerprint 0 included, whose slot stands apart from the table's in each set.
+    #[test]
+    fn tells_the_states_of_a_thread_from_those_before_its_level_whatever_their_fingerprints() {
+        let mut before = verified_states();
+        for (state, fingerprint) in [(5, 0), (6, 1)] {
+            let Err(slot) = before.find(&[state], fingerprint) else {
+                panic!("a fingerprint found before it was added");
+            };
+            before.add(&[state], &[], fingerprint, slot, -1);
+        }
+        let mut thread = Candidates {
+            before: &before,
+            seen: FingerprintSet::new(true),
+            ids: Vec::new(),
+            keys: Vec::new(),
+            fingerprints: Vec::new(),
+            parents: Vec::new(),
+            deferred: Vec::new(),
+            collisions: 0,
+        };
+        for (state, fingerprint, index) in [(5, 0, 0), (6, 1, 1)] {
+            let slot = Reached::find(&mut thread, &[state], fingerprint).expect("a state before");
+            assert_eq!(Reached::index(&thread, slot), index);
+        }
+        // A thread's own states, after none before the level, in the order it found them.
+        let own = verified_states();
+        let mut thread = Candidates {
+            before: &own,
+            seen: FingerprintSet::new(true),
+            ids: Vec::new(),
+            keys: Vec::new(),
+            fingerprints: Vec::new(),
+            parents: Vec::new(),
+            deferred: Vec::new(),
+            collisions: 0,
+        };
+        for (state, fingerprint) in [(7, 2), (8, 0)] {
+            let Err(slot) = Reached::find(&mut thread, &[state], fingerprint) else {
+                panic!("a thread found a state before it reached it");
+            };
+            Reached::add(&mut thread, &[state], &[state], fingerprint, slot, 0);
+        }
+        for (state, fingerprint, index) in [(7, 2, 0), (8, 0, 1)] {
+            let slot = Reached::find(&mut thread, &[state], fingerprint).expect("a state found");
+            assert_eq!(Reached::index(&thread, slot), index);
+        }
+        assert_eq!(thread.collisions, 0);
     }
 
     // Under a VIEW or symmetry the key is kept beside the state, and compared for a collision.
