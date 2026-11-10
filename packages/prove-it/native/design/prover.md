@@ -96,7 +96,7 @@ What this gives:
 
 | Need | Today | In Rust |
 |---|---|---|
-| Lexer and parser, tlapm's mode | `src/lexer.ts`, `src/parser.ts` `parseTlapmModule` (24 branches on `isTlapm`: keywords, `@`, LAMBDA, incomplete-expression errors, operator grouping), plus `obligations/regroup.ts` (tlapm's `Pco.resolve`) | `tla-front`'s lexer and parser, which already have proofs in the AST (`ast.rs`: `Proof`, `ProofStep`, `Theorem`), gain a tlapm mode (section 3.5). |
+| Lexer and parser, tlapm's mode | `src/lexer.ts`, `src/parser.ts` `parseTlapmModule` (24 branches on `isTlapm`: keywords, `@`, LAMBDA, incomplete-expression errors, operator grouping), and its tokens | `tla-front`'s lexer and parser, which already have proofs in the AST (`ast.rs`: `Proof`, `ProofStep`, `Theorem`), gain a tlapm mode (section 3.5); `obligations/regroup.ts` (tlapm's `Pco.resolve`) moves with the obligations. |
 | SANY levels | not used: obligations has its own `levels.ts` (tlapm's `Expr.Levels`) | ported with obligations, not taken from `tla-front`'s `levels.rs` (different rules). |
 | The evaluator, values | not used | — |
 | Rationals and big integers | JS `bigint` (17 files, all in `smt/`) | a std-only integer type (section 3.4). |
@@ -399,22 +399,31 @@ big integer yet; `tla-values` is free to use this one later.
 ### 3.5 What the front end must add
 
 `obligations/index.ts` uses `src/lexer.ts` and `parseTlapmModule`, and `source.ts` converts the TS
-AST. Both TS parsers are on their way out, so the Rust obligations read `tla-front`'s AST. That
-needs, in `tla-front`, behind a `ParseMode::Tlapm` flag and without changing SANY's mode:
+AST. It uses nothing else of the TS front end: no resolution, no SANY levels (tlapm's levels are
+its own, in `obligations/levels.ts`). Both TS parsers are on their way out, so the Rust
+obligations read `tla-front`'s AST (`ast.rs`, which mirrors `src/ast.ts`). What they need from
+`tla-front`, behind a `ParseMode::Tlapm` flag and without changing SANY's mode:
 
-- the 24 places `parser.ts` branches on `isTlapm`: keywords and `TRUE`/`FALSE`/`BOOLEAN`/`STRING`
-  read only as keywords, `@` kept as a token, string columns, tlapm's "incomplete expression" and
-  "Unexpected keyword" errors, LAMBDA, `\B`/`\O`/`\H` prefixes, RECURSIVE inside LET, the
-  separated definables, and no operator-grouping fix-up;
-- `regroup.ts`'s `Pco.resolve` (99 lines), the operator grouping tlapm's parser produces
-  (`SUBSET S \ T` is `SUBSET (S \ T)`), as a pass after parsing;
-- proof syntax tlapm accepts and SANY rejects, or the reverse, as `parser.ts` handles it today
-  (pragmas `(*{ … }*)` are comments to the lexer and read by `obligations/pragma.ts` from the
-  source text, so they need nothing).
+- the parse in tlapm's mode: the 24 places `parser.ts` branches on `isTlapm`: keywords and
+  `TRUE`/`FALSE`/`BOOLEAN`/`STRING` read only as keywords, `@` kept as a token, string columns,
+  tlapm's "incomplete expression" and "Unexpected keyword" errors, LAMBDA, `\B`/`\O`/`\H`
+  prefixes, RECURSIVE inside LET, the separated definables, and no SANY operator-grouping fix-up;
+- the token stream, which `index.ts` uses to place tlapm's TAB error after the last token before
+  the first tab and to find the module's end;
+- a syntax failure in the shape tlapm prints, `{reason, line, column, isEnd}` (today
+  `TlaSyntaxError.failure`).
 
-Measured against the TS parser on every corpus module in `proofs.json` (the AST as `source.ts`
-consumes it), as the front-end differential does for SANY's mode. This is P5a; it is the only
-work in a crate another session owns, so it is announced first and kept to that flag.
+`regroup.ts` (tlapm's `Pco.resolve`, 99 lines: `SUBSET S \ T` is `SUBSET (S \ T)` to tlapm) is
+not part of the parse: `source.ts` applies it while converting. It moves with the obligations
+(P5b), so `tla-front`'s AST stays a faithful parse in both modes. Pragmas `(*{ … }*)` are comments
+to the lexer and `obligations/pragma.ts` reads them from the source text, so they need nothing.
+
+The gate (agreed with `tla-front`'s owner): a `tlapm-ast` mode of `scripts/front-differential.ts`
+comparing the TS parser's tlapm-mode AST, tokens and syntax failures with `tla-front`'s, over the
+corpora including the 304 modules of `proofs.json` and the modules they load, and the error
+corpus of `tests/conformance/tlapm.json`. P5b's byte-identical obligation texts check it end to
+end. This is P5a; it is the only work in a crate another session owns, so it is announced to the
+coordinator first, done by or with that crate's owner, and kept to that flag.
 
 ### 3.6 Limits, interruption, determinism
 
@@ -538,8 +547,8 @@ Sizes are TypeScript lines ported.
 | **P3c** SMT core | AST, parser, rewriters, tactics, CDCL kernel, E-matching, MBQI, `theory-lra-*` | 23,254 | decider differential on `.smt`/`.smt2` inputs (verdict, `rlimit` count, instances); `smt.test.ts`, `smt-clause-store.test.ts`. Until P3b lands, inputs without arithmetic theory atoms only, then all | high | P3a; all inputs need P3b |
 | **P4a** Isabelle kernel | `pure/` | 6,628 | ported unit tests of the kernel; the decider differential on the theories whose tactics are only `pure` steps (few); mostly through P4b | medium | P0 |
 | **P4b** Isabelle provers and Isar | `provers/`, `isar/`, `tla/`, `tools/`, the logic data | 5,124 + data | decider differential on theory inputs (verdict, step count); `isabelle.test.ts` | medium-high: Isabelle's search order (nets, simpsets) must be exact | P4a |
-| **P5a** tlapm parse mode | `tla-front` `ParseMode::Tlapm` and `regroup` | ≈1,500 in `tla-front` | the AST `source.ts` consumes, against the TS parser, on all corpus modules; tlapm's parse errors on `tlapm.json` | medium; touches a shared crate | announced; independent of P1–P4 |
-| **P5b** Obligations | `obligations/` on `tla-front`'s AST | 8,873 | encoder differential: every obligation's text, location, kind; `obligations.test.ts`; `conformance:tlapm`'s `-N`/`--summary` output | high: tlapm's printer and Format layout byte for byte | P5a |
+| **P5a** tlapm parse mode | `tla-front` `ParseMode::Tlapm`: the parse, the tokens, the syntax failure (3.5) | ≈1,500 in `tla-front` | `front-differential.ts tlapm-ast` against the TS parser on all corpus modules; tlapm's parse errors on `tlapm.json` | medium; touches a shared crate | announced; independent of P1–P4 |
+| **P5b** Obligations | `obligations/` on `tla-front`'s AST, `regroup` included | 8,873 | encoder differential: every obligation's text, location, kind; `obligations.test.ts`; `conformance:tlapm`'s `-N`/`--summary` output | high: tlapm's printer and Format layout byte for byte | P5a |
 | **P5c** Prep and encoders | `prep/`, the four encoders, `first-order`, fingerprints, MD5 | ≈5,800 | encoder differential: every back-end text and fingerprint byte-identical; `conformance:smt-encode`, `:isabelle-encode` | medium | P5b |
 | **P6** Driver and CLI | `prove-it-prover` (`prove.ts`, ordering, reuse, CASE sessions, threads), `.tlacache` (OCaml Marshal), `prove-it tlapm` in the native binary, `prove` in the library through the binding | ≈2,000 | end-to-end differential (layer 5), with 1 and 4 threads, with and without `.tlacache`; `prove.test.ts`, `prove-workers.test.ts`, `tlapm-cache.test.ts`; `conformance:tlapm` | medium | P1–P5 |
 | **P7** Delete | the TypeScript prover and obligations, `PROVE_IT_PROVER*`, the TS-only tests the Rust tests replaced; `THIRD_PARTY_NOTICES.md` | −86,000 | the whole gate, `conformance:prove` unchanged | low | P6 and every flip |
