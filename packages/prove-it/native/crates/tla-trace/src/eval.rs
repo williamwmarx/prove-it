@@ -297,6 +297,8 @@ pub(crate) const PRIMED_UNASSIGNED: &str = "primed variable not assigned: ";
 
 pub struct Evaluator<'ir> {
     pub ir: &'ir Ir,
+    /// Builtins that `can_read` counts as reading the state, as `is_precomputed` asks.
+    pub(crate) state_builtins: &'static [&'static str],
     texts: Vec<Option<Rc<Text>>>,
     ranks: HashMap<Box<[u16]>, i32>,
     constants: Vec<Option<Value>>,
@@ -552,6 +554,7 @@ impl<'ir> Evaluator<'ir> {
             .collect();
         let width = ir.variables.len();
         Evaluator {
+            state_builtins: &[],
             ir,
             texts: vec![None; ir.texts.len()],
             ranks,

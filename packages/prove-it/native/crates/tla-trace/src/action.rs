@@ -199,6 +199,17 @@ impl<'ir> Evaluator<'ir> {
         is_constant
     }
 
+    /// Whether TLC computes a definition as it starts (`processConstantDefns`), which it does to
+    /// one of constant level whose evaluation then succeeds. One that reads TLC's registers or
+    /// its counterexample fails then, so TLC keeps it; any other one of constant level may be
+    /// computed, so this says yes for it.
+    pub(crate) fn is_precomputed(&mut self, definition: NodeId) -> bool {
+        self.state_builtins = &["TLCGet", "TLCSet", "CounterExample"];
+        let reads = self.can_read(definition, &Context::default());
+        self.state_builtins = &[];
+        !reads
+    }
+
     /// Whether an expression may read the state, as `getLevel` finds it above constant level.
     pub(crate) fn can_read(&self, node: NodeId, context: &Context) -> bool {
         self.can_read_state(node, context, &mut HashSet::new())
@@ -317,6 +328,9 @@ impl<'ir> Evaluator<'ir> {
         }
         match name.resolution {
             Resolution::Variable(_) => true,
+            Resolution::Builtin(index) => self
+                .state_builtins
+                .contains(&&*self.ir.texts[self.ir.builtins[index as usize].name as usize]),
             Resolution::Definition(index) => self.can_read_state(
                 self.ir.definitions[index as usize],
                 &Context::default(),

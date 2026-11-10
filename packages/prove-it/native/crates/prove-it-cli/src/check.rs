@@ -685,6 +685,23 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
             return report_not_native(printer, &format!("the engine IR doesn't decode: {error}"));
         }
     };
+    // TLC rejects a POSTCONDITION or an ALIAS it computed as it started (`Spec.getAlias`,
+    // `getPostConditionSpecs`), which the binary doesn't report: it declines one that may be.
+    let configured = ir.model.postconditions.iter().chain(&ir.model.alias);
+    let definitions: Vec<u32> = configured.filter_map(|name| name.definition).collect();
+    if !definitions.is_empty() {
+        let is_precomputed = Rebuilder::new(&ir).map_or(true, |mut rebuilder| {
+            definitions
+                .iter()
+                .any(|&definition| rebuilder.is_precomputed(definition))
+        });
+        if is_precomputed {
+            return report_not_native(
+                printer,
+                "a POSTCONDITION or an ALIAS TLC may compute as it starts",
+            );
+        }
+    }
     let (is_startup_printed, startup_messages) = match front.output {
         Output::Recorded(output) => {
             printer.raw(&output);
@@ -910,9 +927,6 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                 print_liveness_finished(printer, checking);
             }
             if !ir.model.postconditions.is_empty() {
-                if has_constant_postcondition(&ir) {
-                    return report_not_native(printer, "a POSTCONDITION TLC computes as it starts");
-                }
                 let statistics = Statistics {
                     generated: counts.generated,
                     distinct: counts.distinct,
@@ -1006,15 +1020,14 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                 ViolationKind::Error { site }
                     if !is_initial_site(site)
                         && !config.postconditions.is_empty()
-                        && (has_constant_postcondition(&ir)
-                            || match site {
-                                ErrorSite::Invariant(_) => false,
-                                ErrorSite::Next => {
-                                    ir.model.check_deadlock
-                                        && violation.counts.generated != initial_generated
-                                }
-                                _ => true,
-                            }) =>
+                        && match site {
+                            ErrorSite::Invariant(_) => false,
+                            ErrorSite::Next => {
+                                ir.model.check_deadlock
+                                    && violation.counts.generated != initial_generated
+                            }
+                            _ => true,
+                        } =>
                 {
                     Err("a failure with a POSTCONDITION".to_string())
                 }
@@ -1251,10 +1264,7 @@ fn print_violation(
     }
     // TLC prints a trace once it has rebuilt all of it, and a state that the evaluator can't
     // rebuild as TLC built it keeps the run not native.
-    // After a violation, TLC checks no postcondition where one is a value it computes as it
-    // starts.
-    let checked = postconditions
-        .filter(|_| !ir.model.postconditions.is_empty() && !has_constant_postcondition(ir));
+    let checked = postconditions.filter(|_| !ir.model.postconditions.is_empty());
     let trace = match rebuild_trace(ir, violation, checked, printer.is_tool) {
         Ok(trace) => trace,
         Err(reason) => return Ok(report_not_native(printer, &reason)),
@@ -1623,15 +1633,6 @@ fn postcondition_run(
             duration: counts(start.elapsed().as_secs()),
         },
     }
-}
-
-/// Whether a postcondition is a definition TLC computes as it starts, which it rejects.
-fn has_constant_postcondition(ir: &tla_ir::Ir) -> bool {
-    ir.model.postconditions.iter().any(|postcondition| {
-        postcondition
-            .definition
-            .is_some_and(|definition| ir.model.startup.definitions.contains(&definition))
-    })
 }
 
 /// TLC's report of the first postcondition that doesn't hold, named with where its definition's
