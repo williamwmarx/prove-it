@@ -687,15 +687,38 @@ fn reports_an_assumption_that_is_no_boolean() {
 }
 
 // The Bags module's Java overrides (`tlc2.module.Bags`) and SubBag's TLA+ definition, as
-// tests/unit/bags.test.ts has TLC fail them. (+) requires both arguments be bags, so a count of 0
-// fails it.
+// tests/unit/bags.test.ts has TLC fail them, and as TLC at d8fb231 fails them where a comparison,
+// a cast or a lazy function fails inside a method, which TLC reports as the method's failure.
+// (+) requires both arguments be bags, so a count of 0 fails it.
 #[test]
 fn reports_failures_of_the_bags_operators_as_tlc() {
-    let cast = |method: &str| {
+    let java = |method: &str, error: &str| {
+        let arguments = if method.contains("BagUnion")
+            || method.contains("SetToBag")
+            || method.contains("BagToSet")
+            || method.contains("IsABag")
+            || method.contains("BagCardinality")
+        {
+            "tlc2.value.impl.Value"
+        } else {
+            "tlc2.value.impl.Value,tlc2.value.impl.Value"
+        };
         format!(
-            "Attempted to apply the operator overridden by the Java method\npublic static {method}(tlc2.value.impl.Value,tlc2.value.impl.Value),\nbut it produced the following error:\nclass tlc2.value.impl.StringValue cannot be cast to class tlc2.value.impl.IntValue (tlc2.value.impl.StringValue and tlc2.value.impl.IntValue are in unnamed module of loader 'app')"
+            "Attempted to apply the operator overridden by the Java method\npublic static {method}({arguments}),\nbut it produced the following error:\n{error}"
         )
     };
+    let class_cast = |class: &str| {
+        format!(
+            "class tlc2.value.impl.{class} cannot be cast to class tlc2.value.impl.IntValue (tlc2.value.impl.{class} and tlc2.value.impl.IntValue are in unnamed module of loader 'app')"
+        )
+    };
+    let cast = |method: &str| java(method, &class_cast("StringValue"));
+    let string_with_integer = "Attempted to check equality of string \"a\" with non-string:\n1";
+    let lazy_nat = "Attempted to compute the number of elements in the overridden value Nat.";
+    const BAG_CUP: &str = "tlc2.value.impl.Value tlc2.module.Bags.BagCup";
+    const BAG_DIFF: &str = "tlc2.value.impl.Value tlc2.module.Bags.BagDiff";
+    const SQ_SUBSETEQ: &str = "tlc2.value.IBoolValue tlc2.module.Bags.SqSubseteq";
+    const BAG_UNION: &str = "tlc2.value.impl.Value tlc2.module.Bags.BagUnion";
     let operator = |literal: &str| {
         format!(
             "The first argument of BagOfAll should be an operator, but instead it is:\n{literal}"
@@ -815,6 +838,125 @@ fn reports_failures_of_the_bags_operators_as_tlc() {
             "Naturals",
             "SubBag(<<\"a\">>) /\\ 1 >= 0",
             "The first argument of > should be an integer, but instead it is:\n\"a\"".to_string(),
+        ),
+        // A count that isn't positive leaves the bag outside the domain of Bags.tla's RSB,
+        // which TLC prints as a function of RSB's domain.
+        (
+            "Integers",
+            "SubBag(<<0>>)",
+            "In applying the function\n(<<>> :> {<<>>}),\nthe first argument is:\n<<0>>\nwhich is not in its domain.\n".to_string(),
+        ),
+        (
+            "Integers",
+            "SubBag(<<2, 0>>)",
+            "In applying the function\n( <<>> :> {<<>>} @@\n  <<1>> :> {<<>>, <<1>>, <<2>>} @@\n  <<2>> :> {<<>>, <<1>>, <<2>>} @@\n  (2 :> 1) :> {<<>>} @@\n  (2 :> 2) :> {<<>>} @@\n  <<1, 1>> :> {<<>>, <<1>>, <<2>>} @@\n  <<1, 2>> :> {<<>>, <<1>>, <<2>>} @@\n  <<2, 1>> :> {<<>>, <<1>>, <<2>>} @@\n  <<2, 2>> :> {<<>>, <<1>>, <<2>>} ),\nthe first argument is:\n<<2, 0>>\nwhich is not in its domain.\n".to_string(),
+        ),
+        // Comparisons that fail inside a method.
+        (
+            "Integers",
+            "<<1, 2>> (+) [a |-> 3]",
+            java(BAG_CUP, string_with_integer),
+        ),
+        (
+            "Integers",
+            "<<1, 2>> (-) [a |-> 3]",
+            java(
+                BAG_DIFF,
+                "Attempted to check equality of integer 1 with non-integer:\n\"a\"",
+            ),
+        ),
+        (
+            "Integers",
+            "<<1, 2>> \\sqsubseteq [a |-> 3]",
+            java(
+                SQ_SUBSETEQ,
+                "Attempted to check equality of integer 1 with non-integer:\n\"a\"",
+            ),
+        ),
+        (
+            "Integers",
+            "CopiesIn(\"a\", <<1>>)",
+            java(
+                "tlc2.value.impl.IntValue tlc2.module.Bags.CopiesIn",
+                string_with_integer,
+            ),
+        ),
+        (
+            "Integers",
+            "BagIn(\"a\", <<1>>)",
+            java(
+                "tlc2.value.IBoolValue tlc2.module.Bags.BagIn",
+                string_with_integer,
+            ),
+        ),
+        (
+            "Integers",
+            "BagUnion({<<1>>, [a |-> 1]})",
+            java(
+                BAG_UNION,
+                "Attempted to compare record:\n[a |-> 1]\nwith non-record\n<<1>>",
+            ),
+        ),
+        (
+            "Integers",
+            "SetToBag({1, \"a\"})",
+            java(
+                "tlc2.value.impl.Value tlc2.module.Bags.SetToBag",
+                "Attempted to compare string \"a\" with non-string:\n1",
+            ),
+        ),
+        (
+            "Integers",
+            "BagOfAll(LAMBDA e : IF e = 1 THEN 1 ELSE \"a\", <<1, 1>>)",
+            java(
+                "tlc2.value.impl.Value tlc2.module.Bags.BagOfAll",
+                string_with_integer,
+            ),
+        ),
+        // A function TLC keeps lazy over Nat, which the method converts.
+        (
+            "Integers",
+            "IsABag([n \\in Nat |-> 1])",
+            java("tlc2.value.IBoolValue tlc2.module.Bags.IsABag", lazy_nat),
+        ),
+        (
+            "Integers",
+            "BagCardinality([n \\in Nat |-> 1])",
+            java(
+                "tlc2.value.impl.IntValue tlc2.module.Bags.BagCardinality",
+                lazy_nat,
+            ),
+        ),
+        (
+            "Integers",
+            "BagToSet([n \\in Nat |-> 1])",
+            java("tlc2.value.impl.Value tlc2.module.Bags.BagToSet", lazy_nat),
+        ),
+        (
+            "Integers",
+            "<<1>> (+) [n \\in Nat |-> 1]",
+            java(BAG_CUP, lazy_nat),
+        ),
+        // The class of a count that isn't an integer.
+        (
+            "Integers",
+            "<<{1}>> (-) EmptyBag",
+            java(BAG_DIFF, &class_cast("SetEnumValue")),
+        ),
+        (
+            "Integers",
+            "<<SUBSET {1}>> (-) EmptyBag",
+            java(BAG_DIFF, &class_cast("SubsetValue")),
+        ),
+        (
+            "Integers",
+            "<<{1}>> \\sqsubseteq EmptyBag",
+            java(SQ_SUBSETEQ, &class_cast("SetEnumValue")),
+        ),
+        (
+            "Integers",
+            "BagUnion({<<{1}>>, <<{2}>>})",
+            java(BAG_UNION, &class_cast("SetEnumValue")),
         ),
     ]
     .into_iter()
