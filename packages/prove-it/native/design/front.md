@@ -681,8 +681,7 @@ binary over both directories and counts them (TLC runs on the coordinator's side
 container can't build it). Before the port 138 of 153 printed what TLC prints (116 of the 125
 errors, 22 of the 28 accepted specs), 15 declined and none differed; after it, before E4294_Module
 was written, 146 printed, 7 declined and none differed: all 125 errors but E4294_Module, and the
-six accepted specs above. `front-differential.ts sany-text` stays at 2,367 of 2,367. The recorded
-gate, with the directories in `corpora.json` and TLC's output recorded, is still to come.
+six accepted specs above. `front-differential.ts sany-text` stays at 2,367 of 2,367.
 
 ### Open
 
@@ -777,3 +776,17 @@ On SANY's corpus (153 specs), the CLI with the addon prints what the binary prin
 up from 135. The 3 that differ are E4294_Module, which the CLI leaves to the TypeScript report,
 and FairnessTest and NumbersTest, whose model the TypeScript front end rejects after SANY's
 report. The other 6 decline in both.
+
+Against TLC's output on d8fb231, recorded in `tests/conformance/sany-stdout`, the binary prints
+what TLC prints on 152 of the corpus's 153 specs and declines AssumeProveTest, and on 57 of the
+grid's 183, declining the other 126; none differ. Verification's Front End task holds it to that.
+The CLI, with the addon, differs on 9 of the corpus's specs and 5 of the grid's, none of them in a
+report tla-front writes: E4294_Module and the 5 grid specs are the generator's exception, which the
+CLI leaves to the TypeScript report; FairnessTest, NumbersTest and ProofsTest are specs tla-front
+accepts and the TypeScript front end rejects after the report, and AssumeProveTest one the binary
+declines and the TypeScript parser rejects; AssumeTest, BasicTest, InnerModuleTest and Semantics
+are an assumption the TypeScript checker words otherwise than TLC. So
+`--cli` stays out of the gate until stage 3 retires those.
+
+The addon writes the report on a 64 MiB thread, as the binary's run does: a formula nested a few
+hundred parentheses deep overflows the stack of the thread JavaScript calls on.
