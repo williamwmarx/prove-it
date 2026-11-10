@@ -151,7 +151,7 @@ describe("functions over infinite domains print like TLC", () => {
     ],
     [
       "ASSUME PrintT(ToString([n \\in Nat \\ {1} |-> n]))",
-      '"[n \\\\in Nat \\\\ {1} |-> <expression line 3, col 45 to line 3, col 45 of module M>]"',
+      '"[n \\\\in Nat \\\\ ({1}) |-> <expression line 3, col 45 to line 3, col 45 of module M>]"',
     ],
   ])("prints %s with its parameters and body location", async (body, text) => {
     expect((await checkPrinting(body)).printed).toEqual([text]);
