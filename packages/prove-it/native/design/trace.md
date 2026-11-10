@@ -445,11 +445,16 @@ engine leaves to it (AssertError) and a replayed failure read what TLC reads:
   IsFiniteSet and Cardinality report a failure, but an EvalException, as their Java method's.
 - TLCFP fingerprints a value as the engine does; TLCDefer is TRUE; an interval past 2^24
   elements is declined rather than built.
-- `{x \in S : P}` over a set it can't enumerate is `Lazy::Filter` (`SetPredValue`), `UNION` of
-  sets that aren't all set enumerations is `Lazy::Union` (`UnionValue`), and a function over a
-  domain it can't enumerate is `Value::Lambda` (`FcnLambdaValue`), which applies, takes DOMAIN
-  and EXCEPT lazily. Their membership evaluates the predicate or the body, so `member` lives in
-  the evaluator.
+- `{x \in S : P}` over any set but a set enumeration or an interval is `Lazy::Filter`
+  (`SetPredValue`), as `Tool`'s OPCODE_sso tests `Reducible`. Its membership asks S first and
+  words a failing predicate as `SetPredValue.member` does. Over a finite S the evaluator filters
+  ahead, where the predicate neither fails nor has effects, and its enumeration reads that;
+  otherwise the comparison, Print or Cardinality that enumerates the filter evaluates the
+  predicate in turn (`settle`), as `SetPredValue.toSetEnum` does.
+- `UNION` of sets that aren't all set enumerations is `Lazy::Union` (`UnionValue`), and a
+  function over a domain it can't enumerate is `Value::Lambda` (`FcnLambdaValue`), which applies,
+  takes DOMAIN and EXCEPT lazily. Their membership evaluates the predicate or the body, so
+  `member` lives in the evaluator.
 - `isEmpty` of a lazy set is answered by its enumerator's first element; Cardinality of a set
   enumeration that fails to normalize reports the comparison's failure as its Java method's.
 - ToString prints with `toStringUnchecked`, where a lazy set's expansion that fails fails.

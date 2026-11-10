@@ -716,6 +716,38 @@ fn words_failed_memberships_and_sequence_arguments_as_tlc() {
 }
 
 #[test]
+fn tests_membership_in_a_filter_of_a_finite_set_as_tlc_keeps_it_lazy() {
+    // TLC filters only a set enumeration or an interval at once. Over SUBSET {1} it asks the set
+    // first and evaluates the predicate only for an element, wording its failure as its own.
+    for (assumption, error) in [
+        (
+            "1 \\in {s \\in SUBSET {1} : 1 \\div 0 = 0}",
+            "Attempted to check if the non-enumerable value\n1\nis element of\n{{}, {1}}",
+        ),
+        (
+            "{1} \\in {s \\in SUBSET {1} : 1 \\div 0 = 0}",
+            "Cannot decide if element:\n{1}\n is element of:\n{{}, {1}}\nand satisfies the predicate line 4, col 36 to line 4, col 47 of module Filter",
+        ),
+        (
+            "Cardinality({s \\in SUBSET {1} : 1 \\div 0 = 0}) = 1",
+            "The second argument of \\div is 0.",
+        ),
+    ] {
+        let spec = format!(
+            "---- MODULE Filter ----\nEXTENDS Naturals, FiniteSets\nVARIABLE x\nASSUME {assumption}\nInit == x = 0\nNext == x' = x\n====\n"
+        );
+        let (output, directory) = run_front("filter", &spec, "INIT Init\nNEXT Next\n", &[]);
+        let text = stdout(&output);
+        assert_eq!(output.status.code(), Some(10), "{text}");
+        assert!(
+            text.contains(&format!("of module Filter failed.\n{error}\n")),
+            "{text}"
+        );
+        std::fs::remove_dir_all(directory).expect("removed");
+    }
+}
+
+#[test]
 fn fails_to_print_a_lazy_set_whose_expansion_fails() {
     // PrintT prints with `toStringUnchecked`, which fails where TLC can't expand a lazy set.
     for (set, error) in [

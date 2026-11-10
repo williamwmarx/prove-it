@@ -85,11 +85,18 @@ pub struct Predicate {
     level: i32,
     /// `{x \in`, and ` : <expression …> }`, around the set's text.
     text: (String, String),
+    /// The elements that pass, where the evaluator filtered a finite set without effects, as
+    /// TLC's enumeration of the filter finds them.
+    filtered: Option<Rc<Vec<Value>>>,
 }
 
 impl Predicate {
     pub fn text(&self) -> &(String, String) {
         &self.text
+    }
+
+    pub fn filtered(&self) -> Option<&Rc<Vec<Value>>> {
+        self.filtered.as_ref()
     }
 }
 
@@ -228,7 +235,7 @@ type KeyedVisit<'v, 'ir> = dyn FnMut(&mut Evaluator<'ir>, &Context, &[Value]) ->
 
 /// The evaluator: the IR, the texts as values, the state it evaluates in, and what it printed.
 /// TLC's `CallStack`: the nodes a replay is in, which stop being popped once it fails.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct CallStack {
     pub frames: Vec<StackFrame>,
     pub is_frozen: bool,
@@ -248,11 +255,8 @@ pub struct CallStack {
     /// the FingerprintException.
     pub fingerprinted_sources: Vec<NodeId>,
     /// Why the replay can't follow TLC to the failure, where it can't: through an assignment
-    /// `x' \in S` whose set TLC streams in an order of its own, or through a filter TLC keeps lazy.
+    /// `x' \in S` whose set TLC streams in an order of its own.
     pub unfollowed: Option<&'static str>,
-    /// Where the frames of the predicate of a filter TLC keeps lazy start, when it failed: TLC
-    /// evaluates the predicate only as a method of the value enumerates it, as Print's does.
-    pub lazy_filter: Option<usize>,
     /// Where a state the replay found fails to fingerprint: the nodes that built the values the
     /// fingerprint fails in, outermost first, as TLC's FingerprintException traces them, and the
     /// state's values as TLC prints them, in the IR's order of the variables.
@@ -422,10 +426,10 @@ fn undefined_register<T>(key: &Value) -> Evaluated<T> {
     )
 }
 
-const LAZY_FILTER: &str = "a filter TLC keeps lazy";
 /// The reasons the replay can't follow TLC's frames to a failure, which change no message: TLC
 /// prints no frames where an assumption fails to evaluate.
-pub(crate) const UNFOLLOWED_FRAMES: [&str; 2] = [LAZY_DOMAIN, BUILT_FUNCTION];
+pub(crate) const UNFOLLOWED_FRAMES: [&str; 3] = [LAZY_DOMAIN, BUILT_FUNCTION, LAZY_MEMBER];
+const LAZY_MEMBER: &str = "the membership of a filter TLC keeps lazy";
 const LAZY_DOMAIN: &str = "the domain of a function TLC keeps lazy";
 const BUILT_FUNCTION: &str = "building a function a definition defines";
 /// `EC.TLC_MODULE_VALUE_JAVA_METHOD_OVERRIDE`.
@@ -1273,11 +1277,13 @@ impl<'ir> Evaluator<'ir> {
             NodeKind::SetFilter { bound, predicate } => {
                 let set = self.evaluate(bound.set, context)?;
                 // `Tool`'s OPCODE_sso: TLC filters a reducible set at once, and keeps any other
-                // filter lazy, which the evaluator follows where it can't enumerate the set, or
-                // can't tell: TLC asks no set here whether it is finite.
-                if !matches!(set, Value::Set(_) | Value::Interval(..))
-                    && (!is_enumerable(&set) || !is_finite(&set).unwrap_or(false))
-                {
+                // filter lazy (`SetPredValue`), testing membership in it by the set's own member
+                // first. The evaluator filters a finite one without effects ahead of time, to
+                // enumerate it as TLC would, but keeps it lazy.
+                if !matches!(
+                    set,
+                    Value::Set(_) | Value::Interval(..) | Value::Unsorted(_)
+                ) {
                     let names = match &bound.pattern {
                         Pattern::Name(name) => self.name(*name).to_string(),
                         Pattern::Tuple(names) => names
@@ -1285,6 +1291,11 @@ impl<'ir> Evaluator<'ir> {
                             .map(|&name| self.name(name))
                             .collect::<Vec<_>>()
                             .join(", "),
+                    };
+                    let filtered = if is_enumerable(&set) && is_finite(&set).unwrap_or(false) {
+                        self.filter_ahead(&set, &bound.pattern, *predicate, context)?
+                    } else {
+                        None
                     };
                     let predicate = Predicate {
                         pattern: bound.pattern.clone(),
@@ -1297,25 +1308,14 @@ impl<'ir> Evaluator<'ir> {
                             format!("{{{names} \\in "),
                             format!(" : <expression {}> }}", self.describe_range(*predicate)),
                         ),
+                        filtered,
                     };
                     return Ok(Value::Lazy(Rc::new(Lazy::Filter(set, Rc::new(predicate)))));
                 }
                 let mut kept = Vec::new();
                 for element in elements(&set)?.iter() {
                     let inner = self.bind_pattern(&bound.pattern, element, context)?;
-                    let start = self.call_stack.as_ref().map(|stack| stack.frames.len());
-                    let test = self.boolean(*predicate, &inner);
-                    // TLC filters a set it can't enumerate lazily, so its predicate fails only
-                    // where TLC uses the result, which the replay follows only into Print.
-                    if test.is_err()
-                        && !matches!(set, Value::Set(_) | Value::Interval(..))
-                        && let Some(stack) = &mut self.call_stack
-                        && stack.unfollowed.is_none()
-                    {
-                        stack.unfollowed = Some(LAZY_FILTER);
-                        stack.lazy_filter = start;
-                    }
-                    if test? {
+                    if self.boolean(*predicate, &inner)? {
                         kept.push(element.clone());
                     }
                 }
@@ -2780,7 +2780,7 @@ impl<'ir> Evaluator<'ir> {
                 if !self.member(element, base)? {
                     return Ok(false);
                 }
-                self.filters(element, predicate)
+                self.filters(element, base, predicate)
             }
             Lazy::Cap(left, right) => {
                 Ok(self.member(element, left)? && self.member(element, right)?)
@@ -2832,7 +2832,7 @@ impl<'ir> Evaluator<'ir> {
     }
 
     // A lazy filter's predicate on an element of its set, in the states the filter was built in.
-    fn filters(&mut self, element: &Value, predicate: &Predicate) -> Evaluated<bool> {
+    fn filters(&mut self, element: &Value, base: &Value, predicate: &Predicate) -> Evaluated<bool> {
         let context = match &predicate.pattern {
             Pattern::Name(_) => {
                 self.bind_pattern(&predicate.pattern, element, &predicate.context)?
@@ -2855,14 +2855,26 @@ impl<'ir> Evaluator<'ir> {
         match result {
             Ok(Value::Bool(holds)) => Ok(holds),
             Ok(_) => fail("a lazy filter's predicate that isn't a boolean"),
-            // `SetPredValue.member` words an EvalException as its own failure.
+            // `SetPredValue.member` words an EvalException as its own failure, whose frames the
+            // replay doesn't follow.
             Err(error)
                 if error
                     .message
                     .as_ref()
                     .is_some_and(|message| message.is_eval_exception) =>
             {
-                fail("a lazy filter's predicate that fails")
+                if let Some(stack) = &mut self.call_stack {
+                    stack.unfollowed.get_or_insert(LAZY_MEMBER);
+                }
+                fail_runtime(
+                    "a lazy filter's predicate that fails",
+                    format!(
+                        "Cannot decide if element:\n{}\n is element of:\n{}\nand satisfies the predicate {}",
+                        format_pretty(element),
+                        format_pretty(base),
+                        self.describe_range(predicate.body)
+                    ),
+                )
             }
             Err(error) => Err(error),
         }
@@ -2899,58 +2911,117 @@ impl<'ir> Evaluator<'ir> {
         Ok(Combined::Set(self.operand(set)?))
     }
 
-    // A failure in the predicate of a filter TLC keeps lazy, where what uses the filter, whose
-    // frames end at `frame`, enumerates it itself: TLC's call stack holds the frames from the
-    // predicate's on right after it.
-    fn follow_lazy_filter(&mut self, frame: Option<usize>) {
-        if let (Some(stack), Some(frame)) = (&mut self.call_stack, frame)
-            && stack.unfollowed == Some(LAZY_FILTER)
-            && let Some(start) = stack.lazy_filter.filter(|&start| start >= frame)
-        {
-            stack.frames.drain(frame..start);
-            stack.unfollowed = None;
-            stack.lazy_filter = None;
+    // A value whose filters TLC keeps lazy are enumerated, at its top or in the tuples and records
+    // it is, as what uses it enumerates them (`SetPredValue.toSetEnum`): the predicate evaluated
+    // on each element of the set in turn, where the evaluator didn't filter the set ahead.
+    fn settle(&mut self, value: &Value) -> Evaluated<Value> {
+        Ok(self.settled(value)?.unwrap_or_else(|| value.clone()))
+    }
+
+    // `settle`'s value, where it differs.
+    fn settled(&mut self, value: &Value) -> Evaluated<Option<Value>> {
+        match value {
+            Value::Lazy(lazy) => match &**lazy {
+                Lazy::Filter(base, predicate)
+                    if predicate.filtered().is_none()
+                        && is_enumerable(base)
+                        && is_finite(base).unwrap_or(false) =>
+                {
+                    let mut kept = Vec::new();
+                    for element in elements(base)?.iter() {
+                        if self.passes(element, predicate)? {
+                            kept.push(element.clone());
+                        }
+                    }
+                    Ok(Some(Value::Set(Rc::new(kept))))
+                }
+                _ => Ok(None),
+            },
+            Value::Function(function)
+                if matches!(function.class.get(), Class::Tuple | Class::Record) =>
+            {
+                let mut range = function.range.clone();
+                let mut is_settled = false;
+                for element in &mut range {
+                    if let Some(settled) = self.settled(element)? {
+                        *element = settled;
+                        is_settled = true;
+                    }
+                }
+                Ok(is_settled.then(|| {
+                    Value::Function(Rc::new(Function {
+                        domain: function.domain.clone(),
+                        range,
+                        class: function.class.clone(),
+                        written: function.written.clone(),
+                        search: function.search.clone(),
+                        interval: function.interval,
+                    }))
+                }))
+            }
+            _ => Ok(None),
         }
     }
 
-    // A failure in the predicate of a filter TLC keeps lazy, which TLC meets as Print's Java method
-    // enumerates the filter it prints: the frames from the predicate's on, after Print's own, in
-    // the error of the method.
-    fn printed_filter_failure(
+    // Whether an element passes the predicate of a filter, evaluated where the filter was built.
+    fn passes(&mut self, element: &Value, predicate: &Predicate) -> Evaluated<bool> {
+        let context = self.bind_pattern(&predicate.pattern, element, &predicate.context)?;
+        let current = std::mem::replace(&mut self.current, predicate.current.clone());
+        let next = std::mem::replace(&mut self.next, predicate.next.clone());
+        let level = std::mem::replace(&mut self.level, predicate.level);
+        let result = self.boolean(predicate.body, &context);
+        self.current = current;
+        self.next = next;
+        self.level = level;
+        result
+    }
+
+    // The elements of a finite set that pass the predicate of a filter TLC keeps lazy, as TLC's
+    // enumeration of the filter finds them. None where the predicate fails, which TLC meets only
+    // as it uses the filter (`settle`). The evaluator declines a predicate with effects, which
+    // TLC has each time it enumerates it.
+    fn filter_ahead(
         &mut self,
-        name: &str,
-        frame: Option<usize>,
-        error: EvalError,
-    ) -> EvalError {
-        let Some(stack) = &mut self.call_stack else {
-            return error;
+        set: &Value,
+        pattern: &Pattern,
+        predicate: NodeId,
+        context: &Context,
+    ) -> Evaluated<Option<Rc<Vec<Value>>>> {
+        let Ok(elements) = elements(set) else {
+            return Ok(None);
         };
-        let (Some(frame), Some(start), Some(message)) = (frame, stack.lazy_filter, &error.message)
-        else {
-            return error;
-        };
-        if stack.unfollowed != Some(LAZY_FILTER) || start < frame {
-            return error;
+        let effects = (
+            self.printed.len(),
+            self.register_writes,
+            self.random.as_ref().map(|random| random.state()),
+        );
+        let call_stack = self.call_stack.clone();
+        let mut kept = Vec::new();
+        let mut is_failed = false;
+        for element in elements.iter() {
+            let test = self
+                .bind_pattern(pattern, element, context)
+                .and_then(|inner| self.boolean(predicate, &inner));
+            match test {
+                Ok(true) => kept.push(element.clone()),
+                Ok(false) => {}
+                Err(_) => {
+                    self.call_stack = call_stack;
+                    is_failed = true;
+                    break;
+                }
+            }
         }
-        stack.frames.drain(frame..start);
-        stack.unfollowed = None;
-        stack.lazy_filter = None;
-        let parameters = if name == "Print" {
-            "tlc2.value.impl.Value,tlc2.value.impl.Value"
-        } else {
-            "tlc2.value.impl.Value"
-        };
-        EvalError {
-            message: Some(TlcMessage {
-                text: format!(
-                    "Attempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.Value tlc2.module.TLC.{name}({parameters}),\nbut it produced the following error:\n{}",
-                    message.text
-                ),
-                code: Some(JAVA_METHOD_FAILED),
-                is_eval_exception: false,
-            }),
-            ..error
+        if effects
+            != (
+                self.printed.len(),
+                self.register_writes,
+                self.random.as_ref().map(|random| random.state()),
+            )
+        {
+            return fail("a filter TLC keeps lazy whose predicate has effects");
         }
+        Ok((!is_failed).then(|| Rc::new(kept)))
     }
 
     fn builtin(
@@ -3001,27 +3072,11 @@ impl<'ir> Evaluator<'ir> {
             "STRING" => Value::Lazy(Rc::new(Lazy::Strings)),
             "=" | "#" => {
                 arity(2)?;
-                // The frame of the comparison, which enumerates a filter TLC kept lazy.
-                let frame = self
-                    .call_stack
-                    .as_ref()
-                    .filter(|stack| !stack.is_frozen)
-                    .map(|stack| stack.frames.len());
-                let left = match self.operand(&operands[0]) {
-                    Ok(left) => left,
-                    Err(error) => {
-                        // TLC evaluates the other side before the comparison enumerates the
-                        // filter, outside the frames of the failure.
-                        let stack = self.call_stack.take();
-                        let is_right_evaluated = self.operand(&operands[1]).is_ok();
-                        self.call_stack = stack;
-                        if is_right_evaluated {
-                            self.follow_lazy_filter(frame);
-                        }
-                        return Err(error);
-                    }
-                };
+                let left = self.operand(&operands[0])?;
                 let right = self.operand(&operands[1])?;
+                // The comparison enumerates a filter TLC keeps lazy, the left first.
+                let left = self.settle(&left)?;
+                let right = self.settle(&right)?;
                 Value::Bool(equals(&left, &right)? == (name == "="))
             }
             "~" => {
@@ -3279,6 +3334,8 @@ impl<'ir> Evaluator<'ir> {
             "Cardinality" => {
                 arity(1)?;
                 let set = self.operand(&operands[0])?;
+                // `SetPredValue.size` enumerates a filter TLC keeps lazy.
+                let set = self.settle(&set)?;
                 // `FiniteSets.Cardinality` counts an `Enumerable` value.
                 let is_enumerable = match &set {
                     Value::Lazy(lazy) => !lazy.is_overridden(),
@@ -3481,35 +3538,18 @@ impl<'ir> Evaluator<'ir> {
                 }
             }
             "Print" | "PrintT" => {
-                // The frame of the application, which Print's Java method fails in.
-                let frame = self
-                    .call_stack
-                    .as_ref()
-                    .filter(|stack| !stack.is_frozen)
-                    .map(|stack| stack.frames.len());
                 let mut values = Vec::with_capacity(operands.len());
-                for (position, operand) in operands.iter().enumerate() {
-                    match self.operand(operand) {
-                        Ok(value) => values.push(value),
-                        Err(error) => {
-                            // TLC evaluates the rest of the arguments before Print enumerates
-                            // the filter, outside the frames of the failure.
-                            let stack = self.call_stack.take();
-                            let is_rest_evaluated = operands[position + 1..]
-                                .iter()
-                                .all(|operand| self.operand(operand).is_ok());
-                            self.call_stack = stack;
-                            return Err(if is_rest_evaluated {
-                                self.printed_filter_failure(name, frame, error)
-                            } else {
-                                error
-                            });
-                        }
-                    }
+                for operand in operands {
+                    values.push(self.operand(operand)?);
                 }
                 let expected = if name == "Print" { 2 } else { 1 };
                 if values.len() != expected {
                     return fail("an operator applied to the wrong number of arguments");
+                }
+                let signature = if name == "Print" { PRINT } else { PRINT_T };
+                // Print's Java method enumerates a filter TLC keeps lazy as it prints it.
+                for value in &mut values {
+                    *value = as_java_failure(signature, self.settle(value))?;
                 }
                 // TLC prints each value with `toStringUnchecked`, which fails where a lazy set's
                 // expansion fails.
@@ -3520,7 +3560,6 @@ impl<'ir> Evaluator<'ir> {
                 }) = &checked
                     && !message.is_eval_exception
                 {
-                    let signature = if name == "Print" { PRINT } else { PRINT_T };
                     return as_java_failure(signature, checked.map(|()| Value::Bool(true)));
                 }
                 checked?;
