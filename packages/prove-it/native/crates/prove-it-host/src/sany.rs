@@ -78,6 +78,7 @@ fn write_sany_text(arguments: &[HostValue]) -> HookResult {
                 .unwrap_or_default()
         },
         root_extendees: &[],
+        is_xml_export: false,
     };
     let result = get_sany_text_of(&root, &source, &options);
     if let Some(needed) = sources.get_needed() {

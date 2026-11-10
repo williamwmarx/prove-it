@@ -10,7 +10,7 @@ use std::io::{BufRead, BufReader, BufWriter, Write};
 use tla_engine::compile::{DISTINCT_SLOT, LEVEL_SLOT, NEXT_LEVEL_SLOT};
 use tla_engine::{CompileError, Compiled, Compiler, Machine, Options, Root, UNASSIGNED};
 use tla_ir::{ConfigName, Ir};
-use tla_values::fingerprint::Fingerprints;
+use tla_values::fingerprint::{Fingerprints, Polynomial};
 use tla_values::transfer::decode_states;
 use tla_values::{Id, Store};
 
@@ -127,7 +127,7 @@ pub fn replay(arguments: &[String]) -> Result<String, String> {
     }
     let width = ir.variables.len();
     let mut machine = Machine::new(&program, store);
-    let mut fingerprints = Fingerprints::new();
+    let mut fingerprints = Fingerprints::new(Polynomial::get(0));
     let mut states: Vec<Id> = Vec::new();
     let mut levels: Vec<i64> = Vec::new();
     let unassigned = vec![UNASSIGNED; width];

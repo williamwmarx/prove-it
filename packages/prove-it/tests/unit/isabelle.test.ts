@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { decideIsabelle } from "../../src/prover/isabelle/decide";
+import type { Statistics } from "../../src/prover/verdict";
 
 // Theories tlapm wrote for Isabelle, named after their module and obligation, with Isabelle's verdict
 // on each from the conformance recording.
@@ -32,6 +33,14 @@ describe("decideIsabelle gives Isabelle's verdict on tlapm's theories", () => {
 
   it("answers unknown for a theory tlapm stopped writing partway", () => {
     expect(decide(readTheory("Level_test-1"))).toBe("unknown");
+  });
+
+  it("answers unknown for a symbol that never closes", () => {
+    const text = readTheory("constantfcn_test-1").replace(/^shows ".*?"/m, 'shows "\\<and"');
+    expect(text).toContain('shows "\\<and"');
+    const statistics: Statistics = {};
+    expect(decideIsabelle(text, { timeLimitMs: 30_000, statistics })).toBe("unknown");
+    expect(statistics.stop).toBe("ERROR");
   });
 
   // tla-ts's encoder wrote this one, since tlapm proved the obligation with SMT. The simplifier

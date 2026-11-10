@@ -184,6 +184,7 @@ fn native_sany(
         } else {
             &[]
         },
+        is_xml_export: false,
     };
     get_sany_text_of(root, sources.source, &options)
 }

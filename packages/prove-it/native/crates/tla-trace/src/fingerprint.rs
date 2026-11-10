@@ -2,7 +2,7 @@
 //! a set of 31 elements or more, whose size overflows an int (`SubsetValue.size`), and a union it
 //! can't enumerate (`SetCupValue.fingerPrint`).
 
-use tla_values::fingerprint::{Fingerprints, of_bool, of_int, of_model, of_string};
+use tla_values::fingerprint::Fingerprints;
 
 use crate::print::format_pretty;
 use crate::value::{Lazy, TlcMessage, Value, elements};
@@ -92,11 +92,12 @@ pub fn state_fingerprint(fingerprints: &mut Fingerprints, values: &[&Value]) -> 
 
 // F and length of a value (`Fingerprints::get_value` of the store's).
 fn value_fingerprint(fingerprints: &mut Fingerprints, value: &Value) -> Option<(u64, u64)> {
+    let polynomial = fingerprints.polynomial();
     match value {
-        Value::Bool(boolean) => Some(of_bool(*boolean)),
-        Value::Int(int) => Some(of_int(*int)),
-        Value::Str(text) => Some(of_string(&text.units)),
-        Value::Model(text) => (text.rank >= 0).then(|| of_model(text.rank)),
+        Value::Bool(boolean) => Some(polynomial.of_bool(*boolean)),
+        Value::Int(int) => Some(polynomial.of_int(*int)),
+        Value::Str(text) => Some(polynomial.of_string(&text.units)),
+        Value::Model(text) => (text.rank >= 0).then(|| polynomial.of_model(text.rank)),
         Value::Unsorted(_) | Value::Lambda(_) => None,
         Value::Function(function) => {
             let mut parts = Vec::with_capacity(function.domain.len() * 2);
