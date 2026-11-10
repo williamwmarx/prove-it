@@ -76,3 +76,14 @@ export const writeDebugBytes = (name: string, bytes: Uint8Array) => {
   const path = getEnvironment()?.[name];
   if (path) getMainThreadFileSystem()?.writeFileSync(path, bytes);
 };
+
+// PROVE_IT_CHECK_LOG names a file each check appends lines of JSON to, which
+// scripts/check-log.ts reads: the check's source, configuration, options and caller, then each
+// module it loads.
+export const getCheckLog = () => {
+  const path = getEnvironment()?.PROVE_IT_CHECK_LOG;
+  const fileSystem = path ? getMainThreadFileSystem() : undefined;
+  return path && fileSystem
+    ? (entry: object) => fileSystem.appendFileSync(path, `${JSON.stringify(entry)}\n`)
+    : undefined;
+};
