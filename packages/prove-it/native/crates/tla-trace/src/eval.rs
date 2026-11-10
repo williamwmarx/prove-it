@@ -502,6 +502,8 @@ const JAVA_METHOD_FAILED: u32 = 2154;
 
 const TLC_EVAL: &str = "public static tlc2.value.impl.Value tlc2.module.TLCEval.tlcEval(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel)";
 
+const TLC_GET_EVAL: &str = "public static tlc2.value.impl.Value tlc2.module.TLCGetSet.TLCGetEval(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel)";
+
 const RANDOM_SUBSET: &str = "public static tlc2.value.impl.Value tlc2.module.Randomization.RandomSubset(tlc2.value.impl.Value,tlc2.value.impl.Value)";
 
 // `reportAsJavaFailure`: a failure with TLC's message, reported as the failure of the Java method
@@ -3542,6 +3544,118 @@ impl<'ir> Evaluator<'ir> {
         Ok((!is_failed).then(|| Rc::new(kept)))
     }
 
+    fn tlc_get(&mut self, operand: &Operand, context: &Context) -> Evaluated<Value> {
+        Ok(match self.operand(operand)? {
+            // A register, whose value no cache may keep.
+            key @ Value::Int(index) if index >= 0 => {
+                self.reads += 1;
+                self.register_reads += 1;
+                match self.registers.numbered.get(index as usize) {
+                    Some(Some(value)) => value.clone(),
+                    _ => return undefined_register(&key),
+                }
+            }
+            key if is_register_name(&key) => {
+                self.reads += 1;
+                self.register_reads += 1;
+                match self.get_named_register(&key)? {
+                    Some(value) => value,
+                    None => return undefined_register(&key),
+                }
+            }
+            key @ (Value::Int(_)
+            | Value::Bool(_)
+            | Value::Model(_)
+            | Value::Set(_)
+            | Value::Interval(..)
+            | Value::Function(_)
+            | Value::Lazy(_)) => {
+                return fail_coded(
+                    "TLCGet of a key that isn't a natural number",
+                    ONE_ARGUMENT_ERROR,
+                    format!(
+                        "The argument of TLCGet should be a nonnegative integer, but instead it is:\n{}",
+                        format_pretty(&key)
+                    ),
+                );
+            }
+            // The specification's record, as the interpreter computes it for TLC's.
+            Value::Str(key) if *key.units == *"spec".encode_utf16().collect::<Vec<_>>() => {
+                let ir = self.ir;
+                match ir.model.tlc_spec {
+                    Some(index) => self.convert(&ir.values.list[index as usize])?,
+                    None => return fail("TLCGet(\"spec\") the IR doesn't hold"),
+                }
+            }
+            // `AbstractChecker.createConfig`, as the engine words it: TLC's install is
+            // where its jar is, which the native checker has none of.
+            Value::Str(key) if *key.units == *"config".encode_utf16().collect::<Vec<_>>() => {
+                let Some(workers) = self.workers else {
+                    return fail("TLCGet(\"config\") without the run's workers");
+                };
+                let model = &self.ir.model;
+                let text = |text: &str| self.text_of(text.encode_utf16().collect());
+                let string = |value: &str| Value::Str(text(value));
+                Value::record(vec![
+                    (text("mode"), string("bfs")),
+                    (text("deadlock"), Value::Bool(model.check_deadlock)),
+                    (text("worker"), Value::Int(workers as i32)),
+                    (
+                        text("seed"),
+                        string(&(model.random_seed as i64).to_string()),
+                    ),
+                    (
+                        text("fingerprint"),
+                        string(&(tla_values::fingerprint::INITIAL as i64).to_string()),
+                    ),
+                    (text("install"), string("unknown")),
+                ])?
+            }
+            Value::Str(key) if *key.units == *"level".encode_utf16().collect::<Vec<_>>() => {
+                self.reads += 1;
+                Value::Int(self.level + i32::from(context.is_primed))
+            }
+            // Once the search is over, the run's counts, and its named registers, each
+            // the tuple of one worker's value.
+            Value::Str(key) if self.runtime.is_some() => {
+                self.reads += 1;
+                let key = String::from_utf16_lossy(&key.units);
+                let runtime = self.runtime.as_ref().expect("the runtime");
+                match key.as_str() {
+                    "all:named" => runtime.named.clone(),
+                    "all" => {
+                        let (indices, values) = self
+                            .registers
+                            .numbered
+                            .iter()
+                            .enumerate()
+                            .filter_map(|(index, value)| {
+                                let value = value.clone()?;
+                                Some((Value::Int(index as i32), Value::tuple(vec![value])))
+                            })
+                            .unzip();
+                        sorted_function(indices, values, Class::Plain)?
+                    }
+                    "stats" => runtime.stats.clone(),
+                    "generated" | "distinct" | "queue" | "diameter" => {
+                        let Value::Function(stats) = &runtime.stats else {
+                            return fail("TLCGet");
+                        };
+                        let position = stats.domain.iter().position(|field| {
+                            matches!(field, Value::Str(name) if String::from_utf16_lossy(&name.units) == key)
+                        });
+                        match position {
+                            Some(position) => stats.range[position].clone(),
+                            None => return fail("TLCGet"),
+                        }
+                    }
+                    _ => return fail("TLCGet"),
+                }
+            }
+            _ => return fail("TLCGet"),
+        })
+    }
+
     // An operator's table as `OpRcdValue.toString` prints it, pretty printed: `{ <0, 1>, <2, 3>}`,
     // each row its arguments and then its value.
     fn table_text(&mut self, table: &[(Option<Index>, Option<Index>)]) -> Evaluated<String> {
@@ -4472,121 +4586,11 @@ impl<'ir> Evaluator<'ir> {
                 arity(1)?;
                 Value::Bool(true)
             }
+            // `TLCGetSet.TLCGetEval`, an `EvaluatingValue`: TLC reports any failure within it,
+            // its argument's included, as the failure of the Java method.
             "TLCGet" => {
                 arity(1)?;
-                match self.operand(&operands[0])? {
-                    // A register, whose value no cache may keep.
-                    key @ Value::Int(index) if index >= 0 => {
-                        self.reads += 1;
-                        self.register_reads += 1;
-                        match self.registers.numbered.get(index as usize) {
-                            Some(Some(value)) => value.clone(),
-                            _ => return undefined_register(&key),
-                        }
-                    }
-                    key if is_register_name(&key) => {
-                        self.reads += 1;
-                        self.register_reads += 1;
-                        match self.get_named_register(&key)? {
-                            Some(value) => value,
-                            None => return undefined_register(&key),
-                        }
-                    }
-                    key @ (Value::Int(_)
-                    | Value::Bool(_)
-                    | Value::Model(_)
-                    | Value::Set(_)
-                    | Value::Interval(..)
-                    | Value::Function(_)
-                    | Value::Lazy(_)) => {
-                        return fail_coded(
-                            "TLCGet of a key that isn't a natural number",
-                            ONE_ARGUMENT_ERROR,
-                            format!(
-                                "The argument of TLCGet should be a nonnegative integer, but instead it is:\n{}",
-                                format_pretty(&key)
-                            ),
-                        );
-                    }
-                    // The specification's record, as the interpreter computes it for TLC's.
-                    Value::Str(key) if *key.units == *"spec".encode_utf16().collect::<Vec<_>>() => {
-                        let ir = self.ir;
-                        match ir.model.tlc_spec {
-                            Some(index) => self.convert(&ir.values.list[index as usize])?,
-                            None => return fail("TLCGet(\"spec\") the IR doesn't hold"),
-                        }
-                    }
-                    // `AbstractChecker.createConfig`, as the engine words it: TLC's install is
-                    // where its jar is, which the native checker has none of.
-                    Value::Str(key)
-                        if *key.units == *"config".encode_utf16().collect::<Vec<_>>() =>
-                    {
-                        let Some(workers) = self.workers else {
-                            return fail("TLCGet(\"config\") without the run's workers");
-                        };
-                        let model = &self.ir.model;
-                        let text = |text: &str| self.text_of(text.encode_utf16().collect());
-                        let string = |value: &str| Value::Str(text(value));
-                        Value::record(vec![
-                            (text("mode"), string("bfs")),
-                            (text("deadlock"), Value::Bool(model.check_deadlock)),
-                            (text("worker"), Value::Int(workers as i32)),
-                            (
-                                text("seed"),
-                                string(&(model.random_seed as i64).to_string()),
-                            ),
-                            (
-                                text("fingerprint"),
-                                string(&(tla_values::fingerprint::INITIAL as i64).to_string()),
-                            ),
-                            (text("install"), string("unknown")),
-                        ])?
-                    }
-                    Value::Str(key)
-                        if *key.units == *"level".encode_utf16().collect::<Vec<_>>() =>
-                    {
-                        self.reads += 1;
-                        Value::Int(self.level + i32::from(context.is_primed))
-                    }
-                    // Once the search is over, the run's counts, and its named registers, each
-                    // the tuple of one worker's value.
-                    Value::Str(key) if self.runtime.is_some() => {
-                        self.reads += 1;
-                        let key = String::from_utf16_lossy(&key.units);
-                        let runtime = self.runtime.as_ref().expect("the runtime");
-                        match key.as_str() {
-                            "all:named" => runtime.named.clone(),
-                            "all" => {
-                                let (indices, values) = self
-                                    .registers
-                                    .numbered
-                                    .iter()
-                                    .enumerate()
-                                    .filter_map(|(index, value)| {
-                                        let value = value.clone()?;
-                                        Some((Value::Int(index as i32), Value::tuple(vec![value])))
-                                    })
-                                    .unzip();
-                                sorted_function(indices, values, Class::Plain)?
-                            }
-                            "stats" => runtime.stats.clone(),
-                            "generated" | "distinct" | "queue" | "diameter" => {
-                                let Value::Function(stats) = &runtime.stats else {
-                                    return fail("TLCGet");
-                                };
-                                let position = stats.domain.iter().position(|field| {
-                                    matches!(field, Value::Str(name) if String::from_utf16_lossy(&name.units) == key)
-                                });
-                                match position {
-                                    Some(position) => stats.range[position].clone(),
-                                    None => return fail("TLCGet"),
-                                }
-                            }
-                            _ => return fail("TLCGet"),
-                        }
-                    }
-                    _ => return fail("TLCGet"),
-                }
+                as_java_failure(TLC_GET_EVAL, self.tlc_get(&operands[0], context))?
             }
             "Permutations" => {
                 arity(1)?;
