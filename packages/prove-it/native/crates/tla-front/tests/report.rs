@@ -116,3 +116,20 @@ fn declines_a_module_that_sany_parses_and_the_front_end_does_not() {
     );
     assert!(matches!(report, Err(FrontError::NotYet(_))));
 }
+
+#[test]
+fn declines_a_module_of_the_community_modules_tlc_bundles() {
+    // TLC's jar finds IOUtils in its CommunityModules, which the front end doesn't have; another
+    // module it can't find is SANY's error.
+    let bundled = get_report("bundled", "---- MODULE Main ----\nEXTENDS IOUtils\n====\n");
+    assert!(matches!(bundled, Err(FrontError::NotYet(_))));
+    let missing = get_text(
+        "unbundled",
+        "---- MODULE Main ----\nEXTENDS NoSuchModule\n====\n",
+    );
+    assert!(
+        missing
+            .contains("Cannot find source file for module NoSuchModule imported in module Main."),
+        "{missing}"
+    );
+}
