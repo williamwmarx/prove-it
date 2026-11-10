@@ -3,14 +3,12 @@
 //! A port of `src/obligations/temporal.ts`.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
-use std::rc::{Rc, Weak};
 
 use crate::errors::{ObligationError, Result};
 use crate::expression::{
     BoundDomain, Builtin, Bullet, DefnCore, ExceptPoint, Expr, ExprCore, ExprNode, Fairness, Hyp,
-    HypCore, Level, Modal, ScopeRef, Time, adjoin, adjoin_all, apply_builtin, at, get_fresh,
-    get_local_defn, get_scope_at, map_children,
+    HypCore, IdentityCache, Level, Modal, ScopeRef, Time, adjoin, adjoin_all, apply_builtin, at,
+    get_fresh, get_local_defn, get_scope_at, map_children,
 };
 
 /// `isApplied`: the arguments when the expression applies one of the builtins.
@@ -235,45 +233,6 @@ const TEMPORAL_BUILTINS: [Builtin; 10] = [
     Builtin::BoxFalse,
     Builtin::Diamond,
 ];
-
-/// A cache keyed by the identity of an `Rc`, as a `WeakMap` is. Each entry keeps a `Weak` to its
-/// key, which keeps the allocation, so its pointer cannot be reused while the entry exists, but not
-/// the value; an entry whose key has been dropped can never be found again, as in a `WeakMap`.
-/// It belongs in `expression.rs`, where `levels.rs` keeps a copy of it too.
-struct IdentityCache<Key, Value> {
-    entries: HashMap<*const Key, (Weak<Key>, Value)>,
-    prune_at: usize,
-}
-
-const MINIMUM_PRUNE_SIZE: usize = 1024;
-
-impl<Key, Value: Clone> IdentityCache<Key, Value> {
-    fn new() -> Self {
-        Self {
-            entries: HashMap::new(),
-            prune_at: MINIMUM_PRUNE_SIZE,
-        }
-    }
-
-    fn get(&self, key: &Rc<Key>) -> Option<Value> {
-        self.entries
-            .get(&Rc::as_ptr(key))
-            .map(|entry| entry.1.clone())
-    }
-
-    fn insert(&mut self, key: &Rc<Key>, value: Value) {
-        if self.entries.len() >= self.prune_at {
-            #[expect(
-                clippy::disallowed_methods,
-                reason = "dropping the entries of dead keys observes no order"
-            )]
-            self.entries.retain(|_, entry| entry.0.strong_count() > 0);
-            self.prune_at = MINIMUM_PRUNE_SIZE.max(self.entries.len() * 2);
-        }
-        self.entries
-            .insert(Rc::as_ptr(key), (Rc::downgrade(key), value));
-    }
-}
 
 thread_local! {
     // Keyed by the body alone, as the TypeScript's is: the first scope a body is judged in decides
@@ -533,6 +492,8 @@ pub fn get_scope_time(context: &[Hyp], time: Time) -> Time {
 
 #[cfg(test)]
 mod tests {
+    use std::rc::Rc;
+
     use super::*;
     use crate::expression::{
         Bound, CaseArm, Defn, ExceptSpec, Field, Locus, Param, Quantifier, Sequent, Visibility,

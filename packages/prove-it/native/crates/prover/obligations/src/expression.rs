@@ -6,7 +6,7 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 use crate::errors::Result;
 use crate::pragma::{OldMethod, PragmaSetting};
@@ -1362,4 +1362,48 @@ pub fn get_children(expression: &Expr) -> Vec<Expr> {
         Ok(inner.clone())
     });
     children
+}
+
+/// A cache keyed by the identity of an `Rc`, as a `WeakMap` is. Each entry keeps a `Weak` to its
+/// key, which keeps the allocation, so its pointer cannot be reused while the entry exists, but not
+/// the value; an entry whose key has been dropped can never be found again, as in a `WeakMap`.
+pub struct IdentityCache<Key, Value> {
+    entries: HashMap<*const Key, (Weak<Key>, Value)>,
+    prune_at: usize,
+}
+
+const MINIMUM_PRUNE_SIZE: usize = 1024;
+
+impl<Key, Value: Clone> IdentityCache<Key, Value> {
+    pub fn new() -> Self {
+        Self {
+            entries: HashMap::new(),
+            prune_at: MINIMUM_PRUNE_SIZE,
+        }
+    }
+
+    pub fn get(&self, key: &Rc<Key>) -> Option<Value> {
+        self.entries
+            .get(&Rc::as_ptr(key))
+            .map(|entry| entry.1.clone())
+    }
+
+    pub fn insert(&mut self, key: &Rc<Key>, value: Value) {
+        if self.entries.len() >= self.prune_at {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "dropping the entries of dead keys observes no order"
+            )]
+            self.entries.retain(|_, entry| entry.0.strong_count() > 0);
+            self.prune_at = MINIMUM_PRUNE_SIZE.max(self.entries.len() * 2);
+        }
+        self.entries
+            .insert(Rc::as_ptr(key), (Rc::downgrade(key), value));
+    }
+}
+
+impl<Key, Value: Clone> Default for IdentityCache<Key, Value> {
+    fn default() -> Self {
+        Self::new()
+    }
 }

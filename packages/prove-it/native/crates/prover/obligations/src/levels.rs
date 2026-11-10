@@ -3,14 +3,14 @@
 //! A port of `src/obligations/levels.ts`.
 
 use std::cell::RefCell;
-use std::collections::{BTreeSet, HashMap};
-use std::rc::{Rc, Weak};
+use std::collections::BTreeSet;
+use std::rc::Rc;
 
 use crate::errors::{ObligationError, Result};
 use crate::expression::{
-    Bound, BoundDomain, Builtin, DefnCore, ExceptPoint, Expr, ExprCore, HypCore, Level, Scope,
-    ScopeRef, adjoin, adjoin_all, get_bound_fresh, get_bounded_fresh, get_fresh, get_local_defn,
-    get_param_fresh, get_scope_at, hyp, is_builtin_apply, map_accumulate,
+    Bound, BoundDomain, Builtin, DefnCore, ExceptPoint, Expr, ExprCore, HypCore, IdentityCache,
+    Level, Scope, ScopeRef, adjoin, adjoin_all, get_bound_fresh, get_bounded_fresh, get_fresh,
+    get_local_defn, get_param_fresh, get_scope_at, hyp, is_builtin_apply, map_accumulate,
 };
 
 /// The TypeScript's `params` is a `Set` that is only unioned, filtered and tested for membership,
@@ -89,45 +89,6 @@ fn combine_levels(infos: &[LevelInfo]) -> LevelInfo {
         level: infos.iter().map(|info| info.level).fold(0, usize::max),
         weights: Vec::new(),
         params: union(infos.iter().map(|info| &info.params)),
-    }
-}
-
-/// A cache keyed by the identity of an `Rc`, as a `WeakMap` is. Each entry keeps a `Weak` to its
-/// key, which keeps the allocation, so its pointer cannot be reused while the entry exists, but not
-/// the value; an entry whose key has been dropped can never be found again, as in a `WeakMap`.
-/// It belongs in `expression.rs`, where `temporal.rs` keeps a copy of it too.
-struct IdentityCache<Key, Value> {
-    entries: HashMap<*const Key, (Weak<Key>, Value)>,
-    prune_at: usize,
-}
-
-const MINIMUM_PRUNE_SIZE: usize = 1024;
-
-impl<Key, Value: Clone> IdentityCache<Key, Value> {
-    fn new() -> Self {
-        Self {
-            entries: HashMap::new(),
-            prune_at: MINIMUM_PRUNE_SIZE,
-        }
-    }
-
-    fn get(&self, key: &Rc<Key>) -> Option<Value> {
-        self.entries
-            .get(&Rc::as_ptr(key))
-            .map(|entry| entry.1.clone())
-    }
-
-    fn insert(&mut self, key: &Rc<Key>, value: Value) {
-        if self.entries.len() >= self.prune_at {
-            #[expect(
-                clippy::disallowed_methods,
-                reason = "dropping the entries of dead keys observes no order"
-            )]
-            self.entries.retain(|_, entry| entry.0.strong_count() > 0);
-            self.prune_at = MINIMUM_PRUNE_SIZE.max(self.entries.len() * 2);
-        }
-        self.entries
-            .insert(Rc::as_ptr(key), (Rc::downgrade(key), value));
     }
 }
 
