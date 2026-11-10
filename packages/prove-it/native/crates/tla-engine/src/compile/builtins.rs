@@ -320,7 +320,7 @@ impl Compiler<'_> {
             "JsonSerialize" | "ndJsonSerialize" | "JsonDeserialize" | "ndJsonDeserialize"
         ) && self.is_native
         {
-            return self.compile_json_file(name, operands);
+            return self.compile_json_file(name, operands, context);
         }
         if builtin.flags & Builtin::TABLE != 0 {
             return self.compile_table(index, operands);
@@ -603,9 +603,24 @@ impl Compiler<'_> {
     // The Json module's operators that write a value to the file a string names, as JSON or one
     // element of a sequence per line, or read one, as TLC's Json class does (`src/json.ts`). Only
     // the native checker reads and writes the files: the interpreter does beside the addon.
-    // Writing prints in TLC's order, as Print does; reading ranks the strings it reads.
-    fn compile_json_file(&mut self, name: &str, operands: &[Operand]) -> Compiling<Compiled> {
+    // Writing prints in TLC's order, as Print does; reading ranks the strings it reads. Where the
+    // model writes a file, a read sees what was last written, so it too is evaluated only where,
+    // and as often as, TLC does; where it writes none, every read of a file reads the same, as
+    // TLC's reading it once at startup does.
+    fn compile_json_file(
+        &mut self,
+        name: &str,
+        operands: &[Operand],
+        context: &Context,
+    ) -> Compiling<Compiled> {
         let is_written = name.ends_with("Serialize");
+        let is_ordered = is_written
+            || self.ir.builtins.iter().any(|builtin| {
+                matches!(self.text(builtin.name), "JsonSerialize" | "ndJsonSerialize")
+            });
+        if is_ordered && !context.can_print {
+            return self.decline_print(name);
+        }
         if operands.len() != if is_written { 2 } else { 1 } {
             return unsupported("an operator applied to the wrong number of arguments");
         }
@@ -613,7 +628,11 @@ impl Compiler<'_> {
             .iter()
             .map(|operand| self.operand(operand))
             .collect::<Compiling<Vec<Compiled>>>()?;
-        let footprint = Footprint::merge_all(compiled.iter().map(|operand| &operand.footprint));
+        let mut footprint = Footprint::merge_all(compiled.iter().map(|operand| &operand.footprint));
+        if is_ordered {
+            footprint = footprint.merge(&Footprint::slot(super::PRINT_SLOT));
+            self.is_printing = true;
+        }
         let evaluators: Vec<Eval> = compiled.into_iter().map(|operand| operand.eval).collect();
         let is_lines = name.starts_with("nd");
         let read_path = move |machine: &mut Machine<'_>, evaluate: &Eval| -> Outcome<String> {
@@ -640,7 +659,6 @@ impl Compiler<'_> {
                 footprint,
             ));
         }
-        self.is_printing = true;
         Ok(Compiled {
             is_boolean: true,
             ..leaf(
@@ -679,7 +697,7 @@ impl Compiler<'_> {
                         .map_err(|_| Bail("a Json operator's file that can't be written"))?;
                     Ok(TRUE)
                 }),
-                footprint.merge(&Footprint::slot(super::PRINT_SLOT)),
+                footprint,
             )
         })
     }
@@ -1477,22 +1495,26 @@ impl Compiler<'_> {
                 }
             }
             "Assert" => {
-                arity(1)?;
-                // Assert(P, message) is TRUE when P holds. When it doesn't, TLC fails with the
-                // message, which the interpreter reports.
+                arity(2)?;
+                // Assert(P, message) is TRUE when P holds. TLC evaluates the message too, as it
+                // does any Java method's arguments, whose effects and failures show. When P
+                // doesn't hold, TLC fails with the message, which the interpreter reports.
                 let condition = self.boolean_operand(&operands[0])?;
-                let test = condition.eval.clone();
+                let message = self.operand(&operands[1])?;
+                let (test, evaluate_message) = (condition.eval.clone(), message.eval);
                 Compiled {
                     is_boolean: true,
                     ..leaf(
                         eval(move |machine| {
-                            if test(machine)? == TRUE {
+                            let holds = test(machine)?;
+                            evaluate_message(machine)?;
+                            if holds == TRUE {
                                 Ok(TRUE)
                             } else {
                                 Err(Bail("an assertion failed"))
                             }
                         }),
-                        condition.footprint,
+                        condition.footprint.merge(&message.footprint),
                     )
                 }
             }

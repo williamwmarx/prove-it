@@ -1205,7 +1205,9 @@ impl<'a> Compiler<'a> {
                     }
                     Resolution::Builtin(index) => match self.builtin_name(index) {
                         "Print" | "PrintT" | "RandomElement" | "RandomSubset" | "TLCEval" | "="
-                        | "#" | "~" | "=>" | "TLCSet" | "TLCGet" | "TLCFP" | "TLCCache" => true,
+                        | "#" | "~" | "=>" | "TLCSet" | "TLCGet" | "TLCFP" | "TLCCache"
+                        | "Assert" | "JsonSerialize" | "ndJsonSerialize" | "JsonDeserialize"
+                        | "ndJsonDeserialize" => true,
                         // TLC evaluates the operands, then builds the set, which the engine
                         // builds the same way unless an operand is a set TLC keeps lazy.
                         "\\cup" | "\\cap" | "\\" | "UNION" => !args
@@ -1230,8 +1232,9 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    // Whether evaluating an expression may print, draw or set a TLC register, itself or through
-    // the definitions it names. An operator bound locally may do anything.
+    // Whether evaluating an expression may print, draw, set a TLC register, or write or read a
+    // file, itself or through the definitions it names. An operator bound locally may do
+    // anything.
     fn may_have_effect(&self, node: NodeId, seen: &mut HashSet<NodeId>) -> bool {
         if !seen.insert(node) {
             return false;
@@ -1242,7 +1245,15 @@ impl<'a> Compiler<'a> {
                 match name.resolution {
                     Resolution::Builtin(index) => matches!(
                         self.builtin_name(index),
-                        "Print" | "PrintT" | "RandomElement" | "RandomSubset" | "TLCSet"
+                        "Print"
+                            | "PrintT"
+                            | "RandomElement"
+                            | "RandomSubset"
+                            | "TLCSet"
+                            | "JsonSerialize"
+                            | "ndJsonSerialize"
+                            | "JsonDeserialize"
+                            | "ndJsonDeserialize"
                     ),
                     Resolution::Definition(index) => self.may_have_effect(
                         self.definition(self.ir.definitions[index as usize]).body,

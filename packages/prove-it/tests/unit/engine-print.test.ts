@@ -308,6 +308,12 @@ describe("the engine's Print, PrintT and TLCGet", () => {
     }
   });
 
+  it("evaluates Assert's message where the assertion holds, as TLC does", async () => {
+    const body = `EXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ Assert(TRUE, PrintT(<<"msg", x>>)) /\\ x' = x + 1`;
+    const { printed } = await checkBoth(body, "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE");
+    expect(printed).toEqual(['<<"msg", 0>>', '<<"msg", 1>>']);
+  });
+
   it("hands over printing Nat, Int or STRING, which the interpreter's encoding lacks", async () => {
     // What TLC prints: Nat and Int by name. The engine hands over where it meets {Int}.
     const body = `EXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ PrintT(<<x, {Int}>>) /\\ x' = x + 1`;

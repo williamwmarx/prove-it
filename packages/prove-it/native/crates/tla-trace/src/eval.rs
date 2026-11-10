@@ -3549,12 +3549,14 @@ impl<'ir> Evaluator<'ir> {
                     sorted_function(keys, values, Class::Plain)?
                 }
             }
+            // TLC evaluates both arguments, as it does any Java method's, then tests the first.
             "Assert" => {
                 arity(2)?;
-                if self.operand_boolean(&operands[0])? {
+                let holds = self.operand_boolean(&operands[0])?;
+                let message = self.operand(&operands[1])?;
+                if holds {
                     Value::Bool(true)
                 } else {
-                    let message = self.operand(&operands[1])?;
                     return fail_coded(
                         "an assertion failed",
                         2132,

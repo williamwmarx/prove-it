@@ -3262,14 +3262,21 @@ export const createCompiler = (environment: Environment, isViewed: boolean): Com
         } as LazySet;
       }
       case "Assert": {
-        // Assert(P, message) is TRUE when P holds. When it doesn't, TLC fails with the message,
-        // which the interpreter reports.
+        // Assert(P, message) is TRUE when P holds. TLC evaluates the message too, as it does any
+        // Java method's arguments, whose effects and failures show. When P doesn't hold, TLC fails
+        // with the message, which the interpreter reports.
         const condition = compileBoolean(args[0], context);
+        const message = operand(1);
         const conditionEvaluate = condition.evaluate;
+        const messageEvaluate = message.evaluate;
         return {
           ...leaf(
-            () => (conditionEvaluate() === TRUE ? TRUE : bail("an assertion failed")),
-            condition.footprint,
+            () => {
+              const holds = conditionEvaluate();
+              messageEvaluate();
+              return holds === TRUE ? TRUE : bail("an assertion failed");
+            },
+            mergeFootprints(condition.footprint, message.footprint),
           ),
           isBoolean: true,
         };

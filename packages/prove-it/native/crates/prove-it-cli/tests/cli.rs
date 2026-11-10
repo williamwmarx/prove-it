@@ -1571,6 +1571,37 @@ fn declines_what_tlc_fails_to_enumerate_where_it_writes_or_reads_a_value() {
 }
 
 #[test]
+fn evaluates_assert_s_message_and_reads_a_file_as_tlc() {
+    // TLC evaluates Assert's message even where the assertion holds, as it does any Java
+    // method's arguments, printing it again as it rebuilds the trace.
+    let spec = "---- MODULE Stop ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0 /\\ Assert(TRUE, PrintT(\"msg\"))\nNext == x < 1 /\\ x' = x + 1\n====\n";
+    let (output, directory) = run_lowered("assert-message", spec, "INIT Init\nNEXT Next\n");
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(11), "{text}");
+    assert_eq!(text.matches("\"msg\"\n").count(), 3, "{text}");
+    std::fs::remove_dir_all(directory).expect("removed");
+    // TLC reads the file again at each use where it didn't compute the read at startup, which
+    // the engine leaves to its caller rather than reading a value it kept.
+    for (test, read) in [
+        ("read-again", "JsonDeserialize(\"r.json\")[1]"),
+        ("read-let", "LET r == JsonDeserialize(\"r.json\") IN r[1]"),
+        ("read-defined", "Read[1]"),
+    ] {
+        let spec = format!(
+            "---- MODULE Stop ----\nEXTENDS Integers, TLC, Json\nVARIABLE x\nRead == JsonDeserialize(\"r.json\")\nInit == JsonSerialize(\"r.json\", <<0>>) /\\ x = 0\nNext == JsonSerialize(\"r.json\", <<x + 1>>) /\\ x' = {read}\nInv == x < 2\n====\n"
+        );
+        let (output, directory) = run_lowered(test, &spec, "INIT Init\nNEXT Next\nINVARIANT Inv\n");
+        let text = stdout(&output);
+        assert!(!text.contains("Model checking completed"), "{test}: {text}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("not native yet"),
+            "{test}: {text}"
+        );
+        std::fs::remove_dir_all(directory).expect("removed");
+    }
+}
+
+#[test]
 fn declines_to_fingerprint_what_tlc_fails_to() {
     // TLC fails to fingerprint a function over Nat or Int it keeps lazy, and Nat, Int or STRING,
     // at any depth: TLCFP of one fails, and so does a state or a VIEW that holds one.

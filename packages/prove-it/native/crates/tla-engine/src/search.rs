@@ -1979,9 +1979,14 @@ fn run_startup(machine: &mut Machine<'_>, startup: &Startup, is_native: bool) ->
         }
     }
     // `processConstantDefns`: TLC swallows whatever a constant definition throws and keeps it as
-    // an operator, which evaluates it again, and fails again, where it is used.
+    // an operator, which evaluates it again, with its effects, at every use, where the engine
+    // would keep the first value it computes.
     for evaluate in &startup.definitions {
-        let _ = evaluate(machine);
+        if evaluate(machine).is_err() {
+            return Err(Bail(
+                "unsupported: a definition TLC computes at startup that fails there",
+            ));
+        }
     }
     // `getConstantValue`: TLC keeps a definition that fails to evaluate as an operator.
     for (evaluate, form, kind, name) in &startup.predicates {
