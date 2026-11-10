@@ -2838,7 +2838,7 @@ impl<'ir> Evaluator<'ir> {
             "SUBSET" => {
                 arity(1)?;
                 let base = self.operand(&operands[0])?;
-                if !base.is_set() {
+                if !base.is_set() && !matches!(base, Value::Unsorted(_)) {
                     return fail("SUBSET of a non-set");
                 }
                 Value::Lazy(Rc::new(Lazy::Subset(base)))
