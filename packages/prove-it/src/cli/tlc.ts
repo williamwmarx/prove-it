@@ -609,7 +609,7 @@ const getTemporaryName = (contents: string) => getTlcFingerprint([contents]).toS
 // The file TLC's SANY says it parses each module from: the real path of a module's own file, or a
 // copy in a temporary directory of a module from the root module's file or from the jar on the
 // class path, followed by where TLC copied it from.
-const createFileDescriber = (
+export const createFileDescriber = (
   specPath: string,
   directories: string[],
   java: JavaProperties,
