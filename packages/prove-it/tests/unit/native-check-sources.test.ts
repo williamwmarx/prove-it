@@ -149,4 +149,21 @@ describe("checkSources", () => {
     expect(checkInProcess(directory, args)).toBe(checkWithBinary(directory, test.args));
     rmSync(directory, { recursive: true, force: true });
   });
+
+  // WebAssembly's frames are on the host's stack, so its engine stops recursing sooner.
+  it.if(process.env.PROVE_IT_ENGINE_WASM !== undefined)(
+    "declines recursion deeper than WebAssembly's stack holds, where the addon recurses",
+    () => {
+      const directory = mkdtempSync(join(tmpdir(), "prove-it-check-sources-"));
+      writeFileSync(
+        join(directory, "Deep.tla"),
+        "---- MODULE Deep ----\nEXTENDS Naturals\nRECURSIVE F(_)\nF(n) == IF n = 0 THEN 0 ELSE 1 + F(n - 1)\nVARIABLE x\nInit == x = 0\nNext == x < 1 /\\ x' = F(5000) - 4999\n====\n",
+      );
+      writeFileSync(join(directory, "Deep.cfg"), "INIT Init\nNEXT Next\n");
+      expect(checkInProcess(directory, ["-noGenerateSpecTE", "-deadlock", "Deep.tla"])).toBe(
+        "declined: the engine stopped: recursion too deep",
+      );
+      rmSync(directory, { recursive: true, force: true });
+    },
+  );
 });

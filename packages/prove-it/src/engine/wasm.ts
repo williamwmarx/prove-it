@@ -277,10 +277,17 @@ export const instantiateEngine = (module: WebAssembly.Module): NativeAddon => {
         running.check = undefined;
       }
     },
-    checkSources: (args, known, machine) =>
-      callCurrent("prove_it_check_sources", [args, known, machine]) as ReturnType<
-        NativeAddon["checkSources"]
-      >,
+    // A check that runs out of the host's stack declines, for the TypeScript check to check it.
+    checkSources: (args, known, machine) => {
+      try {
+        return callCurrent("prove_it_check_sources", [args, known, machine]) as ReturnType<
+          NativeAddon["checkSources"]
+        >;
+      } catch (error) {
+        if (!isStackOverflow(error)) throw error;
+        return { kind: "declined", reason: "WebAssembly ran out of stack" };
+      }
+    },
     sanyText: (root, source, fileName, known) =>
       callCurrent("prove_it_sany_text", [root, source, fileName, known]) as ReturnType<
         NativeAddon["sanyText"]
