@@ -27,7 +27,8 @@ const lines = readFileSync(DECISIONS, "utf8")
       statistics,
     });
     const values = Object.entries(statistics).map(
-      (entry) => `${entry[0]}=${typeof entry[1] === "string" ? JSON.stringify(entry[1]) : entry[1]}`,
+      (entry) =>
+        `${entry[0]}=${typeof entry[1] === "string" ? JSON.stringify(entry[1]) : entry[1]}`,
     );
     return [path, stepLimit, ...values].join(" ");
   });
