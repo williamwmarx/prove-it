@@ -49,7 +49,9 @@ how.
     state with the same key, whose invariant TLC checks instead, so the thread only records the
     failure, an invariant false or one that fails to evaluate, and the merge stops there only if
     that successor's key is still new when its parent's turn comes.
-- **How many threads.** `PROVE_IT_WORKERS`, in the binding and in the native binary, at most
+- **How many threads.** In the binding, `PROVE_IT_WORKERS`. In the native binary, TLC's
+  `-workers` (`auto` is every core), which `PROVE_IT_WORKERS` overrides, so Parity can run on four
+  threads under the `-workers 1` its recordings were made with. Either way at most
   `available_parallelism`, since more threads than the machine runs at once only take turns. The coordinator waits on the threads it spawned,
   and no thread spins.
 - **The first level** is the initial states, and is shared like any other.
