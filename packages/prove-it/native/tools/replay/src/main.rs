@@ -22,7 +22,7 @@ use std::io::{BufRead, BufReader};
 use std::process::ExitCode;
 
 use json::{Json, parse};
-use tla_values::fingerprint::Fingerprints;
+use tla_values::fingerprint::{Fingerprints, Polynomial};
 use tla_values::trace::{Answer, Argument, Failure, perform};
 use tla_values::transfer::{EncodedStates, decode_states};
 use tla_values::{Id, Store, on_nesting_stack};
@@ -223,7 +223,7 @@ fn replay_log(path: &str) -> Result<String, String> {
         Ok(())
     })?;
     let (width, order, _) = shape.ok_or("an empty log")?;
-    let mut fingerprints = Fingerprints::new();
+    let mut fingerprints = Fingerprints::new(Polynomial::get(0));
     let from_parents = fingerprints
         .get_states(&store, &keys, width, &order, Some(&parents))
         .map_err(|bail| bail.0)?;

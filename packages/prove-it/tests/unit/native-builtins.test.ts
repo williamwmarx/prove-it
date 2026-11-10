@@ -491,4 +491,20 @@ describe.if(ADDON !== undefined)("the native engine's bridged builtins", () => {
       await compareWithInterpreter(body, "INIT Init\nNEXT Next\nINVARIANT First"),
     ).toContainEqual(expect.stringMatching(stopped("ToString of a text the engine made unranked")));
   });
+
+  // tlc2.module.Naturals#Divide floors only a quotient Java truncates below 0, where TLC loads
+  // Integers' method over it once the spec uses Integers.
+  it.each(["EXTENDS Naturals, TLC", "EXTENDS Naturals, TLC\nLOCAL INSTANCE Integers"])(
+    "divides as TLC loads the method with %s",
+    async (uses) => {
+      const body = [
+        uses,
+        "VARIABLE x",
+        "Init == x \\in {0 - 1, 0 - 7}",
+        "Next == UNCHANGED x",
+        "Divided == PrintT(x \\div 2)",
+      ];
+      await compareWithInterpreter(body, "INIT Init\nNEXT Next\nINVARIANT Divided");
+    },
+  );
 });

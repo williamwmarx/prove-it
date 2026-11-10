@@ -26,6 +26,7 @@ pub mod pcal;
 pub mod recursive;
 pub mod report;
 pub mod resolve;
+pub mod sany;
 pub mod sany_parse_error;
 pub mod spec;
 #[rustfmt::skip]

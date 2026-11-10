@@ -1,0 +1,169 @@
+> term	((%x:i ((g::fun(i,fun(i,i)) B0) B0)) a::i)
+beta_norm ((g::fun(i,fun(i,i)) a::i) a::i)
+eta_contract ((%x:i ((g::fun(i,fun(i,i)) B0) B0)) a::i)
+aeconv_beta false
+fastype i
+> term	(%y:i ((%x:i ((g::fun(i,fun(i,i)) B0) B1)) a::i))
+beta_norm (%y:i ((g::fun(i,fun(i,i)) a::i) B0))
+eta_contract (%y:i ((%x:i ((g::fun(i,fun(i,i)) B0) B1)) a::i))
+aeconv_beta false
+fastype fun(i,i)
+> term	(%x:i (f::fun(i,i) B0))
+beta_norm (%x:i (f::fun(i,i) B0))
+eta_contract f::fun(i,i)
+aeconv_beta true
+fastype fun(i,i)
+> term	(%x:i (%y:i ((g::fun(i,fun(i,i)) B1) B0)))
+beta_norm (%x:i (%y:i ((g::fun(i,fun(i,i)) B1) B0)))
+eta_contract g::fun(i,fun(i,i))
+aeconv_beta true
+fastype fun(i,fun(i,i))
+> term	(%x:i (%y:i ((g::fun(i,fun(i,i)) B0) B1)))
+beta_norm (%x:i (%y:i ((g::fun(i,fun(i,i)) B0) B1)))
+eta_contract (%x:i (%y:i ((g::fun(i,fun(i,i)) B0) B1)))
+aeconv_beta true
+fastype fun(i,fun(i,i))
+> term	(%x:i (((%z:i g::fun(i,fun(i,i))) B0) B0))
+beta_norm (%x:i (g::fun(i,fun(i,i)) B0))
+eta_contract (%x:i (((%z:i g::fun(i,fun(i,i))) B0) B0))
+aeconv_beta false
+fastype fun(i,fun(i,i))
+> term	(((%x:i (%y:i ((g::fun(i,fun(i,i)) B1) B0))) a::i) b::i)
+beta_norm ((g::fun(i,fun(i,i)) a::i) b::i)
+eta_contract ((g::fun(i,fun(i,i)) a::i) b::i)
+aeconv_beta true
+fastype i
+> term	(f::fun(i,i) B0)
+beta_norm (f::fun(i,i) B0)
+eta_contract (f::fun(i,i) B0)
+aeconv_beta true
+fastype i
+> term	(a::i b::i)
+beta_norm (a::i b::i)
+eta_contract (a::i b::i)
+aeconv_beta true
+error TYPE: fastype: expected function type
+> term	(%x:i (?F.0:fun(i,i) B0))
+beta_norm (%x:i (?F.0:fun(i,i) B0))
+eta_contract ?F.0:fun(i,i)
+aeconv_beta true
+fastype fun(i,i)
+> genvars	x	3	i
+maxidx 4
+var ?x.4:i
+> genvars	x	-1	i	fun(i,i)	?'a.0
+maxidx 0
+var ?xa.0:i
+var ?xb.0:fun(i,i)
+var ?xc.0:?'a.0
+> genvars	y	7	i	i	i	i	i	i	i	i	i	i	i	i	i	i	i	i	i	i	i	i	i	i	i	i	i	i	i	i	i	i
+maxidx 8
+var ?ya.8:i
+var ?yb.8:i
+var ?yc.8:i
+var ?yd.8:i
+var ?ye.8:i
+var ?yf.8:i
+var ?yg.8:i
+var ?yh.8:i
+var ?yi.8:i
+var ?yj.8:i
+var ?yk.8:i
+var ?yl.8:i
+var ?ym.8:i
+var ?yn.8:i
+var ?yo.8:i
+var ?yp.8:i
+var ?yq.8:i
+var ?yr.8:i
+var ?ys.8:i
+var ?yt.8:i
+var ?yu.8:i
+var ?yv.8:i
+var ?yw.8:i
+var ?yx.8:i
+var ?yy.8:i
+var ?yz.8:i
+var ?yba.8:i
+var ?ybb.8:i
+var ?ybc.8:i
+var ?ybd.8:i
+> instantiate	2	?x.1:i	?y.0:i	?y.0:i	a::i	((g::fun(i,fun(i,i)) ?x.1:i) ?y.0:i)
+maxidx 2
+tenv ?y.0:i := a::i
+tenv ?x.1:i := ?y.0:i
+above true false false false
+norm_term ((g::fun(i,fun(i,i)) a::i) a::i)
+head_norm ((g::fun(i,fun(i,i)) ?x.1:i) ?y.0:i)
+subst_term ((g::fun(i,fun(i,i)) ?y.0:i) a::i)
+fastype i
+> instantiate	2	?y.0:i	?x.1:i	?x.1:i	a::i	((g::fun(i,fun(i,i)) ?x.1:i) ?y.0:i)
+error TERM: Envir.update: duplicate assignment
+> instantiate	2	?y.0:i	?y.0:i	((g::fun(i,fun(i,i)) ?y.0:i) ?y.0:i)
+maxidx 2
+above true true true true
+norm_term ((g::fun(i,fun(i,i)) ?y.0:i) ?y.0:i)
+head_norm ((g::fun(i,fun(i,i)) ?y.0:i) ?y.0:i)
+subst_term ((g::fun(i,fun(i,i)) ?y.0:i) ?y.0:i)
+fastype i
+> instantiate	2	?y.2:i	a::i	?y.2:i	b::i	?y.2:i
+error TERM: Envir.update: duplicate assignment
+> instantiate	3	?F.0:fun(i,fun(i,i))	(%u:i (%w:i ((g::fun(i,fun(i,i)) B0) B1)))	?G.0:fun(i,i)	(%u:i ((?F.0:fun(i,fun(i,i)) B0) (h::fun(i,i) B0)))	(%x:i (?G.0:fun(i,i) (f::fun(i,i) B0)))
+maxidx 3
+tenv ?F.0:fun(i,fun(i,i)) := (%u:i (%w:i ((g::fun(i,fun(i,i)) B0) B1)))
+tenv ?G.0:fun(i,i) := (%u:i ((?F.0:fun(i,fun(i,i)) B0) (h::fun(i,i) B0)))
+above true false false false
+norm_term (%x:i ((g::fun(i,fun(i,i)) (h::fun(i,i) (f::fun(i,i) B0))) (f::fun(i,i) B0)))
+head_norm (%x:i ((g::fun(i,fun(i,i)) (h::fun(i,i) (f::fun(i,i) B0))) (f::fun(i,i) B0)))
+subst_term (%x:i ((%u:i ((?F.0:fun(i,fun(i,i)) B0) (h::fun(i,i) B0))) (f::fun(i,i) B0)))
+fastype fun(i,i)
+> term	(PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) (a_CONSTANTunde_Qunde_a:fun(PredicateLogic.c,PredicateLogic.c) a_CONSTANTunde_Sunde_a:PredicateLogic.c))
+beta_norm (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) (a_CONSTANTunde_Qunde_a:fun(PredicateLogic.c,PredicateLogic.c) a_CONSTANTunde_Sunde_a:PredicateLogic.c))
+eta_contract (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) (a_CONSTANTunde_Qunde_a:fun(PredicateLogic.c,PredicateLogic.c) a_CONSTANTunde_Sunde_a:PredicateLogic.c))
+aeconv_beta true
+fastype prop
+> term	(PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) (PredicateLogic.All::fun(fun(PredicateLogic.c,PredicateLogic.c),PredicateLogic.c) (%a_CONSTANTunde_gunde_a:PredicateLogic.c (PredicateLogic.All::fun(fun(PredicateLogic.c,PredicateLogic.c),PredicateLogic.c) (%a_CONSTANTunde_hunde_a:PredicateLogic.c ((SetTheory.bAll::fun(PredicateLogic.c,fun(fun(PredicateLogic.c,PredicateLogic.c),PredicateLogic.c)) (a_CONSTANTunde_FiniteSubsetsOfunde_a:fun(PredicateLogic.c,PredicateLogic.c) a_CONSTANTunde_Sunde_a:PredicateLogic.c)) (%a_CONSTANTunde_xunde_a:PredicateLogic.c ((PredicateLogic.imp::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) ((SetTheory.bAll::fun(PredicateLogic.c,fun(fun(PredicateLogic.c,PredicateLogic.c),PredicateLogic.c)) (((a_CONSTANTunde_SetLessThanunde_a:fun(PredicateLogic.c,fun('a,fun(PredicateLogic.c,PredicateLogic.c))) B0) (a_CONSTANTunde_StrictSubsetOrderingunde_a:fun(PredicateLogic.c,'a) a_CONSTANTunde_Sunde_a:PredicateLogic.c)) (a_CONSTANTunde_FiniteSubsetsOfunde_a:fun(PredicateLogic.c,PredicateLogic.c) a_CONSTANTunde_Sunde_a:PredicateLogic.c))) (%a_CONSTANTunde_yunde_a:PredicateLogic.c ((PredicateLogic.eq::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) ((Functions.fapply::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) B3) B0)) ((Functions.fapply::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) B2) B0))))) ((PredicateLogic.eq::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) ((a_CONSTANTunde_PermsRecunde_a:fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) B2) B0)) ((a_CONSTANTunde_PermsRecunde_a:fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) B1) B0))))))))))
+beta_norm (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) (PredicateLogic.All::fun(fun(PredicateLogic.c,PredicateLogic.c),PredicateLogic.c) (%a_CONSTANTunde_gunde_a:PredicateLogic.c (PredicateLogic.All::fun(fun(PredicateLogic.c,PredicateLogic.c),PredicateLogic.c) (%a_CONSTANTunde_hunde_a:PredicateLogic.c ((SetTheory.bAll::fun(PredicateLogic.c,fun(fun(PredicateLogic.c,PredicateLogic.c),PredicateLogic.c)) (a_CONSTANTunde_FiniteSubsetsOfunde_a:fun(PredicateLogic.c,PredicateLogic.c) a_CONSTANTunde_Sunde_a:PredicateLogic.c)) (%a_CONSTANTunde_xunde_a:PredicateLogic.c ((PredicateLogic.imp::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) ((SetTheory.bAll::fun(PredicateLogic.c,fun(fun(PredicateLogic.c,PredicateLogic.c),PredicateLogic.c)) (((a_CONSTANTunde_SetLessThanunde_a:fun(PredicateLogic.c,fun('a,fun(PredicateLogic.c,PredicateLogic.c))) B0) (a_CONSTANTunde_StrictSubsetOrderingunde_a:fun(PredicateLogic.c,'a) a_CONSTANTunde_Sunde_a:PredicateLogic.c)) (a_CONSTANTunde_FiniteSubsetsOfunde_a:fun(PredicateLogic.c,PredicateLogic.c) a_CONSTANTunde_Sunde_a:PredicateLogic.c))) (%a_CONSTANTunde_yunde_a:PredicateLogic.c ((PredicateLogic.eq::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) ((Functions.fapply::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) B3) B0)) ((Functions.fapply::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) B2) B0))))) ((PredicateLogic.eq::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) ((a_CONSTANTunde_PermsRecunde_a:fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) B2) B0)) ((a_CONSTANTunde_PermsRecunde_a:fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) B1) B0))))))))))
+eta_contract (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) (PredicateLogic.All::fun(fun(PredicateLogic.c,PredicateLogic.c),PredicateLogic.c) (%a_CONSTANTunde_gunde_a:PredicateLogic.c (PredicateLogic.All::fun(fun(PredicateLogic.c,PredicateLogic.c),PredicateLogic.c) (%a_CONSTANTunde_hunde_a:PredicateLogic.c ((SetTheory.bAll::fun(PredicateLogic.c,fun(fun(PredicateLogic.c,PredicateLogic.c),PredicateLogic.c)) (a_CONSTANTunde_FiniteSubsetsOfunde_a:fun(PredicateLogic.c,PredicateLogic.c) a_CONSTANTunde_Sunde_a:PredicateLogic.c)) (%a_CONSTANTunde_xunde_a:PredicateLogic.c ((PredicateLogic.imp::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) ((SetTheory.bAll::fun(PredicateLogic.c,fun(fun(PredicateLogic.c,PredicateLogic.c),PredicateLogic.c)) (((a_CONSTANTunde_SetLessThanunde_a:fun(PredicateLogic.c,fun('a,fun(PredicateLogic.c,PredicateLogic.c))) B0) (a_CONSTANTunde_StrictSubsetOrderingunde_a:fun(PredicateLogic.c,'a) a_CONSTANTunde_Sunde_a:PredicateLogic.c)) (a_CONSTANTunde_FiniteSubsetsOfunde_a:fun(PredicateLogic.c,PredicateLogic.c) a_CONSTANTunde_Sunde_a:PredicateLogic.c))) (%a_CONSTANTunde_yunde_a:PredicateLogic.c ((PredicateLogic.eq::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) ((Functions.fapply::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) B3) B0)) ((Functions.fapply::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) B2) B0))))) ((PredicateLogic.eq::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) ((a_CONSTANTunde_PermsRecunde_a:fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) B2) B0)) ((a_CONSTANTunde_PermsRecunde_a:fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) B1) B0))))))))))
+aeconv_beta true
+fastype prop
+> term	(PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) ((SetTheory.bAll::fun(PredicateLogic.c,fun(fun(PredicateLogic.c,PredicateLogic.c),PredicateLogic.c)) Integers.Nat::PredicateLogic.c) (%a_CONSTANTunde_nunde_a:PredicateLogic.c ((SetTheory.bAll::fun(PredicateLogic.c,fun(fun(PredicateLogic.c,PredicateLogic.c),PredicateLogic.c)) Integers.Nat::PredicateLogic.c) (%a_CONSTANTunde_munde_a:PredicateLogic.c ((SetTheory.bAll::fun(PredicateLogic.c,fun(fun(PredicateLogic.c,PredicateLogic.c),PredicateLogic.c)) Integers.Nat::PredicateLogic.c) (%a_CONSTANTunde_qunde_a:PredicateLogic.c ((PredicateLogic.imp::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) ((PredicateLogic.conj::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) ((IntegerArithmetic.less::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) B1) B2)) ((IntegerArithmetic.leq::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) B0) B1))) ((IntegerArithmetic.less::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) B0) B2)))))))))
+beta_norm (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) ((SetTheory.bAll::fun(PredicateLogic.c,fun(fun(PredicateLogic.c,PredicateLogic.c),PredicateLogic.c)) Integers.Nat::PredicateLogic.c) (%a_CONSTANTunde_nunde_a:PredicateLogic.c ((SetTheory.bAll::fun(PredicateLogic.c,fun(fun(PredicateLogic.c,PredicateLogic.c),PredicateLogic.c)) Integers.Nat::PredicateLogic.c) (%a_CONSTANTunde_munde_a:PredicateLogic.c ((SetTheory.bAll::fun(PredicateLogic.c,fun(fun(PredicateLogic.c,PredicateLogic.c),PredicateLogic.c)) Integers.Nat::PredicateLogic.c) (%a_CONSTANTunde_qunde_a:PredicateLogic.c ((PredicateLogic.imp::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) ((PredicateLogic.conj::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) ((IntegerArithmetic.less::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) B1) B2)) ((IntegerArithmetic.leq::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) B0) B1))) ((IntegerArithmetic.less::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) B0) B2)))))))))
+eta_contract (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) ((SetTheory.bAll::fun(PredicateLogic.c,fun(fun(PredicateLogic.c,PredicateLogic.c),PredicateLogic.c)) Integers.Nat::PredicateLogic.c) (%a_CONSTANTunde_nunde_a:PredicateLogic.c ((SetTheory.bAll::fun(PredicateLogic.c,fun(fun(PredicateLogic.c,PredicateLogic.c),PredicateLogic.c)) Integers.Nat::PredicateLogic.c) (%a_CONSTANTunde_munde_a:PredicateLogic.c ((SetTheory.bAll::fun(PredicateLogic.c,fun(fun(PredicateLogic.c,PredicateLogic.c),PredicateLogic.c)) Integers.Nat::PredicateLogic.c) (%a_CONSTANTunde_qunde_a:PredicateLogic.c ((PredicateLogic.imp::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) ((PredicateLogic.conj::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) ((IntegerArithmetic.less::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) B1) B2)) ((IntegerArithmetic.leq::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) B0) B1))) ((IntegerArithmetic.less::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) B0) B2)))))))))
+aeconv_beta true
+fastype prop
+> term	(PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) ((a_CONSTANTunde_IsWellFoundedOnunde_a:fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) (((a_CONSTANTunde_PreImageunde_a:fun(fun(PredicateLogic.c,PredicateLogic.c),fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c))) a_CONSTANTunde_Cardinalityunde_a:fun(PredicateLogic.c,PredicateLogic.c)) (a_CONSTANTunde_FiniteSubsetsOfunde_a:fun('a,PredicateLogic.c) a_CONSTANTunde_Sunde_a:'a)) ((a_CONSTANTunde_OpToRelunde_a:fun(fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)),fun(PredicateLogic.c,PredicateLogic.c)) (%a_Unknownunde_x1unde_a:PredicateLogic.c (%a_Unknownunde_x2unde_a:PredicateLogic.c ((IntegerArithmetic.less::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) B1) B0)))) Integers.Nat::PredicateLogic.c))) (a_CONSTANTunde_FiniteSubsetsOfunde_a:fun('a,PredicateLogic.c) a_CONSTANTunde_Sunde_a:'a)))
+beta_norm (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) ((a_CONSTANTunde_IsWellFoundedOnunde_a:fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) (((a_CONSTANTunde_PreImageunde_a:fun(fun(PredicateLogic.c,PredicateLogic.c),fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c))) a_CONSTANTunde_Cardinalityunde_a:fun(PredicateLogic.c,PredicateLogic.c)) (a_CONSTANTunde_FiniteSubsetsOfunde_a:fun('a,PredicateLogic.c) a_CONSTANTunde_Sunde_a:'a)) ((a_CONSTANTunde_OpToRelunde_a:fun(fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)),fun(PredicateLogic.c,PredicateLogic.c)) (%a_Unknownunde_x1unde_a:PredicateLogic.c (%a_Unknownunde_x2unde_a:PredicateLogic.c ((IntegerArithmetic.less::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) B1) B0)))) Integers.Nat::PredicateLogic.c))) (a_CONSTANTunde_FiniteSubsetsOfunde_a:fun('a,PredicateLogic.c) a_CONSTANTunde_Sunde_a:'a)))
+eta_contract (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) ((a_CONSTANTunde_IsWellFoundedOnunde_a:fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) (((a_CONSTANTunde_PreImageunde_a:fun(fun(PredicateLogic.c,PredicateLogic.c),fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c))) a_CONSTANTunde_Cardinalityunde_a:fun(PredicateLogic.c,PredicateLogic.c)) (a_CONSTANTunde_FiniteSubsetsOfunde_a:fun('a,PredicateLogic.c) a_CONSTANTunde_Sunde_a:'a)) ((a_CONSTANTunde_OpToRelunde_a:fun(fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)),fun(PredicateLogic.c,PredicateLogic.c)) IntegerArithmetic.less::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c))) Integers.Nat::PredicateLogic.c))) (a_CONSTANTunde_FiniteSubsetsOfunde_a:fun('a,PredicateLogic.c) a_CONSTANTunde_Sunde_a:'a)))
+aeconv_beta true
+fastype prop
+> term	(PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) ((SetTheory.bAll::fun(PredicateLogic.c,fun(fun(PredicateLogic.c,PredicateLogic.c),PredicateLogic.c)) Integers.Nat::PredicateLogic.c) (%a_CONSTANTunde_nunde_a:PredicateLogic.c (a_CONSTANTunde_Punde_a:fun(PredicateLogic.c,PredicateLogic.c) B0))))
+beta_norm (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) ((SetTheory.bAll::fun(PredicateLogic.c,fun(fun(PredicateLogic.c,PredicateLogic.c),PredicateLogic.c)) Integers.Nat::PredicateLogic.c) (%a_CONSTANTunde_nunde_a:PredicateLogic.c (a_CONSTANTunde_Punde_a:fun(PredicateLogic.c,PredicateLogic.c) B0))))
+eta_contract (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) ((SetTheory.bAll::fun(PredicateLogic.c,fun(fun(PredicateLogic.c,PredicateLogic.c),PredicateLogic.c)) Integers.Nat::PredicateLogic.c) a_CONSTANTunde_Punde_a:fun(PredicateLogic.c,PredicateLogic.c)))
+aeconv_beta true
+fastype prop
+> term	(PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) ((SetTheory.bAll::fun(PredicateLogic.c,fun(fun(PredicateLogic.c,PredicateLogic.c),PredicateLogic.c)) a_CONSTANTunde_Acceptorsunde_a:PredicateLogic.c) (%a_CONSTANTunde_accunde_a:PredicateLogic.c ((PredicateLogic.conj::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) ((PredicateLogic.iff::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) ((PredicateLogic.eq::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) ((Functions.fapply::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) a_VARIABLEunde_maxValunde_hash_primea:PredicateLogic.c) B0)) a_CONSTANTunde_Noneunde_a:PredicateLogic.c)) ((PredicateLogic.eq::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) ((Functions.fapply::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) a_VARIABLEunde_maxVBalunde_hash_primea:PredicateLogic.c) B0)) (minus:fun(PredicateLogic.c,PredicateLogic.c) ((Functions.fapply::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) Integers.succ::PredicateLogic.c) Integers.zero::PredicateLogic.c))))) ((IntegerArithmetic.leq::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) ((Functions.fapply::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) a_VARIABLEunde_maxVBalunde_hash_primea:PredicateLogic.c) B0)) ((Functions.fapply::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) a_VARIABLEunde_maxBalunde_hash_primea:PredicateLogic.c) B0))))))
+beta_norm (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) ((SetTheory.bAll::fun(PredicateLogic.c,fun(fun(PredicateLogic.c,PredicateLogic.c),PredicateLogic.c)) a_CONSTANTunde_Acceptorsunde_a:PredicateLogic.c) (%a_CONSTANTunde_accunde_a:PredicateLogic.c ((PredicateLogic.conj::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) ((PredicateLogic.iff::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) ((PredicateLogic.eq::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) ((Functions.fapply::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) a_VARIABLEunde_maxValunde_hash_primea:PredicateLogic.c) B0)) a_CONSTANTunde_Noneunde_a:PredicateLogic.c)) ((PredicateLogic.eq::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) ((Functions.fapply::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) a_VARIABLEunde_maxVBalunde_hash_primea:PredicateLogic.c) B0)) (minus:fun(PredicateLogic.c,PredicateLogic.c) ((Functions.fapply::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) Integers.succ::PredicateLogic.c) Integers.zero::PredicateLogic.c))))) ((IntegerArithmetic.leq::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) ((Functions.fapply::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) a_VARIABLEunde_maxVBalunde_hash_primea:PredicateLogic.c) B0)) ((Functions.fapply::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) a_VARIABLEunde_maxBalunde_hash_primea:PredicateLogic.c) B0))))))
+eta_contract (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) ((SetTheory.bAll::fun(PredicateLogic.c,fun(fun(PredicateLogic.c,PredicateLogic.c),PredicateLogic.c)) a_CONSTANTunde_Acceptorsunde_a:PredicateLogic.c) (%a_CONSTANTunde_accunde_a:PredicateLogic.c ((PredicateLogic.conj::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) ((PredicateLogic.iff::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) ((PredicateLogic.eq::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) ((Functions.fapply::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) a_VARIABLEunde_maxValunde_hash_primea:PredicateLogic.c) B0)) a_CONSTANTunde_Noneunde_a:PredicateLogic.c)) ((PredicateLogic.eq::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) ((Functions.fapply::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) a_VARIABLEunde_maxVBalunde_hash_primea:PredicateLogic.c) B0)) (minus:fun(PredicateLogic.c,PredicateLogic.c) ((Functions.fapply::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) Integers.succ::PredicateLogic.c) Integers.zero::PredicateLogic.c))))) ((IntegerArithmetic.leq::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) ((Functions.fapply::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) a_VARIABLEunde_maxVBalunde_hash_primea:PredicateLogic.c) B0)) ((Functions.fapply::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) a_VARIABLEunde_maxBalunde_hash_primea:PredicateLogic.c) B0))))))
+aeconv_beta true
+fastype prop
+> term	(PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) (PredicateLogic.not::fun(PredicateLogic.c,PredicateLogic.c) ((PredicateLogic.eq::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) a_CONSTANTunde_Sunde_a:PredicateLogic.c) SetTheory.emptyset::PredicateLogic.c)))
+beta_norm (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) (PredicateLogic.not::fun(PredicateLogic.c,PredicateLogic.c) ((PredicateLogic.eq::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) a_CONSTANTunde_Sunde_a:PredicateLogic.c) SetTheory.emptyset::PredicateLogic.c)))
+eta_contract (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) (PredicateLogic.not::fun(PredicateLogic.c,PredicateLogic.c) ((PredicateLogic.eq::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) a_CONSTANTunde_Sunde_a:PredicateLogic.c) SetTheory.emptyset::PredicateLogic.c)))
+aeconv_beta true
+fastype prop
+> term	(PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) (PredicateLogic.All::fun(fun(PredicateLogic.c,PredicateLogic.c),PredicateLogic.c) (%a_CONSTANTunde_Sunde_a:PredicateLogic.c (PredicateLogic.Ex::fun(fun(PredicateLogic.c,PredicateLogic.c),PredicateLogic.c) (%a_CONSTANTunde_xunde_a:PredicateLogic.c (PredicateLogic.not::fun(PredicateLogic.c,PredicateLogic.c) ((SetTheory.in::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) B0) B1)))))))
+beta_norm (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) (PredicateLogic.All::fun(fun(PredicateLogic.c,PredicateLogic.c),PredicateLogic.c) (%a_CONSTANTunde_Sunde_a:PredicateLogic.c (PredicateLogic.Ex::fun(fun(PredicateLogic.c,PredicateLogic.c),PredicateLogic.c) (%a_CONSTANTunde_xunde_a:PredicateLogic.c (PredicateLogic.not::fun(PredicateLogic.c,PredicateLogic.c) ((SetTheory.in::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) B0) B1)))))))
+eta_contract (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) (PredicateLogic.All::fun(fun(PredicateLogic.c,PredicateLogic.c),PredicateLogic.c) (%a_CONSTANTunde_Sunde_a:PredicateLogic.c (PredicateLogic.Ex::fun(fun(PredicateLogic.c,PredicateLogic.c),PredicateLogic.c) (%a_CONSTANTunde_xunde_a:PredicateLogic.c (PredicateLogic.not::fun(PredicateLogic.c,PredicateLogic.c) ((SetTheory.in::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) B0) B1)))))))
+aeconv_beta true
+fastype prop
+> term	(PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) ((PredicateLogic.eq::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) ((Functions.fapply::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) ((Functions.Fcn::fun(PredicateLogic.c,fun(fun(PredicateLogic.c,PredicateLogic.c),PredicateLogic.c)) ((SetTheory.addElt::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) ((Functions.fapply::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) Integers.succ::PredicateLogic.c) Integers.zero::PredicateLogic.c)) SetTheory.emptyset::PredicateLogic.c)) (%a_CONSTANTunde_yunde_a:PredicateLogic.c Integers.zero::PredicateLogic.c))) Integers.zero::PredicateLogic.c)) Integers.zero::PredicateLogic.c))
+beta_norm (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) ((PredicateLogic.eq::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) ((Functions.fapply::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) ((Functions.Fcn::fun(PredicateLogic.c,fun(fun(PredicateLogic.c,PredicateLogic.c),PredicateLogic.c)) ((SetTheory.addElt::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) ((Functions.fapply::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) Integers.succ::PredicateLogic.c) Integers.zero::PredicateLogic.c)) SetTheory.emptyset::PredicateLogic.c)) (%a_CONSTANTunde_yunde_a:PredicateLogic.c Integers.zero::PredicateLogic.c))) Integers.zero::PredicateLogic.c)) Integers.zero::PredicateLogic.c))
+eta_contract (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) ((PredicateLogic.eq::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) ((Functions.fapply::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) ((Functions.Fcn::fun(PredicateLogic.c,fun(fun(PredicateLogic.c,PredicateLogic.c),PredicateLogic.c)) ((SetTheory.addElt::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) ((Functions.fapply::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) Integers.succ::PredicateLogic.c) Integers.zero::PredicateLogic.c)) SetTheory.emptyset::PredicateLogic.c)) (%a_CONSTANTunde_yunde_a:PredicateLogic.c Integers.zero::PredicateLogic.c))) Integers.zero::PredicateLogic.c)) Integers.zero::PredicateLogic.c))
+aeconv_beta true
+fastype prop
+> term	(PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) PredicateLogic.FALSE::PredicateLogic.c)
+beta_norm (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) PredicateLogic.FALSE::PredicateLogic.c)
+eta_contract (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) PredicateLogic.FALSE::PredicateLogic.c)
+aeconv_beta true
+fastype prop

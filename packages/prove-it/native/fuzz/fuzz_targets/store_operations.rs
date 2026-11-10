@@ -7,7 +7,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use tla_values::fingerprint::Fingerprints;
+use tla_values::fingerprint::{Fingerprints, Polynomial};
 use tla_values::store::Store;
 use tla_values::trace::{Answer, Argument, Failure, perform};
 use tla_values::transfer::{StateEncoder, decode_states};
@@ -187,7 +187,7 @@ fuzz_target!(|data: &[u8]| {
         .zip(ids.iter().rev())
         .flat_map(|(&left, &right)| [left, right])
         .collect();
-    let mut fingerprints = Fingerprints::new();
+    let mut fingerprints = Fingerprints::new(Polynomial::get(0));
     let order = [1, 0];
     let scratch: Vec<u64> = states
         .chunks_exact(2)
@@ -198,7 +198,7 @@ fuzz_target!(|data: &[u8]| {
         scratch
     );
     assert_eq!(
-        Fingerprints::new().get_states_reference(&store, &states, 2, &order),
+        Fingerprints::new(Polynomial::get(0)).get_states_reference(&store, &states, 2, &order),
         scratch
     );
     // A value read back is normalized, so reading it back again changes nothing. The encoding

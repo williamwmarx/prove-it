@@ -1,0 +1,22 @@
+fixes a_CONSTANTunde_Clientsunde_a
+fixes a_CONSTANTunde_Resourcesunde_a
+fixes a_VARIABLEunde_unsatunde_a a_VARIABLEunde_unsatunde_a'
+fixes a_VARIABLEunde_allocunde_a a_VARIABLEunde_allocunde_a'
+fixes a_VARIABLEunde_schedunde_a a_VARIABLEunde_schedunde_a'
+fixes a_VARIABLEunde_requestsunde_a a_VARIABLEunde_requestsunde_a'
+fixes a_VARIABLEunde_holdingunde_a a_VARIABLEunde_holdingunde_a'
+fixes a_VARIABLEunde_networkunde_a a_VARIABLEunde_networkunde_a'
+fixes a_CONSTANTunde_Tunde_a
+fixes a_CONSTANTunde_Sunde_a
+assumes a_CONSTANTunde_Sunde_a_in
+assumes v'254
+fixes a_CONSTANTunde_squnde_a
+assumes a_CONSTANTunde_squnde_a_in
+assumes v'260
+assumes v'261
+assumption a_CONSTANTunde_Sunde_a_in: (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) ((SetTheory.in::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) a_CONSTANTunde_Sunde_a:PredicateLogic.c) (SetTheory.SUBSET::fun(PredicateLogic.c,PredicateLogic.c) a_CONSTANTunde_Tunde_a:PredicateLogic.c)))
+assumption v'254: (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) (a_CONSTANTunde_IsFiniteSetunde_a:fun(PredicateLogic.c,PredicateLogic.c) a_CONSTANTunde_Sunde_a:PredicateLogic.c))
+assumption a_CONSTANTunde_squnde_a_in: (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) ((SetTheory.in::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) a_CONSTANTunde_squnde_a:PredicateLogic.c) (a_CONSTANTunde_Schedexcl_PermSeqsunde_a:fun(PredicateLogic.c,PredicateLogic.c) a_CONSTANTunde_Sunde_a:PredicateLogic.c)))
+assumption v'260: (Pure.all::fun(fun(PredicateLogic.c,prop),prop) (%a_CONSTANTunde_ssunde_a:PredicateLogic.c. ((Pure.imp::fun(prop,fun(prop,prop)) (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) ((SetTheory.in::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) B0) (SetTheory.SUBSET::fun(PredicateLogic.c,PredicateLogic.c) a_CONSTANTunde_Sunde_a:PredicateLogic.c)))) ((Pure.imp::fun(prop,fun(prop,prop)) (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) ((SetTheory.bAll::fun(PredicateLogic.c,fun(fun(PredicateLogic.c,PredicateLogic.c),PredicateLogic.c)) ((SetTheory.setminus::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) (SetTheory.SUBSET::fun(PredicateLogic.c,PredicateLogic.c) B0)) ((SetTheory.addElt::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) B0) SetTheory.emptyset::PredicateLogic.c))) (%a_CONSTANTunde_Uunde_a:PredicateLogic.c. (a_CONSTANTunde_Qunde_a:fun(PredicateLogic.c,PredicateLogic.c) B0))))) (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) (a_CONSTANTunde_Qunde_a:fun(PredicateLogic.c,PredicateLogic.c) B0))))))
+assumption v'261: (Pure.all::fun(fun(fun(PredicateLogic.c,PredicateLogic.c),prop),prop) (%a_CONSTANTunde_Punde_a:fun(PredicateLogic.c,PredicateLogic.c). (Pure.all::fun(fun(PredicateLogic.c,prop),prop) (%a_CONSTANTunde_Sunde_a_1:PredicateLogic.c. ((Pure.imp::fun(prop,fun(prop,prop)) (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) (a_CONSTANTunde_IsFiniteSetunde_a:fun(PredicateLogic.c,PredicateLogic.c) B0))) ((Pure.imp::fun(prop,fun(prop,prop)) (Pure.all::fun(fun(PredicateLogic.c,prop),prop) (%a_CONSTANTunde_Tunde_a_1:PredicateLogic.c. ((Pure.imp::fun(prop,fun(prop,prop)) (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) ((SetTheory.in::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) B0) (SetTheory.SUBSET::fun(PredicateLogic.c,PredicateLogic.c) B1)))) ((Pure.imp::fun(prop,fun(prop,prop)) (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) ((SetTheory.bAll::fun(PredicateLogic.c,fun(fun(PredicateLogic.c,PredicateLogic.c),PredicateLogic.c)) ((SetTheory.setminus::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) (SetTheory.SUBSET::fun(PredicateLogic.c,PredicateLogic.c) B0)) ((SetTheory.addElt::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) B0) SetTheory.emptyset::PredicateLogic.c))) (%a_CONSTANTunde_Uunde_a:PredicateLogic.c. (B3 B0))))) (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) (B2 B0))))))) (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) (B1 B0))))))))
+conclusion: (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) (a_CONSTANTunde_Qunde_a:fun(PredicateLogic.c,PredicateLogic.c) a_CONSTANTunde_Sunde_a:PredicateLogic.c))

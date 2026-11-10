@@ -10,6 +10,7 @@
 
 mod action;
 mod alias;
+mod dump;
 mod eval;
 mod failure;
 mod fingerprint;
@@ -23,6 +24,7 @@ mod split;
 mod value;
 
 pub use alias::Alias;
+pub use dump::TraceDump;
 
 /// The texts TLC interns as it computes the model's constant definitions, `definitions` by index
 /// in TLC's order, past those the IR ranks, in the order it interns them.
