@@ -84,9 +84,17 @@ const SHOWN_EFFECTS: [&str; 9] = [
     "RandomSubsetSet",
 ];
 
-/// Whether evaluating the definition again can show, as by printing twice.
-fn reaches_shown_effect(definition: &Rc<Definition>, environment: &Environment) -> bool {
-    let mut seen = FastSet::default();
+/// Whether evaluating the definition again can show, as by printing twice, other than through
+/// `cached`, whose value TLC keeps.
+fn reaches_shown_effect(
+    definition: &Rc<Definition>,
+    environment: &Environment,
+    cached: Option<&Rc<Definition>>,
+) -> bool {
+    let mut seen: FastSet<usize> = cached
+        .map(|cached| Rc::as_ptr(cached) as usize)
+        .into_iter()
+        .collect();
     let mut pending = vec![definition.body.clone()];
     while let Some(expression) = pending.pop() {
         if let Some(name) = expression.reference()
@@ -1082,10 +1090,12 @@ impl<'a> Lowering<'a> {
                     ExpressionKind::Apply { operator, args, .. } if &**operator == "TLCEval" && args.len() == 1
                 ) && self.facts.is_constant_level(definition, environment)
                     && !environment.startup_definitions.iter().any(|other| {
-                        !Rc::ptr_eq(other, definition) && reaches_shown_effect(other, environment)
+                        !Rc::ptr_eq(other, definition)
+                            && is_startup_definition(other, environment, &self.facts)
+                            && reaches_shown_effect(other, environment, Some(definition))
                     })
             };
-            if is_constant && reaches_shown_effect(definition, environment) && !is_cached() {
+            if is_constant && reaches_shown_effect(definition, environment, None) && !is_cached() {
                 return Err(FrontError::NotYet(format!(
                     "a configuration substitute with effects, which TLC evaluates at every use: \
                      {name} <- {target}"

@@ -2469,18 +2469,53 @@ fn enumerates_a_set_tlceval_made_in_its_normalized_order() {
 #[test]
 fn declines_a_substitute_with_effects_without_a_recorded_front() {
     // TLC evaluates QDef before K and L, and again wherever Q is read, printing "subst" each time.
-    let (output, directory) = run_front(
-        "effectful-substitute",
-        "---- MODULE W3 ----\nEXTENDS Integers, TLC\nCONSTANTS Q\nVARIABLES f\nK == PrintT(\"constdef\")\nQDef == IF PrintT(\"subst\") THEN 1 ELSE 2\nL == PrintT(\"constdef2\")\nASSUME PrintT(\"assume1\") /\\ K /\\ L\nInit == f = 0\nNext == f' = f\n====\n",
-        "CONSTANTS Q <- QDef\nINIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE\n",
-        &[],
+    let config = "CONSTANTS Q <- QDef\nINIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE\n";
+    let spec = |name: &str, definitions: &str, assumption: &str| {
+        format!(
+            "---- MODULE {name} ----\nEXTENDS Integers, TLC\nCONSTANTS Q\nVARIABLES f\n{definitions}\nASSUME {assumption}\nInit == f = Q\nNext == f' = f\n====\n"
+        )
+    };
+    let declined = [
+        spec(
+            "W3",
+            "K == PrintT(\"constdef\")\nQDef == IF PrintT(\"subst\") THEN 1 ELSE 2\nL == PrintT(\"constdef2\")",
+            "PrintT(\"assume1\") /\\ K /\\ L",
+        ),
+        spec(
+            "W2",
+            "QDef == IF PrintT(\"subst\") THEN 1 ELSE 2",
+            "PrintT(\"assume1\") /\\ Q = 1 /\\ Q = 1",
+        ),
+        // TLC keeps a constant TLCEval's value, but prints "subst" before K's "constdef".
+        spec(
+            "W4",
+            "K == PrintT(\"constdef\")\nQDef == TLCEval(IF PrintT(\"subst\") THEN 1 ELSE 2)",
+            "PrintT(\"assume1\") /\\ K /\\ Q = 1",
+        ),
+    ];
+    for spec in &declined {
+        let (output, directory) = run_front("effectful-substitute", spec, config, &[]);
+        assert_eq!(output.status.code(), Some(1), "{}", stdout(&output));
+        assert!(
+            String::from_utf8_lossy(&output.stderr)
+                .contains("not native yet: a configuration substitute with effects"),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        std::fs::remove_dir_all(directory).expect("removed");
+    }
+    // A constant TLCEval no other constant definition's effects come before prints once.
+    let cached = spec(
+        "W5",
+        "QDef == TLCEval(IF PrintT(\"subst\") THEN 1 ELSE 2)",
+        "PrintT(\"assume1\") /\\ Q = 1 /\\ Q = 1",
     );
-    assert_eq!(output.status.code(), Some(1), "{}", stdout(&output));
+    let (output, directory) = run_front("cached-substitute", &cached, config, &[]);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(0), "{text}");
     assert!(
-        String::from_utf8_lossy(&output.stderr)
-            .contains("not native yet: a configuration substitute with effects"),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
+        text.contains("\n\"subst\"\n\"assume1\"\nComputing initial states...\n"),
+        "{text}"
     );
     std::fs::remove_dir_all(directory).expect("removed");
 }
