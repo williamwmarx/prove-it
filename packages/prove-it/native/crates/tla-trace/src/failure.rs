@@ -316,11 +316,12 @@ impl<'ir> Rebuilder<'ir> {
                     "evaluating the assumption again: it didn't fail".into(),
                 ));
             }
-            // `Tool.isValid` fails on an assumption that is no boolean, naming its place.
+            // `Tool.isValid` fails on an assumption that is no boolean, naming it as SANY's
+            // `toString` does.
             Ok(_) if ir.nodes.arena[node as usize].range.is_some() => TlcMessage {
                 text: format!(
                     "TLC expected a boolean value, but did not find one. {}",
-                    evaluator.describe_range(node)
+                    ir.texts[name as usize]
                 ),
                 code: Some(EXPECTED_VALUE),
                 is_eval_exception: false,
@@ -1645,9 +1646,23 @@ fn constraint_value_holds(
     body: NodeId,
     value: Value,
 ) -> Evaluated<bool> {
+    let node = &evaluator.ir.nodes.arena[body as usize];
     match value {
         Value::Bool(holds) => Ok(holds),
-        _ if evaluator.ir.nodes.arena[body as usize].range.is_some() => fail_with(
+        // `Tool.eval` gives a literal the value its tool object holds, which
+        // `processModelConstraints` replaced with the constraint's `OpDefNode`: TLC fails with a
+        // ClassCastException, whose message names the JVM's classes.
+        _ if matches!(
+            node.kind,
+            NodeKind::Number(_)
+                | NodeKind::WideNumber(_)
+                | NodeKind::Decimal(_)
+                | NodeKind::String(_)
+        ) =>
+        {
+            fail("a constraint that is a literal, which TLC fails to cast")
+        }
+        _ if node.range.is_some() => fail_with(
             "a constraint that isn't a boolean",
             TlcMessage {
                 text: format!(
