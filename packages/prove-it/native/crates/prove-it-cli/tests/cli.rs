@@ -2182,3 +2182,24 @@ fn checks_a_successor_in_tlc_s_order() {
     );
     std::fs::remove_dir_all(directory).expect("removed");
 }
+
+#[test]
+fn reports_the_progress_of_the_initial_states_tlc_computes_again() {
+    let spec = "---- MODULE InitInvErr ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x \\in 1..6\nNext == x' = x\nInv == IF x = 6 THEN Assert(FALSE, \"i\") ELSE TRUE\n====\n";
+    let (output, directory) = run_front(
+        "init-replay",
+        spec,
+        "INIT Init\nNEXT Next\nINVARIANT Inv\n",
+        &[],
+    );
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(75), "{text}");
+    let progress = "Computed 2 initial states...\nComputed 4 initial states...\n";
+    assert!(
+        text.contains(&format!(
+            "Computing initial states...\n{progress}Error: The first argument of Assert evaluated to FALSE; the second argument was:\n\"i\"\n{progress}Error: The error occurred when TLC was evaluating the nested\n"
+        )),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
