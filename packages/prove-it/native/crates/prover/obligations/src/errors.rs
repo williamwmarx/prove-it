@@ -1,5 +1,6 @@
 //! The errors of `src/errors.ts` the obligations throw: `TlaProofError` (with `TlapmBugError`, which
-//! keeps its name), `TlaProverError` and `TlaUnsupportedError`.
+//! keeps its name), `TlaProverError`, `TlaUnsupportedError`, and the `TlaSyntaxError` of a parse
+//! that fails without a place tlapm reports.
 
 use std::fmt;
 
@@ -16,6 +17,8 @@ pub enum ObligationError {
     Prover(String),
     /// `TlaUnsupportedError`.
     Unsupported(String),
+    /// `TlaSyntaxError`.
+    Syntax(String),
 }
 
 pub type Result<T> = std::result::Result<T, ObligationError>;
@@ -93,9 +96,10 @@ impl ObligationError {
 
     pub fn message(&self) -> &str {
         match self {
-            Self::Proof { message, .. } | Self::Prover(message) | Self::Unsupported(message) => {
-                message
-            }
+            Self::Proof { message, .. }
+            | Self::Prover(message)
+            | Self::Unsupported(message)
+            | Self::Syntax(message) => message,
         }
     }
 
@@ -105,6 +109,7 @@ impl ObligationError {
             Self::Proof { .. } => "TlaProofError",
             Self::Prover(_) => "TlaProverError",
             Self::Unsupported(_) => "TlaUnsupportedError",
+            Self::Syntax(_) => "TlaSyntaxError",
         }
     }
 }
