@@ -1,10 +1,10 @@
 // The enumeration oracle (native/DESIGN.md 6.8): seeded small sets TLC keeps lazy, each
 // enumerated in the order a quantifier binds its elements and the order x' \in S assigns them, by
-// TLC's own classes (native/oracle/ValueOracle.java), by the interpreter as the TypeScript engine
-// asks it (getQuantifierElements, getStreamedElements), and by the native engine (replay
-// enumerate). The three must list the same elements in the same order, or all fail. --record
-// freezes a sample of the cases, with TLC's answers, into tests/conformance/enumeration, which
-// cargo test (replay's tests) and tests/unit/enumeration-oracle.test.ts check without Java.
+// TLC's own classes (native/oracle/ValueOracle.java), by the interpreter (getQuantifierElements,
+// getStreamedElements), and by the native engine (replay enumerate). The three must list the same
+// elements in the same order, or all fail. --record freezes a sample of the cases, with TLC's
+// answers, into tests/conformance/enumeration, which cargo test (replay's tests) and
+// tests/unit/enumeration-oracle.test.ts check without Java.
 // Usage: TLA2TOOLS_JAR=... bun scripts/run.ts enumeration-oracle [--cases 100000] [--seed 1]
 //        [--record 400]
 

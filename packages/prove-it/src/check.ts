@@ -1,8 +1,6 @@
 import type { Expression } from "./ast";
 import { type ModelConfig, parseConfig } from "./config";
 import { hasEffect, isConstantLevel, isImpureDefinition } from "./dependencies";
-import { getMemoStatistics } from "./engine/compile";
-import { toEngineProperties } from "./engine/context";
 import { toValue as toEngineValue } from "./engine/convert";
 import {
   type IrOutcome,
@@ -11,16 +9,16 @@ import {
   type IrStartup,
   lowerToIr,
 } from "./engine/ir";
-import { checkNatively, type NativeLiveness, toEngineResult, toStop } from "./engine/native";
 import {
+  checkNatively,
   type EngineCheckpoint,
   type EngineGraph,
   type EngineResult,
-  isBailout,
-  runEngine,
-} from "./engine/search";
+  type NativeLiveness,
+  toEngineResult,
+  toStop,
+} from "./engine/native";
 import {
-  getEngineBackend,
   getEngineSetting,
   getEnvironmentFlag,
   getTestLiveCheckAt,
@@ -28,10 +26,12 @@ import {
   reportEngine,
   writeDebugBytes,
 } from "./engine/settings";
+import { Bailout } from "./engine/store";
 import { createEnvironment } from "./environment";
 import {
   createStackOverflowError,
   EngineInvariantError,
+  EngineUnavailableError,
   getErrorExitCode,
   isStackOverflow,
   TlaConfigError,
@@ -1861,13 +1861,7 @@ const searchStates = (
         })),
       }),
     };
-    // The engine here checks no property read in an instance's scope; the IR holds it for the
-    // native binary.
-    const engineProperties = toEngineProperties(search.properties);
     const tlcOrder = search.getTlcOrder();
-    const symmetry = search.symmetryGroup?.map((images) =>
-      [...images].map(([name, image]): [string, string] => [name, image.name]),
-    );
     // TLC's actions for the IR, when the search doesn't take its steps through them already.
     // Finding them describes the spec, which evaluates parts of what the configuration names (an
     // action's arguments, a constant conjunct of the specification or invariant), so it happens
@@ -1936,10 +1930,6 @@ const searchStates = (
     };
     if (isIrDumped()) lowerModel();
     if (isLoweredOnly) return undefined;
-    if (!engineProperties) {
-      reportEngine("skipped: properties in an instance");
-      return undefined;
-    }
     const callbacks = {
       onProgress: (progress: CheckProgress) => {
         engineReport.isReported = true;
@@ -1980,12 +1970,11 @@ const searchStates = (
       },
     };
     const startedAt = performance.now();
-    const native = isNativeBackend()
-      ? checkNatively(lowerModel, callbacks, options.livenessCheck !== "final")
-      : undefined;
-    const verdict = native?.status === "complete" ? native.liveness : undefined;
+    const native = checkNatively(lowerModel, callbacks, options.livenessCheck !== "final");
+    if (native.status === "unavailable") throw new EngineUnavailableError(native.reason);
+    const verdict = native.status === "complete" ? native.liveness : undefined;
     engineReport.liveness = verdict;
-    engineReport.lassoActions = native?.status === "complete" ? native.lassoActions : undefined;
+    engineReport.lassoActions = native.status === "complete" ? native.lassoActions : undefined;
     if (isLiveChecked && liveness && verdict && verdict.branches !== -1) {
       if (verdict.branches !== liveness.branches) {
         throw new EngineInvariantError(
@@ -1993,48 +1982,26 @@ const searchStates = (
         );
       }
     }
-    if (native) {
+    reportEngine(
+      `native: ${native.status}: ${native.reason} (${(performance.now() - startedAt).toFixed(2)} ms)`,
+    );
+    if (verdict) {
       reportEngine(
-        `native: ${native.status}: ${native.reason} (${(performance.now() - startedAt).toFixed(2)} ms)`,
+        `native: liveness: ${verdict.status}${verdict.reason === "" ? "" : `: ${verdict.reason}`}`,
       );
-      if (verdict) {
-        reportEngine(
-          `native: liveness: ${verdict.status}${verdict.reason === "" ? "" : `: ${verdict.reason}`}`,
-        );
-      }
-      if ("counts" in native && getEnvironmentFlag("PROVE_IT_FP_VERIFY")) {
-        reportEngine(`native: fingerprint collisions: ${native.counts[native.counts.length - 1]}`);
-      }
     }
-    const nativeOnlyReason = getNativeOnlyReason();
-    if (
-      nativeOnlyReason &&
-      (native === undefined || native.status === "declined" || native.status === "unavailable")
-    ) {
-      reportEngine(`skipped: ${nativeOnlyReason}`);
-      return undefined;
+    if ("counts" in native && getEnvironmentFlag("PROVE_IT_FP_VERIFY")) {
+      reportEngine(`native: fingerprint collisions: ${native.counts[native.counts.length - 1]}`);
     }
+    // The interpreter checks what the native engine declines.
+    if (native.status === "declined") return undefined;
     try {
       const width = environment.variables.length;
       const atoms = liveness?.atoms ?? [];
-      if (native?.status === "stopped" || native?.status === "invariant") {
+      if (native.status === "stopped" || native.status === "invariant") {
         throw toStop(native, width, atoms);
       }
-      const result =
-        native?.status === "complete"
-          ? toEngineResult(native, width, atoms)
-          : runEngine({
-              config,
-              environment,
-              spec: engineSpec,
-              isWarningEnabled: runtime.isWarningEnabled,
-              tlcOrder,
-              startedAt,
-              properties: engineProperties,
-              isRecordingGraph: liveness !== undefined,
-              symmetry,
-              ...callbacks,
-            });
+      const result = toEngineResult(native, width, atoms);
       // Under SYMMETRY or a VIEW, a replay of the graph would give the interpreter's liveness
       // checker the states stored rather than the states each step reached, so it searches again.
       const isReplayFaithful = !isReducing || (verdict?.status === "lasso" && !isLiveChecked);
@@ -2075,13 +2042,6 @@ const searchStates = (
       reportEngine(
         `checked ${result.distinctStates} states on ${result.threads} thread${result.threads === 1 ? "" : "s"} in ${(performance.now() - startedAt).toFixed(0)} ms with ${result.valueCount} values`,
       );
-      if (getEnvironmentFlag("PROVE_IT_MEMO")) {
-        for (const table of getMemoStatistics()) {
-          reportEngine(
-            `memo width ${table.width}: ${table.hits}/${table.lookups} hits, ${table.size} entries${table.isEnabled ? "" : ", off"}`,
-          );
-        }
-      }
       runtime.generatedStates = result.generatedStates;
       runtime.distinctStates = result.distinctStates;
       runtime.initialStates = result.initialStates.generated;
@@ -2119,35 +2079,21 @@ const searchStates = (
       // temporal properties, and the interpreter goes on from the state it stopped at. Under
       // SYMMETRY or a VIEW that graph holds the states stored rather than those each step reached,
       // so the interpreter searches again.
-      if (isBailout(error) && error.checkpoint) {
+      if (error instanceof Bailout && error.checkpoint) {
         const checkpoint = error.checkpoint as EngineCheckpoint;
         if (!liveness) engineReport.checkpoint = checkpoint;
         else if (checkpoint.graph && !isReducing) takeGraph(checkpoint);
       }
       reportEngine(
-        `handed over after ${(performance.now() - startedAt).toFixed(0)} ms: ${isBailout(error) ? error.message : String(error instanceof Error ? (error.stack ?? error.message) : error)}`,
+        `handed over after ${(performance.now() - startedAt).toFixed(0)} ms: ${error instanceof Bailout ? error.message : String(error instanceof Error ? (error.stack ?? error.message) : error)}`,
       );
       return undefined;
     }
-  };
-  const isNativeBackend = () => {
-    const backend = getEngineBackend();
-    return backend === "rust" || backend === "auto";
-  };
-  // What only the native engine searches as TLC does: it fingerprints a string by the low byte of
-  // each character, as TLC does, and tells states apart by their fingerprints alone, and it counts
-  // the _POSSIBLE predicates.
-  const getNativeOnlyReason = () => {
-    if (search.isFingerprintedLikeTlc) return "wide strings";
-    if (config.possible.length > 0) return "_POSSIBLE predicates";
-    return undefined;
   };
   const getEngineIneligibility = () => {
     if (getEngineSetting() === "0") return "disabled";
     if (stateWriter) return "-dump";
     if (options.isContinued) return "-continue";
-    const nativeOnlyReason = getNativeOnlyReason();
-    if (nativeOnlyReason && !isNativeBackend()) return nativeOnlyReason;
     if (config.periodic !== undefined) return "periodic";
     if (is174) return "TLC 1.7.4";
     return undefined;

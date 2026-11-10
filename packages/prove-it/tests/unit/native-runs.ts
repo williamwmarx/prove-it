@@ -1,18 +1,19 @@
-// Runs of check() with the native engine, the TypeScript engine and the interpreter, for the tests
-// of the native engine. They run where the addon was built, with PROVE_IT_ENGINE_ADDON naming it.
+// Runs of check() with the native engine and the interpreter, for the tests of the native engine.
+// They run where the addon was built, with PROVE_IT_ENGINE_ADDON naming it.
 
 import { expect, spyOn } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { getStateLogDifference, readLogLines } from "../../scripts/state-logs";
+import { readLogLines } from "../../scripts/state-logs";
 import { check, type CheckOptions } from "../../src";
+import { createStateDecoder } from "../../src/transfer";
+import { formatState } from "../../src/values";
 
 export const ADDON = process.env.PROVE_IT_ENGINE_ADDON;
 const SETTINGS = [
   "PROVE_IT_ENGINE",
-  "PROVE_IT_ENGINE_BACKEND",
   "PROVE_IT_STATE_LOG",
   "PROVE_IT_STOP_AT",
   "PROVE_IT_TEST_LIVE_CHECK_AT",
@@ -41,7 +42,7 @@ interface Run {
 export const run = async (
   options: Pick<
     CheckOptions,
-    "source" | "config" | "isWarningEnabled" | "loadModule" | "livenessCheck"
+    "source" | "config" | "isWarningEnabled" | "loadModule" | "livenessCheck" | "dump" | "writeFile"
   >,
   settings: Partial<Record<(typeof SETTINGS)[number], string>>,
 ): Promise<Run> => {
@@ -80,7 +81,6 @@ export const compareWithInterpreter = async (
   const options = { source: toModule(body), config, isWarningEnabled };
   const native = await run(options, {
     PROVE_IT_ENGINE: "debug",
-    PROVE_IT_ENGINE_BACKEND: "rust",
     ...settings,
   });
   const interpreter = await run(options, { PROVE_IT_ENGINE: "0" });
@@ -90,7 +90,9 @@ export const compareWithInterpreter = async (
   return native.lines;
 };
 
-// The state logs of the TypeScript and the native engine, which must be identical.
+// The states the native engine's state log holds, in its order, which must be those the interpreter
+// writes to TLC's -dump, in TLC's order: all of them, or the first of them where the engine
+// stopped part way.
 export const compareStateLogs = async (
   body: string[],
   config: string,
@@ -99,20 +101,43 @@ export const compareStateLogs = async (
   const directory = mkdtempSync(join(tmpdir(), "prove-it-native-search-"));
   try {
     const options = { source: toModule(body), config, isWarningEnabled };
-    const paths = ["ts", "rust"].map((backend) => join(directory, `${backend}.jsonl`));
-    const lines: string[][] = [];
-    for (const [index, backend] of ["ts", "rust"].entries()) {
-      const logged = await run(options, {
-        PROVE_IT_ENGINE: "debug",
-        PROVE_IT_ENGINE_BACKEND: backend,
-        PROVE_IT_STATE_LOG: paths[index],
-      });
-      lines.push(logged.lines);
-    }
-    const [typescript, native] = paths.map(readLogLines);
-    expect(getStateLogDifference(typescript, native)).toBeUndefined();
-    expect(native.length).toBeGreaterThan(1);
-    return lines[1];
+    const path = join(directory, "native.jsonl");
+    const native = await run(options, { PROVE_IT_ENGINE: "debug", PROVE_IT_STATE_LOG: path });
+    const dumped: string[] = [];
+    await run(
+      {
+        ...options,
+        dump: { path: "states.dump" },
+        writeFile: (_path, content) => dumped.push(content),
+      },
+      { PROVE_IT_ENGINE: "0" },
+    );
+    // A state's conjuncts, in no order: the dump orders the variables as TLC prints them.
+    const getConjuncts = (text: string) =>
+      text
+        .trimEnd()
+        .split(/\n(?=\/\\ )/)
+        .sort();
+    const expected = dumped
+      .join("")
+      .split(/^State \d+:\n/m)
+      .slice(1)
+      .map(getConjuncts);
+    const lines = readLogLines(path).filter((line) => line !== "");
+    const header: { variables: string[]; stopped: string | null } = JSON.parse(lines[0]);
+    const decode = createStateDecoder(header.variables.length);
+    const states = lines.slice(1).map((line) => {
+      const record: [number, number, number, string, number[], string[]] = JSON.parse(line);
+      const state = decode({ words: Int32Array.from(record[4]), strings: record[5], count: 1 })[0];
+      return getConjuncts(
+        formatState(
+          Object.fromEntries(header.variables.map((name, index) => [name, state[index]])),
+        ),
+      );
+    });
+    expect(states).toEqual(header.stopped === null ? expected : expected.slice(0, states.length));
+    expect(states.length).toBeGreaterThan(0);
+    return native.lines;
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
