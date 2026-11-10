@@ -251,6 +251,45 @@ Still to do:
     the search left them, `Violation::possible`, which a witnessed one checks with);
   - what `Rebuilder::postcondition` declines, such as CounterExample's actions with parameters.
 
+## -dumpTrace
+
+TLC dumps a violation's counterexample with postconditions of its trace modules, which it parses
+with the spec: `_TLCTrace` for `-dumpTrace tlc` and the trace exploration spec's
+`<Spec>_TTrace_<epoch>.bin`, `_JsonTrace` for `-dumpTrace json`. Each writes
+`[counterexample |-> CounterExample, vars |-> vars]`. `tla-trace` writes both files; the binary
+doesn't call it yet (its arguments, SANY's report of the extra modules, and the postconditions'
+order are the binary's).
+
+- `Rebuilder::dump_trace(&CounterExample) -> Result<TraceDump, Unsupported>` builds the value, with
+  `Rebuilder::rebuild_counter_example(store, states, labels)` giving an invariant violation's trace
+  as TLC holds it then (`Worker.doPostCondition`): the states rebuilt, and the last found again
+  among the successors of the state the search held, so the two share no value but those TLC made
+  once, such as a string literal's.
+- `TraceDump::to_tlc(model_values: &[&str]) -> Result<Vec<u8>, Unsupported>` is the gzipped file
+  (`_TLCTrace.ioSerialize`): the value fingerprinted, which sorts it in place, then written by
+  `ValueOutputStream`'s grammar, back-references to the values written before included. A value
+  written twice is one `Rc` of the evaluator, as it is one Java object to TLC: a string literal is
+  one object per node, a state's unchanged variable is its predecessor's. `model_values` are the
+  configuration's in the order `ModelConfig.parse` makes them, whose positions TLC writes. The gzip
+  member has `GZIPOutputStream`'s header and stored deflate blocks.
+- `TraceDump::to_json() -> Result<String, Unsupported>` is `Json.serialize`'s text, Gson's
+  escaping included: records and functions in the order written until TLC sorts them, so a JSON
+  dump after `to_tlc` writes them sorted, as TLC's does when `-dumpTrace tlc` comes first.
+- The payload equals TLC's but for the tokens of its strings (`design/gaps.md`), which the dump
+  numbers in the order it first writes each text. `tests/dump.rs` compares the dumps of four specs
+  with what the jar (tlaplus d8fb231) wrote, in both orders of the two flags: an invariant
+  violation, a deadlock, a lasso, and nested values.
+- Round trip: the jar read each of the eight `.bin` files `tla-trace` wrote and its own with
+  `java -jar tla2tools.jar -tool -modelcheck -config <Spec>.cfg -loadtrace tlc trace.bin <Spec>`,
+  and printed the same, but for times, pids, the seed and the fingerprint index: the trace
+  replayed, exit 12, 11, 13 and 12.
+- Not dumped (`Unsupported`): a safety violation of a model with an ALIAS; a set or function TLC
+  keeps lazy, whose cached enumeration is a Java object of its own; an action's parameter bound to
+  a string, set or function, the object its set holds, which a state may hold too; a model value
+  the configuration doesn't make. The sharing follows the evaluator's, which these specs check; where
+  TLC's state queue spilled the held state to disk and read it back, TLC's literals are new
+  objects, which the dump doesn't follow.
+
 ## Specs TLC stops at before the search
 
 - tla-front finds whether TLC stops before it searches, and the binary prints what TLC prints

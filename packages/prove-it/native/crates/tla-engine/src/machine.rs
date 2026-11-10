@@ -40,8 +40,15 @@ pub enum Printed {
 pub const UNASSIGNED: Id = u32::MAX;
 
 /// How deep recursive operators and functions may call themselves before the engine hands over,
-/// so that deep TLA+ recursion stops cleanly rather than overflow the native stack.
-const MAXIMUM_RECURSION: u32 = 20_000;
+/// so that deep TLA+ recursion stops cleanly rather than overflow the native stack. WebAssembly's
+/// frames are on the host's stack, which holds about 1,500 calls of a simple recursive operator
+/// under Bun and 1,800 under Node's default stack (fallback.md), so it stops sooner there. TLC's
+/// own JVM stack holds a few hundred.
+const MAXIMUM_RECURSION: u32 = if cfg!(target_arch = "wasm32") {
+    1_000
+} else {
+    20_000
+};
 
 /// Where a memo table reads one of its keys.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

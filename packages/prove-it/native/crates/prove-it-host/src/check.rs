@@ -5,7 +5,9 @@
 //! - `{ kind: "checked", exitCode, out, err }`, what the binary prints to stdout and stderr, and its
 //!   exit code;
 //! - `{ kind: "needed", keys }`, what the check reads that isn't known yet (`sources`). It asks for
-//!   everything before it searches, so a round never searches.
+//!   everything before it searches, so a round never searches;
+//! - `{ kind: "declined", reason }`, where the binary prints `not native yet`, without what it
+//!   printed before.
 //!
 //! The keys it reads, besides SANY's `module:` and `file:`, are `text:<path>`, the text of the file
 //! at a path the command line names (the spec and its configuration), and `class:<name>`, the
@@ -19,17 +21,23 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use prove_it_check::zone::{Zone, parse_rule};
 use prove_it_check::{FileDescription, Files, Host, Machine, Output};
+use tla_engine::clock::Instant;
 use tla_front::report::ModuleOrigin;
 
 use crate::hooks::HookResult;
 use crate::sources::{Sources, get_text};
 use crate::value::HostValue;
 
+/// How the binary starts the line on stderr that declines a model.
+const NOT_NATIVE: &str = "prove-it: not native yet: ";
+
 /// What the host JavaScript runs on gives the check.
 struct SourcesHost {
     sources: Sources,
     machine: Machine,
+    /// The wall clock when the check started, which goes on from then by the monotonic clock.
     now: SystemTime,
+    started: Instant,
     zone: Zone,
     variables: Vec<(String, String)>,
 }
@@ -80,7 +88,7 @@ impl Host for SourcesHost {
     }
 
     fn now(&self) -> SystemTime {
-        self.now
+        self.now + self.started.elapsed()
     }
 
     fn zone(&self) -> &Zone {
@@ -182,6 +190,7 @@ fn check(arguments: &[HostValue]) -> HookResult {
             pid: get_number(pid, "the pid")? as u32,
         },
         now: UNIX_EPOCH + Duration::from_millis(get_number(now, "now")? as u64),
+        started: Instant::now(),
         zone: parse_rule(&get_text(zone, "the zone")?).map_or(Zone::UTC, Zone::from_rule),
         variables,
     };
@@ -197,10 +206,50 @@ fn check(arguments: &[HostValue]) -> HookResult {
     if let Some(needed) = host.sources.get_needed() {
         return Ok(needed);
     }
+    let err = String::from_utf8_lossy(&err);
+    // What the binary prints as it declines, which the host checks otherwise: what was printed
+    // before it is dropped.
+    if let Some(reason) = err.lines().find_map(|line| line.strip_prefix(NOT_NATIVE))
+        && exit_code == 1
+    {
+        return Ok(HostValue::Object(vec![
+            ("kind", HostValue::text("declined")),
+            ("reason", HostValue::text(reason)),
+        ]));
+    }
     Ok(HostValue::Object(vec![
         ("kind", HostValue::text("checked")),
         ("exitCode", HostValue::Number(f64::from(exit_code))),
         ("out", HostValue::text(&String::from_utf8_lossy(&out))),
-        ("err", HostValue::text(&String::from_utf8_lossy(&err))),
+        ("err", HostValue::text(&err)),
     ]))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // A check's dates go on from the time it was given, so the date it finishes at is not the date
+    // it started at.
+    #[test]
+    fn the_clock_goes_on_from_the_time_given() {
+        let host = SourcesHost {
+            sources: Sources::new(&HostValue::Array(Vec::new())).expect("no sources"),
+            machine: Machine {
+                system: String::new(),
+                release: String::new(),
+                arch: String::new(),
+                cores: 1,
+                memory_megabytes: 1,
+                pid: 1,
+            },
+            now: UNIX_EPOCH,
+            started: Instant::now(),
+            zone: Zone::UTC,
+            variables: Vec::new(),
+        };
+        let first = host.now();
+        std::thread::sleep(Duration::from_millis(5));
+        assert!(host.now() > first && first >= UNIX_EPOCH);
+    }
 }

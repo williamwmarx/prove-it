@@ -146,6 +146,7 @@ const BUILTIN_LEVEL_CONSTANT = 2;
 const BUILTIN_LAZY = 4;
 const BUILTIN_TABLE = 8;
 const BUILTIN_NATURALS_GEQ = 16;
+const BUILTIN_NATURALS_METHOD = 32;
 
 const SCOPE_VALUE = 0;
 const SCOPE_THUNK = 1;
@@ -418,7 +419,8 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
         (builtin.isLevelConstant ? BUILTIN_LEVEL_CONSTANT : 0) |
         (builtin.isLazy ? BUILTIN_LAZY : 0) |
         (builtin.table ? BUILTIN_TABLE : 0) |
-        (builtin.isNaturalsGeq ? BUILTIN_NATURALS_GEQ : 0),
+        (builtin.isNaturalsGeq ? BUILTIN_NATURALS_GEQ : 0) |
+        (builtin.isNaturalsMethod ? BUILTIN_NATURALS_METHOD : 0),
     );
     if (builtin.table) {
       push(builtins, builtin.table.length);

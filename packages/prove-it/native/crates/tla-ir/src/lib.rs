@@ -103,6 +103,9 @@ impl Builtin {
     /// `>=` of `tlc2.module.Naturals`, which names itself `>` in its errors, where the `>=` of
     /// Integers names itself.
     pub const NATURALS_GEQ: i32 = 16;
+    /// An operator a method of `tlc2.module.Naturals` computes rather than one of
+    /// `tlc2.module.Integers`, which TLC loads over it where the spec uses Integers.
+    pub const NATURALS_METHOD: i32 = 32;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

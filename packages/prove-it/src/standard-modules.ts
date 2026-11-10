@@ -206,7 +206,7 @@ const NEG_SIGNATURE = getJavaSignature("Integers", "Neg", "IntValue", 1);
 // those of tlc2.module.Integers when the spec loads Integers, and names the method in an error.
 const createArithmeticOperators = (module: string) => {
   const dotDotSignature = getJavaSignature(module, "DotDot", "IntervalValue", 2);
-  return [
+  const operators = [
     defineArithmetic(module, "+", "Plus", (left, right) => left + right),
     defineArithmetic(module, "-", "Minus", (left, right) => left - right),
     defineArithmetic(module, "*", "Times", (left, right) => left * right),
@@ -245,6 +245,9 @@ const createArithmeticOperators = (module: string) => {
       high: getJavaInteger(getValue(args, 1, ".."), dotDotSignature),
     })),
   ];
+  return module === "Naturals"
+    ? operators.map((operator) => ({ ...operator, isNaturalsMethod: true }))
+    : operators;
 };
 
 const NATURALS_ARITHMETIC = createArithmeticOperators("Naturals");
