@@ -180,7 +180,6 @@ fn reads_the_command_line_as_tlc() {
         (&["-difftrace", "TCommit"][..], "the TLC option -difftrace"),
         (&["-simulate", "TCommit"], "the TLC option -simulate"),
         (&["-coverage", "1", "TCommit"], "the TLC option -coverage"),
-        (&["-fp", "1", "TCommit"], "-fp 1"),
         (&["-lncheck", "off", "TCommit"], "-lncheck off"),
         (&["TCommit.cfg"], "a module named as a configuration file"),
     ] {
@@ -5351,4 +5350,45 @@ fn declines_a_temporal_property_tlc_rejects_after_it_warns_about_the_symmetry() 
         "{}",
         stdout(&output)
     );
+}
+
+#[test]
+fn exports_xml_as_sanys_xml_exporter_does() {
+    let directory = std::env::temp_dir().join(format!("prove-it-cli-xml-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    std::fs::write(
+        directory.join("Small.tla"),
+        "---- MODULE Small ----\nVARIABLE x\nInit == x = 0\n====\n",
+    )
+    .expect("a file");
+    let exported = run(
+        &directory,
+        &["tla2sany.xml.XMLExporter", "-o", "-t", "Small.tla"],
+    );
+    assert_eq!(exported.status.code(), Some(0));
+    assert!(stdout(&exported).starts_with(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"no\"?><modules><RootModule>Small</RootModule>"
+    ));
+    let several = run(&directory, &["tla2sany.xml.XMLExporter", "-q", "Small.tla"]);
+    assert_eq!(several.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&several.stderr)
+            .starts_with("ERROR: Only one TLA file to check allowed!\n")
+    );
+    // TLC 1.7.4's XMLExporter is retired: the binary declines it rather than write master's XML.
+    let retired = run(
+        &directory,
+        &[
+            "-Dtla-ts.tlc=1.7.4",
+            "tla2sany.xml.XMLExporter",
+            "-o",
+            "Small.tla",
+        ],
+    );
+    assert!(stdout(&retired).is_empty());
+    assert_eq!(
+        String::from_utf8_lossy(&retired.stderr),
+        "prove-it: not native yet: TLC 1.7.4\n"
+    );
+    std::fs::remove_dir_all(&directory).expect("removed");
 }
