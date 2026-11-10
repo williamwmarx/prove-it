@@ -611,6 +611,8 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
 - A record set or a product an empty part empties is empty before its parts are combined, and one
   of more than 2^24 combinations stops at a limit, where it exhausted memory.
 - `Seq(S)` has a lazy value (never empty, not enumerable), so `[Seq(S) -> {}]` is empty.
+- A set of functions with a part TLC keeps lazy, as `[{} -> SUBSET (1..40)]`, is enumerated the
+  same way, so its one function of an empty domain doesn't build the range.
 - A function that isn't a tuple, with integers for its domain, is in no set of tuples
   (`SetOfTuplesValue.member`), where the engine failed.
 - An assumption the engine stops at a limit of goes to the trace evaluator's `check_assumption`,
@@ -641,28 +643,29 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
 
 ## Open: what the infinite-sets session left (2026-11-09)
 
-- **EmptySetEqAssume** still declines. Every delegated assumption re-evaluates the ones before
-  it in `tla-trace` (`check_assumption`), so one the evaluator can't follow stops them all. The
-  first it can't, of 443, has moved from 26 to 217:
-  - 217, `1 = Cardinality([(UNION {1..2000000, {"a"}}) -> {"d1"}])`: `tla-trace` builds the UNION
-    and fails comparing an integer with a string, where TLC keeps a `UnionValue` and its `size`
-    never asks the domain. It needs a lazy UNION value, as the engine's `Lazy::Union`. More may
-    follow it.
-  - In the engine, `ToString([{} -> (SUBSET (1..40))])` (assumption 379) overflows counting the
-    power set: the set of functions' own value evaluates its range, where TLC's enumeration of
-    an empty domain doesn't ask it. Its `eval` goes through the lazy enumeration only where a
-    part may be infinite.
-- **ValueSemanticsAssume** declines: not surveyed again since `tla-trace` took TLCFP, which its
-  fifteenth assumption reads. Five assumptions fail in the engine with "EXCEPT outside the
-  domain", not looked at.
-- **MCEWD687a** (both copies) stops on "enumerated a filter of an infinite set", which is TLC's
-  own failure (`SetPredValue.elements`: "Attempted to enumerate { x \in S : p(x) } when S: ...
-  is not enumerable") evaluating the property TreeWithRoot as an invariant. Counting the reason
-  among `TLC_FAILURES` isn't enough: the CLI declines a failure in a model with temporal
-  properties (one copy) or with an ALIAS or POSTCONDITION (the other). Past those,
-  `Site::Invariant` reads only the model's invariants, not the properties checked as
-  invariants, in an instance's scope here; the replay of the expansion declines them too; and
-  `tla-trace` builds a filter where TLC keeps it lazy, with no message for this failure.
+- **EmptySetEqAssume** and **ValueSemanticsAssume** now print what TLC prints. The engine took
+  three stops for failures of TLC's that aren't in an assumption: "EXCEPT outside the domain",
+  where TLC leaves the function as it is (`FcnRcdValue.takeExcept`), is a limit; IsFiniteSet of
+  a set that may be infinite is a limit, since TLC asks such a set by its parts
+  (`SetOfFcnsValue.isFinite`); and an assumption that stops enumerating a set of functions over
+  a domain TLC can't enumerate (`INFINITE_DOMAIN`) or a bound the engine takes for one
+  (`INFINITE_BOUND`, as `Nat \cap S`) is delegated like a limit, since TLC compares such sets
+  and enumerates such a bound by rules of its own. Where the caller can't check a delegated one,
+  it is reported as failing, as before.
+- **MCEWD687a** (both copies) stops where TLC fails (`SetPredValue.elements`: "Attempted to
+  enumerate { x \in S : p(x) } when S: ... is not enumerable") evaluating the property
+  TreeWithRoot as an invariant. The engine and the CLI now follow TLC there: the stop is among
+  `TLC_FAILURES`; `Site::Invariant` and the replay of the expansion read the properties checked as
+  invariants after the model's invariants, each in its scope and by TLC's name for it
+  (`tlc_invariants`); and the CLI no longer declines an invariant that fails to evaluate in a
+  model with temporal properties, unless an atom of theirs may print (`atoms_print`), since
+  TLC's worker stops before it adds the state to the behavior graphs and its replay adds nothing
+  to them. `tla-trace` keeps the filter lazy as TLC does (`Lazy::Filter`) and fails with TLC's
+  message where a bound enumerates it. Both copies now print what TLC prints; the examples copy
+  fails on an initial state. A function over such a filter, `[p \in Path(G) |-> e]`, is one TLC
+  keeps lazy and applies by the filter's membership: the engine declines it (membership in
+  `Seq(S)` by its lazy reference is a limit, not a failure of TLC's), and `tla-trace` asks no
+  set whether it is finite to decide what stays lazy, as `Tool` doesn't.
 - **PrintTraceRace** declines on purpose: TLC searches a set enumeration it hasn't normalized,
   as `{1..2}` built by the invariant, element by element with `equals`, and words the failure
   otherwise than the sorted search does. `evaluate_failure` declines an invariant's failure

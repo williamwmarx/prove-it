@@ -5,7 +5,7 @@
 use std::time::Instant;
 
 use tla_engine::search::Violation;
-use tla_ir::{Ir, SourceRange};
+use tla_ir::{Ir, NodeId, NodeKind, SourceRange};
 use tla_trace::{
     Alias, CounterExample, Ending, Failure, Rebuilder, Registers, Site, Trace, Unsupported,
     format_call_stack,
@@ -91,7 +91,13 @@ pub fn print_failure(
             | Site::InitialPredicate(_)
             | Site::InitialAtom(_)
     );
-    if !ir.model.live_properties.is_empty() && !is_atom && !is_initial {
+    // An invariant that fails to evaluate stops TLC's worker before it adds the state it was
+    // expanding to the behavior graphs, and TLC's replay of the expansion adds nothing to them
+    // (`ModelChecker.doNext`), so the temporal properties show only in what their atoms print as
+    // TLC adds the states before it.
+    let is_followed =
+        is_atom || is_initial || matches!(stop.site, Site::Invariant(_)) && !atoms_print(ir);
+    if !ir.model.live_properties.is_empty() && !is_followed {
         return Err("a failure in a model with temporal properties".into());
     }
     if stop.site == Site::Next && stop.reason == "a successor that isn't complete" {
@@ -264,6 +270,39 @@ pub fn print_failure(
     }
     print_finished(printer, start);
     Ok(failure.exit_code)
+}
+
+// Whether an atom of the temporal properties may print as TLC evaluates it: one read in an
+// instance's scope, or one that reaches Print or PrintT, through the definitions it names.
+fn atoms_print(ir: &Ir) -> bool {
+    let arena = &ir.nodes.arena;
+    if ir.model.atoms.iter().any(|atom| atom.scope.is_some()) {
+        return true;
+    }
+    let mut pending: Vec<NodeId> = ir.model.atoms.iter().map(|atom| atom.expression).collect();
+    let mut seen = vec![false; arena.len()];
+    while let Some(node) = pending.pop() {
+        if std::mem::replace(&mut seen[node as usize], true) {
+            continue;
+        }
+        let kind = &arena[node as usize].kind;
+        if let NodeKind::Identifier(name)
+        | NodeKind::Apply { name, .. }
+        | NodeKind::OperatorReference(name) = kind
+        {
+            if matches!(&*ir.texts[name.text as usize], "Print" | "PrintT") {
+                return true;
+            }
+            if let tla_ir::Resolution::Definition(index) = name.resolution {
+                pending.push(ir.definitions[index as usize]);
+            }
+        }
+        if let NodeKind::Reference(target) = kind {
+            pending.push(*target);
+        }
+        pending.extend(kind.children());
+    }
+    false
 }
 
 fn print_call_stack(printer: &mut Printer, ir: &Ir, call_stack: &[SourceRange]) {

@@ -213,16 +213,23 @@ impl Compiler<'_> {
         }?;
         // Where a part may be a set TLC can't enumerate, TLC's own enumeration decides: it finds
         // the set empty, or its one function of an empty domain, before it asks that part.
-        let Some(reference) = set.reference.clone().filter(|_| set.has_infinite_part) else {
-            return Ok(set);
+        let is_lazy = set.has_infinite_part;
+        Ok(Self::enumerated_lazily(set, is_lazy))
+    }
+
+    // A set of functions, records or tuples whose value is TLC's enumeration of it where
+    // `is_lazy`, which asks nothing of a part it doesn't need.
+    fn enumerated_lazily(set: Compiled, is_lazy: bool) -> Compiled {
+        let Some(reference) = set.reference.clone().filter(|_| is_lazy) else {
+            return set;
         };
-        Ok(Compiled {
+        Compiled {
             eval: eval(move |machine| {
                 let elements = reference(machine)?.enumerate(machine)?;
                 machine.store.set_of(&elements)
             }),
             ..set
-        })
+        }
     }
 
     fn compile_function_set(
@@ -239,7 +246,10 @@ impl Compiler<'_> {
         let (domain_eval, range_eval) = (domain.eval.clone(), range.eval.clone());
         let member_domain = domain.eval.clone();
         let member_parts = set_parts.clone();
-        Ok(Compiled {
+        // A part TLC keeps lazy, as SUBSET S, isn't built to find the one function of an empty
+        // domain.
+        let is_part_lazy = !domain.is_normalized || !range.is_normalized;
+        let set = Compiled {
             is_costly: true,
             // TLC enumerates [S -> T] in its own order, which the reference gives.
             is_normalized: false,
@@ -281,7 +291,8 @@ impl Compiler<'_> {
                 }),
                 footprint,
             )
-        })
+        };
+        Ok(Self::enumerated_lazily(set, is_part_lazy))
     }
 
     fn compile_record_set(

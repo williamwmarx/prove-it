@@ -1000,6 +1000,40 @@ fn reports_a_constraint_that_fails_in_a_values_method_on_an_initial_state() {
 }
 
 #[test]
+fn reports_a_bound_that_filters_a_set_tlc_cant_enumerate() {
+    // The shape of MCEWD687a's TreeWithRoot: the bound is an operator whose definition filters
+    // Seq(S), which TLC keeps as it is until the quantifier enumerates it. The state that fails
+    // is one TLC has seen as it replays the expansion, which then ends quietly.
+    let spec = "---- MODULE Stop ----\nEXTENDS Naturals, Sequences\nVARIABLE x\nP(S) == {p \\in Seq(S) : p # <<>>}\nInit == x = 0\nNext == x' = (x + 1) % 3\nInv == x < 1 \\/ \\E p \\in P({1, 2}) : p[1] = 1\n====\n";
+    let (output, directory) = run_lowered(
+        "filter-bound",
+        spec,
+        "INIT Init\nNEXT Next\nINVARIANT Inv\n",
+    );
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(76), "{text}");
+    assert!(
+        text.contains("Error: Evaluating invariant Inv failed.\nAttempted to enumerate { x \\in S : p(x) } when S:\nSeq({1, 2})\nis not enumerable\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nState 2: <Next line 6, col 9 to line 6, col 24 of module Stop>\nx = 1\n\n2 states generated, 2 distinct states found, 0 states left on queue.\nThe depth of the complete state graph search is 2.\nThe average outdegree of the complete state graph is 1 (minimum is 1, the maximum 1 and the 95th percentile is 1).\n"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+    // A function over the filter is one TLC keeps lazy and applies by the filter's membership,
+    // which holds: TLC finds no error, and the binary doesn't report one.
+    let spec = spec.replace(
+        "\\E p \\in P({1, 2}) : p[1] = 1",
+        "[p \\in P({1}) |-> 1][<<1>>] = 1",
+    );
+    let (output, directory) = run_lowered(
+        "filter-function",
+        &spec,
+        "INIT Init\nNEXT Next\nINVARIANT Inv\n",
+    );
+    let text = stdout(&output);
+    assert!(!text.contains("Error:"), "{text}");
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
 fn reads_and_sets_tlcs_registers() {
     // TLCCache evaluates Counted once, TLCFP is TLC's fingerprint under -fp 0, which the
     // interpreter and TLC print the same, and a Java property TLC hasn't set is its key.

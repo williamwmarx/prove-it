@@ -400,7 +400,6 @@ const TLC_FAILURES: &[&str] = &[
     "CHOOSE from a non-set",
     "DOMAIN of a non-function",
     "EXCEPT on a non-function",
-    "EXCEPT outside the domain",
     "Head of an empty sequence",
     "IsFiniteSet of a non-set",
     "RandomElement of the empty set",
@@ -452,6 +451,7 @@ const TLC_FAILURES: &[&str] = &[
     "differently typed model values",
     "division by zero",
     "drew from a value that isn't a set",
+    "enumerated a filter of an infinite set",
     "enumerated a non-set",
     crate::compile::INFINITE_BOUND,
     "equality of values TLC can't compare",
@@ -1995,8 +1995,19 @@ fn check_assumptions(
                 break;
             }
             // One the engine stops at a limit of is the caller's too, whose evaluator follows
-            // TLC further, as where TLC compares two sets it can't enumerate part by part.
-            Err(bail) if is_native && is_engine_limit(bail.0) => {
+            // TLC further, as where TLC compares two sets it can't enumerate part by part. So
+            // is one that enumerates a set the engine takes for one TLC can't enumerate, which
+            // TLC fails at only where it enumerates such a set itself: it compares two sets of
+            // functions over Nat by their parts, and enumerates `Nat \cap S` by S.
+            Err(bail)
+                if is_native
+                    && (is_engine_limit(bail.0)
+                        || [
+                            crate::compile::lazy::INFINITE_DOMAIN,
+                            crate::compile::INFINITE_BOUND,
+                        ]
+                        .contains(&bail.0)) =>
+            {
                 assumed.delegated = Some((position as u32, bail));
                 break;
             }
