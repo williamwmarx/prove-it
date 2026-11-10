@@ -442,17 +442,17 @@ engine leaves to it (AssertError) and a replayed failure read what TLC reads:
   IsFiniteSet and Cardinality report a failure, but an EvalException, as their Java method's.
 - TLCFP fingerprints a value as the engine does; TLCDefer is TRUE; an interval past 2^24
   elements is declined rather than built.
+- `{x \in S : P}` over a set it can't enumerate is `Lazy::Filter` (`SetPredValue`), `UNION` of
+  sets that aren't all set enumerations is `Lazy::Union` (`UnionValue`), and a function over a
+  domain it can't enumerate is `Value::Lambda` (`FcnLambdaValue`), which applies, takes DOMAIN
+  and EXCEPT lazily. Their membership evaluates the predicate or the body, so `member` lives in
+  the evaluator.
+- `isEmpty` of a lazy set is answered by its enumerator's first element; Cardinality of a set
+  enumeration that fails to normalize reports the comparison's failure as its Java method's.
+- ToString prints with `toStringUnchecked`, where a lazy set's expansion that fails fails.
 
-Still apart from TLC (ValueSemanticsAssume: 48 of 510 assumptions, EmptySetEqAssume: 64):
-- `{x \in Nat : P}` (`SetPredValue`), `UNION` of infinite sets (`UnionValue`) and functions
-  over an infinite domain (`FcnLambdaValue`: `[x \in Nat |-> e][0]`, EXCEPT, DOMAIN) are
-  enumerated, so they fail where TLC tests them lazily;
-- a set enumeration TLC normalizes only as it uses it, as inside Cardinality, which wraps a
-  comparison's failure as its Java method's (the replay keeps it unsorted only as it replays a
-  failure's call stack);
-- ToString prints with `toStringUnchecked`, where a lazy set's expansion that fails fails;
-- two integer overflows in ValueSemanticsAssume.
-An AssertError assumption the replay finds false stays not native until these match TLC.
+The replay evaluates every assumption of ValueSemanticsAssume and EmptySetEqAssume as TLC does,
+so the CLI reports an AssertError assumption it finds false.
 
 ## The second rebuild of a violation's trace (as built)
 
