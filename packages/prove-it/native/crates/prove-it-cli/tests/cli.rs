@@ -687,6 +687,54 @@ fn reports_an_assumption_that_is_no_boolean() {
 }
 
 #[test]
+fn follows_tlc_through_a_set_operation_on_a_value_that_isnt_a_set() {
+    // `Tool` builds `\\cup`, `\\cap` and `\\` through a set enumeration or interval operand, a
+    // union with an empty one being the other operand, and keeps any other union lazy, testing
+    // that operand first. An empty interval holds nothing (`IntervalValue.member`).
+    let holding = [
+        "({} \\cup 0) = 0",
+        "({} \\cap 0) = {}",
+        "({} \\ 0) = {}",
+        "1 \\in ({1} \\cup 0)",
+        "1 \\in (0 \\cup {1})",
+        "1 \\in ((1..2) \\cup \"a\")",
+        "~(\"a\" \\in 3..1)",
+    ];
+    let assumptions: String = holding
+        .iter()
+        .map(|assumption| format!("ASSUME {assumption}\n"))
+        .collect();
+    let spec = format!(
+        "---- MODULE Lazy ----\nEXTENDS Integers\nVARIABLE x\n{assumptions}Init == x = 0\nNext == x' = x\n====\n"
+    );
+    let (output, directory) = run_front("lazy-sets", &spec, "INIT Init\nNEXT Next\n", &[]);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(0), "{text}");
+    std::fs::remove_dir_all(directory).expect("removed");
+    // An intersection or a difference with a set enumeration tests each of its elements at once,
+    // so it fails on one the membership never asks about.
+    for (test, assumption, element) in [
+        ("lazy-cap", "3 \\in (0 \\cap {1})", 1),
+        ("lazy-diff", "3 \\in ({1} \\ 0)", 1),
+        ("lazy-cup", "2 \\in (0 \\cup {1})", 2),
+    ] {
+        let spec = format!(
+            "---- MODULE Lazy ----\nEXTENDS Integers\nVARIABLE x\nASSUME {assumption}\nInit == x = 0\nNext == x' = x\n====\n"
+        );
+        let (output, directory) = run_front(test, &spec, "INIT Init\nNEXT Next\n", &[]);
+        let text = stdout(&output);
+        assert_eq!(output.status.code(), Some(10), "{text}");
+        assert!(
+            text.contains(&format!(
+                "failed.\nAttempted to check if the value:\n{element}\nis an element of the integer 0\n"
+            )),
+            "{text}"
+        );
+        std::fs::remove_dir_all(directory).expect("removed");
+    }
+}
+
+#[test]
 fn prints_once_what_an_assumption_printed_before_the_engine_left_it() {
     // The search prints the first print, then leaves the assumption to the trace evaluator, which
     // prints it again as it evaluates the assumption whole.

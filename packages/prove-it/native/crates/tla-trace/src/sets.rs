@@ -3,6 +3,7 @@
 use std::cmp::Ordering;
 use std::rc::Rc;
 
+use crate::eval::Predicate;
 use crate::print::{format_pretty, format_value};
 use crate::value::{
     Class, Evaluated, Lazy, Value, compare, elements, equals, fail, fail_coded, fail_runtime,
@@ -352,7 +353,21 @@ pub fn failing_sets(value: &Value, set: &Value) -> Option<Vec<Value>> {
     None
 }
 
+/// A lazy filter's test of an element of its base, which only the evaluator can make.
+pub type Filter<'a> = dyn FnMut(&Value, &Value, &Predicate) -> Evaluated<bool> + 'a;
+
 pub fn is_member(value: &Value, set: &Value) -> Evaluated<bool> {
+    is_member_filtered(value, set, &mut |_, _, _| {
+        fail("a lazy filter's membership outside the evaluator")
+    })
+}
+
+/// Membership in a set, with `filter` testing an element of a lazy filter nested in it.
+pub fn is_member_filtered(
+    value: &Value,
+    set: &Value,
+    test_filter: &mut Filter<'_>,
+) -> Evaluated<bool> {
     // TLC tests a set it holds unnormalized element by element, as it built it, asking each
     // element whether it equals the value (`ValueVec.search`).
     if let Some(written) = unnormalized(set) {
@@ -460,7 +475,7 @@ pub fn is_member(value: &Value, set: &Value) -> Evaluated<bool> {
                     );
                 }
                 for element in elements(value)?.iter() {
-                    if !is_member(element, base)? {
+                    if !is_member_filtered(element, base, test_filter)? {
                         return Ok(false);
                     }
                 }
@@ -493,7 +508,7 @@ pub fn is_member(value: &Value, set: &Value) -> Evaluated<bool> {
                     return Ok(false);
                 }
                 for element in &function.range {
-                    if !is_member(element, range)? {
+                    if !is_member_filtered(element, range, test_filter)? {
                         return Ok(false);
                     }
                 }
@@ -524,7 +539,7 @@ pub fn is_member(value: &Value, set: &Value) -> Evaluated<bool> {
                 for (name, set) in fields {
                     match find_key(function, &Value::Str(Rc::clone(name)))? {
                         Some(position) => {
-                            if !is_member(&function.range[position], set)? {
+                            if !is_member_filtered(&function.range[position], set, test_filter)? {
                                 return Ok(false);
                             }
                         }
@@ -558,7 +573,7 @@ pub fn is_member(value: &Value, set: &Value) -> Evaluated<bool> {
                     return Ok(false);
                 }
                 for (element, factor) in tuple.iter().zip(factors) {
-                    if !is_member(element, factor)? {
+                    if !is_member_filtered(element, factor, test_filter)? {
                         return Ok(false);
                     }
                 }
@@ -574,28 +589,31 @@ pub fn is_member(value: &Value, set: &Value) -> Evaluated<bool> {
                     return mistyped(value, &format_pretty(set));
                 };
                 for element in tuple {
-                    if !is_member(element, base)? {
+                    if !is_member_filtered(element, base, test_filter)? {
                         return Ok(false);
                     }
                 }
                 Ok(true)
             }
-            Lazy::Filter(..) => fail("a lazy filter's membership outside the evaluator"),
+            Lazy::Filter(base, predicate) => test_filter(value, base, predicate),
             // `UnionValue.member`: in an element of an enumerable set of sets.
             Lazy::Union(sets) => {
                 if !is_enumerable(sets) {
                     return fail("a membership in the union of a set TLC doesn't enumerate");
                 }
                 for inner in elements(sets)?.iter() {
-                    if is_member(value, inner)? {
+                    if is_member_filtered(value, inner, test_filter)? {
                         return Ok(true);
                     }
                 }
                 Ok(false)
             }
-            Lazy::Cap(left, right) => Ok(is_member(value, left)? && is_member(value, right)?),
-            Lazy::Cup(left, right) => Ok(is_member(value, left)? || is_member(value, right)?),
-            Lazy::Diff(left, right) => Ok(is_member(value, left)? && !is_member(value, right)?),
+            Lazy::Cap(left, right) => Ok(is_member_filtered(value, left, test_filter)?
+                && is_member_filtered(value, right, test_filter)?),
+            Lazy::Cup(left, right) => Ok(is_member_filtered(value, left, test_filter)?
+                || is_member_filtered(value, right, test_filter)?),
+            Lazy::Diff(left, right) => Ok(is_member_filtered(value, left, test_filter)?
+                && !is_member_filtered(value, right, test_filter)?),
         },
         // The `member` of each class of value that isn't a set.
         _ => {
@@ -683,7 +701,7 @@ pub fn as_tuple(value: &Value) -> Option<&[Value]> {
 
 // TLC's reducible sets, a set enumeration or an interval, which combine with another set element by
 // element.
-fn is_reducible(value: &Value) -> bool {
+pub(crate) fn is_reducible(value: &Value) -> bool {
     matches!(value, Value::Set(_) | Value::Interval(..))
 }
 
