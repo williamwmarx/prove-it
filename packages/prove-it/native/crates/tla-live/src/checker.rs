@@ -8,7 +8,7 @@ use std::collections::{HashMap, HashSet};
 use std::hash::{BuildHasherDefault, Hasher};
 
 use crate::tableau::{Kind, Model, Solution, Tableau, TermId, Terms};
-use crate::{Declined, Event, Slot, Source, Unanswered, Verdict};
+use crate::{Declined, Event, Graph, Slot, Source, Unanswered, Verdict};
 
 const NO_NODE: u32 = u32::MAX;
 const UNWRITTEN: usize = usize::MAX;
@@ -46,6 +46,14 @@ impl Hasher for IntegerHasher {
     fn write_usize(&mut self, value: usize) {
         self.write_u64(value as u64);
     }
+}
+
+/// A check's value without its step: known, read from the step, or not answered in the tables.
+#[derive(Clone, Copy)]
+enum Partial {
+    Known(bool),
+    Stepped,
+    Unknown,
 }
 
 /// A counterexample's states: the prefix, then the cycle.
@@ -340,6 +348,75 @@ impl Checker {
         }
     }
 
+    /// A check's value: read straight from the answer tables where nothing is logged and every
+    /// atom it reads has an answer, and otherwise as `evaluate` finds it.
+    fn evaluate_check(
+        &self,
+        source: &Source<'_>,
+        term: TermId,
+        state: u32,
+        step: Option<Step>,
+    ) -> Result<bool, Declined> {
+        if !self.is_effectful()
+            && let Some(tables) = source.answers.tables()
+            && let Some(value) = self.read(tables, source.graph, term, state, step)
+        {
+            return Ok(value);
+        }
+        self.evaluate(source, term, state, step)
+    }
+
+    // `evaluate` on the tables, or None where it reads an atom without an answer there or would
+    // fail: `evaluate` then finds what fails, in its order.
+    fn read(
+        &self,
+        tables: &[Option<&[u8]>],
+        graph: &Graph<'_>,
+        term: TermId,
+        state: u32,
+        step: Option<Step>,
+    ) -> Option<bool> {
+        let answer =
+            |atom: u32, position: usize| match tables.get(atom as usize)?.as_ref()?.get(position) {
+                Some(0) => Some(false),
+                Some(1) => Some(true),
+                _ => None,
+            };
+        match self.terms.kind(term) {
+            Kind::Boolean(value) => Some(value),
+            Kind::State(atom) | Kind::Enabled(atom) => answer(atom, state as usize),
+            Kind::Action { atom, enabled } => {
+                if let Some(enabled) = enabled
+                    && let Some(Some(table)) = tables.get(enabled as usize)
+                    && table.get(state as usize) == Some(&0)
+                {
+                    return Some(false);
+                }
+                answer(atom, graph.position(step?.slot))
+            }
+            Kind::Not => self
+                .read(tables, graph, self.terms.body(term), state, step)
+                .map(|value| !value),
+            Kind::And | Kind::Or => {
+                let is_and = self.terms.kind(term) == Kind::And;
+                for &operand in self.terms.children(term) {
+                    if self.read(tables, graph, operand, state, step)? != is_and {
+                        return Some(!is_and);
+                    }
+                }
+                Some(is_and)
+            }
+            Kind::Next => self.read(
+                tables,
+                graph,
+                self.terms.body(term),
+                step.map_or(state, |step| step.real),
+                None,
+            ),
+            Kind::Always | Kind::Eventually => None,
+        }
+    }
+
     // Starts the evaluation of a check, which TLC evaluates without the atoms' answers so far: the
     // answers known before.
     fn start_evaluation(&self) -> Vec<(u32, bool)> {
@@ -461,9 +538,109 @@ impl Checker {
                 continue;
             }
             self.start_evaluation();
-            self.steps[slot] = i8::from(self.evaluate(source, check, state, Some(step))?);
+            self.steps[slot] = i8::from(self.evaluate_check(source, check, state, Some(step))?);
         }
         Ok(())
+    }
+
+    // The action checks on each step of a successor set, in rows from `first_row`: each check's
+    // part that reads only the state once for all the steps, where the tables answer it.
+    fn check_steps(
+        &mut self,
+        source: &Source<'_>,
+        behavior: usize,
+        state: u32,
+        set: &[Step],
+        first_row: usize,
+    ) -> Result<(), Declined> {
+        if !self.is_effectful()
+            && let Some(tables) = source.answers.tables()
+            && self.read_steps(tables, source.graph, behavior, state, set, first_row)
+        {
+            return Ok(());
+        }
+        for (position, &step) in set.iter().enumerate() {
+            self.check_step(source, behavior, state, step, first_row + position)?;
+        }
+        Ok(())
+    }
+
+    // Fills what the tables answer of the action checks on the steps, and whether they answer all.
+    fn read_steps(
+        &mut self,
+        tables: &[Option<&[u8]>],
+        graph: &Graph<'_>,
+        behavior: usize,
+        state: u32,
+        set: &[Step],
+        first_row: usize,
+    ) -> bool {
+        let solution = &self.solutions[self.behaviors[behavior].solution];
+        let mut is_complete = true;
+        for (position, &check) in solution.action_checks.iter().enumerate() {
+            let id = self.behaviors[behavior].action_ids[position];
+            let partial = self.read_partially(tables, check, state);
+            for (offset, &step) in set.iter().enumerate() {
+                let slot = (first_row + offset) * self.action_count + id;
+                if self.steps[slot] != -1 {
+                    continue;
+                }
+                let value = match partial {
+                    Partial::Known(value) => Some(value),
+                    Partial::Stepped => self.read(tables, graph, check, state, Some(step)),
+                    Partial::Unknown => None,
+                };
+                match value {
+                    Some(value) => self.steps[slot] = i8::from(value),
+                    None => is_complete = false,
+                }
+            }
+        }
+        is_complete
+    }
+
+    // `read` of a check without its step: its value where that doesn't depend on the step.
+    fn read_partially(&self, tables: &[Option<&[u8]>], term: TermId, state: u32) -> Partial {
+        let answer = |atom: u32| match tables
+            .get(atom as usize)
+            .and_then(|table| table.as_ref()?.get(state as usize))
+        {
+            Some(0) => Partial::Known(false),
+            Some(1) => Partial::Known(true),
+            _ => Partial::Unknown,
+        };
+        match self.terms.kind(term) {
+            Kind::Boolean(value) => Partial::Known(value),
+            Kind::State(atom) | Kind::Enabled(atom) => answer(atom),
+            Kind::Action {
+                enabled: Some(enabled),
+                ..
+            } if matches!(
+                tables.get(enabled as usize),
+                Some(Some(table)) if table.get(state as usize) == Some(&0)
+            ) =>
+            {
+                Partial::Known(false)
+            }
+            Kind::Action { .. } | Kind::Next => Partial::Stepped,
+            Kind::Not => match self.read_partially(tables, self.terms.body(term), state) {
+                Partial::Known(value) => Partial::Known(!value),
+                other => other,
+            },
+            // An operand that reads the step comes first, so the others decide nothing alone.
+            Kind::And | Kind::Or => {
+                let is_and = self.terms.kind(term) == Kind::And;
+                for &operand in self.terms.children(term) {
+                    match self.read_partially(tables, operand, state) {
+                        Partial::Known(value) if value == is_and => {}
+                        Partial::Known(_) => return Partial::Known(!is_and),
+                        other => return other,
+                    }
+                }
+                Partial::Known(is_and)
+            }
+            Kind::Always | Kind::Eventually => Partial::Unknown,
+        }
     }
 
     fn check_action(
@@ -493,7 +670,7 @@ impl Checker {
             .iter()
             .map(|&check| {
                 self.start_evaluation();
-                self.evaluate(source, check, real, None).map(u8::from)
+                self.evaluate_check(source, check, real, None).map(u8::from)
             })
             .collect::<Result<_, _>>()?;
         let stored = &mut self.behaviors[behavior].state_results;
@@ -534,7 +711,7 @@ impl Checker {
         self.start_evaluation();
         let mut is_held = true;
         for &predicate in &tableau.nodes[node as usize].state_predicates {
-            if !self.evaluate(source, predicate, state, None)? {
+            if !self.evaluate_check(source, predicate, state, None)? {
                 is_held = false;
                 break;
             }
@@ -711,9 +888,7 @@ impl Checker {
                 shared_step
             };
             if is_effectful || !self.behaviors[behavior].is_covered {
-                for (position, &step) in set.iter().enumerate() {
-                    self.check_step(source, behavior, state, step, first_step + position)?;
-                }
+                self.check_steps(source, behavior, state, &set, first_step)?;
             }
             self.check_state(source, behavior, state)?;
             if self.tableau(behavior).is_none() {

@@ -304,3 +304,50 @@ fn online_unanswered() -> Option<Unanswered> {
         .expect("a checker")
         .unanswered()
 }
+
+#[test]
+fn names_the_first_action_it_leaves_unanswered_step_by_step() {
+    // WF of actions 2 and 4, whose ENABLED are atoms 1 and 3, and the negation of []<>P, P atom 0.
+    // TLC checks every action on one step before the next step, so the first unanswered atom is
+    // the first of the step it meets first, whichever of the actions has it.
+    let fairness = |enabled: u32, atom: u32| {
+        [
+            Term::Always,
+            Term::Eventually,
+            Term::Or(2),
+            Term::Not,
+            Term::Enabled(enabled),
+            Term::Action {
+                atom,
+                enabled: Some(enabled),
+            },
+        ]
+    };
+    let formula: Vec<Term> = [Term::And(3)]
+        .into_iter()
+        .chain(fairness(1, 2))
+        .chain(fairness(3, 4))
+        .chain(NOT_INFINITELY_OFTEN)
+        .collect();
+    let unanswered = |first: &[u8], second: &[u8]| {
+        check(
+            &formula,
+            &[&INFINITELY_OFTEN],
+            &graph(),
+            &[
+                Some(&[0, 0]),
+                Some(&[1, 1]),
+                Some(first),
+                Some(&[1, 1]),
+                Some(second),
+            ],
+            false,
+        )
+        .unanswered
+        .map(|unanswered| (unanswered.atom, unanswered.slot))
+    };
+    // The steps' answers: from state 0, from state 1, then each state's stuttering step.
+    assert_eq!(unanswered(&[1, 1, 1, 1], &[0, 0, 0, 0]), None);
+    assert_eq!(unanswered(&[2, 1, 1, 1], &[1, 1, 2, 1]), Some((4, 2)));
+    assert_eq!(unanswered(&[1, 1, 2, 1], &[2, 1, 1, 1]), Some((2, 2)));
+}
