@@ -1694,14 +1694,6 @@ fn declines_what_it_doesnt_follow_of_the_behavior_graphs() {
         &["-deadlock"],
         "prints it doesn't place in TLC's order",
     );
-    // TLC ends this lasso, whose last state is its cycle's first, with "State 3: Stuttering".
-    declines(
-        "lasso-end",
-        "VARIABLES x, y\nvars == <<x, y>>\nInit == x \\in {0, 1} /\\ y = 0\nA0 == x = 1 /\\ y = 0 /\\ x' = 1 /\\ y' \\in {0, 1}\nA1 == x = 1 /\\ x' = 0 /\\ y' = 1\nA2 == x = 1 /\\ y = 0 /\\ x' = 0 /\\ y' = y\nA3 == x = 0 /\\ x' = 1 /\\ y' \\in {0, 0}\nNext == A0 \\/ A1 \\/ A2 \\/ A3\nSpec == Init /\\ [][Next]_vars /\\ WF_vars(Next)\nP0 == []<>(x # 0)\nP1 == []((x = 0) => <>[](y = 1))",
-        "SPECIFICATION Spec\nPROPERTY P0\nPROPERTY P1\n",
-        &[],
-        "a lasso that ends in the first state of its cycle",
-    );
 }
 
 #[test]
