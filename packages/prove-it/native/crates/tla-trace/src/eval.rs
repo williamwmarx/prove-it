@@ -28,8 +28,8 @@ use crate::sets::{
 use crate::value::{
     Class, EvalError, Evaluated, Function, Lazy, Search, Text, TlcMessage, Value, compare,
     elements, equals, fail, fail_coded, fail_runtime, fail_with, find_key, from_store,
-    is_enumerable, mark_unnormalized, note_sorted, set_of, sorted_function, unnormalized,
-    unsorted_failure, written_function,
+    is_enumerable, lambda_as_function, mark_unnormalized, note_sorted, set_of, sorted_function,
+    unnormalized, unsorted_failure, written_function,
 };
 
 /// The bindings an expression sees, innermost first.
@@ -349,6 +349,8 @@ pub struct Evaluator<'ir> {
     /// Builtins that `can_read` counts as reading the state, as `is_precomputed` asks.
     pub(crate) state_builtins: &'static [&'static str],
     texts: Vec<Option<Rc<Text>>>,
+    /// The value of each string literal, by its node.
+    literals: HashMap<NodeId, Rc<Text>>,
     ranks: HashMap<Box<[u16]>, i32>,
     /// The texts ranked past the IR's, in order, while the startup ranks what it makes as TLC
     /// interns it; none otherwise.
@@ -651,6 +653,7 @@ impl<'ir> Evaluator<'ir> {
             state_builtins: &[],
             ir,
             texts: vec![None; ir.texts.len()],
+            literals: HashMap::new(),
             ranks,
             startup_ranked: None,
             constants: vec![None; ir.values.list.len()],
@@ -702,11 +705,14 @@ impl<'ir> Evaluator<'ir> {
         self.text_of(units)
     }
 
-    /// A text with TLC's rank of it, or -1 for one the IR doesn't rank.
     /// A field name of the records TLC builds of its counterexample (`RecordValue`'s statics):
     /// interned as its class loads, after the spec's strings, in the order declared, unless the
-    /// spec has the string.
-    pub(crate) fn counterexample_field(&self, name: &str) -> Rc<Text> {
+    /// spec has the string. Where TLC dumps the trace (`is_dumped`), the trace modules it parses
+    /// after the spec's (`_TLCTrace.tla`, `_JsonTrace.tla`) intern `state`, `vars` and
+    /// `counterexample`, in that order, before SANY's semantic prelude, whose first text the IR
+    /// ranks; `action` they write as a string, which TLC interns as it runs.
+    pub(crate) fn counterexample_field(&self, name: &str, is_dumped: bool) -> Rc<Text> {
+        const PARSED: [&str; 3] = ["state", "vars", "counterexample"];
         const FIELDS: [&str; 9] = [
             "beginLine",
             "beginColumn",
@@ -722,12 +728,28 @@ impl<'ir> Evaluator<'ir> {
         if let Some(&rank) = self.ranks.get(&units) {
             return Rc::new(Text { units, rank });
         }
+        // Ranks of the prelude's texts, which no field is compared with, may be shared.
+        let prelude: Box<[u16]> = "$$InAssume".encode_utf16().collect();
+        let parsed = PARSED.iter().position(|field| *field == name);
+        if let (true, Some(position), Some(&prelude)) =
+            (is_dumped, parsed, self.ranks.get(&prelude))
+        {
+            return Rc::new(Text {
+                units,
+                rank: prelude + position as i32,
+            });
+        }
         let last = self.ranks.values().copied().max().unwrap_or(-1);
-        let position = FIELDS.iter().position(|field| *field == name);
+        let fields = if is_dumped { &PARSED[..] } else { &[] };
+        let position = fields
+            .iter()
+            .chain(&FIELDS)
+            .position(|field| *field == name);
         let rank = position.map_or(-1, |position| last + 1 + position as i32);
         Rc::new(Text { units, rank })
     }
 
+    /// A text with TLC's rank of it, or -1 for one the IR doesn't rank.
     pub fn text_of(&self, units: Box<[u16]>) -> Rc<Text> {
         let rank = self.ranks.get(&units).copied().unwrap_or(-1);
         Rc::new(Text { units, rank })
@@ -1456,7 +1478,17 @@ impl<'ir> Evaluator<'ir> {
             NodeKind::Number(int) => Ok(Value::Int(*int)),
             NodeKind::WideNumber(_) => fail("an integer outside 32 bits"),
             NodeKind::Decimal(_) => fail("a real number"),
-            NodeKind::String(text) => Ok(Value::Str(self.text(*text))),
+            // TLC makes a string literal's value once, as the node's tool object, so each
+            // evaluation of the node gives the same object (`Tool.evalAppl`'s `StringKind`).
+            NodeKind::String(text) => {
+                let node = self.node(node).0;
+                if let Some(literal) = self.literals.get(&node) {
+                    return Ok(Value::Str(Rc::clone(literal)));
+                }
+                let literal = self.text_of(self.ir.get_text_units(*text).into());
+                self.literals.insert(node, Rc::clone(&literal));
+                Ok(Value::Str(literal))
+            }
             NodeKind::Identifier(name) => self.identifier(node, name, context),
             NodeKind::Apply { name, args } => match (name.resolution, &args[..]) {
                 (Resolution::Builtin(index), &[left, right])
@@ -2401,6 +2433,216 @@ impl<'ir> Evaluator<'ir> {
                 let operands: Vec<Operand> = values.iter().cloned().map(Operand::Value).collect();
                 self.builtin(index, &operands, &operator.context)
             }
+        }
+    }
+
+    // A Java method of `tlc2.module.Bags` applied to its arguments' values.
+    fn bags(
+        &mut self,
+        name: &str,
+        operator: Option<&Operator>,
+        values: &[Value],
+    ) -> Evaluated<Value> {
+        match (name, values) {
+            // Whether a value is a function whose counts are positive integers.
+            ("IsABag", [bag]) => Ok(Value::Bool(
+                bag_entries(bag)?.is_some_and(|entries| is_bag(&entries)),
+            )),
+            // The copies a bag holds, added in an int, each a positive integer.
+            ("BagCardinality", [bag]) => {
+                let Some(entries) = bag_entries(bag)? else {
+                    return wrong_value("BagCardinality", "a function with a finite domain", bag);
+                };
+                let mut size = 0;
+                for (_, count) in entries {
+                    match count {
+                        Value::Int(count) if count > 0 => size = add_counts(size, count)?,
+                        _ => return wrong_value("BagCardinality", "a bag", bag),
+                    }
+                }
+                Ok(Value::Int(size))
+            }
+            // The elements a bag holds: its domain, an interval where TLC holds one.
+            ("BagToSet", [bag]) => {
+                if bag_entries(bag)?.is_none() {
+                    return wrong_value("BagToSet", "a function with a finite domain", bag);
+                }
+                let Value::Function(function) = bag else {
+                    unreachable!("a bag's entries are a function's")
+                };
+                Ok(match function.interval {
+                    Some((low, high)) => Value::Interval(low, high),
+                    None => Value::Set(Rc::new(function.domain.clone())),
+                })
+            }
+            // Each element of a finite set once, whose message names BagToSet.
+            ("SetToBag", [set]) => {
+                if !is_enumerable(set) {
+                    return wrong_value("BagToSet", "a function with a finite domain", set);
+                }
+                let keys = elements(set)?.to_vec();
+                let values = vec![Value::Int(1); keys.len()];
+                sorted_function(keys, values, Class::Plain)
+            }
+            // The sum of a finite set's bags in the set's order: the one element of a set of
+            // one, bag or not.
+            ("BagUnion", [set]) => {
+                if !is_enumerable(set) {
+                    return wrong_value("BagUnion", "a finite enumerable set", set);
+                }
+                let bags = elements(set)?;
+                if bags.len() < 2 {
+                    return Ok(bags
+                        .first()
+                        .cloned()
+                        .unwrap_or_else(|| Value::function(Vec::new(), Vec::new(), Class::Plain)));
+                }
+                let not_a_bag = || {
+                    fail_coded(
+                        "BagUnion of a set whose element isn't a function",
+                        BAG_UNION1,
+                        format!(
+                            "Attempted to apply BagUnion to the following set, whose\nelement is not a bag:\n{}",
+                            format_pretty(set)
+                        ),
+                    )
+                };
+                let Some(mut counts) = bag_entries(&bags[0])? else {
+                    return not_a_bag();
+                };
+                for bag in &bags[1..] {
+                    let Some(entries) = bag_entries(bag)? else {
+                        return not_a_bag();
+                    };
+                    for (key, count) in entries {
+                        add_copies(&mut counts, key, count)?;
+                    }
+                }
+                counted_bag(counts)
+            }
+            // Whether a bag holds an element, or how many copies: the count at the first key
+            // equal to it, which must be an integer.
+            ("BagIn" | "CopiesIn", [element, bag]) => {
+                // The method reads the function of a value that isn't one, a NullPointerException
+                // whose message names a local variable only where TLC was compiled with its
+                // names, as tla2tools.jar is.
+                let Some(entries) = bag_entries(bag)? else {
+                    return fail(format!("{name} of a value that isn't a function"));
+                };
+                let mut found = None;
+                for (key, count) in entries {
+                    if equals(element, &key)? {
+                        found = Some(count);
+                        break;
+                    }
+                }
+                Ok(match (found, name == "BagIn") {
+                    (None, true) => Value::Bool(false),
+                    (None, false) => Value::Int(0),
+                    (Some(Value::Int(count)), true) => Value::Bool(count > 0),
+                    (Some(Value::Int(count)), false) => Value::Int(count),
+                    (Some(_), _) => return bag_argument("second", name, "bag", bag),
+                })
+            }
+            // The copies of two bags added (`BagCup`): the first's elements, then the second's
+            // others. Both must be bags.
+            ("\\oplus", [left, right]) => {
+                let (left_entries, right_entries) = (bag_entries(left)?, bag_entries(right)?);
+                // `IsABag` reads the function of a value that isn't one, a NullPointerException
+                // as BagIn's.
+                let Some(mut counts) = left_entries else {
+                    return fail("(+) of a value that isn't a function");
+                };
+                if !is_bag(&counts) {
+                    return bag_argument("first", "(+)", "bag", left);
+                }
+                let Some(right_entries) = right_entries else {
+                    return fail("(+) of a value that isn't a function");
+                };
+                if !is_bag(&right_entries) {
+                    return bag_argument("second", "(+)", "bag", right);
+                }
+                for (key, count) in right_entries {
+                    add_copies(&mut counts, key, count)?;
+                }
+                counted_bag(counts)
+            }
+            // The first bag's copies less the second's, kept where some remain (`BagDiff`),
+            // subtracted in an int.
+            ("\\ominus", [left, right]) => {
+                let (left_entries, right_entries) = (bag_entries(left)?, bag_entries(right)?);
+                let Some(left_entries) = left_entries else {
+                    return bag_argument("first", "(-)", "bag", left);
+                };
+                let Some(right_entries) = right_entries else {
+                    return bag_argument("second", "(-)", "bag", right);
+                };
+                let mut keys = Vec::new();
+                let mut values = Vec::new();
+                for (key, count) in left_entries {
+                    let remaining = remaining_copies(&key, &count, &right_entries)?;
+                    if remaining > 0 {
+                        keys.push(key);
+                        values.push(Value::Int(remaining));
+                    }
+                }
+                written_function(keys, values, Class::Plain)
+            }
+            // Whether no element has more copies in the first bag than in the second
+            // (`SqSubseteq`), counted in an int.
+            ("\\sqsubseteq", [left, right]) => {
+                let (left_entries, right_entries) = (bag_entries(left)?, bag_entries(right)?);
+                let expected = "a function with a finite domain";
+                let Some(left_entries) = left_entries else {
+                    return wrong_value("\\sqsubseteq", expected, left);
+                };
+                let Some(right_entries) = right_entries else {
+                    return wrong_value("\\sqsubseteq", expected, right);
+                };
+                for (key, count) in &left_entries {
+                    if remaining_copies(key, count, &right_entries)? > 0 {
+                        return Ok(Value::Bool(false));
+                    }
+                }
+                Ok(Value::Bool(true))
+            }
+            // The bag of an operator's images of a bag's elements, each image's copies added.
+            ("BagOfAll", [bag]) => {
+                let operator = operator.expect("BagOfAll's operator");
+                // TLC passes an operator whose body is a number or a string as that literal.
+                if let Body::Node(body) = operator.body {
+                    let literal = match self.kind(body) {
+                        NodeKind::Number(int) => Some(Value::Int(*int)),
+                        NodeKind::String(text) => Some(Value::Str(self.text(*text))),
+                        _ => None,
+                    };
+                    if let Some(literal) = literal {
+                        return fail_coded(
+                            "BagOfAll of a literal",
+                            ARGUMENT_ERROR_AN,
+                            format!(
+                                "The first argument of BagOfAll should be an operator, but instead it is:\n{}",
+                                format_pretty(&literal)
+                            ),
+                        );
+                    }
+                }
+                let Some(entries) = bag_entries(bag)? else {
+                    return bag_argument(
+                        "second",
+                        "BagOfAll",
+                        "function with a finite domain",
+                        bag,
+                    );
+                };
+                let mut counts = Vec::new();
+                for (key, count) in entries {
+                    let image = self.call_with_values(operator, &[key])?;
+                    add_copies(&mut counts, image, count)?;
+                }
+                counted_bag(counts)
+            }
+            _ => unreachable!("a Bags method of its arity"),
         }
     }
 
@@ -3924,8 +4166,23 @@ impl<'ir> Evaluator<'ir> {
                                 "The second argument of \\div is 0.".into(),
                             );
                         }
-                        int(left.div_euclid(right)
-                            - i64::from(right < 0 && left.rem_euclid(right) != 0))?
+                        // `Naturals#Divide` floors only a quotient Java truncates below 0, and
+                        // lets -2147483648 \\div -1 wrap.
+                        if builtin.flags & Builtin::NATURALS_METHOD != 0 {
+                            let (left, right) = (left as i32, right as i32);
+                            let quotient = left.wrapping_div(right);
+                            let is_floored = quotient < 0 && quotient.wrapping_mul(right) != left;
+                            Value::Int(quotient - i32::from(is_floored))
+                        } else if left == i64::from(i32::MIN) && right == -1 {
+                            return fail_coded(
+                                "integer overflow",
+                                MODULE_OVERFLOW,
+                                "Overflow when computing -2147483648 \\div -1".into(),
+                            );
+                        } else {
+                            int(left.div_euclid(right)
+                                - i64::from(right < 0 && left.rem_euclid(right) != 0))?
+                        }
                     }
                     "%" => {
                         if right <= 0 {
@@ -4458,89 +4715,121 @@ impl<'ir> Evaluator<'ir> {
                 arity(0)?;
                 Value::function(Vec::new(), Vec::new(), Class::Plain)
             }
-            // A bag's copies of the first's elements, then of the second's others, added
-            // (`Bags.BagCup`), or the first's less the second's, kept where some remain
-            // (`Bags.BagDiff`).
-            "\\oplus" | "\\ominus" => {
-                arity(2)?;
-                let left = self.operand(&operands[0])?;
-                let right = self.operand(&operands[1])?;
-                let (left, right) = (bag_counts(&left)?, bag_counts(&right)?);
-                let count_in = |bag: &[(Value, i32)], key: &Value| -> Evaluated<Option<i32>> {
-                    for (element, count) in bag {
-                        if equals(element, key)? {
-                            return Ok(Some(*count));
-                        }
-                    }
-                    Ok(None)
+            // The Java methods of `tlc2.module.Bags`, which TLC applies to its arguments' values,
+            // BagOfAll's first an operator. What fails in a method but an EvalException fails as
+            // the method's failure (`MethodValue.eval`).
+            "IsABag" | "BagCardinality" | "BagToSet" | "SetToBag" | "BagUnion" | "BagIn"
+            | "CopiesIn" | "\\oplus" | "\\ominus" | "\\sqsubseteq" | "BagOfAll" => {
+                let (method, result) = bags_method(name);
+                let is_binary = !matches!(
+                    name,
+                    "IsABag" | "BagCardinality" | "BagToSet" | "SetToBag" | "BagUnion"
+                );
+                arity(if is_binary { 2 } else { 1 })?;
+                let operator = if name == "BagOfAll" {
+                    Some(self.operand_operator(&operands[0])?)
+                } else {
+                    None
                 };
-                let mut keys = Vec::new();
-                let mut values = Vec::new();
-                for (element, count) in &left {
-                    let other = count_in(&right, element)?.unwrap_or(0);
-                    let total = if name == "\\oplus" {
-                        Some(add_counts(*count, other)?)
+                let values = operands[usize::from(operator.is_some())..]
+                    .iter()
+                    .map(|operand| self.operand(operand))
+                    .collect::<Evaluated<Vec<_>>>()?;
+                let signature = format!(
+                    "public static {result} tlc2.module.Bags.{method}({})",
+                    vec!["tlc2.value.impl.Value"; operands.len()].join(",")
+                );
+                let applied = self.bags(name, operator.as_deref(), &values);
+                as_method_failure(&signature, applied)?
+            }
+            // TLC evaluates SubBag as Bags.tla defines it: every bag of at most a bag's copies of
+            // each element (`RSB[B]`), where Biggest's CHOOSE first compares the least count with
+            // itself by `>=`.
+            "SubBag" => {
+                arity(1)?;
+                let bag = self.operand(&operands[0])?;
+                // The DOMAIN that fails names where Bags.tla applies it.
+                let Value::Function(function) = &bag else {
+                    return fail("SubBag of a value that isn't a function");
+                };
+                let Ok(range) = set_of(function.range.clone()) else {
+                    return fail("SubBag of a bag whose counts don't compare");
+                };
+                let range = elements(&range)?;
+                if let Some(least) = range.first()
+                    && !matches!(least, Value::Int(_))
+                {
+                    // The >= of Naturals names itself >, and Integers replaces it where TLC loads
+                    // Integers, which the IR says only of a >= the spec applies.
+                    let Some(geq) = self
+                        .ir
+                        .builtins
+                        .iter()
+                        .find(|builtin| self.name(builtin.name) == ">=")
+                    else {
+                        return fail("SubBag's >=, which may be Naturals' or Integers'");
+                    };
+                    let shown = if geq.flags & Builtin::NATURALS_GEQ != 0 {
+                        ">"
                     } else {
-                        count.checked_sub(other)
+                        ">="
                     };
-                    let Some(total) = total else {
-                        return fail("a bag's count past an int");
-                    };
-                    if total > 0 {
-                        keys.push(element.clone());
-                        values.push(Value::Int(total));
-                    }
+                    return fail_coded(
+                        "expected an integer",
+                        ARGUMENT_ERROR_AN,
+                        format!(
+                            "The first argument of {shown} should be an integer, but instead it is:\n{}",
+                            format_pretty(least)
+                        ),
+                    );
                 }
-                if name == "\\oplus" {
-                    for (element, count) in &right {
-                        if count_in(&left, element)?.is_none() {
-                            keys.push(element.clone());
-                            values.push(Value::Int(*count));
+                let mut counts = Vec::with_capacity(function.domain.len());
+                for (key, count) in function.domain.iter().zip(&function.range) {
+                    let Value::Int(count) = count else {
+                        return fail("SubBag of a bag whose counts aren't all integers");
+                    };
+                    counts.push((key.clone(), *count));
+                }
+                let Some(biggest) = counts.iter().map(|&(_, count)| count).max() else {
+                    return Ok(Value::Set(Rc::new(vec![Value::tuple(Vec::new())])));
+                };
+                if biggest > 0 && counts.iter().all(|&(_, count)| count > 0) {
+                    return sub_bags(&counts);
+                }
+                // A count that isn't positive leaves the bag outside the domain of RSB, the bags
+                // of DOMAIN B's subsets with counts in 1..Biggest, which `FcnLambdaValue.apply`
+                // prints as a function: each bag's sub-bags of at most B's copies.
+                let bounds: Vec<_> = counts
+                    .iter()
+                    .map(|(key, _)| (key.clone(), biggest))
+                    .collect();
+                let domain = sub_bags(&bounds)?;
+                let domain = elements(&domain)?;
+                let mut keys = Vec::with_capacity(domain.len());
+                let mut values = Vec::with_capacity(domain.len());
+                for point in domain.iter() {
+                    let Value::Function(point_function) = point else {
+                        return fail("a sub-bag that isn't a function");
+                    };
+                    let mut point_bounds = Vec::with_capacity(point_function.domain.len());
+                    for key in &point_function.domain {
+                        for (inner_key, count) in &counts {
+                            if equals(key, inner_key)? {
+                                point_bounds.push((key.clone(), *count));
+                            }
                         }
                     }
+                    keys.push(point.clone());
+                    values.push(sub_bags(&point_bounds)?);
                 }
-                written_function(keys, values, Class::Plain)?
-            }
-            // Each element of a set once (`Bags.SetToBag`).
-            "SetToBag" => {
-                arity(1)?;
-                let set = self.operand(&operands[0])?;
-                let keys = elements(&set)?.to_vec();
-                let values = vec![Value::Int(1); keys.len()];
-                sorted_function(keys, values, Class::Plain)?
-            }
-            // The copies a bag holds (`Bags.BagCardinality`), which TLC adds in an int.
-            "BagCardinality" => {
-                arity(1)?;
-                let bag = self.operand(&operands[0])?;
-                let mut size = 0;
-                for (_, count) in positive_counts(&bag)? {
-                    size = add_counts(size, count)?;
-                }
-                Value::Int(size)
-            }
-            // The sum of a set's bags in the set's order (`Bags.BagUnion`).
-            "BagUnion" => {
-                arity(1)?;
-                let set = self.operand(&operands[0])?;
-                let bags = elements(&set)?;
-                match bags.as_slice() {
-                    [] => Value::function(Vec::new(), Vec::new(), Class::Plain),
-                    [bag] => bag.clone(),
-                    [first, rest @ ..] => {
-                        let mut counts = bag_counts(first)?;
-                        for bag in rest {
-                            merge_counts(&mut counts, bag_counts(bag)?)?;
-                        }
-                        counted_bag(counts)?
-                    }
-                }
-            }
-            // The elements a bag holds (`Bags.BagToSet`).
-            "BagToSet" => {
-                arity(1)?;
-                let bag = self.operand(&operands[0])?;
-                set_of(bag_counts(&bag)?.into_iter().map(|(key, _)| key).collect())?
+                return fail_runtime(
+                    "SubBag of a bag with a count that isn't positive",
+                    format!(
+                        "In applying the function\n{},\nthe first argument is:\n{}\nwhich is not in its domain.\n",
+                        format_pretty(&sorted_function(keys, values, Class::Lambda)?),
+                        format_pretty(&bag)
+                    ),
+                );
             }
             // The model value of a name (`TLCExt.tlcModelValue`), which compares by the name's
             // rank, as TLC ranks it.
@@ -5070,6 +5359,35 @@ fn describe(kind: &NodeKind) -> &'static str {
     }
 }
 
+/// `EC.TLC_MODULE_BAG_UNION1`.
+const BAG_UNION1: u32 = 2177;
+/// The most sub-bags SubBag builds.
+const MAXIMUM_SUB_BAGS: usize = 1 << 20;
+
+// The Java method of a Bags operator, and the class it returns.
+fn bags_method(name: &str) -> (&str, &'static str) {
+    match name {
+        "IsABag" | "BagIn" => (name, "tlc2.value.IBoolValue"),
+        "\\sqsubseteq" => ("SqSubseteq", "tlc2.value.IBoolValue"),
+        "BagCardinality" | "CopiesIn" => (name, "tlc2.value.impl.IntValue"),
+        "\\oplus" => ("BagCup", "tlc2.value.impl.Value"),
+        "\\ominus" => ("BagDiff", "tlc2.value.impl.Value"),
+        _ => (name, "tlc2.value.impl.Value"),
+    }
+}
+
+// `MethodValue.eval`: what fails in a Java method, but an EvalException, fails as the method's
+// failure.
+fn as_method_failure<T>(signature: &str, result: Evaluated<T>) -> Evaluated<T> {
+    match &result {
+        Err(EvalError {
+            message: Some(message),
+            ..
+        }) if !message.is_eval_exception => as_java_failure(signature, result),
+        _ => result,
+    }
+}
+
 // TLC's sum of two counts (`Bags.addCounts`), which fails where an int overflows.
 fn add_counts(left: i32, right: i32) -> Evaluated<i32> {
     match left.checked_add(right) {
@@ -5082,56 +5400,172 @@ fn add_counts(left: i32, right: i32) -> Evaluated<i32> {
     }
 }
 
-// The counts of a bag, each of which TLC requires to be positive (`Bags.IsABag`).
-fn positive_counts(bag: &Value) -> Evaluated<Vec<(Value, i32)>> {
-    let counts = bag_counts(bag)?;
-    if counts.iter().any(|&(_, count)| count <= 0) {
-        return fail("a bag with a count that isn't positive");
-    }
-    Ok(counts)
+// `EC.TLC_MODULE_APPLYING_TO_WRONG_VALUE` of a Bags method.
+fn wrong_value<T>(name: &str, expected: &str, value: &Value) -> Evaluated<T> {
+    fail_coded(
+        format!("{name} of a value that isn't {expected}"),
+        APPLYING_TO_WRONG_VALUE,
+        format!(
+            "Applying {name} to the following value,\nwhich is not {expected}:\n{}",
+            format_pretty(value)
+        ),
+    )
 }
 
-// Adds a bag's counts to those gathered, a new element after them.
-fn merge_counts(counts: &mut Vec<(Value, i32)>, added: Vec<(Value, i32)>) -> Evaluated<()> {
-    for (key, count) in added {
-        let mut held = None;
-        for (index, (inner_key, _)) in counts.iter().enumerate() {
-            if equals(inner_key, &key)? {
-                held = Some(index);
-                break;
-            }
-        }
-        match held {
-            Some(index) => counts[index].1 = add_counts(counts[index].1, count)?,
-            None => counts.push((key, count)),
+// `EC.TLC_MODULE_ARGUMENT_ERROR` of a Bags method.
+fn bag_argument<T>(position: &str, name: &str, expected: &str, value: &Value) -> Evaluated<T> {
+    fail_coded(
+        format!("{name} of a value that isn't a {expected}"),
+        ARGUMENT_ERROR,
+        format!(
+            "The {position} argument of {name} should be a {expected}, but instead it is:\n{}",
+            format_pretty(value)
+        ),
+    )
+}
+
+// A bag's keys and counts as `Bags.toFcnRcd` reads them, in the order TLC holds them, or `None`
+// for a value that isn't a function. `RecordValue.toFcnRcd` sorts the record, and
+// `FcnLambdaValue.toFcnRcd` fails to size a domain TLC overrides.
+fn bag_entries(bag: &Value) -> Evaluated<Option<Vec<(Value, Value)>>> {
+    let function = match bag {
+        Value::Function(function) => function,
+        Value::Lambda(lambda) => return lambda_as_function(lambda),
+        _ => return Ok(None),
+    };
+    if function.class.get() == Class::Record {
+        function.written.borrow_mut().take();
+    }
+    let order: Vec<usize> = match &*function.written.borrow() {
+        Some(written) => written.iter().map(|&position| position as usize).collect(),
+        None => (0..function.domain.len()).collect(),
+    };
+    Ok(Some(
+        order
+            .into_iter()
+            .map(|position| {
+                (
+                    function.domain[position].clone(),
+                    function.range[position].clone(),
+                )
+            })
+            .collect(),
+    ))
+}
+
+// Whether each count is a positive integer (`Bags.IsABag`).
+fn is_bag(entries: &[(Value, Value)]) -> bool {
+    entries
+        .iter()
+        .all(|(_, count)| matches!(count, Value::Int(count) if *count > 0))
+}
+
+// `(IntValue) count` in a Bags method: a count that isn't an integer fails with Java's
+// ClassCastException.
+fn cast_count(count: &Value) -> Evaluated<i32> {
+    let class = match count {
+        Value::Int(count) => return Ok(*count),
+        Value::Bool(_) => "BoolValue",
+        Value::Str(_) => "StringValue",
+        Value::Model(_) => "ModelValue",
+        Value::Set(_) | Value::Unsorted(_) => "SetEnumValue",
+        Value::Interval(..) => "IntervalValue",
+        Value::Lambda(_) => "FcnLambdaValue",
+        Value::Function(function) => match function.class.get() {
+            Class::Plain => "FcnRcdValue",
+            Class::Lambda => "FcnLambdaValue",
+            Class::Tuple => "TupleValue",
+            Class::Record => "RecordValue",
+        },
+        Value::Lazy(lazy) => match &**lazy {
+            lazy if lazy.is_overridden() => "UserValue",
+            Lazy::Subset(_) => "SubsetValue",
+            Lazy::FunctionSet(..) => "SetOfFcnsValue",
+            Lazy::RecordSet(..) => "SetOfRcdsValue",
+            Lazy::Product(_) => "SetOfTuplesValue",
+            Lazy::Cap(..) => "SetCapValue",
+            Lazy::Cup(..) => "SetCupValue",
+            Lazy::Diff(..) => "SetDiffValue",
+            Lazy::Union(_) => "UnionValue",
+            Lazy::Filter(..) => "SetPredValue",
+            _ => unreachable!("an overridden set"),
+        },
+    };
+    fail_runtime(
+        "a bag's count that isn't an integer",
+        format!(
+            "class tlc2.value.impl.{class} cannot be cast to class tlc2.value.impl.IntValue (tlc2.value.impl.{class} and tlc2.value.impl.IntValue are in unnamed module of loader 'app')"
+        ),
+    )
+}
+
+// Adds an element's copies to the counts gathered, as `Bags.BagCup`, `Bags.BagUnion` and
+// `Bags.BagOfAll` do: to the count of the first element it equals, both cast to an int, or
+// after them.
+fn add_copies(counts: &mut Vec<(Value, Value)>, element: Value, copies: Value) -> Evaluated<()> {
+    for (key, count) in counts.iter_mut() {
+        if equals(&element, key)? {
+            let held = cast_count(count)?;
+            *count = Value::Int(add_counts(held, cast_count(&copies)?)?);
+            return Ok(());
         }
     }
+    counts.push((element, copies));
     Ok(())
 }
 
+// An element's copies in a bag less those in another, subtracted in an int, as `Bags.BagDiff`
+// and `Bags.SqSubseteq` do.
+fn remaining_copies(key: &Value, count: &Value, other: &[(Value, Value)]) -> Evaluated<i32> {
+    let count = cast_count(count)?;
+    for (other_key, removed) in other {
+        if equals(key, other_key)? {
+            return Ok(count.wrapping_sub(cast_count(removed)?));
+        }
+    }
+    Ok(count)
+}
+
 // The bag of the counts gathered, in their order, as TLC builds it before it normalizes it.
-fn counted_bag(counts: Vec<(Value, i32)>) -> Evaluated<Value> {
-    let (keys, values) = counts
-        .into_iter()
-        .map(|(key, count)| (key, Value::Int(count)))
-        .unzip();
+fn counted_bag(counts: Vec<(Value, Value)>) -> Evaluated<Value> {
+    let (keys, values) = counts.into_iter().unzip();
     written_function(keys, values, Class::Plain)
 }
 
-// A bag's elements with their counts, in the order of its domain, as TLC reads a bag's function.
-fn bag_counts(bag: &Value) -> Evaluated<Vec<(Value, i32)>> {
-    let Value::Function(function) = bag else {
-        return fail("a bag that isn't a function");
-    };
-    function
-        .domain
-        .iter()
-        .zip(&function.range)
-        .map(|(key, count)| match count {
-            Value::Int(count) => Ok((key.clone(), *count)),
-            _ => fail("a bag whose count isn't an integer"),
-        })
-        .collect()
+// The bags of at most each element's copies, counts of 1 or more: `<< >>`, and the functions
+// Bags.tla's Combine builds.
+fn sub_bags(bounds: &[(Value, i32)]) -> Evaluated<Value> {
+    let size = bounds.iter().fold(1usize, |size, &(_, count)| {
+        size.saturating_mul(count.max(0) as usize + 1)
+    });
+    if size > MAXIMUM_SUB_BAGS {
+        return fail("SubBag of a bag with too many sub-bags to build");
+    }
+    let mut sub_bags: Vec<Vec<(Value, i32)>> = vec![Vec::new()];
+    for (key, count) in bounds {
+        let mut grown = Vec::new();
+        for sub_bag in &sub_bags {
+            for copies in 1..=*count {
+                let mut inner_sub_bag = sub_bag.clone();
+                inner_sub_bag.push((key.clone(), copies));
+                grown.push(inner_sub_bag);
+            }
+        }
+        sub_bags.extend(grown);
+    }
+    let mut values = Vec::with_capacity(sub_bags.len());
+    for sub_bag in sub_bags {
+        values.push(if sub_bag.is_empty() {
+            Value::tuple(Vec::new())
+        } else {
+            let (keys, copies) = sub_bag
+                .into_iter()
+                .map(|(key, copies)| (key, Value::Int(copies)))
+                .unzip();
+            sorted_function(keys, copies, Class::Lambda)?
+        });
+    }
+    set_of(values)
 }
 
 #[cfg(test)]

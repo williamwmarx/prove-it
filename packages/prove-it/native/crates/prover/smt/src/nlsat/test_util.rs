@@ -1,0 +1,255 @@
+//! What the ported tests of `tests/unit/smt-nlsat.test.ts` share: reading its fixtures, and its
+//! harness helpers.
+
+use std::fs;
+use std::path::PathBuf;
+
+use super::algebraic::{AlgebraicManager, Anum, AnumValue};
+use super::polynomial::{Polynomial, PolynomialManager, Var};
+use super::types::{Atom, IneqAtom, IneqKind, RootAtom, RootKind};
+use super::{Int, Rational};
+
+// The harness syntax: terms separated by spaces, each coeff:var^degree,var^degree.
+pub fn parse_polynomial(pm: &mut PolynomialManager, text: &str) -> Polynomial {
+    let terms: Vec<&str> = text.split_whitespace().collect();
+    let as_: Vec<Int> = terms
+        .iter()
+        .map(|term| {
+            term[..term.find(':').expect("a term has a colon")]
+                .parse::<Int>()
+                .expect("a coefficient")
+        })
+        .collect();
+    let ms: Vec<_> = terms
+        .iter()
+        .map(|term| {
+            let powers: Vec<Vec<u32>> = term[term.find(':').expect("a term has a colon") + 1..]
+                .split(',')
+                .filter(|power| !power.is_empty())
+                .map(|power| {
+                    power
+                        .split('^')
+                        .map(|part| part.parse::<u32>().expect("a number"))
+                        .collect()
+                })
+                .collect();
+            let vars: Vec<Var> = powers
+                .iter()
+                .map(|power| Var::try_from(power[0]).expect("a variable"))
+                .collect();
+            let degrees: Vec<u32> = powers.iter().map(|power| power[1]).collect();
+            pm.mk_monomial(&vars, &degrees)
+        })
+        .collect();
+    pm.mk_polynomial(&as_, &ms)
+}
+
+// Prints the monomials in the polynomial's own order, as the harness does.
+pub fn show_polynomial(pm: &PolynomialManager, polynomial: &Polynomial) -> String {
+    let terms = polynomial.terms();
+    let shown: Vec<String> = terms
+        .ms
+        .iter()
+        .enumerate()
+        .map(|(index, monomial)| {
+            let powers: Vec<String> = pm
+                .monomial_vars(*monomial)
+                .iter()
+                .zip(pm.monomial_degrees(*monomial))
+                .map(|(variable, degree)| format!("{variable}^{degree}"))
+                .collect();
+            format!("{}:{}", terms.as_[index], powers.join(","))
+        })
+        .collect();
+    format!("[{}]", shown.join(" "))
+}
+
+/// The `[input, expected]` pairs of `tests/fixtures/nlsat/<name>`.
+pub fn read_fixture(name: &str) -> Vec<(String, String)> {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../../tests/fixtures/nlsat")
+        .join(name);
+    let text = fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("reading {}: {error}", path.display()));
+    let mut parser = JsonParser {
+        bytes: text.as_bytes(),
+        position: 0,
+    };
+    let mut pairs = Vec::new();
+    parser.expect(b'[');
+    if parser.peek() == b']' {
+        return pairs;
+    }
+    loop {
+        parser.expect(b'[');
+        let input = parser.parse_string();
+        parser.expect(b',');
+        let expected = parser.parse_string();
+        parser.expect(b']');
+        pairs.push((input, expected));
+        if parser.peek() == b']' {
+            return pairs;
+        }
+        parser.expect(b',');
+    }
+}
+
+/// parseRational: `n` or `n/d`.
+pub fn parse_rational(text: &str) -> Rational {
+    let mut parts = text.split('/');
+    let num = parts
+        .next()
+        .expect("a numerator")
+        .parse()
+        .expect("an integer");
+    let den = parts.next().unwrap_or("1").parse().expect("an integer");
+    Rational::of(num, den)
+}
+
+/// an_show in the harness: a rational, or the defining polynomial, root index and isolating
+/// interval.
+pub fn show_anum(am: &mut AlgebraicManager, anum: &Anum) -> String {
+    if let AnumValue::Rational(value) = &*anum.value() {
+        return format!(" q{value}");
+    }
+    let root_index = am.get_root_index(anum);
+    let value = anum.value();
+    let AnumValue::Cell(cell) = &*value else {
+        unreachable!("get_root_index leaves the number irrational");
+    };
+    let coeffs: Vec<String> = cell.p.iter().map(ToString::to_string).collect();
+    format!(
+        " r[{}]#{root_index}({},{})",
+        coeffs.join(" "),
+        cell.lower,
+        cell.upper
+    )
+}
+
+/// Rebuilds an atom from the harness's print of it: the solver normalizes atoms, which is not
+/// the evaluator's job.
+pub fn parse_atom(pm: &mut PolynomialManager, text: &str) -> Atom {
+    let words: Vec<&str> = text.trim().split(' ').collect();
+    let bool_var: u32 = words[0][1..].parse().expect("a Boolean variable");
+    let max_var: Var = words[2].parse().expect("a variable");
+    // The matches of /([eoi]\d*) ?\[([^\]]*)\]/g: a tag and the polynomial in brackets.
+    let mut factors: Vec<(&str, &str)> = Vec::new();
+    let bytes = text.as_bytes();
+    let mut start = 0;
+    while start < bytes.len() {
+        if !matches!(bytes[start], b'e' | b'o' | b'i') {
+            start += 1;
+            continue;
+        }
+        let mut end = start + 1;
+        while end < bytes.len() && bytes[end].is_ascii_digit() {
+            end += 1;
+        }
+        let mut open = end;
+        if open < bytes.len() && bytes[open] == b' ' {
+            open += 1;
+        }
+        let close = text[open..].find(']').map(|offset| open + offset);
+        match close {
+            Some(close) if bytes[open] == b'[' => {
+                factors.push((&text[start..end], &text[open + 1..close]));
+                start = close + 1;
+            }
+            _ => start += 1,
+        }
+    }
+    if words[1].starts_with("ROOT") {
+        let kind = match words[1] {
+            "ROOT_EQ" => RootKind::RootEq,
+            "ROOT_LT" => RootKind::RootLt,
+            "ROOT_GT" => RootKind::RootGt,
+            "ROOT_LE" => RootKind::RootLe,
+            _ => RootKind::RootGe,
+        };
+        return Atom::Root(RootAtom {
+            kind,
+            bool_var,
+            max_var: max_var.into(),
+            index: factors[0].0[1..].parse().expect("a root index"),
+            polynomial: parse_polynomial(pm, factors[0].1),
+        });
+    }
+    let kind = match words[1] {
+        "EQ" => IneqKind::Eq,
+        "LT" => IneqKind::Lt,
+        _ => IneqKind::Gt,
+    };
+    Atom::Ineq(IneqAtom {
+        kind,
+        bool_var,
+        max_var: max_var.into(),
+        polynomials: factors
+            .iter()
+            .map(|factor| parse_polynomial(pm, factor.1))
+            .collect(),
+        is_even: factors.iter().map(|factor| factor.0 == "e").collect(),
+    })
+}
+
+struct JsonParser<'text> {
+    bytes: &'text [u8],
+    position: usize,
+}
+
+impl JsonParser<'_> {
+    fn peek(&mut self) -> u8 {
+        while self.bytes[self.position].is_ascii_whitespace() {
+            self.position += 1;
+        }
+        self.bytes[self.position]
+    }
+
+    fn expect(&mut self, byte: u8) {
+        assert_eq!(self.peek(), byte, "fixture JSON at byte {}", self.position);
+        self.position += 1;
+    }
+
+    fn parse_string(&mut self) -> String {
+        self.expect(b'"');
+        let mut text = Vec::new();
+        loop {
+            let byte = self.bytes[self.position];
+            self.position += 1;
+            match byte {
+                b'"' => return String::from_utf8(text).expect("fixture strings are UTF-8"),
+                b'\\' => {
+                    let escaped = self.bytes[self.position];
+                    self.position += 1;
+                    match escaped {
+                        b'n' => text.push(b'\n'),
+                        b't' => text.push(b'\t'),
+                        b'"' | b'\\' | b'/' => text.push(escaped),
+                        b'u' => {
+                            let hex =
+                                std::str::from_utf8(&self.bytes[self.position..self.position + 4])
+                                    .expect("hex digits");
+                            self.position += 4;
+                            let code = u32::from_str_radix(hex, 16).expect("a \\u escape");
+                            let character = char::from_u32(code).expect("a BMP scalar");
+                            text.extend_from_slice(character.to_string().as_bytes());
+                        }
+                        other => panic!("unexpected escape \\{}", other as char),
+                    }
+                }
+                _ => text.push(byte),
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::read_fixture;
+
+    #[test]
+    fn reads_every_fixture() {
+        for name in ["polynomial.json", "upolynomial.json", "search.json"] {
+            assert!(!read_fixture(name).is_empty(), "{name}");
+        }
+    }
+}
