@@ -210,17 +210,17 @@ Still to do:
 
 ## The front, from tla-front
 
-- Without a recorded `<Spec>.ir`, the binary lowers the model with `tla_front::model::lower_model`.
-  Its IR has no TLC actions yet, so a trace that needs labels stays not native until the engine
-  splits Next.
+- tla-front is the binary's only front end (`front.rs`): it prints SANY's report as
+  `tla_front::report::get_sany_text` writes it and lowers the model with
+  `tla_front::model::lower_front_ranking`. The lowered IR has no TLC actions; the trace evaluator
+  splits Next (`tla_trace::add_actions`).
 - `files.rs` names the files SANY parses as `createFileDescriber` does. The directory TLC copies
   a module into is named by TLC's fingerprint of a string, as `getTemporaryName` does it.
-- With PROVE_IT_NATIVE_FRONT=1 the binary prints SANY's report as
-  `tla_front::report::get_sany_text` writes it, in place of the recorded one. Under -tool it goes
-  between "Starting SANY..." (2220) and "SANY finished." (2219), and otherwise before `Starting...`.
-  The rest of the front stays recorded until tla-front writes it too.
-- The engine's startup hooks (`startup_print`, `symmetry_sets_too_small`, `startup_done`) stay
-  silent while the front is recorded, since the recorded text already holds what they report.
+- The differential used to hand the binary a recorded front (`PROVE_IT_FRONT`: the IR and the
+  text the TypeScript CLI printed before the search). It is gone; the one test seam left
+  is `PROVE_IT_TEST_IR`, which names a golden engine IR the CLI tests check in place of the
+  lowered one, with no SANY report and nothing printed before the search but the engine's
+  startup.
 
 ## POSTCONDITION
 
@@ -242,8 +242,8 @@ Still to do:
 
 ## Specs TLC stops at before the search
 
-- Where the differential records no front, the binary asks tla-front whether TLC stops before it
-  searches, and prints what TLC prints then:
+- tla-front finds whether TLC stops before it searches, and the binary prints what TLC prints
+  then:
   - SANY's report, framed by 2220 "Starting SANY..." and 2219 "SANY finished." under -tool;
   - 2185 `Starting... (…)`;
   - SANY's rejection of the spec (3002, exit 150), or the error tla-front's lowering raises with
@@ -256,12 +256,11 @@ Still to do:
 - Lowering reads modules beside the spec, then from each `-DTLA-Library` directory in order.
 - Where tla-front doesn't find where TLC stops, the not-native reason says why.
 
-## The front from tla-front alone
+## What TLC prints as it starts
 
-- Without `PROVE_IT_FRONT`, tla-front is the whole front end: the binary prints SANY's report as
-  tla-front writes it (framed by 2220 and 2219 under -tool), then `Starting...`, and lowers the
-  model itself. What TLC prints as it starts comes from the engine's startup hooks, which the
-  binary wires only on this path (`Relay::is_startup_printed`), since a recorded front holds it:
+- The binary prints SANY's report as tla-front writes it (framed by 2220 and 2219 under -tool),
+  then `Starting...`, and lowers the model itself. What TLC prints as it starts comes from the
+  engine's startup hooks:
   - `startup_print` prints as `Relay::print` does, with the same `is_printable` check, so a value
     whose text depends on how TLC built it stops the run as not native;
     Where the store has forgotten how TLC built a value, the binary takes what the substitutes,
@@ -269,17 +268,18 @@ Still to do:
     (`Rebuilder::startup_prints`), so long as each print the store words is the same and there
     are as many; not under SYMMETRY, whose body the evaluator doesn't evaluate;
   - `symmetry_sets_too_small` prints 2300 as `Tool.getSymmetryPerms` words it.
-- Still not native on this path, as TLC prints more as it starts:
+- Not native when this was first measured, as TLC prints more as it starts (front.md has what
+  has landed since):
   - the Java overrides TLC loads (any `.class` file beside the spec);
   - the warning of a constant-level invariant (2149), which the IR drops;
   - a PROPERTY: the warning of a state-level property and the tableau's branches (2212);
   - the trace exploration spec TLC parses with the spec, unless `-tool`, `-noGenerateSpecTE`
     (`-noTE`) or `-continue` (`isTraceRecorded`).
 - The binary seeds TLC's generator with -seed, which tla-front's IR doesn't hold.
-- `differential --native <binary> --native-front` runs the binary this way.
+- `differential --native <binary> --native-only` runs the binary alone this way.
 - Measured (2026-11-09) on the TLC test models of up to 5 s: 462 of 758 runs print what TLC
   prints with no recorded front, and none differs once the seed is set. What only this path
-  declines:
+  declined then:
   - a PROPERTY (244 runs, 122 models): TLC's warning of a state-level property (2255,
     `getProperties`), the warning of symmetry with liveness (2279), and 2212 `Implied-temporal
     checking--satisfiability problem has N branches.`, with N the tableau's solutions
@@ -345,11 +345,9 @@ form (DESIGN 13.1): several specs, `Spec.cfg`, and its usage where none is named
 
 ## Handoff
 
-- Two paths feed the search. With a recorded front (`PROVE_IT_FRONT/<spec>.front`, what TLC
-  printed from the banner to "Computing initial states", which the differential records), the
-  binary prints that text and lowers the IR itself where no `.ir` is recorded. Where the directory
-  has no recorded front, it only reports where TLC stops before the search. Without
-  `PROVE_IT_FRONT`, tla-front is the whole front end (above).
+- tla-front feeds the search, or reports where TLC stops before it (above). Parity measures the
+  binary that way: `differential --native-only --native <binary>`, gated on
+  known-differences.json's `tlc/native` entries.
 - Sweep for wrong output after a big push: list the corpus models whose configuration uses
   SYMMETRY, VIEW, ALIAS, POSTCONDITION(S) or `_POSSIBLE`, and run
   `bun scripts/run.ts differential --compare-backends --filter <id> --native

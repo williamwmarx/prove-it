@@ -15,7 +15,7 @@ use tla_values::{Id, Store};
 use crate::args::{Java, Parsed, Stop, USAGE, get_java_launch, is_auto};
 use crate::failure::{ErrorStop, print_assumption_failure, print_failure};
 use crate::files::FileDescriber;
-use crate::front::{Failure, Output, Read, read_front};
+use crate::front::{Failure, Read, read_front};
 use crate::messages::{self as code, Level, Printer};
 use crate::summary::{
     actual_probability, fingerprint_distance, format_count, format_probability,
@@ -278,8 +278,6 @@ enum Event {
 
 struct Relay<'ir> {
     sender: mpsc::Sender<Event>,
-    /// Whether the run prints what TLC prints as it starts, which a recorded front holds.
-    is_startup_printed: bool,
     ir: &'ir tla_ir::Ir,
     is_tool: bool,
     workers: usize,
@@ -383,9 +381,6 @@ impl Reporter for Relay<'_> {
     // TLC built it where the store forgot, as long as it prints the same: each print the store
     // words alike, and as many.
     fn startup_print(&mut self, store: &Store, values: &[Id]) {
-        if !self.is_startup_printed {
-            return;
-        }
         let worded = format_printed(store, values);
         let Some(worded_prints) = self.startup_worded.as_mut() else {
             let printed = self.word_assumed(worded);
@@ -448,22 +443,20 @@ impl Reporter for Relay<'_> {
             .map_err(|Unsupported(reason)| format!("checking an assumption again: {reason}"))?;
         // What the run printed of the assumption before it left it to the trace evaluator must be
         // what TLC prints first, after what the assumptions before it print.
-        if self.is_startup_printed {
-            let expected: Vec<String> = checked
-                .printed_before
-                .iter()
-                .chain(&checked.printed)
-                .map(|print| format_print(print))
-                .collect();
-            if !expected.starts_with(&self.assumed_printed) {
-                let _ = self.sender.send(Event::Print(None));
-                return Err("printing other than TLC prints".into());
-            }
-            for text in &expected[self.assumed_printed.len()..] {
-                self.assumed_worded.push(Some(text.clone()));
-                self.assumed_printed.push(text.clone());
-                let _ = self.sender.send(Event::Print(Some(text.clone())));
-            }
+        let expected: Vec<String> = checked
+            .printed_before
+            .iter()
+            .chain(&checked.printed)
+            .map(|print| format_print(print))
+            .collect();
+        if !expected.starts_with(&self.assumed_printed) {
+            let _ = self.sender.send(Event::Print(None));
+            return Err("printing other than TLC prints".into());
+        }
+        for text in &expected[self.assumed_printed.len()..] {
+            self.assumed_worded.push(Some(text.clone()));
+            self.assumed_printed.push(text.clone());
+            let _ = self.sender.send(Event::Print(Some(text.clone())));
         }
         Ok(Delegated {
             holds: checked.holds,
@@ -472,11 +465,9 @@ impl Reporter for Relay<'_> {
     }
 
     fn symmetry_sets_too_small(&mut self, names: &[String]) {
-        if self.is_startup_printed {
-            let _ = self
-                .sender
-                .send(Event::SymmetrySetsTooSmall(names.to_vec()));
-        }
+        let _ = self
+            .sender
+            .send(Event::SymmetrySetsTooSmall(names.to_vec()));
     }
 }
 
@@ -677,30 +668,19 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
             );
         }
     }
-    let (is_startup_printed, startup_messages) = match front.output {
-        Output::Recorded(output) => {
-            printer.raw(&output);
-            (false, Vec::new())
+    if let Some(sany) = &front.sany {
+        if is_trace_recorded(args) {
+            return report_not_native(
+                printer,
+                "SANY's report of the trace exploration spec TLC parses with the spec",
+            );
         }
-        Output::Native {
-            sany,
-            override_messages,
-            startup_messages,
-        } => {
-            if is_trace_recorded(args) {
-                return report_not_native(
-                    printer,
-                    "SANY's report of the trace exploration spec TLC parses with the spec",
-                );
-            }
-            print_sany(printer, &sany);
-            // TLC loads the classes of the modules before it computes the constant definitions.
-            for message in &override_messages {
-                print_startup_message(printer, message);
-            }
-            (true, startup_messages)
-        }
-    };
+        print_sany(printer, sany);
+    }
+    // TLC loads the classes of the modules before it computes the constant definitions.
+    for message in &front.override_messages {
+        print_startup_message(printer, message);
+    }
     // TLC seeds its generator with -seed, which an IR tla-front lowers doesn't hold.
     ir.model.random_seed = seed as u64;
     if args.has("-deadlock") {
@@ -750,11 +730,10 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
             .spawn_scoped(scope, move || {
                 let mut relay = Relay {
                     sender,
-                    is_startup_printed,
                     ir,
                     is_tool,
                     workers,
-                    startup_messages,
+                    startup_messages: front.startup_messages,
                     startup_worded: Some(Vec::new()),
                     assumed_worded: Vec::new(),
                     assumed_printed: Vec::new(),
@@ -943,15 +922,20 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
             return report_not_native(printer, &format!("the engine declined: {reason}"));
         }
         SearchOutcome::AssumptionFailed { position } => {
-            // A recorded front holds what the assumptions printed.
-            let printed = is_startup_printed.then_some(assumed_printed.as_slice());
-            return print_assumption_failure(printer, &ir, position, printed, workers, start)
-                .unwrap_or_else(|why| {
-                    report_not_native(
-                        printer,
-                        &format!("an assumption that fails to evaluate: {why}"),
-                    )
-                });
+            return print_assumption_failure(
+                printer,
+                &ir,
+                position,
+                &assumed_printed,
+                workers,
+                start,
+            )
+            .unwrap_or_else(|why| {
+                report_not_native(
+                    printer,
+                    &format!("an assumption that fails to evaluate: {why}"),
+                )
+            });
         }
         // TLC rejects the value of a constant definition the configuration names as it reads
         // the configuration.
