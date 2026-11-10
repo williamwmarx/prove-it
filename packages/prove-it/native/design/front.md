@@ -593,34 +593,94 @@ brought:
   the literal on its own line, exit 151 or 255. The TypeScript CLI still prints the front end's
   error (code 1000, exit 75).
 
-Declines left: 9 of the error corpus's SANY errors (E4200, E4203, E4204, E4223, E4293 ×2, E4294,
-E4351, E4355), whose reports `report.rs` doesn't write; AssumeProveTest's labeled ASSUME/PROVE and
-ProofsTest's DEFINE step; and four corpus specs whose failing assumptions the engine declines to
-replay (AssumeTest, BasicTest, InnerModuleTest, Semantics).
+The generator's checks the error corpus declined (E4200, E4203, E4204, E4223, E4293 ×2, E4294,
+E4351, E4355) are now written, from `Generator.java` and `SymbolTable.java` at d8fb231:
+
+- `selectorToNode` (`resolve.rs`, `get_symbol_arity`): an INSTANCE's name as an expression, with
+  its arguments checked first ("The operator I requires n arguments." at the arguments, or at the
+  name without any) and then "Operator name I is incomplete." at the name; in a fact SANY takes the
+  name, which stays `NotYet`. A theorem whose statement is an ASSUME/PROVE, and a step whose name
+  `Local::unselectable` marks: "ASSUME/PROVE used where an expression is required." for an
+  ASSUME/PROVE step, and "HAVE", "CASE", "TAKE", "PICK", "WITNESS", "QED step" or "SUFFICES"
+  "proof step selected instead of expression." A theorem whose statement is an expression, which
+  SANY takes as one, is linked as a definition; named in its own proof, where the front end hasn't
+  bound it yet, it stays `NotYet` (ProofsTest's `DefineStepProof`).
+- RECURSIVE declarations: `recursive.rs` names the shapes the front end follows, and every other
+  module with a RECURSIVE declaration is `NotYet`. `processRecursive` binds each declared operator
+  at the current LET/IN level (`curLevel`), `processOperator` and `processFunction` define it,
+  `checkForUndefinedRecursiveOps` reports it at the end of its LET or module if nothing has, and
+  `SymbolTable.addSymbol` decides what any other binding of its name means. The front end follows
+  a declaration of N with k arguments, at module level or in a LET, only where N is no built-in,
+  nothing before it in its module or LET names or binds N, and nothing after it in its scope binds
+  N but one definition of N in the same module or LET (or, for a LET, one LET definition of N
+  within a later definition of that LET, "defined at wrong LET/IN level"). That definition is an
+  operator with k parameters that take no arguments, or a function when k is 0; at module level it
+  may instead have another number of such parameters ("Definition of N has different arity than its
+  RECURSIVE declaration.") or be a function when k isn't 0 ("Function N has operator arguments in
+  its RECURSIVE declaration."). Where N is left undefined, defined at a deeper LET, or defined in
+  one of those two other shapes, nothing may name N. A LET with RECURSIVE declarations has no
+  INSTANCE and no other such LET within it; a nested module declares nothing RECURSIVE at its own
+  level; no INSTANCE without a name follows a module-level declaration; and the resolver declines
+  a declaration of a name already bound where it appears. Within these, a LET's declarations are
+  in the AST (`ExpressionKind::Let::recursive`) and bind as pending operators with the
+  declaration's arity, and at the end of the LET's definitions, before its body, which is a level
+  up, SANY reports "Symbol S declared in RECURSIVE statement but not defined." for every
+  declaration of that level it has read and left undefined (`recursiveDecls` is the module's),
+  each once, as `Errors.addMessage` drops a message it holds.
+  `crates/tla-front/tests/recursive-shapes` holds a grid of declarations at module level, in a LET
+  and in a LET within a definition of another, against everything else that can bind or name what
+  they declare; the `report.rs` test lists the cells the front end reports, and
+  `scripts/sany-corpus.ts --specs` runs the grid through TLC. The grid isn't among the fixtures
+  `front-differential.ts` reads, as the TypeScript resolver doesn't follow these declarations.
+- `generateUseOrHide` and `generateLeafProof`: the parser keeps every DEF entry in the SANY run,
+  and `check_defs` reports, where SANY meets it, an unknown name ("Unknown operator: `X'." then
+  "DEF clause entry should describe a defined operator.") and a built-in operator, a constant, a
+  variable, a parameter or a NEW symbol (the second only). A USE or HIDE that keeps no fact and no
+  entry is "Empty USE or HIDE statement.", and such a BY "Empty BY".
+- `SymbolTable.addModule`: a nested module named like a standard module SANY has read is
+  "Multiply-defined module", at the standard module's extent, which `get_standard_source` reads
+  from SANY's text of it; where the module has other errors, whose order with it isn't followed,
+  `NotYet`.
+- `SimpleFilenameToStream.locate` reads a user's file, then a standard module, and only then
+  (`FileUtil`) a module of the root module's file, so `report.rs` reads a standard module before a
+  nested module of its name, which SANY's parse doesn't see.
+
+- E4294_Module, a MODULE inside a recursive section: the nested module's end takes the section's
+  count off the total (`checkForUndefinedRecursiveOps`), so the definition after it drives the
+  total below zero and `endOpDefNode` throws a WrongInvocationException. `SANY.parse` prints it
+  after the module's "Semantic processing" line and none of its messages, and SpecProcessor fails
+  with `Assert.fail(EC.TLC_PARSING_FAILED2, e)`, whose message TLC words with 2171 twice (nested
+  markers under -tool), with no "SANY finished." or "Starting...", and exit 150; recorded from TLC
+  at d8fb231 (`report.rs` `get_generator_exception`, `SanyText::exception`). It is written for
+  the root module after standard modules alone; a recursive section the module leaves without a
+  definition after it, or one that goes on after it, stays `NotYet`. The TypeScript report's "A
+  MODULE may not appear within a recursive definition section." is not what TLC does.
+
+Declines left, each for a reason:
+
+- AssumeProveTest's labeled ASSUME/PROVE, which the front end's parser rejects.
+- ProofsTest: a theorem whose statement is an expression, named as an expression in its own proof.
+- Four corpus specs whose failing assumptions the engine declines to replay (AssumeTest,
+  BasicTest, InnerModuleTest, Semantics).
+
+The binary names the check it declines (`SANY's report of <reason>`).
 
 `bun scripts/sany-corpus.ts --tlaplus <clone> --classpath <tla2tools>` runs TLC live against the
-binary over both directories and counts them: 138 of 153 print what TLC prints (116 of the 125
-errors, 22 of the 28 accepted specs), 15 decline and none differ. The recorded gate, with the
-directories in `corpora.json` and TLC's output recorded, comes with the generator's port below.
-
-### Next milestone: SANY's generator in tla-front (after native-parity)
-
-The binary's SANY report comes from `report.rs`, over `resolve.rs` and `levels.rs`, which port
-`src/resolve.ts` and `src/levels.ts` and cover a subset of SANY; the TypeScript CLI writes its
-report with `src/sany/` (`generator.ts`, `levels.ts`, `selectors.ts`), a port of SANY's whole
-semantic analysis. Porting `src/sany` to tla-front replaces `report.rs`'s semantic checks as the
-source of the native report, so no TypeScript is in its path, and can land a check at a time
-behind the existing report. It must keep `front-differential.ts sany-text` at 2,359 of 2,359,
-the error corpus at 116 of 125 with none differing, and write the 9 SANY errors `report.rs`
-declines (E4200, E4203, E4204, E4223, E4293 ×2, E4294, E4351, E4355).
+binary over both directories and counts them (TLC runs on the coordinator's side, as this
+container can't build it). Before the port 138 of 153 printed what TLC prints (116 of the 125
+errors, 22 of the 28 accepted specs), 15 declined and none differed; after it, before E4294_Module
+was written, 146 printed, 7 declined and none differed: all 125 errors but E4294_Module, and the
+six accepted specs above. `front-differential.ts sany-text` stays at 2,367 of 2,367. The recorded
+gate, with the directories in `corpora.json` and TLC's output recorded, is still to come.
 
 ### Open
 
-- The 9 SANY errors above, which the native report declines.
+- `report.rs`'s semantic checks still port `src/resolve.ts` and `src/levels.ts`, not the whole of
+  `src/sany`; the generator's errors the corpus doesn't reach are the next to port.
 - A RECURSIVE operator that applies another of its section (mutual recursion): SANY's first pass
   reads the section's operators with action-level arguments, which `levels.rs` declines.
-- Labeled ASSUME/PROVE (AssumeProveTest) and a DEFINE step's operator (ProofsTest), which the
-  native front declines.
+- Labeled ASSUME/PROVE (AssumeProveTest) and a theorem named as an expression in its own proof
+  (ProofsTest), which the native front declines.
 - The TypeScript front end's differences from TLC, below.
 
 ### Where the TypeScript front end differs from TLC
@@ -630,13 +690,15 @@ declines:
 
 - E4243 ×3 (an explicit substitute's arity, two errors in SANY) and E4260 ×2 (a function applied
   to another number of arguments).
-- E4294_Module and E4350_Plus/Star (a named `<*>` or `<+>` step, which it rejects as a parse
-  error).
+- E4294_Module (an exception, above) and E4350_Plus/Star (a named `<*>` or `<+>` step, which it
+  rejects as a parse error).
 - AssumeProveTest (a labeled ASSUME/PROVE among the assumptions) and FairnessTest (`WF_B(A)(Act)`),
   which it rejects as parse errors.
 - NumbersTest: a decimal or a number TLC can't hold, which it reports with code 1000 and exit 75
   for TLC's 2244 (exit 151) and 2265 (exit 255).
-- ProofsTest (a DEFINE step's operator), which the native front declines too.
+- ProofsTest (a theorem named as an expression in its own proof), which the native front declines
+  too.
+- LetInTest, and an INSTANCE named as a fact, which it reports as unknown operators.
 
 ## The strings TLC interns as it starts
 

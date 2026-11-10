@@ -20,10 +20,11 @@ pub enum Read {
 }
 
 /// A spec TLC stops at before the search: SANY's report, then SANY's rejection of the spec, or
-/// else the error TLC reports with its code.
+/// else the error TLC reports with its code, or the exception SANY threw, which ends the report.
 pub struct Failure {
     pub sany: String,
     pub error: Option<CodedError>,
+    pub exception: Option<String>,
 }
 
 /// The model to check, and what TLC prints after the banner and before it computes the initial
@@ -65,12 +66,15 @@ pub fn read_front(
             startup_messages: Vec::new(),
         }));
     }
-    let sany = native_sany(spec_path, describer, libraries)
-        .ok_or("SANY's report, which tla-front doesn't write")?;
+    let sany = native_sany(spec_path, describer, libraries).map_err(|error| match error {
+        FrontError::NotYet(reason) => format!("SANY's report of {reason}"),
+        _ => "SANY's report, which tla-front doesn't write".to_owned(),
+    })?;
     if sany.is_failed {
         return Ok(Read::Failed(Failure {
             sany: sany.text,
             error: None,
+            exception: sany.exception,
         }));
     }
     // TLC's seed as the generator's 64 bits.
@@ -98,6 +102,7 @@ pub fn read_front(
     Ok(Read::Failed(Failure {
         sany: sany.text,
         error: Some(coded),
+        exception: None,
     }))
 }
 
@@ -140,7 +145,7 @@ fn native_sany(
     spec_path: &str,
     describer: &FileDescriber,
     libraries: &[String],
-) -> Option<SanyText> {
+) -> Result<SanyText, FrontError> {
     let spec = Path::new(spec_path);
     let directory = spec.parent().unwrap_or(Path::new("."));
     let load_module = |name: &str| {
@@ -162,5 +167,5 @@ fn native_sany(
         load_module: &load_module,
         describe_file: &|name, origin| describer.describe(name, origin),
     };
-    get_sany_text(spec, &options).ok()
+    get_sany_text(spec, &options)
 }

@@ -11,6 +11,7 @@ pub const FINISHED: u32 = 2186;
 pub const SANY_FINISHED: u32 = 2219;
 pub const STARTING_SANY: u32 = 2220;
 pub const PARSING_FAILED: u32 = 3002;
+pub const PARSING_FAILED_EXCEPTION: u32 = 2171;
 pub const MODEL_CHECKING: u32 = 2187;
 pub const COMPUTING_INIT: u32 = 2189;
 pub const INVARIANT_VIOLATED_INITIAL: u32 = 2107;

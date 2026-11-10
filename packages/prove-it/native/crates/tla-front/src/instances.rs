@@ -133,6 +133,7 @@ pub fn let_expression(definitions: Vec<Rc<Definition>>, body: Expr, location: &L
         ExpressionKind::Let {
             definitions,
             instances: None,
+            recursive: Vec::new(),
             body,
         },
         location.clone(),
@@ -279,6 +280,7 @@ pub fn map_children(expression: &Expr, tables: &Tables, map: &mut Map) -> Result
         ExpressionKind::Let {
             definitions,
             instances,
+            recursive,
             body,
         } => {
             let names: Vec<Name> = definitions
@@ -298,6 +300,7 @@ pub fn map_children(expression: &Expr, tables: &Tables, map: &mut Map) -> Result
             ExpressionKind::Let {
                 definitions,
                 instances: instances.clone(),
+                recursive: recursive.clone(),
                 body: map(body, &names)?,
             }
         }
@@ -1084,8 +1087,18 @@ impl<'a> Instantiator<'a> {
             ExpressionKind::Let {
                 definitions,
                 instances,
+                recursive,
                 body,
             } => ExpressionKind::Let {
+                recursive: recursive
+                    .iter()
+                    .map(|declaration| {
+                        Rc::new(Declaration {
+                            name: rename(&declaration.name),
+                            ..(**declaration).clone()
+                        })
+                    })
+                    .collect(),
                 definitions: definitions
                     .iter()
                     .map(|definition| {
@@ -1185,6 +1198,7 @@ fn expand_let_instances(
     let ExpressionKind::Let {
         definitions,
         instances: Some(instances),
+        recursive,
         body,
     } = &mapped.kind
     else {
@@ -1206,6 +1220,7 @@ fn expand_let_instances(
         ExpressionKind::Let {
             definitions: current,
             instances: Some(instances.clone()),
+            recursive: recursive.clone(),
             body: body.clone(),
         },
     ))
