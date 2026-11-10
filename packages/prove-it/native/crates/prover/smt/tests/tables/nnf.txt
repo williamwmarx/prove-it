@@ -9320,10 +9320,85 @@ nnf 91 => 2673:718:1616826611 | (>= 0 (* (sk (f k!0!174)) y)) defs=- fresh=- ste
 nnf 1825 => 1825:579:1232353468 defs=- fresh=- steps=3619 asts=933
 nnf 33 => 33:53:971149324 | (= x y) defs=- fresh=- steps=3619 asts=933
 pull 23 => 23:43:755549715 | (=> (Q 1) (<= (+ x x (h x) x 1) 0)) fresh=- steps=3629 asts=933
-release => - steps=3629 asts=903
-refs => 2787 2051588863 171859685 steps=3629 asts=903
-dec-held => - steps=3629 asts=359
-refs => 2787 4151878487 2190134007 steps=3629 asts=359
+decl e 3 3 0 => 193 steps=3629 asts=934
+begin => -1 steps=3629 asts=934
+var 0 3 => 25:45:3828055200 | (:var 0) steps=3629 asts=934
+app 30 25 3 => 26:46:3264338069 | (f (:var 0)) steps=3629 asts=934
+app 193 25 3 => 2787:758:3431943444 | (e (:var 0)) steps=3629 asts=935
+app 30 2787 3 => 2788:720:1359710673 | (f (e (:var 0))) steps=3629 asts=936
+app 2 26,2788 0 => 2789:675:247122970 | (= (f (:var 0)) (f (e (:var 0)))) steps=3629 asts=937
+quant 1 3 s:x 2789 - 0 - => 2790:740:2414357963 | (forall (1) (= (f (:var 0)) (f (e (:var 0))))) steps=3629 asts=938
+hold 2790 => 2 steps=3629 asts=938
+end -1 => - steps=3629 asts=938
+infer 2790 => patterns=2791:730:1779661808 | (pattern (e (:var 0))) weight=0 steps=3629 asts=939
+infer-pulled 2790 => patterns=2791:730:1779661808 | (pattern (e (:var 0))) steps=3629 asts=939
+begin => -1 steps=3629 asts=938
+var 0 3 => 25:45:3828055200 | (:var 0) steps=3629 asts=938
+app 193 25 3 => 2787:758:3431943444 | (e (:var 0)) steps=3629 asts=938
+app 30 2787 3 => 2788:720:1359710673 | (f (e (:var 0))) steps=3629 asts=938
+app 30 25 3 => 26:46:3264338069 | (f (:var 0)) steps=3629 asts=938
+app 2 2788,26 0 => 2792:730:163878114 | (= (f (e (:var 0))) (f (:var 0))) steps=3629 asts=939
+quant 1 3 s:x 2792 - 0 - => 2793:708:2072850258 | (forall (1) (= (f (e (:var 0))) (f (:var 0)))) steps=3629 asts=940
+hold 2793 => 2 steps=3629 asts=940
+end -1 => - steps=3629 asts=940
+infer 2793 => patterns=2791:752:1779661808 | (pattern (e (:var 0))) weight=0 steps=3629 asts=941
+infer-pulled 2793 => patterns=2791:752:1779661808 | (pattern (e (:var 0))) steps=3629 asts=941
+begin => -1 steps=3629 asts=940
+var 0 3 => 25:45:3828055200 | (:var 0) steps=3629 asts=940
+var 1 3 => 49:69:4288545599 | (:var 1) steps=3629 asts=940
+app 31 25,49 0 => 2794:752:3845495434 | (g (:var 0) (:var 1)) steps=3629 asts=941
+app 31 49,25 0 => 2795:324:1139410302 | (g (:var 1) (:var 0)) steps=3629 asts=942
+app 6 2794,2795 0 => 2796:731:3798392241 | (or (g (:var 0) (:var 1)) (g (:var 1) (:var 0))) steps=3629 asts=943
+quant 1 3,3 s:x,s:y 2796 - 0 - => 2797:664:2041104816 | (forall (2) (or (g (:var 0) (:var 1)) (g (:var 1) (:var 0)))) steps=3629 asts=944
+hold 2797 => 2 steps=3629 asts=944
+end -1 => - steps=3629 asts=944
+infer 2797 => patterns=2798:649:2643594412 | (pattern (g (:var 0) (:var 1))) ; 2799:723:262144585 | (pattern (g (:var 1) (:var 0))) weight=0 steps=3629 asts=947
+infer-pulled 2797 => patterns=2798:649:2643594412 | (pattern (g (:var 0) (:var 1))) ; 2799:723:262144585 | (pattern (g (:var 1) (:var 0))) steps=3629 asts=947
+begin => -1 steps=3629 asts=944
+var 0 3 => 25:45:3828055200 | (:var 0) steps=3629 asts=944
+var 1 3 => 49:69:4288545599 | (:var 1) steps=3629 asts=944
+app 30 49 3 => 67:87:1746527871 | (f (:var 1)) steps=3629 asts=944
+app 31 25,67 0 => 2800:649:3833322337 | (g (:var 0) (f (:var 1))) steps=3629 asts=945
+app 30 25 3 => 26:46:3264338069 | (f (:var 0)) steps=3629 asts=945
+app 31 49,26 0 => 2801:723:1361642997 | (g (:var 1) (f (:var 0))) steps=3629 asts=946
+app 5 2800,2801 0 => 2802:674:1568551981 | (and (g (:var 0) (f (:var 1))) (g (:var 1) (f (:var 0)))) steps=3629 asts=947
+quant 1 3,3 s:x,s:y 2802 - 0 - => 2803:766:4032004847 | (forall (2) (and (g (:var 0) (f (:var 1))) (g (:var 1) (f (:var 0))))) steps=3629 asts=948
+hold 2803 => 2 steps=3629 asts=948
+end -1 => - steps=3629 asts=948
+infer 2803 => patterns=2804:741:873774920 | (pattern (g (:var 0) (f (:var 1)))) ; 2805:686:3688542993 | (pattern (g (:var 1) (f (:var 0)))) weight=0 steps=3629 asts=951
+infer-pulled 2803 => patterns=2804:741:873774920 | (pattern (g (:var 0) (f (:var 1)))) ; 2805:686:3688542993 | (pattern (g (:var 1) (f (:var 0)))) steps=3629 asts=951
+begin => -1 steps=3629 asts=948
+var 0 3 => 25:45:3828055200 | (:var 0) steps=3629 asts=948
+app 32 25 0 => 37:57:2059989238 | (P (:var 0)) steps=3629 asts=948
+var 1 3 => 49:69:4288545599 | (:var 1) steps=3629 asts=948
+app 31 49,2 0 => 2806:741:4050253348 | (g (:var 1) c) steps=3629 asts=949
+var 2 3 => 38:58:1048181046 | (:var 2) steps=3629 asts=949
+app 32 38 0 => 44:64:167799652 | (P (:var 2)) steps=3629 asts=949
+var 3 3 => 40:60:1778393277 | (:var 3) steps=3629 asts=949
+app 31 40,2 0 => 45:65:2146218675 | (g (:var 3) c) steps=3629 asts=949
+var 4 3 => 741:686:2698775068 | (:var 4) steps=3629 asts=950
+app 32 741 0 => 2807:679:1790875217 | (P (:var 4)) steps=3629 asts=951
+var 5 3 => 740:764:3138477115 | (:var 5) steps=3629 asts=952
+app 31 740,2 0 => 2808:762:1337914699 | (g (:var 5) c) steps=3629 asts=953
+var 6 3 => 778:703:2045544626 | (:var 6) steps=3629 asts=954
+app 32 778 0 => 2809:765:2884486239 | (P (:var 6)) steps=3629 asts=955
+var 7 3 => 2810:755:2236313193 | (:var 7) steps=3629 asts=956
+app 31 2810,2 0 => 2811:599:4090570 | (g (:var 7) c) steps=3629 asts=957
+app 2 37,2806 0 => 2812:688:2561988851 | (= (P (:var 0)) (g (:var 1) c)) steps=3629 asts=958
+app 4 45,2807,2808 0 => 2813:756:1802974038 | (ite (g (:var 3) c) (P (:var 4)) (g (:var 5) c)) steps=3629 asts=959
+app 6 44,2813 0 => 2814:603:2476526160 | (or (P (:var 2)) (ite (g (:var 3) c) (P (:var 4)) (g (:var 5) c))) steps=3629 asts=960
+app 7 2809,2811 0 => 2815:732:2851642487 | (xor (P (:var 6)) (g (:var 7) c)) steps=3629 asts=961
+app 9 2815,37 0 => 2816:759:4217234262 | (=> (xor (P (:var 6)) (g (:var 7) c)) (P (:var 0))) steps=3629 asts=962
+app 5 2812,2814,2816 0 => 2817:760:3593294695 | (and (= (P (:var 0)) (g (:var 1) c)) (or (P (:var 2)) (ite (g (:var 3) c) (P (:var 4)) (g (:var 5) c))) (=> (xor (P (:var 6)) (g (:var 7) c)) (P (:var 0)))) steps=3629 asts=963
+quant 1 3,3,3,3,3,3,3,3 n:0,n:1,n:2,n:3,n:4,n:5,n:6,n:7 2817 - 0 split => 2818:761:243975298 steps=3629 asts=964
+hold 2818 => 2 steps=3629 asts=964
+end -1 => - steps=3629 asts=964
+infer 2818 => patterns=2819:598:1996072342 | (pattern (P (:var 0)) (P (:var 2)) (P (:var 4)) (P (:var 6)) (g (:var 1) c) (g (:var 3) c) (g (:var 5) c) (g (:var 7) c)) weight=0 steps=3629 asts=966
+infer-pulled 2818 => patterns=2819:598:1996072342 | (pattern (P (:var 0)) (P (:var 2)) (P (:var 4)) (P (:var 6)) (g (:var 1) c) (g (:var 3) c) (g (:var 5) c) (g (:var 7) c)) steps=3629 asts=966
+release => - steps=3629 asts=934
+refs => 2820 2325440784 1175687832 steps=3629 asts=934
+dec-held => - steps=3629 asts=360
+refs => 2820 3472257999 2103783267 steps=3629 asts=360
 fixture Allocator-37.smt
 parsed 12 => - steps=0 asts=309
 nnf 0 => 98:118:488764457 defs=- fresh=smt__z!0 steps=11 asts=317

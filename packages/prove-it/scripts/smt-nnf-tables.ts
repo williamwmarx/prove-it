@@ -591,6 +591,102 @@ for (let step = 0; step < 1100; step++) {
   }
   if (step % 100 === 0) recordRefs();
 }
+
+// Loop patterns: f(x) and f(e(x)) in both orders, where the smaller one is blocked, and pairs that
+// are instances of each other, such as g(x, y) and g(y, x), where neither is.
+const declE = mkDecl("e", [sortU], sortU);
+const loopQuantifiers = [
+  () => {
+    const variable = mkVar(0, sortU);
+    const applied = mkApp(declF, [variable], sortU);
+    const nested = mkApp(declF, [mkApp(declE, [variable], sortU)], sortU);
+    return mkQuantifier(
+      true,
+      [sortU],
+      ["x"],
+      mkApp(OP_EQ, [applied, nested], SORT_BOOL),
+      [],
+      0,
+      "",
+    );
+  },
+  () => {
+    const variable = mkVar(0, sortU);
+    const nested = mkApp(declF, [mkApp(declE, [variable], sortU)], sortU);
+    const applied = mkApp(declF, [variable], sortU);
+    return mkQuantifier(
+      true,
+      [sortU],
+      ["x"],
+      mkApp(OP_EQ, [nested, applied], SORT_BOOL),
+      [],
+      0,
+      "",
+    );
+  },
+  () => {
+    const first = mkVar(0, sortU);
+    const second = mkVar(1, sortU);
+    const body = mkApp(
+      OP_OR,
+      [mkApp(declG, [first, second], SORT_BOOL), mkApp(declG, [second, first], SORT_BOOL)],
+      SORT_BOOL,
+    );
+    return mkQuantifier(true, [sortU, sortU], ["x", "y"], body, [], 0, "");
+  },
+  () => {
+    const first = mkVar(0, sortU);
+    const second = mkVar(1, sortU);
+    const body = mkApp(
+      OP_AND,
+      [
+        mkApp(declG, [first, mkApp(declF, [second], sortU)], SORT_BOOL),
+        mkApp(declG, [second, mkApp(declF, [first], sortU)], SORT_BOOL),
+      ],
+      SORT_BOOL,
+    );
+    return mkQuantifier(true, [sortU, sortU], ["x", "y"], body, [], 0, "");
+  },
+  // Eight variables, each in atoms of its own under and, or, iff and ite, so that the search for a
+  // multi-pattern reaches MAX_SPLITS. Its first complete multi-pattern takes every candidate, so the
+  // cap does not change it.
+  () => {
+    const sorts = Array.from({ length: 8 }, () => sortU);
+    const atoms = sorts.map((_, index) =>
+      index % 2 === 0
+        ? mkApp(declP, [mkVar(index, sortU)], SORT_BOOL)
+        : mkApp(declG, [mkVar(index, sortU), constC], SORT_BOOL),
+    );
+    const body = mkApp(
+      OP_AND,
+      [
+        mkApp(OP_EQ, [atoms[0], atoms[1]], SORT_BOOL),
+        mkApp(
+          OP_OR,
+          [atoms[2], mkApp(OP_ITE, [atoms[3], atoms[4], atoms[5]], SORT_BOOL)],
+          SORT_BOOL,
+        ),
+        mkApp(OP_IMPLIES, [mkApp(OP_XOR, [atoms[6], atoms[7]], SORT_BOOL), atoms[0]], SORT_BOOL),
+      ],
+      SORT_BOOL,
+    );
+    return mkQuantifier(
+      true,
+      sorts,
+      sorts.map((_, index) => index),
+      body,
+      [],
+      0,
+      "split",
+    );
+  },
+];
+for (const make of loopQuantifiers) {
+  const quantifier = build(make);
+  recordInfer(`infer ${quantifier}`, inference, quantifier, false);
+  recordInfer(`infer-pulled ${quantifier}`, inference, quantifier, true);
+}
+
 nnf.release();
 pull.release();
 sharing.release();
