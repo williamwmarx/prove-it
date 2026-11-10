@@ -122,7 +122,7 @@ fn get_needed(
     Ok(result)
 }
 
-fn check(root: &Rc<Proof>, checker: &mut Checker<'_>, limits: &mut Limits) -> Checked<bool> {
+fn check(root: &Rc<Proof>, checker: &mut Checker<'_>, limits: &Limits) -> Checked<bool> {
     let mut needed: HashMap<ProofKey, KeySet> = HashMap::new();
     // Subproofs before their parents, without recursion: proofs can be deep.
     let mut stack = vec![(root.clone(), false)];
@@ -162,7 +162,7 @@ fn check(root: &Rc<Proof>, checker: &mut Checker<'_>, limits: &mut Limits) -> Ch
 
 /// True when the proof refutes the hypotheses: whether the proof is valid, or false once the limits
 /// pass.
-pub fn check_proof(root: &Rc<Proof>, context: &CheckContext, limits: &mut Limits) -> bool {
+pub fn check_proof(root: &Rc<Proof>, context: &CheckContext, limits: &Limits) -> bool {
     let mut checker = Checker {
         context,
         keys: Keys::default(),
@@ -173,13 +173,13 @@ pub fn check_proof(root: &Rc<Proof>, context: &CheckContext, limits: &mut Limits
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::AtomicI32;
+    use std::sync::Arc;
 
     use super::*;
     use crate::expr::{Expr, Expressions, UNIVERSE};
     use crate::proof::Rule;
 
-    fn unlimited() -> Limits<'static> {
+    fn unlimited() -> Limits {
         Limits::new(f64::INFINITY, None, None)
     }
 
@@ -240,7 +240,7 @@ mod tests {
         assert!(check_proof(
             &get_closure(&fixture.first),
             &context,
-            &mut unlimited()
+            &unlimited()
         ));
     }
 
@@ -254,21 +254,20 @@ mod tests {
             fixture.exprs.enot(&fixture.first),
         ]);
         let proof = get_closure(&fixture.first);
-        let cancel = AtomicI32::new(1);
         assert!(!check_proof(
             &proof,
             &context,
-            &mut Limits::new(-1.0, None, None)
+            &Limits::new(-1.0, None, None)
         ));
         assert!(!check_proof(
             &proof,
             &context,
-            &mut Limits::new(f64::INFINITY, None, Some(&cancel))
+            &Limits::new(f64::INFINITY, None, Some(Arc::new(|| true)))
         ));
         assert!(!check_proof(
             &proof,
             &context,
-            &mut Limits::new(f64::INFINITY, Some(0), None)
+            &Limits::new(f64::INFINITY, Some(0), None)
         ));
     }
 
@@ -278,7 +277,7 @@ mod tests {
         assert!(!check_proof(
             &get_closure(&fixture.first),
             &get_context(vec![fixture.first.clone()]),
-            &mut unlimited()
+            &unlimited()
         ));
     }
 
@@ -292,7 +291,7 @@ mod tests {
         assert!(check_proof(
             &fixture.get_split(RuleName::And),
             &context,
-            &mut unlimited()
+            &unlimited()
         ));
     }
 
@@ -306,7 +305,7 @@ mod tests {
         assert!(!check_proof(
             &fixture.get_split(RuleName::And),
             &context,
-            &mut unlimited()
+            &unlimited()
         ));
     }
 
@@ -320,7 +319,7 @@ mod tests {
         assert!(!check_proof(
             &fixture.get_split(RuleName::Or),
             &context,
-            &mut unlimited()
+            &unlimited()
         ));
     }
 
@@ -359,12 +358,12 @@ mod tests {
     #[test]
     fn accepts_a_symmetric_closure_when_a_hypothesis_makes_the_relation_symmetric() {
         let (swapped, context) = get_relation_context("R");
-        assert!(check_proof(&swapped, &context, &mut unlimited()));
+        assert!(check_proof(&swapped, &context, &unlimited()));
     }
 
     #[test]
     fn rejects_a_symmetric_closure_without_that_hypothesis() {
         let (swapped, context) = get_relation_context("S");
-        assert!(!check_proof(&swapped, &context, &mut unlimited()));
+        assert!(!check_proof(&swapped, &context, &unlimited()));
     }
 }
