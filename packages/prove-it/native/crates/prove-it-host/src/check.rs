@@ -5,7 +5,9 @@
 //! - `{ kind: "checked", exitCode, out, err }`, what the binary prints to stdout and stderr, and its
 //!   exit code;
 //! - `{ kind: "needed", keys }`, what the check reads that isn't known yet (`sources`). It asks for
-//!   everything before it searches, so a round never searches.
+//!   everything before it searches, so a round never searches;
+//! - `{ kind: "declined", reason }`, where the binary prints `not native yet`, without what it
+//!   printed before.
 //!
 //! The keys it reads, besides SANY's `module:` and `file:`, are `text:<path>`, the text of the file
 //! at a path the command line names (the spec and its configuration), and `class:<name>`, the
@@ -24,6 +26,9 @@ use tla_front::report::ModuleOrigin;
 use crate::hooks::HookResult;
 use crate::sources::{Sources, get_text};
 use crate::value::HostValue;
+
+/// How the binary starts the line on stderr that declines a model.
+const NOT_NATIVE: &str = "prove-it: not native yet: ";
 
 /// What the host JavaScript runs on gives the check.
 struct SourcesHost {
@@ -197,10 +202,21 @@ fn check(arguments: &[HostValue]) -> HookResult {
     if let Some(needed) = host.sources.get_needed() {
         return Ok(needed);
     }
+    let err = String::from_utf8_lossy(&err);
+    // What the binary prints as it declines, which the host checks otherwise: what was printed
+    // before it is dropped.
+    if let Some(reason) = err.lines().find_map(|line| line.strip_prefix(NOT_NATIVE))
+        && exit_code == 1
+    {
+        return Ok(HostValue::Object(vec![
+            ("kind", HostValue::text("declined")),
+            ("reason", HostValue::text(reason)),
+        ]));
+    }
     Ok(HostValue::Object(vec![
         ("kind", HostValue::text("checked")),
         ("exitCode", HostValue::Number(f64::from(exit_code))),
         ("out", HostValue::text(&String::from_utf8_lossy(&out))),
-        ("err", HostValue::text(&String::from_utf8_lossy(&err))),
+        ("err", HostValue::text(&err)),
     ]))
 }

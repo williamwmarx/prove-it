@@ -101,7 +101,7 @@ const checkInProcess = (directory: string, args: string[]) => {
   const addon = getNativeAddon();
   if (typeof addon === "string") throw new Error(addon);
   const known = new Map<string, string | Uint8Array | undefined>();
-  const check = (): Extract<NativeCheckSources, { kind: "checked" }> => {
+  const check = (): Exclude<NativeCheckSources, { kind: "needed" }> => {
     const result = addon.checkSources(
       args.map((arg) => (arg.endsWith(".tla") ? getSpecPath(directory, [arg]) : arg)),
       [...known],
@@ -117,12 +117,14 @@ const checkInProcess = (directory: string, args: string[]) => {
         [],
       ],
     );
-    if (result.kind === "checked") return result;
+    if (result.kind !== "needed") return result;
     result.keys.forEach((key) => known.set(key, readKey(directory, args, key)));
     return check();
   };
   const result = check();
-  return getTranscript(String(result.exitCode), result.out, result.err);
+  return result.kind === "declined"
+    ? `declined: ${result.reason}`
+    : getTranscript(String(result.exitCode), result.out, result.err);
 };
 
 const checkWithBinary = (directory: string, args: string[]) => {
@@ -134,11 +136,14 @@ const checkWithBinary = (directory: string, args: string[]) => {
     ],
     { cwd: directory, encoding: "utf8", env: { ...process.env, TZ: "UTC" } },
   );
-  return getTranscript(String(run.status), run.stdout, run.stderr);
+  const declined = /^prove-it: not native yet: (.*)$/m.exec(run.stderr);
+  return declined
+    ? `declined: ${declined[1]}`
+    : getTranscript(String(run.status), run.stdout, run.stderr);
 };
 
 describe("checkSources", () => {
-  it.each(CASES)("prints what the binary prints for $name", (test) => {
+  it.each(CASES)("prints what the binary prints, or declines as it does, for $name", (test) => {
     const directory = getDirectory(test);
     const args = ["-noGenerateSpecTE", ...test.args];
     expect(checkInProcess(directory, args)).toBe(checkWithBinary(directory, test.args));

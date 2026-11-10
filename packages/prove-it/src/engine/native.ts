@@ -80,11 +80,12 @@ export type NativeSanyText =
   | { kind: "needed"; keys: string[] }
   | { kind: "declined"; reason: string };
 
-// What the native binary prints for a TLC command line, and its exit code, or the keys of what the
-// check still reads (prove-it-host's check.rs).
+// What the native binary prints for a TLC command line, and its exit code, the keys of what the
+// check still reads, or why the binary declines the model (prove-it-host's check.rs).
 export type NativeCheckSources =
   | { kind: "checked"; exitCode: number; out: string; err: string }
-  | { kind: "needed"; keys: string[] };
+  | { kind: "needed"; keys: string[] }
+  | { kind: "declined"; reason: string };
 
 // What the check prints of the machine it runs on and of the time: `now` in milliseconds since the
 // epoch, `zone` a POSIX TZ rule, and the environment variables it reads. A tuple, since neither
