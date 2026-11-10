@@ -10,8 +10,9 @@
 use std::collections::{HashMap, HashSet};
 
 use tla_ir::{
-    Action, Bound, Builtin, Definition, DefinitionForm, Index, InstanceAction, Ir, Name, Node,
-    NodeId, NodeKind, Pattern, Resolution, Scope, ScopeBinding, SourceRange, TextId,
+    Action, AtomKind, Bound, Builtin, Definition, DefinitionForm, EnabledActions, Index,
+    InstanceAction, Ir, Name, Node, NodeId, NodeKind, Pattern, Resolution, Scope, ScopeBinding,
+    SourceRange, TextId,
 };
 
 use crate::Unsupported;
@@ -19,7 +20,7 @@ use crate::eval::{Context, Evaluator};
 use crate::print::format_value;
 use crate::rebuild::run;
 use crate::sets::as_tuple;
-use crate::value::{Class, Evaluated, Value, elements, set_of};
+use crate::value::{Class, Evaluated, Value, elements, is_same, set_of};
 
 /// One of TLC's actions: the expression it walks, with the values of the names the split bound,
 /// and what a trace calls it.
@@ -90,13 +91,16 @@ enum Added {
 /// print, draw or set a register, or the split can't follow TLC, there are none. `check.ts` gives
 /// none to a model whose next-state relation has an effect anywhere, which the interpreter would
 /// evaluate; this split evaluates only the constants TLC evaluates, so it labels those too.
+///
+/// It also gives each ENABLED atom the actions it splits into, which the search's steps then
+/// answer it from, and labels the steps where some atom is made of only some of them.
 pub fn add_actions(ir: &Ir) -> Result<Ir, Unsupported> {
     let mut ir = ir.clone();
     // A spec without variables has no behaviors, and the IR's next-state relation stands for none.
     if !ir.model.actions.is_empty() || ir.model.is_labelled || ir.variables.is_empty() {
         return Ok(ir);
     }
-    let (actions, scopes, nodes) = {
+    let (actions, enabled, scopes, nodes) = {
         let mut evaluator = Evaluator::new(&ir);
         // The actions read what TLC computed when it started, as the search does.
         if let Err(error) = evaluator.compute_startup() {
@@ -111,6 +115,12 @@ pub fn add_actions(ir: &Ir) -> Result<Ir, Unsupported> {
             nodes: Vec::new(),
         };
         let actions = splitter.split_next()?;
+        let enabled: Vec<EnabledActions> = ir
+            .model
+            .atoms
+            .iter()
+            .map(|atom| splitter.find_enabled_actions(atom, &actions))
+            .collect();
         let actions: Vec<Labelled> = actions
             .iter()
             .map(|action| {
@@ -133,7 +143,7 @@ pub fn add_actions(ir: &Ir) -> Result<Ir, Unsupported> {
                 }
             })
             .collect();
-        (actions, splitter.scopes, splitter.nodes)
+        (actions, enabled, splitter.scopes, splitter.nodes)
     };
     let mut writer = Writer::new(&mut ir);
     let scopes: Vec<Scope> = scopes
@@ -165,6 +175,12 @@ pub fn add_actions(ir: &Ir) -> Result<Ir, Unsupported> {
     ir.nodes.arena.extend(nodes);
     ir.scopes.extend(scopes);
     ir.model.actions = actions;
+    for (atom, actions) in ir.model.atoms.iter_mut().zip(enabled) {
+        if let AtomKind::Enabled { .. } = atom.kind {
+            ir.model.is_labelled |= matches!(actions, EnabledActions::Some(_));
+            atom.kind = AtomKind::Enabled { actions };
+        }
+    }
     Ok(ir)
 }
 
@@ -586,6 +602,95 @@ impl Splitter<'_, '_> {
             }
         }
         Ok((!actions.is_empty()).then_some(actions))
+    }
+
+    // `findActionPositions`: the positions among TLC's actions of the actions an ENABLED <<A>>_v
+    // atom's A splits into, each the same expression with the same bindings as one of them and in
+    // TLC's order, or unknown. ENABLED is then true of a state where a step the search took through
+    // one of them changes v, which holds only where the search keeps every step those actions
+    // take: TLC's ENABLED ignores a CONSTRAINT or ACTION_CONSTRAINT, which drops steps
+    // (`ModelChecker.java`'s `isInModel` and `isInActions`), and a VIEW or SYMMETRY leaves the
+    // step at a state the search saw before, not the one A takes it to. Where A or the next-state
+    // relation may have an effect, such as printing, TLC shows it as it runs A, so A runs.
+    fn find_enabled_actions(
+        &mut self,
+        atom: &tla_ir::Atom,
+        actions: &[SplitAction],
+    ) -> EnabledActions {
+        let ir = self.evaluator.ir;
+        let model = &ir.model;
+        let NodeKind::AngleAction { action, .. } =
+            &ir.nodes.arena[self.evaluator.resolved(atom.expression) as usize].kind
+        else {
+            return EnabledActions::Unknown;
+        };
+        let is_kept = model.constraints.is_empty()
+            && model.action_constraints.is_empty()
+            && model.view.is_none()
+            && model.startup.symmetry.is_none()
+            && model
+                .next
+                .is_none_or(|next| !may_have_effect(self.evaluator, next, &mut HashSet::new()))
+            && !may_have_effect(self.evaluator, atom.expression, &mut HashSet::new());
+        if !is_kept {
+            return EnabledActions::Unknown;
+        }
+        let Ok(context) = self.evaluator.scope_context(atom.scope) else {
+            return EnabledActions::Unknown;
+        };
+        let place = Place {
+            context,
+            scope: atom.scope,
+        };
+        let Some(splits) = self
+            .split(*action, &place, None)
+            .ok()
+            .filter(|splits| !splits.is_empty())
+        else {
+            return EnabledActions::Unknown;
+        };
+        let mut positions: Vec<i32> = Vec::with_capacity(splits.len());
+        for split in &splits {
+            let start = positions.last().map_or(0, |&last| last as usize + 1);
+            let found = (start..actions.len()).find(|&position| {
+                actions[position].expression == split.expression
+                    && self.is_same_scope(actions[position].place.scope, split.place.scope)
+            });
+            let Some(position) = found else {
+                return EnabledActions::Unknown;
+            };
+            positions.push(position as i32);
+        }
+        if positions.len() == actions.len() {
+            EnabledActions::All
+        } else {
+            EnabledActions::Some(positions)
+        }
+    }
+
+    // `isSameScope`: whether two scopes bind the same names to the same values. A scope of the IR,
+    // or one binding a LET's definitions, is the same only as itself.
+    fn is_same_scope(&self, scope: Option<Index>, other: Option<Index>) -> bool {
+        if scope == other {
+            return true;
+        }
+        let own = self.evaluator.ir.scopes.len();
+        let added = |scope: Option<Index>| {
+            scope
+                .and_then(|index| (index as usize).checked_sub(own))
+                .map(|index| &self.scopes[index])
+        };
+        match (added(scope), added(other)) {
+            (
+                Some((parent, name, Added::Value(value))),
+                Some((other_parent, other_name, Added::Value(other_value))),
+            ) => {
+                name == other_name
+                    && is_same(value, other_value)
+                    && self.is_same_scope(*parent, *other_parent)
+            }
+            _ => false,
+        }
     }
 
     // A place with `name` bound to `value`, for the evaluator and as a scope of the IR.

@@ -10,13 +10,24 @@
 // dist/ to it too. Without `--tlaplus` or `--specs`, it reads the `sany` corpus that
 // fetch-corpora.ts fetches. `--main` names the class the jar runs, tlc2.TLC by default, such as
 // tla2sany.xml.XMLExporter, and `--arguments` the arguments every run takes before the spec's name,
-// TLC's below by default.
+// TLC's below by default. `--names` runs only the specs it names, which may be in a directory of
+// `--specs` that `-I` names. Each run is in a copy of the whole directory. XMLExporter's XML is
+// recorded by its SHA-256 and length, as the corpus's would be hundreds of megabytes.
 // Usage: bun scripts/sany-corpus.ts [--tlaplus <clone> | --specs <directory>]
 //   (--classpath <tla2tools> [--record <file>] | --recorded <file> [--cli]) [--native <binary>]
-//   [--main <class>] [--arguments "<argument> ..."]
+//   [--main <class>] [--arguments "<argument> ..."] [--names <name>,...]
 
 import { spawnSync } from "node:child_process";
-import { cpSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import {
+  cpSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 
@@ -41,7 +52,7 @@ if (
   (isCliChecked && recordedPath === undefined)
 ) {
   console.error(
-    "usage: bun scripts/sany-corpus.ts [--tlaplus <clone> | --specs <directory>] (--classpath <tla2tools> [--record <file>] | --recorded <file> [--cli]) [--native <binary>]",
+    'usage: bun scripts/sany-corpus.ts [--tlaplus <clone> | --specs <directory>] (--classpath <tla2tools> [--record <file>] | --recorded <file> [--cli]) [--native <binary>] [--main <class>] [--arguments "<argument> ..."] [--names <name>,...]',
   );
   process.exit(2);
 }
@@ -61,18 +72,26 @@ const ARGUMENTS = getOption("--arguments")?.split(" ") ?? [
   "-seed",
   "0",
 ];
+const names = getOption("--names")?.split(",");
 
 // What a run printed, with what differs between two runs of the same spec rewritten, and without
 // the JVM's note of the options it was given. TLC built as a directory of classes reads the
 // standard modules where they are, which TLC from its jar extracts to a temporary directory first.
+// The directory of the run, which a missing file's message names, is written as `.`.
 const run = (command: string, args: string[], directory: string) => {
   const result = spawnSync(command, args, { cwd: directory, encoding: "utf8" });
   const stdout = result.stdout.replace(
     /^(Parsing file )\S*\/tla2sany\/StandardModules\//gm,
     "$1/tmp/tlc-0/",
   );
-  const stderr = result.stderr.replace(/^Picked up JAVA_TOOL_OPTIONS:.*\n/gm, "");
-  return getTranscript(String(result.status), stdout, stderr);
+  const stderr = result.stderr
+    .replace(/^Picked up JAVA_TOOL_OPTIONS:.*\n/gm, "")
+    .replaceAll(realpathSync(directory), ".")
+    .replaceAll(directory, ".");
+  const xml = stdout.startsWith("<?xml")
+    ? `XML of SHA-256 ${createHash("sha256").update(stdout).digest("hex")}, ${Buffer.byteLength(stdout)} bytes\n`
+    : stdout;
+  return getTranscript(String(result.status), xml, stderr);
 };
 
 const semantic = join(
@@ -98,12 +117,15 @@ const count = (id: string, expected: string, actual: string) => {
 };
 for (const source of corpora) {
   const corpus = basename(source);
-  const specs = readdirSync(source).filter((file) => file.endsWith(".tla"));
-  for (const spec of specs.toSorted()) {
-    const name = spec.slice(0, -".tla".length);
+  const specs =
+    names ??
+    readdirSync(source)
+      .filter((file) => file.endsWith(".tla"))
+      .map((file) => file.slice(0, -".tla".length));
+  for (const name of specs.toSorted()) {
     const id = `${corpus}/${name}`;
     const directory = mkdtempSync(join(tmpdir(), "sany-corpus-"));
-    specs.forEach((file) => cpSync(join(source, file), join(directory, file)));
+    cpSync(source, directory, { recursive: true });
     writeFileSync(join(directory, `${name}.cfg`), "");
     const expected =
       classpath === undefined

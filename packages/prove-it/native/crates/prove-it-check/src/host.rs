@@ -5,6 +5,7 @@
 use std::path::Path;
 use std::time::SystemTime;
 
+use tla_engine::search::Advice;
 use tla_front::report::ModuleOrigin;
 
 use crate::files::FileDescriber;
@@ -58,16 +59,23 @@ pub trait Host {
     fn is_checking_several(&self) -> bool {
         true
     }
+    /// What the host tells the system of the search's large regions of memory
+    /// (`Settings::large_region_advice`).
+    fn large_region_advice(&self) -> Option<Advice> {
+        None
+    }
 }
 
-/// The file system and the process the binary runs in.
+/// The file system and the process the binary runs in, and the advice the binary gives the system
+/// of the search's large regions, such as Linux's huge pages.
 pub struct SystemHost {
     zone: Zone,
     machine: Machine,
+    large_region_advice: Option<Advice>,
 }
 
-impl Default for SystemHost {
-    fn default() -> Self {
+impl SystemHost {
+    pub fn new(large_region_advice: Option<Advice>) -> Self {
         // Node's os.type(): the kernel's name.
         let system = read_trimmed("/proc/sys/kernel/ostype").unwrap_or_else(|| {
             match std::env::consts::OS {
@@ -93,6 +101,7 @@ impl Default for SystemHost {
                 memory_megabytes: get_memory_megabytes(),
                 pid: std::process::id(),
             },
+            large_region_advice,
         }
     }
 }
@@ -135,6 +144,10 @@ impl Host for SystemHost {
 
     fn machine(&self) -> &Machine {
         &self.machine
+    }
+
+    fn large_region_advice(&self) -> Option<Advice> {
+        self.large_region_advice
     }
 }
 
