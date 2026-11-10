@@ -2525,7 +2525,18 @@ impl<'ir> Evaluator<'ir> {
                 return Ok(value.clone());
             }
         }
-        if !self.member(key, &lambda.domain)? {
+        let is_member = self.member(key, &lambda.domain);
+        // A domain TLC built of other sets, such as `Nat \ {0}` or `Nat \X Nat`, keeps its source,
+        // and TLC reports a test of it that fails as a value it can't fingerprint
+        // (`FingerprintException.getNewHead`), which the replay doesn't word. Nat, Int, STRING and
+        // Seq(S) report the failure itself.
+        if is_member.is_err()
+            && matches!(&lambda.domain, Value::Lazy(lazy)
+                if !matches!(**lazy, Lazy::Nat | Lazy::Int | Lazy::Real | Lazy::Strings | Lazy::Seq(_)))
+        {
+            return fail("a failing test of a lazy function's domain TLC built from an expression");
+        }
+        if !is_member? {
             return fail("applied a function outside its domain");
         }
         let context = lambda.context.bind_value(lambda.name, key.clone());
