@@ -89,8 +89,7 @@ fn tokenize(text: &str) -> Res<Vec<Token>> {
             continue;
         }
         if text[position..].starts_with("\\<") && is_letter(bytes.get(position + 2)) {
-            // HACK: where no > follows, the TypeScript's indexOf returns -1 and its tokenizer
-            // starts over from the beginning forever; this reports the lexical error instead.
+            // Where no > follows, Isabelle reports a lexical error.
             let Some(offset) = text[position..].find('>') else {
                 return Err(error_exn(format!(
                     "Inner lexical error at: {}",
