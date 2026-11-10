@@ -6,7 +6,8 @@
 #
 # Tools: bun, node (with npm), gitleaks, op (the 1Password CLI), and for the checker benchmark java
 # (Temurin JDK), ant (which builds TLC) and rust (rustc, cargo, clippy and rustfmt), which also
-# builds the native engine. bun-canary is a Bun canary with the ahead-of-time compiler that
+# builds the native engine. rust-wasm32 adds the wasm32-unknown-unknown standard library to rust,
+# which must come before it, for the engine as WebAssembly. bun-canary is a Bun canary with the ahead-of-time compiler that
 # build-binary.ts --aot needs; its bin directory holds a bun, so put it on PATH only for that build.
 # Linux x64, which is what depot-ubuntu-24.04 runs, and for bun, node and rust Linux arm64, which
 # depot-ubuntu-24.04-arm runs. The x64 bun, node, gitleaks and op pins match Argos's
@@ -41,6 +42,7 @@ pin() {
     ant-*) echo "ant 1.10.15 https://archive.apache.org/dist/ant/binaries/apache-ant-1.10.15-bin.tar.gz 71334d7e5d98cfe53d6c429a648a5021137a967378667306c5f613dff5180506 apache-ant-1.10.15/bin" ;;
     rust-x64) echo "rust 1.99.1 https://static.rust-lang.org/dist/rust-1.99.1-x86_64-unknown-linux-gnu.tar.xz 231fcae47ee950621374725b5fc3b5441d2fbda2955ac45dd7dc816d8876cfe7 toolchain/bin" ;;
     rust-arm64) echo "rust 1.99.1 https://static.rust-lang.org/dist/rust-1.99.1-aarch64-unknown-linux-gnu.tar.xz a48fb1e853be56ce9b8e2751f5464dbd5e16440cd81e237920f3a5e7e806333e toolchain/bin" ;;
+    rust-wasm32-*) echo "rust-wasm32 1.99.1 https://static.rust-lang.org/dist/rust-std-1.99.1-wasm32-unknown-unknown.tar.xz 5f628f857dd00a8aa3fcac2e275665d2782066a5795274ed124c5b560f46423c ." ;;
     *) die "no pin for $1 on Linux $arch" ;;
   esac
 }
@@ -70,6 +72,12 @@ for tool in "$@"; do
       "$directory/rust-$version-$rust_target/install.sh" --prefix="$directory/toolchain" --disable-ldconfig \
         --components="rustc,cargo,rust-std-$rust_target,clippy-preview,rustfmt-preview" >/dev/null
       rm -rf "$directory"/rust-*
+    fi
+    if [ "$name" = rust-wasm32 ]; then
+      toolchain=$root/rust-$version/toolchain
+      [ -x "$toolchain/bin/rustc" ] || die "rust-wasm32 needs rust $version bootstrapped first"
+      "$directory/rust-std-$version-wasm32-unknown-unknown/install.sh" --prefix="$toolchain" --disable-ldconfig >/dev/null
+      rm -rf "$directory"/rust-std-*
     fi
     # Bun's npm package ships bun alone; its installer adds bunx, which runs bun as "bun x".
     if [ "$name" = bun ]; then ln -s bun "$directory/$bin/bunx"; fi

@@ -74,6 +74,16 @@ jobs:
               bun scripts/platform-packages.ts build
               bun run build
               PROVE_IT_ENGINE_ADDON="$PWD/native/npm/linux-x64-gnu/prove-it-engine.node" bun test tests/unit/native.test.ts tests/unit/native-search.test.ts tests/unit/engine-store.test.ts tests/unit/engine-fingerprints.test.ts
+          # The engine as WebAssembly: its code for wasm32 linted, then the native tests with it
+          # standing in for the addon, as where there is no process.dlopen (DESIGN.md 7.4).
+          - task: WebAssembly
+            command: |
+              cd packages/prove-it
+              (cd native && cargo clippy --locked --target wasm32-unknown-unknown -p prove-it-wasm -- -D warnings)
+              bun scripts/platform-packages.ts build
+              bun scripts/platform-packages.ts build --target wasm32-unknown-unknown
+              bun run build
+              PROVE_IT_ENGINE_ADDON="$PWD/native/npm/linux-x64-gnu/prove-it-engine.node" PROVE_IT_ENGINE_WASM="$PWD/native/npm/wasm32/prove-it-engine.wasm" bun test tests/unit/native.test.ts tests/unit/native-search.test.ts tests/unit/engine-store.test.ts tests/unit/engine-fingerprints.test.ts
           # Every unit test with the native engine searching, but those native/ts-only-tests.json
           # lists, which read the TypeScript engine's internals and pin its backend.
           - task: Unit Tests (Rust)
@@ -155,14 +165,14 @@ jobs:
       - name: Install dependencies
         run: |
           set -euo pipefail
-          PATH="$(scripts/ci/bootstrap.sh bun node rust):$PATH"
+          PATH="$(scripts/ci/bootstrap.sh bun node rust rust-wasm32):$PATH"
           bun install --frozen-lockfile --ignore-scripts
       - name: Run ${{ matrix.task }}
         env:
           COMMAND: ${{ matrix.command }}
         run: |
           set -euo pipefail
-          PATH="$(scripts/ci/bootstrap.sh bun node rust):$PATH"
+          PATH="$(scripts/ci/bootstrap.sh bun node rust rust-wasm32):$PATH"
           bash -euo pipefail -c "$COMMAND"
           test -z "$(git status --porcelain)"
   # The native engine's musl packages, built and tested on Alpine by scripts/ci/alpine-package.sh,
