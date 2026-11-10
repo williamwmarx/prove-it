@@ -636,6 +636,7 @@ impl<'a> Lowering<'a> {
                 definitions,
                 instances,
                 body,
+                ..
             } => {
                 // The compiler refuses an INSTANCE in a LET, so only how many there are is kept.
                 let definitions = definitions

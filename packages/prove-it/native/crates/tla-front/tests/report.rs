@@ -133,3 +133,66 @@ fn declines_a_module_of_the_community_modules_tlc_bundles() {
         "{missing}"
     );
 }
+
+// SANY's error corpus E4203 and E4204: `selectorToNode` checks an INSTANCE's arguments, then that
+// the name selects an operator of it.
+#[test]
+fn reports_an_instance_named_as_an_expression() {
+    assert_eq!(
+        get_text(
+            "instance",
+            "---- MODULE Main ----\nI == INSTANCE Naturals\nJ(x) == INSTANCE Naturals\nA == I\nB == J(1, 2)\nC == J\n====\n"
+        ),
+        "Parsing file Main File\nParsing file Naturals Standard\nSemantic processing of module Naturals\nSemantic processing of module Main\nSemantic errors:\n\n*** Errors: 3\n\nline 4, col 6 to line 4, col 6 of module Main\n\nOperator name I is incomplete.\n\n\nline 5, col 7 to line 5, col 12 of module Main\n\nThe operator J requires 1 arguments.\n\n\nline 6, col 6 to line 6, col 6 of module Main\n\nThe operator J requires 1 arguments.\n\n\n"
+    );
+}
+
+// E4351 and E4355: an ASSUME/PROVE, or a step that asserts no expression, used as an expression.
+#[test]
+fn reports_a_theorem_or_step_that_asserts_no_expression_named_as_one() {
+    assert_eq!(
+        get_text(
+            "selected",
+            "---- MODULE Main ----\nop(x) == x\nTHEOREM T == ASSUME TRUE PROVE TRUE\nA == T\nTHEOREM TRUE\n<1>a HAVE TRUE\n<1>b SUFFICES TRUE\n<1>c ASSUME TRUE PROVE TRUE\n<1>d CASE TRUE\n<1>e op(<1>a) /\\ op(<1>b) /\\ op(<1>c) /\\ op(<1>d)\n<1> QED\n====\n"
+        ),
+        "Parsing file Main File\nSemantic processing of module Main\nSemantic errors:\n\n*** Errors: 5\n\nline 4, col 6 to line 4, col 6 of module Main\n\nASSUME/PROVE used where an expression is required.\n\n\nline 10, col 9 to line 10, col 12 of module Main\n\nHAVE proof step selected instead of expression.\n\n\nline 10, col 21 to line 10, col 24 of module Main\n\nSUFFICES proof step selected instead of expression.\n\n\nline 10, col 33 to line 10, col 36 of module Main\n\nASSUME/PROVE used where an expression is required.\n\n\nline 10, col 45 to line 10, col 48 of module Main\n\nCASE proof step selected instead of expression.\n\n\n"
+    );
+}
+
+// E4293: a definition at a deeper LET of an operator or function a LET declares RECURSIVE, and at
+// the end of each LET that leaves one undefined, every one of its level so far, each once.
+#[test]
+fn reports_operators_a_let_declares_recursive_and_leaves_undefined() {
+    assert_eq!(
+        get_text(
+            "recursive",
+            "---- MODULE Main ----\nA == LET RECURSIVE F(_)\n     IN 1\nB == LET RECURSIVE G\n         H == LET G == 2 IN G\n     IN LET RECURSIVE K IN 3\nC == LET RECURSIVE R\n         D == LET R[x \\in {}] == 0 IN 0\n     IN 0\n====\n"
+        ),
+        "Parsing file Main File\nSemantic processing of module Main\n*** Warnings: 1\n\nline 5, col 19 to line 5, col 24 of module Main\n\nMultiple declarations or definitions for symbol G.  \nThis duplicates the one at line 4, col 20 to line 4, col 20 of module Main.\n\n\n\nSemantic errors:\n\n*** Errors: 6\n\nline 2, col 20 to line 2, col 23 of module Main\n\nSymbol F declared in RECURSIVE statement but not defined.\n\n\nline 5, col 19 to line 5, col 24 of module Main\n\nRecursive operator G defined at wrong LET/IN level.\n\n\nline 4, col 20 to line 4, col 20 of module Main\n\nSymbol G declared in RECURSIVE statement but not defined.\n\n\nline 6, col 23 to line 6, col 23 of module Main\n\nSymbol K declared in RECURSIVE statement but not defined.\n\n\nline 8, col 19 to line 8, col 34 of module Main\n\nRecursive function R defined at wrong LET/IN level.\n\n\nline 7, col 20 to line 7, col 20 of module Main\n\nSymbol R declared in RECURSIVE statement but not defined.\n\n\n"
+    );
+}
+
+// E4200: an unknown name, a constant, a variable or a parameter as a DEF entry, and a USE, HIDE or
+// BY that keeps nothing.
+#[test]
+fn reports_def_entries_that_name_no_defined_operator() {
+    assert_eq!(
+        get_text(
+            "defs",
+            "---- MODULE Main ----\nCONSTANT C\nVARIABLE v\nop == 1\nUSE DEF Missing\nUSE DEF C, v\nUSE DEF op, Nope\nTHEOREM TRUE\n<1>1 HIDE DEF C\n<1> QED BY DEF Gone\n====\n"
+        ),
+        "Parsing file Main File\nSemantic processing of module Main\nSemantic errors:\n\n*** Errors: 13\n\nline 5, col 9 to line 5, col 15 of module Main\n\nUnknown operator: `Missing'.\n\n\nline 5, col 9 to line 5, col 15 of module Main\n\nDEF clause entry should describe a defined operator.\n\n\nline 5, col 1 to line 5, col 15 of module Main\n\nEmpty USE or HIDE statement.\n\n\nline 6, col 9 to line 6, col 9 of module Main\n\nDEF clause entry should describe a defined operator.\n\n\nline 6, col 12 to line 6, col 12 of module Main\n\nDEF clause entry should describe a defined operator.\n\n\nline 6, col 1 to line 6, col 12 of module Main\n\nEmpty USE or HIDE statement.\n\n\nline 7, col 13 to line 7, col 16 of module Main\n\nUnknown operator: `Nope'.\n\n\nline 7, col 13 to line 7, col 16 of module Main\n\nDEF clause entry should describe a defined operator.\n\n\nline 9, col 15 to line 9, col 15 of module Main\n\nDEF clause entry should describe a defined operator.\n\n\nline 9, col 6 to line 9, col 15 of module Main\n\nEmpty USE or HIDE statement.\n\n\nline 10, col 16 to line 10, col 19 of module Main\n\nUnknown operator: `Gone'.\n\n\nline 10, col 16 to line 10, col 19 of module Main\n\nDEF clause entry should describe a defined operator.\n\n\nline 10, col 9 to line 10, col 19 of module Main\n\nEmpty BY\n\n\n"
+    );
+}
+
+// E4223: a nested module named like a module SANY has already read.
+#[test]
+fn reports_a_nested_module_named_like_a_standard_module_it_extends() {
+    assert_eq!(
+        get_text(
+            "module",
+            "---- MODULE Main ----\nEXTENDS Naturals\n---- MODULE Naturals ----\n====\nINSTANCE Naturals\n====\n"
+        ),
+        "Parsing file Main File\nParsing file Naturals Standard\nSemantic processing of module Naturals\nSemantic processing of module Main\nSemantic errors:\n\n*** Errors: 1\n\nline 3, col 1 to line 4, col 4 of module Main\n\nMultiply-defined module 'Naturals': this definition or declaration conflicts \nwith the one at line 1, col 1 to line 36, col 77 of module Naturals.\n\n\n"
+    );
+}

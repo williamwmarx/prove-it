@@ -523,17 +523,16 @@ impl Loader<'_> {
         if let Some(file) = (self.options.load_module)(name) {
             return (Some(file), ModuleOrigin::File);
         }
+        // `SimpleFilenameToStream.locate` reads the standard modules next, and `FileUtil` takes a
+        // module from the root module's file only after them.
+        if let Some(standard) = get_standard_module(name, self.options.version) {
+            return (Some(standard.to_owned()), ModuleOrigin::Standard);
+        }
         // TLC 1.7.4's SANY reads a module only from a file of its own.
         let extracted = (self.options.version != TlcVersion::V1_7_4)
             .then(|| extract_module(self.source, name))
             .flatten();
-        match extracted {
-            Some(text) => (Some(text), ModuleOrigin::RootFile),
-            None => (
-                get_standard_module(name, self.options.version).map(str::to_owned),
-                ModuleOrigin::Standard,
-            ),
-        }
+        (extracted, ModuleOrigin::RootFile)
     }
 
     /// SpecObj.loadSpec: SANY resolves the first unresolved name it finds from the root, every

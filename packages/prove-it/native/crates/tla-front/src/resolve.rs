@@ -70,7 +70,8 @@ struct Goal {
 
 /// A local name (`LocalName`), or a name the module binds from `position` on (`ModuleBinding`).
 /// `is_pending` holds for an operator a RECURSIVE declaration names until its definition.
-/// `is_non_fact` holds for the name of a USE, HIDE, DEFINE or INSTANCE step.
+/// `is_non_fact` holds for the name of a USE, HIDE, DEFINE or INSTANCE step, and `unselectable`
+/// is SANY's error for the name of a step that asserts no expression used as one.
 #[derive(Debug)]
 struct Local {
     name: Name,
@@ -82,6 +83,7 @@ struct Local {
     goal: Option<Rc<Goal>>,
     is_pending: Cell<bool>,
     is_non_fact: bool,
+    unselectable: Option<&'static str>,
     position: Position,
     /// The parameters of a function a LET defines, which SANY checks its applications against.
     function_params: Option<usize>,
@@ -101,6 +103,7 @@ impl Local {
             goal: None,
             is_pending: Cell::new(false),
             is_non_fact: false,
+            unselectable: None,
             position: MODULE_START,
             function_params: None,
         }
@@ -236,6 +239,11 @@ struct Unit<'a> {
     /// defined.
     is_generated: bool,
     tables: Rc<Tables>,
+    /// How many LETs enclose the unit's definitions (`curLevel`).
+    let_level: usize,
+    /// The operators the module's LETs declare RECURSIVE and don't define, each with its LET's
+    /// level, in the order SANY reads them (`recursiveDecls`).
+    let_recursive: Rc<RefCell<Vec<(usize, Rc<Declaration>)>>>,
 }
 
 impl Unit<'_> {
@@ -1259,18 +1267,21 @@ fn get_symbol_arity(
         );
         return Ok(None);
     }
-    // SANY's selectors reject a step that asserts no expression, or a SUFFICES, named as an
-    // expression (`HAVE proof step selected instead of expression.`), which the front end doesn't
-    // word yet.
-    if !unit.is_fact
-        && is_step_name(name)
-        && local
-            .as_ref()
-            .is_some_and(|local| local.goal.as_ref().is_none_or(|goal| goal.is_suffices))
+    // `Generator.selectorToNode` rejects a step that asserts no expression named as an
+    // expression, after it checks the step's arguments, which it takes none of.
+    if let Some(unselectable) = local.as_ref().and_then(|local| local.unselectable)
+        && !unit.is_fact
     {
-        return Err(FrontError::NotYet(format!(
-            "the step {name} that asserts no expression named as an expression"
-        )));
+        if apply_arity(expression) > 0 {
+            return Err(FrontError::NotYet(format!(
+                "the step {name} given arguments named as an expression"
+            )));
+        }
+        unit.error(
+            format_range(&get_spelled_name_range(expression, name)),
+            unselectable.to_owned(),
+        );
+        return Ok(None);
     }
     if check_reference(expression, scope, unit, false) || (is_step_name(name) && local.is_some()) {
         return Ok(Some(apply_arity(expression)));
@@ -1312,16 +1323,64 @@ fn get_symbol_arity(
     } else {
         get_spelled_name_range(expression, name)
     });
-    // SANY's selectors word a theorem's, an assumption's or an instance's name used as an
-    // expression otherwise (`Operator name M is incomplete.`, `ASSUME/PROVE used where an
-    // expression is required.`), which the front end doesn't follow.
-    let is_named = unit.facts.borrow().contains(name)
-        || find_current(scope, name, unit, None).is_some_and(|local| {
-            matches!(
-                local.binding().kind,
-                SymbolKind::Instance | SymbolKind::Theorem
+    let current = find_current(scope, name, unit, None);
+    // `Generator.selectorToNode` checks an INSTANCE's arguments, at the arguments or else at the
+    // whole name, and then, but in a fact, that the name selects an operator of the module.
+    if let Some(instance) = current
+        .as_ref()
+        .filter(|local| local.kind == SymbolKind::Instance)
+    {
+        let arguments_range = match &expression.kind {
+            ExpressionKind::Apply {
+                arguments_range, ..
+            } => arguments_range.as_ref(),
+            _ => None,
+        };
+        let (range, message) = if apply_arity(expression) == instance.arity {
+            // A fact may name an instance, which `UseOrHideNode.factCheck` checks.
+            if unit.is_fact {
+                return Err(FrontError::NotYet(format!(
+                    "the instance {name} named as a fact"
+                )));
+            }
+            (
+                Some(get_spelled_name_range(expression, name)),
+                format!("Operator name {name} is incomplete."),
             )
-        });
+        } else {
+            (
+                arguments_range.or(location.range.as_ref()).cloned(),
+                format!("The operator {name} requires {} arguments.", instance.arity),
+            )
+        };
+        let Some(range) = range else {
+            return Err(FrontError::NotYet(format!(
+                "the instance {name} named as an expression without a place"
+            )));
+        };
+        unit.error(format_range(&range), message);
+        return Ok(None);
+    }
+    // It rejects a theorem whose statement is an ASSUME/PROVE named as an expression, after it
+    // checks the theorem's arguments, which it takes none of.
+    let is_assume_prove = current
+        .as_ref()
+        .is_some_and(|local| local.kind == SymbolKind::Theorem)
+        && unit
+            .goals
+            .get(name)
+            .is_some_and(|goal| matches!(goal.statement, Statement::AssumeProve(_)));
+    if is_assume_prove && !unit.is_fact && apply_arity(expression) == 0 {
+        unit.error(
+            format_range(&get_spelled_name_range(expression, name)),
+            "ASSUME/PROVE used where an expression is required.".to_owned(),
+        );
+        return Ok(None);
+    }
+    // A theorem or an assumption whose statement is an expression is one SANY takes, which the
+    // front end doesn't follow.
+    let is_named = unit.facts.borrow().contains(name)
+        || current.is_some_and(|local| local.binding().kind == SymbolKind::Theorem);
     if is_named {
         return Err(FrontError::NotYet(format!(
             "the name {name} of a theorem, an assumption or an instance as an expression"
@@ -1504,6 +1563,63 @@ fn resolve_definition(
         },
         &unit,
     ))
+}
+
+/// Binds the operators a LET declares RECURSIVE and doesn't define, as `processRecursive` does,
+/// and records them with the LET's level.
+fn bind_undefined_recursive(
+    undefined: &[&Rc<Declaration>],
+    definitions: &[Rc<Definition>],
+    scope: &Scope,
+    unit: &Unit,
+) -> Result<Scope> {
+    if undefined.is_empty() {
+        return Ok(scope.clone());
+    }
+    // SANY reads the declaration where it appears, which a definition before it doesn't see.
+    let is_after_definition = undefined.iter().any(|declaration| {
+        definitions.iter().any(|definition| {
+            is_before(
+                definition.location.position(),
+                declaration.location.position(),
+            )
+        })
+    });
+    if unit.is_generated || is_after_definition {
+        return Err(FrontError::NotYet(
+            "a LET that declares RECURSIVE an operator it doesn't define".to_owned(),
+        ));
+    }
+    let mut declared = scope.clone();
+    for declaration in undefined {
+        if find_current(&declared, &declaration.name, unit, None).is_some() {
+            return Err(FrontError::NotYet(format!(
+                "a LET that declares RECURSIVE {}, a name already bound",
+                declaration.name
+            )));
+        }
+        let mut records = unit.let_recursive.borrow_mut();
+        if !records
+            .iter()
+            .any(|(_, recorded)| Rc::ptr_eq(recorded, declaration))
+        {
+            records.push((unit.let_level, (*declaration).clone()));
+        }
+        declared = Some(Rc::new(Local {
+            is_pending: Cell::new(true),
+            ..Local::new(
+                declaration.name.clone(),
+                Binding {
+                    kind: SymbolKind::Definition,
+                    arity: declaration.arity,
+                    params: Some(Rc::from(vec![0; declaration.arity])),
+                    range: declaration.location.range.clone(),
+                },
+                declared,
+            )
+        }));
+    }
+    Ok(declared)
 }
 
 /// SANY analyzes an INSTANCE in a LET where it appears, before the definitions that follow it,
@@ -2033,14 +2149,56 @@ fn resolve_expression(expression: &Expr, scope: &Scope, unit: &Unit) -> Result<(
         ExpressionKind::Let {
             definitions,
             instances,
+            recursive,
             body,
         } => {
+            // `Generator.processLetIn` reads the definitions a level deeper, where an operator
+            // declared RECURSIVE at another level is defined at the wrong one.
+            let level = Unit {
+                let_level: unit.let_level + 1,
+                ..unit.clone()
+            };
+            let undefined: Vec<&Rc<Declaration>> = recursive
+                .iter()
+                .filter(|declaration| {
+                    definitions
+                        .iter()
+                        .all(|definition| definition.name != declaration.name)
+                })
+                .collect();
+            let declared = bind_undefined_recursive(&undefined, definitions, scope, &level)?;
             let inner = resolve_definitions(
                 definitions,
-                scope,
-                unit,
+                &declared,
+                &level,
                 instances.as_deref().unwrap_or(&[]),
             )?;
+            // `checkForUndefinedRecursiveOps`: at the end of the definitions of a LET that leaves
+            // one undefined, SANY reports each operator declared RECURSIVE at that level and not
+            // defined, of any LET it has read.
+            if !undefined.is_empty() {
+                let reported: Vec<Rc<Declaration>> = unit
+                    .let_recursive
+                    .borrow()
+                    .iter()
+                    .filter(|(declared_level, _)| *declared_level == level.let_level)
+                    .map(|(_, declaration)| declaration.clone())
+                    .collect();
+                for declaration in reported {
+                    let Some(range) = &declaration.location.range else {
+                        return Err(FrontError::NotYet(
+                            "a RECURSIVE declaration without a place".to_owned(),
+                        ));
+                    };
+                    level.error(
+                        format_range(range),
+                        format!(
+                            "Symbol {} declared in RECURSIVE statement but not defined.",
+                            declaration.name
+                        ),
+                    );
+                }
+            }
             resolve_expression(body, &inner, unit)
         }
         ExpressionKind::Quantified { bounds, body, .. }
@@ -2215,33 +2373,76 @@ fn check_facts(facts: &[Fact], scope: &Scope, unit: &Unit) -> Result<()> {
     Ok(())
 }
 
-/// SANY's `generateDefs` rejects a DEF entry that names no defined operator, theorem or
-/// assumption, which the front end doesn't word yet: an entry that names something else, or
-/// nothing, stays `NotYet`.
-fn check_defs(defs: &[Fact], scope: &Scope, unit: &Unit) -> Result<()> {
+/// `generateUseOrHide` rejects a DEF entry that names no defined operator, theorem or assumption:
+/// an unknown name, which `selectorToNode` reports first, or a built-in operator, a constant, a
+/// variable, a parameter or a NEW symbol. Tells whether an entry may be kept.
+fn check_defs(defs: &[Fact], scope: &Scope, unit: &Unit) -> Result<bool> {
+    let mut is_kept = false;
     for def in defs {
         let Fact::Expression(def) = def else {
+            is_kept = true;
             continue;
         };
         let ExpressionKind::Identifier { name, .. } = &def.kind else {
+            is_kept = true;
             continue;
         };
         // A step's name, which SANY takes when the step defines, and a selection.
         if name.contains('!') || name.starts_with('<') {
+            is_kept = true;
             continue;
         }
         let kind = find_current(scope, name, unit, def.location.range.as_ref())
             .map(|local| local.binding().kind);
-        let is_defined = matches!(
+        if matches!(
             kind,
             Some(SymbolKind::Definition | SymbolKind::Instance | SymbolKind::Theorem)
+        ) {
+            is_kept = true;
+            continue;
+        }
+        let is_unknown = kind.is_none() && !unit.facts.borrow().contains(name);
+        let is_rejected = matches!(
+            kind,
+            Some(
+                SymbolKind::Builtin
+                    | SymbolKind::Constant
+                    | SymbolKind::Variable
+                    | SymbolKind::Parameter
+                    | SymbolKind::New(_)
+            )
         );
-        if !is_defined {
+        let (true, Some(range)) = (is_unknown || is_rejected, &def.location.range) else {
             return Err(FrontError::NotYet(format!(
                 "a DEF clause entry {name} SANY may reject"
             )));
+        };
+        if is_unknown {
+            unit.error(format_range(range), format!("Unknown operator: `{name}'."));
         }
+        unit.error(
+            format_range(range),
+            "DEF clause entry should describe a defined operator.".to_owned(),
+        );
     }
+    Ok(is_kept)
+}
+
+/// SANY rejects a USE or HIDE that keeps no fact and no DEF entry.
+fn check_use_or_hide(use_or_hide: &UseOrHide, scope: &Scope, unit: &Unit) -> Result<()> {
+    check_facts(&use_or_hide.facts, scope, unit)?;
+    if check_defs(&use_or_hide.defs, scope, unit)? || !use_or_hide.facts.is_empty() {
+        return Ok(());
+    }
+    let Some(range) = &use_or_hide.location.range else {
+        return Err(FrontError::NotYet(
+            "an empty USE or HIDE without a place".to_owned(),
+        ));
+    };
+    unit.error(
+        format_range(range),
+        "Empty USE or HIDE statement.".to_owned(),
+    );
     Ok(())
 }
 
@@ -2319,9 +2520,17 @@ fn resolve_proof(proof: Option<&Proof>, scope: &Scope, outer: &Unit) -> Result<(
         outer.clone()
     };
     match proof.map(|proof| &proof.kind) {
+        // `generateLeafProof` rejects a BY that keeps no fact and no DEF entry.
         Some(ProofKind::By { facts, defs, .. }) => {
             check_facts(facts, scope, &unit)?;
-            check_defs(defs, scope, &unit)
+            if check_defs(defs, scope, &unit)? || !facts.is_empty() {
+                return Ok(());
+            }
+            let Some(range) = proof.and_then(|proof| proof.location.range.as_ref()) else {
+                return Err(FrontError::NotYet("an empty BY without a place".to_owned()));
+            };
+            unit.error(format_range(range), "Empty BY".to_owned());
+            Ok(())
         }
         Some(ProofKind::Steps { steps, .. }) => {
             let mut current = scope.clone();
@@ -2398,10 +2607,17 @@ fn resolve_local_instance(instance: &Rc<Instance>, scope: &Scope, unit: &Unit) -
     })
 }
 
-fn theorem_local(name: &Name, parent: Scope, goal: Option<Rc<Goal>>, is_non_fact: bool) -> Scope {
+fn theorem_local(
+    name: &Name,
+    parent: Scope,
+    goal: Option<Rc<Goal>>,
+    is_non_fact: bool,
+    unselectable: Option<&'static str>,
+) -> Scope {
     Some(Rc::new(Local {
         goal,
         is_non_fact,
+        unselectable,
         ..Local::new(
             name.clone(),
             Binding {
@@ -2428,13 +2644,31 @@ fn resolve_step(step: &ProofStep, scope: &Scope, unit: &Unit) -> Result<Scope> {
             ..unit.clone()
         }
     };
+    // What SANY says of the step's name used as an expression, where the step asserts none
+    // (`Generator.selectorToNode`).
+    let unselectable = match &step.body {
+        StepBody::Assert {
+            statement: Statement::AssumeProve(_),
+            ..
+        } => Some("ASSUME/PROVE used where an expression is required."),
+        StepBody::Assert {
+            is_suffices: true, ..
+        } => Some("SUFFICES proof step selected instead of expression."),
+        StepBody::Have(_) => Some("HAVE proof step selected instead of expression."),
+        StepBody::Case(_) => Some("CASE proof step selected instead of expression."),
+        StepBody::Take { .. } => Some("TAKE proof step selected instead of expression."),
+        StepBody::Pick { .. } => Some("PICK proof step selected instead of expression."),
+        StepBody::Witness(_) => Some("WITNESS proof step selected instead of expression."),
+        StepBody::Qed => Some("QED step proof step selected instead of expression."),
+        _ => None,
+    };
     let bind_step = |parent: &Scope| match &step.name {
         None => parent.clone(),
-        Some(name) => theorem_local(name, parent.clone(), None, false),
+        Some(name) => theorem_local(name, parent.clone(), None, false, unselectable),
     };
     let bind_non_fact_step = |parent: &Scope| match &step.name {
         None => parent.clone(),
-        Some(name) => theorem_local(name, parent.clone(), None, true),
+        Some(name) => theorem_local(name, parent.clone(), None, true, None),
     };
     let proof = step.proof.as_deref();
     match &step.body {
@@ -2457,7 +2691,13 @@ fn resolve_step(step: &ProofStep, scope: &Scope, unit: &Unit) -> Result<Scope> {
             });
             resolve_proof(
                 proof,
-                &theorem_local(name, proof_scope.clone(), Some(goal.clone()), false),
+                &theorem_local(
+                    name,
+                    proof_scope.clone(),
+                    Some(goal.clone()),
+                    false,
+                    unselectable,
+                ),
                 unit,
             )?;
             goal.is_in_proof.set(false);
@@ -2466,11 +2706,11 @@ fn resolve_step(step: &ProofStep, scope: &Scope, unit: &Unit) -> Result<Scope> {
                 if *is_suffices { assumed } else { scope.clone() },
                 Some(goal),
                 false,
+                unselectable,
             ))
         }
         StepBody::UseOrHide(use_or_hide) => {
-            check_facts(&use_or_hide.facts, scope, unit)?;
-            check_defs(&use_or_hide.defs, scope, unit)?;
+            check_use_or_hide(use_or_hide, scope, unit)?;
             Ok(bind_non_fact_step(scope))
         }
         StepBody::Instance(instance) => Ok(bind_non_fact_step(&resolve_local_instance(
@@ -2879,6 +3119,8 @@ pub fn resolve_substitutions(
             labels: Rc::default(),
             is_generated: false,
             tables: unit.tables.clone(),
+            let_level: 0,
+            let_recursive: Rc::default(),
         },
     )
 }
@@ -2947,11 +3189,6 @@ type RecursiveDeclaration = (Rc<Declaration>, Option<Rc<Local>>);
 /// SANY binds the names of a module in the order of its units, and reports a RECURSIVE declaration
 /// that no definition follows at the end. Returns the errors.
 pub fn resolve_module(module: &Module, unit: &ModuleContext) -> Result<Vec<SanyError>> {
-    if module.has_undefined_let_recursive {
-        return Err(FrontError::NotYet(
-            "a LET that declares RECURSIVE an operator it doesn't define".to_owned(),
-        ));
-    }
     let symbols = Rc::new(create_symbols(module, &unit.imported));
     let facts: Rc<RefCell<FastSet<Name>>> = Rc::new(RefCell::new(
         unit.facts
@@ -3005,6 +3242,7 @@ pub fn resolve_module(module: &Module, unit: &ModuleContext) -> Result<Vec<SanyE
     ));
     let recursive: Rc<RefCell<Vec<Rc<Local>>>> = Rc::default();
     let declarations: Rc<RefCell<Vec<RecursiveDeclaration>>> = Rc::default();
+    let let_recursive: Rc<RefCell<Vec<(usize, Rc<Declaration>)>>> = Rc::default();
     let declared = get_declared(module);
     let create_unit = |location: Position,
                        self_definition: Option<Rc<Definition>>,
@@ -3032,6 +3270,8 @@ pub fn resolve_module(module: &Module, unit: &ModuleContext) -> Result<Vec<SanyE
         labels: Rc::default(),
         is_generated: false,
         tables: unit.tables.clone(),
+        let_level: 0,
+        let_recursive: let_recursive.clone(),
     };
     let create_unit = &create_unit;
     let mut units: Vec<SemanticUnit<'_>> = Vec::new();
@@ -3077,10 +3317,12 @@ pub fn resolve_module(module: &Module, unit: &ModuleContext) -> Result<Vec<SanyE
         if pending.is_empty() {
             continue;
         }
-        // SANY's generator fails there with an exception TLC prints as it is.
+        // The nested module's end clears the section's count (`checkForUndefinedRecursiveOps`),
+        // so the operator's definition after it drives the count below zero, and `endOpDefNode`
+        // throws a WrongInvocationException, which TLC reports as a failed parse.
         if matches!(item, ModuleUnit::Module(_)) {
             return Err(FrontError::NotYet(
-                "a module in a recursive section".to_owned(),
+                "a module in a recursive section, where SANY's generator throws".to_owned(),
             ));
         }
         let Some(range) = location.range.clone() else {
@@ -3305,8 +3547,7 @@ pub fn resolve_module(module: &Module, unit: &ModuleContext) -> Result<Vec<SanyE
                     warnings,
                     false,
                 );
-                check_facts(&use_or_hide.facts, &None, &unit)?;
-                check_defs(&use_or_hide.defs, &None, &unit)
+                check_use_or_hide(use_or_hide, &None, &unit)
             }),
         });
     }

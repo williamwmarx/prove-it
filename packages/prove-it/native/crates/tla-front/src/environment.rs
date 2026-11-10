@@ -426,6 +426,20 @@ impl Linker<'_> {
         }
     }
 
+    /// The text of a standard module SANY reads, as the parser reads it, where no module of the
+    /// user's has its name.
+    fn get_standard_source(&self, name: &str) -> Option<Rc<Module>> {
+        if self.standard_exports.borrow().get(name).is_none() {
+            return None;
+        }
+        let texts = match self.options.version {
+            TlcVersion::Master => standard_modules::MASTER,
+            TlcVersion::V1_7_4 => standard_modules::TLC_174,
+        };
+        let text = texts.iter().find(|module| module.0 == name)?.1;
+        self.parse_text(text).ok()
+    }
+
     fn add_standard_module(&self, name: &str) -> Option<Rc<Symbols>> {
         if let Some(cached) = self.standard_exports.borrow().get(name) {
             return Some(cached.clone());
@@ -633,9 +647,27 @@ impl Linker<'_> {
             .find(|module| closure.contains(&module.name))
             .cloned();
         if let Some(duplicate) = duplicate {
-            let loaded = self.linked_modules.borrow().get(&duplicate.name).cloned();
+            let loaded = self
+                .linked_modules
+                .borrow()
+                .get(&duplicate.name)
+                .map(|loaded| loaded.module.clone())
+                .or_else(|| self.get_standard_source(&duplicate.name));
+            // SANY reports it where it meets the nested module, among the module's other errors.
+            let is_reported = self
+                .collected
+                .borrow()
+                .errors
+                .get(&parsed.name)
+                .is_some_and(|reported| !reported.is_empty());
+            if is_reported {
+                return Err(FrontError::NotYet(format!(
+                    "a nested module {} of a name already defined, with other errors",
+                    duplicate.name
+                )));
+            }
             if let Some(redefinition) =
-                loaded.and_then(|loaded| get_module_redefinition(&duplicate, &loaded.module))
+                loaded.and_then(|loaded| get_module_redefinition(&duplicate, &loaded))
             {
                 return Err(sany_error(
                     vec![redefinition],
