@@ -534,6 +534,7 @@ dropped because they did not move it. Recorded so that nobody repeats them.
 | A table from label to walks for PlusCal's `switch` (string labels compare by id) | Detlefs | 4.70 → 4.63 s, within noise | The `switch`'s self time is the walks inlined into it, not the 49-label scan. |
 | An index, per (quantifier, set id), of the elements whose leading `m.f = c` holds | PaxosCommit | 33.1–35.0 s → 36.0–37.0 s | `msgs` is a new set in nearly every state, so the index is used only by that state's 3 acceptor scans. |
 | Fuse a whole PlusCal step into one closure | MCbtree, MCExactInitialSync | Not built: estimated 5–10% | `walker::segments`' self time is spread over the per-op dispatch, 1–2% a line, with no hot spot. |
+| Share one parse between SANY's report and the lowering | 2PCwithBTM, TCommit, TwoPhase, DieHard (`-workers 1`) | Not built: tokenizing and parsing a spec and its standard modules takes 0.26–0.66 ms of 7.9–16.7 ms runs, 3–5% at most | The report's resolution, level checks and linting stay, and the run goes to lowering (25–33%), the process (about 2 ms) and the engine's setup; such a run is already far below TLC's startup. |
 
 Counts behind the quantifier index, from an instrumentation build that counted every quantifier,
 set filter or action-level `\E` whose body starts with `m.f = e` on the bound name:
