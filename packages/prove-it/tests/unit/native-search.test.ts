@@ -1,8 +1,8 @@
-// The native engine's search, with PROVE_IT_ENGINE_BACKEND=rust: it must reach what the interpreter
-// reaches, whether it completes the search or hands over part way, and find the same states in the
-// same order as the TypeScript engine. Each test also checks what the native engine did, so a
-// model it declines can't pass by the TypeScript engine's search. They run where the addon was
-// built, with PROVE_IT_ENGINE_ADDON naming it, as the native job in verification.yml does.
+// The native engine's search: it must reach what the interpreter reaches, whether it completes the
+// search or hands over part way, and find the same states in the same order as the interpreter's
+// -dump. Each test also checks what the native engine did, so a model it declines can't pass by
+// the interpreter's search. They run where the addon was built, with PROVE_IT_ENGINE_ADDON naming
+// it, as tests/setup.ts sets it.
 
 import { afterEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -399,8 +399,8 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
 
   it("walks a universal quantifier with 2^32 bindings, and doesn't skip its body", async () => {
     // The product of the sizes doesn't fit 32 bits, and the first binding already rules out every
-    // successor. The interpreter builds the product of the sets, so this compares with the
-    // TypeScript engine, which walks the bindings as the native engine does.
+    // successor, so the initial state is the only one. The interpreter builds the product of the
+    // sets, so this checks the result itself.
     const options = {
       source: toModule([
         "EXTENDS Naturals",
@@ -411,15 +411,12 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
       config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
       isWarningEnabled: false,
     };
-    const native = await run(options, {
-      PROVE_IT_ENGINE: "debug",
-      PROVE_IT_ENGINE_BACKEND: "rust",
+    const native = await run(options, { PROVE_IT_ENGINE: "debug" });
+    expect(native.result).toMatchObject({
+      status: "success",
+      generatedStates: 1,
+      distinctStates: 1,
     });
-    const typescript = await run(options, {
-      PROVE_IT_ENGINE: "debug",
-      PROVE_IT_ENGINE_BACKEND: "ts",
-    });
-    expect(native.result).toEqual(typescript.result);
     expect(native.lines).toContainEqual(expect.stringMatching(COMPLETE));
   });
 
@@ -635,6 +632,25 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     }
   });
 
+  // summerset's Crossword_MC: the operator that gives each set's permutations is applied once per
+  // set, and looked through again for each is no recursion.
+  it("builds the group of a SYMMETRY that applies one operator to several sets", async () => {
+    const body = [
+      "EXTENDS Naturals, FiniteSets, TLC",
+      "CONSTANTS Procs, Values",
+      "VARIABLES owner, value",
+      "Perms(set) == IF Cardinality(set) > 1 THEN Permutations(set) ELSE {}",
+      "Init == owner \\in Procs /\\ value \\in Values",
+      "Next == owner' \\in Procs /\\ value' \\in Values",
+      "Sym == Perms(Procs) \\cup Perms(Values)",
+    ];
+    const config =
+      "CONSTANTS Procs = {p1, p2, p3}\nValues = {v1, v2}\nINIT Init\nNEXT Next\nSYMMETRY Sym";
+    expect(await compareWithInterpreter(body, config)).toContainEqual(
+      expect.stringMatching(COMPLETE),
+    );
+  });
+
   it("answers ENABLED by running the action", async () => {
     const body = [
       "EXTENDS Naturals",
@@ -689,7 +705,6 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
       const options = { source: toModule(body), config };
       const native = await run(options, {
         PROVE_IT_ENGINE: "debug",
-        PROVE_IT_ENGINE_BACKEND: "rust",
       });
       expect(native.result.status).toBe(status);
     }
@@ -852,14 +867,9 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     ];
     const config =
       "CONSTANTS a = a\nb = b\nc = c\nd = d\ne = e\nf = f\nNoVal = NoVal\nSYMMETRY Symmetry\nSPECIFICATION Spec\nPROPERTY Liveness";
-    for (const backend of ["ts", "rust"]) {
-      expect(
-        await compareWithInterpreter(body, config, {
-          PROVE_IT_ENGINE_BACKEND: backend,
-          PROVE_IT_STOP_AT: "65",
-        }),
-      ).toContainEqual(expect.stringMatching(/stopped where PROVE_IT_STOP_AT asked/));
-    }
+    expect(await compareWithInterpreter(body, config, { PROVE_IT_STOP_AT: "65" })).toContainEqual(
+      expect.stringMatching(/stopped where PROVE_IT_STOP_AT asked/),
+    );
   });
 
   it("checks the temporal properties part way through the search, as TLC does", async () => {
@@ -887,7 +897,6 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
       };
       const native = await run(options, {
         PROVE_IT_ENGINE: "debug",
-        PROVE_IT_ENGINE_BACKEND: "rust",
         PROVE_IT_TEST_LIVE_CHECK_AT: "2",
         PROVE_IT_STATE_LOG: log,
       });
@@ -923,7 +932,7 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     ];
     const native = await run(
       { source: toModule(body), config: "SPECIFICATION Spec\nPROPERTY Holds" },
-      { PROVE_IT_ENGINE: "debug", PROVE_IT_ENGINE_BACKEND: "rust" },
+      { PROVE_IT_ENGINE: "debug" },
     );
     expect(native.lines).toContainEqual(expect.stringMatching(COMPLETE));
     expect([native.result.status, native.result.distinctStates]).toEqual(["success", 4_000_001]);
@@ -967,7 +976,7 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
         config: "SPECIFICATION Spec\nPROPERTY AtMostOnce",
         livenessCheck: "final",
       },
-      { PROVE_IT_ENGINE: "debug", PROVE_IT_ENGINE_BACKEND: "rust" },
+      { PROVE_IT_ENGINE: "debug" },
     );
     expect(native.lines).toContainEqual(
       expect.stringMatching(stopped("a state graph too large to keep")),
@@ -1157,7 +1166,7 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
   it("hands over where PROVE_IT_STOP_AT asks, and the interpreter goes on as without the stop", async () => {
     const config = "INIT Init\nNEXT Next";
     const options = { source: toModule(WALKS), config };
-    const whole = await run(options, { PROVE_IT_ENGINE: "debug", PROVE_IT_ENGINE_BACKEND: "rust" });
+    const whole = await run(options, { PROVE_IT_ENGINE: "debug" });
     const directory = mkdtempSync(join(tmpdir(), "prove-it-native-stop-"));
     try {
       for (const stopAt of ["0", "1", "7", "20"]) {
@@ -1193,7 +1202,6 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     const options = { source: toModule(WALKS), config: "INIT Init\nNEXT Next" };
     const verified = await run(options, {
       PROVE_IT_ENGINE: "debug",
-      PROVE_IT_ENGINE_BACKEND: "rust",
       PROVE_IT_FP_VERIFY: "1",
     });
     expect(verified.lines).toContain("[engine] native: fingerprint collisions: 0");
@@ -1382,14 +1390,13 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     );
   });
 
-  it("leaves a model it can't search to the TypeScript engine", async () => {
+  it("leaves a model it can't search to the interpreter", async () => {
     // UNCHANGED in the initial predicate, which TLC evaluates and neither engine walks.
     const body = ["VARIABLE x", "Init == x = 0 /\\ UNCHANGED x", "Next == x' = x"];
     const lines = await compareWithInterpreter(body, "INIT Init\nNEXT Next");
     expect(lines).toEqual([
       expect.stringMatching(/^\[engine\] native: ir: /),
       expect.stringMatching(declined("unsupported: UNCHANGED in the initial predicate")),
-      expect.stringMatching(/^\[engine\] handed over after \d+ ms: primed variable not assigned$/),
     ]);
   });
 
@@ -1602,7 +1609,6 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     };
     const native = await run(options, {
       PROVE_IT_ENGINE: "debug",
-      PROVE_IT_ENGINE_BACKEND: "rust",
     });
     const interpreter = await run(options, { PROVE_IT_ENGINE: "0" });
     expect(native.result).toEqual(interpreter.result);
@@ -1846,11 +1852,48 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     };
     const native = await run(options, {
       PROVE_IT_ENGINE: "debug",
-      PROVE_IT_ENGINE_BACKEND: "rust",
     });
     const interpreter = await run(options, { PROVE_IT_ENGINE: "0" });
     expect(native.result).toEqual(interpreter.result);
     expect(native.lines).toContainEqual(expect.stringMatching(COMPLETE));
+  });
+
+  it("checks the properties an instance's definitions state, and reports one violated", async () => {
+    // Each property reads its body in the instance's scope, where v is x.
+    const counter = [
+      "---- MODULE Counter ----",
+      "EXTENDS Naturals",
+      "VARIABLE v",
+      "Start == v = 0",
+      "Step == v' = (v + 1) % 5",
+      "Spec == Start /\\ [][Step]_v",
+      "Bounded == [](v < 5)",
+      "Moves == [][v' # v]_v",
+      "Small == [](v < 3)",
+      "====",
+    ].join("\n");
+    const body = [
+      "VARIABLE x",
+      "C == INSTANCE Counter WITH v <- x",
+      "Spec == C!Spec",
+      "Bounded == C!Bounded",
+      "Moves == C!Moves",
+      "Small == C!Small",
+    ];
+    for (const [properties, line] of [
+      ["Bounded Moves", COMPLETE],
+      ["Bounded Small", stopped("an invariant violated")],
+    ] as const) {
+      const options = {
+        source: toModule(body),
+        config: `SPECIFICATION Spec\nPROPERTY ${properties}`,
+        loadModule: (name: string) => (name === "Counter" ? counter : undefined),
+      };
+      const native = await run(options, { PROVE_IT_ENGINE: "debug" });
+      const interpreter = await run(options, { PROVE_IT_ENGINE: "0" });
+      expect(native.result).toEqual(interpreter.result);
+      expect(native.lines).toContainEqual(expect.stringMatching(line));
+    }
   });
 
   it("takes a string as a sequence in Len and Tail, as TLC's Sequences does", async () => {

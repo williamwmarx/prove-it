@@ -16,8 +16,7 @@
 // TLA2TOOLS_JAR names tla2tools.jar, TLA_TS_CLI tla-ts's dist/cli.js and TLA_RS_BIN tla-rs's tla
 // binary, and PROVE_IT_BASE_BINARY another build's dist/prove-it (prove-it-base); the Prove It binary
 // is dist/prove-it (bun run build:binary), and the one Bun compiled ahead of time dist/prove-it-aot
-// (build-binary.ts --aot, prove-it-aot). prove-it-rust, prove-it-rust-aot and prove-it-base-rust run
-// those binaries with PROVE_IT_ENGINE_BACKEND=rust, where the binary embeds the native engine
+// (build-binary.ts --aot, prove-it-aot). The binaries embed the native engine
 // (scripts/platform-packages.ts build, before build-binary.ts). native and native-auto run the
 // native binary (cargo build --release -p prove-it-cli in native) on one worker and on every core,
 // and native-base PROVE_IT_BASE_NATIVE, another build of it, on one worker. A checker whose file is
@@ -39,7 +38,6 @@ import {
 import { availableParallelism, cpus, loadavg, release, tmpdir, totalmem } from "node:os";
 import { dirname, join } from "node:path";
 
-import { ADDON_FILE } from "../src/engine/native";
 import { EXPECTED_PATH, getOption, LIBRARY_PATH, linkLibraryModules, TLC_SEED } from "./corpora";
 
 interface SuiteModel {
@@ -71,8 +69,6 @@ interface Checker {
   // The directory the checker runs in, when it isn't the model's.
   getDirectory?: (model: SuiteModel) => string;
   parse: (stdout: string, stderr: string) => Outcome;
-  // What the checker's runs set in the environment besides it.
-  environment?: Record<string, string>;
   // tla-rs counts transitions where TLC counts generated states, which differ by the initial states.
   isCountingGenerated: boolean;
   // TLC on several workers can report a depth past the search's, as its workers don't keep to levels.
@@ -104,10 +100,6 @@ const AOT_BINARY_PATH = join(PACKAGE_DIRECTORY, "dist/prove-it-aot");
 // PROVE_IT_NATIVE names another native binary, such as a build with symbols for perf.
 const NATIVE_PATH =
   process.env.PROVE_IT_NATIVE ?? join(PACKAGE_DIRECTORY, "native/target/release/prove-it");
-// build-binary.ts embeds the native engine from beside the binary, when it was built for this
-// platform.
-const getAddonPath = (binaryPath: string) => join(dirname(binaryPath), "embedded", ADDON_FILE);
-const RUST_BACKEND = { PROVE_IT_ENGINE_BACKEND: "rust" };
 // --suite names another list of models beside this script, such as bench-liveness.json.
 const MODELS: SuiteModel[] = JSON.parse(
   readFileSync(join(import.meta.dirname, getOption("--suite") ?? "bench-suite.json"), "utf8"),
@@ -364,26 +356,6 @@ const ALL_CHECKERS: (Checker & { isAvailable: boolean })[] = [
     isAvailable: existsSync(AOT_BINARY_PATH),
   },
   {
-    name: "prove-it-rust",
-    getCommand: (model, metadataDirectory) => [
-      BINARY_PATH,
-      ...getCliArguments(model, metadataDirectory),
-    ],
-    ...TLC_STYLE,
-    environment: RUST_BACKEND,
-    isAvailable: existsSync(BINARY_PATH) && existsSync(getAddonPath(BINARY_PATH)),
-  },
-  {
-    name: "prove-it-rust-aot",
-    getCommand: (model, metadataDirectory) => [
-      AOT_BINARY_PATH,
-      ...getCliArguments(model, metadataDirectory),
-    ],
-    ...TLC_STYLE,
-    environment: RUST_BACKEND,
-    isAvailable: existsSync(AOT_BINARY_PATH) && existsSync(getAddonPath(AOT_BINARY_PATH)),
-  },
-  {
     name: "prove-it-base",
     getCommand: (model, metadataDirectory) => [
       baseBinaryPath,
@@ -391,19 +363,6 @@ const ALL_CHECKERS: (Checker & { isAvailable: boolean })[] = [
     ],
     ...TLC_STYLE,
     isAvailable: baseBinaryPath !== "" && existsSync(baseBinaryPath),
-  },
-  {
-    name: "prove-it-base-rust",
-    getCommand: (model, metadataDirectory) => [
-      baseBinaryPath,
-      ...getCliArguments(model, metadataDirectory),
-    ],
-    ...TLC_STYLE,
-    environment: RUST_BACKEND,
-    isAvailable:
-      baseBinaryPath !== "" &&
-      existsSync(baseBinaryPath) &&
-      existsSync(getAddonPath(baseBinaryPath)),
   },
   {
     name: "prove-it-base-aot",
@@ -454,7 +413,7 @@ const missing = ALL_CHECKERS.filter(
 );
 missing.forEach((checker) =>
   console.warn(
-    `Leaving out ${checker.name}: set TLA2TOOLS_JAR, TLA_TS_CLI, TLA_RS_BIN, PROVE_IT_BASE_BINARY, PROVE_IT_BASE_AOT_BINARY and PROVE_IT_BASE_NATIVE, and build dist/prove-it and dist/prove-it-aot, with the native engine for the -rust ones, and the native binary`,
+    `Leaving out ${checker.name}: set TLA2TOOLS_JAR, TLA_TS_CLI, TLA_RS_BIN, PROVE_IT_BASE_BINARY, PROVE_IT_BASE_AOT_BINARY and PROVE_IT_BASE_NATIVE, and build dist/prove-it and dist/prove-it-aot, and the native binary`,
   ),
 );
 if (requested !== undefined && missing.length > 0) process.exit(1);
@@ -463,17 +422,14 @@ const checkers = ALL_CHECKERS.filter(
 );
 // The speedups are over this Prove It, and the counts are checked against TLC on one worker, or
 // against TLC's recording in expected.json when TLC isn't run.
-const baseline = ["native", "prove-it", "prove-it-bun", "prove-it-node", "prove-it-rust"].find(
-  (name) => checkers.some((checker) => checker.name === name),
+const baseline = ["native", "prove-it", "prove-it-bun", "prove-it-node"].find((name) =>
+  checkers.some((checker) => checker.name === name),
 );
 const isProveIt = (name: string) => name.startsWith("prove-it") || name.startsWith("native");
 
-// The engine is on, on its default backend, unless a checker says otherwise, so the runs don't
-// inherit a setting from the shell.
+// The engine is on, so the runs don't inherit a setting from the shell.
 const environment = Object.fromEntries(
-  Object.entries(process.env).filter(
-    (entry) => entry[0] !== "PROVE_IT_ENGINE" && entry[0] !== "PROVE_IT_ENGINE_BACKEND",
-  ),
+  Object.entries(process.env).filter((entry) => entry[0] !== "PROVE_IT_ENGINE"),
 );
 
 const run = (command: string[], cwd: string, settings: Record<string, string> = {}) => {
@@ -503,7 +459,7 @@ const measure = (checker: Checker, model: SuiteModel): Measurement => {
   const startedAt = performance.now();
   let execution: ReturnType<typeof run>;
   try {
-    execution = run(command, directory, checker.environment);
+    execution = run(command, directory);
   } catch (error) {
     // A checker that can't start fails its cell rather than the whole benchmark.
     rmSync(metadataDirectory, { recursive: true, force: true });
@@ -712,10 +668,7 @@ const results = models.map((model, index) => {
       : run(
           prober?.getCommand(model, tmpdir()) ?? getBunCommand(model, tmpdir()),
           model.directory,
-          {
-            ...prober?.environment,
-            PROVE_IT_ENGINE: "debug",
-          },
+          { PROVE_IT_ENGINE: "debug" },
         )
           .output.match(/^\[engine\] .*$/gm)
           ?.at(-1);
