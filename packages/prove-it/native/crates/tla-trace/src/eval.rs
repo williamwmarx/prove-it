@@ -1188,9 +1188,10 @@ impl<'ir> Evaluator<'ir> {
             NodeKind::SetFilter { bound, predicate } => {
                 let set = self.evaluate(bound.set, context)?;
                 // `Tool`'s OPCODE_sso: TLC filters a reducible set at once, and keeps any other
-                // filter lazy, which the evaluator follows where it can't enumerate the set.
+                // filter lazy, which the evaluator follows where it can't enumerate the set, or
+                // can't tell: TLC asks no set here whether it is finite.
                 if !matches!(set, Value::Set(_) | Value::Interval(..))
-                    && (!is_enumerable(&set) || !is_finite(&set)?)
+                    && (!is_enumerable(&set) || !is_finite(&set).unwrap_or(false))
                 {
                     let names = match &bound.pattern {
                         Pattern::Name(name) => self.name(*name).to_string(),
@@ -2098,7 +2099,7 @@ impl<'ir> Evaluator<'ir> {
             // `Tool`'s OPCODE_fc keeps a function lazy unless its domain is reducible, which
             // the evaluator follows where it can't build the function.
             if !matches!(set, Value::Set(_) | Value::Interval(..))
-                && (!is_enumerable(&set) || !is_finite(&set)?)
+                && (!is_enumerable(&set) || !is_finite(&set).unwrap_or(false))
             {
                 let text = (
                     format!("[{} \\in ", self.name(name)),

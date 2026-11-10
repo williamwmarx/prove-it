@@ -541,6 +541,35 @@ fn prints_an_assumption_that_fails_to_evaluate() {
     }
 }
 
+#[test]
+fn prints_what_an_assumption_printed_before_it_failed_once() {
+    let spec = "---- MODULE Printed ----\nEXTENDS TLC, Integers\nVARIABLE x\nASSUME PrintT(1)\nASSUME PrintT(3) /\\ PrintT(2) /\\ 1 \\div 0 = 1\nInit == x = 0\nNext == x' = x\n====\n";
+    let expected = "\n1\n3\n2\nError: Evaluating assumption line 5, col 8 to line 5, col 45 of module Printed failed.\nThe second argument of \\div is 0.\nFinished in ";
+    // tla-front as the whole front end, where the search prints the assumptions as it evaluates
+    // them.
+    let (output, directory) = run_front("printed-native", spec, "INIT Init\nNEXT Next\n", &[]);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(10), "{text}");
+    assert!(text.contains(expected), "{text}");
+    std::fs::remove_dir_all(directory).expect("removed");
+    // A recorded front, which holds what TLC printed before the error.
+    let directory =
+        std::env::temp_dir().join(format!("prove-it-cli-printed-front-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    for (extension, contents) in [
+        ("tla", spec),
+        ("cfg", "INIT Init\nNEXT Next\n"),
+        ("front", "Starting... (2026-11-10 00:00:00)\n1\n3\n2\n"),
+    ] {
+        std::fs::write(directory.join(format!("Printed.{extension}")), contents).expect("a file");
+    }
+    let output = run(&directory, &["-noTE", "Printed"]);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(10), "{text}");
+    assert!(text.contains(&format!("00:00:00){expected}")), "{text}");
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
 const CDOT_IR: &[u8] = include_bytes!(
     "../../../../tests/conformance/ir/tlc/tlatools/org.lamport.tlatools/test-model/cdot/CdotWithContextA.ir"
 );
@@ -919,6 +948,40 @@ fn reports_a_constraint_that_fails_in_a_values_method_on_an_initial_state() {
         text.contains("in Stop\n\n\nReason:\nAttempted to enumerate a set of the form [D -> R],but the domain D:\nSTRING\ncannot be enumerated.\n1 states generated, 0 distinct states found, 0 states left on queue.\nThe depth of the complete state graph search is 1.\n"),
         "{text}"
     );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn reports_a_bound_that_filters_a_set_tlc_cant_enumerate() {
+    // The shape of MCEWD687a's TreeWithRoot: the bound is an operator whose definition filters
+    // Seq(S), which TLC keeps as it is until the quantifier enumerates it. The state that fails
+    // is one TLC has seen as it replays the expansion, which then ends quietly.
+    let spec = "---- MODULE Stop ----\nEXTENDS Naturals, Sequences\nVARIABLE x\nP(S) == {p \\in Seq(S) : p # <<>>}\nInit == x = 0\nNext == x' = (x + 1) % 3\nInv == x < 1 \\/ \\E p \\in P({1, 2}) : p[1] = 1\n====\n";
+    let (output, directory) = run_lowered(
+        "filter-bound",
+        spec,
+        "INIT Init\nNEXT Next\nINVARIANT Inv\n",
+    );
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(76), "{text}");
+    assert!(
+        text.contains("Error: Evaluating invariant Inv failed.\nAttempted to enumerate { x \\in S : p(x) } when S:\nSeq({1, 2})\nis not enumerable\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nState 2: <Next line 6, col 9 to line 6, col 24 of module Stop>\nx = 1\n\n2 states generated, 2 distinct states found, 0 states left on queue.\nThe depth of the complete state graph search is 2.\nThe average outdegree of the complete state graph is 1 (minimum is 1, the maximum 1 and the 95th percentile is 1).\n"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+    // A function over the filter is one TLC keeps lazy and applies by the filter's membership,
+    // which holds: TLC finds no error, and the binary doesn't report one.
+    let spec = spec.replace(
+        "\\E p \\in P({1, 2}) : p[1] = 1",
+        "[p \\in P({1}) |-> 1][<<1>>] = 1",
+    );
+    let (output, directory) = run_lowered(
+        "filter-function",
+        &spec,
+        "INIT Init\nNEXT Next\nINVARIANT Inv\n",
+    );
+    let text = stdout(&output);
+    assert!(!text.contains("Error:"), "{text}");
     std::fs::remove_dir_all(directory).expect("removed");
 }
 
