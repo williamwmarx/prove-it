@@ -190,7 +190,8 @@ impl<'ir> Rebuilder<'ir> {
         ending: Ending,
         is_checked: bool,
     ) -> Result<Trace, Unsupported> {
-        let Some(first) = self.rebuild_pass(store, states, actions, ending, is_checked)? else {
+        let Some(first) = self.rebuild_pass(store, states, actions, ending, is_checked, true)?
+        else {
             return Ok(Trace {
                 states: Vec::new(),
                 trace_output: Vec::new(),
@@ -207,7 +208,7 @@ impl<'ir> Rebuilder<'ir> {
             )
         });
         let again = if !matches!(ending, Ending::Lasso) && first.rebuilt.len() > 1 && is_effectful {
-            self.rebuild_pass(store, states, actions, ending, false)?
+            self.rebuild_pass(store, states, actions, ending, false, false)?
                 .map(|pass| {
                     pass.initial_output
                         .into_iter()
@@ -228,6 +229,7 @@ impl<'ir> Rebuilder<'ir> {
         actions: &[Option<u32>],
         ending: Ending,
         is_checked: bool,
+        is_first: bool,
     ) -> Result<Option<Pass>, Unsupported> {
         let evaluator = &mut self.evaluator;
         let ir = evaluator.ir;
@@ -275,6 +277,9 @@ impl<'ir> Rebuilder<'ir> {
         // TLC prints a violating state as it found it, not as it recovers a state, so it is the
         // candidate equal to the search's, whatever the VIEW or SYMMETRY.
         let is_held = matches!(ending, Ending::Violation);
+        // TLC's first rebuild of a violation's trace of two states prints the initial state as it
+        // holds it (`printTrace`), so the walk of the initial predicate sets no register of TLC's.
+        let is_initial_held = is_first && is_held && states.len() == 2;
         let key_of = |position: usize| {
             if is_held && position + 1 == states.len() {
                 &Key::State
@@ -285,6 +290,7 @@ impl<'ir> Rebuilder<'ir> {
         // The initial states draw from the generator startup left, which TLC never reseeds
         // there, so walking the whole initial predicate draws as the search drew.
         evaluator.random = is_drawing.then(|| JavaRandom::from_state(self.startup_random));
+        let registers = evaluator.registers.clone();
         let initial = find(
             evaluator,
             key_of(0),
@@ -293,6 +299,9 @@ impl<'ir> Rebuilder<'ir> {
             store,
             first,
         )?;
+        if is_initial_held {
+            evaluator.registers = registers;
+        }
         let Some(initial) = initial else {
             return unsupported("no initial state is the trace's first");
         };
@@ -371,12 +380,18 @@ impl<'ir> Rebuilder<'ir> {
         if is_held && is_reducing {
             // TLC finds the violating state among the successors by equality, which sorts it.
             last.iter().for_each(settle_deep);
-        } else if is_in_model(evaluator, &rebuilt)? {
-            settle_recovered(evaluator, &self.key, &rebuilt[rebuilt.len() - 1])?;
-        } else if is_held && is_checked {
-            // A violating state outside the model isn't fingerprinted, but TLC's checks of it
-            // sort what their comparisons reach.
-            check_violation(evaluator, &rebuilt)?;
+        } else {
+            // TLC's rebuild evaluates neither the constraints nor the invariants
+            // (`Tool.getState`): what these checks set of its registers is undone.
+            let registers = evaluator.registers.clone();
+            if is_in_model(evaluator, &rebuilt)? {
+                settle_recovered(evaluator, &self.key, &rebuilt[rebuilt.len() - 1])?;
+            } else if is_held && is_checked {
+                // A violating state outside the model isn't fingerprinted, but TLC's checks of it
+                // sort what their comparisons reach.
+                check_violation(evaluator, &rebuilt)?;
+            }
+            evaluator.registers = registers;
         }
         evaluator.printed.clear();
         Ok(Some(Pass {

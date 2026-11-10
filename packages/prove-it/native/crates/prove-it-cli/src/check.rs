@@ -64,7 +64,10 @@ pub fn run(args: &[String]) -> i32 {
         return not_native("reading the version of a tla2tools.jar");
     }
     match launch.main_class.as_str() {
-        "tlc2.TLC" => check_specs(&launch.args, &launch.java, true),
+        "tlc2.TLC" => match &launch.java.unmodelled_property {
+            Some(property) => not_native(&format!("the system property {property}")),
+            None => check_specs(&launch.args, &launch.java, true),
+        },
         "tla2sany.xml.XMLExporter" => not_native("tla2sany.xml.XMLExporter"),
         other => {
             eprintln!(
@@ -606,13 +609,6 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
     if args.has("-continue") {
         return report_not_native(printer, "-continue");
     }
-    // TLC checks no temporal property at the end under -lncheck off, which the binary doesn't follow.
-    if args
-        .first("-lncheck")
-        .is_some_and(|check| check.eq_ignore_ascii_case("off"))
-    {
-        return report_not_native(printer, "-lncheck off");
-    }
     let front = match read_front(
         spec_path,
         config_text.as_deref().unwrap_or_default(),
@@ -718,7 +714,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
     // the end.
     let is_liveness_periodic = !args
         .first("-lncheck")
-        .is_some_and(|check| ["final", "seqfinal", "off"].contains(&check.to_lowercase().as_str()));
+        .is_some_and(|check| ["final", "seqfinal"].contains(&check.to_lowercase().as_str()));
     let settings = Settings {
         is_violation_reported: true,
         workers,
@@ -1389,9 +1385,13 @@ fn print_violation(
     // and no statistics, since it checks the initial states before it searches.
     if let ViolationKind::InitialInvariant(_) | ViolationKind::InitialPredicate(_) = violation.kind
     {
+        // TLC checks the postconditions then, with the counts of the initial states it found,
+        // which the binary doesn't follow.
+        if !ir.model.postconditions.is_empty() {
+            return Err("a POSTCONDITION after an initial state's violation");
+        }
         let state = &trace.states.first().ok_or(NOT_IN_IR)?.text;
         printer.print(code, Level::Error, &format!("{text}\n{state}"));
-        print_postcondition_failure(printer, ir, trace.postconditions.as_ref());
         print_finished(printer, start);
         return Ok(exit_code);
     }

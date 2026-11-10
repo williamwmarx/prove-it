@@ -703,6 +703,11 @@ pub struct Compiler<'a> {
     /// Whether anything compiled may print, and whether it uses ToString, which ranks strings.
     pub is_printing: bool,
     pub is_ranking: bool,
+    /// Whether a variable is assigned a set TLC keeps lazy, and whether a set read out of the
+    /// state is enumerated in TLC's order: under a VIEW TLC never normalizes the first, so the
+    /// second would come in an order the store doesn't keep.
+    pub is_lazy_set_held: bool,
+    pub is_held_set_enumerated: bool,
     /// Whether the caller reports what the search finds itself (`Settings::is_violation_reported`),
     /// as the native checker does: only then does the engine follow what the interpreter wouldn't
     /// take a search over with, such as TLC's registers, and otherwise declines it as the
@@ -781,6 +786,8 @@ impl<'a> Compiler<'a> {
             is_diameter_read: false,
             is_printing: false,
             is_ranking: false,
+            is_lazy_set_held: false,
+            is_held_set_enumerated: false,
             is_native: false,
             workers: 1,
             is_lambda_built: false,

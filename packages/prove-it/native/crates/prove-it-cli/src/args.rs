@@ -21,7 +21,16 @@ pub struct Java {
     /// `java.io.tmpdir`, where TLC copies the standard modules it parses.
     pub temporary_directory: Option<String>,
     pub is_174: bool,
+    /// The first system property of TLC's that the binary doesn't model.
+    pub unmodelled_property: Option<String>,
 }
+
+/// Where TLC's classes name their system properties.
+const TLC_PROPERTY_NAMESPACES: [&str; 4] = ["tlc2.", "util.", "tla2sany.", "tlc."];
+
+/// The properties of TLC's that change nothing TLC prints: both only reach the execution
+/// statistics TLC reports home (TLC.java:1710, ExecutionStatisticsCollector.java:74 and 205).
+const SILENT_PROPERTIES: [&str; 2] = ["tlc2.TLC.ide", "util.ExecutionStatisticsCollector.id"];
 
 /// A Java launch: the main class, its arguments and the JVM's options.
 #[derive(Debug, PartialEq)]
@@ -54,7 +63,16 @@ pub fn get_java_launch(args: &[String]) -> Option<Launch> {
             java.temporary_directory = Some(directory.into());
         } else if let Some(version) = arg.strip_prefix("-Dtla-ts.tlc=") {
             java.is_174 = version == "1.7.4";
-        } else if !arg.starts_with("-D") && !arg.starts_with("-X") {
+        } else if let Some(property) = arg.strip_prefix("-D") {
+            let name = property.split_once('=').map_or(property, |(name, _)| name);
+            if TLC_PROPERTY_NAMESPACES
+                .iter()
+                .any(|namespace| name.starts_with(namespace))
+                && !SILENT_PROPERTIES.contains(&name)
+            {
+                java.unmodelled_property.get_or_insert_with(|| name.into());
+            }
+        } else if !arg.starts_with("-X") {
             let is_launch = index > 0 || JAVA_MAIN_CLASSES.contains(&arg.as_str());
             return is_launch.then(|| Launch {
                 main_class: arg.clone(),
@@ -159,12 +177,19 @@ impl Parsed {
                     }
                     Vec::new()
                 }
-                "-lncheck" => vec![take(
-                    args,
-                    &mut index,
-                    "expect a strategy such as final for -lncheck option.",
-                    is_tool,
-                )?],
+                "-lncheck" => {
+                    let strategy = take(
+                        args,
+                        &mut index,
+                        "expect a strategy such as final for -lncheck option.",
+                        is_tool,
+                    )?;
+                    // With off, TLC checks no temporal property (LiveCheck.java:238).
+                    if strategy.eq_ignore_ascii_case("off") {
+                        return Err(Stop::NotNative("-lncheck off".into()));
+                    }
+                    vec![strategy]
+                }
                 "-metadir" => vec![take(
                     args,
                     &mut index,
@@ -367,7 +392,22 @@ mod tests {
         assert_eq!(launch.main_class, "tlc2.TLC");
         assert_eq!(launch.args, strings(&["-tool", "Spec"]));
         assert_eq!(launch.java.libraries, strings(&["/a", "/b"]));
+        assert_eq!(launch.java.unmodelled_property, None);
         assert_eq!(get_java_launch(&strings(&["Spec.tla", "-tool"])), None);
+        let properties = get_java_launch(&strings(&[
+            "-Dtlc2.TLC.ide=vscode",
+            "-Dutil.ExecutionStatisticsCollector.id=abc",
+            "-Dfile.encoding=UTF-8",
+            "-Dtlc2.tool.fp.FPSet.impl=tlc2.tool.fp.MSBDiskFPSet",
+            "-Dtlc2.tool.ModelChecker.BAQueue=true",
+            "tlc2.TLC",
+            "Spec",
+        ]))
+        .expect("a launch");
+        assert_eq!(
+            properties.java.unmodelled_property.as_deref(),
+            Some("tlc2.tool.fp.FPSet.impl")
+        );
         let jar = get_java_launch(&strings(&["-jar", "tla2tools.jar", "Spec"])).expect("a jar");
         assert_eq!(jar.java.class_path.as_deref(), Some("tla2tools.jar"));
         assert_eq!(jar.args, strings(&["Spec"]));
@@ -493,6 +533,7 @@ mod tests {
             &["-dfid", "3", "Spec"],
             &["-DUMPTRACE", "json", "out.json", "Spec"],
             &["-fp", "1", "Spec"],
+            &["-lncheck", "OFF", "Spec"],
             &["-dump"],
             &["-dump", "class,Writer", "Spec"],
             &["", "Spec"],

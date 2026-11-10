@@ -145,6 +145,7 @@ fn reads_the_command_line_as_tlc() {
         (&["-simulate", "TCommit"], "the TLC option -simulate"),
         (&["-coverage", "1", "TCommit"], "the TLC option -coverage"),
         (&["-fp", "1", "TCommit"], "-fp 1"),
+        (&["-lncheck", "off", "TCommit"], "-lncheck off"),
         (&["TCommit.cfg"], "a module named as a configuration file"),
     ] {
         let output = run(&directory, &[&["tlc2.TLC"], args].concat());
@@ -155,6 +156,23 @@ fn reads_the_command_line_as_tlc() {
             format!("prove-it: not native yet: {what}\n")
         );
     }
+    let property = run(
+        &directory,
+        &[
+            "-Dtlc2.tool.ModelChecker.BAQueue=true",
+            "tlc2.TLC",
+            "TCommit",
+        ],
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&property.stderr),
+        "prove-it: not native yet: the system property tlc2.tool.ModelChecker.BAQueue\n"
+    );
+    let silent = run(
+        &directory,
+        &["-Dtlc2.TLC.ide=vscode", "tlc2.TLC", "TCommit"],
+    );
+    assert_eq!(silent.status.code(), Some(0), "{}", stdout(&silent));
     std::fs::remove_dir_all(directory).expect("removed");
 }
 
@@ -1165,6 +1183,64 @@ fn checks_assumptions_that_draw_in_an_argument_and_add_bags() {
 }
 
 #[test]
+fn declines_what_the_replay_doesnt_follow_of_a_state_tlc_cant_fingerprint() {
+    let declines = |test: &str, spec: &str, config: &str, reason: &str| {
+        let (output, directory) = run_lowered(test, spec, config);
+        let error = String::from_utf8_lossy(&output.stderr).into_owned();
+        assert!(error.contains(reason), "{}{error}", stdout(&output));
+        std::fs::remove_dir_all(directory).expect("removed");
+    };
+    // TLC fingerprints an initial state only where the constraints hold of it, and finds no
+    // error here.
+    declines(
+        "constrained-fingerprint",
+        "---- MODULE Stop ----\nEXTENDS Integers\nVARIABLES x, y\nInit == \\/ (x = SUBSET (1..31) /\\ y = 0) \\/ (x = 0 /\\ y = 1)\nNext == UNCHANGED <<x, y>>\nC == y = 1\n====\n",
+        "INIT Init\nNEXT Next\nCONSTRAINT C\n",
+        "a state TLC fingerprints only where its constraints hold",
+    );
+    // TLC's replay takes all of the action's successors before it fingerprints one, so it
+    // reports the assertion that fails after the successor it can't fingerprint.
+    declines(
+        "fingerprint-then-failure",
+        "---- MODULE Stop ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0\nNext == x = 0 /\\ \\E i \\in {1, 2} : x' = IF i = 1 THEN SUBSET (1..31) ELSE Assert(FALSE, \"boom\")\n====\n",
+        "INIT Init\nNEXT Next\n",
+        "an action that fails or prints after a successor TLC can't fingerprint",
+    );
+}
+
+#[test]
+fn declines_a_trace_through_a_set_tlc_streams_in_an_order_of_its_own() {
+    let declines = |test: &str, spec: &str, config: &str, reason: &str| {
+        let (output, directory) = run_lowered(test, spec, config);
+        let error = String::from_utf8_lossy(&output.stderr).into_owned();
+        assert!(error.contains(reason), "{}{error}", stdout(&output));
+        std::fs::remove_dir_all(directory).expect("removed");
+    };
+    // TLC prints 33 first: it streams the union in the union's order, not the normalized one.
+    declines(
+        "streamed-print",
+        "---- MODULE Stop ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLES x, n\nInit == x = {} /\\ n = 0\nNext == n < 2 /\\ x' \\in ((SUBSET {1, 2}) \\cup {{n + 3}}) /\\ PrintT(IF n + 3 \\in x' THEN 33 ELSE Cardinality(x')) /\\ Cardinality(x') = 1 /\\ n' = n + 1\nInv == n < 1\n====\n",
+        "INIT Init\nNEXT Next\nINVARIANT Inv\n",
+        "an effect under an assignment from a set TLC streams",
+    );
+    // Under the VIEW TLC keeps the first state it streams, x = {3}, whether a definition or a
+    // variable holds the union: the engine declines the second as it starts.
+    let reason = "several states TLC may take for the search's under VIEW or SYMMETRY";
+    declines(
+        "streamed-definition",
+        "---- MODULE Stop ----\nEXTENDS Integers, FiniteSets\nVARIABLES x, n\nS == (SUBSET {1, 2}) \\cup {{3}}\nInit == x = {} /\\ n = 0\nNext == n < 3 /\\ x' \\in S /\\ Cardinality(x') = 1 /\\ n' = n + 1\nInv == n < 2\nV == <<n>>\n====\n",
+        "INIT Init\nNEXT Next\nINVARIANT Inv\nVIEW V\n",
+        reason,
+    );
+    declines(
+        "streamed-variable",
+        "---- MODULE Stop ----\nEXTENDS Integers, FiniteSets\nVARIABLES x, n, s\nInit == x = {} /\\ n = 0 /\\ s = (SUBSET {1, 2}) \\cup {{3}}\nNext == n < 3 /\\ x' \\in s /\\ Cardinality(x') = 1 /\\ n' = n + 1 /\\ s' = s\nInv == n < 2\nV == <<n>>\n====\n",
+        "INIT Init\nNEXT Next\nINVARIANT Inv\nVIEW V\n",
+        "enumerating a lazy set of the state under a VIEW",
+    );
+}
+
+#[test]
 fn reads_and_sets_tlcs_registers() {
     // TLCCache evaluates Counted once, TLCFP is TLC's fingerprint under -fp 0, which the
     // interpreter and TLC print the same, and a Java property TLC hasn't set is its key.
@@ -1345,6 +1421,123 @@ fn declines_a_postcondition_or_alias_tlc_computes_as_it_starts() {
 }
 
 #[test]
+fn declines_an_alias_that_prints_as_it_fails() {
+    // TLC prints what the alias printed before the state whose alias fails, which the binary
+    // doesn't place.
+    let spec = "---- MODULE Stop ----\nEXTENDS Naturals, TLC\nVARIABLES x\nInit == x = 0\nNext == x' = x + 1\nAl == [x |-> x, z |-> IF x = 0 THEN TRUE ELSE PrintT(\"hello\") /\\ Assert(FALSE, \"boom\")]\nInv == x < 1\n====\n";
+    let (output, directory) = run_lowered(
+        "alias-prints",
+        spec,
+        "INIT Init\nNEXT Next\nINVARIANT Inv\nALIAS Al\n",
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("not native yet: an ALIAS that prints"),
+        "{}",
+        stdout(&output)
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn keeps_the_registers_as_tlc_rebuilds_a_violations_trace() {
+    // TLC's first rebuild doesn't walk the initial predicate of a trace of two states, and no
+    // rebuild evaluates the constraints: only the search and the second rebuild, for the
+    // postcondition, set the register there.
+    let post = "Post == PrintT(<<\"post\", TLCGet(1)>>)\n====\n";
+    let cases = [
+        (
+            "Init == /\\ TLCSet(1, TLCGet(1) + 1) /\\ x \\in {0, 1}\nNext == x' = x + 1\nInv == x < 2\n",
+            "",
+            "<<\"post\", 2>>",
+        ),
+        (
+            "Init == x = 0\nNext == x' = x + 1\nC == TLCSet(1, TLCGet(1) + 1)\nInv == x < 3\n",
+            "CONSTRAINT C\n",
+            "<<\"post\", 4>>",
+        ),
+    ];
+    for (definitions, constraint, printed) in cases {
+        let spec = format!(
+            "---- MODULE Stop ----\nEXTENDS Naturals, TLC\nVARIABLE x\nASSUME TLCSet(1, 0)\n{definitions}{post}"
+        );
+        let config =
+            format!("INIT Init\nNEXT Next\nINVARIANT Inv\n{constraint}POSTCONDITION Post\n");
+        let (output, directory) = run_lowered("registers", &spec, &config);
+        let text = stdout(&output);
+        assert!(text.contains(&format!("\n{printed}\n")), "{text}");
+        std::fs::remove_dir_all(directory).expect("removed");
+    }
+}
+
+#[test]
+fn prints_the_counterexample_records_in_tlcs_order() {
+    // TLC interns the field names of its counterexample's records as RecordValue loads, after the
+    // spec's strings and in the order declared, so a name the spec has comes first.
+    let spec = "---- MODULE Stop ----\nEXTENDS Naturals, TLC, TLCExt\nVARIABLES x\nInit == x = 0\nA(n) == x' = x + n\nDummy == <<\"parameters\", \"context\", \"endLine\">>\nNext == \\E n \\in {1} : A(n)\nInv == x < 1\nPost == PrintT(CounterExample.action) /\\ TRUE\n====\n";
+    let (output, directory) = run_lowered(
+        "counterexample",
+        spec,
+        "INIT Init\nNEXT Next\nINVARIANT Inv\nPOSTCONDITION Post\n",
+    );
+    let text = stdout(&output);
+    assert!(
+        text.contains("[ parameters |-> <<\"n\">>,\n       context |-> [n |-> 1],\n       name |-> \"A\",\n       location |->\n           [ endLine |-> 5,\n             beginLine |-> 5,\n             beginColumn |-> 9,\n             endColumn |-> 18,\n             module |-> \"Stop\" ] ]"),
+        "{text}"
+    );
+    // TLC builds the counterexample's states from an ALIAS, which the binary doesn't follow.
+    let aliased = spec.replace("Inv ==", "Al == [x |-> x, z |-> 0]\nInv ==");
+    let (output, aliased_directory) = run_lowered(
+        "counterexample-alias",
+        &aliased,
+        "INIT Init\nNEXT Next\nINVARIANT Inv\nPOSTCONDITION Post\nALIAS Al\n",
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("reads the counterexample of a model with an ALIAS"),
+        "{}",
+        stdout(&output)
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+    std::fs::remove_dir_all(aliased_directory).expect("removed");
+}
+
+#[test]
+fn declines_a_postcondition_after_an_initial_states_violation() {
+    // TLC checks the postconditions after an initial state violates an invariant, with counts of
+    // the initial states the binary doesn't follow (TLC prints <<"post", 2>> here).
+    let spec = "---- MODULE Stop ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x \\in {0, 1}\nNext == x' = x + 1\nInv == x < 1\nPost == PrintT(<<\"post\", TLCGet(\"distinct\")>>)\n====\n";
+    let (output, directory) = run_lowered(
+        "initial-post",
+        spec,
+        "INIT Init\nNEXT Next\nINVARIANT Inv\nPOSTCONDITION Post\n",
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("a POSTCONDITION after an initial state's violation"),
+        "{}",
+        stdout(&output)
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn exits_by_the_code_of_an_evalexception_in_the_next_states() {
+    // TLC's replay of the expansion exits by the EvalException's code: a general error, 255, for
+    // a division by zero, after the trace and the call stack.
+    let spec = "---- MODULE Stop ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = (IF x = 1 THEN 1 % 0 ELSE x + 1)\n====\n";
+    let (output, directory) = run_lowered("eval-exit", spec, "INIT Init\nNEXT Next\n");
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(255), "{text}");
+    assert!(
+        text.contains(
+            "Error: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n"
+        ),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
 fn prints_what_the_expansion_printed_before_its_violation() {
     // TLC checks each successor as it finds it, so it prints what finding the violating one
     // printed before it reports the violation, as TLC 1.8 prints this spec's 1.
@@ -1469,8 +1662,9 @@ fn reports_a_division_by_zero_after_what_the_expansion_printed() {
     let output = run(&directory, &["-workers", "1", "D"]);
     let text = stdout(&output);
     // As TLC prints it: the EvalException's message after the expansion's print, the trace, the
-    // replay's print and the call stack.
-    assert_eq!(output.status.code(), Some(75), "{text}");
+    // replay's print and the call stack, exiting by the EvalException's code (255, as TLC
+    // d8fb231 exits).
+    assert_eq!(output.status.code(), Some(255), "{text}");
     assert!(
         text.contains("\"step\"\nError: The second argument of \\div is 0.\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 1\n\n\"step\"\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 42 in D\n1. Line 5, column 12 to line 5, column 42 in D\n2. Line 5, column 12 to line 5, column 25 in D\n3. Line 5, column 30 to line 5, column 42 in D\n4. Line 5, column 35 to line 5, column 42 in D\n\n\n1 states generated, 1 distinct states found, 0 states left on queue.\n"),
         "{text}"
