@@ -69,7 +69,7 @@ const PURE_BUILTINS: [&str; 19] = [
 const MAXIMUM_POWER_SET: u32 = 20;
 
 /// A union, an intersection or a difference with an operand that isn't a set, which TLC keeps
-/// lazy or builds element by element: the engine's limit, for the caller to follow.
+/// lazy or builds element by element, failing only where it tests that operand for an element.
 pub(crate) const NON_SET_OPERAND: &str = "a set operation on a value that isn't a set";
 
 fn expect_sets(machine: &Machine<'_>, left: Id, right: Id) -> Outcome<(Id, Id)> {
@@ -1866,8 +1866,7 @@ impl Compiler<'_> {
         }
         // TLC builds a union, an intersection or a difference with an operand that isn't a set
         // lazily or element by element (OPCODE_cup, OPCODE_cap, OPCODE_setdiff), and fails only
-        // where it tests that operand for an element, so the engine leaves such a set to the
-        // caller.
+        // where it tests that operand for an element.
         let operation: Binary = match name {
             "\\cup" => |machine, left, right| {
                 let (left, right) = expect_sets(machine, left, right)?;
