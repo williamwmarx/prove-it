@@ -4117,3 +4117,43 @@ fn prints_a_lasso_that_ends_in_the_first_state_of_its_cycle() {
     }
     std::fs::remove_dir_all(directory).expect("removed");
 }
+
+#[test]
+fn checks_the_postconditions_once_a_stuttering_lasso_is_printed() {
+    // TLC checks the postconditions once it has printed where a lasso closes, with the action of
+    // the last step closing a lasso that stutters at the first state of its cycle, here A3.
+    let spec = "---- MODULE Stop ----\nEXTENDS TLC, TLCExt\nVARIABLES x, y\nvars == <<x, y>>\nInit == x \\in {0, 1} /\\ y = 0\nA0 == x = 1 /\\ y = 0 /\\ x' = 1 /\\ y' \\in {0, 1}\nA1 == x = 1 /\\ x' = 0 /\\ y' = 1\nA2 == x = 1 /\\ y = 0 /\\ x' = 0 /\\ y' = y\nA3 == x = 0 /\\ x' = 1 /\\ y' \\in {0, 0}\nNext == A0 \\/ A1 \\/ A2 \\/ A3\nSpec == Init /\\ [][Next]_vars /\\ WF_vars(Next)\nP0 == []<>(x # 0)\nP1 == []((x = 0) => <>[](y = 1))\nPost == PrintT(<<\"closing\", {e[2].name : e \\in {f \\in CounterExample.action : f[1][1] = 7}}>>)\n====\n";
+    let directory =
+        std::env::temp_dir().join(format!("prove-it-cli-lasso-post-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    std::fs::write(directory.join("Stop.tla"), spec).expect("a spec");
+    std::fs::write(
+        directory.join("Stop.cfg"),
+        "SPECIFICATION Spec\nPROPERTY P0\nPROPERTY P1\nPOSTCONDITION Post\n",
+    )
+    .expect("a configuration");
+    for check in [&[][..], &["-lncheck", "final"][..]] {
+        for threads in ["1", "4"] {
+            let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
+                .args([
+                    "tlc2.TLC", "-noTE", "-workers", "1", "-fp", "0", "-seed", "0",
+                ])
+                .args(check)
+                .arg("Stop")
+                .current_dir(&directory)
+                .env("PROVE_IT_WORKERS", threads)
+                .env("PROVE_IT_SHARED_LEVEL", "1")
+                .output()
+                .expect("the binary runs");
+            let text = stdout(&output);
+            assert_eq!(output.status.code(), Some(13), "{threads}: {text}");
+            assert!(
+                text.contains(
+                    "/\\ x = 1\n/\\ y = 0\n\nState 3: Stuttering\n<<\"closing\", {\"A3\"}>>\n"
+                ),
+                "{check:?} {threads}: {text}"
+            );
+        }
+    }
+    std::fs::remove_dir_all(directory).expect("removed");
+}

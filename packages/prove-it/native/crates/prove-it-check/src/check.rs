@@ -1515,12 +1515,13 @@ fn print_violation(
     printer.print(heading_code, Level::Error, heading);
     print_states(printer, &trace, &labels);
     // TLC rebuilds a violation's trace again for the counterexample the postconditions read,
-    // so what that prints comes before what they print.
+    // so what that prints comes before what they print. TLC checks them on a lasso once it has
+    // printed where the lasso closes (`LiveWorker.printTrace`).
     let postcondition_output = trace
         .postconditions
         .iter()
         .flat_map(|checked| &checked.printed);
-    if lasso.is_some() || is_counterexample {
+    if lasso.is_none() && is_counterexample {
         for line in postcondition_output.clone() {
             printer.line(line);
         }
@@ -1528,7 +1529,11 @@ fn print_violation(
     match lasso {
         None if is_counterexample => {}
         None => {
-            for line in trace.trace_output.iter().chain(postcondition_output) {
+            for line in trace
+                .trace_output
+                .iter()
+                .chain(postcondition_output.clone())
+            {
                 printer.line(line);
             }
         }
@@ -1580,6 +1585,11 @@ fn print_violation(
                     );
                 }
             }
+        }
+    }
+    if lasso.is_some() {
+        for line in postcondition_output {
+            printer.line(line);
         }
     }
     if let Some((accepted, headline, labels)) = accepted {
