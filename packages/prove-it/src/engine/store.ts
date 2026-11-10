@@ -372,6 +372,15 @@ const hasUntypedModelKey = (id: number) => {
   return false;
 };
 
+// Whether `record` is a record and `fn` has an untyped model value among its keys. A record's
+// first key is a string, and such a function's a model value, so the first keys decide most pairs
+// without reading the rest.
+const isRecordBesideModelKey = (fn: number, record: number) =>
+  kinds[heap[payloads[fn]]] === KIND_MODEL &&
+  kinds[heap[payloads[record]]] === KIND_STRING &&
+  isRecordId(record) &&
+  hasUntypedModelKey(fn);
+
 const checkIntervalKeys = (left: number, right: number) => {
   if (
     sizes[left] > 0 &&
@@ -396,10 +405,7 @@ const compareFunctions = (left: number, right: number) => {
     }
     return size - rightSize;
   }
-  if (
-    (hasUntypedModelKey(left) && isRecordId(right)) ||
-    (hasUntypedModelKey(right) && isRecordId(left))
-  ) {
+  if (isRecordBesideModelKey(left, right) || isRecordBesideModelKey(right, left)) {
     return bail("a record compared with a function of its size over a model value");
   }
   checkIntervalKeys(left, right);
