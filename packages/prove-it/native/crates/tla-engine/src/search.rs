@@ -2668,9 +2668,16 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 if is_shared && threads > 1 {
                     threads_used = threads_used.max(threads);
                     if workers.is_empty() {
+                        // The memo tables of the search's machine and its workers' share one
+                        // machine's room, so that memory doesn't grow with the threads.
+                        machine.share_memo(thread_count);
                         workers = (0..thread_count)
                             .map(|_| Worker {
-                                machine: Machine::new(&program, Store::new()),
+                                machine: {
+                                    let mut worker = Machine::new(&program, Store::new());
+                                    worker.share_memo(thread_count);
+                                    worker
+                                },
                                 fingerprints: Fingerprints::default(),
                                 canonicalizer: search
                                     .canonicalizer
