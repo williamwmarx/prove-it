@@ -317,22 +317,44 @@ fn print_call_stack(printer: &mut Printer, ir: &Ir, call_stack: &[SourceRange]) 
 }
 
 /// Prints TLC's report of the assumption at `position` that failed to evaluate as TLC started,
-/// after what it printed before it failed, and returns the status TLC exits with, or why the run
-/// isn't native yet. TLC prints no statistics, since it hasn't searched.
+/// after what the assumptions printed before it failed that the run hasn't, and returns the
+/// status TLC exits with, or why the run isn't native yet. `printed` is what the run printed of
+/// the assumptions, which must be what TLC prints first; none where a recorded front printed
+/// it all. TLC prints no statistics, since it hasn't searched.
 pub fn print_assumption_failure(
     printer: &mut Printer,
     ir: &Ir,
     position: u32,
+    printed: Option<&[String]>,
     workers: usize,
     start: Instant,
 ) -> Result<i32, String> {
-    let failure = on_search_stack(|| {
-        let mut rebuilder = Rebuilder::new(ir)?;
-        rebuilder.set_workers(workers);
-        rebuilder.evaluate_assumption(position)
+    let is_tool = printer.is_tool;
+    let (failure, mut expected) = on_search_stack(|| {
+        let new_rebuilder = || {
+            Rebuilder::new(ir).map(|mut rebuilder| {
+                rebuilder.set_workers(workers);
+                rebuilder
+            })
+        };
+        let failure = new_rebuilder()?.evaluate_assumption(position)?;
+        // What TLC prints of the assumptions before this one, which hold, and of this one.
+        let mut expected = Vec::new();
+        if printed.is_some() {
+            for before in 0..position {
+                let checked = new_rebuilder()?.check_assumption(before, is_tool)?;
+                expected.extend(checked.printed.iter().map(|print| format_print(print)));
+            }
+            expected.extend(failure.printed.iter().map(|print| format_print(print)));
+        }
+        Ok((failure, expected))
     })?;
-    for print in &failure.printed {
-        printer.line(&format_print(print));
+    let printed = printed.unwrap_or_default();
+    if !expected.starts_with(printed) {
+        return Err("the assumptions printing other than TLC prints".into());
+    }
+    for text in &expected.split_off(printed.len()) {
+        printer.line(text);
     }
     let message = if printer.is_tool {
         &failure.tool_message

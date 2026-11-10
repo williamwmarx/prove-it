@@ -302,6 +302,8 @@ struct Relay<'ir> {
     /// What the assumptions printed as the store words it, or as the trace evaluator printed an
     /// assumption the engine left to it, from `startup_done` on.
     assumed_worded: Vec<Option<String>>,
+    /// What the run printed of the assumptions, from `startup_done` on.
+    assumed_printed: Vec<String>,
     /// What the trace evaluator finds the assumptions print, in order, where the store forgot how
     /// TLC built a value one prints.
     assumed_texts: Option<Option<Vec<String>>>,
@@ -398,6 +400,7 @@ impl Reporter for Relay<'_> {
         let worded = format_printed(store, values);
         let Some(worded_prints) = self.startup_worded.as_mut() else {
             let printed = self.word_assumed(worded);
+            self.assumed_printed.extend(printed.clone());
             let _ = self.sender.send(Event::Print(printed));
             return;
         };
@@ -458,6 +461,7 @@ impl Reporter for Relay<'_> {
             for print in &checked.printed {
                 let text = format_print(print);
                 self.assumed_worded.push(Some(text.clone()));
+                self.assumed_printed.push(text.clone());
                 let _ = self.sender.send(Event::Print(Some(text)));
             }
         }
@@ -729,7 +733,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
     // When the check of the temporal properties part way through the search that found a
     // counterexample started.
     let mut checking = None;
-    let outcome = std::thread::scope(|scope| {
+    let (outcome, assumed_printed) = std::thread::scope(|scope| {
         let ir = &ir;
         let searching = std::thread::Builder::new()
             .stack_size(SEARCH_STACK_BYTES)
@@ -743,10 +747,12 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                     startup_messages,
                     startup_worded: Some(Vec::new()),
                     assumed_worded: Vec::new(),
+                    assumed_printed: Vec::new(),
                     assumed_texts: None,
                     startup_texts: None,
                 };
-                search(ir, &settings, &mut relay)
+                let outcome = search(ir, &settings, &mut relay);
+                (outcome, relay.assumed_printed)
             })
             .expect("a thread for the search");
         for event in receiver {
@@ -924,7 +930,9 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
             return report_not_native(printer, &format!("the engine declined: {reason}"));
         }
         SearchOutcome::AssumptionFailed { position } => {
-            return print_assumption_failure(printer, &ir, position, workers, start)
+            // A recorded front holds what the assumptions printed.
+            let printed = is_startup_printed.then_some(assumed_printed.as_slice());
+            return print_assumption_failure(printer, &ir, position, printed, workers, start)
                 .unwrap_or_else(|why| {
                     report_not_native(
                         printer,
