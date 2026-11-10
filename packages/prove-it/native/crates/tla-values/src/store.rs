@@ -551,7 +551,8 @@ impl Store {
         id
     }
 
-    fn is_kept_lazy(&self, id: Id) -> bool {
+    /// Whether a value is a function TLC keeps lazy or holds one, which equality builds.
+    pub fn is_kept_lazy(&self, id: Id) -> bool {
         let meta = self.meta(id);
         meta.kind == KIND_LAZY_FUNCTION || meta.flags & HOLDS_LAZY != 0
     }
