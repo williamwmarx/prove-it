@@ -39,6 +39,7 @@ pub(crate) enum Operator {
 
 /// The interpreter's value of a set: a normalized set (TLC's SetEnumValue), or one of the sets
 /// TLC implements lazily.
+#[derive(Clone)]
 pub(crate) enum Lazy {
     Set(Id),
     /// Nat, Int or STRING, which TLC tests for membership and can't enumerate.

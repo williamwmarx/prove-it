@@ -783,6 +783,14 @@ TypeScript CLI on the Rust backend. Fixed, each with a test in `prove-it-cli/tes
 - a value that holds a function TLC keeps lazy compared with itself or looked for in a set: the
   store's equal ids say nothing of what TLC builds to compare. Not native (`HOLDS_LAZY`);
 - a later bound's set, which TLC evaluates though an earlier bound is empty (`Tool.contexts`).
+  The engine first did so by evaluating the later sets ahead of the first and then again for
+  each binding, so a set that reads a register (through `TLCCache`) another set writes saw it
+  out of order. A quantifier, a set map and a function construction of several bounds now
+  evaluate each set once, in the order written, `a, b \in S` sharing one evaluation of S, and
+  then bind the first bound fastest, as `ContextEnumerator` and `FcnParams.Enumerator` do; they
+  bound the last fastest, so a body FALSE at `<<2, 1>>` and failing at `<<1, 2>>` failed. A
+  function TLC builds at once is built over the sets its lazy form evaluated, not over sets
+  evaluated again.
 
 ### Open: the depth TLC's stack allows
 

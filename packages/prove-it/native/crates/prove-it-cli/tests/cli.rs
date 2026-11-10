@@ -1498,6 +1498,39 @@ fn applies_the_functions_tlc_keeps_lazy() {
 }
 
 #[test]
+fn binds_several_bounds_in_tlcs_order() {
+    // TLC evaluates each bound's set once, in the order written, then binds the first bound
+    // fastest (`Tool.contexts`, `ContextEnumerator`): Inv is FALSE at <<2, 1>> before it fails to
+    // evaluate at <<1, 2>>, whichever way the sets are written.
+    for (test, bounds) in [
+        ("bound-order", "a \\in {1, 2}, b \\in {1, 2 + x}"),
+        ("bound-order-shared", "a, b \\in 1..(2 + x)"),
+    ] {
+        let spec = format!(
+            "---- MODULE Stop ----\nEXTENDS Integers\nVARIABLE x\nInit == x = 0\nNext == x' = x\nInv == \\A {bounds} : ~(a = 2 /\\ b = 1) /\\ (a = 1 /\\ b = 2 => 1 \\div 0 = 0)\n====\n"
+        );
+        let (output, directory) = run_lowered(test, &spec, "INIT Init\nNEXT Next\nINVARIANT Inv\n");
+        let text = stdout(&output);
+        assert_eq!(output.status.code(), Some(12), "{text}");
+        assert!(
+            text.contains("Error: Invariant Inv is violated by the initial state:\nx = 0\n"),
+            "{text}"
+        );
+        std::fs::remove_dir_all(directory).expect("removed");
+    }
+    // The first set sets the register the second reads, so b = 1 and x is TRUE.
+    let spec = "---- MODULE Stop ----\nEXTENDS TLC, TLCExt\nVARIABLE x\nInit == /\\ TLCSet(0, {0}) /\\ x = (\\E a \\in {TLCCache(TLCSet(0, {1}), 0)}, b \\in TLCCache(TLCGet(0), 1) : b = 1)\nNext == x' = x\nInv == x = FALSE\n====\n";
+    let (output, directory) = run_lowered(
+        "bound-register",
+        spec,
+        "INIT Init\nNEXT Next\nINVARIANT Inv\n",
+    );
+    let text = stdout(&output);
+    assert!(!text.contains("No error has been found"), "{text}");
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
 fn tests_the_domain_of_a_function_tlc_keeps_lazy_as_it_was_built() {
     // TLC tests the domain as it applies the function, in the context the function was built in
     // (`FcnLambdaValue.apply`), where a filter's predicate reads k, and tests Seq(S) and a union
