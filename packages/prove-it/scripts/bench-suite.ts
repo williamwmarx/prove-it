@@ -40,7 +40,7 @@ import { availableParallelism, cpus, loadavg, release, tmpdir, totalmem } from "
 import { dirname, join } from "node:path";
 
 import { ADDON_FILE } from "../src/engine/native";
-import { EXPECTED_PATH, getOption, LIBRARY_PATH, linkLibraryModules } from "./corpora";
+import { EXPECTED_PATH, getOption, LIBRARY_PATH, linkLibraryModules, TLC_SEED } from "./corpora";
 
 interface SuiteModel {
   id: string;
@@ -49,7 +49,8 @@ interface SuiteModel {
   config: string;
   style: string;
   isUsingLibrary?: boolean;
-  // TLC's result on a model outside the conformance corpora, which expected.json doesn't hold.
+  // TLC's result where expected.json doesn't hold it, or holds it without counts: under the suite's
+  // options, which fix the seed.
   expected?: ExpectedResult;
 }
 
@@ -231,11 +232,14 @@ const parseTlaRsOutput = (stdout: string, stderr: string): Outcome => {
 };
 
 // TLC's options, which the native binary takes too: the differential's, so the binary prints what
-// TLC prints, without its seed.
+// TLC prints. A model that draws random values, such as with RandomElement, draws the same ones on
+// every run and in every checker under the fixed seed.
 const getTlcOptions = (workers: string, model: SuiteModel, metadataDirectory: string) => [
   "-workers",
   workers,
   "-nowarning",
+  "-seed",
+  String(TLC_SEED),
   "-fp",
   "0",
   "-lncheck",
@@ -635,7 +639,7 @@ const RECORDED_VERDICTS: Record<string, string> = {
 const isTlcRequested = checkers.some((checker) => checker.name === "tlc");
 
 const results = models.map((model, index) => {
-  const expected = expectedById.get(model.id) ?? model.expected;
+  const expected = model.expected ?? expectedById.get(model.id);
   const recorded: Outcome | undefined =
     expected?.distinctStates === undefined
       ? undefined
