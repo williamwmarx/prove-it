@@ -1,0 +1,3 @@
+# Every text file checks out with LF line ends, on Windows too: the tests compare the binary's
+# output against fixtures byte for byte, and the binary embeds the standard modules' sources.
+* text=auto eol=lf
