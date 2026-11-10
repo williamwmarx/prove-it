@@ -2,13 +2,15 @@
 // test/tla2sany/semantic/error_corpus, each a SANY error, and corpus, which SANY accepts, each with
 // an empty configuration, and counts the specs on which the binary prints what TLC prints, declines,
 // or differs. TLC runs live, from the classpath of a tla2tools build; the recorded gate comes with
-// the port of SANY's generator to tla-front (native/design/front.md).
-// Usage: bun scripts/sany-corpus.ts --tlaplus <clone> --classpath <tla2tools> [--native <binary>]
+// the port of SANY's generator to tla-front (native/design/front.md). `--specs` runs the specs of
+// another directory instead, such as tests/fixtures/recursive-shapes.
+// Usage: bun scripts/sany-corpus.ts (--tlaplus <clone> | --specs <directory>) --classpath <tla2tools>
+//   [--native <binary>]
 
 import { spawnSync } from "node:child_process";
 import { cpSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 
 import { getTranscript } from "./normalize-output";
 
@@ -18,10 +20,11 @@ const getOption = (name: string) => {
 };
 
 const tlaplus = getOption("--tlaplus");
+const specDirectory = getOption("--specs");
 const classpath = getOption("--classpath");
-if (tlaplus === undefined || classpath === undefined) {
+if ((tlaplus === undefined) === (specDirectory === undefined) || classpath === undefined) {
   console.error(
-    "usage: bun scripts/sany-corpus.ts --tlaplus <clone> --classpath <tla2tools> [--native <binary>]",
+    "usage: bun scripts/sany-corpus.ts (--tlaplus <clone> | --specs <directory>) --classpath <tla2tools> [--native <binary>]",
   );
   process.exit(2);
 }
@@ -30,7 +33,6 @@ const native = resolve(
   getOption("--native") ?? join(import.meta.dirname, "../native/target/release/prove-it"),
 );
 const ARGUMENTS = ["-nowarning", "-noGenerateSpecTE", "-workers", "1", "-fp", "0", "-seed", "0"];
-const SEMANTIC = join(tlaplus, "tlatools/org.lamport.tlatools/test/tla2sany/semantic");
 
 // What a run printed, with what differs between two runs of the same spec rewritten, and without
 // the JVM's note of the options it was given. TLC built as a directory of classes reads the
@@ -46,8 +48,13 @@ const run = (command: string, args: string[], directory: string) => {
 };
 
 const counts = { same: 0, declined: 0, differs: 0 };
-for (const corpus of ["error_corpus", "corpus"]) {
-  const source = join(SEMANTIC, corpus);
+const semantic = join(tlaplus ?? "", "tlatools/org.lamport.tlatools/test/tla2sany/semantic");
+const corpora =
+  specDirectory === undefined
+    ? ["error_corpus", "corpus"].map((corpus) => join(semantic, corpus))
+    : [resolve(specDirectory)];
+for (const source of corpora) {
+  const corpus = basename(source);
   const specs = readdirSync(source).filter((file) => file.endsWith(".tla"));
   for (const spec of specs.toSorted()) {
     const name = spec.slice(0, -".tla".length);
