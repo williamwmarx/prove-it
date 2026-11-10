@@ -1088,3 +1088,13 @@ as Integers does.
   for a trace of two states or more `<Spec>_TTrace_<epoch>.tla` and its path after `Finished in`.
 - **The TypeScript interpreter** writes neither file, and in this mode it keeps Naturals' `>=`
   wording (`getTraceSpecArithmetic`). It is retired with the interpreter (fallback.md, S4).
+
+## The tokens of a dumped trace
+
+- A `.bin` trace dump (`tla-trace`'s `TraceDump::to_tlc`, cli.md's "-dumpTrace") equals TLC's but
+  for the token each `UniqueString` carries, TLC's intern number of the text in that run, which no
+  other run reproduces. TLC's reader skips it and interns the characters again:
+  `_TLCTrace.ioDeserialize` reads with `ValueInputStream.read(Map)`, which calls `readExternal`
+  (ValueInputStream.java 110-111, 118), whose strings and record names go through
+  `UniqueString.readExternal` (UniqueString.java 336-342: the token and the slot skipped as
+  "invalid for the given internTbl"). The dump numbers each text in the order it first writes it.
