@@ -2675,6 +2675,26 @@ describe("evaluation errors match TLC", () => {
     expect(result.status).toBe("success");
   });
 
+  it.each([
+    ["Nat", "Nat"],
+    ["Seq({1})", "Seq({1})"],
+    ["[a : {1}]", "{[a |-> 1]}"],
+    ["{1} \\X {1}", "{<<1, 1>>}"],
+  ])("rejects a typed model value's membership in %s", async (set, shown) => {
+    const result = await checkModule(`CONSTANT m\nASSUME m \\in ${set}`, "CONSTANT m = A_b");
+    expect(result.status).toBe("assumption-violation");
+    expect(result.violation?.message).toBe(
+      `Attempted to check if the typed model value A_b is an element of\n${shown}`,
+    );
+  });
+
+  it("rejects a typed model value's membership in an interval", async () => {
+    const result = await checkModule("CONSTANT m\nASSUME m \\in 1..3", "CONSTANT m = A_b");
+    expect(result.violation?.message).toBe(
+      "Attempted to check if the value:\nA_b\nis in the integer interval 1..3",
+    );
+  });
+
   it.each(['"a" \\in Nat', "1 \\in STRING", "{} \\in 1..4", "FALSE \\in Int"])(
     "rejects %s",
     async (membership) => {
