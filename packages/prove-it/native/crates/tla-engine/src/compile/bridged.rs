@@ -75,12 +75,18 @@ impl Compiler<'_> {
         if operators.len() != expected {
             return unsupported(format!("{name} of an operator where it takes a value"));
         }
-        if name == "BagOfAll" && operators[0].is_literal {
-            // TLC passes an operator whose body is a literal to Bags.java as the literal.
-            return Ok(Some(leaf(
-                eval(|_| Err(Bail("BagOfAll of a literal"))),
-                footprint,
-            )));
+        if operators
+            .first()
+            .is_some_and(|operator| operator.is_literal)
+        {
+            // TLC passes an operator whose body is a literal to Bags.java and TLC.java as the
+            // literal.
+            let reason = if name == "BagOfAll" {
+                "BagOfAll of a literal"
+            } else {
+                "SortSeq of a literal"
+            };
+            return Ok(Some(leaf(eval(move |_| Err(Bail(reason))), footprint)));
         }
         Ok(Some(Compiled {
             is_costly: true,
@@ -195,7 +201,8 @@ fn sub_seq(machine: &mut Machine<'_>, args: &[Id], _: &[Applier]) -> Outcome<Id>
     Ok(sub_seq_of(machine, args[0], from, to))
 }
 
-// TLC inserts each element before the first one sorted so far that it precedes.
+// TLC's `SortSeq`: an insertion sort, which moves each element back past those sorted before it
+// while it precedes them, and fails on a comparison that isn't a boolean.
 fn sort_seq(machine: &mut Machine<'_>, args: &[Id], operators: &[Applier]) -> Outcome<Id> {
     let sequence = args[0];
     if machine.store.kind_of(sequence) != KIND_TUPLE {
@@ -206,10 +213,11 @@ fn sort_seq(machine: &mut Machine<'_>, args: &[Id], operators: &[Applier]) -> Ou
     for index in 0..machine.store.size_of(sequence) {
         let element = machine.store.get_range_value(sequence, index);
         let mut position = sorted.len();
-        for (at, &existing) in sorted.iter().enumerate() {
-            if precedes.apply(machine, &[element, existing])? == TRUE {
-                position = at;
-                break;
+        while position > 0 {
+            match precedes.apply(machine, &[element, sorted[position - 1]])? {
+                TRUE => position -= 1,
+                FALSE => break,
+                _ => return Err(Bail("a SortSeq comparison that isn't a boolean")),
             }
         }
         sorted.insert(position, element);

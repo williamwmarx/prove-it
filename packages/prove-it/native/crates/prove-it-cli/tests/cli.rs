@@ -5305,3 +5305,106 @@ fn declines_a_temporal_property_tlc_rejects_after_it_warns_about_the_symmetry() 
         stdout(&output)
     );
 }
+
+// Checks M, its definitions after its variable x, on one thread and on four, plainly and with
+// -tool, giving each run's flags and output.
+fn check_on_threads(test: &str, definitions: &str, config: &str) -> Vec<(String, Output)> {
+    let directory =
+        std::env::temp_dir().join(format!("prove-it-cli-{test}-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    std::fs::write(
+        directory.join("M.tla"),
+        format!(
+            "---- MODULE M ----\nEXTENDS TLC, Sequences, Naturals, FiniteSets, Bags\nVARIABLE x\nNext == UNCHANGED x\n{definitions}\n====\n"
+        ),
+    )
+    .expect("a spec");
+    std::fs::write(directory.join("M.cfg"), config).expect("a configuration");
+    let mut outputs = Vec::new();
+    for threads in ["1", "4"] {
+        for flags in [&[][..], &["-tool"][..]] {
+            let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
+                .arg("-noGenerateSpecTE")
+                .args(flags)
+                .arg("M")
+                .current_dir(&directory)
+                .env("PROVE_IT_WORKERS", threads)
+                .env("PROVE_IT_SHARED_LEVEL", "1")
+                .output()
+                .expect("the binary runs");
+            outputs.push((format!("{threads} {flags:?}"), output));
+        }
+    }
+    std::fs::remove_dir_all(directory).expect("removed");
+    outputs
+}
+
+#[test]
+fn sorts_as_tlcs_sort_seq() {
+    // TLC's SortSeq moves each element back past those sorted before it while the comparison
+    // holds, so it keeps an order the comparison isn't, and never compares 5 with 1 here. What it
+    // prints is what TLC at d8fb231 prints, and with -tool.
+    for (definitions, printed) in [
+        (
+            "Init == PrintT(SortSeq(<<1, 2, 1>>, LAMBDA u, v : u = v)) /\\ x = 0",
+            "<<1, 2, 1>>",
+        ),
+        (
+            "Init == PrintT(SortSeq(<<3, 1, 2, 5, 4>>, LAMBDA u, v : IF <<u, v>> = <<5, 1>> THEN 0 ELSE u < v)) /\\ x = 0",
+            "<<1, 2, 3, 4, 5>>",
+        ),
+    ] {
+        for (run, output) in check_on_threads("sort-seq", definitions, "INIT Init\nNEXT Next\n") {
+            let text = stdout(&output);
+            let expected = if run.ends_with("[]") {
+                format!(
+                    "Computing initial states...\n{printed}\nFinished computing initial states: 1 distinct state generated at "
+                )
+            } else {
+                format!(
+                    "Computing initial states...\n@!@!@ENDMSG 2189 @!@!@\n{printed}\n@!@!@STARTMSG 2190:0 @!@!@\nFinished computing initial states: 1 distinct state generated at "
+                )
+            };
+            assert!(text.contains(&expected), "{definitions} on {run}:\n{text}");
+            assert!(
+                text.contains("Model checking completed. No error has been found.\n"),
+                "{definitions} on {run}:\n{text}"
+            );
+        }
+    }
+}
+
+#[test]
+fn stops_where_tlcs_sort_seq_fails() {
+    // TLC's SortSeq fails on a comparison that isn't a boolean, and on an operator whose body is a
+    // literal, which TLC passes as the literal. The engine stops there, and either prints what TLC
+    // at d8fb231 prints, and with -tool, or declines.
+    for (definitions, printed, tool) in [
+        (
+            "Init == x = SortSeq(<<1, 2>>, LAMBDA u, v : u + 7)",
+            "Error: The second argument of SortSeq should be a boolean function, but instead it is:\n9\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 50 in M\n1. Line 5, column 13 to line 5, column 50 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\n@!@!@STARTMSG 2169:0 @!@!@\nThe second argument of SortSeq should be a boolean function, but instead it is:\n9\n@!@!@ENDMSG 2169 @!@!@\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 50 in M\n1. Line 5, column 13 to line 5, column 50 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "Init == x = SortSeq(<<2, 1>>, LAMBDA u, v : \"a\")",
+            "Error: The second argument of SortSeq should be a operator, but instead it is:\n\"a\"\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 48 in M\n1. Line 5, column 13 to line 5, column 48 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\n@!@!@STARTMSG 2169:0 @!@!@\nThe second argument of SortSeq should be a operator, but instead it is:\n\"a\"\n@!@!@ENDMSG 2169 @!@!@\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 48 in M\n1. Line 5, column 13 to line 5, column 48 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+    ] {
+        for (run, output) in
+            check_on_threads("sort-seq-fails", definitions, "INIT Init\nNEXT Next\n")
+        {
+            let text = stdout(&output);
+            let expected = if run.ends_with("[]") { printed } else { tool };
+            assert!(
+                text.contains(expected)
+                    || String::from_utf8_lossy(&output.stderr).contains("not native yet"),
+                "{definitions} on {run}:\n{text}"
+            );
+            assert!(
+                !text.contains("No error has been found"),
+                "{definitions} on {run}:\n{text}"
+            );
+        }
+    }
+}

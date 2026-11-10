@@ -451,6 +451,7 @@ const TLC_FAILURES: &[&str] = &[
     "a CASE condition that isn't a boolean",
     "a SelectSeq test that isn't a boolean",
     "a SelectSeq test that isn't an operator",
+    "a SortSeq comparison that isn't a boolean",
     "a conjunct that isn't a boolean",
     "a count that isn't a number",
     "a function over a non-set",
