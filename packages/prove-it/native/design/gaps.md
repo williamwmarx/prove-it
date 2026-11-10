@@ -1084,6 +1084,9 @@ violated it, so the binary declined each such run.
   name is TLC's (`SpecProcessor.impliedActNameVec`): the configuration's name for a property that
   is the `[][A]_v` alone, and where the conjunct is written for a conjunct of one. The IR carries
   it (`ActionProperty::name`, IR version 15).
+- **Under a VIEW or symmetry** the search runs on one thread when there are action properties: a
+  thread waits to report an invariant a new state violates until no other thread found its key
+  first, but an action property is of the step, which violates it whichever thread found the key.
 - **-continue** (`TLCGlobals.continuation`): TLC reports each invariant an initial state
   violates, the first invariant a later state violates, and the first action property a step
   violates, each with its trace, keeps the state, and ends as a run without a violation, with
@@ -1091,7 +1094,9 @@ violated it, so the binary declined each such run.
   `Reporter::continued`, whose trace the binary rebuilds as it does a stop's.
 - **What still declines:** -continue with temporal properties, under SYMMETRY or a VIEW, and with
   a POSTCONDITION, where TLC checks more than the binary reports; a -continue run that stops at
-  an error or a deadlock, which TLC then reports with other traces and exit codes; and -continue
-  on a spec that draws at random, whose traces TLC fails to recover as it goes on ("Failed to
+  an error or a deadlock, which TLC then reports with other traces and exit codes; -continue on a
+  spec that prints or sets TLC's registers, whose prints TLC makes before each violation it
+  reports and whose registers it sets again as it rebuilds each trace; and -continue on a spec
+  that draws at random, whose traces TLC fails to recover as it goes on ("Failed to
   recover the initial state from its fingerprint", exit 1, on its RandomElement and
   RandomSubsetNext).

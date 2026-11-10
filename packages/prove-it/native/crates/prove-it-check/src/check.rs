@@ -850,18 +850,28 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
     let is_continued = args.has("-continue");
     if is_continued {
         let model = &ir.model;
+        let is_built_in = |names: &[&str]| {
+            ir.builtins
+                .iter()
+                .any(|builtin| names.contains(&&*ir.texts[builtin.name as usize]))
+        };
         let unfollowed = if !model.live_formula.is_empty() {
             Some("-continue with temporal properties")
         } else if model.view.is_some() || model.startup.symmetry.is_some() {
             Some("-continue under SYMMETRY or a VIEW")
         } else if !model.postconditions.is_empty() {
             Some("-continue with a POSTCONDITION")
-        } else if ir.builtins.iter().any(|builtin| {
-            matches!(
-                &*ir.texts[builtin.name as usize],
-                "RandomElement" | "RandomSubset" | "RandomSetOfSubsets" | "RandomSubsetSet"
-            )
-        }) {
+        } else if is_built_in(&["Print", "PrintT", "TLCSet"]) {
+            // TLC prints what the spec prints as it evaluates, before the violation it then
+            // reports, and sets its registers again as it rebuilds each trace (`printTrace`),
+            // which the search goes on reading.
+            Some("-continue with a spec that prints or sets TLC's registers")
+        } else if is_built_in(&[
+            "RandomElement",
+            "RandomSubset",
+            "RandomSetOfSubsets",
+            "RandomSubsetSet",
+        ]) {
             // TLC fails to recover the traces of a spec that draws at random as it goes on
             // (RandomElement, RandomSubsetNext): "Failed to recover the initial state".
             Some("-continue with random draws")

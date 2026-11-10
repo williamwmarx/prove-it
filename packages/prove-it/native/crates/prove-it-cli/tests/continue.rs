@@ -198,3 +198,52 @@ fn declines_continue_where_the_binary_doesnt_follow_tlc() {
     );
     std::fs::remove_dir_all(directory).expect("removed");
 }
+
+// As TLC ran it at d8fb231 with `-workers 1`: all three initial states step to the VIEW's one key,
+// and only the step from x = 3 violates the action property. TLC checks the property on each
+// step, whichever found the key first, so the binary stops there on any number of threads.
+#[test]
+fn reports_an_action_property_violated_under_a_view_as_tlc() {
+    let spec = "---- MODULE Stop ----\nEXTENDS Naturals\nVARIABLES x, y\nInit == x \\in 1..3 /\\ y = 0\nNext == x' = 0 /\\ y' = x\nView == x\nNotThree == [][y' # 3]_y\n====\n";
+    let config = "INIT Init\nNEXT Next\nVIEW View\nPROPERTY NotThree\nCHECK_DEADLOCK FALSE\n";
+    let expected = "Error: Action property NotThree is violated.\nError: The behavior up to this point is:\nState 1: <Initial predicate>\n/\\ x = 3\n/\\ y = 0\n\nState 2: <Next line 5, col 9 to line 5, col 24 of module Stop>\n/\\ x = 0\n/\\ y = 3\n\n6 states generated, 4 distinct states found, 1 states left on queue.\nThe depth of the complete state graph search is 2.\n";
+    let (output, directory) = run_spec("action-view", spec, config);
+    assert_eq!(output.status.code(), Some(13), "{}", stdout(&output));
+    assert!(stdout(&output).contains(expected), "{}", stdout(&output));
+    let shared = std::process::Command::new(env!("CARGO_BIN_EXE_prove-it"))
+        .args(["-workers", "4", "-noTE", "Stop"])
+        .current_dir(&directory)
+        .env("PROVE_IT_SHARED_LEVEL", "1")
+        .output()
+        .expect("the binary runs");
+    assert_eq!(shared.status.code(), Some(13), "{}", stdout(&shared));
+    assert!(stdout(&shared).contains(expected), "{}", stdout(&shared));
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+// TLC prints what the spec prints as it evaluates, before each violation it reports, and sets its
+// registers again as it rebuilds each trace, which the binary doesn't follow.
+#[test]
+fn declines_continue_on_a_spec_that_prints_or_sets_registers() {
+    for (test, next) in [
+        ("continue-print", "x < 2 /\\ PrintT(x) /\\ x' = x + 1"),
+        ("continue-register", "x < 2 /\\ TLCSet(1, x) /\\ x' = x + 1"),
+    ] {
+        let spec = format!(
+            "---- MODULE Stop ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == {next}\nInv == x < 1\n====\n"
+        );
+        let (output, directory) = run_spec_with(
+            test,
+            &spec,
+            "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE\n",
+            &["-continue"],
+        );
+        assert_eq!(output.status.code(), Some(1), "{test}: {}", stdout(&output));
+        assert_eq!(
+            stderr(&output),
+            "prove-it: not native yet: -continue with a spec that prints or sets TLC's registers\n",
+            "{test}"
+        );
+        std::fs::remove_dir_all(directory).expect("removed");
+    }
+}
