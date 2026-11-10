@@ -1,9 +1,10 @@
 //! Standardize.set_extensionality_visitor: an equality of sets where it may need proving triggers
 //! the set extensionality axiom, through TrigEq. A port of `src/prover/smt/extensionality.ts`.
 
+use crate::expression::is_js_space;
 use crate::smt::format::{
-    CAP, CUP, FUN_SET, INT_RANGE, SEQ, SET_MINUS, SUBSET, TRIG_EQ, UNION, get_closing, is_js_space,
-    slice, step_over,
+    CAP, CUP, FUN_SET, INT_RANGE, SEQ, SET_MINUS, SUBSET, TRIG_EQ, UNION, get_closing, slice,
+    step_over,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -188,6 +188,22 @@ pub fn to_index(count: usize) -> isize {
     count as isize
 }
 
+/// JavaScript's white space: what a regular expression's `\s` matches and `trim` removes, which
+/// differs from `char::is_whitespace` on U+0085 and U+FEFF.
+pub fn is_js_space(character: char) -> bool {
+    matches!(
+        character,
+        '\t' | '\n' | '\u{b}' | '\u{c}' | '\r' | ' ' | '\u{a0}' | '\u{1680}' | '\u{2000}'
+            ..='\u{200a}'
+                | '\u{2028}'
+                | '\u{2029}'
+                | '\u{202f}'
+                | '\u{205f}'
+                | '\u{3000}'
+                | '\u{feff}'
+    )
+}
+
 /// `Shape`: an operator's arity, 0 for an expression.
 pub type Shape = usize;
 

@@ -5,7 +5,8 @@
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
-use crate::smt::format::{declare, format_name, get_closing, is_js_space, slice, step_over};
+use crate::expression::is_js_space;
+use crate::smt::format::{declare, format_name, get_closing, slice, step_over};
 use crate::smt::table::Axiom;
 
 /// The axioms of a flattened symbol: given its name and the keys of the axioms collected so far.

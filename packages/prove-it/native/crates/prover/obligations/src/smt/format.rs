@@ -5,6 +5,7 @@
 //! code units; each offset only slices the text it was found in, so the slices are the same.
 
 use crate::expression::Builtin;
+use crate::expression::is_js_space;
 
 // Smtlib.format_smt: spells out each special character, then doubles each underscore.
 const SPELLED: [(char, &str); 22] = [
@@ -228,21 +229,6 @@ pub fn replace_token(text: &str, token: &str, replacement: &str) -> String {
     }
     replaced.push_str(if run == token { replacement } else { &run });
     replaced
-}
-
-/// JavaScript's `\s`: the characters a regular expression's `\s` matches.
-pub(crate) fn is_js_space(character: char) -> bool {
-    matches!(
-        character,
-        '\t' | '\n' | '\u{b}' | '\u{c}' | '\r' | ' ' | '\u{a0}' | '\u{1680}' | '\u{2000}'
-            ..='\u{200a}'
-                | '\u{2028}'
-                | '\u{2029}'
-                | '\u{202f}'
-                | '\u{205f}'
-                | '\u{3000}'
-                | '\u{feff}'
-    )
 }
 
 /// The offset just past the character at `index`, as the TypeScript's `index + 1` steps over one

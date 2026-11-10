@@ -9,6 +9,7 @@
 //! forever, makes a doc that fails to render.
 
 use crate::errors::{ObligationError, Result};
+use crate::expression::is_js_space;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum BoxKind {
@@ -468,20 +469,6 @@ fn get_doc_string(doc: &Doc) -> String {
         .join(",")
 }
 
-fn is_js_whitespace(character: char) -> bool {
-    matches!(
-        character,
-        '\t' | '\n' | '\u{b}' | '\u{c}' | '\r' | ' ' | '\u{a0}' | '\u{1680}' | '\u{2000}'
-            ..='\u{200a}'
-                | '\u{2028}'
-                | '\u{2029}'
-                | '\u{202f}'
-                | '\u{205f}'
-                | '\u{3000}'
-                | '\u{feff}'
-    )
-}
-
 fn is_decimal_literal(text: &str) -> bool {
     let unsigned = text.strip_prefix(['+', '-']).unwrap_or(text);
     let (mantissa, exponent) = match unsigned.find(['e', 'E']) {
@@ -500,7 +487,7 @@ fn is_decimal_literal(text: &str) -> bool {
 /// `Number(text)` of a string.
 fn get_number(units: &[u16]) -> f64 {
     let decoded = String::from_utf16_lossy(units);
-    let trimmed = decoded.trim_matches(is_js_whitespace);
+    let trimmed = decoded.trim_matches(is_js_space);
     if trimmed.is_empty() {
         return 0.0;
     }

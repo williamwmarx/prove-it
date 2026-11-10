@@ -4,6 +4,7 @@
 use std::collections::HashMap;
 
 use crate::errors::{ObligationError, Result};
+use crate::expression::is_js_space;
 use crate::expression::{
     Bound, BoundDomain, Builtin, Bullet, DefnCore, ExceptPoint, Expr, ExprCore, ExprNode, Fairness,
     Hyp, HypCore, HypNode, Level, Modal, Param, ParenForm, Quantifier, Selector, Sequent, Shape,
@@ -1101,29 +1102,12 @@ pub fn print_sequent(sequent: &Sequent) -> Result<Doc> {
     .print_sequent(sequent)
 }
 
-/// JavaScript's `trimEnd`, which trims its own set of white space.
-fn trim_js_end(value: &str) -> &str {
-    value.trim_end_matches(|character| {
-        matches!(
-            character,
-            '\t' | '\n' | '\u{b}' | '\u{c}' | '\r' | ' ' | '\u{a0}' | '\u{1680}' | '\u{2000}'
-                ..='\u{200a}'
-                    | '\u{2028}'
-                    | '\u{2029}'
-                    | '\u{202f}'
-                    | '\u{205f}'
-                    | '\u{3000}'
-                    | '\u{feff}'
-        )
-    })
-}
-
 pub fn format_obligation(sequent: &Sequent) -> Result<String> {
     let rendered = render_doc(
         &format("@[<b0>%a@]", vec![print_sequent(sequent)?.into()]),
         68,
     )?;
-    Ok(trim_js_end(&rendered).to_owned())
+    Ok(rendered.trim_end_matches(is_js_space).to_owned())
 }
 
 #[cfg(test)]

@@ -4,7 +4,8 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::errors::{ObligationError, Result};
-use crate::smt::format::{format_name, is_js_space};
+use crate::expression::is_js_space;
+use crate::smt::format::format_name;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Identifier {
