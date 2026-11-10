@@ -1629,7 +1629,7 @@ impl PolynomialManager {
             degrees: Vec::new(),
         };
         let coeffs = self.to_coeffs(polynomial);
-        factor_square_free(&mut self.um, &coeffs, &mut fs, 1, &DEFAULT_FACTOR_PARAMS)?;
+        factor_square_free(&self.um, &coeffs, &mut fs, 1, &DEFAULT_FACTOR_PARAMS)?;
         if fs.factors.len() == 1 && fs.degrees[0] == 1 {
             Self::push_factor(result, polynomial, k);
             return Ok(());
@@ -2164,7 +2164,7 @@ impl PolynomialManager {
                         let coeffs = self.to_coeffs(&univariate);
                         let primitive = self.um.get_primitive(&coeffs);
                         factor_square_free(
-                            &mut self.um,
+                            &self.um,
                             &primitive,
                             &mut univariate_fs,
                             1,
