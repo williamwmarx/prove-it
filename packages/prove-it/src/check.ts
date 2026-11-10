@@ -297,6 +297,9 @@ export interface EvaluationFailure {
 interface ReplayFailure {
   callStack: Expression[];
   fingerprint: FingerprintFailure | undefined;
+  // What the replay failed with, which may come after the failure it replays: the replay takes
+  // all of an action's successors before it fingerprints one.
+  replayError?: TlaEvaluationError;
 }
 
 export interface InitialStates {
@@ -350,6 +353,7 @@ interface FailureOptions {
   isNextState?: boolean;
   isCallStackFirst?: boolean;
   traceFailure?: FailureMessage;
+  replayError?: TlaEvaluationError;
   // Whether the call stack is of adding the state to the behavior graph, which TLC prints instead
   // of replaying the error.
   isLiveCallStack?: boolean;
@@ -750,7 +754,11 @@ const searchStates = (
       // A replay that overflows the stack again has an empty call stack.
       if (isStackOverflow(error)) return { callStack: [], fingerprint: undefined };
       if (!(error instanceof TlaEvaluationError) || !callStack) return undefined;
-      return { callStack: callStack.expressions, fingerprint: callStack.fingerprint };
+      return {
+        callStack: callStack.expressions,
+        fingerprint: callStack.fingerprint,
+        replayError: error,
+      };
     }
   };
   // The sources of the values a fingerprint fails inside, outermost first: each value fails as it
@@ -1174,7 +1182,7 @@ const searchStates = (
     // it does for a replay that fails to fingerprint.
     return failureOptions.isInitial || failureOptions.fingerprint
       ? EXIT_STATUS.specEvaluationFailure
-      : getReplayExitCode(error);
+      : getReplayExitCode(failureOptions.replayError ?? error);
   };
   const createFailureResult = (
     failed: unknown,
@@ -1271,6 +1279,10 @@ const searchStates = (
       if (error) throw error;
     }
   };
+  // Under a VIEW TLC fingerprints the view's value alone, so what the state holds beside it stays
+  // as the spec built it: a set TLC streams in an order of its own keeps that order.
+  const markModelState = (state: Value[], fingerprintState: Value[]) =>
+    (config.view === undefined ? state : fingerprintState).forEach(markFingerprinted);
   const isSameState = (stored: Value[], state: Value[]) => {
     for (let position = 0; position < state.length; position++) {
       if (!isSameValue(stored[position], state[position])) return false;
@@ -1400,12 +1412,13 @@ const searchStates = (
     current.candidate = state;
     current.candidateLevel = 1;
     const fingerprintState = getFingerprintState(state);
-    const hash = getStateHash(fingerprintState);
+    // TLC fingerprints a state only once its constraints hold of it (isInModel).
     const isInModel = search.satisfiesConstraints(state);
+    const hash = isInModel ? getStateHash(fingerprintState) : 0;
     if (isInModel) {
       search.trackStatePossible(state);
       fingerprintModelState(fingerprintState);
-      state.forEach(markFingerprinted);
+      markModelState(state, fingerprintState);
     }
     const isSeen = isInModel && findStateIndex(hash, fingerprintState) !== -1;
     if (isSeen) return undefined;
@@ -1456,31 +1469,30 @@ const searchStates = (
     current.candidateLevel = depths[index] + 1;
     if (isCanonicalizedFirst) canonicalizeState(successor.state);
     const fingerprintState = getFingerprintState(successor.state);
-    const hash = getStateHash(fingerprintState);
-    const foundIndex = findStateIndex(hash, fingerprintState);
     const isStateInModel = search.satisfiesConstraints(successor.state, state);
     if (isStateInModel) search.trackStatePossible(successor.state);
     const isInModel = isStateInModel && search.satisfiesActionConstraints(state, successor.state);
+    const hash = isInModel ? getStateHash(fingerprintState) : 0;
+    const foundIndex = isInModel ? findStateIndex(hash, fingerprintState) : -1;
     if (isInModel) {
       search.trackActionPossible(state, successor.state);
       fingerprintModelState(fingerprintState);
-      successor.state.forEach(markFingerprinted);
+      markModelState(successor.state, fingerprintState);
     }
-    const existing = isInModel ? foundIndex : -1;
     if (source && isInModel) {
       stateWriter?.writeSuccessor(
         source,
         getGraphState(successor.state, depths[index] + 1),
-        existing !== -1,
+        foundIndex !== -1,
         action && { name: action.name, signature: getActionSignature(action) },
       );
     }
-    if (existing !== -1 && liveness) {
-      const stored = states[existing];
+    if (foundIndex !== -1 && liveness) {
+      const stored = states[foundIndex];
       const isStored = stored.every((value, position) => value === successor.state[position]);
-      liveSuccessors.push({ index: existing, state: isStored ? stored : successor.state });
+      liveSuccessors.push({ index: foundIndex, state: isStored ? stored : successor.state });
     }
-    const isNew = isInModel && existing === -1;
+    const isNew = isInModel && foundIndex === -1;
     // TLC adds a new state to the behavior graph's successors before it checks the invariants.
     if (isNew && liveness) liveSuccessors.push({ index: states.length, state: successor.state });
     unstoredState.fingerprint = isNew ? fingerprintState : undefined;
@@ -1488,7 +1500,7 @@ const searchStates = (
       countDistinctState(depths[index] + 1);
       expansion.newStates++;
     }
-    if (existing === -1) {
+    if (foundIndex === -1) {
       try {
         const violated = search.findViolatedInvariant(successor.state, state);
         const violation = violated && { name: violated.name, ...getTrace(index, successor) };
@@ -1635,7 +1647,7 @@ const searchStates = (
     const state = toEngineState(checkpoint, index);
     engineIndices.set(state, index);
     const fingerprintState = toEngineKey(checkpoint, index, state);
-    state.forEach(markFingerprinted);
+    markModelState(state, fingerprintState);
     return { state, fingerprintState, hash: getStateHash(fingerprintState) };
   };
   // TLC reports an error in an initial state once it has replayed the initial predicate with its call
@@ -2279,7 +2291,11 @@ const searchStates = (
   const replayFailedNext = (index: number, liveSuccessors: LiveSuccessor[]) => {
     const live = captureOutput(() => addFailedLiveState(index, liveSuccessors));
     if (live.result) {
-      const result = { callStack: live.result, fingerprint: undefined, isLiveCallStack: true };
+      const result: ReplayFailure & { isLiveCallStack: boolean } = {
+        callStack: live.result,
+        fingerprint: undefined,
+        isLiveCallStack: true,
+      };
       return { result, lines: live.lines };
     }
     const replay = captureOutput(() => replayNext(index));
@@ -2355,12 +2371,18 @@ const searchStates = (
             const isTraceFailed = getFingerprintState(successor.state).some(
               (value) => getFingerprintError(value) !== undefined,
             );
+            // Tool.getState takes all of the action's successors to find the one to print, so a
+            // later successor that fails to evaluate fails there first, as it fails the replay.
+            const traceError =
+              replay.result?.fingerprint === undefined
+                ? (replay.result?.replayError ?? error)
+                : error;
             const traceFailure =
-              isTraceFailed && error instanceof TlaEvaluationError
+              isTraceFailed && traceError instanceof TlaEvaluationError
                 ? getFailureMessage(
-                    isEvalException(error)
-                      ? new TlaEvaluationError(`${UNEXPECTED_EVAL_EXCEPTION}${error.message}`)
-                      : error,
+                    isEvalException(traceError)
+                      ? new TlaEvaluationError(`${UNEXPECTED_EVAL_EXCEPTION}${traceError.message}`)
+                      : traceError,
                     true,
                   )
                 : undefined;

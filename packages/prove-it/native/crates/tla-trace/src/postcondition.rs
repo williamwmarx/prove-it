@@ -99,12 +99,20 @@ impl Rebuilder<'_> {
                 }
             }
         }
+        // TLC builds the counterexample's states from the ALIAS (`Worker.doPostCondition`),
+        // which the binary doesn't follow.
+        if ir.model.alias.is_some()
+            && inputs.counter_example.is_some()
+            && evaluator.may_reach(ir.definitions[definition as usize], &["CounterExample"])
+        {
+            return unsupported("that reads the counterexample of a model with an ALIAS");
+        }
         let text = |name: &str| Value::Str(evaluator.text_of(name.encode_utf16().collect()));
         let record = |fields: Vec<(&str, Value)>| {
             Value::record(
                 fields
                     .into_iter()
-                    .map(|(name, value)| (evaluator.text_of(name.encode_utf16().collect()), value))
+                    .map(|(name, value)| (evaluator.counterexample_field(name), value))
                     .collect(),
             )
         };

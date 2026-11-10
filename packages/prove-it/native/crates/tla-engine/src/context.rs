@@ -660,6 +660,13 @@ impl EngineContext {
             .filter(|((_, conjunct), _)| !init_conjuncts.contains(conjunct))
             .map(|((compiled, _), &owner)| (compiled.eval.clone(), owner))
             .unzip();
+        // Under a VIEW TLC fingerprints the view's value alone, so a set TLC keeps lazy that a
+        // variable holds stays as the spec built it, in an order the store doesn't keep.
+        if view.is_some() && compiler.is_lazy_set_held && compiler.is_held_set_enumerated {
+            return Err(CompileError::Bail(
+                "unsupported: enumerating a lazy set of the state under a VIEW".into(),
+            ));
+        }
         Ok(EngineContext {
             width,
             init,
