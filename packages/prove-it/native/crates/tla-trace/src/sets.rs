@@ -376,12 +376,27 @@ pub fn is_member(value: &Value, set: &Value) -> Evaluated<bool> {
             }
             Ok(false)
         }
-        // An untyped model value is in no interval or lazy set: TLC's `member` of each hands it
-        // to `ModelValue.modelValueMember`, which says false.
-        Value::Interval(..) | Value::Lazy(_) if matches!(value, Value::Model(model) if model.model_type() == 0) => {
+        // An untyped model value is in no interval: `IntervalValue.member` says false.
+        Value::Interval(..) if matches!(value, Value::Model(model) if model.model_type() == 0) => {
             Ok(false)
         }
-        // A typed one fails there, for the sets whose `member` hands it to it.
+        // The sets the standard modules override and the sets of functions, records and tuples hand
+        // a model value to `ModelValue.modelValueMember`, which says false, unless it is typed.
+        Value::Lazy(lazy)
+            if matches!(value, Value::Model(model) if model.model_type() == 0)
+                && matches!(
+                    **lazy,
+                    Lazy::Nat
+                        | Lazy::Int
+                        | Lazy::Strings
+                        | Lazy::Seq(_)
+                        | Lazy::FunctionSet(..)
+                        | Lazy::RecordSet(..)
+                        | Lazy::Product(_)
+                ) =>
+        {
+            Ok(false)
+        }
         Value::Lazy(lazy)
             if matches!(value, Value::Model(_))
                 && matches!(
@@ -465,7 +480,16 @@ pub fn is_member(value: &Value, set: &Value) -> Evaluated<bool> {
                         ),
                     );
                 };
-                if !equals(&Value::Set(Rc::new(function.domain.clone())), domain)? {
+                // `SetOfFcnsValue.member`: its domain equals the function's, or the interval a
+                // function is over equals its domain.
+                let is_domain = match (function.class.get(), function.interval) {
+                    (Class::Tuple, _) => {
+                        equals(&Value::Interval(1, function.range.len() as i32), domain)?
+                    }
+                    (_, Some((low, high))) => equals(&Value::Interval(low, high), domain)?,
+                    _ => equals(domain, &Value::Set(Rc::new(function.domain.clone())))?,
+                };
+                if !is_domain {
                     return Ok(false);
                 }
                 for element in &function.range {
@@ -477,6 +501,10 @@ pub fn is_member(value: &Value, set: &Value) -> Evaluated<bool> {
             }
             // `SetOfRcdsValue.member`: a value `toRcd` makes no record of fails.
             Lazy::RecordSet(fields, _) => {
+                // TLC takes a function it keeps lazy as the value it builds (`toFcnRcd`).
+                if let Value::Lambda(lambda) = value {
+                    return crate::value::lambda_as_function(lambda);
+                }
                 let Value::Function(function) = value else {
                     return non_record(value, set);
                 };
@@ -508,6 +536,10 @@ pub fn is_member(value: &Value, set: &Value) -> Evaluated<bool> {
             // `SetOfTuplesValue.member`: a function `toTuple` makes no tuple of is in none, but a
             // value that isn't a function, or a function over a key that isn't an integer, fails.
             Lazy::Product(factors) => {
+                // TLC takes a function it keeps lazy as a tuple (`toTuple`).
+                if let Value::Lambda(lambda) = value {
+                    return crate::value::lambda_as_tuple(lambda);
+                }
                 let Some(tuple) = as_tuple(value) else {
                     let Value::Function(function) = value else {
                         return non_tuple(value, set);
@@ -534,6 +566,10 @@ pub fn is_member(value: &Value, set: &Value) -> Evaluated<bool> {
             }
             // `Sequences.member`.
             Lazy::Seq(base) => {
+                // TLC takes a function it keeps lazy as a tuple (`toTuple`).
+                if let Value::Lambda(lambda) = value {
+                    return crate::value::lambda_as_tuple(lambda);
+                }
                 let Some(tuple) = as_tuple(value) else {
                     return mistyped(value, &format_pretty(set));
                 };
@@ -671,10 +707,48 @@ pub fn union(left: &Value, right: &Value) -> Evaluated<Value> {
     }
     // `Tool`'s OPCODE_cup: a reducible operand's `cup`, the other's lazy union otherwise.
     match (is_reducible(left), is_reducible(right)) {
+        // `cup` of a set enumeration or an interval: its elements as it holds them, then each of
+        // the other's that its own `member` finds it lacks, a set TLC holds unnormalized.
         (true, true) => {
-            let mut all = elements(left)?.to_vec();
-            all.extend(elements(right)?.iter().cloned());
-            set_of(all)
+            let written = unnormalized(left);
+            let mut all = match (&written, left) {
+                (Some(written), _) => written.clone(),
+                (None, Value::Unsorted(values)) => values.to_vec(),
+                _ => elements(left)?.to_vec(),
+            };
+            for element in elements(right)?.iter() {
+                let is_held = match left {
+                    Value::Unsorted(values) => {
+                        let mut is_held = false;
+                        for value in values.iter() {
+                            if equals(value, element)? {
+                                is_held = true;
+                                break;
+                            }
+                        }
+                        is_held
+                    }
+                    _ => is_member(element, left)?,
+                };
+                if !is_held {
+                    all.push(element.clone());
+                }
+            }
+            match set_of(all.clone()) {
+                Ok(set) => {
+                    mark_unnormalized(&set, all);
+                    Ok(set)
+                }
+                Err(error)
+                    if error
+                        .message
+                        .as_ref()
+                        .is_some_and(|message| !message.is_eval_exception) =>
+                {
+                    Ok(Value::Unsorted(Rc::new(all)))
+                }
+                Err(error) => Err(error),
+            }
         }
         (true, false) | (false, false) => Ok(lazy(Lazy::Cup(left.clone(), right.clone()))),
         (false, true) => Ok(lazy(Lazy::Cup(right.clone(), left.clone()))),

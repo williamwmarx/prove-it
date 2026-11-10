@@ -1122,9 +1122,16 @@ impl<'a> Lowering<'a> {
                 .iter()
                 .any(|substitution| substitution.name == name)
         };
+        // TLC takes the arguments of the body's node, whatever operator SANY made of it, and
+        // fails on a body that is no application, such as a LET (`Tool.getSymmetryPerms`).
         let permuted = match &definition.body.kind {
             ExpressionKind::Apply { args, .. } => args.clone(),
-            _ => Vec::new(),
+            ExpressionKind::Identifier { .. } => Vec::new(),
+            _ => {
+                return Err(FrontError::NotYet(
+                    "a SYMMETRY definition that isn't an operator applied to its sets".to_owned(),
+                ));
+            }
         };
         let mut permuted_sets = Vec::new();
         for set in permuted {

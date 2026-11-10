@@ -183,6 +183,31 @@ pub fn print_failure(
     if failure.fingerprint.is_some() && !is_replayed && !report.states.is_empty() {
         printer.print(failure.code, Level::Error, message);
     }
+    // TLC computes the initial states again for the call stack, from a count of none, and
+    // reports its progress at each power of two before the state that fails again
+    // (`DoInitFunctor.addElement`).
+    let is_progress_replayed = matches!(
+        stop.site,
+        Site::Init
+            | Site::InitialConstraint(_)
+            | Site::InitialInvariant(_)
+            | Site::InitialPredicate(_)
+    );
+    let progress = std::iter::successors(Some(2u64), |count| count.checked_mul(2))
+        .take_while(|&count| is_progress_replayed && count < stop.statistics.generated);
+    if stop.statistics.generated > 2
+        && is_progress_replayed
+        && (failure.fingerprint.is_some() || !report.after.is_empty())
+    {
+        return Err("TLC's progress as it computes the initial states again, in a spec that prints or with a state it can't fingerprint".into());
+    }
+    for count in progress {
+        printer.print(
+            code::COMPUTING_INIT_PROGRESS,
+            Level::None,
+            &format!("Computed {count} initial states..."),
+        );
+    }
     for line in &report.after {
         printer.line(line);
     }

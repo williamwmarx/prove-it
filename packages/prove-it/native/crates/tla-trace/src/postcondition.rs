@@ -5,6 +5,7 @@ use std::collections::HashMap;
 
 use tla_ir::{DefinitionForm, ScopeBinding};
 
+use crate::alias::Alias;
 use crate::eval::{Context, Evaluator, Runtime};
 use crate::rebuild::{Rebuilder, run};
 use crate::value::{Class, Value, set_of, sorted_function};
@@ -69,6 +70,15 @@ impl Rebuilder<'_> {
         index: usize,
         inputs: &PostconditionInputs<'_>,
     ) -> Result<Checked, Unsupported> {
+        // TLC builds a safety violation's counterexample from the ALIAS of each state, the last
+        // state's with itself as the next (`Worker.doPostCondition`, `evalAlias`), and a
+        // liveness checker's lasso from the states.
+        let aliases = match &inputs.counter_example {
+            Some(counter_example) if counter_example.cycle.is_none() => {
+                self.alias(counter_example.trace, None, false)?
+            }
+            _ => None,
+        };
         let evaluator = self.evaluator();
         let ir = evaluator.ir;
         let Some(definition) = ir
@@ -98,14 +108,6 @@ impl Rebuilder<'_> {
                     parameters.insert(position, bound);
                 }
             }
-        }
-        // TLC builds the counterexample's states from the ALIAS (`Worker.doPostCondition`),
-        // which the binary doesn't follow.
-        if ir.model.alias.is_some()
-            && inputs.counter_example.is_some()
-            && evaluator.may_reach(ir.definitions[definition as usize], &["CounterExample"])
-        {
-            return unsupported("that reads the counterexample of a model with an ALIAS");
         }
         let text = |name: &str| Value::Str(evaluator.text_of(name.encode_utf16().collect()));
         let record = |fields: Vec<(&str, Value)>| {
@@ -186,6 +188,26 @@ impl Rebuilder<'_> {
                     .iter()
                     .enumerate()
                     .map(|(position, state)| {
+                        if let Some(Alias::Record(fields)) =
+                            aliases.as_ref().map(|aliases| &aliases[position])
+                        {
+                            if fields.iter().any(|(name, _)| name == "_ALIASEvalError") {
+                                return unsupported("of a model whose ALIAS fails");
+                            }
+                            let fields = fields
+                                .iter()
+                                .map(|(name, value)| {
+                                    (
+                                        evaluator.text_of(name.encode_utf16().collect()),
+                                        value.clone(),
+                                    )
+                                })
+                                .collect();
+                            return Ok(Value::tuple(vec![
+                                Value::Int(position as i32 + 1),
+                                run(Value::record(fields))?,
+                            ]));
+                        }
                         let fields = ir
                             .tlc_order
                             .iter()

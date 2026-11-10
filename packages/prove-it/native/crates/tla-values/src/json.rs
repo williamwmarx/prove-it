@@ -89,6 +89,22 @@ pub fn write_json(store: &Store, id: Id, out: &mut Vec<u16>) -> Outcome<()> {
 }
 
 /// Whether a value is a record as `isRecord` has it: a function on a nonempty set of strings.
+/// Whether a value holds a record or function of several keys, which TLC's Json module writes
+/// in the order TLC holds them (`Json.getObjectNode`), sorted only once TLC has normalized the
+/// value, which the store forgets.
+pub fn holds_ordered_keys(store: &Store, id: Id) -> bool {
+    let kind = store.kind_of(id);
+    let size = store.size_of(id);
+    if kind == KIND_SET {
+        return (0..size).any(|index| holds_ordered_keys(store, store.element_at(id, index)));
+    }
+    if !crate::store::is_function_kind(kind) {
+        return false;
+    }
+    kind != KIND_TUPLE && size > 1
+        || (0..size).any(|index| holds_ordered_keys(store, store.get_range_value(id, index)))
+}
+
 pub fn is_json_record(store: &Store, id: Id) -> bool {
     let kind = store.kind_of(id);
     let size = store.size_of(id);

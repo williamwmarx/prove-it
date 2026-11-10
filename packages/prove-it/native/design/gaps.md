@@ -737,6 +737,17 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
 
 Built by the liveness session: see "Atoms that use TLC's registers" in `liveness.md`.
 
+## A check of a successor that fails to evaluate
+
+TLC reports a constraint, an action constraint, a VIEW or an action property that fails on a
+successor from `Worker.addElement`, with the successor in the trace. The search has no site for
+these, and filed them as a failure of the next-state relation at the parent, which the replay
+confirmed where the relation failed later in the same expansion. `check_successor` now turns any
+such failure into a limit of its own ("a constraint, a VIEW or an action property that fails on a
+successor"), as `visit_initial` does for a VIEW that fails on an initial state, so both are not
+native. The search also evaluates the VIEW of a successor only where the action constraints hold,
+as TLC fingerprints it only then.
+
 ## Handoff (gaps session, 2026-11-09)
 
 Done since by the engine-gaps session (each in a section above): the run-time walk of a
