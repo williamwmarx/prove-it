@@ -558,10 +558,46 @@ pub fn is_member(value: &Value, set: &Value) -> Evaluated<bool> {
             Lazy::Cup(left, right) => Ok(is_member(value, left)? || is_member(value, right)?),
             Lazy::Diff(left, right) => Ok(is_member(value, left)? && !is_member(value, right)?),
         },
-        _ => fail(format!(
-            "a membership in a {}, which isn't a set",
-            set.kind_name()
-        )),
+        // The `member` of each class of value that isn't a set.
+        _ => {
+            let kind = match set {
+                Value::Bool(_) => "boolean",
+                Value::Int(_) => "integer",
+                Value::Str(_) => "string",
+                Value::Model(_) => "model value",
+                Value::Function(function) if function.class.get() == Class::Tuple => {
+                    return fail_runtime(
+                        "a membership in a tuple",
+                        "Attempted to check set membership in a tuple value.".into(),
+                    );
+                }
+                Value::Function(function) if function.class.get() == Class::Record => {
+                    return fail_runtime(
+                        "a membership in a record",
+                        format!(
+                            "Attempted to check if element:\n{}\nis in the record:\n{}",
+                            format_pretty(value),
+                            format_pretty(set)
+                        ),
+                    );
+                }
+                Value::Function(_) | Value::Lambda(_) => "function",
+                _ => {
+                    return fail(format!(
+                        "a membership in a {}, which isn't a set",
+                        set.kind_name()
+                    ));
+                }
+            };
+            fail_runtime(
+                format!("a membership in a {kind}"),
+                format!(
+                    "Attempted to check if the value:\n{}\nis an element of the {kind} {}",
+                    format_pretty(value),
+                    format_pretty(set)
+                ),
+            )
+        }
     }
 }
 

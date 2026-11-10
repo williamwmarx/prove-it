@@ -678,6 +678,22 @@ fn words_failed_memberships_and_sequence_arguments_as_tlc() {
             "Len(Nat) = 1",
             "The argument of Len should be a sequence, but instead it is:\nNat",
         ),
+        (
+            "1 \\in <<1, 2>>",
+            "Attempted to check set membership in a tuple value.",
+        ),
+        (
+            "{1} \\subseteq 1",
+            "Attempted to check if the value:\n1\nis an element of the integer 1",
+        ),
+        (
+            "DOMAIN [a : Nat] = {}",
+            "Attempted to apply the operator DOMAIN to a non-function\n(a set of the form [d1 : S1, ... , dN : SN])\nline 5, col 8 to line 5, col 23 of module Member",
+        ),
+        (
+            "Seq(Nat)[1] = 1",
+            "A non-function (a special set constant) was applied as a function.\nline 5, col 8 to line 5, col 18 of module Member",
+        ),
     ] {
         let spec = format!(
             "---- MODULE Member ----\nEXTENDS Naturals, Sequences\nCONSTANT m\nVARIABLE x\nASSUME {assumption}\nInit == x = 0\nNext == x' = x\n====\n"
