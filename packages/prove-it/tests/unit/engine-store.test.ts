@@ -243,6 +243,44 @@ describe.each(STORES)("the engine's %s store", (_, store) => {
     for (const [operation, reason] of cases) expect(operation).toThrow(new Bailout(reason));
   });
 
+  // TLC holds [i \in 0..1 |-> 1] over an interval and [i \in {0, 1} |-> 1] over its keys, which the
+  // store doesn't tell apart. Against a function of its size with an untyped model value among its
+  // keys, the first fails and the second compares the keys, which the model value passes. A tuple,
+  // which TLC compares with a function over 1..n, is the same.
+  it("stops comparing a run of integers with a function over a model value", () => {
+    const [m, n] = ["m", "n"].map(store.model);
+    const one = store.int(1);
+    const run = store.functionOf(ints([0, 1]), [one, one]);
+    const tuple = store.tupleOf([one, one], 2);
+    const models = store.functionOf([m, n], [one, one]);
+    const mixed = store.functionOf([m, store.int(0)], [one, one]);
+    const record = store.recordOf(store.createRecordShape([store.str("a"), store.str("b")]), [
+      one,
+      one,
+    ]);
+    const reason = "a function over an interval compared with one over other keys";
+    for (const integers of [run, tuple]) {
+      for (const other of [models, mixed]) {
+        expect(() => store.compare(integers, other)).toThrow(new Bailout(reason));
+        expect(() => store.compare(other, integers)).toThrow(new Bailout(reason));
+        expect(() => store.equals(integers, other)).toThrow(new Bailout(reason));
+        expect(() => store.setOf([other, integers])).toThrow(new Bailout(reason));
+      }
+    }
+    // A miss compares too: TLC's search compares <<m>> with a function over n.
+    const pair = store.functionOf([n], [one]);
+    expect(() => store.isMember(store.tupleOf([m], 1), store.setOf([pair]))).toThrow(
+      new Bailout(reason),
+    );
+    // RecordValue.compareTo fails on a function of its size, which, asking, compares by its keys.
+    expect(() => store.compare(models, record)).toThrow(
+      new Bailout("a record compared with a function of its size over a model value"),
+    );
+    // Functions of other sizes compare by size, and functions over model values by their keys.
+    expect(Math.sign(store.compare(run, store.functionOf([m], [one])))).toBe(1);
+    expect(store.equals(models, mixed)).toBe(false);
+  });
+
   it("answers a miss among records of several sizes, which TLC compares without failing", () => {
     const kind = store.str("kind");
     const from = store.str("from");

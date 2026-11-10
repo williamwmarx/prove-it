@@ -16,7 +16,8 @@
 // A request TLC fails on answers "!" and the exception's class. A value is written as prefix
 // tokens: T and F, i<int>, s<text> for a string and m<text> for a model value, S<n> for a set of
 // the n values that follow, U<n> for a tuple, R<n> for a record of n field names (as s tokens) and
-// values, and f<n> for a function of n keys and values. A text is its UTF-16 code units in hex,
+// values, f<n> for a function of n keys and values, and g<n> for a function over an interval of n
+// integers from the int token that follows, then its n values. A text is its UTF-16 code units in hex,
 // four digits each. The sets TLC keeps lazy are built as Tool builds them: Lp for SUBSET of the
 // value that follows, Lf for [D -> R] of the two, Lr<n> for a set of records of n field names (as
 // s tokens) and sets, Lx<n> for the product of n sets, and Lu, Li and Ld for the union,
@@ -35,6 +36,7 @@ import tlc2.value.impl.BoolValue;
 import tlc2.value.impl.Enumerable;
 import tlc2.value.impl.FcnRcdValue;
 import tlc2.value.impl.IntValue;
+import tlc2.value.impl.IntervalValue;
 import tlc2.value.impl.ModelValue;
 import tlc2.value.impl.RecordValue;
 import tlc2.value.impl.Reducible;
@@ -108,6 +110,11 @@ public final class ValueOracle {
           range[index] = read();
         }
         return (Value) new FcnRcdValue(domain, range, false).normalize();
+      }
+      case 'g': {
+        final int size = Integer.parseInt(rest);
+        final int low = ((IntValue) read()).val;
+        return new FcnRcdValue(new IntervalValue(low, low + size - 1), read(size));
       }
       case 'L':
         return readLazy(rest);

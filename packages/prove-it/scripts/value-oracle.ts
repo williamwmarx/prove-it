@@ -54,7 +54,7 @@ type Tree =
   | { kind: "string" | "model"; text: string }
   | { kind: "set" | "tuple"; elements: Tree[] }
   | { kind: "record"; fields: [string, Tree][] }
-  | { kind: "function"; pairs: [Tree, Tree][] };
+  | { kind: "function"; pairs: [Tree, Tree][]; isInterval: boolean };
 
 // An answer: a number, a boolean or a fingerprint as text, or why it failed.
 interface Answer {
@@ -119,13 +119,30 @@ const generate = (depth: number): Tree => {
   if (choice === 8) {
     return { kind: "record", fields: names.map((name) => [name, generate(depth - 1)]) };
   }
-  // Keys from 1, which make a tuple of a function, or from 0, which don't.
+  if (choice === 9) {
+    const keys: Tree[] = names.map((text) => ({ kind: "string", text }));
+    return {
+      kind: "function",
+      pairs: keys.map((key) => [key, generate(depth - 1)]),
+      isInterval: false,
+    };
+  }
+  // Keys from 1, which make a tuple of a function, or from 0, which don't, which TLC holds over an
+  // interval, as [i \in 0..n |-> e] makes one, or over their elements, as [i \in {0, 1} |-> e]
+  // does; or model values, alone or with integers.
   const low = next(2);
-  const keys: Tree[] =
-    choice === 9
-      ? names.map((text) => ({ kind: "string", text }))
-      : Array.from({ length: 1 + next(3) }, (_, index) => ({ kind: "int", value: low + index }));
-  return { kind: "function", pairs: keys.map((key) => [key, generate(depth - 1)]) };
+  const keyKind = next(3);
+  const firstModel = next(MODELS.length);
+  const keys: Tree[] = Array.from({ length: 1 + next(3) }, (_, index) =>
+    keyKind === 0 || (keyKind === 2 && index > 0)
+      ? { kind: "int", value: low + index }
+      : { kind: "model", text: MODELS[(firstModel + index) % MODELS.length] },
+  );
+  return {
+    kind: "function",
+    pairs: keys.map((key) => [key, generate(depth - 1)]),
+    isInterval: keyKind === 0 && next(2) === 0,
+  };
 };
 
 const encodeText = (text: string) =>
@@ -153,10 +170,16 @@ const toTokens = (tree: Tree): string[] => {
         ...tree.fields.flatMap(([name, field]) => [`s${encodeText(name)}`, ...toTokens(field)]),
       ];
     case "function":
-      return [
-        `f${tree.pairs.length}`,
-        ...tree.pairs.flatMap(([key, value]) => [...toTokens(key), ...toTokens(value)]),
-      ];
+      return tree.isInterval
+        ? [
+            `g${tree.pairs.length}`,
+            ...toTokens(tree.pairs[0][0]),
+            ...tree.pairs.flatMap(([, value]) => toTokens(value)),
+          ]
+        : [
+            `f${tree.pairs.length}`,
+            ...tree.pairs.flatMap(([key, value]) => [...toTokens(key), ...toTokens(value)]),
+          ];
   }
 };
 

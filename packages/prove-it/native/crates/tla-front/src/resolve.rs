@@ -2873,7 +2873,16 @@ fn resolve_theorem(theorem: &Theorem, unit: &Unit) -> Result<()> {
     if let Some(goal) = &goal {
         goal.is_in_proof.set(true);
     }
-    resolve_proof(theorem.proof.as_ref(), &scope, unit)?;
+    // `processTheorem` adds a theorem whose statement is an expression to the symbol table before
+    // its proof, which may name it as one, so its proof is read after its definition.
+    let proof_unit = match (&theorem.proof, is_definition) {
+        (Some(proof), true) => Unit {
+            location: proof.location.position(),
+            ..unit.clone()
+        },
+        _ => unit.clone(),
+    };
+    resolve_proof(theorem.proof.as_ref(), &scope, &proof_unit)?;
     if let Some(goal) = &goal {
         goal.is_in_proof.set(false);
     }

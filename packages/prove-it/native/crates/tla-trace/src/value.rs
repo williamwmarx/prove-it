@@ -715,10 +715,25 @@ pub fn equals(left: &Value, right: &Value) -> Evaluated<bool> {
             if size != right.domain.len() {
                 return Ok(false);
             }
-            for (left, right) in left.domain.iter().zip(&right.domain) {
-                if !equals(left, right)? {
-                    return Ok(false);
+            // `FcnRcdValue.equals`, which `TupleValue.equals` reaches with the other as a function:
+            // the keys of one over an interval as integers against the other's.
+            let are_keys_equal = match (function_interval(left), function_interval(right)) {
+                (Some(low), Some(other)) => size == 0 || low == other,
+                (Some(low), None) => are_interval_keys(low, &right.domain)?,
+                (None, Some(low)) => are_interval_keys(low, &left.domain)?,
+                (None, None) => {
+                    let mut are_equal = true;
+                    for (left, right) in left.domain.iter().zip(&right.domain) {
+                        if !equals(left, right)? {
+                            are_equal = false;
+                            break;
+                        }
+                    }
+                    are_equal
                 }
+            };
+            if !are_keys_equal {
+                return Ok(false);
             }
             for (left, right) in left.range.iter().zip(&right.range) {
                 if !equals(left, right)? {
@@ -766,6 +781,26 @@ pub fn equals(left: &Value, right: &Value) -> Evaluated<bool> {
         }
         _ => incomparable(left, right, true),
     }
+}
+
+// Whether a function's keys are those of the interval from `low`, up to the first that isn't, as
+// `FcnRcdValue.equals` asks them, failing at one that isn't an integer.
+fn are_interval_keys(low: i32, keys: &[Value]) -> Evaluated<bool> {
+    for (index, key) in keys.iter().enumerate() {
+        let Value::Int(key) = key else {
+            return fail_runtime(
+                "a function over an interval compared with one over other keys",
+                format!(
+                    "Attempted to compare an integer with non-integer:\n{}.",
+                    format_pretty(key)
+                ),
+            );
+        };
+        if i64::from(*key) != i64::from(low) + index as i64 {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 fn is_same_construction(left: &Lazy, right: &Lazy) -> bool {
