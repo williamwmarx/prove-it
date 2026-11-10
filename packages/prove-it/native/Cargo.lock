@@ -3,6 +3,17 @@
 version = 4
 
 [[package]]
+name = "prove-decide"
+version = "0.1.0"
+
+[[package]]
+name = "prove-isabelle"
+version = "0.1.0"
+dependencies = [
+ "prove-decide",
+]
+
+[[package]]
 name = "prove-it-check"
 version = "0.1.0"
 dependencies = [
@@ -27,6 +38,7 @@ dependencies = [
 name = "prove-it-host"
 version = "0.1.0"
 dependencies = [
+ "prove-it-prover",
  "tla-engine",
  "tla-front",
  "tla-ir",
@@ -43,11 +55,51 @@ dependencies = [
 ]
 
 [[package]]
+name = "prove-it-prover"
+version = "0.1.0"
+dependencies = [
+ "prove-decide",
+ "prove-isabelle",
+ "prove-ptl",
+ "prove-smt",
+ "prove-zenon",
+]
+
+[[package]]
 name = "prove-it-wasm"
 version = "0.1.0"
 dependencies = [
  "prove-it-host",
  "tla-values",
+]
+
+[[package]]
+name = "prove-num"
+version = "0.1.0"
+
+[[package]]
+name = "prove-obligations"
+version = "0.1.0"
+
+[[package]]
+name = "prove-ptl"
+version = "0.1.0"
+dependencies = [
+ "prove-decide",
+]
+
+[[package]]
+name = "prove-smt"
+version = "0.1.0"
+dependencies = [
+ "prove-decide",
+]
+
+[[package]]
+name = "prove-zenon"
+version = "0.1.0"
+dependencies = [
+ "prove-decide",
 ]
 
 [[package]]

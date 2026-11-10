@@ -8,6 +8,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+prove-it-prover = { path = "../prover/prover" }
 tla-engine = { path = "../tla-engine" }
 tla-front = { path = "../tla-front" }
 tla-ir = { path = "../tla-ir" }

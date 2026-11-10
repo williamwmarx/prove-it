@@ -147,6 +147,21 @@ pub unsafe extern "C" fn prove_it_sany_text(pointer: *mut u8, length: usize) -> 
     }
 }
 
+/// `decide(prover, text, timeLimitMs, stepLimit)`, as prove-it-host's `prover` describes it. There
+/// is no cancel cell: the decision runs on the thread that would set it.
+///
+/// # Safety
+///
+/// As for `prove_it_check`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn prove_it_decide(pointer: *mut u8, length: usize) -> *mut u8 {
+    unsafe {
+        call(pointer, length, |arguments| {
+            prove_it_host::prover::decide(&get::<4>(arguments), None)
+        })
+    }
+}
+
 /// `storePerform(name, args)`.
 ///
 /// # Safety

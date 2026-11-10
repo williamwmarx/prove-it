@@ -49,3 +49,12 @@ export const writeInputRecords = (records: Record<string, InputRecord>) =>
       .map((digest) => `${JSON.stringify(digest)}: ${JSON.stringify(records[digest])}`)
       .join(",\n")}\n}\n`,
   );
+
+// Makes prove's decide use the TypeScript backends whatever the environment says, as the record is
+// theirs.
+export const useTypeScriptBackends = () => {
+  Object.keys(process.env)
+    .filter((name) => name.startsWith("PROVE_IT_PROVER"))
+    .forEach((name) => delete process.env[name]);
+  process.env.PROVE_IT_PROVER = "ts";
+};

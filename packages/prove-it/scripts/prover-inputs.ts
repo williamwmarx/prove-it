@@ -32,9 +32,12 @@ import {
   PROVER_INPUTS_DIRECTORY,
   PROVER_INPUTS_PATH,
   readInputRecords,
+  useTypeScriptBackends,
   writeInputRecords,
 } from "./prover-records";
 import { getDigest } from "./tlapm-digest";
+
+useTypeScriptBackends();
 
 const isRecording = process.argv.includes("--record");
 

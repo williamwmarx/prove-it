@@ -5,6 +5,7 @@
 //     reproduces; --side rust with the native ones.
 //   --prover smt|z3|zenon|isabelle|ls4 and --filter text keep the inputs of one backend, or whose
 //     digest contains the text. --jobs n runs n workers. --verbose lists every difference.
+// "declined" counts the inputs the native backend doesn't decide yet, and isn't a failure.
 // An answer is "unstable" when the recording or the new decision stopped for a reason that is a
 // property of the runtime rather than of the search, a full heap or stack, and isn't compared.
 
@@ -12,15 +13,21 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
+import { getNativeAddon } from "../src/engine/native";
 import { TlaProverError } from "../src/errors";
 import { decide } from "../src/prover/deciders";
 import type { Statistics, Verdict } from "../src/prover/verdict";
 import { CONFORMANCE_DIRECTORY, getOption, writeResults } from "./corpora";
 import { runModuleWorkers } from "./module-workers";
 import { printResults } from "./proof-records";
-import { getInputPath, type InputRecord, readInputRecords } from "./prover-records";
+import {
+  getInputPath,
+  type InputRecord,
+  readInputRecords,
+  useTypeScriptBackends,
+} from "./prover-records";
 
-type Outcome = "same" | "differs" | "unstable" | "crash";
+type Outcome = "same" | "differs" | "unstable" | "declined" | "crash";
 
 interface Answer {
   verdict: Verdict;
@@ -35,6 +42,7 @@ interface Result {
   expected?: Answer;
   actual?: Answer;
   crash?: string;
+  reason?: string;
 }
 
 interface Batch {
@@ -52,7 +60,21 @@ const side = getOption("--side") ?? "ts";
 const prover = getOption("--prover");
 const filter = getOption("--filter");
 
-const decideOnSide = (record: InputRecord, text: string): Answer => {
+useTypeScriptBackends();
+
+// The native backend's answer, which reads the input with no fallback, or why it declined.
+const decideNatively = (record: InputRecord, text: string): Answer | string => {
+  const addon = getNativeAddon();
+  if (typeof addon === "string") throw new Error(`no native engine: ${addon}`);
+  const decision = addon.decide(record.prover, text, Infinity, record.stepLimit, undefined);
+  if (decision.kind === "declined") return decision.reason;
+  if (decision.kind === "error")
+    return { verdict: "unknown", statistics: {}, error: decision.message };
+  return { verdict: decision.verdict, statistics: decision.statistics };
+};
+
+const decideOnSide = (record: InputRecord, text: string): Answer | string => {
+  if (side === "rust") return decideNatively(record, text);
   if (side !== "ts") throw new Error(`no ${side} side`);
   try {
     const decision = decide(record.prover, text, { timeLimitMs: Infinity }, record.stepLimit);
@@ -76,10 +98,11 @@ const getResult = (digest: string, record: InputRecord): Result => {
     try {
       return decideOnSide(record, readFileSync(getInputPath(record.prover, digest), "utf8"));
     } catch (error) {
-      return String(error instanceof Error ? (error.stack ?? error.message) : error);
+      return { crash: String(error instanceof Error ? (error.stack ?? error.message) : error) };
     }
   })();
-  if (typeof actual === "string") return { ...base, verdict: "crash", crash: actual };
+  if (typeof actual === "string") return { ...base, verdict: "declined", reason: actual };
+  if ("crash" in actual) return { ...base, verdict: "crash", crash: actual.crash };
   const outcome: Outcome =
     isRuntimeStop(expected) || isRuntimeStop(actual)
       ? "unstable"
@@ -112,10 +135,14 @@ const missing = digests.length - results.length;
 console.log(
   `${side} on ${results.length} of ${digests.length} inputs${missing > 0 ? `, ${missing} lost with their worker` : ""}`,
 );
-printResults(results, ["same", "differs", "unstable", "crash"], ["differs", "crash"], (result) =>
-  result.verdict === "crash"
-    ? `crash ${result.prover} ${result.digest}: ${result.crash}`
-    : `${result.verdict} ${result.prover} ${result.digest}: expected ${JSON.stringify(result.expected)}, got ${JSON.stringify(result.actual)}`,
+printResults(
+  results,
+  ["same", "differs", "unstable", "declined", "crash"],
+  ["differs", "crash"],
+  (result) =>
+    result.verdict === "crash"
+      ? `crash ${result.prover} ${result.digest}: ${result.crash}`
+      : `${result.verdict} ${result.prover} ${result.digest}: expected ${JSON.stringify(result.expected)}, got ${JSON.stringify(result.actual)}`,
 );
 if (
   results.some((result) => result.verdict === "differs" || result.verdict === "crash") ||

@@ -1,0 +1,11 @@
+//! A port of Zenon as tlapm ships it, with its TLA+ extension and an independent check of each
+//! proof, on the .znn text tlapm writes: `src/prover/zenon` in TypeScript (design/prover.md, P2).
+
+use prove_decide::{DecideError, Decision, Limits};
+
+/// Declines every input until the port lands, so that the TypeScript backend decides it.
+pub fn decide(_text: &str, _limits: &mut Limits) -> Result<Decision, DecideError> {
+    Err(DecideError::Declined(
+        "Zenon isn't ported to Rust yet".into(),
+    ))
+}

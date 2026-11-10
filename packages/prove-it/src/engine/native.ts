@@ -5,6 +5,7 @@
 
 import type { CheckProgress } from "../check";
 import { EngineInvariantError } from "../errors";
+import type { Statistics, Verdict } from "../prover/verdict";
 import type { LiveEnabled, LiveExpression } from "../tableau";
 import {
   createStateDecoder,
@@ -80,8 +81,22 @@ export type NativeSanyText =
   | { kind: "needed"; keys: string[] }
   | { kind: "declined"; reason: string };
 
+// A prover backend's answer, malformed input, or why the Rust backend doesn't decide the input
+// (prove-it-host's prover.rs).
+export type NativeDecision =
+  | { kind: "decided"; verdict: Verdict; statistics: Statistics }
+  | { kind: "error"; message: string }
+  | { kind: "declined"; reason: string };
+
 export interface NativeAddon extends NativeStoreHooks {
   abiVersion: () => number;
+  decide: (
+    prover: string,
+    text: string,
+    timeLimitMs: number,
+    stepLimit: number | undefined,
+    cancel: Int32Array | undefined,
+  ) => NativeDecision;
   sanyText: (
     root: string,
     source: string,
@@ -250,7 +265,7 @@ export interface EngineResult {
 }
 
 // The contract between this loader and the addon, ABI_VERSION in its lib.rs.
-const ABI_VERSION = 11;
+const ABI_VERSION = 12;
 
 export const ADDON_FILE = "prove-it-engine.node";
 export const WASM_FILE = "prove-it-engine.wasm";

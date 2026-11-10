@@ -22,7 +22,9 @@ export const getEngineWasm = () => getEnvironment()?.PROVE_IT_ENGINE_WASM;
 // PROVE_IT_IR_DUMP names the file the engine IR of the model is written to.
 export const isIrDumped = () => Boolean(getEnvironment()?.PROVE_IT_IR_DUMP);
 
-export const getEnvironmentFlag = (name: string) => getEnvironment()?.[name] === "1";
+export const getEnvironmentSetting = (name: string) => getEnvironment()?.[name];
+
+export const getEnvironmentFlag = (name: string) => getEnvironmentSetting(name) === "1";
 
 // The state PROVE_IT_STOP_AT names, before whose expansion the engine's search stops, or -1.
 export const getStopAt = () => {

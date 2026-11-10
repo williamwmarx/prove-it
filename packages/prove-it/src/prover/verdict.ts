@@ -25,6 +25,9 @@ export interface Steps {
 export interface DecideOptions {
   timeLimitMs: number;
   signal?: AbortSignal;
+  // A cell over shared memory whose first element another thread sets to cancel the decision, as
+  // the signal does where the decision can't see it: in a native backend, or a worker.
+  cancel?: Int32Array;
   steps?: Steps;
   // Where the backend writes its statistics.
   statistics?: Statistics;

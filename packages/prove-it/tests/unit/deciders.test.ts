@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { getNativeAddon } from "../../src/engine/native";
 import { decide } from "../../src/prover/deciders";
 
 const TESTS_DIRECTORY = join(import.meta.dirname, "..");
@@ -43,5 +44,36 @@ describe("the deciders' steps and statistics", () => {
       verdict: "unsat",
       statistics: { steps },
     });
+  });
+});
+
+// Until a backend's port lands, the native engine declines its inputs and TypeScript decides them.
+describe("the Rust ports", () => {
+  const getAddon = () => {
+    const addon = getNativeAddon();
+    if (typeof addon === "string") throw new Error(addon);
+    return addon;
+  };
+
+  it.each(INPUTS)("%s declines while it isn't ported", (prover, text) => {
+    expect(getAddon().decide(prover, text, 1000, undefined, undefined).kind).toBe("declined");
+  });
+
+  it("declines a prover without a backend", () => {
+    expect(getAddon().decide("cvc4", "", 1000, 10, undefined)).toEqual({
+      kind: "declined",
+      reason: "the cvc4 backend",
+    });
+  });
+
+  it.each(INPUTS)("%s falls back to TypeScript where its port declines", (prover, text) => {
+    const setting = process.env.PROVE_IT_PROVER;
+    process.env.PROVE_IT_PROVER = "rust";
+    try {
+      expect(decide(prover, text, OPTIONS)).toMatchObject({ verdict: "unsat" });
+    } finally {
+      if (setting === undefined) delete process.env.PROVE_IT_PROVER;
+      else process.env.PROVE_IT_PROVER = setting;
+    }
   });
 });

@@ -7,6 +7,7 @@
 use std::ffi::{CStr, c_char, c_void};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::ptr::{null, null_mut};
+use std::sync::atomic::AtomicI32;
 
 use crate::ABI_VERSION;
 
@@ -244,6 +245,30 @@ unsafe extern "C" fn sany_text(env: napi_env, info: napi_callback_info) -> napi_
     }
 }
 
+// decide(prover: string, text: string, timeLimitMs: number, stepLimit: number | undefined,
+// cancel: Int32Array | undefined): { kind, ... }, as prove-it-host's `prover` describes it. The
+// first element of `cancel`, over a SharedArrayBuffer, is read in place while the backend runs, so
+// that another thread can cancel it.
+unsafe extern "C" fn decide(env: napi_env, info: napi_callback_info) -> napi_value {
+    unsafe {
+        guard(env, || {
+            let [prover, text, time_limit, step_limit, cancel] =
+                store::get_arguments::<5>(env, info)?;
+            let arguments = [prover, text, time_limit, step_limit]
+                .into_iter()
+                .map(|argument| store::get_host(env, argument))
+                .collect::<Result<Vec<_>, _>>()?;
+            let cancel = match store::get_typed::<i32>(env, cancel, store::NAPI_INT32_ARRAY)? {
+                // SAFETY: an i32 and an AtomicI32 have the same layout, and JavaScript keeps the
+                // array alive while this call runs.
+                Some([first, ..]) => Some(AtomicI32::from_ptr(first)),
+                _ => None,
+            };
+            store::create_result(env, prove_it_host::prover::decide(&arguments, cancel))
+        })
+    }
+}
+
 /// Node and Bun call this when they load the addon.
 ///
 /// # Safety
@@ -265,6 +290,7 @@ pub unsafe extern "C" fn napi_register_module_v1(env: napi_env, exports: napi_va
             export(env, exports, c"abiVersion", abi_version)?;
             export(env, exports, c"check", check::check_model)?;
             export(env, exports, c"sanyText", sany_text)?;
+            export(env, exports, c"decide", decide)?;
             store::export_hooks(env, exports)?;
             Ok(exports)
         })
