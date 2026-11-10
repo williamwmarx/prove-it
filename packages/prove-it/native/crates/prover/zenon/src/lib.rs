@@ -4,6 +4,7 @@
 //! of OCaml's standard library under the LGPL with OCaml's linking exception.
 
 pub mod eqrel;
+pub mod equality_rules;
 pub mod expr;
 pub mod index_table;
 pub mod limits;
@@ -13,6 +14,9 @@ pub mod ocaml;
 pub mod parse;
 pub mod phrase;
 pub mod proof;
+pub mod propositional_rules;
+pub mod rules;
+pub mod search;
 pub mod tla;
 
 use prove_decide::{DecideError, Decision, Limits};
