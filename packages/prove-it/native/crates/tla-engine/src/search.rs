@@ -722,7 +722,9 @@ impl States {
         for index in 0..count {
             encoder
                 .encode(store, &ids[index * width..(index + 1) * width])
-                .expect("a state the search fingerprinted, which holds only values that encode");
+                .expect(
+                    "a state compute_key let the search keep, which holds only values that encode",
+                );
         }
         encoder.finish()
     }
@@ -732,7 +734,9 @@ impl States {
         for index in 0..count {
             encoder
                 .encode(store, &ids[index * width..(index + 1) * width])
-                .expect("a state the search fingerprinted, which holds only values that encode");
+                .expect(
+                    "a state compute_key let the search keep, which holds only values that encode",
+                );
         }
         encoder.finish()
     }
@@ -914,7 +918,9 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
         context: &EngineContext,
         is_successor: bool,
     ) -> Outcome<u64> {
-        if self.is_lambda_built
+        // Where the key is a VIEW, the state itself isn't fingerprinted, which would refuse it;
+        // every state the search keeps is one the transfer encoding can write.
+        if (self.is_lambda_built || context.view.is_some())
             && machine
                 .current()
                 .iter()

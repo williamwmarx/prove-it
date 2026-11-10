@@ -9,7 +9,8 @@ use crate::store::{
 };
 use crate::{Bail, Id, Store};
 
-/// `JSON.stringify` of a string, with U+2028 and U+2029 escaped as well (`toJsonString`).
+/// Gson's text of a string as TLC writes it to a file: `JSON.stringify`'s, with U+2028 and U+2029
+/// escaped as well (`toJsonString`), and a lone surrogate as the '?' UTF-8 can't encode.
 fn write_string(text: &[u16], out: &mut Vec<u16>) {
     let push = |out: &mut Vec<u16>, text: &str| out.extend(text.encode_utf16());
     out.push(u16::from(b'"'));
@@ -33,7 +34,9 @@ fn write_string(text: &[u16], out: &mut Vec<u16>) {
             0x0D => push(out, "\\r"),
             0x09 => push(out, "\\t"),
             0x2028 | 0x2029 => push(out, &format!("\\u{unit:04x}")),
-            _ if unit < 0x20 || is_lone => push(out, &format!("\\u{unit:04x}")),
+            _ if unit < 0x20 => push(out, &format!("\\u{unit:04x}")),
+            // Gson keeps a lone surrogate, which the file's UTF-8 encoder writes as '?'.
+            _ if is_lone => out.push(u16::from(b'?')),
             _ => out.push(unit),
         }
     }
@@ -387,6 +390,11 @@ fn from_json(store: &mut Store, json: Json) -> Outcome<Id> {
                 .collect::<Outcome<Vec<Id>>>()?;
             Ok(store.tuple_of(&values))
         }
+        // TLC reads {} as an empty record, which it prints and writes apart from the empty
+        // sequence that the store holds for both.
+        Json::Object(members) if members.is_empty() => Err(Bail(
+            "unsupported: an empty JSON object, which TLC holds apart from <<>>",
+        )),
         Json::Object(members) => {
             let mut keys = Vec::with_capacity(members.len());
             let mut values = Vec::with_capacity(members.len());
@@ -411,13 +419,11 @@ pub fn read_json(store: &mut Store, text: &[u16]) -> Outcome<Id> {
     from_json(store, json)
 }
 
-/// `ndJsonDeserialize`'s value of a text: each line that isn't blank once trimmed, read as JSON,
-/// in a tuple.
+/// `ndJsonDeserialize`'s value of a text: each line that isn't empty once trimmed as Java's
+/// `String.trim` trims, of the units up to a space, read as JSON past a byte order mark that
+/// starts it, in a tuple.
 pub fn read_nd_json(store: &mut Store, text: &[u16]) -> Outcome<Id> {
-    let is_space = |unit: &u16| {
-        char::from_u32(u32::from(*unit)).is_some_and(|character| character.is_whitespace())
-            || *unit == 0xFEFF
-    };
+    let is_space = |unit: &u16| *unit <= 0x20;
     let mut values = Vec::new();
     let mut start = 0;
     while start <= text.len() {
@@ -432,7 +438,11 @@ pub fn read_nd_json(store: &mut Store, text: &[u16]) -> Outcome<Id> {
                 .iter()
                 .rposition(|unit| !is_space(unit))
                 .unwrap_or(first);
-            values.push(read_json(store, &line[first..=last])?);
+            let line = &line[first..=last];
+            values.push(read_json(
+                store,
+                line.strip_prefix(&[0xFEFF]).unwrap_or(line),
+            )?);
         }
         start = match text.get(end) {
             Some(0x0D) if text.get(end + 1) == Some(&0x0A) => end + 2,

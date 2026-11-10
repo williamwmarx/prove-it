@@ -1571,6 +1571,34 @@ fn declines_what_tlc_fails_to_enumerate_where_it_writes_or_reads_a_value() {
 }
 
 #[test]
+fn writes_json_files_as_tlc() {
+    // TLC makes a file's directories before it writes it, and reads {} as an empty record, which
+    // it writes back as {} where the store would write [].
+    let spec = "---- MODULE Stop ----\nEXTENDS Integers, TLC, Json\nVARIABLE x\nInit == JsonSerialize(\"sub/d/o.json\", <<1, \"a\">>) /\\ ndJsonSerialize(\"sub/e/o.ndjson\", <<1, <<2>>>>) /\\ x = 0\nNext == x' = x\n====\n";
+    let (output, directory) = run_lowered("json-directories", spec, "INIT Init\nNEXT Next\n");
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(0), "{text}");
+    let read = |path: &str| std::fs::read_to_string(directory.join(path)).expect("a file");
+    assert_eq!(read("sub/d/o.json"), "[1,\"a\"]");
+    assert_eq!(read("sub/e/o.ndjson"), "1\n[2]\n");
+    std::fs::remove_dir_all(directory).expect("removed");
+    let spec = "---- MODULE Stop ----\nEXTENDS Integers, TLC, Json\nVARIABLE x\nInit == JsonSerialize(\"o.json\", JsonDeserialize(\"i.json\")) /\\ x = 0\nNext == x' = x\n====\n";
+    let directory =
+        std::env::temp_dir().join(format!("prove-it-cli-json-empty-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    std::fs::write(directory.join("i.json"), "[{}]").expect("the input");
+    let (output, directory) = run_lowered("json-empty", spec, "INIT Init\nNEXT Next\n");
+    let text = stdout(&output);
+    assert!(!text.contains("Model checking completed"), "{text}");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("an empty JSON object"),
+        "{text}"
+    );
+    assert!(!directory.join("o.json").exists());
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
 fn evaluates_assert_s_message_and_reads_a_file_as_tlc() {
     // TLC evaluates Assert's message even where the assertion holds, as it does any Java
     // method's arguments, printing it again as it rebuilds the trace.
