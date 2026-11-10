@@ -178,7 +178,7 @@ fn reads_the_command_line_as_tlc() {
     assert_eq!(configured.status.code(), Some(0), "{}", stdout(&configured));
     for (args, what) in [
         (&["-difftrace", "TCommit"][..], "the TLC option -difftrace"),
-        (&["-simulate", "TCommit"], "the TLC option -simulate"),
+        (&["-generate", "TCommit"], "the TLC option -generate"),
         (&["-coverage", "1", "TCommit"], "the TLC option -coverage"),
         (&["-fp", "1", "TCommit"], "-fp 1"),
         (&["-lncheck", "off", "TCommit"], "-lncheck off"),

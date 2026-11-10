@@ -41,6 +41,8 @@ pub struct Front {
     /// What TLC prints itself after the constant definitions and before the assumptions (the
     /// engine's `startup_done`).
     pub startup_messages: Vec<StartupMessage>,
+    /// How a simulation labels an initial state, where the front end knows.
+    pub initial_label: Option<String>,
 }
 
 /// The front as tla-front finds it: the model it lowers, or where TLC stops before the search, as
@@ -80,6 +82,7 @@ pub fn read_front(
             sany: None,
             override_messages: Vec::new(),
             startup_messages: Vec::new(),
+            initial_label: None,
         }));
     }
     let describe = host.get_file_describer(files);
@@ -109,6 +112,7 @@ pub fn read_front(
                 sany: Some(sany.text),
                 startup_messages: lowered.startup_messages?,
                 override_messages: lowered.override_messages,
+                initial_label: lowered.initial_label,
             }));
         }
         Err(FrontError::NotYet(reason)) => return Err(reason),

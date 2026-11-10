@@ -18,6 +18,7 @@ use crate::failure::{ErrorStop, print_assumption_failure, print_failure};
 use crate::front::{Failure, Read, read_front};
 use crate::host::{Files, Host};
 use crate::messages::{self as code, Level, Output, Printer};
+use crate::simulation::{Simulating, check_simulation, get_simulation, print_banner};
 use crate::stack::{alongside, on_search_stack};
 use crate::summary::{
     actual_probability, fingerprint_distance, format_count, format_probability,
@@ -37,10 +38,10 @@ use tla_trace::{Rebuilder, Site, Unsupported, pretty_print};
 use tla_trace::{Stats, Verdict as PostconditionVerdict};
 
 // TLC's exit statuses, from EC.ExitStatus.
-const SUCCESS: i32 = 0;
-const DEADLOCK: i32 = 11;
-const ASSUMPTION_VIOLATION: i32 = 10;
-const SAFETY_VIOLATION: i32 = 12;
+pub(crate) const SUCCESS: i32 = 0;
+pub(crate) const DEADLOCK: i32 = 11;
+pub(crate) const ASSUMPTION_VIOLATION: i32 = 10;
+pub(crate) const SAFETY_VIOLATION: i32 = 12;
 const LIVENESS_VIOLATION: i32 = 13;
 const NO_NEXT_ACTION: i32 = 75;
 const SPEC_PARSE_ERROR: i32 = 150;
@@ -232,7 +233,7 @@ fn print_startup_banner(printer: &mut Printer, seed: i64, workers: usize) {
 
 /// JavaScript's `Math.max(1, Number.parseInt(value, 10) || 1)`.
 /// What the search reports as it runs, relayed from its thread.
-enum Event {
+pub(crate) enum Event {
     /// What TLC prints itself as it starts, after the constant definitions and before the
     /// assumptions, as tla-front writes it.
     StartupMessage(StartupMessage),
@@ -252,9 +253,12 @@ enum Event {
     /// TLC would evaluate the `_PERIODIC` expression now, as it prints its progress, which the
     /// engine doesn't: the search ends as not native.
     Periodic,
+    /// A simulation's progress: the states checked, the traces generated, and TLC's packed mean
+    /// and squared deviations of their lengths.
+    SimulationProgress(u64, u64, i64),
 }
 
-struct Relay<'ir> {
+pub(crate) struct Relay<'ir> {
     sender: mpsc::Sender<Event>,
     /// Whether something printed has a text TLC's isn't known to be, which ends the search.
     is_misprinted: bool,
@@ -274,7 +278,10 @@ struct Relay<'ir> {
     /// assumption the engine left to it, from `startup_done` on.
     assumed_worded: Vec<Option<String>>,
     /// What the run printed of the assumptions, from `startup_done` on.
-    assumed_printed: Vec<String>,
+    pub(crate) assumed_printed: Vec<String>,
+    /// Why the trace evaluator mustn't check an assumption the engine leaves to it, as where it
+    /// would read the model checker's TLCGet in a simulation.
+    pub(crate) undelegated: Option<&'static str>,
     /// What the trace evaluator finds the assumptions print, in order, where the store forgot how
     /// TLC built a value one prints.
     assumed_texts: Option<Option<Vec<String>>>,
@@ -283,7 +290,33 @@ struct Relay<'ir> {
     startup_texts: Option<Option<Vec<String>>>,
 }
 
-impl Relay<'_> {
+impl<'ir> Relay<'ir> {
+    pub(crate) fn new(
+        sender: mpsc::Sender<Event>,
+        ir: &'ir tla_ir::Ir,
+        is_tool: bool,
+        workers: usize,
+        is_periodic: bool,
+        startup_messages: Vec<StartupMessage>,
+    ) -> Self {
+        Relay {
+            sender,
+            is_misprinted: false,
+            is_periodic,
+            is_periodic_reached: false,
+            ir,
+            is_tool,
+            workers,
+            startup_messages,
+            startup_worded: Some(Vec::new()),
+            assumed_worded: Vec::new(),
+            assumed_printed: Vec::new(),
+            assumed_texts: None,
+            startup_texts: None,
+            undelegated: None,
+        }
+    }
+
     fn send_print(&mut self, printed: Option<String>) {
         self.is_misprinted |= printed.is_none();
         let _ = self.sender.send(Event::Print(printed));
@@ -371,6 +404,12 @@ impl Reporter for Relay<'_> {
         let _ = self.sender.send(Event::LivenessFinished);
     }
 
+    fn simulation_progress(&mut self, generated: u64, traces: u64, lengths: i64) {
+        let _ = self
+            .sender
+            .send(Event::SimulationProgress(generated, traces, lengths));
+    }
+
     fn print(&mut self, store: &Store, values: &[Id]) {
         self.send_print(format_printed(store, values));
     }
@@ -433,6 +472,9 @@ impl Reporter for Relay<'_> {
     // The trace evaluator words TLC's messages, which AssertError compares. It runs on the
     // search's thread, with its stack.
     fn check_assumption(&mut self, position: u32) -> Result<Delegated, String> {
+        if let Some(reason) = self.undelegated {
+            return Err(reason.into());
+        }
         let checked = Rebuilder::new(self.ir)
             .and_then(|mut rebuilder| {
                 rebuilder.set_workers(self.workers);
@@ -556,8 +598,12 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
         Some(workers) => workers.parse().unwrap_or(1),
         None => 1,
     };
+    let simulation = get_simulation(args);
     print_welcome(printer);
-    print_startup_banner(printer, seed, workers);
+    match &simulation {
+        Some(simulation) => print_banner(printer, simulation.seed, workers),
+        None => print_startup_banner(printer, seed, workers),
+    }
     let config_path = match args.first("-config") {
         Some(path) => Some(path.to_string()),
         None => Some(match spec_path.strip_suffix(".tla") {
@@ -618,6 +664,17 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
         seed,
     ) {
         Ok(Read::Model(front)) => front,
+        // TLC rejects a temporal formula as it builds its liveness checker, which a simulation
+        // builds only as it checks a trace.
+        Ok(Read::Failed(failure))
+            if simulation.is_some()
+                && failure
+                    .error
+                    .as_ref()
+                    .is_some_and(|coded| coded.text.contains("emporal formula")) =>
+        {
+            return report_not_native(printer, "a simulation of a temporal formula TLC rejects");
+        }
         Ok(Read::Failed(failure)) => return print_failed_front(printer, &failure, start),
         Err(reason) => return report_not_native(printer, &reason),
     };
@@ -700,6 +757,17 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
             ir = split;
         }
     }
+    if let Some(simulation) = simulation {
+        let simulating = Simulating {
+            simulation,
+            config: &config,
+            startup_messages: front.startup_messages,
+            initial_label: front.initial_label,
+            workers,
+            start,
+        };
+        return check_simulation(printer, &ir, simulating);
+    }
     // TLC checks the temporal properties as the search goes, unless -lncheck asks for one check at
     // the end.
     let is_liveness_periodic = !args
@@ -740,21 +808,14 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
     let (outcome, assumed_printed) = alongside(
         move || {
             let ir = ir_ref;
-            let mut relay = Relay {
+            let mut relay = Relay::new(
                 sender,
-                is_misprinted: false,
-                is_periodic,
-                is_periodic_reached: false,
                 ir,
                 is_tool,
                 workers,
-                startup_messages: front.startup_messages,
-                startup_worded: Some(Vec::new()),
-                assumed_worded: Vec::new(),
-                assumed_printed: Vec::new(),
-                assumed_texts: None,
-                startup_texts: None,
-            };
+                is_periodic,
+                front.startup_messages,
+            );
             let outcome = search(ir, &settings, &mut relay);
             (outcome, relay.assumed_printed)
         },
@@ -807,6 +868,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                         is_periodic_reached = true;
                         break;
                     }
+                    Event::SimulationProgress(..) => {}
                 }
             }
             drop(receiver);
@@ -1241,7 +1303,7 @@ fn is_initial_site(site: ErrorSite) -> bool {
 /// Prints a violation the engine stopped at, or the lasso the liveness checker found, as
 /// `printViolation` in `src/cli/tlc.ts` does, and returns the exit code, or why it can't print
 /// it yet.
-fn print_violation(
+pub(crate) fn print_violation(
     printer: &mut Printer,
     ir: &tla_ir::Ir,
     config: &ModelConfig,
@@ -1726,7 +1788,7 @@ fn is_trace_recorded(args: &Parsed) -> bool {
 }
 
 // A message TLC prints itself as it starts, as tla-front writes it.
-fn print_startup_message(printer: &mut Printer, message: &StartupMessage) {
+pub(crate) fn print_startup_message(printer: &mut Printer, message: &StartupMessage) {
     let level = if message.is_warning {
         Level::Warning
     } else {
@@ -1736,7 +1798,7 @@ fn print_startup_message(printer: &mut Printer, message: &StartupMessage) {
 }
 
 // `TLC_SYMMETRY_SET_TOO_SMALL`, as `symmetry.ts` words it.
-fn print_small_sets(printer: &mut Printer, names: &[String]) {
+pub(crate) fn print_small_sets(printer: &mut Printer, names: &[String]) {
     let is_plural = names.len() > 1;
     printer.print(
         code::SYMMETRY_SET_TOO_SMALL,
@@ -1792,7 +1854,11 @@ fn print_failed_front(printer: &mut Printer, failure: &Failure, start: Instant) 
 }
 
 /// An error TLC reports with its code, then how long it ran (`printFailure`).
-fn print_coded_failure(printer: &mut Printer, coded: &CodedError, start: Instant) -> i32 {
+pub(crate) fn print_coded_failure(
+    printer: &mut Printer,
+    coded: &CodedError,
+    start: Instant,
+) -> i32 {
     printer.print(coded.code, Level::Error, &coded.text);
     print_finished(printer, start);
     coded.exit_code
@@ -1813,7 +1879,7 @@ pub(crate) fn print_finished(printer: &mut Printer, start: Instant) {
     );
 }
 
-fn report_not_native(printer: &mut Printer, what: &str) -> i32 {
+pub(crate) fn report_not_native(printer: &mut Printer, what: &str) -> i32 {
     printer.note(&format!("prove-it: not native yet: {what}"));
     NOT_NATIVE
 }

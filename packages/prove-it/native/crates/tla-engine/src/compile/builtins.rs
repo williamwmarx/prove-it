@@ -728,6 +728,23 @@ impl Compiler<'_> {
         if key.is_none_or(|key| key.starts_with(NAMED_REGISTER_PREFIX)) {
             return self.compile_register(operands, context, false);
         }
+        // A simulation's run, its statistics, its configuration and its search keys differ
+        // from the model checker's (`Simulator.getStatistics`, `createConfig`).
+        if self.simulation.is_some()
+            && key.is_some_and(|key| {
+                !matches!(key, "level" | "spec" | "config")
+                    && !key.starts_with(JAVA_PROPERTY_PREFIX)
+            })
+        {
+            return Ok(leaf(
+                eval(|_| {
+                    Err(Bail(
+                        "unsupported: TLCGet of a key a simulation reads otherwise",
+                    ))
+                }),
+                Footprint::slot(super::REGISTER_SLOT),
+            ));
+        }
         if key == Some("config") {
             return self.compile_config();
         }
@@ -813,7 +830,33 @@ impl Compiler<'_> {
     fn compile_config(&mut self) -> Compiling<Compiled> {
         let model = &self.ir.model;
         let text = |text: &str| text.encode_utf16().collect::<Vec<u16>>();
-        let fields = [
+        // A simulation's (`Simulator.createConfig`): the number of traces as Java's int of the
+        // workers' total, and -1 for a depth without bound.
+        let simulated = self.simulation.map(|simulation| {
+            let traces = simulation.traces.map_or(i64::MAX, |traces| traces as i64);
+            [
+                ("mode", Field::Text("simulate".into())),
+                (
+                    "depth",
+                    Field::Int(if simulation.depth == i32::MAX {
+                        -1
+                    } else {
+                        i64::from(simulation.depth)
+                    }),
+                ),
+                (
+                    "traces",
+                    Field::Int(i64::from((self.workers as i64).wrapping_mul(traces) as i32)),
+                ),
+                ("deadlock", Field::Bool(model.check_deadlock)),
+                ("seed", Field::Text(simulation.seed.to_string())),
+                ("aril", Field::Text(simulation.aril.to_string())),
+                ("worker", Field::Int(self.workers as i64)),
+                ("install", Field::Text("unknown".into())),
+                ("sched", Field::Text("random".into())),
+            ]
+        });
+        let searched = [
             ("mode", Field::Text("bfs".into())),
             ("deadlock", Field::Bool(model.check_deadlock)),
             ("worker", Field::Int(self.workers as i64)),
@@ -821,6 +864,10 @@ impl Compiler<'_> {
             ("fingerprint", Field::Text((INITIAL as i64).to_string())),
             ("install", Field::Text("unknown".into())),
         ];
+        let fields: Vec<(&str, Field)> = match simulated {
+            Some(fields) => fields.into_iter().collect(),
+            None => searched.into_iter().collect(),
+        };
         let mut keys = Vec::with_capacity(fields.len());
         let mut values = Vec::with_capacity(fields.len());
         for (name, field) in fields {

@@ -8,9 +8,9 @@ use crate::TlcVersion;
 use crate::ast::SourceRange;
 use crate::config::parse_config;
 use crate::dependencies::create_definition_facts;
-use crate::describe::{Description, Part, describe};
+use crate::describe::{Description, Part, UNNAMED_ACTION, describe};
 use crate::environment::{EnvironmentOptions, create_environment};
-use crate::errors::FrontError;
+use crate::errors::{FrontError, format_range};
 use crate::eval::Evaluator;
 use crate::hash::FastMap;
 use crate::lower::{Lowering, RankedTexts};
@@ -65,6 +65,11 @@ pub struct LoweredModel {
     /// What TLC prints of the Java overrides it loads, right after `Starting...`, before it
     /// computes the constant definitions.
     pub override_messages: Vec<StartupMessage>,
+    /// How a simulation labels an initial state, as `TLCStateInfo` labels the last of TLC's
+    /// initial predicates (`initPredVec`): `Init line 4, col 9 to line 4, col 13 of module M`, or
+    /// `Initial predicate` and where an unnamed one is written. None where the front end can't
+    /// tell.
+    pub initial_label: Option<String>,
 }
 
 /// The encoded IR of the model the configuration describes, without TLC's actions, which the
@@ -279,15 +284,27 @@ fn lower_ranked(
         let (ir, startup) = lowering.finish_indexing(model)?;
         // TLCGet("spec"), where an expression reads it; where the front end can't describe the
         // specification, the engine stops where TLC would read it.
-        let ir = if options.is_spec_described && reads_spec(&ir) {
-            describe(&config, &environment, &facts, &evaluator)
-                .ok()
-                .and_then(|description| {
-                    tla_trace::add_spec(&ir, &to_spec_description(&ir, description)).ok()
-                })
-                .unwrap_or(ir)
-        } else {
-            ir
+        let description = describe(&config, &environment, &facts, &evaluator).ok();
+        // TLC places a definition an INSTANCE with substitutions copies at the INSTANCE.
+        let initial_label = description.as_ref().and_then(|description| {
+            let init = description.inits.last()?;
+            let location = environment
+                .instance_actions
+                .values()
+                .find(|action| action.name == init.name)
+                .map_or(&init.location, |action| &action.location);
+            let range = format_range(location.range.as_ref()?);
+            Some(if &*init.name == UNNAMED_ACTION {
+                format!("Initial predicate {range}")
+            } else {
+                format!("{} {range}", init.name)
+            })
+        });
+        let ir = match description {
+            Some(description) if options.is_spec_described && reads_spec(&ir) => {
+                tla_trace::add_spec(&ir, &to_spec_description(&ir, description)).unwrap_or(ir)
+            }
+            _ => ir,
         };
         // Under -nowarning TLC prints none of its warnings, so an invariant the engine checks at
         // startup, which may be a constant TLC warns about, matters only without it.
@@ -335,6 +352,7 @@ fn lower_ranked(
                 override_messages,
                 ir: tla_ir::encode(&ir),
                 startup_messages,
+                initial_label,
             },
             startup,
         ))
