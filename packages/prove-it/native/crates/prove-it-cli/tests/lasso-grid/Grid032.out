@@ -1,0 +1,22 @@
+exit 13
+Semantic processing of module Naturals
+Semantic processing of module Grid032
+Linting of module Grid032
+Implied-temporal checking--satisfiability problem has 1 branches.
+Computing initial states...
+Error: Temporal property P0 was violated.
+
+Error: The following behavior constitutes a counter-example:
+
+State 1: <Initial predicate>
+/\ x = 0
+/\ y = 0
+
+State 2: <B(0) line 9, col 9 to line 9, col 47 of module Grid032>
+/\ x = 1
+/\ y = 1
+
+Back to state 1: <A2 line 8, col 7 to line 8, col 29 of module Grid032>
+
+27 states generated, 5 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 2.
