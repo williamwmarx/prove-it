@@ -21,6 +21,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use prove_it_check::zone::{Zone, parse_rule};
 use prove_it_check::{FileDescription, Files, Host, Machine, Output};
+use tla_engine::clock::Instant;
 use tla_front::report::ModuleOrigin;
 
 use crate::hooks::HookResult;
@@ -34,7 +35,9 @@ const NOT_NATIVE: &str = "prove-it: not native yet: ";
 struct SourcesHost {
     sources: Sources,
     machine: Machine,
+    /// The wall clock when the check started, which goes on from then by the monotonic clock.
     now: SystemTime,
+    started: Instant,
     zone: Zone,
     variables: Vec<(String, String)>,
 }
@@ -85,7 +88,7 @@ impl Host for SourcesHost {
     }
 
     fn now(&self) -> SystemTime {
-        self.now
+        self.now + self.started.elapsed()
     }
 
     fn zone(&self) -> &Zone {
@@ -187,6 +190,7 @@ fn check(arguments: &[HostValue]) -> HookResult {
             pid: get_number(pid, "the pid")? as u32,
         },
         now: UNIX_EPOCH + Duration::from_millis(get_number(now, "now")? as u64),
+        started: Instant::now(),
         zone: parse_rule(&get_text(zone, "the zone")?).map_or(Zone::UTC, Zone::from_rule),
         variables,
     };
@@ -219,4 +223,33 @@ fn check(arguments: &[HostValue]) -> HookResult {
         ("out", HostValue::text(&String::from_utf8_lossy(&out))),
         ("err", HostValue::text(&err)),
     ]))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // A check's dates go on from the time it was given, so the date it finishes at is not the date
+    // it started at.
+    #[test]
+    fn the_clock_goes_on_from_the_time_given() {
+        let host = SourcesHost {
+            sources: Sources::new(&HostValue::Array(Vec::new())).expect("no sources"),
+            machine: Machine {
+                system: String::new(),
+                release: String::new(),
+                arch: String::new(),
+                cores: 1,
+                memory_megabytes: 1,
+                pid: 1,
+            },
+            now: UNIX_EPOCH,
+            started: Instant::now(),
+            zone: Zone::UTC,
+            variables: Vec::new(),
+        };
+        let first = host.now();
+        std::thread::sleep(Duration::from_millis(5));
+        assert!(host.now() > first && first >= UNIX_EPOCH);
+    }
 }
