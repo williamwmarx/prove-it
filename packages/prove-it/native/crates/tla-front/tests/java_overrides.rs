@@ -66,7 +66,7 @@ fn replaces_each_operator_with_the_method_of_the_same_name_and_arity() {
             ("Small", true),
             ("Large", true),
             ("Name", true),
-            ("Twice", true),
+            ("Twice", false),
             ("Mismatch", false),
             ("Computed", false),
         ]
@@ -80,5 +80,15 @@ fn replaces_each_operator_with_the_method_of_the_same_name_and_arity() {
 #[test]
 fn leaves_an_override_that_computes_its_value_to_java() {
     let error = link("---- MODULE Overrides ----\nComputed == 0\n====\n").err();
+    assert!(matches!(error, Some(FrontError::NotYet(_))), "{error:?}");
+}
+
+#[test]
+fn leaves_an_override_with_parameters_to_java() {
+    // TLC evaluates 1 \div 0 before it calls Twice, and reports the division, not -2.
+    let error = link(
+        "---- MODULE Overrides ----\nEXTENDS Integers\nVARIABLE x\nTwice(n) == 2 * n\nInit == x = Twice(1 \\div 0)\n====\n",
+    )
+    .err();
     assert!(matches!(error, Some(FrontError::NotYet(_))), "{error:?}");
 }

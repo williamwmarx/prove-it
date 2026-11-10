@@ -341,6 +341,13 @@ export const overrideDefinitions = (
       (candidate) => candidate.name === definition.name && isMatched(candidate),
     );
     if (!method) return definition;
+    // TLC evaluates each argument, in order, before it calls the method (OpValue.eval), so an
+    // argument that fails or prints does so, which a literal in the operator's place skips.
+    if (method.arity > 0) {
+      throw new TlaUnsupportedError(
+        `The Java override ${module.name}.${method.name} has parameters, whose arguments TLC evaluates, which tla-ts cannot run`,
+      );
+    }
     return {
       ...definition,
       body: getReturnedLiteral(method, classFile.pool, module.name, definition.location),

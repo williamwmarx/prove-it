@@ -455,6 +455,13 @@ pub fn override_definitions(
                     .find(|method| *method.name == *definition.name && is_matched(method))
             })
             .flatten();
+        // TLC evaluates each argument, in order, before it calls the method (`OpValue.eval`), so an
+        // argument that fails or prints does so, which a literal in the operator's place skips.
+        if method.is_some_and(|method| method.arity > 0) {
+            return Err(not_yet(
+                "a Java override with parameters, whose arguments TLC evaluates",
+            ));
+        }
         definitions.push(match method {
             Some(method) => Rc::new(Definition {
                 body: get_returned_literal(method, &pool, &definition.location)?,
