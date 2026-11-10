@@ -97,9 +97,15 @@ impl<'ir> Rebuilder<'ir> {
 
     /// Takes the values the search computed at startup, ids of `store`, which TLC's trace reads
     /// as it computed them, and the state of the generator the startup left.
-    pub fn set_startup(&mut self, store: &Store, values: &[Id], random: u64) {
-        self.evaluator.set_startup(store, values);
+    pub fn set_startup(
+        &mut self,
+        store: &Store,
+        values: &[Id],
+        random: u64,
+    ) -> Result<(), Unsupported> {
+        self.evaluator.set_startup(store, values)?;
         self.startup_random = random;
+        Ok(())
     }
 
     /// Takes the state of the generator where an invariant of the trace's last state stopped the
@@ -602,11 +608,17 @@ fn find(
 ) -> Result<Option<Vec<Value>>, Unsupported> {
     let target_view = match key {
         Key::View(view) => {
-            let state: Vec<Value> = target.iter().map(|&id| from_store(store, id)).collect();
+            let state: Vec<Value> = target
+                .iter()
+                .map(|&id| from_store(store, id))
+                .collect::<Result<_, _>>()?;
             Some(run(view_of(evaluator, *view, &state))?)
         }
         Key::ViewOfSymmetry(view, group) => {
-            let state: Vec<Value> = target.iter().map(|&id| from_store(store, id)).collect();
+            let state: Vec<Value> = target
+                .iter()
+                .map(|&id| from_store(store, id))
+                .collect::<Result<_, _>>()?;
             let least = run(least_in_orbit(evaluator.ir, group, &state))?;
             Some(run(view_of(evaluator, *view, &least))?)
         }

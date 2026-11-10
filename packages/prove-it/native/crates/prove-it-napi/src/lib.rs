@@ -79,7 +79,9 @@ impl Reporter for Relay {
     // the interpreter's printer.
     fn print(&mut self, store: &Store, values: &[Id]) {
         let mut encoder = StateEncoder::new();
-        encoder.encode(store, values);
+        encoder
+            .encode(store, values)
+            .expect("the engine prints beside the addon only values that encode");
         let _ = self.0.send(Event::Print(encoder.finish(), values.len()));
     }
 }

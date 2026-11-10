@@ -11,6 +11,11 @@ use crate::store::{
     KIND_TUPLE, SMALL_INT_MAX, Store, TRUE,
 };
 
+/// Why a value has no encoding: a function TLC keeps lazy, or Nat, Int or STRING, which
+/// `transfer.ts` has no tag for.
+pub const UNENCODABLE: Bail =
+    Bail("unsupported: handing over a function TLC keeps lazy, or Nat, Int or STRING");
+
 const FALSE_TAG: i32 = 0;
 const TRUE_TAG: i32 = 1;
 const INTEGER_TAG: i32 = 2;
@@ -44,11 +49,13 @@ impl StateEncoder {
         StateEncoder::default()
     }
 
-    pub fn encode(&mut self, store: &Store, state: &[Id]) {
+    /// Writes a state, unless it holds a value the encoding has no tag for.
+    pub fn encode(&mut self, store: &Store, state: &[Id]) -> Result<(), Bail> {
         for &id in state {
-            self.encode_value(store, id);
+            self.encode_value(store, id)?;
         }
         self.encoded.count += 1;
+        Ok(())
     }
 
     pub fn finish(self) -> EncodedStates {
@@ -64,7 +71,7 @@ impl StateEncoder {
         self.encoded.words.push(index);
     }
 
-    fn encode_value(&mut self, store: &Store, id: Id) {
+    fn encode_value(&mut self, store: &Store, id: Id) -> Result<(), Bail> {
         let size = store.size_of(id);
         match store.kind_of(id) {
             KIND_BOOL => self
@@ -88,7 +95,7 @@ impl StateEncoder {
                     .words
                     .extend_from_slice(&[SET_TAG, size as i32]);
                 for index in 0..size {
-                    self.encode_value(store, store.element_at(id, index));
+                    self.encode_value(store, store.element_at(id, index))?;
                 }
             }
             // The interpreter's tuple has the domain 1..n, which the encoding keeps as an
@@ -101,10 +108,10 @@ impl StateEncoder {
                     size as i32,
                 ]);
                 for index in 0..size {
-                    self.encode_value(store, store.get_range_value(id, index));
+                    self.encode_value(store, store.get_range_value(id, index))?;
                 }
             }
-            kind => {
+            kind @ (KIND_TUPLE | KIND_FUNCTION) => {
                 let class = if kind == KIND_TUPLE {
                     TUPLE_CLASS
                 } else if store.is_record(id) {
@@ -115,18 +122,19 @@ impl StateEncoder {
                 self.encoded
                     .words
                     .extend_from_slice(&[FUNCTION_TAG, class, size as i32]);
-                debug_assert!(kind == KIND_TUPLE || kind == KIND_FUNCTION);
                 for index in 0..size {
                     let key = store
                         .peek_key(id, index)
                         .expect("a function's key is interned");
-                    self.encode_value(store, key);
+                    self.encode_value(store, key)?;
                 }
                 for index in 0..size {
-                    self.encode_value(store, store.get_range_value(id, index));
+                    self.encode_value(store, store.get_range_value(id, index))?;
                 }
             }
+            _ => return Err(UNENCODABLE),
         }
+        Ok(())
     }
 }
 
@@ -161,11 +169,13 @@ impl SharedEncoder {
         }
     }
 
-    pub fn encode(&mut self, store: &Store, state: &[Id]) {
+    /// Writes a state, unless it holds a value the encoding has no tag for.
+    pub fn encode(&mut self, store: &Store, state: &[Id]) -> Result<(), Bail> {
         for &id in state {
-            let position = self.write(store, id);
+            let position = self.write(store, id)?;
             self.states.push(position);
         }
+        Ok(())
     }
 
     pub fn finish(self) -> SharedStates {
@@ -182,20 +192,24 @@ impl SharedEncoder {
         encoded.count as i32 - 1
     }
 
-    fn write_parts(&mut self, store: &Store, parts: impl Iterator<Item = Id>) -> Vec<i32> {
+    fn write_parts(
+        &mut self,
+        store: &Store,
+        parts: impl Iterator<Item = Id>,
+    ) -> Result<Vec<i32>, Bail> {
         parts.map(|part| self.write(store, part)).collect()
     }
 
     // The value's position, writing it and the parts not yet written first.
-    fn write(&mut self, store: &Store, id: Id) -> i32 {
+    fn write(&mut self, store: &Store, id: Id) -> Result<i32, Bail> {
         let known = self.positions[id as usize];
         if known != -1 {
-            return known;
+            return Ok(known);
         }
         let size = store.size_of(id);
         let position = match store.kind_of(id) {
             KIND_BOOL | KIND_INT => {
-                self.encoder.encode_value(store, id);
+                self.encoder.encode_value(store, id)?;
                 self.encoder.encoded.count += 1;
                 self.encoder.encoded.count as i32 - 1
             }
@@ -212,7 +226,7 @@ impl SharedEncoder {
             }
             KIND_SET => {
                 let elements =
-                    self.write_parts(store, (0..size).map(|index| store.element_at(id, index)));
+                    self.write_parts(store, (0..size).map(|index| store.element_at(id, index)))?;
                 self.push(&[&[SET_TAG, size as i32][..], &elements].concat())
             }
             // A reader interns an interval's keys before its values, so the keys a reset store
@@ -224,7 +238,7 @@ impl SharedEncoder {
                 let values = self.write_parts(
                     store,
                     (0..size).map(|index| store.get_range_value(id, index)),
-                );
+                )?;
                 self.push(
                     &[
                         &[INTERVAL_FUNCTION_TAG, TUPLE_CLASS, 1, size as i32][..],
@@ -233,7 +247,7 @@ impl SharedEncoder {
                     .concat(),
                 )
             }
-            kind => {
+            kind @ (KIND_TUPLE | KIND_FUNCTION) => {
                 let class = if kind == KIND_TUPLE {
                     TUPLE_CLASS
                 } else if store.is_record(id) {
@@ -248,16 +262,17 @@ impl SharedEncoder {
                             .peek_key(id, index)
                             .expect("a function's key is interned")
                     }),
-                );
+                )?;
                 let values = self.write_parts(
                     store,
                     (0..size).map(|index| store.get_range_value(id, index)),
-                );
+                )?;
                 self.push(&[&[FUNCTION_TAG, class, size as i32][..], &keys, &values].concat())
             }
+            _ => return Err(UNENCODABLE),
         };
         self.positions[id as usize] = position;
-        position
+        Ok(position)
     }
 }
 

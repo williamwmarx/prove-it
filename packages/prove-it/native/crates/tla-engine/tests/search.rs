@@ -127,7 +127,7 @@ impl Reporter for Recorded {
 fn format_values(store: &tla_values::Store, values: &[tla_values::Id]) -> String {
     values
         .iter()
-        .map(|&value| tla_values::print::format_value(store, value))
+        .map(|&value| tla_values::print::format_value(store, value).expect("printable"))
         .collect::<Vec<_>>()
         .join("  ")
 }

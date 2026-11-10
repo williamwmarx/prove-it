@@ -35,7 +35,9 @@ fn evaluate_failure(path: &str) -> (Failure, String) {
         let actions = vec![None; states.len().saturating_sub(1)];
         let failure = Rebuilder::new(&ir)
             .and_then(|mut rebuilder| {
-                rebuilder.set_startup(&stopped.store, &stopped.startup, stopped.startup_random);
+                rebuilder
+                    .set_startup(&stopped.store, &stopped.startup, stopped.startup_random)
+                    .expect("startup values");
                 if let Some(group) = &stopped.symmetry {
                     rebuilder.set_symmetry(group);
                 }

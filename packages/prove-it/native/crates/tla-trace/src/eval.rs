@@ -16,6 +16,7 @@ use tla_ir::{
 
 use tla_values::{Id, Store};
 
+use crate::Unsupported;
 use crate::failure::nested;
 use crate::print::{format_pretty, format_printed, format_value};
 use crate::random::{random_element, random_subset};
@@ -372,17 +373,21 @@ const NAMED_REGISTER_PREFIX: &str = "s:";
 
 impl Registers {
     /// The registers whose values are ids of `store`: by number, and by name.
-    pub fn from_store(store: &Store, numbered: &[Option<Id>], named: &[(Id, Id)]) -> Registers {
-        Registers {
+    pub fn from_store(
+        store: &Store,
+        numbered: &[Option<Id>],
+        named: &[(Id, Id)],
+    ) -> Result<Registers, Unsupported> {
+        Ok(Registers {
             numbered: numbered
                 .iter()
-                .map(|value| value.map(|id| from_store(store, id)))
-                .collect(),
+                .map(|value| value.map(|id| from_store(store, id)).transpose())
+                .collect::<Result<_, _>>()?,
             named: named
                 .iter()
-                .map(|&(name, value)| (from_store(store, name), from_store(store, value)))
-                .collect(),
-        }
+                .map(|&(name, value)| Ok((from_store(store, name)?, from_store(store, value)?)))
+                .collect::<Result<_, Unsupported>>()?,
+        })
     }
 }
 
@@ -1606,13 +1611,14 @@ impl<'ir> Evaluator<'ir> {
 
     /// Takes the values the search computed at startup for the model's startup definitions,
     /// ids of `store` in their order, as the values of those definitions.
-    pub fn set_startup(&mut self, store: &Store, values: &[Id]) {
+    pub fn set_startup(&mut self, store: &Store, values: &[Id]) -> Result<(), Unsupported> {
         for (&index, &id) in self.ir.model.startup.definitions.iter().zip(values) {
             let node = self.ir.definitions[index as usize];
-            let value = from_store(store, id);
+            let value = from_store(store, id)?;
             self.cache.insert((node, false), value.clone());
             self.cache.insert((node, true), value);
         }
+        Ok(())
     }
 
     fn definition_value(&mut self, node: NodeId, context: &Context) -> Evaluated<Value> {

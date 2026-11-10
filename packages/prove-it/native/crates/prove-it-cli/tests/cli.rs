@@ -1523,6 +1523,54 @@ fn caches_tlccache_by_its_key_alone_as_tlc() {
 }
 
 #[test]
+fn declines_what_tlc_fails_to_enumerate_where_it_writes_or_reads_a_value() {
+    // TLC fails on a function it keeps lazy, or on Nat, where it writes JSON, tests a bag, or
+    // reads a register; and on a tuple as a quantifier's bound.
+    for (test, definitions, config) in [
+        (
+            "json-lazy",
+            "Init == JsonSerialize(\"out.json\", <<[i \\in Nat |-> i]>>) /\\ x = 0\nNext == x' = x",
+            "",
+        ),
+        (
+            "json-nat",
+            "Init == \\E s \\in {Nat} : JsonSerialize(\"out.json\", <<s>>) /\\ x = 0\nNext == x' = x",
+            "",
+        ),
+        (
+            "bag-lazy",
+            "Init == IsABag([i \\in Nat |-> 1]) = FALSE /\\ x = 0\nNext == x' = x",
+            "",
+        ),
+        (
+            "register-lazy",
+            "Init == x = 0\nNext == x < 3 /\\ x' = x + 1 /\\ TLCSet(1, [i \\in Nat |-> i])\nPost == 3 \\in DOMAIN TLCGet(1)",
+            "POSTCONDITION Post\n",
+        ),
+        (
+            "tuple-bound",
+            "Init == \\A i \\in <<1>> : x = i\nNext == x' = x",
+            "",
+        ),
+    ] {
+        let spec = format!(
+            "---- MODULE Stop ----\nEXTENDS Integers, TLC, TLCExt, Json, Bags\nVARIABLE x\n{definitions}\n====\n"
+        );
+        let (output, directory) =
+            run_lowered(test, &spec, &format!("INIT Init\nNEXT Next\n{config}"));
+        let text = stdout(&output);
+        assert!(!text.contains("Model checking completed"), "{test}: {text}");
+        assert!(!text.contains("Error: "), "{test}: {text}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("not native yet"),
+            "{test}: {text}"
+        );
+        assert!(!directory.join("out.json").exists(), "{test}");
+        std::fs::remove_dir_all(directory).expect("removed");
+    }
+}
+
+#[test]
 fn declines_to_fingerprint_what_tlc_fails_to() {
     // TLC fails to fingerprint a function over Nat or Int it keeps lazy, and Nat, Int or STRING,
     // at any depth: TLCFP of one fails, and so does a state or a VIEW that holds one.

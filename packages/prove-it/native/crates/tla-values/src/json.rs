@@ -4,7 +4,8 @@
 
 use crate::print::{is_printable, write_value};
 use crate::store::{
-    FALSE, KIND_BOOL, KIND_INT, KIND_MODEL, KIND_SET, KIND_STRING, KIND_TUPLE, Outcome, TRUE,
+    FALSE, KIND_BOOL, KIND_FUNCTION, KIND_INT, KIND_MODEL, KIND_SET, KIND_STRING, KIND_TUPLE,
+    Outcome, TRUE,
 };
 use crate::{Bail, Id, Store};
 
@@ -40,7 +41,8 @@ fn write_string(text: &[u16], out: &mut Vec<u16>) {
 }
 
 /// `toJson`: a value's JSON text. A set is an array of its elements and a sequence an array of
-/// its values; another function is an object, a key that isn't a string named by its text.
+/// its values; another function is an object, a key that isn't a string named by its text. TLC
+/// fails on a function it keeps lazy and on Nat, Int or STRING, which the engine doesn't model.
 pub fn write_json(store: &Store, id: Id, out: &mut Vec<u16>) -> Outcome<()> {
     let size = store.size_of(id);
     let join = |out: &mut Vec<u16>,
@@ -67,7 +69,7 @@ pub fn write_json(store: &Store, id: Id, out: &mut Vec<u16>) -> Outcome<()> {
         KIND_TUPLE => join(out, b'[', b']', &mut |out, index| {
             write_json(store, store.get_range_value(id, index), out)
         })?,
-        _ => join(out, b'{', b'}', &mut |out, index| {
+        KIND_FUNCTION => join(out, b'{', b'}', &mut |out, index| {
             let key = store
                 .peek_key(id, index)
                 .ok_or(Bail("a function key the store didn't intern"))?;
@@ -78,12 +80,17 @@ pub fn write_json(store: &Store, id: Id, out: &mut Vec<u16>) -> Outcome<()> {
                     return Err(Bail("a JSON key whose text depends on how TLC built it"));
                 }
                 let mut text = Vec::new();
-                write_value(store, key, &mut text);
+                write_value(store, key, &mut text)?;
                 write_string(&text, out);
             }
             out.push(u16::from(b':'));
             write_json(store, store.get_range_value(id, index), out)
         })?,
+        _ => {
+            return Err(Bail(
+                "unsupported: JSON of a function TLC keeps lazy, or Nat, Int or STRING",
+            ));
+        }
     }
     Ok(())
 }

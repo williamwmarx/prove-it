@@ -11,10 +11,11 @@ use std::rc::Rc;
 
 use tla_values::Store;
 
+use crate::Unsupported;
 use crate::print::format_pretty;
 use tla_values::store::{
-    INT, KIND_BOOL, KIND_INFINITE_SET, KIND_INT, KIND_MODEL, KIND_SET, KIND_STRING, KIND_TUPLE,
-    NAT, STRINGS, TRUE,
+    INT, KIND_BOOL, KIND_FUNCTION, KIND_INFINITE_SET, KIND_INT, KIND_MODEL, KIND_SET, KIND_STRING,
+    KIND_TUPLE, NAT, STRINGS, TRUE,
 };
 
 /// Why an evaluation failed, as TLC would have, or where the evaluator can't follow it: the
@@ -1301,8 +1302,9 @@ pub fn is_same(left: &Value, right: &Value) -> bool {
 }
 
 /// The value an id of the store holds, as TLC holds it normalized: a tuple as a tuple, a function
-/// of strings as a record.
-pub fn from_store(store: &Store, id: u32) -> Value {
+/// of strings as a record. A function the engine kept lazy is the machine's that built it, which
+/// the store alone can't give.
+pub fn from_store(store: &Store, id: u32) -> Result<Value, Unsupported> {
     let text = || {
         Rc::new(Text {
             units: store.text_of(id).into(),
@@ -1310,7 +1312,7 @@ pub fn from_store(store: &Store, id: u32) -> Value {
         })
     };
     let size = store.size_of(id);
-    match store.kind_of(id) {
+    Ok(match store.kind_of(id) {
         KIND_BOOL => Value::Bool(id == TRUE),
         KIND_INT => Value::Int(store.int_of(id)),
         KIND_STRING => Value::Str(text()),
@@ -1323,19 +1325,19 @@ pub fn from_store(store: &Store, id: u32) -> Value {
         KIND_SET => Value::Set(Rc::new(
             (0..size)
                 .map(|index| from_store(store, store.element_at(id, index)))
-                .collect(),
+                .collect::<Result<_, _>>()?,
         )),
-        kind => {
+        kind @ (KIND_FUNCTION | KIND_TUPLE) => {
             let range = (0..size)
                 .map(|index| from_store(store, store.get_range_value(id, index)))
-                .collect();
+                .collect::<Result<_, _>>()?;
             if kind == KIND_TUPLE {
-                return Value::tuple(range);
+                return Ok(Value::tuple(range));
             }
             let domain: Vec<Value> = (0..size)
                 .filter_map(|index| store.peek_key(id, index))
                 .map(|key| from_store(store, key))
-                .collect();
+                .collect::<Result<_, _>>()?;
             let class = if store.is_record(id) {
                 Class::Record
             } else {
@@ -1343,7 +1345,12 @@ pub fn from_store(store: &Store, id: u32) -> Value {
             };
             Value::function(domain, range, class)
         }
-    }
+        _ => {
+            return Err(Unsupported(
+                "a value the search left holding a function TLC keeps lazy".into(),
+            ));
+        }
+    })
 }
 
 /// A value with its model values renamed by a permutation of a symmetry set, as TLC's `permute`

@@ -12,6 +12,7 @@ use tla_values::store::{
     EMPTY_SET, EMPTY_TUPLE, FALSE, INT, KIND_INT, KIND_SET, KIND_STRING, KIND_TUPLE, NAT, Outcome,
     STRINGS, TRUE, is_function_kind,
 };
+use tla_values::transfer::UNENCODABLE;
 use tla_values::{Bail, Id, Store};
 
 use super::fused;
@@ -583,6 +584,11 @@ impl Compiler<'_> {
                             return Err(Bail(
                                 "printing a value whose text depends on how TLC built it",
                             ));
+                        }
+                        // The addon hands what it prints to the interpreter, whose encoding has
+                        // no Nat, Int or STRING.
+                        if !is_native && machine.store.holds_lazy_function(value) {
+                            return Err(UNENCODABLE);
                         }
                     }
                     let result = if is_print { values[1] } else { TRUE };
@@ -1796,7 +1802,7 @@ fn to_string(machine: &mut Machine<'_>, value: Id) -> Outcome<Id> {
         ));
     }
     let mut text = Vec::new();
-    write_value(&machine.store, value, &mut text);
+    write_value(&machine.store, value, &mut text)?;
     // A text the engine made before, such as by \o, keeps the rank it had then, -1, which the
     // store's guard on unordered strings doesn't see.
     if let Some(string) = machine.store.find_str(&text)
