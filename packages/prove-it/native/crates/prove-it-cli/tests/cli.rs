@@ -686,6 +686,159 @@ fn reports_an_assumption_that_is_no_boolean() {
     }
 }
 
+// The Bags module's Java overrides (`tlc2.module.Bags`) and SubBag's TLA+ definition, as
+// tests/unit/bags.test.ts has TLC fail them. (+) requires both arguments be bags, so a count of 0
+// fails it.
+#[test]
+fn reports_failures_of_the_bags_operators_as_tlc() {
+    let cast = |method: &str| {
+        format!(
+            "Attempted to apply the operator overridden by the Java method\npublic static {method}(tlc2.value.impl.Value,tlc2.value.impl.Value),\nbut it produced the following error:\nclass tlc2.value.impl.StringValue cannot be cast to class tlc2.value.impl.IntValue (tlc2.value.impl.StringValue and tlc2.value.impl.IntValue are in unnamed module of loader 'app')"
+        )
+    };
+    let operator = |literal: &str| {
+        format!(
+            "The first argument of BagOfAll should be an operator, but instead it is:\n{literal}"
+        )
+    };
+    for (index, (extends, assumption, message)) in [
+        (
+            "Integers",
+            "BagCardinality(<<0>>)",
+            "Applying BagCardinality to the following value,\nwhich is not a bag:\n<<0>>".to_string(),
+        ),
+        (
+            "Integers",
+            "<<0>> (+) EmptyBag",
+            "The first argument of (+) should be a bag, but instead it is:\n<<0>>".to_string(),
+        ),
+        (
+            "Integers",
+            "EmptyBag (-) 1",
+            "The second argument of (-) should be a bag, but instead it is:\n1".to_string(),
+        ),
+        (
+            "Integers",
+            "BagIn(1, <<\"a\">>)",
+            "The second argument of BagIn should be a bag, but instead it is:\n<<\"a\">>".to_string(),
+        ),
+        (
+            "Integers",
+            "CopiesIn(1, <<\"a\">>)",
+            "The second argument of CopiesIn should be a bag, but instead it is:\n<<\"a\">>"
+                .to_string(),
+        ),
+        (
+            "Integers",
+            "BagUnion({1, 2})",
+            "Attempted to apply BagUnion to the following set, whose\nelement is not a bag:\n{1, 2}"
+                .to_string(),
+        ),
+        (
+            "Integers",
+            "BagUnion(Nat)",
+            "Applying BagUnion to the following value,\nwhich is not a finite enumerable set:\nNat"
+                .to_string(),
+        ),
+        (
+            "Integers",
+            "SetToBag(Nat)",
+            "Applying BagToSet to the following value,\nwhich is not a function with a finite domain:\nNat"
+                .to_string(),
+        ),
+        (
+            "Integers",
+            "BagToSet(1)",
+            "Applying BagToSet to the following value,\nwhich is not a function with a finite domain:\n1"
+                .to_string(),
+        ),
+        (
+            "Integers",
+            "1 \\sqsubseteq EmptyBag",
+            "Applying \\sqsubseteq to the following value,\nwhich is not a function with a finite domain:\n1"
+                .to_string(),
+        ),
+        (
+            "Integers",
+            "BagOfAll(LAMBDA n : n, 1)",
+            "The second argument of BagOfAll should be a function with a finite domain, but instead it is:\n1"
+                .to_string(),
+        ),
+        (
+            "Integers",
+            "<<2147483647>> (+) <<1>>",
+            "Overflow when computing 2147483647+1".to_string(),
+        ),
+        (
+            "Integers",
+            "BagUnion({<<2147483647>>, <<1>>})",
+            "Overflow when computing 1+2147483647".to_string(),
+        ),
+        (
+            "Integers",
+            "<<\"a\">> (-) EmptyBag",
+            cast("tlc2.value.impl.Value tlc2.module.Bags.BagDiff"),
+        ),
+        (
+            "Integers",
+            "<<\"a\">> \\sqsubseteq EmptyBag",
+            cast("tlc2.value.IBoolValue tlc2.module.Bags.SqSubseteq"),
+        ),
+        (
+            "Integers",
+            "BagOfAll(LAMBDA e : TRUE, <<\"a\", 1>>)",
+            cast("tlc2.value.impl.Value tlc2.module.Bags.BagOfAll"),
+        ),
+        (
+            "Integers",
+            "BagOfAll(LAMBDA e : \"c\", <<1>>)",
+            operator("\"c\""),
+        ),
+        (
+            "Integers",
+            "LET H(e) == 1 IN BagOfAll(H, <<1>>)",
+            operator("1"),
+        ),
+        (
+            "Integers",
+            "LET H(e) == \"c\"\n    G(Op(_)) == BagOfAll(Op, <<1>>)\nIN G(H)",
+            operator("\"c\""),
+        ),
+        // SubBag compares the counts with the >= of Naturals, which names itself >, and which
+        // Integers replaces.
+        (
+            "Integers",
+            "SubBag(<<\"a\">>) /\\ 1 >= 0",
+            "The first argument of >= should be an integer, but instead it is:\n\"a\"".to_string(),
+        ),
+        (
+            "Naturals",
+            "SubBag(<<\"a\">>) /\\ 1 >= 0",
+            "The first argument of > should be an integer, but instead it is:\n\"a\"".to_string(),
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let spec = format!(
+            "---- MODULE Bagged ----\nEXTENDS {extends}, FiniteSets, TLC, Bags\nCONSTANT C\nVARIABLE x\nInit == x = 0\nNext == x' = x\nASSUME PrintT({assumption})\n====\n"
+        );
+        let (output, directory) = run_front(
+            &format!("bags-{index}"),
+            &spec,
+            "CONSTANT C = C\nINIT Init\nNEXT Next\n",
+            &[],
+        );
+        let text = stdout(&output);
+        assert_eq!(output.status.code(), Some(10), "{assumption}: {text}");
+        assert!(
+            text.contains(&format!(" of module Bagged failed.\n{message}\n")),
+            "{assumption}: {text}"
+        );
+        std::fs::remove_dir_all(directory).expect("removed");
+    }
+}
+
 #[test]
 fn prints_once_what_an_assumption_printed_before_the_engine_left_it() {
     // The search prints the first print, then leaves the assumption to the trace evaluator, which
