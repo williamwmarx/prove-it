@@ -447,6 +447,36 @@ Each change, measured with the suite against the build before it: median wall se
 interleaved runs on the 4-core cloud container, with the min–max range. Models not listed moved
 within their range.
 
+### The suite again at 3f66319
+
+`main` at 3f66319, the same container, `bench-suite.ts` with `native` (one worker) and
+`native-auto` (4 threads): median wall seconds of 5 interleaved runs, with the min–max range. TLC
+is the baseline's single run of each (d8fb231, the same container), not run again. Every run agrees
+with TLC. MCabs, GameOfLife, BufferedRandomAccessFile, StarkMutex and cf1s_folklore were run again
+on an idle machine, since a build overlapped their first runs.
+
+| Model | Baseline, 1 worker | Now, 1 worker (range) | Gain | Now, 4 workers (range) | Over TLC, 1 | Over TLC, auto (4) |
+|---|---:|---:|---:|---:|---:|---:|
+| MCExactInitialSync | 17.24 | 15.47 (15.15–16.20) | 1.11× | 6.85 (6.78–7.38) | 8.2× | 11.8× |
+| PaxosCommit | 27.23 | 18.48 (17.19–19.49) | 1.47× | 8.45 (7.87–8.79) | 6.0× | 4.2× |
+| MCMultiNode | 7.79 | 5.75 (5.56–5.99) | 1.35× | 2.65 (2.53–2.95) | 11.4× | 7.6× |
+| MCLamportMutex | 3.08 | 2.45 (2.31–2.91) | 1.26× | 1.28 (1.14–1.39) | 5.0× | 6.3× |
+| MCbtree | 0.90 | 0.83 (0.81–0.85) | 1.09× | 0.39 (0.37–0.39) | 34.5× | 26.4× |
+| Detlefs | 4.14 | 2.57 (2.41–2.82) | 1.61× | 1.15 (1.10–1.21) | 11.1× | 11.0× |
+| FastPaxos | 3.28 | 1.79 (1.62–1.85) | 1.83× | 0.84 (0.82–0.98) | 16.2× | 10.0× |
+| TLCSailfish1 | 11.27 | 3.47 (3.38–3.78) | 3.25× | 1.23 (1.19–1.30) | 10.5× | 8.9× |
+| MCabs | 11.24 | 10.18 (9.73–11.16) | 1.10× | 3.06 (2.90–3.20) | 4.3× | 4.6× |
+| GameOfLife | 1.22 | 1.25 (1.21–1.29) | 0.97× | 0.41 (0.39–0.44) | 7.7× | 9.0× |
+| BufferedRandomAccessFile | 1.64 | 1.64 (1.61–1.67) | 1.00× | 0.54 (0.50–0.56) | 25.4× | 21.6× |
+| StarkMutex, N = 4 | 9.49 | 5.41 (4.71–5.66) | 1.76× | 3.61 (3.30–4.23) | 19.3× | 9.0× |
+| cf1s_folklore | 16.69 | 16.07 (14.70–17.13) | 1.04× | 9.37 (8.79–10.48) | 10.3× | 5.3× |
+| SpanTreeRandom (seed 4) | 2.05 | 1.93 (1.91–2.01) | 1.06× | 1.99 (1.81–2.07) | 15.2× | 4.8× |
+| 2PCwithBTM | 0.017 | 0.011 (0.011–0.012) | 1.55× | 0.011 (0.011–0.011) | 60.0× | 55.5× |
+
+Over the 14 models past 2PCwithBTM, whose 10–17 ms is start-up, in geomean: one worker is 1.34×
+the baseline, 4 threads are 2.15× one thread, one worker is 11.2× TLC on one worker (9.2× at the
+baseline), and 4 threads are 8.6× TLC on every core (3.5×).
+
 ### Membership by id (plan item 3)
 
 The store gives each value a shape (`tla-values/src/store/shapes.rs`): a class of values any two
@@ -476,6 +506,19 @@ dropped because they did not move it. Recorded so that nobody repeats them.
 | A table from label to walks for PlusCal's `switch` (string labels compare by id) | Detlefs | 4.70 → 4.63 s, within noise | The `switch`'s self time is the walks inlined into it, not the 49-label scan. |
 | An index, per (quantifier, set id), of the elements whose leading `m.f = c` holds | PaxosCommit | 33.1–35.0 s → 36.0–37.0 s | `msgs` is a new set in nearly every state, so the index is used only by that state's 3 acceptor scans. |
 | Fuse a whole PlusCal step into one closure | MCbtree, MCExactInitialSync | Not built: estimated 5–10% | `walker::segments`' self time is spread over the per-op dispatch, 1–2% a line, with no hot spot. |
+| Read the operands of arithmetic, comparisons and other binary and unary builtins in place (`predicate::Leaf`) rather than through their closures | BufferedRandomAccessFile, MCabs, MCMultiNode, PaxosCommit | 1.66 → 1.59 s, 10.29 → 10.27 s, 5.71 → 5.66 s, 17.9 → 18.6 s | An indirect call to a leaf costs a nanosecond or two; see below. |
+| Intern the integers to 65,535 at reset rather than to 4,096 | BufferedRandomAccessFile | 1.60 → 1.62 s; 2PCwithBTM's start-up 14 → 21 ms | `store.int`'s share is the small integers' own path, not the hash table. |
+| Intern a tuple in place | cf1s_folklore | Not built | `tuple_of` already hashes the stack in place and copies only a new tuple; 69% of `intern_block` is the first load of the intern table's slot, a cache miss. |
+
+**Evaluator dispatch, bounded.** An instrumentation build counted every evaluation of a compiled
+closure (`eval`, by the place that made it), at one worker: 256M in BufferedRandomAccessFile's
+1.60 s, 2.05G in MCabs' 10.2 s, 376M in MCMultiNode's 5.7 s and 861M in PaxosCommit's 18.5 s, 5 to
+21 ns each with all their work. Leaves that only return a value (a constant, a variable, a bound
+name, a value computed once) are 42%, 33%, 10% and 57% of them. Samples whose instruction lies in
+the calls themselves (the `Arc` deref, `?`, the `Fn` shims) are 8–16% of the profiles. A flat
+register form or fused super-nodes would remove at most that, about 1.1–1.15×, and the operands read
+in place above, its cheapest slice, measured 0–4%. The rest of the closures' time is the store's,
+the memo tables' and the state table's memory, which their own tracks address.
 
 Counts behind the quantifier index, from an instrumentation build that counted every quantifier,
 set filter or action-level `\E` whose body starts with `m.f = e` on the bound name:
