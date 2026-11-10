@@ -612,8 +612,14 @@ E4351, E4355) are now written, from `Generator.java` and `SymbolTable.java` at d
   At the end of the LET's definitions, before its body, which is a level up, SANY reports
   "Symbol S declared in RECURSIVE statement but not defined." for every declaration of the LET's
   level it has read and left undefined (`recursiveDecls` is the module's), each once, as
-  `Errors.addMessage` drops a message it holds. A LET whose declaration follows one of its
-  definitions, or that the front end analyzes again for a generated definition, stays `NotYet`.
+  `Errors.addMessage` drops a message it holds. Each declaration binds with its own arity,
+  where `processRecursive` binds it, and the LET's end reports those still pending. `NotYet`, as
+  SANY's symbol table or its order would part from the front end's: a definition before a
+  declaration that defines or names the operator (in its body or bounds); a parameter or bound
+  variable of a declared name; a definition whose parameters differ from its declaration (in
+  number, or taking operators, or a function of a declaration with parameters); an INSTANCE in
+  the LET; a nested LET that declares again an operator an enclosing one leaves undefined; and a
+  LET the front end analyzes again for a generated definition.
 - `generateUseOrHide` and `generateLeafProof`: the parser keeps every DEF entry in the SANY run,
   and `check_defs` reports, where SANY meets it, an unknown name ("Unknown operator: `X'." then
   "DEF clause entry should describe a defined operator.") and a built-in operator, a constant, a

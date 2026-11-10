@@ -1628,6 +1628,7 @@ fn resolve_definition(
 fn bind_let_recursive(
     recursive: &[Rc<Declaration>],
     definitions: &[Rc<Definition>],
+    has_instances: bool,
     body: &Expression,
     scope: &Scope,
     unit: &Unit,
@@ -1636,6 +1637,25 @@ fn bind_let_recursive(
     let mut locals = Vec::new();
     if recursive.is_empty() {
         return Ok((declared, locals));
+    }
+    // SANY gives a declared operator parameters of arity zero until `processOperator` sets its
+    // definition's, and an INSTANCE binds where it appears, which the front end doesn't follow.
+    let is_reshaped = recursive.iter().any(|declaration| {
+        definitions
+            .iter()
+            .filter(|definition| definition.name == declaration.name)
+            .any(|definition| match &definition.kind {
+                DefinitionKind::Operator { params, .. } => {
+                    params.len() != declaration.arity || params.iter().any(|param| param.arity != 0)
+                }
+                DefinitionKind::Function { .. } => declaration.arity != 0,
+            })
+    });
+    if has_instances || is_reshaped {
+        return Err(FrontError::NotYet(
+            "a LET with RECURSIVE declarations and an INSTANCE, or a definition shaped otherwise than its declaration"
+                .to_owned(),
+        ));
     }
     // `SymbolTable.addSymbol` rejects a parameter or a bound variable of a declared operator's
     // name, which leaves the declaration's binding as SANY has it, and the front end doesn't follow.
@@ -2281,8 +2301,16 @@ fn resolve_expression(expression: &Expr, scope: &Scope, unit: &Unit) -> Result<(
                 let_level: unit.let_level + 1,
                 ..unit.clone()
             };
-            let (declared, locals) =
-                bind_let_recursive(recursive, definitions, body, scope, &level)?;
+            let (declared, locals) = bind_let_recursive(
+                recursive,
+                definitions,
+                instances
+                    .as_ref()
+                    .is_some_and(|instances| !instances.is_empty()),
+                body,
+                scope,
+                &level,
+            )?;
             let inner = resolve_definitions(
                 definitions,
                 &declared,

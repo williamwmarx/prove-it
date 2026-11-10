@@ -225,33 +225,6 @@ fn ends_with_the_exception_sanys_generator_throws_for_a_module_in_a_recursive_se
     ));
 }
 
-// A LET defines an operator or a function with another arity than its RECURSIVE declaration
-// gives: SANY reports the operator's and analyzes it with the declaration's arity, and leaves the
-// function undefined.
-#[test]
-fn reports_definitions_whose_arity_differs_from_their_let_recursive_declaration() {
-    assert_eq!(
-        get_text(
-            "arities",
-            "---- MODULE Main ----\nA == LET RECURSIVE F(_)\n         F[x \\in {}] == 0\n     IN 0\nB == LET RECURSIVE G(_)\n         G == 1\n     IN 0\n====\n"
-        ),
-        "Parsing file Main File\nSemantic processing of module Main\nSemantic errors:\n\n*** Errors: 3\n\nline 3, col 10 to line 3, col 25 of module Main\n\nFunction F has operator arguments in its RECURSIVE declaration.\n\n\nline 2, col 20 to line 2, col 23 of module Main\n\nSymbol F declared in RECURSIVE statement but not defined.\n\n\nline 6, col 10 to line 6, col 15 of module Main\n\nDefinition of G has different arity than its RECURSIVE declaration.\n\n\n"
-    );
-}
-
-// A function declared RECURSIVE with operator arguments stays undefined beside an operator its LET
-// leaves undefined.
-#[test]
-fn reports_a_let_recursive_function_with_operator_arguments_among_undefined_declarations() {
-    assert_eq!(
-        get_text(
-            "undefined_function",
-            "---- MODULE Main ----\nA == LET RECURSIVE F(_), K\n         F[x \\in {}] == 0\n     IN 0\n====\n"
-        ),
-        "Parsing file Main File\nSemantic processing of module Main\nSemantic errors:\n\n*** Errors: 3\n\nline 3, col 10 to line 3, col 25 of module Main\n\nFunction F has operator arguments in its RECURSIVE declaration.\n\n\nline 2, col 20 to line 2, col 23 of module Main\n\nSymbol F declared in RECURSIVE statement but not defined.\n\n\nline 2, col 26 to line 2, col 26 of module Main\n\nSymbol K declared in RECURSIVE statement but not defined.\n\n\n"
-    );
-}
-
 #[test]
 fn leaves_a_recursive_function_with_operator_arguments_after_a_module_not_native() {
     // `processFunction` leaves F undefined, so its definition doesn't make the generator throw.
@@ -274,4 +247,21 @@ fn leaves_a_recursive_section_after_a_module_whose_declaration_sany_rejects_not_
         ),
         Err(FrontError::NotYet(_))
     ));
+}
+
+#[test]
+fn leaves_a_let_whose_recursive_definitions_are_shaped_otherwise_not_native() {
+    // SANY gives a declared operator parameters of arity zero until its definition sets them, and
+    // an INSTANCE binds where it appears.
+    for source in [
+        "---- MODULE Main ----\nA == LET RECURSIVE F(_)\n         F[x \\in {}] == 0\n     IN 0\n====\n",
+        "---- MODULE Main ----\nA == LET RECURSIVE G(_)\n         G == 1\n     IN 0\n====\n",
+        "---- MODULE Main ----\nA == LET RECURSIVE F(_), K\n         G == F(0)\n         F(H(_)) == 0\n     IN 0\n====\n",
+        "---- MODULE Main ----\nA == LET I == INSTANCE Naturals\n         RECURSIVE I, K\n     IN I\n====\n",
+    ] {
+        assert!(
+            matches!(get_report("reshaped", source), Err(FrontError::NotYet(_))),
+            "{source}"
+        );
+    }
 }
