@@ -18,7 +18,7 @@ pub fn get_stop_reason(limits: &Limits) -> Option<&'static str> {
 }
 
 /// Counts a step, and returns why the limits stop Zenon now, if they do: `getLimitFailure`.
-pub fn get_limit_failure(limits: &mut Limits) -> Option<&'static str> {
+pub fn get_limit_failure(limits: &Limits) -> Option<&'static str> {
     if limits.is_step_limit_reached() {
         Some("step limit")
     } else {

@@ -99,11 +99,6 @@ impl Limits {
         self.0.steps.get() > self.0.step_limit
     }
 
-    /// Whether more steps than the limit have been taken, without counting one.
-    pub fn is_step_limit_passed(&self) -> bool {
-        self.steps > self.step_limit
-    }
-
     pub fn is_past_deadline(&self) -> bool {
         now() > self.0.deadline
     }
