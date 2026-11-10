@@ -324,7 +324,7 @@ root 17 invariant Diagonal: ok
 16 17 fp 67160b34d23c0a57
 17 0 bail division by zero
 17 1 bail modulus by a non-positive number
-17 2 fp f67893cfa654c4b3
+17 2 bail zero to the power of zero
 17 3 fp 20790d6eb34b4402
 17 4 fp d0ba3e880dcdd983
 17 5 fp d0ba3e880dcdd983
