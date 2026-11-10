@@ -87,7 +87,6 @@ struct ScopeId(usize);
 /// `AssumeProveState`: Generator.assumeProveDepth, inScopeOfAPDecl, currentGoal and
 /// currentGoalClause, where the generator is among nested ASSUME/PROVEs: the depth, whether each
 /// level declares a symbol, and the goal and clause a label lies in.
-#[expect(dead_code, reason = "the labels and proofs that read it are stubs")]
 #[derive(Clone, Debug, Default)]
 struct AssumeProveState {
     depth: usize,
@@ -116,7 +115,6 @@ fn get_new_symbol_kind(level: SymbolLevel) -> (u32, u8) {
 }
 
 /// `isIdentifier`: whether SANY names an operator by an identifier rather than by a symbol.
-#[expect(dead_code, reason = "expressions.rs is a stub")]
 fn is_identifier(name: &str) -> bool {
     !name.is_empty()
         && name
@@ -126,7 +124,6 @@ fn is_identifier(name: &str) -> bool {
 
 /// `isSelector`: whether an operator name selects through an instance, as M!Op does, unlike the
 /// infix !!.
-#[expect(dead_code, reason = "expressions.rs is a stub")]
 fn is_selector(name: &str) -> bool {
     name != "!!" && name.contains('!')
 }
@@ -360,7 +357,6 @@ fn is_internal_instance(module: &Module, name: &str) -> bool {
 }
 
 /// `getNumeralDigits`: the decimal digits of a numeral such as \hFF, which SANY keeps at any size.
-#[expect(dead_code, reason = "generate_expression in expressions.rs is a stub")]
 fn get_numeral_digits(text: &str) -> String {
     const LIMB: u64 = 1_000_000_000;
     let (radix, digits) = match text.strip_prefix('\\') {
@@ -581,7 +577,6 @@ const POSTFIX_OPERATOR_TEXTS: &[&str] = &["'", "^+", "^*", "^#"];
 /// `getOperatorNodeKind`: SANY's syntax node for an operator (an `OperatorReference` or a `Lambda`)
 /// that appears where an expression is required. The parser reads a prefix operator other than ~
 /// and -. as a LAMBDA.
-#[expect(dead_code, reason = "generate_expression in expressions.rs is a stub")]
 fn get_operator_node_kind(expression: &Expression, text: &str) -> &'static str {
     if POSTFIX_OPERATOR_TEXTS.contains(&text) {
         return "N_GenPostfixOp";
@@ -1010,12 +1005,9 @@ struct ModuleGenerator<'a> {
     symbol_table: SymbolTable,
     state: RecursionState,
     functions: Vec<RecursiveFunction>,
-    #[expect(dead_code, reason = "EXCEPT in expressions.rs is a stub")]
     except_stack: Vec<NodeId>,
-    #[expect(dead_code, reason = "EXCEPT in expressions.rs is a stub")]
     except_spec_stack: Vec<NodeId>,
     label_scopes: Vec<LabelScope>,
-    #[expect(dead_code, reason = "the labels and proofs that read it are stubs")]
     assume_prove_state: AssumeProveState,
     scopes: Vec<AssumeProveScope>,
     assume_prove_scopes: FastMap<NodeId, ScopeId>,
@@ -1142,13 +1134,11 @@ impl<'a> ModuleGenerator<'a> {
     }
 
     /// `pushLabelScope`.
-    #[expect(dead_code, reason = "the stubs push label scopes")]
     fn push_label_scope(&mut self) {
         self.label_scopes.push(LabelScope::default());
     }
 
     /// `popLabels`.
-    #[expect(dead_code, reason = "the stubs pop label scopes")]
     fn pop_labels(&mut self) -> OrderedMap<Name, NodeId> {
         self.label_scopes
             .pop()
@@ -1170,10 +1160,6 @@ impl<'a> ModuleGenerator<'a> {
     }
 
     /// `getUnitSpan`.
-    #[expect(
-        dead_code,
-        reason = "the units in definitions.rs and proofs.rs are stubs"
-    )]
     fn get_unit_span(&self, location: &Location) -> TokenSpan {
         get_unit_span(&self.file, location)
     }
@@ -1435,7 +1421,6 @@ impl<'a> ModuleGenerator<'a> {
     }
 
     /// `applyBuiltin`.
-    #[expect(dead_code, reason = "expressions.rs and proofs.rs are stubs")]
     fn apply_builtin<O: Into<Option<NodeId>>>(
         &mut self,
         name: &str,
@@ -1448,7 +1433,6 @@ impl<'a> ModuleGenerator<'a> {
     }
 
     /// `createString`.
-    #[expect(dead_code, reason = "expressions.rs is a stub")]
     fn create_string(&mut self, value: &str, location: SanyLocation) -> NodeId {
         let uid = self.spec.get_uid();
         self.spec.graph.add(
@@ -1611,7 +1595,6 @@ impl<'a> ModuleGenerator<'a> {
     }
 
     /// `generateSelectorExpression`.
-    #[expect(dead_code, reason = "generate_expression in expressions.rs is a stub")]
     fn generate_selector_expression(&mut self, expression: &Expr) -> Result<NodeId> {
         let node = self.generate_selector(expression, 0, false, false)?;
         if !matches!(self.spec.graph.kind(node), NodeKind::OpAppl(_)) {
@@ -1621,7 +1604,6 @@ impl<'a> ModuleGenerator<'a> {
     }
 
     /// `checkRecursion`.
-    #[expect(dead_code, reason = "generate_expression in expressions.rs is a stub")]
     fn check_recursion(&mut self, node: NodeId) {
         let NodeKind::OpAppl(application) = self.spec.graph.kind(node) else {
             return;
@@ -1644,10 +1626,6 @@ impl<'a> ModuleGenerator<'a> {
     /// `generateBounds`: processQuantBoundArgs, SANY generates every bounding set before it
     /// declares the symbols, each named at its token between the end of the previous group and its
     /// set.
-    #[expect(
-        dead_code,
-        reason = "expressions.rs, definitions.rs and proofs.rs are stubs"
-    )]
     fn generate_bounds(&mut self, bounds: &[Bound], search_start: usize) -> Result<BoundSymbols> {
         let ranges = get_bound_groups(bounds)
             .iter()
