@@ -20,6 +20,7 @@ track: keep it current.
 | `lp::dependency` | `lp/dependency.ts` | done |
 | `core::{ast, flat_literals, ref_vector, expr_ref}` | the AST manager | done; a 3000-step trace of the TS manager (ids, hashes, small ids, ref counts, recycling) in `smt/tests/tables/ast.txt`, written by `scripts/smt-core-tables.ts` |
 | `core::{literal, sort, enode, cg_table, case_split_queue, sticky_generations, clause}` | the e-graph's and the clauses' types | done; `smt-clause-store` ported |
+| `core::{smtlib_parser, goal}` | the SMT-LIB reader, goals | done; all 46 `tests/fixtures/smt` and 52 of 54 short scripts against the TS (`smt/tests/tables/parser.txt`, `scripts/smt-parser-tables.ts`); the two skipped are listed in `tests/parser.rs` |
 | `core::*` | the rest of `smt/solver/*.ts` | §3 |
 
 The tables are written by `scripts/smt-foundation-tables.ts` (`bun scripts/smt-foundation-tables.ts`)
@@ -103,6 +104,11 @@ to be a key (`${a},${b}`) may be keyed by a tuple instead, when it is never iter
 `Math.imul` are `i32`/`u32` wrapping arithmetic. A float stays `f64` with the same operations in the
 same order. `array.sort(cmp)` is `sort_by` (stable, as JS), the comparator ported literally;
 `sortByKey`/`sortNumbers` (`sort.ts`) are stable sorts by key and port as `sort_by_key`.
+
+**Where the port refuses what the TS accepts.** `SmtError::Invariant` from the Rust where the TS
+goes on (so far: a nullary `(and)`, `(or)`, `(=)`, whose TS declaration hash reads `undefined`
+sorts, matching neither Z3 nor any input tlapm writes) must reach `decide` as
+`DecideError::Declined`, so the TypeScript decides it; never as a verdict.
 
 **Recursion.** Where the TS recurses on terms and relies on catching a stack overflow
 (`isStackOverflow` → unknown), the Rust counts depth and returns `SmtError::Unsupported` past a

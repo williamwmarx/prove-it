@@ -85,8 +85,9 @@ const CHAINABLE_OPS: [(&str, i32); 5] = [
 ];
 
 // The quantifiers, lets and annotations that may nest, which the parser enters by recursion where
-// the TypeScript would exhaust its stack and give up.
-const MAX_NESTING: usize = 256;
+// the TypeScript would exhaust its stack and give up. A decision runs on a 256 MB stack
+// (design/prover.md 3.6), which this depth stays well within.
+const MAX_NESTING: usize = 10_000;
 
 fn get_op(ops: &[(&str, i32)], name: &str) -> Option<i32> {
     ops.iter()
@@ -990,13 +991,20 @@ mod tests {
 
     #[test]
     fn refuses_binders_nested_too_deeply() {
-        assert_eq!(parse(&get_nested_lets(MAX_NESTING)), Ok(1));
-        assert_eq!(
-            parse(&get_nested_lets(MAX_NESTING + 1)),
-            Err(SmtError::Unsupported(
-                "the term is nested too deeply".into()
-            ))
-        );
+        // On a stack the size of a decision's.
+        std::thread::Builder::new()
+            .stack_size(256 << 20)
+            .spawn(|| {
+                assert_eq!(parse(&get_nested_lets(MAX_NESTING)), Ok(1));
+                assert_eq!(
+                    parse(&get_nested_lets(MAX_NESTING + 1)),
+                    Err(SmtError::Unsupported(
+                        "the term is nested too deeply".into()
+                    ))
+                );
+            })
+            .and_then(|thread| thread.join().map_err(|_| std::io::Error::other("panicked")))
+            .unwrap();
     }
 
     // The TypeScript crashes with a TypeError on these.
