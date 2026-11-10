@@ -260,6 +260,31 @@ array of the set's ids, built when a large set is first tested.
 - **Risk:** none to output. The tables are caches of pure functions, and ToString's ranking and
   TLCCache already keep their own rules.
 
+**Done (#179): clustering.** The hot tables key on one state variable and the bound names of a
+quantifier over it (PaxosCommit `[msgs, s28, s29, s31]`, MCMultiNode `[history, s72, s73]`), and
+fill the 4M-entry cap. A table of two keys or more, once it has 4,096 slots, homes an entry by a
+hash of its first key alone, so a state's entries share one run. A probe budget (32 a lookup over
+a window of 16,384 lookups) scatters a table whose first key has too few values.
+- PaxosCommit 34.4 → 28.4 s, MCMultiNode 9.3 → 7.7 s (1.21× each). The rest of the suite is within
+  noise.
+- Memo is then about 24% of MCMultiNode and 12% of PaxosCommit. 40% of what is left of the lookup
+  is still the first load of a run: the first lookup of a key never seen.
+
+Measured and dropped:
+- **A size cap without eviction** (2^12 to 2^20 entries): slower on both. The caching pays even at
+  a miss to memory.
+- **Clustering in bands** of 8 or 64 slots instead of on the first key alone: slower than both.
+- **Clustering from the start**, small tables included: TLCSailfish1 9% slower, and MCLamportMutex
+  3.4 → 4.4 s without the probe budget.
+- **Prefetching each large table's run when a state becomes current** (`set_current`):
+  MCMultiNode 5% slower.
+- **A memo keyed per action footprint** (item 3 of "What 10x would take"): not built. Its hit
+  rate's ceiling is the share of expansions whose read variables repeat. PaxosCommit's costly
+  actions (Phase1a, Phase2a, Decide) read only `msgs`, which is new in 848K of 1.2M expansions:
+  at most about 30% hits, so at most about 15% of the run, before the cost of recording and
+  replaying successors. MCMultiNode's `history` is new in 481K of 1.4M expansions, and the work
+  keyed by it is already in tables keyed on `history` (the invariants hit 92% at width 1).
+
 ### 5. Symmetry (`perf-symmetry`), independent
 
 - Keep each permutation as a dense table by id instead of a `HashMap` with SipHash: 7% on
@@ -368,6 +393,7 @@ The design-level changes, ranked by the share they attack:
      from states differing only elsewhere.
    - Attacks the 22–42% memo share: expected 1.3–1.6× on MCMultiNode, PaxosCommit and
      MCLamportMutex.
+   - Measured after #179 and dropped: at most about 30% hits on PaxosCommit (item 4 above).
 4. **Incremental fingerprints and a compact state table**, for the fast models. A successor's
    fingerprint can be the parent's, updated for the variables its action assigned.
    - `changed-slots` (speed.md) tried skipping comparisons and lost. This instead skips the
