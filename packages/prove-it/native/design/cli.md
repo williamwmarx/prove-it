@@ -327,6 +327,12 @@ the module on the `tlc2.TLC` form. `-lncheck off` is not native either: TLC then
 `seqfinal` is `final` with one worker for the liveness check (`LiveCheck.java:291`), so the two
 read alike.
 
+`-workers N` (or `auto`, every core) is the number of threads the search shares its levels and
+the liveness checker's atoms between, at most the cores ([parallel.md](parallel.md)). They find
+what one thread finds, so the binary prints what TLC prints on one worker, whatever `-workers`
+says; only the banner names N workers, as TLC's does. TLC on N workers may find another
+counterexample or report a greater depth, as its workers don't keep to levels.
+
 On the `tlc2.TLC` form a system property in TLC's namespaces (`-Dtlc2.…`, `-Dutil.…`,
 `-Dtla2sany.…`, `-Dtlc.…`) is not native, except the two that only reach the execution statistics
 TLC reports home and change nothing it prints: `tlc2.TLC.ide` (`TLC.java:1710`, `REPL.java:275`)
