@@ -338,16 +338,59 @@ const isRecordId = (id: number) => {
   return true;
 };
 
+// TLC holds a function over a run of integers either over an interval (FcnRcdValue.intv, as
+// [i \in 0..n |-> e] makes one, and a tuple compared with a function) or over the run's elements
+// (as [i \in {0, 1} |-> e] makes one), which the store doesn't tell apart. Against a function of its
+// size with an untyped model value among its keys, the first fails (FcnRcdValue.compareToInterval,
+// compareOtherInterval and equals), and the second compares the keys, which the model value passes.
+// The store fails as TLC may, and the evaluator, which knows how TLC built the function, finds
+// whether it does.
+const isIntRunId = (id: number) => {
+  if (kinds[id] === KIND_TUPLE) return true;
+  if (kinds[id] !== KIND_FUNCTION) return false;
+  const first = heap[payloads[id]];
+  const last = heap[payloads[id] + sizes[id] - 1];
+  return (
+    kinds[first] === KIND_INT &&
+    kinds[last] === KIND_INT &&
+    payloads[last] - payloads[first] === sizes[id] - 1
+  );
+};
+
+const hasUntypedModelKey = (id: number) => {
+  if (kinds[id] !== KIND_FUNCTION) return false;
+  const offset = payloads[id];
+  for (let index = 0; index < sizes[id]; index++) {
+    const key = heap[offset + index];
+    if (kinds[key] === KIND_MODEL && getModelType(key) === 0) return true;
+  }
+  return false;
+};
+
+const checkIntervalKeys = (left: number, right: number) => {
+  if (
+    sizes[left] > 0 &&
+    ((isIntRunId(left) && hasUntypedModelKey(right)) ||
+      (isIntRunId(right) && hasUntypedModelKey(left)))
+  ) {
+    bail("a function over an interval compared with one over other keys");
+  }
+};
+
 const compareFunctions = (left: number, right: number) => {
   const size = sizes[left];
   const rightSize = sizes[right];
-  if (size !== rightSize) {
-    // TLC compares a record only with a record, which may fail before the sizes decide.
-    if (size > 0 && rightSize > 0 && isRecordId(left) !== isRecordId(right)) {
+  if (size > 0 && rightSize > 0 && isRecordId(left) !== isRecordId(right)) {
+    // TLC compares a record only with a record (RecordValue.compareTo), which may fail before the
+    // sizes decide. Of one size, a function asking compares by its keys, which fail against
+    // strings unless they are untyped model values.
+    const fn = isRecordId(left) ? right : left;
+    if (size !== rightSize || hasUntypedModelKey(fn)) {
       return bail("record compared with a function");
     }
-    return size - rightSize;
   }
+  if (size !== rightSize) return size - rightSize;
+  checkIntervalKeys(left, right);
   for (let index = 0; index < size; index++) {
     const comparison = compare(getKey(left, index), getKey(right, index));
     if (comparison !== 0) return comparison;
@@ -412,6 +455,7 @@ const equalsFunctions = (left: number, right: number) => {
     return bail("record compared with a function");
   }
   if (size !== rightSize) return false;
+  checkIntervalKeys(left, right);
   for (let index = 0; index < size; index++) {
     const leftKey = getKey(left, index);
     const rightKey = getKey(right, index);

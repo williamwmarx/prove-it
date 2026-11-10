@@ -464,6 +464,7 @@ const TLC_FAILURES: &[&str] = &[
     "enumerated a filter of an infinite set",
     "enumerated a non-set",
     crate::compile::INFINITE_BOUND,
+    tla_values::store::INTERVAL_KEYS.0,
     "equality of values TLC can't compare",
     "expected a bag",
     "expected a boolean",
@@ -4616,6 +4617,8 @@ mod tests {
         // TLC fails only where a value it built as a record meets a function, which the store,
         // knowing a value by its domain, can't tell from a function over strings.
         assert!(is_engine_limit("record compared with a function"));
+        // TLC fails where it holds a function over an interval, which the evaluator knows.
+        assert!(!is_engine_limit(tla_values::store::INTERVAL_KEYS.0));
     }
 
     fn verified_states() -> States {

@@ -4,7 +4,9 @@
 mod common;
 
 use common::workload;
-use tla_values::store::{Bail, EMPTY_SET, EMPTY_TUPLE, FALSE, Id, KIND_INT, KIND_SET, Store, TRUE};
+use tla_values::store::{
+    Bail, EMPTY_SET, EMPTY_TUPLE, FALSE, INTERVAL_KEYS, Id, KIND_INT, KIND_SET, Store, TRUE,
+};
 
 fn utf16(text: &str) -> Vec<u16> {
     text.encode_utf16().collect()
@@ -339,6 +341,54 @@ fn stops_a_membership_where_tlcs_search_of_the_set_fails_to_compare() {
     for (element, set, reason) in cases {
         assert_eq!(store.is_member(element, set), Err(Bail(reason)));
     }
+}
+
+// TLC holds [i \in 0..1 |-> 1] over an interval and [i \in {0, 1} |-> 1] over its keys, which the
+// store doesn't tell apart. Against a function of its size with an untyped model value among its
+// keys, the first fails and the second compares the keys, which the model value passes. A tuple,
+// which TLC compares with a function over 1..n, is the same. Both orders fail, and so does
+// equality, for the evaluator to find whether TLC does.
+#[test]
+fn stops_comparing_a_run_of_integers_with_a_function_over_a_model_value() {
+    let mut store = Store::new();
+    let (m, n) = (store.model(&utf16("m")), store.model(&utf16("n")));
+    let [zero, one] = [0, 1].map(|value| store.int(value).unwrap());
+    let run = store.function_of(&[zero, one], &[one, one]).unwrap();
+    let tuple = store.tuple_of(&[one, one]);
+    let models = store.function_of(&[m, n], &[one, one]).unwrap();
+    let mixed = store.function_of(&[m, zero], &[one, one]).unwrap();
+    for integers in [run, tuple] {
+        for other in [models, mixed] {
+            assert_eq!(store.compare(integers, other), Err(INTERVAL_KEYS));
+            assert_eq!(store.compare(other, integers), Err(INTERVAL_KEYS));
+            assert_eq!(store.equals(integers, other), Err(INTERVAL_KEYS));
+            assert_eq!(store.equals(other, integers), Err(INTERVAL_KEYS));
+            assert_eq!(store.set_of(&[integers, other]), Err(INTERVAL_KEYS));
+        }
+    }
+    // Functions of other sizes compare by size, and functions over model values by their keys.
+    let single = store.function_of(&[m], &[one]).unwrap();
+    assert_eq!(store.compare(run, single).map(i32::signum), Ok(1));
+    assert_eq!(store.equals(single, tuple), Ok(false));
+    assert!(store.compare(models, mixed).is_ok());
+    assert!(store.compare(run, tuple).is_ok());
+}
+
+// RecordValue.compareTo fails on a function of its size, which, asking, compares by its keys: an
+// untyped model value among them passes, so either may happen.
+#[test]
+fn stops_comparing_a_record_with_a_function_of_its_size_over_a_model_value() {
+    let mut store = Store::new();
+    let keys = [str(&mut store, "a"), str(&mut store, "b")];
+    let (m, n) = (store.model(&utf16("m")), store.model(&utf16("n")));
+    let one = store.int(1).unwrap();
+    let shape = store.create_record_shape(&keys);
+    let record = store.record_of(&shape, &[one, one]);
+    let models = store.function_of(&[m, n], &[one, one]).unwrap();
+    let reason = Bail("record compared with a function");
+    assert_eq!(store.compare(record, models), Err(reason));
+    assert_eq!(store.compare(models, record), Err(reason));
+    assert_eq!(store.equals(models, record), Err(reason));
 }
 
 #[test]
