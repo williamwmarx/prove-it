@@ -210,7 +210,7 @@ impl MemoTable {
             self.can_cluster = false;
             self.rehash(self.capacity());
         }
-        if self.lookups % WINDOW == 0 {
+        if self.lookups.is_multiple_of(WINDOW) {
             self.probes = 0;
         }
     }
