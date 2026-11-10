@@ -4,7 +4,7 @@ import { EngineUnavailableError } from "../errors";
 import { EXIT_STATUS } from "../exit-codes";
 import { getTlcVersion } from "../tlc/version";
 import { getToolsJar, type JavaProperties, reportErrors } from "./shared";
-import { checkSpecs } from "./tlc";
+import { checkNatively, checkSpecs } from "./tlc";
 
 // Tools that run TLC with Java, such as pstack's statechart skill, can run tla-ts in place of java,
 // as in `tla-ts -DTLA-Library=lib -cp tla2tools.jar tlc2.TLC Spec`. Other JVM options are ignored.
@@ -53,9 +53,16 @@ const run = async (args: string[]) => {
     return reportErrors(() => tlapm.runTlapm(args.slice(1)));
   }
   const launch = getJavaLaunch(args);
-  if (launch === undefined) return checkSpecs(args, { libraries: [], properties: new Map() });
+  if (launch === undefined) {
+    const java = { libraries: [], properties: new Map() };
+    return (await checkNatively(args, args, java)) ?? checkSpecs(args, java);
+  }
   launch.java.tlcVersion ??= await getTlcVersion(getToolsJar(launch.java));
-  if (launch.mainClass === "tlc2.TLC") return checkSpecs(launch.args, launch.java);
+  if (launch.mainClass === "tlc2.TLC") {
+    return (
+      (await checkNatively(args, launch.args, launch.java)) ?? checkSpecs(launch.args, launch.java)
+    );
+  }
   if (launch.mainClass === "tla2sany.xml.XMLExporter") {
     const exporter = await import("./xml-exporter");
     return reportErrors(() =>
