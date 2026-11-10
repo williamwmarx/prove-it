@@ -2,10 +2,15 @@
 //! to the TypeScript one on every corpus spec.
 
 use tla_front::TlcVersion;
-use tla_front::report::{ReportOptions, get_sany_text};
+use tla_front::errors::FrontError;
+use tla_front::report::{ReportOptions, SanyText, get_sany_text};
 
 /// What SANY prints for the root module `source`, named Main, with no other files.
 fn get_text(name: &str, source: &str) -> String {
+    get_report(name, source).expect("a text").text
+}
+
+fn get_report(name: &str, source: &str) -> Result<SanyText, FrontError> {
     let directory =
         std::env::temp_dir().join(format!("tla-front-report-{name}-{}", std::process::id()));
     std::fs::create_dir_all(&directory).expect("a directory");
@@ -21,7 +26,7 @@ fn get_text(name: &str, source: &str) -> String {
         },
     );
     std::fs::remove_dir_all(&directory).expect("a removed directory");
-    text.expect("a text").text
+    text
 }
 
 #[test]
@@ -100,4 +105,14 @@ fn reports_a_named_step_of_an_implicit_level_as_a_semantic_error() {
         text.ends_with("Semantic errors:\n\n*** Errors: 1\n\nline 4, col 1 to line 4, col 5 of module Main\n\n<*> and <+> cannot be used for a named step.\n\n\n"),
         "{text}"
     );
+}
+
+#[test]
+fn declines_a_module_that_sany_parses_and_the_front_end_does_not() {
+    // TLC's tla2sany corpus, AssumeProveTest: a labeled ASSUME/PROVE among the assumptions.
+    let report = get_report(
+        "unparsed",
+        "---- MODULE Main ----\nTHEOREM ASSUME inner :: ASSUME TRUE PROVE TRUE PROVE TRUE\n====\n",
+    );
+    assert!(matches!(report, Err(FrontError::NotYet(_))));
 }

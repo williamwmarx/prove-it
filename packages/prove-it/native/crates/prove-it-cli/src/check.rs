@@ -64,7 +64,10 @@ pub fn run(args: &[String]) -> i32 {
         return not_native("reading the version of a tla2tools.jar");
     }
     match launch.main_class.as_str() {
-        "tlc2.TLC" => check_specs(&launch.args, &launch.java, true),
+        "tlc2.TLC" => match &launch.java.unmodelled_property {
+            Some(property) => not_native(&format!("the system property {property}")),
+            None => check_specs(&launch.args, &launch.java, true),
+        },
         "tla2sany.xml.XMLExporter" => not_native("tla2sany.xml.XMLExporter"),
         other => {
             eprintln!(
@@ -631,6 +634,37 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
             return report_not_native(printer, &format!("the engine IR doesn't decode: {error}"));
         }
     };
+    // TLC rejects a POSTCONDITION or an ALIAS it computed as it started (`Spec.getAlias`,
+    // `getPostConditionSpecs`), which the binary doesn't report: it declines one that may be.
+    let configured = ir.model.postconditions.iter().chain(&ir.model.alias);
+    let definitions: Vec<u32> = configured.filter_map(|name| name.definition).collect();
+    // TLC names a postcondition with where its definition's body is written.
+    let is_postcondition_unplaced = ir.model.postconditions.iter().any(|postcondition| {
+        postcondition.definition.is_none_or(|definition| {
+            match &ir.nodes.arena[ir.definitions[definition as usize] as usize].kind {
+                tla_ir::NodeKind::Definition(definition) => {
+                    ir.nodes.arena[definition.body as usize].range.is_none()
+                }
+                _ => true,
+            }
+        })
+    });
+    if is_postcondition_unplaced {
+        return report_not_native(printer, "a POSTCONDITION without a place in the source");
+    }
+    if !definitions.is_empty() {
+        let is_precomputed = Rebuilder::new(&ir).map_or(true, |mut rebuilder| {
+            definitions
+                .iter()
+                .any(|&definition| rebuilder.is_precomputed(definition))
+        });
+        if is_precomputed {
+            return report_not_native(
+                printer,
+                "a POSTCONDITION or an ALIAS TLC may compute as it starts",
+            );
+        }
+    }
     let (is_startup_printed, startup_messages) = match front.output {
         Output::Recorded(output) => {
             printer.raw(&output);
@@ -680,7 +714,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
     // the end.
     let is_liveness_periodic = !args
         .first("-lncheck")
-        .is_some_and(|check| ["final", "seqfinal", "off"].contains(&check.to_lowercase().as_str()));
+        .is_some_and(|check| ["final", "seqfinal"].contains(&check.to_lowercase().as_str()));
     let settings = Settings {
         is_violation_reported: true,
         workers,
@@ -852,13 +886,16 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                     queued: counts.queued,
                     depth: counts.depth,
                 };
-                let checking = print_liveness_started(printer, &statistics, liveness.branches);
+                let Some(branches) = liveness.branches else {
+                    return report_not_native(
+                        printer,
+                        "temporal properties of branches not counted",
+                    );
+                };
+                let checking = print_liveness_started(printer, &statistics, branches);
                 print_liveness_finished(printer, checking);
             }
             if !ir.model.postconditions.is_empty() {
-                if has_constant_postcondition(&ir) {
-                    return report_not_native(printer, "a POSTCONDITION TLC computes as it starts");
-                }
                 let statistics = Statistics {
                     generated: counts.generated,
                     distinct: counts.distinct,
@@ -952,15 +989,14 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                 ViolationKind::Error { site }
                     if !is_initial_site(site)
                         && !config.postconditions.is_empty()
-                        && (has_constant_postcondition(&ir)
-                            || match site {
-                                ErrorSite::Invariant(_) => false,
-                                ErrorSite::Next => {
-                                    ir.model.check_deadlock
-                                        && violation.counts.generated != initial_generated
-                                }
-                                _ => true,
-                            }) =>
+                        && match site {
+                            ErrorSite::Invariant(_) => false,
+                            ErrorSite::Next => {
+                                ir.model.check_deadlock
+                                    && violation.counts.generated != initial_generated
+                            }
+                            _ => true,
+                        } =>
                 {
                     Err("a failure with a POSTCONDITION".to_string())
                 }
@@ -1092,10 +1128,10 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
 fn print_liveness_started(
     printer: &mut Printer,
     statistics: &Statistics,
-    branches: Option<usize>,
+    branches: usize,
 ) -> Instant {
     print_progress(printer, statistics, None);
-    let branches = branches.unwrap_or(1) as u64;
+    let branches = branches as u64;
     print_liveness_check(printer, branches, statistics.distinct, "complete")
 }
 
@@ -1163,9 +1199,6 @@ const NO_SPECIFICATION_WARNING: &str = "The stuttering counterexample above may 
 /// Why `print_violation` can't print a violation yet, where the IR doesn't name what it reports.
 const NOT_IN_IR: &str = "a name the IR doesn't carry";
 
-/// Prints a violation the engine stopped at, or the lasso the liveness checker found, as
-/// `printViolation` in `src/cli/tlc.ts` does, and returns the exit code, or why it can't print
-/// it yet.
 // Whether a failure is among the initial states, before TLC has taken a step.
 fn is_initial_site(site: ErrorSite) -> bool {
     matches!(
@@ -1178,6 +1211,9 @@ fn is_initial_site(site: ErrorSite) -> bool {
     )
 }
 
+/// Prints a violation the engine stopped at, or the lasso the liveness checker found, as
+/// `printViolation` in `src/cli/tlc.ts` does, and returns the exit code, or why it can't print
+/// it yet.
 fn print_violation(
     printer: &mut Printer,
     ir: &tla_ir::Ir,
@@ -1197,10 +1233,7 @@ fn print_violation(
     }
     // TLC prints a trace once it has rebuilt all of it, and a state that the evaluator can't
     // rebuild as TLC built it keeps the run not native.
-    // After a violation, TLC checks no postcondition where one is a value it computes as it
-    // starts.
-    let checked = postconditions
-        .filter(|_| !ir.model.postconditions.is_empty() && !has_constant_postcondition(ir));
+    let checked = postconditions.filter(|_| !ir.model.postconditions.is_empty());
     let trace = match rebuild_trace(ir, violation, checked, printer.is_tool) {
         Ok(trace) => trace,
         Err(reason) => return Ok(report_not_native(printer, &reason)),
@@ -1312,9 +1345,11 @@ fn print_violation(
             if !is_stuttering && is_printing {
                 return Err("a step back into the cycle of a spec that prints");
             }
+            // TLC labels the step back into the cycle (`printBackToState`), but a stuttering one.
             let label = match loop_label.or(trace.loop_action) {
                 Some(action) => Some(action_label(action)?),
-                None => None,
+                None if is_stuttering => None,
+                None => return Err("a step back into the cycle whose action the trace lacks"),
             };
             Some((loop_start, is_stuttering, label, is_warned))
         }
@@ -1365,9 +1400,19 @@ fn print_violation(
         _ => Vec::new(),
     };
     // A check part way through the search reported its start as it began.
-    let checking = liveness.map(|liveness| {
-        started.unwrap_or_else(|| print_liveness_started(printer, &statistics, liveness.branches))
-    });
+    let checking = match liveness {
+        Some(liveness) => Some(match started {
+            Some(started) => started,
+            None => print_liveness_started(
+                printer,
+                &statistics,
+                liveness
+                    .branches
+                    .ok_or("temporal properties of branches not counted")?,
+            ),
+        }),
+        None => None,
+    };
     // What the spec printed as TLC rebuilt the trace: the first state's after the headline, each
     // later state's before it, and the rebuild after the trace. TLC rebuilds a counterexample
     // before it reports it, all of it as it recovers the first state (`printViolation`).
@@ -1421,9 +1466,7 @@ fn print_violation(
             &format!("{}: Stuttering", loop_start + 2),
         ),
         Some((loop_start, false, label, _)) => {
-            let label = label
-                .map(|label| format!(": <{label}>\n"))
-                .unwrap_or_default();
+            let label = format!(": <{}>\n", label.unwrap_or_default());
             if printer.is_tool {
                 printer.print(
                     code::BACK_TO_STATE,
@@ -1571,15 +1614,6 @@ fn postcondition_run(
     }
 }
 
-/// Whether a postcondition is a definition TLC computes as it starts, which it rejects.
-fn has_constant_postcondition(ir: &tla_ir::Ir) -> bool {
-    ir.model.postconditions.iter().any(|postcondition| {
-        postcondition
-            .definition
-            .is_some_and(|definition| ir.model.startup.definitions.contains(&definition))
-    })
-}
-
 /// TLC's report of the first postcondition that doesn't hold, named with where its definition's
 /// body is written (`findPostconditionViolation`).
 pub(crate) fn print_postcondition_failure(
@@ -1615,9 +1649,12 @@ pub(crate) fn print_postcondition_failure(
         })
         .unwrap_or_default();
     let (code, text) = match verdict {
-        PostconditionVerdict::Failed(message) => (
+        PostconditionVerdict::Failed { text, tool_text } => (
             code::POSTCONDITION_FAILED,
-            format!("Evaluating postcondition {name}{location} failed.\n{message}"),
+            format!(
+                "Evaluating postcondition {name}{location} failed.\n{}",
+                if printer.is_tool { tool_text } else { text }
+            ),
         ),
         _ => (
             code::POSTCONDITION_FALSE,

@@ -46,6 +46,13 @@ fn unsupported<T>(reason: impl Into<String>) -> Result<T, Unsupported> {
 }
 
 impl<'ir> Rebuilder<'ir> {
+    /// Whether TLC computes the definition at this index of the IR's definitions as it starts,
+    /// as `Evaluator::is_precomputed` says.
+    pub fn is_precomputed(&mut self, definition: u32) -> bool {
+        let node = self.evaluator.ir.definitions[definition as usize];
+        self.evaluator.is_precomputed(node)
+    }
+
     pub(crate) fn evaluator(&mut self) -> &mut Evaluator<'ir> {
         &mut self.evaluator
     }

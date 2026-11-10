@@ -585,6 +585,10 @@ impl Parser {
 
     fn parse_subscript(&mut self) -> Parsed<Expression> {
         let token = self.peek(0);
+        // SANY's FairnessExpr reads WF_B(A)(Act) with the subscript B(A).
+        if token.kind == TokenKind::Identifier && self.is_application_subscript_ahead() {
+            return self.parse_primary(None);
+        }
         if token.kind == TokenKind::Identifier {
             let start = self.index;
             let location = self.peek_location();
@@ -611,6 +615,30 @@ impl Parser {
             "Expected a subscript but found {}",
             self.describe(&token)
         )))
+    }
+
+    fn is_application_subscript_ahead(&self) -> bool {
+        let mut offset = 1;
+        while self.is_at("!", offset) && self.peek_kind(offset + 1) == TokenKind::Identifier {
+            offset += 2;
+        }
+        if !self.is_at("(", offset) {
+            return false;
+        }
+        let mut depth = 0;
+        loop {
+            if self.peek_kind(offset) == TokenKind::End {
+                return false;
+            }
+            depth += usize::from(self.is_at("(", offset));
+            if self.is_at(")", offset) {
+                depth -= 1;
+                if depth == 0 {
+                    return self.is_at("(", offset + 1);
+                }
+            }
+            offset += 1;
+        }
     }
 
     fn is_definition_ahead(&self, operator_line: u32) -> bool {

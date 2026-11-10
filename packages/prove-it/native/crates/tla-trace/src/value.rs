@@ -437,7 +437,6 @@ pub(crate) fn normalize(value: &Value) {
     }
 }
 
-/// The elements of a set TLC can enumerate, in TLC's order.
 /// `IntervalValue.size`: an interval of more than 2^31 - 1 elements has no int size.
 pub fn interval_size(low: i32, high: i32) -> Evaluated<usize> {
     let size = (i64::from(high) - i64::from(low) + 1).max(0);
@@ -456,6 +455,7 @@ pub fn interval_size(low: i32, high: i32) -> Evaluated<usize> {
 /// The most elements of an interval the evaluator builds.
 const MAXIMUM_INTERVAL: usize = 1 << 24;
 
+/// The elements of a set TLC can enumerate, in TLC's order.
 pub fn elements(value: &Value) -> Evaluated<Rc<Vec<Value>>> {
     normalize(value);
     match value {
@@ -884,8 +884,6 @@ pub fn set_of(mut elements: Vec<Value>) -> Evaluated<Value> {
     Ok(Value::Set(Rc::new(distinct)))
 }
 
-/// Where TLC fails to normalize a set enumeration: the first comparison that fails as
-/// `ValueVec.sort` inserts each element, in the order written, into those it sorted before it.
 /// The failure of normalizing a set enumeration TLC keeps unnormalized.
 pub fn unsorted_failure(elements: &[Value]) -> EvalError {
     normalize_failure(elements).unwrap_or_else(|| EvalError {
@@ -894,6 +892,8 @@ pub fn unsorted_failure(elements: &[Value]) -> EvalError {
     })
 }
 
+/// Where TLC fails to normalize a set enumeration: the first comparison that fails as
+/// `ValueVec.sort` inserts each element, in the order written, into those it sorted before it.
 pub fn normalize_failure(elements: &[Value]) -> Option<EvalError> {
     let mut sorted: Vec<&Value> = Vec::with_capacity(elements.len());
     for element in elements {
@@ -979,7 +979,11 @@ pub fn find_key(function: &Function, key: &Value) -> Evaluated<Option<usize>> {
 /// (`SpecProcessor.evalConstantDefn`): each function in it that the evaluator holds sorted too.
 pub fn note_sorted(value: &Value) {
     match value {
-        Value::Set(elements) => elements.iter().for_each(note_sorted),
+        // TLC normalizes what it computes at startup, as it fingerprints it.
+        Value::Set(elements) => {
+            normalize(value);
+            elements.iter().for_each(note_sorted);
+        }
         Value::Function(function) => {
             if function.written.borrow().is_none() {
                 function.search.set(Search::Sorted);

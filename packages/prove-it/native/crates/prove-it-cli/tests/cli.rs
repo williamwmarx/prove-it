@@ -145,6 +145,7 @@ fn reads_the_command_line_as_tlc() {
         (&["-simulate", "TCommit"], "the TLC option -simulate"),
         (&["-coverage", "1", "TCommit"], "the TLC option -coverage"),
         (&["-fp", "1", "TCommit"], "-fp 1"),
+        (&["-lncheck", "off", "TCommit"], "-lncheck off"),
         (&["TCommit.cfg"], "a module named as a configuration file"),
     ] {
         let output = run(&directory, &[&["tlc2.TLC"], args].concat());
@@ -155,6 +156,23 @@ fn reads_the_command_line_as_tlc() {
             format!("prove-it: not native yet: {what}\n")
         );
     }
+    let property = run(
+        &directory,
+        &[
+            "-Dtlc2.tool.ModelChecker.BAQueue=true",
+            "tlc2.TLC",
+            "TCommit",
+        ],
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&property.stderr),
+        "prove-it: not native yet: the system property tlc2.tool.ModelChecker.BAQueue\n"
+    );
+    let silent = run(
+        &directory,
+        &["-Dtlc2.TLC.ide=vscode", "tlc2.TLC", "TCommit"],
+    );
+    assert_eq!(silent.status.code(), Some(0), "{}", stdout(&silent));
     std::fs::remove_dir_all(directory).expect("removed");
 }
 
@@ -1353,6 +1371,27 @@ fn stops_where_an_invariant_sets_exit_as_tlc_does() {
         "{text}"
     );
     std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn declines_a_postcondition_or_alias_tlc_computes_as_it_starts() {
+    // TLC computes a definition of constant level as it starts, then rejects it as a
+    // POSTCONDITION ("The post condition Post cannot be a constant.") or an ALIAS.
+    let spec = "---- MODULE Stop ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = x\nPost == FALSE\nAl == [y |-> 1]\n====\n";
+    for config in ["POSTCONDITION Post\n", "ALIAS Al\n"] {
+        let (output, directory) = run_lowered(
+            "precomputed",
+            spec,
+            &format!("INIT Init\nNEXT Next\n{config}"),
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stderr)
+                .contains("prove-it: not native yet: a POSTCONDITION or an ALIAS"),
+            "{}",
+            stdout(&output)
+        );
+        std::fs::remove_dir_all(directory).expect("removed");
+    }
 }
 
 #[test]

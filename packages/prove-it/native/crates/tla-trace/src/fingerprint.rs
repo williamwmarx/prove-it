@@ -4,7 +4,7 @@
 
 use tla_values::fingerprint::{Fingerprints, of_bool, of_int, of_model, of_string};
 
-use crate::print::format_value;
+use crate::print::format_pretty;
 use crate::value::{Lazy, TlcMessage, Value, elements};
 
 /// `EC.TLC_MODULE_OVERFLOW`.
@@ -28,7 +28,7 @@ pub fn fingerprint_failure(value: &Value) -> Result<Option<(Vec<Value>, TlcMessa
                     let message = TlcMessage {
                         text: format!(
                             "Overflow when computing the number of elements in:\n{}",
-                            format_value(value)
+                            format_pretty(value)
                         ),
                         code: Some(OVERFLOW),
                         is_eval_exception: false,
