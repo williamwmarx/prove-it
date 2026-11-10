@@ -91,6 +91,33 @@ const CASES: Case[] = [
     invalid: ["SubSeq(<<1, 2>>, 0, 1)", "SubSeq(<<1, 2>>, 1, 3)", "SubSeq({1}, 1, 1)"],
   },
   {
+    name: "an equality of SubSeqs",
+    valid: (random) => {
+      const isText = random() < 0.3;
+      const getOne = () => (isText ? getText(random) : getSequence(random));
+      const left = getOne();
+      const right = random() < 0.5 ? left : getOne();
+      const getSlice = (sequence: string) => {
+        const length = isText
+          ? sequence.length - 2
+          : sequence === "<<>>"
+            ? 0
+            : sequence.split(",").length;
+        if (length === 0 || random() < 0.2) return `SubSeq(${sequence}, 2, 1)`;
+        const start = getInteger(random, 1, length);
+        return `SubSeq(${sequence}, ${start}, ${getInteger(random, start, length)})`;
+      };
+      return `${getSlice(left)} ${pick(random, ["=", "#"])} ${getSlice(right)}`;
+    },
+    invalid: [
+      "SubSeq(<<1>>, 0, 1) = SubSeq(<<1>>, 1, 1)",
+      "SubSeq(<<1>>, 1, 1) = SubSeq(<<1>>, 1, 2)",
+      'SubSeq("ab", 1, 1) = SubSeq(<<1>>, 1, 1)',
+      "SubSeq(<<1, TRUE>>, 1, 1) = SubSeq(<<TRUE, 1>>, 1, 1)",
+      "SubSeq(<<[x \\in Nat |-> x]>>, 1, 1) = SubSeq(<<[x \\in Nat |-> x]>>, 1, 1)",
+    ],
+  },
+  {
     name: "SelectSeq",
     valid: (random) =>
       random() < 0.5
