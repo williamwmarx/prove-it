@@ -93,7 +93,14 @@
     "spec": "StarkMutex.tla",
     "config": "benchmarks/liveness/StarkMutex.cfg",
     "style": "liveness, 400k states under fairness: the liveness checker",
-    "isUsingLibrary": true
+    "isUsingLibrary": true,
+    "expected": {
+      "id": "benchmarks/liveness/StarkMutex.cfg",
+      "status": "success",
+      "generatedStates": 1194504,
+      "distinctStates": 399763,
+      "depth": 115
+    }
   },
   {
     "id": "examples/specifications/cf1s-folklore/cf1s_folklore.cfg",
@@ -109,7 +116,14 @@
     "spec": "SpanTreeRandom.tla",
     "config": "SpanTreeRandom.cfg",
     "style": "a liveness violation: the lasso and its trace",
-    "isUsingLibrary": true
+    "isUsingLibrary": true,
+    "expected": {
+      "id": "tlc/tlatools/org.lamport.tlatools/test-model/examples/SpanningTree/SpanTreeRandom.cfg",
+      "status": "liveness-violation",
+      "generatedStates": 1044320,
+      "distinctStates": 65396,
+      "depth": 6
+    }
   },
   {
     "id": "examples/specifications/transaction_commit/2PCwithBTM.cfg",

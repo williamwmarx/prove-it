@@ -80,8 +80,39 @@ Every run agreed with TLC's recorded verdict and counts where `expected.json` ha
 spread between runs is within 5% on every model of a second or more. The 4-thread build's CPU time
 is 1.30× the one-thread CPU time in geomean, so a quarter of the threads' work is overhead.
 
-TLC's own times on this machine, on one worker and on every core, are in the section below once
-measured.
+SpanTreeRandom draws with RandomElement, so its counts depend on the seed. The suite now passes the
+differential's `-seed 4` to every checker. The row above is at the binary's default seed 0. At
+seed 4, one run takes 2.05 s for 65,396 states.
+
+### Against TLC
+
+TLC built from d8fb231 (the recordings' commit), run once each with `-workers 1` and with
+`-workers auto` (4 here), on the same machine and with the same options. The native column is the
+5-run median above, at seed 4 for SpanTreeRandom.
+
+| Model | TLC, 1 | TLC, auto | Native, 1 | Over TLC, 1 | Over TLC, auto | TLC RSS MB |
+|---|---:|---:|---:|---:|---:|---:|
+| MCExactInitialSync | 126.44 | 81.11 | 17.24 | 7.3× | 4.7× | 2,106 |
+| PaxosCommit | 110.73 | 35.74 | 27.23 | 4.1× | 1.3× | 1,817 |
+| MCMultiNode | 65.37 | 20.10 | 7.79 | 8.4× | 2.6× | 1,706 |
+| MCLamportMutex | 12.34 | 8.02 | 3.08 | 4.0× | 2.6× | 1,580 |
+| MCbtree | 28.55 | 10.28 | 0.90 | 31.7× | 11.4× | 1,563 |
+| Detlefs | 28.49 | 12.55 | 4.14 | 6.9× | 3.0× | 1,783 |
+| FastPaxos | 29.00 | 8.35 | 3.28 | 8.8× | 2.5× | 1,481 |
+| TLCSailfish1 | 36.26 | 10.97 | 11.27 | 3.2× | 1.0× | 1,637 |
+| MCabs | 44.08 | 14.13 | 11.24 | 3.9× | 1.3× | 1,455 |
+| GameOfLife | 9.64 | 3.68 | 1.22 | 7.9× | 3.0× | 1,459 |
+| BufferedRandomAccessFile | 41.68 | 11.60 | 1.64 | 25.5× | 7.1× | 1,474 |
+| StarkMutex, N = 4 | 104.50 | 32.36 | 9.49 | 11.0× | 3.4× | 1,950 |
+| cf1s_folklore | 165.97 | 49.71 | 16.69 | 9.9× | 3.0× | 2,074 |
+| SpanTreeRandom | 29.45 | 9.64 | 2.05 | 14.4× | 4.7× | 1,507 |
+| 2PCwithBTM | 0.66 | 0.61 | 0.017 | 38.5× | 35.8× | 151 |
+
+Geomean: the binary on one worker is 9.2× TLC on one worker, but only 3.5× TLC on every core,
+since `-workers auto` gives TLC its threads and not the binary. With the 4-thread build, it is
+6.3× TLC on every core over the 13 models that build measured. PaxosCommit, TLCSailfish1 and
+MCabs are the models closest to TLC: on one worker TLC is within 4× of the binary, and on four
+cores within 1.3×.
 
 ## Where the time goes
 
@@ -213,6 +244,98 @@ SANY's report and the lowering each parse the spec and its modules. One parse sh
 would cut the front end's part of a small run, about half of 17 ms, by up to half. The front-end
 session owns `tla-front` and the CLI's front, so this goes to them or waits for their change to
 land.
+
+## What 10x would take
+
+The plan above sums to roughly 3–5× on four cores: about 2.4× from threads, and the rest from
+the single-thread items, each removing a share of one or two models' time. 10× over today means
+removing about 90% of each model's single-thread time, threads aside, or 75% with 2.4× from
+threads. Grouping the profiles' self time shows what is left once tracks 1–8 have done what they
+promise.
+
+Self time by category, one thread (`perf script` leaf frames grouped by symbol):
+
+| Model | Successors/s | Evaluator dispatch | Memo | Compare | Intern, alloc, copy | Store reads | Fingerprints | State table | Symmetry |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| MCExactInitialSync | 2.3M | 30% | 8% | 0% | 11% | 5% | 19% | 21% | — |
+| MCbtree | 3.1M | 32% | 4% | 6% | 9% | — | 27% | 16% | — |
+| MCLamportMutex | 0.9M | 32% | 22% | 1% | 13% | 11% | 9% | 6% | — |
+| MCMultiNode | 0.5M | 21% | 42% | 1% | 9% | 13% | 3% | 4% | — |
+| PaxosCommit | 0.62M | 29% | 26% | 16% | 13% | 7% | 4% | 3% | — |
+| Detlefs | 0.5M | 15% | 4% | 13% | 5% | 2% | 13% | 9% | 31% |
+| FastPaxos | 98k | 11% | 4% | 18% | 4% | 2% | — | 1% | 50% |
+| TLCSailfish1 | 28k | 9% | 11% | 68% | 6% | 4% | — | 1% | — |
+| MCabs | 520 | 35% | 4% | 5% | 31% | 23% | — | — | — |
+| GameOfLife | 107k | 37% | 6% | 27% | 16% | 8% | — | 1% | — |
+| BufferedRandomAccessFile | 79k | 59% | 17% | 7% | 5% | 7% | 1% | — | — |
+
+Why PaxosCommit, TLCSailfish1 and FastPaxos are slow:
+- **They don't reach states slowly; each successor costs more.** MCExactInitialSync makes 2.3M
+  successors a second, PaxosCommit 0.62M, FastPaxos 98k and TLCSailfish1 28k.
+- **PaxosCommit's actions quantify over the set of messages** and build sets per successor.
+  `compile_subset`, `compile_record_set`, `union` and `merge` are on its hot path, and `member_test`
+  takes 14%. A third of its time is set algebra and membership, and a quarter memo misses.
+- **TLCSailfish1** spends 60% in `member_test`, which compares records field by field down a binary
+  search of a large set.
+- **FastPaxos** spends 50% in symmetry: each successor is canonicalized under every permutation,
+  and each permutation rebuilds the image of the message set.
+
+So the evaluator's dispatch, the closures' own cost, is not what makes them slow. It is 9–29% of
+those three. Value work per successor is. The fast models are the other way round: dispatch,
+fingerprints and the state table make up 70–80% of MCExactInitialSync and MCbtree, and value work
+is small there.
+
+The design-level changes, ranked by the share they attack:
+
+1. **Values that answer set questions without comparing**, beyond track 3. A set interned with an
+   id-indexed side table, or a hash of its ids, answers `\in`, `\subseteq`, union with one element
+   and `\ ` by id, wherever the store can show no comparison would fail. Comparing in TLC's order
+   is then kept for sorting new sets.
+   - Attacks compare plus part of intern: 68% of TLCSailfish1, 30% of GameOfLife, about 30% of
+     PaxosCommit, and 18% of FastPaxos.
+   - Expected: 2–3× on those.
+2. **Symmetry by orbit, not by permutation.** TLC's representative is the least image over the
+   group. Sorting the model values by an invariant of the state (their counts in each variable,
+   say) narrows the permutations that can give the least image before any is built.
+   - The group's images then cost a few comparisons instead of the whole group, and the chosen
+     representative must still be checked to be TLC's.
+   - Attacks 31–50% on Detlefs and FastPaxos, and about 20% on the large symmetric models.
+3. **Memo by footprint at the action, not by expression.** PaxosCommit's and MCMultiNode's memo
+   tables miss to memory because each successor asks many small tables with keys they have never
+   seen. A guard memoized on the variables it reads would be a hit for every successor that
+   didn't change them.
+   - Today's tables key on the variables an expression reads. Keying each action's enabledness on
+     the parent's id-tuple of the variables it reads is coarser, and hits when an action fires
+     from states differing only elsewhere.
+   - Attacks the 22–42% memo share: expected 1.3–1.6× on MCMultiNode, PaxosCommit and
+     MCLamportMutex.
+4. **Incremental fingerprints and a compact state table**, for the fast models. A successor's
+   fingerprint can be the parent's, updated for the variables its action assigned.
+   - `changed-slots` (speed.md) tried skipping comparisons and lost. This instead skips the
+     fingerprint work for unchanged variables, which is 19–27% on MCExactInitialSync and MCbtree.
+   - A table that stores fingerprints and indices in one cache line per probe, plus batched
+     prefetch, attacks the 16–21% state table share.
+   - Expected 1.3–1.5× on the fast models.
+5. **Specialised walks.** The remaining dispatch, 30% of the fast models and 59% of
+   BufferedRandomAccessFile, is closure entry and exit and the walker's bookkeeping, per
+   speed.md's callgrind. native-backend.md measured a native backend at 25–45% of instructions,
+   and it is shelved.
+   - A middle way is closures generated per action shape for the PlusCal `pc` dispatch, the most
+     common walk (#137), fusing a whole `pc = l /\ ... /\ pc' = m` step into one closure. That
+     spends no unsafe and no executable memory.
+   - Expected 1.2–1.4× where dispatch dominates.
+6. **Scaling past four cores** (track 6): a lock-free fingerprint set, threads kept across
+   levels, and the merge overlapped with expansion. TLC itself scales about 3× from 1 to 4
+   workers on these models.
+   - The 16-core Benchmark decides how much is left. 10× from threads alone would need about 16
+     cores at 60% efficiency.
+
+Per model, the path to 10× is then: threads (2–3× at 4 cores, more at 16), times the one or two
+design items that attack its largest category (1.5–3×), times what the rest removes (1.2–1.5×).
+That reaches 10× on four cores only where one category is most of the time: TLCSailfish1,
+FastPaxos, Detlefs, PaxosCommit and the liveness models. On the fast models (MCExactInitialSync,
+MCbtree) it needs more cores. These items are independent of each other and of tracks 2–8, except
+1 with 3 (membership) and 3 with 4 (memo): those are one track each.
 
 ### Not on the list
 
