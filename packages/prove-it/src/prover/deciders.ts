@@ -62,7 +62,8 @@ const decideNatively = (
 };
 
 // The decision, with the backend's statistics. A step limit, which only scripts set, stops the
-// backend after that many steps.
+// backend after that many steps. A native backend sees only the cancel cell, so an input whose
+// signal has aborted already goes to TypeScript, which answers unknown.
 export const decide = (
   prover: string,
   text: string,
@@ -70,7 +71,10 @@ export const decide = (
   stepLimit?: number,
 ): Decision => {
   const start = performance.now();
-  const native = isRust(prover) ? decideNatively(prover, text, options, stepLimit) : undefined;
+  const native =
+    isRust(prover) && options.signal?.aborted !== true
+      ? decideNatively(prover, text, options, stepLimit)
+      : undefined;
   const statistics = native?.statistics ?? {};
   const verdict =
     native?.verdict ??
