@@ -632,6 +632,25 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     }
   });
 
+  // summerset's Crossword_MC: the operator that gives each set's permutations is applied once per
+  // set, and looked through again for each is no recursion.
+  it("builds the group of a SYMMETRY that applies one operator to several sets", async () => {
+    const body = [
+      "EXTENDS Naturals, FiniteSets, TLC",
+      "CONSTANTS Procs, Values",
+      "VARIABLES owner, value",
+      "Perms(set) == IF Cardinality(set) > 1 THEN Permutations(set) ELSE {}",
+      "Init == owner \\in Procs /\\ value \\in Values",
+      "Next == owner' \\in Procs /\\ value' \\in Values",
+      "Sym == Perms(Procs) \\cup Perms(Values)",
+    ];
+    const config =
+      "CONSTANTS Procs = {p1, p2, p3}\nValues = {v1, v2}\nINIT Init\nNEXT Next\nSYMMETRY Sym";
+    expect(await compareWithInterpreter(body, config)).toContainEqual(
+      expect.stringMatching(COMPLETE),
+    );
+  });
+
   it("answers ENABLED by running the action", async () => {
     const body = [
       "EXTENDS Naturals",
