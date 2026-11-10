@@ -1288,6 +1288,15 @@ impl<'a> Lowering<'a> {
         {
             return false;
         }
+        // TLC computes the symmetry with the operators the names resolve to: one the model
+        // substitutes or the spec defines may compute anything.
+        let is_builtin = |name: &str| {
+            !self.environment.substitutions.contains_key(name)
+                && !self.environment.definitions.contains_key(name)
+        };
+        if !is_builtin("Permutations") || !is_builtin("\\cup") {
+            return false;
+        }
         let get_permuted = |expression: &Expr| match &expression.kind {
             ExpressionKind::Apply { args, .. }
                 if args.len() == 1 && expression.reference().as_deref() == Some("Permutations") =>

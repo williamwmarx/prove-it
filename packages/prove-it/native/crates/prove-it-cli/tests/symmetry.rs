@@ -187,3 +187,31 @@ fn declines_a_temporal_property_tlc_rejects_after_it_warns_the_symmetry_set_is_t
     );
     std::fs::remove_dir_all(directory).expect("removed");
 }
+
+#[test]
+fn declines_a_temporal_property_tlc_rejects_after_a_substituted_symmetry() {
+    // The model substitutes Permutations, so the symmetry may be anything: TLC fails computing
+    // this one ("The symmetry values must be function records.") before the liveness checker.
+    let directory = std::env::temp_dir().join(format!(
+        "prove-it-cli-substituted-symmetry-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    std::fs::write(
+        directory.join("M.tla"),
+        "---- MODULE M ----\nEXTENDS Naturals, TLC\nCONSTANTS a, b\nVARIABLE x\nInit == x = a\nNext == x' \\in {a, b}\nSpec == Init /\\ [][Next]_x\nBad(S) == {1}\nSym == Permutations({a, b})\nProp == <><<Next>>_x\n====\n",
+    )
+    .expect("a spec");
+    std::fs::write(
+        directory.join("M.cfg"),
+        "CONSTANTS a = a\nb = b\nPermutations <- Bad\nSPECIFICATION Spec\nSYMMETRY Sym\nPROPERTY Prop\n",
+    )
+    .expect("a configuration");
+    let output = run(&directory, &["-noGenerateSpecTE", "M"]);
+    assert_eq!(output.status.code(), Some(1), "{}", stdout(&output));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "prove-it: not native yet: a temporal property TLC rejects after it computes a symmetry it may report on\n"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
