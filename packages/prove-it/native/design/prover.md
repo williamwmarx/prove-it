@@ -592,7 +592,7 @@ Sizes are TypeScript lines ported.
 | **P5a** tlapm parse mode | `tla-front` `ParseMode::Tlapm`: the parse, the tokens, the syntax failure (3.5) | ≈400–600 in `tla-front` (its owner's inventory: `Mode::Tlapm` in `parser.rs`, `parse_tlapm_module`; the tokens and `SyntaxFailure` exist already) | `front-differential.ts tlapm-ast` against the TS parser on all corpus modules; tlapm's parse errors on `tlapm.json` | medium; touches a shared crate | announced; independent of P1–P4 |
 | **P5b** Obligations | `obligations/` on `tla-front`'s AST, `regroup` included | 8,873 | encoder differential: every obligation's text, location, kind; `obligations.test.ts`; `conformance:tlapm`'s `-N`/`--summary` output | high: tlapm's printer and Format layout byte for byte | P5a |
 | **P5c** Prep and encoders | `prep/`, the four encoders, `first-order`, fingerprints, MD5 | ≈5,800 | encoder differential: every back-end text and fingerprint byte-identical; `conformance:smt-encode`, `:isabelle-encode` | medium | P5b |
-| **P6** Driver and CLI | `prove-it-prover` (`prove.ts`, ordering, reuse, CASE sessions, threads), `.tlacache` (OCaml Marshal), `prove-it tlapm` in the native binary, `prove` in the library through the binding | ≈2,000 | end-to-end differential (layer 5), with 1 and 4 threads, with and without `.tlacache`; `prove.test.ts`, `prove-workers.test.ts`, `tlapm-cache.test.ts`; `conformance:tlapm` | medium | P1–P5 |
+| **P6** Driver and CLI (4c) | `prove-it-prover` (`prove.ts`, ordering, reuse, CASE sessions, threads), `.tlacache` (OCaml Marshal), `prove-it tlapm` in the native binary, `prove` in the library through the binding | ≈2,000 | end-to-end differential (layer 5), with 1 and 4 threads, with and without `.tlacache`; `prove.test.ts`, `prove-workers.test.ts`, `tlapm-cache.test.ts`; `conformance:tlapm` | medium | P1–P5 |
 | **P7** Delete | the TypeScript prover and obligations, `PROVE_IT_PROVER*`, the TS-only tests the Rust tests replaced; `THIRD_PARTY_NOTICES.md` | −86,000 | the whole gate, `conformance:prove` unchanged | low | P6 and every flip |
 
 **P0 leaves the oracle as it is.** The step counters and `stepLimit` change TypeScript that is the
@@ -823,6 +823,73 @@ session:
   printed text, location, kind, fingerprint and every encoder's text, byte for byte against
   TypeScript.
 - It needs no decider; it must not change what `decide` receives.
+
+### 4c. P6, the driver
+
+The design of P6, which the lead takes, and which the P5 session joins for the CLI once P5c is in.
+It moves `prove.ts`'s driver to `prove-it-prover` while some back ends are still TypeScript, so
+the boundary has to carry decisions both ways.
+
+**Why not obligations and texts up front.** The SMT encoder numbers the CASE errors it
+standardizes across the run (`getSession`). An obligation's count depends on every earlier
+obligation that reached the SMT encoder, which depends on what earlier methods decided and on
+fingerprint reuse. So texts cannot be computed before deciding, and the driver, not the encoders,
+is what must move.
+
+**Request and retry, as `Sources` does.** One host export, run in Rust:
+
+```
+prove(mains, known, options)
+  → { kind: "proved", modules, reports }                 every obligation settled
+  | { kind: "needed", keys, texts, reports }             decisions Rust can't make yet
+  | { kind: "error", ... }                               as getObligations throws today
+```
+
+- `known` holds the module texts under P5's keys (`tlapm:<name>`, `text:<path>`), and the answers
+  of earlier rounds under `decide:<prover>/<digest>`: `{verdict, statistics, timeUsedMs}` or
+  `{error}` (a `TlaProverError`'s message).
+- The driver runs `prove.ts`'s algorithm: methods in turn, `Prep.already_processed` reuse by
+  fingerprint, triviality, the CASE session, the reasons. It decides with every Rust back end
+  that decides by default, on std threads (3.7).
+- Where an obligation needs a back end that is still TypeScript and the answer isn't in
+  `known`, the obligation waits, and its key goes into `keys`, with the text in `texts`.
+- `reports` are the settled obligations, in order, so that `onObligation` streams as today.
+- JavaScript decides every needed key in the existing pool, in parallel, and calls again with
+  the answers added.
+- The driver runs again from the start. It is deterministic, so the same obligations settle the
+  same way and the new answers let more of them go on.
+
+**Rounds.** Each round settles every decision that is ready, so the number of rounds is the
+longest chain of dependent TypeScript decisions: an obligation's methods tried in turn, and an
+obligation that waits for an earlier one with the same fingerprint or for every earlier one to
+learn its CASE count. The end-to-end differential reports the rounds per module, and if a chain
+is long, the CASE wait is the place to cut it: it only waits on obligations whose encoding has
+an incomplete CASE.
+
+**Cost of running again.** A per-process cache, keyed by the digest of `mains` and `known`'s
+module texts, keeps the parsed modules, the obligations, and every encoder text by
+(obligation, method, CASE count). A round then costs the driver's bookkeeping, not Prep's 520
+seconds. The cache changes no result, and the differential runs once with it cleared each round.
+
+**Time and cancellation.** `timeUsedMs` comes from whichever side decided, and the reason
+`timeout` or `false` is computed from it as now. An abort stops JavaScript from calling again,
+and the cancel cell stops the Rust decisions in flight.
+
+**Selection.** `PROVE_IT_PROVER_DRIVER=ts|rust` picks the driver. The default stays TypeScript
+until the end-to-end differential (2.2, layer 5) is clean on all 304 modules with 1 and 4
+threads: identical `ProofObligation`s less `timeUsedMs`, and identical `missingProofCount` and
+`omittedProofCount`.
+
+**Stages.**
+- P6a, the driver: `prove-it-prover::prove`, the host export, the loop in `prove.ts`, and the
+  end-to-end differential.
+- P6b, tlapm's state: `.tlacache` through OCaml's Marshal (`tlapm/cache.ts`,
+  `ocaml-marshal.ts`, LGPL), and the JS CLI's `prove-it tlapm` on the Rust driver, compared
+  with `conformance:tlapm` and the end-to-end differential with and without a cache, `--nofp`
+  and `--nofpl`.
+- P6c, the native binary's `prove-it tlapm`: it cannot call TypeScript, so it declines, as it
+  does today, while any obligation needs a back end that is not yet Rust, and becomes native
+  once all four are.
 
 ---
 
