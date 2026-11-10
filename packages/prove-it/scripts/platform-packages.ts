@@ -4,9 +4,9 @@
 // manager install only the one for its platform, and the main package's version.
 // src/engine/native.ts finds the installed one. The package declares no bin, so it never shadows
 // the main package's.
-// The wasm32 package holds prove-it-engine.wasm instead, the engine for hosts without
-// process.dlopen, such as a browser, with no os or cpu fields, so every package manager installs
-// it; native.ts fetches it there.
+// The engine as WebAssembly, for hosts without process.dlopen such as a browser, ships in the main
+// package instead: build --target wasm32-unknown-unknown writes it to dist/prove-it-engine.wasm,
+// after bun run build, beside the modules that name it.
 // Usage: bun scripts/platform-packages.ts build [--target <Rust target>]
 //        bun scripts/platform-packages.ts pack <destination>
 //        bun scripts/platform-packages.ts install-test
@@ -137,26 +137,13 @@ const buildWasm = () => {
     ["build", "--release", "--locked", "--package", "prove-it-wasm", "--target", WASM_TARGET],
     NATIVE_DIRECTORY,
   );
-  const main = JSON.parse(readFileSync(join(PACKAGE_DIRECTORY, "package.json"), "utf8"));
-  const directory = join(NPM_DIRECTORY, "wasm32");
-  rmSync(directory, { recursive: true, force: true });
+  const directory = join(PACKAGE_DIRECTORY, "dist");
   mkdirSync(directory, { recursive: true });
   copyFileSync(
     join(NATIVE_DIRECTORY, "target", WASM_TARGET, "release", "prove_it_wasm.wasm"),
     join(directory, WASM_FILE),
   );
-  copyFileSync(join(PACKAGE_DIRECTORY, "../../LICENSE"), join(directory, "LICENSE"));
-  const manifest = {
-    name: `${main.name}-wasm32`,
-    version: main.version,
-    description: `The native engine of ${main.name} as WebAssembly, for hosts without process.dlopen`,
-    license: "MIT",
-    repository: main.repository,
-    files: [WASM_FILE],
-    publishConfig: main.publishConfig,
-  };
-  writeFileSync(join(directory, "package.json"), `${JSON.stringify(manifest, null, 2)}\n`);
-  console.log(`Built ${manifest.name}@${manifest.version} in ${directory}`);
+  console.log(`Built ${join(directory, WASM_FILE)}`);
 };
 
 const build = (requested: string | undefined) => {

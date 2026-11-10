@@ -3,8 +3,8 @@
 # it by hand for a first release or to retry one that failed. The native engine's platform packages
 # for Linux x64 and arm64 with glibc and with musl, macOS arm64 and x64 and Windows x64 go first,
 # each built and tested on its own system (musl in Alpine, macOS and Windows on GitHub's runners, by
-# platforms.yml), with the engine as WebAssembly for hosts without process.dlopen, and the main
-# package lists them as optionalDependencies, added when it is packed; other platforms get the
+# platforms.yml), and the main package lists them as optionalDependencies, added when it is
+# packed, and carries the engine as WebAssembly for hosts without process.dlopen; other platforms get the
 # TypeScript engine.
 #
 # The npm token is NPM_TOKEN in the 1Password Environment prove-it-release, whose ID is below.
@@ -204,9 +204,9 @@ jobs:
             api "$url" > "$RUNNER_TEMP/$name.zip"
             unzip -o -q "$RUNNER_TEMP/$name.zip" -d "$RUNNER_TEMP/fetched"
           done
-      # Builds the Linux x64 engine's platform package and the WebAssembly one, then lists every
-      # platform package in the main package's optionalDependencies, at its own version, as the main
-      # package is packed.
+      # Builds the Linux x64 engine's platform package, and the engine as WebAssembly into the main
+      # package's dist, then lists every platform package in the main package's
+      # optionalDependencies, at its own version, as the main package is packed.
       - name: Pack
         id: pack
         if: steps.plan.outputs.publish == 'true'
@@ -236,7 +236,6 @@ jobs:
                 "darwin-arm64",
                 "darwin-x64",
                 "win32-x64-msvc",
-                "wasm32",
               ].map((name) => [
                 `${main.name}-${name}`,
                 main.version,
@@ -245,6 +244,7 @@ jobs:
             fs.writeFileSync("package.json", `${JSON.stringify(main, null, 2)}\n`);
           '
           tarball=$(npm pack --silent --pack-destination "$RUNNER_TEMP")
+          tar -tzf "$RUNNER_TEMP/$tarball" | grep -qx 'package/dist/prove-it-engine.wasm'
           git checkout -- package.json
           echo "tarball=$RUNNER_TEMP/$tarball" >> "$GITHUB_OUTPUT"
           echo "Packed $tarball, sha256 $(sha256sum "$RUNNER_TEMP/$tarball" | cut -d' ' -f1)" | tee -a "$GITHUB_STEP_SUMMARY"
@@ -274,7 +274,7 @@ jobs:
               npm publish "$tarball" --access public --ignore-scripts
           done
           rm -f "$npmrc"
-          echo "Published $PACKAGE@${{ steps.plan.outputs.version }} and its Linux (glibc and musl), macOS, Windows and WebAssembly engines" >> "$GITHUB_STEP_SUMMARY"
+          echo "Published $PACKAGE@${{ steps.plan.outputs.version }} and its Linux (glibc and musl), macOS, Windows engines, and the engine as WebAssembly in the main package" >> "$GITHUB_STEP_SUMMARY"
       - name: Tag the release
         env:
           GH_TOKEN: ${{ github.token }}

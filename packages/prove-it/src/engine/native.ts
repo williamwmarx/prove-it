@@ -248,9 +248,10 @@ export const getNativeAddon = () => {
   return loaded.addon;
 };
 
-// Where there is no process.dlopen, as in a browser, fetches and compiles the engine as WebAssembly
-// from the wasm32 platform package, before getNativeAddon is first called: compiling it takes a
-// promise there. A bundler copies the file beside the module that names it in a URL.
+// Where there is no process.dlopen, as in a browser, fetches and compiles the engine as WebAssembly,
+// which the package ships beside its modules, before getNativeAddon is first called: compiling it
+// takes a promise there. The URL is a literal, as WASM_FILE names it, so that a bundler finds the
+// file and copies it beside the module it bundles this into.
 export const loadWasmEngine = async () => {
   if (
     loaded.addon !== undefined ||
@@ -260,13 +261,7 @@ export const loadWasmEngine = async () => {
   ) {
     return;
   }
-  const url = (() => {
-    try {
-      return new URL(import.meta.resolve(`@atemp/prove-it-wasm32/${WASM_FILE}`));
-    } catch {
-      return new URL(`./${WASM_FILE}`, import.meta.url);
-    }
-  })();
+  const url = new URL("./prove-it-engine.wasm", import.meta.url);
   try {
     loaded.addon = getChecked(
       instantiateEngine(await WebAssembly.compileStreaming(fetch(url))),
