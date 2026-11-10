@@ -2453,3 +2453,15 @@ fn declines_a_deadlock_past_a_node_that_accepts_every_behavior() {
     );
     std::fs::remove_dir_all(directory).expect("removed");
 }
+
+// TLCEval makes the set an enumerated one (`TLCEval.convert`), which TLC enumerates in its
+// normalized order whatever the union it was.
+#[test]
+fn enumerates_a_set_tlceval_made_in_its_normalized_order() {
+    let spec = "---- MODULE Evaluated ----\nEXTENDS Naturals, TLC\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == x < 1 /\\ x' = x + 1 /\\ y' \\in TLCEval((SUBSET {1, 2}) \\cup {{3}})\n====\n";
+    let (output, directory) = run_front("tlceval-order", spec, "INIT Init\nNEXT Next\n", &[]);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(11), "{text}");
+    assert!(text.contains("\n/\\ x = 1\n/\\ y = {}\n"), "{text}");
+    std::fs::remove_dir_all(directory).expect("removed");
+}

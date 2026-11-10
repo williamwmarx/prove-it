@@ -100,6 +100,13 @@ pub(crate) fn except(machine: &mut Machine<'_>, function: Id, key: Id, value: Id
     if machine.store.kind_of(function) != KIND_LAZY_FUNCTION {
         return machine.store.except(function, key, value);
     }
+    // TLC reads the function at the key first (`FcnLambdaValue.select`): outside its domain the
+    // EXCEPT changes nothing, and inside it the function's value there is evaluated, and may
+    // fail.
+    if !is_in_domain(machine, function, key)? {
+        return Ok(function);
+    }
+    apply_lazy(machine, function, key)?;
     let lazy = &machine.lazy_functions[machine.store.lazy_index_of(function) as usize];
     let mut excepts = lazy.excepts.clone();
     excepts.push((key, value));

@@ -586,6 +586,30 @@ impl Compiler<'_> {
         Ok((levels, bound, inner))
     }
 
+    // TLC evaluates the set of every bound before it binds any (`Tool.contexts`), so a later
+    // bound's set fails though an earlier one is empty: what evaluates the later sets first.
+    fn compile_later_bounds(levels: &[Level], reason: &'static str) -> Compiling<Eval> {
+        let mut sets = Vec::new();
+        for level in levels.iter().skip(1) {
+            if level.set.is_printing() {
+                return unsupported("Print in the set of a later bound");
+            }
+            match &level.set.interval {
+                Some((low, high)) => sets.extend([(low.clone(), false), (high.clone(), false)]),
+                None => sets.push((level.set.eval.clone(), true)),
+            }
+        }
+        Ok(eval(move |machine| {
+            for (set, is_set) in &sets {
+                let id = set(machine)?;
+                if *is_set {
+                    expect_set(machine, id, reason)?;
+                }
+            }
+            Ok(TRUE)
+        }))
+    }
+
     fn compile_quantifier(
         &mut self,
         bounds: &[Bound],
@@ -647,6 +671,7 @@ impl Compiler<'_> {
                 )
             });
         }
+        let later_bounds = Self::compile_later_bounds(&levels, "quantified over a non-set")?;
         let predicate = Predicate::of(&body);
         // ForallInterval and ExistsInterval: a name over a..b at each level counts through the
         // interval without building it.
@@ -675,7 +700,13 @@ impl Compiler<'_> {
         Ok(Compiled {
             is_costly: true,
             is_boolean: true,
-            ..leaf(evaluate, footprint)
+            ..leaf(
+                eval(move |machine| {
+                    later_bounds(machine)?;
+                    evaluate(machine)
+                }),
+                footprint,
+            )
         })
     }
 
@@ -824,6 +855,7 @@ impl Compiler<'_> {
             .merge(&body.footprint.without_slots(&bound));
         let are_elements_enumerated = body.is_enumerated;
         let are_elements_in_order = body.is_in_order;
+        let later_bounds = Self::compile_later_bounds(&levels, "mapped a non-set")?;
         let levels: Arc<Vec<(Eval, Vec<u32>, bool)>> = Arc::new(
             levels
                 .into_iter()
@@ -839,6 +871,7 @@ impl Compiler<'_> {
             are_elements_in_order,
             ..leaf(
                 eval(move |machine| {
+                    later_bounds(machine)?;
                     let at = machine.stack.len();
                     let result = map_images(machine, &levels, 0, &body);
                     let images = machine.stack.split_off(at);
