@@ -22,6 +22,7 @@ track: keep it current.
 | `core::{literal, sort, enode, cg_table, case_split_queue, sticky_generations, clause}` | the e-graph's and the clauses' types | done; `smt-clause-store` ported |
 | `core::{smtlib_parser, goal}` | the SMT-LIB reader, goals | done; all 46 `tests/fixtures/smt` and 52 of 54 short scripts against the TS (`smt/tests/tables/parser.txt`, `scripts/smt-parser-tables.ts`); the two skipped are listed in `tests/parser.rs` |
 | `core::{act_cache, rewriter_tpl, var_subst, expr_safe_replace, ast_lt, ast_util}` | the rewriter template and substitution | done; a 6,192-line TS trace (results, ids, step counts, ref counts) in `smt/tests/tables/rewriter.txt`, written by `scripts/smt-rewriter-tables.ts`. A rewriter's configuration is a `RewriterConfig` trait (module header of `rewriter_tpl.rs`) |
+| `core::{context, internalizer, relevancy, conflict_resolution, dyn_ack}` | the CDCL kernel with the E-graph | done; `context.rs`'s unit tests (propositional, EUF, pigeonhole, 3-SAT, dynamic Ackermann) expect the TS numbers `scripts/smt-kernel-reference.ts` prints, less the steps of the stubbed modules (each test says how many). Stubs, marked `STUB`: `rewriter`, `asserted_formulas`, `proto_model`, `model_generator`, `quantifier_manager`, `theory_lra` |
 | `core::*` | the rest of `smt/solver/*.ts` | §3 |
 
 The tables are written by `scripts/smt-foundation-tables.ts` (`bun scripts/smt-foundation-tables.ts`)
