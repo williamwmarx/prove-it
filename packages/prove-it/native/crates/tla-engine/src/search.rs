@@ -514,6 +514,7 @@ const TLC_FAILURES: &[&str] = &[
     "variable not assigned",
     "zero to the power of zero",
     crate::compile::lazy::SUBSET_OVERFLOW,
+    crate::compile::NON_SET_OPERAND,
 ];
 
 /// The counts of a search that stopped, as TLC reports them.
@@ -2391,13 +2392,15 @@ fn check_assumptions(
             // TLC further, as where TLC compares two sets it can't enumerate part by part. So
             // is one that enumerates a set the engine takes for one TLC can't enumerate, which
             // TLC fails at only where it enumerates such a set itself: it compares two sets of
-            // functions over Nat by their parts, and enumerates `Nat \cap S` by S.
+            // functions over Nat by their parts, and enumerates `Nat \cap S` by S. So is a set
+            // operation on a value that isn't a set, which TLC may never test for an element.
             Err(bail)
                 if is_native
                     && (is_engine_limit(bail.0)
                         || [
                             crate::compile::lazy::INFINITE_DOMAIN,
                             crate::compile::INFINITE_BOUND,
+                            crate::compile::NON_SET_OPERAND,
                         ]
                         .contains(&bail.0)) =>
             {
