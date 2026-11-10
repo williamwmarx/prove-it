@@ -1855,6 +1855,25 @@ impl Store {
         self.apply(function, key)
     }
 
+    /// `r.field` of a function that has the key, found by the key's id without comparing, where
+    /// `hint` is the position it was last found at: None where `apply_field` would search with
+    /// comparisons or fail.
+    #[inline(always)]
+    pub fn field_by_id(&self, function: Id, key: Id, hint: &mut u32) -> Option<Id> {
+        let meta = self.meta(function);
+        if meta.kind != KIND_FUNCTION {
+            return None;
+        }
+        let (size, offset) = (meta.size, meta.payload as usize);
+        if *hint >= size || self.word(offset + *hint as usize) != key {
+            *hint = self
+                .words(offset, size as usize)
+                .iter()
+                .position(|&stored| stored == key)? as u32;
+        }
+        Some(self.word(offset + (size + *hint) as usize))
+    }
+
     pub fn domain_of(&mut self, function: Id) -> Id {
         let size = self.size_of(function);
         let mut keys = self.take_scratch(size as usize);
