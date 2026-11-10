@@ -3,7 +3,7 @@
 use std::cmp::Ordering;
 use std::fmt;
 
-use crate::util::rational::Rational;
+use prove_num::Rational;
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Impq {

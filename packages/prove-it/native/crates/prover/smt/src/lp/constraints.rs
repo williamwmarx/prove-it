@@ -1,8 +1,8 @@
 // Ported from Z3 (src/math/lp/lar_constraints.h), MIT license, see z3-license.txt. The bounds
 // that the theory asserts on columns, each with a leaf dependency on its own index, and the set of
 // active ones, both undone by pop.
+use crate::lp::dependency::{Dependency, mk_leaf};
 use crate::lp::numeric_pair::Impq;
-use crate::util::dependency::{Dependency, mk_leaf};
 
 // lconstraint_kind: flipping negates the kind, and halving a non-strict kind gives the strict one.
 pub type ConstraintKind = i32;

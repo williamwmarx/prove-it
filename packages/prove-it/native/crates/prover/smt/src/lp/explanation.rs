@@ -1,9 +1,9 @@
 // Ported from Z3 (src/math/lp/explanation.h), MIT license, see z3-license.txt. The constraints
 // behind a conflict or a propagation: weighted pairs, or a set of constraint indices whose
 // iteration order is the slot order of Z3's hashtable.
-use crate::util::dependency::{Dependency, linearize};
-use crate::util::hashtable::{ObjMap, get_identity_hash};
-use crate::util::rational::Rational;
+use crate::lp::dependency::{Dependency, linearize};
+use crate::util::hashtable::ObjMap;
+use prove_num::Rational;
 
 #[derive(Clone)]
 pub struct Explanation {
@@ -21,7 +21,7 @@ impl Explanation {
     pub fn new() -> Explanation {
         Explanation {
             pairs: Vec::new(),
-            indices: ObjMap::new(get_identity_hash),
+            indices: ObjMap::new(),
         }
     }
 
@@ -35,7 +35,8 @@ impl Explanation {
     }
 
     pub fn push(&mut self, constraint: usize) {
-        self.indices.insert(constraint as u32, ());
+        self.indices
+            .insert(constraint as u32, constraint as u32, ());
     }
 
     // push_explanation: the constraints behind a dependency.

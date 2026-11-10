@@ -6,7 +6,7 @@ use std::cmp::Ordering;
 
 use prove_num::Int;
 
-use crate::util::rational::Rational;
+use prove_num::Rational;
 
 // rem of mpq: the remainder of the numerators, truncated toward zero.
 fn get_rem(first: &Rational, second: &Rational) -> Rational {
@@ -309,6 +309,10 @@ pub fn get_determinant_of_rectangular_matrix(
 
 // hnf: W, the Hermite normal form of the rows of the matrix, computed modulo d. None when
 // canceled.
+#[expect(
+    clippy::needless_range_loop,
+    reason = "a literal port of Z3's matrix loops, which index rows i, j and k together"
+)]
 pub fn get_hermite_normal_form(
     matrix: &GeneralMatrix,
     d: &Rational,

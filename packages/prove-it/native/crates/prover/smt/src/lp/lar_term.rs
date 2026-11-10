@@ -1,8 +1,8 @@
 // Ported from Z3 (src/math/lp/lar_term.h), MIT license, see z3-license.txt. A linear combination of
 // columns, kept in a u_map so that its iteration order is Z3's.
 use crate::lp::numeric_pair::Impq;
-use crate::util::hashtable::{ObjMap, get_identity_hash};
-use crate::util::rational::Rational;
+use crate::util::hashtable::ObjMap;
+use prove_num::Rational;
 
 #[derive(Clone)]
 pub struct LarTerm {
@@ -22,7 +22,7 @@ impl Default for LarTerm {
 impl LarTerm {
     pub fn new() -> LarTerm {
         LarTerm {
-            coeffs: ObjMap::new(get_identity_hash),
+            coeffs: ObjMap::new(),
             column: NO_COLUMN,
         }
     }
@@ -45,7 +45,7 @@ impl LarTerm {
     }
 
     pub fn get(&self, column: usize) -> Option<&Rational> {
-        self.coeffs.get(column as u32)
+        self.coeffs.get(column as u32, column as u32)
     }
 
     pub fn clear(&mut self) {
@@ -57,15 +57,15 @@ impl LarTerm {
             return;
         }
         let key = column as u32;
-        let Some(existing) = self.coeffs.get(key) else {
-            self.coeffs.insert(key, coeff.clone());
+        let Some(existing) = self.coeffs.get(key, key) else {
+            self.coeffs.insert(key, key, coeff.clone());
             return;
         };
         let sum = existing.add(coeff);
         if sum.is_zero() {
-            self.coeffs.remove(key);
+            self.coeffs.remove(key, key);
         } else {
-            self.coeffs.replace(key, sum);
+            self.coeffs.replace(key, key, sum);
         }
     }
 
@@ -80,10 +80,14 @@ impl LarTerm {
 
     // subst_by_term: replaces the term column by its definition.
     pub fn subst_by_term(&mut self, term: &LarTerm, term_column: usize) {
-        let Some(coeff) = self.coeffs.get(term_column as u32).cloned() else {
+        let Some(coeff) = self
+            .coeffs
+            .get(term_column as u32, term_column as u32)
+            .cloned()
+        else {
             return;
         };
-        self.coeffs.remove(term_column as u32);
+        self.coeffs.remove(term_column as u32, term_column as u32);
         for (column, entry) in term.iter() {
             self.add_monomial(&coeff.mul(entry), column);
         }
@@ -100,7 +104,7 @@ impl LarTerm {
             return (None, Rational::one());
         }
         let coeff = entries[0].1.clone();
-        if coeff.is_one() {
+        if coeff == Rational::one() {
             return (None, coeff);
         }
         let mut term = LarTerm::new();
