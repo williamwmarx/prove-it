@@ -518,3 +518,22 @@ Open:
 - Sets TLC holds unnormalized: `\cup` and DOMAIN, above.
 - Not this workstream's: FingerprintExceptionHang, TSnapShot and DoInitFunctorMinimalErrorStack
   (infinite sets and the trace's stops).
+
+## What the replay declines of TLC's own orders
+
+- TLC fingerprints a state only where the constraints hold of it (`isInModel`). The replay
+  doesn't evaluate them where it fingerprints, so a state that fails to fingerprint in a model
+  with constraints, or action constraints for a successor, is declined.
+- TLC's worker fingerprints each successor as the action gives it, but its replay, and
+  `Tool.getState` as it prints the trace, take all of the action's successors first. After a
+  successor that fails to fingerprint the replay finishes the action without the call stack, and
+  declines where the rest fails or prints.
+- TLC streams a set it keeps lazy in an order of its own. A print, a draw or a register read or
+  written under an assignment from such a set is declined, and a variable, a constant or a
+  definition TLC computes at startup counts as normalized only where what it holds is: a set TLC
+  normalized, a set of functions, records or tuples of such sets, or a union of them whose
+  elements, the first operand's then the second's own, come in normalized order
+  (`is_streamed_normalized`).
+- The replay reads TLC's actions from the IR, which `add_actions` gives it; where the IR holds
+  none it declines. There is one port of `Tool.getActions`, in `split.rs`.
+
