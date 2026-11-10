@@ -580,7 +580,32 @@ E4351, E4355), whose reports `report.rs` doesn't write; AssumeProveTest's labele
 ProofsTest's DEFINE step; and four corpus specs whose failing assumptions the engine declines to
 replay (AssumeTest, BasicTest, InnerModuleTest, Semantics).
 
-### Open: where the TypeScript front end differs from TLC
+`bun scripts/sany-corpus.ts --tlaplus <clone> --classpath <tla2tools>` runs TLC live against the
+binary over both directories and counts them: 138 of 153 print what TLC prints (116 of the 125
+errors, 22 of the 28 accepted specs), 15 decline and none differ. The recorded gate, with the
+directories in `corpora.json` and TLC's output recorded, comes with the generator's port below.
+
+### Next milestone: SANY's generator in tla-front (after native-parity)
+
+The binary's SANY report comes from `report.rs`, over `resolve.rs` and `levels.rs`, which port
+`src/resolve.ts` and `src/levels.ts` and cover a subset of SANY; the TypeScript CLI writes its
+report with `src/sany/` (`generator.ts`, `levels.ts`, `selectors.ts`), a port of SANY's whole
+semantic analysis. Porting `src/sany` to tla-front replaces `report.rs`'s semantic checks as the
+source of the native report, so no TypeScript is in its path, and can land a check at a time
+behind the existing report. It must keep `front-differential.ts sany-text` at 2,359 of 2,359,
+the error corpus at 116 of 125 with none differing, and write the 9 SANY errors `report.rs`
+declines (E4200, E4203, E4204, E4223, E4293 ×2, E4294, E4351, E4355).
+
+### Open
+
+- The 9 SANY errors above, which the native report declines.
+- A RECURSIVE operator that applies another of its section (mutual recursion): SANY's first pass
+  reads the section's operators with action-level arguments, which `levels.rs` declines.
+- Labeled ASSUME/PROVE (AssumeProveTest) and a DEFINE step's operator (ProofsTest), which the
+  native front declines.
+- The TypeScript front end's differences from TLC, below.
+
+### Where the TypeScript front end differs from TLC
 
 The TypeScript CLI's report still differs from TLC on these, which the native front writes or
 declines:
