@@ -10,7 +10,7 @@ use crate::encoding::{decode, encode};
 
 #[link(wasm_import_module = "env")]
 unsafe extern "C" {
-    fn prove_it_report(kind: f64, a: f64, b: f64, c: f64, d: f64, e: f64);
+    fn prove_it_report(kind: f64, a: f64, b: f64, c: f64, d: f64, e: f64, f: f64);
     fn prove_it_print(pointer: *const u8, length: usize);
 }
 
@@ -116,7 +116,9 @@ pub unsafe extern "C" fn prove_it_check(pointer: *mut u8, length: usize) -> *mut
             let mut settings = get_settings(&words, String::from_utf16_lossy(&state_log))?;
             settings.threads = 1;
             let outcome = check_on_thread(&ir, &settings, |event| match get_event_call(event) {
-                EventCall::Report([kind, a, b, c, d, e]) => prove_it_report(kind, a, b, c, d, e),
+                EventCall::Report([kind, a, b, c, d, e, f]) => {
+                    prove_it_report(kind, a, b, c, d, e, f)
+                }
                 EventCall::Print(width, values) => {
                     let mut out = Vec::new();
                     let printed = HostValue::Array(vec![

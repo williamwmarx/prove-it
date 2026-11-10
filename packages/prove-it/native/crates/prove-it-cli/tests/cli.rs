@@ -503,9 +503,10 @@ fn checks_temporal_properties_part_way_through_the_search() {
     let config = "CONSTANTS\n  DNA = 5\n  PRIMER = 5\nINVARIANT TypeOK\nSPECIFICATION Spec\nPROPERTIES cleanSpec primerDepleted\nCHECK_DEADLOCK FALSE\n";
     let (output, directory) = run_golden("periodic", ir, "stages", config, &["-lncheck", "final"]);
     assert_eq!(output.status.code(), Some(0));
-    let current = "Checking temporal properties for the current state space with 10 total distinct states at (";
+    let current = "Checking temporal properties for the current state space with 14 total distinct states at (";
     // PROVE_IT_TEST_LIVE_CHECK_AT has the first check made after 10 states are expanded, which
-    // -lncheck final leaves to the end.
+    // -lncheck final leaves to the end. TLC counts the states of the behavior graph, those still
+    // queued among them.
     let periodic = Command::new(env!("CARGO_BIN_EXE_prove-it"))
         .arg("stages")
         .current_dir(&directory)
@@ -1400,7 +1401,8 @@ fn reports_an_atom_that_fails_on_an_initial_state() {
 #[test]
 fn prints_a_lasso_a_check_part_way_through_the_search_finds() {
     // Without fairness x stutters, which a check after two states finds with a state left to
-    // expand: TLC reports the check's start, the counterexample and the counts so far.
+    // expand: TLC reports the check's start, on a graph of the three, the counterexample and the
+    // counts so far.
     let spec = "---- MODULE Stop ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 10\nUnfair == Init /\\ [][Next]_x\nReaches == <>(x = 9)\n====\n";
     let directory = std::env::temp_dir().join(format!(
         "prove-it-cli-periodic-lasso-{}",
@@ -1422,7 +1424,7 @@ fn prints_a_lasso_a_check_part_way_through_the_search_finds() {
     let text = stdout(&output);
     assert_eq!(output.status.code(), Some(13), "{text}");
     assert!(
-        text.contains(".\nChecking temporal properties for the current state space with 2 total distinct states at ("),
+        text.contains(".\nChecking temporal properties for the current state space with 3 total distinct states at ("),
         "{text}"
     );
     assert!(

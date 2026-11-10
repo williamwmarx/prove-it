@@ -13,7 +13,7 @@
 //!   Where the addon writes into an array it is given, the hook returns the new elements instead.
 //!
 //! The module imports `prove_it_now()`, the host's clock in milliseconds, and, while `check` runs,
-//! `prove_it_report(kind, a, b, c, d, e)` and `prove_it_print(pointer, length)`, the latter with
+//! `prove_it_report(kind, a, b, c, d, e, f)` and `prove_it_print(pointer, length)`, the latter with
 //! `[width, words, strings]` encoded, and `prove_it_write(path, pathLength, bytes, length,
 //! isAppended)` for the state log, the path in UTF-8. WebAssembly has one thread, so the search
 //! uses one.

@@ -48,6 +48,9 @@ export interface LivenessChecker {
     tracing?: Environment,
   ) => number[] | undefined;
   findViolation: () => Lasso | undefined;
+  // The states of the behavior graphs, summed over the branches, which TLC reports as it checks
+  // them (LiveCheck.check0).
+  getSize: () => number;
   getViolatedProperties: (path: Value[][], cycleStart: number) => string[];
   // The state predicates, action predicates and ENABLED predicates the checks ask about.
   atoms: LiveExpression[];
@@ -99,6 +102,10 @@ interface BehaviorGraph {
   nextSiblings: number[];
   nodeIds: NodeTable;
   isDone: boolean[];
+  // TLC's AbstractDiskGraph#size: the states its node table has a key for. A graph without a
+  // tableau has those of the nodes written, the states added; one with a tableau has those done and
+  // those with a node recorded, such as a successor still to expand.
+  size: number;
   errorNode: number | undefined;
 }
 
@@ -344,6 +351,7 @@ export const createLivenessChecker = (
     nextSiblings: [],
     nodeIds: { slots: new Int32Array(3 << 10), size: 0, shift: 22 },
     isDone: [],
+    size: 0,
     errorNode: undefined,
     isCovered: false,
   }));
@@ -620,6 +628,7 @@ export const createLivenessChecker = (
     table.slots[slot + 2] = node;
     const last = behavior.lastNodes.data[state] ?? NO_NODE;
     if (last === NO_NODE) {
+      if (behavior.isDone[state] !== true) behavior.size++;
       reservePool(behavior.firstNodes, state + 1);
       behavior.firstNodes.data[state] = node;
     } else {
@@ -781,6 +790,12 @@ export const createLivenessChecker = (
         consistency[node * set.length + position] = isHeld ? 1 : 0;
       }
     }
+    if (
+      behavior.isDone[index] !== true &&
+      (behavior.lastNodes.data[index] ?? NO_NODE) === NO_NODE
+    ) {
+      behavior.size++;
+    }
     behavior.isDone[index] = true;
     // TLC expands the nodes recorded before the loop, not the ones the loop records.
     const last = behavior.lastNodes.data[index] ?? NO_NODE;
@@ -832,6 +847,7 @@ export const createLivenessChecker = (
       edgeSteps.push(firstStep + position);
     });
     writeNode(behavior, index, successors, edgeSteps);
+    behavior.size++;
   };
 
   // The shortest path from an initial node to the node, last node first, as TLC's getPath finds it.
@@ -1237,6 +1253,7 @@ export const createLivenessChecker = (
       }
       return undefined;
     },
+    getSize: () => behaviors.reduce((sum, behavior) => sum + behavior.size, 0),
     // TLC names every property that the counterexample violates, once each.
     getViolatedProperties: (path, cycleStart) => [
       ...new Set(

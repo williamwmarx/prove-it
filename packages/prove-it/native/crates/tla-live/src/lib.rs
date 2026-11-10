@@ -562,7 +562,9 @@ pub fn atom_order(formula: &[Term]) -> Result<Vec<u32>, Declined> {
 /// them, on a search's graph, from the engine's answers to each atom (`None` for an atom
 /// it doesn't answer), and finds which of the properties a counterexample violates. Where the
 /// atoms' evaluations have effects, it logs each evaluation of an atom TLC makes. Otherwise it
-/// builds the behavior graphs on up to `threads` threads.
+/// builds the behavior graphs on up to `threads` threads. With what it found, it returns the states
+/// of the behavior graphs, summed over the branches, as TLC counts them once every state is added:
+/// where the check holds or finds a lasso.
 pub fn check(
     formula: &[Term],
     properties: &[&[Term]],
@@ -570,8 +572,9 @@ pub fn check(
     tables: &[Option<&[u8]>],
     is_effectful: bool,
     threads: usize,
-) -> Liveness {
+) -> (Liveness, u64) {
     let mut branches = None;
+    let mut size = 0;
     let mut events = Vec::new();
     let mut unanswered = None;
     let build = || -> Result<(checker::Checker, Vec<TermId>), Declined> {
@@ -616,6 +619,7 @@ pub fn check(
             checker::check(&mut checker, &source, &properties, &mut events)
         };
         unanswered = verdict.is_err().then(|| checker.unanswered.get()).flatten();
+        size = checker.size();
         verdict
     };
     let verdict = run().unwrap_or_else(|declined| {
@@ -625,10 +629,13 @@ pub fn check(
             Verdict::Declined(declined)
         }
     });
-    Liveness {
-        branches,
-        verdict,
-        events,
-        unanswered,
-    }
+    (
+        Liveness {
+            branches,
+            verdict,
+            events,
+            unanswered,
+        },
+        size,
+    )
 }

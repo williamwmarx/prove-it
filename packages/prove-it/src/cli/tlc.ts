@@ -356,12 +356,10 @@ const printCheckProgress = (
       // TLC reports how far the search got before it checks the complete state graph.
       if (progress.isComplete) printProgress(printer, progress.statistics);
       const branches = progress.branches > 1 ? `${progress.branches} branches of ` : "";
-      // TLC counts the states of the behavior graph of each branch, without its tableau nodes.
-      const states = progress.branches * progress.states;
       print(
         MESSAGE_CODE.checkingTemporal,
         MESSAGE_LEVEL.none,
-        `Checking ${branches}temporal properties for the ${progress.isComplete ? "complete" : "current"} state space with ${states} total distinct states at (${formatTlcDate(new Date())})`,
+        `Checking ${branches}temporal properties for the ${progress.isComplete ? "complete" : "current"} state space with ${progress.states} total distinct states at (${formatTlcDate(new Date())})`,
       );
       return;
     }

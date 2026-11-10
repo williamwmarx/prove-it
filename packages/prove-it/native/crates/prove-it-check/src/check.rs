@@ -243,7 +243,7 @@ enum Event {
     InitialStates(u64, u64),
     Progress(u64, u64, u64, u64),
     /// TLC checks the temporal properties part way through the search: of how many branches, on
-    /// the graph of how many states.
+    /// behavior graphs of how many states in all.
     LivenessStarted(u64, u64),
     LivenessFinished,
     /// What Print or PrintT printed, or nothing when TLC's text isn't known.
@@ -372,8 +372,8 @@ impl Reporter for Relay<'_> {
             .send(Event::Progress(generated, distinct, queued, depth));
     }
 
-    fn liveness_started(&mut self, branches: u64, expanded: u64, _counts: [u64; 3]) {
-        let _ = self.sender.send(Event::LivenessStarted(branches, expanded));
+    fn liveness_started(&mut self, branches: u64, _expanded: u64, states: u64, _counts: [u64; 3]) {
+        let _ = self.sender.send(Event::LivenessStarted(branches, states));
     }
 
     fn liveness_finished(&mut self) {
@@ -866,9 +866,8 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                         print_progress(printer, &statistics, Some(start));
                         printer.flush();
                     }
-                    Event::LivenessStarted(branches, expanded) => {
-                        checking =
-                            Some(print_liveness_check(printer, branches, expanded, "current"));
+                    Event::LivenessStarted(branches, states) => {
+                        checking = Some(print_liveness_check(printer, branches, states, "current"));
                     }
                     Event::LivenessFinished => {
                         if let Some(checking) = checking.take() {
@@ -1280,11 +1279,18 @@ fn print_liveness_started(
 ) -> Instant {
     print_progress(printer, statistics, None);
     let branches = branches as u64;
-    print_liveness_check(printer, branches, statistics.distinct, "complete")
+    // Each branch's behavior graph has every state once the search is complete.
+    print_liveness_check(
+        printer,
+        branches,
+        branches * statistics.distinct,
+        "complete",
+    )
 }
 
-/// TLC checks the temporal properties of its branches on the graph of `states` states, of the
-/// complete or the current state space: returns when it started.
+/// TLC checks the temporal properties of its branches on behavior graphs of `states` states in
+/// all, summed over the branches, of the complete or the current state space: returns when it
+/// started.
 fn print_liveness_check(printer: &mut Printer, branches: u64, states: u64, space: &str) -> Instant {
     let checking = Instant::now();
     let branch_text = if branches > 1 {
@@ -1296,8 +1302,7 @@ fn print_liveness_check(printer: &mut Printer, branches: u64, states: u64, space
         code::CHECKING_TEMPORAL,
         Level::None,
         &format!(
-            "Checking {branch_text}temporal properties for the {space} state space with {} total distinct states at ({})",
-            branches * states,
+            "Checking {branch_text}temporal properties for the {space} state space with {states} total distinct states at ({})",
             printer.date()
         ),
     );
