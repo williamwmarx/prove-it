@@ -485,6 +485,14 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
         "LET f == [i \\in Nat |-> i + x] IN f = f",
         "unsupported: comparing a function TLC keeps lazy",
       ],
+      [
+        "LET f == [i \\in Nat |-> i + x] IN {f} = {f}",
+        "unsupported: comparing a function TLC keeps lazy",
+      ],
+      [
+        "LET f == [i \\in Nat |-> i + x] IN f \\in {f}",
+        "unsupported: comparing a function TLC keeps lazy",
+      ],
       // TLC evaluates every bound's set before it binds any (Tool.contexts).
       ["~(\\E i \\in {}, j \\in (1 \\div x) .. 2 : TRUE)", "division by zero"],
       ["\\A i \\in {}, j \\in x : FALSE", "quantified over a non-set"],

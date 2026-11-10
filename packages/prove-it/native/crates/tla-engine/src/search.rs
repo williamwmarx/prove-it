@@ -2704,6 +2704,15 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             if is_graph_bounded.get() && search.states.count() > MAXIMUM_GRAPH_STATES {
                 return Err(Bail(GRAPH_TOO_LARGE));
             }
+            // The search numbers its states and its graph's steps in 32 bits.
+            if search.states.count() >= i32::MAX as usize
+                || search
+                    .graph
+                    .as_ref()
+                    .is_some_and(|graph| graph.edges.len() >= i32::MAX as usize)
+            {
+                return Err(Bail(GRAPH_TOO_LARGE));
+            }
             search.current.clear();
             search
                 .current

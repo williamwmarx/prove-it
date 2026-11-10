@@ -453,10 +453,20 @@ fn evaluate(ir: &Ir, stop: &ErrorStop<'_>, is_tool: bool) -> Result<Report, Stri
             };
             rebuilder.rebuild(stop.store, states, actions, ending)?
         };
-        // TLC rebuilds the trace once more after it prints it, then replays the failure.
+        // TLC rebuilds the trace once more after it prints it, for the postconditions, then
+        // replays the failure. Its worker rebuilds it after a failure in the next-state relation
+        // only as it goes on to check the state for deadlock, having generated no successor of
+        // it, and never after an invariant fails to evaluate, since it generated the successor
+        // (`Worker.run`, `Worker.addElement`).
+        let is_rebuilt_again = match stop.site {
+            Site::Invariant(_) => false,
+            Site::Next => ir.model.check_deadlock && !failure.replay.is_successor_generated,
+            _ => true,
+        };
         let after = trace
             .trace_output
             .iter()
+            .filter(|_| is_rebuilt_again)
             .chain(&failure.printed)
             .map(|print| format_print(print))
             .collect();

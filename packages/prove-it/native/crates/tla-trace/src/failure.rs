@@ -81,9 +81,14 @@ pub struct Failure {
 }
 
 /// TLC's replay of an expansion after an invariant failed to evaluate
-/// (`doNext(cTool, predErrState)`), which goes on past the successor that failed.
+/// (`doNext(cTool, predErrState)`), which goes on past the successor that failed, and what its
+/// worker generated before the next-state relation failed.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Replay {
+    /// Whether TLC's worker generated a successor of the state it was expanding before the
+    /// next-state relation failed: it then doesn't check the state for deadlock, nor the
+    /// postconditions on the trace it rebuilds for them (`Worker.run`).
+    pub is_successor_generated: bool,
     /// The successors the replay found that TLC's set of fingerprints lacked, which it adds to
     /// the count of distinct states.
     pub found: u64,
@@ -335,6 +340,21 @@ impl<'ir> Rebuilder<'ir> {
         actions: &[Option<u32>],
         site: Site,
     ) -> Result<Failure, Unsupported> {
+        let mut is_successor_generated = false;
+        let mut failure =
+            self.evaluate_failure_at(store, states, actions, site, &mut is_successor_generated)?;
+        failure.replay.is_successor_generated = is_successor_generated;
+        Ok(failure)
+    }
+
+    fn evaluate_failure_at(
+        &mut self,
+        store: &Store,
+        states: &[&[Id]],
+        actions: &[Option<u32>],
+        site: Site,
+        is_successor_generated: &mut bool,
+    ) -> Result<Failure, Unsupported> {
         // TLC 1.7.4 streams the lazy bounds of a quantifier rather than enumerating them in order,
         // and words some messages apart, neither of which is ported.
         if self.evaluator().is_174() {
@@ -515,16 +535,15 @@ impl<'ir> Rebuilder<'ir> {
                             return evaluator.boolean(*failed, &Context::default());
                         }
                         // TLC's replay of the initial states evaluates the constraint with its
-                        // `CallStackTool`, which a failure in a value's method ends as a
-                        // FingerprintException, with the constraint's frames after the initial
-                        // predicate's; any other failure of a constraint it reports without
-                        // them.
+                        // `CallStackTool`, so a failure as it evaluates the constraint has the
+                        // constraint's frames after the initial predicate's. A constraint that
+                        // isn't a boolean fails once evaluated (`Tool.isInModel`), without them.
                         evaluator.call_stack = call_stack;
                         let depth = evaluator
                             .call_stack
                             .as_ref()
                             .map(|stack| (stack.frames.len(), stack.is_frozen));
-                        let holds = constraint_holds(evaluator, *failed);
+                        let value = evaluator.evaluate(*failed, &Context::default())?;
                         if let (Some(stack), Some((depth, is_frozen))) =
                             (&mut evaluator.call_stack, depth)
                             && !stack.is_fingerprinted
@@ -532,7 +551,7 @@ impl<'ir> Rebuilder<'ir> {
                             stack.frames.truncate(depth);
                             stack.is_frozen = is_frozen;
                         }
-                        holds
+                        constraint_value_holds(evaluator, *failed, value)
                     })
                 })
             }
@@ -569,6 +588,7 @@ impl<'ir> Rebuilder<'ir> {
                                     if failure.is_some() {
                                         return Ok(true);
                                     }
+                                    *is_successor_generated = true;
                                     let found = evaluator.fingerprint_found(false);
                                     match found {
                                         Err(error) => {
@@ -1439,7 +1459,17 @@ fn contains_unsorted(value: &Value) -> bool {
 
 // Whether a state satisfies a constraint, which TLC fails where it isn't a boolean (`isInModel`).
 fn constraint_holds(evaluator: &mut Evaluator<'_>, body: NodeId) -> Evaluated<bool> {
-    match evaluator.evaluate(body, &Context::default())? {
+    let value = evaluator.evaluate(body, &Context::default())?;
+    constraint_value_holds(evaluator, body, value)
+}
+
+// Whether a constraint's value says it holds, or TLC's failure where it isn't a boolean.
+fn constraint_value_holds(
+    evaluator: &mut Evaluator<'_>,
+    body: NodeId,
+    value: Value,
+) -> Evaluated<bool> {
+    match value {
         Value::Bool(holds) => Ok(holds),
         _ if evaluator.ir.nodes.arena[body as usize].range.is_some() => fail_with(
             "a constraint that isn't a boolean",
