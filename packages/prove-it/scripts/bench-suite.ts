@@ -147,7 +147,8 @@ if (!existsSync(CLI_PATH)) {
 // which tla-ts and Prove It take in the form of a java command line.
 const LIBRARY_OPTION = `-DTLA-Library=${LIBRARY_PATH}`;
 
-const getCliArguments = (model: SuiteModel) =>
+// tla-ts takes TLC's command line without the options the others share (getTlcOptions).
+const getTlaTsArguments = (model: SuiteModel) =>
   model.isUsingLibrary
     ? [LIBRARY_OPTION, "tlc2.TLC", "-config", model.config, model.spec]
     : [model.spec, "-config", model.config];
@@ -231,8 +232,7 @@ const parseTlaRsOutput = (stdout: string, stderr: string): Outcome => {
   }
 };
 
-// TLC's options, which the native binary takes too: the differential's, so the binary prints what
-// TLC prints. A model that draws random values, such as with RandomElement, draws the same ones on
+// TLC's options, which Prove It takes too: the differential's, so Prove It prints what TLC prints. A model that draws random values, such as with RandomElement, draws the same ones on
 // every run and in every checker under the fixed seed.
 const getTlcOptions = (workers: string, model: SuiteModel, metadataDirectory: string) => [
   "-workers",
@@ -252,11 +252,16 @@ const getTlcOptions = (workers: string, model: SuiteModel, metadataDirectory: st
   model.spec,
 ];
 
+// Prove It's command line: TLC's, after the library a model that uses one finds its modules in.
+const getCliArguments = (model: SuiteModel, metadataDirectory: string, workers = "1") => [
+  ...(model.isUsingLibrary ? [LIBRARY_OPTION, "tlc2.TLC"] : []),
+  ...getTlcOptions(workers, model, metadataDirectory),
+];
+
 const getNativeCommand =
   (binaryPath: string, workers: string) => (model: SuiteModel, metadataDirectory: string) => [
     binaryPath,
-    ...(model.isUsingLibrary ? [LIBRARY_OPTION, "tlc2.TLC"] : []),
-    ...getTlcOptions(workers, model, metadataDirectory),
+    ...getCliArguments(model, metadataDirectory, workers),
   ];
 
 const getTlcCommand = (workers: string) => (model: SuiteModel, metadataDirectory: string) => [
@@ -271,17 +276,19 @@ const getTlcCommand = (workers: string) => (model: SuiteModel, metadataDirectory
 ];
 
 // tla-ts's own benchmark runs both checkers under Node with this heap.
-const getNodeCommand = (cliPath: string) => (model: SuiteModel) => [
-  "node",
-  "--max-old-space-size=6144",
-  cliPath,
-  ...getCliArguments(model),
-];
+const getNodeCommand =
+  (cliPath: string, getArguments: (model: SuiteModel, metadataDirectory: string) => string[]) =>
+  (model: SuiteModel, metadataDirectory: string) => [
+    "node",
+    "--max-old-space-size=6144",
+    cliPath,
+    ...getArguments(model, metadataDirectory),
+  ];
 
-const getBunCommand = (model: SuiteModel) => [
+const getBunCommand = (model: SuiteModel, metadataDirectory: string) => [
   process.execPath,
   CLI_PATH,
-  ...getCliArguments(model),
+  ...getCliArguments(model, metadataDirectory),
 ];
 
 // tla-rs reads modules only from the spec's directory, so a model that uses the library runs in a
@@ -325,7 +332,7 @@ const ALL_CHECKERS: (Checker & { isAvailable: boolean })[] = [
   },
   {
     name: "tla-ts",
-    getCommand: getNodeCommand(tlaTsPath),
+    getCommand: getNodeCommand(tlaTsPath, getTlaTsArguments),
     ...TLC_STYLE,
     isAvailable: existsSync(tlaTsPath),
   },
@@ -340,39 +347,57 @@ const ALL_CHECKERS: (Checker & { isAvailable: boolean })[] = [
   },
   {
     name: "prove-it",
-    getCommand: (model) => [BINARY_PATH, ...getCliArguments(model)],
+    getCommand: (model, metadataDirectory) => [
+      BINARY_PATH,
+      ...getCliArguments(model, metadataDirectory),
+    ],
     ...TLC_STYLE,
     isAvailable: existsSync(BINARY_PATH),
   },
   {
     name: "prove-it-aot",
-    getCommand: (model) => [AOT_BINARY_PATH, ...getCliArguments(model)],
+    getCommand: (model, metadataDirectory) => [
+      AOT_BINARY_PATH,
+      ...getCliArguments(model, metadataDirectory),
+    ],
     ...TLC_STYLE,
     isAvailable: existsSync(AOT_BINARY_PATH),
   },
   {
     name: "prove-it-rust",
-    getCommand: (model) => [BINARY_PATH, ...getCliArguments(model)],
+    getCommand: (model, metadataDirectory) => [
+      BINARY_PATH,
+      ...getCliArguments(model, metadataDirectory),
+    ],
     ...TLC_STYLE,
     environment: RUST_BACKEND,
     isAvailable: existsSync(BINARY_PATH) && existsSync(getAddonPath(BINARY_PATH)),
   },
   {
     name: "prove-it-rust-aot",
-    getCommand: (model) => [AOT_BINARY_PATH, ...getCliArguments(model)],
+    getCommand: (model, metadataDirectory) => [
+      AOT_BINARY_PATH,
+      ...getCliArguments(model, metadataDirectory),
+    ],
     ...TLC_STYLE,
     environment: RUST_BACKEND,
     isAvailable: existsSync(AOT_BINARY_PATH) && existsSync(getAddonPath(AOT_BINARY_PATH)),
   },
   {
     name: "prove-it-base",
-    getCommand: (model) => [baseBinaryPath, ...getCliArguments(model)],
+    getCommand: (model, metadataDirectory) => [
+      baseBinaryPath,
+      ...getCliArguments(model, metadataDirectory),
+    ],
     ...TLC_STYLE,
     isAvailable: baseBinaryPath !== "" && existsSync(baseBinaryPath),
   },
   {
     name: "prove-it-base-rust",
-    getCommand: (model) => [baseBinaryPath, ...getCliArguments(model)],
+    getCommand: (model, metadataDirectory) => [
+      baseBinaryPath,
+      ...getCliArguments(model, metadataDirectory),
+    ],
     ...TLC_STYLE,
     environment: RUST_BACKEND,
     isAvailable:
@@ -382,7 +407,10 @@ const ALL_CHECKERS: (Checker & { isAvailable: boolean })[] = [
   },
   {
     name: "prove-it-base-aot",
-    getCommand: (model) => [baseAotBinaryPath, ...getCliArguments(model)],
+    getCommand: (model, metadataDirectory) => [
+      baseAotBinaryPath,
+      ...getCliArguments(model, metadataDirectory),
+    ],
     ...TLC_STYLE,
     isAvailable: baseAotBinaryPath !== "" && existsSync(baseAotBinaryPath),
   },
@@ -408,7 +436,7 @@ const ALL_CHECKERS: (Checker & { isAvailable: boolean })[] = [
   { name: "prove-it-bun", getCommand: getBunCommand, ...TLC_STYLE, isAvailable: true },
   {
     name: "prove-it-node",
-    getCommand: getNodeCommand(CLI_PATH),
+    getCommand: getNodeCommand(CLI_PATH, getCliArguments),
     ...TLC_STYLE,
     isAvailable: true,
   },
@@ -681,10 +709,14 @@ const results = models.map((model, index) => {
   const engineLine =
     baseline === "native"
       ? undefined
-      : run(prober?.getCommand(model, tmpdir()) ?? getBunCommand(model), model.directory, {
-          ...prober?.environment,
-          PROVE_IT_ENGINE: "debug",
-        })
+      : run(
+          prober?.getCommand(model, tmpdir()) ?? getBunCommand(model, tmpdir()),
+          model.directory,
+          {
+            ...prober?.environment,
+            PROVE_IT_ENGINE: "debug",
+          },
+        )
           .output.match(/^\[engine\] .*$/gm)
           ?.at(-1);
   const measurements = Object.fromEntries(
