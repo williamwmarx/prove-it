@@ -138,7 +138,10 @@ pub fn enumerate(lazy: &Lazy) -> Evaluated<Vec<Value>> {
         }
         // `SetPredValue.Enumerator`: the set, which TLC must enumerate, filtered by the predicate,
         // which only the evaluator tests: a lazy filter is of a set it fails to enumerate.
-        Lazy::Filter(base, _) => {
+        Lazy::Filter(base, predicate) => {
+            if let Some(filtered) = predicate.filtered() {
+                return Ok(filtered.to_vec());
+            }
             if !is_enumerable(base) {
                 return fail_runtime(
                     "enumerated a filter of a set TLC doesn't enumerate",

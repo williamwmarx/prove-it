@@ -716,6 +716,38 @@ fn words_failed_memberships_and_sequence_arguments_as_tlc() {
 }
 
 #[test]
+fn tests_membership_in_a_filter_of_a_finite_set_as_tlc_keeps_it_lazy() {
+    // TLC filters only a set enumeration or an interval at once. Over SUBSET {1} it asks the set
+    // first and evaluates the predicate only for an element, wording its failure as its own.
+    for (assumption, error) in [
+        (
+            "1 \\in {s \\in SUBSET {1} : 1 \\div 0 = 0}",
+            "Attempted to check if the non-enumerable value\n1\nis element of\n{{}, {1}}",
+        ),
+        (
+            "{1} \\in {s \\in SUBSET {1} : 1 \\div 0 = 0}",
+            "Cannot decide if element:\n{1}\n is element of:\n{{}, {1}}\nand satisfies the predicate line 4, col 36 to line 4, col 47 of module Filter",
+        ),
+        (
+            "Cardinality({s \\in SUBSET {1} : 1 \\div 0 = 0}) = 1",
+            "The second argument of \\div is 0.",
+        ),
+    ] {
+        let spec = format!(
+            "---- MODULE Filter ----\nEXTENDS Naturals, FiniteSets\nVARIABLE x\nASSUME {assumption}\nInit == x = 0\nNext == x' = x\n====\n"
+        );
+        let (output, directory) = run_front("filter", &spec, "INIT Init\nNEXT Next\n", &[]);
+        let text = stdout(&output);
+        assert_eq!(output.status.code(), Some(10), "{text}");
+        assert!(
+            text.contains(&format!("of module Filter failed.\n{error}\n")),
+            "{text}"
+        );
+        std::fs::remove_dir_all(directory).expect("removed");
+    }
+}
+
+#[test]
 fn fails_to_print_a_lazy_set_whose_expansion_fails() {
     // PrintT prints with `toStringUnchecked`, which fails where TLC can't expand a lazy set.
     for (set, error) in [
@@ -2147,6 +2179,54 @@ fn prints_an_assumption_value_as_tlc_built_it_without_a_recorded_front() {
         text.contains(
             "  [a |-> {3, 4}, b |-> {2, 4}, c |-> {2, 3}] }\nComputing initial states...\n"
         ),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn labels_a_step_of_a_next_state_relation_that_instantiates_in_a_let_without_a_recorded_front() {
+    // test-model/CyclicRedefineInstance: TLC splits B!Next, which the LET's INSTANCE defines,
+    // into its body, and labels the step of the other disjunct.
+    let (output, directory) = run_front(
+        "let-instance",
+        "---- MODULE CyclicRedefineInstance ----\nEXTENDS Base\n\nReDefNext ==\n\tLET B == INSTANCE Base\n\tIN \\/ B!Next\n\t   \\/ x' = TRUE\n=====\n----- MODULE Base -----\nVARIABLE x\n\nNext ==\n    x' = FALSE\n\nSpec ==\n\tx = FALSE /\\ [][Next]_x\n\nInv ==\n\tx = FALSE\n====\n",
+        "SPECIFICATION Spec\nINVARIANT Inv\nCONSTANT\n\tNext <- ReDefNext\n",
+        &[],
+    );
+    let text = stdout(&output);
+    assert_eq!(
+        output.status.code(),
+        Some(12),
+        "{text}{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        text.contains("State 2: <ReDefNext line 7, col 15 to line 7, col 23 of module CyclicRedefineInstance>\nx = TRUE\n"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn ranks_the_strings_the_startup_makes_without_a_recorded_front() {
+    // test-model/Github696: TLC interns the names ToString and \o make as it computes MVS, which
+    // orders the model values the search then compares.
+    let (output, directory) = run_front(
+        "startup-ranks",
+        "---- MODULE Ranked ----\nEXTENDS TLC, TLCExt, Integers, Sequences\nb == TLCModelValue(\"B_a\")\nMVS == { TLCModelValue(\"A_\" \\o ToString(n)) : n \\in 0..63 }\nVARIABLE v\nInit == v = [ mv \\in MVS |-> ToString(mv) ]\nNext == UNCHANGED v\nInv == v = [ v EXCEPT ![b] = 42 ]\n====\n",
+        "INIT Init\nNEXT Next\nINVARIANT Inv\n",
+        &[],
+    );
+    let text = stdout(&output);
+    assert_eq!(
+        output.status.code(),
+        Some(75),
+        "{text}{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        text.contains("Error: Attempted to compare the differently-typed model values A_31 and B_a\nWhile working on the initial state:\n"),
         "{text}"
     );
     std::fs::remove_dir_all(directory).expect("removed");

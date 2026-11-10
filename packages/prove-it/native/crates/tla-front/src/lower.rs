@@ -1287,7 +1287,13 @@ impl<'a> Lowering<'a> {
         })
     }
 
-    pub fn finish(mut self, mut model: Model) -> Result<Ir> {
+    pub fn finish(self, model: Model) -> Result<Ir> {
+        self.finish_indexing(model).map(|(ir, _)| ir)
+    }
+
+    /// The IR, and the indexes of the definitions it holds that TLC computes as it starts
+    /// (`processConstantDefns`), in TLC's order.
+    pub fn finish_indexing(mut self, mut model: Model) -> Result<(Ir, Vec<Index>)> {
         let mut definitions = Vec::new();
         let (mut next, mut next_scope) = (0, 0);
         loop {
@@ -1369,7 +1375,21 @@ impl<'a> Lowering<'a> {
             .chain(&self.extra_texts)
             .map(|text| Box::from(&**text))
             .collect();
-        Ok(Ir {
+        let mut seen = FastSet::default();
+        let startup = environment
+            .startup_definitions
+            .iter()
+            .filter(|definition| {
+                is_startup_definition(definition, environment, &self.facts)
+                    && seen.insert(Rc::as_ptr(definition) as usize)
+            })
+            .filter_map(|definition| {
+                self.definition_ids
+                    .get(&(Rc::as_ptr(definition) as usize))
+                    .copied()
+            })
+            .collect();
+        let ir = Ir {
             ranked_count: self.ranked.texts.len() as u32,
             texts,
             wide_texts: std::collections::BTreeMap::new(),
@@ -1389,7 +1409,8 @@ impl<'a> Lowering<'a> {
                 top: self.top,
                 junctions: self.junctions,
             },
-        })
+        };
+        Ok((ir, startup))
     }
 }
 
