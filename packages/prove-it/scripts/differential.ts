@@ -11,22 +11,21 @@
 // itself stopped (rust/stopped). --update rewrites known-differences.json from the run, keeping
 // the reasons it gives.
 // --native names the native prove-it binary (native/DESIGN.md 13), which then runs on each model
-// too, with the front the engine's run recorded, and is compared with TLC as tlc/native.
-// That pair fails nothing yet: the run reports how many runs it matches and why the others differ.
-// With --native-front, the binary runs with no recorded front, as tla-front is its whole front end.
-// --native-only runs the native binary alone that way, without the CLI's runs, so a pass over
-// the whole corpus takes minutes, and fails if it prints something TLC doesn't that
+// too, as it ships, with tla-front as its front end, and is compared with TLC as tlc/native. That
+// pair fails nothing: the run reports how many runs it matches and why the others differ.
+// --native-only runs the native binary alone, without the CLI's runs, so a pass over the
+// whole corpus takes minutes, and fails if it prints something TLC doesn't that
 // known-differences.json doesn't list for tlc/native; a run it declines as not native fails nothing.
 // A run without a TLC recording fails the check, since nothing compared it with TLC. --timeout-ms
 // stops a checker that runs longer, and without it nothing does.
 // Usage: bun scripts/run.ts differential [--max-tlc-ms 20000] [--filter text] [--concurrency 3]
 //        [--modes default,tool] [--stop-at] [--timeout-ms ms] [--update] [--out path]
-//        [--native path [--native-front | --native-only]]
+//        [--native path [--native-only]]
 
 import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 
 import {
   CONFORMANCE_DIRECTORY,
@@ -67,7 +66,7 @@ interface Output {
 interface KnownDifference {
   id: string;
   mode: OutputMode;
-  // The two checkers, such as "tlc/rust" or "rust/interpreter".
+  // The two checkers, such as "tlc/ts" or "ts/interpreter".
   pair: string;
   reason: string;
   diff: string[];
@@ -100,7 +99,6 @@ const outPath = getOption("--out") ?? join(CONFORMANCE_DIRECTORY, ".differential
 // Resolved here, since each checker runs from its model's directory.
 const nativeOption = getOption("--native");
 const nativeBinary = nativeOption && resolve(nativeOption);
-const isNativeFront = process.argv.includes("--native-front");
 const isNativeOnly = process.argv.includes("--native-only");
 if (isNativeOnly && !nativeBinary) throw new Error("--native-only needs --native");
 
@@ -148,55 +146,6 @@ const runChecker = (
 
 const runCli = (model: CorpusModel, mode: OutputMode, environment: NodeJS.ProcessEnv) =>
   runChecker(process.execPath, [CLI_PATH], model, mode, environment);
-
-// What TLC prints between its banner and the first message of the search, which the front end
-// computes: the native binary reads it, with the IR, as the front of the run until tla-front
-// lands (native/DESIGN.md 13.5). A run whose engine never computed the initial states has none.
-const getFront = (stdout: string) => {
-  const isTool = stdout.startsWith("@!@!@STARTMSG");
-  const banner = isTool ? "@!@!@ENDMSG 2187 @!@!@\n" : "\nRunning breadth-first search ";
-  const bannerAt = stdout.indexOf(banner);
-  const start = isTool
-    ? bannerAt + banner.length
-    : stdout.indexOf("\n", bannerAt + banner.length) + 1;
-  // The front ends where TLC computes the initial states, or where it reports an assumption that is
-  // false or fails to evaluate.
-  const ends = isTool
-    ? ["@!@!@STARTMSG 2189:", "@!@!@STARTMSG 2104:", "@!@!@STARTMSG 2105:"]
-    : [
-        "\nComputing initial states...\n",
-        "\nError: Assumption ",
-        "\nError: Evaluating assumption ",
-      ];
-  const end = Math.min(
-    ...ends.map((marker) => stdout.indexOf(marker)).filter((index) => index !== -1),
-  );
-  return bannerAt === -1 || end === Infinity
-    ? undefined
-    : stdout.slice(start, end + (isTool ? 0 : 1));
-};
-
-// Runs the native binary on a model, with the front the CLI recorded for it.
-const runNative = async (
-  binary: string,
-  model: CorpusModel,
-  mode: OutputMode,
-  recorded: Output,
-  directory: string,
-) => {
-  const stem = basename(model.specPath, ".tla");
-  const front = getFront(recorded.stdout);
-  if (front !== undefined) writeFileSync(join(directory, `${stem}.front`), front);
-  const native = await runChecker(
-    binary,
-    [],
-    model,
-    mode,
-    isNativeFront ? process.env : { ...process.env, PROVE_IT_FRONT: directory },
-  );
-  rmSync(directory, { recursive: true, force: true });
-  return native;
-};
 
 // A state from those the run found, the same for a model on every run.
 const getStopState = (id: string, transcript: string) => {
@@ -282,11 +231,7 @@ const compareNative = (id: string, mode: OutputMode, tlc: string, native: Output
   const comparison = getComparison(id, mode, "tlc/native", tlc, native.transcript);
   nativeComparisons.push({
     ...comparison,
-    // A run with no front never reached the engine in the CLI: SANY, the configuration or an
-    // assumption stopped it, which tla-front will report.
-    reason: /^prove-it: not native yet: (.*)$/m
-      .exec(native.stderr)?.[1]
-      ?.replace(/^no recorded front of .*$/, "no recorded front"),
+    reason: /^prove-it: not native yet: (.*)$/m.exec(native.stderr)?.[1],
     isAborted: native.isAborted,
   });
 };
@@ -300,9 +245,7 @@ const work = async (queue: { model: CorpusModel; mode: OutputMode }[], total: nu
     const tlc =
       recording && getTranscript(String(recording.exitCode), recording.stdout, recording.stderr);
     if (nativeBinary && isNativeOnly) {
-      const environment = { ...process.env };
-      delete environment.PROVE_IT_FRONT;
-      const native = await runChecker(nativeBinary, [], model, mode, environment);
+      const native = await runChecker(nativeBinary, [], model, mode, process.env);
       if (tlc) compareNative(model.id, mode, tlc, native);
       results.push({ id: model.id, mode, tlc, outputs: { native } });
       const isSame = native.transcript === tlc;
@@ -314,17 +257,11 @@ const work = async (queue: { model: CorpusModel; mode: OutputMode }[], total: nu
     const interpreter = await runCli(model, mode, { ...process.env, PROVE_IT_ENGINE: "0" });
     const modelComparisons: Comparison[] = [];
     const outputs: Record<string, Output> = { interpreter };
-    const frontDirectory = nativeBinary && mkdtempSync(join(tmpdir(), "prove-it-front-"));
-    const engine = await runCli(model, mode, {
-      ...getEngineEnvironment(),
-      PROVE_IT_ENGINE: "debug",
-      ...(frontDirectory && {
-        PROVE_IT_IR_DUMP: join(frontDirectory, `${basename(model.specPath, ".tla")}.ir`),
-      }),
-    });
+    const engine = await runCli(model, mode, getEngineEnvironment());
     outputs[ENGINE_LABEL] = engine;
-    if (tlc)
+    if (tlc) {
       modelComparisons.push(compare(model.id, mode, `tlc/${ENGINE_LABEL}`, tlc, engine.transcript));
+    }
     modelComparisons.push(
       compare(
         model.id,
@@ -347,7 +284,6 @@ const work = async (queue: { model: CorpusModel; mode: OutputMode }[], total: nu
     while (stopAt !== undefined && !isForced) {
       const stopped = await runCli(model, mode, {
         ...getEngineEnvironment(),
-        PROVE_IT_ENGINE: "debug",
         PROVE_IT_STOP_AT: String(stopAt),
       });
       isForced = stopped.engineLine?.endsWith(STOPPED_REASON) ?? false;
@@ -358,9 +294,9 @@ const work = async (queue: { model: CorpusModel; mode: OutputMode }[], total: nu
         );
       } else stopAt = stopAt > 0 ? Math.floor(stopAt / 2) : undefined;
     }
-    if (isStopping && isSearched && !isForced) unforced.push(`${mode} ${model.id}`);
-    if (nativeBinary && frontDirectory) {
-      const native = await runNative(nativeBinary, model, mode, engine, frontDirectory);
+    if (isStopping && isSearched && !isForced) unforced.push(`${ENGINE_LABEL} ${mode} ${model.id}`);
+    if (nativeBinary) {
+      const native = await runChecker(nativeBinary, [], model, mode, process.env);
       outputs.native = native;
       if (tlc) compareNative(model.id, mode, tlc, native);
     }

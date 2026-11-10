@@ -4,10 +4,10 @@
 # model with the engine on and off and fails if the two reach different outcomes; Differential
 # compares Prove It's full output, with the engine, without it, and stopped part way, with TLC's
 # recorded in tests/conformance/tlc-stdout, and fails on a difference
-# tests/conformance/known-differences.json doesn't list; it then runs the native binary alone, with
-# no recorded front, and fails on a difference with TLC that file doesn't list. It runs by hand and
-# on every push to main, never on a pull request, and holds no credential. Each job's results are
-# its artifact.
+# tests/conformance/known-differences.json doesn't list; it then runs the native binary alone, as
+# it ships, with tla-front as its front end, and fails on a difference with TLC that file doesn't
+# list. It runs by hand and on every push to main, never on a pull request, and holds no
+# credential. Each job's results are its artifact.
 name: Parity
 "on":
   workflow_dispatch:
@@ -164,7 +164,7 @@ jobs:
           status=0
           export PROVE_IT_ENGINE_ADDON="$PWD/native/npm/linux-x64-gnu/prove-it-engine.node"
           bun scripts/run.ts differential --stop-at --concurrency 12 \
-            --max-tlc-ms "$MAX_TLC_MS" --native "$PWD/native/target/release/prove-it" \
+            --max-tlc-ms "$MAX_TLC_MS" \
             ${FILTER:+--filter "$FILTER"} --out "$RUNNER_TEMP/parity/differential.json" \
             | tee "$RUNNER_TEMP/parity/differential.log" || status=$?
           {
@@ -175,8 +175,7 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           exit "$status"
-      # The end state: tla-front is the whole front end, with no front the CLI recorded.
-      - name: Compare the native binary's output with TLC's, with no recorded front
+      - name: Compare the native binary's output with TLC's
         if: success() || failure()
         env:
           FILTER: ${{ inputs.filter || '' }}
@@ -192,7 +191,7 @@ jobs:
             ${FILTER:+--filter "$FILTER"} --out "$RUNNER_TEMP/parity/differential-native.json" \
             | tee "$RUNNER_TEMP/parity/differential-native.log" || status=$?
           {
-            echo "## Differential without a recorded front"
+            echo "## Differential of the native binary"
             echo
             echo '```'
             sed -n '/^native:/,$p' "$RUNNER_TEMP/parity/differential-native.log" | head -100

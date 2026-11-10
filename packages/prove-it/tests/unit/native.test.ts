@@ -7,6 +7,8 @@
 
 import { describe, expect, it } from "bun:test";
 import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const COMMIT = join(import.meta.dirname, "../fixtures/commit");
@@ -133,6 +135,47 @@ describe("the native engine", () => {
       expect(lines).toContainEqual(
         expect.stringMatching(/^\[engine\] checked 251 states on 1 thread /),
       );
+    },
+    SPAWN_LIMIT_MS,
+  );
+
+  // A recursion as deep as this exhausts the stack the engine has as WebAssembly, and the
+  // interpreter searches again from the start, after the search had printed.
+  it.if(WASM !== undefined)(
+    "prints once what it printed before WebAssembly ran out of stack",
+    () => {
+      const directory = mkdtempSync(join(tmpdir(), "prove-it-wasm-stack-"));
+      try {
+        writeFileSync(
+          join(directory, "Deep.tla"),
+          [
+            "---- MODULE Deep ----",
+            "EXTENDS Naturals, TLC",
+            "VARIABLE x",
+            "RECURSIVE Sum(_)",
+            "Sum(k) == IF k = 0 THEN 0 ELSE 1 + Sum(k - 1)",
+            'Init == PrintT("init") /\\ x = 0',
+            "Next == x < 2 /\\ PrintT(x) /\\ x' = IF x = 1 THEN Sum(3000) - 2998 ELSE x + 1",
+            "====",
+          ].join("\n"),
+        );
+        writeFileSync(join(directory, "Deep.cfg"), "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE\n");
+        const runDeep = (env: Record<string, string>) =>
+          spawnSync("bun", [SOURCE_CLI, "Deep.cfg"], {
+            cwd: directory,
+            encoding: "utf8",
+            env: { ...process.env, PROVE_IT_ENGINE_ADDON: undefined, ...env },
+          });
+        const printed = (stdout: string) =>
+          stdout.split("\n").filter((line) => /^("init"|\d+)$/.test(line));
+        const native = runDeep({ PROVE_IT_ENGINE: "debug", PROVE_IT_ENGINE_WASM: WASM ?? "" });
+        expect(native.stderr).toContain("native: stopped: WebAssembly ran out of stack");
+        const interpreter = runDeep({ PROVE_IT_ENGINE: "0" });
+        expect(printed(native.stdout)).toEqual(['"init"', "0", "1"]);
+        expect(printed(native.stdout)).toEqual(printed(interpreter.stdout));
+      } finally {
+        rmSync(directory, { recursive: true, force: true });
+      }
     },
     SPAWN_LIMIT_MS,
   );
