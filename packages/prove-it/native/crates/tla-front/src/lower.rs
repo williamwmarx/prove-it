@@ -1029,6 +1029,14 @@ impl<'a> Lowering<'a> {
             let Some(definition) = environment.definitions.get(target) else {
                 continue;
             };
+            // TLC evaluates a substitute before the constant definitions and again wherever the
+            // name it replaces is read, which repeats its effects; the IR evaluates it once.
+            if self.facts.is_impure_definition(definition, environment) {
+                return Err(FrontError::NotYet(
+                    "a configuration substitute with effects, which TLC evaluates at every use"
+                        .to_owned(),
+                ));
+            }
             let is_checked = environment
                 .root_constants
                 .iter()

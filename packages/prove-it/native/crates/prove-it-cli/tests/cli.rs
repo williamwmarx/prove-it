@@ -2465,3 +2465,22 @@ fn enumerates_a_set_tlceval_made_in_its_normalized_order() {
     assert!(text.contains("\n/\\ x = 1\n/\\ y = {}\n"), "{text}");
     std::fs::remove_dir_all(directory).expect("removed");
 }
+
+#[test]
+fn declines_a_substitute_with_effects_without_a_recorded_front() {
+    // TLC evaluates QDef before K and L, and again wherever Q is read, printing "subst" each time.
+    let (output, directory) = run_front(
+        "effectful-substitute",
+        "---- MODULE W3 ----\nEXTENDS Integers, TLC\nCONSTANTS Q\nVARIABLES f\nK == PrintT(\"constdef\")\nQDef == IF PrintT(\"subst\") THEN 1 ELSE 2\nL == PrintT(\"constdef2\")\nASSUME PrintT(\"assume1\") /\\ K /\\ L\nInit == f = 0\nNext == f' = f\n====\n",
+        "CONSTANTS Q <- QDef\nINIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE\n",
+        &[],
+    );
+    assert_eq!(output.status.code(), Some(1), "{}", stdout(&output));
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("not native yet: a configuration substitute with effects"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
