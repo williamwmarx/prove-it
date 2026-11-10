@@ -226,8 +226,13 @@ export const instantiateEngine = (module: WebAssembly.Module): NativeAddon => {
           memory.subarray(pathPointer, pathPointer + pathLength),
         );
         const bytes = memory.slice(pointer, pointer + length);
-        if (isAppended === 1) fs.appendFileSync(path, bytes);
-        else fs.writeFileSync(path, bytes);
+        // The addon writes no log where it can't create or write the file, and the check goes on.
+        try {
+          if (isAppended === 1) fs.appendFileSync(path, bytes);
+          else fs.writeFileSync(path, bytes);
+        } catch {
+          return;
+        }
       },
       prove_it_report: (kind: number, a: number, b: number, c: number, d: number, e: number) => {
         const check = running.check;
