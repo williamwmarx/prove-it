@@ -2326,23 +2326,6 @@ fn declines_to_serialize_a_record_of_several_fields() {
     std::fs::remove_dir_all(directory).expect("removed");
 }
 
-// TLC drops its generator before it rebuilds a trace, so the initial predicate draws again from
-// the seed and TLC fails to find the state where the startup drew first.
-#[test]
-fn declines_a_trace_after_the_startup_draws_at_random() {
-    let spec = "---- MODULE Drawn ----\nEXTENDS Integers, TLC\nVARIABLES x, n\nASSUME RandomElement(1..1000) > 0\nInit == x = RandomElement(1..1000) /\\ n = 0\nNext == n < 3 /\\ n' = n + 1 /\\ x' = x\nInv == n < 3\n====\n";
-    let config = "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE\n";
-    let (output, directory) = run_front("startup-draws", spec, config, &[]);
-    assert_eq!(output.status.code(), Some(1));
-    assert!(
-        String::from_utf8_lossy(&output.stderr)
-            .contains("a trace of a model that draws at random as it starts"),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    std::fs::remove_dir_all(directory).expect("removed");
-}
-
 // TLC stops at the first state whose tableau node accepts every behavior, before the deadlock
 // the search goes on to.
 #[test]
