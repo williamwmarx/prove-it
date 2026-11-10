@@ -315,11 +315,17 @@ describe("the engine's Print, PrintT and TLCGet", () => {
   });
 
   it("hands over printing Nat, Int or STRING, which the interpreter's encoding lacks", async () => {
-    // What TLC prints: Nat and Int by name. The engine hands over where it meets {Int}.
+    // What TLC prints: Nat and Int by name. The native engine hands over as it prints {Int}, which
+    // the TypeScript engine never builds.
     const body = `EXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ PrintT(<<x, {Int}>>) /\\ x' = x + 1`;
     const { printed, lines } = await checkBoth(body, "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE");
     expect(printed).toEqual(["<<0, {Int}>>", "<<1, {Int}>>"]);
-    expect(lines).toEqual([expect.stringMatching(/^\[engine\] handed over /)]);
+    const reason = isNative
+      ? "unsupported: handing over a function TLC keeps lazy, or Nat, Int or STRING"
+      : "enumerated Int";
+    expect(lines).toEqual([
+      expect.stringMatching(new RegExp(`^\\[engine\\] handed over .*: ${reason}$`)),
+    ]);
   });
 
   it("reports the initial states it computed after what the initial predicate printed", async () => {
