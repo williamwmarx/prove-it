@@ -2,13 +2,17 @@
 //! order for the backends: [A]_v, <<A>>_v and UNCHANGED become primes (Expr.Tla_norm), primes move
 //! down to the variables (Symbol_commute), and what remains modal becomes opaque (Coalesce).
 //! A port of `src/prover/prep/action.ts`.
+//!
+//! The TypeScript's module-level `createContextMap`s live in thread-locals here, so they share each
+//! mapped prefix of a context across obligations as the TypeScript's do.
 
 use std::cell::RefCell;
+use std::thread::LocalKey;
 
 use crate::errors::{ObligationError, Result};
 use crate::expression::{
-    Bound, BoundDomain, Builtin, Defn, DefnCore, Expr, ExprCore, Hyp, HypCore, HypNode, Hyps,
-    IdentityCache, Level, Modal, Param, Quantifier, ScopeRef, Sequent, adjoin, adjoin_all,
+    Bound, BoundDomain, Builtin, ContextMap, Defn, DefnCore, Expr, ExprCore, Hyp, HypCore, HypNode,
+    Hyps, IdentityCache, Level, Modal, Param, Quantifier, ScopeRef, Sequent, adjoin, adjoin_all,
     apply_builtin, at, expr, get_bound_fresh, get_bounded_fresh, get_fresh, get_local_defn,
     get_param_fresh, get_scope_at, get_scope_hyps, hyp, map_accumulate, map_hyp, map_scoped,
     to_index,
@@ -53,16 +57,35 @@ fn map_in_scope(scope: &ScopeRef, expression: &Expr, rewrite: Rewrite, hyps: Hyp
     )
 }
 
-// Visit.map over a sequent: each hypothesis maps in the scope before it, hidden ones too if hyps
-// is "all".
-fn map_sequent(map: Rewrite, hyps: Hyps, sequent: &Sequent) -> Result<Sequent> {
-    let (inner, context) = map_accumulate(None, &sequent.context, |scope, hyp| {
-        let mapped = map_hyp(hyp, &mut |inner| map(&scope, inner), hyps)?;
-        Ok((adjoin(&scope, &mapped), mapped))
-    })?;
+type Step<State> = fn(&State, &Hyp, &Hyp) -> Result<(State, Option<Hyp>)>;
+
+type SharedContextMap<State> = RefCell<ContextMap<State, Step<State>>>;
+
+// A step of a sequent map: the hypothesis maps in the scope before it, hidden ones too if hyps is
+// "all".
+fn map_context_hyp(
+    map: Rewrite,
+    hyps: Hyps,
+    scope: &ScopeRef,
+    hyp: &Hyp,
+) -> Result<(ScopeRef, Option<Hyp>)> {
+    let mapped = map_hyp(hyp, &mut |inner| map(scope, inner), hyps)?;
+    Ok((adjoin(scope, &mapped), Some(mapped)))
+}
+
+// Visit.map over a sequent: each hypothesis maps in the scope before it. The context maps by the
+// obligation's own hypotheses, from which it derives.
+fn map_sequent(
+    context_map: &'static LocalKey<SharedContextMap<ScopeRef>>,
+    map: Rewrite,
+    keys: &[Hyp],
+    sequent: &Sequent,
+) -> Result<Sequent> {
+    let mapped =
+        context_map.with(|shared| shared.borrow_mut().map(keys, Some(&sequent.context)))?;
     Ok(Sequent {
-        context,
-        active: map(&inner, &sequent.active)?,
+        context: mapped.context,
+        active: map(&mapped.state, &sequent.active)?,
     })
 }
 
@@ -250,6 +273,7 @@ fn get_renamed(kind: &str, name: &str) -> String {
     format!("{kind}_{name}_")
 }
 
+#[derive(Clone)]
 struct RenameState {
     scope: ScopeRef,
     original: ScopeRef,
@@ -386,27 +410,32 @@ fn get_original_level(scope: &ScopeRef, hyp: &Hyp) -> Result<Option<usize>> {
 }
 
 // renameSequent on the obligation, with the levels of its definitions from before commuting.
-fn rename_obligation(commuted: &Sequent, original: &Sequent) -> Result<Sequent> {
-    let initial = RenameState {
-        scope: None,
-        original: None,
+fn rename_context(
+    current: &RenameState,
+    hyp: &Hyp,
+    original: &Hyp,
+) -> Result<(RenameState, Option<Hyp>)> {
+    let renamed = rename_hyp(
+        &current.scope,
+        hyp,
+        get_original_level(&current.original, original)?,
+    )?;
+    let next = RenameState {
+        scope: adjoin(&current.scope, &renamed),
+        original: adjoin(&current.original, original),
     };
-    let pairs: Vec<_> = original.context.iter().zip(&commuted.context).collect();
-    let (state, context) = map_accumulate(initial, &pairs, |current, (original, hyp)| {
-        let renamed = rename_hyp(
-            &current.scope,
-            hyp,
-            get_original_level(&current.original, original)?,
-        )?;
-        let next = RenameState {
-            scope: adjoin(&current.scope, &renamed),
-            original: adjoin(&current.original, original),
-        };
-        Ok((next, renamed))
+    Ok((next, Some(renamed)))
+}
+
+fn rename_obligation(commuted: &Sequent, original: &Sequent) -> Result<Sequent> {
+    let renamed = RENAME_CONTEXT.with(|shared| {
+        shared
+            .borrow_mut()
+            .map(&original.context, Some(&commuted.context))
     })?;
     Ok(Sequent {
-        context,
-        active: rename(&state.scope, &commuted.active)?,
+        context: renamed.context,
+        active: rename(&renamed.state.scope, &commuted.active)?,
     })
 }
 
@@ -834,19 +863,50 @@ fn coalesce_modal(scope: &ScopeRef, expression: &Expr) -> Result<Expr> {
     }
 }
 
-/// process_eob, on an obligation's sequent. The TypeScript maps each context through maps shared by
-/// every obligation, which keep the mapped prefixes of contexts while their hypotheses live. Rust
-/// has no weak map to hold them as long, so each obligation maps its own context.
+thread_local! {
+    static EXPAND_ACTION_SEQUENT: SharedContextMap<ScopeRef> =
+        RefCell::new(ContextMap::new(None, |scope, hyp, _| {
+            map_context_hyp(expand_action, Hyps::All, scope, hyp)
+        }));
+
+    static EXPAND_UNCHANGED_SEQUENT: SharedContextMap<ScopeRef> =
+        RefCell::new(ContextMap::new(None, |scope, hyp, _| {
+            map_context_hyp(expand_unchanged, Hyps::All, scope, hyp)
+        }));
+
+    static COMMUTE_SEQUENT: SharedContextMap<ScopeRef> =
+        RefCell::new(ContextMap::new(None, |scope, hyp, _| {
+            map_context_hyp(commute_symbols, Hyps::All, scope, hyp)
+        }));
+
+    static COALESCE_SEQUENT: SharedContextMap<ScopeRef> =
+        RefCell::new(ContextMap::new(None, |scope, hyp, _| {
+            map_context_hyp(coalesce_modal, Hyps::Visible, scope, hyp)
+        }));
+
+    static RENAME_CONTEXT: SharedContextMap<RenameState> = RefCell::new(ContextMap::new(
+        RenameState {
+            scope: None,
+            original: None,
+        },
+        rename_context,
+    ));
+}
+
+/// process_eob, on an obligation's sequent.
 pub fn process_obligation(sequent: &Sequent) -> Result<Sequent> {
+    let keys = &sequent.context;
     let expanded = map_sequent(
+        &EXPAND_UNCHANGED_SEQUENT,
         expand_unchanged,
-        Hyps::All,
-        &map_sequent(expand_action, Hyps::All, sequent)?,
+        keys,
+        &map_sequent(&EXPAND_ACTION_SEQUENT, expand_action, keys, sequent)?,
     )?;
-    let commuted = map_sequent(commute_symbols, Hyps::All, &expanded)?;
+    let commuted = map_sequent(&COMMUTE_SEQUENT, commute_symbols, keys, &expanded)?;
     map_sequent(
+        &COALESCE_SEQUENT,
         coalesce_modal,
-        Hyps::Visible,
+        keys,
         &rename_obligation(&commuted, sequent)?,
     )
 }
