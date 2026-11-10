@@ -324,6 +324,7 @@ impl<const IS_INIT: bool> Segment<IS_INIT> {
             Op::Assign(variable, source) => {
                 let value = read_source(machine, source, *variable)?;
                 target(machine, IS_INIT)[*variable as usize] = value;
+                machine.note_assigned(*variable as usize, value);
                 machine.assigned += 1;
                 Ok(true)
             }
@@ -427,6 +428,7 @@ fn either_step(variable: u32, source: Source, rest: Rest, is_init: bool) -> Step
         let current = target(machine, is_init)[index];
         if current == UNASSIGNED {
             target(machine, is_init)[index] = value;
+            machine.note_assigned(index, value);
             machine.assigned += 1;
             let result = run_rest(&rest, machine, on_complete);
             target(machine, is_init)[index] = UNASSIGNED;
@@ -2315,6 +2317,36 @@ impl<'a> Compiler<'a> {
         Ok(guards)
     }
 
+    // Whether TLC's membership of a value in a set, which it tests as it evaluates `x' \in S` as a
+    // predicate, can't fail for a value whose shape joins those the walk assigned from the set:
+    // the forms below, each from its `member` at d8fb231 (perf.md, "Plan (i), as built"), and
+    // nothing else. An enumerated set (`SetEnumValue.member`, `ValueVec.search`) compares the
+    // value with its elements by `compareTo` or `equals`, each of which the walk assigned; an
+    // integer interval (`IntervalValue.member`) fails only on a value that isn't an integer or an
+    // untyped model value where it isn't empty, and the walk assigned an integer from it. A
+    // definition with no arguments is the set its body is.
+    fn is_membership_covered(&self, set: NodeId, seen: &mut HashSet<NodeId>) -> bool {
+        if !seen.insert(set) {
+            return false;
+        }
+        match self.node(set).1 {
+            NodeKind::SetEnumeration(_) => true,
+            NodeKind::Identifier(name) if !name.is_local => match name.resolution {
+                Resolution::Definition(index) => {
+                    let definition = self.definition(self.ir.definitions[index as usize]);
+                    matches!(&definition.form, DefinitionForm::Operator(params) if params.is_empty())
+                        && self.is_membership_covered(definition.body, seen)
+                }
+                _ => false,
+            },
+            NodeKind::Apply { name, .. } if !name.is_local => matches!(
+                name.resolution,
+                Resolution::Builtin(index) if self.text(self.ir.builtins[index as usize].name) == ".."
+            ),
+            _ => false,
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     // `x \in S`, or, where `is_power_set`, `x \subseteq S`, which assigns x each subset of S.
     fn walk_membership(
@@ -2343,6 +2375,8 @@ impl<'a> Compiler<'a> {
                 },
             )));
         }
+        // `x' \subseteq S` enumerates SUBSET S, which isn't empty where S is.
+        let is_covered = !is_power_set && self.is_membership_covered(set, &mut HashSet::new());
         let set = if is_power_set {
             let base = self.compile(set, context)?;
             let subsets = self.compile_subset(&base);
@@ -2369,10 +2403,15 @@ impl<'a> Compiler<'a> {
             }
             let id = (set.eval)(machine)?;
             let size = set.size(machine, id)?;
+            // Only Next's walks reach TLC's predicate evaluation of Next.
+            if !is_init && (size == 0 || !is_covered) {
+                machine.note_unsafe_membership();
+            }
             machine.assigned += 1;
             for position in 0..size {
                 let element = machine.store.element_at(id, position);
                 target(machine, is_init)[index] = element;
+                machine.note_assigned(index, element);
                 run_rest(&assigned, machine, on_complete)?;
             }
             target(machine, is_init)[index] = UNASSIGNED;
