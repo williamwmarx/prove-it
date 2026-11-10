@@ -1227,6 +1227,9 @@ impl Compiler<'_> {
                             if exponent < 0 {
                                 return Err(Bail("negative exponent"));
                             }
+                            if base == 0 && exponent == 0 {
+                                return Err(Bail("zero to the power of zero"));
+                            }
                             // Past 32 bits the store fails as TLC's arithmetic overflows.
                             Ok(u32::try_from(exponent)
                                 .ok()

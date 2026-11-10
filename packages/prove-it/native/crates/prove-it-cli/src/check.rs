@@ -12,7 +12,7 @@ use tla_live::{Liveness, Verdict};
 use tla_values::print::{is_printable, write_value};
 use tla_values::{Id, Store};
 
-use crate::args::{Java, Parsed, USAGE, get_java_launch};
+use crate::args::{Java, Parsed, Stop, USAGE, get_java_launch, is_auto};
 use crate::failure::{ErrorStop, print_assumption_failure, print_failure};
 use crate::files::FileDescriber;
 use crate::front::{Failure, Output, Read, read_front};
@@ -58,13 +58,13 @@ pub fn run(args: &[String]) -> i32 {
         return not_native("tlapm");
     }
     let Some(launch) = get_java_launch(args) else {
-        return check_specs(args, &Java::default());
+        return check_specs(args, &Java::default(), false);
     };
     if launch.java.class_path.is_some() {
         return not_native("reading the version of a tla2tools.jar");
     }
     match launch.main_class.as_str() {
-        "tlc2.TLC" => check_specs(&launch.args, &launch.java),
+        "tlc2.TLC" => check_specs(&launch.args, &launch.java, true),
         "tla2sany.xml.XMLExporter" => not_native("tla2sany.xml.XMLExporter"),
         other => {
             eprintln!(
@@ -91,10 +91,21 @@ fn file_name(path: &str) -> String {
     )
 }
 
-fn check_specs(args: &[String], java: &Java) -> i32 {
-    let parsed = Parsed::parse(args);
+// With `is_tlc` the command line is `tlc2.TLC`'s, which names one module.
+fn check_specs(args: &[String], java: &Java, is_tlc: bool) -> i32 {
     if java.is_174 {
         return not_native("TLC 1.7.4");
+    }
+    let parsed = match Parsed::parse(args, is_tlc) {
+        Ok(parsed) => parsed,
+        Err(Stop::NotNative(what)) => return not_native(&what),
+        Err(Stop::Error { message, is_tool }) => {
+            return print_command_line_error(&mut Printer::new(is_tool, true), &message);
+        }
+    };
+    // TLC takes Spec.cfg for a module of that name.
+    if is_tlc && parsed.positionals.iter().any(|path| path.ends_with(".cfg")) {
+        return not_native("a module named as a configuration file");
     }
     if parsed
         .positionals
@@ -242,31 +253,6 @@ fn print_startup_banner(printer: &mut Printer, seed: i64, workers: usize) {
 }
 
 /// JavaScript's `Math.max(1, Number.parseInt(value, 10) || 1)`.
-fn parse_workers(values: Option<&[String]>) -> usize {
-    let Some(value) = values.and_then(|values| values.first()) else {
-        return 1;
-    };
-    if value == "auto" {
-        return cores();
-    }
-    let text = value.trim_start();
-    let (sign, digits) = match text.strip_prefix('-') {
-        Some(rest) => (-1, rest),
-        None => (1, text.strip_prefix('+').unwrap_or(text)),
-    };
-    let end = digits
-        .find(|character: char| !character.is_ascii_digit())
-        .unwrap_or(digits.len());
-    let count = digits[..end].parse::<i64>().unwrap_or(0) * sign;
-    if count == 0 { 1 } else { count.max(1) as usize }
-}
-
-/// JavaScript's `Number(text) !== 0` for the index -fp names.
-fn is_nonzero(text: &str) -> bool {
-    let trimmed = text.trim();
-    !trimmed.is_empty() && !trimmed.parse::<f64>().is_ok_and(|value| value == 0.0)
-}
-
 /// What the search reports as it runs, relayed from its thread.
 enum Event {
     /// What TLC prints itself as it starts, after the constant definitions and before the
@@ -567,53 +553,20 @@ fn print_initial_states(printer: &mut Printer, generated: u64, distinct: u64) {
 }
 
 fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer) -> i32 {
-    // TLC.handleParameters: TLC reads its options before it says which version it is.
-    let seed = if args.has("-seed") {
-        args.first("-seed")
-    } else {
-        Some("0")
-    };
-    let Some(seed) = seed else {
-        return print_command_line_error(printer, "Error: seed required.");
-    };
-    let Ok(seed) = seed.parse::<i64>() else {
-        return print_command_line_error(
-            printer,
-            &format!("Error: An integer for seed required. But encountered {seed}"),
-        );
-    };
-    if args.has("-lncheck") && args.first("-lncheck").is_none() {
-        return print_command_line_error(
-            printer,
-            "Error: expect a strategy such as final for -lncheck option.",
-        );
-    }
+    let seed = args
+        .first("-seed")
+        .and_then(|seed| seed.parse::<i64>().ok())
+        .unwrap_or(0);
     let dump = args.get("-dump");
-    if dump.is_some_and(<[String]>::is_empty) {
-        return print_command_line_error(
-            printer,
-            "Error: A file name for dumping states required.",
-        );
-    }
-    if let Some([format, _]) = dump {
-        let format = format.to_lowercase();
-        if let Some(unsupported) = ["constrained", "stuttering", "strict"]
-            .into_iter()
-            .find(|unsupported| format.contains(unsupported))
-        {
-            eprintln!("Error: tla-ts does not support the -dump format {unsupported}.");
-            return 1;
-        }
-    }
-    if let Some(index) = args.first("-fp").filter(|index| is_nonzero(index)) {
-        eprintln!("Error: tla-ts fingerprints states as TLC does with -fp 0, not -fp {index}.");
-        return 1;
-    }
-    let workers = parse_workers(args.get("-workers"));
+    let workers = match args.first("-workers") {
+        Some(workers) if is_auto(workers) => cores(),
+        Some(workers) => workers.parse().unwrap_or(1),
+        None => 1,
+    };
     print_welcome(printer);
     print_startup_banner(printer, seed, workers);
-    let config_path = match args.get("-config") {
-        Some(values) => values.first().cloned(),
+    let config_path = match args.first("-config") {
+        Some(path) => Some(path.to_string()),
         None => Some(match spec_path.strip_suffix(".tla") {
             Some(stem) => format!("{stem}.cfg"),
             None => spec_path.to_string(),
@@ -1735,17 +1688,9 @@ fn print_sany(printer: &mut Printer, sany: &str) {
 
 // `isTraceRecorded`: whether TLC writes the trace exploration spec, which it parses with the spec.
 fn is_trace_recorded(args: &Parsed) -> bool {
-    let has_flag = |name: &str, alias: &str| {
-        args.unknown
-            .iter()
-            .chain(args.options.iter().map(|(option, _)| option))
-            .any(|flag| flag == name || flag.eq_ignore_ascii_case(alias))
-    };
-    let is_spec_generated = has_flag("-generateSpecTE", "-generateSpecTE")
-        || (!has_flag("-noGenerateSpecTE", "-noTE")
-            && !has_flag("-tool", "-tool")
-            && !has_flag("-continue", "-continue"));
-    is_spec_generated && !has_flag("-noGenerateSpecTEBin", "-noTEBin")
+    let is_spec_generated = args.has("-generateSpecTE")
+        || (!args.has("-noGenerateSpecTE") && !args.has("-tool") && !args.has("-continue"));
+    is_spec_generated && !args.has("-noGenerateSpecTEBin")
 }
 
 // A message TLC prints itself as it starts, as tla-front writes it.
@@ -1823,27 +1768,6 @@ fn report_not_native(printer: &mut Printer, what: &str) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn reads_workers_as_parse_int() {
-        let workers = |text: &str| parse_workers(Some(&[text.to_string()]));
-        assert_eq!(parse_workers(None), 1);
-        assert_eq!(workers("4"), 4);
-        assert_eq!(workers(" 3x"), 3);
-        assert_eq!(workers("0"), 1);
-        assert_eq!(workers("-2"), 1);
-        assert_eq!(workers("x"), 1);
-        assert_eq!(workers("auto"), cores());
-    }
-
-    #[test]
-    fn reads_the_fingerprint_index_as_number() {
-        assert!(!is_nonzero("0"));
-        assert!(!is_nonzero(""));
-        assert!(!is_nonzero(" 0.0 "));
-        assert!(is_nonzero("1"));
-        assert!(is_nonzero("x"));
-    }
 
     #[test]
     fn knows_the_package_version() {

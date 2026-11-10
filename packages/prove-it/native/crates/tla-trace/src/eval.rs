@@ -542,6 +542,7 @@ fn parts_size<'v>(parts: impl Iterator<Item = &'v Value>) -> Evaluated<i64> {
 /// `EC.TLC_MODULE_COMPUTING_CARDINALITY`.
 const COMPUTING_CARDINALITY: u32 = 2181;
 const MODULE_OVERFLOW: u32 = 2178;
+const NULL_POWER_NULL: u32 = 2180;
 const IS_FINITE_SET: &str =
     "public static tlc2.value.IBoolValue tlc2.module.FiniteSets.IsFiniteSet(tlc2.value.impl.Value)";
 const CARDINALITY: &str = "public static tlc2.value.impl.IntValue tlc2.module.FiniteSets.Cardinality(tlc2.value.impl.Value)";
@@ -3125,6 +3126,13 @@ impl<'ir> Evaluator<'ir> {
                                 format!(
                                     "The second argument of ^ should be a natural number, but instead it is:\n{right}"
                                 ),
+                            );
+                        }
+                        if left == 0 && right == 0 {
+                            return fail_coded(
+                                "zero to the power of zero",
+                                NULL_POWER_NULL,
+                                "0^0 is undefined.".into(),
                             );
                         }
                         match u32::try_from(right)

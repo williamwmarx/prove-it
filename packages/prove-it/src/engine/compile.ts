@@ -3173,7 +3173,9 @@ export const createCompiler = (environment: Environment): Compiler => {
         return binary(operand(0), operand(1), (left, right) => {
           const exponent = expectInt(right);
           if (exponent < 0) return bail("negative exponent");
-          return int(Math.pow(expectInt(left), exponent));
+          const base = expectInt(left);
+          if (base === 0 && exponent === 0) return bail("zero to the power of zero");
+          return int(Math.pow(base, exponent));
         });
       case "<":
         return binary(
