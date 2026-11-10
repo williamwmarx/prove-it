@@ -971,3 +971,19 @@ is next.
   - **Next:** run the trace on every SMT input of the decider corpus once its record is on
     `main`. Then nra-solver, after nlsat. Then P3c's theory-lra glue, which calls lp exactly as
     the trace does.
+- P5a tlapm parse mode: `tla-front`'s `Mode::Tlapm` and `parse_tlapm_module` (#226), held equal to
+  `parseTlapmModule` by `front-differential.ts tlapm-ast` (2,367 of 2,367 corpus modules, every
+  mutation), the other modes byte-identical to before.
+- P5b obligations: `prove-obligations` ports all of `src/obligations/` on `tla-front`'s AST, one
+  module per TS file, `regroup` included; `index.rs` is `getObligations`. `scripts/
+  obligation-differential.ts` runs the TypeScript and `obligations-dump` (the crate's binary) on
+  every module of `proofs.json` and compares each module's obligations (id, location, kind, method,
+  printed text), summary, warnings in order and error: 304 of 304 match. Each module has unit tests
+  whose expected values come from running the TypeScript under Bun. Ported ahead of P5c, with the
+  same tests: `ocaml`, the SMT encoder (`smt/`), `first_order`, the Zenon and Isabelle encoders,
+  `prep/{md5, methods, fingerprint, level_comparison, enabled_axioms, normalize}` and
+  `tlaps_module`. Next (P5c): `prep/action` and the PTL encoder; Prep's context maps held per run,
+  not per thread (they keep their keys alive, where the TypeScript's `WeakMap`s let them go); the
+  encoder half of the differential (every method's text and the fingerprint, by `prover/digest`
+  against `prover-inputs.json`); then the `prove_obligations` boundary of 3.2, agreed with the
+  prover lead first.
