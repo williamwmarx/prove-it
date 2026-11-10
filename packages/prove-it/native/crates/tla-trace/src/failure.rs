@@ -933,6 +933,13 @@ impl<'ir> Rebuilder<'ir> {
             // in the initial predicate, as the failure of the replay (`getFailureExitCode`).
             exit_code: match (site, message.code) {
                 (Site::Next, Some(ASSERT_FAILED)) => VIOLATION_ASSERT,
+                // TLC's replay of the expansion exits by an EvalException's code
+                // (`errorConstantToExitStatus`): an undefined identifier is among the
+                // configuration's errors, and the others are general ones.
+                (Site::Next, Some(UNDEFINED_IDENTIFIER)) if message.is_eval_exception => {
+                    ERROR_CONFIG_PARSE
+                }
+                (Site::Next, _) if message.is_eval_exception => FAILURE_ERROR,
                 _ if is_atom && !message.is_eval_exception => FAILURE_ERROR,
                 _ => FAILURE_SPEC_EVAL,
             },

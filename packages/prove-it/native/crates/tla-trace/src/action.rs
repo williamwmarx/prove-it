@@ -131,10 +131,18 @@ impl<'ir> Evaluator<'ir> {
     /// counterexample or the _POSSIBLE counts fails then, so TLC keeps it; any other one of
     /// constant level may be computed, so this says yes for it.
     pub(crate) fn is_precomputed(&mut self, definition: NodeId) -> bool {
-        self.state_builtins = &["TLCGet", "TLCSet", "CounterExample", "_Counts"];
-        let reads = self.can_read(definition, &Context::default());
+        !self.may_reach(
+            definition,
+            &["TLCGet", "TLCSet", "CounterExample", "_Counts"],
+        )
+    }
+
+    /// Whether an expression may read the state or apply one of these builtins.
+    pub(crate) fn may_reach(&mut self, node: NodeId, builtins: &'static [&'static str]) -> bool {
+        self.state_builtins = builtins;
+        let reads = self.can_read(node, &Context::default());
         self.state_builtins = &[];
-        !reads
+        reads
     }
 
     /// Whether an expression may read the state, as `getLevel` finds it above constant level.
