@@ -1364,9 +1364,9 @@ fn declines_an_alias_that_prints_as_it_fails() {
 
 #[test]
 fn keeps_the_registers_as_tlc_rebuilds_a_violations_trace() {
-    // TLC's first rebuild walks neither the initial predicate of a trace of two states nor the
-    // step to the violating state, and no rebuild evaluates the constraints: only the search and
-    // the second rebuild, for the postcondition, set the register.
+    // TLC's first rebuild doesn't walk the initial predicate of a trace of two states, and no
+    // rebuild evaluates the constraints: only the search and the second rebuild, for the
+    // postcondition, set the register there.
     let post = "Post == PrintT(<<\"post\", TLCGet(1)>>)\n====\n";
     let cases = [
         (

@@ -277,12 +277,9 @@ impl<'ir> Rebuilder<'ir> {
         // TLC prints a violating state as it found it, not as it recovers a state, so it is the
         // candidate equal to the search's, whatever the VIEW or SYMMETRY.
         let is_held = matches!(ending, Ending::Violation);
-        // TLC's first rebuild of a violation's trace walks to the state before the violating one,
-        // which it prints as it found it (`printTrace`), and the initial state of a trace of two as
-        // it holds it: the walks the rebuild takes past those set no register of TLC's.
-        let is_unwalked = |position: usize| {
-            is_first && is_held && (position + 1 == states.len() || states.len() == 2)
-        };
+        // TLC's first rebuild of a violation's trace of two states prints the initial state as it
+        // holds it (`printTrace`), so the walk of the initial predicate sets no register of TLC's.
+        let is_initial_held = is_first && is_held && states.len() == 2;
         let key_of = |position: usize| {
             if is_held && position + 1 == states.len() {
                 &Key::State
@@ -302,7 +299,7 @@ impl<'ir> Rebuilder<'ir> {
             store,
             first,
         )?;
-        if is_unwalked(0) {
+        if is_initial_held {
             evaluator.registers = registers;
         }
         let Some(initial) = initial else {
@@ -349,7 +346,6 @@ impl<'ir> Rebuilder<'ir> {
             };
             let mut found = None;
             let mut step = None;
-            let registers = evaluator.registers.clone();
             for (expression, scope, index) in candidates {
                 let context = run(evaluator.scope_context(scope))?;
                 evaluator.next = vec![None; width];
@@ -372,9 +368,6 @@ impl<'ir> Rebuilder<'ir> {
                     position + 1
                 ));
             };
-            if is_unwalked(position + 1) {
-                evaluator.registers = registers;
-            }
             rebuilt.push(state);
             outputs.push(std::mem::take(&mut evaluator.printed));
             steps.push(step);
