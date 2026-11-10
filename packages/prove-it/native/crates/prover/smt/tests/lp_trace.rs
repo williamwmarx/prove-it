@@ -26,7 +26,8 @@ use prove_smt::lp::bound_propagator::{BoundPropagator, BoundPropagatorHost, Impl
 use prove_smt::lp::constraints::ConstraintKind;
 use prove_smt::lp::dependency::{Dependency, linearize};
 use prove_smt::lp::explanation::Explanation;
-use prove_smt::lp::lar_solver::{DioHooks, LarSolver};
+use prove_smt::lp::int_solver::{IntSolver, Lia, LiaMove};
+use prove_smt::lp::lar_solver::LarSolver;
 use prove_smt::lp::lar_term::LarTerm;
 use prove_smt::lp::numeric_pair::Impq;
 use prove_smt::lp::random_updater::random_update;
@@ -251,6 +252,27 @@ fn get_implied_bound(bound: &ImpliedBound) -> Value {
     ])
 }
 
+/// A LiaMove as TypeScript's `{ kind, ... }`.
+fn get_lia_move(lia_move: &LiaMove) -> Value {
+    let kind = |name: &str| ("kind".to_string(), Value::String(name.into()));
+    Value::Object(match lia_move {
+        LiaMove::Sat => vec![kind("sat")],
+        LiaMove::Undef => vec![kind("undef")],
+        LiaMove::Conflict => vec![kind("conflict")],
+        LiaMove::Continue => vec![kind("continue")],
+        LiaMove::Cut { offset, is_upper } => vec![
+            kind("cut"),
+            ("offset".into(), get_rational(offset)),
+            ("isUpper".into(), Value::Bool(*is_upper)),
+        ],
+        LiaMove::Branch { is_upper, offset } => vec![
+            kind("branch"),
+            ("isUpper".into(), Value::Bool(*is_upper)),
+            ("offset".into(), get_rational(offset)),
+        ],
+    })
+}
+
 /// The `Name: message` of the TypeScript error an SmtError stands for.
 fn get_error(error: &SmtError) -> String {
     match error {
@@ -422,13 +444,17 @@ struct Propagator {
     host: TraceHost,
 }
 
+struct IntegerSolver {
+    solver: IntSolver,
+    lar: usize,
+}
+
 /// The lp objects of a trace, by kind in order of creation, as the trace numbers them.
 struct Replay {
     callbacks: Rc<Callbacks>,
     lars: Vec<LarSolver<'static>>,
     bps: Vec<Propagator>,
-    // The LarSolver of each IntSolver.
-    lias: Vec<usize>,
+    lias: Vec<IntegerSolver>,
 }
 
 impl Replay {
@@ -515,11 +541,11 @@ impl Replay {
                 });
             }
             _ => {
-                // TODO(lia): IntSolver::new once it lands. What its DiophantineSolver does to the
-                // LarSolver, setting onAddTerm and onColumnBoundUpdate, is done here meanwhile.
                 let lar = self.get_lar_index(args.reference(0)?, line)?;
-                self.lars[lar].dio_hooks = Some(DioHooks::default());
-                self.lias.push(lar);
+                self.lias.push(IntegerSolver {
+                    solver: IntSolver::new(&mut self.lars[lar]),
+                    lar,
+                });
             }
         }
         Ok(Outcome::default())
@@ -676,7 +702,7 @@ impl Replay {
         })
     }
 
-    // TODO(lia): IntSolver through the Lia view once it lands.
+    // IntSolver's check, through the Lia view.
     fn call_lia(
         &mut self,
         index: usize,
@@ -684,7 +710,25 @@ impl Replay {
         _args: &Args<'_>,
         line: usize,
     ) -> Result<Outcome, Stop> {
-        Err(Replay::decline(line, &format!("lia#{index}"), method))
+        let integer = self.lias.get_mut(index).ok_or_else(|| Stop::Crash {
+            line,
+            message: format!("no lia#{index}"),
+        })?;
+        if method != "check" {
+            return Err(Replay::decline(line, &format!("lia#{index}"), method));
+        }
+        let result = Lia {
+            lia: &mut integer.solver,
+            lra: &mut self.lars[integer.lar],
+        }
+        .check();
+        Ok(match result {
+            Ok(lia_move) => returning(get_lia_move(&lia_move)),
+            Err(error) => Outcome {
+                error: Some(get_error(&error)),
+                ..Outcome::default()
+            },
+        })
     }
 
     // TODO(nla): NlaCore through the Nla view once it lands.
@@ -725,6 +769,14 @@ impl Replay {
                     "constraints.constraints.length" => {
                         get_number(lar.constraints.constraints.len())
                     }
+                    _ => return Err(declined()),
+                }))
+            }
+            "lia" => {
+                let solver = &self.lias.get(index).ok_or_else(declined)?.solver;
+                Ok(Some(match path {
+                    "term" => get_term(&solver.term),
+                    "explanation" => get_explanation(&solver.explanation),
                     _ => return Err(declined()),
                 }))
             }
