@@ -1738,6 +1738,50 @@ fn keeps_the_domain_a_lazy_function_was_built_over() {
 }
 
 #[test]
+fn evaluates_a_lazy_functions_domain_as_tlc_builds_it() {
+    // TLC evaluates the domain's parts as it builds the function, applied or not: Seq(S), a
+    // difference with Nat, SUBSET Seq(S) and a union with Int fail there. The predicate of a
+    // filter of Nat waits until a key is tested, so that function builds.
+    for (test, domain) in [
+        ("domain-fail-seq", "Seq({1 \\div 0})"),
+        ("domain-fail-difference", "Nat \\ {1 \\div 0}"),
+        ("domain-fail-subset", "SUBSET Seq({1 \\div 0})"),
+        ("domain-fail-union", "Int \\cup {1 \\div 0}"),
+    ] {
+        let spec = format!(
+            "---- MODULE Stop ----\nEXTENDS Integers, Sequences\nVARIABLE x\nInit == x = (\\E f \\in {{[i \\in {domain} |-> 1]}} : TRUE)\nNext == UNCHANGED x\nInv == x\n====\n"
+        );
+        let (output, directory) = run_lowered(test, &spec, "INIT Init\nNEXT Next\nINVARIANT Inv\n");
+        let text = stdout(&output);
+        assert_eq!(output.status.code(), Some(75), "{text}");
+        assert!(
+            text.contains("\nError: The second argument of \\div is 0.\n"),
+            "{text}"
+        );
+        std::fs::remove_dir_all(directory).expect("removed");
+    }
+    let spec = "---- MODULE Stop ----\nEXTENDS Integers\nVARIABLE x\nInit == x = (\\E f \\in {[i \\in {n \\in Nat : 1 \\div 0 = n} |-> 1]} : TRUE)\nNext == UNCHANGED x\nInv == x\n====\n";
+    let (output, directory) = run_lowered(
+        "domain-lazy-predicate",
+        spec,
+        "INIT Init\nNEXT Next\nINVARIANT Inv\n",
+    );
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(0), "{text}");
+    std::fs::remove_dir_all(directory).expect("removed");
+    // A key outside a tuple pattern's domain over Nat \X Nat, which TLC reports without
+    // enumerating the product: the run must not word it as an enumeration.
+    let spec = "---- MODULE Stop ----\nEXTENDS Integers\nVARIABLE x\nInit == x = [<<i, j>> \\in Nat \\X Nat |-> i - j][<<5, -2>>]\nNext == UNCHANGED x\n====\n";
+    let (output, directory) = run_lowered("domain-tuple", spec, "INIT Init\nNEXT Next\n");
+    assert!(
+        !stdout(&output).contains("Attempted to enumerate"),
+        "{}",
+        stdout(&output)
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
 fn keeps_a_definitions_value_as_tlc_does() {
     // TLC evaluates a LET definition or an argument once, at its first use, and keeps the value
     // (`LazyValue`), so `a` is 0 both times though TLCSet writes the register between its uses.

@@ -479,6 +479,26 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   as one that reads a register, TLC's search or the generator is not native. A function stored in
   a register or cached and applied in a later state stays not native ("applied in another
   state").
+- TLC evaluates the domain's parts as it builds the function, applied or not, so `[i \in
+  Seq(1 \div 0) |-> 1]` fails where it is built, as do `Nat \ {1 \div 0}`, `Int \cup {1 \div 0}`,
+  `SUBSET Seq(1 \div 0)`, `Seq(1 \div 0) \X Nat` and a filter of `Seq(1 \div 0)`; a filter's
+  predicate waits for a key (`{n \in Nat : 1 \div 0 = n}` builds). The engine kept the membership
+  test, or a reference that names Seq(S) without S, and evaluated nothing: the function built.
+  It now runs the domain's parts (`parts_of`) as it builds the function, and a union, an
+  intersection or a difference with an infinite set has its operands as parts. A domain whose
+  parts may print, set a register or draw is not native, since the reference evaluates them
+  again.
+- The trace evaluator follows a lazy function of one named bound only. For several bounds or a
+  tuple pattern over a set it can't enumerate it enumerated the domain, and the binary printed
+  "Attempted to enumerate a set of the form s1 \X s2 ..." where TLC reports a key outside the
+  domain (`[<<i, j>> \in Nat \X Nat |-> i - j][<<5, -2>>]`). It now declines there.
+- A sweep of the lazy-function path against TLC (2026-11-10): construction with failing and
+  lazy parts, two bounds failing in order, application inside and outside the domain, of the
+  wrong type, with two keys or a tuple pattern, EXCEPT inside and outside the domain, nested
+  EXCEPT through a record, `@`, `@@`, DOMAIN and membership in it, membership in `[Nat -> Nat]`,
+  equality, printing, a state holding one, Cardinality of a set of one, a recursive function
+  over Nat, primed values captured in an action, invariants and constraints over several
+  states. Each prints what TLC prints or is not native.
 - TLC compares the elements of two sets, functions or records up to the first that differ, and
   fails at one that holds a lazy function, even where both are the same. The store skipped
   elements with equal ids, so `[a |-> f, b |-> 1] = [a |-> f, b |-> 2]` was FALSE; it now

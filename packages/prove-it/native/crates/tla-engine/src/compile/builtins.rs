@@ -1741,10 +1741,17 @@ impl Compiler<'_> {
                 "\\cap" => Operator::Intersection,
                 _ => Operator::Difference,
             };
+            // TLC evaluates both operands as it builds the set (SetCupValue, SetCapValue,
+            // SetDiffValue), whatever it tests later.
+            let (left_parts, right_parts) = (Self::parts_of(left), Self::parts_of(right));
             return Ok(Some(Compiled {
                 is_normalized: false,
                 infinite: Some("Combined"),
                 member: lazy_member,
+                parts: Some(super::parts(move |machine| {
+                    left_parts(machine)?;
+                    right_parts(machine)
+                })),
                 reference: combine_references(&[left, right], move |machine, mut sets| {
                     let right = sets.pop().expect("the right set");
                     let left = sets.pop().expect("the left set");

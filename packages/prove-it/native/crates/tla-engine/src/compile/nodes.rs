@@ -920,15 +920,10 @@ impl Compiler<'_> {
         let domains: Vec<Reference> = levels_for_lambda
             .iter()
             .map(|(set, ..)| -> Reference {
-                match (set.infinite, &set.member, &set.reference) {
-                    // TLC evaluates the operands of such a set as it builds the function, and
-                    // the test evaluates them as it applies it: where they read a register,
-                    // TLC's search, or draw, what they read may have changed by then.
-                    (Some(_), Some(_), _) if set.reads_search() => Arc::new(|_| {
-                        Err(Bail(
-                            "unsupported: a domain TLC keeps lazy that reads what may change before it is applied",
-                        ))
-                    }),
+                let domain: Reference = match (set.infinite, &set.member, &set.reference) {
+                    // The test evaluates the operands again as it applies the function, so where
+                    // they read a register, TLC's search, or draw (below), what they read may
+                    // have changed by then.
                     (Some(_), Some(member), _) => {
                         let member = Arc::clone(member);
                         Arc::new(move |_| Ok(Lazy::Tested(Arc::clone(&member))))
@@ -937,15 +932,33 @@ impl Compiler<'_> {
                     (None, _, Some(reference)) => Arc::clone(reference),
                     (None, _, None) => {
                         let set = set.eval.clone();
-                        Arc::new(move |machine| {
+                        return Arc::new(move |machine| {
                             Ok(Lazy::Set(evaluate_set(
                                 machine,
                                 &set,
                                 "a function over a non-set",
                             )?))
-                        })
+                        });
                     }
+                };
+                // TLC evaluates the domain's parts as it builds the function, so one that fails
+                // fails there, applied or not (`FcnParams` holds the values): `Seq(1 \div 0)`,
+                // `Nat \ {1 \div 0}` or `SUBSET Seq(S)`, where neither the test nor the reference
+                // evaluates S. A filter's predicate stays lazy, as SetPredValue keeps it. Where
+                // they may print, set a register or draw, evaluating them again for the reference
+                // would do so twice.
+                if set.reads_search() {
+                    return Arc::new(|_| {
+                        Err(Bail(
+                            "unsupported: a domain TLC keeps lazy that reads what may change before it is applied",
+                        ))
+                    });
                 }
+                let parts = Self::parts_of(set);
+                Arc::new(move |machine| {
+                    machine.run_parts(&parts)?;
+                    domain(machine)
+                })
             })
             .collect();
         let evaluate = if is_lambda_possible {
