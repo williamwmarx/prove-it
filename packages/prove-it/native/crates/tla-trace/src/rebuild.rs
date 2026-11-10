@@ -289,12 +289,6 @@ impl<'ir> Rebuilder<'ir> {
         };
         // The initial states draw from the generator startup left, which TLC never reseeds
         // there, so walking the whole initial predicate draws as the search drew.
-        // TLC drops its generator before it rebuilds a trace (`TLCTrace.getTrace`'s
-        // `RandomEnumerableValues.reset`), so the initial predicate then draws from the seed, not
-        // from where the startup's draws left the generator, and TLC doesn't find the state.
-        if is_drawing && self.startup_random != JavaRandom::seeded(ir.model.random_seed).state() {
-            return unsupported("a trace of a model that draws at random as it starts");
-        }
         evaluator.random = is_drawing.then(|| JavaRandom::from_state(self.startup_random));
         let registers = evaluator.registers.clone();
         let initial = find(
