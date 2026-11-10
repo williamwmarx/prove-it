@@ -360,6 +360,33 @@ platform's separators and `user.dir`, and fails as unsupported on another of the
 `prove-it <Spec>...` without `tlc2.TLC` stays Prove It's own
 form (DESIGN 13.1): several specs, `Spec.cfg`, and its usage where none is named.
 
+## -dump
+
+`-dump <file>` writes each state the search found to `<file>.dump` (TLC adds the suffix where the
+name lacks it), as TLC's `StateWriter` does: `State N:` from 1, the state as TLC prints it
+(`TLCStateMut.toString`), and a blank line. TLC writes a state as it adds it to its set of
+fingerprints, before it checks the invariants, so on a stop the dump holds the states the
+stopping expansion found and the state that stopped it where TLC counted it. The engine hands the
+states over once, as the search ends (`Reporter::dumped`, `Settings::is_dumped`), and the binary
+opens the file where TLC does, before it reads the configuration, so a run that stops before the
+search leaves it empty. Each run was compared with TLC's dump at d8fb231 over the corpus.
+
+With N workers TLC writes the states in the order its workers happen to add them, which differs
+from run to run. The binary's shared levels find what one thread finds, so its dump on any number
+of workers is TLC's dump on one worker.
+
+Not native, where TLC writes what the binary doesn't model:
+
+- `-dump dot ...` (`DotStateWriter`), `-dump class,...` and a file under `${metadir}`;
+- temporal properties: TLC writes each state again as it adds its stuttering step to the behavior
+  graph (`Worker.doNextCheckLiveness`);
+- SYMMETRY or a VIEW;
+- a search stopped computing its initial states: TLC returns without closing the dump (no
+  `cleanup`), which then holds only what Java's buffers flushed;
+- an invariant that fails to evaluate past the initial states: TLC expands the state again to
+  print the call stack and writes the new states it finds then (`keepCallStack`);
+- a spec with no variables, and a state holding a value whose text depends on how TLC built it.
+
 ## Handoff
 
 - tla-front feeds the search, or reports where TLC stops before it (above). Parity measures the

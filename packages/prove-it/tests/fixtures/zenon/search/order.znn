@@ -1,0 +1,5 @@
+$hyp "le" (A. ((x y z) (=> (/\ (lt x y) (lt y z)) (lt x z))))
+$hyp "s" (A. ((x) (lt x (s x))))
+$hyp "n" (A. ((x) (-. (lt x x))))
+$hyp "f" (A. ((x) (E. ((y) (/\ (lt x y) (P y))))))
+$goal (E. ((x y) (/\ (P x) (/\ (P y) (lt x y)))))

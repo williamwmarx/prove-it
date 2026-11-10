@@ -2,7 +2,8 @@
 // the fetched corpora and the test fixtures, as text: each side writes one JSON line per module.
 // Usage: bun scripts/front-differential.ts <mode> [--fixtures] [--filter text] [--mutate count]
 //   [--rust <front-dump>]
-// The modes are tokens, ast, sany-ast, config (over the .cfg files), resolve, model, ir, order,
+// The modes are tokens, ast, sany-ast, tlapm-ast (the parse in tlapm's mode, whose failures carry
+// the reason and position tlapm prints), config (over the .cfg files), resolve, model, ir, order,
 // model-ir, pcal, sany-parse-error, and time, which
 // compares how long each side takes to parse each module instead. resolve links each module as the
 // root of a spec without a model, reading the modules it imports beside it and from the corpora's
@@ -46,7 +47,7 @@ import { type Builtin, describeRange } from "../src/evaluate";
 import { tokenize } from "../src/lexer";
 import { getLevel } from "../src/liveness";
 import { createLivenessChecker } from "../src/liveness-checker";
-import { parseModule, parseSanyModule } from "../src/parser";
+import { parseModule, parseSanyModule, parseTlapmModule } from "../src/parser";
 import { createPcalParams } from "../src/pcal/ast";
 import { createPcalSession } from "../src/pcal/parse";
 import { validatePcalModule } from "../src/pcal/validate";
@@ -379,6 +380,7 @@ const MODES: Record<string, (source: string, path: string, spec: string) => stri
   ),
   ast: writeResult(parseModule),
   "sany-ast": writeResult((source) => parseSanyModule(source)),
+  "tlapm-ast": writeResult(parseTlapmModule),
   resolve: writeResult((source, path) => readEnvironment(source, path)),
   // Whether linking with SANY's level checks passes, or its error.
   levels: writeResult((source, path) => {

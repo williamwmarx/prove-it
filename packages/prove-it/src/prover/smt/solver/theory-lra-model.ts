@@ -15,6 +15,7 @@ import {
   OP_MOD0,
 } from "./ast";
 import { Enode } from "./enode";
+import { traceLpFunction } from "./lp-trace";
 import { NULL_LPVAR } from "./lp/lar-solver";
 import type { NlaCore } from "./lp/nla-core";
 import { randomUpdate } from "./lp/random-updater";
@@ -67,7 +68,7 @@ export abstract class TheoryLraModel extends TheoryLraPropagate {
         }
       }
     }
-    if (columns.length > 0) randomUpdate(solver, columns);
+    if (columns.length > 0) traceLpFunction("randomUpdate", randomUpdate)(solver, columns);
   }
 
   // assume_eqs: model-based theory combination.
