@@ -615,6 +615,11 @@ impl Compiler<'_> {
                     let path = read_path(machine, &evaluators[0])?;
                     let value = evaluators[1](machine)?;
                     let store = &machine.store;
+                    if json::holds_ordered_keys(store, value) {
+                        return Err(Bail(
+                            "a Json operator's record, whose fields TLC writes as it holds them",
+                        ));
+                    }
                     let mut text = Vec::new();
                     if is_lines {
                         if store.kind_of(value) != KIND_TUPLE {
