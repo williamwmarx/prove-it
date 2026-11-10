@@ -324,11 +324,9 @@ mod tests {
 
     /// The steps the TypeScript takes in what is still stubbed here, which the script prints for
     /// each problem: the empty arithmetic theory (two in its first propagation, two in each of its
-    /// final checks) and the rewriter, which leaves every instance of these problems as it is
-    /// (the script checks that too) but counts its steps.
+    /// final checks).
     struct Stubbed {
         theory: u64,
-        rewriter: u64,
     }
 
     struct Problem {
@@ -421,7 +419,7 @@ mod tests {
             (
                 result,
                 self.context.get_num_conflicts(),
-                self.context.m.limit.count() + stubbed.theory + stubbed.rewriter,
+                self.context.m.limit.count() + stubbed.theory,
                 self.context.qmanager.get_num_instances(),
             )
         }
@@ -449,10 +447,7 @@ mod tests {
         let eq = problem.eq(a, b);
         let not = problem.not(eq);
         problem.assert(not);
-        let stubbed = Stubbed {
-            theory: 2,
-            rewriter: 12,
-        };
+        let stubbed = Stubbed { theory: 2 };
         assert_eq!(problem.search(stubbed), (LBool::False, 1, 41, 2));
     }
 
@@ -485,10 +480,7 @@ mod tests {
         let rad = problem.app(r, &[a, d], SORT_BOOL);
         let not = problem.not(rad);
         problem.assert(not);
-        let stubbed = Stubbed {
-            theory: 2,
-            rewriter: 32,
-        };
+        let stubbed = Stubbed { theory: 2 };
         assert_eq!(problem.search(stubbed), (LBool::False, 1, 91, 3));
     }
 
@@ -519,10 +511,7 @@ mod tests {
         let eq = problem.eq(fc, b);
         let not = problem.not(eq);
         problem.assert(not);
-        let stubbed = Stubbed {
-            theory: 2,
-            rewriter: 8,
-        };
+        let stubbed = Stubbed { theory: 2 };
         assert_eq!(problem.search(stubbed), (LBool::False, 1, 42, 1));
     }
 
@@ -550,10 +539,7 @@ mod tests {
         let psssa = problem.app(p, &[sssa], SORT_BOOL);
         let not = problem.not(psssa);
         problem.assert(not);
-        let stubbed = Stubbed {
-            theory: 2,
-            rewriter: 30,
-        };
+        let stubbed = Stubbed { theory: 2 };
         assert_eq!(problem.search(stubbed), (LBool::False, 1, 82, 3));
     }
 
@@ -582,10 +568,7 @@ mod tests {
             let not = problem.not(atom);
             problem.assert(not);
         }
-        let stubbed = Stubbed {
-            theory: 2,
-            rewriter: 16,
-        };
+        let stubbed = Stubbed { theory: 2 };
         assert_eq!(problem.search(stubbed), (LBool::False, 2, 64, 2));
     }
 
@@ -617,10 +600,7 @@ mod tests {
         let eq = problem.eq(a, b);
         let not = problem.not(eq);
         problem.assert(not);
-        let stubbed = Stubbed {
-            theory: 4,
-            rewriter: 12,
-        };
+        let stubbed = Stubbed { theory: 4 };
         assert_eq!(problem.search(stubbed), (LBool::False, 1, 47, 1));
     }
 
@@ -645,10 +625,7 @@ mod tests {
         problem.assert(not);
         let eq = problem.eq(a, b);
         problem.assert(eq);
-        let stubbed = Stubbed {
-            theory: 0,
-            rewriter: 0,
-        };
+        let stubbed = Stubbed { theory: 0 };
         assert_eq!(problem.search(stubbed), (LBool::False, 1, 7, 0));
     }
 }

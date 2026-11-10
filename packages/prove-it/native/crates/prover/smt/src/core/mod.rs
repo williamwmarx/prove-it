@@ -2,6 +2,7 @@
 //! file.
 
 pub mod act_cache;
+pub mod arith_rewriter;
 pub mod asserted_formulas;
 pub mod ast;
 pub mod ast_lt;
@@ -11,6 +12,7 @@ pub mod cg_table;
 pub mod clause;
 pub mod conflict_resolution;
 pub mod context;
+pub mod der;
 pub mod dyn_ack;
 pub mod e_matching;
 pub mod enode;
@@ -29,6 +31,7 @@ pub mod model_finder;
 pub mod model_generator;
 pub mod nnf;
 pub mod pattern_inference;
+pub mod poly_rewriter;
 pub mod proto_model;
 pub mod pull_quant;
 pub mod qe_lite_fm;
