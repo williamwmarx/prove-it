@@ -117,3 +117,42 @@ fn declines_a_counterexample_where_tlc_records_the_trace() {
     );
     std::fs::remove_dir_all(directory).expect("removed");
 }
+
+#[test]
+fn declines_a_module_of_the_users_that_the_trace_exploration_spec_uses() {
+    // SANY analyzes the modules TLC adds for the trace exploration spec with the spec's, so a
+    // TLCExt beside the spec that fails its analysis fails TLC's run, though the spec doesn't use
+    // it (TLC at d8fb231 reports "Unknown operator: `Unknown'." in TLCExt, then _TLCTrace's own).
+    let directory =
+        std::env::temp_dir().join(format!("prove-it-trace-users-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    let files = [
+        (
+            "M.tla",
+            "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1\n====\n",
+        ),
+        ("M.cfg", "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE\n"),
+        (
+            "TLCExt.tla",
+            "---- MODULE TLCExt ----\nBad == Unknown\n====\n",
+        ),
+    ];
+    for (name, text) in files {
+        std::fs::write(directory.join(name), text).expect("a file");
+    }
+    let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
+        .arg("M")
+        .current_dir(&directory)
+        .output()
+        .expect("the binary runs");
+    let text = format!(
+        "{}{}",
+        stdout(&output),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        text.contains("not native yet: SANY's report of a module of the user's that the trace exploration spec uses"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
