@@ -40,10 +40,40 @@ fn nests_the_error_a_message_reports_under_tool() {
 fn leaves_other_errors_uncoded() {
     let error = FrontError::NotYet("anything".to_owned());
     assert_eq!(coded(error, false), None);
-    let error = FrontError::Evaluation("TLC can't handle real numbers: 1.5 at line 1".to_owned());
+    let error = FrontError::Evaluation("Attempted to apply a function to a value".to_owned());
     assert_eq!(
         coded(error, false).map(|coded| (coded.code, coded.exit_code)),
         Some((1000, 75))
+    );
+}
+
+#[test]
+fn codes_a_literal_tlc_cannot_hold_as_its_spec_processor_does() {
+    // TLC's tla2sany corpus, NumbersTest.
+    let real = FrontError::Evaluation(
+        "TLC can't handle real numbers: 12345.67890 at line 5, column 16".to_owned(),
+    );
+    let big = FrontError::Evaluation(
+        "TLC can't handle a number this big: 99999999999 at line 2, column 8".to_owned(),
+    );
+    assert_eq!(
+        [real, big].map(|error| coded(error, true).map(|coded| (
+            coded.code,
+            coded.text,
+            coded.exit_code
+        ))),
+        [
+            Some((
+                2244,
+                "TLC can't handle real numbers.\n12345.67890".to_owned(),
+                151
+            )),
+            Some((
+                2265,
+                "TLC can't handle a number this big.\n99999999999".to_owned(),
+                255
+            )),
+        ]
     );
 }
 

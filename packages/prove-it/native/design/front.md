@@ -551,3 +551,31 @@ module's start reports it, before the module's other units, as SANY checks the r
 first. `NotYet`: a recursive operator that applies another (SANY's first pass reads the section's
 operators with action-level arguments), one whose levels fail to analyze, and errors of both a
 module's and a LET's operators, whose order isn't checked.
+
+## TLC's negative tests
+
+`tlatools/test/tla2sany/semantic/error_corpus` (125 specs, each a SANY error) and `corpus` (28
+specs SANY accepts), run through the binary against master TLC with an empty configuration: 116
+and 21 print what TLC prints, and the rest decline. None differ. The front end's checks they
+brought:
+
+- `resolve.rs`: SANY's `@` outside an EXCEPT, a recursive section's units, a function's RECURSIVE
+  declaration with parameters, a function applied to another number of arguments, the arity of an
+  explicit substitute (two errors, the second in `--TLA+ BUILTINS--`), and DEF entries that aren't
+  definitions.
+- `levels.rs`: an assumption above level 0, `checkArguments`'s errors of an operator's
+  arguments, junctions' and bounded quantifiers' level errors under SANY's names, and a NEW over a
+  temporal set.
+- The parser: a named `<*>` or `<+>` step, a semantic error of the TLC-mode parse, and SANY's
+  `WF_B(A)(Act)`, whose subscript is `B(A)`.
+- `report.rs` declines a module the front end's parser rejects where SANY's parser
+  (`sany_parse_error`) accepts it, rather than print the front end's message: a labeled
+  ASSUME/PROVE among the assumptions (AssumeProveTest) is one.
+- `get_coded` reports a decimal or an integer TLC can't hold as SpecProcessor does: 2244 or 2265,
+  the literal on its own line, exit 151 or 255. The TypeScript CLI still prints the front end's
+  error (code 1000, exit 75).
+
+Declines left: 9 of the error corpus's SANY errors (E4200, E4203, E4204, E4223, E4293 ×2, E4294,
+E4351, E4355), whose reports `report.rs` doesn't write; AssumeProveTest's labeled ASSUME/PROVE and
+ProofsTest's DEFINE step; and four corpus specs whose failing assumptions the engine declines to
+replay (AssumeTest, BasicTest, InnerModuleTest, Semantics).
