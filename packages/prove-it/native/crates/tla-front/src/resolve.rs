@@ -207,8 +207,9 @@ impl Tables {
     }
 }
 
-/// The operators a module's LETs declare RECURSIVE and leave undefined, each with its LET's level.
-type LetRecursive = Rc<RefCell<Vec<(usize, Rc<Declaration>)>>>;
+/// The operators a module's LETs declare RECURSIVE, each with its LET's level and what it binds,
+/// in the order SANY reads them (`recursiveDecls`).
+type LetRecursive = Rc<RefCell<Vec<(usize, Rc<Declaration>, Rc<Local>)>>>;
 
 /// What SANY reports while it goes on analyzing a unit of a module, and the scope it analyzes it
 /// in (`Unit`).
@@ -247,8 +248,6 @@ struct Unit<'a> {
     tables: Rc<Tables>,
     /// How many LETs enclose the unit's definitions (`curLevel`).
     let_level: usize,
-    /// The operators the module's LETs declare RECURSIVE and don't define, each with its LET's
-    /// level, in the order SANY reads them (`recursiveDecls`).
     let_recursive: LetRecursive,
 }
 
@@ -1571,19 +1570,21 @@ fn resolve_definition(
     ))
 }
 
-/// Binds the operators a LET declares RECURSIVE and doesn't define, as `processRecursive` does,
-/// and records them with the LET's level.
-fn bind_undefined_recursive(
-    undefined: &[&Rc<Declaration>],
+/// Binds the operators a LET declares RECURSIVE as `processRecursive` does, with the arity of the
+/// declaration, and records them with the LET's level. Returns the scope and what they bind.
+fn bind_let_recursive(
+    recursive: &[Rc<Declaration>],
     definitions: &[Rc<Definition>],
     scope: &Scope,
     unit: &Unit,
-) -> Result<Scope> {
-    if undefined.is_empty() {
-        return Ok(scope.clone());
+) -> Result<(Scope, Vec<Rc<Local>>)> {
+    let mut declared = scope.clone();
+    let mut locals = Vec::new();
+    if recursive.is_empty() {
+        return Ok((declared, locals));
     }
     // SANY reads the declaration where it appears, which a definition before it doesn't see.
-    let is_after_definition = undefined.iter().any(|declaration| {
+    let is_after_definition = recursive.iter().any(|declaration| {
         definitions.iter().any(|definition| {
             is_before(
                 definition.location.position(),
@@ -1593,40 +1594,51 @@ fn bind_undefined_recursive(
     });
     if unit.is_generated || is_after_definition {
         return Err(FrontError::NotYet(
-            "a LET that declares RECURSIVE an operator it doesn't define".to_owned(),
+            "a LET whose RECURSIVE declarations follow a definition, or analyzed again".to_owned(),
         ));
     }
-    let mut declared = scope.clone();
-    for declaration in undefined {
+    for declaration in recursive {
         if find_current(&declared, &declaration.name, unit, None).is_some() {
             return Err(FrontError::NotYet(format!(
                 "a LET that declares RECURSIVE {}, a name already bound",
                 declaration.name
             )));
         }
-        let mut records = unit.let_recursive.borrow_mut();
-        if !records
+        let definition = definitions
             .iter()
-            .any(|(_, recorded)| Rc::ptr_eq(recorded, declaration))
-        {
-            records.push((unit.let_level, (*declaration).clone()));
-        }
-        declared = Some(Rc::new(Local {
+            .find(|definition| definition.name == declaration.name);
+        let local = Rc::new(Local {
             is_pending: Cell::new(true),
-            is_undefined_recursive: true,
+            is_undefined_recursive: definition.is_none(),
             ..Local::new(
                 declaration.name.clone(),
                 Binding {
                     kind: SymbolKind::Definition,
                     arity: declaration.arity,
-                    params: Some(Rc::from(vec![0; declaration.arity])),
-                    range: declaration.location.range.clone(),
+                    params: Some(definition.map_or_else(
+                        || Rc::from(vec![0; declaration.arity]),
+                        |definition| get_param_arities(definition),
+                    )),
+                    // Where SANY reports a second declaration of it.
+                    range: definition
+                        .is_none()
+                        .then(|| declaration.location.range.clone())
+                        .flatten(),
                 },
                 declared,
             )
-        }));
+        });
+        let mut records = unit.let_recursive.borrow_mut();
+        if !records
+            .iter()
+            .any(|(_, recorded, _)| Rc::ptr_eq(recorded, declaration))
+        {
+            records.push((unit.let_level, declaration.clone(), local.clone()));
+        }
+        locals.push(local.clone());
+        declared = Some(local);
     }
-    Ok(declared)
+    Ok((declared, locals))
 }
 
 /// SANY analyzes an INSTANCE in a LET where it appears, before the definitions that follow it,
@@ -1636,8 +1648,9 @@ fn resolve_definitions(
     scope: &Scope,
     unit: &Unit,
     instances: &[Rc<Instance>],
+    declared_recursive: &[Rc<Local>],
 ) -> Result<Scope> {
-    let mut recursive: Vec<Rc<Local>> = Vec::new();
+    let mut recursive: Vec<Rc<Local>> = declared_recursive.to_vec();
     let mut declared = scope.clone();
     for definition in definitions
         .iter()
@@ -1647,10 +1660,9 @@ fn resolve_definitions(
             lookup_local(&declared, &definition.name).filter(|local| local.is_pending.get());
         // SANY adds a second declaration of an operator an enclosing LET declares RECURSIVE and
         // leaves undefined, which the front end doesn't follow.
-        if pending
-            .as_ref()
-            .is_some_and(|local| local.is_undefined_recursive)
-        {
+        if pending.as_ref().is_some_and(|local| {
+            local.is_undefined_recursive && !recursive.iter().any(|item| Rc::ptr_eq(item, local))
+        }) {
             return Err(FrontError::NotYet(format!(
                 "a LET that declares RECURSIVE {}, which an enclosing LET declares and leaves undefined",
                 definition.name
@@ -2178,31 +2190,26 @@ fn resolve_expression(expression: &Expr, scope: &Scope, unit: &Unit) -> Result<(
                 let_level: unit.let_level + 1,
                 ..unit.clone()
             };
-            let undefined: Vec<&Rc<Declaration>> = recursive
-                .iter()
-                .filter(|declaration| {
-                    definitions
-                        .iter()
-                        .all(|definition| definition.name != declaration.name)
-                })
-                .collect();
-            let declared = bind_undefined_recursive(&undefined, definitions, scope, &level)?;
+            let (declared, locals) = bind_let_recursive(recursive, definitions, scope, &level)?;
             let inner = resolve_definitions(
                 definitions,
                 &declared,
                 &level,
                 instances.as_deref().unwrap_or(&[]),
+                &locals,
             )?;
             // `checkForUndefinedRecursiveOps`: at the end of the definitions of a LET that leaves
             // one undefined, SANY reports each operator declared RECURSIVE at that level and not
             // defined, of any LET it has read.
-            if !undefined.is_empty() {
+            if locals.iter().any(|local| local.is_pending.get()) {
                 let reported: Vec<Rc<Declaration>> = unit
                     .let_recursive
                     .borrow()
                     .iter()
-                    .filter(|(declared_level, _)| *declared_level == level.let_level)
-                    .map(|(_, declaration)| declaration.clone())
+                    .filter(|(declared_level, _, local)| {
+                        *declared_level == level.let_level && local.is_pending.get()
+                    })
+                    .map(|(_, declaration, _)| declaration.clone())
                     .collect();
                 for declaration in reported {
                     let Some(range) = &declaration.location.range else {
@@ -2743,9 +2750,13 @@ fn resolve_step(step: &ProofStep, scope: &Scope, unit: &Unit) -> Result<Scope> {
                     DefinitionUnit::Instance(instance) => {
                         resolve_local_instance(instance, &current, &step_unit)?
                     }
-                    DefinitionUnit::Definition(definition) => {
-                        resolve_definitions(std::slice::from_ref(definition), &current, unit, &[])?
-                    }
+                    DefinitionUnit::Definition(definition) => resolve_definitions(
+                        std::slice::from_ref(definition),
+                        &current,
+                        unit,
+                        &[],
+                        &[],
+                    )?,
                 };
             }
             Ok(bind_non_fact_step(&current))
