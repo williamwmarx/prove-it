@@ -154,7 +154,7 @@ Besides the 15 declines, it does the following in the library:
   a VIEW, whose states it re-creates from the previous real state's successors as TLC's
   `LiveWorker.printTrace` does with `getState(fp, previous)`. It declines an accepting node under
   SYMMETRY or a VIEW, an unexpanded graph and uncounted branches. None of these occurs in the
-  corpus or the library's tests ([below](#liveness-what-the-binary-declines-in-the-librarys-tests)).
+  corpus or the library's tests ([below](#liveness)).
 - **Models without a search.** 44 models have only constants and ASSUMEs. The interpreter also
   checks every model's assumptions, and computes the initial states of a spec without a next-state
   relation. The binary does all three.
@@ -170,38 +170,263 @@ Neither side implements `-simulate`, `-generate`, `-debug`, `-dumpTrace` or `-lo
 `getParentPort`). Those move to the prover. `tlc/version.ts`, `tlc/jar-data.ts` and
 `tlc/messages.ts` are shared with the front end and the CLI, so they move too.
 
-### Liveness: what the binary declines in the library's tests
+### Every `check` of the library's tests, through the binary
 
-Measured at main d89e559. Every `check` call of `bun test` whose configuration has temporal
-properties (285 of 1,678) was run through the binary with the same seed, `-lncheck` and `-tool`, on
-one thread and with every level shared between four threads. Both gave the same answers. 206 print
-TLC's output natively, with an exit code of 0, 11, 12, 13, 77, 151 or 255. The rest are `not native
-yet` for the reasons below. The corpus has no such run (`differential --native-only`: 1,460 of
-1,466 runs match TLC, and the 6 known differences aren't about liveness).
+Measured at main d89e559, as the to-do list for S2 and S3. A scratch hook in `checkParsed` (not
+committed) wrote each `check` call of `bun test` with a configuration given as text: its root module,
+the modules it loaded, its configuration, seed, `-lncheck`, `-tool`, `-dump`, `-continue`, version and
+the test that made it. 1,785 distinct calls ran through the binary with the same command line, on
+one thread and with every level shared between four. Both gave the same answer for every call.
 
-| Reason | Runs | Tests |
-|---|---:|---|
-| the engine stopped: an atom of the temporal properties that may fail to evaluate (and its variants) | 14 | `check` 2428, 2443; `tlc-replay` 150, 225; `tlc-live-level` 18, 25; `engine` 1088, 1123, 1240; `exit-codes` 104 |
-| the engine stopped: …: a failure in a model with temporal properties | 3 | `check` 2489; `tlc-replay` 138 |
-| a temporal property's counterexample: a lasso the engine doesn't hand over | 5 | `native-search` 1027; `temporal` 96; `engine-print` 272 |
-| the engine stopped: printing where the native checker doesn't check the temporal properties | 5 | `native-search` 826, 1046, 1058, 1074; `check` 2466 |
-| the engine stopped: deadlock, an invariant violated or a division by zero, with temporal properties | 5 | `check` 2508, 2521; `tlc-replay` 167, 185 |
-| a property TLC finds a tautology; a constant part of a temporal formula that isn't a boolean | 5 | `check` 5194, 5316, 5337, 5524 |
-| the liveness checker declined: an atom the engine doesn't answer | 2 | `native-search` 1106; `tlc-live-level` 18 |
-| the liveness checker declined: a late node TLC adds at another diameter | 1 | `native-search` 1103 |
-| a temporal property's counterexample: a step back into the cycle of a spec that prints | 1 | `counter-example` 38 |
-| several states TLC may take for the search's under VIEW or SYMMETRY | 1 | `native-search` 870 |
-| no step from state 3 is the trace's next (a lasso TLC fails to rebuild under a VIEW) | 1 | `check` 721 |
+- 1,267 print TLC's output natively. Their exit codes are 0 (583), 150 (168), 12 (111), 75 (99),
+  10 (97), 13 (83), 151 (54), 255 (30), 11 (17), 76 (11), 14 (8) and 77 (6).
+- 518 are `not native yet`, for 195 reasons, grouped below and listed in full after.
+- Besides those, the binary declines at the command line, whatever the spec: TLC 1.7.4's output
+  (62 calls: `check` 50, `tlc-replay` 5, `modules` 2, `liveness` 2, `randomization`, `parallel`,
+  `state-graph`; 28 of them are among the 518) and `-dump` (70 calls: `native-sets` 29,
+  `native-search` 19, `native-builtins` 15, `state-graph` 7).
+- Two calls have a periodic configuration (`check`). The binary prints both natively.
+- No `-continue` call reached `check` through the hook.
+- The hook saw no call whose configuration is an object, nor the CLI's own runs of `dist/cli.js`.
 
-Other declines in models with temporal properties belong to other parts of this plan:
-- the action property violated (6 runs) goes to `-continue`'s native report;
-- constant evaluation (11), a constraint or VIEW that fails on a successor (9), a power set too
-  large (3), `PrintT` (2), `Trace` (2), a `_POSSIBLE` predicate, a configuration error and an
-  assumption reading `TLCGet` (1 each) belong to the evaluator and the stops.
+| Kind | Runs | Reasons | Test files (runs) |
+|---|---:|---:|---|
+| Rebuilding a run-time failure | 166 | 61 | `check` 63, `engine` 49, `native-builtins` 29, `native-search` 8, `tlc-replay` 4, `operator-constants` 4 … |
+| Rebuilding a failing assumption | 97 | 39 | `check` 71, `bags` 18, `modules` 2, `json` 2, `tlc-action` 1, `exit-codes` 1 … |
+| The engine stops the search | 95 | 34 | `check` 39, `native-builtins` 17, `engine` 8, `exit-codes` 6, `native-search` 5, `tlc-replay` 5 … |
+| The engine declines the model | 51 | 21 | `check` 15, `native-search` 10, `native-sets` 7, `tlc-ext-operators` 6, `engine-print` 4, `operator-constants` 3 … |
+| Temporal properties | 46 | 20 | `check` 15, `native-search` 8, `tlc-replay` 7, `tlc-live-level` 4, `engine` 3, `temporal` 3 … |
+| Front end, configuration and printing | 33 | 13 | `check` 13, `engine-print` 5, `alias` 4, `possible` 3, `native-search` 3, `printing` 3 … |
+| Constant evaluation | 30 | 7 | `check` 12, `engine` 5, `native-search` 3, `exit-codes` 2, `liveness` 2, `bags` 2 … |
 
-Nothing reaches the binary's other liveness declines: an accepting node under SYMMETRY or a VIEW,
-an unexpanded graph, uncounted branches, and every decline of atoms that read or set TLC's
-registers. They stay declines until a test or a model reaches one.
+#### Liveness
+
+307 of the calls have temporal properties: 216 are native and 91 are not. 53 of those 91 are the
+liveness part of this plan:
+- an atom of the temporal properties that may fail to evaluate (15), and a failure in a model with
+  temporal properties (5);
+- the search's stops in a model with temporal properties: deadlock (5), an invariant (2), a
+  division by zero (2);
+- a property TLC finds a tautology, or a constant part of a temporal formula that isn't a boolean (7);
+- printing where the native checker doesn't check the temporal properties (6);
+- a lasso the engine doesn't hand over (5);
+- an atom the engine doesn't answer (2);
+- a late node at another diameter, a step back into the cycle of a spec that prints, several states
+  under VIEW or SYMMETRY, and a lasso TLC fails to rebuild under a VIEW (1 each).
+
+The other 38 are the action property violated (6, `-continue`'s native report), constant evaluation,
+a constraint or VIEW that fails on a successor, and the evaluator's other gaps. The corpus has no
+temporal decline: `differential --native-only` matches 1,460 of 1,466 runs, and the 6 known
+differences aren't about liveness.
+
+A lasso that ends in the first state of its cycle (the `temporal` test's three runs) is more than a
+printing gap. Printing it as TLC does, stuttering at the cycle's first state, matches TLC built at
+d8fb231 on those three runs. But on the binary's own `lasso-end` case the lasso differs from TLC's,
+so the decline stays until the lasso's construction is traced against `LiveWorker.printTrace`.
+
+Nothing reaches these liveness declines, so they stay declines until a test or a model does: an
+accepting node under SYMMETRY or a VIEW, an unexpanded graph, uncounted branches, and every decline
+of atoms that read or set TLC's registers.
+
+#### Every reason
+
+| Runs | Reason | Tests |
+|---:|---|---|
+| 16 | the engine stopped: a constraint, a VIEW or an action property that fails on a successor (with 1.7.4) | `exit-codes:99` ×3, `check:2046` ×2, `check:2002`, `check:2013`, `check:2026`, `check:2989`, `check:2994`, `check:2035`, `tlc-replay:112`, `check:2081`, `possible:110`, `check:2078`, `tlc-replay:104` |
+| 14 | a constant invariant the engine checks, which TLC may warn about | `engine:708` ×2, `bags:43` ×2, `engine:809` ×2, `engine-print:183`, `engine:869`, `exit-codes:73`, `instances:43`, `native-search:1931`, `native-search:1519`, `native-search:1513`, `tlc-replay:213` |
+| 12 | the engine stopped: a mistyped membership in a set of functions: evaluating the failure again: a failure TLC reports as a FingerprintException | `engine:780` ×12 |
+| 11 | the engine declined: unsupported: Print | `native-search:1306` ×7, `engine-print:222` ×4 |
+| 11 | the engine stopped: values TLC can't compare: evaluating the failure again: a failure TLC reports as a FingerprintException | `engine:780` ×5, `engine:743` ×3, `check:1675` ×2, `check:1576` |
+| 10 | the engine stopped: a mistyped membership in a set of records: evaluating the failure again: a failure TLC reports as a FingerprintException | `engine:780` ×10 |
+| 10 | the engine stopped: division by zero: evaluating the failure again: a failure TLC reports as a FingerprintException (with 1.7.4) | `check:1699` ×4, `check:1980` ×2, `check:1809`, `check:1797`, `check:1991`, `native-search:505` |
+| 9 | an assumption that fails to evaluate: evaluating the assumption again: expected an integer, not a string | `check:2330` ×4, `check:3156` ×4, `check:2593` |
+| 9 | printing a value whose text depends on how TLC built it | `engine-print:284` ×5, `printing:157` ×3, `native-search:1229` |
+| 9 | the engine declined: unsupported: enumerating a set TLC keeps lazy (UNION at line 3) | `native-sets:248` ×4, `check:5217` ×2, `check:5206` ×2, `native-sets:311` |
+| 9 | the engine stopped: a conjunct that isn't a boolean: evaluating the failure again: expected a boolean, not a integer | `check:2368` ×6, `check:2971`, `check:382`, `check:2967` |
+| 8 | an assumption that fails to evaluate: evaluating the assumption again: integer overflow | `check:2330` ×6, `check:2612` ×2 |
+| 7 | an assumption that fails to evaluate: evaluating the assumption again: expected a boolean, not a integer | `check:3222` ×4, `check:2330` ×2, `check:2675` |
+| 7 | the engine declined: unsupported: enumerating a set TLC keeps lazy (UNION at line 5) (with 1.7.4) | `check:5116` ×4, `check:5145`, `native-sets:322`, `check:1606` |
+| 7 | the engine stopped: a membership in SUBSET of a non-set: evaluating the failure again: a failure TLC reports as a FingerprintException | `engine:780` ×7 |
+| 6 | the engine stopped: ToString of a value whose text depends on how TLC built it | `native-builtins:244` ×6 |
+| 6 | the engine stopped: a mistyped membership in Seq: evaluating the failure again: a failure TLC reports as a FingerprintException | `engine:780` ×6 |
+| 6 | the engine stopped: a mistyped membership in a set of tuples: evaluating the failure again: a failure TLC reports as a FingerprintException | `engine:780` ×6 |
+| 6 | the engine stopped: a power set too large to build | `engine:1220` ×3, `engine:1346`, `engine-print:344`, `engine:696` |
+| 6 | the engine stopped: an action property violated | `check:5172`, `check:5309`, `native-search:1146`, `parallel:92`, `check:579`, `check:974` |
+| 6 | the engine stopped: an atom of the temporal properties that may fail to evaluate (with 1.7.4) | `tlc-live-level:18` ×2, `tlc-replay:225` ×2, `engine:1240`, `tlc-live-level:25` |
+| 5 | a POSTCONDITION or an ALIAS TLC may compute as it starts | `alias:70` ×2, `possible:118`, `possible:123`, `alias:89` |
+| 5 | a division by zero, which the constant evaluator doesn't compute (with 1.7.4) | `liveness:111` ×2, `check:1300`, `check:5562`, `check:5507` |
+| 5 | a property TLC finds a tautology (with 1.7.4) | `check:5524` ×2, `check:5316` ×2, `check:5194` |
+| 5 | a temporal property's counterexample: a lasso the engine doesn't hand over | `temporal:96` ×3, `engine-print:272`, `native-search:1027` |
+| 5 | an assumption that fails to evaluate: evaluating the assumption again: SUBSET of a non-set | `check:2330` ×4, `check:2583` |
+| 5 | an assumption that fails to evaluate: evaluating the assumption again: it didn't fail | `check:3125`, `check:194`, `check:2776`, `bags:97`, `check:2330` |
+| 5 | an assumption that fails to evaluate: evaluating the assumption again: the builtin BagOfAll | `bags:128` ×3, `bags:97`, `bags:120` |
+| 5 | the engine stopped: an atom of the temporal properties that may fail to evaluate: evaluating the failure again: expected a boolean, not a integer | `check:2428` ×2, `check:2443` ×2, `tlc-replay:150` |
+| 5 | the engine stopped: an operator's table applied outside its rows: evaluating the failure again: an operator's table applied outside its rows | `operator-constants:81` ×3, `native-search:1801`, `operator-constants:49` |
+| 5 | the engine stopped: deadlock (with 1.7.4) | `check:2521` ×2, `tlc-replay:185` ×2, `tlc-replay:167` |
+| 5 | the engine stopped: enumerated Nat | `check:1934` ×2, `check:3101` ×2, `check:1951` |
+| 5 | the engine stopped: unsupported: TLCGet of a key the search doesn't keep (with 1.7.4) | `check:2837`, `check:248`, `tlc-statistics:25`, `check:5379`, `check:5378` |
+| 4 | a _POSSIBLE predicate the search didn't witness | `native-search:1547`, `check:282`, `native-search:1543`, `possible:66` |
+| 4 | an assumption that fails to evaluate: evaluating the assumption again: expected a sequence, not 1 (with 1.7.4) | `check:2330` ×2, `check:2339` ×2 |
+| 4 | an assumption that fails to evaluate: evaluating the assumption again: expected an integer, not a set | `check:2330` ×4 |
+| 4 | rebuilding a trace: the builtin Trace | `tlc-ext:23`, `alias:48`, `alias:59`, `alias:28` |
+| 4 | the engine stopped: SubSeq outside the sequence's domain: evaluating the failure again: SubSeq outside the sequence's domain | `native-builtins:228` ×4 |
+| 4 | the engine stopped: applied a function outside its domain: evaluating the failure again: a failure TLC reports as a FingerprintException (with 1.7.4) | `check:5259`, `check:1627`, `check:5266`, `tlc-replay:95` |
+| 4 | the engine stopped: applied a function outside its domain: evaluating the failure again: applied a function outside its domain | `check:1896`, `check:1830`, `check:1874`, `native-search:505` |
+| 4 | the engine stopped: applied a function outside its domain: evaluating the failure again: values TLC can't compare (with 1.7.4) | `check:2573` ×4 |
+| 4 | the engine stopped: expected a boolean: evaluating the failure again: expected a boolean, not a function | `check:1403` ×4 |
+| 4 | the engine stopped: recursion too deep | `check:2928`, `exit-codes:75`, `exit-codes:71`, `exit-codes:72` |
+| 4 | the engine stopped: unsupported: comparing a function TLC keeps lazy | `native-search:505` ×3, `native-builtins:228` |
+| 4 | values TLC can't compare, which the constant evaluator doesn't compute | `check:1257` ×3, `exit-codes:84` |
+| 3 | a SYMMETRY definition that isn't an operator applied to its sets | `check:1243` ×2, `exit-codes:57` |
+| 3 | a constant definition the configuration names | `check:5014`, `check:5019`, `check:5011` |
+| 3 | a value that isn't a set where TLC wants one, which the constant evaluator doesn't compute (with 1.7.4) | `check:5562` ×3 |
+| 3 | an assumption that fails to evaluate: evaluating the assumption again: a membership in a set, which isn't a set | `check:2760`, `check:2754`, `check:2717` |
+| 3 | an assumption that fails to evaluate: evaluating the assumption again: enumerated an infinite set | `bags:97` ×2, `check:2675` |
+| 3 | an assumption that fails to evaluate: evaluating the assumption again: expected an integer, not a function | `check:2330` ×3 |
+| 3 | an assumption that fails to evaluate: evaluating the assumption again: the builtin AssertEq | `check:770` ×2, `json:28` |
+| 3 | an assumption that fails to evaluate: evaluating the assumption again: the builtin SubBag | `bags:120`, `check:501`, `bags:97` |
+| 3 | an assumption that fails to evaluate: evaluating the assumption again: values TLC can't compare | `check:3248` ×3 |
+| 3 | temporal quantification in the specification | `specifications:68` ×2, `exit-codes:109` |
+| 3 | the engine declined: unsupported: PickSuccessor | `tlc-ext-operators:48`, `tlc-ext-operators:54`, `tlc-ext-operators:61` |
+| 3 | the engine stopped: EXCEPT outside the domain (with 1.7.4) | `check:2573` ×2, `check:1627` |
+| 3 | the engine stopped: a guard that isn't a boolean: evaluating the failure again: expected a boolean, not a integer | `tlc-replay:62`, `check:2975`, `exit-codes:52` |
+| 3 | the engine stopped: a predicate that isn't a boolean: evaluating the failure again: expected a boolean, not a integer | `check:2075`, `check:2072`, `check:2002` |
+| 3 | the engine stopped: an invariant violated (with 1.7.4) | `check:2521` ×2, `check:644` |
+| 3 | the engine stopped: an order of strings the search ranked | `native-builtins:279` ×2, `native-builtins:327` |
+| 3 | the engine stopped: enumerated a set TLC can't enumerate: evaluating the failure again: enumerated an infinite set | `check:3043`, `check:2407`, `check:1914` |
+| 3 | the engine stopped: expected a set: evaluating the failure again: expected a set, not a integer | `native-builtins:228` ×3 |
+| 3 | the engine stopped: expected an integer: evaluating the failure again: expected an integer, not a string | `tlc-replay:57`, `tlc-replay:51`, `exit-codes:52` |
+| 3 | the engine stopped: no CASE arm holds: evaluating the failure again: no CASE arm holds | `check:2407`, `check:3055`, `check:1521` |
+| 3 | the engine stopped: record compared with a function | `engine:618` ×2, `engine:743` |
+| 3 | the engine stopped: variable not assigned: evaluating the failure again: it didn't fail | `native-search:1161`, `check:1859`, `check:1854` |
+| 2 | SANY's report of a module-level RECURSIVE declaration that something else binds, or an INSTANCE may: F | `check:3442`, `check:4626` |
+| 2 | a constant part of a temporal formula that isn't a boolean | `check:5337` ×2 |
+| 2 | an assumption that fails to evaluate: evaluating the assumption again: SubSeq outside the sequence's domain | `check:2330` ×2 |
+| 2 | an assumption that fails to evaluate: evaluating the assumption again: TLCGet | `tlc-action:10`, `tlc-revision:26` |
+| 2 | an assumption that fails to evaluate: evaluating the assumption again: a bag that isn't a function | `bags:97` ×2 |
+| 2 | an assumption that fails to evaluate: evaluating the assumption again: applied a function outside its domain | `check:2692`, `check:2695` |
+| 2 | an assumption that fails to evaluate: evaluating the assumption again: expected a set, not a integer | `check:2675` ×2 |
+| 2 | an assumption that fails to evaluate: evaluating the assumption again: the builtin ToJson@Json (with 1.7.4) | `modules:152` ×2 |
+| 2 | an assumption that fails to evaluate: evaluating the assumption again: the builtin \sqsubseteq | `bags:120`, `bags:97` |
+| 2 | an operator, which the constant evaluator doesn't compute | `check:5337`, `engine-ir:198` |
+| 2 | the engine declined: the builtin EmptyBag@Bags, whose value the interpreter computes | `modules:136` ×2 |
+| 2 | the engine declined: unsupported: F | `operator-constants:33` ×2 |
+| 2 | the engine declined: unsupported: PrintT | `tlc-constraint-order:11`, `tlc-statistics:11` |
+| 2 | the engine declined: unsupported: enumerating a set TLC keeps lazy (Product at line 5) (with 1.7.4) | `check:5116` ×2 |
+| 2 | the engine stopped: CHOOSE found no element: a failure in a model with temporal properties (with 1.7.4) | `tlc-replay:138` ×2 |
+| 2 | the engine stopped: Print inside ENABLED | `engine-print:251`, `native-search:1314` |
+| 2 | the engine stopped: TLCExt's Trace, the behavior the engine doesn't keep | `tlc-ext:17`, `tlc-ext:30` |
+| 2 | the engine stopped: ToString of a text the engine made unranked | `native-builtins:279`, `native-builtins:491` |
+| 2 | the engine stopped: a CASE condition that isn't a boolean: evaluating the failure again: expected a boolean, not a integer | `check:2407` ×2 |
+| 2 | the engine stopped: a tuple pattern that doesn't match: evaluating the failure again: a tuple pattern that doesn't match | `native-search:1388`, `native-search:1360` |
+| 2 | the engine stopped: an IF condition that isn't a boolean: evaluating the failure again: expected a boolean, not a integer | `check:2407` ×2 |
+| 2 | the engine stopped: an atom of the temporal properties that may fail to evaluate: evaluating the failure again: enumerated an infinite set | `engine:1088`, `check:2428` |
+| 2 | the engine stopped: division by zero (with 1.7.4) | `check:2508` ×2 |
+| 2 | the engine stopped: division by zero: a failure in a model with temporal properties (with 1.7.4) | `tlc-replay:138` ×2 |
+| 2 | the engine stopped: equality of values TLC can't compare: evaluating the failure again: equality of values TLC can't compare | `check:1416` ×2 |
+| 2 | the engine stopped: expected a function: evaluating the failure again: a bag that isn't a function | `native-builtins:228` ×2 |
+| 2 | the engine stopped: printing where the native checker doesn't check the temporal properties: a predicate the engine leaves to the interpreter (with 1.7.4) | `check:2466` ×2 |
+| 2 | the engine stopped: printing where the native checker doesn't check the temporal properties: prints it doesn't place in TLC's order | `native-search:1074`, `native-search:1058` |
+| 2 | the engine stopped: unsupported: a state holding a function TLC keeps lazy | `check:1963`, `check:1934` |
+| 2 | the engine stopped: values TLC can't compare: evaluating the failure again: a set TLC leaves unnormalized | `check:1675`, `native-builtins:228` |
+| 2 | the liveness checker declined: an atom the engine doesn't answer | `tlc-live-level:18`, `native-search:1106` |
+| 1 | SANY's report of a RECURSIVE declaration of a name a module binds or names before it: F | `check:4677` |
+| 1 | SANY's report of a module nested in another that declares RECURSIVE R | `check:4626` |
+| 1 | TLCGet, which the constant evaluator doesn't compute | `check:1034` |
+| 1 | a CHOOSE no element of which satisfies, which the constant evaluator doesn't compute | `check:1290` |
+| 1 | a configuration error that shows a value | `check:5027` |
+| 1 | a configuration substitute with effects, which TLC evaluates at every use: C <- Foo | `check:1040` |
+| 1 | a temporal property's counterexample: a step back into the cycle of a spec that prints | `counter-example:38` |
+| 1 | a violating successor TLC fails to find again from its generator | `randomization:41` |
+| 1 | an ALIAS without a definition | `alias:70` |
+| 1 | an assumption that fails to evaluate: an assumption the engine found to hold that doesn't again | `check:69` |
+| 1 | an assumption that fails to evaluate: evaluating the assumption again: Head of the empty sequence | `check:2330` |
+| 1 | an assumption that fails to evaluate: evaluating the assumption again: JsonDeserialize, whose file the replay doesn't read or write | `json:34` |
+| 1 | an assumption that fails to evaluate: evaluating the assumption again: Tail of the empty sequence | `check:2330` |
+| 1 | an assumption that fails to evaluate: evaluating the assumption again: a SelectSeq test that isn't a boolean | `check:2330` |
+| 1 | an assumption that fails to evaluate: evaluating the assumption again: a bag whose count isn't an integer | `bags:120` |
+| 1 | an assumption that fails to evaluate: evaluating the assumption again: a bag with a count that isn't positive | `bags:97` |
+| 1 | an assumption that fails to evaluate: evaluating the assumption again: a power set too large to build | `check:3084` |
+| 1 | an assumption that fails to evaluate: evaluating the assumption again: evaluating a an unbounded quantifier | `check:1473` |
+| 1 | an assumption that fails to evaluate: evaluating the assumption again: expected a boolean, not a set | `check:3222` |
+| 1 | an assumption that fails to evaluate: evaluating the assumption again: expected a sequence, not "ab" | `check:2330` |
+| 1 | an assumption that fails to evaluate: evaluating the assumption again: expected an integer, not a boolean | `check:2330` |
+| 1 | an assumption that fails to evaluate: evaluating the assumption again: no CASE arm holds | `check:1453` |
+| 1 | an assumption that fails to evaluate: evaluating the assumption again: recursion too deep | `exit-codes:77` |
+| 1 | an assumption that fails to evaluate: evaluating the assumption again: the builtin BagIn | `bags:97` |
+| 1 | an assumption that fails to evaluate: evaluating the assumption again: the builtin IsABag | `bags:120` |
+| 1 | an assumption that fails to evaluate: evaluating the assumption again: the builtin ToJson | `check:761` |
+| 1 | an assumption that fails to evaluate: evaluating the assumption again: the builtin Trace | `tlc-ext-operators:40` |
+| 1 | no step from state N is the trace's next | `check:721` |
+| 1 | several states TLC may take for the search's under VIEW or SYMMETRY | `native-search:870` |
+| 1 | the engine declined: checking an assumption again: an assumption the engine doesn't evaluate that fails to: AssertError of a message that isn't a string | `tlc-ext-operators:69` |
+| 1 | the engine declined: unsupported: AssertEq | `tlc-ext-operators:27` |
+| 1 | the engine declined: unsupported: Inc | `operator-constants:45` |
+| 1 | the engine declined: unsupported: Print where TLC evaluates it otherwise | `native-search:1306` |
+| 1 | the engine declined: unsupported: RandomElement | `randomization:142` |
+| 1 | the engine declined: unsupported: TLCGetAndSet | `tlc-ext-operators:94` |
+| 1 | the engine declined: unsupported: UNCHANGED in the initial predicate | `native-search:1396` |
+| 1 | the engine declined: unsupported: a value TLC computed at startup with effects | `native-search:1641` |
+| 1 | the engine declined: unsupported: enumerating a lazy set of the state under a VIEW | `check:2155` |
+| 1 | the engine declined: unsupported: enumerating a set TLC keeps lazy (Alias: UNION at line 5) | `native-sets:333` |
+| 1 | the engine declined: unsupported: enumerating a set TLC keeps lazy (UNION at line 4) | `check:5206` |
+| 1 | the engine declined: unsupported: expression UnboundedQuantifier | `bundled-modules:16` |
+| 1 | the engine declined: unsupported: walking a lazy function over a tuple | `check:1830` |
+| 1 | the engine stopped: BagCardinality of a non-bag: evaluating the failure again: a bag whose count isn't an integer | `native-builtins:228` |
+| 1 | the engine stopped: BagCardinality of a non-bag: evaluating the failure again: a bag with a count that isn't positive | `native-builtins:228` |
+| 1 | the engine stopped: BagOfAll of a literal | `native-builtins:228` |
+| 1 | the engine stopped: EXCEPT on a non-function: evaluating the failure again: Attempted to apply EXCEPT construct to the value 1. | `check:2573` |
+| 1 | the engine stopped: EXCEPT on a non-function: evaluating the failure again: a failure TLC reports as a FingerprintException | `check:1627` |
+| 1 | the engine stopped: RandomSubset of a product too large to index | `native-builtins:390` |
+| 1 | the engine stopped: RandomSubset of an interval too large to draw from | `native-builtins:401` |
+| 1 | the engine stopped: SortSeq of a non-sequence: evaluating the failure again: the builtin SortSeq | `native-builtins:228` |
+| 1 | the engine stopped: SubBag of a non-bag: evaluating the failure again: the builtin SubBag | `native-builtins:228` |
+| 1 | the engine stopped: SubSeq of a non-sequence: evaluating the failure again: expected a sequence, not {1} | `native-builtins:228` |
+| 1 | the engine stopped: TLCGet of a key that isn't a natural number | `check:2837` |
+| 1 | the engine stopped: TLCGet of a register TLC hasn't set | `check:2837` |
+| 1 | the engine stopped: TLCModelValue of a value that isn't a string: evaluating the failure again: TLCModelValue of a value that isn't a string | `native-builtins:334` |
+| 1 | the engine stopped: a SelectSeq test that isn't a boolean: evaluating the failure again: a SelectSeq test that isn't a boolean | `native-builtins:228` |
+| 1 | the engine stopped: a VIEW that fails on an initial state | `engine-symmetry:93` |
+| 1 | the engine stopped: a guard that isn't a boolean: evaluating the failure again: a failure TLC reports as a FingerprintException | `check:1854` |
+| 1 | the engine stopped: action composition: evaluating the failure again: a next-state relation the IR holds no actions of (with 1.7.4) | `check:5407` |
+| 1 | the engine stopped: an atom of the temporal properties that may fail to evaluate: evaluating the failure again: an EvalException adding an initial state | `exit-codes:104` |
+| 1 | the engine stopped: an atom of the temporal properties that may fail to evaluate: evaluating the failure again: it didn't fail | `engine:1123` |
+| 1 | the engine stopped: an initial state that isn't complete: evaluating the failure again: an initial state that isn't complete | `exit-codes:52` |
+| 1 | the engine stopped: an invariant violated: a _POSSIBLE predicate | `possible:72` |
+| 1 | the engine stopped: an order of model values the search ranked | `native-builtins:315` |
+| 1 | the engine stopped: an overflow counting the elements of a power set: evaluating the failure again: a state TLC fingerprints only where its constraints hold | `check:2121` |
+| 1 | the engine stopped: an overflow counting the elements of a power set: evaluating the failure again: an action that fails or prints after a successor TLC can't fingerprint | `check:2137` |
+| 1 | the engine stopped: applied a function outside its domain: rebuilding a trace: primed variable not assigned: x | `native-search:1460` |
+| 1 | the engine stopped: applied a non-function: evaluating the failure again: a failure TLC reports as a FingerprintException | `check:1627` |
+| 1 | the engine stopped: division by zero: a failure with a POSTCONDITION | `possible:110` |
+| 1 | the engine stopped: drew from a set whose shape the engine forgets | `native-builtins:417` |
+| 1 | the engine stopped: enumerated [D -> R] with R infinite | `native-sets:169` |
+| 1 | the engine stopped: enumerated a filter of an infinite set: evaluating the failure again: a state whose fingerprint the replay doesn't follow | `check:1944` |
+| 1 | the engine stopped: enumerated a non-set: a failure in a model with temporal properties | `check:2489` |
+| 1 | the engine stopped: enumerated a product of an infinite set | `native-sets:169` |
+| 1 | the engine stopped: enumerated a set TLC can't enumerate: evaluating the failure again: a failure TLC reports as a FingerprintException | `native-sets:207` |
+| 1 | the engine stopped: enumerated an infinite set | `native-sets:169` |
+| 1 | the engine stopped: enumerated an operation on infinite sets | `bundled-modules:23` |
+| 1 | the engine stopped: equality of values TLC can't compare: evaluating the failure again: a failure TLC reports as a FingerprintException | `check:1416` |
+| 1 | the engine stopped: equality of values TLC can't compare: evaluating the failure again: the builtin BagIn | `native-builtins:228` |
+| 1 | the engine stopped: expected a bag: evaluating the failure again: it didn't fail | `native-builtins:228` |
+| 1 | the engine stopped: expected a boolean: evaluating the failure again: a failure TLC reports as a FingerprintException | `native-sets:169` |
+| 1 | the engine stopped: expected a function: evaluating the failure again: the builtin BagIn | `native-builtins:228` |
+| 1 | the engine stopped: expected a function: evaluating the failure again: the builtin BagOfAll | `native-builtins:228` |
+| 1 | the engine stopped: expected a function: evaluating the failure again: the builtin SubBag | `native-builtins:228` |
+| 1 | the engine stopped: expected a function: evaluating the failure again: the builtin \sqsubseteq | `native-builtins:228` |
+| 1 | the engine stopped: expected a sequence: evaluating the failure again: expected a sequence, not "ab" | `native-builtins:228` |
+| 1 | the engine stopped: expected a set: evaluating the failure again: expected a set, not a function | `native-builtins:228` |
+| 1 | the engine stopped: expected an integer: evaluating the failure again: a bag whose count isn't an integer | `native-builtins:228` |
+| 1 | the engine stopped: expected an integer: evaluating the failure again: the builtin CopiesIn | `native-builtins:228` |
+| 1 | the engine stopped: expected an integer: evaluating the failure again: the builtin SortSeq | `native-builtins:228` |
+| 1 | the engine stopped: expected an integer: evaluating the failure again: the builtin SubBag | `native-builtins:228` |
+| 1 | the engine stopped: printing where the native checker doesn't check the temporal properties: a node that accepts every behavior | `native-search:1046` |
+| 1 | the engine stopped: printing where the native checker doesn't check the temporal properties: steps from states it didn't store | `native-search:826` |
+| 1 | the engine stopped: quantified over a non-set: evaluating the failure again: expected a set, not a integer | `native-search:505` |
+| 1 | the engine stopped: unsupported: TLCGet("diameter") in the search | `check:248` |
+| 1 | the engine stopped: unsupported: TLCSet of a key that stops or configures TLC | `tlc-pause:8` |
+| 1 | the liveness checker declined: a late node TLC adds at another diameter | `native-search:1103` |
 
 ### What uses it as the reference, and what replaces it
 
