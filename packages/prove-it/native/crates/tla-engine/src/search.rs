@@ -2364,9 +2364,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         keys: Vec::new(),
         parents: Vec::new(),
         fingerprints: Vec::new(),
-        set: FingerprintSet::new(
-            settings.is_fingerprint_verified || model.is_recording_graph,
-        ),
+        set: FingerprintSet::new(settings.is_fingerprint_verified || model.is_recording_graph),
         order,
         is_verified: settings.is_fingerprint_verified,
         collisions: 0,
