@@ -5,6 +5,8 @@
 pub mod constraints;
 pub mod dependency;
 pub mod explanation;
+pub mod hnf;
 pub mod lar_term;
 pub mod lp_settings;
+pub mod nla_backoff;
 pub mod numeric_pair;
