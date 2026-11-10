@@ -74,7 +74,7 @@ const record = (prover: string, text: string, timeLimitMs: number): InputRecord 
     return getRecord();
   } catch (error) {
     if (!(error instanceof TlaProverError)) throw error;
-    return { prover, stepLimit: 0, verdict: "unknown", statistics: {}, error: error.message };
+    return { prover, verdict: "unknown", statistics: {}, error: error.message };
   }
 };
 

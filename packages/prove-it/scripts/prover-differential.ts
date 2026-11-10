@@ -125,7 +125,7 @@ const batches: Batch[] = Array.from(
 );
 const byBatch = await runModuleWorkers(
   batches,
-  (batch) => batch.digests.reduce((total, digest) => total + records[digest].stepLimit, 0),
+  (batch) => batch.digests.reduce((total, digest) => total + (records[digest].stepLimit ?? 0), 0),
   async (batch) => batch.digests.map((digest) => getResult(digest, records[digest])),
   1,
 );

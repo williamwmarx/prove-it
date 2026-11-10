@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { getNativeAddon } from "../../src/engine/native";
+import { TlaProverError } from "../../src/errors";
 import { decide } from "../../src/prover/deciders";
 
 const TESTS_DIRECTORY = join(import.meta.dirname, "..");
@@ -43,6 +44,23 @@ describe("the deciders' steps and statistics", () => {
     expect(decide(prover, text, OPTIONS, steps)).toMatchObject({
       verdict: "unsat",
       statistics: { steps },
+    });
+  });
+});
+
+// Z3 takes steps parsing up to a malformed term, so a step limit can stop it before the error, which
+// is why prover-inputs.ts records an input that throws without a step limit.
+describe("a malformed input", () => {
+  const text = "(declare-const x Int)\n(assert (= (+ x 1) x))\n(assert (foo x))\n(check-sat)";
+
+  it("throws without a step limit", () => {
+    expect(() => decide("smt", text, OPTIONS)).toThrow(TlaProverError);
+  });
+
+  it("is unknown when the step limit stops it first", () => {
+    expect(decide("smt", text, OPTIONS, 0)).toMatchObject({
+      verdict: "unknown",
+      statistics: { stop: "steps" },
     });
   });
 });
