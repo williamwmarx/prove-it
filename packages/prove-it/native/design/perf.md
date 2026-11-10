@@ -307,6 +307,19 @@ The candidates are kept threads, a merge that imports while the next level expan
 read-only memo snapshots.
 - **Needs:** the 16-core Benchmark from the coordinator to measure scaling.
 - **Gain:** from 2.4× toward 3.5× at 4 threads, and more at 16.
+- **Measured (`perf` at 4 threads).** On MCExactInitialSync the merge runs alone for about 3.5 s
+  of the 9.7 s: 14% of all samples, of which half is `States::find`, the state table's probe
+  missing the cache on each candidate, then `insert` and `Store::import`. On PaxosCommit the
+  threads' own work dominates, and `forget_from` at each level costs 2%.
+- **Done: the merge reads the table ahead.** It touches the home slot of the candidate 16 places
+  on before it probes for the current one. MCExactInitialSync at 4 threads: 9.15 → 8.36 s
+  (medians of 9, ranges 8.66–9.58 and 8.07–9.09). Neutral where the table fits the cache
+  (MCbtree, Detlefs). One thread doesn't merge.
+- **Next: fill the table in parallel.** A serial pass numbers the level's new states in
+  (parent, step) order, deduplicating them in a small table of the level's own; then each thread
+  inserts the winners of its shard of a table split by the fingerprint's top bits. That needs the
+  layout of `perf-state-table` (the one-thread probe path, owned by that track) and its
+  `find`/`insert` at a slot.
 
 ### 7. Interning long blocks (`perf-intern`), independent
 
