@@ -3,6 +3,7 @@
 
 use std::path::Path;
 use std::sync::mpsc;
+use tla_engine::Prints;
 use tla_engine::clock::Instant;
 
 use tla_engine::search::{
@@ -469,15 +470,15 @@ impl Reporter for Relay<'_> {
         let _ = self.sender.send(Event::LivenessFinished);
     }
 
-    fn print(&mut self, store: &Store, values: &[Id]) {
-        self.send_print(format_printed(store, values));
+    fn print(&mut self, store: &Store, prints: &Prints) {
+        self.send_print(format_printed(store, prints));
     }
 
     // What the substitutes and constant definitions print, which the trace evaluator prints as
     // TLC built it where the store forgot, as long as it prints the same: each print the store
     // words alike, and as many.
-    fn startup_print(&mut self, store: &Store, values: &[Id]) {
-        let worded = format_printed(store, values);
+    fn startup_print(&mut self, store: &Store, prints: &Prints) {
+        let worded = format_printed(store, prints);
         let Some(worded_prints) = self.startup_worded.as_mut() else {
             let printed = self.word_assumed(worded);
             self.assumed_printed.extend(printed.clone());
@@ -611,19 +612,24 @@ impl Reporter for Relay<'_> {
     }
 }
 
-// What Print or PrintT prints of the values, unless the store has forgotten how TLC built one.
-fn format_printed(store: &Store, values: &[Id]) -> Option<String> {
-    if !values.iter().all(|&id| is_printable(store, id)) {
-        return None;
-    }
-    let printed = values
-        .iter()
-        .map(|&id| {
-            let mut text = Vec::new();
-            write_value(store, id, &mut text).ok()?;
-            Some(pretty_print(&text))
-        })
-        .collect::<Option<Vec<_>>>()?;
+// What Print or PrintT prints of the values: TLC's text of each that the engine knew, or that the
+// store words, unless the store has forgotten how TLC built one.
+fn format_printed(store: &Store, prints: &Prints) -> Option<String> {
+    let printed = match &prints.texts {
+        Some(texts) => texts.iter().map(|text| pretty_print(text)).collect(),
+        None => prints
+            .values
+            .iter()
+            .map(|&id| {
+                if !is_printable(store, id) {
+                    return None;
+                }
+                let mut text = Vec::new();
+                write_value(store, id, &mut text).ok()?;
+                Some(pretty_print(&text))
+            })
+            .collect::<Option<Vec<_>>>()?,
+    };
     Some(printed.join("  "))
 }
 
@@ -1680,7 +1686,7 @@ fn print_violation(
     let lasso_printed = match &violation.kind {
         ViolationKind::Lasso { printed, .. } => printed
             .iter()
-            .map(|values| format_printed(&violation.store, values))
+            .map(|prints| format_printed(&violation.store, prints))
             .collect::<Option<Vec<_>>>()
             .ok_or("printing a value whose text depends on how TLC built it")?,
         _ => Vec::new(),
@@ -2174,7 +2180,7 @@ mod tests {
         fn initial_states_progress(&mut self, _count: u64) {}
         fn initial_states(&mut self, _generated: u64, _distinct: u64) {}
         fn progress(&mut self, _generated: u64, _distinct: u64, _queued: u64, _depth: u64) {}
-        fn print(&mut self, _store: &tla_values::Store, _values: &[tla_values::Id]) {}
+        fn print(&mut self, _store: &tla_values::Store, _prints: &tla_engine::Prints) {}
     }
 
     #[test]
