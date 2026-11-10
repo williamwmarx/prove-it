@@ -4,7 +4,7 @@
 //   --side ts (the default) decides with the TypeScript backends, which checks that the recording
 //     reproduces; --side rust with the native ones.
 //   --prover smt|z3|zenon|isabelle|ls4 and --filter text keep the inputs of one backend, or whose
-//     digest contains the text. --jobs n runs n workers. --verbose lists every difference.
+//     key, prover/digest, contains the text. --jobs n runs n workers. --verbose lists every difference.
 // "declined" counts the inputs the native backend doesn't decide yet, and isn't a failure.
 // An answer is "unstable" when the recording or the new decision stopped for a reason that is a
 // property of the runtime rather than of the search, a full heap or stack, and isn't compared.
@@ -38,7 +38,7 @@ interface Answer {
 interface Result {
   verdict: Outcome;
   prover: string;
-  digest: string;
+  key: string;
   expected?: Answer;
   actual?: Answer;
   crash?: string;
@@ -47,7 +47,7 @@ interface Result {
 
 interface Batch {
   id: string;
-  digests: string[];
+  keys: string[];
 }
 
 const RESULTS_PATH = join(CONFORMANCE_DIRECTORY, ".prover-differential.json");
@@ -87,16 +87,16 @@ const decideOnSide = (record: InputRecord, text: string): Answer | string => {
 
 const isRuntimeStop = (answer: Answer) => RUNTIME_STOPS.has(String(answer.statistics.stop));
 
-const getResult = (digest: string, record: InputRecord): Result => {
+const getResult = (key: string, record: InputRecord): Result => {
   const expected = {
     verdict: record.verdict,
     statistics: record.statistics,
     ...(record.error !== undefined && { error: record.error }),
   };
-  const base = { prover: record.prover, digest, expected };
+  const base = { prover: record.prover, key, expected };
   const actual = (() => {
     try {
-      return decideOnSide(record, readFileSync(getInputPath(record.prover, digest), "utf8"));
+      return decideOnSide(record, readFileSync(getInputPath(key), "utf8"));
     } catch (error) {
       return { crash: String(error instanceof Error ? (error.stack ?? error.message) : error) };
     }
@@ -113,27 +113,27 @@ const getResult = (digest: string, record: InputRecord): Result => {
 };
 
 const records = readInputRecords();
-const digests = Object.keys(records)
-  .filter((digest) => prover === undefined || records[digest].prover === prover)
-  .filter((digest) => filter === undefined || digest.includes(filter));
+const keys = Object.keys(records)
+  .filter((key) => prover === undefined || records[key].prover === prover)
+  .filter((key) => filter === undefined || key.includes(filter));
 const batches: Batch[] = Array.from(
-  { length: Math.ceil(digests.length / BATCH_SIZE) },
+  { length: Math.ceil(keys.length / BATCH_SIZE) },
   (_, index) => ({
-    id: `inputs ${index * BATCH_SIZE + 1}-${Math.min(digests.length, (index + 1) * BATCH_SIZE)}`,
-    digests: digests.slice(index * BATCH_SIZE, (index + 1) * BATCH_SIZE),
+    id: `inputs ${index * BATCH_SIZE + 1}-${Math.min(keys.length, (index + 1) * BATCH_SIZE)}`,
+    keys: keys.slice(index * BATCH_SIZE, (index + 1) * BATCH_SIZE),
   }),
 );
 const byBatch = await runModuleWorkers(
   batches,
-  (batch) => batch.digests.reduce((total, digest) => total + (records[digest].stepLimit ?? 0), 0),
-  async (batch) => batch.digests.map((digest) => getResult(digest, records[digest])),
+  (batch) => batch.keys.reduce((total, key) => total + (records[key].stepLimit ?? 0), 0),
+  async (batch) => batch.keys.map((key) => getResult(key, records[key])),
   1,
 );
 const results = [...byBatch.values()].flat();
 writeResults(RESULTS_PATH, results);
-const missing = digests.length - results.length;
+const missing = keys.length - results.length;
 console.log(
-  `${side} on ${results.length} of ${digests.length} inputs${missing > 0 ? `, ${missing} lost with their worker` : ""}`,
+  `${side} on ${results.length} of ${keys.length} inputs${missing > 0 ? `, ${missing} lost with their worker` : ""}`,
 );
 printResults(
   results,
@@ -141,8 +141,8 @@ printResults(
   ["differs", "crash"],
   (result) =>
     result.verdict === "crash"
-      ? `crash ${result.prover} ${result.digest}: ${result.crash}`
-      : `${result.verdict} ${result.prover} ${result.digest}: expected ${JSON.stringify(result.expected)}, got ${JSON.stringify(result.actual)}`,
+      ? `crash ${result.key}: ${result.crash}`
+      : `${result.verdict} ${result.key}: expected ${JSON.stringify(result.expected)}, got ${JSON.stringify(result.actual)}`,
 );
 if (
   results.some((result) => result.verdict === "differs" || result.verdict === "crash") ||
