@@ -291,6 +291,7 @@ fn write_sany_text(out: &mut String, path: &Path, library: Option<&Path>) {
             file_name: None,
             load_module: &load_module,
             describe_file: &describe_file,
+            is_xml_export: false,
         },
     ) {
         Ok(sany) => {

@@ -76,6 +76,9 @@ pub struct ReportOptions<'a> {
     pub load_module: &'a dyn Fn(&str) -> Option<String>,
     /// The file TLC prints that it parses a module from, as `createFileDescriber` names it.
     pub describe_file: &'a dyn Fn(&str, ModuleOrigin) -> String,
+    /// tla2sany.xml.XMLExporter runs SANY with its validAstSettings: SANY prints only its errors,
+    /// with no progress lines and no warnings, and neither validates PlusCal nor lints.
+    pub is_xml_export: bool,
 }
 
 /// tla2sany.semantic.StandardModules: SANY lints the modules other than these.
@@ -344,10 +347,17 @@ impl Loader<'_> {
             (None, Ok(_)) => None,
         };
         if let Some(parse_error) = parse_error {
-            self.lines.push(parsing_line);
+            self.push_progress(parsing_line);
+            // XMLExporter gives SANY the file it is asked for, which SANY names for the root.
+            let file = match self.options.file_name {
+                Some(file_name) if self.options.is_xml_export && self.loaded.is_empty() => {
+                    format!("{}.tla", file_name.strip_suffix(".tla").unwrap_or(file_name))
+                }
+                _ => format!("{name}.tla"),
+            };
             return Err(Stop::Fatal {
                 location: Some(name.clone()),
-                message: format!("Could not parse module {name} from file {name}.tla"),
+                message: format!("Could not parse module {name} from file {file}"),
                 parse_error: Some(parse_error),
             });
         }
@@ -355,7 +365,7 @@ impl Loader<'_> {
             return Err(not_yet("SANY's parse errors"));
         };
         if module.name != *name {
-            self.lines.push(parsing_line);
+            self.push_progress(parsing_line);
             return Err(Stop::Fatal {
                 location: None,
                 message: format!(
@@ -393,12 +403,19 @@ impl Loader<'_> {
         for extendee in &extendees {
             self.validate(extendee)?;
         }
-        self.lines.push(parsing_line);
+        self.push_progress(parsing_line);
         if *name == self.root() {
             self.validate(name)?;
         }
         self.print_validations();
         Ok(())
+    }
+
+    /// A line of SANY's progress, which XMLExporter's SANY doesn't print.
+    fn push_progress(&mut self, line: String) {
+        if !self.options.is_xml_export {
+            self.lines.push(line);
+        }
     }
 
     fn root(&self) -> Rc<str> {
@@ -414,6 +431,9 @@ impl Loader<'_> {
     /// `validate` in `getSanyReport`, SpecObj.validateParseUnit: SANY's validation of the
     /// module's PlusCal, whose messages Errors.addMessage keeps once each.
     fn validate(&mut self, name: &Rc<str>) -> Result<()> {
+        if self.options.is_xml_export {
+            return Ok(());
+        }
         let loaded = &self.modules[name];
         let Some(range) = &loaded.module.location.range else {
             return Ok(());
@@ -870,9 +890,7 @@ fn write_sany_text(loader: &mut Loader, root: &Rc<str>) -> Result<()> {
             ));
         }
         for name in &order {
-            loader
-                .lines
-                .push(format!("Semantic processing of module {name}\n"));
+            loader.push_progress(format!("Semantic processing of module {name}\n"));
         }
         loader.lines.push(format!("{exception}\n"));
         loader.is_failed = true;
@@ -902,9 +920,7 @@ fn write_sany_text(loader: &mut Loader, root: &Rc<str>) -> Result<()> {
     let mut warnings: Vec<SanyError> = Vec::new();
     let mut errors: Vec<SanyError> = Vec::new();
     for (name, module_messages) in order.iter().zip(messages) {
-        loader
-            .lines
-            .push(format!("Semantic processing of module {name}\n"));
+        loader.push_progress(format!("Semantic processing of module {name}\n"));
         warnings.extend(module_messages.warnings);
         errors.extend(module_messages.errors);
         if warnings.is_empty() && errors.is_empty() {
@@ -916,7 +932,7 @@ fn write_sany_text(loader: &mut Loader, root: &Rc<str>) -> Result<()> {
         }
         let format_message =
             |message: &SanyError| format!("{}\n\n{}", message.location, message.message);
-        if !warnings.is_empty() {
+        if !warnings.is_empty() && !options.is_xml_export {
             loader
                 .lines
                 .push(format!("*** Warnings: {}\n\n", warnings.len()));
@@ -941,7 +957,7 @@ fn write_sany_text(loader: &mut Loader, root: &Rc<str>) -> Result<()> {
     loader.is_failed = !errors.is_empty();
     // SANY.frontEndLinting: when SANY accepts the spec, it lints the modules. TLC 1.7.4's SANY
     // has no linter.
-    if errors.is_empty() && options.version != TlcVersion::V1_7_4 {
+    if errors.is_empty() && options.version != TlcVersion::V1_7_4 && !options.is_xml_export {
         let linted: Vec<&Rc<str>> = order
             .iter()
             .filter(|name| !UNLINTED_MODULES.contains(&&***name))

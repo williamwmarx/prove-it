@@ -25,6 +25,7 @@ fn get_report(name: &str, source: &str) -> Result<SanyText, FrontError> {
             file_name: None,
             load_module: &|_| None,
             describe_file: &|name, origin| format!("{name} {origin:?}"),
+            is_xml_export: false,
         },
     );
     std::fs::remove_dir_all(&directory).expect("a removed directory");
@@ -115,6 +116,7 @@ fn reports_only_the_recursive_shapes_it_follows() {
                     std::fs::read_to_string(directory.join(format!("{module}.tla"))).ok()
                 },
                 describe_file: &|name, origin| format!("{name} {origin:?}"),
+                is_xml_export: false,
             },
         );
         match report {
