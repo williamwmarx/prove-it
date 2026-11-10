@@ -1007,6 +1007,85 @@ fn run_spec(test: &str, spec: &str, config: &str) -> (Output, PathBuf) {
     (run(&directory, &["-noTE", "Stop"]), directory)
 }
 
+// A counter with a `_PERIODIC` expression, as TLC's ran at d8fb231 with `-workers 1`: TLC
+// evaluates the expression just before it prints its progress, about 3 s in, and not at all in a
+// run that ends first. A constant-level expression it evaluates once, at startup.
+fn periodic_spec(next: &str, periodic: &str) -> String {
+    format!(
+        "---- MODULE Stop ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == {next}\nPeriodic == {periodic}\n====\n"
+    )
+}
+
+const PERIODIC_CONFIG: &str = "INIT Init\nNEXT Next\n_PERIODIC Periodic\nCHECK_DEADLOCK FALSE\n";
+
+#[test]
+fn prints_a_constant_periodic_expression_at_startup_as_tlc() {
+    let spec = periodic_spec("x < 3 /\\ x' = x + 1", "PrintT(\"periodic\")");
+    let (output, directory) = run_spec("periodic-constant", &spec, PERIODIC_CONFIG);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(0), "{text}");
+    assert!(
+        text.contains(
+            "\n\"periodic\"\nComputing initial states...\nFinished computing initial states: 1 distinct state generated at "
+        ),
+        "{text}"
+    );
+    assert!(
+        text.contains("Model checking completed. No error has been found."),
+        "{text}"
+    );
+    assert!(
+        text.contains("4 states generated, 4 distinct states found, 0 states left on queue.\n"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn completes_where_tlc_ends_before_it_evaluates_the_periodic_expression() {
+    for (test, periodic) in [
+        (
+            "periodic-print",
+            "PrintT(<<\"periodic\", TLCGet(\"distinct\")>>)",
+        ),
+        ("periodic-false", "TLCGet(\"distinct\") < 0"),
+    ] {
+        let spec = periodic_spec("x < 3 /\\ x' = x + 1", periodic);
+        let (output, directory) = run_spec(test, &spec, PERIODIC_CONFIG);
+        let text = stdout(&output);
+        assert_eq!(output.status.code(), Some(0), "{test}: {text}");
+        assert!(!text.contains("\"periodic\""), "{test}: {text}");
+        assert!(
+            text.contains("Model checking completed. No error has been found."),
+            "{test}: {text}"
+        );
+        assert!(
+            text.contains("4 states generated, 4 distinct states found, 0 states left on queue.\n"),
+            "{test}: {text}"
+        );
+        std::fs::remove_dir_all(directory).expect("removed");
+    }
+}
+
+#[test]
+fn declines_where_tlc_would_evaluate_the_periodic_expression() {
+    // A search that runs until TLC's first progress, where TLC prints <<"periodic", n>>.
+    let spec = periodic_spec(
+        "x' = x + 1",
+        "PrintT(<<\"periodic\", TLCGet(\"distinct\")>>)",
+    );
+    let (output, directory) = run_spec("periodic-long", &spec, PERIODIC_CONFIG);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(1), "{text}");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "prove-it: not native yet: _PERIODIC, which TLC evaluates as it prints its progress\n"
+    );
+    assert!(!text.contains("\"periodic\""), "{text}");
+    assert!(!text.contains("Progress("), "{text}");
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
 #[test]
 fn reports_a_constant_the_configuration_leaves_unassigned() {
     let spec =
@@ -2668,6 +2747,100 @@ fn run_front(test: &str, spec: &str, config: &str, args: &[&str]) -> (Output, Pa
         .output()
         .expect("the binary runs");
     (output, directory)
+}
+
+// tests/liveness-failures: x' \in S or x' \subseteq S beside x' = a \/ x' = b, where TLC fails
+// evaluating WF_x(Next) or WF_x(Alias), Alias == Next, as it adds a state to the behavior graphs.
+// Where the subscript's two values fail to compare (`LNAction.eval` compares them outside any
+// evaluation), TLC prints no nested expressions; where an element of x' fails S's own `member` in
+// `isSubsetEq` and S has a source, TLC throws a FingerprintException, whose message it doesn't
+// print, which the engine declines as it does other FingerprintExceptions. TLC's output for each
+// at d8fb231 is beside it.
+#[test]
+fn reports_failures_in_the_temporal_properties_as_tlc() {
+    let declined = [
+        "MFunctionsSubseteqEmptyWrap",
+        "MFunctionsSubseteqWrap",
+        "MProductSubseteqEmptyWrap",
+        "MRecordsSubseteqEmptyWrap",
+    ];
+    let directory =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/liveness-failures");
+    let mut names: Vec<String> = std::fs::read_dir(&directory)
+        .expect("the specs")
+        .filter_map(|entry| {
+            let path = entry.expect("an entry").path();
+            (path.extension()? == "tla").then(|| path.file_stem()?.to_str().map(String::from))?
+        })
+        .collect();
+    names.sort();
+    assert_eq!(names.len(), 9);
+    for name in names {
+        let spec = std::fs::read_to_string(directory.join(format!("{name}.tla"))).expect("a spec");
+        let constant = if name.contains("Empty") {
+            "{}"
+        } else {
+            "{1, 3}"
+        };
+        for (specification, suffix) in [("Weak", ""), ("AliasWeak", ".alias")] {
+            let tlc = std::fs::read_to_string(directory.join(format!("{name}{suffix}.txt")))
+                .expect("TLC's output");
+            for workers in ["1", "4"] {
+                let config = format!(
+                    "CONSTANT C = {constant}\nSPECIFICATION {specification}\nPROPERTY Live\n"
+                );
+                let test = format!("failures-{name}-{specification}-{workers}");
+                let args = [
+                    "-workers",
+                    workers,
+                    "-nowarning",
+                    "-seed",
+                    "4",
+                    "-fp",
+                    "0",
+                    "-lncheck",
+                    "final",
+                ];
+                let (output, run) = run_front(&test, &spec, &config, &args);
+                let text = stdout(&output);
+                let error = String::from_utf8_lossy(&output.stderr).into_owned();
+                if declined.contains(&name.as_str()) {
+                    assert!(
+                        error.contains("prove-it: not native yet: "),
+                        "{name} {specification} {workers}: {text}{error}"
+                    );
+                } else {
+                    assert_eq!(
+                        get_untimed(&text),
+                        tlc,
+                        "{name} {specification} {workers}: {error}"
+                    );
+                }
+                std::fs::remove_dir_all(run).expect("removed");
+            }
+        }
+    }
+}
+
+// What a run printed from `Starting...` to `Finished in`, but the lines that tell the time.
+fn get_untimed(text: &str) -> String {
+    let start = text.find("Starting... (").expect("the start");
+    let end = text.find("Finished in ").expect("the end");
+    text[start..end]
+        .lines()
+        .skip(1)
+        .filter(|line| {
+            ![
+                "Finished computing initial states",
+                "Progress(",
+                "Checking ",
+                "Finished checking temporal properties",
+            ]
+            .iter()
+            .any(|prefix| line.starts_with(prefix))
+        })
+        .map(|line| format!("{line}\n"))
+        .collect()
 }
 
 // What a run printed from `Starting...` to computing the initial states.

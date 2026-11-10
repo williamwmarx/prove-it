@@ -1,6 +1,8 @@
 //! The native `prove-it` binary (native/DESIGN.md 13): checks a TLA+ spec as the TypeScript CLI
 //! does and prints exactly what TLC prints.
 
+mod pages;
+
 use prove_it_check::Output;
 
 /// The stack of the run's thread: the front end recurses as deep as TLC's translation of a
@@ -22,6 +24,7 @@ fn main() {
                 &mut Output {
                     out: &mut out,
                     err: &mut err,
+                    large_region_advice: pages::LARGE_REGION_ADVICE,
                 },
             )
         })
