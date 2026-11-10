@@ -5302,8 +5302,7 @@ fn describe(kind: &NodeKind) -> &'static str {
     }
 }
 
-/// `EC.TLC_MODULE_APPLYING_TO_WRONG_VALUE` and `EC.TLC_MODULE_BAG_UNION1`.
-const APPLYING_TO_WRONG_VALUE: u32 = 2176;
+/// `EC.TLC_MODULE_BAG_UNION1`.
 const BAG_UNION1: u32 = 2177;
 /// The most sub-bags SubBag builds.
 const MAXIMUM_SUB_BAGS: usize = 1 << 20;
