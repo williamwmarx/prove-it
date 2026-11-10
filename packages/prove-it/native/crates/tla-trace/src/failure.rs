@@ -12,7 +12,7 @@ use crate::fingerprint::{fingerprint_failure, state_fingerprint};
 use crate::print::format_value;
 use crate::rebuild::{Rebuilder, is_in_model, is_same, run};
 use crate::value::{
-    Evaluated, TlcMessage, Value, clear_unnormalized, fail, fail_with, normalize_failure,
+    Evaluated, TlcMessage, Value, clear_unnormalized, fail, fail_with, normalize_failure, settle,
 };
 use crate::{Ending, Trace, Unsupported};
 
@@ -488,6 +488,11 @@ impl<'ir> Rebuilder<'ir> {
                         let call_stack = evaluator.call_stack.take();
                         let (failed, earlier) = checks.split_last().expect("a check");
                         for (position, &body) in earlier.iter().enumerate() {
+                            // TLC fingerprints the state once the constraints hold, before it
+                            // checks the invariants (`DoInitFunctor`).
+                            if position == constraint_count && is_keyed_by_state {
+                                evaluator.current.iter().flatten().for_each(settle);
+                            }
                             let holds = if position < constraint_count {
                                 constraint_holds(evaluator, body)
                             } else {
@@ -499,6 +504,9 @@ impl<'ir> Rebuilder<'ir> {
                             }
                         }
                         if is_traced {
+                            if earlier.len() <= constraint_count && is_keyed_by_state {
+                                evaluator.current.iter().flatten().for_each(settle);
+                            }
                             evaluator.call_stack = call_stack;
                             return evaluator.boolean(*failed, &Context::default());
                         }

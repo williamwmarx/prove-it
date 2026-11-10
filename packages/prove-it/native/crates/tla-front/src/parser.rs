@@ -69,7 +69,7 @@ fn get_infix(text: &str) -> Option<InfixOperator> {
     }
 }
 
-fn is_infix(text: &str) -> bool {
+pub fn is_infix(text: &str) -> bool {
     get_infix(text).is_some()
 }
 
@@ -1382,7 +1382,14 @@ impl Parser {
                         DefinitionUnit::Definition(definition) => definitions.push(definition),
                     }
                 }
-                self.recursive_scopes.pop();
+                let declared = self.recursive_scopes.pop().unwrap_or_default();
+                if declared.iter().any(|name| {
+                    definitions
+                        .iter()
+                        .all(|definition: &Rc<Definition>| definition.name != *name)
+                }) {
+                    self.current_module().has_undefined_let_recursive = true;
+                }
                 let body = Rc::new(self.parse_expression(0)?);
                 Ok(located(
                     ExpressionKind::Let {
@@ -2683,6 +2690,7 @@ impl Parser {
             theorems: Vec::new(),
             uses: Vec::new(),
             units: Vec::new(),
+            has_undefined_let_recursive: false,
         });
         self.recursive_scopes.push(FastSet::default());
         if self.accept("EXTENDS") {

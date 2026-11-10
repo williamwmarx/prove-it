@@ -1148,6 +1148,26 @@ fn reports_a_union_with_an_operand_that_isnt_a_set_as_it_fingerprints_it() {
 }
 
 #[test]
+fn stops_where_an_invariant_sets_exit_as_tlc_does() {
+    // TLC's test EWD998Chan: TLCSet("exit", TRUE) finishes the queue, so the worker completes the
+    // state it expands and stops, and TLC's main thread prints the progress as the invariant that
+    // set it left it. TLCGet's key reaches it through an INSTANCE of TLC.
+    let spec = "---- MODULE Stop ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' \\in {x + 1, x + 2}\nStop == LET T == INSTANCE TLC IN T!TLCSet(\"exit\", T!TLCGet(\"distinct\") > 4)\n====\n";
+    let (output, directory) = run_lowered("exit", spec, "INIT Init\nNEXT Next\nINVARIANT Stop\n");
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(0), "{text}");
+    assert!(
+        text.contains(": 7 states generated (") && text.contains(", 5 distinct states found (") && text.contains("ds/min), 1 states left on queue.\nModel checking completed. No error has been found.\n"),
+        "{text}"
+    );
+    assert!(
+        text.contains("\n7 states generated, 5 distinct states found, 2 states left on queue.\nThe depth of the complete state graph search is 3.\n"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
 fn prints_what_the_expansion_printed_before_its_violation() {
     // TLC checks each successor as it finds it, so it prints what finding the violating one
     // printed before it reports the violation, as TLC 1.8 prints this spec's 1.
@@ -1671,6 +1691,57 @@ fn checks_the_postconditions_after_a_failure_as_tlcs_deadlock_check_does() {
         "{text}"
     );
     assert!(!text.contains("Postcondition"), "{text}");
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn compares_the_message_of_a_lazy_function_applied_outside_its_domain() {
+    // TLC applies a LET's function constructor keeping it lazy, and `FcnLambdaValue.apply` words
+    // a key outside its domain with the function as its `FcnRcdValue` prints (TLC's Github696).
+    let spec = "---- MODULE AE ----\nEXTENDS TLC, TLCExt, Naturals\nVARIABLE x\nASSUME LET f == [n \\in {1, 3} |-> n + 1] IN AssertError(\"In applying the function\\n(1 :> 2 @@ 3 :> 4),\\nthe first argument is:\\n5\\nwhich is not in its domain.\\n\", f[5])\nInit == x = 1\nNext == UNCHANGED x\n====\n";
+    let (output, directory) = run_front("assert-error-lazy", spec, "INIT Init\nNEXT Next\n", &[]);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(0), "{text}");
+    assert!(
+        text.contains("1 distinct states found, 0 states left on queue."),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+    // A LET that names the function elsewhere may have built it first, which words the failure
+    // otherwise: the replay doesn't follow which, so the run isn't native.
+    let twice = spec.replace("IN AssertError(", "IN DOMAIN f = {1, 3} /\\ AssertError(");
+    let (output, directory) =
+        run_front("assert-error-built", &twice, "INIT Init\nNEXT Next\n", &[]);
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("not native yet"),
+        "{}",
+        stdout(&output)
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn searches_a_functions_keys_as_tlc_does_where_one_cant_compare() {
+    // `FcnRcdValue.select` asks each key of a short function whether it equals the argument, in
+    // the order of a function a state holds, which TLC has sorted.
+    let spec = "---- MODULE Keys ----\nEXTENDS Integers, TLC\nCONSTANTS M1, M2, K\nVARIABLE v\nInit == v = [m \\in {M1, M2} |-> 1]\nNext == UNCHANGED v\nInv == v[K] = 1\n====\n";
+    let config = "CONSTANTS M1 = A_1\nM2 = A_2\nK = B_1\nINIT Init\nNEXT Next\nINVARIANT Inv\n";
+    let (output, directory) = run_front("keys-state", spec, config, &[]);
+    let text = stdout(&output);
+    assert!(
+        text.contains("Error: Attempted to check equality of the differently-typed model values A_1 and B_1\nWhile working on the initial state:\nv = (A_1 :> 1 @@ A_2 :> 1)\n"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+    // TLC searches a function it hasn't sorted in the order it built it, which the replay
+    // doesn't keep.
+    let built = spec.replace("Inv == v[K] = 1", "Inv == (M2 :> v @@ M1 :> 2)[K] = 1");
+    let (output, directory) = run_front("keys-built", &built, config, &[]);
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("not native yet"),
+        "{}",
+        stdout(&output)
+    );
     std::fs::remove_dir_all(directory).expect("removed");
 }
 
