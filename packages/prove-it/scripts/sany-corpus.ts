@@ -112,7 +112,7 @@ for (const source of corpora) {
     if (expected === undefined) throw new Error(`${recordedPath} records nothing for ${id}`);
     if (recordPath !== undefined) recording[id] = expected;
     else {
-      count(id, expected, run(native, [...ARGUMENTS, name], directory));
+      count(id, expected, run(native, [main, ...ARGUMENTS, name], directory));
       if (isCliChecked) {
         count(`${id} (cli)`, expected, run("node", [cli, main, ...ARGUMENTS, name], directory));
       }
