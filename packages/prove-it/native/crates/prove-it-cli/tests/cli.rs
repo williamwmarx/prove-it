@@ -1981,3 +1981,27 @@ fn labels_a_step_of_a_next_state_relation_that_instantiates_in_a_let_without_a_r
     );
     std::fs::remove_dir_all(directory).expect("removed");
 }
+
+#[test]
+fn ranks_the_strings_the_startup_makes_without_a_recorded_front() {
+    // test-model/Github696: TLC interns the names ToString and \o make as it computes MVS, which
+    // orders the model values the search then compares.
+    let (output, directory) = run_front(
+        "startup-ranks",
+        "---- MODULE Ranked ----\nEXTENDS TLC, TLCExt, Integers, Sequences\nb == TLCModelValue(\"B_a\")\nMVS == { TLCModelValue(\"A_\" \\o ToString(n)) : n \\in 0..63 }\nVARIABLE v\nInit == v = [ mv \\in MVS |-> ToString(mv) ]\nNext == UNCHANGED v\nInv == v = [ v EXCEPT ![b] = 42 ]\n====\n",
+        "INIT Init\nNEXT Next\nINVARIANT Inv\n",
+        &[],
+    );
+    let text = stdout(&output);
+    assert_eq!(
+        output.status.code(),
+        Some(75),
+        "{text}{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        text.contains("Error: Attempted to compare the differently-typed model values A_31 and B_a\nWhile working on the initial state:\n"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}

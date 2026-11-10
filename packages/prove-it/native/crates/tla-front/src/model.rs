@@ -84,6 +84,40 @@ pub fn lower_front(
     config_text: &str,
     options: &ModelOptions,
 ) -> Result<LoweredModel, FrontError> {
+    lower_ranked(spec_path, config_text, options, &[]).map(|(lowered, _)| lowered)
+}
+
+/// The model as `lower_front` lowers it, with the strings TLC makes as it computes the constant
+/// definitions ranked after the spec's, as `check.ts` lowers its IR once it has computed them.
+/// `get_startup_texts` finds them in the IR, given the indexes of the definitions TLC computes
+/// as it starts, in its order; where it finds some, the model is lowered again with them ranked.
+pub fn lower_front_ranking(
+    spec_path: &Path,
+    config_text: &str,
+    options: &ModelOptions,
+    get_startup_texts: &dyn Fn(&tla_ir::Ir, &[tla_ir::Index]) -> Vec<Box<[u16]>>,
+) -> Result<LoweredModel, FrontError> {
+    let (lowered, startup) = lower_ranked(spec_path, config_text, options, &[])?;
+    let Ok(ir) = tla_ir::decode(&lowered.ir) else {
+        return Ok(lowered);
+    };
+    // A text Rust can't hold as a string ends the ranks, which stay TLC's up to it.
+    let startup_texts: Vec<Rc<str>> = get_startup_texts(&ir, &startup)
+        .iter()
+        .map_while(|units| String::from_utf16(units).ok().map(Rc::from))
+        .collect();
+    if startup_texts.is_empty() {
+        return Ok(lowered);
+    }
+    lower_ranked(spec_path, config_text, options, &startup_texts).map(|(lowered, _)| lowered)
+}
+
+fn lower_ranked(
+    spec_path: &Path,
+    config_text: &str,
+    options: &ModelOptions,
+    startup_texts: &[Rc<str>],
+) -> Result<(LoweredModel, Vec<tla_ir::Index>), FrontError> {
     let version = options.version.unwrap_or(TlcVersion::Master);
     let source = std::fs::read_to_string(spec_path)
         .map_err(|error| FrontError::Config(format!("{}: {error}", spec_path.display())))?;
@@ -108,6 +142,7 @@ pub fn lower_front(
         .get_string_order(&config)?
         .iter()
         .map(|text| Rc::from(text.as_str()))
+        .chain(startup_texts.iter().cloned())
         .collect();
     let variable_order = order.get_declaration_order(true)?;
     let facts = create_definition_facts(&environment);
@@ -198,7 +233,7 @@ pub fn lower_front(
             )?
         };
         let branches = lowering.branches;
-        let ir = lowering.finish(model)?;
+        let (ir, startup) = lowering.finish_indexing(model)?;
         // TLCGet("spec"), where an expression reads it; where the front end can't describe the
         // specification, the engine stops where TLC would read it.
         let ir = if options.is_spec_described && reads_spec(&ir) {
@@ -252,11 +287,14 @@ pub fn lower_front(
             Ok(messages) => (startup_messages, messages),
             Err(reason) => (Err(reason), Vec::new()),
         };
-        Ok(LoweredModel {
-            override_messages,
-            ir: tla_ir::encode(&ir),
-            startup_messages,
-        })
+        Ok((
+            LoweredModel {
+                override_messages,
+                ir: tla_ir::encode(&ir),
+                startup_messages,
+            },
+            startup,
+        ))
     })();
     // TLC stops on a constant predicate the engine checks at startup before what follows it, so
     // the front end can't report what follows.
