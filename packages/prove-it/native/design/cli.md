@@ -8,8 +8,11 @@ ones. The plan stays in §13.
 The binary's check lives in `prove-it-check`, which `prove-it-cli` runs on stdout and stderr: it
 writes what TLC prints, and its own notes such as `not native yet`, to an `Output`, so that the
 host can run the same check in-process ([fallback.md](fallback.md), S1). A printed value whose
-text depends on how TLC built it used to end the process at once; the check now stops printing,
-lets the search end with its events unread, and reports the model as not native.
+text depends on how TLC built it used to end the process at once. Now the check prints nothing
+more, and its relay cancels the search (`Reporter::is_cancelled`). The engine asks where it checks
+its progress: every 256 states on one thread, and after each share of a level on several. The
+search declines within that, and the check reports the model as not native, with the same output
+and exit code.
 
 ## Print and PrintT (#66)
 

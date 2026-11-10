@@ -2865,6 +2865,32 @@ fn searches_a_functions_keys_as_tlc_does_where_one_cant_compare() {
 }
 
 #[test]
+fn declines_a_search_that_prints_a_value_as_tlc_built_it() {
+    // TLC prints 1..2 as written, which the store forgets. The search, which never ends, stops
+    // once the print is known to differ, on one thread and on several.
+    let spec = "---- MODULE Misprinted ----\nEXTENDS TLC, Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = x + 1 /\\ PrintT(1..2)\n====\n";
+    let directory =
+        std::env::temp_dir().join(format!("prove-it-cli-misprinted-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    std::fs::write(directory.join("Misprinted.tla"), spec).expect("the spec");
+    std::fs::write(directory.join("Misprinted.cfg"), "INIT Init\nNEXT Next\n")
+        .expect("the configuration");
+    for workers in ["1", "4"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
+            .args(["-noGenerateSpecTE", "-workers", workers, "Misprinted"])
+            .current_dir(&directory)
+            .output()
+            .expect("the binary runs");
+        assert_eq!(output.status.code(), Some(1), "{}", stdout(&output));
+        assert_eq!(
+            String::from_utf8_lossy(&output.stderr),
+            "prove-it: not native yet: printing a value whose text depends on how TLC built it\n"
+        );
+    }
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
 fn prints_an_assumption_value_as_tlc_built_it() {
     // test-model/SetPredValue: the store forgets how TLC built the set PrintT prints, which the
     // trace evaluator prints as TLC does.

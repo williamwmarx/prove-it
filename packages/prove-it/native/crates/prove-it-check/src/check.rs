@@ -290,6 +290,8 @@ enum Event {
 
 struct Relay<'ir> {
     sender: mpsc::Sender<Event>,
+    /// Whether something printed has a text TLC's isn't known to be, which ends the search.
+    is_misprinted: bool,
     ir: &'ir tla_ir::Ir,
     is_tool: bool,
     workers: usize,
@@ -312,6 +314,11 @@ struct Relay<'ir> {
 }
 
 impl Relay<'_> {
+    fn send_print(&mut self, printed: Option<String>) {
+        self.is_misprinted |= printed.is_none();
+        let _ = self.sender.send(Event::Print(printed));
+    }
+
     // What an assumption prints, which the trace evaluator prints as TLC built it where the store
     // forgot, as long as it prints the same: each print before it the store worded alike.
     fn word_assumed(&mut self, worded: Option<String>) -> Option<String> {
@@ -357,6 +364,10 @@ impl Relay<'_> {
 }
 
 impl Reporter for Relay<'_> {
+    fn is_cancelled(&self) -> bool {
+        self.is_misprinted
+    }
+
     fn initial_states_started(&mut self) {
         let _ = self.sender.send(Event::InitialStatesStarted);
     }
@@ -384,9 +395,7 @@ impl Reporter for Relay<'_> {
     }
 
     fn print(&mut self, store: &Store, values: &[Id]) {
-        let _ = self
-            .sender
-            .send(Event::Print(format_printed(store, values)));
+        self.send_print(format_printed(store, values));
     }
 
     // What the substitutes and constant definitions print, which the trace evaluator prints as
@@ -397,12 +406,12 @@ impl Reporter for Relay<'_> {
         let Some(worded_prints) = self.startup_worded.as_mut() else {
             let printed = self.word_assumed(worded);
             self.assumed_printed.extend(printed.clone());
-            let _ = self.sender.send(Event::Print(printed));
+            self.send_print(printed);
             return;
         };
         worded_prints.push(worded.clone());
         if self.startup_texts.is_none() && worded.is_some() {
-            let _ = self.sender.send(Event::Print(worded));
+            self.send_print(worded);
             return;
         }
         let ir = self.ir;
@@ -429,7 +438,7 @@ impl Reporter for Relay<'_> {
             .and_then(|texts| texts.get(index))
             .filter(|text| worded.as_ref().is_none_or(|worded| worded == *text))
             .cloned();
-        let _ = self.sender.send(Event::Print(printed));
+        self.send_print(printed);
     }
 
     fn startup_done(&mut self) {
@@ -437,7 +446,7 @@ impl Reporter for Relay<'_> {
         if let Some(Some(texts)) = &self.startup_texts
             && Some(texts.len()) != count
         {
-            let _ = self.sender.send(Event::Print(None));
+            self.send_print(None);
         }
         for message in self.startup_messages.drain(..) {
             let _ = self.sender.send(Event::StartupMessage(message));
@@ -462,13 +471,13 @@ impl Reporter for Relay<'_> {
             .map(|print| format_print(print))
             .collect();
         if !expected.starts_with(&self.assumed_printed) {
-            let _ = self.sender.send(Event::Print(None));
+            self.send_print(None);
             return Err("printing other than TLC prints".into());
         }
         for text in &expected[self.assumed_printed.len()..] {
             self.assumed_worded.push(Some(text.clone()));
             self.assumed_printed.push(text.clone());
-            let _ = self.sender.send(Event::Print(Some(text.clone())));
+            self.send_print(Some(text.clone()));
         }
         Ok(Delegated {
             holds: checked.holds,
@@ -752,6 +761,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
             .spawn_scoped(scope, move || {
                 let mut relay = Relay {
                     sender,
+                    is_misprinted: false,
                     ir,
                     is_tool,
                     workers,
@@ -803,8 +813,8 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                 Event::Print(Some(text)) => printer.line(&text),
                 Event::StartupMessage(message) => print_startup_message(printer, &message),
                 Event::SymmetrySetsTooSmall(names) => print_small_sets(printer, &names),
-                // Nothing more this run prints can be right, so it prints nothing more, and
-                // leaves the search to end with the events it sends unread.
+                // Nothing more this run prints can be right, so it prints nothing more, and the
+                // search, which the relay cancels, ends with the events it sends unread.
                 Event::Print(None) => {
                     is_misprinted = true;
                     break;
