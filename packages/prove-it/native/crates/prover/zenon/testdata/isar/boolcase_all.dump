@@ -1,0 +1,75 @@
+counter	q
+steps	6
+expr	2	var	x	
+expr	3	app	Q	2
+expr	4	all	zenon_U	2,3
+expr	5	app	P	4
+expr	6	var	a	
+expr	7	app	Q	6
+expr	8	not		7
+expr	9	app	P	1
+expr	10	not		9
+expr	11	var	S	
+expr	12	app	TLA.in	2,11
+expr	13	app	P	2
+expr	15	var	B	
+expr	16	app	TLA.in	2,15
+expr	17	lam		2,16
+expr	19	imply		12,13
+expr	20	all		2,19
+expr	22	and		12,13
+expr	23	ex		2,22
+expr	24	tau		2,22
+expr	28	var	zenon_Vf	
+expr	29	lam		28,28
+expr	30	not		28
+expr	31	lam		28,30
+expr	32	app	P	28
+expr	33	not		32
+expr	34	lam		28,33
+expr	36	var	zenon_Vg	
+expr	40	app	Q	36
+expr	41	not		40
+expr	42	lam		36,41
+expr	44	var	zenon_Vh	
+expr	46	app	P	44
+expr	47	lam		44,46
+expr	48	lam	zenon_U	2,3
+expr	49	app	=	4,0
+expr	50	app	P	0
+expr	51	app	=	4,1
+expr	56	var	zenon_Vi	
+expr	58	app	=	56,1
+expr	59	lam		56,58
+expr	65	var	zenon_Vj	
+expr	69	not		3
+expr	70	tau	zenon_U	2,69
+expr	73	ex	zenon_U	2,69
+expr	75	var	zenon_Vk	
+expr	79	var	zenon_Vl	
+expr	88	var	zenon_Vm	
+expr	95	var	zenon_Vn	
+expr	97	app	=	95,0
+expr	98	lam		95,97
+expr	102	var	zenon_Vo	
+expr	104	meta		4
+expr	107	var	zenon_Vp	
+expr	109	app	Q	107
+expr	110	lam		107,109
+expr	116	var	zenon_Vq	
+expr	120	app	=	116,6
+expr	121	not		120
+expr	122	lam		116,121
+expr	123	app	=	104,116
+expr	124	not		123
+expr	125	lam		116,124
+lemma	zenon_thm	
+node	2	5,10,8	extension	zenon_boolcase_all	47,48	5	49,50;51,9
+node	1	49,8	extension	zenon_eq_x_true	4	49	4
+node	1	4,8	all	4	6
+node	0	8,7	axiom	7
+node	0	10,9	axiom	9
+numbers	
+hyp	h	5	1
+hyp	n	8	1
+hyp	zenon_G	10	0

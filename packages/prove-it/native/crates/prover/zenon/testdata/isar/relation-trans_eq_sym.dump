@@ -1,0 +1,742 @@
+counter	ec
+steps	111
+expr	2	var	x	
+expr	3	var	y	
+expr	4	app	R	2,3
+expr	5	var	z	
+expr	6	app	R	3,5
+expr	7	and		4,6
+expr	8	app	R	2,5
+expr	9	imply		7,8
+expr	10	all	zenon_U	5,9
+expr	11	all	zenon_U	3,10
+expr	12	all	zenon_U	2,11
+expr	13	app	R	3,2
+expr	14	imply		4,13
+expr	15	all	zenon_U	3,14
+expr	16	all	zenon_U	2,15
+expr	17	var	b	
+expr	18	app	g	17
+expr	19	var	a	
+expr	20	app	f	19
+expr	21	app	=	18,20
+expr	22	app	g	3
+expr	23	app	R	22,18
+expr	24	all	zenon_U	3,23
+expr	25	app	f	2
+expr	26	app	R	20,25
+expr	27	all	zenon_U	2,26
+expr	28	var	c	
+expr	29	app	f	28
+expr	30	var	d	
+expr	31	app	g	30
+expr	32	app	R	29,31
+expr	33	not		32
+expr	34	var	S	
+expr	35	app	TLA.in	2,34
+expr	36	app	P	2
+expr	38	var	B	
+expr	39	app	TLA.in	2,38
+expr	40	lam		2,39
+expr	42	imply		35,36
+expr	43	all		2,42
+expr	45	and		35,36
+expr	46	ex		2,45
+expr	47	tau		2,45
+expr	54	app	R	31,29
+expr	55	var	zenon_Vf	
+expr	56	lam		55,55
+expr	57	not		55
+expr	58	lam		55,57
+expr	59	app	R	55,31
+expr	60	not		59
+expr	61	lam		55,60
+expr	62	app	f	55
+expr	63	app	R	62,31
+expr	64	not		63
+expr	65	lam		55,64
+expr	66	app	R	29,55
+expr	67	not		66
+expr	68	lam		55,67
+expr	69	app	g	55
+expr	70	app	R	29,69
+expr	71	not		70
+expr	72	lam		55,71
+expr	74	var	zenon_Vg	
+expr	76	meta		27
+expr	77	app	f	76
+expr	78	app	R	20,77
+expr	80	var	zenon_Vh	
+expr	82	meta		24
+expr	83	app	g	82
+expr	84	app	R	83,18
+expr	85	not		21
+expr	88	var	zenon_Vi	
+expr	90	app	=	88,20
+expr	91	lam		88,90
+expr	92	app	g	88
+expr	93	app	=	92,20
+expr	94	lam		88,93
+expr	95	app	=	18,88
+expr	96	lam		88,95
+expr	97	app	f	88
+expr	98	app	=	18,97
+expr	99	lam		88,98
+expr	100	app	R	31,18
+expr	101	not		100
+expr	102	app	R	20,29
+expr	103	not		102
+expr	106	app	=	20,29
+expr	107	not		106
+expr	111	var	zenon_Vj	
+expr	113	app	R	111,18
+expr	114	lam		111,113
+expr	115	app	g	111
+expr	116	app	R	115,18
+expr	117	lam		111,116
+expr	118	app	R	83,111
+expr	119	lam		111,118
+expr	120	app	R	83,115
+expr	121	lam		111,120
+expr	136	app	R	18,31
+expr	137	not		136
+expr	145	var	zenon_Vk	
+expr	147	app	R	145,77
+expr	148	lam		145,147
+expr	149	app	f	145
+expr	150	app	R	149,77
+expr	151	lam		145,150
+expr	152	app	R	20,145
+expr	153	lam		145,152
+expr	154	app	R	20,149
+expr	155	lam		145,154
+expr	156	app	=	29,20
+expr	157	not		156
+expr	158	app	R	29,20
+expr	159	not		158
+expr	164	app	=	31,20
+expr	165	not		164
+expr	166	app	R	31,20
+expr	167	not		166
+expr	172	app	=	20,31
+expr	173	not		172
+expr	174	app	R	20,31
+expr	175	not		174
+expr	181	var	zenon_Vl	
+expr	185	app	R	181,29
+expr	186	not		185
+expr	187	lam		181,186
+expr	188	app	f	181
+expr	189	app	R	188,29
+expr	190	not		189
+expr	191	lam		181,190
+expr	192	app	R	77,181
+expr	193	not		192
+expr	194	lam		181,193
+expr	195	app	R	77,188
+expr	196	not		195
+expr	197	lam		181,196
+expr	219	var	zenon_Vm	
+expr	223	app	=	219,29
+expr	224	not		223
+expr	225	lam		219,224
+expr	226	app	f	219
+expr	227	app	=	226,29
+expr	228	not		227
+expr	229	lam		219,228
+expr	230	app	=	77,219
+expr	231	not		230
+expr	232	lam		219,231
+expr	233	app	=	77,226
+expr	234	not		233
+expr	235	lam		219,234
+expr	241	var	zenon_Vn	
+expr	245	app	=	241,28
+expr	246	not		245
+expr	247	lam		241,246
+expr	248	app	=	76,241
+expr	249	not		248
+expr	250	lam		241,249
+expr	252	var	zenon_Vo	
+expr	259	app	f	252
+expr	263	app	=	20,252
+expr	264	not		263
+expr	265	lam		252,264
+expr	266	app	=	20,259
+expr	267	not		266
+expr	268	lam		252,267
+expr	276	var	zenon_Vp	
+expr	283	app	=	19,276
+expr	284	not		283
+expr	285	lam		276,284
+expr	287	var	zenon_Vq	
+expr	291	app	R	287,77
+expr	292	not		291
+expr	293	lam		287,292
+expr	294	app	f	287
+expr	295	app	R	294,77
+expr	296	not		295
+expr	297	lam		287,296
+expr	305	not		159
+expr	306	var	zenon_Vr	
+expr	310	app	R	306,20
+expr	311	not		310
+expr	312	lam		306,311
+expr	313	app	f	306
+expr	314	app	R	313,20
+expr	315	not		314
+expr	316	lam		306,315
+expr	320	app	R	29,313
+expr	321	not		320
+expr	322	lam		306,321
+expr	336	var	zenon_Vs	
+expr	343	app	g	336
+expr	344	app	R	343,31
+expr	345	not		344
+expr	346	lam		336,345
+expr	347	app	R	18,336
+expr	348	not		347
+expr	349	lam		336,348
+expr	350	app	R	18,343
+expr	351	not		350
+expr	352	lam		336,351
+expr	362	var	zenon_Vt	
+expr	366	app	=	362,31
+expr	367	not		366
+expr	368	lam		362,367
+expr	369	app	g	362
+expr	370	app	=	369,31
+expr	371	not		370
+expr	372	lam		362,371
+expr	373	app	=	18,362
+expr	374	not		373
+expr	375	lam		362,374
+expr	376	app	=	18,369
+expr	377	not		376
+expr	378	lam		362,377
+expr	384	var	zenon_Vu	
+expr	388	app	=	384,30
+expr	389	not		388
+expr	390	lam		384,389
+expr	391	app	=	17,384
+expr	392	not		391
+expr	393	lam		384,392
+expr	395	var	zenon_Vv	
+expr	402	app	g	395
+expr	406	app	=	83,395
+expr	407	not		406
+expr	408	lam		395,407
+expr	409	app	=	83,402
+expr	410	not		409
+expr	411	lam		395,410
+expr	419	var	zenon_Vw	
+expr	426	app	=	82,419
+expr	427	not		426
+expr	428	lam		419,427
+expr	432	var	zenon_Vx	
+expr	436	app	R	432,18
+expr	437	not		436
+expr	438	lam		432,437
+expr	439	app	g	432
+expr	440	app	R	439,18
+expr	441	not		440
+expr	442	lam		432,441
+expr	451	var	zenon_Vy	
+expr	455	app	R	451,83
+expr	456	not		455
+expr	457	lam		451,456
+expr	458	app	g	451
+expr	459	app	R	458,83
+expr	460	not		459
+expr	461	lam		451,460
+expr	462	app	R	31,451
+expr	463	not		462
+expr	464	lam		451,463
+expr	465	app	R	31,458
+expr	466	not		465
+expr	467	lam		451,466
+expr	472	app	R	20,83
+expr	476	app	R	83,20
+expr	479	var	zenon_Vz	
+expr	490	app	R	20,479
+expr	491	not		490
+expr	492	lam		479,491
+expr	493	app	g	479
+expr	494	app	R	20,493
+expr	495	not		494
+expr	496	lam		479,495
+expr	500	var	zenon_Vaa	
+expr	507	app	f	500
+expr	508	app	=	507,31
+expr	509	not		508
+expr	510	lam		500,509
+expr	514	app	g	500
+expr	515	app	=	20,514
+expr	516	not		515
+expr	517	lam		500,516
+expr	519	var	zenon_Vba	
+expr	533	app	g	519
+expr	534	app	R	77,533
+expr	535	not		534
+expr	536	lam		519,535
+expr	542	var	zenon_Vca	
+expr	556	app	g	542
+expr	557	app	=	77,556
+expr	558	not		557
+expr	559	lam		542,558
+expr	563	var	zenon_Vda	
+expr	570	app	f	563
+expr	577	app	R	20,570
+expr	578	not		577
+expr	579	lam		563,578
+expr	581	var	zenon_Vea	
+expr	599	var	zenon_Vfa	
+expr	606	app	f	599
+expr	607	app	R	606,18
+expr	608	not		607
+expr	609	lam		599,608
+expr	617	var	zenon_Vga	
+expr	635	var	zenon_Vha	
+expr	642	app	f	635
+expr	643	app	R	642,83
+expr	644	not		643
+expr	645	lam		635,644
+expr	654	var	zenon_Via	
+expr	658	app	=	654,83
+expr	659	not		658
+expr	660	lam		654,659
+expr	661	app	f	654
+expr	662	app	=	661,83
+expr	663	not		662
+expr	664	lam		654,663
+expr	665	app	=	29,654
+expr	666	not		665
+expr	667	lam		654,666
+expr	668	app	g	654
+expr	669	app	=	29,668
+expr	670	not		669
+expr	671	lam		654,670
+expr	673	var	zenon_Vja	
+expr	680	app	g	673
+expr	681	app	=	680,29
+expr	682	not		681
+expr	683	lam		673,682
+expr	687	app	f	673
+expr	688	app	=	18,687
+expr	689	not		688
+expr	690	lam		673,689
+expr	692	var	zenon_Vka	
+expr	696	app	=	692,20
+expr	697	not		696
+expr	698	lam		692,697
+expr	699	app	f	692
+expr	700	app	=	699,20
+expr	701	not		700
+expr	702	lam		692,701
+expr	714	var	zenon_Vla	
+expr	718	app	=	714,19
+expr	719	not		718
+expr	720	lam		714,719
+expr	725	var	zenon_Vma	
+expr	744	var	zenon_Vna	
+expr	748	app	=	744,18
+expr	749	not		748
+expr	750	lam		744,749
+expr	751	app	f	744
+expr	752	app	=	751,18
+expr	753	not		752
+expr	754	lam		744,753
+expr	762	var	zenon_Voa	
+expr	779	var	zenon_Vpa	
+expr	797	var	zenon_Vqa	
+expr	815	not		167
+expr	816	var	zenon_Vra	
+expr	823	app	g	816
+expr	824	app	R	823,20
+expr	825	not		824
+expr	826	lam		816,825
+expr	830	app	f	816
+expr	831	app	R	31,830
+expr	832	not		831
+expr	833	lam		816,832
+expr	834	not		165
+expr	835	var	zenon_Vsa	
+expr	842	app	g	835
+expr	843	app	=	842,20
+expr	844	not		843
+expr	845	lam		835,844
+expr	846	app	=	31,835
+expr	847	not		846
+expr	848	lam		835,847
+expr	849	app	f	835
+expr	850	app	=	31,849
+expr	851	not		850
+expr	852	lam		835,851
+expr	853	var	zenon_Vta	
+expr	870	var	zenon_Vua	
+expr	887	var	zenon_Vva	
+expr	897	var	zenon_Vwa	
+expr	914	var	zenon_Vxa	
+expr	924	var	zenon_Vya	
+expr	941	var	zenon_Vza	
+expr	958	var	zenon_Vab	
+expr	976	var	zenon_Vbb	
+expr	995	var	zenon_Vcb	
+expr	1014	var	zenon_Vdb	
+expr	1033	var	zenon_Veb	
+expr	1047	app	f	1033
+expr	1048	app	R	18,1047
+expr	1049	not		1048
+expr	1050	lam		1033,1049
+expr	1051	var	zenon_Vfb	
+expr	1069	var	zenon_Vgb	
+expr	1076	app	g	1069
+expr	1077	app	=	1076,83
+expr	1078	not		1077
+expr	1079	lam		1069,1078
+expr	1083	app	=	31,1076
+expr	1084	not		1083
+expr	1085	lam		1069,1084
+expr	1087	var	zenon_Vhb	
+expr	1091	app	=	1087,82
+expr	1092	not		1091
+expr	1093	lam		1087,1092
+expr	1094	app	=	30,1087
+expr	1095	not		1094
+expr	1096	lam		1087,1095
+expr	1098	var	zenon_Vib	
+expr	1115	var	zenon_Vjb	
+expr	1125	var	zenon_Vkb	
+expr	1143	var	zenon_Vlb	
+expr	1161	var	zenon_Vmb	
+expr	1178	var	zenon_Vnb	
+expr	1196	var	zenon_Vob	
+expr	1215	var	zenon_Vpb	
+expr	1232	var	zenon_Vqb	
+expr	1249	var	zenon_Vrb	
+expr	1259	var	zenon_Vsb	
+expr	1276	var	zenon_Vtb	
+expr	1286	var	zenon_Vub	
+expr	1303	var	zenon_Vvb	
+expr	1320	var	zenon_Vwb	
+expr	1338	var	zenon_Vxb	
+expr	1356	var	zenon_Vyb	
+expr	1375	var	zenon_Vzb	
+expr	1379	app	=	1375,77
+expr	1380	not		1379
+expr	1381	lam		1375,1380
+expr	1382	app	f	1375
+expr	1383	app	=	1382,77
+expr	1384	not		1383
+expr	1385	lam		1375,1384
+expr	1393	var	zenon_Vac	
+expr	1410	var	zenon_Vbc	
+expr	1427	var	zenon_Vcc	
+expr	1444	var	zenon_Vdc	
+expr	1462	var	zenon_Vec	
+expr	1469	app	g	1462
+expr	1470	app	=	1469,18
+expr	1471	not		1470
+expr	1472	lam		1462,1471
+expr	1481	not		54
+expr	1482	and		165,167
+expr	1483	app	=	31,31
+expr	1484	not		1483
+expr	1485	imply		6,8
+expr	1486	imply		4,1485
+expr	1487	all	zenon_U	5,1486
+expr	1488	all	zenon_U	3,1487
+expr	1489	all	zenon_U	2,1488
+expr	1492	app	R	31,3
+expr	1493	app	R	31,5
+expr	1494	imply		6,1493
+expr	1495	imply		1492,1494
+expr	1496	all	zenon_U	5,1495
+expr	1497	all	zenon_U	3,1496
+expr	1498	app	R	20,5
+expr	1499	imply		1498,1493
+expr	1500	imply		166,1499
+expr	1501	all	zenon_U	5,1500
+expr	1505	not		1482
+expr	1506	imply		102,54
+expr	1507	imply		166,1506
+expr	1514	app	=	29,29
+expr	1515	not		1514
+expr	1518	app	R	20,3
+expr	1519	imply		6,1498
+expr	1520	imply		1518,1519
+expr	1521	all	zenon_U	5,1520
+expr	1522	all	zenon_U	3,1521
+expr	1523	app	R	77,5
+expr	1524	imply		1523,1498
+expr	1525	imply		78,1524
+expr	1526	all	zenon_U	5,1525
+expr	1532	imply		54,32
+expr	1533	app	R	3,31
+expr	1534	imply		1492,1533
+expr	1535	all	zenon_U	3,1534
+expr	1542	app	R	83,5
+expr	1543	imply		1542,1498
+expr	1544	imply		472,1543
+expr	1545	all	zenon_U	5,1544
+expr	1560	app	R	83,3
+expr	1561	imply		6,1542
+expr	1562	imply		1560,1561
+expr	1563	all	zenon_U	5,1562
+expr	1564	all	zenon_U	3,1563
+expr	1565	app	R	18,5
+expr	1566	imply		1565,1542
+expr	1567	imply		84,1566
+expr	1568	all	zenon_U	5,1567
+expr	1572	imply		174,166
+expr	1573	app	R	3,20
+expr	1574	imply		1518,1573
+expr	1575	all	zenon_U	3,1574
+expr	1581	imply		1498,1542
+expr	1582	imply		476,1581
+expr	1583	all	zenon_U	5,1582
+expr	1588	app	R	3,83
+expr	1589	imply		1560,1588
+expr	1590	all	zenon_U	3,1589
+expr	1592	var	zenon_X0_zenon_5fU	
+expr	1593	app	g	1592
+expr	1594	app	=	1593,1593
+expr	1595	not		1594
+expr	1596	app	R	1593,20
+expr	1597	not		1596
+expr	1600	app	R	1593,5
+expr	1601	imply		1498,1600
+expr	1602	imply		1596,1601
+expr	1603	all	zenon_U	5,1602
+expr	1604	imply		6,1600
+expr	1605	app	R	1593,3
+expr	1606	imply		1605,1604
+expr	1607	all	zenon_U	5,1606
+expr	1608	all	zenon_U	3,1607
+expr	1609	app	R	1593,18
+expr	1610	not		1609
+expr	1613	app	R	20,1593
+expr	1614	not		1613
+expr	1615	imply		1596,1613
+expr	1616	app	R	3,1593
+expr	1617	imply		1605,1616
+expr	1618	all	zenon_U	3,1617
+expr	1619	app	=	20,1593
+expr	1620	not		1619
+expr	1621	and		1620,1614
+expr	1622	app	=	1593,20
+expr	1623	not		1622
+expr	1624	not		1620
+expr	1627	imply		1600,1498
+expr	1628	imply		1613,1627
+expr	1629	all	zenon_U	5,1628
+expr	1630	not		1614
+expr	1631	not		1621
+expr	1632	app	R	1593,31
+expr	1633	not		1632
+expr	1634	imply		1632,174
+expr	1635	imply		1613,1634
+expr	1636	imply		136,1632
+expr	1637	imply		1609,1636
+expr	1638	imply		1565,1600
+expr	1639	imply		1609,1638
+expr	1640	all	zenon_U	5,1639
+expr	1641	imply		100,136
+expr	1644	var	zenon_X1_zenon_5fU	
+expr	1645	app	f	1644
+expr	1646	app	R	20,1645
+expr	1647	not		1646
+expr	1653	app	R	1645,29
+expr	1654	not		1653
+expr	1655	imply		1653,102
+expr	1656	imply		1646,1655
+expr	1657	app	R	1645,5
+expr	1658	imply		1657,1498
+expr	1659	imply		1646,1658
+expr	1660	all	zenon_U	5,1659
+expr	1661	and		157,159
+expr	1662	not		157
+expr	1665	app	R	29,3
+expr	1666	app	R	29,5
+expr	1667	imply		6,1666
+expr	1668	imply		1665,1667
+expr	1669	all	zenon_U	5,1668
+expr	1670	all	zenon_U	3,1669
+expr	1671	imply		1498,1666
+expr	1672	imply		158,1671
+expr	1673	all	zenon_U	5,1672
+expr	1677	not		1661
+expr	1693	app	R	3,29
+expr	1694	imply		1665,1693
+expr	1695	all	zenon_U	3,1694
+expr	1697	imply		102,158
+expr	1700	app	=	1645,1645
+expr	1701	not		1700
+expr	1702	app	R	29,1645
+expr	1703	not		1702
+expr	1704	imply		1646,1702
+expr	1705	imply		158,1704
+expr	1710	imply		1702,1653
+expr	1711	not		1489
+expr	1712	not		1488
+expr	1713	tau	zenon_U	2,1712
+expr	1714	app	R	1713,3
+expr	1715	app	R	1713,5
+expr	1716	imply		6,1715
+expr	1717	imply		1714,1716
+expr	1718	all	zenon_U	5,1717
+expr	1719	all	zenon_U	3,1718
+expr	1720	not		1719
+expr	1721	not		1718
+expr	1722	tau	zenon_U	3,1721
+expr	1723	app	R	1713,1722
+expr	1724	app	R	1722,5
+expr	1725	imply		1724,1715
+expr	1726	imply		1723,1725
+expr	1727	all	zenon_U	5,1726
+expr	1728	not		1727
+expr	1729	not		1726
+expr	1730	tau	zenon_U	5,1729
+expr	1731	app	R	1722,1730
+expr	1732	app	R	1713,1730
+expr	1733	imply		1731,1732
+expr	1734	imply		1723,1733
+expr	1735	not		1734
+expr	1736	not		1732
+expr	1737	and		1714,6
+expr	1738	imply		1737,1715
+expr	1739	all	zenon_U	5,1738
+expr	1740	all	zenon_U	3,1739
+expr	1741	and		1723,1724
+expr	1742	imply		1741,1715
+expr	1743	all	zenon_U	5,1742
+expr	1744	and		1723,1731
+expr	1745	imply		1744,1732
+expr	1746	not		1744
+expr	1747	not		1723
+expr	1748	not		1731
+lemma	zenon_L1_	
+node	1	16,24,137	all	24	30
+node	1	16,100,137	all	16	31
+node	1	1535,100,137	all	1535	18
+node	2	1641,100,137	connect	imply	100	136
+node	0	101,100	axiom	100
+node	0	137,136	axiom	136
+lemma	zenon_thm	
+node	2	12,16,33,27,21,24	cut	1489
+node	1	1489,16,33,27,21,24	all	24	1592
+node	1	16,1489,24,1609,21,27,33	all	27	1644
+node	1	16,27,1646,1489,24,1609,21,33	all	16	31
+node	1	16,1535,27,1646,1489,24,1609,21,33	all	1535	29
+node	2	16,1532,27,1646,1489,24,1609,21,33	connect	imply	54	32
+node	2	16,21,1609,24,1489,1481,1646,27	cut	1482
+node	1	16,1489,1482,24,1609,21	connect	and	165	167
+node	1	16,24,1609,1489,21,167	all	16	20
+node	1	16,1575,24,1609,1489,21,167	all	1575	31
+node	2	16,1572,24,1609,1489,21,167	connect	imply	174	166
+node	2	16,21,1489,175,1609,24	cut	1621
+node	1	1621,21,1609	connect	and	1620	1614
+node	1	16,1609,21,1614	all	16	1593
+node	1	1618,1609,21,1614	all	1618	20
+node	2	1615,1609,21,1614	connect	imply	1596	1613
+node	2	1597,1609,21	pnotp	1609	1597
+node	0	1595	noteq	1593
+node	0	85,21	axiom	21
+node	0	1614,1613	axiom	1613
+node	2	16,1631,1489,175,1609,24	cut	136
+node	1	1609,136,175,1489,1631	all	1489	1593
+node	1	1608,1609,136,175,1489,1631	all	1608	18
+node	1	1640,1609,136,175,1489,1631	all	1640	31
+node	2	1637,1609,136,175,1489,1631	connect	imply	1609	1636
+node	0	1610,1609	axiom	1609
+node	2	1636,136,175,1489,1631	connect	imply	136	1632
+node	0	137,136	axiom	136
+node	2	175,1632,1489,1631	pnotp	1632	175
+node	2	1631,1623,1489,1632,175	notconnect	and	1620	1614
+node	1	1624,1623	notnot	1619
+node	0	1623,1619	eqsym	20	1593
+node	1	1630,1489,1632,175	notnot	1613
+node	1	1489,1613,1632,175	all	1489	20
+node	1	1522,1613,1632,175	all	1522	1593
+node	1	1629,1613,1632,175	all	1629	31
+node	2	1635,1613,1632,175	connect	imply	1613	1634
+node	0	1614,1613	axiom	1613
+node	2	1634,1632,175	connect	imply	1632	174
+node	0	1633,1632	axiom	1632
+node	0	175,174	axiom	174
+node	0	1484	noteq	31
+node	0	16,24,137	lemma	zenon_L1_	
+node	0	167,166	axiom	166
+node	2	16,1505,1489,1481,1646,27	cut	1653
+node	1	1646,1653,1481,1489,1505	all	1489	20
+node	1	1522,1646,1653,1481,1489,1505	all	1522	1645
+node	1	1660,1646,1653,1481,1489,1505	all	1660	29
+node	2	1656,1646,1653,1481,1489,1505	connect	imply	1646	1655
+node	0	1647,1646	axiom	1646
+node	2	1655,1653,1481,1489,1505	connect	imply	1653	102
+node	0	1654,1653	axiom	1653
+node	2	1481,102,1489,1505	pnotp	102	1481
+node	2	1505,173,1489,102,1481	notconnect	and	165	167
+node	1	834,173	notnot	164
+node	0	173,164	eqsym	31	20
+node	1	815,1489,102,1481	notnot	166
+node	1	1489,166,102,1481	all	1489	31
+node	1	1497,166,102,1481	all	1497	20
+node	1	1501,166,102,1481	all	1501	29
+node	2	1507,166,102,1481	connect	imply	166	1506
+node	0	167,166	axiom	166
+node	2	1506,102,1481	connect	imply	102	54
+node	0	103,102	axiom	102
+node	0	1481,54	axiom	54
+node	0	1515	noteq	29
+node	1	16,1646,1489,27,1654	all	16	29
+node	1	16,1695,1646,1489,27,1654	all	1695	1645
+node	2	16,1710,1646,1489,27,1654	connect	imply	1702	1653
+node	2	16,27,1489,1703,1646	cut	1661
+node	1	16,1661,27	connect	and	157	159
+node	1	16,27,159	all	27	28
+node	1	16,102,159	all	16	20
+node	1	1575,102,159	all	1575	29
+node	2	1697,102,159	connect	imply	102	158
+node	0	103,102	axiom	102
+node	0	159,158	axiom	158
+node	2	1703,1646,1489,1677	pnotp	1646	1703
+node	2	1677,107,1489,1646,1703	notconnect	and	157	159
+node	1	1662,107	notnot	156
+node	2	156,107	cut	1514
+node	2	107,1514,156	pnotp	1514	107
+node	0	157,156	axiom	156
+node	0	1515	noteq	29
+node	0	1515	noteq	29
+node	1	305,1489,1646,1703	notnot	158
+node	1	1489,158,1646,1703	all	1489	29
+node	1	1670,158,1646,1703	all	1670	20
+node	1	1673,158,1646,1703	all	1673	1645
+node	2	1705,158,1646,1703	connect	imply	158	1704
+node	0	159,158	axiom	158
+node	2	1704,1646,1703	connect	imply	1646	1702
+node	0	1647,1646	axiom	1646
+node	0	1703,1702	axiom	1702
+node	0	1701	noteq	1645
+node	0	1654,1653	axiom	1653
+node	0	33,32	axiom	32
+node	1	1711,12	notall	1489	1713
+node	1	1720,12	notall	1719	1722
+node	1	1728,12	notall	1727	1730
+node	1	1735,12	notconnect	imply	1723	1733
+node	1	12,1723	notconnect	imply	1731	1732
+node	1	12,1731,1723,1736	all	12	1713
+node	1	1740,1731,1723,1736	all	1740	1722
+node	1	1743,1731,1723,1736	all	1743	1730
+node	2	1745,1731,1723,1736	connect	imply	1744	1732
+node	2	1746,1723,1731	notconnect	and	1723	1731
+node	0	1747,1723	axiom	1723
+node	0	1748,1731	axiom	1731
+node	0	1736,1732	axiom	1732
+numbers	24,27
+hyp	trans	12	1
+hyp	sym	16	1
+hyp	e	21	1
+hyp	h1	24	1
+hyp	h2	27	1
+hyp	zenon_G	33	0

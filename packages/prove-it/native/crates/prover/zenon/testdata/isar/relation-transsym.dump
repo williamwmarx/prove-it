@@ -1,0 +1,421 @@
+counter	ld
+steps	17
+expr	2	var	x	
+expr	3	app	R	2,2
+expr	4	all	zenon_U	2,3
+expr	5	var	y	
+expr	6	app	R	2,5
+expr	7	var	z	
+expr	8	app	R	2,7
+expr	9	and		6,8
+expr	10	app	R	5,7
+expr	11	imply		9,10
+expr	12	all	zenon_U	7,11
+expr	13	all	zenon_U	5,12
+expr	14	all	zenon_U	2,13
+expr	15	var	a	
+expr	16	var	b	
+expr	17	app	R	15,16
+expr	18	var	c	
+expr	19	app	R	16,18
+expr	20	app	R	15,18
+expr	21	not		20
+expr	22	var	S	
+expr	23	app	TLA.in	2,22
+expr	24	app	P	2
+expr	26	var	B	
+expr	27	app	TLA.in	2,26
+expr	28	lam		2,27
+expr	30	imply		23,24
+expr	31	all		2,30
+expr	33	and		23,24
+expr	34	ex		2,33
+expr	35	tau		2,33
+expr	42	var	zenon_Vf	
+expr	43	lam		42,42
+expr	44	not		42
+expr	45	lam		42,44
+expr	46	app	R	42,18
+expr	47	not		46
+expr	48	lam		42,47
+expr	49	app	R	15,42
+expr	50	not		49
+expr	51	lam		42,50
+expr	54	not		19
+expr	55	var	zenon_Vg	
+expr	57	app	R	55,18
+expr	58	lam		55,57
+expr	59	app	R	16,55
+expr	60	lam		55,59
+expr	65	not		17
+expr	66	var	zenon_Vh	
+expr	68	app	R	66,16
+expr	69	lam		66,68
+expr	70	app	R	15,66
+expr	71	lam		66,70
+expr	77	var	zenon_Vi	
+expr	79	meta		14
+expr	80	app	R	79,5
+expr	81	app	R	79,7
+expr	82	and		80,81
+expr	83	imply		82,10
+expr	84	all	zenon_U	7,83
+expr	85	all	zenon_U	5,84
+expr	87	var	zenon_Vj	
+expr	89	meta		85
+expr	90	app	R	79,89
+expr	91	and		90,81
+expr	92	app	R	89,7
+expr	93	imply		91,92
+expr	94	all	zenon_U	7,93
+expr	96	var	zenon_Vk	
+expr	98	meta		94
+expr	104	var	zenon_Vl	
+expr	109	var	zenon_Vm	
+expr	113	app	R	109,98
+expr	114	not		113
+expr	115	lam		109,114
+expr	116	app	R	79,109
+expr	117	not		116
+expr	118	lam		109,117
+expr	132	var	zenon_Vn	
+expr	136	app	=	132,98
+expr	137	not		136
+expr	138	lam		132,137
+expr	139	app	=	79,132
+expr	140	not		139
+expr	141	lam		132,140
+expr	142	app	R	79,79
+expr	146	app	R	98,5
+expr	147	app	R	98,7
+expr	148	and		146,147
+expr	149	imply		148,10
+expr	150	all	zenon_U	7,149
+expr	151	all	zenon_U	5,150
+expr	155	var	zenon_Vo	
+expr	159	app	=	155,18
+expr	160	not		159
+expr	161	lam		155,160
+expr	162	app	=	15,155
+expr	163	not		162
+expr	164	lam		155,163
+expr	170	var	zenon_Vp	
+expr	177	app	=	18,170
+expr	178	not		177
+expr	179	lam		170,178
+expr	189	var	zenon_Vq	
+expr	196	app	=	16,189
+expr	197	not		196
+expr	198	lam		189,197
+expr	204	var	zenon_Vr	
+expr	208	var	zenon_Vs	
+expr	212	app	R	89,208
+expr	213	lam		208,212
+expr	222	var	zenon_Vt	
+expr	226	app	=	222,15
+expr	227	not		226
+expr	228	lam		222,227
+expr	229	app	=	89,222
+expr	230	not		229
+expr	231	lam		222,230
+expr	232	app	R	79,15
+expr	233	and		232,81
+expr	234	app	R	15,7
+expr	235	imply		233,234
+expr	236	all	zenon_U	7,235
+expr	240	var	zenon_Vu	
+expr	242	meta		236
+expr	248	var	zenon_Vv	
+expr	253	var	zenon_Vw	
+expr	257	app	R	253,242
+expr	258	not		257
+expr	259	lam		253,258
+expr	272	var	zenon_Vx	
+expr	276	app	=	272,242
+expr	277	not		276
+expr	278	lam		272,277
+expr	285	app	R	242,5
+expr	286	app	R	242,7
+expr	287	and		285,286
+expr	288	imply		287,10
+expr	289	all	zenon_U	7,288
+expr	290	all	zenon_U	5,289
+expr	294	var	zenon_Vy	
+expr	309	var	zenon_Vz	
+expr	322	var	zenon_Vaa	
+expr	325	var	zenon_Vba	
+expr	340	var	zenon_Vca	
+expr	350	app	R	18,5
+expr	351	app	R	18,7
+expr	352	and		350,351
+expr	353	imply		352,10
+expr	354	all	zenon_U	7,353
+expr	355	all	zenon_U	5,354
+expr	357	var	zenon_Vda	
+expr	361	app	=	357,79
+expr	362	not		361
+expr	363	lam		357,362
+expr	367	app	R	16,5
+expr	368	app	R	16,7
+expr	369	and		367,368
+expr	370	imply		369,10
+expr	371	all	zenon_U	7,370
+expr	372	all	zenon_U	5,371
+expr	374	var	zenon_Vea	
+expr	384	app	R	89,5
+expr	385	and		384,92
+expr	386	imply		385,10
+expr	387	all	zenon_U	7,386
+expr	388	all	zenon_U	5,387
+expr	389	and		142,81
+expr	390	imply		389,81
+expr	391	all	zenon_U	7,390
+expr	393	var	zenon_Vfa	
+expr	397	var	zenon_Vga	
+expr	399	meta		372
+expr	400	app	R	16,399
+expr	401	and		400,368
+expr	402	app	R	399,7
+expr	403	imply		401,402
+expr	404	all	zenon_U	7,403
+expr	406	var	zenon_Vha	
+expr	414	var	zenon_Via	
+expr	419	var	zenon_Vja	
+expr	423	app	R	419,399
+expr	424	not		423
+expr	425	lam		419,424
+expr	426	app	R	16,419
+expr	427	not		426
+expr	428	lam		419,427
+expr	442	var	zenon_Vka	
+expr	446	app	=	442,399
+expr	447	not		446
+expr	448	lam		442,447
+expr	452	app	R	16,16
+expr	453	and		452,368
+expr	454	imply		453,368
+expr	455	all	zenon_U	7,454
+expr	459	var	zenon_Vla	
+expr	469	and		19,368
+expr	470	imply		469,351
+expr	471	all	zenon_U	7,470
+expr	475	var	zenon_Vma	
+expr	477	meta		355
+expr	478	app	R	18,477
+expr	479	and		478,351
+expr	480	app	R	477,7
+expr	481	imply		479,480
+expr	482	all	zenon_U	7,481
+expr	484	var	zenon_Vna	
+expr	492	var	zenon_Voa	
+expr	497	var	zenon_Vpa	
+expr	501	app	R	497,477
+expr	502	not		501
+expr	503	lam		497,502
+expr	504	app	R	18,497
+expr	505	not		504
+expr	506	lam		497,505
+expr	516	var	zenon_Vqa	
+expr	520	app	=	516,477
+expr	521	not		520
+expr	522	lam		516,521
+expr	526	app	R	18,18
+expr	527	and		526,351
+expr	528	imply		527,351
+expr	529	all	zenon_U	7,528
+expr	533	var	zenon_Vra	
+expr	535	meta		455
+expr	540	var	zenon_Vsa	
+expr	545	var	zenon_Vta	
+expr	549	app	R	545,535
+expr	550	not		549
+expr	551	lam		545,550
+expr	562	var	zenon_Vua	
+expr	566	app	=	562,535
+expr	567	not		566
+expr	568	lam		562,567
+expr	577	var	zenon_Vva	
+expr	590	var	zenon_Vwa	
+expr	592	meta		471
+expr	598	var	zenon_Vxa	
+expr	602	var	zenon_Vya	
+expr	606	app	R	602,592
+expr	607	not		606
+expr	608	lam		602,607
+expr	619	var	zenon_Vza	
+expr	623	app	=	619,592
+expr	624	not		623
+expr	625	lam		619,624
+expr	630	app	R	18,16
+expr	635	var	zenon_Vab	
+expr	648	var	zenon_Vbb	
+expr	651	var	zenon_Vcb	
+expr	653	meta		529
+expr	658	var	zenon_Vdb	
+expr	663	var	zenon_Veb	
+expr	667	app	R	663,653
+expr	668	not		667
+expr	669	lam		663,668
+expr	680	var	zenon_Vfb	
+expr	684	app	=	680,653
+expr	685	not		684
+expr	686	lam		680,685
+expr	693	var	zenon_Vgb	
+expr	696	var	zenon_Vhb	
+expr	700	app	R	18,696
+expr	701	lam		696,700
+expr	707	var	zenon_Vib	
+expr	717	and		630,351
+expr	718	imply		717,368
+expr	719	all	zenon_U	7,718
+expr	723	var	zenon_Vjb	
+expr	736	var	zenon_Vkb	
+expr	739	var	zenon_Vlb	
+expr	742	var	zenon_Vmb	
+expr	745	var	zenon_Vnb	
+expr	747	meta		719
+expr	753	var	zenon_Vob	
+expr	757	var	zenon_Vpb	
+expr	761	app	R	757,747
+expr	762	not		761
+expr	763	lam		757,762
+expr	774	var	zenon_Vqb	
+expr	778	app	=	774,747
+expr	779	not		778
+expr	780	lam		774,779
+expr	789	var	zenon_Vrb	
+expr	802	var	zenon_Vsb	
+expr	805	var	zenon_Vtb	
+expr	816	var	zenon_Vub	
+expr	827	var	zenon_Vvb	
+expr	830	var	zenon_Vwb	
+expr	833	var	zenon_Vxb	
+expr	838	var	zenon_Vyb	
+expr	842	app	R	838,15
+expr	843	not		842
+expr	844	lam		838,843
+expr	849	var	zenon_Vzb	
+expr	859	app	R	15,5
+expr	860	and		859,234
+expr	861	imply		860,10
+expr	862	all	zenon_U	7,861
+expr	863	all	zenon_U	5,862
+expr	865	var	zenon_Vac	
+expr	867	meta		863
+expr	868	app	R	15,867
+expr	869	and		868,234
+expr	870	app	R	867,7
+expr	871	imply		869,870
+expr	872	all	zenon_U	7,871
+expr	874	var	zenon_Vbc	
+expr	882	var	zenon_Vcc	
+expr	887	var	zenon_Vdc	
+expr	891	app	R	887,867
+expr	892	not		891
+expr	893	lam		887,892
+expr	906	var	zenon_Vec	
+expr	910	app	=	906,867
+expr	911	not		910
+expr	912	lam		906,911
+expr	916	app	R	15,15
+expr	917	and		916,234
+expr	918	imply		917,234
+expr	919	all	zenon_U	7,918
+expr	923	var	zenon_Vfc	
+expr	933	and		17,234
+expr	934	imply		933,368
+expr	935	all	zenon_U	7,934
+expr	939	var	zenon_Vgc	
+expr	941	meta		919
+expr	946	var	zenon_Vhc	
+expr	949	not		916
+expr	951	var	zenon_Vic	
+expr	955	app	R	951,941
+expr	956	not		955
+expr	957	lam		951,956
+expr	970	var	zenon_Vjc	
+expr	974	app	=	970,941
+expr	975	not		974
+expr	976	lam		970,975
+expr	985	var	zenon_Vkc	
+expr	1000	var	zenon_Vlc	
+expr	1002	meta		935
+expr	1008	var	zenon_Vmc	
+expr	1012	var	zenon_Vnc	
+expr	1016	app	R	1012,1002
+expr	1017	not		1016
+expr	1018	lam		1012,1017
+expr	1031	var	zenon_Voc	
+expr	1035	app	=	1031,1002
+expr	1036	not		1035
+expr	1037	lam		1031,1036
+expr	1041	and		17,916
+expr	1042	app	R	16,15
+expr	1043	imply		1041,1042
+expr	1047	var	zenon_Vpc	
+expr	1062	var	zenon_Vqc	
+expr	1065	var	zenon_Vrc	
+expr	1068	var	zenon_Vsc	
+expr	1070	not		1042
+expr	1071	var	zenon_Vtc	
+expr	1073	app	R	1071,15
+expr	1074	lam		1071,1073
+expr	1100	var	zenon_Vuc	
+expr	1110	and		1042,368
+expr	1111	imply		1110,234
+expr	1112	all	zenon_U	7,1111
+expr	1116	var	zenon_Vvc	
+expr	1131	var	zenon_Vwc	
+expr	1142	app	R	18,15
+expr	1145	var	zenon_Vxc	
+expr	1148	var	zenon_Vyc	
+expr	1151	var	zenon_Vzc	
+expr	1153	meta		1112
+expr	1159	var	zenon_Vad	
+expr	1163	var	zenon_Vbd	
+expr	1167	app	R	1163,1153
+expr	1168	not		1167
+expr	1169	lam		1163,1168
+expr	1182	var	zenon_Vcd	
+expr	1186	app	=	1182,1153
+expr	1187	not		1186
+expr	1188	lam		1182,1187
+expr	1197	var	zenon_Vdd	
+expr	1207	and		1042,19
+expr	1208	imply		1207,20
+expr	1212	var	zenon_Ved	
+expr	1225	var	zenon_Vfd	
+expr	1228	var	zenon_Vgd	
+expr	1237	var	zenon_Vhd	
+expr	1247	and		1142,351
+expr	1248	imply		1247,234
+expr	1249	all	zenon_U	7,1248
+expr	1253	var	zenon_Vid	
+expr	1268	var	zenon_Vjd	
+expr	1281	var	zenon_Vkd	
+expr	1284	var	zenon_Vld	
+expr	1288	not		1207
+expr	1289	not		1041
+lemma	zenon_thm	
+node	1	4,19,21,17,14	all	14	16
+node	1	4,14,17,372,21,19	all	14	15
+node	1	4,863,19,21,372,17	all	863	16
+node	1	4,935,17,372,21,19	all	935	15
+node	2	1043,4,17,372,21,19	connect	imply	1041	1042
+node	2	1289,17,4	notconnect	and	17	916
+node	0	17,65	axiom	17
+node	1	4,949	all	4	15
+node	0	949,916	axiom	916
+node	1	372,21,19,1042	all	372	15
+node	1	1112,1042,19,21	all	1112	18
+node	2	1208,19,1042,21	connect	imply	1207	20
+node	2	1288,1042,19	notconnect	and	1042	19
+node	0	1042,1070	axiom	1042
+node	0	19,54	axiom	19
+node	0	21,20	axiom	20
+numbers	
+hyp	refl	4	1
+hyp	ts	14	1
+hyp	h1	17	1
+hyp	h2	19	1
+hyp	zenon_G	21	0

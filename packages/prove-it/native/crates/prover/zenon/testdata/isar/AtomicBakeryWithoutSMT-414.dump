@@ -1,0 +1,3153 @@
+counter	jya
+steps	186
+expr	2	var	a_CONSTANTunde_iunde_a	
+expr	3	var	a_CONSTANTunde_Punde_a	
+expr	4	app	TLA.in	2,3
+expr	5	var	a_CONSTANTunde_selfunde_a	
+expr	6	app	TLA.in	5,3
+expr	7	var	a_VARIABLEunde_numunde_a	
+expr	8	var	arith.N	
+expr	9	app	TLA.FuncSet	3,8
+expr	10	app	TLA.in	7,9
+expr	11	var	a_VARIABLEunde_flagunde_a	
+expr	12	app	TLA.set	0,1
+expr	13	app	TLA.FuncSet	3,12
+expr	14	app	TLA.in	11,13
+expr	15	var	a_VARIABLEunde_unreadunde_a	
+expr	16	app	TLA.SUBSET	3
+expr	17	app	TLA.FuncSet	3,16
+expr	18	app	TLA.in	15,17
+expr	19	var	a_VARIABLEunde_pcunde_a	
+expr	20	var	a_CONSTANTunde_iunde_a_1	
+expr	21	app	TLA.fapply	19,20
+expr	22	var	"p2"	
+expr	23	app	$string	22
+expr	24	var	"p5"	
+expr	25	app	$string	24
+expr	26	var	"p6"	
+expr	27	app	$string	26
+expr	28	app	TLA.set	23,25,27
+expr	29	app	TLA.in	21,28
+expr	30	app	TLA.fapply	15,20
+expr	31	app	TLA.in	20,30
+expr	32	not		31
+expr	33	imply		29,32
+expr	34	lam	zenon_U	20,33
+expr	35	app	TLA.bAll	3,34
+expr	36	var	a_VARIABLEunde_maxunde_a	
+expr	37	app	TLA.in	36,9
+expr	38	var	a_VARIABLEunde_nxtunde_a	
+expr	39	app	TLA.FuncSet	3,3
+expr	40	app	TLA.in	38,39
+expr	41	app	=	21,27
+expr	42	app	TLA.fapply	38,20
+expr	43	app	=	42,20
+expr	44	not		43
+expr	45	imply		41,44
+expr	46	lam	zenon_U	20,45
+expr	47	app	TLA.bAll	3,46
+expr	48	var	"p1"	
+expr	49	app	$string	48
+expr	50	var	"p3"	
+expr	51	app	$string	50
+expr	52	var	"p4"	
+expr	53	app	$string	52
+expr	54	var	"p7"	
+expr	55	app	$string	54
+expr	56	var	"p8"	
+expr	57	app	$string	56
+expr	58	app	TLA.set	49,23,51,53,25,27,55,57
+expr	59	app	TLA.FuncSet	3,58
+expr	60	app	TLA.in	19,59
+expr	61	and		47,60
+expr	62	and		40,61
+expr	63	and		37,62
+expr	64	and		35,63
+expr	65	and		18,64
+expr	66	and		14,65
+expr	67	and		10,66
+expr	68	var	a_STATEunde_Invunde_a	
+expr	69	app	TLA.fapply	7,2
+expr	70	var	0	
+expr	71	app	=	69,70
+expr	72	app	TLA.fapply	19,2
+expr	73	app	TLA.set	49,23,51
+expr	74	app	TLA.in	72,73
+expr	75	equiv		71,74
+expr	76	app	TLA.fapply	11,2
+expr	77	app	TLA.set	23,51,53
+expr	78	app	TLA.in	72,77
+expr	79	equiv		76,78
+expr	80	app	TLA.set	25,27
+expr	81	app	TLA.in	72,80
+expr	82	app	TLA.fapply	15,2
+expr	83	app	TLA.setminus	3,82
+expr	84	app	TLA.set	2
+expr	85	app	TLA.setminus	83,84
+expr	86	var	a_CONSTANTunde_junde_a	
+expr	87	app	a_STATEunde_Afterunde_a	86,2
+expr	88	lam	zenon_U	86,87
+expr	89	app	TLA.bAll	85,88
+expr	90	imply		81,89
+expr	91	app	=	72,27
+expr	92	app	TLA.fapply	38,2
+expr	93	app	TLA.fapply	19,92
+expr	94	app	=	93,23
+expr	95	app	TLA.fapply	15,92
+expr	96	app	TLA.in	2,95
+expr	97	not		96
+expr	98	and		94,97
+expr	99	app	=	93,51
+expr	100	or		98,99
+expr	101	and		91,100
+expr	102	app	TLA.fapply	36,92
+expr	103	app	arith.le	69,102
+expr	104	imply		101,103
+expr	105	app	TLA.set	55,57
+expr	106	app	TLA.in	72,105
+expr	107	app	TLA.setminus	3,84
+expr	109	app	TLA.bAll	107,88
+expr	110	imply		106,109
+expr	111	and		104,110
+expr	112	and		90,111
+expr	113	and		79,112
+expr	114	and		75,113
+expr	115	app	a_ACTIONunde_punde_a	5
+expr	116	var	h6fbaa	
+expr	117	var	a_STATEunde_varsunde_a	
+expr	118	app	=	116,117
+expr	119	or		115,118
+expr	120	app	TLA.fapply	38,5
+expr	121	app	TLA.fapply	7,120
+expr	122	app	=	121,70
+expr	123	app	arith.lt	120,5
+expr	124	app	TLA.fapply	7,5
+expr	125	app	arith.lt	124,121
+expr	126	app	arith.le	124,121
+expr	127	app	TLA.cond	123,125,126
+expr	128	or		122,127
+expr	129	app	TLA.fapply	19,5
+expr	130	app	=	129,27
+expr	131	var	a_VARIABLEunde_unreadunde_hash_primea	
+expr	132	app	TLA.fapply	15,5
+expr	133	app	TLA.set	120
+expr	134	app	TLA.setminus	132,133
+expr	135	app	TLA.except	15,5,134
+expr	136	app	=	131,135
+expr	137	var	a_VARIABLEunde_pcunde_hash_primea	
+expr	138	app	TLA.except	19,5,25
+expr	139	app	=	137,138
+expr	140	var	a_VARIABLEunde_numunde_hash_primea	
+expr	141	app	=	140,7
+expr	142	var	a_VARIABLEunde_flagunde_hash_primea	
+expr	143	app	=	142,11
+expr	144	var	a_VARIABLEunde_maxunde_hash_primea	
+expr	145	app	=	144,36
+expr	146	var	a_VARIABLEunde_nxtunde_hash_primea	
+expr	147	app	=	146,38
+expr	148	app	TLA.in	86,3
+expr	149	app	TLA.fapply	137,2
+expr	150	app	TLA.in	149,80
+expr	151	app	TLA.fapply	131,2
+expr	152	app	TLA.setminus	3,151
+expr	153	app	TLA.setminus	152,84
+expr	154	app	TLA.in	86,153
+expr	155	and		150,154
+expr	156	app	TLA.in	149,105
+expr	157	app	TLA.in	86,107
+expr	158	and		156,157
+expr	159	or		155,158
+expr	160	app	=	2,5
+expr	161	not		160
+expr	162	app	=	86,5
+expr	163	app	=	2,120
+expr	164	not		125
+expr	165	var	x	
+expr	166	var	S	
+expr	167	app	TLA.in	165,166
+expr	168	app	P	165
+expr	170	var	B	
+expr	171	app	TLA.in	165,170
+expr	172	lam		165,171
+expr	174	imply		167,168
+expr	175	all		165,174
+expr	177	and		167,168
+expr	178	ex		165,177
+expr	179	tau		165,177
+expr	183	not		71
+expr	189	not		78
+expr	195	var	zenon_Vf	
+expr	196	lam		195,195
+expr	197	not		195
+expr	198	lam		195,197
+expr	199	app	arith.lt	195,121
+expr	200	not		199
+expr	201	lam		195,200
+expr	202	app	TLA.fapply	195,5
+expr	203	app	arith.lt	202,121
+expr	204	not		203
+expr	205	lam		195,204
+expr	206	app	TLA.fapply	7,195
+expr	207	app	arith.lt	206,121
+expr	208	not		207
+expr	209	lam		195,208
+expr	210	app	arith.lt	124,195
+expr	211	not		210
+expr	212	lam		195,211
+expr	213	app	TLA.fapply	195,120
+expr	214	app	arith.lt	124,213
+expr	215	not		214
+expr	216	lam		195,215
+expr	217	app	arith.lt	124,206
+expr	218	not		217
+expr	219	lam		195,218
+expr	220	app	TLA.fapply	7,202
+expr	221	app	arith.lt	124,220
+expr	222	not		221
+expr	223	lam		195,222
+expr	224	app	TLA.fapply	38,195
+expr	225	app	TLA.fapply	7,224
+expr	226	app	arith.lt	124,225
+expr	227	not		226
+expr	228	lam		195,227
+expr	229	not		123
+expr	230	var	zenon_Vg	
+expr	232	app	arith.lt	230,5
+expr	233	lam		230,232
+expr	234	app	TLA.fapply	230,5
+expr	235	app	arith.lt	234,5
+expr	236	lam		230,235
+expr	237	app	TLA.fapply	38,230
+expr	238	app	arith.lt	237,5
+expr	239	lam		230,238
+expr	240	app	arith.lt	120,230
+expr	241	lam		230,240
+expr	247	app	=	5,2
+expr	248	var	zenon_Vh	
+expr	252	app	=	248,5
+expr	253	not		252
+expr	254	lam		248,253
+expr	259	var	zenon_Vi	
+expr	262	var	zenon_Vj	
+expr	264	var	zenon_Vk	
+expr	265	app	TLA.in	86,264
+expr	266	lam		264,265
+expr	267	app	TLA.in	262,3
+expr	268	lam		262,267
+expr	272	var	zenon_Vl	
+expr	274	app	=	272,27
+expr	275	lam		272,274
+expr	276	app	TLA.fapply	272,5
+expr	277	app	=	276,27
+expr	278	lam		272,277
+expr	279	app	TLA.fapply	19,272
+expr	280	app	=	279,27
+expr	281	lam		272,280
+expr	282	app	=	129,272
+expr	283	lam		272,282
+expr	284	app	$string	272
+expr	285	app	=	129,284
+expr	286	lam		272,285
+expr	288	var	zenon_Vm	
+expr	291	var	zenon_Vn	
+expr	294	var	zenon_Vo	
+expr	297	var	zenon_Vp	
+expr	300	var	zenon_Vq	
+expr	303	var	zenon_Vr	
+expr	305	var	zenon_Vs	
+expr	306	app	TLA.in	5,305
+expr	307	lam		305,306
+expr	313	var	zenon_Vt	
+expr	315	var	zenon_Vu	
+expr	316	app	TLA.in	2,315
+expr	317	lam		315,316
+expr	320	app	TLA.in	120,3
+expr	322	var	zenon_Vv	
+expr	324	var	zenon_Vw	
+expr	325	app	TLA.in	19,324
+expr	326	lam		324,325
+expr	327	app	TLA.in	322,59
+expr	328	lam		322,327
+expr	331	app	TLA.FuncSet	322,58
+expr	332	app	TLA.in	19,331
+expr	333	lam		322,332
+expr	334	app	TLA.FuncSet	3,322
+expr	335	app	TLA.in	19,334
+expr	336	lam		322,335
+expr	337	app	TLA.set	322,23,51,53,25,27,55,57
+expr	338	app	TLA.FuncSet	3,337
+expr	339	app	TLA.in	19,338
+expr	340	lam		322,339
+expr	341	app	$string	322
+expr	342	app	TLA.set	341,23,51,53,25,27,55,57
+expr	343	app	TLA.FuncSet	3,342
+expr	344	app	TLA.in	19,343
+expr	345	lam		322,344
+expr	346	app	TLA.set	49,322,51,53,25,27,55,57
+expr	347	app	TLA.FuncSet	3,346
+expr	348	app	TLA.in	19,347
+expr	349	lam		322,348
+expr	350	app	TLA.set	49,341,51,53,25,27,55,57
+expr	351	app	TLA.FuncSet	3,350
+expr	352	app	TLA.in	19,351
+expr	353	lam		322,352
+expr	354	app	TLA.set	49,23,322,53,25,27,55,57
+expr	355	app	TLA.FuncSet	3,354
+expr	356	app	TLA.in	19,355
+expr	357	lam		322,356
+expr	358	app	TLA.set	49,23,341,53,25,27,55,57
+expr	359	app	TLA.FuncSet	3,358
+expr	360	app	TLA.in	19,359
+expr	361	lam		322,360
+expr	362	app	TLA.set	49,23,51,322,25,27,55,57
+expr	363	app	TLA.FuncSet	3,362
+expr	364	app	TLA.in	19,363
+expr	365	lam		322,364
+expr	366	app	TLA.set	49,23,51,341,25,27,55,57
+expr	367	app	TLA.FuncSet	3,366
+expr	368	app	TLA.in	19,367
+expr	369	lam		322,368
+expr	370	app	TLA.set	49,23,51,53,322,27,55,57
+expr	371	app	TLA.FuncSet	3,370
+expr	372	app	TLA.in	19,371
+expr	373	lam		322,372
+expr	374	app	TLA.set	49,23,51,53,341,27,55,57
+expr	375	app	TLA.FuncSet	3,374
+expr	376	app	TLA.in	19,375
+expr	377	lam		322,376
+expr	378	app	TLA.set	49,23,51,53,25,322,55,57
+expr	379	app	TLA.FuncSet	3,378
+expr	380	app	TLA.in	19,379
+expr	381	lam		322,380
+expr	382	app	TLA.set	49,23,51,53,25,341,55,57
+expr	383	app	TLA.FuncSet	3,382
+expr	384	app	TLA.in	19,383
+expr	385	lam		322,384
+expr	386	app	TLA.set	49,23,51,53,25,27,322,57
+expr	387	app	TLA.FuncSet	3,386
+expr	388	app	TLA.in	19,387
+expr	389	lam		322,388
+expr	390	app	TLA.set	49,23,51,53,25,27,341,57
+expr	391	app	TLA.FuncSet	3,390
+expr	392	app	TLA.in	19,391
+expr	393	lam		322,392
+expr	394	app	TLA.set	49,23,51,53,25,27,55,322
+expr	395	app	TLA.FuncSet	3,394
+expr	396	app	TLA.in	19,395
+expr	397	lam		322,396
+expr	398	app	TLA.set	49,23,51,53,25,27,55,341
+expr	399	app	TLA.FuncSet	3,398
+expr	400	app	TLA.in	19,399
+expr	401	lam		322,400
+expr	402	app	TLA.isAFcn	19
+expr	403	app	TLA.DOMAIN	19
+expr	404	app	=	403,3
+expr	405	var	zenon_Vx	
+expr	406	app	TLA.in	405,3
+expr	407	app	TLA.fapply	19,405
+expr	408	app	TLA.in	407,58
+expr	409	imply		406,408
+expr	410	all		405,409
+expr	422	var	zenon_Vy	
+expr	424	app	TLA.bAll	422,46
+expr	425	lam		422,424
+expr	426	app	TLA.bAll	3,422
+expr	427	lam		422,426
+expr	429	app	TLA.in	165,3
+expr	430	app	TLA.fapply	19,165
+expr	431	app	=	430,27
+expr	432	app	TLA.fapply	38,165
+expr	433	app	=	432,165
+expr	434	not		433
+expr	435	imply		431,434
+expr	436	imply		429,435
+expr	437	all		165,436
+expr	439	var	zenon_Vz	
+expr	441	var	zenon_Vaa	
+expr	442	app	TLA.in	38,441
+expr	443	lam		441,442
+expr	444	app	TLA.in	439,39
+expr	445	lam		439,444
+expr	448	app	TLA.FuncSet	439,3
+expr	449	app	TLA.in	38,448
+expr	450	lam		439,449
+expr	451	app	TLA.FuncSet	3,439
+expr	452	app	TLA.in	38,451
+expr	453	lam		439,452
+expr	455	app	TLA.DOMAIN	38
+expr	457	var	zenon_Vba	
+expr	458	app	TLA.in	457,3
+expr	459	app	TLA.fapply	38,457
+expr	460	app	TLA.in	459,3
+expr	461	imply		458,460
+expr	462	all		457,461
+expr	464	var	zenon_Vca	
+expr	466	var	zenon_Vda	
+expr	467	app	TLA.in	36,466
+expr	468	lam		466,467
+expr	469	app	TLA.in	464,9
+expr	470	lam		464,469
+expr	473	app	TLA.FuncSet	464,8
+expr	474	app	TLA.in	36,473
+expr	475	lam		464,474
+expr	476	app	TLA.FuncSet	3,464
+expr	477	app	TLA.in	36,476
+expr	478	lam		464,477
+expr	480	app	TLA.DOMAIN	36
+expr	482	var	zenon_Vea	
+expr	483	app	TLA.in	482,3
+expr	484	app	TLA.fapply	36,482
+expr	485	app	TLA.in	484,8
+expr	486	imply		483,485
+expr	487	all		482,486
+expr	502	var	zenon_Vfa	
+expr	504	app	TLA.bAll	502,34
+expr	505	lam		502,504
+expr	508	app	TLA.in	430,28
+expr	509	app	TLA.fapply	15,165
+expr	510	app	TLA.in	165,509
+expr	511	not		510
+expr	512	imply		508,511
+expr	513	imply		429,512
+expr	514	all		165,513
+expr	516	var	zenon_Vga	
+expr	518	var	zenon_Vha	
+expr	519	app	TLA.in	15,518
+expr	520	lam		518,519
+expr	521	app	TLA.in	516,17
+expr	522	lam		516,521
+expr	525	app	TLA.FuncSet	516,16
+expr	526	app	TLA.in	15,525
+expr	527	lam		516,526
+expr	528	app	TLA.FuncSet	3,516
+expr	529	app	TLA.in	15,528
+expr	530	lam		516,529
+expr	531	app	TLA.SUBSET	516
+expr	532	app	TLA.FuncSet	3,531
+expr	533	app	TLA.in	15,532
+expr	534	lam		516,533
+expr	536	app	TLA.DOMAIN	15
+expr	538	var	zenon_Via	
+expr	539	app	TLA.in	538,3
+expr	540	app	TLA.fapply	15,538
+expr	541	app	TLA.in	540,16
+expr	542	imply		539,541
+expr	543	all		538,542
+expr	545	var	zenon_Vja	
+expr	547	var	zenon_Vka	
+expr	548	app	TLA.in	11,547
+expr	549	lam		547,548
+expr	550	app	TLA.in	545,13
+expr	551	lam		545,550
+expr	554	app	TLA.FuncSet	545,12
+expr	555	app	TLA.in	11,554
+expr	556	lam		545,555
+expr	557	app	TLA.FuncSet	3,545
+expr	558	app	TLA.in	11,557
+expr	559	lam		545,558
+expr	560	app	TLA.set	545,1
+expr	561	app	TLA.FuncSet	3,560
+expr	562	app	TLA.in	11,561
+expr	563	lam		545,562
+expr	564	app	TLA.set	0,545
+expr	565	app	TLA.FuncSet	3,564
+expr	566	app	TLA.in	11,565
+expr	567	lam		545,566
+expr	569	app	TLA.DOMAIN	11
+expr	571	var	zenon_Vla	
+expr	572	app	TLA.in	571,3
+expr	573	app	TLA.fapply	11,571
+expr	574	app	TLA.in	573,12
+expr	575	imply		572,574
+expr	576	all		571,575
+expr	578	var	zenon_Vma	
+expr	580	var	zenon_Vna	
+expr	581	app	TLA.in	7,580
+expr	582	lam		580,581
+expr	587	app	TLA.FuncSet	578,8
+expr	588	app	TLA.in	7,587
+expr	589	lam		578,588
+expr	590	app	TLA.FuncSet	3,578
+expr	591	app	TLA.in	7,590
+expr	592	lam		578,591
+expr	594	app	TLA.DOMAIN	7
+expr	596	var	zenon_Voa	
+expr	597	app	TLA.in	596,3
+expr	598	app	TLA.fapply	7,596
+expr	599	app	TLA.in	598,8
+expr	600	imply		597,599
+expr	601	all		596,600
+expr	603	var	zenon_Vpa	
+expr	605	meta		514
+expr	609	app	TLA.fapply	15,605
+expr	615	var	zenon_Vqa	
+expr	617	meta		437
+expr	621	app	TLA.fapply	38,617
+expr	627	var	zenon_Vra	
+expr	630	var	zenon_Vsa	
+expr	634	var	zenon_Vta	
+expr	637	var	zenon_Vua	
+expr	640	var	zenon_Vva	
+expr	645	var	zenon_Vwa	
+expr	652	app	TLA.fapply	645,5
+expr	653	app	=	652,5
+expr	654	not		653
+expr	655	lam		645,654
+expr	656	app	TLA.fapply	38,645
+expr	657	app	=	656,5
+expr	658	not		657
+expr	659	lam		645,658
+expr	660	app	=	120,645
+expr	661	not		660
+expr	662	lam		645,661
+expr	669	var	zenon_Vxa	
+expr	671	var	zenon_Vya	
+expr	672	app	TLA.in	72,671
+expr	673	lam		671,672
+expr	674	app	TLA.in	669,73
+expr	675	lam		669,674
+expr	676	app	TLA.fapply	669,2
+expr	677	app	TLA.in	676,73
+expr	678	lam		669,677
+expr	679	app	TLA.fapply	19,669
+expr	680	app	TLA.in	679,73
+expr	681	lam		669,680
+expr	682	app	TLA.fapply	19,120
+expr	684	app	=	72,49
+expr	685	app	=	72,23
+expr	686	app	=	72,51
+expr	687	var	zenon_Vza	
+expr	689	app	=	687,70
+expr	690	lam		687,689
+expr	691	app	TLA.fapply	687,2
+expr	692	app	=	691,70
+expr	693	lam		687,692
+expr	694	app	TLA.fapply	7,687
+expr	695	app	=	694,70
+expr	696	lam		687,695
+expr	704	not		686
+expr	706	var	zenon_Vab	
+expr	708	app	=	706,51
+expr	709	lam		706,708
+expr	710	app	TLA.fapply	706,2
+expr	711	app	=	710,51
+expr	712	lam		706,711
+expr	713	app	TLA.fapply	19,706
+expr	714	app	=	713,51
+expr	715	lam		706,714
+expr	716	app	=	682,51
+expr	726	var	zenon_Vbb	
+expr	730	app	=	726,129
+expr	731	not		730
+expr	732	lam		726,731
+expr	733	app	TLA.fapply	726,2
+expr	734	app	=	733,129
+expr	735	not		734
+expr	736	lam		726,735
+expr	737	app	TLA.fapply	19,726
+expr	738	app	=	737,129
+expr	739	not		738
+expr	740	lam		726,739
+expr	761	var	zenon_Vcb	
+expr	763	var	zenon_Vdb	
+expr	766	app	TLA.in	761,77
+expr	767	lam		761,766
+expr	768	app	TLA.fapply	761,2
+expr	769	app	TLA.in	768,77
+expr	770	lam		761,769
+expr	771	app	TLA.fapply	19,761
+expr	772	app	TLA.in	771,77
+expr	773	lam		761,772
+expr	774	app	TLA.in	682,77
+expr	782	var	zenon_Veb	
+expr	784	app	TLA.fapply	782,2
+expr	785	lam		782,784
+expr	786	app	TLA.fapply	11,782
+expr	787	lam		782,786
+expr	791	var	zenon_Vfb	
+expr	793	app	TLA.bAll	791,88
+expr	794	lam		791,793
+expr	795	app	TLA.setminus	791,84
+expr	796	app	TLA.bAll	795,88
+expr	797	lam		791,796
+expr	798	app	TLA.setminus	791,82
+expr	799	app	TLA.setminus	798,84
+expr	800	app	TLA.bAll	799,88
+expr	801	lam		791,800
+expr	802	app	TLA.setminus	3,791
+expr	803	app	TLA.setminus	802,84
+expr	804	app	TLA.bAll	803,88
+expr	805	lam		791,804
+expr	806	app	TLA.fapply	791,2
+expr	807	app	TLA.setminus	3,806
+expr	808	app	TLA.setminus	807,84
+expr	809	app	TLA.bAll	808,88
+expr	810	lam		791,809
+expr	811	app	TLA.fapply	15,791
+expr	812	app	TLA.setminus	3,811
+expr	813	app	TLA.setminus	812,84
+expr	814	app	TLA.bAll	813,88
+expr	815	lam		791,814
+expr	816	app	TLA.fapply	15,120
+expr	817	app	TLA.setminus	3,816
+expr	818	app	TLA.setminus	817,84
+expr	820	app	TLA.in	165,85
+expr	821	app	a_STATEunde_Afterunde_a	165,2
+expr	822	imply		820,821
+expr	823	all		165,822
+expr	825	var	zenon_Vgb	
+expr	827	meta		823
+expr	832	var	zenon_Vhb	
+expr	834	app	arith.le	832,102
+expr	835	lam		832,834
+expr	836	app	TLA.fapply	832,2
+expr	837	app	arith.le	836,102
+expr	838	lam		832,837
+expr	839	app	TLA.fapply	7,832
+expr	840	app	arith.le	839,102
+expr	841	lam		832,840
+expr	844	var	zenon_Vib	
+expr	851	app	TLA.setminus	3,844
+expr	852	app	TLA.bAll	851,88
+expr	853	lam		844,852
+expr	854	app	TLA.set	844
+expr	855	app	TLA.setminus	3,854
+expr	856	app	TLA.bAll	855,88
+expr	857	lam		844,856
+expr	858	app	TLA.setminus	3,133
+expr	860	app	TLA.in	165,107
+expr	861	imply		860,821
+expr	862	all		165,861
+expr	864	var	zenon_Vjb	
+expr	866	meta		862
+expr	873	var	zenon_Vkb	
+expr	875	app	=	873,117
+expr	876	lam		873,875
+expr	877	app	=	116,873
+expr	878	lam		873,877
+expr	881	var	zenon_Vlb	
+expr	884	var	zenon_Vmb	
+expr	887	var	zenon_Vnb	
+expr	889	var	zenon_Vob	
+expr	892	app	TLA.in	887,107
+expr	893	lam		887,892
+expr	898	var	zenon_Vpb	
+expr	900	var	zenon_Vqb	
+expr	901	app	TLA.in	149,900
+expr	902	lam		900,901
+expr	903	app	TLA.in	898,105
+expr	904	lam		898,903
+expr	905	app	TLA.fapply	898,2
+expr	906	app	TLA.in	905,105
+expr	907	lam		898,906
+expr	908	app	TLA.fapply	138,2
+expr	910	app	=	149,55
+expr	911	app	=	149,57
+expr	913	var	zenon_Vrb	
+expr	917	var	zenon_Vsb	
+expr	918	app	TLA.in	86,917
+expr	919	not		918
+expr	920	lam		917,919
+expr	921	app	TLA.in	913,84
+expr	922	not		921
+expr	923	lam		913,922
+expr	969	var	zenon_Vtb	
+expr	973	app	=	969,2
+expr	974	not		973
+expr	975	lam		969,974
+expr	976	not		247
+expr	983	var	zenon_Vub	
+expr	985	app	=	983,57
+expr	986	lam		983,985
+expr	987	app	TLA.fapply	983,2
+expr	988	app	=	987,57
+expr	989	lam		983,988
+expr	990	app	=	908,57
+expr	1008	var	zenon_Vvb	
+expr	1034	var	zenon_Vwb	
+expr	1038	app	=	1034,72
+expr	1039	not		1038
+expr	1040	lam		1034,1039
+expr	1041	app	TLA.fapply	1034,2
+expr	1042	app	=	1041,72
+expr	1043	not		1042
+expr	1044	lam		1034,1043
+expr	1052	var	zenon_Vxb	
+expr	1059	app	TLA.in	2,403
+expr	1062	not		1059
+expr	1080	var	zenon_Vyb	
+expr	1092	var	zenon_Vzb	
+expr	1105	var	zenon_Vac	
+expr	1109	var	zenon_Vbc	
+expr	1110	app	TLA.in	5,1109
+expr	1111	not		1110
+expr	1112	lam		1109,1111
+expr	1119	app	TLA.set	1105
+expr	1120	app	TLA.in	5,1119
+expr	1121	not		1120
+expr	1122	lam		1105,1121
+expr	1145	var	zenon_Vcc	
+expr	1149	var	zenon_Vdc	
+expr	1153	app	TLA.in	1145,133
+expr	1154	not		1153
+expr	1155	lam		1145,1154
+expr	1163	app	TLA.fapply	1145,5
+expr	1164	app	TLA.set	1163
+expr	1165	app	TLA.in	5,1164
+expr	1166	not		1165
+expr	1167	lam		1145,1166
+expr	1168	app	TLA.fapply	38,1145
+expr	1169	app	TLA.set	1168
+expr	1170	app	TLA.in	5,1169
+expr	1171	not		1170
+expr	1172	lam		1145,1171
+expr	1194	var	zenon_Vec	
+expr	1196	var	zenon_Vfc	
+expr	1197	app	TLA.in	908,1196
+expr	1198	lam		1196,1197
+expr	1202	app	=	908,55
+expr	1210	var	zenon_Vgc	
+expr	1212	var	zenon_Vhc	
+expr	1219	app	TLA.setminus	1210,84
+expr	1220	app	TLA.in	5,1219
+expr	1221	lam		1210,1220
+expr	1222	app	TLA.setminus	3,1210
+expr	1223	app	TLA.in	5,1222
+expr	1224	lam		1210,1223
+expr	1225	app	TLA.set	1210
+expr	1226	app	TLA.setminus	3,1225
+expr	1227	app	TLA.in	5,1226
+expr	1228	lam		1210,1227
+expr	1233	var	zenon_Vic	
+expr	1235	var	zenon_Vjc	
+expr	1238	app	TLA.in	1233,858
+expr	1239	lam		1233,1238
+expr	1242	app	TLA.setminus	1233,133
+expr	1243	app	TLA.in	5,1242
+expr	1244	lam		1233,1243
+expr	1252	app	TLA.fapply	1233,5
+expr	1253	app	TLA.set	1252
+expr	1254	app	TLA.setminus	3,1253
+expr	1255	app	TLA.in	5,1254
+expr	1256	lam		1233,1255
+expr	1257	app	TLA.fapply	38,1233
+expr	1258	app	TLA.set	1257
+expr	1259	app	TLA.setminus	3,1258
+expr	1260	app	TLA.in	5,1259
+expr	1261	lam		1233,1260
+expr	1267	var	zenon_Vkc	
+expr	1271	var	zenon_Vlc	
+expr	1273	app	a_STATEunde_Afterunde_a	1271,2
+expr	1274	lam		1271,1273
+expr	1275	app	a_STATEunde_Afterunde_a	866,1271
+expr	1276	lam		1271,1275
+expr	1279	var	zenon_Vmc	
+expr	1281	app	a_STATEunde_Afterunde_a	1279,120
+expr	1282	lam		1279,1281
+expr	1285	app	TLA.fapply	1279,5
+expr	1286	app	a_STATEunde_Afterunde_a	866,1285
+expr	1287	lam		1279,1286
+expr	1288	app	TLA.fapply	38,1279
+expr	1289	app	a_STATEunde_Afterunde_a	866,1288
+expr	1290	lam		1279,1289
+expr	1292	var	zenon_Vnc	
+expr	1296	app	TLA.setminus	1292,133
+expr	1297	app	TLA.bAll	1296,88
+expr	1298	lam		1292,1297
+expr	1306	app	TLA.fapply	1292,5
+expr	1307	app	TLA.set	1306
+expr	1308	app	TLA.setminus	3,1307
+expr	1309	app	TLA.bAll	1308,88
+expr	1310	lam		1292,1309
+expr	1311	app	TLA.fapply	38,1292
+expr	1312	app	TLA.set	1311
+expr	1313	app	TLA.setminus	3,1312
+expr	1314	app	TLA.bAll	1313,88
+expr	1315	lam		1292,1314
+expr	1316	app	TLA.bAll	858,1292
+expr	1317	lam		1292,1316
+expr	1318	app	TLA.in	165,858
+expr	1319	imply		1318,821
+expr	1320	all		165,1319
+expr	1322	var	zenon_Voc	
+expr	1324	meta		1320
+expr	1329	var	zenon_Vpc	
+expr	1333	var	zenon_Vqc	
+expr	1337	app	a_STATEunde_Afterunde_a	1324,1333
+expr	1338	lam		1333,1337
+expr	1341	var	zenon_Vrc	
+expr	1347	app	TLA.fapply	1341,5
+expr	1348	app	a_STATEunde_Afterunde_a	1324,1347
+expr	1349	lam		1341,1348
+expr	1350	app	TLA.fapply	38,1341
+expr	1351	app	a_STATEunde_Afterunde_a	1324,1350
+expr	1352	lam		1341,1351
+expr	1354	var	zenon_Vsc	
+expr	1358	app	TLA.fapply	1354,120
+expr	1359	app	arith.le	1358,102
+expr	1360	lam		1354,1359
+expr	1364	app	TLA.fapply	1354,5
+expr	1365	app	TLA.fapply	7,1364
+expr	1366	app	arith.le	1365,102
+expr	1367	lam		1354,1366
+expr	1368	app	TLA.fapply	38,1354
+expr	1369	app	TLA.fapply	7,1368
+expr	1370	app	arith.le	1369,102
+expr	1371	lam		1354,1370
+expr	1372	app	arith.le	121,1354
+expr	1373	lam		1354,1372
+expr	1374	app	TLA.fapply	1354,92
+expr	1375	app	arith.le	121,1374
+expr	1376	lam		1354,1375
+expr	1377	app	TLA.fapply	36,1354
+expr	1378	app	arith.le	121,1377
+expr	1379	lam		1354,1378
+expr	1380	app	TLA.fapply	1354,2
+expr	1381	app	TLA.fapply	36,1380
+expr	1382	app	arith.le	121,1381
+expr	1383	lam		1354,1382
+expr	1384	app	TLA.fapply	36,1368
+expr	1385	app	arith.le	121,1384
+expr	1386	lam		1354,1385
+expr	1387	app	TLA.fapply	38,120
+expr	1388	app	TLA.fapply	36,1387
+expr	1391	var	zenon_Vtc	
+expr	1393	app	arith.le	1391,1388
+expr	1394	lam		1391,1393
+expr	1395	app	TLA.fapply	1391,120
+expr	1396	app	arith.le	1395,1388
+expr	1397	lam		1391,1396
+expr	1398	app	TLA.fapply	7,1391
+expr	1399	app	arith.le	1398,1388
+expr	1400	lam		1391,1399
+expr	1401	app	TLA.fapply	1391,5
+expr	1402	app	TLA.fapply	7,1401
+expr	1403	app	arith.le	1402,1388
+expr	1404	lam		1391,1403
+expr	1405	app	TLA.fapply	38,1391
+expr	1406	app	TLA.fapply	7,1405
+expr	1407	app	arith.le	1406,1388
+expr	1408	lam		1391,1407
+expr	1411	app	TLA.fapply	1391,1387
+expr	1412	app	arith.le	121,1411
+expr	1413	lam		1391,1412
+expr	1417	app	TLA.fapply	36,1395
+expr	1418	app	arith.le	121,1417
+expr	1419	lam		1391,1418
+expr	1423	app	TLA.fapply	38,1401
+expr	1424	app	TLA.fapply	36,1423
+expr	1425	app	arith.le	121,1424
+expr	1426	lam		1391,1425
+expr	1427	app	TLA.fapply	38,1405
+expr	1428	app	TLA.fapply	36,1427
+expr	1429	app	arith.le	121,1428
+expr	1430	lam		1391,1429
+expr	1432	var	zenon_Vuc	
+expr	1436	var	zenon_Vvc	
+expr	1440	app	a_STATEunde_Afterunde_a	827,1436
+expr	1441	lam		1436,1440
+expr	1444	var	zenon_Vwc	
+expr	1450	app	TLA.fapply	1444,5
+expr	1451	app	a_STATEunde_Afterunde_a	827,1450
+expr	1452	lam		1444,1451
+expr	1453	app	TLA.fapply	38,1444
+expr	1454	app	a_STATEunde_Afterunde_a	827,1453
+expr	1455	lam		1444,1454
+expr	1457	var	zenon_Vxc	
+expr	1464	app	TLA.setminus	1457,816
+expr	1465	app	TLA.setminus	1464,84
+expr	1466	app	TLA.bAll	1465,88
+expr	1467	lam		1457,1466
+expr	1472	app	TLA.fapply	1457,120
+expr	1473	app	TLA.setminus	3,1472
+expr	1474	app	TLA.setminus	1473,84
+expr	1475	app	TLA.bAll	1474,88
+expr	1476	lam		1457,1475
+expr	1482	app	TLA.fapply	1457,5
+expr	1483	app	TLA.fapply	15,1482
+expr	1484	app	TLA.setminus	3,1483
+expr	1485	app	TLA.setminus	1484,84
+expr	1486	app	TLA.bAll	1485,88
+expr	1487	lam		1457,1486
+expr	1488	app	TLA.fapply	38,1457
+expr	1489	app	TLA.fapply	15,1488
+expr	1490	app	TLA.setminus	3,1489
+expr	1491	app	TLA.setminus	1490,84
+expr	1492	app	TLA.bAll	1491,88
+expr	1493	lam		1457,1492
+expr	1494	app	TLA.setminus	817,1457
+expr	1495	app	TLA.bAll	1494,88
+expr	1496	lam		1457,1495
+expr	1497	app	TLA.set	1457
+expr	1498	app	TLA.setminus	817,1497
+expr	1499	app	TLA.bAll	1498,88
+expr	1500	lam		1457,1499
+expr	1501	app	TLA.setminus	817,133
+expr	1503	app	TLA.in	165,818
+expr	1504	imply		1503,821
+expr	1505	all		165,1504
+expr	1507	var	zenon_Vyc	
+expr	1509	meta		1505
+expr	1514	var	zenon_Vzc	
+expr	1518	var	zenon_Vad	
+expr	1522	app	a_STATEunde_Afterunde_a	1509,1518
+expr	1523	lam		1518,1522
+expr	1526	var	zenon_Vbd	
+expr	1532	app	TLA.fapply	1526,5
+expr	1533	app	a_STATEunde_Afterunde_a	1509,1532
+expr	1534	lam		1526,1533
+expr	1535	app	TLA.fapply	38,1526
+expr	1536	app	a_STATEunde_Afterunde_a	1509,1535
+expr	1537	lam		1526,1536
+expr	1539	var	zenon_Vcd	
+expr	1546	app	TLA.setminus	1539,816
+expr	1547	app	TLA.setminus	1546,133
+expr	1548	app	TLA.bAll	1547,88
+expr	1549	lam		1539,1548
+expr	1550	app	TLA.setminus	3,1539
+expr	1551	app	TLA.setminus	1550,133
+expr	1552	app	TLA.bAll	1551,88
+expr	1553	lam		1539,1552
+expr	1554	app	TLA.fapply	1539,120
+expr	1555	app	TLA.setminus	3,1554
+expr	1556	app	TLA.setminus	1555,133
+expr	1557	app	TLA.bAll	1556,88
+expr	1558	lam		1539,1557
+expr	1559	app	TLA.fapply	15,1539
+expr	1560	app	TLA.setminus	3,1559
+expr	1561	app	TLA.setminus	1560,133
+expr	1562	app	TLA.bAll	1561,88
+expr	1563	lam		1539,1562
+expr	1564	app	TLA.fapply	1539,5
+expr	1565	app	TLA.fapply	15,1564
+expr	1566	app	TLA.setminus	3,1565
+expr	1567	app	TLA.setminus	1566,133
+expr	1568	app	TLA.bAll	1567,88
+expr	1569	lam		1539,1568
+expr	1570	app	TLA.fapply	38,1539
+expr	1571	app	TLA.fapply	15,1570
+expr	1572	app	TLA.setminus	3,1571
+expr	1573	app	TLA.setminus	1572,133
+expr	1574	app	TLA.bAll	1573,88
+expr	1575	lam		1539,1574
+expr	1583	app	TLA.set	1564
+expr	1584	app	TLA.setminus	817,1583
+expr	1585	app	TLA.bAll	1584,88
+expr	1586	lam		1539,1585
+expr	1587	app	TLA.set	1570
+expr	1588	app	TLA.setminus	817,1587
+expr	1589	app	TLA.bAll	1588,88
+expr	1590	lam		1539,1589
+expr	1591	app	TLA.bAll	1501,1539
+expr	1592	lam		1539,1591
+expr	1593	app	TLA.in	165,1501
+expr	1594	imply		1593,821
+expr	1595	all		165,1594
+expr	1597	var	zenon_Vdd	
+expr	1599	meta		1595
+expr	1604	var	zenon_Ved	
+expr	1608	var	zenon_Vfd	
+expr	1612	app	a_STATEunde_Afterunde_a	1599,1608
+expr	1613	lam		1608,1612
+expr	1616	var	zenon_Vgd	
+expr	1622	app	TLA.fapply	1616,5
+expr	1623	app	a_STATEunde_Afterunde_a	1599,1622
+expr	1624	lam		1616,1623
+expr	1625	app	TLA.fapply	38,1616
+expr	1626	app	a_STATEunde_Afterunde_a	1599,1625
+expr	1627	lam		1616,1626
+expr	1639	var	zenon_Vhd	
+expr	1641	app	TLA.fapply	1639,120
+expr	1642	lam		1639,1641
+expr	1645	app	TLA.fapply	1639,5
+expr	1646	app	TLA.fapply	11,1645
+expr	1647	lam		1639,1646
+expr	1648	app	TLA.fapply	38,1639
+expr	1649	app	TLA.fapply	11,1648
+expr	1650	lam		1639,1649
+expr	1652	var	zenon_Vid	
+expr	1654	var	zenon_Vjd	
+expr	1655	app	TLA.in	682,1654
+expr	1656	lam		1654,1655
+expr	1659	app	TLA.fapply	1652,120
+expr	1660	app	TLA.in	1659,77
+expr	1661	lam		1652,1660
+expr	1665	app	TLA.fapply	1652,5
+expr	1666	app	TLA.fapply	19,1665
+expr	1667	app	TLA.in	1666,77
+expr	1668	lam		1652,1667
+expr	1669	app	TLA.fapply	38,1652
+expr	1670	app	TLA.fapply	19,1669
+expr	1671	app	TLA.in	1670,77
+expr	1672	lam		1652,1671
+expr	1675	app	TLA.set	1652,51,53
+expr	1676	app	TLA.in	682,1675
+expr	1677	lam		1652,1676
+expr	1678	app	$string	1652
+expr	1679	app	TLA.set	1678,51,53
+expr	1680	app	TLA.in	682,1679
+expr	1681	lam		1652,1680
+expr	1682	app	TLA.set	23,1652,53
+expr	1683	app	TLA.in	682,1682
+expr	1684	lam		1652,1683
+expr	1685	app	TLA.set	23,1678,53
+expr	1686	app	TLA.in	682,1685
+expr	1687	lam		1652,1686
+expr	1688	app	TLA.set	23,51,1652
+expr	1689	app	TLA.in	682,1688
+expr	1690	lam		1652,1689
+expr	1691	app	TLA.set	23,51,1678
+expr	1692	app	TLA.in	682,1691
+expr	1693	lam		1652,1692
+expr	1694	app	=	682,23
+expr	1695	app	=	682,53
+expr	1709	var	zenon_Vkd	
+expr	1711	app	=	1709,53
+expr	1712	lam		1709,1711
+expr	1713	app	TLA.fapply	1709,120
+expr	1714	app	=	1713,53
+expr	1715	lam		1709,1714
+expr	1716	app	TLA.fapply	19,1709
+expr	1717	app	=	1716,53
+expr	1718	lam		1709,1717
+expr	1719	app	TLA.fapply	1709,5
+expr	1720	app	TLA.fapply	19,1719
+expr	1721	app	=	1720,53
+expr	1722	lam		1709,1721
+expr	1723	app	TLA.fapply	38,1709
+expr	1724	app	TLA.fapply	19,1723
+expr	1725	app	=	1724,53
+expr	1726	lam		1709,1725
+expr	1727	app	=	682,1709
+expr	1728	lam		1709,1727
+expr	1729	app	$string	1709
+expr	1730	app	=	682,1729
+expr	1731	lam		1709,1730
+expr	1732	app	=	682,908
+expr	1733	not		1732
+expr	1736	app	=	682,72
+expr	1737	not		1736
+expr	1758	var	zenon_Vld	
+expr	1765	app	TLA.fapply	1758,120
+expr	1766	app	=	1765,129
+expr	1767	not		1766
+expr	1768	lam		1758,1767
+expr	1769	app	TLA.fapply	19,1758
+expr	1773	app	TLA.fapply	1758,5
+expr	1774	app	TLA.fapply	19,1773
+expr	1775	app	=	1774,129
+expr	1776	not		1775
+expr	1777	lam		1758,1776
+expr	1778	app	TLA.fapply	38,1758
+expr	1779	app	TLA.fapply	19,1778
+expr	1780	app	=	1779,129
+expr	1781	not		1780
+expr	1782	lam		1758,1781
+expr	1783	app	=	682,1758
+expr	1784	not		1783
+expr	1785	lam		1758,1784
+expr	1786	app	=	682,1773
+expr	1787	not		1786
+expr	1788	lam		1758,1787
+expr	1789	app	=	682,1769
+expr	1790	not		1789
+expr	1791	lam		1758,1790
+expr	1792	app	=	682,682
+expr	1793	not		1792
+expr	1804	var	zenon_Vmd	
+expr	1811	app	TLA.fapply	1804,120
+expr	1812	app	=	1811,72
+expr	1813	not		1812
+expr	1814	lam		1804,1813
+expr	1815	app	TLA.fapply	19,1804
+expr	1816	app	=	1815,72
+expr	1817	not		1816
+expr	1818	lam		1804,1817
+expr	1819	app	TLA.fapply	1804,5
+expr	1820	app	TLA.fapply	19,1819
+expr	1821	app	=	1820,72
+expr	1822	not		1821
+expr	1823	lam		1804,1822
+expr	1824	app	TLA.fapply	38,1804
+expr	1825	app	TLA.fapply	19,1824
+expr	1826	app	=	1825,72
+expr	1827	not		1826
+expr	1828	lam		1804,1827
+expr	1832	app	TLA.fapply	1804,2
+expr	1833	app	=	682,1832
+expr	1834	not		1833
+expr	1835	lam		1804,1834
+expr	1842	var	zenon_Vnd	
+expr	1846	app	=	1842,149
+expr	1847	not		1846
+expr	1848	lam		1842,1847
+expr	1849	app	TLA.fapply	1842,120
+expr	1850	app	=	1849,149
+expr	1851	not		1850
+expr	1852	lam		1842,1851
+expr	1853	app	TLA.fapply	19,1842
+expr	1854	app	=	1853,149
+expr	1855	not		1854
+expr	1856	lam		1842,1855
+expr	1857	app	TLA.fapply	1842,5
+expr	1858	app	TLA.fapply	19,1857
+expr	1859	app	=	1858,149
+expr	1860	not		1859
+expr	1861	lam		1842,1860
+expr	1862	app	TLA.fapply	38,1842
+expr	1863	app	TLA.fapply	19,1862
+expr	1864	app	=	1863,149
+expr	1865	not		1864
+expr	1866	lam		1842,1865
+expr	1877	var	zenon_Vod	
+expr	1881	app	=	1877,908
+expr	1882	not		1881
+expr	1883	lam		1877,1882
+expr	1884	app	TLA.fapply	1877,120
+expr	1885	app	=	1884,908
+expr	1886	not		1885
+expr	1887	lam		1877,1886
+expr	1888	app	TLA.fapply	19,1877
+expr	1889	app	=	1888,908
+expr	1890	not		1889
+expr	1891	lam		1877,1890
+expr	1892	app	TLA.fapply	1877,5
+expr	1893	app	TLA.fapply	19,1892
+expr	1894	app	=	1893,908
+expr	1895	not		1894
+expr	1896	lam		1877,1895
+expr	1897	app	TLA.fapply	38,1877
+expr	1898	app	TLA.fapply	19,1897
+expr	1899	app	=	1898,908
+expr	1900	not		1899
+expr	1901	lam		1877,1900
+expr	1905	app	=	682,25
+expr	1906	not		1905
+expr	1911	var	zenon_Vpd	
+expr	1915	app	TLA.fapply	1911,120
+expr	1916	app	=	1915,51
+expr	1917	lam		1911,1916
+expr	1921	app	TLA.fapply	1911,5
+expr	1922	app	TLA.fapply	19,1921
+expr	1923	app	=	1922,51
+expr	1924	lam		1911,1923
+expr	1925	app	TLA.fapply	38,1911
+expr	1926	app	TLA.fapply	19,1925
+expr	1927	app	=	1926,51
+expr	1928	lam		1911,1927
+expr	1934	var	zenon_Vqd	
+expr	1968	var	zenon_Vrd	
+expr	2000	var	zenon_Vsd	
+expr	2028	not		122
+expr	2034	var	zenon_Vtd	
+expr	2038	app	TLA.fapply	2034,120
+expr	2039	app	=	2038,70
+expr	2040	lam		2034,2039
+expr	2044	app	TLA.fapply	2034,5
+expr	2045	app	TLA.fapply	7,2044
+expr	2046	app	=	2045,70
+expr	2047	lam		2034,2046
+expr	2048	app	TLA.fapply	38,2034
+expr	2049	app	TLA.fapply	7,2048
+expr	2050	app	=	2049,70
+expr	2051	lam		2034,2050
+expr	2052	app	=	121,2034
+expr	2053	lam		2034,2052
+expr	2067	var	zenon_Vud	
+expr	2069	var	zenon_Vvd	
+expr	2074	app	TLA.fapply	2067,120
+expr	2075	app	TLA.in	2074,73
+expr	2076	lam		2067,2075
+expr	2080	app	TLA.fapply	2067,5
+expr	2081	app	TLA.fapply	19,2080
+expr	2082	app	TLA.in	2081,73
+expr	2083	lam		2067,2082
+expr	2084	app	TLA.fapply	38,2067
+expr	2085	app	TLA.fapply	19,2084
+expr	2086	app	TLA.in	2085,73
+expr	2087	lam		2067,2086
+expr	2090	app	TLA.set	2067,23,51
+expr	2091	app	TLA.in	682,2090
+expr	2092	lam		2067,2091
+expr	2093	app	$string	2067
+expr	2094	app	TLA.set	2093,23,51
+expr	2095	app	TLA.in	682,2094
+expr	2096	lam		2067,2095
+expr	2097	app	TLA.set	49,2067,51
+expr	2098	app	TLA.in	682,2097
+expr	2099	lam		2067,2098
+expr	2100	app	TLA.set	49,2093,51
+expr	2101	app	TLA.in	682,2100
+expr	2102	lam		2067,2101
+expr	2103	app	TLA.set	49,23,2067
+expr	2104	app	TLA.in	682,2103
+expr	2105	lam		2067,2104
+expr	2106	app	TLA.set	49,23,2093
+expr	2107	app	TLA.in	682,2106
+expr	2108	lam		2067,2107
+expr	2109	app	=	682,49
+expr	2112	var	zenon_Vwd	
+expr	2121	var	zenon_Vxd	
+expr	2125	app	=	2121,617
+expr	2126	not		2125
+expr	2127	lam		2121,2126
+expr	2128	app	TLA.fapply	2121,617
+expr	2129	app	=	2128,617
+expr	2130	not		2129
+expr	2131	lam		2121,2130
+expr	2132	app	TLA.fapply	38,2121
+expr	2133	app	=	2132,617
+expr	2134	not		2133
+expr	2135	lam		2121,2134
+expr	2136	app	=	621,2121
+expr	2137	not		2136
+expr	2138	lam		2121,2137
+expr	2170	var	zenon_Vyd	
+expr	2175	var	zenon_Vzd	
+expr	2179	var	zenon_Vae	
+expr	2180	app	TLA.in	605,2179
+expr	2181	not		2180
+expr	2182	lam		2179,2181
+expr	2183	app	TLA.in	2175,609
+expr	2184	not		2183
+expr	2185	lam		2175,2184
+expr	2189	app	TLA.fapply	2175,605
+expr	2190	app	TLA.in	605,2189
+expr	2191	not		2190
+expr	2192	lam		2175,2191
+expr	2193	app	TLA.fapply	15,2175
+expr	2194	app	TLA.in	605,2193
+expr	2195	not		2194
+expr	2196	lam		2175,2195
+expr	2197	var	zenon_Vbe	
+expr	2249	var	zenon_Vce	
+expr	2251	app	=	2249,3
+expr	2252	lam		2249,2251
+expr	2253	var	zenon_Vde	
+expr	2254	app	TLA.DOMAIN	2253
+expr	2255	app	=	2254,3
+expr	2256	lam		2253,2255
+expr	2260	app	=	594,2249
+expr	2261	lam		2249,2260
+expr	2262	var	zenon_Vee	
+expr	2263	app	TLA.in	2262,594
+expr	2264	app	TLA.in	2262,3
+expr	2265	equiv		2263,2264
+expr	2266	all		2262,2265
+expr	2268	var	zenon_Vfe	
+expr	2270	var	zenon_Vge	
+expr	2271	app	TLA.isAFcn	2270
+expr	2272	lam		2270,2271
+expr	2278	var	zenon_Vhe	
+expr	2282	var	zenon_Vie	
+expr	2289	app	=	569,2278
+expr	2290	lam		2278,2289
+expr	2291	var	zenon_Vje	
+expr	2292	app	TLA.in	2291,569
+expr	2293	app	TLA.in	2291,3
+expr	2294	equiv		2292,2293
+expr	2295	all		2291,2294
+expr	2297	var	zenon_Vke	
+expr	2299	var	zenon_Vle	
+expr	2307	var	zenon_Vme	
+expr	2311	var	zenon_Vne	
+expr	2318	app	=	536,2307
+expr	2319	lam		2307,2318
+expr	2320	var	zenon_Voe	
+expr	2321	app	TLA.in	2320,536
+expr	2322	app	TLA.in	2320,3
+expr	2323	equiv		2321,2322
+expr	2324	all		2320,2323
+expr	2326	var	zenon_Vpe	
+expr	2328	var	zenon_Vqe	
+expr	2336	var	zenon_Vre	
+expr	2340	var	zenon_Vse	
+expr	2347	app	=	480,2336
+expr	2348	lam		2336,2347
+expr	2349	var	zenon_Vte	
+expr	2350	app	TLA.in	2349,480
+expr	2351	app	TLA.in	2349,3
+expr	2352	equiv		2350,2351
+expr	2353	all		2349,2352
+expr	2355	var	zenon_Vue	
+expr	2357	var	zenon_Vve	
+expr	2365	var	zenon_Vwe	
+expr	2369	var	zenon_Vxe	
+expr	2376	app	=	455,2365
+expr	2377	lam		2365,2376
+expr	2378	var	zenon_Vye	
+expr	2379	app	TLA.in	2378,455
+expr	2380	app	TLA.in	2378,3
+expr	2381	equiv		2379,2380
+expr	2382	all		2378,2381
+expr	2384	var	zenon_Vze	
+expr	2386	var	zenon_Vaf	
+expr	2394	var	zenon_Vbf	
+expr	2398	var	zenon_Vcf	
+expr	2405	app	=	403,2394
+expr	2406	lam		2394,2405
+expr	2407	var	zenon_Vdf	
+expr	2408	app	TLA.in	2407,403
+expr	2409	app	TLA.in	2407,3
+expr	2410	equiv		2408,2409
+expr	2411	all		2407,2410
+expr	2413	var	zenon_Vef	
+expr	2415	var	zenon_Vff	
+expr	2429	var	zenon_Vgf	
+expr	2431	var	zenon_Vhf	
+expr	2432	app	TLA.in	120,2431
+expr	2433	lam		2431,2432
+expr	2434	app	TLA.in	120,403
+expr	2443	var	zenon_Vif	
+expr	2445	var	zenon_Vjf	
+expr	2448	app	TLA.in	2443,594
+expr	2449	lam		2443,2448
+expr	2450	app	TLA.fapply	2443,5
+expr	2451	app	TLA.in	2450,594
+expr	2452	lam		2443,2451
+expr	2453	app	TLA.fapply	38,2443
+expr	2454	app	TLA.in	2453,594
+expr	2455	lam		2443,2454
+expr	2458	var	zenon_Vkf	
+expr	2459	app	TLA.DOMAIN	2458
+expr	2460	app	TLA.in	120,2459
+expr	2461	lam		2458,2460
+expr	2474	var	zenon_Vlf	
+expr	2476	var	zenon_Vmf	
+expr	2479	app	TLA.in	2474,569
+expr	2480	lam		2474,2479
+expr	2481	app	TLA.fapply	2474,5
+expr	2482	app	TLA.in	2481,569
+expr	2483	lam		2474,2482
+expr	2484	app	TLA.fapply	38,2474
+expr	2485	app	TLA.in	2484,569
+expr	2486	lam		2474,2485
+expr	2489	var	zenon_Vnf	
+expr	2503	var	zenon_Vof	
+expr	2505	var	zenon_Vpf	
+expr	2508	app	TLA.in	2503,536
+expr	2509	lam		2503,2508
+expr	2510	app	TLA.fapply	2503,5
+expr	2511	app	TLA.in	2510,536
+expr	2512	lam		2503,2511
+expr	2513	app	TLA.fapply	38,2503
+expr	2514	app	TLA.in	2513,536
+expr	2515	lam		2503,2514
+expr	2518	var	zenon_Vqf	
+expr	2532	var	zenon_Vrf	
+expr	2534	var	zenon_Vsf	
+expr	2537	app	TLA.in	2532,480
+expr	2538	lam		2532,2537
+expr	2539	app	TLA.fapply	2532,5
+expr	2540	app	TLA.in	2539,480
+expr	2541	lam		2532,2540
+expr	2542	app	TLA.fapply	38,2532
+expr	2543	app	TLA.in	2542,480
+expr	2544	lam		2532,2543
+expr	2547	var	zenon_Vtf	
+expr	2561	var	zenon_Vuf	
+expr	2563	var	zenon_Vvf	
+expr	2566	app	TLA.in	2561,455
+expr	2567	lam		2561,2566
+expr	2568	app	TLA.fapply	2561,5
+expr	2569	app	TLA.in	2568,455
+expr	2570	lam		2561,2569
+expr	2571	app	TLA.fapply	38,2561
+expr	2572	app	TLA.in	2571,455
+expr	2573	lam		2561,2572
+expr	2576	var	zenon_Vwf	
+expr	2589	not		2434
+expr	2590	var	zenon_Vxf	
+expr	2592	var	zenon_Vyf	
+expr	2595	app	TLA.in	2590,403
+expr	2596	lam		2590,2595
+expr	2597	app	TLA.fapply	2590,5
+expr	2598	app	TLA.in	2597,403
+expr	2599	lam		2590,2598
+expr	2600	app	TLA.fapply	38,2590
+expr	2601	app	TLA.in	2600,403
+expr	2602	lam		2590,2601
+expr	2605	var	zenon_Vzf	
+expr	2620	var	zenon_Vag	
+expr	2627	app	TLA.fapply	2620,5
+expr	2628	app	=	2627,2
+expr	2629	not		2628
+expr	2630	lam		2620,2629
+expr	2631	app	TLA.fapply	38,2620
+expr	2632	app	=	2631,2
+expr	2633	not		2632
+expr	2634	lam		2620,2633
+expr	2642	var	zenon_Vbg	
+expr	2646	app	=	2642,138
+expr	2647	not		2646
+expr	2648	lam		2642,2647
+expr	2649	app	=	19,2642
+expr	2650	not		2649
+expr	2651	lam		2642,2650
+expr	2652	app	TLA.except	2642,5,25
+expr	2653	app	=	19,2652
+expr	2654	not		2653
+expr	2655	lam		2642,2654
+expr	2656	app	TLA.except	19,2642,25
+expr	2657	app	=	19,2656
+expr	2658	not		2657
+expr	2659	lam		2642,2658
+expr	2660	app	TLA.except	19,5,2642
+expr	2661	app	=	19,2660
+expr	2662	not		2661
+expr	2663	lam		2642,2662
+expr	2664	app	$string	2642
+expr	2665	app	TLA.except	19,5,2664
+expr	2666	app	=	19,2665
+expr	2667	not		2666
+expr	2668	lam		2642,2667
+expr	2669	var	zenon_Vcg	
+expr	2670	app	TLA.DOMAIN	138
+expr	2672	app	TLA.fapply	19,2669
+expr	2673	app	TLA.fapply	138,2669
+expr	2674	app	=	2672,2673
+expr	2675	app	TLA.in	2669,2670
+expr	2676	imply		2675,2674
+expr	2677	all		2669,2676
+expr	2683	var	zenon_Vdg	
+expr	2702	var	zenon_Veg	
+expr	2706	app	=	2702,137
+expr	2707	not		2706
+expr	2708	lam		2702,2707
+expr	2715	var	zenon_Vfg	
+expr	2717	app	arith.le	2715,121
+expr	2718	lam		2715,2717
+expr	2719	app	TLA.fapply	2715,5
+expr	2720	app	arith.le	2719,121
+expr	2721	lam		2715,2720
+expr	2722	app	TLA.fapply	7,2715
+expr	2723	app	arith.le	2722,121
+expr	2724	lam		2715,2723
+expr	2725	app	arith.le	124,2715
+expr	2726	lam		2715,2725
+expr	2727	app	TLA.fapply	2715,120
+expr	2728	app	arith.le	124,2727
+expr	2729	lam		2715,2728
+expr	2730	app	arith.le	124,2722
+expr	2731	lam		2715,2730
+expr	2732	app	TLA.fapply	7,2719
+expr	2733	app	arith.le	124,2732
+expr	2734	lam		2715,2733
+expr	2735	app	TLA.fapply	38,2715
+expr	2736	app	TLA.fapply	7,2735
+expr	2737	app	arith.le	124,2736
+expr	2738	lam		2715,2737
+expr	2739	var	zenon_Vgg	
+expr	2759	var	zenon_Vhg	
+expr	2761	var	zenon_Vig	
+expr	2763	var	zenon_Vjg	
+expr	2768	var	zenon_Vkg	
+expr	2770	var	zenon_Vlg	
+expr	2778	var	zenon_Vmg	
+expr	2782	var	zenon_Vng	
+expr	2789	var	zenon_Vog	
+expr	2796	var	zenon_Vpg	
+expr	2803	var	zenon_Vqg	
+expr	2814	var	zenon_Vrg	
+expr	2825	var	zenon_Vsg	
+expr	2832	var	zenon_Vtg	
+expr	2839	var	zenon_Vug	
+expr	2843	var	zenon_Vvg	
+expr	2847	var	zenon_Vwg	
+expr	2861	var	zenon_Vxg	
+expr	2865	var	zenon_Vyg	
+expr	2889	var	zenon_Vzg	
+expr	2891	var	zenon_Vah	
+expr	2896	var	zenon_Vbh	
+expr	2898	var	zenon_Vch	
+expr	2915	var	zenon_Vdh	
+expr	2917	var	zenon_Veh	
+expr	2944	var	zenon_Vfh	
+expr	2946	var	zenon_Vgh	
+expr	2952	var	zenon_Vhh	
+expr	2964	var	zenon_Vih	
+expr	2991	var	zenon_Vjh	
+expr	2993	var	zenon_Vkh	
+expr	2995	var	zenon_Vlh	
+expr	3001	var	zenon_Vmh	
+expr	3013	var	zenon_Vnh	
+expr	3046	var	zenon_Voh	
+expr	3086	var	zenon_Vph	
+expr	3088	var	zenon_Vqh	
+expr	3094	var	zenon_Vrh	
+expr	3106	var	zenon_Vsh	
+expr	3151	var	zenon_Vth	
+expr	3153	var	zenon_Vuh	
+expr	3155	var	zenon_Vvh	
+expr	3161	var	zenon_Vwh	
+expr	3173	var	zenon_Vxh	
+expr	3228	var	zenon_Vyh	
+expr	3230	var	zenon_Vzh	
+expr	3232	var	zenon_Vai	
+expr	3238	var	zenon_Vbi	
+expr	3250	var	zenon_Vci	
+expr	3262	var	zenon_Vdi	
+expr	3264	var	zenon_Vei	
+expr	3304	var	zenon_Vfi	
+expr	3327	var	zenon_Vgi	
+expr	3350	var	zenon_Vhi	
+expr	3384	var	zenon_Vii	
+expr	3416	var	zenon_Vji	
+expr	3444	var	zenon_Vki	
+expr	3446	var	zenon_Vli	
+expr	3486	var	zenon_Vmi	
+expr	3488	var	zenon_Vni	
+expr	3506	var	zenon_Voi	
+expr	3508	var	zenon_Vpi	
+expr	3512	var	zenon_Vqi	
+expr	3530	var	zenon_Vri	
+expr	3531	var	zenon_Vsi	
+expr	3535	var	zenon_Vti	
+expr	3544	var	zenon_Vui	
+expr	3549	var	zenon_Vvi	
+expr	3551	var	zenon_Vwi	
+expr	3556	var	zenon_Vxi	
+expr	3560	var	zenon_Vyi	
+expr	3569	var	zenon_Vzi	
+expr	3574	var	zenon_Vaj	
+expr	3576	var	zenon_Vbj	
+expr	3581	var	zenon_Vcj	
+expr	3585	var	zenon_Vdj	
+expr	3594	var	zenon_Vej	
+expr	3599	var	zenon_Vfj	
+expr	3601	var	zenon_Vgj	
+expr	3606	var	zenon_Vhj	
+expr	3610	var	zenon_Vij	
+expr	3619	var	zenon_Vjj	
+expr	3624	var	zenon_Vkj	
+expr	3626	var	zenon_Vlj	
+expr	3631	var	zenon_Vmj	
+expr	3635	var	zenon_Vnj	
+expr	3644	var	zenon_Voj	
+expr	3649	var	zenon_Vpj	
+expr	3651	var	zenon_Vqj	
+expr	3656	var	zenon_Vrj	
+expr	3660	var	zenon_Vsj	
+expr	3669	var	zenon_Vtj	
+expr	3674	var	zenon_Vuj	
+expr	3676	var	zenon_Vvj	
+expr	3681	var	zenon_Vwj	
+expr	3683	var	zenon_Vxj	
+expr	3686	var	zenon_Vyj	
+expr	3688	var	zenon_Vzj	
+expr	3701	var	zenon_Vak	
+expr	3708	var	zenon_Vbk	
+expr	3710	var	zenon_Vck	
+expr	3723	var	zenon_Vdk	
+expr	3730	var	zenon_Vek	
+expr	3732	var	zenon_Vfk	
+expr	3745	var	zenon_Vgk	
+expr	3752	var	zenon_Vhk	
+expr	3754	var	zenon_Vik	
+expr	3767	var	zenon_Vjk	
+expr	3774	var	zenon_Vkk	
+expr	3776	var	zenon_Vlk	
+expr	3789	var	zenon_Vmk	
+expr	3796	var	zenon_Vnk	
+expr	3798	var	zenon_Vok	
+expr	3811	var	zenon_Vpk	
+expr	3818	var	zenon_Vqk	
+expr	3836	var	zenon_Vrk	
+expr	3863	var	zenon_Vsk	
+expr	3870	var	zenon_Vtk	
+expr	3888	var	zenon_Vuk	
+expr	3901	var	zenon_Vvk	
+expr	3905	var	zenon_Vwk	
+expr	3906	app	TLA.in	2,3905
+expr	3907	not		3906
+expr	3908	lam		3905,3907
+expr	3909	app	TLA.in	3901,403
+expr	3910	not		3909
+expr	3911	lam		3901,3910
+expr	3964	var	zenon_Vxk	
+expr	3999	var	zenon_Vyk	
+expr	4001	var	zenon_Vzk	
+expr	4007	var	zenon_Val	
+expr	4011	app	=	4007,25
+expr	4012	not		4011
+expr	4013	lam		4007,4012
+expr	4014	app	TLA.fapply	4007,120
+expr	4015	app	=	4014,25
+expr	4016	not		4015
+expr	4017	lam		4007,4016
+expr	4018	app	TLA.fapply	19,4007
+expr	4019	app	=	4018,25
+expr	4020	not		4019
+expr	4021	lam		4007,4020
+expr	4022	app	TLA.fapply	4007,5
+expr	4023	app	TLA.fapply	19,4022
+expr	4024	app	=	4023,25
+expr	4025	not		4024
+expr	4026	lam		4007,4025
+expr	4027	app	TLA.fapply	38,4007
+expr	4028	app	TLA.fapply	19,4027
+expr	4029	app	=	4028,25
+expr	4030	not		4029
+expr	4031	lam		4007,4030
+expr	4035	app	$string	4007
+expr	4036	app	=	682,4035
+expr	4037	not		4036
+expr	4038	lam		4007,4037
+expr	4047	var	zenon_Vbl	
+expr	4049	var	zenon_Vcl	
+expr	4056	var	zenon_Vdl	
+expr	4058	app	=	4056,23
+expr	4059	lam		4056,4058
+expr	4060	app	TLA.fapply	4056,120
+expr	4061	app	=	4060,23
+expr	4062	lam		4056,4061
+expr	4063	app	TLA.fapply	19,4056
+expr	4064	app	=	4063,23
+expr	4065	lam		4056,4064
+expr	4066	app	TLA.fapply	4056,5
+expr	4067	app	TLA.fapply	19,4066
+expr	4068	app	=	4067,23
+expr	4069	lam		4056,4068
+expr	4070	app	TLA.fapply	38,4056
+expr	4071	app	TLA.fapply	19,4070
+expr	4072	app	=	4071,23
+expr	4073	lam		4056,4072
+expr	4088	var	zenon_Vel	
+expr	4122	var	zenon_Vfl	
+expr	4159	var	zenon_Vgl	
+expr	4161	app	=	4159,55
+expr	4162	lam		4159,4161
+expr	4163	app	TLA.fapply	4159,2
+expr	4164	app	=	4163,55
+expr	4165	lam		4159,4164
+expr	4172	var	zenon_Vhl	
+expr	4183	var	zenon_Vil	
+expr	4194	var	zenon_Vjl	
+expr	4202	var	zenon_Vkl	
+expr	4210	var	zenon_Vll	
+expr	4216	var	zenon_Vml	
+expr	4220	var	zenon_Vnl	
+expr	4234	var	zenon_Vol	
+expr	4238	var	zenon_Vpl	
+expr	4262	var	zenon_Vql	
+expr	4264	var	zenon_Vrl	
+expr	4269	var	zenon_Vsl	
+expr	4271	var	zenon_Vtl	
+expr	4288	var	zenon_Vul	
+expr	4290	var	zenon_Vvl	
+expr	4317	var	zenon_Vwl	
+expr	4319	var	zenon_Vxl	
+expr	4325	var	zenon_Vyl	
+expr	4337	var	zenon_Vzl	
+expr	4364	var	zenon_Vam	
+expr	4366	var	zenon_Vbm	
+expr	4368	var	zenon_Vcm	
+expr	4374	var	zenon_Vdm	
+expr	4386	var	zenon_Vem	
+expr	4419	var	zenon_Vfm	
+expr	4459	var	zenon_Vgm	
+expr	4461	var	zenon_Vhm	
+expr	4467	var	zenon_Vim	
+expr	4479	var	zenon_Vjm	
+expr	4524	var	zenon_Vkm	
+expr	4526	var	zenon_Vlm	
+expr	4528	var	zenon_Vmm	
+expr	4534	var	zenon_Vnm	
+expr	4546	var	zenon_Vom	
+expr	4601	var	zenon_Vpm	
+expr	4603	var	zenon_Vqm	
+expr	4605	var	zenon_Vrm	
+expr	4611	var	zenon_Vsm	
+expr	4623	var	zenon_Vtm	
+expr	4635	var	zenon_Vum	
+expr	4637	var	zenon_Vvm	
+expr	4677	var	zenon_Vwm	
+expr	4700	var	zenon_Vxm	
+expr	4723	var	zenon_Vym	
+expr	4759	var	zenon_Vzm	
+expr	4791	var	zenon_Van	
+expr	4819	var	zenon_Vbn	
+expr	4843	var	zenon_Vcn	
+expr	4846	var	zenon_Vdn	
+expr	4848	var	zenon_Ven	
+expr	4851	app	TLA.in	4846,153
+expr	4852	lam		4846,4851
+expr	4856	var	zenon_Vfn	
+expr	4858	var	zenon_Vgn	
+expr	4861	app	TLA.in	4856,80
+expr	4862	lam		4856,4861
+expr	4863	app	TLA.fapply	4856,2
+expr	4864	app	TLA.in	4863,80
+expr	4865	lam		4856,4864
+expr	4867	app	=	149,25
+expr	4868	app	=	149,27
+expr	4869	var	zenon_Vhn	
+expr	4873	var	zenon_Vin	
+expr	4885	var	zenon_Vjn	
+expr	4887	var	zenon_Vkn	
+expr	4890	app	TLA.in	4885,152
+expr	4891	lam		4885,4890
+expr	4898	var	zenon_Vln	
+expr	4902	var	zenon_Vmn	
+expr	4906	app	TLA.in	4898,151
+expr	4907	not		4906
+expr	4908	lam		4898,4907
+expr	4933	var	zenon_Vnn	
+expr	4942	var	zenon_Von	
+expr	4946	app	TLA.fapply	4942,2
+expr	4947	app	=	4946,27
+expr	4948	lam		4942,4947
+expr	4949	app	=	908,27
+expr	4950	var	zenon_Vpn	
+expr	4961	var	zenon_Vqn	
+expr	4969	var	zenon_Vrn	
+expr	4975	var	zenon_Vsn	
+expr	4979	var	zenon_Vtn	
+expr	4989	app	TLA.fapply	4975,2
+expr	4990	app	TLA.in	5,4989
+expr	4991	not		4990
+expr	4992	lam		4975,4991
+expr	4993	app	TLA.fapply	135,2
+expr	4997	var	zenon_Vun	
+expr	5001	var	zenon_Vvn	
+expr	5005	app	TLA.in	4997,4993
+expr	5006	not		5005
+expr	5007	lam		4997,5006
+expr	5040	var	zenon_Vwn	
+expr	5042	var	zenon_Vxn	
+expr	5049	app	TLA.setminus	5040,151
+expr	5050	app	TLA.in	5,5049
+expr	5051	lam		5040,5050
+expr	5055	app	TLA.fapply	5040,2
+expr	5056	app	TLA.setminus	3,5055
+expr	5057	app	TLA.in	5,5056
+expr	5058	lam		5040,5057
+expr	5059	app	TLA.setminus	3,4993
+expr	5062	var	zenon_Vyn	
+expr	5064	var	zenon_Vzn	
+expr	5067	app	TLA.in	5062,5059
+expr	5068	lam		5062,5067
+expr	5071	app	TLA.setminus	5062,4993
+expr	5072	app	TLA.in	5,5071
+expr	5073	lam		5062,5072
+expr	5086	var	zenon_Vao	
+expr	5090	var	zenon_Vbo	
+expr	5104	var	zenon_Vco	
+expr	5108	var	zenon_Vdo	
+expr	5141	var	zenon_Veo	
+expr	5143	var	zenon_Vfo	
+expr	5149	app	=	908,25
+expr	5152	var	zenon_Vgo	
+expr	5154	var	zenon_Vho	
+expr	5164	app	TLA.setminus	5152,151
+expr	5165	app	TLA.setminus	5164,84
+expr	5166	app	TLA.in	5,5165
+expr	5167	lam		5152,5166
+expr	5168	app	TLA.setminus	3,5152
+expr	5169	app	TLA.setminus	5168,84
+expr	5170	app	TLA.in	5,5169
+expr	5171	lam		5152,5170
+expr	5172	app	TLA.fapply	5152,2
+expr	5173	app	TLA.setminus	3,5172
+expr	5174	app	TLA.setminus	5173,84
+expr	5175	app	TLA.in	5,5174
+expr	5176	lam		5152,5175
+expr	5177	app	TLA.setminus	5059,84
+expr	5180	var	zenon_Vio	
+expr	5182	var	zenon_Vjo	
+expr	5185	app	TLA.in	5180,5177
+expr	5186	lam		5180,5185
+expr	5192	app	TLA.setminus	5180,4993
+expr	5193	app	TLA.setminus	5192,84
+expr	5194	app	TLA.in	5,5193
+expr	5195	lam		5180,5194
+expr	5211	var	zenon_Vko	
+expr	5213	var	zenon_Vlo	
+expr	5219	var	zenon_Vmo	
+expr	5231	var	zenon_Vno	
+expr	5258	var	zenon_Voo	
+expr	5260	var	zenon_Vpo	
+expr	5262	var	zenon_Vqo	
+expr	5268	var	zenon_Vro	
+expr	5280	var	zenon_Vso	
+expr	5313	var	zenon_Vto	
+expr	5353	var	zenon_Vuo	
+expr	5355	var	zenon_Vvo	
+expr	5361	var	zenon_Vwo	
+expr	5373	var	zenon_Vxo	
+expr	5418	var	zenon_Vyo	
+expr	5420	var	zenon_Vzo	
+expr	5422	var	zenon_Vap	
+expr	5428	var	zenon_Vbp	
+expr	5440	var	zenon_Vcp	
+expr	5495	var	zenon_Vdp	
+expr	5497	var	zenon_Vep	
+expr	5499	var	zenon_Vfp	
+expr	5505	var	zenon_Vgp	
+expr	5517	var	zenon_Vhp	
+expr	5529	var	zenon_Vip	
+expr	5531	var	zenon_Vjp	
+expr	5571	var	zenon_Vkp	
+expr	5594	var	zenon_Vlp	
+expr	5617	var	zenon_Vmp	
+expr	5651	var	zenon_Vnp	
+expr	5683	var	zenon_Vop	
+expr	5711	var	zenon_Vpp	
+expr	5736	var	zenon_Vqp	
+expr	5738	app	=	5736,25
+expr	5739	lam		5736,5738
+expr	5740	app	TLA.fapply	5736,2
+expr	5741	app	=	5740,25
+expr	5742	lam		5736,5741
+expr	5745	var	zenon_Vrp	
+expr	5756	var	zenon_Vsp	
+expr	5767	var	zenon_Vtp	
+expr	5775	var	zenon_Vup	
+expr	5783	var	zenon_Vvp	
+expr	5789	var	zenon_Vwp	
+expr	5793	var	zenon_Vxp	
+expr	5807	var	zenon_Vyp	
+expr	5811	var	zenon_Vzp	
+expr	5821	var	zenon_Vaq	
+expr	5823	var	zenon_Vbq	
+expr	5840	var	zenon_Vcq	
+expr	5842	var	zenon_Vdq	
+expr	5855	var	zenon_Veq	
+expr	5859	var	zenon_Vfq	
+expr	5873	var	zenon_Vgq	
+expr	5877	var	zenon_Vhq	
+expr	5901	var	zenon_Viq	
+expr	5903	var	zenon_Vjq	
+expr	5908	var	zenon_Vkq	
+expr	5910	var	zenon_Vlq	
+expr	5933	var	zenon_Vmq	
+expr	5935	var	zenon_Vnq	
+expr	5953	var	zenon_Voq	
+expr	5955	var	zenon_Vpq	
+expr	5961	var	zenon_Vqq	
+expr	5973	var	zenon_Vrq	
+expr	6000	var	zenon_Vsq	
+expr	6002	var	zenon_Vtq	
+expr	6004	var	zenon_Vuq	
+expr	6010	var	zenon_Vvq	
+expr	6022	var	zenon_Vwq	
+expr	6055	var	zenon_Vxq	
+expr	6095	var	zenon_Vyq	
+expr	6097	var	zenon_Vzq	
+expr	6103	var	zenon_Var	
+expr	6115	var	zenon_Vbr	
+expr	6160	var	zenon_Vcr	
+expr	6162	var	zenon_Vdr	
+expr	6164	var	zenon_Ver	
+expr	6170	var	zenon_Vfr	
+expr	6182	var	zenon_Vgr	
+expr	6237	var	zenon_Vhr	
+expr	6239	var	zenon_Vir	
+expr	6241	var	zenon_Vjr	
+expr	6247	var	zenon_Vkr	
+expr	6259	var	zenon_Vlr	
+expr	6271	var	zenon_Vmr	
+expr	6273	var	zenon_Vnr	
+expr	6313	var	zenon_Vor	
+expr	6336	var	zenon_Vpr	
+expr	6359	var	zenon_Vqr	
+expr	6393	var	zenon_Vrr	
+expr	6425	var	zenon_Vsr	
+expr	6453	var	zenon_Vtr	
+expr	6477	var	zenon_Vur	
+expr	6481	var	zenon_Vvr	
+expr	6482	app	TLA.in	72,6481
+expr	6483	not		6482
+expr	6484	lam		6481,6483
+expr	6485	app	TLA.in	6477,77
+expr	6486	not		6485
+expr	6487	lam		6477,6486
+expr	6488	app	TLA.fapply	6477,2
+expr	6489	app	TLA.in	6488,77
+expr	6490	not		6489
+expr	6491	lam		6477,6490
+expr	6492	app	TLA.fapply	19,6477
+expr	6493	app	TLA.in	6492,77
+expr	6494	not		6493
+expr	6495	lam		6477,6494
+expr	6496	not		685
+expr	6526	var	zenon_Vwr	
+expr	6530	app	TLA.fapply	6526,2
+expr	6531	not		6530
+expr	6532	lam		6526,6531
+expr	6533	app	TLA.fapply	11,6526
+expr	6534	not		6533
+expr	6535	lam		6526,6534
+expr	6537	var	zenon_Vxr	
+expr	6541	app	=	6537,53
+expr	6542	not		6541
+expr	6543	lam		6537,6542
+expr	6544	app	TLA.fapply	6537,2
+expr	6545	app	=	6544,53
+expr	6546	not		6545
+expr	6547	lam		6537,6546
+expr	6548	app	TLA.fapply	19,6537
+expr	6549	app	=	6548,53
+expr	6550	not		6549
+expr	6551	lam		6537,6550
+expr	6559	var	zenon_Vyr	
+expr	6563	app	=	6559,23
+expr	6564	not		6563
+expr	6565	lam		6559,6564
+expr	6566	app	TLA.fapply	6559,2
+expr	6567	app	=	6566,23
+expr	6568	not		6567
+expr	6569	lam		6559,6568
+expr	6570	app	TLA.fapply	19,6559
+expr	6571	app	=	6570,23
+expr	6572	not		6571
+expr	6573	lam		6559,6572
+expr	6580	var	zenon_Vzr	
+expr	6584	app	TLA.fapply	6580,2
+expr	6585	app	=	6584,23
+expr	6586	lam		6580,6585
+expr	6590	var	zenon_Vas	
+expr	6605	var	zenon_Vbs	
+expr	6607	var	zenon_Vcs	
+expr	6618	var	zenon_Vds	
+expr	6624	var	zenon_Ves	
+expr	6650	var	zenon_Vfs	
+expr	6652	var	zenon_Vgs	
+expr	6662	var	zenon_Vhs	
+expr	6677	var	zenon_Vis	
+expr	6679	var	zenon_Vjs	
+expr	6685	var	zenon_Vks	
+expr	6687	var	zenon_Vls	
+expr	6707	var	zenon_Vms	
+expr	6709	var	zenon_Vns	
+expr	6711	var	zenon_Vos	
+expr	6716	var	zenon_Vps	
+expr	6718	var	zenon_Vqs	
+expr	6726	var	zenon_Vrs	
+expr	6730	var	zenon_Vss	
+expr	6737	var	zenon_Vts	
+expr	6744	var	zenon_Vus	
+expr	6751	var	zenon_Vvs	
+expr	6762	var	zenon_Vws	
+expr	6773	var	zenon_Vxs	
+expr	6780	var	zenon_Vys	
+expr	6787	var	zenon_Vzs	
+expr	6791	var	zenon_Vat	
+expr	6795	var	zenon_Vbt	
+expr	6809	var	zenon_Vct	
+expr	6813	var	zenon_Vdt	
+expr	6837	var	zenon_Vet	
+expr	6839	var	zenon_Vft	
+expr	6844	var	zenon_Vgt	
+expr	6846	var	zenon_Vht	
+expr	6863	var	zenon_Vit	
+expr	6865	var	zenon_Vjt	
+expr	6892	var	zenon_Vkt	
+expr	6894	var	zenon_Vlt	
+expr	6900	var	zenon_Vmt	
+expr	6912	var	zenon_Vnt	
+expr	6939	var	zenon_Vot	
+expr	6941	var	zenon_Vpt	
+expr	6943	var	zenon_Vqt	
+expr	6949	var	zenon_Vrt	
+expr	6961	var	zenon_Vst	
+expr	6994	var	zenon_Vtt	
+expr	7034	var	zenon_Vut	
+expr	7036	var	zenon_Vvt	
+expr	7042	var	zenon_Vwt	
+expr	7054	var	zenon_Vxt	
+expr	7099	var	zenon_Vyt	
+expr	7101	var	zenon_Vzt	
+expr	7103	var	zenon_Vau	
+expr	7109	var	zenon_Vbu	
+expr	7121	var	zenon_Vcu	
+expr	7176	var	zenon_Vdu	
+expr	7178	var	zenon_Veu	
+expr	7180	var	zenon_Vfu	
+expr	7186	var	zenon_Vgu	
+expr	7198	var	zenon_Vhu	
+expr	7210	var	zenon_Viu	
+expr	7212	var	zenon_Vju	
+expr	7252	var	zenon_Vku	
+expr	7275	var	zenon_Vlu	
+expr	7309	var	zenon_Vmu	
+expr	7344	var	zenon_Vnu	
+expr	7367	var	zenon_Vou	
+expr	7390	var	zenon_Vpu	
+expr	7424	var	zenon_Vqu	
+expr	7456	var	zenon_Vru	
+expr	7484	var	zenon_Vsu	
+expr	7491	var	zenon_Vtu	
+expr	7502	var	zenon_Vuu	
+expr	7513	var	zenon_Vvu	
+expr	7520	var	zenon_Vwu	
+expr	7527	var	zenon_Vxu	
+expr	7531	var	zenon_Vyu	
+expr	7535	var	zenon_Vzu	
+expr	7549	var	zenon_Vav	
+expr	7553	var	zenon_Vbv	
+expr	7577	var	zenon_Vcv	
+expr	7579	var	zenon_Vdv	
+expr	7584	var	zenon_Vev	
+expr	7586	var	zenon_Vfv	
+expr	7603	var	zenon_Vgv	
+expr	7605	var	zenon_Vhv	
+expr	7632	var	zenon_Viv	
+expr	7634	var	zenon_Vjv	
+expr	7640	var	zenon_Vkv	
+expr	7652	var	zenon_Vlv	
+expr	7679	var	zenon_Vmv	
+expr	7681	var	zenon_Vnv	
+expr	7683	var	zenon_Vov	
+expr	7689	var	zenon_Vpv	
+expr	7701	var	zenon_Vqv	
+expr	7734	var	zenon_Vrv	
+expr	7774	var	zenon_Vsv	
+expr	7776	var	zenon_Vtv	
+expr	7782	var	zenon_Vuv	
+expr	7794	var	zenon_Vvv	
+expr	7839	var	zenon_Vwv	
+expr	7841	var	zenon_Vxv	
+expr	7843	var	zenon_Vyv	
+expr	7849	var	zenon_Vzv	
+expr	7861	var	zenon_Vaw	
+expr	7916	var	zenon_Vbw	
+expr	7918	var	zenon_Vcw	
+expr	7920	var	zenon_Vdw	
+expr	7926	var	zenon_Vew	
+expr	7938	var	zenon_Vfw	
+expr	7950	var	zenon_Vgw	
+expr	7952	var	zenon_Vhw	
+expr	7992	var	zenon_Viw	
+expr	8015	var	zenon_Vjw	
+expr	8038	var	zenon_Vkw	
+expr	8061	var	zenon_Vlw	
+expr	8095	var	zenon_Vmw	
+expr	8127	var	zenon_Vnw	
+expr	8155	var	zenon_Vow	
+expr	8157	var	zenon_Vpw	
+expr	8159	var	zenon_Vqw	
+expr	8164	var	zenon_Vrw	
+expr	8166	var	zenon_Vsw	
+expr	8174	var	zenon_Vtw	
+expr	8178	var	zenon_Vuw	
+expr	8185	var	zenon_Vvw	
+expr	8187	var	zenon_Vww	
+expr	8192	var	zenon_Vxw	
+expr	8196	var	zenon_Vyw	
+expr	8203	var	zenon_Vzw	
+expr	8210	var	zenon_Vax	
+expr	8217	var	zenon_Vbx	
+expr	8228	var	zenon_Vcx	
+expr	8235	var	zenon_Vdx	
+expr	8239	var	zenon_Vex	
+expr	8243	var	zenon_Vfx	
+expr	8257	var	zenon_Vgx	
+expr	8261	var	zenon_Vhx	
+expr	8271	var	zenon_Vix	
+expr	8273	var	zenon_Vjx	
+expr	8290	var	zenon_Vkx	
+expr	8292	var	zenon_Vlx	
+expr	8305	var	zenon_Vmx	
+expr	8309	var	zenon_Vnx	
+expr	8323	var	zenon_Vox	
+expr	8327	var	zenon_Vpx	
+expr	8351	var	zenon_Vqx	
+expr	8353	var	zenon_Vrx	
+expr	8358	var	zenon_Vsx	
+expr	8360	var	zenon_Vtx	
+expr	8383	var	zenon_Vux	
+expr	8385	var	zenon_Vvx	
+expr	8403	var	zenon_Vwx	
+expr	8405	var	zenon_Vxx	
+expr	8411	var	zenon_Vyx	
+expr	8423	var	zenon_Vzx	
+expr	8450	var	zenon_Vay	
+expr	8452	var	zenon_Vby	
+expr	8454	var	zenon_Vcy	
+expr	8460	var	zenon_Vdy	
+expr	8472	var	zenon_Vey	
+expr	8505	var	zenon_Vfy	
+expr	8545	var	zenon_Vgy	
+expr	8547	var	zenon_Vhy	
+expr	8553	var	zenon_Viy	
+expr	8565	var	zenon_Vjy	
+expr	8610	var	zenon_Vky	
+expr	8612	var	zenon_Vly	
+expr	8614	var	zenon_Vmy	
+expr	8620	var	zenon_Vny	
+expr	8632	var	zenon_Voy	
+expr	8687	var	zenon_Vpy	
+expr	8689	var	zenon_Vqy	
+expr	8691	var	zenon_Vry	
+expr	8697	var	zenon_Vsy	
+expr	8709	var	zenon_Vty	
+expr	8721	var	zenon_Vuy	
+expr	8723	var	zenon_Vvy	
+expr	8763	var	zenon_Vwy	
+expr	8786	var	zenon_Vxy	
+expr	8809	var	zenon_Vyy	
+expr	8832	var	zenon_Vzy	
+expr	8866	var	zenon_Vaz	
+expr	8898	var	zenon_Vbz	
+expr	8926	var	zenon_Vcz	
+expr	8933	var	zenon_Vdz	
+expr	8944	var	zenon_Vez	
+expr	8955	var	zenon_Vfz	
+expr	8962	var	zenon_Vgz	
+expr	8969	var	zenon_Vhz	
+expr	8973	var	zenon_Viz	
+expr	8977	var	zenon_Vjz	
+expr	8991	var	zenon_Vkz	
+expr	8995	var	zenon_Vlz	
+expr	9005	var	zenon_Vmz	
+expr	9007	var	zenon_Vnz	
+expr	9024	var	zenon_Voz	
+expr	9026	var	zenon_Vpz	
+expr	9039	var	zenon_Vqz	
+expr	9043	var	zenon_Vrz	
+expr	9057	var	zenon_Vsz	
+expr	9061	var	zenon_Vtz	
+expr	9085	var	zenon_Vuz	
+expr	9087	var	zenon_Vvz	
+expr	9092	var	zenon_Vwz	
+expr	9094	var	zenon_Vxz	
+expr	9117	var	zenon_Vyz	
+expr	9119	var	zenon_Vzz	
+expr	9137	var	zenon_Vaaa	
+expr	9139	var	zenon_Vbaa	
+expr	9145	var	zenon_Vcaa	
+expr	9157	var	zenon_Vdaa	
+expr	9184	var	zenon_Veaa	
+expr	9186	var	zenon_Vfaa	
+expr	9188	var	zenon_Vgaa	
+expr	9194	var	zenon_Vhaa	
+expr	9206	var	zenon_Viaa	
+expr	9239	var	zenon_Vjaa	
+expr	9279	var	zenon_Vkaa	
+expr	9281	var	zenon_Vlaa	
+expr	9287	var	zenon_Vmaa	
+expr	9299	var	zenon_Vnaa	
+expr	9344	var	zenon_Voaa	
+expr	9346	var	zenon_Vpaa	
+expr	9348	var	zenon_Vqaa	
+expr	9354	var	zenon_Vraa	
+expr	9366	var	zenon_Vsaa	
+expr	9421	var	zenon_Vtaa	
+expr	9423	var	zenon_Vuaa	
+expr	9425	var	zenon_Vvaa	
+expr	9431	var	zenon_Vwaa	
+expr	9443	var	zenon_Vxaa	
+expr	9455	var	zenon_Vyaa	
+expr	9457	var	zenon_Vzaa	
+expr	9497	var	zenon_Vaba	
+expr	9520	var	zenon_Vbba	
+expr	9543	var	zenon_Vcba	
+expr	9566	var	zenon_Vdba	
+expr	9600	var	zenon_Veba	
+expr	9632	var	zenon_Vfba	
+expr	9660	var	zenon_Vgba	
+expr	9664	var	zenon_Vhba	
+expr	9680	var	zenon_Viba	
+expr	9690	var	zenon_Vjba	
+expr	9708	var	zenon_Vkba	
+expr	9712	app	=	9708,51
+expr	9713	not		9712
+expr	9714	lam		9708,9713
+expr	9715	app	TLA.fapply	9708,2
+expr	9716	app	=	9715,51
+expr	9717	not		9716
+expr	9718	lam		9708,9717
+expr	9719	app	TLA.fapply	19,9708
+expr	9720	app	=	9719,51
+expr	9721	not		9720
+expr	9722	lam		9708,9721
+expr	9731	var	zenon_Vlba	
+expr	9733	app	=	9731,49
+expr	9734	lam		9731,9733
+expr	9735	app	TLA.fapply	9731,2
+expr	9736	app	=	9735,49
+expr	9737	lam		9731,9736
+expr	9738	app	TLA.fapply	19,9731
+expr	9739	app	=	9738,49
+expr	9740	lam		9731,9739
+expr	9743	var	zenon_Vmba	
+expr	9760	var	zenon_Vnba	
+expr	9762	var	zenon_Voba	
+expr	9773	var	zenon_Vpba	
+expr	9779	var	zenon_Vqba	
+expr	9783	app	TLA.fapply	9779,2
+expr	9784	app	=	9783,53
+expr	9785	lam		9779,9784
+expr	9790	var	zenon_Vrba	
+expr	9800	var	zenon_Vsba	
+expr	9810	var	zenon_Vtba	
+expr	9814	var	zenon_Vuba	
+expr	9830	var	zenon_Vvba	
+expr	9840	var	zenon_Vwba	
+expr	9857	var	zenon_Vxba	
+expr	9874	var	zenon_Vyba	
+expr	9891	var	zenon_Vzba	
+expr	9917	var	zenon_Vaca	
+expr	9919	var	zenon_Vbca	
+expr	9929	var	zenon_Vcca	
+expr	9944	var	zenon_Vdca	
+expr	9946	var	zenon_Veca	
+expr	9952	var	zenon_Vfca	
+expr	9954	var	zenon_Vgca	
+expr	9974	var	zenon_Vhca	
+expr	9976	var	zenon_Vica	
+expr	9978	var	zenon_Vjca	
+expr	9987	var	zenon_Vkca	
+expr	9989	var	zenon_Vlca	
+expr	9999	var	zenon_Vmca	
+expr	10003	var	zenon_Vnca	
+expr	10010	var	zenon_Voca	
+expr	10018	var	zenon_Vpca	
+expr	10031	var	zenon_Vqca	
+expr	10044	var	zenon_Vrca	
+expr	10055	var	zenon_Vsca	
+expr	10064	var	zenon_Vtca	
+expr	10071	var	zenon_Vuca	
+expr	10075	var	zenon_Vvca	
+expr	10079	var	zenon_Vwca	
+expr	10093	var	zenon_Vxca	
+expr	10097	var	zenon_Vyca	
+expr	10121	var	zenon_Vzca	
+expr	10123	var	zenon_Vada	
+expr	10128	var	zenon_Vbda	
+expr	10130	var	zenon_Vcda	
+expr	10149	var	zenon_Vdda	
+expr	10151	var	zenon_Veda	
+expr	10180	var	zenon_Vfda	
+expr	10182	var	zenon_Vgda	
+expr	10188	var	zenon_Vhda	
+expr	10200	var	zenon_Vida	
+expr	10227	var	zenon_Vjda	
+expr	10229	var	zenon_Vkda	
+expr	10231	var	zenon_Vlda	
+expr	10237	var	zenon_Vmda	
+expr	10249	var	zenon_Vnda	
+expr	10282	var	zenon_Voda	
+expr	10322	var	zenon_Vpda	
+expr	10324	var	zenon_Vqda	
+expr	10330	var	zenon_Vrda	
+expr	10342	var	zenon_Vsda	
+expr	10387	var	zenon_Vtda	
+expr	10389	var	zenon_Vuda	
+expr	10391	var	zenon_Vvda	
+expr	10397	var	zenon_Vwda	
+expr	10409	var	zenon_Vxda	
+expr	10464	var	zenon_Vyda	
+expr	10466	var	zenon_Vzda	
+expr	10468	var	zenon_Vaea	
+expr	10474	var	zenon_Vbea	
+expr	10487	var	zenon_Vcea	
+expr	10494	app	TLA.fapply	10487,120
+expr	10495	app	=	10494,23
+expr	10496	not		10495
+expr	10497	lam		10487,10496
+expr	10502	app	TLA.fapply	10487,5
+expr	10503	app	TLA.fapply	19,10502
+expr	10504	app	=	10503,23
+expr	10505	not		10504
+expr	10506	lam		10487,10505
+expr	10507	app	TLA.fapply	38,10487
+expr	10508	app	TLA.fapply	19,10507
+expr	10509	app	=	10508,23
+expr	10510	not		10509
+expr	10511	lam		10487,10510
+expr	10520	var	zenon_Vdea	
+expr	10527	app	TLA.fapply	10520,120
+expr	10528	app	=	10527,51
+expr	10529	not		10528
+expr	10530	lam		10520,10529
+expr	10535	app	TLA.fapply	10520,5
+expr	10536	app	TLA.fapply	19,10535
+expr	10537	app	=	10536,51
+expr	10538	not		10537
+expr	10539	lam		10520,10538
+expr	10540	app	TLA.fapply	38,10520
+expr	10541	app	TLA.fapply	19,10540
+expr	10542	app	=	10541,51
+expr	10543	not		10542
+expr	10544	lam		10520,10543
+expr	10553	var	zenon_Veea	
+expr	10560	app	TLA.fapply	10553,120
+expr	10561	app	=	10560,53
+expr	10562	not		10561
+expr	10563	lam		10553,10562
+expr	10568	app	TLA.fapply	10553,5
+expr	10569	app	TLA.fapply	19,10568
+expr	10570	app	=	10569,53
+expr	10571	not		10570
+expr	10572	lam		10553,10571
+expr	10573	app	TLA.fapply	38,10553
+expr	10574	app	TLA.fapply	19,10573
+expr	10575	app	=	10574,53
+expr	10576	not		10575
+expr	10577	lam		10553,10576
+expr	10586	var	zenon_Vfea	
+expr	10590	app	TLA.fapply	10586,120
+expr	10591	not		10590
+expr	10592	lam		10586,10591
+expr	10596	app	TLA.fapply	10586,5
+expr	10597	app	TLA.fapply	11,10596
+expr	10598	not		10597
+expr	10599	lam		10586,10598
+expr	10600	app	TLA.fapply	38,10586
+expr	10601	app	TLA.fapply	11,10600
+expr	10602	not		10601
+expr	10603	lam		10586,10602
+expr	10605	var	zenon_Vgea	
+expr	10609	var	zenon_Vhea	
+expr	10610	app	TLA.in	682,10609
+expr	10611	not		10610
+expr	10612	lam		10609,10611
+expr	10616	app	TLA.fapply	10605,120
+expr	10617	app	TLA.in	10616,77
+expr	10618	not		10617
+expr	10619	lam		10605,10618
+expr	10624	app	TLA.fapply	10605,5
+expr	10625	app	TLA.fapply	19,10624
+expr	10626	app	TLA.in	10625,77
+expr	10627	not		10626
+expr	10628	lam		10605,10627
+expr	10629	app	TLA.fapply	38,10605
+expr	10630	app	TLA.fapply	19,10629
+expr	10631	app	TLA.in	10630,77
+expr	10632	not		10631
+expr	10633	lam		10605,10632
+expr	10637	app	TLA.set	10605,51,53
+expr	10638	app	TLA.in	682,10637
+expr	10639	not		10638
+expr	10640	lam		10605,10639
+expr	10641	app	$string	10605
+expr	10642	app	TLA.set	10641,51,53
+expr	10643	app	TLA.in	682,10642
+expr	10644	not		10643
+expr	10645	lam		10605,10644
+expr	10646	app	TLA.set	23,10605,53
+expr	10647	app	TLA.in	682,10646
+expr	10648	not		10647
+expr	10649	lam		10605,10648
+expr	10650	app	TLA.set	23,10641,53
+expr	10651	app	TLA.in	682,10650
+expr	10652	not		10651
+expr	10653	lam		10605,10652
+expr	10654	app	TLA.set	23,51,10605
+expr	10655	app	TLA.in	682,10654
+expr	10656	not		10655
+expr	10657	lam		10605,10656
+expr	10658	app	TLA.set	23,51,10641
+expr	10659	app	TLA.in	682,10658
+expr	10660	not		10659
+expr	10661	lam		10605,10660
+expr	10678	var	zenon_Viea	
+expr	10714	var	zenon_Vjea	
+expr	10718	app	TLA.fapply	10714,120
+expr	10719	app	=	10718,49
+expr	10720	lam		10714,10719
+expr	10724	app	TLA.fapply	10714,5
+expr	10725	app	TLA.fapply	19,10724
+expr	10726	app	=	10725,49
+expr	10727	lam		10714,10726
+expr	10728	app	TLA.fapply	38,10714
+expr	10729	app	TLA.fapply	19,10728
+expr	10730	app	=	10729,49
+expr	10731	lam		10714,10730
+expr	10737	var	zenon_Vkea	
+expr	10769	var	zenon_Vlea	
+expr	10798	var	zenon_Vmea	
+expr	10811	var	zenon_Vnea	
+expr	10822	var	zenon_Voea	
+expr	10833	var	zenon_Vpea	
+expr	10840	var	zenon_Vqea	
+expr	10847	var	zenon_Vrea	
+expr	10851	var	zenon_Vsea	
+expr	10855	var	zenon_Vtea	
+expr	10869	var	zenon_Vuea	
+expr	10873	var	zenon_Vvea	
+expr	10897	var	zenon_Vwea	
+expr	10899	var	zenon_Vxea	
+expr	10904	var	zenon_Vyea	
+expr	10906	var	zenon_Vzea	
+expr	10923	var	zenon_Vafa	
+expr	10925	var	zenon_Vbfa	
+expr	10952	var	zenon_Vcfa	
+expr	10954	var	zenon_Vdfa	
+expr	10960	var	zenon_Vefa	
+expr	10972	var	zenon_Vffa	
+expr	10999	var	zenon_Vgfa	
+expr	11001	var	zenon_Vhfa	
+expr	11003	var	zenon_Vifa	
+expr	11009	var	zenon_Vjfa	
+expr	11021	var	zenon_Vkfa	
+expr	11054	var	zenon_Vlfa	
+expr	11094	var	zenon_Vmfa	
+expr	11096	var	zenon_Vnfa	
+expr	11102	var	zenon_Vofa	
+expr	11114	var	zenon_Vpfa	
+expr	11159	var	zenon_Vqfa	
+expr	11161	var	zenon_Vrfa	
+expr	11163	var	zenon_Vsfa	
+expr	11169	var	zenon_Vtfa	
+expr	11181	var	zenon_Vufa	
+expr	11236	var	zenon_Vvfa	
+expr	11238	var	zenon_Vwfa	
+expr	11240	var	zenon_Vxfa	
+expr	11246	var	zenon_Vyfa	
+expr	11258	var	zenon_Vzfa	
+expr	11290	var	zenon_Vaga	
+expr	11322	var	zenon_Vbga	
+expr	11354	var	zenon_Vcga	
+expr	11372	var	zenon_Vdga	
+expr	11376	var	zenon_Vega	
+expr	11429	var	zenon_Vfga	
+expr	11463	var	zenon_Vgga	
+expr	11486	var	zenon_Vhga	
+expr	11518	var	zenon_Viga	
+expr	11546	var	zenon_Vjga	
+expr	11548	var	zenon_Vkga	
+expr	11550	var	zenon_Vlga	
+expr	11557	var	zenon_Vmga	
+expr	11559	var	zenon_Vnga	
+expr	11569	var	zenon_Voga	
+expr	11573	var	zenon_Vpga	
+expr	11580	var	zenon_Vqga	
+expr	11582	var	zenon_Vrga	
+expr	11589	var	zenon_Vsga	
+expr	11593	var	zenon_Vtga	
+expr	11600	var	zenon_Vuga	
+expr	11607	var	zenon_Vvga	
+expr	11614	var	zenon_Vwga	
+expr	11625	var	zenon_Vxga	
+expr	11632	var	zenon_Vyga	
+expr	11636	var	zenon_Vzga	
+expr	11640	var	zenon_Vaha	
+expr	11654	var	zenon_Vbha	
+expr	11658	var	zenon_Vcha	
+expr	11668	var	zenon_Vdha	
+expr	11670	var	zenon_Veha	
+expr	11687	var	zenon_Vfha	
+expr	11689	var	zenon_Vgha	
+expr	11704	var	zenon_Vhha	
+expr	11708	var	zenon_Viha	
+expr	11722	var	zenon_Vjha	
+expr	11726	var	zenon_Vkha	
+expr	11750	var	zenon_Vlha	
+expr	11752	var	zenon_Vmha	
+expr	11757	var	zenon_Vnha	
+expr	11759	var	zenon_Voha	
+expr	11782	var	zenon_Vpha	
+expr	11784	var	zenon_Vqha	
+expr	11804	var	zenon_Vrha	
+expr	11806	var	zenon_Vsha	
+expr	11812	var	zenon_Vtha	
+expr	11824	var	zenon_Vuha	
+expr	11851	var	zenon_Vvha	
+expr	11853	var	zenon_Vwha	
+expr	11855	var	zenon_Vxha	
+expr	11861	var	zenon_Vyha	
+expr	11873	var	zenon_Vzha	
+expr	11906	var	zenon_Vaia	
+expr	11946	var	zenon_Vbia	
+expr	11948	var	zenon_Vcia	
+expr	11954	var	zenon_Vdia	
+expr	11966	var	zenon_Veia	
+expr	12011	var	zenon_Vfia	
+expr	12013	var	zenon_Vgia	
+expr	12015	var	zenon_Vhia	
+expr	12021	var	zenon_Viia	
+expr	12033	var	zenon_Vjia	
+expr	12088	var	zenon_Vkia	
+expr	12090	var	zenon_Vlia	
+expr	12092	var	zenon_Vmia	
+expr	12098	var	zenon_Vnia	
+expr	12110	var	zenon_Voia	
+expr	12142	var	zenon_Vpia	
+expr	12174	var	zenon_Vqia	
+expr	12206	var	zenon_Vria	
+expr	12224	var	zenon_Vsia	
+expr	12228	var	zenon_Vtia	
+expr	12281	var	zenon_Vuia	
+expr	12315	var	zenon_Vvia	
+expr	12338	var	zenon_Vwia	
+expr	12370	var	zenon_Vxia	
+expr	12399	var	zenon_Vyia	
+expr	12412	var	zenon_Vzia	
+expr	12423	var	zenon_Vaja	
+expr	12434	var	zenon_Vbja	
+expr	12441	var	zenon_Vcja	
+expr	12448	var	zenon_Vdja	
+expr	12452	var	zenon_Veja	
+expr	12456	var	zenon_Vfja	
+expr	12470	var	zenon_Vgja	
+expr	12474	var	zenon_Vhja	
+expr	12484	var	zenon_Vija	
+expr	12486	var	zenon_Vjja	
+expr	12503	var	zenon_Vkja	
+expr	12505	var	zenon_Vlja	
+expr	12518	var	zenon_Vmja	
+expr	12522	var	zenon_Vnja	
+expr	12536	var	zenon_Voja	
+expr	12540	var	zenon_Vpja	
+expr	12564	var	zenon_Vqja	
+expr	12566	var	zenon_Vrja	
+expr	12571	var	zenon_Vsja	
+expr	12573	var	zenon_Vtja	
+expr	12596	var	zenon_Vuja	
+expr	12598	var	zenon_Vvja	
+expr	12616	var	zenon_Vwja	
+expr	12618	var	zenon_Vxja	
+expr	12624	var	zenon_Vyja	
+expr	12636	var	zenon_Vzja	
+expr	12663	var	zenon_Vaka	
+expr	12665	var	zenon_Vbka	
+expr	12667	var	zenon_Vcka	
+expr	12673	var	zenon_Vdka	
+expr	12685	var	zenon_Veka	
+expr	12718	var	zenon_Vfka	
+expr	12758	var	zenon_Vgka	
+expr	12760	var	zenon_Vhka	
+expr	12766	var	zenon_Vika	
+expr	12778	var	zenon_Vjka	
+expr	12823	var	zenon_Vkka	
+expr	12825	var	zenon_Vlka	
+expr	12827	var	zenon_Vmka	
+expr	12833	var	zenon_Vnka	
+expr	12845	var	zenon_Voka	
+expr	12900	var	zenon_Vpka	
+expr	12902	var	zenon_Vqka	
+expr	12904	var	zenon_Vrka	
+expr	12910	var	zenon_Vska	
+expr	12922	var	zenon_Vtka	
+expr	12954	var	zenon_Vuka	
+expr	12986	var	zenon_Vvka	
+expr	13018	var	zenon_Vwka	
+expr	13036	var	zenon_Vxka	
+expr	13040	var	zenon_Vyka	
+expr	13093	var	zenon_Vzka	
+expr	13127	var	zenon_Vala	
+expr	13150	var	zenon_Vbla	
+expr	13182	var	zenon_Vcla	
+expr	13211	var	zenon_Vdla	
+expr	13215	var	zenon_Vela	
+expr	13219	app	TLA.in	13211,73
+expr	13220	not		13219
+expr	13221	lam		13211,13220
+expr	13222	app	TLA.fapply	13211,2
+expr	13223	app	TLA.in	13222,73
+expr	13224	not		13223
+expr	13225	lam		13211,13224
+expr	13226	app	TLA.fapply	19,13211
+expr	13227	app	TLA.in	13226,73
+expr	13228	not		13227
+expr	13229	lam		13211,13228
+expr	13241	var	zenon_Vfla	
+expr	13245	app	=	13241,70
+expr	13246	not		13245
+expr	13247	lam		13241,13246
+expr	13248	app	TLA.fapply	13241,2
+expr	13249	app	=	13248,70
+expr	13250	not		13249
+expr	13251	lam		13241,13250
+expr	13252	app	TLA.fapply	7,13241
+expr	13253	app	=	13252,70
+expr	13254	not		13253
+expr	13255	lam		13241,13254
+expr	13260	var	zenon_Vgla	
+expr	13275	var	zenon_Vhla	
+expr	13291	var	zenon_Vila	
+expr	13295	app	=	13291,49
+expr	13296	not		13295
+expr	13297	lam		13291,13296
+expr	13298	app	TLA.fapply	13291,2
+expr	13299	app	=	13298,49
+expr	13300	not		13299
+expr	13301	lam		13291,13300
+expr	13302	app	TLA.fapply	19,13291
+expr	13303	app	=	13302,49
+expr	13304	not		13303
+expr	13305	lam		13291,13304
+expr	13308	var	zenon_Vjla	
+expr	13310	var	zenon_Vkla	
+expr	13323	var	zenon_Vlla	
+expr	13329	var	zenon_Vmla	
+expr	13349	var	zenon_Vnla	
+expr	13364	var	zenon_Vola	
+expr	13390	var	zenon_Vpla	
+expr	13392	var	zenon_Vqla	
+expr	13402	var	zenon_Vrla	
+expr	13417	var	zenon_Vsla	
+expr	13419	var	zenon_Vtla	
+expr	13425	var	zenon_Vula	
+expr	13427	var	zenon_Vvla	
+expr	13453	var	zenon_Vwla	
+expr	13455	var	zenon_Vxla	
+expr	13457	var	zenon_Vyla	
+expr	13464	var	zenon_Vzla	
+expr	13466	var	zenon_Vama	
+expr	13476	var	zenon_Vbma	
+expr	13480	var	zenon_Vcma	
+expr	13487	var	zenon_Vdma	
+expr	13494	var	zenon_Vema	
+expr	13507	var	zenon_Vfma	
+expr	13518	var	zenon_Vgma	
+expr	13529	var	zenon_Vhma	
+expr	13536	var	zenon_Vima	
+expr	13543	var	zenon_Vjma	
+expr	13549	var	zenon_Vkma	
+expr	13553	var	zenon_Vlma	
+expr	13567	var	zenon_Vmma	
+expr	13571	var	zenon_Vnma	
+expr	13595	var	zenon_Voma	
+expr	13597	var	zenon_Vpma	
+expr	13602	var	zenon_Vqma	
+expr	13604	var	zenon_Vrma	
+expr	13621	var	zenon_Vsma	
+expr	13623	var	zenon_Vtma	
+expr	13652	var	zenon_Vuma	
+expr	13654	var	zenon_Vvma	
+expr	13660	var	zenon_Vwma	
+expr	13672	var	zenon_Vxma	
+expr	13699	var	zenon_Vyma	
+expr	13701	var	zenon_Vzma	
+expr	13703	var	zenon_Vana	
+expr	13709	var	zenon_Vbna	
+expr	13721	var	zenon_Vcna	
+expr	13754	var	zenon_Vdna	
+expr	13794	var	zenon_Vena	
+expr	13796	var	zenon_Vfna	
+expr	13802	var	zenon_Vgna	
+expr	13814	var	zenon_Vhna	
+expr	13859	var	zenon_Vina	
+expr	13861	var	zenon_Vjna	
+expr	13863	var	zenon_Vkna	
+expr	13869	var	zenon_Vlna	
+expr	13881	var	zenon_Vmna	
+expr	13936	var	zenon_Vnna	
+expr	13938	var	zenon_Vona	
+expr	13940	var	zenon_Vpna	
+expr	13946	var	zenon_Vqna	
+expr	13958	var	zenon_Vrna	
+expr	13992	var	zenon_Vsna	
+expr	14017	var	zenon_Vtna	
+expr	14049	var	zenon_Vuna	
+expr	14077	var	zenon_Vvna	
+expr	14088	var	zenon_Vwna	
+expr	14099	var	zenon_Vxna	
+expr	14110	var	zenon_Vyna	
+expr	14117	var	zenon_Vzna	
+expr	14124	var	zenon_Vaoa	
+expr	14128	var	zenon_Vboa	
+expr	14132	var	zenon_Vcoa	
+expr	14146	var	zenon_Vdoa	
+expr	14150	var	zenon_Veoa	
+expr	14174	var	zenon_Vfoa	
+expr	14176	var	zenon_Vgoa	
+expr	14181	var	zenon_Vhoa	
+expr	14183	var	zenon_Vioa	
+expr	14200	var	zenon_Vjoa	
+expr	14202	var	zenon_Vkoa	
+expr	14229	var	zenon_Vloa	
+expr	14231	var	zenon_Vmoa	
+expr	14237	var	zenon_Vnoa	
+expr	14249	var	zenon_Vooa	
+expr	14276	var	zenon_Vpoa	
+expr	14278	var	zenon_Vqoa	
+expr	14280	var	zenon_Vroa	
+expr	14286	var	zenon_Vsoa	
+expr	14298	var	zenon_Vtoa	
+expr	14331	var	zenon_Vuoa	
+expr	14371	var	zenon_Vvoa	
+expr	14373	var	zenon_Vwoa	
+expr	14379	var	zenon_Vxoa	
+expr	14391	var	zenon_Vyoa	
+expr	14436	var	zenon_Vzoa	
+expr	14438	var	zenon_Vapa	
+expr	14440	var	zenon_Vbpa	
+expr	14446	var	zenon_Vcpa	
+expr	14458	var	zenon_Vdpa	
+expr	14513	var	zenon_Vepa	
+expr	14515	var	zenon_Vfpa	
+expr	14517	var	zenon_Vgpa	
+expr	14523	var	zenon_Vhpa	
+expr	14535	var	zenon_Vipa	
+expr	14569	var	zenon_Vjpa	
+expr	14592	var	zenon_Vkpa	
+expr	14624	var	zenon_Vlpa	
+expr	14652	var	zenon_Vmpa	
+expr	14654	var	zenon_Vnpa	
+expr	14656	var	zenon_Vopa	
+expr	14663	var	zenon_Vppa	
+expr	14665	var	zenon_Vqpa	
+expr	14675	var	zenon_Vrpa	
+expr	14679	var	zenon_Vspa	
+expr	14686	var	zenon_Vtpa	
+expr	14688	var	zenon_Vupa	
+expr	14695	var	zenon_Vvpa	
+expr	14699	var	zenon_Vwpa	
+expr	14706	var	zenon_Vxpa	
+expr	14713	var	zenon_Vypa	
+expr	14720	var	zenon_Vzpa	
+expr	14731	var	zenon_Vaqa	
+expr	14738	var	zenon_Vbqa	
+expr	14742	var	zenon_Vcqa	
+expr	14746	var	zenon_Vdqa	
+expr	14760	var	zenon_Veqa	
+expr	14764	var	zenon_Vfqa	
+expr	14774	var	zenon_Vgqa	
+expr	14776	var	zenon_Vhqa	
+expr	14793	var	zenon_Viqa	
+expr	14795	var	zenon_Vjqa	
+expr	14810	var	zenon_Vkqa	
+expr	14814	var	zenon_Vlqa	
+expr	14828	var	zenon_Vmqa	
+expr	14832	var	zenon_Vnqa	
+expr	14856	var	zenon_Voqa	
+expr	14858	var	zenon_Vpqa	
+expr	14863	var	zenon_Vqqa	
+expr	14865	var	zenon_Vrqa	
+expr	14888	var	zenon_Vsqa	
+expr	14890	var	zenon_Vtqa	
+expr	14910	var	zenon_Vuqa	
+expr	14912	var	zenon_Vvqa	
+expr	14918	var	zenon_Vwqa	
+expr	14930	var	zenon_Vxqa	
+expr	14957	var	zenon_Vyqa	
+expr	14959	var	zenon_Vzqa	
+expr	14961	var	zenon_Vara	
+expr	14967	var	zenon_Vbra	
+expr	14979	var	zenon_Vcra	
+expr	15012	var	zenon_Vdra	
+expr	15052	var	zenon_Vera	
+expr	15054	var	zenon_Vfra	
+expr	15060	var	zenon_Vgra	
+expr	15072	var	zenon_Vhra	
+expr	15117	var	zenon_Vira	
+expr	15119	var	zenon_Vjra	
+expr	15121	var	zenon_Vkra	
+expr	15127	var	zenon_Vlra	
+expr	15139	var	zenon_Vmra	
+expr	15194	var	zenon_Vnra	
+expr	15196	var	zenon_Vora	
+expr	15198	var	zenon_Vpra	
+expr	15204	var	zenon_Vqra	
+expr	15216	var	zenon_Vrra	
+expr	15250	var	zenon_Vsra	
+expr	15273	var	zenon_Vtra	
+expr	15305	var	zenon_Vura	
+expr	15333	var	zenon_Vvra	
+expr	15344	var	zenon_Vwra	
+expr	15355	var	zenon_Vxra	
+expr	15366	var	zenon_Vyra	
+expr	15373	var	zenon_Vzra	
+expr	15380	var	zenon_Vasa	
+expr	15384	var	zenon_Vbsa	
+expr	15388	var	zenon_Vcsa	
+expr	15402	var	zenon_Vdsa	
+expr	15406	var	zenon_Vesa	
+expr	15416	var	zenon_Vfsa	
+expr	15418	var	zenon_Vgsa	
+expr	15435	var	zenon_Vhsa	
+expr	15437	var	zenon_Visa	
+expr	15450	var	zenon_Vjsa	
+expr	15454	var	zenon_Vksa	
+expr	15468	var	zenon_Vlsa	
+expr	15472	var	zenon_Vmsa	
+expr	15496	var	zenon_Vnsa	
+expr	15498	var	zenon_Vosa	
+expr	15503	var	zenon_Vpsa	
+expr	15505	var	zenon_Vqsa	
+expr	15528	var	zenon_Vrsa	
+expr	15530	var	zenon_Vssa	
+expr	15548	var	zenon_Vtsa	
+expr	15550	var	zenon_Vusa	
+expr	15556	var	zenon_Vvsa	
+expr	15568	var	zenon_Vwsa	
+expr	15595	var	zenon_Vxsa	
+expr	15597	var	zenon_Vysa	
+expr	15599	var	zenon_Vzsa	
+expr	15605	var	zenon_Vata	
+expr	15617	var	zenon_Vbta	
+expr	15650	var	zenon_Vcta	
+expr	15690	var	zenon_Vdta	
+expr	15692	var	zenon_Veta	
+expr	15698	var	zenon_Vfta	
+expr	15710	var	zenon_Vgta	
+expr	15755	var	zenon_Vhta	
+expr	15757	var	zenon_Vita	
+expr	15759	var	zenon_Vjta	
+expr	15765	var	zenon_Vkta	
+expr	15777	var	zenon_Vlta	
+expr	15832	var	zenon_Vmta	
+expr	15834	var	zenon_Vnta	
+expr	15836	var	zenon_Vota	
+expr	15842	var	zenon_Vpta	
+expr	15854	var	zenon_Vqta	
+expr	15888	var	zenon_Vrta	
+expr	15911	var	zenon_Vsta	
+expr	15943	var	zenon_Vtta	
+expr	15971	var	zenon_Vuta	
+expr	15975	var	zenon_Vvta	
+expr	15990	var	zenon_Vwta	
+expr	16000	var	zenon_Vxta	
+expr	16015	var	zenon_Vyta	
+expr	16041	var	zenon_Vzta	
+expr	16043	var	zenon_Vaua	
+expr	16053	var	zenon_Vbua	
+expr	16068	var	zenon_Vcua	
+expr	16070	var	zenon_Vdua	
+expr	16076	var	zenon_Veua	
+expr	16078	var	zenon_Vfua	
+expr	16098	var	zenon_Vgua	
+expr	16100	var	zenon_Vhua	
+expr	16102	var	zenon_Viua	
+expr	16107	var	zenon_Vjua	
+expr	16109	var	zenon_Vkua	
+expr	16117	var	zenon_Vlua	
+expr	16121	var	zenon_Vmua	
+expr	16128	var	zenon_Vnua	
+expr	16135	var	zenon_Voua	
+expr	16142	var	zenon_Vpua	
+expr	16153	var	zenon_Vqua	
+expr	16160	var	zenon_Vrua	
+expr	16164	var	zenon_Vsua	
+expr	16168	var	zenon_Vtua	
+expr	16182	var	zenon_Vuua	
+expr	16186	var	zenon_Vvua	
+expr	16210	var	zenon_Vwua	
+expr	16212	var	zenon_Vxua	
+expr	16217	var	zenon_Vyua	
+expr	16219	var	zenon_Vzua	
+expr	16236	var	zenon_Vava	
+expr	16238	var	zenon_Vbva	
+expr	16265	var	zenon_Vcva	
+expr	16267	var	zenon_Vdva	
+expr	16273	var	zenon_Veva	
+expr	16285	var	zenon_Vfva	
+expr	16312	var	zenon_Vgva	
+expr	16314	var	zenon_Vhva	
+expr	16316	var	zenon_Viva	
+expr	16322	var	zenon_Vjva	
+expr	16334	var	zenon_Vkva	
+expr	16367	var	zenon_Vlva	
+expr	16407	var	zenon_Vmva	
+expr	16409	var	zenon_Vnva	
+expr	16415	var	zenon_Vova	
+expr	16427	var	zenon_Vpva	
+expr	16472	var	zenon_Vqva	
+expr	16474	var	zenon_Vrva	
+expr	16476	var	zenon_Vsva	
+expr	16482	var	zenon_Vtva	
+expr	16494	var	zenon_Vuva	
+expr	16549	var	zenon_Vvva	
+expr	16551	var	zenon_Vwva	
+expr	16553	var	zenon_Vxva	
+expr	16559	var	zenon_Vyva	
+expr	16571	var	zenon_Vzva	
+expr	16603	var	zenon_Vawa	
+expr	16621	var	zenon_Vbwa	
+expr	16625	var	zenon_Vcwa	
+expr	16678	var	zenon_Vdwa	
+expr	16710	var	zenon_Vewa	
+expr	16743	var	zenon_Vfwa	
+expr	16750	app	TLA.fapply	16743,120
+expr	16751	app	=	16750,49
+expr	16752	not		16751
+expr	16753	lam		16743,16752
+expr	16758	app	TLA.fapply	16743,5
+expr	16759	app	TLA.fapply	19,16758
+expr	16760	app	=	16759,49
+expr	16761	not		16760
+expr	16762	lam		16743,16761
+expr	16763	app	TLA.fapply	38,16743
+expr	16764	app	TLA.fapply	19,16763
+expr	16765	app	=	16764,49
+expr	16766	not		16765
+expr	16767	lam		16743,16766
+expr	16775	var	zenon_Vgwa	
+expr	16779	var	zenon_Vhwa	
+expr	16784	var	zenon_Viwa	
+expr	16788	var	zenon_Vjwa	
+expr	16792	var	zenon_Vkwa	
+expr	16795	var	zenon_Vlwa	
+expr	16799	var	zenon_Vmwa	
+expr	16801	var	zenon_Vnwa	
+expr	16804	var	zenon_Vowa	
+expr	16808	var	zenon_Vpwa	
+expr	16813	var	zenon_Vqwa	
+expr	16816	var	zenon_Vrwa	
+expr	16820	var	zenon_Vswa	
+expr	16823	var	zenon_Vtwa	
+expr	16827	var	zenon_Vuwa	
+expr	16830	var	zenon_Vvwa	
+expr	16834	app	TLA.set	27
+expr	16835	app	TLA.in	149,16834
+expr	16836	app	TLA.set	
+expr	16837	app	TLA.in	149,16836
+expr	16838	var	zenon_Vwwa	
+expr	16841	var	zenon_Vxwa	
+expr	16845	var	zenon_Vywa	
+expr	16848	var	zenon_Vzwa	
+expr	16852	var	zenon_Vaxa	
+expr	16855	var	zenon_Vbxa	
+expr	16859	var	zenon_Vcxa	
+expr	16862	var	zenon_Vdxa	
+expr	16866	app	TLA.set	57
+expr	16867	app	TLA.in	149,16866
+expr	16868	app	TLA.set	51,53
+expr	16869	app	TLA.in	72,16868
+expr	16870	not		16869
+expr	16871	app	TLA.set	53
+expr	16872	app	TLA.in	72,16871
+expr	16873	not		16872
+expr	16874	app	TLA.in	72,16836
+expr	16876	var	zenon_Vexa	
+expr	16879	var	zenon_Vfxa	
+expr	16883	var	zenon_Vgxa	
+expr	16886	var	zenon_Vhxa	
+expr	16890	app	TLA.in	682,16868
+expr	16891	app	TLA.in	682,16871
+expr	16892	app	TLA.in	682,16836
+expr	16893	var	zenon_Vixa	
+expr	16896	var	zenon_Vjxa	
+expr	16900	var	zenon_Vkxa	
+expr	16903	var	zenon_Vlxa	
+expr	16907	var	zenon_Vmxa	
+expr	16910	var	zenon_Vnxa	
+expr	16914	var	zenon_Voxa	
+expr	16917	var	zenon_Vpxa	
+expr	16921	var	zenon_Vqxa	
+expr	16924	var	zenon_Vrxa	
+expr	16928	var	zenon_Vsxa	
+expr	16931	var	zenon_Vtxa	
+expr	16935	var	zenon_Vuxa	
+expr	16938	var	zenon_Vvxa	
+expr	16942	var	zenon_Vwxa	
+expr	16945	var	zenon_Vxxa	
+expr	16949	var	zenon_Vyxa	
+expr	16952	var	zenon_Vzxa	
+expr	16956	var	zenon_Vaya	
+expr	16959	var	zenon_Vbya	
+expr	16963	var	zenon_Vcya	
+expr	16966	var	zenon_Vdya	
+expr	16970	var	zenon_Veya	
+expr	16973	var	zenon_Vfya	
+expr	16977	var	zenon_Vgya	
+expr	16980	var	zenon_Vhya	
+expr	16984	var	zenon_Viya	
+expr	16987	var	zenon_Vjya	
+expr	16991	app	TLA.set	23,51
+expr	16992	app	TLA.in	72,16991
+expr	16993	app	TLA.set	51
+expr	16994	app	TLA.in	72,16993
+lemma	zenon_L1_	
+node	2	127,123,164	extension	zenon_ifthenelse	196,123,125,126	127	123,125;229,126
+node	0	164,125	axiom	125
+node	0	123,229	axiom	123
+lemma	zenon_L2_	
+node	1	163,1737	congruencelr	1791	2	120
+node	0	1793	noteq	682
+lemma	zenon_L3_	
+node	1	163,60,161,1733,4	extension	zenon_in_funcset	19,3,58	60	402,404,410
+node	1	163,4,404,161,1733	congruencelr	268	2	120
+node	1	163,404,320,161,1733	congruencerl	2433	3	403
+node	3	163,1733,2434,161	extension	zenon_fapplyexcept	1785,19,5,25,2	1733	1059,247,1906;1059,976,1737;1062
+node	0	161,247	eqsym	5	2
+node	0	163,1737	lemma	zenon_L2_	
+node	1	163,1062,2434	congruencelr	3911	2	120
+node	0	2434,2589	axiom	2434
+lemma	zenon_L4_	
+node	1	163,5149,716,4,161,60	extension	zenon_stringdiffll	682,51,908,25	716,5149	1733
+node	0	163,60,161,1733,4	lemma	zenon_L3_	
+lemma	zenon_L5_	
+node	1	163,685,1695	extension	zenon_stringdiffll	682,53,72,23	1695,685	1737
+node	0	163,1737	lemma	zenon_L2_	
+lemma	zenon_L6_	
+node	1	163,4949,716,4,161,60	extension	zenon_stringdiffll	682,51,908,27	716,4949	1733
+node	0	163,60,161,1733,4	lemma	zenon_L3_	
+lemma	zenon_L7_	
+node	1	163,1202,716,4,161,60	extension	zenon_stringdiffll	682,51,908,55	716,1202	1733
+node	0	163,60,161,1733,4	lemma	zenon_L3_	
+lemma	zenon_L8_	
+node	1	163,990,716,4,161,60	extension	zenon_stringdiffll	682,51,908,57	716,990	1733
+node	0	163,60,161,1733,4	lemma	zenon_L3_	
+lemma	zenon_L9_	
+node	2	139,163,159,78,4,161,60,685	connect	or	155	158
+node	1	163,139,155,685,60,161,4,78	connect	and	150	154
+node	2	139,163,150,78,4,161,60,685	extension	zenon_in_addElt	149,25,16834	150	4867;16835
+node	1	163,139,4867,78,4,161,60,685	congruencelr	5742	137	138
+node	1	163,78,685,60,161,4,5149	congruencelr	773	2	120
+node	2	163,774,685,60,161,4,5149	extension	zenon_in_addElt	682,23,16868	774	1694;16890
+node	1	163,5149,1694,4,161,60	extension	zenon_stringdiffll	682,23,908,25	1694,5149	1733
+node	0	163,60,161,1733,4	lemma	zenon_L3_	
+node	2	163,16890,685,60,161,4,5149	extension	zenon_in_addElt	682,51,16871	16890	716;16891
+node	0	163,5149,716,4,161,60	lemma	zenon_L4_	
+node	2	163,16891,685	extension	zenon_in_addElt	682,53,16836	16891	1695;16892
+node	0	163,685,1695	lemma	zenon_L5_	
+node	0	16892	extension	zenon_in_emptyset	682	16892	
+node	2	139,163,16835,78,4,161,60,685	extension	zenon_in_addElt	149,27,16836	16835	4868;16837
+node	1	163,139,4868,78,4,161,60,685	congruencelr	4948	137	138
+node	1	163,78,685,60,161,4,4949	congruencelr	773	2	120
+node	2	163,774,685,60,161,4,4949	extension	zenon_in_addElt	682,23,16868	774	1694;16890
+node	1	163,4949,1694,4,161,60	extension	zenon_stringdiffll	682,23,908,27	1694,4949	1733
+node	0	163,60,161,1733,4	lemma	zenon_L3_	
+node	2	163,16890,685,60,161,4,4949	extension	zenon_in_addElt	682,51,16871	16890	716;16891
+node	0	163,4949,716,4,161,60	lemma	zenon_L6_	
+node	2	163,16891,685	extension	zenon_in_addElt	682,53,16836	16891	1695;16892
+node	0	163,685,1695	lemma	zenon_L5_	
+node	0	16892	extension	zenon_in_emptyset	682	16892	
+node	0	16837	extension	zenon_in_emptyset	149	16837	
+node	1	163,139,158,685,60,161,4,78	connect	and	156	157
+node	2	139,163,156,78,4,161,60,685	extension	zenon_in_addElt	149,55,16866	156	910;16867
+node	1	163,139,910,78,4,161,60,685	congruencelr	4165	137	138
+node	1	163,78,685,60,161,4,1202	congruencelr	773	2	120
+node	2	163,774,685,60,161,4,1202	extension	zenon_in_addElt	682,23,16868	774	1694;16890
+node	1	163,1202,1694,4,161,60	extension	zenon_stringdiffll	682,23,908,55	1694,1202	1733
+node	0	163,60,161,1733,4	lemma	zenon_L3_	
+node	2	163,16890,685,60,161,4,1202	extension	zenon_in_addElt	682,51,16871	16890	716;16891
+node	0	163,1202,716,4,161,60	lemma	zenon_L7_	
+node	2	163,16891,685	extension	zenon_in_addElt	682,53,16836	16891	1695;16892
+node	0	163,685,1695	lemma	zenon_L5_	
+node	0	16892	extension	zenon_in_emptyset	682	16892	
+node	2	139,163,16867,78,4,161,60,685	extension	zenon_in_addElt	149,57,16836	16867	911;16837
+node	1	163,139,911,78,4,161,60,685	congruencelr	989	137	138
+node	1	163,78,685,60,161,4,990	congruencelr	773	2	120
+node	2	163,774,685,60,161,4,990	extension	zenon_in_addElt	682,23,16868	774	1694;16890
+node	1	163,990,1694,4,161,60	extension	zenon_stringdiffll	682,23,908,57	1694,990	1733
+node	0	163,60,161,1733,4	lemma	zenon_L3_	
+node	2	163,16890,685,60,161,4,990	extension	zenon_in_addElt	682,51,16871	16890	716;16891
+node	0	163,990,716,4,161,60	lemma	zenon_L8_	
+node	2	163,16891,685	extension	zenon_in_addElt	682,53,16836	16891	1695;16892
+node	0	163,685,1695	lemma	zenon_L5_	
+node	0	16892	extension	zenon_in_emptyset	682	16892	
+node	0	16837	extension	zenon_in_emptyset	149	16837	
+lemma	zenon_L10_	
+node	1	163,686,1694	extension	zenon_stringdiffll	682,23,72,51	1694,686	1737
+node	0	163,1737	lemma	zenon_L2_	
+lemma	zenon_L11_	
+node	1	163,686,1695	extension	zenon_stringdiffll	682,53,72,51	1695,686	1737
+node	0	163,1737	lemma	zenon_L2_	
+lemma	zenon_L12_	
+node	2	139,163,159,78,686,4,161,60	connect	or	155	158
+node	1	163,139,155,60,161,4,686,78	connect	and	150	154
+node	2	139,163,150,78,686,4,161,60	extension	zenon_in_addElt	149,25,16834	150	4867;16835
+node	1	163,139,4867,78,686,4,161,60	congruencelr	5742	137	138
+node	1	163,78,60,161,4,5149,686	congruencelr	773	2	120
+node	2	163,774,60,161,4,5149,686	extension	zenon_in_addElt	682,23,16868	774	1694;16890
+node	0	163,686,1694	lemma	zenon_L10_	
+node	2	163,16890,60,161,4,5149,686	extension	zenon_in_addElt	682,51,16871	16890	716;16891
+node	0	163,5149,716,4,161,60	lemma	zenon_L4_	
+node	2	163,16891,686	extension	zenon_in_addElt	682,53,16836	16891	1695;16892
+node	0	163,686,1695	lemma	zenon_L11_	
+node	0	16892	extension	zenon_in_emptyset	682	16892	
+node	2	139,163,16835,78,686,4,161,60	extension	zenon_in_addElt	149,27,16836	16835	4868;16837
+node	1	163,139,4868,78,686,4,161,60	congruencelr	4948	137	138
+node	1	163,78,60,161,4,4949,686	congruencelr	773	2	120
+node	2	163,774,60,161,4,4949,686	extension	zenon_in_addElt	682,23,16868	774	1694;16890
+node	0	163,686,1694	lemma	zenon_L10_	
+node	2	163,16890,60,161,4,4949,686	extension	zenon_in_addElt	682,51,16871	16890	716;16891
+node	0	163,4949,716,4,161,60	lemma	zenon_L6_	
+node	2	163,16891,686	extension	zenon_in_addElt	682,53,16836	16891	1695;16892
+node	0	163,686,1695	lemma	zenon_L11_	
+node	0	16892	extension	zenon_in_emptyset	682	16892	
+node	0	16837	extension	zenon_in_emptyset	149	16837	
+node	1	163,139,158,60,161,4,686,78	connect	and	156	157
+node	2	139,163,156,78,686,4,161,60	extension	zenon_in_addElt	149,55,16866	156	910;16867
+node	1	163,139,910,78,686,4,161,60	congruencelr	4165	137	138
+node	1	163,78,60,161,4,1202,686	congruencelr	773	2	120
+node	2	163,774,60,161,4,1202,686	extension	zenon_in_addElt	682,23,16868	774	1694;16890
+node	0	163,686,1694	lemma	zenon_L10_	
+node	2	163,16890,60,161,4,1202,686	extension	zenon_in_addElt	682,51,16871	16890	716;16891
+node	0	163,1202,716,4,161,60	lemma	zenon_L7_	
+node	2	163,16891,686	extension	zenon_in_addElt	682,53,16836	16891	1695;16892
+node	0	163,686,1695	lemma	zenon_L11_	
+node	0	16892	extension	zenon_in_emptyset	682	16892	
+node	2	139,163,16867,78,686,4,161,60	extension	zenon_in_addElt	149,57,16836	16867	911;16837
+node	1	163,139,911,78,686,4,161,60	congruencelr	989	137	138
+node	1	163,78,60,161,4,990,686	congruencelr	773	2	120
+node	2	163,774,60,161,4,990,686	extension	zenon_in_addElt	682,23,16868	774	1694;16890
+node	0	163,686,1694	lemma	zenon_L10_	
+node	2	163,16890,60,161,4,990,686	extension	zenon_in_addElt	682,51,16871	16890	716;16891
+node	0	163,990,716,4,161,60	lemma	zenon_L8_	
+node	2	163,16891,686	extension	zenon_in_addElt	682,53,16836	16891	1695;16892
+node	0	163,686,1695	lemma	zenon_L11_	
+node	0	16892	extension	zenon_in_emptyset	682	16892	
+node	0	16837	extension	zenon_in_emptyset	149	16837	
+lemma	zenon_thm	
+node	1	67,114,163,139,159,161,4,123,164,128	connect	and	10	66
+node	1	66,114,163,139,159,161,4,123,164,128	connect	and	14	65
+node	1	65,114,163,139,159,161,4,123,164,128	connect	and	18	64
+node	1	64,114,163,139,159,161,4,123,164,128	connect	and	35	63
+node	1	63,114,163,139,159,161,4,123,164,128	connect	and	37	62
+node	1	62,114,163,139,159,161,4,123,164,128	connect	and	40	61
+node	1	61,114,163,139,159,161,4,123,164,128	connect	and	47	60
+node	1	114,163,139,159,60,161,4,123,164,128	connect	and	75	113
+node	1	113,163,139,75,159,60,161,4,123,164,128	connect	and	79	112
+node	2	163,139,75,159,60,161,4,79,123,164,128	connect	equiv	71	74
+node	2	163,128,164,123,183	connect	or	122	127
+node	1	163,183,122	congruencelr	13255	2	120
+node	0	122,2028	axiom	122
+node	0	127,123,164	lemma	zenon_L1_	
+node	2	139,163,74,79,4,161,60,159	extension	zenon_in_addElt	72,49,16991	74	684;16992
+node	2	139,163,159,684,60,161,4	connect	or	155	158
+node	1	163,139,155,4,161,60,684	connect	and	150	154
+node	2	139,163,150,684,60,161,4	extension	zenon_in_addElt	149,25,16834	150	4867;16835
+node	1	163,139,4867,684,60,161,4	congruencelr	5742	137	138
+node	1	163,684,5149,4,161,60	congruencelr	9740	2	120
+node	1	163,5149,2109,4,161,60	extension	zenon_stringdiffll	682,49,908,25	2109,5149	1733
+node	0	163,60,161,1733,4	lemma	zenon_L3_	
+node	2	139,163,16835,684,60,161,4	extension	zenon_in_addElt	149,27,16836	16835	4868;16837
+node	1	163,139,4868,684,60,161,4	congruencelr	4948	137	138
+node	1	163,684,4949,4,161,60	congruencelr	9740	2	120
+node	1	163,4949,2109,4,161,60	extension	zenon_stringdiffll	682,49,908,27	2109,4949	1733
+node	0	163,60,161,1733,4	lemma	zenon_L3_	
+node	0	16837	extension	zenon_in_emptyset	149	16837	
+node	1	163,139,158,4,161,60,684	connect	and	156	157
+node	2	139,163,156,684,60,161,4	extension	zenon_in_addElt	149,55,16866	156	910;16867
+node	1	163,139,910,684,60,161,4	congruencelr	4165	137	138
+node	1	163,684,1202,4,161,60	congruencelr	9740	2	120
+node	1	163,1202,2109,4,161,60	extension	zenon_stringdiffll	682,49,908,55	2109,1202	1733
+node	0	163,60,161,1733,4	lemma	zenon_L3_	
+node	2	139,163,16867,684,60,161,4	extension	zenon_in_addElt	149,57,16836	16867	911;16837
+node	1	163,139,911,684,60,161,4	congruencelr	989	137	138
+node	1	163,684,990,4,161,60	congruencelr	9740	2	120
+node	1	163,990,2109,4,161,60	extension	zenon_stringdiffll	682,49,908,57	2109,990	1733
+node	0	163,60,161,1733,4	lemma	zenon_L3_	
+node	0	16837	extension	zenon_in_emptyset	149	16837	
+node	2	139,163,16992,79,4,161,60,159	extension	zenon_in_addElt	72,23,16993	16992	685;16994
+node	2	163,139,79,60,161,4,159,685	connect	equiv	76	78
+node	1	189,685	extension	zenon_notin_addElt	72,23,16868	189	6496,16870
+node	0	6496,685	axiom	685
+node	0	139,163,159,78,4,161,60,685	lemma	zenon_L9_	
+node	2	139,163,16994,79,4,161,60,159	extension	zenon_in_addElt	72,51,16836	16994	686;16874
+node	2	163,139,79,60,161,4,159,686	connect	equiv	76	78
+node	1	189,686	extension	zenon_notin_addElt	72,23,16868	189	6496,16870
+node	1	16870,686	extension	zenon_notin_addElt	72,51,16871	16870	704,16873
+node	0	704,686	axiom	686
+node	0	139,163,159,78,686,4,161,60	lemma	zenon_L12_	
+node	0	16874	extension	zenon_in_emptyset	72	16874	
+numbers	
+hyp	a_CONSTANTunde_iunde_a_in	4	1
+hyp	a_CONSTANTunde_selfunde_a_in	6	1
+hyp	v'46	67	1
+hyp	v'47	68	1
+hyp	v'48	114	1
+hyp	v'49	119	1
+hyp	v'62	128	1
+hyp	v'63	130	1
+hyp	v'64	136	1
+hyp	v'65	139	1
+hyp	v'66	141	1
+hyp	v'67	143	1
+hyp	v'68	145	1
+hyp	v'69	147	1
+hyp	a_CONSTANTunde_junde_a_in	148	1
+hyp	v'73	159	1
+hyp	v'80	161	1
+hyp	v'81	162	1
+hyp	v'87	163	1
+hyp	v'93	123	1
+hyp	zenon_G	164	0

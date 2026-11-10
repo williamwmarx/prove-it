@@ -1,0 +1,35 @@
+counter	g
+steps	3
+expr	2	var	p	
+expr	3	app	=	2,0
+expr	4	not		3
+expr	5	var	x	
+expr	6	var	S	
+expr	7	app	TLA.in	5,6
+expr	8	app	P	5
+expr	10	var	B	
+expr	11	app	TLA.in	5,10
+expr	12	lam		5,11
+expr	14	imply		7,8
+expr	15	all		5,14
+expr	17	and		7,8
+expr	18	ex		5,17
+expr	19	tau		5,17
+expr	24	var	zenon_Vf	
+expr	25	lam		24,24
+expr	26	not		24
+expr	27	lam		24,26
+expr	28	app	=	24,0
+expr	29	not		28
+expr	30	lam		24,29
+expr	31	app	=	2,24
+expr	32	not		31
+expr	33	lam		24,32
+expr	34	not		2
+expr	35	var	zenon_Vg	
+lemma	zenon_thm	
+node	1	4,2	extension	zenon_noteq_x_true	2	4	34
+node	0	2,34	axiom	2
+numbers	
+hyp	h	2	1
+hyp	zenon_G	4	0

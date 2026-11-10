@@ -1,0 +1,68 @@
+counter	m
+steps	5
+expr	2	var	TLA.emptyset	
+expr	3	var	a	
+expr	4	app	TLA.set	3
+expr	5	app	=	2,4
+expr	6	not		1
+expr	7	var	x	
+expr	8	var	S	
+expr	9	app	TLA.in	7,8
+expr	10	app	P	7
+expr	12	var	B	
+expr	13	app	TLA.in	7,12
+expr	14	lam		7,13
+expr	16	imply		9,10
+expr	17	all		7,16
+expr	19	and		9,10
+expr	20	ex		7,19
+expr	21	tau		7,19
+expr	27	var	zenon_Vf	
+expr	28	lam		27,27
+expr	29	app	=	27,4
+expr	30	lam		27,29
+expr	31	app	=	2,27
+expr	32	lam		27,31
+expr	33	app	TLA.set	27
+expr	34	app	=	2,33
+expr	35	lam		27,34
+expr	36	var	zenon_Vg	
+expr	37	app	TLA.in	36,4
+expr	38	not		37
+expr	39	all		36,38
+expr	41	var	zenon_Vh	
+expr	43	meta		39
+expr	47	var	zenon_Vi	
+expr	49	not		47
+expr	50	lam		47,49
+expr	51	var	zenon_Vj	
+expr	52	app	TLA.in	43,51
+expr	53	not		52
+expr	54	lam		51,53
+expr	62	var	zenon_Vk	
+expr	66	app	=	62,3
+expr	67	not		66
+expr	68	lam		62,67
+expr	69	app	=	43,62
+expr	70	not		69
+expr	71	lam		62,70
+expr	72	app	TLA.in	3,4
+expr	73	not		72
+expr	75	var	zenon_Vl	
+expr	79	var	zenon_Vm	
+expr	80	app	TLA.in	3,79
+expr	81	not		80
+expr	82	lam		79,81
+expr	85	app	=	3,3
+expr	86	not		85
+expr	88	app	TLA.set	
+expr	89	app	TLA.in	3,88
+expr	90	not		89
+lemma	zenon_thm	
+node	1	5	extension	zenon_setemptyequal	4	5	39
+node	1	39	all	39	3
+node	1	73	extension	zenon_notin_addElt	3,3,88	73	86,90
+node	0	86	noteq	3
+numbers	
+hyp	h	5	1
+hyp	zenon_G	6	0

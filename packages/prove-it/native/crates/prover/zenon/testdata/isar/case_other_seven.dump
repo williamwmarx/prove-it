@@ -1,0 +1,114 @@
+counter	ca
+steps	10
+expr	2	var	a1	
+expr	3	app	P	2
+expr	4	var	a2	
+expr	5	app	P	4
+expr	6	var	a3	
+expr	7	app	P	6
+expr	8	var	a4	
+expr	9	app	P	8
+expr	10	var	a5	
+expr	11	app	P	10
+expr	12	var	a6	
+expr	13	app	P	12
+expr	14	var	a7	
+expr	15	app	P	14
+expr	16	var	b	
+expr	17	app	P	16
+expr	18	var	c1	
+expr	19	var	c2	
+expr	20	var	c3	
+expr	21	var	c4	
+expr	22	var	c5	
+expr	23	var	c6	
+expr	24	var	c7	
+expr	25	app	TLA.CASE	18,2,19,4,20,6,21,8,22,10,23,12,24,14,16
+expr	26	app	P	25
+expr	27	not		26
+expr	28	var	x	
+expr	29	var	S	
+expr	30	app	TLA.in	28,29
+expr	31	app	P	28
+expr	33	var	B	
+expr	34	app	TLA.in	28,33
+expr	35	lam		28,34
+expr	37	imply		30,31
+expr	38	all		28,37
+expr	40	and		30,31
+expr	41	ex		28,40
+expr	42	tau		28,40
+expr	46	var	zenon_Vf	
+expr	47	lam		46,46
+expr	48	not		46
+expr	49	lam		46,48
+expr	50	app	P	46
+expr	51	not		50
+expr	52	lam		46,51
+expr	53	not		18
+expr	54	and		53,0
+expr	55	not		19
+expr	56	and		55,54
+expr	57	not		20
+expr	58	and		57,56
+expr	59	not		21
+expr	60	and		59,58
+expr	61	not		22
+expr	62	and		61,60
+expr	63	not		23
+expr	64	and		63,62
+expr	65	not		24
+expr	66	and		65,64
+expr	67	not		17
+expr	68	not		15
+expr	69	not		13
+expr	70	not		11
+expr	71	not		9
+expr	72	not		7
+expr	73	not		5
+expr	74	not		3
+expr	75	var	zenon_Vg	
+expr	77	app	P	75
+expr	78	lam		75,77
+expr	81	var	zenon_Vh	
+expr	87	var	zenon_Vi	
+expr	93	var	zenon_Vj	
+expr	99	var	zenon_Vk	
+expr	105	var	zenon_Vl	
+expr	111	var	zenon_Vm	
+expr	117	var	zenon_Vn	
+expr	124	var	zenon_Vo	
+expr	127	var	zenon_Vp	
+expr	132	var	zenon_Vq	
+expr	137	var	zenon_Vr	
+expr	142	var	zenon_Vs	
+expr	147	var	zenon_Vt	
+expr	152	var	zenon_Vu	
+expr	157	var	zenon_Vv	
+expr	161	var	zenon_Vw	
+expr	163	var	zenon_Vx	
+expr	165	var	zenon_Vy	
+expr	167	var	zenon_Vz	
+expr	169	var	zenon_Vaa	
+expr	171	var	zenon_Vba	
+expr	173	var	zenon_Vca	
+lemma	zenon_thm	
+node	8	27,27,17,15,13,11,9,7,5,3	extension	zenon_case	52	27	18,74;19,73;20,72;21,71;22,70;23,69;24,68;66,67
+node	0	3,74	axiom	3
+node	0	5,73	axiom	5
+node	0	7,72	axiom	7
+node	0	9,71	axiom	9
+node	0	11,70	axiom	11
+node	0	13,69	axiom	13
+node	0	15,68	axiom	15
+node	0	17,67	axiom	17
+numbers	
+hyp	a1	3	1
+hyp	a2	5	1
+hyp	a3	7	1
+hyp	a4	9	1
+hyp	a5	11	1
+hyp	a6	13	1
+hyp	a7	15	1
+hyp	b	17	1
+hyp	zenon_G	27	0

@@ -1,0 +1,477 @@
+counter	bb
+steps	51
+expr	2	var	a_STATEunde_IndInvunde_Unforgunde_NoBcastunde_a	
+expr	3	var	a_ACTIONunde_Nextunde_a	
+expr	4	var	h6fbaa	
+expr	5	var	a_STATEunde_varsunde_a	
+expr	6	app	=	4,5
+expr	7	or		3,6
+expr	8	var	a_STATEunde_TypeOKunde_a	
+expr	9	var	a_STATEunde_FCConstraintsunde_a	
+expr	10	var	a_VARIABLEunde_sentunde_a	
+expr	11	var	TLA.emptyset	
+expr	12	app	=	10,11
+expr	13	var	a_VARIABLEunde_pcunde_a	
+expr	14	var	a_CONSTANTunde_Procunde_a	
+expr	15	var	"V0"	
+expr	16	app	$string	15
+expr	17	var	a_CONSTANTunde_iunde_a	
+expr	18	lam	zenon_U	17,16
+expr	19	app	TLA.Fcn	14,18
+expr	20	app	=	13,19
+expr	21	var	a_VARIABLEunde_Corrunde_a	
+expr	22	app	a_ACTIONunde_Stepunde_a	17
+expr	23	lam	zenon_U	17,22
+expr	24	app	TLA.bEx	21,23
+expr	25	or		24,6
+expr	27	app	TLA.in	17,21
+expr	28	app	a_ACTIONunde_ReceiveFromAnySenderunde_a	17
+expr	29	app	TLA.fapply	13,17
+expr	30	var	"V1"	
+expr	31	app	$string	30
+expr	32	app	TLA.set	16,31
+expr	33	app	TLA.in	29,32
+expr	34	var	a_CONSTANTunde_Nunde_a	
+expr	35	var	TLA.Succ	
+expr	36	var	0	
+expr	37	app	TLA.fapply	35,36
+expr	38	app	TLA.fapply	35,37
+expr	39	var	a_CONSTANTunde_Tunde_a	
+expr	40	app	arith.mul	38,39
+expr	41	app	arith.minus	40
+expr	42	app	arith.add	34,41
+expr	43	var	a_VARIABLEunde_rcvdunde_hash_primea	
+expr	44	app	TLA.fapply	43,17
+expr	45	app	a_CONSTANTunde_Cardinalityunde_a	44
+expr	46	app	arith.le	42,45
+expr	47	app	arith.minus	39
+expr	48	app	arith.add	34,47
+expr	49	app	arith.lt	45,48
+expr	50	var	a_VARIABLEunde_pcunde_hash_primea	
+expr	51	var	"SE"	
+expr	52	app	$string	51
+expr	53	app	TLA.except	13,17,52
+expr	54	app	=	50,53
+expr	55	var	a_VARIABLEunde_sentunde_hash_primea	
+expr	56	var	"ECHO"	
+expr	57	app	$string	56
+expr	58	app	TLA.tuple	17,57
+expr	59	app	TLA.set	58
+expr	60	app	TLA.cup	10,59
+expr	61	app	=	55,60
+expr	62	var	a_VARIABLEunde_Corrunde_hash_primea	
+expr	63	app	=	62,21
+expr	64	var	a_VARIABLEunde_Faultyunde_hash_primea	
+expr	65	var	a_VARIABLEunde_Faultyunde_a	
+expr	66	app	=	64,65
+expr	67	and		63,66
+expr	68	and		61,67
+expr	69	and		54,68
+expr	70	and		49,69
+expr	71	and		46,70
+expr	72	and		33,71
+expr	73	not		33
+expr	74	not		46
+expr	75	not		49
+expr	76	not		54
+expr	77	not		61
+expr	78	not		67
+expr	79	or		77,78
+expr	80	or		76,79
+expr	81	or		75,80
+expr	82	or		74,81
+expr	83	or		73,82
+expr	84	app	=	72,83
+expr	85	not		84
+expr	86	not		85
+expr	87	var	x	
+expr	88	var	S	
+expr	89	app	TLA.in	87,88
+expr	90	app	P	87
+expr	92	var	B	
+expr	93	app	TLA.in	87,92
+expr	94	lam		87,93
+expr	96	imply		89,90
+expr	97	all		87,96
+expr	99	and		89,90
+expr	100	ex		87,99
+expr	101	tau		87,99
+expr	105	var	zenon_Vf	
+expr	106	lam		105,105
+expr	107	not		105
+expr	108	lam		105,107
+expr	109	not		107
+expr	110	lam		105,109
+expr	111	app	=	105,83
+expr	112	not		111
+expr	113	not		112
+expr	114	lam		105,113
+expr	115	app	=	72,0
+expr	116	app	=	0,83
+expr	119	app	=	72,1
+expr	120	app	=	1,83
+expr	124	var	zenon_Vg	
+expr	126	app	a_ACTIONunde_ReceiveFromAnySenderunde_a	124
+expr	127	lam		124,126
+expr	129	var	zenon_Vh	
+expr	131	app	a_ACTIONunde_Stepunde_a	129
+expr	132	lam		129,131
+expr	134	var	zenon_Vi	
+expr	136	var	zenon_Vj	
+expr	137	app	TLA.in	17,136
+expr	138	lam		136,137
+expr	139	app	TLA.in	134,21
+expr	140	lam		134,139
+expr	146	var	zenon_Vk	
+expr	148	app	=	146,19
+expr	149	lam		146,148
+expr	150	app	=	13,146
+expr	151	lam		146,150
+expr	152	app	TLA.Fcn	146,18
+expr	153	app	=	13,152
+expr	154	lam		146,153
+expr	155	app	TLA.Fcn	14,146
+expr	156	app	=	13,155
+expr	157	lam		146,156
+expr	158	var	zenon_Vl	
+expr	162	app	TLA.fapply	13,158
+expr	163	app	TLA.fapply	19,158
+expr	164	app	=	162,163
+expr	168	all		158,164
+expr	174	var	zenon_Vm	
+expr	176	app	=	174,11
+expr	177	lam		174,176
+expr	178	app	=	10,174
+expr	179	lam		174,178
+expr	180	var	zenon_Vn	
+expr	181	app	TLA.in	180,10
+expr	182	not		181
+expr	183	all		180,182
+expr	185	var	zenon_Vo	
+expr	188	var	zenon_Vp	
+expr	191	var	zenon_Vq	
+expr	194	var	zenon_Vr	
+expr	197	var	zenon_Vs	
+expr	201	var	zenon_Vt	
+expr	203	app	=	201,83
+expr	204	lam		201,203
+expr	208	var	zenon_Vu	
+expr	210	app	=	208,5
+expr	211	lam		208,210
+expr	212	app	=	4,208
+expr	213	lam		208,212
+expr	215	var	zenon_Vv	
+expr	217	meta		183
+expr	221	var	zenon_Vw	
+expr	225	var	zenon_Vx	
+expr	226	app	TLA.in	217,225
+expr	227	not		226
+expr	228	lam		225,227
+expr	231	var	zenon_Vy	
+expr	241	var	zenon_Vz	
+expr	245	app	=	1,241
+expr	246	lam		241,245
+expr	249	not		83
+expr	252	var	zenon_Vaa	
+expr	254	app	=	252,1
+expr	255	lam		252,254
+expr	257	not		72
+expr	259	var	zenon_Vba	
+expr	263	not		66
+expr	264	not		63
+expr	266	var	zenon_Vca	
+expr	275	var	zenon_Vda	
+expr	277	app	=	275,65
+expr	278	lam		275,277
+expr	279	app	=	64,275
+expr	280	lam		275,279
+expr	282	var	zenon_Vea	
+expr	284	app	=	282,21
+expr	285	lam		282,284
+expr	286	app	=	62,282
+expr	287	lam		282,286
+expr	289	var	zenon_Vfa	
+expr	291	app	=	289,60
+expr	292	lam		289,291
+expr	293	app	=	55,289
+expr	294	lam		289,293
+expr	295	app	TLA.cup	289,59
+expr	296	app	=	55,295
+expr	297	lam		289,296
+expr	298	app	TLA.cup	10,289
+expr	299	app	=	55,298
+expr	300	lam		289,299
+expr	301	app	TLA.set	289
+expr	302	app	TLA.cup	10,301
+expr	303	app	=	55,302
+expr	304	lam		289,303
+expr	305	app	TLA.tuple	289,57
+expr	306	app	TLA.set	305
+expr	307	app	TLA.cup	10,306
+expr	308	app	=	55,307
+expr	309	lam		289,308
+expr	310	app	TLA.tuple	17,289
+expr	311	app	TLA.set	310
+expr	312	app	TLA.cup	10,311
+expr	313	app	=	55,312
+expr	314	lam		289,313
+expr	315	app	$string	289
+expr	316	app	TLA.tuple	17,315
+expr	317	app	TLA.set	316
+expr	318	app	TLA.cup	10,317
+expr	319	app	=	55,318
+expr	320	lam		289,319
+expr	321	var	zenon_Vga	
+expr	322	app	TLA.in	321,55
+expr	323	app	TLA.in	321,60
+expr	324	equiv		322,323
+expr	325	all		321,324
+expr	327	var	zenon_Vha	
+expr	329	app	=	327,53
+expr	330	lam		327,329
+expr	331	app	=	50,327
+expr	332	lam		327,331
+expr	333	app	TLA.except	327,17,52
+expr	334	app	=	50,333
+expr	335	lam		327,334
+expr	336	app	TLA.except	13,327,52
+expr	337	app	=	50,336
+expr	338	lam		327,337
+expr	339	app	TLA.except	13,17,327
+expr	340	app	=	50,339
+expr	341	lam		327,340
+expr	342	app	$string	327
+expr	343	app	TLA.except	13,17,342
+expr	344	app	=	50,343
+expr	345	lam		327,344
+expr	346	var	zenon_Via	
+expr	350	app	TLA.fapply	50,346
+expr	351	app	TLA.fapply	53,346
+expr	352	app	=	350,351
+expr	356	all		346,352
+expr	359	var	zenon_Vja	
+expr	361	app	arith.lt	359,48
+expr	362	lam		359,361
+expr	363	app	a_CONSTANTunde_Cardinalityunde_a	359
+expr	364	app	arith.lt	363,48
+expr	365	lam		359,364
+expr	366	app	TLA.fapply	359,17
+expr	367	app	a_CONSTANTunde_Cardinalityunde_a	366
+expr	368	app	arith.lt	367,48
+expr	369	lam		359,368
+expr	370	app	TLA.fapply	43,359
+expr	371	app	a_CONSTANTunde_Cardinalityunde_a	370
+expr	372	app	arith.lt	371,48
+expr	373	lam		359,372
+expr	374	app	arith.lt	45,359
+expr	375	lam		359,374
+expr	376	app	arith.add	359,47
+expr	377	app	arith.lt	45,376
+expr	378	lam		359,377
+expr	379	app	arith.add	34,359
+expr	380	app	arith.lt	45,379
+expr	381	lam		359,380
+expr	382	app	arith.minus	359
+expr	383	app	arith.add	34,382
+expr	384	app	arith.lt	45,383
+expr	385	lam		359,384
+expr	386	var	zenon_Vka	
+expr	388	app	arith.le	386,45
+expr	389	lam		386,388
+expr	390	app	arith.add	386,41
+expr	391	app	arith.le	390,45
+expr	392	lam		386,391
+expr	393	app	arith.add	34,386
+expr	394	app	arith.le	393,45
+expr	395	lam		386,394
+expr	396	app	arith.minus	386
+expr	397	app	arith.add	34,396
+expr	398	app	arith.le	397,45
+expr	399	lam		386,398
+expr	400	app	arith.mul	386,39
+expr	401	app	arith.minus	400
+expr	402	app	arith.add	34,401
+expr	403	app	arith.le	402,45
+expr	404	lam		386,403
+expr	405	app	TLA.fapply	386,37
+expr	406	app	arith.mul	405,39
+expr	407	app	arith.minus	406
+expr	408	app	arith.add	34,407
+expr	409	app	arith.le	408,45
+expr	410	lam		386,409
+expr	411	app	TLA.fapply	35,386
+expr	412	app	arith.mul	411,39
+expr	413	app	arith.minus	412
+expr	414	app	arith.add	34,413
+expr	415	app	arith.le	414,45
+expr	416	lam		386,415
+expr	417	app	TLA.fapply	386,36
+expr	418	app	TLA.fapply	35,417
+expr	419	app	arith.mul	418,39
+expr	420	app	arith.minus	419
+expr	421	app	arith.add	34,420
+expr	422	app	arith.le	421,45
+expr	423	lam		386,422
+expr	424	app	TLA.fapply	35,411
+expr	425	app	arith.mul	424,39
+expr	426	app	arith.minus	425
+expr	427	app	arith.add	34,426
+expr	428	app	arith.le	427,45
+expr	429	lam		386,428
+expr	430	app	arith.mul	38,386
+expr	431	app	arith.minus	430
+expr	432	app	arith.add	34,431
+expr	433	app	arith.le	432,45
+expr	434	lam		386,433
+expr	435	app	arith.le	42,386
+expr	436	lam		386,435
+expr	437	app	a_CONSTANTunde_Cardinalityunde_a	386
+expr	438	app	arith.le	42,437
+expr	439	lam		386,438
+expr	440	app	TLA.fapply	386,17
+expr	441	app	a_CONSTANTunde_Cardinalityunde_a	440
+expr	442	app	arith.le	42,441
+expr	443	lam		386,442
+expr	444	app	TLA.fapply	43,386
+expr	445	app	a_CONSTANTunde_Cardinalityunde_a	444
+expr	446	app	arith.le	42,445
+expr	447	lam		386,446
+expr	448	var	zenon_Vla	
+expr	450	var	zenon_Vma	
+expr	451	app	TLA.in	29,450
+expr	452	lam		450,451
+expr	453	app	TLA.in	448,32
+expr	454	lam		448,453
+expr	455	app	TLA.fapply	448,17
+expr	456	app	TLA.in	455,32
+expr	457	lam		448,456
+expr	458	app	TLA.fapply	13,448
+expr	459	app	TLA.in	458,32
+expr	460	lam		448,459
+expr	463	app	TLA.set	448,31
+expr	464	app	TLA.in	29,463
+expr	465	lam		448,464
+expr	466	app	$string	448
+expr	467	app	TLA.set	466,31
+expr	468	app	TLA.in	29,467
+expr	469	lam		448,468
+expr	470	app	TLA.set	16,448
+expr	471	app	TLA.in	29,470
+expr	472	lam		448,471
+expr	473	app	TLA.set	16,466
+expr	474	app	TLA.in	29,473
+expr	475	lam		448,474
+expr	486	var	zenon_Vna	
+expr	488	app	=	486,31
+expr	489	lam		486,488
+expr	490	app	TLA.fapply	486,17
+expr	491	app	=	490,31
+expr	492	lam		486,491
+expr	493	app	TLA.fapply	13,486
+expr	494	app	=	493,31
+expr	495	lam		486,494
+expr	496	app	=	29,486
+expr	497	lam		486,496
+expr	498	app	$string	486
+expr	499	app	=	29,498
+expr	500	lam		486,499
+expr	502	var	zenon_Voa	
+expr	506	app	=	0,502
+expr	507	lam		502,506
+expr	511	var	zenon_Vpa	
+expr	513	app	=	511,0
+expr	514	lam		511,513
+expr	515	var	zenon_Vqa	
+expr	517	var	zenon_Vra	
+expr	523	var	zenon_Vsa	
+expr	529	var	zenon_Vta	
+expr	561	var	zenon_Vua	
+expr	566	var	zenon_Vva	
+expr	585	var	zenon_Vwa	
+expr	590	var	zenon_Vxa	
+expr	617	var	zenon_Vya	
+expr	679	var	zenon_Vza	
+expr	681	var	zenon_Vab	
+expr	707	var	zenon_Vbb	
+expr	709	not		68
+expr	710	not		69
+expr	711	not		70
+expr	712	not		71
+expr	713	not		73
+expr	714	not		82
+expr	715	not		74
+expr	716	not		81
+expr	717	not		75
+expr	718	not		80
+expr	719	not		76
+expr	720	not		79
+expr	721	not		77
+expr	722	not		78
+lemma	zenon_thm	
+node	1	86	notnot	84
+node	2	84	extension	zenon_boolcase_and	204,33,71	84	115,116;119,120
+node	1	115,116	extension	zenon_eq_x_true	72	115	72
+node	1	72,116	connect	and	33	71
+node	1	71,116,33	connect	and	46	70
+node	1	70,116,33,46	connect	and	49	69
+node	1	69,116,33,46,49	connect	and	54	68
+node	1	68,116,33,46,49,54	connect	and	61	67
+node	1	67,116,33,46,49,54,61	connect	and	63	66
+node	1	116,33,46,49,54,61,63,66	extension	zenon_eq_true_x	83	116	83
+node	2	83,33,46,49,54,61,63,66	connect	or	73	82
+node	0	33,73	axiom	33
+node	2	82,46,49,54,61,63,66	connect	or	74	81
+node	0	46,74	axiom	46
+node	2	81,49,54,61,63,66	connect	or	75	80
+node	0	49,75	axiom	49
+node	2	80,54,61,63,66	connect	or	76	79
+node	0	54,76	axiom	54
+node	2	79,61,63,66	connect	or	77	78
+node	0	61,77	axiom	61
+node	2	78,63,66	notconnect	and	63	66
+node	0	63,264	axiom	63
+node	0	66,263	axiom	66
+node	1	119,120	extension	zenon_eq_x_false	72	119	257
+node	1	120,257	extension	zenon_eq_false_x	83	120	249
+node	1	249,257	notconnect	or	73	82
+node	1	714,713,257	notconnect	or	74	81
+node	1	716,715,713,257	notconnect	or	75	80
+node	1	718,717,715,713,257	notconnect	or	76	79
+node	1	720,719,717,715,713,257	notconnect	or	77	78
+node	1	722,721,719,717,715,713,257	notnot	67
+node	1	67,721,719,717,715,713,257	connect	and	63	66
+node	1	721,719,717,715,713,257,63,66	notnot	61
+node	1	719,717,715,713,257,61,63,66	notnot	54
+node	1	717,715,713,257,54,61,63,66	notnot	49
+node	1	715,713,257,49,54,61,63,66	notnot	46
+node	1	713,257,46,49,54,61,63,66	notnot	33
+node	2	257,33,46,49,54,61,63,66	notconnect	and	33	71
+node	0	33,73	axiom	33
+node	2	712,46,49,54,61,63,66	notconnect	and	46	70
+node	0	46,74	axiom	46
+node	2	711,49,54,61,63,66	notconnect	and	49	69
+node	0	49,75	axiom	49
+node	2	710,54,61,63,66	notconnect	and	54	68
+node	0	54,76	axiom	54
+node	2	709,61,63,66	notconnect	and	61	67
+node	0	61,77	axiom	61
+node	2	78,63,66	notconnect	and	63	66
+node	0	63,264	axiom	63
+node	0	66,263	axiom	66
+numbers	
+hyp	v'297	2	1
+hyp	v'298	7	1
+hyp	v'305	8	1
+hyp	v'306	9	1
+hyp	v'307	12	1
+hyp	v'308	20	1
+hyp	v'309	25	1
+hyp	v'316	8	1
+hyp	v'317	9	1
+hyp	v'318	12	1
+hyp	v'319	20	1
+hyp	a_CONSTANTunde_iunde_a_in	27	1
+hyp	v'321	22	1
+hyp	v'333	2	1
+hyp	v'334	28	1
+hyp	zenon_G	86	0

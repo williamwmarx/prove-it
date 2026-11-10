@@ -1,0 +1,105 @@
+counter	m
+steps	2
+expr	2	var	f	
+expr	3	app	TLA.isAFcn	2
+expr	4	app	TLA.DOMAIN	2
+expr	5	var	"a"	
+expr	6	app	$string	5
+expr	7	app	TLA.set	6
+expr	8	app	=	4,7
+expr	9	app	TLA.fapply	2,6
+expr	10	var	x	
+expr	11	app	=	9,10
+expr	12	app	TLA.record	6,10
+expr	13	app	=	12,2
+expr	14	not		13
+expr	15	var	S	
+expr	16	app	TLA.in	10,15
+expr	17	app	P	10
+expr	19	var	B	
+expr	20	app	TLA.in	10,19
+expr	21	lam		10,20
+expr	23	imply		16,17
+expr	24	all		10,23
+expr	26	and		16,17
+expr	27	ex		10,26
+expr	28	tau		10,26
+expr	33	var	zenon_Vf	
+expr	34	lam		33,33
+expr	35	not		33
+expr	36	lam		33,35
+expr	37	app	=	33,2
+expr	38	not		37
+expr	39	lam		33,38
+expr	40	app	TLA.record	33,10
+expr	41	app	=	40,2
+expr	42	not		41
+expr	43	lam		33,42
+expr	44	app	$string	33
+expr	45	app	TLA.record	44,10
+expr	46	app	=	45,2
+expr	47	not		46
+expr	48	lam		33,47
+expr	49	app	TLA.record	6,33
+expr	50	app	=	49,2
+expr	51	not		50
+expr	52	lam		33,51
+expr	56	not		3
+expr	57	not		8
+expr	58	not		11
+expr	61	var	zenon_Vg	
+expr	63	app	=	61,7
+expr	64	lam		61,63
+expr	65	var	zenon_Vh	
+expr	66	app	TLA.DOMAIN	65
+expr	67	app	=	66,7
+expr	68	lam		65,67
+expr	72	app	=	4,61
+expr	73	lam		61,72
+expr	74	app	TLA.set	61
+expr	75	app	=	4,74
+expr	76	lam		61,75
+expr	77	app	$string	61
+expr	78	app	TLA.set	77
+expr	79	app	=	4,78
+expr	80	lam		61,79
+expr	81	var	zenon_Vi	
+expr	82	app	TLA.in	81,4
+expr	83	app	TLA.in	81,7
+expr	84	equiv		82,83
+expr	85	all		81,84
+expr	86	var	zenon_Vj	
+expr	88	var	zenon_Vk	
+expr	89	app	TLA.isAFcn	88
+expr	90	lam		88,89
+expr	96	var	zenon_Vl	
+expr	100	app	=	96,10
+expr	101	not		100
+expr	102	lam		96,101
+expr	103	app	TLA.fapply	96,6
+expr	104	app	=	103,10
+expr	105	not		104
+expr	106	lam		96,105
+expr	107	app	TLA.fapply	2,96
+expr	108	app	=	107,10
+expr	109	not		108
+expr	110	lam		96,109
+expr	111	app	$string	96
+expr	112	app	TLA.fapply	2,111
+expr	113	app	=	112,10
+expr	114	not		113
+expr	115	lam		96,114
+expr	116	app	=	9,96
+expr	117	not		116
+expr	118	lam		96,117
+expr	124	var	zenon_Vm	
+lemma	zenon_thm	
+node	3	11,14,8,3	extension	zenon_record_neq	2,12	14	56;57;58
+node	0	3,56	axiom	3
+node	0	8,57	axiom	8
+node	0	11,58	axiom	11
+numbers	
+hyp	f	3	1
+hyp	d	8	1
+hyp	v	11	1
+hyp	zenon_G	14	0

@@ -1,0 +1,5337 @@
+counter	zr
+steps	25
+expr	2	var	a_VARIABLEunde_activeunde_a	
+expr	3	var	a_CONSTANTunde_Procsunde_a	
+expr	4	var	a_CONSTANTunde_punde_a	
+expr	5	var	a_CONSTANTunde_Leaderunde_a	
+expr	6	app	=	4,5
+expr	7	lam	zenon_U	4,6
+expr	8	app	TLA.Fcn	3,7
+expr	9	app	=	2,8
+expr	10	var	a_VARIABLEunde_msgsunde_a	
+expr	11	var	a_CONSTANTunde_Edgesunde_a	
+expr	12	var	0	
+expr	13	var	a_CONSTANTunde_eunde_a	
+expr	14	lam	zenon_U	13,12
+expr	15	app	TLA.Fcn	11,14
+expr	16	app	=	10,15
+expr	17	var	a_VARIABLEunde_acksunde_a	
+expr	19	app	=	17,15
+expr	20	var	a_VARIABLEunde_sentUnackedunde_a	
+expr	22	app	=	20,15
+expr	23	var	a_VARIABLEunde_rcvdUnackedunde_a	
+expr	25	app	=	23,15
+expr	26	var	a_VARIABLEunde_upEdgeunde_a	
+expr	27	app	TLA.set	5
+expr	28	app	TLA.setminus	3,27
+expr	29	var	a_CONSTANTunde_NotAnEdgeunde_a	
+expr	30	lam	zenon_U	4,29
+expr	31	app	TLA.Fcn	28,30
+expr	32	app	=	26,31
+expr	33	app	TLA.DOMAIN	26
+expr	34	app	TLA.fapply	26,4
+expr	35	lam	zenon_U	4,34
+expr	36	app	TLA.setOfAll	33,35
+expr	37	app	TLA.set	29
+expr	38	app	TLA.setminus	36,37
+expr	39	var	TLA.Succ	
+expr	40	app	TLA.fapply	39,12
+expr	41	app	TLA.fapply	39,40
+expr	42	app	TLA.fapply	13,41
+expr	43	lam	zenon_U	13,42
+expr	44	app	TLA.setOfAll	38,43
+expr	45	app	TLA.cup	44,27
+expr	46	app	=	45,27
+expr	47	var	"edge"	
+expr	48	app	$string	47
+expr	49	var	"node"	
+expr	50	app	$string	49
+expr	54	app	TLA.record	50,45,48,38
+expr	55	app	TLA.fapply	54,48
+expr	56	app	TLA.fapply	13,40
+expr	57	app	TLA.tuple	42,56
+expr	58	lam	zenon_U	13,57
+expr	59	app	TLA.setOfAll	55,58
+expr	63	app	TLA.fapply	54,50
+expr	64	app	TLA.record	48,59,50,63
+expr	65	var	TLA.emptyset	
+expr	68	app	TLA.record	48,65,50,45
+expr	69	app	=	64,68
+expr	70	and		46,69
+expr	71	not		70
+expr	72	var	x	
+expr	73	var	S	
+expr	74	app	TLA.in	72,73
+expr	75	app	P	72
+expr	77	var	B	
+expr	78	app	TLA.in	72,77
+expr	79	lam		72,78
+expr	81	imply		74,75
+expr	82	all		72,81
+expr	84	and		74,75
+expr	85	ex		72,84
+expr	86	tau		72,84
+expr	89	not		46
+expr	91	var	zenon_Vf	
+expr	92	lam		91,91
+expr	93	not		91
+expr	94	lam		91,93
+expr	95	not		69
+expr	101	var	zenon_Vg	
+expr	105	app	=	101,68
+expr	106	not		105
+expr	107	lam		101,106
+expr	108	app	TLA.record	101,59,50,63
+expr	109	app	=	108,68
+expr	110	not		109
+expr	111	lam		101,110
+expr	112	app	$string	101
+expr	113	app	TLA.record	112,59,50,63
+expr	114	app	=	113,68
+expr	115	not		114
+expr	116	lam		101,115
+expr	117	app	TLA.record	48,101,50,63
+expr	118	app	=	117,68
+expr	119	not		118
+expr	120	lam		101,119
+expr	121	app	TLA.setOfAll	101,58
+expr	122	app	TLA.record	48,121,50,63
+expr	123	app	=	122,68
+expr	124	not		123
+expr	125	lam		101,124
+expr	126	app	TLA.setOfAll	38,58
+expr	130	app	=	59,65
+expr	131	app	=	63,45
+expr	132	not		130
+expr	133	not		131
+expr	143	var	zenon_Vh	
+expr	147	app	=	143,45
+expr	148	not		147
+expr	149	lam		143,148
+expr	150	app	=	45,45
+expr	151	not		150
+expr	152	var	zenon_Vi	
+expr	153	app	TLA.in	152,63
+expr	154	app	TLA.in	152,45
+expr	155	equiv		153,154
+expr	156	all		152,155
+expr	160	var	zenon_Vj	
+expr	164	app	=	160,65
+expr	165	not		164
+expr	166	lam		160,165
+expr	167	app	TLA.setOfAll	160,58
+expr	168	app	=	167,65
+expr	169	not		168
+expr	170	lam		160,169
+expr	173	var	zenon_Vk	
+expr	174	app	TLA.in	173,59
+expr	175	app	TLA.in	173,65
+expr	176	equiv		174,175
+expr	177	all		173,176
+expr	178	not		177
+expr	182	var	zenon_Vl	
+expr	193	app	TLA.setminus	182,37
+expr	194	app	TLA.setOfAll	193,58
+expr	195	app	=	194,65
+expr	196	not		195
+expr	197	lam		182,196
+expr	198	app	TLA.setOfAll	182,35
+expr	199	app	TLA.setminus	198,37
+expr	200	app	TLA.setOfAll	199,58
+expr	201	app	=	200,65
+expr	202	not		201
+expr	203	lam		182,202
+expr	204	var	zenon_Vm	
+expr	205	app	TLA.DOMAIN	204
+expr	206	app	TLA.setOfAll	205,35
+expr	207	app	TLA.setminus	206,37
+expr	208	app	TLA.setOfAll	207,58
+expr	209	app	=	208,65
+expr	210	not		209
+expr	211	lam		204,210
+expr	219	app	TLA.DOMAIN	31
+expr	220	app	TLA.setOfAll	219,35
+expr	221	app	TLA.setminus	220,37
+expr	222	app	TLA.setOfAll	221,58
+expr	225	var	zenon_Vn	
+expr	226	app	TLA.in	225,126
+expr	227	app	TLA.in	225,65
+expr	228	equiv		226,227
+expr	229	all		225,228
+expr	234	var	zenon_Vo	
+expr	256	app	TLA.setOfAll	28,35
+expr	257	app	TLA.setminus	256,37
+expr	258	app	TLA.setOfAll	257,58
+expr	261	var	zenon_Vp	
+expr	262	app	TLA.in	261,222
+expr	263	app	TLA.in	261,65
+expr	264	equiv		262,263
+expr	265	all		261,264
+expr	270	var	zenon_Vq	
+expr	292	app	TLA.setminus	270,27
+expr	293	app	TLA.setOfAll	292,35
+expr	294	app	TLA.setminus	293,37
+expr	295	app	TLA.setOfAll	294,58
+expr	296	app	=	295,65
+expr	297	not		296
+expr	298	lam		270,297
+expr	299	app	TLA.setminus	3,270
+expr	300	app	TLA.setOfAll	299,35
+expr	301	app	TLA.setminus	300,37
+expr	302	app	TLA.setOfAll	301,58
+expr	303	app	=	302,65
+expr	304	not		303
+expr	305	lam		270,304
+expr	306	app	TLA.set	270
+expr	307	app	TLA.setminus	3,306
+expr	308	app	TLA.setOfAll	307,35
+expr	309	app	TLA.setminus	308,37
+expr	310	app	TLA.setOfAll	309,58
+expr	311	app	=	310,65
+expr	312	not		311
+expr	313	lam		270,312
+expr	314	app	TLA.setOfAll	28,270
+expr	315	app	TLA.setminus	314,37
+expr	316	app	TLA.setOfAll	315,58
+expr	317	app	=	316,65
+expr	318	not		317
+expr	319	lam		270,318
+expr	320	app	TLA.setminus	256,270
+expr	321	app	TLA.setOfAll	320,58
+expr	322	app	=	321,65
+expr	323	not		322
+expr	324	lam		270,323
+expr	325	app	TLA.setminus	256,306
+expr	326	app	TLA.setOfAll	325,58
+expr	327	app	=	326,65
+expr	328	not		327
+expr	329	lam		270,328
+expr	330	app	TLA.setOfAll	257,270
+expr	331	app	=	330,65
+expr	332	not		331
+expr	333	lam		270,332
+expr	334	app	=	258,270
+expr	335	not		334
+expr	336	lam		270,335
+expr	337	var	zenon_Vr	
+expr	338	app	TLA.in	337,258
+expr	339	app	TLA.in	337,65
+expr	340	equiv		338,339
+expr	341	all		337,340
+expr	346	var	zenon_Vs	
+expr	353	app	TLA.record	346,126,50,63
+expr	354	app	=	353,68
+expr	355	not		354
+expr	356	lam		346,355
+expr	357	app	$string	346
+expr	358	app	TLA.record	357,126,50,63
+expr	359	app	=	358,68
+expr	360	not		359
+expr	361	lam		346,360
+expr	371	app	TLA.setminus	346,37
+expr	372	app	TLA.setOfAll	371,58
+expr	373	app	TLA.record	48,372,50,63
+expr	374	app	=	373,68
+expr	375	not		374
+expr	376	lam		346,375
+expr	377	app	TLA.setOfAll	346,35
+expr	378	app	TLA.setminus	377,37
+expr	379	app	TLA.setOfAll	378,58
+expr	380	app	TLA.record	48,379,50,63
+expr	381	app	=	380,68
+expr	382	not		381
+expr	383	lam		346,382
+expr	384	var	zenon_Vt	
+expr	385	app	TLA.DOMAIN	384
+expr	386	app	TLA.setOfAll	385,35
+expr	387	app	TLA.setminus	386,37
+expr	388	app	TLA.setOfAll	387,58
+expr	389	app	TLA.record	48,388,50,63
+expr	390	app	=	389,68
+expr	391	not		390
+expr	392	lam		384,391
+expr	407	var	zenon_Vu	
+expr	414	app	TLA.record	407,222,50,63
+expr	415	app	=	414,68
+expr	416	not		415
+expr	417	lam		407,416
+expr	418	app	$string	407
+expr	419	app	TLA.record	418,222,50,63
+expr	420	app	=	419,68
+expr	421	not		420
+expr	422	lam		407,421
+expr	451	var	zenon_Vv	
+expr	458	app	TLA.record	451,258,50,63
+expr	459	app	=	458,68
+expr	460	not		459
+expr	461	lam		451,460
+expr	462	app	$string	451
+expr	463	app	TLA.record	462,258,50,63
+expr	464	app	=	463,68
+expr	465	not		464
+expr	466	lam		451,465
+expr	489	app	TLA.setminus	451,27
+expr	490	app	TLA.setOfAll	489,35
+expr	491	app	TLA.setminus	490,37
+expr	492	app	TLA.setOfAll	491,58
+expr	493	app	TLA.record	48,492,50,63
+expr	494	app	=	493,68
+expr	495	not		494
+expr	496	lam		451,495
+expr	497	app	TLA.setminus	3,451
+expr	498	app	TLA.setOfAll	497,35
+expr	499	app	TLA.setminus	498,37
+expr	500	app	TLA.setOfAll	499,58
+expr	501	app	TLA.record	48,500,50,63
+expr	502	app	=	501,68
+expr	503	not		502
+expr	504	lam		451,503
+expr	505	app	TLA.set	451
+expr	506	app	TLA.setminus	3,505
+expr	507	app	TLA.setOfAll	506,35
+expr	508	app	TLA.setminus	507,37
+expr	509	app	TLA.setOfAll	508,58
+expr	510	app	TLA.record	48,509,50,63
+expr	511	app	=	510,68
+expr	512	not		511
+expr	513	lam		451,512
+expr	514	app	TLA.setOfAll	28,451
+expr	515	app	TLA.setminus	514,37
+expr	516	app	TLA.setOfAll	515,58
+expr	517	app	TLA.record	48,516,50,63
+expr	518	app	=	517,68
+expr	519	not		518
+expr	520	lam		451,519
+expr	521	app	TLA.setminus	256,451
+expr	522	app	TLA.setOfAll	521,58
+expr	523	app	TLA.record	48,522,50,63
+expr	524	app	=	523,68
+expr	525	not		524
+expr	526	lam		451,525
+expr	527	app	TLA.setminus	256,505
+expr	528	app	TLA.setOfAll	527,58
+expr	529	app	TLA.record	48,528,50,63
+expr	530	app	=	529,68
+expr	531	not		530
+expr	532	lam		451,531
+expr	533	app	TLA.setOfAll	257,451
+expr	534	app	TLA.record	48,533,50,63
+expr	535	app	=	534,68
+expr	536	not		535
+expr	537	lam		451,536
+expr	538	app	TLA.record	48,258,451,63
+expr	539	app	=	538,68
+expr	540	not		539
+expr	541	lam		451,540
+expr	542	app	TLA.record	48,258,462,63
+expr	543	app	=	542,68
+expr	544	not		543
+expr	545	lam		451,544
+expr	546	app	TLA.record	48,258,50,451
+expr	547	app	=	546,68
+expr	548	not		547
+expr	549	lam		451,548
+expr	556	var	zenon_Vw	
+expr	563	app	TLA.record	556,258,50,45
+expr	564	app	=	563,68
+expr	565	not		564
+expr	566	lam		556,565
+expr	567	app	$string	556
+expr	568	app	TLA.record	567,258,50,45
+expr	569	app	=	568,68
+expr	570	not		569
+expr	571	lam		556,570
+expr	572	app	TLA.record	48,556,50,45
+expr	573	app	=	572,68
+expr	574	not		573
+expr	575	lam		556,574
+expr	576	app	TLA.setOfAll	556,58
+expr	577	app	TLA.record	48,576,50,45
+expr	578	app	=	577,68
+expr	579	not		578
+expr	580	lam		556,579
+expr	581	app	TLA.setminus	556,37
+expr	582	app	TLA.setOfAll	581,58
+expr	583	app	TLA.record	48,582,50,45
+expr	584	app	=	583,68
+expr	585	not		584
+expr	586	lam		556,585
+expr	587	app	TLA.setOfAll	556,35
+expr	588	app	TLA.setminus	587,37
+expr	589	app	TLA.setOfAll	588,58
+expr	590	app	TLA.record	48,589,50,45
+expr	591	app	=	590,68
+expr	592	not		591
+expr	593	lam		556,592
+expr	594	app	TLA.setminus	556,27
+expr	595	app	TLA.setOfAll	594,35
+expr	596	app	TLA.setminus	595,37
+expr	597	app	TLA.setOfAll	596,58
+expr	598	app	TLA.record	48,597,50,45
+expr	599	app	=	598,68
+expr	600	not		599
+expr	601	lam		556,600
+expr	602	app	TLA.setminus	3,556
+expr	603	app	TLA.setOfAll	602,35
+expr	604	app	TLA.setminus	603,37
+expr	605	app	TLA.setOfAll	604,58
+expr	606	app	TLA.record	48,605,50,45
+expr	607	app	=	606,68
+expr	608	not		607
+expr	609	lam		556,608
+expr	610	app	TLA.set	556
+expr	611	app	TLA.setminus	3,610
+expr	612	app	TLA.setOfAll	611,35
+expr	613	app	TLA.setminus	612,37
+expr	614	app	TLA.setOfAll	613,58
+expr	615	app	TLA.record	48,614,50,45
+expr	616	app	=	615,68
+expr	617	not		616
+expr	618	lam		556,617
+expr	619	app	TLA.setOfAll	28,556
+expr	620	app	TLA.setminus	619,37
+expr	621	app	TLA.setOfAll	620,58
+expr	622	app	TLA.record	48,621,50,45
+expr	623	app	=	622,68
+expr	624	not		623
+expr	625	lam		556,624
+expr	626	app	TLA.setminus	256,556
+expr	627	app	TLA.setOfAll	626,58
+expr	628	app	TLA.record	48,627,50,45
+expr	629	app	=	628,68
+expr	630	not		629
+expr	631	lam		556,630
+expr	632	app	TLA.setminus	256,610
+expr	633	app	TLA.setOfAll	632,58
+expr	634	app	TLA.record	48,633,50,45
+expr	635	app	=	634,68
+expr	636	not		635
+expr	637	lam		556,636
+expr	638	app	TLA.setOfAll	257,556
+expr	639	app	TLA.record	48,638,50,45
+expr	640	app	=	639,68
+expr	641	not		640
+expr	642	lam		556,641
+expr	643	app	TLA.record	48,258,556,45
+expr	644	app	=	643,68
+expr	645	not		644
+expr	646	lam		556,645
+expr	647	app	TLA.record	48,258,567,45
+expr	648	app	=	647,68
+expr	649	not		648
+expr	650	lam		556,649
+expr	655	app	TLA.cup	556,27
+expr	656	app	TLA.record	48,258,50,655
+expr	657	app	=	656,68
+expr	658	not		657
+expr	659	lam		556,658
+expr	660	app	TLA.setOfAll	556,43
+expr	661	app	TLA.cup	660,27
+expr	662	app	TLA.record	48,258,50,661
+expr	663	app	=	662,68
+expr	664	not		663
+expr	665	lam		556,664
+expr	666	app	TLA.setOfAll	581,43
+expr	667	app	TLA.cup	666,27
+expr	668	app	TLA.record	48,258,50,667
+expr	669	app	=	668,68
+expr	670	not		669
+expr	671	lam		556,670
+expr	672	app	TLA.setOfAll	588,43
+expr	673	app	TLA.cup	672,27
+expr	674	app	TLA.record	48,258,50,673
+expr	675	app	=	674,68
+expr	676	not		675
+expr	677	lam		556,676
+expr	678	var	zenon_Vx	
+expr	679	app	TLA.DOMAIN	678
+expr	680	app	TLA.setOfAll	679,35
+expr	681	app	TLA.setminus	680,37
+expr	682	app	TLA.setOfAll	681,43
+expr	683	app	TLA.cup	682,27
+expr	684	app	TLA.record	48,258,50,683
+expr	685	app	=	684,68
+expr	686	not		685
+expr	687	lam		678,686
+expr	697	app	TLA.setOfAll	221,43
+expr	698	app	TLA.cup	697,27
+expr	705	var	zenon_Vy	
+expr	712	app	TLA.record	705,258,50,698
+expr	713	app	=	712,68
+expr	714	not		713
+expr	715	lam		705,714
+expr	716	app	$string	705
+expr	717	app	TLA.record	716,258,50,698
+expr	718	app	=	717,68
+expr	719	not		718
+expr	720	lam		705,719
+expr	721	app	TLA.record	48,705,50,698
+expr	722	app	=	721,68
+expr	723	not		722
+expr	724	lam		705,723
+expr	725	app	TLA.setOfAll	705,58
+expr	726	app	TLA.record	48,725,50,698
+expr	727	app	=	726,68
+expr	728	not		727
+expr	729	lam		705,728
+expr	730	app	TLA.setminus	705,37
+expr	731	app	TLA.setOfAll	730,58
+expr	732	app	TLA.record	48,731,50,698
+expr	733	app	=	732,68
+expr	734	not		733
+expr	735	lam		705,734
+expr	736	app	TLA.setOfAll	705,35
+expr	737	app	TLA.setminus	736,37
+expr	738	app	TLA.setOfAll	737,58
+expr	739	app	TLA.record	48,738,50,698
+expr	740	app	=	739,68
+expr	741	not		740
+expr	742	lam		705,741
+expr	743	app	TLA.setminus	705,27
+expr	744	app	TLA.setOfAll	743,35
+expr	745	app	TLA.setminus	744,37
+expr	746	app	TLA.setOfAll	745,58
+expr	747	app	TLA.record	48,746,50,698
+expr	748	app	=	747,68
+expr	749	not		748
+expr	750	lam		705,749
+expr	751	app	TLA.setminus	3,705
+expr	752	app	TLA.setOfAll	751,35
+expr	753	app	TLA.setminus	752,37
+expr	754	app	TLA.setOfAll	753,58
+expr	755	app	TLA.record	48,754,50,698
+expr	756	app	=	755,68
+expr	757	not		756
+expr	758	lam		705,757
+expr	759	app	TLA.set	705
+expr	760	app	TLA.setminus	3,759
+expr	761	app	TLA.setOfAll	760,35
+expr	762	app	TLA.setminus	761,37
+expr	763	app	TLA.setOfAll	762,58
+expr	764	app	TLA.record	48,763,50,698
+expr	765	app	=	764,68
+expr	766	not		765
+expr	767	lam		705,766
+expr	768	app	TLA.setOfAll	28,705
+expr	769	app	TLA.setminus	768,37
+expr	770	app	TLA.setOfAll	769,58
+expr	771	app	TLA.record	48,770,50,698
+expr	772	app	=	771,68
+expr	773	not		772
+expr	774	lam		705,773
+expr	775	app	TLA.setminus	256,705
+expr	776	app	TLA.setOfAll	775,58
+expr	777	app	TLA.record	48,776,50,698
+expr	778	app	=	777,68
+expr	779	not		778
+expr	780	lam		705,779
+expr	781	app	TLA.setminus	256,759
+expr	782	app	TLA.setOfAll	781,58
+expr	783	app	TLA.record	48,782,50,698
+expr	784	app	=	783,68
+expr	785	not		784
+expr	786	lam		705,785
+expr	787	app	TLA.setOfAll	257,705
+expr	788	app	TLA.record	48,787,50,698
+expr	789	app	=	788,68
+expr	790	not		789
+expr	791	lam		705,790
+expr	792	app	TLA.record	48,258,705,698
+expr	793	app	=	792,68
+expr	794	not		793
+expr	795	lam		705,794
+expr	796	app	TLA.record	48,258,716,698
+expr	797	app	=	796,68
+expr	798	not		797
+expr	799	lam		705,798
+expr	827	app	TLA.setOfAll	257,43
+expr	828	app	TLA.cup	827,27
+expr	829	app	TLA.record	48,258,50,828
+expr	839	var	zenon_Vz	
+expr	846	app	TLA.record	839,258,50,828
+expr	847	app	=	846,68
+expr	848	not		847
+expr	849	lam		839,848
+expr	850	app	$string	839
+expr	851	app	TLA.record	850,258,50,828
+expr	852	app	=	851,68
+expr	853	not		852
+expr	854	lam		839,853
+expr	855	app	TLA.record	48,839,50,828
+expr	856	app	=	855,68
+expr	857	not		856
+expr	858	lam		839,857
+expr	859	app	TLA.setOfAll	839,58
+expr	860	app	TLA.record	48,859,50,828
+expr	861	app	=	860,68
+expr	862	not		861
+expr	863	lam		839,862
+expr	864	app	TLA.setminus	839,37
+expr	865	app	TLA.setOfAll	864,58
+expr	866	app	TLA.record	48,865,50,828
+expr	867	app	=	866,68
+expr	868	not		867
+expr	869	lam		839,868
+expr	870	app	TLA.setOfAll	839,35
+expr	871	app	TLA.setminus	870,37
+expr	872	app	TLA.setOfAll	871,58
+expr	873	app	TLA.record	48,872,50,828
+expr	874	app	=	873,68
+expr	875	not		874
+expr	876	lam		839,875
+expr	877	app	TLA.setminus	839,27
+expr	878	app	TLA.setOfAll	877,35
+expr	879	app	TLA.setminus	878,37
+expr	880	app	TLA.setOfAll	879,58
+expr	881	app	TLA.record	48,880,50,828
+expr	882	app	=	881,68
+expr	883	not		882
+expr	884	lam		839,883
+expr	885	app	TLA.setminus	3,839
+expr	886	app	TLA.setOfAll	885,35
+expr	887	app	TLA.setminus	886,37
+expr	888	app	TLA.setOfAll	887,58
+expr	889	app	TLA.record	48,888,50,828
+expr	890	app	=	889,68
+expr	891	not		890
+expr	892	lam		839,891
+expr	893	app	TLA.set	839
+expr	894	app	TLA.setminus	3,893
+expr	895	app	TLA.setOfAll	894,35
+expr	896	app	TLA.setminus	895,37
+expr	897	app	TLA.setOfAll	896,58
+expr	898	app	TLA.record	48,897,50,828
+expr	899	app	=	898,68
+expr	900	not		899
+expr	901	lam		839,900
+expr	902	app	TLA.setOfAll	28,839
+expr	903	app	TLA.setminus	902,37
+expr	904	app	TLA.setOfAll	903,58
+expr	905	app	TLA.record	48,904,50,828
+expr	906	app	=	905,68
+expr	907	not		906
+expr	908	lam		839,907
+expr	909	app	TLA.setminus	256,839
+expr	910	app	TLA.setOfAll	909,58
+expr	911	app	TLA.record	48,910,50,828
+expr	912	app	=	911,68
+expr	913	not		912
+expr	914	lam		839,913
+expr	915	app	TLA.setminus	256,893
+expr	916	app	TLA.setOfAll	915,58
+expr	917	app	TLA.record	48,916,50,828
+expr	918	app	=	917,68
+expr	919	not		918
+expr	920	lam		839,919
+expr	921	app	TLA.setOfAll	257,839
+expr	922	app	TLA.record	48,921,50,828
+expr	923	app	=	922,68
+expr	924	not		923
+expr	925	lam		839,924
+expr	926	app	TLA.record	48,258,839,828
+expr	927	app	=	926,68
+expr	928	not		927
+expr	929	lam		839,928
+expr	930	app	TLA.record	48,258,850,828
+expr	931	app	=	930,68
+expr	932	not		931
+expr	933	lam		839,932
+expr	938	app	TLA.cup	839,27
+expr	943	app	TLA.setOfAll	839,43
+expr	944	app	TLA.cup	943,27
+expr	949	app	TLA.setOfAll	864,43
+expr	950	app	TLA.cup	949,27
+expr	955	app	TLA.setOfAll	871,43
+expr	956	app	TLA.cup	955,27
+expr	961	app	TLA.setOfAll	879,43
+expr	962	app	TLA.cup	961,27
+expr	963	app	TLA.record	48,258,50,962
+expr	964	app	=	963,68
+expr	965	not		964
+expr	966	lam		839,965
+expr	967	app	TLA.setOfAll	887,43
+expr	968	app	TLA.cup	967,27
+expr	969	app	TLA.record	48,258,50,968
+expr	970	app	=	969,68
+expr	971	not		970
+expr	972	lam		839,971
+expr	973	app	TLA.setOfAll	896,43
+expr	974	app	TLA.cup	973,27
+expr	975	app	TLA.record	48,258,50,974
+expr	976	app	=	975,68
+expr	977	not		976
+expr	978	lam		839,977
+expr	979	app	TLA.setOfAll	903,43
+expr	980	app	TLA.cup	979,27
+expr	981	app	TLA.record	48,258,50,980
+expr	982	app	=	981,68
+expr	983	not		982
+expr	984	lam		839,983
+expr	985	app	TLA.setOfAll	909,43
+expr	986	app	TLA.cup	985,27
+expr	987	app	TLA.record	48,258,50,986
+expr	988	app	=	987,68
+expr	989	not		988
+expr	990	lam		839,989
+expr	991	app	TLA.setOfAll	915,43
+expr	992	app	TLA.cup	991,27
+expr	993	app	TLA.record	48,258,50,992
+expr	994	app	=	993,68
+expr	995	not		994
+expr	996	lam		839,995
+expr	997	app	TLA.cup	921,27
+expr	998	app	TLA.record	48,258,50,997
+expr	999	app	=	998,68
+expr	1000	not		999
+expr	1001	lam		839,1000
+expr	1002	app	TLA.cup	827,839
+expr	1003	app	TLA.record	48,258,50,1002
+expr	1004	app	=	1003,68
+expr	1005	not		1004
+expr	1006	lam		839,1005
+expr	1007	app	TLA.cup	827,893
+expr	1008	app	TLA.record	48,258,50,1007
+expr	1009	app	=	1008,68
+expr	1010	not		1009
+expr	1011	lam		839,1010
+expr	1012	app	=	829,839
+expr	1013	not		1012
+expr	1014	lam		839,1013
+expr	1015	app	TLA.record	839,65,50,45
+expr	1016	app	=	829,1015
+expr	1017	not		1016
+expr	1018	lam		839,1017
+expr	1019	app	TLA.record	850,65,50,45
+expr	1020	app	=	829,1019
+expr	1021	not		1020
+expr	1022	lam		839,1021
+expr	1023	app	TLA.record	48,839,50,45
+expr	1024	app	=	829,1023
+expr	1025	not		1024
+expr	1026	lam		839,1025
+expr	1027	app	TLA.record	48,65,839,45
+expr	1028	app	=	829,1027
+expr	1029	not		1028
+expr	1030	lam		839,1029
+expr	1031	app	TLA.record	48,65,850,45
+expr	1032	app	=	829,1031
+expr	1033	not		1032
+expr	1034	lam		839,1033
+expr	1035	app	TLA.record	48,65,50,839
+expr	1036	app	=	829,1035
+expr	1037	not		1036
+expr	1038	lam		839,1037
+expr	1039	app	TLA.record	48,65,50,938
+expr	1040	app	=	829,1039
+expr	1041	not		1040
+expr	1042	lam		839,1041
+expr	1043	app	TLA.record	48,65,50,944
+expr	1044	app	=	829,1043
+expr	1045	not		1044
+expr	1046	lam		839,1045
+expr	1047	app	TLA.record	48,65,50,950
+expr	1048	app	=	829,1047
+expr	1049	not		1048
+expr	1050	lam		839,1049
+expr	1051	app	TLA.record	48,65,50,956
+expr	1052	app	=	829,1051
+expr	1053	not		1052
+expr	1054	lam		839,1053
+expr	1055	var	zenon_Vaa	
+expr	1056	app	TLA.DOMAIN	1055
+expr	1057	app	TLA.setOfAll	1056,35
+expr	1058	app	TLA.setminus	1057,37
+expr	1059	app	TLA.setOfAll	1058,43
+expr	1060	app	TLA.cup	1059,27
+expr	1061	app	TLA.record	48,65,50,1060
+expr	1062	app	=	829,1061
+expr	1063	not		1062
+expr	1064	lam		1055,1063
+expr	1074	app	TLA.record	48,65,50,698
+expr	1084	var	zenon_Vba	
+expr	1088	app	=	1084,1074
+expr	1089	not		1088
+expr	1090	lam		1084,1089
+expr	1091	app	TLA.record	1084,258,50,828
+expr	1092	app	=	1091,1074
+expr	1093	not		1092
+expr	1094	lam		1084,1093
+expr	1095	app	$string	1084
+expr	1096	app	TLA.record	1095,258,50,828
+expr	1097	app	=	1096,1074
+expr	1098	not		1097
+expr	1099	lam		1084,1098
+expr	1100	app	TLA.record	48,1084,50,828
+expr	1101	app	=	1100,1074
+expr	1102	not		1101
+expr	1103	lam		1084,1102
+expr	1104	app	TLA.setOfAll	1084,58
+expr	1105	app	TLA.record	48,1104,50,828
+expr	1106	app	=	1105,1074
+expr	1107	not		1106
+expr	1108	lam		1084,1107
+expr	1109	app	TLA.setminus	1084,37
+expr	1110	app	TLA.setOfAll	1109,58
+expr	1111	app	TLA.record	48,1110,50,828
+expr	1112	app	=	1111,1074
+expr	1113	not		1112
+expr	1114	lam		1084,1113
+expr	1115	app	TLA.setOfAll	1084,35
+expr	1116	app	TLA.setminus	1115,37
+expr	1117	app	TLA.setOfAll	1116,58
+expr	1118	app	TLA.record	48,1117,50,828
+expr	1119	app	=	1118,1074
+expr	1120	not		1119
+expr	1121	lam		1084,1120
+expr	1122	app	TLA.setminus	1084,27
+expr	1123	app	TLA.setOfAll	1122,35
+expr	1124	app	TLA.setminus	1123,37
+expr	1125	app	TLA.setOfAll	1124,58
+expr	1126	app	TLA.record	48,1125,50,828
+expr	1127	app	=	1126,1074
+expr	1128	not		1127
+expr	1129	lam		1084,1128
+expr	1130	app	TLA.setminus	3,1084
+expr	1131	app	TLA.setOfAll	1130,35
+expr	1132	app	TLA.setminus	1131,37
+expr	1133	app	TLA.setOfAll	1132,58
+expr	1134	app	TLA.record	48,1133,50,828
+expr	1135	app	=	1134,1074
+expr	1136	not		1135
+expr	1137	lam		1084,1136
+expr	1138	app	TLA.set	1084
+expr	1139	app	TLA.setminus	3,1138
+expr	1140	app	TLA.setOfAll	1139,35
+expr	1141	app	TLA.setminus	1140,37
+expr	1142	app	TLA.setOfAll	1141,58
+expr	1143	app	TLA.record	48,1142,50,828
+expr	1144	app	=	1143,1074
+expr	1145	not		1144
+expr	1146	lam		1084,1145
+expr	1147	app	TLA.setOfAll	28,1084
+expr	1148	app	TLA.setminus	1147,37
+expr	1149	app	TLA.setOfAll	1148,58
+expr	1150	app	TLA.record	48,1149,50,828
+expr	1151	app	=	1150,1074
+expr	1152	not		1151
+expr	1153	lam		1084,1152
+expr	1154	app	TLA.setminus	256,1084
+expr	1155	app	TLA.setOfAll	1154,58
+expr	1156	app	TLA.record	48,1155,50,828
+expr	1157	app	=	1156,1074
+expr	1158	not		1157
+expr	1159	lam		1084,1158
+expr	1160	app	TLA.setminus	256,1138
+expr	1161	app	TLA.setOfAll	1160,58
+expr	1162	app	TLA.record	48,1161,50,828
+expr	1163	app	=	1162,1074
+expr	1164	not		1163
+expr	1165	lam		1084,1164
+expr	1166	app	TLA.setOfAll	257,1084
+expr	1167	app	TLA.record	48,1166,50,828
+expr	1168	app	=	1167,1074
+expr	1169	not		1168
+expr	1170	lam		1084,1169
+expr	1171	app	TLA.record	48,258,1084,828
+expr	1172	app	=	1171,1074
+expr	1173	not		1172
+expr	1174	lam		1084,1173
+expr	1175	app	TLA.record	48,258,1095,828
+expr	1176	app	=	1175,1074
+expr	1177	not		1176
+expr	1178	lam		1084,1177
+expr	1179	app	TLA.record	48,258,50,1084
+expr	1180	app	=	1179,1074
+expr	1181	not		1180
+expr	1182	lam		1084,1181
+expr	1183	app	TLA.cup	1084,27
+expr	1184	app	TLA.record	48,258,50,1183
+expr	1185	app	=	1184,1074
+expr	1186	not		1185
+expr	1187	lam		1084,1186
+expr	1188	app	TLA.setOfAll	1084,43
+expr	1189	app	TLA.cup	1188,27
+expr	1190	app	TLA.record	48,258,50,1189
+expr	1191	app	=	1190,1074
+expr	1192	not		1191
+expr	1193	lam		1084,1192
+expr	1194	app	TLA.setOfAll	1109,43
+expr	1195	app	TLA.cup	1194,27
+expr	1196	app	TLA.record	48,258,50,1195
+expr	1197	app	=	1196,1074
+expr	1198	not		1197
+expr	1199	lam		1084,1198
+expr	1200	app	TLA.setOfAll	1116,43
+expr	1201	app	TLA.cup	1200,27
+expr	1202	app	TLA.record	48,258,50,1201
+expr	1203	app	=	1202,1074
+expr	1204	not		1203
+expr	1205	lam		1084,1204
+expr	1206	app	TLA.setOfAll	1124,43
+expr	1207	app	TLA.cup	1206,27
+expr	1208	app	TLA.record	48,258,50,1207
+expr	1209	app	=	1208,1074
+expr	1210	not		1209
+expr	1211	lam		1084,1210
+expr	1212	app	TLA.setOfAll	1132,43
+expr	1213	app	TLA.cup	1212,27
+expr	1214	app	TLA.record	48,258,50,1213
+expr	1215	app	=	1214,1074
+expr	1216	not		1215
+expr	1217	lam		1084,1216
+expr	1218	app	TLA.setOfAll	1141,43
+expr	1219	app	TLA.cup	1218,27
+expr	1220	app	TLA.record	48,258,50,1219
+expr	1221	app	=	1220,1074
+expr	1222	not		1221
+expr	1223	lam		1084,1222
+expr	1224	app	TLA.setOfAll	1148,43
+expr	1225	app	TLA.cup	1224,27
+expr	1226	app	TLA.record	48,258,50,1225
+expr	1227	app	=	1226,1074
+expr	1228	not		1227
+expr	1229	lam		1084,1228
+expr	1230	app	TLA.setOfAll	1154,43
+expr	1231	app	TLA.cup	1230,27
+expr	1232	app	TLA.record	48,258,50,1231
+expr	1233	app	=	1232,1074
+expr	1234	not		1233
+expr	1235	lam		1084,1234
+expr	1236	app	TLA.setOfAll	1160,43
+expr	1237	app	TLA.cup	1236,27
+expr	1238	app	TLA.record	48,258,50,1237
+expr	1239	app	=	1238,1074
+expr	1240	not		1239
+expr	1241	lam		1084,1240
+expr	1242	app	TLA.cup	1166,27
+expr	1243	app	TLA.record	48,258,50,1242
+expr	1244	app	=	1243,1074
+expr	1245	not		1244
+expr	1246	lam		1084,1245
+expr	1247	app	TLA.cup	827,1084
+expr	1248	app	TLA.record	48,258,50,1247
+expr	1249	app	=	1248,1074
+expr	1250	not		1249
+expr	1251	lam		1084,1250
+expr	1252	app	TLA.cup	827,1138
+expr	1253	app	TLA.record	48,258,50,1252
+expr	1254	app	=	1253,1074
+expr	1255	not		1254
+expr	1256	lam		1084,1255
+expr	1260	app	TLA.record	1084,65,50,698
+expr	1261	app	=	829,1260
+expr	1262	not		1261
+expr	1263	lam		1084,1262
+expr	1264	app	TLA.record	1095,65,50,698
+expr	1265	app	=	829,1264
+expr	1266	not		1265
+expr	1267	lam		1084,1266
+expr	1268	app	TLA.record	48,1084,50,698
+expr	1269	app	=	829,1268
+expr	1270	not		1269
+expr	1271	lam		1084,1270
+expr	1272	app	TLA.record	48,65,1084,698
+expr	1273	app	=	829,1272
+expr	1274	not		1273
+expr	1275	lam		1084,1274
+expr	1276	app	TLA.record	48,65,1095,698
+expr	1277	app	=	829,1276
+expr	1278	not		1277
+expr	1279	lam		1084,1278
+expr	1300	app	TLA.record	48,65,50,828
+expr	1310	var	zenon_Vca	
+expr	1314	app	=	1310,1300
+expr	1315	not		1314
+expr	1316	lam		1310,1315
+expr	1317	app	TLA.record	1310,258,50,828
+expr	1318	app	=	1317,1300
+expr	1319	not		1318
+expr	1320	lam		1310,1319
+expr	1321	app	$string	1310
+expr	1322	app	TLA.record	1321,258,50,828
+expr	1323	app	=	1322,1300
+expr	1324	not		1323
+expr	1325	lam		1310,1324
+expr	1326	app	TLA.record	48,1310,50,828
+expr	1327	app	=	1326,1300
+expr	1328	not		1327
+expr	1329	lam		1310,1328
+expr	1330	app	TLA.setOfAll	1310,58
+expr	1331	app	TLA.record	48,1330,50,828
+expr	1332	app	=	1331,1300
+expr	1333	not		1332
+expr	1334	lam		1310,1333
+expr	1335	app	TLA.setminus	1310,37
+expr	1336	app	TLA.setOfAll	1335,58
+expr	1337	app	TLA.record	48,1336,50,828
+expr	1338	app	=	1337,1300
+expr	1339	not		1338
+expr	1340	lam		1310,1339
+expr	1341	app	TLA.setOfAll	1310,35
+expr	1342	app	TLA.setminus	1341,37
+expr	1343	app	TLA.setOfAll	1342,58
+expr	1344	app	TLA.record	48,1343,50,828
+expr	1345	app	=	1344,1300
+expr	1346	not		1345
+expr	1347	lam		1310,1346
+expr	1348	app	TLA.setminus	1310,27
+expr	1349	app	TLA.setOfAll	1348,35
+expr	1350	app	TLA.setminus	1349,37
+expr	1351	app	TLA.setOfAll	1350,58
+expr	1352	app	TLA.record	48,1351,50,828
+expr	1353	app	=	1352,1300
+expr	1354	not		1353
+expr	1355	lam		1310,1354
+expr	1356	app	TLA.setminus	3,1310
+expr	1357	app	TLA.setOfAll	1356,35
+expr	1358	app	TLA.setminus	1357,37
+expr	1359	app	TLA.setOfAll	1358,58
+expr	1360	app	TLA.record	48,1359,50,828
+expr	1361	app	=	1360,1300
+expr	1362	not		1361
+expr	1363	lam		1310,1362
+expr	1364	app	TLA.set	1310
+expr	1365	app	TLA.setminus	3,1364
+expr	1366	app	TLA.setOfAll	1365,35
+expr	1367	app	TLA.setminus	1366,37
+expr	1368	app	TLA.setOfAll	1367,58
+expr	1369	app	TLA.record	48,1368,50,828
+expr	1370	app	=	1369,1300
+expr	1371	not		1370
+expr	1372	lam		1310,1371
+expr	1373	app	TLA.setOfAll	28,1310
+expr	1374	app	TLA.setminus	1373,37
+expr	1375	app	TLA.setOfAll	1374,58
+expr	1376	app	TLA.record	48,1375,50,828
+expr	1377	app	=	1376,1300
+expr	1378	not		1377
+expr	1379	lam		1310,1378
+expr	1380	app	TLA.setminus	256,1310
+expr	1381	app	TLA.setOfAll	1380,58
+expr	1382	app	TLA.record	48,1381,50,828
+expr	1383	app	=	1382,1300
+expr	1384	not		1383
+expr	1385	lam		1310,1384
+expr	1386	app	TLA.setminus	256,1364
+expr	1387	app	TLA.setOfAll	1386,58
+expr	1388	app	TLA.record	48,1387,50,828
+expr	1389	app	=	1388,1300
+expr	1390	not		1389
+expr	1391	lam		1310,1390
+expr	1392	app	TLA.setOfAll	257,1310
+expr	1393	app	TLA.record	48,1392,50,828
+expr	1394	app	=	1393,1300
+expr	1395	not		1394
+expr	1396	lam		1310,1395
+expr	1397	app	TLA.record	48,258,1310,828
+expr	1398	app	=	1397,1300
+expr	1399	not		1398
+expr	1400	lam		1310,1399
+expr	1401	app	TLA.record	48,258,1321,828
+expr	1402	app	=	1401,1300
+expr	1403	not		1402
+expr	1404	lam		1310,1403
+expr	1405	app	TLA.record	48,258,50,1310
+expr	1406	app	=	1405,1300
+expr	1407	not		1406
+expr	1408	lam		1310,1407
+expr	1409	app	TLA.cup	1310,27
+expr	1410	app	TLA.record	48,258,50,1409
+expr	1411	app	=	1410,1300
+expr	1412	not		1411
+expr	1413	lam		1310,1412
+expr	1414	app	TLA.setOfAll	1310,43
+expr	1415	app	TLA.cup	1414,27
+expr	1416	app	TLA.record	48,258,50,1415
+expr	1417	app	=	1416,1300
+expr	1418	not		1417
+expr	1419	lam		1310,1418
+expr	1420	app	TLA.setOfAll	1335,43
+expr	1421	app	TLA.cup	1420,27
+expr	1422	app	TLA.record	48,258,50,1421
+expr	1423	app	=	1422,1300
+expr	1424	not		1423
+expr	1425	lam		1310,1424
+expr	1426	app	TLA.setOfAll	1342,43
+expr	1427	app	TLA.cup	1426,27
+expr	1428	app	TLA.record	48,258,50,1427
+expr	1429	app	=	1428,1300
+expr	1430	not		1429
+expr	1431	lam		1310,1430
+expr	1432	app	TLA.setOfAll	1350,43
+expr	1433	app	TLA.cup	1432,27
+expr	1434	app	TLA.record	48,258,50,1433
+expr	1435	app	=	1434,1300
+expr	1436	not		1435
+expr	1437	lam		1310,1436
+expr	1438	app	TLA.setOfAll	1358,43
+expr	1439	app	TLA.cup	1438,27
+expr	1440	app	TLA.record	48,258,50,1439
+expr	1441	app	=	1440,1300
+expr	1442	not		1441
+expr	1443	lam		1310,1442
+expr	1444	app	TLA.setOfAll	1367,43
+expr	1445	app	TLA.cup	1444,27
+expr	1446	app	TLA.record	48,258,50,1445
+expr	1447	app	=	1446,1300
+expr	1448	not		1447
+expr	1449	lam		1310,1448
+expr	1450	app	TLA.setOfAll	1374,43
+expr	1451	app	TLA.cup	1450,27
+expr	1452	app	TLA.record	48,258,50,1451
+expr	1453	app	=	1452,1300
+expr	1454	not		1453
+expr	1455	lam		1310,1454
+expr	1456	app	TLA.setOfAll	1380,43
+expr	1457	app	TLA.cup	1456,27
+expr	1458	app	TLA.record	48,258,50,1457
+expr	1459	app	=	1458,1300
+expr	1460	not		1459
+expr	1461	lam		1310,1460
+expr	1462	app	TLA.setOfAll	1386,43
+expr	1463	app	TLA.cup	1462,27
+expr	1464	app	TLA.record	48,258,50,1463
+expr	1465	app	=	1464,1300
+expr	1466	not		1465
+expr	1467	lam		1310,1466
+expr	1468	app	TLA.cup	1392,27
+expr	1469	app	TLA.record	48,258,50,1468
+expr	1470	app	=	1469,1300
+expr	1471	not		1470
+expr	1472	lam		1310,1471
+expr	1473	app	TLA.cup	827,1310
+expr	1474	app	TLA.record	48,258,50,1473
+expr	1475	app	=	1474,1300
+expr	1476	not		1475
+expr	1477	lam		1310,1476
+expr	1478	app	TLA.cup	827,1364
+expr	1479	app	TLA.record	48,258,50,1478
+expr	1480	app	=	1479,1300
+expr	1481	not		1480
+expr	1482	lam		1310,1481
+expr	1486	app	TLA.record	1310,65,50,828
+expr	1487	app	=	829,1486
+expr	1488	not		1487
+expr	1489	lam		1310,1488
+expr	1490	app	TLA.record	1321,65,50,828
+expr	1491	app	=	829,1490
+expr	1492	not		1491
+expr	1493	lam		1310,1492
+expr	1494	app	=	829,1326
+expr	1495	not		1494
+expr	1496	lam		1310,1495
+expr	1497	app	TLA.record	48,65,1310,828
+expr	1498	app	=	829,1497
+expr	1499	not		1498
+expr	1500	lam		1310,1499
+expr	1501	app	TLA.record	48,65,1321,828
+expr	1502	app	=	829,1501
+expr	1503	not		1502
+expr	1504	lam		1310,1503
+expr	1525	app	TLA.record	48,65,50,1433
+expr	1526	app	=	829,1525
+expr	1527	not		1526
+expr	1528	lam		1310,1527
+expr	1529	app	TLA.record	48,65,50,1439
+expr	1530	app	=	829,1529
+expr	1531	not		1530
+expr	1532	lam		1310,1531
+expr	1533	app	TLA.record	48,65,50,1445
+expr	1534	app	=	829,1533
+expr	1535	not		1534
+expr	1536	lam		1310,1535
+expr	1537	app	TLA.record	48,65,50,1451
+expr	1538	app	=	829,1537
+expr	1539	not		1538
+expr	1540	lam		1310,1539
+expr	1541	app	TLA.record	48,65,50,1457
+expr	1542	app	=	829,1541
+expr	1543	not		1542
+expr	1544	lam		1310,1543
+expr	1545	app	TLA.record	48,65,50,1463
+expr	1546	app	=	829,1545
+expr	1547	not		1546
+expr	1548	lam		1310,1547
+expr	1549	app	TLA.record	48,65,50,1468
+expr	1550	app	=	829,1549
+expr	1551	not		1550
+expr	1552	lam		1310,1551
+expr	1553	app	TLA.record	48,65,50,1473
+expr	1554	app	=	829,1553
+expr	1555	not		1554
+expr	1556	lam		1310,1555
+expr	1557	app	TLA.record	48,65,50,1478
+expr	1558	app	=	829,1557
+expr	1559	not		1558
+expr	1560	lam		1310,1559
+expr	1564	var	zenon_Vda	
+expr	1568	not		176
+expr	1569	tau		173,1568
+expr	1570	app	TLA.in	1569,59
+expr	1571	app	TLA.in	1569,65
+expr	1572	equiv		1570,1571
+expr	1573	not		1572
+expr	1574	ex		173,1568
+expr	1576	var	zenon_Vea	
+expr	1580	var	zenon_Vfa	
+expr	1586	var	zenon_Vga	
+expr	1588	var	zenon_Vha	
+expr	1589	app	TLA.in	1569,1588
+expr	1590	lam		1588,1589
+expr	1591	app	TLA.in	1586,59
+expr	1592	lam		1586,1591
+expr	1596	app	TLA.setOfAll	1586,58
+expr	1597	app	TLA.in	1569,1596
+expr	1598	lam		1586,1597
+expr	1600	var	zenon_Via	
+expr	1601	app	TLA.in	1600,55
+expr	1602	app	TLA.fapply	1600,41
+expr	1603	app	TLA.fapply	1600,40
+expr	1604	app	TLA.tuple	1602,1603
+expr	1605	app	=	1569,1604
+expr	1606	and		1601,1605
+expr	1607	ex		1600,1606
+expr	1609	var	zenon_Vja	
+expr	1611	var	zenon_Vka	
+expr	1614	app	TLA.in	1609,126
+expr	1615	lam		1609,1614
+expr	1622	app	TLA.setminus	1609,37
+expr	1623	app	TLA.setOfAll	1622,58
+expr	1624	app	TLA.in	1569,1623
+expr	1625	lam		1609,1624
+expr	1626	app	TLA.setOfAll	1609,35
+expr	1627	app	TLA.setminus	1626,37
+expr	1628	app	TLA.setOfAll	1627,58
+expr	1629	app	TLA.in	1569,1628
+expr	1630	lam		1609,1629
+expr	1631	var	zenon_Vla	
+expr	1632	app	TLA.DOMAIN	1631
+expr	1633	app	TLA.setOfAll	1632,35
+expr	1634	app	TLA.setminus	1633,37
+expr	1635	app	TLA.setOfAll	1634,58
+expr	1636	app	TLA.in	1569,1635
+expr	1637	lam		1631,1636
+expr	1645	var	zenon_Vma	
+expr	1646	app	TLA.in	1645,38
+expr	1647	app	TLA.fapply	1645,41
+expr	1648	app	TLA.fapply	1645,40
+expr	1649	app	TLA.tuple	1647,1648
+expr	1650	app	=	1569,1649
+expr	1651	and		1646,1650
+expr	1652	ex		1645,1651
+expr	1654	var	zenon_Vna	
+expr	1656	var	zenon_Voa	
+expr	1659	app	TLA.in	1654,222
+expr	1660	lam		1654,1659
+expr	1677	var	zenon_Vpa	
+expr	1678	app	TLA.in	1677,221
+expr	1679	app	TLA.fapply	1677,41
+expr	1680	app	TLA.fapply	1677,40
+expr	1681	app	TLA.tuple	1679,1680
+expr	1682	app	=	1569,1681
+expr	1683	and		1678,1682
+expr	1684	ex		1677,1683
+expr	1686	var	zenon_Vqa	
+expr	1688	var	zenon_Vra	
+expr	1691	app	TLA.in	1686,258
+expr	1692	lam		1686,1691
+expr	1708	app	TLA.setminus	1686,27
+expr	1709	app	TLA.setOfAll	1708,35
+expr	1710	app	TLA.setminus	1709,37
+expr	1711	app	TLA.setOfAll	1710,58
+expr	1712	app	TLA.in	1569,1711
+expr	1713	lam		1686,1712
+expr	1714	app	TLA.setminus	3,1686
+expr	1715	app	TLA.setOfAll	1714,35
+expr	1716	app	TLA.setminus	1715,37
+expr	1717	app	TLA.setOfAll	1716,58
+expr	1718	app	TLA.in	1569,1717
+expr	1719	lam		1686,1718
+expr	1720	app	TLA.set	1686
+expr	1721	app	TLA.setminus	3,1720
+expr	1722	app	TLA.setOfAll	1721,35
+expr	1723	app	TLA.setminus	1722,37
+expr	1724	app	TLA.setOfAll	1723,58
+expr	1725	app	TLA.in	1569,1724
+expr	1726	lam		1686,1725
+expr	1727	app	TLA.setOfAll	28,1686
+expr	1728	app	TLA.setminus	1727,37
+expr	1729	app	TLA.setOfAll	1728,58
+expr	1730	app	TLA.in	1569,1729
+expr	1731	lam		1686,1730
+expr	1732	app	TLA.setminus	256,1686
+expr	1733	app	TLA.setOfAll	1732,58
+expr	1734	app	TLA.in	1569,1733
+expr	1735	lam		1686,1734
+expr	1736	app	TLA.setminus	256,1720
+expr	1737	app	TLA.setOfAll	1736,58
+expr	1738	app	TLA.in	1569,1737
+expr	1739	lam		1686,1738
+expr	1740	app	TLA.setOfAll	257,1686
+expr	1741	app	TLA.in	1569,1740
+expr	1742	lam		1686,1741
+expr	1743	var	zenon_Vsa	
+expr	1744	app	TLA.in	1743,257
+expr	1745	app	TLA.fapply	1743,41
+expr	1746	app	TLA.fapply	1743,40
+expr	1747	app	TLA.tuple	1745,1746
+expr	1748	app	=	1569,1747
+expr	1749	and		1744,1748
+expr	1750	ex		1743,1749
+expr	1752	var	zenon_Vta	
+expr	1756	not		228
+expr	1757	tau		225,1756
+expr	1762	ex		225,1756
+expr	1764	var	zenon_Vua	
+expr	1768	var	zenon_Vva	
+expr	1774	var	zenon_Vwa	
+expr	1776	var	zenon_Vxa	
+expr	1777	app	TLA.in	1757,1776
+expr	1778	lam		1776,1777
+expr	1784	app	TLA.setOfAll	1774,58
+expr	1785	app	TLA.in	1757,1784
+expr	1786	lam		1774,1785
+expr	1787	app	TLA.setminus	1774,37
+expr	1788	app	TLA.setOfAll	1787,58
+expr	1789	app	TLA.in	1757,1788
+expr	1790	lam		1774,1789
+expr	1791	app	TLA.setOfAll	1774,35
+expr	1792	app	TLA.setminus	1791,37
+expr	1793	app	TLA.setOfAll	1792,58
+expr	1794	app	TLA.in	1757,1793
+expr	1795	lam		1774,1794
+expr	1796	var	zenon_Vya	
+expr	1797	app	TLA.DOMAIN	1796
+expr	1798	app	TLA.setOfAll	1797,35
+expr	1799	app	TLA.setminus	1798,37
+expr	1800	app	TLA.setOfAll	1799,58
+expr	1801	app	TLA.in	1757,1800
+expr	1802	lam		1796,1801
+expr	1810	var	zenon_Vza	
+expr	1811	app	TLA.in	1810,38
+expr	1812	app	TLA.fapply	1810,41
+expr	1813	app	TLA.fapply	1810,40
+expr	1814	app	TLA.tuple	1812,1813
+expr	1815	app	=	1757,1814
+expr	1816	and		1811,1815
+expr	1817	ex		1810,1816
+expr	1819	var	zenon_Vab	
+expr	1821	var	zenon_Vbb	
+expr	1842	var	zenon_Vcb	
+expr	1843	app	TLA.in	1842,221
+expr	1844	app	TLA.fapply	1842,41
+expr	1845	app	TLA.fapply	1842,40
+expr	1846	app	TLA.tuple	1844,1845
+expr	1847	app	=	1757,1846
+expr	1848	and		1843,1847
+expr	1849	ex		1842,1848
+expr	1851	var	zenon_Vdb	
+expr	1853	var	zenon_Veb	
+expr	1873	app	TLA.setminus	1851,27
+expr	1874	app	TLA.setOfAll	1873,35
+expr	1875	app	TLA.setminus	1874,37
+expr	1876	app	TLA.setOfAll	1875,58
+expr	1877	app	TLA.in	1757,1876
+expr	1878	lam		1851,1877
+expr	1879	app	TLA.setminus	3,1851
+expr	1880	app	TLA.setOfAll	1879,35
+expr	1881	app	TLA.setminus	1880,37
+expr	1882	app	TLA.setOfAll	1881,58
+expr	1883	app	TLA.in	1757,1882
+expr	1884	lam		1851,1883
+expr	1885	app	TLA.set	1851
+expr	1886	app	TLA.setminus	3,1885
+expr	1887	app	TLA.setOfAll	1886,35
+expr	1888	app	TLA.setminus	1887,37
+expr	1889	app	TLA.setOfAll	1888,58
+expr	1890	app	TLA.in	1757,1889
+expr	1891	lam		1851,1890
+expr	1892	app	TLA.setOfAll	28,1851
+expr	1893	app	TLA.setminus	1892,37
+expr	1894	app	TLA.setOfAll	1893,58
+expr	1895	app	TLA.in	1757,1894
+expr	1896	lam		1851,1895
+expr	1897	app	TLA.setminus	256,1851
+expr	1898	app	TLA.setOfAll	1897,58
+expr	1899	app	TLA.in	1757,1898
+expr	1900	lam		1851,1899
+expr	1901	app	TLA.setminus	256,1885
+expr	1902	app	TLA.setOfAll	1901,58
+expr	1903	app	TLA.in	1757,1902
+expr	1904	lam		1851,1903
+expr	1905	app	TLA.setOfAll	257,1851
+expr	1906	app	TLA.in	1757,1905
+expr	1907	lam		1851,1906
+expr	1908	var	zenon_Vfb	
+expr	1909	app	TLA.in	1908,257
+expr	1910	app	TLA.fapply	1908,41
+expr	1911	app	TLA.fapply	1908,40
+expr	1912	app	TLA.tuple	1910,1911
+expr	1913	app	=	1757,1912
+expr	1914	and		1909,1913
+expr	1915	ex		1908,1914
+expr	1917	var	zenon_Vgb	
+expr	1921	not		264
+expr	1922	tau		261,1921
+expr	1927	ex		261,1921
+expr	1929	var	zenon_Vhb	
+expr	1933	var	zenon_Vib	
+expr	1939	var	zenon_Vjb	
+expr	1941	var	zenon_Vkb	
+expr	1942	app	TLA.in	1922,1941
+expr	1943	lam		1941,1942
+expr	1949	app	TLA.setOfAll	1939,58
+expr	1950	app	TLA.in	1922,1949
+expr	1951	lam		1939,1950
+expr	1952	app	TLA.setminus	1939,37
+expr	1953	app	TLA.setOfAll	1952,58
+expr	1954	app	TLA.in	1922,1953
+expr	1955	lam		1939,1954
+expr	1956	app	TLA.setOfAll	1939,35
+expr	1957	app	TLA.setminus	1956,37
+expr	1958	app	TLA.setOfAll	1957,58
+expr	1959	app	TLA.in	1922,1958
+expr	1960	lam		1939,1959
+expr	1962	var	zenon_Vlb	
+expr	1963	app	TLA.in	1962,221
+expr	1964	app	TLA.fapply	1962,41
+expr	1965	app	TLA.fapply	1962,40
+expr	1966	app	TLA.tuple	1964,1965
+expr	1967	app	=	1922,1966
+expr	1968	and		1963,1967
+expr	1969	ex		1962,1968
+expr	1971	var	zenon_Vmb	
+expr	1973	var	zenon_Vnb	
+expr	1993	app	TLA.setminus	1971,27
+expr	1994	app	TLA.setOfAll	1993,35
+expr	1995	app	TLA.setminus	1994,37
+expr	1996	app	TLA.setOfAll	1995,58
+expr	1997	app	TLA.in	1922,1996
+expr	1998	lam		1971,1997
+expr	1999	app	TLA.setminus	3,1971
+expr	2000	app	TLA.setOfAll	1999,35
+expr	2001	app	TLA.setminus	2000,37
+expr	2002	app	TLA.setOfAll	2001,58
+expr	2003	app	TLA.in	1922,2002
+expr	2004	lam		1971,2003
+expr	2005	app	TLA.set	1971
+expr	2006	app	TLA.setminus	3,2005
+expr	2007	app	TLA.setOfAll	2006,35
+expr	2008	app	TLA.setminus	2007,37
+expr	2009	app	TLA.setOfAll	2008,58
+expr	2010	app	TLA.in	1922,2009
+expr	2011	lam		1971,2010
+expr	2012	app	TLA.setOfAll	28,1971
+expr	2013	app	TLA.setminus	2012,37
+expr	2014	app	TLA.setOfAll	2013,58
+expr	2015	app	TLA.in	1922,2014
+expr	2016	lam		1971,2015
+expr	2017	app	TLA.setminus	256,1971
+expr	2018	app	TLA.setOfAll	2017,58
+expr	2019	app	TLA.in	1922,2018
+expr	2020	lam		1971,2019
+expr	2021	app	TLA.setminus	256,2005
+expr	2022	app	TLA.setOfAll	2021,58
+expr	2023	app	TLA.in	1922,2022
+expr	2024	lam		1971,2023
+expr	2025	app	TLA.setOfAll	257,1971
+expr	2026	app	TLA.in	1922,2025
+expr	2027	lam		1971,2026
+expr	2028	var	zenon_Vob	
+expr	2029	app	TLA.in	2028,257
+expr	2030	app	TLA.fapply	2028,41
+expr	2031	app	TLA.fapply	2028,40
+expr	2032	app	TLA.tuple	2030,2031
+expr	2033	app	=	1922,2032
+expr	2034	and		2029,2033
+expr	2035	ex		2028,2034
+expr	2037	var	zenon_Vpb	
+expr	2041	not		340
+expr	2042	tau		337,2041
+expr	2047	ex		337,2041
+expr	2049	var	zenon_Vqb	
+expr	2053	var	zenon_Vrb	
+expr	2059	var	zenon_Vsb	
+expr	2061	var	zenon_Vtb	
+expr	2062	app	TLA.in	2042,2061
+expr	2063	lam		2061,2062
+expr	2069	app	TLA.setOfAll	2059,58
+expr	2070	app	TLA.in	2042,2069
+expr	2071	lam		2059,2070
+expr	2072	app	TLA.setminus	2059,37
+expr	2073	app	TLA.setOfAll	2072,58
+expr	2074	app	TLA.in	2042,2073
+expr	2075	lam		2059,2074
+expr	2076	app	TLA.setOfAll	2059,35
+expr	2077	app	TLA.setminus	2076,37
+expr	2078	app	TLA.setOfAll	2077,58
+expr	2079	app	TLA.in	2042,2078
+expr	2080	lam		2059,2079
+expr	2081	app	TLA.setminus	2059,27
+expr	2082	app	TLA.setOfAll	2081,35
+expr	2083	app	TLA.setminus	2082,37
+expr	2084	app	TLA.setOfAll	2083,58
+expr	2085	app	TLA.in	2042,2084
+expr	2086	lam		2059,2085
+expr	2087	app	TLA.setminus	3,2059
+expr	2088	app	TLA.setOfAll	2087,35
+expr	2089	app	TLA.setminus	2088,37
+expr	2090	app	TLA.setOfAll	2089,58
+expr	2091	app	TLA.in	2042,2090
+expr	2092	lam		2059,2091
+expr	2093	app	TLA.set	2059
+expr	2094	app	TLA.setminus	3,2093
+expr	2095	app	TLA.setOfAll	2094,35
+expr	2096	app	TLA.setminus	2095,37
+expr	2097	app	TLA.setOfAll	2096,58
+expr	2098	app	TLA.in	2042,2097
+expr	2099	lam		2059,2098
+expr	2100	app	TLA.setOfAll	28,2059
+expr	2101	app	TLA.setminus	2100,37
+expr	2102	app	TLA.setOfAll	2101,58
+expr	2103	app	TLA.in	2042,2102
+expr	2104	lam		2059,2103
+expr	2105	app	TLA.setminus	256,2059
+expr	2106	app	TLA.setOfAll	2105,58
+expr	2107	app	TLA.in	2042,2106
+expr	2108	lam		2059,2107
+expr	2109	app	TLA.setminus	256,2093
+expr	2110	app	TLA.setOfAll	2109,58
+expr	2111	app	TLA.in	2042,2110
+expr	2112	lam		2059,2111
+expr	2113	app	TLA.setOfAll	257,2059
+expr	2114	app	TLA.in	2042,2113
+expr	2115	lam		2059,2114
+expr	2116	var	zenon_Vub	
+expr	2117	app	TLA.in	2116,257
+expr	2118	app	TLA.fapply	2116,41
+expr	2119	app	TLA.fapply	2116,40
+expr	2120	app	TLA.tuple	2118,2119
+expr	2121	app	=	2042,2120
+expr	2122	and		2117,2121
+expr	2123	ex		2116,2122
+expr	2125	var	zenon_Vvb	
+expr	2127	tau		1600,1606
+expr	2128	app	TLA.in	2127,55
+expr	2129	app	TLA.fapply	2127,41
+expr	2130	app	TLA.fapply	2127,40
+expr	2131	app	TLA.tuple	2129,2130
+expr	2132	app	=	1569,2131
+expr	2133	and		2128,2132
+expr	2135	var	zenon_Vwb	
+expr	2140	var	zenon_Vxb	
+expr	2142	app	=	2140,2131
+expr	2143	lam		2140,2142
+expr	2145	app	=	1569,2140
+expr	2146	lam		2140,2145
+expr	2147	app	TLA.tuple	2140,2130
+expr	2148	app	=	1569,2147
+expr	2149	lam		2140,2148
+expr	2150	app	TLA.fapply	2140,41
+expr	2151	app	TLA.tuple	2150,2130
+expr	2152	app	=	1569,2151
+expr	2153	lam		2140,2152
+expr	2155	app	TLA.fapply	2127,2140
+expr	2156	app	TLA.tuple	2155,2130
+expr	2157	app	=	1569,2156
+expr	2158	lam		2140,2157
+expr	2159	app	TLA.fapply	2140,40
+expr	2160	app	TLA.fapply	2127,2159
+expr	2161	app	TLA.tuple	2160,2130
+expr	2162	app	=	1569,2161
+expr	2163	lam		2140,2162
+expr	2164	app	TLA.fapply	39,2140
+expr	2165	app	TLA.fapply	2127,2164
+expr	2166	app	TLA.tuple	2165,2130
+expr	2167	app	=	1569,2166
+expr	2168	lam		2140,2167
+expr	2169	app	TLA.fapply	2140,12
+expr	2170	app	TLA.fapply	39,2169
+expr	2171	app	TLA.fapply	2127,2170
+expr	2172	app	TLA.tuple	2171,2130
+expr	2173	app	=	1569,2172
+expr	2174	lam		2140,2173
+expr	2175	app	TLA.fapply	39,2164
+expr	2176	app	TLA.fapply	2127,2175
+expr	2177	app	TLA.tuple	2176,2130
+expr	2178	app	=	1569,2177
+expr	2179	lam		2140,2178
+expr	2180	app	TLA.tuple	2129,2140
+expr	2181	app	=	1569,2180
+expr	2182	lam		2140,2181
+expr	2183	app	TLA.tuple	2129,2159
+expr	2184	app	=	1569,2183
+expr	2185	lam		2140,2184
+expr	2187	app	TLA.tuple	2129,2155
+expr	2188	app	=	1569,2187
+expr	2189	lam		2140,2188
+expr	2190	app	TLA.fapply	2127,2169
+expr	2191	app	TLA.tuple	2129,2190
+expr	2192	app	=	1569,2191
+expr	2193	lam		2140,2192
+expr	2194	app	TLA.tuple	2129,2165
+expr	2195	app	=	1569,2194
+expr	2196	lam		2140,2195
+expr	2198	var	zenon_Vyb	
+expr	2200	var	zenon_Vzb	
+expr	2201	app	TLA.in	2127,2200
+expr	2202	lam		2200,2201
+expr	2203	app	TLA.in	2198,55
+expr	2204	lam		2198,2203
+expr	2208	app	TLA.in	2127,38
+expr	2210	var	zenon_Vac	
+expr	2212	var	zenon_Vbc	
+expr	2215	app	TLA.in	2210,38
+expr	2216	lam		2210,2215
+expr	2220	app	TLA.setminus	2210,37
+expr	2221	app	TLA.in	2127,2220
+expr	2222	lam		2210,2221
+expr	2223	app	TLA.setOfAll	2210,35
+expr	2224	app	TLA.setminus	2223,37
+expr	2225	app	TLA.in	2127,2224
+expr	2226	lam		2210,2225
+expr	2227	var	zenon_Vcc	
+expr	2228	app	TLA.DOMAIN	2227
+expr	2229	app	TLA.setOfAll	2228,35
+expr	2230	app	TLA.setminus	2229,37
+expr	2231	app	TLA.in	2127,2230
+expr	2232	lam		2227,2231
+expr	2239	app	TLA.in	2127,36
+expr	2240	app	TLA.in	2127,37
+expr	2241	not		2240
+expr	2243	var	zenon_Vdc	
+expr	2247	var	zenon_Vec	
+expr	2248	app	TLA.in	2127,2247
+expr	2249	not		2248
+expr	2250	lam		2247,2249
+expr	2251	app	TLA.in	2243,37
+expr	2252	not		2251
+expr	2253	lam		2243,2252
+expr	2258	app	TLA.set	2243
+expr	2259	app	TLA.in	2127,2258
+expr	2260	not		2259
+expr	2261	lam		2243,2260
+expr	2262	app	=	2127,29
+expr	2263	not		2262
+expr	2287	var	zenon_Vfc	
+expr	2289	var	zenon_Vgc	
+expr	2292	app	TLA.in	2287,36
+expr	2293	lam		2287,2292
+expr	2297	app	TLA.setOfAll	2287,35
+expr	2298	app	TLA.in	2127,2297
+expr	2299	lam		2287,2298
+expr	2300	var	zenon_Vhc	
+expr	2301	app	TLA.DOMAIN	2300
+expr	2302	app	TLA.setOfAll	2301,35
+expr	2303	app	TLA.in	2127,2302
+expr	2304	lam		2300,2303
+expr	2310	var	zenon_Vic	
+expr	2311	app	TLA.in	2310,33
+expr	2312	app	TLA.fapply	26,2310
+expr	2313	app	=	2127,2312
+expr	2314	and		2311,2313
+expr	2315	ex		2310,2314
+expr	2321	var	zenon_Vjc	
+expr	2325	app	=	2321,29
+expr	2326	not		2325
+expr	2327	lam		2321,2326
+expr	2329	app	=	2127,2321
+expr	2330	not		2329
+expr	2331	lam		2321,2330
+expr	2340	lam		1600,1606
+expr	2342	var	zenon_Vkc	
+expr	2344	var	zenon_Vlc	
+expr	2347	app	TLA.in	2342,220
+expr	2348	lam		2342,2347
+expr	2356	var	zenon_Vmc	
+expr	2357	app	TLA.in	2356,219
+expr	2358	app	TLA.fapply	26,2356
+expr	2359	app	=	2127,2358
+expr	2360	and		2357,2359
+expr	2361	ex		2356,2360
+expr	2365	var	zenon_Vnc	
+expr	2367	var	zenon_Voc	
+expr	2370	app	TLA.in	2365,256
+expr	2371	lam		2365,2370
+expr	2378	app	TLA.setminus	2365,27
+expr	2379	app	TLA.setOfAll	2378,35
+expr	2380	app	TLA.in	2127,2379
+expr	2381	lam		2365,2380
+expr	2382	app	TLA.setminus	3,2365
+expr	2383	app	TLA.setOfAll	2382,35
+expr	2384	app	TLA.in	2127,2383
+expr	2385	lam		2365,2384
+expr	2386	app	TLA.set	2365
+expr	2387	app	TLA.setminus	3,2386
+expr	2388	app	TLA.setOfAll	2387,35
+expr	2389	app	TLA.in	2127,2388
+expr	2390	lam		2365,2389
+expr	2391	app	TLA.setOfAll	28,2365
+expr	2392	app	TLA.in	2127,2391
+expr	2393	lam		2365,2392
+expr	2394	var	zenon_Vpc	
+expr	2395	app	TLA.in	2394,28
+expr	2396	app	TLA.fapply	26,2394
+expr	2397	app	=	2127,2396
+expr	2398	and		2395,2397
+expr	2399	ex		2394,2398
+expr	2403	var	zenon_Vqc	
+expr	2405	var	zenon_Vrc	
+expr	2408	app	TLA.in	2403,221
+expr	2409	lam		2403,2408
+expr	2424	var	zenon_Vsc	
+expr	2426	var	zenon_Vtc	
+expr	2429	app	TLA.in	2424,257
+expr	2430	lam		2424,2429
+expr	2441	app	TLA.setminus	2424,27
+expr	2442	app	TLA.setOfAll	2441,35
+expr	2443	app	TLA.setminus	2442,37
+expr	2444	app	TLA.in	2127,2443
+expr	2445	lam		2424,2444
+expr	2446	app	TLA.setminus	3,2424
+expr	2447	app	TLA.setOfAll	2446,35
+expr	2448	app	TLA.setminus	2447,37
+expr	2449	app	TLA.in	2127,2448
+expr	2450	lam		2424,2449
+expr	2451	app	TLA.set	2424
+expr	2452	app	TLA.setminus	3,2451
+expr	2453	app	TLA.setOfAll	2452,35
+expr	2454	app	TLA.setminus	2453,37
+expr	2455	app	TLA.in	2127,2454
+expr	2456	lam		2424,2455
+expr	2457	app	TLA.setOfAll	28,2424
+expr	2458	app	TLA.setminus	2457,37
+expr	2459	app	TLA.in	2127,2458
+expr	2460	lam		2424,2459
+expr	2461	app	TLA.setminus	256,2424
+expr	2462	app	TLA.in	2127,2461
+expr	2463	lam		2424,2462
+expr	2464	app	TLA.setminus	256,2451
+expr	2465	app	TLA.in	2127,2464
+expr	2466	lam		2424,2465
+expr	2470	var	zenon_Vuc	
+expr	2472	tau		1645,1651
+expr	2474	app	TLA.fapply	2472,41
+expr	2475	app	TLA.fapply	2472,40
+expr	2476	app	TLA.tuple	2474,2475
+expr	2480	var	zenon_Vvc	
+expr	2485	var	zenon_Vwc	
+expr	2487	app	=	2485,2476
+expr	2488	lam		2485,2487
+expr	2492	app	TLA.tuple	2485,2475
+expr	2493	app	=	1569,2492
+expr	2494	lam		2485,2493
+expr	2495	app	TLA.fapply	2485,41
+expr	2496	app	TLA.tuple	2495,2475
+expr	2497	app	=	1569,2496
+expr	2498	lam		2485,2497
+expr	2500	app	TLA.fapply	2472,2485
+expr	2501	app	TLA.tuple	2500,2475
+expr	2502	app	=	1569,2501
+expr	2503	lam		2485,2502
+expr	2504	app	TLA.fapply	2485,40
+expr	2505	app	TLA.fapply	2472,2504
+expr	2506	app	TLA.tuple	2505,2475
+expr	2507	app	=	1569,2506
+expr	2508	lam		2485,2507
+expr	2509	app	TLA.fapply	39,2485
+expr	2510	app	TLA.fapply	2472,2509
+expr	2511	app	TLA.tuple	2510,2475
+expr	2512	app	=	1569,2511
+expr	2513	lam		2485,2512
+expr	2514	app	TLA.fapply	2485,12
+expr	2515	app	TLA.fapply	39,2514
+expr	2516	app	TLA.fapply	2472,2515
+expr	2517	app	TLA.tuple	2516,2475
+expr	2518	app	=	1569,2517
+expr	2519	lam		2485,2518
+expr	2520	app	TLA.fapply	39,2509
+expr	2521	app	TLA.fapply	2472,2520
+expr	2522	app	TLA.tuple	2521,2475
+expr	2523	app	=	1569,2522
+expr	2524	lam		2485,2523
+expr	2525	app	TLA.tuple	2474,2485
+expr	2526	app	=	1569,2525
+expr	2527	lam		2485,2526
+expr	2528	app	TLA.tuple	2474,2504
+expr	2529	app	=	1569,2528
+expr	2530	lam		2485,2529
+expr	2532	app	TLA.tuple	2474,2500
+expr	2533	app	=	1569,2532
+expr	2534	lam		2485,2533
+expr	2535	app	TLA.fapply	2472,2514
+expr	2536	app	TLA.tuple	2474,2535
+expr	2537	app	=	1569,2536
+expr	2538	lam		2485,2537
+expr	2539	app	TLA.tuple	2474,2510
+expr	2540	app	=	1569,2539
+expr	2541	lam		2485,2540
+expr	2543	var	zenon_Vxc	
+expr	2545	var	zenon_Vyc	
+expr	2546	app	TLA.in	2472,2545
+expr	2547	lam		2545,2546
+expr	2553	app	TLA.setminus	2543,37
+expr	2554	app	TLA.in	2472,2553
+expr	2555	lam		2543,2554
+expr	2556	app	TLA.setOfAll	2543,35
+expr	2557	app	TLA.setminus	2556,37
+expr	2558	app	TLA.in	2472,2557
+expr	2559	lam		2543,2558
+expr	2560	var	zenon_Vzc	
+expr	2561	app	TLA.DOMAIN	2560
+expr	2562	app	TLA.setOfAll	2561,35
+expr	2563	app	TLA.setminus	2562,37
+expr	2564	app	TLA.in	2472,2563
+expr	2565	lam		2560,2564
+expr	2578	var	zenon_Vad	
+expr	2582	var	zenon_Vbd	
+expr	2583	app	TLA.in	2472,2582
+expr	2584	not		2583
+expr	2585	lam		2582,2584
+expr	2593	app	TLA.set	2578
+expr	2594	app	TLA.in	2472,2593
+expr	2595	not		2594
+expr	2596	lam		2578,2595
+expr	2612	var	zenon_Vcd	
+expr	2614	var	zenon_Vdd	
+expr	2622	app	TLA.setOfAll	2612,35
+expr	2623	app	TLA.in	2472,2622
+expr	2624	lam		2612,2623
+expr	2625	var	zenon_Ved	
+expr	2626	app	TLA.DOMAIN	2625
+expr	2627	app	TLA.setOfAll	2626,35
+expr	2628	app	TLA.in	2472,2627
+expr	2629	lam		2625,2628
+expr	2635	var	zenon_Vfd	
+expr	2636	app	TLA.in	2635,33
+expr	2637	app	TLA.fapply	26,2635
+expr	2638	app	=	2472,2637
+expr	2639	and		2636,2638
+expr	2640	ex		2635,2639
+expr	2644	var	zenon_Vgd	
+expr	2652	app	=	2472,2644
+expr	2653	not		2652
+expr	2654	lam		2644,2653
+expr	2659	lam		1645,1651
+expr	2661	var	zenon_Vhd	
+expr	2663	var	zenon_Vid	
+expr	2675	var	zenon_Vjd	
+expr	2676	app	TLA.in	2675,219
+expr	2677	app	TLA.fapply	26,2675
+expr	2678	app	=	2472,2677
+expr	2679	and		2676,2678
+expr	2680	ex		2675,2679
+expr	2682	var	zenon_Vkd	
+expr	2684	var	zenon_Vld	
+expr	2695	app	TLA.setminus	2682,27
+expr	2696	app	TLA.setOfAll	2695,35
+expr	2697	app	TLA.in	2472,2696
+expr	2698	lam		2682,2697
+expr	2699	app	TLA.setminus	3,2682
+expr	2700	app	TLA.setOfAll	2699,35
+expr	2701	app	TLA.in	2472,2700
+expr	2702	lam		2682,2701
+expr	2703	app	TLA.set	2682
+expr	2704	app	TLA.setminus	3,2703
+expr	2705	app	TLA.setOfAll	2704,35
+expr	2706	app	TLA.in	2472,2705
+expr	2707	lam		2682,2706
+expr	2708	app	TLA.setOfAll	28,2682
+expr	2709	app	TLA.in	2472,2708
+expr	2710	lam		2682,2709
+expr	2711	var	zenon_Vmd	
+expr	2712	app	TLA.in	2711,28
+expr	2713	app	TLA.fapply	26,2711
+expr	2714	app	=	2472,2713
+expr	2715	and		2712,2714
+expr	2716	ex		2711,2715
+expr	2718	var	zenon_Vnd	
+expr	2720	var	zenon_Vod	
+expr	2737	var	zenon_Vpd	
+expr	2739	var	zenon_Vqd	
+expr	2754	app	TLA.setminus	2737,27
+expr	2755	app	TLA.setOfAll	2754,35
+expr	2756	app	TLA.setminus	2755,37
+expr	2757	app	TLA.in	2472,2756
+expr	2758	lam		2737,2757
+expr	2759	app	TLA.setminus	3,2737
+expr	2760	app	TLA.setOfAll	2759,35
+expr	2761	app	TLA.setminus	2760,37
+expr	2762	app	TLA.in	2472,2761
+expr	2763	lam		2737,2762
+expr	2764	app	TLA.set	2737
+expr	2765	app	TLA.setminus	3,2764
+expr	2766	app	TLA.setOfAll	2765,35
+expr	2767	app	TLA.setminus	2766,37
+expr	2768	app	TLA.in	2472,2767
+expr	2769	lam		2737,2768
+expr	2770	app	TLA.setOfAll	28,2737
+expr	2771	app	TLA.setminus	2770,37
+expr	2772	app	TLA.in	2472,2771
+expr	2773	lam		2737,2772
+expr	2774	app	TLA.setminus	256,2737
+expr	2775	app	TLA.in	2472,2774
+expr	2776	lam		2737,2775
+expr	2777	app	TLA.setminus	256,2764
+expr	2778	app	TLA.in	2472,2777
+expr	2779	lam		2737,2778
+expr	2781	var	zenon_Vrd	
+expr	2783	tau		1677,1683
+expr	2785	app	TLA.fapply	2783,41
+expr	2786	app	TLA.fapply	2783,40
+expr	2787	app	TLA.tuple	2785,2786
+expr	2791	var	zenon_Vsd	
+expr	2796	var	zenon_Vtd	
+expr	2798	app	=	2796,2787
+expr	2799	lam		2796,2798
+expr	2803	app	TLA.tuple	2796,2786
+expr	2804	app	=	1569,2803
+expr	2805	lam		2796,2804
+expr	2806	app	TLA.fapply	2796,41
+expr	2807	app	TLA.tuple	2806,2786
+expr	2808	app	=	1569,2807
+expr	2809	lam		2796,2808
+expr	2811	app	TLA.fapply	2783,2796
+expr	2812	app	TLA.tuple	2811,2786
+expr	2813	app	=	1569,2812
+expr	2814	lam		2796,2813
+expr	2815	app	TLA.fapply	2796,40
+expr	2816	app	TLA.fapply	2783,2815
+expr	2817	app	TLA.tuple	2816,2786
+expr	2818	app	=	1569,2817
+expr	2819	lam		2796,2818
+expr	2820	app	TLA.fapply	39,2796
+expr	2821	app	TLA.fapply	2783,2820
+expr	2822	app	TLA.tuple	2821,2786
+expr	2823	app	=	1569,2822
+expr	2824	lam		2796,2823
+expr	2825	app	TLA.fapply	2796,12
+expr	2826	app	TLA.fapply	39,2825
+expr	2827	app	TLA.fapply	2783,2826
+expr	2828	app	TLA.tuple	2827,2786
+expr	2829	app	=	1569,2828
+expr	2830	lam		2796,2829
+expr	2831	app	TLA.fapply	39,2820
+expr	2832	app	TLA.fapply	2783,2831
+expr	2833	app	TLA.tuple	2832,2786
+expr	2834	app	=	1569,2833
+expr	2835	lam		2796,2834
+expr	2836	app	TLA.tuple	2785,2796
+expr	2837	app	=	1569,2836
+expr	2838	lam		2796,2837
+expr	2839	app	TLA.tuple	2785,2815
+expr	2840	app	=	1569,2839
+expr	2841	lam		2796,2840
+expr	2843	app	TLA.tuple	2785,2811
+expr	2844	app	=	1569,2843
+expr	2845	lam		2796,2844
+expr	2846	app	TLA.fapply	2783,2825
+expr	2847	app	TLA.tuple	2785,2846
+expr	2848	app	=	1569,2847
+expr	2849	lam		2796,2848
+expr	2850	app	TLA.tuple	2785,2821
+expr	2851	app	=	1569,2850
+expr	2852	lam		2796,2851
+expr	2854	var	zenon_Vud	
+expr	2856	var	zenon_Vvd	
+expr	2857	app	TLA.in	2783,2856
+expr	2858	lam		2856,2857
+expr	2864	app	TLA.setminus	2854,37
+expr	2865	app	TLA.in	2783,2864
+expr	2866	lam		2854,2865
+expr	2867	app	TLA.setOfAll	2854,35
+expr	2868	app	TLA.setminus	2867,37
+expr	2869	app	TLA.in	2783,2868
+expr	2870	lam		2854,2869
+expr	2880	var	zenon_Vwd	
+expr	2884	var	zenon_Vxd	
+expr	2885	app	TLA.in	2783,2884
+expr	2886	not		2885
+expr	2887	lam		2884,2886
+expr	2895	app	TLA.set	2880
+expr	2896	app	TLA.in	2783,2895
+expr	2897	not		2896
+expr	2898	lam		2880,2897
+expr	2916	var	zenon_Vyd	
+expr	2918	var	zenon_Vzd	
+expr	2926	app	TLA.setOfAll	2916,35
+expr	2927	app	TLA.in	2783,2926
+expr	2928	lam		2916,2927
+expr	2930	var	zenon_Vae	
+expr	2931	app	TLA.in	2930,219
+expr	2932	app	TLA.fapply	26,2930
+expr	2933	app	=	2783,2932
+expr	2934	and		2931,2933
+expr	2935	ex		2930,2934
+expr	2939	var	zenon_Vbe	
+expr	2947	app	=	2783,2939
+expr	2948	not		2947
+expr	2949	lam		2939,2948
+expr	2954	lam		1677,1683
+expr	2956	var	zenon_Vce	
+expr	2958	var	zenon_Vde	
+expr	2969	app	TLA.setminus	2956,27
+expr	2970	app	TLA.setOfAll	2969,35
+expr	2971	app	TLA.in	2783,2970
+expr	2972	lam		2956,2971
+expr	2973	app	TLA.setminus	3,2956
+expr	2974	app	TLA.setOfAll	2973,35
+expr	2975	app	TLA.in	2783,2974
+expr	2976	lam		2956,2975
+expr	2977	app	TLA.set	2956
+expr	2978	app	TLA.setminus	3,2977
+expr	2979	app	TLA.setOfAll	2978,35
+expr	2980	app	TLA.in	2783,2979
+expr	2981	lam		2956,2980
+expr	2982	app	TLA.setOfAll	28,2956
+expr	2983	app	TLA.in	2783,2982
+expr	2984	lam		2956,2983
+expr	2985	var	zenon_Vee	
+expr	2986	app	TLA.in	2985,28
+expr	2987	app	TLA.fapply	26,2985
+expr	2988	app	=	2783,2987
+expr	2989	and		2986,2988
+expr	2990	ex		2985,2989
+expr	2992	var	zenon_Vfe	
+expr	2994	var	zenon_Vge	
+expr	3009	app	TLA.setminus	2992,27
+expr	3010	app	TLA.setOfAll	3009,35
+expr	3011	app	TLA.setminus	3010,37
+expr	3012	app	TLA.in	2783,3011
+expr	3013	lam		2992,3012
+expr	3014	app	TLA.setminus	3,2992
+expr	3015	app	TLA.setOfAll	3014,35
+expr	3016	app	TLA.setminus	3015,37
+expr	3017	app	TLA.in	2783,3016
+expr	3018	lam		2992,3017
+expr	3019	app	TLA.set	2992
+expr	3020	app	TLA.setminus	3,3019
+expr	3021	app	TLA.setOfAll	3020,35
+expr	3022	app	TLA.setminus	3021,37
+expr	3023	app	TLA.in	2783,3022
+expr	3024	lam		2992,3023
+expr	3025	app	TLA.setOfAll	28,2992
+expr	3026	app	TLA.setminus	3025,37
+expr	3027	app	TLA.in	2783,3026
+expr	3028	lam		2992,3027
+expr	3029	app	TLA.setminus	256,2992
+expr	3030	app	TLA.in	2783,3029
+expr	3031	lam		2992,3030
+expr	3032	app	TLA.setminus	256,3019
+expr	3033	app	TLA.in	2783,3032
+expr	3034	lam		2992,3033
+expr	3036	var	zenon_Vhe	
+expr	3038	tau		1743,1749
+expr	3040	app	TLA.fapply	3038,41
+expr	3041	app	TLA.fapply	3038,40
+expr	3042	app	TLA.tuple	3040,3041
+expr	3046	var	zenon_Vie	
+expr	3051	var	zenon_Vje	
+expr	3053	app	=	3051,3042
+expr	3054	lam		3051,3053
+expr	3058	app	TLA.tuple	3051,3041
+expr	3059	app	=	1569,3058
+expr	3060	lam		3051,3059
+expr	3061	app	TLA.fapply	3051,41
+expr	3062	app	TLA.tuple	3061,3041
+expr	3063	app	=	1569,3062
+expr	3064	lam		3051,3063
+expr	3066	app	TLA.fapply	3038,3051
+expr	3067	app	TLA.tuple	3066,3041
+expr	3068	app	=	1569,3067
+expr	3069	lam		3051,3068
+expr	3070	app	TLA.fapply	3051,40
+expr	3071	app	TLA.fapply	3038,3070
+expr	3072	app	TLA.tuple	3071,3041
+expr	3073	app	=	1569,3072
+expr	3074	lam		3051,3073
+expr	3075	app	TLA.fapply	39,3051
+expr	3076	app	TLA.fapply	3038,3075
+expr	3077	app	TLA.tuple	3076,3041
+expr	3078	app	=	1569,3077
+expr	3079	lam		3051,3078
+expr	3080	app	TLA.fapply	3051,12
+expr	3081	app	TLA.fapply	39,3080
+expr	3082	app	TLA.fapply	3038,3081
+expr	3083	app	TLA.tuple	3082,3041
+expr	3084	app	=	1569,3083
+expr	3085	lam		3051,3084
+expr	3086	app	TLA.fapply	39,3075
+expr	3087	app	TLA.fapply	3038,3086
+expr	3088	app	TLA.tuple	3087,3041
+expr	3089	app	=	1569,3088
+expr	3090	lam		3051,3089
+expr	3091	app	TLA.tuple	3040,3051
+expr	3092	app	=	1569,3091
+expr	3093	lam		3051,3092
+expr	3094	app	TLA.tuple	3040,3070
+expr	3095	app	=	1569,3094
+expr	3096	lam		3051,3095
+expr	3098	app	TLA.tuple	3040,3066
+expr	3099	app	=	1569,3098
+expr	3100	lam		3051,3099
+expr	3101	app	TLA.fapply	3038,3080
+expr	3102	app	TLA.tuple	3040,3101
+expr	3103	app	=	1569,3102
+expr	3104	lam		3051,3103
+expr	3105	app	TLA.tuple	3040,3076
+expr	3106	app	=	1569,3105
+expr	3107	lam		3051,3106
+expr	3109	var	zenon_Vke	
+expr	3111	var	zenon_Vle	
+expr	3112	app	TLA.in	3038,3111
+expr	3113	lam		3111,3112
+expr	3119	app	TLA.setminus	3109,37
+expr	3120	app	TLA.in	3038,3119
+expr	3121	lam		3109,3120
+expr	3122	app	TLA.setOfAll	3109,35
+expr	3123	app	TLA.setminus	3122,37
+expr	3124	app	TLA.in	3038,3123
+expr	3125	lam		3109,3124
+expr	3126	app	TLA.setminus	3109,27
+expr	3127	app	TLA.setOfAll	3126,35
+expr	3128	app	TLA.setminus	3127,37
+expr	3129	app	TLA.in	3038,3128
+expr	3130	lam		3109,3129
+expr	3131	app	TLA.setminus	3,3109
+expr	3132	app	TLA.setOfAll	3131,35
+expr	3133	app	TLA.setminus	3132,37
+expr	3134	app	TLA.in	3038,3133
+expr	3135	lam		3109,3134
+expr	3136	app	TLA.set	3109
+expr	3137	app	TLA.setminus	3,3136
+expr	3138	app	TLA.setOfAll	3137,35
+expr	3139	app	TLA.setminus	3138,37
+expr	3140	app	TLA.in	3038,3139
+expr	3141	lam		3109,3140
+expr	3142	app	TLA.setOfAll	28,3109
+expr	3143	app	TLA.setminus	3142,37
+expr	3144	app	TLA.in	3038,3143
+expr	3145	lam		3109,3144
+expr	3146	app	TLA.setminus	256,3109
+expr	3147	app	TLA.in	3038,3146
+expr	3148	lam		3109,3147
+expr	3149	app	TLA.setminus	256,3136
+expr	3150	app	TLA.in	3038,3149
+expr	3151	lam		3109,3150
+expr	3162	var	zenon_Vme	
+expr	3166	var	zenon_Vne	
+expr	3167	app	TLA.in	3038,3166
+expr	3168	not		3167
+expr	3169	lam		3166,3168
+expr	3177	app	TLA.set	3162
+expr	3178	app	TLA.in	3038,3177
+expr	3179	not		3178
+expr	3180	lam		3162,3179
+expr	3200	var	zenon_Voe	
+expr	3202	var	zenon_Vpe	
+expr	3210	app	TLA.setOfAll	3200,35
+expr	3211	app	TLA.in	3038,3210
+expr	3212	lam		3200,3211
+expr	3213	app	TLA.setminus	3200,27
+expr	3214	app	TLA.setOfAll	3213,35
+expr	3215	app	TLA.in	3038,3214
+expr	3216	lam		3200,3215
+expr	3217	app	TLA.setminus	3,3200
+expr	3218	app	TLA.setOfAll	3217,35
+expr	3219	app	TLA.in	3038,3218
+expr	3220	lam		3200,3219
+expr	3221	app	TLA.set	3200
+expr	3222	app	TLA.setminus	3,3221
+expr	3223	app	TLA.setOfAll	3222,35
+expr	3224	app	TLA.in	3038,3223
+expr	3225	lam		3200,3224
+expr	3226	app	TLA.setOfAll	28,3200
+expr	3227	app	TLA.in	3038,3226
+expr	3228	lam		3200,3227
+expr	3229	var	zenon_Vqe	
+expr	3230	app	TLA.in	3229,28
+expr	3231	app	TLA.fapply	26,3229
+expr	3232	app	=	3038,3231
+expr	3233	and		3230,3232
+expr	3234	ex		3229,3233
+expr	3238	var	zenon_Vre	
+expr	3246	app	=	3038,3238
+expr	3247	not		3246
+expr	3248	lam		3238,3247
+expr	3253	lam		1743,1749
+expr	3255	var	zenon_Vse	
+expr	3257	tau		1810,1816
+expr	3259	app	TLA.fapply	3257,41
+expr	3260	app	TLA.fapply	3257,40
+expr	3261	app	TLA.tuple	3259,3260
+expr	3265	var	zenon_Vte	
+expr	3270	var	zenon_Vue	
+expr	3272	app	=	3270,3261
+expr	3273	lam		3270,3272
+expr	3275	app	=	1757,3270
+expr	3276	lam		3270,3275
+expr	3277	app	TLA.tuple	3270,3260
+expr	3278	app	=	1757,3277
+expr	3279	lam		3270,3278
+expr	3280	app	TLA.fapply	3270,41
+expr	3281	app	TLA.tuple	3280,3260
+expr	3282	app	=	1757,3281
+expr	3283	lam		3270,3282
+expr	3285	app	TLA.fapply	3257,3270
+expr	3286	app	TLA.tuple	3285,3260
+expr	3287	app	=	1757,3286
+expr	3288	lam		3270,3287
+expr	3289	app	TLA.fapply	3270,40
+expr	3290	app	TLA.fapply	3257,3289
+expr	3291	app	TLA.tuple	3290,3260
+expr	3292	app	=	1757,3291
+expr	3293	lam		3270,3292
+expr	3294	app	TLA.fapply	39,3270
+expr	3295	app	TLA.fapply	3257,3294
+expr	3296	app	TLA.tuple	3295,3260
+expr	3297	app	=	1757,3296
+expr	3298	lam		3270,3297
+expr	3299	app	TLA.fapply	3270,12
+expr	3300	app	TLA.fapply	39,3299
+expr	3301	app	TLA.fapply	3257,3300
+expr	3302	app	TLA.tuple	3301,3260
+expr	3303	app	=	1757,3302
+expr	3304	lam		3270,3303
+expr	3305	app	TLA.fapply	39,3294
+expr	3306	app	TLA.fapply	3257,3305
+expr	3307	app	TLA.tuple	3306,3260
+expr	3308	app	=	1757,3307
+expr	3309	lam		3270,3308
+expr	3310	app	TLA.tuple	3259,3270
+expr	3311	app	=	1757,3310
+expr	3312	lam		3270,3311
+expr	3313	app	TLA.tuple	3259,3289
+expr	3314	app	=	1757,3313
+expr	3315	lam		3270,3314
+expr	3317	app	TLA.tuple	3259,3285
+expr	3318	app	=	1757,3317
+expr	3319	lam		3270,3318
+expr	3320	app	TLA.fapply	3257,3299
+expr	3321	app	TLA.tuple	3259,3320
+expr	3322	app	=	1757,3321
+expr	3323	lam		3270,3322
+expr	3324	app	TLA.tuple	3259,3295
+expr	3325	app	=	1757,3324
+expr	3326	lam		3270,3325
+expr	3328	var	zenon_Vve	
+expr	3330	var	zenon_Vwe	
+expr	3331	app	TLA.in	3257,3330
+expr	3332	lam		3330,3331
+expr	3338	app	TLA.setminus	3328,37
+expr	3339	app	TLA.in	3257,3338
+expr	3340	lam		3328,3339
+expr	3341	app	TLA.setOfAll	3328,35
+expr	3342	app	TLA.setminus	3341,37
+expr	3343	app	TLA.in	3257,3342
+expr	3344	lam		3328,3343
+expr	3345	var	zenon_Vxe	
+expr	3346	app	TLA.DOMAIN	3345
+expr	3347	app	TLA.setOfAll	3346,35
+expr	3348	app	TLA.setminus	3347,37
+expr	3349	app	TLA.in	3257,3348
+expr	3350	lam		3345,3349
+expr	3369	var	zenon_Vye	
+expr	3373	var	zenon_Vze	
+expr	3374	app	TLA.in	3257,3373
+expr	3375	not		3374
+expr	3376	lam		3373,3375
+expr	3384	app	TLA.set	3369
+expr	3385	app	TLA.in	3257,3384
+expr	3386	not		3385
+expr	3387	lam		3369,3386
+expr	3409	var	zenon_Vaf	
+expr	3411	var	zenon_Vbf	
+expr	3419	app	TLA.setOfAll	3409,35
+expr	3420	app	TLA.in	3257,3419
+expr	3421	lam		3409,3420
+expr	3422	var	zenon_Vcf	
+expr	3423	app	TLA.DOMAIN	3422
+expr	3424	app	TLA.setOfAll	3423,35
+expr	3425	app	TLA.in	3257,3424
+expr	3426	lam		3422,3425
+expr	3432	var	zenon_Vdf	
+expr	3433	app	TLA.in	3432,33
+expr	3434	app	TLA.fapply	26,3432
+expr	3435	app	=	3257,3434
+expr	3436	and		3433,3435
+expr	3437	ex		3432,3436
+expr	3441	var	zenon_Vef	
+expr	3449	app	=	3257,3441
+expr	3450	not		3449
+expr	3451	lam		3441,3450
+expr	3456	lam		1810,1816
+expr	3458	var	zenon_Vff	
+expr	3460	var	zenon_Vgf	
+expr	3472	var	zenon_Vhf	
+expr	3473	app	TLA.in	3472,219
+expr	3474	app	TLA.fapply	26,3472
+expr	3475	app	=	3257,3474
+expr	3476	and		3473,3475
+expr	3477	ex		3472,3476
+expr	3479	var	zenon_Vif	
+expr	3481	var	zenon_Vjf	
+expr	3492	app	TLA.setminus	3479,27
+expr	3493	app	TLA.setOfAll	3492,35
+expr	3494	app	TLA.in	3257,3493
+expr	3495	lam		3479,3494
+expr	3496	app	TLA.setminus	3,3479
+expr	3497	app	TLA.setOfAll	3496,35
+expr	3498	app	TLA.in	3257,3497
+expr	3499	lam		3479,3498
+expr	3500	app	TLA.set	3479
+expr	3501	app	TLA.setminus	3,3500
+expr	3502	app	TLA.setOfAll	3501,35
+expr	3503	app	TLA.in	3257,3502
+expr	3504	lam		3479,3503
+expr	3505	app	TLA.setOfAll	28,3479
+expr	3506	app	TLA.in	3257,3505
+expr	3507	lam		3479,3506
+expr	3508	var	zenon_Vkf	
+expr	3509	app	TLA.in	3508,28
+expr	3510	app	TLA.fapply	26,3508
+expr	3511	app	=	3257,3510
+expr	3512	and		3509,3511
+expr	3513	ex		3508,3512
+expr	3515	var	zenon_Vlf	
+expr	3517	var	zenon_Vmf	
+expr	3534	var	zenon_Vnf	
+expr	3536	var	zenon_Vof	
+expr	3551	app	TLA.setminus	3534,27
+expr	3552	app	TLA.setOfAll	3551,35
+expr	3553	app	TLA.setminus	3552,37
+expr	3554	app	TLA.in	3257,3553
+expr	3555	lam		3534,3554
+expr	3556	app	TLA.setminus	3,3534
+expr	3557	app	TLA.setOfAll	3556,35
+expr	3558	app	TLA.setminus	3557,37
+expr	3559	app	TLA.in	3257,3558
+expr	3560	lam		3534,3559
+expr	3561	app	TLA.set	3534
+expr	3562	app	TLA.setminus	3,3561
+expr	3563	app	TLA.setOfAll	3562,35
+expr	3564	app	TLA.setminus	3563,37
+expr	3565	app	TLA.in	3257,3564
+expr	3566	lam		3534,3565
+expr	3567	app	TLA.setOfAll	28,3534
+expr	3568	app	TLA.setminus	3567,37
+expr	3569	app	TLA.in	3257,3568
+expr	3570	lam		3534,3569
+expr	3571	app	TLA.setminus	256,3534
+expr	3572	app	TLA.in	3257,3571
+expr	3573	lam		3534,3572
+expr	3574	app	TLA.setminus	256,3561
+expr	3575	app	TLA.in	3257,3574
+expr	3576	lam		3534,3575
+expr	3578	var	zenon_Vpf	
+expr	3580	tau		1842,1848
+expr	3582	app	TLA.fapply	3580,41
+expr	3583	app	TLA.fapply	3580,40
+expr	3584	app	TLA.tuple	3582,3583
+expr	3588	var	zenon_Vqf	
+expr	3593	var	zenon_Vrf	
+expr	3595	app	=	3593,3584
+expr	3596	lam		3593,3595
+expr	3600	app	TLA.tuple	3593,3583
+expr	3601	app	=	1757,3600
+expr	3602	lam		3593,3601
+expr	3603	app	TLA.fapply	3593,41
+expr	3604	app	TLA.tuple	3603,3583
+expr	3605	app	=	1757,3604
+expr	3606	lam		3593,3605
+expr	3608	app	TLA.fapply	3580,3593
+expr	3609	app	TLA.tuple	3608,3583
+expr	3610	app	=	1757,3609
+expr	3611	lam		3593,3610
+expr	3612	app	TLA.fapply	3593,40
+expr	3613	app	TLA.fapply	3580,3612
+expr	3614	app	TLA.tuple	3613,3583
+expr	3615	app	=	1757,3614
+expr	3616	lam		3593,3615
+expr	3617	app	TLA.fapply	39,3593
+expr	3618	app	TLA.fapply	3580,3617
+expr	3619	app	TLA.tuple	3618,3583
+expr	3620	app	=	1757,3619
+expr	3621	lam		3593,3620
+expr	3622	app	TLA.fapply	3593,12
+expr	3623	app	TLA.fapply	39,3622
+expr	3624	app	TLA.fapply	3580,3623
+expr	3625	app	TLA.tuple	3624,3583
+expr	3626	app	=	1757,3625
+expr	3627	lam		3593,3626
+expr	3628	app	TLA.fapply	39,3617
+expr	3629	app	TLA.fapply	3580,3628
+expr	3630	app	TLA.tuple	3629,3583
+expr	3631	app	=	1757,3630
+expr	3632	lam		3593,3631
+expr	3633	app	TLA.tuple	3582,3593
+expr	3634	app	=	1757,3633
+expr	3635	lam		3593,3634
+expr	3636	app	TLA.tuple	3582,3612
+expr	3637	app	=	1757,3636
+expr	3638	lam		3593,3637
+expr	3640	app	TLA.tuple	3582,3608
+expr	3641	app	=	1757,3640
+expr	3642	lam		3593,3641
+expr	3643	app	TLA.fapply	3580,3622
+expr	3644	app	TLA.tuple	3582,3643
+expr	3645	app	=	1757,3644
+expr	3646	lam		3593,3645
+expr	3647	app	TLA.tuple	3582,3618
+expr	3648	app	=	1757,3647
+expr	3649	lam		3593,3648
+expr	3651	var	zenon_Vsf	
+expr	3653	var	zenon_Vtf	
+expr	3654	app	TLA.in	3580,3653
+expr	3655	lam		3653,3654
+expr	3661	app	TLA.setminus	3651,37
+expr	3662	app	TLA.in	3580,3661
+expr	3663	lam		3651,3662
+expr	3664	app	TLA.setOfAll	3651,35
+expr	3665	app	TLA.setminus	3664,37
+expr	3666	app	TLA.in	3580,3665
+expr	3667	lam		3651,3666
+expr	3683	var	zenon_Vuf	
+expr	3687	var	zenon_Vvf	
+expr	3688	app	TLA.in	3580,3687
+expr	3689	not		3688
+expr	3690	lam		3687,3689
+expr	3698	app	TLA.set	3683
+expr	3699	app	TLA.in	3580,3698
+expr	3700	not		3699
+expr	3701	lam		3683,3700
+expr	3725	var	zenon_Vwf	
+expr	3727	var	zenon_Vxf	
+expr	3735	app	TLA.setOfAll	3725,35
+expr	3736	app	TLA.in	3580,3735
+expr	3737	lam		3725,3736
+expr	3739	var	zenon_Vyf	
+expr	3740	app	TLA.in	3739,219
+expr	3741	app	TLA.fapply	26,3739
+expr	3742	app	=	3580,3741
+expr	3743	and		3740,3742
+expr	3744	ex		3739,3743
+expr	3748	var	zenon_Vzf	
+expr	3756	app	=	3580,3748
+expr	3757	not		3756
+expr	3758	lam		3748,3757
+expr	3762	lam		1842,1848
+expr	3764	var	zenon_Vag	
+expr	3766	var	zenon_Vbg	
+expr	3777	app	TLA.setminus	3764,27
+expr	3778	app	TLA.setOfAll	3777,35
+expr	3779	app	TLA.in	3580,3778
+expr	3780	lam		3764,3779
+expr	3781	app	TLA.setminus	3,3764
+expr	3782	app	TLA.setOfAll	3781,35
+expr	3783	app	TLA.in	3580,3782
+expr	3784	lam		3764,3783
+expr	3785	app	TLA.set	3764
+expr	3786	app	TLA.setminus	3,3785
+expr	3787	app	TLA.setOfAll	3786,35
+expr	3788	app	TLA.in	3580,3787
+expr	3789	lam		3764,3788
+expr	3790	app	TLA.setOfAll	28,3764
+expr	3791	app	TLA.in	3580,3790
+expr	3792	lam		3764,3791
+expr	3793	var	zenon_Vcg	
+expr	3794	app	TLA.in	3793,28
+expr	3795	app	TLA.fapply	26,3793
+expr	3796	app	=	3580,3795
+expr	3797	and		3794,3796
+expr	3798	ex		3793,3797
+expr	3800	var	zenon_Vdg	
+expr	3802	var	zenon_Veg	
+expr	3817	app	TLA.setminus	3800,27
+expr	3818	app	TLA.setOfAll	3817,35
+expr	3819	app	TLA.setminus	3818,37
+expr	3820	app	TLA.in	3580,3819
+expr	3821	lam		3800,3820
+expr	3822	app	TLA.setminus	3,3800
+expr	3823	app	TLA.setOfAll	3822,35
+expr	3824	app	TLA.setminus	3823,37
+expr	3825	app	TLA.in	3580,3824
+expr	3826	lam		3800,3825
+expr	3827	app	TLA.set	3800
+expr	3828	app	TLA.setminus	3,3827
+expr	3829	app	TLA.setOfAll	3828,35
+expr	3830	app	TLA.setminus	3829,37
+expr	3831	app	TLA.in	3580,3830
+expr	3832	lam		3800,3831
+expr	3833	app	TLA.setOfAll	28,3800
+expr	3834	app	TLA.setminus	3833,37
+expr	3835	app	TLA.in	3580,3834
+expr	3836	lam		3800,3835
+expr	3837	app	TLA.setminus	256,3800
+expr	3838	app	TLA.in	3580,3837
+expr	3839	lam		3800,3838
+expr	3840	app	TLA.setminus	256,3827
+expr	3841	app	TLA.in	3580,3840
+expr	3842	lam		3800,3841
+expr	3844	var	zenon_Vfg	
+expr	3846	tau		1908,1914
+expr	3848	app	TLA.fapply	3846,41
+expr	3849	app	TLA.fapply	3846,40
+expr	3850	app	TLA.tuple	3848,3849
+expr	3854	var	zenon_Vgg	
+expr	3859	var	zenon_Vhg	
+expr	3861	app	=	3859,3850
+expr	3862	lam		3859,3861
+expr	3866	app	TLA.tuple	3859,3849
+expr	3867	app	=	1757,3866
+expr	3868	lam		3859,3867
+expr	3869	app	TLA.fapply	3859,41
+expr	3870	app	TLA.tuple	3869,3849
+expr	3871	app	=	1757,3870
+expr	3872	lam		3859,3871
+expr	3874	app	TLA.fapply	3846,3859
+expr	3875	app	TLA.tuple	3874,3849
+expr	3876	app	=	1757,3875
+expr	3877	lam		3859,3876
+expr	3878	app	TLA.fapply	3859,40
+expr	3879	app	TLA.fapply	3846,3878
+expr	3880	app	TLA.tuple	3879,3849
+expr	3881	app	=	1757,3880
+expr	3882	lam		3859,3881
+expr	3883	app	TLA.fapply	39,3859
+expr	3884	app	TLA.fapply	3846,3883
+expr	3885	app	TLA.tuple	3884,3849
+expr	3886	app	=	1757,3885
+expr	3887	lam		3859,3886
+expr	3888	app	TLA.fapply	3859,12
+expr	3889	app	TLA.fapply	39,3888
+expr	3890	app	TLA.fapply	3846,3889
+expr	3891	app	TLA.tuple	3890,3849
+expr	3892	app	=	1757,3891
+expr	3893	lam		3859,3892
+expr	3894	app	TLA.fapply	39,3883
+expr	3895	app	TLA.fapply	3846,3894
+expr	3896	app	TLA.tuple	3895,3849
+expr	3897	app	=	1757,3896
+expr	3898	lam		3859,3897
+expr	3899	app	TLA.tuple	3848,3859
+expr	3900	app	=	1757,3899
+expr	3901	lam		3859,3900
+expr	3902	app	TLA.tuple	3848,3878
+expr	3903	app	=	1757,3902
+expr	3904	lam		3859,3903
+expr	3906	app	TLA.tuple	3848,3874
+expr	3907	app	=	1757,3906
+expr	3908	lam		3859,3907
+expr	3909	app	TLA.fapply	3846,3888
+expr	3910	app	TLA.tuple	3848,3909
+expr	3911	app	=	1757,3910
+expr	3912	lam		3859,3911
+expr	3913	app	TLA.tuple	3848,3884
+expr	3914	app	=	1757,3913
+expr	3915	lam		3859,3914
+expr	3917	var	zenon_Vig	
+expr	3919	var	zenon_Vjg	
+expr	3920	app	TLA.in	3846,3919
+expr	3921	lam		3919,3920
+expr	3927	app	TLA.setminus	3917,37
+expr	3928	app	TLA.in	3846,3927
+expr	3929	lam		3917,3928
+expr	3930	app	TLA.setOfAll	3917,35
+expr	3931	app	TLA.setminus	3930,37
+expr	3932	app	TLA.in	3846,3931
+expr	3933	lam		3917,3932
+expr	3934	app	TLA.setminus	3917,27
+expr	3935	app	TLA.setOfAll	3934,35
+expr	3936	app	TLA.setminus	3935,37
+expr	3937	app	TLA.in	3846,3936
+expr	3938	lam		3917,3937
+expr	3939	app	TLA.setminus	3,3917
+expr	3940	app	TLA.setOfAll	3939,35
+expr	3941	app	TLA.setminus	3940,37
+expr	3942	app	TLA.in	3846,3941
+expr	3943	lam		3917,3942
+expr	3944	app	TLA.set	3917
+expr	3945	app	TLA.setminus	3,3944
+expr	3946	app	TLA.setOfAll	3945,35
+expr	3947	app	TLA.setminus	3946,37
+expr	3948	app	TLA.in	3846,3947
+expr	3949	lam		3917,3948
+expr	3950	app	TLA.setOfAll	28,3917
+expr	3951	app	TLA.setminus	3950,37
+expr	3952	app	TLA.in	3846,3951
+expr	3953	lam		3917,3952
+expr	3954	app	TLA.setminus	256,3917
+expr	3955	app	TLA.in	3846,3954
+expr	3956	lam		3917,3955
+expr	3957	app	TLA.setminus	256,3944
+expr	3958	app	TLA.in	3846,3957
+expr	3959	lam		3917,3958
+expr	3976	var	zenon_Vkg	
+expr	3980	var	zenon_Vlg	
+expr	3981	app	TLA.in	3846,3980
+expr	3982	not		3981
+expr	3983	lam		3980,3982
+expr	3991	app	TLA.set	3976
+expr	3992	app	TLA.in	3846,3991
+expr	3993	not		3992
+expr	3994	lam		3976,3993
+expr	4020	var	zenon_Vmg	
+expr	4022	var	zenon_Vng	
+expr	4030	app	TLA.setOfAll	4020,35
+expr	4031	app	TLA.in	3846,4030
+expr	4032	lam		4020,4031
+expr	4033	app	TLA.setminus	4020,27
+expr	4034	app	TLA.setOfAll	4033,35
+expr	4035	app	TLA.in	3846,4034
+expr	4036	lam		4020,4035
+expr	4037	app	TLA.setminus	3,4020
+expr	4038	app	TLA.setOfAll	4037,35
+expr	4039	app	TLA.in	3846,4038
+expr	4040	lam		4020,4039
+expr	4041	app	TLA.set	4020
+expr	4042	app	TLA.setminus	3,4041
+expr	4043	app	TLA.setOfAll	4042,35
+expr	4044	app	TLA.in	3846,4043
+expr	4045	lam		4020,4044
+expr	4046	app	TLA.setOfAll	28,4020
+expr	4047	app	TLA.in	3846,4046
+expr	4048	lam		4020,4047
+expr	4049	var	zenon_Vog	
+expr	4050	app	TLA.in	4049,28
+expr	4051	app	TLA.fapply	26,4049
+expr	4052	app	=	3846,4051
+expr	4053	and		4050,4052
+expr	4054	ex		4049,4053
+expr	4058	var	zenon_Vpg	
+expr	4066	app	=	3846,4058
+expr	4067	not		4066
+expr	4068	lam		4058,4067
+expr	4072	lam		1908,1914
+expr	4074	var	zenon_Vqg	
+expr	4076	tau		1962,1968
+expr	4078	app	TLA.fapply	4076,41
+expr	4079	app	TLA.fapply	4076,40
+expr	4080	app	TLA.tuple	4078,4079
+expr	4084	var	zenon_Vrg	
+expr	4089	var	zenon_Vsg	
+expr	4091	app	=	4089,4080
+expr	4092	lam		4089,4091
+expr	4094	app	=	1922,4089
+expr	4095	lam		4089,4094
+expr	4096	app	TLA.tuple	4089,4079
+expr	4097	app	=	1922,4096
+expr	4098	lam		4089,4097
+expr	4099	app	TLA.fapply	4089,41
+expr	4100	app	TLA.tuple	4099,4079
+expr	4101	app	=	1922,4100
+expr	4102	lam		4089,4101
+expr	4104	app	TLA.fapply	4076,4089
+expr	4105	app	TLA.tuple	4104,4079
+expr	4106	app	=	1922,4105
+expr	4107	lam		4089,4106
+expr	4108	app	TLA.fapply	4089,40
+expr	4109	app	TLA.fapply	4076,4108
+expr	4110	app	TLA.tuple	4109,4079
+expr	4111	app	=	1922,4110
+expr	4112	lam		4089,4111
+expr	4113	app	TLA.fapply	39,4089
+expr	4114	app	TLA.fapply	4076,4113
+expr	4115	app	TLA.tuple	4114,4079
+expr	4116	app	=	1922,4115
+expr	4117	lam		4089,4116
+expr	4118	app	TLA.fapply	4089,12
+expr	4119	app	TLA.fapply	39,4118
+expr	4120	app	TLA.fapply	4076,4119
+expr	4121	app	TLA.tuple	4120,4079
+expr	4122	app	=	1922,4121
+expr	4123	lam		4089,4122
+expr	4124	app	TLA.fapply	39,4113
+expr	4125	app	TLA.fapply	4076,4124
+expr	4126	app	TLA.tuple	4125,4079
+expr	4127	app	=	1922,4126
+expr	4128	lam		4089,4127
+expr	4129	app	TLA.tuple	4078,4089
+expr	4130	app	=	1922,4129
+expr	4131	lam		4089,4130
+expr	4132	app	TLA.tuple	4078,4108
+expr	4133	app	=	1922,4132
+expr	4134	lam		4089,4133
+expr	4136	app	TLA.tuple	4078,4104
+expr	4137	app	=	1922,4136
+expr	4138	lam		4089,4137
+expr	4139	app	TLA.fapply	4076,4118
+expr	4140	app	TLA.tuple	4078,4139
+expr	4141	app	=	1922,4140
+expr	4142	lam		4089,4141
+expr	4143	app	TLA.tuple	4078,4114
+expr	4144	app	=	1922,4143
+expr	4145	lam		4089,4144
+expr	4147	var	zenon_Vtg	
+expr	4149	var	zenon_Vug	
+expr	4150	app	TLA.in	4076,4149
+expr	4151	lam		4149,4150
+expr	4157	app	TLA.setminus	4147,37
+expr	4158	app	TLA.in	4076,4157
+expr	4159	lam		4147,4158
+expr	4160	app	TLA.setOfAll	4147,35
+expr	4161	app	TLA.setminus	4160,37
+expr	4162	app	TLA.in	4076,4161
+expr	4163	lam		4147,4162
+expr	4183	var	zenon_Vvg	
+expr	4187	var	zenon_Vwg	
+expr	4188	app	TLA.in	4076,4187
+expr	4189	not		4188
+expr	4190	lam		4187,4189
+expr	4198	app	TLA.set	4183
+expr	4199	app	TLA.in	4076,4198
+expr	4200	not		4199
+expr	4201	lam		4183,4200
+expr	4229	var	zenon_Vxg	
+expr	4231	var	zenon_Vyg	
+expr	4239	app	TLA.setOfAll	4229,35
+expr	4240	app	TLA.in	4076,4239
+expr	4241	lam		4229,4240
+expr	4243	var	zenon_Vzg	
+expr	4244	app	TLA.in	4243,219
+expr	4245	app	TLA.fapply	26,4243
+expr	4246	app	=	4076,4245
+expr	4247	and		4244,4246
+expr	4248	ex		4243,4247
+expr	4252	var	zenon_Vah	
+expr	4260	app	=	4076,4252
+expr	4261	not		4260
+expr	4262	lam		4252,4261
+expr	4267	lam		1962,1968
+expr	4269	var	zenon_Vbh	
+expr	4271	var	zenon_Vch	
+expr	4282	app	TLA.setminus	4269,27
+expr	4283	app	TLA.setOfAll	4282,35
+expr	4284	app	TLA.in	4076,4283
+expr	4285	lam		4269,4284
+expr	4286	app	TLA.setminus	3,4269
+expr	4287	app	TLA.setOfAll	4286,35
+expr	4288	app	TLA.in	4076,4287
+expr	4289	lam		4269,4288
+expr	4290	app	TLA.set	4269
+expr	4291	app	TLA.setminus	3,4290
+expr	4292	app	TLA.setOfAll	4291,35
+expr	4293	app	TLA.in	4076,4292
+expr	4294	lam		4269,4293
+expr	4295	app	TLA.setOfAll	28,4269
+expr	4296	app	TLA.in	4076,4295
+expr	4297	lam		4269,4296
+expr	4298	var	zenon_Vdh	
+expr	4299	app	TLA.in	4298,28
+expr	4300	app	TLA.fapply	26,4298
+expr	4301	app	=	4076,4300
+expr	4302	and		4299,4301
+expr	4303	ex		4298,4302
+expr	4305	var	zenon_Veh	
+expr	4307	var	zenon_Vfh	
+expr	4322	app	TLA.setminus	4305,27
+expr	4323	app	TLA.setOfAll	4322,35
+expr	4324	app	TLA.setminus	4323,37
+expr	4325	app	TLA.in	4076,4324
+expr	4326	lam		4305,4325
+expr	4327	app	TLA.setminus	3,4305
+expr	4328	app	TLA.setOfAll	4327,35
+expr	4329	app	TLA.setminus	4328,37
+expr	4330	app	TLA.in	4076,4329
+expr	4331	lam		4305,4330
+expr	4332	app	TLA.set	4305
+expr	4333	app	TLA.setminus	3,4332
+expr	4334	app	TLA.setOfAll	4333,35
+expr	4335	app	TLA.setminus	4334,37
+expr	4336	app	TLA.in	4076,4335
+expr	4337	lam		4305,4336
+expr	4338	app	TLA.setOfAll	28,4305
+expr	4339	app	TLA.setminus	4338,37
+expr	4340	app	TLA.in	4076,4339
+expr	4341	lam		4305,4340
+expr	4342	app	TLA.setminus	256,4305
+expr	4343	app	TLA.in	4076,4342
+expr	4344	lam		4305,4343
+expr	4345	app	TLA.setminus	256,4332
+expr	4346	app	TLA.in	4076,4345
+expr	4347	lam		4305,4346
+expr	4349	var	zenon_Vgh	
+expr	4351	tau		2028,2034
+expr	4353	app	TLA.fapply	4351,41
+expr	4354	app	TLA.fapply	4351,40
+expr	4355	app	TLA.tuple	4353,4354
+expr	4359	var	zenon_Vhh	
+expr	4364	var	zenon_Vih	
+expr	4366	app	=	4364,4355
+expr	4367	lam		4364,4366
+expr	4371	app	TLA.tuple	4364,4354
+expr	4372	app	=	1922,4371
+expr	4373	lam		4364,4372
+expr	4374	app	TLA.fapply	4364,41
+expr	4375	app	TLA.tuple	4374,4354
+expr	4376	app	=	1922,4375
+expr	4377	lam		4364,4376
+expr	4379	app	TLA.fapply	4351,4364
+expr	4380	app	TLA.tuple	4379,4354
+expr	4381	app	=	1922,4380
+expr	4382	lam		4364,4381
+expr	4383	app	TLA.fapply	4364,40
+expr	4384	app	TLA.fapply	4351,4383
+expr	4385	app	TLA.tuple	4384,4354
+expr	4386	app	=	1922,4385
+expr	4387	lam		4364,4386
+expr	4388	app	TLA.fapply	39,4364
+expr	4389	app	TLA.fapply	4351,4388
+expr	4390	app	TLA.tuple	4389,4354
+expr	4391	app	=	1922,4390
+expr	4392	lam		4364,4391
+expr	4393	app	TLA.fapply	4364,12
+expr	4394	app	TLA.fapply	39,4393
+expr	4395	app	TLA.fapply	4351,4394
+expr	4396	app	TLA.tuple	4395,4354
+expr	4397	app	=	1922,4396
+expr	4398	lam		4364,4397
+expr	4399	app	TLA.fapply	39,4388
+expr	4400	app	TLA.fapply	4351,4399
+expr	4401	app	TLA.tuple	4400,4354
+expr	4402	app	=	1922,4401
+expr	4403	lam		4364,4402
+expr	4404	app	TLA.tuple	4353,4364
+expr	4405	app	=	1922,4404
+expr	4406	lam		4364,4405
+expr	4407	app	TLA.tuple	4353,4383
+expr	4408	app	=	1922,4407
+expr	4409	lam		4364,4408
+expr	4411	app	TLA.tuple	4353,4379
+expr	4412	app	=	1922,4411
+expr	4413	lam		4364,4412
+expr	4414	app	TLA.fapply	4351,4393
+expr	4415	app	TLA.tuple	4353,4414
+expr	4416	app	=	1922,4415
+expr	4417	lam		4364,4416
+expr	4418	app	TLA.tuple	4353,4389
+expr	4419	app	=	1922,4418
+expr	4420	lam		4364,4419
+expr	4422	var	zenon_Vjh	
+expr	4424	var	zenon_Vkh	
+expr	4425	app	TLA.in	4351,4424
+expr	4426	lam		4424,4425
+expr	4432	app	TLA.setminus	4422,37
+expr	4433	app	TLA.in	4351,4432
+expr	4434	lam		4422,4433
+expr	4435	app	TLA.setOfAll	4422,35
+expr	4436	app	TLA.setminus	4435,37
+expr	4437	app	TLA.in	4351,4436
+expr	4438	lam		4422,4437
+expr	4439	app	TLA.setminus	4422,27
+expr	4440	app	TLA.setOfAll	4439,35
+expr	4441	app	TLA.setminus	4440,37
+expr	4442	app	TLA.in	4351,4441
+expr	4443	lam		4422,4442
+expr	4444	app	TLA.setminus	3,4422
+expr	4445	app	TLA.setOfAll	4444,35
+expr	4446	app	TLA.setminus	4445,37
+expr	4447	app	TLA.in	4351,4446
+expr	4448	lam		4422,4447
+expr	4449	app	TLA.set	4422
+expr	4450	app	TLA.setminus	3,4449
+expr	4451	app	TLA.setOfAll	4450,35
+expr	4452	app	TLA.setminus	4451,37
+expr	4453	app	TLA.in	4351,4452
+expr	4454	lam		4422,4453
+expr	4455	app	TLA.setOfAll	28,4422
+expr	4456	app	TLA.setminus	4455,37
+expr	4457	app	TLA.in	4351,4456
+expr	4458	lam		4422,4457
+expr	4459	app	TLA.setminus	256,4422
+expr	4460	app	TLA.in	4351,4459
+expr	4461	lam		4422,4460
+expr	4462	app	TLA.setminus	256,4449
+expr	4463	app	TLA.in	4351,4462
+expr	4464	lam		4422,4463
+expr	4485	var	zenon_Vlh	
+expr	4489	var	zenon_Vmh	
+expr	4490	app	TLA.in	4351,4489
+expr	4491	not		4490
+expr	4492	lam		4489,4491
+expr	4500	app	TLA.set	4485
+expr	4501	app	TLA.in	4351,4500
+expr	4502	not		4501
+expr	4503	lam		4485,4502
+expr	4533	var	zenon_Vnh	
+expr	4535	var	zenon_Voh	
+expr	4543	app	TLA.setOfAll	4533,35
+expr	4544	app	TLA.in	4351,4543
+expr	4545	lam		4533,4544
+expr	4546	app	TLA.setminus	4533,27
+expr	4547	app	TLA.setOfAll	4546,35
+expr	4548	app	TLA.in	4351,4547
+expr	4549	lam		4533,4548
+expr	4550	app	TLA.setminus	3,4533
+expr	4551	app	TLA.setOfAll	4550,35
+expr	4552	app	TLA.in	4351,4551
+expr	4553	lam		4533,4552
+expr	4554	app	TLA.set	4533
+expr	4555	app	TLA.setminus	3,4554
+expr	4556	app	TLA.setOfAll	4555,35
+expr	4557	app	TLA.in	4351,4556
+expr	4558	lam		4533,4557
+expr	4559	app	TLA.setOfAll	28,4533
+expr	4560	app	TLA.in	4351,4559
+expr	4561	lam		4533,4560
+expr	4562	var	zenon_Vph	
+expr	4563	app	TLA.in	4562,28
+expr	4564	app	TLA.fapply	26,4562
+expr	4565	app	=	4351,4564
+expr	4566	and		4563,4565
+expr	4567	ex		4562,4566
+expr	4571	var	zenon_Vqh	
+expr	4579	app	=	4351,4571
+expr	4580	not		4579
+expr	4581	lam		4571,4580
+expr	4585	lam		2028,2034
+expr	4587	var	zenon_Vrh	
+expr	4589	tau		2116,2122
+expr	4591	app	TLA.fapply	4589,41
+expr	4592	app	TLA.fapply	4589,40
+expr	4593	app	TLA.tuple	4591,4592
+expr	4597	var	zenon_Vsh	
+expr	4602	var	zenon_Vth	
+expr	4604	app	=	4602,4593
+expr	4605	lam		4602,4604
+expr	4607	app	=	2042,4602
+expr	4608	lam		4602,4607
+expr	4609	app	TLA.tuple	4602,4592
+expr	4610	app	=	2042,4609
+expr	4611	lam		4602,4610
+expr	4612	app	TLA.fapply	4602,41
+expr	4613	app	TLA.tuple	4612,4592
+expr	4614	app	=	2042,4613
+expr	4615	lam		4602,4614
+expr	4617	app	TLA.fapply	4589,4602
+expr	4618	app	TLA.tuple	4617,4592
+expr	4619	app	=	2042,4618
+expr	4620	lam		4602,4619
+expr	4621	app	TLA.fapply	4602,40
+expr	4622	app	TLA.fapply	4589,4621
+expr	4623	app	TLA.tuple	4622,4592
+expr	4624	app	=	2042,4623
+expr	4625	lam		4602,4624
+expr	4626	app	TLA.fapply	39,4602
+expr	4627	app	TLA.fapply	4589,4626
+expr	4628	app	TLA.tuple	4627,4592
+expr	4629	app	=	2042,4628
+expr	4630	lam		4602,4629
+expr	4631	app	TLA.fapply	4602,12
+expr	4632	app	TLA.fapply	39,4631
+expr	4633	app	TLA.fapply	4589,4632
+expr	4634	app	TLA.tuple	4633,4592
+expr	4635	app	=	2042,4634
+expr	4636	lam		4602,4635
+expr	4637	app	TLA.fapply	39,4626
+expr	4638	app	TLA.fapply	4589,4637
+expr	4639	app	TLA.tuple	4638,4592
+expr	4640	app	=	2042,4639
+expr	4641	lam		4602,4640
+expr	4642	app	TLA.tuple	4591,4602
+expr	4643	app	=	2042,4642
+expr	4644	lam		4602,4643
+expr	4645	app	TLA.tuple	4591,4621
+expr	4646	app	=	2042,4645
+expr	4647	lam		4602,4646
+expr	4649	app	TLA.tuple	4591,4617
+expr	4650	app	=	2042,4649
+expr	4651	lam		4602,4650
+expr	4652	app	TLA.fapply	4589,4631
+expr	4653	app	TLA.tuple	4591,4652
+expr	4654	app	=	2042,4653
+expr	4655	lam		4602,4654
+expr	4656	app	TLA.tuple	4591,4627
+expr	4657	app	=	2042,4656
+expr	4658	lam		4602,4657
+expr	4660	var	zenon_Vuh	
+expr	4662	var	zenon_Vvh	
+expr	4663	app	TLA.in	4589,4662
+expr	4664	lam		4662,4663
+expr	4670	app	TLA.setminus	4660,37
+expr	4671	app	TLA.in	4589,4670
+expr	4672	lam		4660,4671
+expr	4673	app	TLA.setOfAll	4660,35
+expr	4674	app	TLA.setminus	4673,37
+expr	4675	app	TLA.in	4589,4674
+expr	4676	lam		4660,4675
+expr	4677	app	TLA.setminus	4660,27
+expr	4678	app	TLA.setOfAll	4677,35
+expr	4679	app	TLA.setminus	4678,37
+expr	4680	app	TLA.in	4589,4679
+expr	4681	lam		4660,4680
+expr	4682	app	TLA.setminus	3,4660
+expr	4683	app	TLA.setOfAll	4682,35
+expr	4684	app	TLA.setminus	4683,37
+expr	4685	app	TLA.in	4589,4684
+expr	4686	lam		4660,4685
+expr	4687	app	TLA.set	4660
+expr	4688	app	TLA.setminus	3,4687
+expr	4689	app	TLA.setOfAll	4688,35
+expr	4690	app	TLA.setminus	4689,37
+expr	4691	app	TLA.in	4589,4690
+expr	4692	lam		4660,4691
+expr	4693	app	TLA.setOfAll	28,4660
+expr	4694	app	TLA.setminus	4693,37
+expr	4695	app	TLA.in	4589,4694
+expr	4696	lam		4660,4695
+expr	4697	app	TLA.setminus	256,4660
+expr	4698	app	TLA.in	4589,4697
+expr	4699	lam		4660,4698
+expr	4700	app	TLA.setminus	256,4687
+expr	4701	app	TLA.in	4589,4700
+expr	4702	lam		4660,4701
+expr	4725	var	zenon_Vwh	
+expr	4729	var	zenon_Vxh	
+expr	4730	app	TLA.in	4589,4729
+expr	4731	not		4730
+expr	4732	lam		4729,4731
+expr	4740	app	TLA.set	4725
+expr	4741	app	TLA.in	4589,4740
+expr	4742	not		4741
+expr	4743	lam		4725,4742
+expr	4775	var	zenon_Vyh	
+expr	4777	var	zenon_Vzh	
+expr	4785	app	TLA.setOfAll	4775,35
+expr	4786	app	TLA.in	4589,4785
+expr	4787	lam		4775,4786
+expr	4788	app	TLA.setminus	4775,27
+expr	4789	app	TLA.setOfAll	4788,35
+expr	4790	app	TLA.in	4589,4789
+expr	4791	lam		4775,4790
+expr	4792	app	TLA.setminus	3,4775
+expr	4793	app	TLA.setOfAll	4792,35
+expr	4794	app	TLA.in	4589,4793
+expr	4795	lam		4775,4794
+expr	4796	app	TLA.set	4775
+expr	4797	app	TLA.setminus	3,4796
+expr	4798	app	TLA.setOfAll	4797,35
+expr	4799	app	TLA.in	4589,4798
+expr	4800	lam		4775,4799
+expr	4801	app	TLA.setOfAll	28,4775
+expr	4802	app	TLA.in	4589,4801
+expr	4803	lam		4775,4802
+expr	4804	var	zenon_Vai	
+expr	4805	app	TLA.in	4804,28
+expr	4806	app	TLA.fapply	26,4804
+expr	4807	app	=	4589,4806
+expr	4808	and		4805,4807
+expr	4809	ex		4804,4808
+expr	4813	var	zenon_Vbi	
+expr	4821	app	=	4589,4813
+expr	4822	not		4821
+expr	4823	lam		4813,4822
+expr	4828	lam		2116,2122
+expr	4832	var	zenon_Vci	
+expr	4836	app	=	4832,37
+expr	4837	not		4836
+expr	4838	lam		4832,4837
+expr	4839	app	TLA.setminus	4832,37
+expr	4840	app	=	4839,37
+expr	4841	not		4840
+expr	4842	lam		4832,4841
+expr	4843	app	TLA.setOfAll	4832,35
+expr	4844	app	TLA.setminus	4843,37
+expr	4845	app	=	4844,37
+expr	4846	not		4845
+expr	4847	lam		4832,4846
+expr	4848	var	zenon_Vdi	
+expr	4849	app	TLA.DOMAIN	4848
+expr	4850	app	TLA.setOfAll	4849,35
+expr	4851	app	TLA.setminus	4850,37
+expr	4852	app	=	4851,37
+expr	4853	not		4852
+expr	4854	lam		4848,4853
+expr	4861	var	zenon_Vei	
+expr	4862	app	TLA.in	4861,38
+expr	4863	app	TLA.in	4861,37
+expr	4864	equiv		4862,4863
+expr	4865	all		4861,4864
+expr	4870	var	zenon_Vfi	
+expr	4886	var	zenon_Vgi	
+expr	4887	app	TLA.in	4886,221
+expr	4888	app	TLA.in	4886,37
+expr	4889	equiv		4887,4888
+expr	4890	all		4886,4889
+expr	4895	var	zenon_Vhi	
+expr	4911	app	TLA.setminus	4895,27
+expr	4912	app	TLA.setOfAll	4911,35
+expr	4913	app	TLA.setminus	4912,37
+expr	4914	app	=	4913,37
+expr	4915	not		4914
+expr	4916	lam		4895,4915
+expr	4917	app	TLA.setminus	3,4895
+expr	4918	app	TLA.setOfAll	4917,35
+expr	4919	app	TLA.setminus	4918,37
+expr	4920	app	=	4919,37
+expr	4921	not		4920
+expr	4922	lam		4895,4921
+expr	4923	app	TLA.set	4895
+expr	4924	app	TLA.setminus	3,4923
+expr	4925	app	TLA.setOfAll	4924,35
+expr	4926	app	TLA.setminus	4925,37
+expr	4927	app	=	4926,37
+expr	4928	not		4927
+expr	4929	lam		4895,4928
+expr	4930	app	TLA.setOfAll	28,4895
+expr	4931	app	TLA.setminus	4930,37
+expr	4932	app	=	4931,37
+expr	4933	not		4932
+expr	4934	lam		4895,4933
+expr	4935	app	TLA.setminus	256,4895
+expr	4936	app	=	4935,37
+expr	4937	not		4936
+expr	4938	lam		4895,4937
+expr	4939	app	TLA.setminus	256,4923
+expr	4940	app	=	4939,37
+expr	4941	not		4940
+expr	4942	lam		4895,4941
+expr	4943	app	=	257,4895
+expr	4944	not		4943
+expr	4945	lam		4895,4944
+expr	4946	app	=	257,4923
+expr	4947	not		4946
+expr	4948	lam		4895,4947
+expr	4949	var	zenon_Vii	
+expr	4950	app	TLA.in	4949,257
+expr	4951	app	TLA.in	4949,37
+expr	4952	equiv		4950,4951
+expr	4953	all		4949,4952
+expr	4958	var	zenon_Vji	
+expr	4965	var	zenon_Vki	
+expr	4966	app	TLA.in	4965,55
+expr	4967	app	TLA.in	4965,37
+expr	4968	equiv		4966,4967
+expr	4969	all		4965,4968
+expr	4976	var	zenon_Vli	
+expr	4983	app	TLA.setOfAll	4976,58
+expr	4984	app	=	4983,37
+expr	4985	not		4984
+expr	4986	lam		4976,4985
+expr	4987	app	TLA.setminus	4976,37
+expr	4988	app	TLA.setOfAll	4987,58
+expr	4989	app	=	4988,37
+expr	4990	not		4989
+expr	4991	lam		4976,4990
+expr	4992	app	TLA.setOfAll	4976,35
+expr	4993	app	TLA.setminus	4992,37
+expr	4994	app	TLA.setOfAll	4993,58
+expr	4995	app	=	4994,37
+expr	4996	not		4995
+expr	4997	lam		4976,4996
+expr	4998	app	TLA.setminus	4976,27
+expr	4999	app	TLA.setOfAll	4998,35
+expr	5000	app	TLA.setminus	4999,37
+expr	5001	app	TLA.setOfAll	5000,58
+expr	5002	app	=	5001,37
+expr	5003	not		5002
+expr	5004	lam		4976,5003
+expr	5005	app	TLA.setminus	3,4976
+expr	5006	app	TLA.setOfAll	5005,35
+expr	5007	app	TLA.setminus	5006,37
+expr	5008	app	TLA.setOfAll	5007,58
+expr	5009	app	=	5008,37
+expr	5010	not		5009
+expr	5011	lam		4976,5010
+expr	5012	app	TLA.set	4976
+expr	5013	app	TLA.setminus	3,5012
+expr	5014	app	TLA.setOfAll	5013,35
+expr	5015	app	TLA.setminus	5014,37
+expr	5016	app	TLA.setOfAll	5015,58
+expr	5017	app	=	5016,37
+expr	5018	not		5017
+expr	5019	lam		4976,5018
+expr	5020	app	TLA.setOfAll	28,4976
+expr	5021	app	TLA.setminus	5020,37
+expr	5022	app	TLA.setOfAll	5021,58
+expr	5023	app	=	5022,37
+expr	5024	not		5023
+expr	5025	lam		4976,5024
+expr	5026	app	TLA.setminus	256,4976
+expr	5027	app	TLA.setOfAll	5026,58
+expr	5028	app	=	5027,37
+expr	5029	not		5028
+expr	5030	lam		4976,5029
+expr	5031	app	TLA.setminus	256,5012
+expr	5032	app	TLA.setOfAll	5031,58
+expr	5033	app	=	5032,37
+expr	5034	not		5033
+expr	5035	lam		4976,5034
+expr	5036	app	TLA.setOfAll	257,4976
+expr	5037	app	=	5036,37
+expr	5038	not		5037
+expr	5039	lam		4976,5038
+expr	5043	app	=	258,5012
+expr	5044	not		5043
+expr	5045	lam		4976,5044
+expr	5046	var	zenon_Vmi	
+expr	5047	app	TLA.in	5046,258
+expr	5048	app	TLA.in	5046,37
+expr	5049	equiv		5047,5048
+expr	5050	all		5046,5049
+expr	5057	var	zenon_Vni	
+expr	5079	var	zenon_Voi	
+expr	5080	app	TLA.in	5079,222
+expr	5081	app	TLA.in	5079,37
+expr	5082	equiv		5080,5081
+expr	5083	all		5079,5082
+expr	5090	var	zenon_Vpi	
+expr	5112	var	zenon_Vqi	
+expr	5113	app	TLA.DOMAIN	5112
+expr	5114	app	TLA.setOfAll	5113,35
+expr	5115	app	TLA.setminus	5114,37
+expr	5116	app	TLA.setOfAll	5115,58
+expr	5117	app	=	5116,37
+expr	5118	not		5117
+expr	5119	lam		5112,5118
+expr	5127	var	zenon_Vri	
+expr	5128	app	TLA.in	5127,126
+expr	5129	app	TLA.in	5127,37
+expr	5130	equiv		5128,5129
+expr	5131	all		5127,5130
+expr	5138	var	zenon_Vsi	
+expr	5149	var	zenon_Vti	
+expr	5150	app	TLA.in	5149,59
+expr	5151	app	TLA.in	5149,37
+expr	5152	equiv		5150,5151
+expr	5153	all		5149,5152
+expr	5156	var	zenon_Vui	
+expr	5158	tau		2310,2314
+expr	5159	app	TLA.in	5158,33
+expr	5160	app	TLA.fapply	26,5158
+expr	5161	app	=	2127,5160
+expr	5162	and		5159,5161
+expr	5164	var	zenon_Vvi	
+expr	5169	var	zenon_Vwi	
+expr	5171	app	=	5169,5160
+expr	5172	lam		5169,5171
+expr	5174	app	=	2127,5169
+expr	5175	lam		5169,5174
+expr	5176	app	TLA.fapply	5169,5158
+expr	5177	app	=	2127,5176
+expr	5178	lam		5169,5177
+expr	5179	app	TLA.fapply	31,5158
+expr	5180	app	=	2127,5179
+expr	5188	var	zenon_Vxi	
+expr	5190	var	zenon_Vyi	
+expr	5191	app	TLA.in	5158,5190
+expr	5192	lam		5190,5191
+expr	5193	app	TLA.in	5188,33
+expr	5194	lam		5188,5193
+expr	5198	var	zenon_Vzi	
+expr	5199	app	TLA.DOMAIN	5198
+expr	5200	app	TLA.in	5158,5199
+expr	5201	lam		5198,5200
+expr	5205	app	TLA.in	5158,219
+expr	5229	var	zenon_Vaj	
+expr	5231	var	zenon_Vbj	
+expr	5234	app	TLA.in	5229,219
+expr	5235	lam		5229,5234
+expr	5239	app	TLA.in	5158,28
+expr	5242	not		5239
+expr	5243	var	zenon_Vcj	
+expr	5245	var	zenon_Vdj	
+expr	5248	app	TLA.in	5243,28
+expr	5249	lam		5243,5248
+expr	5253	app	TLA.setminus	5243,27
+expr	5254	app	TLA.in	5158,5253
+expr	5255	lam		5243,5254
+expr	5256	app	TLA.setminus	3,5243
+expr	5257	app	TLA.in	5158,5256
+expr	5258	lam		5243,5257
+expr	5259	app	TLA.set	5243
+expr	5260	app	TLA.setminus	3,5259
+expr	5261	app	TLA.in	5158,5260
+expr	5262	lam		5243,5261
+expr	5269	var	zenon_Vej	
+expr	5273	var	zenon_Vfj	
+expr	5274	app	TLA.in	5158,5273
+expr	5275	not		5274
+expr	5276	lam		5273,5275
+expr	5277	app	TLA.in	5269,27
+expr	5278	not		5277
+expr	5279	lam		5269,5278
+expr	5284	app	TLA.set	5269
+expr	5285	app	TLA.in	5158,5284
+expr	5286	not		5285
+expr	5287	lam		5269,5286
+expr	5349	var	zenon_Vgj	
+expr	5351	var	zenon_Vhj	
+expr	5354	app	TLA.in	5349,3
+expr	5355	lam		5349,5354
+expr	5364	var	zenon_Vij	
+expr	5368	app	=	5364,5
+expr	5369	not		5368
+expr	5370	lam		5364,5369
+expr	5372	app	=	5158,5364
+expr	5373	not		5372
+expr	5374	lam		5364,5373
+expr	5381	lam		2310,2314
+expr	5385	var	zenon_Vjj	
+expr	5387	app	=	5385,5179
+expr	5388	lam		5385,5387
+expr	5396	var	zenon_Vkj	
+expr	5398	var	zenon_Vlj	
+expr	5401	app	TLA.in	5396,65
+expr	5402	lam		5396,5401
+expr	5407	var	zenon_Vmj	
+expr	5411	var	zenon_Vnj	
+expr	5412	app	TLA.in	1569,5411
+expr	5413	not		5412
+expr	5414	lam		5411,5413
+expr	5415	app	TLA.in	5407,59
+expr	5416	not		5415
+expr	5417	lam		5407,5416
+expr	5422	app	TLA.setOfAll	5407,58
+expr	5423	app	TLA.in	1569,5422
+expr	5424	not		5423
+expr	5425	lam		5407,5424
+expr	5426	var	zenon_Voj	
+expr	5437	var	zenon_Vpj	
+expr	5441	app	=	5437,27
+expr	5442	not		5441
+expr	5443	lam		5437,5442
+expr	5444	app	TLA.cup	5437,27
+expr	5445	app	=	5444,27
+expr	5446	not		5445
+expr	5447	lam		5437,5446
+expr	5448	app	TLA.setOfAll	5437,43
+expr	5449	app	TLA.cup	5448,27
+expr	5450	app	=	5449,27
+expr	5451	not		5450
+expr	5452	lam		5437,5451
+expr	5453	app	TLA.setminus	5437,37
+expr	5454	app	TLA.setOfAll	5453,43
+expr	5455	app	TLA.cup	5454,27
+expr	5456	app	=	5455,27
+expr	5457	not		5456
+expr	5458	lam		5437,5457
+expr	5459	app	TLA.setOfAll	5437,35
+expr	5460	app	TLA.setminus	5459,37
+expr	5461	app	TLA.setOfAll	5460,43
+expr	5462	app	TLA.cup	5461,27
+expr	5463	app	=	5462,27
+expr	5464	not		5463
+expr	5465	lam		5437,5464
+expr	5466	var	zenon_Vqj	
+expr	5467	app	TLA.DOMAIN	5466
+expr	5468	app	TLA.setOfAll	5467,35
+expr	5469	app	TLA.setminus	5468,37
+expr	5470	app	TLA.setOfAll	5469,43
+expr	5471	app	TLA.cup	5470,27
+expr	5472	app	=	5471,27
+expr	5473	not		5472
+expr	5474	lam		5466,5473
+expr	5485	var	zenon_Vrj	
+expr	5486	app	TLA.in	5485,45
+expr	5487	app	TLA.in	5485,27
+expr	5488	equiv		5486,5487
+expr	5489	all		5485,5488
+expr	5490	not		5489
+expr	5494	var	zenon_Vsj	
+expr	5525	var	zenon_Vtj	
+expr	5526	app	TLA.in	5525,698
+expr	5527	app	TLA.in	5525,27
+expr	5528	equiv		5526,5527
+expr	5529	all		5525,5528
+expr	5534	var	zenon_Vuj	
+expr	5563	app	TLA.setminus	5534,27
+expr	5564	app	TLA.setOfAll	5563,35
+expr	5565	app	TLA.setminus	5564,37
+expr	5566	app	TLA.setOfAll	5565,43
+expr	5567	app	TLA.cup	5566,27
+expr	5568	app	=	5567,27
+expr	5569	not		5568
+expr	5570	lam		5534,5569
+expr	5571	app	TLA.setminus	3,5534
+expr	5572	app	TLA.setOfAll	5571,35
+expr	5573	app	TLA.setminus	5572,37
+expr	5574	app	TLA.setOfAll	5573,43
+expr	5575	app	TLA.cup	5574,27
+expr	5576	app	=	5575,27
+expr	5577	not		5576
+expr	5578	lam		5534,5577
+expr	5579	app	TLA.set	5534
+expr	5580	app	TLA.setminus	3,5579
+expr	5581	app	TLA.setOfAll	5580,35
+expr	5582	app	TLA.setminus	5581,37
+expr	5583	app	TLA.setOfAll	5582,43
+expr	5584	app	TLA.cup	5583,27
+expr	5585	app	=	5584,27
+expr	5586	not		5585
+expr	5587	lam		5534,5586
+expr	5588	app	TLA.setOfAll	28,5534
+expr	5589	app	TLA.setminus	5588,37
+expr	5590	app	TLA.setOfAll	5589,43
+expr	5591	app	TLA.cup	5590,27
+expr	5592	app	=	5591,27
+expr	5593	not		5592
+expr	5594	lam		5534,5593
+expr	5595	app	TLA.setminus	256,5534
+expr	5596	app	TLA.setOfAll	5595,43
+expr	5597	app	TLA.cup	5596,27
+expr	5598	app	=	5597,27
+expr	5599	not		5598
+expr	5600	lam		5534,5599
+expr	5601	app	TLA.setminus	256,5579
+expr	5602	app	TLA.setOfAll	5601,43
+expr	5603	app	TLA.cup	5602,27
+expr	5604	app	=	5603,27
+expr	5605	not		5604
+expr	5606	lam		5534,5605
+expr	5607	app	TLA.setOfAll	257,5534
+expr	5608	app	TLA.cup	5607,27
+expr	5609	app	=	5608,27
+expr	5610	not		5609
+expr	5611	lam		5534,5610
+expr	5612	app	TLA.cup	827,5534
+expr	5613	app	=	5612,27
+expr	5614	not		5613
+expr	5615	lam		5534,5614
+expr	5616	app	TLA.cup	827,5579
+expr	5617	app	=	5616,27
+expr	5618	not		5617
+expr	5619	lam		5534,5618
+expr	5620	app	=	828,5534
+expr	5621	not		5620
+expr	5622	lam		5534,5621
+expr	5623	app	=	828,5579
+expr	5624	not		5623
+expr	5625	lam		5534,5624
+expr	5626	var	zenon_Vvj	
+expr	5627	app	TLA.in	5626,828
+expr	5628	app	TLA.in	5626,27
+expr	5629	equiv		5627,5628
+expr	5630	all		5626,5629
+expr	5633	var	zenon_Vwj	
+expr	5637	not		5488
+expr	5638	tau		5485,5637
+expr	5639	app	TLA.in	5638,45
+expr	5640	app	TLA.in	5638,27
+expr	5641	equiv		5639,5640
+expr	5642	not		5641
+expr	5643	ex		5485,5637
+expr	5645	var	zenon_Vxj	
+expr	5649	var	zenon_Vyj	
+expr	5653	not		5639
+expr	5654	not		5640
+expr	5656	var	zenon_Vzj	
+expr	5660	var	zenon_Vak	
+expr	5661	app	TLA.in	5638,5660
+expr	5662	not		5661
+expr	5663	lam		5660,5662
+expr	5671	app	TLA.set	5656
+expr	5672	app	TLA.in	5638,5671
+expr	5673	not		5672
+expr	5674	lam		5656,5673
+expr	5677	var	zenon_Vbk	
+expr	5679	var	zenon_Vck	
+expr	5680	app	TLA.in	5638,5679
+expr	5681	lam		5679,5680
+expr	5682	app	TLA.in	5677,45
+expr	5683	lam		5677,5682
+expr	5687	app	TLA.cup	5677,27
+expr	5688	app	TLA.in	5638,5687
+expr	5689	lam		5677,5688
+expr	5690	app	TLA.setOfAll	5677,43
+expr	5691	app	TLA.cup	5690,27
+expr	5692	app	TLA.in	5638,5691
+expr	5693	lam		5677,5692
+expr	5694	app	TLA.setminus	5677,37
+expr	5695	app	TLA.setOfAll	5694,43
+expr	5696	app	TLA.cup	5695,27
+expr	5697	app	TLA.in	5638,5696
+expr	5698	lam		5677,5697
+expr	5699	app	TLA.setOfAll	5677,35
+expr	5700	app	TLA.setminus	5699,37
+expr	5701	app	TLA.setOfAll	5700,43
+expr	5702	app	TLA.cup	5701,27
+expr	5703	app	TLA.in	5638,5702
+expr	5704	lam		5677,5703
+expr	5705	var	zenon_Vdk	
+expr	5706	app	TLA.DOMAIN	5705
+expr	5707	app	TLA.setOfAll	5706,35
+expr	5708	app	TLA.setminus	5707,37
+expr	5709	app	TLA.setOfAll	5708,43
+expr	5710	app	TLA.cup	5709,27
+expr	5711	app	TLA.in	5638,5710
+expr	5712	lam		5705,5711
+expr	5721	app	TLA.in	5638,44
+expr	5727	var	zenon_Vek	
+expr	5735	app	=	5638,5727
+expr	5736	not		5735
+expr	5737	lam		5727,5736
+expr	5744	lam		5485,5637
+expr	5745	not		5721
+expr	5746	var	zenon_Vfk	
+expr	5748	var	zenon_Vgk	
+expr	5751	app	TLA.in	5746,44
+expr	5752	lam		5746,5751
+expr	5756	app	TLA.setOfAll	5746,43
+expr	5757	app	TLA.in	5638,5756
+expr	5758	lam		5746,5757
+expr	5759	app	TLA.setminus	5746,37
+expr	5760	app	TLA.setOfAll	5759,43
+expr	5761	app	TLA.in	5638,5760
+expr	5762	lam		5746,5761
+expr	5763	app	TLA.setOfAll	5746,35
+expr	5764	app	TLA.setminus	5763,37
+expr	5765	app	TLA.setOfAll	5764,43
+expr	5766	app	TLA.in	5638,5765
+expr	5767	lam		5746,5766
+expr	5768	var	zenon_Vhk	
+expr	5769	app	TLA.DOMAIN	5768
+expr	5770	app	TLA.setOfAll	5769,35
+expr	5771	app	TLA.setminus	5770,37
+expr	5772	app	TLA.setOfAll	5771,43
+expr	5773	app	TLA.in	5638,5772
+expr	5774	lam		5768,5773
+expr	5782	var	zenon_Vik	
+expr	5783	app	TLA.in	5782,38
+expr	5784	app	TLA.fapply	5782,41
+expr	5785	app	=	5638,5784
+expr	5786	and		5783,5785
+expr	5787	ex		5782,5786
+expr	5791	var	zenon_Vjk	
+expr	5793	var	zenon_Vkk	
+expr	5796	app	TLA.in	5791,697
+expr	5797	lam		5791,5796
+expr	5814	var	zenon_Vlk	
+expr	5815	app	TLA.in	5814,221
+expr	5816	app	TLA.fapply	5814,41
+expr	5817	app	=	5638,5816
+expr	5818	and		5815,5817
+expr	5819	ex		5814,5818
+expr	5823	var	zenon_Vmk	
+expr	5825	var	zenon_Vnk	
+expr	5828	app	TLA.in	5823,827
+expr	5829	lam		5823,5828
+expr	5845	app	TLA.setminus	5823,27
+expr	5846	app	TLA.setOfAll	5845,35
+expr	5847	app	TLA.setminus	5846,37
+expr	5848	app	TLA.setOfAll	5847,43
+expr	5849	app	TLA.in	5638,5848
+expr	5850	lam		5823,5849
+expr	5851	app	TLA.setminus	3,5823
+expr	5852	app	TLA.setOfAll	5851,35
+expr	5853	app	TLA.setminus	5852,37
+expr	5854	app	TLA.setOfAll	5853,43
+expr	5855	app	TLA.in	5638,5854
+expr	5856	lam		5823,5855
+expr	5857	app	TLA.set	5823
+expr	5858	app	TLA.setminus	3,5857
+expr	5859	app	TLA.setOfAll	5858,35
+expr	5860	app	TLA.setminus	5859,37
+expr	5861	app	TLA.setOfAll	5860,43
+expr	5862	app	TLA.in	5638,5861
+expr	5863	lam		5823,5862
+expr	5864	app	TLA.setOfAll	28,5823
+expr	5865	app	TLA.setminus	5864,37
+expr	5866	app	TLA.setOfAll	5865,43
+expr	5867	app	TLA.in	5638,5866
+expr	5868	lam		5823,5867
+expr	5869	app	TLA.setminus	256,5823
+expr	5870	app	TLA.setOfAll	5869,43
+expr	5871	app	TLA.in	5638,5870
+expr	5872	lam		5823,5871
+expr	5873	app	TLA.setminus	256,5857
+expr	5874	app	TLA.setOfAll	5873,43
+expr	5875	app	TLA.in	5638,5874
+expr	5876	lam		5823,5875
+expr	5877	app	TLA.setOfAll	257,5823
+expr	5878	app	TLA.in	5638,5877
+expr	5879	lam		5823,5878
+expr	5880	var	zenon_Vok	
+expr	5881	app	TLA.in	5880,257
+expr	5882	app	TLA.fapply	5880,41
+expr	5883	app	=	5638,5882
+expr	5884	and		5881,5883
+expr	5885	ex		5880,5884
+expr	5889	var	zenon_Vpk	
+expr	5891	var	zenon_Vqk	
+expr	5894	app	TLA.in	5889,698
+expr	5895	lam		5889,5894
+expr	5919	var	zenon_Vrk	
+expr	5921	var	zenon_Vsk	
+expr	5924	app	TLA.in	5919,828
+expr	5925	lam		5919,5924
+expr	5947	app	TLA.setminus	5919,27
+expr	5948	app	TLA.setOfAll	5947,35
+expr	5949	app	TLA.setminus	5948,37
+expr	5950	app	TLA.setOfAll	5949,43
+expr	5951	app	TLA.cup	5950,27
+expr	5952	app	TLA.in	5638,5951
+expr	5953	lam		5919,5952
+expr	5954	app	TLA.setminus	3,5919
+expr	5955	app	TLA.setOfAll	5954,35
+expr	5956	app	TLA.setminus	5955,37
+expr	5957	app	TLA.setOfAll	5956,43
+expr	5958	app	TLA.cup	5957,27
+expr	5959	app	TLA.in	5638,5958
+expr	5960	lam		5919,5959
+expr	5961	app	TLA.set	5919
+expr	5962	app	TLA.setminus	3,5961
+expr	5963	app	TLA.setOfAll	5962,35
+expr	5964	app	TLA.setminus	5963,37
+expr	5965	app	TLA.setOfAll	5964,43
+expr	5966	app	TLA.cup	5965,27
+expr	5967	app	TLA.in	5638,5966
+expr	5968	lam		5919,5967
+expr	5969	app	TLA.setOfAll	28,5919
+expr	5970	app	TLA.setminus	5969,37
+expr	5971	app	TLA.setOfAll	5970,43
+expr	5972	app	TLA.cup	5971,27
+expr	5973	app	TLA.in	5638,5972
+expr	5974	lam		5919,5973
+expr	5975	app	TLA.setminus	256,5919
+expr	5976	app	TLA.setOfAll	5975,43
+expr	5977	app	TLA.cup	5976,27
+expr	5978	app	TLA.in	5638,5977
+expr	5979	lam		5919,5978
+expr	5980	app	TLA.setminus	256,5961
+expr	5981	app	TLA.setOfAll	5980,43
+expr	5982	app	TLA.cup	5981,27
+expr	5983	app	TLA.in	5638,5982
+expr	5984	lam		5919,5983
+expr	5985	app	TLA.setOfAll	257,5919
+expr	5986	app	TLA.cup	5985,27
+expr	5987	app	TLA.in	5638,5986
+expr	5988	lam		5919,5987
+expr	5989	app	TLA.cup	827,5919
+expr	5990	app	TLA.in	5638,5989
+expr	5991	lam		5919,5990
+expr	5992	app	TLA.cup	827,5961
+expr	5993	app	TLA.in	5638,5992
+expr	5994	lam		5919,5993
+expr	5996	var	zenon_Vtk	
+expr	6000	not		5528
+expr	6001	tau		5525,6000
+expr	6006	ex		5525,6000
+expr	6008	var	zenon_Vuk	
+expr	6012	var	zenon_Vvk	
+expr	6019	var	zenon_Vwk	
+expr	6023	var	zenon_Vxk	
+expr	6024	app	TLA.in	6001,6023
+expr	6025	not		6024
+expr	6026	lam		6023,6025
+expr	6034	app	TLA.set	6019
+expr	6035	app	TLA.in	6001,6034
+expr	6036	not		6035
+expr	6037	lam		6019,6036
+expr	6042	var	zenon_Vyk	
+expr	6044	var	zenon_Vzk	
+expr	6045	app	TLA.in	6001,6044
+expr	6046	lam		6044,6045
+expr	6052	app	TLA.cup	6042,27
+expr	6053	app	TLA.in	6001,6052
+expr	6054	lam		6042,6053
+expr	6055	app	TLA.setOfAll	6042,43
+expr	6056	app	TLA.cup	6055,27
+expr	6057	app	TLA.in	6001,6056
+expr	6058	lam		6042,6057
+expr	6059	app	TLA.setminus	6042,37
+expr	6060	app	TLA.setOfAll	6059,43
+expr	6061	app	TLA.cup	6060,27
+expr	6062	app	TLA.in	6001,6061
+expr	6063	lam		6042,6062
+expr	6064	app	TLA.setOfAll	6042,35
+expr	6065	app	TLA.setminus	6064,37
+expr	6066	app	TLA.setOfAll	6065,43
+expr	6067	app	TLA.cup	6066,27
+expr	6068	app	TLA.in	6001,6067
+expr	6069	lam		6042,6068
+expr	6079	var	zenon_Val	
+expr	6087	app	=	6001,6079
+expr	6088	not		6087
+expr	6089	lam		6079,6088
+expr	6095	lam		5525,6000
+expr	6097	var	zenon_Vbl	
+expr	6099	var	zenon_Vcl	
+expr	6107	app	TLA.setOfAll	6097,43
+expr	6108	app	TLA.in	6001,6107
+expr	6109	lam		6097,6108
+expr	6110	app	TLA.setminus	6097,37
+expr	6111	app	TLA.setOfAll	6110,43
+expr	6112	app	TLA.in	6001,6111
+expr	6113	lam		6097,6112
+expr	6114	app	TLA.setOfAll	6097,35
+expr	6115	app	TLA.setminus	6114,37
+expr	6116	app	TLA.setOfAll	6115,43
+expr	6117	app	TLA.in	6001,6116
+expr	6118	lam		6097,6117
+expr	6120	var	zenon_Vdl	
+expr	6121	app	TLA.in	6120,221
+expr	6122	app	TLA.fapply	6120,41
+expr	6123	app	=	6001,6122
+expr	6124	and		6121,6123
+expr	6125	ex		6120,6124
+expr	6127	var	zenon_Vel	
+expr	6129	var	zenon_Vfl	
+expr	6149	app	TLA.setminus	6127,27
+expr	6150	app	TLA.setOfAll	6149,35
+expr	6151	app	TLA.setminus	6150,37
+expr	6152	app	TLA.setOfAll	6151,43
+expr	6153	app	TLA.in	6001,6152
+expr	6154	lam		6127,6153
+expr	6155	app	TLA.setminus	3,6127
+expr	6156	app	TLA.setOfAll	6155,35
+expr	6157	app	TLA.setminus	6156,37
+expr	6158	app	TLA.setOfAll	6157,43
+expr	6159	app	TLA.in	6001,6158
+expr	6160	lam		6127,6159
+expr	6161	app	TLA.set	6127
+expr	6162	app	TLA.setminus	3,6161
+expr	6163	app	TLA.setOfAll	6162,35
+expr	6164	app	TLA.setminus	6163,37
+expr	6165	app	TLA.setOfAll	6164,43
+expr	6166	app	TLA.in	6001,6165
+expr	6167	lam		6127,6166
+expr	6168	app	TLA.setOfAll	28,6127
+expr	6169	app	TLA.setminus	6168,37
+expr	6170	app	TLA.setOfAll	6169,43
+expr	6171	app	TLA.in	6001,6170
+expr	6172	lam		6127,6171
+expr	6173	app	TLA.setminus	256,6127
+expr	6174	app	TLA.setOfAll	6173,43
+expr	6175	app	TLA.in	6001,6174
+expr	6176	lam		6127,6175
+expr	6177	app	TLA.setminus	256,6161
+expr	6178	app	TLA.setOfAll	6177,43
+expr	6179	app	TLA.in	6001,6178
+expr	6180	lam		6127,6179
+expr	6181	app	TLA.setOfAll	257,6127
+expr	6182	app	TLA.in	6001,6181
+expr	6183	lam		6127,6182
+expr	6184	var	zenon_Vgl	
+expr	6185	app	TLA.in	6184,257
+expr	6186	app	TLA.fapply	6184,41
+expr	6187	app	=	6001,6186
+expr	6188	and		6185,6187
+expr	6189	ex		6184,6188
+expr	6191	var	zenon_Vhl	
+expr	6193	var	zenon_Vil	
+expr	6219	app	TLA.setminus	6191,27
+expr	6220	app	TLA.setOfAll	6219,35
+expr	6221	app	TLA.setminus	6220,37
+expr	6222	app	TLA.setOfAll	6221,43
+expr	6223	app	TLA.cup	6222,27
+expr	6224	app	TLA.in	6001,6223
+expr	6225	lam		6191,6224
+expr	6226	app	TLA.setminus	3,6191
+expr	6227	app	TLA.setOfAll	6226,35
+expr	6228	app	TLA.setminus	6227,37
+expr	6229	app	TLA.setOfAll	6228,43
+expr	6230	app	TLA.cup	6229,27
+expr	6231	app	TLA.in	6001,6230
+expr	6232	lam		6191,6231
+expr	6233	app	TLA.set	6191
+expr	6234	app	TLA.setminus	3,6233
+expr	6235	app	TLA.setOfAll	6234,35
+expr	6236	app	TLA.setminus	6235,37
+expr	6237	app	TLA.setOfAll	6236,43
+expr	6238	app	TLA.cup	6237,27
+expr	6239	app	TLA.in	6001,6238
+expr	6240	lam		6191,6239
+expr	6241	app	TLA.setOfAll	28,6191
+expr	6242	app	TLA.setminus	6241,37
+expr	6243	app	TLA.setOfAll	6242,43
+expr	6244	app	TLA.cup	6243,27
+expr	6245	app	TLA.in	6001,6244
+expr	6246	lam		6191,6245
+expr	6247	app	TLA.setminus	256,6191
+expr	6248	app	TLA.setOfAll	6247,43
+expr	6249	app	TLA.cup	6248,27
+expr	6250	app	TLA.in	6001,6249
+expr	6251	lam		6191,6250
+expr	6252	app	TLA.setminus	256,6233
+expr	6253	app	TLA.setOfAll	6252,43
+expr	6254	app	TLA.cup	6253,27
+expr	6255	app	TLA.in	6001,6254
+expr	6256	lam		6191,6255
+expr	6257	app	TLA.setOfAll	257,6191
+expr	6258	app	TLA.cup	6257,27
+expr	6259	app	TLA.in	6001,6258
+expr	6260	lam		6191,6259
+expr	6261	app	TLA.cup	827,6191
+expr	6262	app	TLA.in	6001,6261
+expr	6263	lam		6191,6262
+expr	6264	app	TLA.cup	827,6233
+expr	6265	app	TLA.in	6001,6264
+expr	6266	lam		6191,6265
+expr	6268	var	zenon_Vjl	
+expr	6272	not		5629
+expr	6273	tau		5626,6272
+expr	6278	ex		5626,6272
+expr	6280	var	zenon_Vkl	
+expr	6284	var	zenon_Vll	
+expr	6291	var	zenon_Vml	
+expr	6295	var	zenon_Vnl	
+expr	6296	app	TLA.in	6273,6295
+expr	6297	not		6296
+expr	6298	lam		6295,6297
+expr	6306	app	TLA.set	6291
+expr	6307	app	TLA.in	6273,6306
+expr	6308	not		6307
+expr	6309	lam		6291,6308
+expr	6316	var	zenon_Vol	
+expr	6318	var	zenon_Vpl	
+expr	6319	app	TLA.in	6273,6318
+expr	6320	lam		6318,6319
+expr	6326	app	TLA.cup	6316,27
+expr	6327	app	TLA.in	6273,6326
+expr	6328	lam		6316,6327
+expr	6329	app	TLA.setOfAll	6316,43
+expr	6330	app	TLA.cup	6329,27
+expr	6331	app	TLA.in	6273,6330
+expr	6332	lam		6316,6331
+expr	6333	app	TLA.setminus	6316,37
+expr	6334	app	TLA.setOfAll	6333,43
+expr	6335	app	TLA.cup	6334,27
+expr	6336	app	TLA.in	6273,6335
+expr	6337	lam		6316,6336
+expr	6338	app	TLA.setOfAll	6316,35
+expr	6339	app	TLA.setminus	6338,37
+expr	6340	app	TLA.setOfAll	6339,43
+expr	6341	app	TLA.cup	6340,27
+expr	6342	app	TLA.in	6273,6341
+expr	6343	lam		6316,6342
+expr	6344	app	TLA.setminus	6316,27
+expr	6345	app	TLA.setOfAll	6344,35
+expr	6346	app	TLA.setminus	6345,37
+expr	6347	app	TLA.setOfAll	6346,43
+expr	6348	app	TLA.cup	6347,27
+expr	6349	app	TLA.in	6273,6348
+expr	6350	lam		6316,6349
+expr	6351	app	TLA.setminus	3,6316
+expr	6352	app	TLA.setOfAll	6351,35
+expr	6353	app	TLA.setminus	6352,37
+expr	6354	app	TLA.setOfAll	6353,43
+expr	6355	app	TLA.cup	6354,27
+expr	6356	app	TLA.in	6273,6355
+expr	6357	lam		6316,6356
+expr	6358	app	TLA.set	6316
+expr	6359	app	TLA.setminus	3,6358
+expr	6360	app	TLA.setOfAll	6359,35
+expr	6361	app	TLA.setminus	6360,37
+expr	6362	app	TLA.setOfAll	6361,43
+expr	6363	app	TLA.cup	6362,27
+expr	6364	app	TLA.in	6273,6363
+expr	6365	lam		6316,6364
+expr	6366	app	TLA.setOfAll	28,6316
+expr	6367	app	TLA.setminus	6366,37
+expr	6368	app	TLA.setOfAll	6367,43
+expr	6369	app	TLA.cup	6368,27
+expr	6370	app	TLA.in	6273,6369
+expr	6371	lam		6316,6370
+expr	6372	app	TLA.setminus	256,6316
+expr	6373	app	TLA.setOfAll	6372,43
+expr	6374	app	TLA.cup	6373,27
+expr	6375	app	TLA.in	6273,6374
+expr	6376	lam		6316,6375
+expr	6377	app	TLA.setminus	256,6358
+expr	6378	app	TLA.setOfAll	6377,43
+expr	6379	app	TLA.cup	6378,27
+expr	6380	app	TLA.in	6273,6379
+expr	6381	lam		6316,6380
+expr	6382	app	TLA.setOfAll	257,6316
+expr	6383	app	TLA.cup	6382,27
+expr	6384	app	TLA.in	6273,6383
+expr	6385	lam		6316,6384
+expr	6386	app	TLA.cup	827,6316
+expr	6387	app	TLA.in	6273,6386
+expr	6388	lam		6316,6387
+expr	6389	app	TLA.cup	827,6358
+expr	6390	app	TLA.in	6273,6389
+expr	6391	lam		6316,6390
+expr	6402	var	zenon_Vql	
+expr	6410	app	=	6273,6402
+expr	6411	not		6410
+expr	6412	lam		6402,6411
+expr	6418	lam		5626,6272
+expr	6420	var	zenon_Vrl	
+expr	6422	var	zenon_Vsl	
+expr	6430	app	TLA.setOfAll	6420,43
+expr	6431	app	TLA.in	6273,6430
+expr	6432	lam		6420,6431
+expr	6433	app	TLA.setminus	6420,37
+expr	6434	app	TLA.setOfAll	6433,43
+expr	6435	app	TLA.in	6273,6434
+expr	6436	lam		6420,6435
+expr	6437	app	TLA.setOfAll	6420,35
+expr	6438	app	TLA.setminus	6437,37
+expr	6439	app	TLA.setOfAll	6438,43
+expr	6440	app	TLA.in	6273,6439
+expr	6441	lam		6420,6440
+expr	6442	app	TLA.setminus	6420,27
+expr	6443	app	TLA.setOfAll	6442,35
+expr	6444	app	TLA.setminus	6443,37
+expr	6445	app	TLA.setOfAll	6444,43
+expr	6446	app	TLA.in	6273,6445
+expr	6447	lam		6420,6446
+expr	6448	app	TLA.setminus	3,6420
+expr	6449	app	TLA.setOfAll	6448,35
+expr	6450	app	TLA.setminus	6449,37
+expr	6451	app	TLA.setOfAll	6450,43
+expr	6452	app	TLA.in	6273,6451
+expr	6453	lam		6420,6452
+expr	6454	app	TLA.set	6420
+expr	6455	app	TLA.setminus	3,6454
+expr	6456	app	TLA.setOfAll	6455,35
+expr	6457	app	TLA.setminus	6456,37
+expr	6458	app	TLA.setOfAll	6457,43
+expr	6459	app	TLA.in	6273,6458
+expr	6460	lam		6420,6459
+expr	6461	app	TLA.setOfAll	28,6420
+expr	6462	app	TLA.setminus	6461,37
+expr	6463	app	TLA.setOfAll	6462,43
+expr	6464	app	TLA.in	6273,6463
+expr	6465	lam		6420,6464
+expr	6466	app	TLA.setminus	256,6420
+expr	6467	app	TLA.setOfAll	6466,43
+expr	6468	app	TLA.in	6273,6467
+expr	6469	lam		6420,6468
+expr	6470	app	TLA.setminus	256,6454
+expr	6471	app	TLA.setOfAll	6470,43
+expr	6472	app	TLA.in	6273,6471
+expr	6473	lam		6420,6472
+expr	6474	app	TLA.setOfAll	257,6420
+expr	6475	app	TLA.in	6273,6474
+expr	6476	lam		6420,6475
+expr	6477	var	zenon_Vtl	
+expr	6478	app	TLA.in	6477,257
+expr	6479	app	TLA.fapply	6477,41
+expr	6480	app	=	6273,6479
+expr	6481	and		6478,6480
+expr	6482	ex		6477,6481
+expr	6484	var	zenon_Vul	
+expr	6486	tau		5782,5786
+expr	6487	app	TLA.in	6486,38
+expr	6488	app	TLA.fapply	6486,41
+expr	6489	app	=	5638,6488
+expr	6490	and		6487,6489
+expr	6492	var	zenon_Vvl	
+expr	6497	var	zenon_Vwl	
+expr	6499	app	=	6497,6488
+expr	6500	lam		6497,6499
+expr	6502	app	=	5638,6497
+expr	6503	lam		6497,6502
+expr	6504	app	TLA.fapply	6497,41
+expr	6505	app	=	5638,6504
+expr	6506	lam		6497,6505
+expr	6508	app	TLA.fapply	6486,6497
+expr	6509	app	=	5638,6508
+expr	6510	lam		6497,6509
+expr	6511	app	TLA.fapply	6497,40
+expr	6512	app	TLA.fapply	6486,6511
+expr	6513	app	=	5638,6512
+expr	6514	lam		6497,6513
+expr	6515	app	TLA.fapply	39,6497
+expr	6516	app	TLA.fapply	6486,6515
+expr	6517	app	=	5638,6516
+expr	6518	lam		6497,6517
+expr	6519	app	TLA.fapply	6497,12
+expr	6520	app	TLA.fapply	39,6519
+expr	6521	app	TLA.fapply	6486,6520
+expr	6522	app	=	5638,6521
+expr	6523	lam		6497,6522
+expr	6524	app	TLA.fapply	39,6515
+expr	6525	app	TLA.fapply	6486,6524
+expr	6526	app	=	5638,6525
+expr	6527	lam		6497,6526
+expr	6531	var	zenon_Vxl	
+expr	6533	var	zenon_Vyl	
+expr	6534	app	TLA.in	6486,6533
+expr	6535	lam		6533,6534
+expr	6541	app	TLA.setminus	6531,37
+expr	6542	app	TLA.in	6486,6541
+expr	6543	lam		6531,6542
+expr	6544	app	TLA.setOfAll	6531,35
+expr	6545	app	TLA.setminus	6544,37
+expr	6546	app	TLA.in	6486,6545
+expr	6547	lam		6531,6546
+expr	6548	var	zenon_Vzl	
+expr	6549	app	TLA.DOMAIN	6548
+expr	6550	app	TLA.setOfAll	6549,35
+expr	6551	app	TLA.setminus	6550,37
+expr	6552	app	TLA.in	6486,6551
+expr	6553	lam		6548,6552
+expr	6560	app	TLA.in	6486,36
+expr	6561	app	TLA.in	6486,37
+expr	6562	not		6561
+expr	6570	var	zenon_Vam	
+expr	6574	var	zenon_Vbm	
+expr	6575	app	TLA.in	6486,6574
+expr	6576	not		6575
+expr	6577	lam		6574,6576
+expr	6585	app	TLA.set	6570
+expr	6586	app	TLA.in	6486,6585
+expr	6587	not		6586
+expr	6588	lam		6570,6587
+expr	6589	app	=	6486,29
+expr	6590	not		6589
+expr	6612	var	zenon_Vcm	
+expr	6614	var	zenon_Vdm	
+expr	6622	app	TLA.setOfAll	6612,35
+expr	6623	app	TLA.in	6486,6622
+expr	6624	lam		6612,6623
+expr	6625	var	zenon_Vem	
+expr	6626	app	TLA.DOMAIN	6625
+expr	6627	app	TLA.setOfAll	6626,35
+expr	6628	app	TLA.in	6486,6627
+expr	6629	lam		6625,6628
+expr	6635	var	zenon_Vfm	
+expr	6636	app	TLA.in	6635,33
+expr	6637	app	TLA.fapply	26,6635
+expr	6638	app	=	6486,6637
+expr	6639	and		6636,6638
+expr	6640	ex		6635,6639
+expr	6644	var	zenon_Vgm	
+expr	6652	app	=	6486,6644
+expr	6653	not		6652
+expr	6654	lam		6644,6653
+expr	6659	lam		5782,5786
+expr	6661	var	zenon_Vhm	
+expr	6663	var	zenon_Vim	
+expr	6675	var	zenon_Vjm	
+expr	6676	app	TLA.in	6675,219
+expr	6677	app	TLA.fapply	26,6675
+expr	6678	app	=	6486,6677
+expr	6679	and		6676,6678
+expr	6680	ex		6675,6679
+expr	6682	var	zenon_Vkm	
+expr	6684	var	zenon_Vlm	
+expr	6695	app	TLA.setminus	6682,27
+expr	6696	app	TLA.setOfAll	6695,35
+expr	6697	app	TLA.in	6486,6696
+expr	6698	lam		6682,6697
+expr	6699	app	TLA.setminus	3,6682
+expr	6700	app	TLA.setOfAll	6699,35
+expr	6701	app	TLA.in	6486,6700
+expr	6702	lam		6682,6701
+expr	6703	app	TLA.set	6682
+expr	6704	app	TLA.setminus	3,6703
+expr	6705	app	TLA.setOfAll	6704,35
+expr	6706	app	TLA.in	6486,6705
+expr	6707	lam		6682,6706
+expr	6708	app	TLA.setOfAll	28,6682
+expr	6709	app	TLA.in	6486,6708
+expr	6710	lam		6682,6709
+expr	6711	var	zenon_Vmm	
+expr	6712	app	TLA.in	6711,28
+expr	6713	app	TLA.fapply	26,6711
+expr	6714	app	=	6486,6713
+expr	6715	and		6712,6714
+expr	6716	ex		6711,6715
+expr	6718	var	zenon_Vnm	
+expr	6720	var	zenon_Vom	
+expr	6737	var	zenon_Vpm	
+expr	6739	var	zenon_Vqm	
+expr	6754	app	TLA.setminus	6737,27
+expr	6755	app	TLA.setOfAll	6754,35
+expr	6756	app	TLA.setminus	6755,37
+expr	6757	app	TLA.in	6486,6756
+expr	6758	lam		6737,6757
+expr	6759	app	TLA.setminus	3,6737
+expr	6760	app	TLA.setOfAll	6759,35
+expr	6761	app	TLA.setminus	6760,37
+expr	6762	app	TLA.in	6486,6761
+expr	6763	lam		6737,6762
+expr	6764	app	TLA.set	6737
+expr	6765	app	TLA.setminus	3,6764
+expr	6766	app	TLA.setOfAll	6765,35
+expr	6767	app	TLA.setminus	6766,37
+expr	6768	app	TLA.in	6486,6767
+expr	6769	lam		6737,6768
+expr	6770	app	TLA.setOfAll	28,6737
+expr	6771	app	TLA.setminus	6770,37
+expr	6772	app	TLA.in	6486,6771
+expr	6773	lam		6737,6772
+expr	6774	app	TLA.setminus	256,6737
+expr	6775	app	TLA.in	6486,6774
+expr	6776	lam		6737,6775
+expr	6777	app	TLA.setminus	256,6764
+expr	6778	app	TLA.in	6486,6777
+expr	6779	lam		6737,6778
+expr	6783	var	zenon_Vrm	
+expr	6790	app	TLA.fapply	6783,41
+expr	6791	app	=	6790,5
+expr	6792	not		6791
+expr	6793	lam		6783,6792
+expr	6795	app	TLA.fapply	6486,6783
+expr	6796	app	=	6795,5
+expr	6797	not		6796
+expr	6798	lam		6783,6797
+expr	6799	app	TLA.fapply	6783,40
+expr	6800	app	TLA.fapply	6486,6799
+expr	6801	app	=	6800,5
+expr	6802	not		6801
+expr	6803	lam		6783,6802
+expr	6804	app	TLA.fapply	39,6783
+expr	6805	app	TLA.fapply	6486,6804
+expr	6806	app	=	6805,5
+expr	6807	not		6806
+expr	6808	lam		6783,6807
+expr	6809	app	TLA.fapply	6783,12
+expr	6810	app	TLA.fapply	39,6809
+expr	6811	app	TLA.fapply	6486,6810
+expr	6812	app	=	6811,5
+expr	6813	not		6812
+expr	6814	lam		6783,6813
+expr	6815	app	TLA.fapply	39,6804
+expr	6816	app	TLA.fapply	6486,6815
+expr	6817	app	=	6816,5
+expr	6818	not		6817
+expr	6819	lam		6783,6818
+expr	6820	app	=	6488,6783
+expr	6821	not		6820
+expr	6822	lam		6783,6821
+expr	6828	var	zenon_Vsm	
+expr	6835	app	TLA.setOfAll	6828,43
+expr	6836	app	=	6835,27
+expr	6837	not		6836
+expr	6838	lam		6828,6837
+expr	6839	app	TLA.setminus	6828,37
+expr	6840	app	TLA.setOfAll	6839,43
+expr	6841	app	=	6840,27
+expr	6842	not		6841
+expr	6843	lam		6828,6842
+expr	6844	app	TLA.setOfAll	6828,35
+expr	6845	app	TLA.setminus	6844,37
+expr	6846	app	TLA.setOfAll	6845,43
+expr	6847	app	=	6846,27
+expr	6848	not		6847
+expr	6849	lam		6828,6848
+expr	6850	var	zenon_Vtm	
+expr	6851	app	TLA.DOMAIN	6850
+expr	6852	app	TLA.setOfAll	6851,35
+expr	6853	app	TLA.setminus	6852,37
+expr	6854	app	TLA.setOfAll	6853,43
+expr	6855	app	=	6854,27
+expr	6856	not		6855
+expr	6857	lam		6850,6856
+expr	6865	var	zenon_Vum	
+expr	6866	app	TLA.in	6865,44
+expr	6867	app	TLA.in	6865,27
+expr	6868	equiv		6866,6867
+expr	6869	all		6865,6868
+expr	6874	var	zenon_Vvm	
+expr	6896	var	zenon_Vwm	
+expr	6897	app	TLA.in	6896,697
+expr	6898	app	TLA.in	6896,27
+expr	6899	equiv		6897,6898
+expr	6900	all		6896,6899
+expr	6905	var	zenon_Vxm	
+expr	6927	app	TLA.setminus	6905,27
+expr	6928	app	TLA.setOfAll	6927,35
+expr	6929	app	TLA.setminus	6928,37
+expr	6930	app	TLA.setOfAll	6929,43
+expr	6931	app	=	6930,27
+expr	6932	not		6931
+expr	6933	lam		6905,6932
+expr	6934	app	TLA.setminus	3,6905
+expr	6935	app	TLA.setOfAll	6934,35
+expr	6936	app	TLA.setminus	6935,37
+expr	6937	app	TLA.setOfAll	6936,43
+expr	6938	app	=	6937,27
+expr	6939	not		6938
+expr	6940	lam		6905,6939
+expr	6941	app	TLA.set	6905
+expr	6942	app	TLA.setminus	3,6941
+expr	6943	app	TLA.setOfAll	6942,35
+expr	6944	app	TLA.setminus	6943,37
+expr	6945	app	TLA.setOfAll	6944,43
+expr	6946	app	=	6945,27
+expr	6947	not		6946
+expr	6948	lam		6905,6947
+expr	6949	app	TLA.setOfAll	28,6905
+expr	6950	app	TLA.setminus	6949,37
+expr	6951	app	TLA.setOfAll	6950,43
+expr	6952	app	=	6951,27
+expr	6953	not		6952
+expr	6954	lam		6905,6953
+expr	6955	app	TLA.setminus	256,6905
+expr	6956	app	TLA.setOfAll	6955,43
+expr	6957	app	=	6956,27
+expr	6958	not		6957
+expr	6959	lam		6905,6958
+expr	6960	app	TLA.setminus	256,6941
+expr	6961	app	TLA.setOfAll	6960,43
+expr	6962	app	=	6961,27
+expr	6963	not		6962
+expr	6964	lam		6905,6963
+expr	6965	app	TLA.setOfAll	257,6905
+expr	6966	app	=	6965,27
+expr	6967	not		6966
+expr	6968	lam		6905,6967
+expr	6969	app	=	827,6905
+expr	6970	not		6969
+expr	6971	lam		6905,6970
+expr	6972	app	=	827,6941
+expr	6973	not		6972
+expr	6974	lam		6905,6973
+expr	6975	var	zenon_Vym	
+expr	6976	app	TLA.in	6975,827
+expr	6977	app	TLA.in	6975,27
+expr	6978	equiv		6976,6977
+expr	6979	all		6975,6978
+expr	6982	var	zenon_Vzm	
+expr	6984	tau		5814,5818
+expr	6986	app	TLA.fapply	6984,41
+expr	6990	var	zenon_Van	
+expr	6995	var	zenon_Vbn	
+expr	6997	app	=	6995,6986
+expr	6998	lam		6995,6997
+expr	7006	app	TLA.fapply	6984,6995
+expr	7007	app	=	5638,7006
+expr	7008	lam		6995,7007
+expr	7009	app	TLA.fapply	6995,40
+expr	7010	app	TLA.fapply	6984,7009
+expr	7011	app	=	5638,7010
+expr	7012	lam		6995,7011
+expr	7013	app	TLA.fapply	39,6995
+expr	7014	app	TLA.fapply	6984,7013
+expr	7015	app	=	5638,7014
+expr	7016	lam		6995,7015
+expr	7017	app	TLA.fapply	6995,12
+expr	7018	app	TLA.fapply	39,7017
+expr	7019	app	TLA.fapply	6984,7018
+expr	7020	app	=	5638,7019
+expr	7021	lam		6995,7020
+expr	7022	app	TLA.fapply	39,7013
+expr	7023	app	TLA.fapply	6984,7022
+expr	7024	app	=	5638,7023
+expr	7025	lam		6995,7024
+expr	7031	var	zenon_Vcn	
+expr	7033	var	zenon_Vdn	
+expr	7034	app	TLA.in	6984,7033
+expr	7035	lam		7033,7034
+expr	7041	app	TLA.setminus	7031,37
+expr	7042	app	TLA.in	6984,7041
+expr	7043	lam		7031,7042
+expr	7044	app	TLA.setOfAll	7031,35
+expr	7045	app	TLA.setminus	7044,37
+expr	7046	app	TLA.in	6984,7045
+expr	7047	lam		7031,7046
+expr	7061	var	zenon_Ven	
+expr	7065	var	zenon_Vfn	
+expr	7066	app	TLA.in	6984,7065
+expr	7067	not		7066
+expr	7068	lam		7065,7067
+expr	7076	app	TLA.set	7061
+expr	7077	app	TLA.in	6984,7076
+expr	7078	not		7077
+expr	7079	lam		7061,7078
+expr	7093	var	zenon_Vgn	
+expr	7095	var	zenon_Vhn	
+expr	7103	app	TLA.setOfAll	7093,35
+expr	7104	app	TLA.in	6984,7103
+expr	7105	lam		7093,7104
+expr	7107	var	zenon_Vin	
+expr	7108	app	TLA.in	7107,219
+expr	7109	app	TLA.fapply	26,7107
+expr	7110	app	=	6984,7109
+expr	7111	and		7108,7110
+expr	7112	ex		7107,7111
+expr	7116	var	zenon_Vjn	
+expr	7124	app	=	6984,7116
+expr	7125	not		7124
+expr	7126	lam		7116,7125
+expr	7130	lam		5814,5818
+expr	7132	var	zenon_Vkn	
+expr	7134	var	zenon_Vln	
+expr	7145	app	TLA.setminus	7132,27
+expr	7146	app	TLA.setOfAll	7145,35
+expr	7147	app	TLA.in	6984,7146
+expr	7148	lam		7132,7147
+expr	7149	app	TLA.setminus	3,7132
+expr	7150	app	TLA.setOfAll	7149,35
+expr	7151	app	TLA.in	6984,7150
+expr	7152	lam		7132,7151
+expr	7153	app	TLA.set	7132
+expr	7154	app	TLA.setminus	3,7153
+expr	7155	app	TLA.setOfAll	7154,35
+expr	7156	app	TLA.in	6984,7155
+expr	7157	lam		7132,7156
+expr	7158	app	TLA.setOfAll	28,7132
+expr	7159	app	TLA.in	6984,7158
+expr	7160	lam		7132,7159
+expr	7161	var	zenon_Vmn	
+expr	7162	app	TLA.in	7161,28
+expr	7163	app	TLA.fapply	26,7161
+expr	7164	app	=	6984,7163
+expr	7165	and		7162,7164
+expr	7166	ex		7161,7165
+expr	7168	var	zenon_Vnn	
+expr	7170	var	zenon_Von	
+expr	7185	app	TLA.setminus	7168,27
+expr	7186	app	TLA.setOfAll	7185,35
+expr	7187	app	TLA.setminus	7186,37
+expr	7188	app	TLA.in	6984,7187
+expr	7189	lam		7168,7188
+expr	7190	app	TLA.setminus	3,7168
+expr	7191	app	TLA.setOfAll	7190,35
+expr	7192	app	TLA.setminus	7191,37
+expr	7193	app	TLA.in	6984,7192
+expr	7194	lam		7168,7193
+expr	7195	app	TLA.set	7168
+expr	7196	app	TLA.setminus	3,7195
+expr	7197	app	TLA.setOfAll	7196,35
+expr	7198	app	TLA.setminus	7197,37
+expr	7199	app	TLA.in	6984,7198
+expr	7200	lam		7168,7199
+expr	7201	app	TLA.setOfAll	28,7168
+expr	7202	app	TLA.setminus	7201,37
+expr	7203	app	TLA.in	6984,7202
+expr	7204	lam		7168,7203
+expr	7205	app	TLA.setminus	256,7168
+expr	7206	app	TLA.in	6984,7205
+expr	7207	lam		7168,7206
+expr	7208	app	TLA.setminus	256,7195
+expr	7209	app	TLA.in	6984,7208
+expr	7210	lam		7168,7209
+expr	7214	var	zenon_Vpn	
+expr	7226	app	TLA.fapply	6984,7214
+expr	7227	app	=	7226,5
+expr	7228	not		7227
+expr	7229	lam		7214,7228
+expr	7230	app	TLA.fapply	7214,40
+expr	7231	app	TLA.fapply	6984,7230
+expr	7232	app	=	7231,5
+expr	7233	not		7232
+expr	7234	lam		7214,7233
+expr	7235	app	TLA.fapply	39,7214
+expr	7236	app	TLA.fapply	6984,7235
+expr	7237	app	=	7236,5
+expr	7238	not		7237
+expr	7239	lam		7214,7238
+expr	7240	app	TLA.fapply	7214,12
+expr	7241	app	TLA.fapply	39,7240
+expr	7242	app	TLA.fapply	6984,7241
+expr	7243	app	=	7242,5
+expr	7244	not		7243
+expr	7245	lam		7214,7244
+expr	7246	app	TLA.fapply	39,7235
+expr	7247	app	TLA.fapply	6984,7246
+expr	7248	app	=	7247,5
+expr	7249	not		7248
+expr	7250	lam		7214,7249
+expr	7251	app	=	6986,7214
+expr	7252	not		7251
+expr	7253	lam		7214,7252
+expr	7259	var	zenon_Vqn	
+expr	7261	tau		5880,5884
+expr	7263	app	TLA.fapply	7261,41
+expr	7267	var	zenon_Vrn	
+expr	7272	var	zenon_Vsn	
+expr	7274	app	=	7272,7263
+expr	7275	lam		7272,7274
+expr	7283	app	TLA.fapply	7261,7272
+expr	7284	app	=	5638,7283
+expr	7285	lam		7272,7284
+expr	7286	app	TLA.fapply	7272,40
+expr	7287	app	TLA.fapply	7261,7286
+expr	7288	app	=	5638,7287
+expr	7289	lam		7272,7288
+expr	7290	app	TLA.fapply	39,7272
+expr	7291	app	TLA.fapply	7261,7290
+expr	7292	app	=	5638,7291
+expr	7293	lam		7272,7292
+expr	7294	app	TLA.fapply	7272,12
+expr	7295	app	TLA.fapply	39,7294
+expr	7296	app	TLA.fapply	7261,7295
+expr	7297	app	=	5638,7296
+expr	7298	lam		7272,7297
+expr	7299	app	TLA.fapply	39,7290
+expr	7300	app	TLA.fapply	7261,7299
+expr	7301	app	=	5638,7300
+expr	7302	lam		7272,7301
+expr	7310	var	zenon_Vtn	
+expr	7312	var	zenon_Vun	
+expr	7313	app	TLA.in	7261,7312
+expr	7314	lam		7312,7313
+expr	7320	app	TLA.setminus	7310,37
+expr	7321	app	TLA.in	7261,7320
+expr	7322	lam		7310,7321
+expr	7323	app	TLA.setOfAll	7310,35
+expr	7324	app	TLA.setminus	7323,37
+expr	7325	app	TLA.in	7261,7324
+expr	7326	lam		7310,7325
+expr	7327	app	TLA.setminus	7310,27
+expr	7328	app	TLA.setOfAll	7327,35
+expr	7329	app	TLA.setminus	7328,37
+expr	7330	app	TLA.in	7261,7329
+expr	7331	lam		7310,7330
+expr	7332	app	TLA.setminus	3,7310
+expr	7333	app	TLA.setOfAll	7332,35
+expr	7334	app	TLA.setminus	7333,37
+expr	7335	app	TLA.in	7261,7334
+expr	7336	lam		7310,7335
+expr	7337	app	TLA.set	7310
+expr	7338	app	TLA.setminus	3,7337
+expr	7339	app	TLA.setOfAll	7338,35
+expr	7340	app	TLA.setminus	7339,37
+expr	7341	app	TLA.in	7261,7340
+expr	7342	lam		7310,7341
+expr	7343	app	TLA.setOfAll	28,7310
+expr	7344	app	TLA.setminus	7343,37
+expr	7345	app	TLA.in	7261,7344
+expr	7346	lam		7310,7345
+expr	7347	app	TLA.setminus	256,7310
+expr	7348	app	TLA.in	7261,7347
+expr	7349	lam		7310,7348
+expr	7350	app	TLA.setminus	256,7337
+expr	7351	app	TLA.in	7261,7350
+expr	7352	lam		7310,7351
+expr	7367	var	zenon_Vvn	
+expr	7371	var	zenon_Vwn	
+expr	7372	app	TLA.in	7261,7371
+expr	7373	not		7372
+expr	7374	lam		7371,7373
+expr	7382	app	TLA.set	7367
+expr	7383	app	TLA.in	7261,7382
+expr	7384	not		7383
+expr	7385	lam		7367,7384
+expr	7401	var	zenon_Vxn	
+expr	7403	var	zenon_Vyn	
+expr	7411	app	TLA.setOfAll	7401,35
+expr	7412	app	TLA.in	7261,7411
+expr	7413	lam		7401,7412
+expr	7414	app	TLA.setminus	7401,27
+expr	7415	app	TLA.setOfAll	7414,35
+expr	7416	app	TLA.in	7261,7415
+expr	7417	lam		7401,7416
+expr	7418	app	TLA.setminus	3,7401
+expr	7419	app	TLA.setOfAll	7418,35
+expr	7420	app	TLA.in	7261,7419
+expr	7421	lam		7401,7420
+expr	7422	app	TLA.set	7401
+expr	7423	app	TLA.setminus	3,7422
+expr	7424	app	TLA.setOfAll	7423,35
+expr	7425	app	TLA.in	7261,7424
+expr	7426	lam		7401,7425
+expr	7427	app	TLA.setOfAll	28,7401
+expr	7428	app	TLA.in	7261,7427
+expr	7429	lam		7401,7428
+expr	7430	var	zenon_Vzn	
+expr	7431	app	TLA.in	7430,28
+expr	7432	app	TLA.fapply	26,7430
+expr	7433	app	=	7261,7432
+expr	7434	and		7431,7433
+expr	7435	ex		7430,7434
+expr	7439	var	zenon_Vao	
+expr	7447	app	=	7261,7439
+expr	7448	not		7447
+expr	7449	lam		7439,7448
+expr	7453	lam		5880,5884
+expr	7457	var	zenon_Vbo	
+expr	7469	app	TLA.fapply	7261,7457
+expr	7470	app	=	7469,5
+expr	7471	not		7470
+expr	7472	lam		7457,7471
+expr	7473	app	TLA.fapply	7457,40
+expr	7474	app	TLA.fapply	7261,7473
+expr	7475	app	=	7474,5
+expr	7476	not		7475
+expr	7477	lam		7457,7476
+expr	7478	app	TLA.fapply	39,7457
+expr	7479	app	TLA.fapply	7261,7478
+expr	7480	app	=	7479,5
+expr	7481	not		7480
+expr	7482	lam		7457,7481
+expr	7483	app	TLA.fapply	7457,12
+expr	7484	app	TLA.fapply	39,7483
+expr	7485	app	TLA.fapply	7261,7484
+expr	7486	app	=	7485,5
+expr	7487	not		7486
+expr	7488	lam		7457,7487
+expr	7489	app	TLA.fapply	39,7478
+expr	7490	app	TLA.fapply	7261,7489
+expr	7491	app	=	7490,5
+expr	7492	not		7491
+expr	7493	lam		7457,7492
+expr	7494	app	=	7263,7457
+expr	7495	not		7494
+expr	7496	lam		7457,7495
+expr	7504	var	zenon_Vco	
+expr	7506	tau		6120,6124
+expr	7508	app	TLA.fapply	7506,41
+expr	7512	var	zenon_Vdo	
+expr	7517	var	zenon_Veo	
+expr	7519	app	=	7517,7508
+expr	7520	lam		7517,7519
+expr	7522	app	=	6001,7517
+expr	7523	lam		7517,7522
+expr	7524	app	TLA.fapply	7517,41
+expr	7525	app	=	6001,7524
+expr	7526	lam		7517,7525
+expr	7528	app	TLA.fapply	7506,7517
+expr	7529	app	=	6001,7528
+expr	7530	lam		7517,7529
+expr	7531	app	TLA.fapply	7517,40
+expr	7532	app	TLA.fapply	7506,7531
+expr	7533	app	=	6001,7532
+expr	7534	lam		7517,7533
+expr	7535	app	TLA.fapply	39,7517
+expr	7536	app	TLA.fapply	7506,7535
+expr	7537	app	=	6001,7536
+expr	7538	lam		7517,7537
+expr	7539	app	TLA.fapply	7517,12
+expr	7540	app	TLA.fapply	39,7539
+expr	7541	app	TLA.fapply	7506,7540
+expr	7542	app	=	6001,7541
+expr	7543	lam		7517,7542
+expr	7544	app	TLA.fapply	39,7535
+expr	7545	app	TLA.fapply	7506,7544
+expr	7546	app	=	6001,7545
+expr	7547	lam		7517,7546
+expr	7557	var	zenon_Vfo	
+expr	7559	var	zenon_Vgo	
+expr	7560	app	TLA.in	7506,7559
+expr	7561	lam		7559,7560
+expr	7567	app	TLA.setminus	7557,37
+expr	7568	app	TLA.in	7506,7567
+expr	7569	lam		7557,7568
+expr	7570	app	TLA.setOfAll	7557,35
+expr	7571	app	TLA.setminus	7570,37
+expr	7572	app	TLA.in	7506,7571
+expr	7573	lam		7557,7572
+expr	7591	var	zenon_Vho	
+expr	7595	var	zenon_Vio	
+expr	7596	app	TLA.in	7506,7595
+expr	7597	not		7596
+expr	7598	lam		7595,7597
+expr	7606	app	TLA.set	7591
+expr	7607	app	TLA.in	7506,7606
+expr	7608	not		7607
+expr	7609	lam		7591,7608
+expr	7627	var	zenon_Vjo	
+expr	7629	var	zenon_Vko	
+expr	7637	app	TLA.setOfAll	7627,35
+expr	7638	app	TLA.in	7506,7637
+expr	7639	lam		7627,7638
+expr	7641	var	zenon_Vlo	
+expr	7642	app	TLA.in	7641,219
+expr	7643	app	TLA.fapply	26,7641
+expr	7644	app	=	7506,7643
+expr	7645	and		7642,7644
+expr	7646	ex		7641,7645
+expr	7650	var	zenon_Vmo	
+expr	7658	app	=	7506,7650
+expr	7659	not		7658
+expr	7660	lam		7650,7659
+expr	7665	lam		6120,6124
+expr	7667	var	zenon_Vno	
+expr	7669	var	zenon_Voo	
+expr	7680	app	TLA.setminus	7667,27
+expr	7681	app	TLA.setOfAll	7680,35
+expr	7682	app	TLA.in	7506,7681
+expr	7683	lam		7667,7682
+expr	7684	app	TLA.setminus	3,7667
+expr	7685	app	TLA.setOfAll	7684,35
+expr	7686	app	TLA.in	7506,7685
+expr	7687	lam		7667,7686
+expr	7688	app	TLA.set	7667
+expr	7689	app	TLA.setminus	3,7688
+expr	7690	app	TLA.setOfAll	7689,35
+expr	7691	app	TLA.in	7506,7690
+expr	7692	lam		7667,7691
+expr	7693	app	TLA.setOfAll	28,7667
+expr	7694	app	TLA.in	7506,7693
+expr	7695	lam		7667,7694
+expr	7696	var	zenon_Vpo	
+expr	7697	app	TLA.in	7696,28
+expr	7698	app	TLA.fapply	26,7696
+expr	7699	app	=	7506,7698
+expr	7700	and		7697,7699
+expr	7701	ex		7696,7700
+expr	7703	var	zenon_Vqo	
+expr	7705	var	zenon_Vro	
+expr	7720	app	TLA.setminus	7703,27
+expr	7721	app	TLA.setOfAll	7720,35
+expr	7722	app	TLA.setminus	7721,37
+expr	7723	app	TLA.in	7506,7722
+expr	7724	lam		7703,7723
+expr	7725	app	TLA.setminus	3,7703
+expr	7726	app	TLA.setOfAll	7725,35
+expr	7727	app	TLA.setminus	7726,37
+expr	7728	app	TLA.in	7506,7727
+expr	7729	lam		7703,7728
+expr	7730	app	TLA.set	7703
+expr	7731	app	TLA.setminus	3,7730
+expr	7732	app	TLA.setOfAll	7731,35
+expr	7733	app	TLA.setminus	7732,37
+expr	7734	app	TLA.in	7506,7733
+expr	7735	lam		7703,7734
+expr	7736	app	TLA.setOfAll	28,7703
+expr	7737	app	TLA.setminus	7736,37
+expr	7738	app	TLA.in	7506,7737
+expr	7739	lam		7703,7738
+expr	7740	app	TLA.setminus	256,7703
+expr	7741	app	TLA.in	7506,7740
+expr	7742	lam		7703,7741
+expr	7743	app	TLA.setminus	256,7730
+expr	7744	app	TLA.in	7506,7743
+expr	7745	lam		7703,7744
+expr	7749	var	zenon_Vso	
+expr	7761	app	TLA.fapply	7506,7749
+expr	7762	app	=	7761,5
+expr	7763	not		7762
+expr	7764	lam		7749,7763
+expr	7765	app	TLA.fapply	7749,40
+expr	7766	app	TLA.fapply	7506,7765
+expr	7767	app	=	7766,5
+expr	7768	not		7767
+expr	7769	lam		7749,7768
+expr	7770	app	TLA.fapply	39,7749
+expr	7771	app	TLA.fapply	7506,7770
+expr	7772	app	=	7771,5
+expr	7773	not		7772
+expr	7774	lam		7749,7773
+expr	7775	app	TLA.fapply	7749,12
+expr	7776	app	TLA.fapply	39,7775
+expr	7777	app	TLA.fapply	7506,7776
+expr	7778	app	=	7777,5
+expr	7779	not		7778
+expr	7780	lam		7749,7779
+expr	7781	app	TLA.fapply	39,7770
+expr	7782	app	TLA.fapply	7506,7781
+expr	7783	app	=	7782,5
+expr	7784	not		7783
+expr	7785	lam		7749,7784
+expr	7786	app	=	7508,7749
+expr	7787	not		7786
+expr	7788	lam		7749,7787
+expr	7798	var	zenon_Vto	
+expr	7800	tau		6184,6188
+expr	7802	app	TLA.fapply	7800,41
+expr	7806	var	zenon_Vuo	
+expr	7811	var	zenon_Vvo	
+expr	7813	app	=	7811,7802
+expr	7814	lam		7811,7813
+expr	7822	app	TLA.fapply	7800,7811
+expr	7823	app	=	6001,7822
+expr	7824	lam		7811,7823
+expr	7825	app	TLA.fapply	7811,40
+expr	7826	app	TLA.fapply	7800,7825
+expr	7827	app	=	6001,7826
+expr	7828	lam		7811,7827
+expr	7829	app	TLA.fapply	39,7811
+expr	7830	app	TLA.fapply	7800,7829
+expr	7831	app	=	6001,7830
+expr	7832	lam		7811,7831
+expr	7833	app	TLA.fapply	7811,12
+expr	7834	app	TLA.fapply	39,7833
+expr	7835	app	TLA.fapply	7800,7834
+expr	7836	app	=	6001,7835
+expr	7837	lam		7811,7836
+expr	7838	app	TLA.fapply	39,7829
+expr	7839	app	TLA.fapply	7800,7838
+expr	7840	app	=	6001,7839
+expr	7841	lam		7811,7840
+expr	7853	var	zenon_Vwo	
+expr	7855	var	zenon_Vxo	
+expr	7856	app	TLA.in	7800,7855
+expr	7857	lam		7855,7856
+expr	7863	app	TLA.setminus	7853,37
+expr	7864	app	TLA.in	7800,7863
+expr	7865	lam		7853,7864
+expr	7866	app	TLA.setOfAll	7853,35
+expr	7867	app	TLA.setminus	7866,37
+expr	7868	app	TLA.in	7800,7867
+expr	7869	lam		7853,7868
+expr	7870	app	TLA.setminus	7853,27
+expr	7871	app	TLA.setOfAll	7870,35
+expr	7872	app	TLA.setminus	7871,37
+expr	7873	app	TLA.in	7800,7872
+expr	7874	lam		7853,7873
+expr	7875	app	TLA.setminus	3,7853
+expr	7876	app	TLA.setOfAll	7875,35
+expr	7877	app	TLA.setminus	7876,37
+expr	7878	app	TLA.in	7800,7877
+expr	7879	lam		7853,7878
+expr	7880	app	TLA.set	7853
+expr	7881	app	TLA.setminus	3,7880
+expr	7882	app	TLA.setOfAll	7881,35
+expr	7883	app	TLA.setminus	7882,37
+expr	7884	app	TLA.in	7800,7883
+expr	7885	lam		7853,7884
+expr	7886	app	TLA.setOfAll	28,7853
+expr	7887	app	TLA.setminus	7886,37
+expr	7888	app	TLA.in	7800,7887
+expr	7889	lam		7853,7888
+expr	7890	app	TLA.setminus	256,7853
+expr	7891	app	TLA.in	7800,7890
+expr	7892	lam		7853,7891
+expr	7893	app	TLA.setminus	256,7880
+expr	7894	app	TLA.in	7800,7893
+expr	7895	lam		7853,7894
+expr	7914	var	zenon_Vyo	
+expr	7918	var	zenon_Vzo	
+expr	7919	app	TLA.in	7800,7918
+expr	7920	not		7919
+expr	7921	lam		7918,7920
+expr	7929	app	TLA.set	7914
+expr	7930	app	TLA.in	7800,7929
+expr	7931	not		7930
+expr	7932	lam		7914,7931
+expr	7952	var	zenon_Vap	
+expr	7954	var	zenon_Vbp	
+expr	7962	app	TLA.setOfAll	7952,35
+expr	7963	app	TLA.in	7800,7962
+expr	7964	lam		7952,7963
+expr	7965	app	TLA.setminus	7952,27
+expr	7966	app	TLA.setOfAll	7965,35
+expr	7967	app	TLA.in	7800,7966
+expr	7968	lam		7952,7967
+expr	7969	app	TLA.setminus	3,7952
+expr	7970	app	TLA.setOfAll	7969,35
+expr	7971	app	TLA.in	7800,7970
+expr	7972	lam		7952,7971
+expr	7973	app	TLA.set	7952
+expr	7974	app	TLA.setminus	3,7973
+expr	7975	app	TLA.setOfAll	7974,35
+expr	7976	app	TLA.in	7800,7975
+expr	7977	lam		7952,7976
+expr	7978	app	TLA.setOfAll	28,7952
+expr	7979	app	TLA.in	7800,7978
+expr	7980	lam		7952,7979
+expr	7981	var	zenon_Vcp	
+expr	7982	app	TLA.in	7981,28
+expr	7983	app	TLA.fapply	26,7981
+expr	7984	app	=	7800,7983
+expr	7985	and		7982,7984
+expr	7986	ex		7981,7985
+expr	7990	var	zenon_Vdp	
+expr	7998	app	=	7800,7990
+expr	7999	not		7998
+expr	8000	lam		7990,7999
+expr	8004	lam		6184,6188
+expr	8008	var	zenon_Vep	
+expr	8020	app	TLA.fapply	7800,8008
+expr	8021	app	=	8020,5
+expr	8022	not		8021
+expr	8023	lam		8008,8022
+expr	8024	app	TLA.fapply	8008,40
+expr	8025	app	TLA.fapply	7800,8024
+expr	8026	app	=	8025,5
+expr	8027	not		8026
+expr	8028	lam		8008,8027
+expr	8029	app	TLA.fapply	39,8008
+expr	8030	app	TLA.fapply	7800,8029
+expr	8031	app	=	8030,5
+expr	8032	not		8031
+expr	8033	lam		8008,8032
+expr	8034	app	TLA.fapply	8008,12
+expr	8035	app	TLA.fapply	39,8034
+expr	8036	app	TLA.fapply	7800,8035
+expr	8037	app	=	8036,5
+expr	8038	not		8037
+expr	8039	lam		8008,8038
+expr	8040	app	TLA.fapply	39,8029
+expr	8041	app	TLA.fapply	7800,8040
+expr	8042	app	=	8041,5
+expr	8043	not		8042
+expr	8044	lam		8008,8043
+expr	8045	app	=	7802,8008
+expr	8046	not		8045
+expr	8047	lam		8008,8046
+expr	8059	var	zenon_Vfp	
+expr	8061	tau		6477,6481
+expr	8063	app	TLA.fapply	8061,41
+expr	8067	var	zenon_Vgp	
+expr	8072	var	zenon_Vhp	
+expr	8074	app	=	8072,8063
+expr	8075	lam		8072,8074
+expr	8077	app	=	6273,8072
+expr	8078	lam		8072,8077
+expr	8079	app	TLA.fapply	8072,41
+expr	8080	app	=	6273,8079
+expr	8081	lam		8072,8080
+expr	8083	app	TLA.fapply	8061,8072
+expr	8084	app	=	6273,8083
+expr	8085	lam		8072,8084
+expr	8086	app	TLA.fapply	8072,40
+expr	8087	app	TLA.fapply	8061,8086
+expr	8088	app	=	6273,8087
+expr	8089	lam		8072,8088
+expr	8090	app	TLA.fapply	39,8072
+expr	8091	app	TLA.fapply	8061,8090
+expr	8092	app	=	6273,8091
+expr	8093	lam		8072,8092
+expr	8094	app	TLA.fapply	8072,12
+expr	8095	app	TLA.fapply	39,8094
+expr	8096	app	TLA.fapply	8061,8095
+expr	8097	app	=	6273,8096
+expr	8098	lam		8072,8097
+expr	8099	app	TLA.fapply	39,8090
+expr	8100	app	TLA.fapply	8061,8099
+expr	8101	app	=	6273,8100
+expr	8102	lam		8072,8101
+expr	8116	var	zenon_Vip	
+expr	8118	var	zenon_Vjp	
+expr	8119	app	TLA.in	8061,8118
+expr	8120	lam		8118,8119
+expr	8126	app	TLA.setminus	8116,37
+expr	8127	app	TLA.in	8061,8126
+expr	8128	lam		8116,8127
+expr	8129	app	TLA.setOfAll	8116,35
+expr	8130	app	TLA.setminus	8129,37
+expr	8131	app	TLA.in	8061,8130
+expr	8132	lam		8116,8131
+expr	8133	app	TLA.setminus	8116,27
+expr	8134	app	TLA.setOfAll	8133,35
+expr	8135	app	TLA.setminus	8134,37
+expr	8136	app	TLA.in	8061,8135
+expr	8137	lam		8116,8136
+expr	8138	app	TLA.setminus	3,8116
+expr	8139	app	TLA.setOfAll	8138,35
+expr	8140	app	TLA.setminus	8139,37
+expr	8141	app	TLA.in	8061,8140
+expr	8142	lam		8116,8141
+expr	8143	app	TLA.set	8116
+expr	8144	app	TLA.setminus	3,8143
+expr	8145	app	TLA.setOfAll	8144,35
+expr	8146	app	TLA.setminus	8145,37
+expr	8147	app	TLA.in	8061,8146
+expr	8148	lam		8116,8147
+expr	8149	app	TLA.setOfAll	28,8116
+expr	8150	app	TLA.setminus	8149,37
+expr	8151	app	TLA.in	8061,8150
+expr	8152	lam		8116,8151
+expr	8153	app	TLA.setminus	256,8116
+expr	8154	app	TLA.in	8061,8153
+expr	8155	lam		8116,8154
+expr	8156	app	TLA.setminus	256,8143
+expr	8157	app	TLA.in	8061,8156
+expr	8158	lam		8116,8157
+expr	8179	var	zenon_Vkp	
+expr	8183	var	zenon_Vlp	
+expr	8184	app	TLA.in	8061,8183
+expr	8185	not		8184
+expr	8186	lam		8183,8185
+expr	8194	app	TLA.set	8179
+expr	8195	app	TLA.in	8061,8194
+expr	8196	not		8195
+expr	8197	lam		8179,8196
+expr	8219	var	zenon_Vmp	
+expr	8221	var	zenon_Vnp	
+expr	8229	app	TLA.setOfAll	8219,35
+expr	8230	app	TLA.in	8061,8229
+expr	8231	lam		8219,8230
+expr	8232	app	TLA.setminus	8219,27
+expr	8233	app	TLA.setOfAll	8232,35
+expr	8234	app	TLA.in	8061,8233
+expr	8235	lam		8219,8234
+expr	8236	app	TLA.setminus	3,8219
+expr	8237	app	TLA.setOfAll	8236,35
+expr	8238	app	TLA.in	8061,8237
+expr	8239	lam		8219,8238
+expr	8240	app	TLA.set	8219
+expr	8241	app	TLA.setminus	3,8240
+expr	8242	app	TLA.setOfAll	8241,35
+expr	8243	app	TLA.in	8061,8242
+expr	8244	lam		8219,8243
+expr	8245	app	TLA.setOfAll	28,8219
+expr	8246	app	TLA.in	8061,8245
+expr	8247	lam		8219,8246
+expr	8248	var	zenon_Vop	
+expr	8249	app	TLA.in	8248,28
+expr	8250	app	TLA.fapply	26,8248
+expr	8251	app	=	8061,8250
+expr	8252	and		8249,8251
+expr	8253	ex		8248,8252
+expr	8257	var	zenon_Vpp	
+expr	8265	app	=	8061,8257
+expr	8266	not		8265
+expr	8267	lam		8257,8266
+expr	8272	lam		6477,6481
+expr	8276	var	zenon_Vqp	
+expr	8288	app	TLA.fapply	8061,8276
+expr	8289	app	=	8288,5
+expr	8290	not		8289
+expr	8291	lam		8276,8290
+expr	8292	app	TLA.fapply	8276,40
+expr	8293	app	TLA.fapply	8061,8292
+expr	8294	app	=	8293,5
+expr	8295	not		8294
+expr	8296	lam		8276,8295
+expr	8297	app	TLA.fapply	39,8276
+expr	8298	app	TLA.fapply	8061,8297
+expr	8299	app	=	8298,5
+expr	8300	not		8299
+expr	8301	lam		8276,8300
+expr	8302	app	TLA.fapply	8276,12
+expr	8303	app	TLA.fapply	39,8302
+expr	8304	app	TLA.fapply	8061,8303
+expr	8305	app	=	8304,5
+expr	8306	not		8305
+expr	8307	lam		8276,8306
+expr	8308	app	TLA.fapply	39,8297
+expr	8309	app	TLA.fapply	8061,8308
+expr	8310	app	=	8309,5
+expr	8311	not		8310
+expr	8312	lam		8276,8311
+expr	8313	app	=	8063,8276
+expr	8314	not		8313
+expr	8315	lam		8276,8314
+expr	8331	var	zenon_Vrp	
+expr	8338	app	TLA.setminus	8331,37
+expr	8339	app	=	8338,27
+expr	8340	not		8339
+expr	8341	lam		8331,8340
+expr	8342	app	TLA.setOfAll	8331,35
+expr	8343	app	TLA.setminus	8342,37
+expr	8344	app	=	8343,27
+expr	8345	not		8344
+expr	8346	lam		8331,8345
+expr	8347	var	zenon_Vsp	
+expr	8348	app	TLA.DOMAIN	8347
+expr	8349	app	TLA.setOfAll	8348,35
+expr	8350	app	TLA.setminus	8349,37
+expr	8351	app	=	8350,27
+expr	8352	not		8351
+expr	8353	lam		8347,8352
+expr	8360	var	zenon_Vtp	
+expr	8361	app	TLA.in	8360,38
+expr	8362	app	TLA.in	8360,27
+expr	8363	equiv		8361,8362
+expr	8364	all		8360,8363
+expr	8369	var	zenon_Vup	
+expr	8385	var	zenon_Vvp	
+expr	8386	app	TLA.in	8385,221
+expr	8387	app	TLA.in	8385,27
+expr	8388	equiv		8386,8387
+expr	8389	all		8385,8388
+expr	8394	var	zenon_Vwp	
+expr	8410	app	TLA.setminus	8394,27
+expr	8411	app	TLA.setOfAll	8410,35
+expr	8412	app	TLA.setminus	8411,37
+expr	8413	app	=	8412,27
+expr	8414	not		8413
+expr	8415	lam		8394,8414
+expr	8416	app	TLA.setminus	3,8394
+expr	8417	app	TLA.setOfAll	8416,35
+expr	8418	app	TLA.setminus	8417,37
+expr	8419	app	=	8418,27
+expr	8420	not		8419
+expr	8421	lam		8394,8420
+expr	8422	app	TLA.set	8394
+expr	8423	app	TLA.setminus	3,8422
+expr	8424	app	TLA.setOfAll	8423,35
+expr	8425	app	TLA.setminus	8424,37
+expr	8426	app	=	8425,27
+expr	8427	not		8426
+expr	8428	lam		8394,8427
+expr	8429	app	TLA.setOfAll	28,8394
+expr	8430	app	TLA.setminus	8429,37
+expr	8431	app	=	8430,27
+expr	8432	not		8431
+expr	8433	lam		8394,8432
+expr	8434	app	TLA.setminus	256,8394
+expr	8435	app	=	8434,27
+expr	8436	not		8435
+expr	8437	lam		8394,8436
+expr	8438	app	TLA.setminus	256,8422
+expr	8439	app	=	8438,27
+expr	8440	not		8439
+expr	8441	lam		8394,8440
+expr	8448	var	zenon_Vxp	
+expr	8449	app	TLA.in	8448,257
+expr	8450	app	TLA.in	8448,27
+expr	8451	equiv		8449,8450
+expr	8452	all		8448,8451
+expr	8454	var	zenon_Vyp	
+expr	8470	var	zenon_Vzp	
+expr	8483	var	zenon_Vaq	
+expr	8488	var	zenon_Vbq	
+expr	8504	var	zenon_Vcq	
+expr	8509	var	zenon_Vdq	
+expr	8563	var	zenon_Veq	
+expr	8571	var	zenon_Vfq	
+expr	8578	app	TLA.setOfAll	8571,43
+expr	8579	app	=	8578,37
+expr	8580	not		8579
+expr	8581	lam		8571,8580
+expr	8582	app	TLA.setminus	8571,37
+expr	8583	app	TLA.setOfAll	8582,43
+expr	8584	app	=	8583,37
+expr	8585	not		8584
+expr	8586	lam		8571,8585
+expr	8587	app	TLA.setOfAll	8571,35
+expr	8588	app	TLA.setminus	8587,37
+expr	8589	app	TLA.setOfAll	8588,43
+expr	8590	app	=	8589,37
+expr	8591	not		8590
+expr	8592	lam		8571,8591
+expr	8593	app	TLA.setminus	8571,27
+expr	8594	app	TLA.setOfAll	8593,35
+expr	8595	app	TLA.setminus	8594,37
+expr	8596	app	TLA.setOfAll	8595,43
+expr	8597	app	=	8596,37
+expr	8598	not		8597
+expr	8599	lam		8571,8598
+expr	8600	app	TLA.setminus	3,8571
+expr	8601	app	TLA.setOfAll	8600,35
+expr	8602	app	TLA.setminus	8601,37
+expr	8603	app	TLA.setOfAll	8602,43
+expr	8604	app	=	8603,37
+expr	8605	not		8604
+expr	8606	lam		8571,8605
+expr	8607	app	TLA.set	8571
+expr	8608	app	TLA.setminus	3,8607
+expr	8609	app	TLA.setOfAll	8608,35
+expr	8610	app	TLA.setminus	8609,37
+expr	8611	app	TLA.setOfAll	8610,43
+expr	8612	app	=	8611,37
+expr	8613	not		8612
+expr	8614	lam		8571,8613
+expr	8615	app	TLA.setOfAll	28,8571
+expr	8616	app	TLA.setminus	8615,37
+expr	8617	app	TLA.setOfAll	8616,43
+expr	8618	app	=	8617,37
+expr	8619	not		8618
+expr	8620	lam		8571,8619
+expr	8621	app	TLA.setminus	256,8571
+expr	8622	app	TLA.setOfAll	8621,43
+expr	8623	app	=	8622,37
+expr	8624	not		8623
+expr	8625	lam		8571,8624
+expr	8626	app	TLA.setminus	256,8607
+expr	8627	app	TLA.setOfAll	8626,43
+expr	8628	app	=	8627,37
+expr	8629	not		8628
+expr	8630	lam		8571,8629
+expr	8641	var	zenon_Vgq	
+expr	8642	app	TLA.in	8641,827
+expr	8643	app	TLA.in	8641,37
+expr	8644	equiv		8642,8643
+expr	8645	all		8641,8644
+expr	8650	var	zenon_Vhq	
+expr	8657	app	TLA.cup	8650,27
+expr	8658	app	=	8657,37
+expr	8659	not		8658
+expr	8660	lam		8650,8659
+expr	8661	app	TLA.setOfAll	8650,43
+expr	8662	app	TLA.cup	8661,27
+expr	8663	app	=	8662,37
+expr	8664	not		8663
+expr	8665	lam		8650,8664
+expr	8666	app	TLA.setminus	8650,37
+expr	8667	app	TLA.setOfAll	8666,43
+expr	8668	app	TLA.cup	8667,27
+expr	8669	app	=	8668,37
+expr	8670	not		8669
+expr	8671	lam		8650,8670
+expr	8672	app	TLA.setOfAll	8650,35
+expr	8673	app	TLA.setminus	8672,37
+expr	8674	app	TLA.setOfAll	8673,43
+expr	8675	app	TLA.cup	8674,27
+expr	8676	app	=	8675,37
+expr	8677	not		8676
+expr	8678	lam		8650,8677
+expr	8679	app	TLA.setminus	8650,27
+expr	8680	app	TLA.setOfAll	8679,35
+expr	8681	app	TLA.setminus	8680,37
+expr	8682	app	TLA.setOfAll	8681,43
+expr	8683	app	TLA.cup	8682,27
+expr	8684	app	=	8683,37
+expr	8685	not		8684
+expr	8686	lam		8650,8685
+expr	8687	app	TLA.setminus	3,8650
+expr	8688	app	TLA.setOfAll	8687,35
+expr	8689	app	TLA.setminus	8688,37
+expr	8690	app	TLA.setOfAll	8689,43
+expr	8691	app	TLA.cup	8690,27
+expr	8692	app	=	8691,37
+expr	8693	not		8692
+expr	8694	lam		8650,8693
+expr	8695	app	TLA.set	8650
+expr	8696	app	TLA.setminus	3,8695
+expr	8697	app	TLA.setOfAll	8696,35
+expr	8698	app	TLA.setminus	8697,37
+expr	8699	app	TLA.setOfAll	8698,43
+expr	8700	app	TLA.cup	8699,27
+expr	8701	app	=	8700,37
+expr	8702	not		8701
+expr	8703	lam		8650,8702
+expr	8704	app	TLA.setOfAll	28,8650
+expr	8705	app	TLA.setminus	8704,37
+expr	8706	app	TLA.setOfAll	8705,43
+expr	8707	app	TLA.cup	8706,27
+expr	8708	app	=	8707,37
+expr	8709	not		8708
+expr	8710	lam		8650,8709
+expr	8711	app	TLA.setminus	256,8650
+expr	8712	app	TLA.setOfAll	8711,43
+expr	8713	app	TLA.cup	8712,27
+expr	8714	app	=	8713,37
+expr	8715	not		8714
+expr	8716	lam		8650,8715
+expr	8717	app	TLA.setminus	256,8695
+expr	8718	app	TLA.setOfAll	8717,43
+expr	8719	app	TLA.cup	8718,27
+expr	8720	app	=	8719,37
+expr	8721	not		8720
+expr	8722	lam		8650,8721
+expr	8723	app	TLA.setOfAll	257,8650
+expr	8724	app	TLA.cup	8723,27
+expr	8725	app	=	8724,37
+expr	8726	not		8725
+expr	8727	lam		8650,8726
+expr	8728	app	TLA.cup	827,8650
+expr	8729	app	=	8728,37
+expr	8730	not		8729
+expr	8731	lam		8650,8730
+expr	8732	app	TLA.cup	827,8695
+expr	8733	app	=	8732,37
+expr	8734	not		8733
+expr	8735	lam		8650,8734
+expr	8742	var	zenon_Viq	
+expr	8743	app	TLA.in	8742,828
+expr	8744	app	TLA.in	8742,37
+expr	8745	equiv		8743,8744
+expr	8746	all		8742,8745
+expr	8751	var	zenon_Vjq	
+expr	8773	var	zenon_Vkq	
+expr	8774	app	TLA.in	8773,697
+expr	8775	app	TLA.in	8773,37
+expr	8776	equiv		8774,8775
+expr	8777	all		8773,8776
+expr	8782	var	zenon_Vlq	
+expr	8811	var	zenon_Vmq	
+expr	8812	app	TLA.in	8811,698
+expr	8813	app	TLA.in	8811,37
+expr	8814	equiv		8812,8813
+expr	8815	all		8811,8814
+expr	8820	var	zenon_Vnq	
+expr	8842	var	zenon_Voq	
+expr	8843	app	TLA.DOMAIN	8842
+expr	8844	app	TLA.setOfAll	8843,35
+expr	8845	app	TLA.setminus	8844,37
+expr	8846	app	TLA.setOfAll	8845,43
+expr	8847	app	=	8846,37
+expr	8848	not		8847
+expr	8849	lam		8842,8848
+expr	8857	var	zenon_Vpq	
+expr	8858	app	TLA.in	8857,44
+expr	8859	app	TLA.in	8857,37
+expr	8860	equiv		8858,8859
+expr	8861	all		8857,8860
+expr	8866	var	zenon_Vqq	
+expr	8895	var	zenon_Vrq	
+expr	8896	app	TLA.DOMAIN	8895
+expr	8897	app	TLA.setOfAll	8896,35
+expr	8898	app	TLA.setminus	8897,37
+expr	8899	app	TLA.setOfAll	8898,43
+expr	8900	app	TLA.cup	8899,27
+expr	8901	app	=	8900,37
+expr	8902	not		8901
+expr	8903	lam		8895,8902
+expr	8912	var	zenon_Vsq	
+expr	8913	app	TLA.in	8912,45
+expr	8914	app	TLA.in	8912,37
+expr	8915	equiv		8913,8914
+expr	8916	all		8912,8915
+expr	8919	var	zenon_Vtq	
+expr	8921	tau		6635,6639
+expr	8922	app	TLA.in	8921,33
+expr	8923	app	TLA.fapply	26,8921
+expr	8924	app	=	6486,8923
+expr	8925	and		8922,8924
+expr	8927	var	zenon_Vuq	
+expr	8932	var	zenon_Vvq	
+expr	8934	app	=	8932,8923
+expr	8935	lam		8932,8934
+expr	8937	app	=	6486,8932
+expr	8938	lam		8932,8937
+expr	8939	app	TLA.fapply	8932,8921
+expr	8940	app	=	6486,8939
+expr	8941	lam		8932,8940
+expr	8942	app	TLA.fapply	31,8921
+expr	8943	app	=	6486,8942
+expr	8961	var	zenon_Vwq	
+expr	8963	var	zenon_Vxq	
+expr	8964	app	TLA.in	8921,8963
+expr	8965	lam		8963,8964
+expr	8971	var	zenon_Vyq	
+expr	8972	app	TLA.DOMAIN	8971
+expr	8973	app	TLA.in	8921,8972
+expr	8974	lam		8971,8973
+expr	8978	app	TLA.in	8921,219
+expr	8998	var	zenon_Vzq	
+expr	9000	var	zenon_Var	
+expr	9008	app	TLA.in	8921,28
+expr	9009	not		9008
+expr	9010	var	zenon_Vbr	
+expr	9012	var	zenon_Vcr	
+expr	9020	app	TLA.setminus	9010,27
+expr	9021	app	TLA.in	8921,9020
+expr	9022	lam		9010,9021
+expr	9023	app	TLA.setminus	3,9010
+expr	9024	app	TLA.in	8921,9023
+expr	9025	lam		9010,9024
+expr	9026	app	TLA.set	9010
+expr	9027	app	TLA.setminus	3,9026
+expr	9028	app	TLA.in	8921,9027
+expr	9029	lam		9010,9028
+expr	9034	var	zenon_Vdr	
+expr	9038	var	zenon_Ver	
+expr	9039	app	TLA.in	8921,9038
+expr	9040	not		9039
+expr	9041	lam		9038,9040
+expr	9049	app	TLA.set	9034
+expr	9050	app	TLA.in	8921,9049
+expr	9051	not		9050
+expr	9052	lam		9034,9051
+expr	9076	var	zenon_Vfr	
+expr	9078	var	zenon_Vgr	
+expr	9089	var	zenon_Vhr	
+expr	9097	app	=	8921,9089
+expr	9098	not		9097
+expr	9099	lam		9089,9098
+expr	9104	lam		6635,6639
+expr	9108	var	zenon_Vir	
+expr	9110	app	=	9108,8942
+expr	9111	lam		9108,9110
+expr	9129	var	zenon_Vjr	
+expr	9131	var	zenon_Vkr	
+expr	9134	app	TLA.in	9129,27
+expr	9135	lam		9129,9134
+expr	9139	app	TLA.set	9129
+expr	9140	app	TLA.in	5638,9139
+expr	9141	lam		9129,9140
+expr	9143	var	zenon_Vlr	
+expr	9147	var	zenon_Vmr	
+expr	9151	app	TLA.in	9143,45
+expr	9152	not		9151
+expr	9153	lam		9143,9152
+expr	9158	app	TLA.cup	9143,27
+expr	9159	app	TLA.in	5638,9158
+expr	9160	not		9159
+expr	9161	lam		9143,9160
+expr	9162	app	TLA.setOfAll	9143,43
+expr	9163	app	TLA.cup	9162,27
+expr	9164	app	TLA.in	5638,9163
+expr	9165	not		9164
+expr	9166	lam		9143,9165
+expr	9167	app	TLA.setminus	9143,37
+expr	9168	app	TLA.setOfAll	9167,43
+expr	9169	app	TLA.cup	9168,27
+expr	9170	app	TLA.in	5638,9169
+expr	9171	not		9170
+expr	9172	lam		9143,9171
+expr	9173	app	TLA.setOfAll	9143,35
+expr	9174	app	TLA.setminus	9173,37
+expr	9175	app	TLA.setOfAll	9174,43
+expr	9176	app	TLA.cup	9175,27
+expr	9177	app	TLA.in	5638,9176
+expr	9178	not		9177
+expr	9179	lam		9143,9178
+expr	9180	var	zenon_Vnr	
+expr	9181	app	TLA.DOMAIN	9180
+expr	9182	app	TLA.setOfAll	9181,35
+expr	9183	app	TLA.setminus	9182,37
+expr	9184	app	TLA.setOfAll	9183,43
+expr	9185	app	TLA.cup	9184,27
+expr	9186	app	TLA.in	5638,9185
+expr	9187	not		9186
+expr	9188	lam		9180,9187
+expr	9198	var	zenon_Vor	
+expr	9202	var	zenon_Vpr	
+expr	9206	app	TLA.in	9198,44
+expr	9207	not		9206
+expr	9208	lam		9198,9207
+expr	9213	app	TLA.setOfAll	9198,43
+expr	9214	app	TLA.in	5638,9213
+expr	9215	not		9214
+expr	9216	lam		9198,9215
+expr	9217	app	TLA.setminus	9198,37
+expr	9218	app	TLA.setOfAll	9217,43
+expr	9219	app	TLA.in	5638,9218
+expr	9220	not		9219
+expr	9221	lam		9198,9220
+expr	9222	app	TLA.setOfAll	9198,35
+expr	9223	app	TLA.setminus	9222,37
+expr	9224	app	TLA.setOfAll	9223,43
+expr	9225	app	TLA.in	5638,9224
+expr	9226	not		9225
+expr	9227	lam		9198,9226
+expr	9228	var	zenon_Vqr	
+expr	9229	app	TLA.DOMAIN	9228
+expr	9230	app	TLA.setOfAll	9229,35
+expr	9231	app	TLA.setminus	9230,37
+expr	9232	app	TLA.setOfAll	9231,43
+expr	9233	app	TLA.in	5638,9232
+expr	9234	not		9233
+expr	9235	lam		9228,9234
+expr	9243	var	zenon_Vrr	
+expr	9250	lam		5485,5488
+expr	9252	var	zenon_Vsr	
+expr	9256	var	zenon_Vtr	
+expr	9260	var	zenon_Vur	
+expr	9263	var	zenon_Vvr	
+expr	9268	app	TLA.set	
+expr	9269	app	TLA.in	6486,9268
+expr	9270	not		9269
+expr	9276	lam		173,176
+expr	9278	var	zenon_Vwr	
+expr	9281	var	zenon_Vxr	
+expr	9285	var	zenon_Vyr	
+expr	9288	var	zenon_Vzr	
+expr	9293	app	TLA.in	2127,9268
+expr	9294	not		9293
+lemma	zenon_thm	
+node	2	32,71	notconnect	and	46	69
+node	1	32,89	extension	zenon_notsetequal	45,27	89	5490
+node	1	32,5490	extension	zenon_notallex	9250	5490	5643
+node	1	32,5643	ex	5643	5638
+node	2	32,5642	notconnect	equiv	5639	5640
+node	1	5653,5640	extension	zenon_notin_cup	5638,44,27	5653	5745,5654
+node	0	5640,5654	axiom	5640
+node	2	32,5639,5654	extension	zenon_in_cup	5638,44,27	5639	5721;5640
+node	1	32,5721	extension	zenon_in_setofall	5638,38,43	5721	5787
+node	1	32,5787	ex	5787	6486
+node	1	32,6490	connect	and	6487	6489
+node	1	32,6487	extension	zenon_in_setminus	6486,36,37	6487	6560,6562
+node	1	32,6562,6560	extension	zenon_notin_addElt	6486,29,9268	6562	6590,9270
+node	1	32,6560,6590	extension	zenon_in_setofall	6486,33,35	6560	6640
+node	1	32,6640,6590	ex	6640	8921
+node	1	32,8925,6590	connect	and	8922	8924
+node	1	32,8922,6590,8924	congruencelr	8974	26	31
+node	1	32,8978,6590,8924	extension	zenon_domain_fcn	8965,28,30	8978	9008
+node	1	32,8924,6590,9008	congruencelr	8941	26	31
+node	2	8943,6590,9008	extension	zenon_fapplyfcn	8938,28,30,8921	8943	9009;6589
+node	0	9008,9009	axiom	9008
+node	0	6590,6589	axiom	6589
+node	0	5654,5640	axiom	5640
+node	2	32,95	extension	zenon_record_neq_match		95	132;133
+node	1	32,132	extension	zenon_notsetequal	59,65	132	178
+node	1	32,178	extension	zenon_notallex	9276	178	1574
+node	1	32,1574	ex	1574	1569
+node	2	32,1573	notconnect	equiv	1570	1571
+node	0	1571	extension	zenon_in_emptyset	1569	1571	
+node	1	32,1570	extension	zenon_in_setofall	1569,55,58	1570	1607
+node	1	32,1607	ex	1607	2127
+node	1	32,2133	connect	and	2128	2132
+node	1	32,2128	extension	zenon_record_access	2202,55,38	2128	2208
+node	1	32,2208	extension	zenon_in_setminus	2127,36,37	2208	2239,2241
+node	1	32,2241,2239	extension	zenon_notin_addElt	2127,29,9268	2241	2263,9294
+node	1	32,2239,2263	extension	zenon_in_setofall	2127,33,35	2239	2315
+node	1	32,2315,2263	ex	2315	5158
+node	1	32,5162,2263	connect	and	5159	5161
+node	1	32,5159,2263,5161	congruencelr	5201	26	31
+node	1	32,5205,2263,5161	extension	zenon_domain_fcn	5192,28,30	5205	5239
+node	1	32,5161,2263,5239	congruencelr	5178	26	31
+node	2	5180,2263,5239	extension	zenon_fapplyfcn	5175,28,30,5158	5180	5242;2262
+node	0	5239,5242	axiom	5239
+node	0	2263,2262	axiom	2262
+node	1	133	extension	zenon_record_access	149,63,45	133	151
+node	0	151	noteq	45
+numbers	
+hyp	v'309	9	1
+hyp	v'310	16	1
+hyp	v'311	19	1
+hyp	v'312	22	1
+hyp	v'313	25	1
+hyp	v'314	32	1
+hyp	zenon_G	71	0

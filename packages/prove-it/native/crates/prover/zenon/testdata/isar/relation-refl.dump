@@ -1,0 +1,65 @@
+counter	g
+steps	3
+expr	2	var	x	
+expr	3	app	R	2,2
+expr	4	all	zenon_U	2,3
+expr	5	var	a	
+expr	6	app	f	5
+expr	7	var	b	
+expr	8	app	g	7
+expr	9	app	=	6,8
+expr	10	app	R	6,8
+expr	11	not		10
+expr	12	var	S	
+expr	13	app	TLA.in	2,12
+expr	14	app	P	2
+expr	16	var	B	
+expr	17	app	TLA.in	2,16
+expr	18	lam		2,17
+expr	20	imply		13,14
+expr	21	all		2,20
+expr	23	and		13,14
+expr	24	ex		2,23
+expr	25	tau		2,23
+expr	29	var	zenon_Vf	
+expr	30	lam		29,29
+expr	31	not		29
+expr	32	lam		29,31
+expr	33	app	R	29,8
+expr	34	not		33
+expr	35	lam		29,34
+expr	36	app	f	29
+expr	37	app	R	36,8
+expr	38	not		37
+expr	39	lam		29,38
+expr	40	app	R	6,29
+expr	41	not		40
+expr	42	lam		29,41
+expr	43	app	g	29
+expr	44	app	R	6,43
+expr	45	not		44
+expr	46	lam		29,45
+expr	47	not		9
+expr	50	var	zenon_Vg	
+expr	52	app	=	50,8
+expr	53	lam		50,52
+expr	54	app	f	50
+expr	55	app	=	54,8
+expr	56	lam		50,55
+expr	57	app	=	6,50
+expr	58	lam		50,57
+expr	59	app	g	50
+expr	60	app	=	6,59
+expr	61	lam		50,60
+expr	65	app	R	6,6
+expr	66	app	=	6,6
+expr	67	not		66
+lemma	zenon_thm	
+node	1	4,11,9	all	4	6
+node	2	11,65,9	pnotp	65	11
+node	0	67	noteq	6
+node	0	9,47	axiom	9
+numbers	
+hyp	refl	4	1
+hyp	e	9	1
+hyp	zenon_G	11	0

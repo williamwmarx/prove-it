@@ -1,0 +1,73 @@
+counter	k
+steps	4
+expr	2	var	TLA.Succ	
+expr	3	var	0	
+expr	4	app	TLA.fapply	2,3
+expr	5	app	TLA.fapply	2,4
+expr	6	var	arith.N	
+expr	7	app	TLA.in	5,6
+expr	8	not		7
+expr	9	var	x	
+expr	10	var	S	
+expr	11	app	TLA.in	9,10
+expr	12	app	P	9
+expr	14	var	B	
+expr	15	app	TLA.in	9,14
+expr	16	lam		9,15
+expr	18	imply		11,12
+expr	19	all		9,18
+expr	21	and		11,12
+expr	22	ex		9,21
+expr	23	tau		9,21
+expr	27	var	zenon_Vf	
+expr	28	lam		27,27
+expr	29	not		27
+expr	30	lam		27,29
+expr	31	var	zenon_Vg	
+expr	32	app	TLA.in	5,31
+expr	33	not		32
+expr	34	lam		31,33
+expr	35	app	TLA.in	27,6
+expr	36	not		35
+expr	37	lam		27,36
+expr	38	app	TLA.fapply	27,4
+expr	39	app	TLA.in	38,6
+expr	40	not		39
+expr	41	lam		27,40
+expr	42	app	TLA.fapply	2,27
+expr	43	app	TLA.in	42,6
+expr	44	not		43
+expr	45	lam		27,44
+expr	46	app	TLA.fapply	27,3
+expr	47	app	TLA.fapply	2,46
+expr	48	app	TLA.in	47,6
+expr	49	not		48
+expr	50	lam		27,49
+expr	51	app	TLA.fapply	2,42
+expr	52	app	TLA.in	51,6
+expr	53	not		52
+expr	54	lam		27,53
+expr	58	app	TLA.in	4,6
+expr	59	not		58
+expr	61	var	zenon_Vh	
+expr	65	var	zenon_Vi	
+expr	66	app	TLA.in	4,65
+expr	67	not		66
+expr	68	lam		65,67
+expr	72	app	TLA.fapply	61,3
+expr	73	app	TLA.in	72,6
+expr	74	not		73
+expr	75	lam		61,74
+expr	83	app	TLA.in	3,6
+expr	84	not		83
+expr	86	var	zenon_Vj	
+expr	90	var	zenon_Vk	
+expr	91	app	TLA.in	3,90
+expr	92	not		91
+expr	93	lam		90,92
+lemma	zenon_thm	
+node	1	8	extension	zenon_in_nat_succ	4	8	59
+node	1	59	extension	zenon_in_nat_succ	3	59	84
+node	0	84	extension	zenon_in_nat_0		84	
+numbers	
+hyp	zenon_G	8	0

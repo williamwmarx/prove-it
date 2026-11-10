@@ -3,6 +3,7 @@
 //! rewriting a subterm with an equality on the branch.
 
 pub mod functions;
+pub mod llproof;
 pub mod records;
 pub mod rewrites;
 pub mod sets;

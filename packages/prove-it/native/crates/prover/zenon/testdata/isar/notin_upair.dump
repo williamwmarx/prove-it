@@ -1,0 +1,54 @@
+counter	h
+steps	3
+expr	2	var	b	
+expr	3	var	c	
+expr	4	app	TLA.upair	3,2
+expr	5	app	TLA.in	2,4
+expr	6	not		5
+expr	7	var	x	
+expr	8	var	S	
+expr	9	app	TLA.in	7,8
+expr	10	app	P	7
+expr	12	var	B	
+expr	13	app	TLA.in	7,12
+expr	14	lam		7,13
+expr	16	imply		9,10
+expr	17	all		7,16
+expr	19	and		9,10
+expr	20	ex		7,19
+expr	21	tau		7,19
+expr	25	var	zenon_Vf	
+expr	26	lam		25,25
+expr	27	not		25
+expr	28	lam		25,27
+expr	29	var	zenon_Vg	
+expr	30	app	TLA.in	2,29
+expr	31	not		30
+expr	32	lam		29,31
+expr	33	app	TLA.in	25,4
+expr	34	not		33
+expr	35	lam		25,34
+expr	39	app	TLA.upair	25,2
+expr	40	app	TLA.in	2,39
+expr	41	not		40
+expr	42	lam		25,41
+expr	43	app	TLA.upair	3,25
+expr	44	app	TLA.in	2,43
+expr	45	not		44
+expr	46	lam		25,45
+expr	47	app	=	2,3
+expr	48	app	=	2,2
+expr	49	not		47
+expr	50	not		48
+expr	55	var	zenon_Vh	
+expr	59	app	=	55,3
+expr	60	not		59
+expr	61	lam		55,60
+expr	62	app	=	2,55
+expr	63	not		62
+expr	64	lam		55,63
+lemma	zenon_thm	
+node	1	6	extension	zenon_notin_upair	2,3,2	6	49,50
+node	0	50	noteq	2
+numbers	
+hyp	zenon_G	6	0
