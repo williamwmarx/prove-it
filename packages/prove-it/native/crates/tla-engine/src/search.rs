@@ -1703,7 +1703,7 @@ fn expand_claimed(worker: &mut Worker<'_>, shared: &Shared<'_>) -> Expanded {
     let (before, level) = (shared.before, shared.level);
     let candidates = Candidates {
         before,
-        seen: FingerprintSet::new(before.is_verified),
+        seen: FingerprintSet::new(before.set.indices.is_some()),
         ids: Vec::new(),
         keys: Vec::new(),
         fingerprints: Vec::new(),
