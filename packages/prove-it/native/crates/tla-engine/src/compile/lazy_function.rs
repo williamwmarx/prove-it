@@ -124,24 +124,25 @@ pub(crate) fn except(machine: &mut Machine<'_>, function: Id, key: Id, value: Id
 /// of its bounds' sets (`FcnLambdaValue.getDomain`).
 pub(crate) fn is_in_domain(machine: &mut Machine<'_>, function: Id, element: Id) -> Outcome<bool> {
     let index = machine.store.lazy_index_of(function) as usize;
-    let domains = Arc::clone(&machine.lazy_functions[index].domains);
-    if let [domain] = &domains[..] {
-        return domain.contains(machine, element);
-    }
-    // TLC fails asking a set of tuples for a value that isn't a tuple.
-    if machine.store.kind_of(element) != KIND_TUPLE {
-        return Err(DOMAIN);
-    }
-    if machine.store.size_of(element) as usize != domains.len() {
-        return Ok(false);
-    }
-    for (position, domain) in domains.iter().enumerate() {
-        let component = machine.store.get_range_value(element, position as u32);
-        if !domain.contains(machine, component)? {
+    in_built_context(machine, index, |machine, _, domains| {
+        if let [domain] = domains {
+            return domain.contains(machine, element);
+        }
+        // TLC fails asking a set of tuples for a value that isn't a tuple.
+        if machine.store.kind_of(element) != KIND_TUPLE {
+            return Err(DOMAIN);
+        }
+        if machine.store.size_of(element) as usize != domains.len() {
             return Ok(false);
         }
-    }
-    Ok(true)
+        for (position, domain) in domains.iter().enumerate() {
+            let component = machine.store.get_range_value(element, position as u32);
+            if !domain.contains(machine, component)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    })
 }
 
 /// Whether a value is a function TLC keeps lazy.
@@ -154,6 +155,45 @@ pub(crate) fn is_lazy(machine: &Machine<'_>, value: Id) -> bool {
 #[inline(never)]
 fn apply_lazy(machine: &mut Machine<'_>, function: Id, key: Id) -> Outcome<Id> {
     let index = machine.store.lazy_index_of(function) as usize;
+    for at in (0..machine.lazy_functions[index].excepts.len()).rev() {
+        let (except_key, value) = machine.lazy_functions[index].excepts[at];
+        if machine.store.equals(except_key, key)? {
+            return Ok(value);
+        }
+    }
+    in_built_context(machine, index, |machine, definition, domains| {
+        // One bound takes the key; several take a tuple of as many elements, one for each.
+        let elements: Vec<Id> = match &definition.levels[..] {
+            [_] => vec![key],
+            levels => {
+                let store = &machine.store;
+                if store.kind_of(key) != KIND_TUPLE || store.size_of(key) as usize != levels.len() {
+                    return Err(Bail("applied a function outside its domain"));
+                }
+                (0..levels.len() as u32)
+                    .map(|position| store.get_range_value(key, position))
+                    .collect()
+            }
+        };
+        for (domain, &element) in domains.iter().zip(&elements) {
+            if !domain.contains(machine, element)? {
+                return Err(Bail("applied a function outside its domain"));
+            }
+        }
+        for ((slots, tuple), &element) in definition.levels.iter().zip(&elements) {
+            assign_bound(machine, slots, *tuple, element)?;
+        }
+        (definition.body)(machine)
+    })
+}
+
+// Runs `run` in the context TLC built the function in, which its domains and body read: its state,
+// and the captured slots' values. The slots it sets, its bounds' among them, are restored after.
+fn in_built_context<T>(
+    machine: &mut Machine<'_>,
+    index: usize,
+    run: impl FnOnce(&mut Machine<'_>, &LambdaDefinition, &[Lazy]) -> Outcome<T>,
+) -> Outcome<T> {
     let lazy = &machine.lazy_functions[index];
     let (definition, domains, captured, state) = (
         Arc::clone(&lazy.definition),
@@ -161,13 +201,6 @@ fn apply_lazy(machine: &mut Machine<'_>, function: Id, key: Id) -> Outcome<Id> {
         Arc::clone(&lazy.captured),
         Arc::clone(&lazy.state),
     );
-    for at in (0..machine.lazy_functions[index].excepts.len()).rev() {
-        let (except_key, value) = machine.lazy_functions[index].excepts[at];
-        if machine.store.equals(except_key, key)? {
-            return Ok(value);
-        }
-    }
-    // The body reads the state it was built in.
     let is_same_state = definition
         .vars
         .iter()
@@ -181,24 +214,6 @@ fn apply_lazy(machine: &mut Machine<'_>, function: Id, key: Id) -> Outcome<Id> {
         .eq(state.iter().copied());
     if !is_same_state {
         return Err(OTHER_STATE);
-    }
-    // One bound takes the key; several take a tuple of as many elements, one for each.
-    let elements: Vec<Id> = match &definition.levels[..] {
-        [_] => vec![key],
-        levels => {
-            let store = &machine.store;
-            if store.kind_of(key) != KIND_TUPLE || store.size_of(key) as usize != levels.len() {
-                return Err(Bail("applied a function outside its domain"));
-            }
-            (0..levels.len() as u32)
-                .map(|position| store.get_range_value(key, position))
-                .collect()
-        }
-    };
-    for (domain, &element) in domains.iter().zip(&elements) {
-        if !domain.contains(machine, element)? {
-            return Err(Bail("applied a function outside its domain"));
-        }
     }
     let slots: Vec<u32> = definition
         .captured
@@ -218,12 +233,7 @@ fn apply_lazy(machine: &mut Machine<'_>, function: Id, key: Id) -> Outcome<Id> {
     for (&slot, &value) in definition.captured.iter().zip(captured.iter()) {
         machine.locals[slot as usize] = value;
     }
-    let result = definition
-        .levels
-        .iter()
-        .zip(&elements)
-        .try_for_each(|((slots, tuple), &element)| assign_bound(machine, slots, *tuple, element))
-        .and_then(|()| (definition.body)(machine));
+    let result = run(machine, &definition, &domains);
     for (&slot, &value) in slots.iter().zip(&saved) {
         machine.locals[slot as usize] = value;
     }

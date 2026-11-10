@@ -955,37 +955,57 @@ impl Compiler<'_> {
         let is_lambda_possible = levels_for_lambda
             .iter()
             .any(|(set, ..)| set.may_be_infinite());
-        let domains: Vec<(Option<&'static str>, Option<Reference>, Eval)> = levels_for_lambda
+        // A domain TLC only tests, such as `{n \in Nat : n < k}` or `Seq(S)`, is tested as the
+        // engine tests membership in it.
+        let domains: Vec<Reference> = levels_for_lambda
             .iter()
-            .map(|(set, ..)| (set.infinite, set.reference.clone(), set.eval.clone()))
+            .map(|(set, ..)| -> Reference {
+                match (set.infinite, &set.member, &set.reference) {
+                    (Some(_), Some(member), _) => {
+                        let member = Arc::clone(member);
+                        Arc::new(move |_| Ok(Lazy::Tested(Arc::clone(&member))))
+                    }
+                    (Some(name), None, _) => Arc::new(move |_| Ok(Lazy::Infinite(name))),
+                    (None, _, Some(reference)) => Arc::clone(reference),
+                    (None, _, None) => {
+                        let set = set.eval.clone();
+                        Arc::new(move |machine| {
+                            Ok(Lazy::Set(evaluate_set(
+                                machine,
+                                &set,
+                                "a function over a non-set",
+                            )?))
+                        })
+                    }
+                }
+            })
             .collect();
         let evaluate = if is_lambda_possible {
             self.is_lambda_built = true;
+            // The domains are tested when the function is applied, as TLC tests them
+            // (`FcnLambdaValue.apply`), with what they read as it was when the function was built.
+            let read =
+                Footprint::merge_all(levels_for_lambda.iter().map(|(set, ..)| &set.footprint))
+                    .merge(&body_footprint);
             let definition = Arc::new(LambdaDefinition {
                 levels: levels_for_lambda
                     .into_iter()
                     .map(|(_, slots, tuple)| (slots, tuple))
                     .collect(),
                 body: body_for_lambda,
-                captured: body_footprint
+                captured: read
                     .slots
                     .iter()
                     .copied()
                     .filter(|slot| !bound.contains(slot))
                     .collect(),
-                vars: body_footprint.vars.clone(),
-                primes: body_footprint.primes.clone(),
+                vars: read.vars.clone(),
+                primes: read.primes.clone(),
             });
             eval(move |machine| {
                 let mut lazy = Vec::with_capacity(domains.len());
-                for (infinite, reference, set) in &domains {
-                    lazy.push(match (infinite, reference) {
-                        (Some(name), _) => Lazy::Infinite(name),
-                        (None, Some(reference)) => reference(machine)?,
-                        (None, None) => {
-                            Lazy::Set(evaluate_set(machine, set, "a function over a non-set")?)
-                        }
-                    });
+                for domain in &domains {
+                    lazy.push(domain(machine)?);
                 }
                 if lazy.iter().any(is_lazy_domain) {
                     return lazy_function::build(machine, &definition, lazy);
