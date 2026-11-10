@@ -2850,6 +2850,194 @@ fn get_untimed(text: &str) -> String {
         .collect()
 }
 
+const NEXT_FAIR: &str = "---- MODULE NextFair ----\nEXTENDS Naturals\nVARIABLE x\nInc == x < 2 /\\ x' = x + 1\nTwice == x = 0 /\\ x' = 1\nBack == x > 0 /\\ x' = 0\nNext == Inc \\/ Twice \\/ Back\nWeak == x = 0 /\\ [][Next]_x /\\ WF_x(Next)\nStrong == x = 0 /\\ [][Next]_x /\\ SF_x(Next)\nReach == <>(x = 2)\nLive == []<>(x = 0)\nStable == <>[](x = 2)\n====\n";
+
+const NEXT_MIXED: &str = "---- MODULE Mixed ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nA == x' = \"a\" /\\ FALSE\nB == x' = (x + 1) % 3\nNext == A \\/ B\nSpec == Init /\\ [][Next]_x /\\ WF_x(Next)\nLive == []<>(x = 2)\n====\n";
+
+const NEXT_PIECES: &str = "---- MODULE Pieces ----\nEXTENDS Naturals\nVARIABLES x, y\nvars == <<x, y>>\nInit == x = 0 /\\ y = 0\nA == x' = (x + 1) % 3 /\\ y' = y\nB == x' = (x + 1) % 3 /\\ UNCHANGED y\nC == y' = 1 - y /\\ UNCHANGED x\nD == x' = 2 /\\ y' = y\nNext == A \\/ B \\/ C\nSubSpec == Init /\\ [][Next]_vars /\\ WF_vars(B)\nOtherSpec == Init /\\ [][Next]_vars /\\ WF_vars(D)\nLive == []<>(x = 2)\n====\n";
+
+#[test]
+fn answers_fairness_of_the_next_state_relation_as_tlc() {
+    // TLC's output on each, at d8fb231. The engine answers <<Next>>_x of each step from the
+    // search's steps, which hold of Next, where no comparison of TLC's predicate evaluation can
+    // fail: under WF and SF, with a successor two disjuncts take and a step to a state seen
+    // before. Where x' = "a" may be compared with an integer, as TLC does and fails, it evaluates;
+    // and an action that is part of Next, or not of it, is evaluated as before.
+    let same = NEXT_MIXED
+        .replace("MODULE Mixed", "MODULE Same")
+        .replace("\"a\"", "7");
+    let other = NEXT_PIECES.replace("MODULE Pieces", "MODULE Other");
+    let cases = [
+        (
+            NEXT_FAIR.to_string(),
+            "SPECIFICATION Weak\nPROPERTY Live Reach\n",
+            include_str!("next-fair-weak.txt"),
+        ),
+        (
+            NEXT_FAIR.replace("MODULE NextFair", "MODULE NextStrong"),
+            "SPECIFICATION Strong\nPROPERTY Live Stable\n",
+            include_str!("next-fair-strong.txt"),
+        ),
+        (
+            NEXT_MIXED.to_string(),
+            "SPECIFICATION Spec\nPROPERTY Live\n",
+            include_str!("next-fair-mixed.txt"),
+        ),
+        (
+            same,
+            "SPECIFICATION Spec\nPROPERTY Live\n",
+            include_str!("next-fair-same.txt"),
+        ),
+        (
+            NEXT_PIECES.to_string(),
+            "SPECIFICATION SubSpec\nPROPERTY Live\n",
+            include_str!("next-fair-part.txt"),
+        ),
+        (
+            other,
+            "SPECIFICATION OtherSpec\nPROPERTY Live\n",
+            include_str!("next-fair-other.txt"),
+        ),
+        // Init assigns from sets the guard doesn't cover, which TLC's predicate evaluation of
+        // Next never tests: the steps still answer.
+        (
+            "---- MODULE InitUncovered ----\nEXTENDS Naturals\nVARIABLE x\nInit == x \\in ([a : {}] \\cup {0}) \\cup {y \\in {1, 2} : y > 1}\nNext == x' = (x + 1) % 3\nSpec == Init /\\ [][Next]_x /\\ WF_x(Next)\nReach == <>(x = 5)\n====\n".to_string(),
+            "SPECIFICATION Spec\nPROPERTY Reach\n",
+            include_str!("next-fair-init.txt"),
+        ),
+    ];
+    for (position, (spec, config, expected)) in cases.iter().enumerate() {
+        for workers in ["1", "4"] {
+            let test = format!("next-fair-{position}-{workers}");
+            let (output, directory) = run_front(&test, spec, config, &["-workers", workers]);
+            let text = stdout(&output);
+            assert_eq!(get_untimed(&text), *expected, "{text}");
+            std::fs::remove_dir_all(directory).expect("removed");
+        }
+    }
+}
+
+#[test]
+fn evaluates_the_next_state_relation_where_a_walk_assigned_from_a_set_it_cant_cover() {
+    // TLC fails testing x' \in S of a value as it evaluates WF_x(Next) on a step another disjunct
+    // took, where S is empty, as [a : {}] is, or holds an empty part, as [a : {}] \cup {1} and
+    // SUBSET [a : {}] do, or is the base of x' \subseteq S: the walk joined no shape TLC tests the
+    // value against. So the engine
+    // evaluates the action, and leaves TLC's failure to the interpreter. TLC's output at d8fb231.
+    let cases = [
+        (
+            include_str!("empty/EmptyRecords.tla"),
+            include_str!("empty/EmptyRecords.cfg"),
+            include_str!("empty/EmptyRecords.txt"),
+        ),
+        (
+            include_str!("empty/UnionEmpty.tla"),
+            include_str!("empty/UnionEmpty.cfg"),
+            include_str!("empty/UnionEmpty.txt"),
+        ),
+        (
+            include_str!("empty/SubsetEmpty.tla"),
+            include_str!("empty/SubsetEmpty.cfg"),
+            include_str!("empty/SubsetEmpty.txt"),
+        ),
+        (
+            include_str!("empty/SubseteqEmpty.tla"),
+            include_str!("empty/SubseteqEmpty.cfg"),
+            include_str!("empty/SubseteqEmpty.txt"),
+        ),
+    ];
+    for (spec, config, expected) in cases {
+        for workers in ["1", "4"] {
+            let name = spec.split_whitespace().nth(2).expect("the module's name");
+            let test = format!("empty-{name}-{workers}");
+            let args = [
+                "-workers",
+                workers,
+                "-nowarning",
+                "-seed",
+                "4",
+                "-fp",
+                "0",
+                "-lncheck",
+                "final",
+            ];
+            let (output, directory) = run_front(&test, spec, config, &args);
+            let text = stdout(&output);
+            let is_declined =
+                String::from_utf8_lossy(&output.stderr).contains("prove-it: not native yet: ");
+            assert!(is_declined || get_untimed(&text) == expected, "{text}");
+            std::fs::remove_dir_all(directory).expect("removed");
+        }
+    }
+}
+
+// tests/membership-grid: x' \in S beside x' = a \/ x' = b, under WF_x(Next), which the engine
+// answers from the steps the search took where the guard lets it, and WF_x(Alias) with
+// Alias == Next, which it evaluates. S is each of an enumeration, an interval, records, functions,
+// a product, SUBSET, a filter, a map, a union, a constant and a definition, with a part empty and
+// not, nested in x' \in S, x' \in S \cup {7}, x' \subseteq S, [{1} -> S], [a : S], S \X {1} and a
+// filter; a and b are 0 and 1, values of S's elements' kind, or integers in the nesting's shape.
+// And Init x \in S \cup {a} for each S, with Next x' = a \/ x' = b: TLC's predicate evaluation of
+// Next never tests the sets Init assigns from, so those leave the shortcut on. TLC's output on
+// each formulation at d8fb231 is beside it: each run prints it exactly, or both formulations
+// decline.
+#[test]
+fn answers_fairness_of_next_as_tlc_whatever_set_a_walk_assigns_from() {
+    let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/membership-grid");
+    let mut names: Vec<String> = std::fs::read_dir(&directory)
+        .expect("the grid")
+        .filter_map(|entry| {
+            let path = entry.expect("an entry").path();
+            (path.extension()? == "tla").then(|| path.file_stem()?.to_str().map(String::from))?
+        })
+        .collect();
+    names.sort();
+    assert_eq!(names.len(), 418);
+    for name in names {
+        let spec = std::fs::read_to_string(directory.join(format!("{name}.tla"))).expect("a spec");
+        let constant = if name.contains("Empty") {
+            "{}"
+        } else {
+            "{1, 3}"
+        };
+        for workers in ["1", "4"] {
+            let mut declines = Vec::new();
+            for (specification, suffix) in [("Weak", ""), ("AliasWeak", ".alias")] {
+                let tlc = std::fs::read_to_string(directory.join(format!("{name}{suffix}.txt")))
+                    .expect("TLC's output");
+                let config = format!(
+                    "CONSTANT C = {constant}\nSPECIFICATION {specification}\nPROPERTY Live\n"
+                );
+                let test = format!("grid-{name}-{specification}-{workers}");
+                let args = [
+                    "-workers",
+                    workers,
+                    "-nowarning",
+                    "-seed",
+                    "4",
+                    "-fp",
+                    "0",
+                    "-lncheck",
+                    "final",
+                ];
+                let (output, run) = run_front(&test, &spec, &config, &args);
+                let is_declined =
+                    String::from_utf8_lossy(&output.stderr).contains("prove-it: not native yet: ");
+                if !is_declined {
+                    assert_eq!(
+                        get_untimed(&stdout(&output)),
+                        tlc,
+                        "{name} {specification} {workers}"
+                    );
+                }
+                declines.push(is_declined);
+                std::fs::remove_dir_all(run).expect("removed");
+            }
+            assert_eq!(declines[0], declines[1], "{name} at {workers} workers");
+        }
+    }
+}
+
 // What a run printed from `Starting...` to computing the initial states.
 fn get_startup(text: &str) -> &str {
     let start = text.find("Starting... (").expect("the start");
@@ -4097,4 +4285,39 @@ fn declines_a_dump_where_tlc_replays_the_step_that_failed() {
         "prove-it: not native yet: -dump of states TLC finds as it replays a step\n"
     );
     std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn declines_a_temporal_property_tlc_rejects_after_it_warns_about_the_symmetry() {
+    // tests/fixtures/cli-output/EventualAction: TLC starts the liveness checker, warns that a
+    // symmetry is dangerous for liveness, then rejects the property:
+    //   Warning: Declaring symmetry during liveness checking is dangerous. ...
+    //   Error: Temporal formulas containing actions must be of forms <>[]A or []<>A.
+    // The front end's failure doesn't print the warning, so the model isn't native yet.
+    let fixtures =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../tests/fixtures/cli-output");
+    let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
+        .args(["-noGenerateSpecTE", "EventualAction.tla"])
+        .current_dir(&fixtures)
+        .output()
+        .expect("the binary runs");
+    assert_eq!(output.status.code(), Some(1), "{}", stdout(&output));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "prove-it: not native yet: a temporal property TLC rejects after it warns about the symmetry\n"
+    );
+    // With -nowarning TLC prints no warning, and the binary prints TLC's error natively.
+    let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
+        .args(["-noGenerateSpecTE", "-nowarning", "EventualAction.tla"])
+        .current_dir(&fixtures)
+        .output()
+        .expect("the binary runs");
+    assert_eq!(output.status.code(), Some(255), "{}", stdout(&output));
+    assert!(
+        stdout(&output).contains(
+            "Error: Temporal formulas containing actions must be of forms <>[]A or []<>A.\n"
+        ),
+        "{}",
+        stdout(&output)
+    );
 }
