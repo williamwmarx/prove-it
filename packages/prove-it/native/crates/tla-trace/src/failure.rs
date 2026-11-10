@@ -12,7 +12,8 @@ use crate::fingerprint::{fingerprint_failure, state_fingerprint};
 use crate::print::format_value;
 use crate::rebuild::{Rebuilder, is_in_model, is_same, run};
 use crate::value::{
-    Evaluated, TlcMessage, Value, clear_unnormalized, fail, fail_with, normalize_failure, settle,
+    Evaluated, TlcMessage, Value, clear_unnormalized, equals, fail, fail_with, normalize_failure,
+    settle,
 };
 use crate::{Ending, Trace, Unsupported};
 
@@ -671,14 +672,37 @@ impl<'ir> Rebuilder<'ir> {
                         .enabled(atom.expression, &context)
                         .map(|value| matches!(value, Value::Bool(true))),
                     AtomKind::Action { unchanged, .. } => {
-                        if let Some(extra) = extra {
-                            evaluator.next = extra;
-                        }
-                        match unchanged {
-                            Some(unchanged) if evaluator.boolean(*unchanged, &context)? => {
-                                Ok(false)
+                        // `LNAction.eval` evaluates the subscript in each state, then compares the
+                        // two values outside any evaluation, so a failing comparison has no call
+                        // stack, and TLC prints none.
+                        if let Some(unchanged) = unchanged {
+                            let NodeKind::Unchanged(subscript) =
+                                &ir.nodes.arena[*unchanged as usize].kind
+                            else {
+                                return fail("a subscript the replay doesn't read");
+                            };
+                            let before = evaluator.evaluate(*subscript, &context);
+                            let current = evaluator.current.clone();
+                            if let Some(extra) = &extra {
+                                evaluator.current = extra.clone();
                             }
-                            _ => evaluator.boolean(atom.expression, &context),
+                            let after = before.and_then(|before| {
+                                Ok((before, evaluator.evaluate(*subscript, &context)?))
+                            });
+                            evaluator.current = current;
+                            if let Some(extra) = extra {
+                                evaluator.next = extra;
+                            }
+                            match after.and_then(|(before, after)| equals(&before, &after)) {
+                                Ok(true) => Ok(false),
+                                Ok(false) => evaluator.boolean(atom.expression, &context),
+                                Err(error) => Err(error),
+                            }
+                        } else {
+                            if let Some(extra) = extra {
+                                evaluator.next = extra;
+                            }
+                            evaluator.boolean(atom.expression, &context)
                         }
                     }
                 })

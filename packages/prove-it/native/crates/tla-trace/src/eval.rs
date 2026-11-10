@@ -1162,10 +1162,23 @@ impl<'ir> Evaluator<'ir> {
             }
             _ => None,
         };
-        let Some(stack) = &mut self.call_stack else {
+        let Some(stack) = &self.call_stack else {
             return;
         };
         let Some(received) = receiver.and_then(|receiver| stack.values.get(&receiver)) else {
+            return;
+        };
+        let element = element
+            .and_then(|element| stack.values.get(&element))
+            .cloned();
+        let received = received.clone();
+        self.mark_failing_member(&received, element.as_ref());
+    }
+
+    // Marks a failure in a method of a set with a source as TLC's FingerprintException, through
+    // the sets nested in it that test the element's parts, where an element was tested.
+    fn mark_failing_member(&mut self, received: &Value, element: Option<&Value>) {
+        let Some(stack) = &mut self.call_stack else {
             return;
         };
         let Some(source) = stack.source(received) else {
@@ -1174,9 +1187,7 @@ impl<'ir> Evaluator<'ir> {
         if stack.is_fingerprinted {
             return;
         }
-        let nested = element
-            .and_then(|element| stack.values.get(&element))
-            .and_then(|element| crate::sets::failing_sets(element, received));
+        let nested = element.and_then(|element| crate::sets::failing_sets(element, received));
         // TLC searches a set enumeration it hasn't normalized, as one an evaluation just built,
         // element by element with `equals`, which fails otherwise than the search of a sorted one.
         // The evaluator searches so the sets it records as TLC holds them unnormalized.
@@ -3127,7 +3138,18 @@ impl<'ir> Evaluator<'ir> {
             );
         }
         for element in elements(&left)?.iter() {
-            if !self.member(element, &right)? {
+            // `isSubsetEq` tests each element in T's own `member`, so a failure there is in a
+            // method of T, which TLC reports as a FingerprintException where T has a source.
+            let is_member = self.member(element, &right);
+            if is_member.is_err()
+                && self
+                    .call_stack
+                    .as_ref()
+                    .is_some_and(|stack| !stack.is_frozen)
+            {
+                self.mark_failing_member(&right, Some(element));
+            }
+            if !is_member? {
                 return Ok(Value::Bool(false));
             }
         }
