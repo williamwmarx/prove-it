@@ -56,6 +56,83 @@ enum Partial {
     Unknown,
 }
 
+/// Buffers kept between the states the checker adds, so that adding one allocates nothing.
+#[derive(Default)]
+struct Scratch {
+    consistency: Vec<bool>,
+    successors: Vec<u32>,
+    targets: Vec<u32>,
+    steps: Vec<u32>,
+}
+
+/// The results of the action checks on each step, a row of bits per step by the checks' ids:
+/// whether each was checked, and what it found. A row takes the checks' count rounded up to a
+/// power of two, so that one of up to 64 checks lies in one word, or else whole words.
+#[derive(Default)]
+struct StepResults {
+    stride: usize,
+    count: usize,
+    checked: Vec<u64>,
+    values: Vec<u64>,
+}
+
+impl StepResults {
+    fn new(checks: usize) -> Self {
+        Self {
+            stride: if checks > 64 {
+                checks.div_ceil(64) * 64
+            } else {
+                checks.next_power_of_two()
+            },
+            ..Self::default()
+        }
+    }
+
+    /// Adds rows for `count` steps, and returns the first.
+    fn add(&mut self, count: usize) -> usize {
+        let first = self.count;
+        self.count += count;
+        let length = (self.count * self.stride).div_ceil(64);
+        self.checked.resize(length, 0);
+        self.values.resize(length, 0);
+        first
+    }
+
+    fn is_checked(&self, row: usize, id: usize) -> bool {
+        let bit = row * self.stride + id;
+        self.checked[bit / 64] >> (bit % 64) & 1 == 1
+    }
+
+    fn set(&mut self, row: usize, id: usize, value: bool) {
+        let bit = row * self.stride + id;
+        self.checked[bit / 64] |= 1 << (bit % 64);
+        self.values[bit / 64] |= u64::from(value) << (bit % 64);
+    }
+
+    fn value(&self, row: usize, id: usize) -> bool {
+        let bit = row * self.stride + id;
+        self.values[bit / 64] >> (bit % 64) & 1 == 1
+    }
+
+    /// A word of a row's results, as a mask from `mask` reads it.
+    fn word(&self, row: usize, word: usize) -> u64 {
+        let bit = row * self.stride;
+        if self.stride >= 64 {
+            self.values[bit / 64 + word]
+        } else {
+            self.values[bit / 64] >> (bit % 64) & ((1 << self.stride) - 1)
+        }
+    }
+
+    fn mask(&self, ids: impl Iterator<Item = usize>) -> Vec<u64> {
+        let mut mask = vec![0; self.stride.div_ceil(64)];
+        for id in ids {
+            mask[id / 64] |= 1 << (id % 64);
+        }
+        mask
+    }
+}
+
 /// A counterexample's states: the prefix, then the cycle.
 type Lasso = (Vec<u32>, Vec<u32>);
 
@@ -89,7 +166,6 @@ struct Behavior {
     first_nodes: Vec<u32>,
     last_nodes: Vec<u32>,
     next_siblings: Vec<u32>,
-    node_ids: IntegerMap<(u32, u32), u32>,
     /// The state each late node reached, where it isn't the state stored for the node.
     node_reals: IntegerMap<u32, u32>,
     is_done: Vec<bool>,
@@ -119,7 +195,6 @@ impl Behavior {
 
     fn record_node(&mut self, state: u32, tableau_node: u32) -> u32 {
         let node = self.push_node(state, tableau_node);
-        self.node_ids.insert((state, tableau_node), node);
         let state = state as usize;
         if self.last_nodes.len() <= state {
             self.last_nodes.resize(state + 1, NO_NODE);
@@ -145,14 +220,11 @@ pub struct Checker {
     terms: Terms,
     solutions: Vec<Solution>,
     behaviors: Vec<Behavior>,
-    action_count: usize,
-    /// The results of the action checks on each step, a row of action ids per step: -1 until
-    /// checked, then 0 or 1.
-    steps: Vec<i8>,
-    step_count: usize,
+    steps: StepResults,
     /// TLC's SetOfStates grows its capacity with every set that outgrows it.
     capacity_multiplier: usize,
     slots: Vec<u32>,
+    scratch: Scratch,
     is_cycle_constrained: Vec<bool>,
     /// Where an atom's evaluation has effects, which TLC has each time it evaluates the atom: the
     /// checks keep no results across evaluations and log each evaluation of an atom.
@@ -208,7 +280,6 @@ impl Checker {
                 first_nodes: Vec::new(),
                 last_nodes: Vec::new(),
                 next_siblings: Vec::new(),
-                node_ids: IntegerMap::default(),
                 node_reals: IntegerMap::default(),
                 is_done: Vec::new(),
                 error_node: None,
@@ -232,11 +303,10 @@ impl Checker {
             terms,
             solutions,
             behaviors,
-            action_count: action_ids.len(),
-            steps: Vec::new(),
-            step_count: 0,
+            steps: StepResults::new(action_ids.len()),
             capacity_multiplier: 1,
             slots: Vec::new(),
+            scratch: Scratch::default(),
             is_cycle_constrained,
             effects: RefCell::new(None),
             diameter: Cell::new(1),
@@ -517,10 +587,7 @@ impl Checker {
     }
 
     fn add_steps(&mut self, count: usize) -> usize {
-        let first = self.step_count;
-        self.step_count += count;
-        self.steps.resize(self.step_count * self.action_count, -1);
-        first
+        self.steps.add(count)
     }
 
     fn check_step(
@@ -533,12 +600,13 @@ impl Checker {
     ) -> Result<(), Declined> {
         let solution = &self.solutions[self.behaviors[behavior].solution];
         for (position, &check) in solution.action_checks.iter().enumerate() {
-            let slot = row * self.action_count + self.behaviors[behavior].action_ids[position];
-            if self.steps[slot] != -1 {
+            let id = self.behaviors[behavior].action_ids[position];
+            if self.steps.is_checked(row, id) {
                 continue;
             }
             self.start_evaluation();
-            self.steps[slot] = i8::from(self.evaluate_check(source, check, state, Some(step))?);
+            let value = self.evaluate_check(source, check, state, Some(step))?;
+            self.steps.set(row, id, value);
         }
         Ok(())
     }
@@ -581,8 +649,8 @@ impl Checker {
             let id = self.behaviors[behavior].action_ids[position];
             let partial = self.read_partially(tables, check, state);
             for (offset, &step) in set.iter().enumerate() {
-                let slot = (first_row + offset) * self.action_count + id;
-                if self.steps[slot] != -1 {
+                let row = first_row + offset;
+                if self.steps.is_checked(row, id) {
                     continue;
                 }
                 let value = match partial {
@@ -591,7 +659,7 @@ impl Checker {
                     Partial::Unknown => None,
                 };
                 match value {
-                    Some(value) => self.steps[slot] = i8::from(value),
+                    Some(value) => self.steps.set(row, id, value),
                     None => is_complete = false,
                 }
             }
@@ -779,11 +847,14 @@ impl Checker {
             })
     }
 
+    // The node of a state and tableau node, among the state's nodes, which are few.
     fn node_id(&self, behavior: usize, state: u32, tableau_node: u32) -> Option<u32> {
-        self.behaviors[behavior]
-            .node_ids
-            .get(&(state, tableau_node))
-            .copied()
+        let graph = &self.behaviors[behavior];
+        let mut node = *graph.first_nodes.get(state as usize)?;
+        while node != NO_NODE && graph.node_tableaux[node as usize] != tableau_node {
+            node = graph.next_siblings[node as usize];
+        }
+        (node != NO_NODE).then_some(node)
     }
 
     // --- building the graphs: TLC's TableauLiveChecker and LiveChecker ---
@@ -922,11 +993,9 @@ impl Checker {
         behavior.write_node(state, &targets, &steps);
     }
 
-    fn tableau_successors(&self, behavior: usize, node: u32) -> Vec<u32> {
+    fn tableau_successors(&self, behavior: usize, node: u32) -> &[u32] {
         let tableau = self.tableau(behavior).expect("a tableau");
-        tableau.nodes[self.behaviors[behavior].node_tableaux[node as usize] as usize]
-            .successors
-            .clone()
+        &tableau.nodes[self.behaviors[behavior].node_tableaux[node as usize] as usize].successors
     }
 
     fn add_tableau_state(
@@ -938,13 +1007,16 @@ impl Checker {
         state: u32,
     ) -> Result<Option<Vec<u32>>, Declined> {
         let node_count = self.tableau_size(behavior);
-        let mut consistency = vec![false; node_count * set.len()];
+        let mut consistency = std::mem::take(&mut self.scratch.consistency);
+        consistency.clear();
         for node in 0..node_count {
-            for (position, step) in set.iter().enumerate() {
-                consistency[node * set.len() + position] =
-                    self.is_consistent(source, behavior, node as u32, step.real)?;
+            for step in set {
+                consistency.push(self.is_consistent(source, behavior, node as u32, step.real)?);
             }
         }
+        let mut tableau_successors = std::mem::take(&mut self.scratch.successors);
+        let mut targets = std::mem::take(&mut self.scratch.targets);
+        let mut steps = std::mem::take(&mut self.scratch.steps);
         self.set_done(behavior, state);
         // TLC expands the nodes recorded before the loop, not the ones the loop records.
         let last = self.behaviors[behavior]
@@ -958,9 +1030,10 @@ impl Checker {
             self.behaviors[behavior].first_nodes[state as usize]
         };
         while node != NO_NODE {
-            let tableau_successors = self.tableau_successors(behavior, node);
-            let mut targets = Vec::new();
-            let mut steps = Vec::new();
+            tableau_successors.clear();
+            tableau_successors.extend_from_slice(self.tableau_successors(behavior, node));
+            targets.clear();
+            steps.clear();
             for (position, step) in set.iter().enumerate() {
                 let is_done = self.is_done(behavior, step.target);
                 for &next in &tableau_successors {
@@ -989,6 +1062,12 @@ impl Checker {
                 self.behaviors[behavior].next_siblings[node as usize]
             };
         }
+        self.scratch = Scratch {
+            consistency,
+            successors: tableau_successors,
+            targets,
+            steps,
+        };
         let Some(error_node) = self.behaviors[behavior].error_node else {
             return Ok(None);
         };
@@ -1025,7 +1104,7 @@ impl Checker {
             self.behaviors[behavior].node_reals.insert(node, real);
         }
         self.check_state(source, behavior, real)?;
-        let tableau_successors = self.tableau_successors(behavior, node);
+        let tableau_successors = self.tableau_successors(behavior, node).to_vec();
         let mut targets = Vec::new();
         let mut steps = Vec::new();
         let self_step = if tableau_successors.is_empty() {
@@ -1296,7 +1375,10 @@ struct Search<'s> {
     behavior: &'s Behavior,
     solution: &'s Solution,
     model: &'s Model,
-    allowed_ids: Vec<usize>,
+    /// The action checks the edges of a cycle must all pass, and those its edges must pass
+    /// between them, as masks of a row of `StepResults`.
+    allowed: Vec<u64>,
+    required: Vec<u64>,
     links: Vec<i64>,
     components: Vec<u32>,
     members: Vec<u32>,
@@ -1328,11 +1410,18 @@ impl<'s> Search<'s> {
             behavior: graph,
             solution,
             model,
-            allowed_ids: model
-                .eventually_always
-                .iter()
-                .map(|&position| graph.action_ids[position])
-                .collect(),
+            allowed: checker.steps.mask(
+                model
+                    .eventually_always
+                    .iter()
+                    .map(|&position| graph.action_ids[position]),
+            ),
+            required: checker.steps.mask(
+                model
+                    .infinitely_often_actions
+                    .iter()
+                    .map(|&position| graph.action_ids[position]),
+            ),
             links: vec![UNVISITED; node_count],
             components: Vec::new(),
             members: Vec::new(),
@@ -1342,21 +1431,24 @@ impl<'s> Search<'s> {
         }
     }
 
+    // The row of the action checks' results on the step of a node's edge.
     fn row(&self, node: u32, edge: usize) -> usize {
         let behavior = self.behavior;
         behavior.edge_steps[behavior.edge_starts[node as usize] + edge] as usize
-            * self.checker.action_count
     }
 
     fn is_action(&self, node: u32, edge: usize, position: usize) -> bool {
-        self.checker.steps[self.row(node, edge) + self.behavior.action_ids[position]] == 1
+        self.checker
+            .steps
+            .value(self.row(node, edge), self.behavior.action_ids[position])
     }
 
     fn is_allowed(&self, node: u32, edge: usize) -> bool {
         let row = self.row(node, edge);
-        self.allowed_ids
+        self.allowed
             .iter()
-            .all(|&id| self.checker.steps[row + id] == 1)
+            .enumerate()
+            .all(|(word, &mask)| mask == 0 || self.checker.steps.word(row, word) & mask == mask)
     }
 
     fn is_member(&self, node: u32) -> bool {
@@ -1388,27 +1480,28 @@ impl<'s> Search<'s> {
     // Whether the component's edges that stay in it take every action that the model requires
     // infinitely often.
     fn is_action_satisfied(&self) -> bool {
-        let actions = &self.model.infinitely_often_actions;
-        let mut satisfied = vec![false; actions.len()];
-        let mut remaining = actions.len();
+        let mut satisfied = vec![0u64; self.required.len()];
+        let is_done = |satisfied: &[u64]| satisfied == self.required.as_slice();
+        if is_done(&satisfied) {
+            return true;
+        }
         for &node in &self.members {
-            let successors = self.behavior.successors(node);
-            for (edge, &next) in successors.iter().enumerate() {
-                if remaining == 0 {
-                    break;
-                }
+            for (edge, &next) in self.behavior.successors(node).iter().enumerate() {
                 if !self.is_member(next) || !self.is_allowed(node, edge) {
                     continue;
                 }
-                for (slot, &position) in actions.iter().enumerate() {
-                    if !satisfied[slot] && self.is_action(node, edge, position) {
-                        satisfied[slot] = true;
-                        remaining -= 1;
-                    }
+                let row = self.row(node, edge);
+                for (word, (satisfied, mask)) in
+                    satisfied.iter_mut().zip(&self.required).enumerate()
+                {
+                    *satisfied |= self.checker.steps.word(row, word) & mask;
+                }
+                if is_done(&satisfied) {
+                    return true;
                 }
             }
         }
-        remaining == 0
+        false
     }
 
     fn check_component(&mut self, root: u32) -> Result<Option<Lasso>, Declined> {
@@ -1783,4 +1876,38 @@ pub fn finish(
         loop_start,
         is_cycle_constrained,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::StepResults;
+
+    #[test]
+    fn keeps_each_steps_results_apart_in_rows_of_any_width() {
+        for checks in [1, 3, 60, 64, 130] {
+            let mut results = StepResults::new(checks);
+            let first = results.add(5);
+            assert_eq!(results.add(4), first + 5);
+            for row in 0..9 {
+                for id in (row % 2..checks).step_by(3) {
+                    results.set(row, id, id % 2 == 0);
+                }
+            }
+            let mask = results.mask((0..checks).filter(|id| id % 2 == 0));
+            for row in 0..9 {
+                for id in 0..checks {
+                    let is_set = id >= row % 2 && (id - row % 2) % 3 == 0;
+                    assert_eq!(results.is_checked(row, id), is_set);
+                    assert_eq!(results.value(row, id), is_set && id % 2 == 0);
+                }
+                for (word, &mask) in mask.iter().enumerate() {
+                    let found = results.word(row, word) & mask;
+                    let expected = (0..checks)
+                        .filter(|&id| id / 64 == word && results.value(row, id))
+                        .fold(0, |bits, id| bits | 1 << (id % 64));
+                    assert_eq!(found, expected, "{checks} checks, row {row}");
+                }
+            }
+        }
+    }
 }
