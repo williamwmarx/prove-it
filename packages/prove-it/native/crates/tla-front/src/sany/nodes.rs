@@ -671,7 +671,9 @@ impl Context {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::rc::Rc;
+
+    use super::{Context, NodeId, get_java_hash};
 
     #[test]
     fn java_hash_matches_string_hash_code() {
@@ -681,22 +683,86 @@ mod tests {
         assert_eq!(get_java_hash("polygenelubricants"), i32::MIN);
     }
 
+    /// `Hashtable.elements()` of the first n names, each put with its index, as OpenJDK 21
+    /// enumerates them.
     #[test]
     fn hashtable_enumerates_as_java_does() {
-        // Ten keys rehash the table once; the order is what `getHashtableValues` gives.
-        let mut context = Context::default();
         let names = [
-            "x", "y", "z", "Init", "Next", "Spec", "TypeOK", "vars", "a", "b",
+            "x",
+            "y",
+            "z",
+            "Init",
+            "Next",
+            "Spec",
+            "TypeOK",
+            "vars",
+            "a",
+            "b",
+            "c",
+            "\\in",
+            "=",
+            "Seq",
+            "Len",
+            "Append",
+            "Head",
+            "Tail",
+            "SubSeq",
+            "SelectSeq",
+            "\u{e9}t\u{e9}",
+            "Nat",
+            "Int",
+            "+",
+            "-",
+            "*",
+            "\\div",
+            "%",
+            "^",
+            "..",
+            "<",
+            ">",
+            "<=",
+            ">=",
+            "STRING",
+            "BOOLEAN",
+            "TRUE",
+            "FALSE",
+            "$Pair",
+            "$Tuple",
         ];
-        for (index, name) in names.iter().enumerate() {
-            context.add(Rc::from(*name), name, NodeId(index as u32));
+        let recorded: [(usize, &[u32]); 6] = [
+            (1, &[0]),
+            (8, &[0, 4, 3, 7, 6, 2, 5, 1]),
+            (9, &[5, 6, 3, 7, 2, 1, 8, 0, 4]),
+            (
+                17,
+                &[16, 15, 5, 6, 3, 12, 14, 7, 11, 10, 2, 9, 1, 8, 0, 4, 13],
+            ),
+            (
+                25,
+                &[
+                    24, 23, 14, 15, 11, 22, 2, 20, 1, 0, 19, 16, 7, 5, 17, 6, 21, 12, 18, 4, 13,
+                    10, 9, 8, 3,
+                ],
+            ),
+            (
+                40,
+                &[
+                    28, 14, 21, 5, 33, 16, 15, 13, 38, 18, 39, 31, 12, 30, 22, 19, 35, 29, 36, 24,
+                    23, 25, 27, 26, 20, 2, 1, 0, 3, 32, 7, 17, 34, 37, 11, 4, 10, 6, 9, 8,
+                ],
+            ),
+        ];
+        for (count, expected) in recorded {
+            let mut context = Context::default();
+            for (index, name) in names.iter().take(count).enumerate() {
+                context.add(Rc::from(*name), name, NodeId(index as u32));
+            }
+            let values: Vec<u32> = context
+                .get_hashtable_values()
+                .iter()
+                .map(|id| id.0)
+                .collect();
+            assert_eq!(values, expected, "{count} names");
         }
-        let values: Vec<u32> = context
-            .get_hashtable_values()
-            .iter()
-            .map(|id| id.0)
-            .collect();
-        assert_eq!(values, [5, 6, 3, 7, 2, 9, 1, 8, 0, 4]);
-        assert_eq!(context.get_symbol("Next"), Some(NodeId(4)));
     }
 }

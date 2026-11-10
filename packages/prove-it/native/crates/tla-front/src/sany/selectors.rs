@@ -1082,7 +1082,9 @@ pub fn selector_to_node<G: SelectorGenerator>(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{
+        Name, SelectorItem, SelectorOp, get_name_parts, get_selector_items, is_general_id,
+    };
     use crate::TlcVersion;
     use crate::parser::parse_sany_module;
 
