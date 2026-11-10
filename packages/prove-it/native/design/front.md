@@ -804,3 +804,53 @@ are an assumption the TypeScript checker words otherwise than TLC. So
 
 The addon writes the report on a 64 MiB thread, as the binary's run does: a formula nested a few
 hundred parentheses deep overflows the stack of the thread JavaScript calls on.
+
+## SANY's XMLExporter as built (`sany/`)
+
+tlapm and other tools read a module through `tla2sany.xml.XMLExporter`, which writes SANY's
+semantic graph: every node with SANY's UID, the level SANY's levelCheck gives it, and a
+definition's comments. tla-front's AST and resolution hold none of that, so `src/sany` ports the
+TypeScript emulation of SANY's graph literally, file for file, over the Rust AST (which mirrors
+`ast.ts`):
+
+| Rust | TypeScript | What it holds |
+|---|---|---|
+| `sany/nodes.rs` | `sany/nodes.ts` | the graph, an arena of nodes addressed by `NodeId`, each with its UID (`Node::uid`, a counter apart from the arena: SANY numbers nodes the graph never holds, such as its first set of builtins); SANY's `Context`, a `java.util.Hashtable` that enumerates as OpenJDK does |
+| `sany/source.rs` | `sany/source.ts` | token spans, the locations SANY gives what the AST leaves out, and pre-comments, sliced at each `(*` and `*)` as SANY's lexer ends a comment token |
+| `sany/builtins.rs` | `sany/builtins.ts` | `BuiltInOperators`, with their levels; a variadic builtin has no `params` and SANY's arity -1 (`OpDef::get_sany_arity`) |
+| `sany/selectors.rs` | `sany/selectors.ts` | `Generator.selectorToNode` |
+| `sany/generator/` | `sany/generator.ts` | `Generator`: the module loader and SANY's order, the UIDs (two sets of builtins, InAssumeDummyNode, four null nodes per module), expressions (`expressions.rs`), definitions, substitutions and instances (`definitions.rs`), proofs (`proofs.rs`) |
+| `sany/levels.rs` | `sany/levels.ts` | SANY's levelCheck of each node |
+| `sany/xml.rs` | `sany/xml.ts` | the writer with `-r`, `-u`, `-t`; the context of symbols in the order of `java.util.HashMap<Integer>` |
+| `sany/export.rs` | `cli/xml-exporter.ts` `exportXml` | the run: SANY's report, then the graph, level-checked, then the XML |
+
+TLC 1.7.4's exporter is retired and not ported, nor is `snapshot.ts` (the build's cache of the
+standard modules' graph): the Rust generates them on each run.
+
+What SANY prints is `report.rs`'s, run as XMLExporter runs SANY (`ReportOptions::is_xml_export`:
+no progress lines, no warnings, no PlusCal validation, no linting). The graph is built only for a
+spec the report accepts, and an error of the generator the report didn't print is `NotYet`, so the
+two can't disagree silently. Also `NotYet`: what XMLExporter prints with Java's stack traces (a
+DEFINE step a DEF clause names, which it can't export, and SANY's generator exception of
+E4294_Module), and a context whose HashMap would make a bucket a tree (9 UIDs in one bucket),
+whose order neither port follows. `prove-it-check`'s `xml_exporter.rs` takes XMLExporter's
+arguments and usage, and names a root module that no file holds as SimpleFilenameToStream does.
+
+Gates, run by Verification's Front End job:
+
+- `front-differential.ts sany-xml`: the TypeScript and Rust exporters on every module of the
+  corpora and fixtures, with `-o` and each of `-r`, `-u`, `-t` and `-tru`: the error stream, the
+  XML's hash and the exit code (`--xml` compares the XML itself). 2,362 of 2,367 modules match and
+  none differ; of the 5 left, 4 are RECURSIVE declarations the front end declines and 1 is the
+  DEFINE step XMLExporter prints Java's stack traces for.
+- `sany-corpus.ts --recorded` on `tests/conformance/sany-stdout/xml-*.json`, the real exporter at
+  d8fb231: with each of the five flag sets, 150 of SANY's 153 corpus specs print what it printed
+  and 3 decline (AssumeProveTest and LetInTest, which the front end declines, and E4294_Module);
+  8 of the 9 XML fixtures (DefineStep declines), and both `-I` fixtures. None differ. The
+  TypeScript exporter printed what it printed on 142. Porting it found that the parser gave the
+  subscript `B(A)` of `WF_B(A)(Act)` no range (FairnessTest), which SANY locates over its
+  arguments.
+
+Known approximation: `levels.rs` copies a source's level sets where `levels.ts` shares them
+(`shareLevels`, for OpArg, Label, Assume and NewSymb nodes); the two differ only if the source's
+sets grow after the copy, which no gate has shown.

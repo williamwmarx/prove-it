@@ -1,0 +1,22 @@
+fixes a_CONSTANTunde_Cardinalityunde_a
+fixes a_CONSTANTunde_nunde_a
+assumes a_CONSTANTunde_nunde_a_in
+fixes a_CONSTANTunde_Sunde_a
+assumes v'47
+assumes v'48
+fixes a_CONSTANTunde_Tunde_a
+assumes v'50
+assumes v'51
+fixes a_CONSTANTunde_funde_a
+assumes a_CONSTANTunde_funde_a_in
+assumes v'59
+assumes v'60
+assumption a_CONSTANTunde_nunde_a_in: (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) ((SetTheory.in::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) a_CONSTANTunde_nunde_a:PredicateLogic.c) Integers.Nat::PredicateLogic.c))
+assumption v'47: (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) (a_CONSTANTunde_IsFiniteSetunde_a:fun(PredicateLogic.c,PredicateLogic.c) a_CONSTANTunde_Sunde_a:PredicateLogic.c))
+assumption v'48: (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) ((PredicateLogic.eq::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) (a_CONSTANTunde_Cardinalityunde_a:fun(PredicateLogic.c,PredicateLogic.c) a_CONSTANTunde_Sunde_a:PredicateLogic.c)) ((IntegerArithmetic.addint::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) a_CONSTANTunde_nunde_a:PredicateLogic.c) ((Functions.fapply::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) Integers.succ::PredicateLogic.c) Integers.zero::PredicateLogic.c))))
+assumption v'50: (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) (a_CONSTANTunde_IsFiniteSetunde_a:fun(PredicateLogic.c,PredicateLogic.c) a_CONSTANTunde_Tunde_a:PredicateLogic.c))
+assumption v'51: (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) ((IntegerArithmetic.less::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) (a_CONSTANTunde_Cardinalityunde_a:fun(PredicateLogic.c,PredicateLogic.c) a_CONSTANTunde_Tunde_a:PredicateLogic.c)) (a_CONSTANTunde_Cardinalityunde_a:fun(PredicateLogic.c,PredicateLogic.c) a_CONSTANTunde_Sunde_a:PredicateLogic.c)))
+assumption a_CONSTANTunde_funde_a_in: (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) ((SetTheory.in::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) a_CONSTANTunde_funde_a:PredicateLogic.c) ((Functions.FuncSet::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) a_CONSTANTunde_Sunde_a:PredicateLogic.c) a_CONSTANTunde_Tunde_a:PredicateLogic.c)))
+assumption v'59: (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) ((PredicateLogic.conj::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) (a_CONSTANTunde_IsFiniteSetunde_a:fun(PredicateLogic.c,PredicateLogic.c) SetTheory.emptyset::PredicateLogic.c)) (PredicateLogic.All::fun(fun(PredicateLogic.c,PredicateLogic.c),PredicateLogic.c) (%a_CONSTANTunde_Sunde_a_1:PredicateLogic.c. ((PredicateLogic.imp::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) ((PredicateLogic.conj::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) (a_CONSTANTunde_IsFiniteSetunde_a:fun(PredicateLogic.c,PredicateLogic.c) B0)) ((PredicateLogic.eq::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) (a_CONSTANTunde_Cardinalityunde_a:fun(PredicateLogic.c,PredicateLogic.c) B0)) Integers.zero::PredicateLogic.c))) ((PredicateLogic.eq::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) B0) SetTheory.emptyset::PredicateLogic.c))))))
+assumption v'60: (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) ((PredicateLogic.eq::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) (a_CONSTANTunde_Cardinalityunde_a:fun(PredicateLogic.c,PredicateLogic.c) SetTheory.emptyset::PredicateLogic.c)) Integers.zero::PredicateLogic.c))
+conclusion: (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) (PredicateLogic.not::fun(PredicateLogic.c,PredicateLogic.c) ((PredicateLogic.eq::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) a_CONSTANTunde_Sunde_a:PredicateLogic.c) SetTheory.emptyset::PredicateLogic.c)))
