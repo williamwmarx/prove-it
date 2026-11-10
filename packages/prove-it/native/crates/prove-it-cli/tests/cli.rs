@@ -3836,3 +3836,57 @@ fn unites_a_set_with_one_element_in_tlcs_order() {
     }
     std::fs::remove_dir_all(directory).expect("removed");
 }
+
+// A lasso of a spec whose actions print: TLC runs the actions again to rebuild the trace, so what
+// they print comes before the counterexample, as TLC built at d8fb231 prints it.
+#[test]
+fn prints_a_lasso_whose_actions_print_as_tlc_rebuilds_it() {
+    let specs = [
+        (
+            "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ Print(x, TRUE) /\\ x' = x + 1\nLive == <>(x = 2)\n====\n",
+            "INIT Init\nNEXT Next\nPROPERTY Live\nCHECK_DEADLOCK FALSE\n",
+            concat!(
+                ")\n0  TRUE\nError: Temporal property Live was violated.\n\n",
+                "Error: The following behavior constitutes a counter-example:\n\n",
+                "State 1: <Initial predicate>\nx = 0\n\n",
+                "State 2: <Next line 5, col 9 to line 5, col 45 of module M>\nx = 1\n\n",
+                "State 3: Stuttering\n",
+            ),
+        ),
+        (
+            "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nNext == \\/ x < 3 /\\ PrintT(x) /\\ x' = x + 1\n        \\/ x = 3 /\\ UNCHANGED x\nSpec == x = 0 /\\ [][Next]_x /\\ WF_x(Next)\nStays == <>[](x = 0)\n====\n",
+            "SPECIFICATION Spec\nPROPERTY Stays\n",
+            concat!(
+                "0\n1\n2\nError: Temporal property Stays was violated.\n\n",
+                "Error: The following behavior constitutes a counter-example:\n\n",
+                "State 1: <Initial predicate>\nx = 0\n\n",
+                "State 2: <Next line 4, col 12 to line 4, col 43 of module M>\nx = 1\n\n",
+                "State 3: <Next line 4, col 12 to line 4, col 43 of module M>\nx = 2\n\n",
+                "State 4: <Next line 4, col 12 to line 4, col 43 of module M>\nx = 3\n\n",
+                "State 5: Stuttering\n",
+            ),
+        ),
+    ];
+    for (position, (spec, config, printed)) in specs.into_iter().enumerate() {
+        let directory = std::env::temp_dir().join(format!(
+            "prove-it-cli-printing-lasso-{position}-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&directory).expect("a directory");
+        std::fs::write(directory.join("M.tla"), spec).expect("a spec");
+        std::fs::write(directory.join("M.cfg"), config).expect("a configuration");
+        for threads in ["1", "4"] {
+            let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
+                .args(["-noTE", "M"])
+                .current_dir(&directory)
+                .env("PROVE_IT_WORKERS", threads)
+                .env("PROVE_IT_SHARED_LEVEL", "1")
+                .output()
+                .expect("the binary runs");
+            let text = stdout(&output);
+            assert_eq!(output.status.code(), Some(13), "{threads}: {text}");
+            assert!(text.contains(printed), "{threads}: {text}");
+        }
+        std::fs::remove_dir_all(directory).expect("removed");
+    }
+}

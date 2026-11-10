@@ -209,7 +209,9 @@ liveness part of this plan:
   division by zero (2);
 - a property TLC finds a tautology, or a constant part of a temporal formula that isn't a boolean (7);
 - printing where the native checker doesn't check the temporal properties (6);
-- a lasso the engine doesn't hand over (5);
+- a lasso the engine doesn't hand over (5): the 2 of specs whose actions print are now native, and
+  the 3 that end in the first state of their cycle (below) decline as "a step back into the cycle
+  the rebuilt lasso lacks";
 - an atom the engine doesn't answer (2);
 - a late node at another diameter, a step back into the cycle of a spec that prints, several states
   under VIEW or SYMMETRY, and a lasso TLC fails to rebuild under a VIEW (1 each).

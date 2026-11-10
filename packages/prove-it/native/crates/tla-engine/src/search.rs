@@ -4549,19 +4549,21 @@ fn to_lasso(
     printed: Vec<Vec<Id>>,
     counts: &Counts,
 ) -> Option<Box<Violation>> {
-    // Under SYMMETRY or a VIEW the stored states aren't those TLC prints, and the caller's rebuild
-    // finds the steps' actions, the step back into the cycle's too, as TLC does.
+    // Under SYMMETRY or a VIEW the stored states aren't those TLC prints, and where the search
+    // couldn't label the steps, such as with actions that print, it didn't run them as TLC runs
+    // them to rebuild the trace. The caller's rebuild then finds the steps' actions, the step
+    // back into the cycle's too, as TLC does.
     let is_reduced = search.states.key_width.is_some() || search.canonicalizer.is_some();
-    let (labels, loop_label) = if is_reduced {
-        (vec![None; path.len().saturating_sub(1)], None)
-    } else {
-        let (&loop_label, steps) = actions.split_last()?;
-        let is_stuttering = loop_start + 1 == path.len();
-        let is_labelled = actions.len() == path.len() && (is_stuttering || loop_label.is_some());
-        if !is_labelled {
-            return None;
+    let is_stuttering = loop_start + 1 == path.len();
+    let (labels, loop_label) = match actions.split_last() {
+        Some((&loop_label, steps))
+            if !is_reduced
+                && actions.len() == path.len()
+                && (is_stuttering || loop_label.is_some()) =>
+        {
+            (steps.to_vec(), loop_label)
         }
-        (steps.to_vec(), loop_label)
+        _ => (vec![None; path.len().saturating_sub(1)], None),
     };
     let startup = startup_values(machine, context).ok()?;
     let symmetry = search

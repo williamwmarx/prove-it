@@ -111,7 +111,16 @@ fn rebuild(
                     ViolationKind::Lasso { loop_start, .. } if is_reduced => Some(loop_start),
                     _ => None,
                 };
-                let closing = reduced_cycle.filter(|&loop_start| loop_start + 1 < states.len());
+                // A step back into the cycle the search didn't label, as under SYMMETRY or a
+                // VIEW, is found as TLC finds it, from the last state.
+                let closing = match *kind {
+                    ViolationKind::Lasso {
+                        loop_start,
+                        loop_label: None,
+                        ..
+                    } if loop_start + 1 < states.len() => Some(loop_start),
+                    _ => None,
+                };
                 if let Some(loop_start) = closing {
                     states.push(states[loop_start]);
                     labels.push(None);
