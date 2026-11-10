@@ -14,7 +14,7 @@ use prove_decide::Limits;
 use prove_num::Int;
 use prove_smt::core::ast::{
     AstManager, Expr, KIND_APP, KIND_QUANTIFIER, KIND_VAR, OP_AND, OP_NUM, QuantifierData,
-    SmtSymbol,
+    SORT_BOOL, SmtSymbol,
 };
 use prove_smt::core::maximize_ac_sharing::{MaxBvSharing, MaxBvSharingConfig};
 use prove_smt::core::nnf::{DefinedNames, Nnf};
@@ -590,4 +590,61 @@ fn normalizes_as_the_typescript() {
         .unwrap()
         .join()
         .unwrap();
+}
+
+/// A shared DAG whose unfolded size doubles at each level (t₀ = x, tₙ₊₁ = f(tₙ, tₙ)). The
+/// candidate sizes are JavaScript numbers in the TypeScript, which never overflow; the patterns
+/// are the TypeScript's for depth 20 (`PatternInference.infer`, printed as handle, Z3 id, number
+/// of arguments and the distinct arguments).
+#[test]
+fn infers_patterns_on_a_shared_dag_as_the_typescript_does() {
+    let limits = Limits::new(f64::INFINITY, None, None);
+    let mut m = AstManager::new(ResourceLimit::new(&limits));
+    let u = m.mk_sort("U");
+    let f = m.mk_func_decl(SmtSymbol::Name("f".into()), &[u, u], u, false);
+    let p = m.mk_func_decl(SmtSymbol::Name("p".into()), &[u], SORT_BOOL, false);
+    let q = m.mk_func_decl(SmtSymbol::Name("q".into()), &[u], SORT_BOOL, false);
+    let x = m.mk_var(0, u);
+    let mut chain = vec![x];
+    for index in 0..20 {
+        let next = m.mk_app(f, &[chain[index], chain[index]], u).unwrap();
+        chain.push(next);
+    }
+    let mut inference = PatternInference::new();
+    let eq = m.mk_eq(chain[20], x).unwrap();
+    let p_term = m.mk_app(p, &[chain[20]], SORT_BOOL).unwrap();
+    let q_term = m.mk_app(q, &[chain[19]], SORT_BOOL).unwrap();
+    let or = m.mk_or(&[p_term, q_term]).unwrap();
+    let describe = |m: &AstManager, pattern: Expr| {
+        let mut args: Vec<Expr> = Vec::new();
+        for index in 0..m.get_num_args(pattern) {
+            let arg = m.get_arg(pattern, index);
+            if !args.contains(&arg) {
+                args.push(arg);
+            }
+        }
+        let args: Vec<String> = args.iter().map(ToString::to_string).collect();
+        format!(
+            "{},{},{},{}",
+            pattern,
+            m.ids[pattern as usize],
+            m.get_num_args(pattern),
+            args.join("+")
+        )
+    };
+    for (body, expected) in [
+        (eq, "0 27,47,524288,3"),
+        (or, "0 27,47,524288,3 | 28,48,262144,3"),
+    ] {
+        let inferred = inference.infer(&mut m, 1, body, 0).unwrap();
+        let patterns: Vec<String> = inferred
+            .patterns
+            .iter()
+            .map(|pattern| describe(&m, *pattern))
+            .collect();
+        assert_eq!(
+            format!("{} {}", inferred.weight, patterns.join(" | ")),
+            expected
+        );
+    }
 }
