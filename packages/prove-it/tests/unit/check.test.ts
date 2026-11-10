@@ -2126,6 +2126,21 @@ describe("evaluation errors match TLC", () => {
     expect(failure?.fingerprint).toBeUndefined();
   });
 
+  // Under a VIEW TLC fingerprints the view's value alone, so the union a variable holds is never
+  // normalized and streams {3} first each time (TLC's own run of this model).
+  it("streams a set a variable holds as the spec built it under a VIEW", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers, FiniteSets\nVARIABLES x, n, s\nInit == x = {} /\\ n = 0 /\\ s = (SUBSET {1, 2}) \\cup {{3}}\nNext == n < 3 /\\ x' \\in s /\\ Cardinality(x') = 1 /\\ n' = n + 1 /\\ s' = s\nInv == n < 2\nV == <<n>>\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv\nVIEW V",
+    });
+    expect(result.violation?.trace.map((step) => formatValue(step.state.x))).toEqual([
+      "{}",
+      "{3}",
+      "{3}",
+    ]);
+  });
+
   it("fails on zero to the power of zero in an invariant of a later state", async () => {
     const result = await check({
       source:

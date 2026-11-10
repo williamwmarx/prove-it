@@ -1279,6 +1279,10 @@ const searchStates = (
       if (error) throw error;
     }
   };
+  // Under a VIEW TLC fingerprints the view's value alone, so what the state holds beside it stays
+  // as the spec built it: a set TLC streams in an order of its own keeps that order.
+  const markModelState = (state: Value[], fingerprintState: Value[]) =>
+    (config.view === undefined ? state : fingerprintState).forEach(markFingerprinted);
   const isSameState = (stored: Value[], state: Value[]) => {
     for (let position = 0; position < state.length; position++) {
       if (!isSameValue(stored[position], state[position])) return false;
@@ -1414,7 +1418,7 @@ const searchStates = (
     if (isInModel) {
       search.trackStatePossible(state);
       fingerprintModelState(fingerprintState);
-      state.forEach(markFingerprinted);
+      markModelState(state, fingerprintState);
     }
     const isSeen = isInModel && findStateIndex(hash, fingerprintState) !== -1;
     if (isSeen) return undefined;
@@ -1473,7 +1477,7 @@ const searchStates = (
     if (isInModel) {
       search.trackActionPossible(state, successor.state);
       fingerprintModelState(fingerprintState);
-      successor.state.forEach(markFingerprinted);
+      markModelState(successor.state, fingerprintState);
     }
     if (source && isInModel) {
       stateWriter?.writeSuccessor(
@@ -1643,7 +1647,7 @@ const searchStates = (
     const state = toEngineState(checkpoint, index);
     engineIndices.set(state, index);
     const fingerprintState = toEngineKey(checkpoint, index, state);
-    state.forEach(markFingerprinted);
+    markModelState(state, fingerprintState);
     return { state, fingerprintState, hash: getStateHash(fingerprintState) };
   };
   // TLC reports an error in an initial state once it has replayed the initial predicate with its call

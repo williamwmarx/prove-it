@@ -1429,6 +1429,20 @@ impl<'a> Compiler<'a> {
                 is_ordered: false,
             });
         }
+        // Under a VIEW TLC fingerprints the view's value alone, so a set a variable holds stays
+        // as the spec built it, in an order the store doesn't keep.
+        if self.ir.model.view.is_some()
+            && !set.footprint.vars.is_empty()
+            && match &self.ir.nodes.arena[node as usize].kind {
+                NodeKind::Identifier(name) => {
+                    !name.is_local && matches!(name.resolution, Resolution::Variable(_))
+                }
+                NodeKind::FunctionApplication { .. } | NodeKind::FieldAccess { .. } => true,
+                _ => false,
+            }
+        {
+            return unsupported("enumerating a set of the state under a VIEW");
+        }
         if set.is_normalized {
             return Ok(Ordered {
                 eval: set.eval,
