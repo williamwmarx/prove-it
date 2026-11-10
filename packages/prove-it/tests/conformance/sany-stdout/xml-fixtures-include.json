@@ -1,0 +1,4 @@
+{
+  "xml-export/Missing": "exit 2\n\n--- stderr\nFile does not exist: ././Missing.tla while looking in these directories: ., nested, classpath:/tla2sany/StandardModules, classpath:/\n\nFatal errors while parsing TLA+ spec in file Missing\n\nUnknown location\n\nCannot find source file for module Missing\n*** Errors: 1\n\nUnknown location\n\nCannot find source file for module Missing\n\n\n\nERROR: Failed to parse module.\n",
+  "xml-export/Root": "exit 0\nXML of SHA-256 2233b551fdafad042cc241555db269a148ea06d551134b5e23db73194cef5185, 2498 bytes\n"
+}
