@@ -1,7 +1,7 @@
 //! Test hooks into the native store, for `src/engine/native-store.ts`, which gives the store's
 //! tests and the value oracle the TypeScript store's functions over this one. The process has one
-//! store, which each call runs on a thread with a stack for deeply nested values. A call costs what an N-API
-//! call costs, which tests don't mind; the engine never crosses per value.
+//! store, which each call runs on a thread with a stack for deeply nested values. A call costs what an
+//! N-API call costs, which tests don't mind; the engine never crosses per value.
 //!
 //! - `storePerform(name, args)` runs an operation as a store trace names it, with ids as numbers,
 //!   texts as strings and lists as arrays or Int32Arrays, and returns its number, boolean or
@@ -14,15 +14,11 @@
 //!   every value's.
 
 use std::ffi::{CStr, CString, c_void};
-use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 use std::ptr::null_mut;
-use std::sync::mpsc::{Sender, channel};
-use std::sync::{Mutex, PoisonError};
 
-use tla_values::fingerprint::Fingerprints;
-use tla_values::trace::{Answer, Argument, Failure, perform};
-use tla_values::transfer::{DecodeError, EncodedStates, StateEncoder, decode_states};
-use tla_values::{Id, Store, on_nesting_stack};
+use prove_it_host::hooks::{self, HookResult};
+use prove_it_host::value::HostValue;
+use tla_values::transfer::EncodedStates;
 
 use super::{
     Thrown, export, guard, napi_callback_info, napi_create_object, napi_env, napi_get_cb_info,
@@ -33,10 +29,13 @@ const NAPI_NULL: i32 = 1;
 const NAPI_NUMBER: i32 = 3;
 pub(super) const NAPI_STRING: i32 = 4;
 pub(super) const NAPI_INT32_ARRAY: i32 = 5;
-pub(super) const NAPI_BIGINT64_ARRAY: i32 = 9;
 const NAPI_UNDEFINED: i32 = 0;
+const NAPI_UINT8_ARRAY: i32 = 1;
+const NAPI_FLOAT64_ARRAY: i32 = 8;
+const NAPI_BIGINT64_ARRAY: i32 = 9;
 
 napi_functions! {
+    fn napi_get_undefined(env: napi_env, result: *mut napi_value) -> napi_status;
     pub(super) fn napi_typeof(env: napi_env, value: napi_value, result: *mut i32) -> napi_status;
     fn napi_get_value_double(env: napi_env, value: napi_value, result: *mut f64) -> napi_status;
     fn napi_get_value_bool(env: napi_env, value: napi_value, result: *mut bool) -> napi_status;
@@ -89,45 +88,6 @@ napi_functions! {
         byte_offset: usize,
         result: *mut napi_value,
     ) -> napi_status;
-}
-
-type Job = Box<dyn FnOnce(&mut Store, &mut Fingerprints) + Send>;
-
-// The thread that owns the store and runs every call's work on it, with a stack for deeply nested
-// values. A thread spawned per call would map that stack each time.
-static STORE_THREAD: Mutex<Option<Sender<Job>>> = Mutex::new(None);
-
-fn start_store_thread() -> Sender<Job> {
-    let (sender, jobs) = channel::<Job>();
-    std::thread::spawn(move || {
-        on_nesting_stack(move || {
-            let (mut store, mut fingerprints) = (Store::new(), Fingerprints::new());
-            for job in jobs {
-                job(&mut store, &mut fingerprints);
-            }
-        })
-    });
-    sender
-}
-
-// Runs work on the store and its fingerprints, and returns what it returns, or its panic.
-fn with_store<T: Send + 'static>(
-    work: impl FnOnce(&mut Store, &mut Fingerprints) -> T + Send + 'static,
-) -> T {
-    let (reply, answer) = channel();
-    let job: Job = Box::new(move |store, fingerprints| {
-        let _ = reply.send(catch_unwind(AssertUnwindSafe(|| work(store, fingerprints))));
-    });
-    STORE_THREAD
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .get_or_insert_with(start_store_thread)
-        .send(job)
-        .expect("the store's thread takes work");
-    answer
-        .recv()
-        .expect("the store's thread answers")
-        .unwrap_or_else(|panic| resume_unwind(panic))
 }
 
 pub(super) fn wrong(message: String) -> Thrown {
@@ -258,35 +218,6 @@ unsafe fn get_texts(env: napi_env, value: napi_value, what: &str) -> Result<Vec<
         .collect()
 }
 
-unsafe fn get_argument(env: napi_env, value: napi_value) -> Result<Argument, Thrown> {
-    match unsafe { type_of(env, value) }? {
-        NAPI_NUMBER => return Ok(Argument::Number(unsafe { get_number(env, value) }?)),
-        NAPI_STRING => return Ok(Argument::Text(unsafe { get_text(env, value) }?)),
-        _ => {}
-    }
-    if let Some(words) = unsafe { get_typed::<i32>(env, value, NAPI_INT32_ARRAY) }? {
-        return Ok(Argument::Numbers(
-            words.iter().map(|&word| f64::from(word)).collect(),
-        ));
-    }
-    let elements = unsafe { get_elements(env, value) }?
-        .ok_or_else(|| wrong("an argument must be a number, a string or an array".into()))?;
-    let first = elements
-        .first()
-        .map(|&element| unsafe { type_of(env, element) })
-        .transpose()?;
-    if first == Some(NAPI_STRING) {
-        let texts = elements
-            .into_iter()
-            .map(|element| unsafe { get_text(env, element) });
-        return Ok(Argument::Texts(texts.collect::<Result<_, _>>()?));
-    }
-    let numbers = elements
-        .into_iter()
-        .map(|element| unsafe { get_number(env, element) });
-    Ok(Argument::Numbers(numbers.collect::<Result<_, _>>()?))
-}
-
 pub(super) unsafe fn create_null(env: napi_env) -> Result<napi_value, Thrown> {
     let mut result = null_mut();
     status(unsafe { napi_get_null(env, &mut result) })?;
@@ -305,10 +236,6 @@ pub(super) unsafe fn create_text(env: napi_env, units: &[u16]) -> Result<napi_va
     Ok(result)
 }
 
-unsafe fn create_bail(env: napi_env, reason: &str) -> Result<napi_value, Thrown> {
-    unsafe { create_text(env, &reason.encode_utf16().collect::<Vec<u16>>()) }
-}
-
 pub(super) unsafe fn create_int32s(env: napi_env, words: &[i32]) -> Result<napi_value, Thrown> {
     let (mut data, mut buffer, mut result) = (null_mut(), null_mut(), null_mut());
     status(unsafe { napi_create_arraybuffer(env, size_of_val(words), &mut data, &mut buffer) })?;
@@ -320,6 +247,82 @@ pub(super) unsafe fn create_int32s(env: napi_env, words: &[i32]) -> Result<napi_
         napi_create_typedarray(env, NAPI_INT32_ARRAY, words.len(), buffer, 0, &mut result)
     })?;
     Ok(result)
+}
+
+// A value for `storePerform`'s arguments: a number, a string, an Int32Array or an array of them.
+unsafe fn get_host(env: napi_env, value: napi_value) -> Result<HostValue, Thrown> {
+    match unsafe { type_of(env, value) }? {
+        NAPI_NUMBER => return Ok(HostValue::Number(unsafe { get_number(env, value) }?)),
+        NAPI_STRING => return Ok(HostValue::Text(unsafe { get_text(env, value) }?)),
+        _ => {}
+    }
+    if let Some(words) = unsafe { get_typed::<i32>(env, value, NAPI_INT32_ARRAY) }? {
+        return Ok(HostValue::Int32s(words.to_vec()));
+    }
+    match unsafe { get_elements(env, value) }? {
+        Some(elements) => elements
+            .into_iter()
+            .map(|element| unsafe { get_host(env, element) })
+            .collect::<Result<_, _>>()
+            .map(HostValue::Array),
+        None => Ok(HostValue::Undefined),
+    }
+}
+
+unsafe fn create_typed<T: Copy>(
+    env: napi_env,
+    kind: i32,
+    values: &[T],
+) -> Result<napi_value, Thrown> {
+    let (mut data, mut buffer, mut result) = (null_mut::<c_void>(), null_mut(), null_mut());
+    status(unsafe { napi_create_arraybuffer(env, size_of_val(values), &mut data, &mut buffer) })?;
+    if !values.is_empty() {
+        unsafe { std::slice::from_raw_parts_mut(data.cast::<T>(), values.len()) }
+            .copy_from_slice(values);
+    }
+    status(unsafe { napi_create_typedarray(env, kind, values.len(), buffer, 0, &mut result) })?;
+    Ok(result)
+}
+
+/// The JavaScript value for what the engine hands its host.
+pub(super) unsafe fn create_host(env: napi_env, value: &HostValue) -> Result<napi_value, Thrown> {
+    let mut result = null_mut();
+    unsafe {
+        match value {
+            HostValue::Undefined => status(napi_get_undefined(env, &mut result))?,
+            HostValue::Null => return create_null(env),
+            HostValue::Bool(value) => status(napi_get_boolean(env, *value, &mut result))?,
+            HostValue::Number(value) => return create_number(env, *value),
+            HostValue::Text(units) => return create_text(env, units),
+            HostValue::Int32s(values) => return create_int32s(env, values),
+            HostValue::Float64s(values) => return create_typed(env, NAPI_FLOAT64_ARRAY, values),
+            HostValue::BigInt64s(values) => return create_typed(env, NAPI_BIGINT64_ARRAY, values),
+            HostValue::Uint8s(values) => return create_typed(env, NAPI_UINT8_ARRAY, values),
+            HostValue::Array(elements) => {
+                status(napi_create_array_with_length(
+                    env,
+                    elements.len(),
+                    &mut result,
+                ))?;
+                for (index, element) in elements.iter().enumerate() {
+                    let element = create_host(env, element)?;
+                    status(napi_set_element(env, result, index as u32, element))?;
+                }
+            }
+            HostValue::Object(properties) => {
+                status(napi_create_object(env, &mut result))?;
+                for (name, property) in properties {
+                    let name = CString::new(*name).unwrap_or_default();
+                    set_property(env, result, &name, create_host(env, property)?)?;
+                }
+            }
+        }
+    }
+    Ok(result)
+}
+
+unsafe fn create_result(env: napi_env, result: HookResult) -> Result<napi_value, Thrown> {
+    unsafe { create_host(env, &result.map_err(wrong)?) }
 }
 
 // storePerform(name: string, args: unknown[]): number | boolean | null | string
@@ -335,19 +338,9 @@ unsafe extern "C" fn store_perform(env: napi_env, info: napi_callback_info) -> n
                 .ok_or_else(|| wrong("storePerform takes its arguments as an array".into()))?;
             let arguments = elements
                 .into_iter()
-                .map(|element| get_argument(env, element))
+                .map(|element| hooks::get_argument(&get_host(env, element)?).map_err(wrong))
                 .collect::<Result<Vec<_>, _>>()?;
-            match with_store(move |store, _| perform(store, &name, &arguments)) {
-                Ok(Answer::Null) => create_null(env),
-                Ok(Answer::Bool(value)) => {
-                    let mut result = null_mut();
-                    status(napi_get_boolean(env, value, &mut result))?;
-                    Ok(result)
-                }
-                Ok(Answer::Number(value)) => create_number(env, value as f64),
-                Err(Failure::Bail(bail)) => create_bail(env, bail.0),
-                Err(Failure::Argument(message)) => Err(wrong(message)),
-            }
+            create_result(env, hooks::store_perform(name, arguments))
         })
     }
 }
@@ -365,37 +358,15 @@ unsafe extern "C" fn store_decode(env: napi_env, info: napi_callback_info) -> na
             };
             let width = get_index(env, width, "width")?;
             let ids = get_int32s(env, ids, "ids")?;
-            if ids.len() < width * encoded.count as usize {
-                return Err(wrong("ids must hold every value of every state".into()));
-            }
-            match with_store(move |store, _| decode_states(store, &encoded, width)) {
-                Ok(decoded) => {
-                    for (slot, id) in ids.iter_mut().zip(decoded) {
-                        *slot = id as i32;
-                    }
+            match hooks::store_decode(encoded, width, ids.len()).map_err(wrong)? {
+                HostValue::Int32s(decoded) => {
+                    ids[..decoded.len()].copy_from_slice(&decoded);
                     create_null(env)
                 }
-                Err(DecodeError::Bail(bail)) => create_bail(env, bail.0),
-                Err(DecodeError::Malformed(error)) => Err(wrong(format!("storeDecode: {error}"))),
+                bail => create_host(env, &bail),
             }
         })
     }
-}
-
-// The states of a call, checked to be ids of the store's values.
-fn get_states(store: &Store, words: &[i32], width: usize) -> Result<Vec<Id>, Thrown> {
-    if width == 0 || !words.len().is_multiple_of(width) {
-        return Err(wrong(
-            "states must be whole states of a width above 0".into(),
-        ));
-    }
-    words
-        .iter()
-        .map(|&word| match Id::try_from(word) {
-            Ok(id) if (id as usize) < store.value_count() => Ok(id),
-            _ => Err(wrong(format!("{word} is no value's id"))),
-        })
-        .collect()
 }
 
 // storeEncode(states: Int32Array, width: number): { words: Int32Array, strings: string[], count }
@@ -403,45 +374,9 @@ unsafe extern "C" fn store_encode(env: napi_env, info: napi_callback_info) -> na
     unsafe {
         guard(env, || {
             let [states, width] = get_arguments::<2>(env, info)?;
-            let words = get_int32s(env, states, "states")?;
+            let words = get_int32s(env, states, "states")?.to_vec();
             let width = get_index(env, width, "width")?;
-            let words = words.to_vec();
-            let encoded = with_store(move |store, _| {
-                let words = &words;
-                let states = get_states(store, words, width)?;
-                let mut encoder = StateEncoder::new();
-                for state in states.chunks_exact(width) {
-                    encoder
-                        .encode(store, state)
-                        .map_err(|bail| wrong(bail.0.into()))?;
-                }
-                Ok(encoder.finish())
-            })?;
-            let mut strings = null_mut();
-            status(napi_create_array_with_length(
-                env,
-                encoded.strings.len(),
-                &mut strings,
-            ))?;
-            for (index, text) in encoded.strings.iter().enumerate() {
-                status(napi_set_element(
-                    env,
-                    strings,
-                    index as u32,
-                    create_text(env, text)?,
-                ))?;
-            }
-            let mut result = null_mut();
-            status(napi_create_object(env, &mut result))?;
-            set_property(env, result, c"words", create_int32s(env, &encoded.words)?)?;
-            set_property(env, result, c"strings", strings)?;
-            set_property(
-                env,
-                result,
-                c"count",
-                create_number(env, f64::from(encoded.count))?,
-            )?;
-            Ok(result)
+            create_result(env, hooks::store_encode(words, width))
         })
     }
 }
@@ -452,13 +387,9 @@ unsafe extern "C" fn store_fingerprints(env: napi_env, info: napi_callback_info)
     unsafe {
         guard(env, || {
             let [states, width, order, parents, is_reference, out] = get_arguments::<6>(env, info)?;
-            let words = get_int32s(env, states, "states")?;
+            let words = get_int32s(env, states, "states")?.to_vec();
             let width = get_index(env, width, "width")?;
-            let order = get_int32s(env, order, "order")?
-                .iter()
-                .map(|&index| usize::try_from(index).ok().filter(|&index| index < width))
-                .collect::<Option<Vec<usize>>>()
-                .ok_or_else(|| wrong("order must hold positions inside a state".into()))?;
+            let order = get_int32s(env, order, "order")?;
             let parents = match type_of(env, parents)? {
                 NAPI_UNDEFINED | NAPI_NULL => None,
                 _ => Some(get_int32s(env, parents, "parents")?.to_vec()),
@@ -471,28 +402,17 @@ unsafe extern "C" fn store_fingerprints(env: napi_env, info: napi_callback_info)
             ))?;
             let out = get_typed::<i64>(env, out, NAPI_BIGINT64_ARRAY)?
                 .ok_or_else(|| wrong("fingerprints must be a BigInt64Array".into()))?;
-            let words = words.to_vec();
-            let fingerprints = with_store(move |store, fingerprints| {
-                let (words, parents) = (&words, parents.as_deref());
-                let states = get_states(store, words, width)?;
-                let count = states.len() / width;
-                if parents.is_some_and(|parents| {
-                    parents.len() < count || parents.iter().take(count).any(|&parent| parent < -1)
-                }) {
-                    return Err(wrong("parents must name a state or be -1".into()));
-                }
-                if is_reference_value {
-                    fingerprints.get_states_reference(store, &states, width, &order)
-                } else {
-                    fingerprints.get_states(store, &states, width, &order, parents)
-                }
-                .map_err(|bail| wrong(bail.0.into()))
-            })?;
-            if out.len() < fingerprints.len() {
-                return Err(wrong("fingerprints must have room for every state".into()));
-            }
-            for (slot, fingerprint) in out.iter_mut().zip(fingerprints) {
-                *slot = fingerprint as i64;
+            let fingerprints = hooks::store_fingerprints(
+                words,
+                width,
+                order,
+                parents,
+                is_reference_value,
+                out.len(),
+            )
+            .map_err(wrong)?;
+            if let HostValue::BigInt64s(fingerprints) = fingerprints {
+                out[..fingerprints.len()].copy_from_slice(&fingerprints);
             }
             Ok(null_mut())
         })
@@ -506,7 +426,7 @@ unsafe extern "C" fn store_reset_fingerprints(
 ) -> napi_value {
     unsafe {
         guard(env, || {
-            with_store(|_, fingerprints| fingerprints.reset());
+            hooks::store_reset_fingerprints();
             Ok(null_mut())
         })
     }
