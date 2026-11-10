@@ -25,9 +25,13 @@ mod value;
 pub use alias::Alias;
 
 /// The texts TLC interns as it computes the model's constant definitions, `definitions` by index
-/// in TLC's order, past those the IR ranks, in the order it interns them.
-pub fn get_startup_texts(ir: &tla_ir::Ir, definitions: &[tla_ir::Index]) -> Vec<Box<[u16]>> {
-    eval::Evaluator::get_startup_texts(ir, definitions)
+/// in TLC's order, past the first `interned` texts the IR ranks, in the order it interns them.
+pub fn get_startup_texts(
+    ir: &tla_ir::Ir,
+    definitions: &[tla_ir::Index],
+    interned: usize,
+) -> Vec<Box<[u16]>> {
+    eval::Evaluator::get_startup_texts(ir, definitions, interned)
 }
 pub use eval::Registers;
 pub use failure::{
@@ -38,6 +42,7 @@ pub use pretty::pretty_print;
 pub use print::{format_printed, format_value};
 pub use rebuild::Rebuilder;
 pub use split::{Described, SpecDescription, add_actions, add_spec};
+pub use value::RECORD_VALUE_FIELDS;
 pub use value::Value;
 
 /// Where the evaluator can't follow TLC yet: the caller reports `not native yet: <reason>`.

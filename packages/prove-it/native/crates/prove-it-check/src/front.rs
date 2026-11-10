@@ -142,8 +142,8 @@ fn lower(
         random_seed,
     };
     // The evaluator recurses, so it runs with the search's stack.
-    let get_startup_texts = |ir: &tla_ir::Ir, definitions: &[tla_ir::Index]| {
-        on_search_stack(|| tla_trace::get_startup_texts(ir, definitions))
+    let get_startup_texts = |ir: &tla_ir::Ir, definitions: &[tla_ir::Index], interned: usize| {
+        on_search_stack(|| tla_trace::get_startup_texts(ir, definitions, interned))
     };
     lower_front_ranking_of(sources, config_text, &options, &get_startup_texts)
 }

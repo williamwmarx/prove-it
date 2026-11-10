@@ -14,7 +14,7 @@ use crate::errors::FrontError;
 use crate::eval::Evaluator;
 use crate::hash::FastMap;
 use crate::lower::{Lowering, RankedTexts};
-use crate::order::TlcOrder;
+use crate::order::{TlcOrder, get_checker_strings, get_unique};
 use crate::spec::{
     Properties, Specification, check_invariants, check_search_config, create_identifier,
     get_properties, get_specification,
@@ -85,7 +85,7 @@ pub fn lower_front(
     options: &ModelOptions,
 ) -> Result<LoweredModel, FrontError> {
     with_files(spec_path, options, |sources| {
-        lower_ranked(sources, config_text, options, &[]).map(|(lowered, _)| lowered)
+        lower_ranked(sources, config_text, options, &[]).map(|(lowered, ..)| lowered)
     })
 }
 
@@ -118,8 +118,8 @@ fn with_files<T>(
 }
 
 /// What finds the texts TLC interns as it computes the constant definitions an IR holds, given
-/// their indexes in TLC's order.
-pub type StartupTexts = dyn Fn(&tla_ir::Ir, &[tla_ir::Index]) -> Vec<Box<[u16]>>;
+/// their indexes in TLC's order and how many of the IR's ranked texts TLC interned before.
+pub type StartupTexts = dyn Fn(&tla_ir::Ir, &[tla_ir::Index], usize) -> Vec<Box<[u16]>>;
 
 /// The model as `lower_front` lowers it, with the strings TLC makes as it computes the constant
 /// definitions ranked after the spec's, as `check.ts` lowers its IR once it has computed them.
@@ -143,19 +143,19 @@ pub fn lower_front_ranking_of(
     options: &ModelOptions,
     get_startup_texts: &StartupTexts,
 ) -> Result<LoweredModel, FrontError> {
-    let (lowered, startup) = lower_ranked(sources, config_text, options, &[])?;
+    let (lowered, startup, interned) = lower_ranked(sources, config_text, options, &[])?;
     let Ok(ir) = tla_ir::decode(&lowered.ir) else {
         return Ok(lowered);
     };
     // A text Rust can't hold as a string ends the ranks, which stay TLC's up to it.
-    let startup_texts: Vec<Rc<str>> = get_startup_texts(&ir, &startup)
+    let startup_texts: Vec<Rc<str>> = get_startup_texts(&ir, &startup, interned)
         .iter()
         .map_while(|units| String::from_utf16(units).ok().map(Rc::from))
         .collect();
     if startup_texts.is_empty() {
         return Ok(lowered);
     }
-    lower_ranked(sources, config_text, options, &startup_texts).map(|(lowered, _)| lowered)
+    lower_ranked(sources, config_text, options, &startup_texts).map(|(lowered, ..)| lowered)
 }
 
 fn lower_ranked(
@@ -163,7 +163,7 @@ fn lower_ranked(
     config_text: &str,
     options: &ModelOptions,
     startup_texts: &[Rc<str>],
-) -> Result<(LoweredModel, Vec<tla_ir::Index>), FrontError> {
+) -> Result<(LoweredModel, Vec<tla_ir::Index>, usize), FrontError> {
     let version = options.version.unwrap_or(TlcVersion::Master);
     let source = sources.source;
     let load = sources.load_module;
@@ -181,12 +181,17 @@ fn lower_ranked(
         load_class: Some(load_class),
     })?;
     let order = TlcOrder::new(source, load, version)?;
-    let texts: Vec<Rc<str>> = order
-        .get_string_order(&config)?
-        .iter()
-        .map(|text| Rc::from(text.as_str()))
-        .chain(startup_texts.iter().cloned())
-        .collect();
+    // TLC computes the constant definitions after SANY and before it builds its checker.
+    let sany = order.get_sany_string_order(&config)?;
+    let texts: Vec<Rc<str>> = get_unique(
+        sany.iter()
+            .map(String::as_str)
+            .chain(startup_texts.iter().map(|text| &**text))
+            .chain(get_checker_strings(&config)),
+    )
+    .into_iter()
+    .map(Rc::from)
+    .collect();
     let variable_order = order.get_declaration_order(true)?;
     let facts = create_definition_facts(&environment);
     let ranks: FastMap<Rc<str>, u32> = texts
@@ -345,7 +350,7 @@ fn lower_ranked(
         Err(error) if evaluator.is_deferring() && !matches!(error, FrontError::NotYet(_)) => Err(
             FrontError::NotYet("an error after a constant predicate the engine checks".to_owned()),
         ),
-        lowered => lowered,
+        lowered => lowered.map(|(lowered, startup)| (lowered, startup, sany.len())),
     }
 }
 

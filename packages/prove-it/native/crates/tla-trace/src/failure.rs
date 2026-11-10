@@ -198,6 +198,23 @@ impl<'ir> Rebuilder<'ir> {
         position: u32,
         is_tool: bool,
     ) -> Result<Assumption, Unsupported> {
+        self.ranking_made_texts(|rebuilder| rebuilder.check_ranked_assumption(position, is_tool))
+    }
+
+    // TLC interns what the startup and the assumptions make as it makes them, which the
+    // evaluator follows in TLC's order there, unlike in the search.
+    fn ranking_made_texts<T>(&mut self, check: impl FnOnce(&mut Self) -> T) -> T {
+        self.evaluator().start_ranking();
+        let result = check(self);
+        self.evaluator().stop_ranking();
+        result
+    }
+
+    fn check_ranked_assumption(
+        &mut self,
+        position: u32,
+        is_tool: bool,
+    ) -> Result<Assumption, Unsupported> {
         let evaluator = self.evaluator();
         let ir = evaluator.ir;
         let startup = &ir.model.startup;
@@ -281,6 +298,10 @@ impl<'ir> Rebuilder<'ir> {
     /// (`checkAssumptions`), with what the assumptions before it printed and what it printed
     /// before it failed.
     pub fn evaluate_assumption(&mut self, position: u32) -> Result<Failure, Unsupported> {
+        self.ranking_made_texts(|rebuilder| rebuilder.evaluate_ranked_assumption(position))
+    }
+
+    fn evaluate_ranked_assumption(&mut self, position: u32) -> Result<Failure, Unsupported> {
         let evaluator = self.evaluator();
         let ir = evaluator.ir;
         let Some(&(node, name)) = ir.model.startup.assumptions.get(position as usize) else {

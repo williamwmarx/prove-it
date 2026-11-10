@@ -22,10 +22,10 @@ use crate::print::{format_pretty, format_printed, format_value};
 use crate::random::{random_element, random_subset};
 use crate::sets::{as_tuple, cardinality, difference, intersection, is_member, union};
 use crate::value::{
-    Class, EvalError, Evaluated, Function, Lazy, Search, Text, TlcMessage, Value, compare,
-    elements, equals, fail, fail_coded, fail_runtime, fail_with, find_key, from_store,
-    is_enumerable, mark_unnormalized, note_sorted, set_of, sorted_function, unnormalized,
-    unsorted_failure, written_function,
+    Class, EvalError, Evaluated, Function, Lazy, RECORD_VALUE_FIELDS, Search, Text, TlcMessage,
+    Value, compare, elements, equals, fail, fail_coded, fail_runtime, fail_with, find_key,
+    from_store, is_enumerable, mark_unnormalized, note_sorted, set_of, sorted_function,
+    take_is_record_built, unnormalized, unsorted_failure, written_function,
 };
 
 /// The bindings an expression sees, innermost first.
@@ -614,16 +614,41 @@ impl<'ir> Evaluator<'ir> {
         text
     }
 
-    /// A text a string operator makes, which TLC interns: ranked as it is made while the startup
+    /// A text a string operator makes, which TLC interns: ranked as it is made while the evaluator
     /// ranks texts (`rankString`, for the strings TLC makes as it starts).
     fn made_text(&mut self, units: Box<[u16]>) -> Rc<Text> {
-        if let Some(ranked) = &mut self.startup_ranked
-            && !self.ranks.contains_key(&units)
-        {
-            self.ranks.insert(units.clone(), self.ranks.len() as i32);
-            ranked.push(units.clone());
-        }
+        self.rank_record_fields();
+        self.rank_made(&units);
         self.text_of(units)
+    }
+
+    fn rank_made(&mut self, units: &[u16]) {
+        if let Some(ranked) = &mut self.startup_ranked
+            && !self.ranks.contains_key(units)
+        {
+            self.ranks.insert(units.into(), self.ranks.len() as i32);
+            ranked.push(units.into());
+        }
+    }
+
+    // RecordValue's field names, which TLC interns as it builds its first record, where the
+    // evaluator has built one since it last looked.
+    fn rank_record_fields(&mut self) {
+        if self.startup_ranked.is_some() && take_is_record_built() {
+            for field in RECORD_VALUE_FIELDS {
+                self.rank_made(&field.encode_utf16().collect::<Vec<u16>>());
+            }
+        }
+    }
+
+    /// Ranks what the evaluator makes from now on, as TLC interns it.
+    pub(crate) fn start_ranking(&mut self) {
+        take_is_record_built();
+        self.startup_ranked = Some(Vec::new());
+    }
+
+    pub(crate) fn stop_ranking(&mut self) {
+        self.startup_ranked = None;
     }
 
     /// A text with TLC's rank of it, or -1 for one the IR doesn't rank.
@@ -631,23 +656,12 @@ impl<'ir> Evaluator<'ir> {
     /// interned as its class loads, after the spec's strings, in the order declared, unless the
     /// spec has the string.
     pub(crate) fn counterexample_field(&self, name: &str) -> Rc<Text> {
-        const FIELDS: [&str; 9] = [
-            "beginLine",
-            "beginColumn",
-            "endLine",
-            "endColumn",
-            "module",
-            "name",
-            "location",
-            "context",
-            "parameters",
-        ];
         let units: Box<[u16]> = name.encode_utf16().collect();
         if let Some(&rank) = self.ranks.get(&units) {
             return Rc::new(Text { units, rank });
         }
         let last = self.ranks.values().copied().max().unwrap_or(-1);
-        let position = FIELDS.iter().position(|field| *field == name);
+        let position = RECORD_VALUE_FIELDS.iter().position(|field| *field == name);
         let rank = position.map_or(-1, |position| last + 1 + position as i32);
         Rc::new(Text { units, rank })
     }
@@ -1529,11 +1543,19 @@ impl<'ir> Evaluator<'ir> {
     }
 
     /// The texts TLC interns as it computes the startup definitions, the substitutes and then
-    /// `definitions` (`processConstantDefns`), past those the IR ranks, in order: those Tail,
-    /// SubSeq, `\o` and ToString make, as `rankString` ranks them.
-    pub(crate) fn get_startup_texts(ir: &Ir, definitions: &[Index]) -> Vec<Box<[u16]>> {
+    /// `definitions` (`processConstantDefns`), past the first `interned` texts the IR ranks, in
+    /// order: those Tail, SubSeq, `\o` and ToString make, as `rankString` ranks them, and
+    /// RecordValue's field names where it builds its first record.
+    pub(crate) fn get_startup_texts(
+        ir: &Ir,
+        definitions: &[Index],
+        interned: usize,
+    ) -> Vec<Box<[u16]>> {
         let mut evaluator = Evaluator::new(ir);
-        evaluator.startup_ranked = Some(Vec::new());
+        evaluator
+            .ranks
+            .retain(|_, rank| (*rank as usize) < interned);
+        evaluator.start_ranking();
         evaluator.random = Some(JavaRandom::seeded(ir.model.random_seed));
         let substitutes = ir.model.startup.substitutes.iter().map(|&(_, index)| index);
         for index in substitutes.chain(definitions.iter().copied()) {
@@ -1542,6 +1564,7 @@ impl<'ir> Evaluator<'ir> {
             evaluator
                 .evaluate(evaluator.definition(node).body, &Context::default())
                 .ok();
+            evaluator.rank_record_fields();
         }
         evaluator.startup_ranked.unwrap_or_default()
     }

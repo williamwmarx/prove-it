@@ -78,7 +78,7 @@ pub fn fail_coded<T>(reason: impl Into<String>, code: u32, text: String) -> Eval
 }
 
 /// A string or a model value's name, with TLC's rank of it: the order TLC interned the text in,
-/// or -1 for a text the IR doesn't rank, which compares by its units, as the store's does.
+/// or -1 for a text the evaluator doesn't rank, which TLC made as it searched.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Text {
     pub units: Box<[u16]>,
@@ -206,6 +206,39 @@ pub enum Value {
     Lambda(Rc<crate::eval::Lambda>),
 }
 
+/// The field names tlc2.value.impl.RecordValue interns as it initializes, in the order it declares
+/// them.
+pub const RECORD_VALUE_FIELDS: [&str; 10] = [
+    "beginLine",
+    "beginColumn",
+    "endLine",
+    "endColumn",
+    "module",
+    "name",
+    "location",
+    "context",
+    "parameters",
+    "_action",
+];
+
+thread_local! {
+    // Whether the evaluator has built a record since `take_is_record_built` last asked: TLC
+    // initializes RecordValue, which interns its field names, as it builds its first record.
+    static IS_RECORD_BUILT: Cell<bool> = const { Cell::new(false) };
+}
+
+fn new_class(class: Class) -> Cell<Class> {
+    if class == Class::Record {
+        IS_RECORD_BUILT.set(true);
+    }
+    Cell::new(class)
+}
+
+/// Whether the evaluator has built a record since the last call.
+pub(crate) fn take_is_record_built() -> bool {
+    IS_RECORD_BUILT.replace(false)
+}
+
 impl Value {
     pub fn empty_set() -> Value {
         Value::Set(Rc::new(Vec::new()))
@@ -215,7 +248,7 @@ impl Value {
         Value::Function(Rc::new(Function {
             domain,
             range,
-            class: Cell::new(class),
+            class: new_class(class),
             written: RefCell::new(None),
             search: Cell::new(Search::Unknown),
             interval: None,
@@ -228,7 +261,7 @@ impl Value {
         Value::Function(Rc::new(Function {
             domain: (low..=high).map(Value::Int).collect(),
             range,
-            class: Cell::new(class),
+            class: new_class(class),
             written: RefCell::new(None),
             search: Cell::new(Search::Unknown),
             interval: Some((low, high)),
@@ -309,7 +342,7 @@ pub fn written_function(keys: Vec<Value>, values: Vec<Value>, class: Class) -> E
     Ok(Value::Function(Rc::new(Function {
         domain,
         range,
-        class: Cell::new(class),
+        class: new_class(class),
         written: RefCell::new(written),
         search: Cell::new(Search::Unknown),
         interval: None,
@@ -328,12 +361,14 @@ pub fn sorted_function(keys: Vec<Value>, values: Vec<Value>, class: Class) -> Ev
 
 // --- TLC's order, as the store's `compare` ---
 
-fn compare_texts(left: &Text, right: &Text) -> Ordering {
+// TLC interns a text it makes after it starts as it makes it, after every text it interned as it
+// started: two such texts the evaluator didn't rank compare in an order it can't know.
+fn compare_texts(left: &Text, right: &Text) -> Evaluated<Ordering> {
     match (left.rank, right.rank) {
-        (-1, -1) => left.units.cmp(&right.units),
-        (_, -1) => Ordering::Less,
-        (-1, _) => Ordering::Greater,
-        (left, right) => left.cmp(&right),
+        (-1, -1) => fail("an order of strings TLC made as it searched"),
+        (_, -1) => Ok(Ordering::Less),
+        (-1, _) => Ok(Ordering::Greater),
+        (left, right) => Ok(left.cmp(&right)),
     }
 }
 
@@ -497,10 +532,10 @@ pub fn compare(left: &Value, right: &Value) -> Evaluated<Ordering> {
     match (left, right) {
         (Value::Int(left), Value::Int(right)) => Ok(left.cmp(right)),
         (Value::Bool(left), Value::Bool(right)) => Ok(left.cmp(right)),
-        (Value::Str(left), Value::Str(right)) => Ok(compare_texts(left, right)),
+        (Value::Str(left), Value::Str(right)) => compare_texts(left, right),
         (Value::Model(left_text), Value::Model(right_text)) => {
             check_model_types(left, right, false)?;
-            Ok(compare_texts(left_text, right_text))
+            compare_texts(left_text, right_text)
         }
         (Value::Model(model), _) => {
             if model.model_type() == 0 {

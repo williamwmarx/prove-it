@@ -24,6 +24,12 @@ fn str(store: &mut Store, text: &str) -> Id {
     store.str(&utf16(text))
 }
 
+// Ranks texts as TLC interned the spec's strings as it started, in this order.
+fn rank(store: &mut Store, texts: &[&str]) {
+    let units: Vec<Vec<u16>> = texts.iter().map(|text| utf16(text)).collect();
+    store.rank_strings(units.iter().map(Vec::as_slice));
+}
+
 #[test]
 fn interns_the_constants_first() {
     let store = Store::new();
@@ -134,6 +140,7 @@ fn sorts_a_sets_elements_and_drops_duplicates_short_or_long() {
 #[test]
 fn sorts_a_functions_keys_with_their_values() {
     let mut store = Store::new();
+    rank(&mut store, &["a", "b", "c"]);
     let keys = [
         str(&mut store, "c"),
         str(&mut store, "a"),
@@ -175,7 +182,7 @@ fn builds_a_sequences_tail_append_and_concatenation_as_the_tuple_of_their_elemen
 }
 
 #[test]
-fn orders_strings_by_rank_ranked_before_unranked_and_unranked_by_text() {
+fn orders_strings_by_rank_and_ranked_before_unranked() {
     let mut store = Store::new();
     store.reset([&utf16("b")[..], &utf16("a")[..]]);
     let (a, b, zz, c) = (
@@ -186,9 +193,15 @@ fn orders_strings_by_rank_ranked_before_unranked_and_unranked_by_text() {
     );
     assert_eq!(store.compare(a, b), Ok(1));
     assert_eq!(store.compare(b, zz), Ok(-1));
-    assert_eq!(store.compare(c, zz), Ok(-1));
-    let set = store.set_of_sorted(&[b, a, c, zz]);
-    assert_eq!(store.set_of(&[zz, c, a, b]), Ok(set));
+    // TLC orders two strings it made as it ran by when it made them, which the store doesn't
+    // know.
+    assert_eq!(
+        store.compare(c, zz),
+        Err(Bail("an order of strings the search made"))
+    );
+    assert!(store.set_of(&[zz, c, a, b]).is_err());
+    let set = store.set_of_sorted(&[b, a, zz]);
+    assert_eq!(store.set_of(&[zz, a, b]), Ok(set));
     // A model value is ranked when it is made, a string built at run time is not.
     let m = store.model(&utf16("m"));
     assert_eq!(store.text_rank_of(m), 2);
@@ -447,6 +460,7 @@ fn stops_a_membership_tlcs_search_passes_but_its_equals_of_a_set_enumeration_fai
 #[test]
 fn misses_a_scalar_in_a_set_of_its_own_kind() {
     let mut store = Store::new();
+    rank(&mut store, &["cs", "e1", "exit", "ncs"]);
     let words = ["ncs", "e1", "exit", "cs"].map(|word| store.str(&utf16(word)));
     let strings = store.set_of(&words[..3]).unwrap();
     assert_eq!(store.is_member(words[3], strings), Ok(false));
@@ -642,8 +656,9 @@ fn search(store: &mut Store, element: Id, set: Id) -> Result<bool, Bail> {
 #[test]
 fn fails_a_membership_wherever_tlcs_search_fails() {
     let mut store = Store::new();
+    // The spec's strings, which TLC interned as it started.
     store.reset(
-        ["b", "a", "m1"]
+        ["b", "a", "m1", "c", "zz", "é", "\u{3b1}"]
             .map(|text| text.encode_utf16().collect::<Vec<_>>())
             .iter()
             .map(Vec::as_slice),
@@ -713,8 +728,15 @@ fn fails_a_membership_wherever_tlcs_search_fails() {
 #[test]
 fn answers_a_membership_among_records_of_many_keys() {
     let mut store = Store::new();
+    let count = if cfg!(miri) { 100 } else { 2_000 };
+    let mut keys: Vec<String> = (0..count).map(|index| format!("k{index}")).collect();
+    keys.sort();
+    rank(
+        &mut store,
+        &keys.iter().map(String::as_str).collect::<Vec<_>>(),
+    );
     let one = store.int(1).unwrap();
-    let records: Vec<Id> = (0..if cfg!(miri) { 100 } else { 2_000 })
+    let records: Vec<Id> = (0..count)
         .map(|index| {
             let key = str(&mut store, &format!("k{index}"));
             store.function_of(&[key], &[one]).unwrap()

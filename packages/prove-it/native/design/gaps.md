@@ -1070,3 +1070,34 @@ and then evaluates again at each progress point: a `PrintT` in one prints again 
 - **What removes it:** evaluating the expression at each progress point, as TLC does: printing
   what it prints, and, where it is FALSE, stopping with TLC's statistics, work left on the queue,
   and exit 10. It comes after -dump and -continue.
+
+## TLC's order of strings
+
+TLC compares strings by the token `UniqueString` gives each as it interns it (`compareTo`), so a
+set of strings prints in the order TLC interned them. TLC interns a string as it makes one, by
+`\o` or ToString, say, as well as each name it reads. A debug build of TLC's `InternTable` that
+prints the stack at each intern gives the order before TLC checks the model, at d8fb231:
+
+1. The configuration's values, TLC's startup strings and SANY's: each module's tokens in the order
+   `SpecObj.loadSpec` parses the modules, and the string literals in semantic order.
+2. `--unknown--`, right after the root module's tokens: `pcal.Validator` reads the root's location
+   once SANY has parsed it, which initializes `tla2sany.st.Location`.
+3. What the constant definitions make (`processConstantDefns`). The first record built here also
+   interns RecordValue's ten field names, there.
+4. `UnnamedAction`, as `processConfig` builds the first action: where the configuration names an
+   INIT, NEXT, SPECIFICATION, INVARIANT or PROPERTY.
+5. TLCGetSet's names, `all:named` and `level` among them, as `AbstractChecker.createConfig`
+   initializes the class; then the mode `bfs` createConfig makes, and RecordValue's names, as
+   createConfig builds its record, unless 3 interned them.
+6. What the assumptions make, as they make them, then what the search makes.
+
+- **What the binary does:** tla-front ranks 1 and 2 (`get_sany_string_order`), then 3, which the
+  replay finds (`get_startup_texts`, with RecordValue's names where it builds a record), then 4
+  and 5 (`get_checker_strings`). The replay ranks what the assumptions make as it makes them. A
+  string ranked at startup comes before one made after, in the store and the replay alike.
+- **What declines:** two strings neither ranked, which TLC orders by when it made them. The engine
+  doesn't make them in TLC's order, and a rebuilt trace makes only some of them, so both decline
+  rather than order them by their text, as they did.
+- **Left out:** createConfig also interns the seed, the fingerprint polynomial and the install
+  location as strings, which only a spec making the same text would see. The TypeScript
+  interpreter ranks 3 after 4 and 5.

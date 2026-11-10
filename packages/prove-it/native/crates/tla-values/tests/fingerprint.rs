@@ -14,6 +14,9 @@ fn utf16(text: &str) -> Vec<u16> {
 #[test]
 fn match_tlc_on_a_sample_of_each_kind() {
     let mut store = Store::new();
+    // The spec's strings, which TLC interned as it started.
+    let texts = ["a", "b", "hello", "p", "q", "x"].map(utf16);
+    store.rank_strings(texts.iter().map(Vec::as_slice));
     let int = |store: &mut Store, value: i64| store.int(value).unwrap();
     let (one, two, three) = (int(&mut store, 1), int(&mut store, 2), int(&mut store, 3));
     let set = store.set_of(&[three, one, two]).unwrap();

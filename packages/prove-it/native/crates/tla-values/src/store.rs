@@ -482,7 +482,13 @@ impl Store {
     /// Whether a string or a model value compares with others without bailing: its text was
     /// ranked before `freeze_string_order`.
     pub fn is_text_ordered(&self, id: Id) -> bool {
-        self.text_rank_of(id) < self.unordered_rank
+        self.is_startup_rank(self.text_rank_of(id))
+    }
+
+    /// Whether a rank is one the store gave a text before `freeze_string_order`, which compares
+    /// with any other text.
+    pub(crate) fn is_startup_rank(&self, rank: i32) -> bool {
+        (0..self.unordered_rank).contains(&rank)
     }
 
     pub fn is_model_id(&self, id: Id) -> bool {
@@ -802,8 +808,7 @@ impl Store {
                 }),
                 KIND_STRING => {
                     let (left, right) = (left_meta.payload, right_meta.payload);
-                    self.check_ordered(left, right, "an order of strings the search ranked")?;
-                    Ok(self.compare_texts(left, right))
+                    self.compare_texts(left, right)
                 }
                 KIND_BOOL => Ok(if left < right { -1 } else { 1 }),
                 KIND_MODEL => {
@@ -843,19 +848,16 @@ impl Store {
         Err(Bail("values TLC can't compare"))
     }
 
-    fn compare_texts(&self, left: i32, right: i32) -> i32 {
-        let (left, right) = (self.text(left), self.text(right));
-        match (left.rank, right.rank) {
-            (-1, -1) => {
-                if left.units < right.units {
-                    -1
-                } else {
-                    1
-                }
-            }
-            (_, -1) => -1,
-            (-1, _) => 1,
-            (left, right) => left - right,
+    // A text TLC made as it ran, which the store holds unranked, comes after those it interned
+    // as it started, and two such compare in the order TLC made them, which the store doesn't
+    // know.
+    fn compare_texts(&self, left: i32, right: i32) -> Outcome<i32> {
+        self.check_ordered(left, right, "an order of strings the search ranked")?;
+        match (self.text(left).rank, self.text(right).rank) {
+            (-1, -1) => Err(Bail("an order of strings the search made")),
+            (_, -1) => Ok(-1),
+            (-1, _) => Ok(1),
+            (left, right) => Ok(left - right),
         }
     }
 
