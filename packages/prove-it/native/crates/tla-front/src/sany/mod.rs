@@ -6,10 +6,13 @@
 //! warnings) is `report.rs`'s: the graph is built only for a specification SANY accepts, and a
 //! throw of the TypeScript generator, or an error `report.rs` didn't report, is `NotYet`.
 
+pub mod builtins;
 pub mod export;
+pub mod generator;
 pub mod levels;
 pub mod nodes;
 pub mod selectors;
+pub mod source;
 pub mod xml;
 
 pub type Result<T> = std::result::Result<T, crate::errors::FrontError>;

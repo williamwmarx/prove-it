@@ -5,9 +5,7 @@ use std::path::Path;
 use std::rc::Rc;
 
 use crate::TlcVersion;
-use crate::ast::{
-    Assumed, Declaration, DefinitionKind, Expr, ExpressionKind, Module, ModuleUnit, Statement,
-};
+use crate::ast::{Declaration, DefinitionKind, Module, ModuleUnit};
 use crate::config::parse_config;
 use crate::environment::{EnvironmentOptions, get_sany_messages};
 use crate::errors::{FrontError, SanyError};
@@ -17,6 +15,7 @@ use crate::linter::Linter;
 use crate::parser::{extract_module, parse_sany_module};
 use crate::pcal::{PcalFatal, PcalSession, ValidationResult};
 use crate::recursive::check_recursive;
+use crate::sany::generator::{ModuleDependencies, get_dependencies};
 use crate::sany_parse_error::{get_sany_174_lexical_error, get_sany_parse_error};
 
 type Result<T> = std::result::Result<T, Stop>;
@@ -94,164 +93,10 @@ const UNLINTED_MODULES: &[&str] = &[
     "TLC",
 ];
 
-/// The modules a file extends and instantiates, as SANY's ParseUnit collects them, and the module
-/// of that file which first names each.
-#[derive(Default)]
-struct Dependencies {
-    extendees: Vec<Rc<str>>,
-    instancees: Vec<Rc<str>>,
-    importers: FastMap<Rc<str>, Rc<str>>,
-}
-
-fn get_let_instances(expression: &Expr, found: &mut Vec<Rc<str>>) {
-    if let ExpressionKind::Let {
-        instances: Some(instances),
-        ..
-    } = &expression.kind
-    {
-        found.extend(instances.iter().map(|instance| instance.module.clone()));
-    }
-    expression
-        .children()
-        .iter()
-        .for_each(|child| get_let_instances(child, found));
-}
-
-fn get_assumed_instances(assumed: &Assumed, found: &mut Vec<Rc<str>>) {
-    match assumed {
-        Assumed::Expression(expression) => get_let_instances(expression, found),
-        Assumed::NewSymbol(_) => {}
-        Assumed::AssumeProve(assume_prove) => {
-            assume_prove
-                .assumptions
-                .iter()
-                .for_each(|assumption| get_assumed_instances(assumption, found));
-            get_let_instances(&assume_prove.conclusion, found);
-        }
-    }
-}
-
-/// SpecObj.instanceResolvesToInternalModule: SANY finds a module that the root module
-/// instantiates among its inner modules only when its first top-level INSTANCE of the module
-/// follows the inner module.
-fn is_internal_instance(module: &Module, name: &str) -> bool {
-    let mut seen: FastSet<&str> = FastSet::default();
-    for unit in &module.units {
-        match unit {
-            ModuleUnit::Module(inner) => {
-                seen.insert(&inner.name);
-            }
-            ModuleUnit::Instance(instance) if &*instance.module == name => {
-                return seen.contains(name);
-            }
-            _ => {}
-        }
-    }
-    false
-}
-
-/// `getDependencies`: ParseUnit.calculateContextWithinParseUnit lets a module know the inner
-/// modules defined before it in the modules enclosing it and the inner modules of the modules it
-/// extends, but not itself.
-fn get_dependencies(module: &Rc<Module>) -> Dependencies {
-    fn visit(
-        current: &Rc<Module>,
-        is_root: bool,
-        context: &FastMap<Rc<str>, Rc<Module>>,
-        dependencies: &mut Dependencies,
-    ) {
-        let is_external = |name: &Rc<str>| !context.contains_key(name);
-        let mut add_imports = |names: Vec<Rc<str>>, is_extension: bool| {
-            for name in names {
-                dependencies
-                    .importers
-                    .entry(name.clone())
-                    .or_insert_with(|| current.name.clone());
-                if is_extension {
-                    dependencies.extendees.push(name);
-                } else {
-                    dependencies.instancees.push(name);
-                }
-            }
-        };
-        add_imports(
-            current
-                .extends
-                .iter()
-                .filter(|name| is_external(name))
-                .cloned()
-                .collect(),
-            true,
-        );
-        let mut instances = Vec::new();
-        for unit in &current.units {
-            match unit {
-                ModuleUnit::Instance(instance) => instances.push(instance.module.clone()),
-                ModuleUnit::Definition(definition) => {
-                    get_let_instances(&definition.body, &mut instances)
-                }
-                ModuleUnit::Theorem(theorem) if is_root => match &theorem.statement {
-                    Statement::Expression(expression) => {
-                        get_let_instances(expression, &mut instances)
-                    }
-                    Statement::AssumeProve(assume_prove) => get_assumed_instances(
-                        &Assumed::AssumeProve(assume_prove.clone()),
-                        &mut instances,
-                    ),
-                },
-                ModuleUnit::Assumption(assumption) if is_root => {
-                    get_let_instances(&assumption.expression, &mut instances)
-                }
-                _ => {}
-            }
-        }
-        add_imports(
-            instances
-                .into_iter()
-                .filter(|name| is_external(name) && !is_internal_instance(current, name))
-                .collect(),
-            false,
-        );
-        let mut peers = context.clone();
-        for inner in &current.modules {
-            let mut inner_context = peers.clone();
-            // ParseUnit.handleExtensions.
-            let mut extenders: Vec<*const Module> = Vec::new();
-            fn add_extended_inner_modules(
-                extender: &Rc<Module>,
-                extenders: &mut Vec<*const Module>,
-                inner_context: &mut FastMap<Rc<str>, Rc<Module>>,
-            ) {
-                if extenders.contains(&Rc::as_ptr(extender)) {
-                    return;
-                }
-                extenders.push(Rc::as_ptr(extender));
-                for name in &extender.extends {
-                    let Some(extendee) = inner_context.get(name).cloned() else {
-                        continue;
-                    };
-                    for extendee_inner in &extendee.modules {
-                        inner_context
-                            .entry(extendee_inner.name.clone())
-                            .or_insert_with(|| extendee_inner.clone());
-                    }
-                    add_extended_inner_modules(&extendee, extenders, inner_context);
-                }
-            }
-            add_extended_inner_modules(inner, &mut extenders, &mut inner_context);
-            visit(inner, false, &inner_context, dependencies);
-            peers.insert(inner.name.clone(), inner.clone());
-        }
-    }
-    let mut dependencies = Dependencies::default();
-    visit(module, true, &FastMap::default(), &mut dependencies);
-    dependencies
-}
-
 struct Loaded {
     text: String,
     module: Rc<Module>,
-    dependencies: Rc<Dependencies>,
+    dependencies: Rc<ModuleDependencies>,
 }
 
 /// A message of SANY's parsing phase, which come from its validation of PlusCal.
@@ -296,7 +141,7 @@ fn get_extendees(module: &Module) -> Vec<Rc<str>> {
 }
 
 impl Loader<'_> {
-    fn get_dependencies(&self, name: &str) -> Rc<Dependencies> {
+    fn get_dependencies(&self, name: &str) -> Rc<ModuleDependencies> {
         self.modules[name].dependencies.clone()
     }
 

@@ -9,7 +9,7 @@ use crate::ast::*;
 use crate::errors::{SanyError, SyntaxError, SyntaxFailure, format_range};
 use crate::hash::FastSet;
 use crate::json::write_js_string;
-use crate::lexer::{Token, TokenKind, tokenize};
+use crate::lexer::{Token, TokenKind, read_at_as_identifier, tokenize};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Precedence {
@@ -2888,17 +2888,7 @@ fn parse_collecting(
         None => tokenize(source)?,
     };
     let end: Rc<str> = Rc::from("");
-    // SANY's lexer reads @ as an identifier, which stands for the value an EXCEPT changes only
-    // alone.
-    let tokens = tokens
-        .into_iter()
-        .map(|mut token| {
-            if token.kind == TokenKind::Operator && &*token.text == "@" {
-                token.kind = TokenKind::Identifier;
-            }
-            token
-        })
-        .collect();
+    let tokens = tokens.into_iter().map(read_at_as_identifier).collect();
     let mut parser = Parser {
         tokens,
         index: 0,
