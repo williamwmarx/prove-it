@@ -1024,7 +1024,8 @@ packages/prove-it/native/           Cargo workspace; rust-toolchain.toml pins 1.
   crates/prove-it-host   what the engine hands its host, built once for both bindings
   crates/prove-it-napi   cdylib: the N-API binding
   crates/prove-it-wasm   cdylib: the WebAssembly binding, for hosts without process.dlopen
-  crates/prove-it-cli    stages 4–5: the native binary (13)
+  crates/prove-it-check stages 4–5: the binary's check, writing to a sink (13)
+  crates/prove-it-cli    stages 4–5: the native binary, which runs prove-it-check on stdout (13)
   oracle/ValueOracle.java, tools/replay, fuzz/
 ```
 `Cargo.lock` is committed and builds use `--locked`, with no network in `build.rs`. Release
