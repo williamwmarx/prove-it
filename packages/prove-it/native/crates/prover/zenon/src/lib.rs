@@ -13,6 +13,7 @@ pub mod ocaml;
 pub mod parse;
 pub mod phrase;
 pub mod proof;
+pub mod tla;
 
 use prove_decide::{DecideError, Decision, Limits};
 
