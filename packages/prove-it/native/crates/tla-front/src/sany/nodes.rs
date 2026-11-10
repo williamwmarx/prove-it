@@ -327,21 +327,45 @@ pub enum NodeKind {
     ThmOrAssumpDef(Box<ThmOrAssumpDef>),
     Module(Box<Module>),
     OpAppl(OpAppl),
-    Numeral { value: String, location: SanyLocation },
-    String { value: String, location: SanyLocation },
+    Numeral {
+        value: String,
+        location: SanyLocation,
+    },
+    String {
+        value: String,
+        location: SanyLocation,
+    },
     Decimal(Decimal),
     LetIn(LetIn),
     Label(Label),
-    OpArg { op: NodeId, location: SanyLocation },
-    At { except: NodeId, component: NodeId, location: SanyLocation },
+    OpArg {
+        op: NodeId,
+        location: SanyLocation,
+    },
+    At {
+        except: NodeId,
+        component: NodeId,
+        location: SanyLocation,
+    },
     SubstIn(SubstIn),
     Instance(Instance),
-    Assume { definition: Option<NodeId>, body: NodeId, location: SanyLocation },
+    Assume {
+        definition: Option<NodeId>,
+        body: NodeId,
+        location: SanyLocation,
+    },
     Theorem(Theorem),
     LeafProof(LeafProof),
-    DefStep { defs: Vec<NodeId>, location: SanyLocation },
+    DefStep {
+        defs: Vec<NodeId>,
+        location: SanyLocation,
+    },
     NonLeafProof(NonLeafProof),
-    NewSymb { declaration: NodeId, set: Option<NodeId>, location: SanyLocation },
+    NewSymb {
+        declaration: NodeId,
+        set: Option<NodeId>,
+        location: SanyLocation,
+    },
     AssumeProve(AssumeProve),
     UseOrHide(UseOrHide),
 }
@@ -661,11 +685,17 @@ mod tests {
     fn hashtable_enumerates_as_java_does() {
         // Ten keys rehash the table once; the order is what `getHashtableValues` gives.
         let mut context = Context::default();
-        let names = ["x", "y", "z", "Init", "Next", "Spec", "TypeOK", "vars", "a", "b"];
+        let names = [
+            "x", "y", "z", "Init", "Next", "Spec", "TypeOK", "vars", "a", "b",
+        ];
         for (index, name) in names.iter().enumerate() {
             context.add(Rc::from(*name), name, NodeId(index as u32));
         }
-        let values: Vec<u32> = context.get_hashtable_values().iter().map(|id| id.0).collect();
+        let values: Vec<u32> = context
+            .get_hashtable_values()
+            .iter()
+            .map(|id| id.0)
+            .collect();
         assert_eq!(values, [5, 6, 3, 7, 2, 9, 1, 8, 0, 4]);
         assert_eq!(context.get_symbol("Next"), Some(NodeId(4)));
     }
