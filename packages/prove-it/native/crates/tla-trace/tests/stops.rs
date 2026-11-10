@@ -148,7 +148,8 @@ fn replays_the_expansion_past_the_successor_that_fails_an_invariant() {
         Replay {
             found: 1,
             queued: 0,
-            is_failed: true
+            is_failed: true,
+            is_successor_generated: false
         }
     );
     assert_eq!(failure.exit_code, 75);

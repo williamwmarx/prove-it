@@ -2454,6 +2454,95 @@ fn declines_a_deadlock_past_a_node_that_accepts_every_behavior() {
     std::fs::remove_dir_all(directory).expect("removed");
 }
 
+#[test]
+fn declines_a_trace_tlc_fails_to_rebuild_after_drawing_as_it_starts() {
+    // An ASSUME draws as TLC starts, and the initial predicate draws after it. TLC rebuilds a
+    // trace from the seed (`TLCTrace.getTrace`), finds no initial state, and throws a
+    // NullPointerException; it holds the initial state of a violation of two states instead.
+    let spec = "---- MODULE Stop ----\nEXTENDS Integers, TLC, Randomization\nVARIABLES x, y, n\nASSUME PrintT(<<\"s\", RandomElement(1..1000)>>)\nInit == x = RandomElement(1..1000) /\\ y = \"a\" /\\ n = 0\nNext == n < 3 /\\ n' = n + 1 /\\ x' = x /\\ y' = y\nInv == n < 3\nHeld == n < 1\n====\n";
+    let (output, directory) = run_lowered(
+        "startup-draw",
+        spec,
+        "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE\nINVARIANT Inv\n",
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("prove-it: not native yet: a trace whose initial state TLC fails to rebuild"),
+        "{}",
+        stdout(&output)
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+    let (output, directory) = run_lowered(
+        "startup-draw-held",
+        spec,
+        "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE\nINVARIANT Held\n",
+    );
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(12), "{text}");
+    assert!(
+        text.contains("Error: Invariant Held is violated.\nError: The behavior up to this point is:\nState 1: <Initial predicate>\n/\\ n = 0\n/\\ x = 241\n/\\ y = \"a\"\n\nState 2: <Next line 6, col 9 to line 6, col 47 of module Stop>\n/\\ n = 1\n/\\ x = 241\n/\\ y = \"a\"\n\n2 states generated, 2 distinct states found, 0 states left on queue.\n"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn reports_a_constraint_that_fails_on_a_later_initial_state_with_its_frames() {
+    // TLC's replay of the initial states evaluates the constraint with its call stack, so the
+    // failure has the constraint's frames after the initial predicate's.
+    let spec = "---- MODULE Stop ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x \\in 1..7\nNext == x' = x\nCon == Assert(x # 6, \"con\")\n====\n";
+    let (output, directory) = run_lowered(
+        "constraint-frames",
+        spec,
+        "INIT Init\nNEXT Next\nCONSTRAINT Con\n",
+    );
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(75), "{text}");
+    assert!(
+        text.contains("Error: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 18 in Stop\n1. Line 6, column 8 to line 6, column 27 in Stop\n\n\n6 states generated, 5 distinct states found, 5 states left on queue.\n"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn rebuilds_the_trace_again_only_where_tlc_checks_the_postconditions_after_a_failure() {
+    // After a failure in the next-state relation TLC's worker rebuilds the trace again, printing,
+    // only where it generated no successor of the state before the failure; after an invariant
+    // fails to evaluate, never. Then it prints what its replay of the expansion printed.
+    let next = "---- MODULE Stop ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nA == PrintT(<<\"a\", x>>) /\\ x' \\in {x + 1, x + 2, x}\nB == x = 3 /\\ PrintT(<<\"b\", x>>) /\\ x' = 1 \\div (x - 3)\nNext == (x < 4 /\\ A) \\/ B\n====\n";
+    let (output, directory) = run_lowered("next-prints", next, "INIT Init\nNEXT Next\n");
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(255), "{text}");
+    assert!(
+        text.contains("State 3: <Next line 7, col 10 to line 7, col 19 of module Stop>\nx = 3\n\n<<\"a\", 3>>\n<<\"b\", 3>>\nError: The error occurred when TLC was evaluating the nested\n"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+    let first = next.replace("(x < 4 /\\ A) \\/ B", "B \\/ (x < 4 /\\ A)");
+    let (output, directory) = run_lowered("next-prints-first", &first, "INIT Init\nNEXT Next\n");
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(255), "{text}");
+    assert!(
+        text.contains("State 3: <Next line 7, col 15 to line 7, col 24 of module Stop>\nx = 3\n\n<<\"a\", 0>>\n<<\"a\", 1>>\n<<\"b\", 3>>\nError: The error occurred when TLC was evaluating the nested\n"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+    let invariant = "---- MODULE Stop ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == PrintT(<<\"n\", x>>) /\\ x' \\in {(x + 1) % 6, (x + 2) % 6, (x+3) % 6}\nInv == IF x = 5 THEN Assert(FALSE, \"inv\") ELSE TRUE\n====\n";
+    let (output, directory) = run_lowered(
+        "invariant-prints",
+        invariant,
+        "INIT Init\nNEXT Next\nINVARIANT Inv\n",
+    );
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(76), "{text}");
+    assert!(
+        text.contains("State 3: <Next line 5, col 9 to line 5, col 74 of module Stop>\nx = 5\n\n<<\"n\", 2>>\n10 states generated, 6 distinct states found, 2 states left on queue.\n"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
 // TLCEval makes the set an enumerated one (`TLCEval.convert`), which TLC enumerates in its
 // normalized order whatever the union it was.
 #[test]

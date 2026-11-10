@@ -208,13 +208,32 @@ impl<'ir> Rebuilder<'ir> {
             )
         });
         let again = if !matches!(ending, Ending::Lasso) && first.rebuilt.len() > 1 && is_effectful {
-            self.rebuild_pass(store, states, actions, ending, false, false)?
+            // TLC's second rebuild resets the generator with the thread's current state set, so
+            // it draws from a seed this rebuild doesn't follow: what it prints or sets then isn't
+            // followed.
+            let is_drawing = ir.builtins.iter().any(|builtin| {
+                matches!(
+                    &*ir.texts[builtin.name as usize],
+                    "RandomElement" | "RandomSubset"
+                )
+            });
+            let registers = format!("{:?}", self.evaluator.registers);
+            let output: Option<Vec<Vec<String>>> = self
+                .rebuild_pass(store, states, actions, ending, false, false)?
                 .map(|pass| {
                     pass.initial_output
                         .into_iter()
                         .chain(pass.outputs.into_iter().flatten())
                         .collect()
-                })
+                });
+            let is_effective = output.as_ref().is_some_and(|output| !output.is_empty())
+                || format!("{:?}", self.evaluator.registers) != registers;
+            if is_drawing && is_effective {
+                return Err(Unsupported(
+                    "the second rebuild of a trace of a spec that draws at random".into(),
+                ));
+            }
+            output
         } else {
             None
         };
@@ -287,9 +306,24 @@ impl<'ir> Rebuilder<'ir> {
                 &self.key
             }
         };
-        // The initial states draw from the generator startup left, which TLC never reseeds
-        // there, so walking the whole initial predicate draws as the search drew.
-        evaluator.random = is_drawing.then(|| JavaRandom::from_state(self.startup_random));
+        // The search's initial states draw from the generator startup left. TLC rebuilds the
+        // initial state of a trace from the seed instead (`TLCTrace.getTrace` resets the
+        // generator, and a lasso's prefix is rebuilt on a thread of its own): where startup drew,
+        // a drawing initial predicate finds no initial state, and TLC fails. It holds the initial
+        // state of a violation of two states and of a trace of one state, which it doesn't rebuild.
+        let is_initial_rebuilt = is_first
+            && match ending {
+                Ending::Violation => states.len() > 2,
+                Ending::Kept => states.len() > 1,
+                Ending::Lasso => true,
+            };
+        evaluator.random = is_drawing.then(|| {
+            if is_initial_rebuilt {
+                JavaRandom::seeded(ir.model.random_seed)
+            } else {
+                JavaRandom::from_state(self.startup_random)
+            }
+        });
         let registers = evaluator.registers.clone();
         let initial = find(
             evaluator,
@@ -303,6 +337,11 @@ impl<'ir> Rebuilder<'ir> {
             evaluator.registers = registers;
         }
         let Some(initial) = initial else {
+            if is_initial_rebuilt && is_drawing {
+                return unsupported(
+                    "a trace whose initial state TLC fails to rebuild from the generator it resets",
+                );
+            }
             return unsupported("no initial state is the trace's first");
         };
         let initial_output = std::mem::take(&mut evaluator.printed);
