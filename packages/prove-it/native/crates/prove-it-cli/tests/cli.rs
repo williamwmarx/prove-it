@@ -1355,6 +1355,38 @@ fn declines_a_trace_through_a_set_tlc_streams_in_an_order_of_its_own() {
 }
 
 #[test]
+fn exits_as_tlc_does_where_an_atom_fails_adding_a_state() {
+    // TLC exits by the error's own status where an atom of a temporal property fails as it adds
+    // a state to the behavior graphs: 255 for an EvalException, 14 for a failed assertion. It
+    // records no node for the brackets of <<A>>_v, so the call stack starts at A.
+    let run = |test: &str, property: &str| {
+        let spec = format!(
+            "---- MODULE Stop ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 3\nSpec == Init /\\ [][Next]_x /\\ WF_x(Next)\nP == {property}\n====\n"
+        );
+        let (output, directory) = run_lowered(test, &spec, "SPECIFICATION Spec\nPROPERTY P\n");
+        std::fs::remove_dir_all(directory).expect("removed");
+        (output.status.code(), stdout(&output))
+    };
+    let (status, text) = run("atom-division", "[]<>(3 \\div (x - 1) > 0)");
+    assert_eq!(status, Some(255), "{text}");
+    assert!(
+        text.contains("The second argument of \\div is 0."),
+        "{text}"
+    );
+    let (status, text) = run("atom-assert", "[]<>Assert(x # 1, \"atom\")");
+    assert_eq!(status, Some(14), "{text}");
+    let (status, text) = run(
+        "atom-action",
+        "[]<><<3 \\div (x - 1) > 0 /\\ x' = x + 1>>_x",
+    );
+    assert_eq!(status, Some(255), "{text}");
+    assert!(
+        text.contains("positions:\n0. Line 7, column 12 to line 7, column 43 in Stop\n1. Line 7, column 12 to line 7, column 29 in Stop\n2. Line 7, column 12 to line 7, column 25 in Stop\n"),
+        "{text}"
+    );
+}
+
+#[test]
 fn reads_and_sets_tlcs_registers() {
     // TLCCache evaluates Counted once, TLCFP is TLC's fingerprint under -fp 0, which the
     // interpreter and TLC print the same, and a Java property TLC hasn't set is its key.
