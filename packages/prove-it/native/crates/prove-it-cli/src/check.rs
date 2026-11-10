@@ -482,17 +482,18 @@ impl Reporter for Relay<'_> {
 
 // What Print or PrintT prints of the values, unless the store has forgotten how TLC built one.
 fn format_printed(store: &Store, values: &[Id]) -> Option<String> {
-    values.iter().all(|&id| is_printable(store, id)).then(|| {
-        values
-            .iter()
-            .map(|&id| {
-                let mut text = Vec::new();
-                write_value(store, id, &mut text);
-                pretty_print(&text)
-            })
-            .collect::<Vec<_>>()
-            .join("  ")
-    })
+    if !values.iter().all(|&id| is_printable(store, id)) {
+        return None;
+    }
+    let printed = values
+        .iter()
+        .map(|&id| {
+            let mut text = Vec::new();
+            write_value(store, id, &mut text).ok()?;
+            Some(pretty_print(&text))
+        })
+        .collect::<Option<Vec<_>>>()?;
+    Some(printed.join("  "))
 }
 
 /// The counts a Progress line reports.

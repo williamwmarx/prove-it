@@ -376,8 +376,8 @@ impl<'ir> Rebuilder<'ir> {
                 })?;
                 let extra: Vec<Option<Value>> = extra
                     .iter()
-                    .map(|&id| Some(crate::value::from_store(store, id)))
-                    .collect();
+                    .map(|&id| crate::value::from_store(store, id).map(Some))
+                    .collect::<Result<_, _>>()?;
                 (path, &actions[..path.len().saturating_sub(1)], Some(extra))
             }
             _ => (states, actions, None),

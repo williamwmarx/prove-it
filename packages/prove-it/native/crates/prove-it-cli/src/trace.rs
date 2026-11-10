@@ -137,7 +137,7 @@ fn rebuild(
                         &violation.store,
                         &violation.startup,
                         violation.startup_random,
-                    );
+                    )?;
                     if let Some(random) = violation.random {
                         rebuilder.set_violation_random(random);
                     }
@@ -148,7 +148,7 @@ fn rebuild(
                         &violation.store,
                         &violation.registers.numbered,
                         &violation.registers.named,
-                    ));
+                    )?);
                     let mut trace =
                         rebuilder.rebuild(&violation.store, &states, &labels, ending)?;
                     let loop_action = match closing {
@@ -328,7 +328,7 @@ pub fn check_postconditions(
                                 &stored.store,
                                 &stored.registers.numbered,
                                 &stored.registers.named,
-                            ));
+                            )?);
                         }
                         check(&mut rebuilder, ir, run, None)
                     })

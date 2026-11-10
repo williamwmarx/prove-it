@@ -179,8 +179,9 @@ pub struct Checkpoint {
     /// What each `_POSSIBLE` predicate counted before the expansion the interpreter goes on
     /// from, or -1 where it wasn't evaluated.
     pub possible: Vec<i64>,
-    /// The value TLC computed at startup of each of the model's startup definitions, as one row.
-    pub startup: SharedStates,
+    /// The value TLC computed at startup of each of the model's startup definitions, as one row,
+    /// unless one is a value the encoding has no tag for, such as a function TLC keeps lazy.
+    pub startup: Option<SharedStates>,
     /// The state of the generator the startup left (`JavaRandom::state`).
     pub startup_random: u64,
     /// The symmetry group the search reduced by, if any.
@@ -719,7 +720,9 @@ impl States {
     fn encode(&self, store: &Store, ids: &[Id], width: usize, count: usize) -> EncodedStates {
         let mut encoder = StateEncoder::new();
         for index in 0..count {
-            encoder.encode(store, &ids[index * width..(index + 1) * width]);
+            encoder
+                .encode(store, &ids[index * width..(index + 1) * width])
+                .expect("a state the search fingerprinted, which holds only values that encode");
         }
         encoder.finish()
     }
@@ -727,7 +730,9 @@ impl States {
     fn share(&self, store: &Store, ids: &[Id], width: usize, count: usize) -> SharedStates {
         let mut encoder = SharedEncoder::new(store);
         for index in 0..count {
-            encoder.encode(store, &ids[index * width..(index + 1) * width]);
+            encoder
+                .encode(store, &ids[index * width..(index + 1) * width])
+                .expect("a state the search fingerprinted, which holds only values that encode");
         }
         encoder.finish()
     }
@@ -1988,7 +1993,7 @@ fn run_startup(machine: &mut Machine<'_>, startup: &Startup, is_native: bool) ->
         // The store forgets how TLC built some values, whose text then depends on it.
         let format = |machine: &Machine<'_>| {
             if tla_values::print::is_printable(&machine.store, value) {
-                Ok(tla_values::print::format_value(&machine.store, value))
+                tla_values::print::format_value(&machine.store, value)
             } else {
                 Err(Bail(
                     "unsupported: printing a value whose text depends on how TLC built it",
@@ -2137,7 +2142,7 @@ fn startup_values(machine: &mut Machine<'_>, context: &EngineContext) -> Outcome
 fn share_startup(machine: &mut Machine<'_>, context: &EngineContext) -> Outcome<SharedStates> {
     let values = startup_values(machine, context)?;
     let mut encoder = SharedEncoder::new(&machine.store);
-    encoder.encode(&machine.store, &values);
+    encoder.encode(&machine.store, &values)?;
     Ok(encoder.finish())
 }
 
@@ -2855,7 +2860,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 tables,
             }),
             possible,
-            startup: share_startup(machine, &context).expect("values computed at startup"),
+            startup: share_startup(machine, &context).ok(),
             startup_random,
             symmetry: named_group.clone(),
         }
@@ -3328,8 +3333,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     }),
                     graph: None,
                     possible: checkpoint_possible.clone(),
-                    startup: share_startup(&mut machine, &context)
-                        .expect("values computed at startup"),
+                    startup: share_startup(&mut machine, &context).ok(),
                     startup_random,
                     symmetry: named_group.clone(),
                 }))

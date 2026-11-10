@@ -411,7 +411,9 @@ unsafe extern "C" fn store_encode(env: napi_env, info: napi_callback_info) -> na
                 let states = get_states(store, words, width)?;
                 let mut encoder = StateEncoder::new();
                 for state in states.chunks_exact(width) {
-                    encoder.encode(store, state);
+                    encoder
+                        .encode(store, state)
+                        .map_err(|bail| wrong(bail.0.into()))?;
                 }
                 Ok(encoder.finish())
             })?;

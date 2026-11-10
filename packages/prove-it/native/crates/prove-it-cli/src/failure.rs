@@ -413,7 +413,7 @@ fn evaluate(ir: &Ir, stop: &ErrorStop<'_>, is_tool: bool) -> Result<Report, Stri
                 &violation.store,
                 &violation.startup,
                 violation.startup_random,
-            );
+            )?;
             if let Some(group) = &violation.symmetry {
                 rebuilder.set_symmetry(group);
             }
@@ -421,7 +421,7 @@ fn evaluate(ir: &Ir, stop: &ErrorStop<'_>, is_tool: bool) -> Result<Report, Stri
                 &violation.store,
                 &violation.registers.numbered,
                 &violation.registers.named,
-            ));
+            )?);
         }
         let failure =
             rebuilder.evaluate_failure(stop.store, &stop.states, &stop.actions, stop.site)?;

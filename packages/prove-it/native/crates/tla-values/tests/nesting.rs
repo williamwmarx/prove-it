@@ -29,7 +29,7 @@ fn hold_values_nested_past_the_typescript_stores_stack() {
         let mut fingerprints = Fingerprints::new();
         let fingerprint = fingerprints.get_state(&store, &[left], &[0]);
         let mut encoder = StateEncoder::new();
-        encoder.encode(&store, &[left]);
+        encoder.encode(&store, &[left]).unwrap();
         let encoded = encoder.finish();
         let mut other = Store::new();
         let read = decode_states(&mut other, &encoded, 1).unwrap();

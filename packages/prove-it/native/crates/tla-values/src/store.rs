@@ -292,7 +292,10 @@ impl Store {
                     .collect();
                 self.intern_block(meta.kind, &words, meta.size)
             }
-            _ => self.intern_scalar(meta.kind, meta.payload),
+            KIND_BOOL | KIND_INT | KIND_LAZY_FUNCTION | KIND_INFINITE_SET => {
+                self.intern_scalar(meta.kind, meta.payload)
+            }
+            kind => unreachable!("an overlay holds a value of no kind the store makes: {kind}"),
         };
         if imported.len() <= index {
             imported.resize(overlay.meta.len() - overlay.id_base as usize, EMPTY_SLOT);
@@ -528,7 +531,7 @@ impl Store {
     // Adds a value whose block, if any, is already on the heap at `payload`.
     fn allocate(&mut self, kind: u8, payload: i32, size: u32, hash: u32, slot: usize) -> Id {
         let id = self.value_count() as Id;
-        let flags = if kind >= KIND_SET {
+        let flags = if matches!(kind, KIND_SET | KIND_FUNCTION | KIND_TUPLE) {
             self.get_flags(kind, payload as usize, size as usize)
         } else {
             0
@@ -784,7 +787,8 @@ impl Store {
                     Err(Bail("values TLC can't compare"))
                 }
                 KIND_INFINITE_SET => Ok(left_meta.payload - right_meta.payload),
-                _ => self.compare_functions(left, right),
+                KIND_FUNCTION | KIND_TUPLE => self.compare_functions(left, right),
+                _ => Err(Bail("values TLC can't compare")),
             };
         }
         if left_meta.kind == KIND_MODEL {
@@ -964,7 +968,9 @@ impl Store {
                 KIND_FUNCTION | KIND_TUPLE => self.equals_functions(left, right),
                 // `UserValue.equals` compares.
                 KIND_INFINITE_SET => self.compare(left, right).map(|order| order == 0),
-                _ => Ok(false),
+                // Interned, so their ids differ only where they do.
+                KIND_BOOL | KIND_INT | KIND_STRING => Ok(false),
+                _ => Err(Bail("equality of values TLC can't compare")),
             };
         }
         if left_kind == KIND_MODEL {
@@ -1156,8 +1162,10 @@ impl Store {
     }
 
     pub fn is_member(&mut self, element: Id, set: Id) -> Outcome<bool> {
-        if self.kind_of(set) == KIND_INFINITE_SET {
-            return self.is_member_of_infinite(element, set);
+        match self.kind_of(set) {
+            KIND_INFINITE_SET => return self.is_member_of_infinite(element, set),
+            KIND_SET => {}
+            _ => return Err(Bail("membership in a non-set")),
         }
         // TLC compares the element with the set's, which builds a function it kept lazy.
         if self.size_of(set) > 0 && (self.is_kept_lazy(element) || self.is_kept_lazy(set)) {
@@ -2049,6 +2057,9 @@ mod tests {
             Err(Bail("a mistyped membership in Nat"))
         );
         assert!(store.holds_lazy_function(both));
-        assert_eq!(crate::print::format_value(&store, both), "{{Nat}, {Int}}");
+        assert_eq!(
+            crate::print::format_value(&store, both).unwrap(),
+            "{{Nat}, {Int}}"
+        );
     }
 }

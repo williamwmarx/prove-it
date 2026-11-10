@@ -4,8 +4,8 @@
 //! wherever the interpreter's fails, which then reports TLC's error.
 
 use tla_values::store::{
-    EMPTY_TUPLE, FALSE, KIND_INT, KIND_SET, KIND_STRING, KIND_TUPLE, Outcome, TRUE,
-    is_function_kind,
+    EMPTY_TUPLE, FALSE, KIND_INT, KIND_LAZY_FUNCTION, KIND_SET, KIND_STRING, KIND_TUPLE, Outcome,
+    TRUE, is_function_kind,
 };
 use tla_values::{Bail, Id};
 
@@ -245,7 +245,12 @@ fn is_finite_set(machine: &mut Machine<'_>, args: &[Id], _: &[Applier]) -> Outco
 
 fn is_a_bag(machine: &mut Machine<'_>, args: &[Id], _: &[Applier]) -> Outcome<Id> {
     let bag = args[0];
-    if !is_function_kind(machine.store.kind_of(bag)) {
+    let kind = machine.store.kind_of(bag);
+    // TLC fails to enumerate the domain of a function it keeps lazy (`toFcnRcd`).
+    if kind == KIND_LAZY_FUNCTION {
+        return Err(Bail("unsupported: IsABag of a function TLC keeps lazy"));
+    }
+    if !is_function_kind(kind) {
         return Ok(FALSE);
     }
     let is_bag = (0..machine.store.size_of(bag)).all(|index| {

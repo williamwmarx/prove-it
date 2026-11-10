@@ -42,7 +42,9 @@ fn check(path: &std::path::Path) -> Result<usize, String> {
         Ok(rebuilder) => rebuilder,
         Err(Unsupported(reason)) => return Err(reason),
     };
-    rebuilder.set_startup(&stopped.store, &stopped.startup, stopped.startup_random);
+    rebuilder
+        .set_startup(&stopped.store, &stopped.startup, stopped.startup_random)
+        .expect("startup values");
     if let Some(group) = &stopped.symmetry {
         rebuilder.set_symmetry(group);
     }
@@ -189,7 +191,9 @@ fn deadlock_trace(path: &str, is_split: bool) -> (Vec<String>, Option<Vec<String
             .collect();
         let trace = Rebuilder::new(&ir)
             .and_then(|mut rebuilder| {
-                rebuilder.set_startup(&stopped.store, &stopped.startup, stopped.startup_random);
+                rebuilder
+                    .set_startup(&stopped.store, &stopped.startup, stopped.startup_random)
+                    .expect("startup values");
                 if let Some(group) = &stopped.symmetry {
                     rebuilder.set_symmetry(group);
                 }
@@ -310,7 +314,7 @@ fn rebuild_violation<T: Send>(
             &violation.store,
             &violation.startup,
             violation.startup_random,
-        );
+        )?;
         let trace = rebuilder.rebuild(&violation.store, &states, &violation.labels, ending)?;
         then(&ir, &mut rebuilder, &trace, cycle_start)
     })
@@ -463,7 +467,9 @@ fn records_the_parameters_of_the_counter_examples_actions() {
         let stopped = tla_engine::on_nesting_stack(|| stop_search(&ir, Some(400)))
             .expect("a search that stops");
         let mut rebuilder = Rebuilder::new(&ir)?;
-        rebuilder.set_startup(&stopped.store, &stopped.startup, stopped.startup_random);
+        rebuilder
+            .set_startup(&stopped.store, &stopped.startup, stopped.startup_random)
+            .expect("startup values");
         // TLC's lasso starts in the initial state where only node 3 is active.
         let active = ir
             .variables
