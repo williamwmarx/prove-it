@@ -5,7 +5,9 @@ use std::path::Path;
 use std::rc::Rc;
 
 use crate::TlcVersion;
-use crate::ast::{Assumed, Expr, ExpressionKind, Module, ModuleUnit, Statement};
+use crate::ast::{
+    Assumed, Declaration, DefinitionKind, Expr, ExpressionKind, Module, ModuleUnit, Statement,
+};
 use crate::config::parse_config;
 use crate::environment::{EnvironmentOptions, get_sany_messages};
 use crate::errors::{FrontError, SanyError};
@@ -14,6 +16,7 @@ use crate::hash::{FastMap, FastSet};
 use crate::linter::Linter;
 use crate::parser::{extract_module, parse_sany_module};
 use crate::pcal::{PcalFatal, PcalSession, ValidationResult};
+use crate::recursive::check_recursive;
 use crate::sany_parse_error::{get_sany_174_lexical_error, get_sany_parse_error};
 
 type Result<T> = std::result::Result<T, Stop>;
@@ -58,6 +61,9 @@ pub enum ModuleOrigin {
 pub struct SanyText {
     pub text: String,
     pub is_failed: bool,
+    /// The Java exception SANY's semantic analysis throws, which TLC reports as a failed parse
+    /// (`Assert.fail(EC.TLC_PARSING_FAILED2, ...)`), and which `text` ends with.
+    pub exception: Option<String>,
 }
 
 /// How the run reads and names the spec's modules.
@@ -267,6 +273,7 @@ struct Loader<'a> {
     is_parse_reported: bool,
     /// Whether SANY's semantic analysis found errors.
     is_failed: bool,
+    exception: Option<String>,
 }
 
 /// The modules a module and its inner modules extend, other than its inner modules.
@@ -523,17 +530,16 @@ impl Loader<'_> {
         if let Some(file) = (self.options.load_module)(name) {
             return (Some(file), ModuleOrigin::File);
         }
+        // `SimpleFilenameToStream.locate` reads the standard modules next, and `FileUtil` takes a
+        // module from the root module's file only after them.
+        if let Some(standard) = get_standard_module(name, self.options.version) {
+            return (Some(standard.to_owned()), ModuleOrigin::Standard);
+        }
         // TLC 1.7.4's SANY reads a module only from a file of its own.
         let extracted = (self.options.version != TlcVersion::V1_7_4)
             .then(|| extract_module(self.source, name))
             .flatten();
-        match extracted {
-            Some(text) => (Some(text), ModuleOrigin::RootFile),
-            None => (
-                get_standard_module(name, self.options.version).map(str::to_owned),
-                ModuleOrigin::Standard,
-            ),
-        }
+        (extracted, ModuleOrigin::RootFile)
     }
 
     /// SpecObj.loadSpec: SANY resolves the first unresolved name it finds from the root, every
@@ -683,12 +689,14 @@ pub fn get_sany_text(
         validations: Vec::new(),
         is_parse_reported: false,
         is_failed: false,
+        exception: None,
     };
     let name = options.file_name.unwrap_or(&root);
     match write_sany_text(&mut loader, &root) {
         Ok(()) => Ok(SanyText {
             text: loader.lines.concat(),
             is_failed: loader.is_failed,
+            exception: loader.exception,
         }),
         Err(Stop::Front(error)) => Err(error),
         // SANY.frontEndParse turns a Java exception of its validation of PlusCal into a fatal
@@ -702,6 +710,7 @@ pub fn get_sany_text(
                 loader.lines.concat()
             ),
             is_failed: true,
+            exception: None,
         }),
         // The fatal error follows the messages of the parsing phase.
         Err(Stop::Fatal { .. }) if !loader.parse_messages.is_empty() => Err(FrontError::NotYet(
@@ -730,9 +739,92 @@ pub fn get_sany_text(
                     loader.lines.concat()
                 ),
                 is_failed: true,
+                exception: None,
             })
         }
     }
+}
+
+/// `Generator`'s exception where a nested module ends the module's recursive section early: its
+/// `checkForUndefinedRecursiveOps` takes the section's count off the total, so the definition of
+/// an operator the section declared drives the total below zero (`endOpDefNode`). `NotYet` where
+/// the count is off in a way that throws nothing, or elsewhere.
+fn get_generator_exception(module: &Module) -> Result<Option<&'static str>> {
+    check_recursive(module)?;
+    let mut pending: Vec<Rc<Declaration>> = Vec::new();
+    let mut declared: Vec<Rc<Declaration>> = Vec::new();
+    let mut is_cleared = false;
+    for unit in &module.units {
+        match unit {
+            ModuleUnit::Recursive(declared) if is_cleared => {
+                return Err(not_yet(&format!(
+                    "a RECURSIVE declaration of {} after a module in a recursive section",
+                    declared.first().map_or("", |declaration| &declaration.name)
+                )));
+            }
+            ModuleUnit::Recursive(recursive) => {
+                pending.extend(recursive.iter().cloned());
+                declared.extend(recursive.iter().cloned());
+            }
+            ModuleUnit::Definition(definition) => {
+                let Some(index) = pending
+                    .iter()
+                    .position(|declaration| declaration.name == definition.name)
+                else {
+                    continue;
+                };
+                // `processFunction` leaves a function whose declaration takes operator arguments
+                // undefined, so it doesn't count down.
+                if pending[index].arity != 0
+                    && matches!(definition.kind, DefinitionKind::Function { .. })
+                {
+                    if is_cleared {
+                        return Err(not_yet(
+                            "a function declared RECURSIVE with operator arguments in a recursive section",
+                        ));
+                    }
+                    continue;
+                }
+                // `check_recursive` leaves no other binding of a declared name in the module, but
+                // one from an EXTENDS or an INSTANCE that `SymbolTable.addSymbol` would reject the
+                // declaration over, which only the resolver finds.
+                let is_conflicting = !module.extends.is_empty() || !module.instances.is_empty();
+                if is_cleared && is_conflicting {
+                    return Err(not_yet(
+                        "a recursive section after a module, whose declarations SANY may reject",
+                    ));
+                }
+                if is_cleared {
+                    return Ok(Some(
+                        "util.WrongInvocationException: Defined more recursive operators than were declared in RECURSIVE statements.",
+                    ));
+                }
+                pending.remove(index);
+            }
+            ModuleUnit::Module(inner) if !pending.is_empty() => {
+                let is_recursive = inner
+                    .units
+                    .iter()
+                    .any(|unit| matches!(unit, ModuleUnit::Recursive(_) | ModuleUnit::Module(_)));
+                if is_recursive {
+                    return Err(not_yet(
+                        "a module with modules or RECURSIVE declarations in a recursive section",
+                    ));
+                }
+                is_cleared = true;
+            }
+            ModuleUnit::Instance(_) if is_cleared => {
+                return Err(not_yet("an INSTANCE after a module in a recursive section"));
+            }
+            _ => {}
+        }
+    }
+    if is_cleared {
+        return Err(not_yet(
+            "a module in a recursive section whose operators aren't defined after it",
+        ));
+    }
+    Ok(None)
 }
 
 fn write_sany_text(loader: &mut Loader, root: &Rc<str>) -> Result<()> {
@@ -757,6 +849,27 @@ fn write_sany_text(loader: &mut Loader, root: &Rc<str>) -> Result<()> {
     let mut order = Vec::new();
     loader.get_analysis_order(&root, &mut Vec::new(), &mut FastSet::default(), &mut order)?;
     loader.report_parse_messages(options.file_name.unwrap_or(&root))?;
+    // SANY's generator throws on the root module before it reports its messages, and
+    // `SANY.parse` prints the exception. The standard modules before it have none.
+    if let Some(exception) = get_generator_exception(&loader.modules[&root].module)? {
+        let is_standard = |name: &Rc<str>| loader.read(name).1 == ModuleOrigin::Standard;
+        if options.version == TlcVersion::V1_7_4
+            || order.iter().any(|name| *name != root && !is_standard(name))
+        {
+            return Err(not_yet(
+                "SANY's generator exception after a module of the user's",
+            ));
+        }
+        for name in &order {
+            loader
+                .lines
+                .push(format!("Semantic processing of module {name}\n"));
+        }
+        loader.lines.push(format!("{exception}\n"));
+        loader.is_failed = true;
+        loader.exception = Some(exception.to_owned());
+        return Ok(());
+    }
     // SANY's messages come from linking, which reports what SANY's semantic analysis does.
     let config =
         parse_config("", options.version).map_err(|error| FrontError::Config(error.message))?;
