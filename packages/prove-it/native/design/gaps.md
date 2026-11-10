@@ -643,17 +643,15 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
 
 ## Open: what the infinite-sets session left (2026-11-09)
 
-- **EmptySetEqAssume** still declines. Every delegated assumption re-evaluates the ones before
-  it in `tla-trace` (`check_assumption`), so one the evaluator can't follow stops them all. The
-  first it can't, of 443, has moved from 26 to 217:
-  - 217, `1 = Cardinality([(UNION {1..2000000, {"a"}}) -> {"d1"}])`: `tla-trace` builds the UNION
-    and fails comparing an integer with a string, where TLC keeps a `UnionValue` and its `size`
-    never asks the domain. It needs a lazy UNION value, as the engine's `Lazy::Union`. More may
-    follow it.
-- **ValueSemanticsAssume** declines in `tla-trace` only. The engine stopped five assumptions
-  with "EXCEPT outside the domain" as a failure of TLC's, where TLC leaves the function as it is
-  (`FcnRcdValue.takeExcept`; a record or a tuple with a warning). The reason is now a limit, so
-  such an assumption goes to the trace evaluator.
+- **EmptySetEqAssume** and **ValueSemanticsAssume** now print what TLC prints. The engine took
+  three stops for failures of TLC's that aren't in an assumption: "EXCEPT outside the domain",
+  where TLC leaves the function as it is (`FcnRcdValue.takeExcept`), is a limit; IsFiniteSet of
+  a set that may be infinite is a limit, since TLC asks such a set by its parts
+  (`SetOfFcnsValue.isFinite`); and an assumption that stops enumerating a set of functions over
+  a domain TLC can't enumerate (`INFINITE_DOMAIN`) or a bound the engine takes for one
+  (`INFINITE_BOUND`, as `Nat \cap S`) is delegated like a limit, since TLC compares such sets
+  and enumerates such a bound by rules of its own. Where the caller can't check a delegated one,
+  it is reported as failing, as before.
 - **MCEWD687a** (both copies) stops where TLC fails (`SetPredValue.elements`: "Attempted to
   enumerate { x \in S : p(x) } when S: ... is not enumerable") evaluating the property
   TreeWithRoot as an invariant. The engine and the CLI now follow TLC there: the stop is among
