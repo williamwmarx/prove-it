@@ -350,43 +350,28 @@ fn print_call_stack(printer: &mut Printer, ir: &Ir, call_stack: &[SourceRange]) 
 /// Prints TLC's report of the assumption at `position` that failed to evaluate as TLC started,
 /// after what the assumptions printed before it failed that the run hasn't, and returns the
 /// status TLC exits with, or why the run isn't native yet. `printed` is what the run printed of
-/// the assumptions, which must be what TLC prints first; none where a recorded front printed
-/// it all. TLC prints no statistics, since it hasn't searched.
+/// the assumptions, which must be what TLC prints first. TLC prints no statistics, since it hasn't
+/// searched.
 pub fn print_assumption_failure(
     printer: &mut Printer,
     ir: &Ir,
     position: u32,
-    printed: Option<&[String]>,
+    printed: &[String],
     workers: usize,
     start: Instant,
 ) -> Result<i32, String> {
-    let is_tool = printer.is_tool;
-    let (failure, mut expected) = on_search_stack(|| {
-        let new_rebuilder = || {
-            Rebuilder::new(ir).map(|mut rebuilder| {
-                rebuilder.set_workers(workers);
-                rebuilder
-            })
-        };
-        let failure = new_rebuilder()?.evaluate_assumption(position)?;
-        // What TLC prints of the assumptions before this one, which hold, and of this one.
-        let mut expected = Vec::new();
-        if printed.is_some() {
-            if let Some(last) = position.checked_sub(1) {
-                let checked = new_rebuilder()?.check_assumption(last, is_tool)?;
-                expected.extend(
-                    checked
-                        .printed_before
-                        .iter()
-                        .chain(&checked.printed)
-                        .map(|print| format_print(print)),
-                );
-            }
-            expected.extend(failure.printed.iter().map(|print| format_print(print)));
-        }
-        Ok((failure, expected))
+    let failure = on_search_stack(|| {
+        Rebuilder::new(ir).and_then(|mut rebuilder| {
+            rebuilder.set_workers(workers);
+            rebuilder.evaluate_assumption(position)
+        })
     })?;
-    let printed = printed.unwrap_or_default();
+    // What TLC prints of the assumptions before this one, which hold, and of this one.
+    let mut expected: Vec<String> = failure
+        .printed
+        .iter()
+        .map(|print| format_print(print))
+        .collect();
     if !expected.starts_with(printed) {
         return Err("the assumptions printing other than TLC prints".into());
     }
