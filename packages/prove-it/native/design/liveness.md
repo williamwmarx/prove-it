@@ -353,7 +353,10 @@ Done on native-parity:
   temporal properties, which the search hands over only where the atoms of the initial states
   evaluate; and both front ends keep the list a definition wrote as the specification's
   initial predicate where its conjuncts are that list's, so the call stack's first frame is the
-  list's, as TLC keeps the body of a definition the specification names whole.
+  list's, as TLC keeps the body of a definition the specification names whole (the
+  infinite-sets session is replacing that rule of `getSpecification` with its own lowering of
+  the initial predicate; the test `reports_a_bound_tlc_cant_enumerate_in_the_initial_predicate`
+  and YoYoAllGraphs hold either way).
 - TraceMultiNodeReads: without the Java overrides its CONSTRAINT chooses from
   [STRING -> STRING] on the first initial state. Enumerating a set of functions whose domain
   TLC can't enumerate is one of TLC's failures (`INFINITE_DOMAIN`); `tla-trace` marks a failed
@@ -370,8 +373,9 @@ Open, with what is known:
   TLC names it as the configuration's property refers to it (`A!Safe`, `opNode.getName()` in
   `SpecProcessor#processConfigProps`), in both front ends, scoped or not. No corpus model
   reports such an invariant violated. Reported to the coordinator for the front's owner.
-- MCEWD687a gets past the scoped properties and stops on "enumerated a filter of an infinite
-  set": the infinite-sets session's.
+- MCEWD687a (both copies) is the infinite-sets session's: see `gaps.md`. The scoped properties
+  it needed are in; what is left is TLC's failure enumerating the filter of Seq(S), the
+  property invariant's failure site and its replay.
 - Where the atoms use TLC's registers, the cases the search declines (the section above): the
   next would be an atom TLC evaluates on an initial state, which needs the checker called from
   `visit_initial` with the machine's state kept around the atom, and a late node, where Next's
