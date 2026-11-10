@@ -1,0 +1,18 @@
+theory tlapm_1ed0ff
+const isReal :: c = PredicateLogic.c
+const isa_slas_a :: [c,c] => c = (PredicateLogic.c => (PredicateLogic.c => PredicateLogic.c))
+const isa_bksl_diva :: [c,c] => c = (PredicateLogic.c => (PredicateLogic.c => PredicateLogic.c))
+const isa_perc_a :: [c,c] => c = (PredicateLogic.c => (PredicateLogic.c => PredicateLogic.c))
+const isa_peri_peri_a :: [c,c] => c = (PredicateLogic.c => (PredicateLogic.c => PredicateLogic.c))
+const isInfinity :: c = PredicateLogic.c
+const isa_lbrk_rbrk_a :: [c] => c = (PredicateLogic.c => PredicateLogic.c)
+const isa_less_more_a :: [c] => c = (PredicateLogic.c => PredicateLogic.c)
+fixes a_CONSTANTunde_Punde_a
+assumes v'5: ((a_CONSTANTunde_Punde_a (((0)))))
+  = ('PredicateLogic.Trueprop (a_CONSTANTunde_Punde_a 'Integers.zero))
+assumes v'6: (\\<forall> a_CONSTANTunde_nunde_a \\<in> (Nat) : ((((a_CONSTANTunde_Punde_a ((a_CONSTANTunde_nunde_a)))) \\<Rightarrow> ((a_CONSTANTunde_Punde_a (((addint ((a_CONSTANTunde_nunde_a), ((succ[0])))))))))))
+  = ('PredicateLogic.Trueprop (('SetTheory.bAll Nat) (%a_CONSTANTunde_nunde_a. (('PredicateLogic.imp (a_CONSTANTunde_Punde_a a_CONSTANTunde_nunde_a)) (a_CONSTANTunde_Punde_a ((addint a_CONSTANTunde_nunde_a) (('Functions.fapply succ) 'Integers.zero)))))))
+shows (\\<forall> a_CONSTANTunde_nunde_a \\<in> (Nat) : ((a_CONSTANTunde_Punde_a ((a_CONSTANTunde_nunde_a)))))
+  = ('PredicateLogic.Trueprop (('SetTheory.bAll Nat) (%a_CONSTANTunde_nunde_a. (a_CONSTANTunde_Punde_a a_CONSTANTunde_nunde_a))))
+using assms true
+method symbol:( word:intro word:natInduct symbol:, word:auto symbol:)

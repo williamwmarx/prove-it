@@ -6,7 +6,9 @@
 #![allow(clippy::type_complexity)]
 
 pub mod error;
+pub mod isar;
 pub mod pure;
+pub mod tla;
 
 use prove_decide::{DecideError, Decision, Limits};
 

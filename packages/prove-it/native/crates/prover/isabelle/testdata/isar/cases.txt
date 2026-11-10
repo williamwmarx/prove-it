@@ -1,0 +1,337 @@
+theory	theory T imports Constant Zenon begin\nlemma L: shows "x" (is "PROP ?G") proof - show "PROP ?G" by auto qed end
+theory T
+  shows x
+    = ('PredicateLogic.Trueprop x)
+  using assms false
+  method word:auto
+theory	theory T imports Constant Zenon begin\nconsts "f" :: "[c,c] => c" "g" :: c\nlemma L: fixes a b c assumes h: "a" assumes k: "b \\" \\\\ \\<in>" shows "x" (is "PROP ?G") proof - show "PROP ?G" using assms by (auto simp: x) (simp add: y) qed end
+theory T
+  const f :: [c,c] => c = (PredicateLogic.c => (PredicateLogic.c => PredicateLogic.c))
+  const g :: c = PredicateLogic.c
+  fixes a b c
+  assumes h: a
+    = ('PredicateLogic.Trueprop a)
+  assumes k: b " \\ \\<in>
+    = ERROR: Inner lexical error at: " \ \<in>
+  shows x
+    = ('PredicateLogic.Trueprop x)
+  using assms true
+  method symbol:( word:auto word:simp symbol:: word:x symbol:) symbol:( word:simp word:add symbol:: word:y symbol:)
+theory	theory T imports Constant Zenon begin\n(* a (* nested *) comment *)lemma L: shows "x" (is "PROP ?G") proof - show "PROP ?G" by auto qed end
+theory T
+  shows x
+    = ('PredicateLogic.Trueprop x)
+  using assms false
+  method word:auto
+theory	theory T imports Constant Zenon begin\n(* unterminated (* comment *)lemma L: shows "x" (is "PROP ?G") proof - show "PROP ?G" by auto qed end
+ERROR: Outer lexical error: unterminated comment
+theory	theory T imports Constant Zenon begin\nlemma L: shows "unterminated
+ERROR: Outer lexical error: unterminated string
+theory	theory T imports Constant Zenon begin\nlemma L: shows "x\\"
+ERROR: Outer lexical error: unterminated string
+theory	theory
+ERROR: Outer syntax error at: end of input
+theory	theory T
+ERROR: Outer syntax error at: end of input
+theory	theory begin
+ERROR: Outer syntax error at: end of input
+theory	theory T imports begin lemma L: shows "x" (is "PROP ?G") proof - show "PROP ?G" by auto qed end
+theory T
+  shows x
+    = ('PredicateLogic.Trueprop x)
+  using assms false
+  method word:auto
+theory	theory T imports Constant Zenon begin\nlemma lemma: shows "x"
+ERROR: Outer syntax error at: lemma
+theory	theory T imports Constant Zenon begin\nlemma L shows "x"
+ERROR: Outer syntax error at: shows
+theory	theory T imports Constant Zenon begin\nlemma L: fixes shows "x"
+ERROR: Outer syntax error at: shows
+theory	theory T imports Constant Zenon begin\nlemma L: assumes "a" shows "x"
+ERROR: Outer syntax error at: a
+theory	theory T imports Constant Zenon begin\nlemma L: assumes h "a" shows "x"
+ERROR: Outer syntax error at: a
+theory	theory T imports Constant Zenon begin\nlemma L: shows "x" (is "PROP ?G") proof - show "PROP ?G" by auto qed end end
+ERROR: Outer syntax error at: end
+theory	theory T imports Constant Zenon begin\nlemma L: shows "x" (is "PROP ?G") proof - show "PROP ?G" by auto qed
+ERROR: Outer syntax error at: end of input
+theory	theory T imports Constant Zenon begin\nlemma L: shows "x" (is "PROP ?G") proof - show "PROP ?G" by auto
+ERROR: Outer syntax error at: end of input
+theory	theory T imports Constant Zenon begin\nlemma L: shows "x" (is "PROP ?G") proof show "PROP ?G" by auto qed end
+ERROR: Outer syntax error at: show
+theory	theory T imports Constant Zenon begin\nlemma L: shows "x" (is "PROP ?G") proof - show "PROP ?G" using foo by auto qed end
+ERROR: Outer syntax error at: foo
+theory	theory T imports Constant Zenon begin\nlemma L: shows "x" (is "PROP ?G") proof - show "PROP ?G" by qed end
+theory T
+  shows x
+    = ('PredicateLogic.Trueprop x)
+  using assms false
+  method
+theory	theory T imports Constant Zenon begin\nconsts "f" : c lemma L: shows "x" (is "PROP ?G") proof - show "PROP ?G" by auto qed end
+ERROR: Outer syntax error at: c
+theory	theory T imports Constant Zenon begin\nconsts "f" :: lemma L: shows "x" (is "PROP ?G") proof - show "PROP ?G" by auto qed end
+ERROR: Outer syntax error at: lemma
+theory	theory T imports Constant Zenon begin\nconsts lemma L: shows "x" (is "PROP ?G") proof - show "PROP ?G" by auto qed end
+theory T
+  shows x
+    = ('PredicateLogic.Trueprop x)
+  using assms false
+  method word:auto
+theory	theory T imports Constant Zenon begin\nlemma L: shows "x" (is "PROP ?G") proof - show "PROP ?G" by auto é x﻿+ λ 'a.b_c' qed end
+theory T
+  shows x
+    = ('PredicateLogic.Trueprop x)
+  using assms false
+  method word:auto symbol:é word:x symbol: symbol:+ symbol:λ word:'a.b_c'
+theory	theory T imports Constant Zenon begin\nlemma L: shows "x" (is "PROP ?G") proof - show "PROP ?G" by (simp)[2] qed end
+theory T
+  shows x
+    = ('PredicateLogic.Trueprop x)
+  using assms false
+  method symbol:( word:simp symbol:) symbol:[ word:2 symbol:]
+theory	theory T imports Constant Zenon begin\nlemma L: shows x (is "PROP ?G") proof - show "PROP ?G" by auto qed end
+ERROR: Outer syntax error at: x
+theory	theory T imports Constant Zenon begin\nlemma L: shows "x" (is PROP) proof - show "PROP ?G" by auto qed end
+ERROR: Outer syntax error at: PROP
+theory	theory T imports "Constant" Zenon begin\nlemma L: shows "x" (is "PROP ?G") proof - show "PROP ?G" by auto qed end
+ERROR: Outer syntax error at: Constant
+theory	 theory T imports Constant Zenon begin\nlemma L: shows "x" (is "PROP ?G") proof - show "PROP ?G" by auto qed end\n﻿
+theory T
+  shows x
+    = ('PredicateLogic.Trueprop x)
+  using assms false
+  method word:auto
+theory	theory T imports Constant Zenon begin\nlemma L: shows "x" (is "PROP ?G") proof - show "PROP ?G" by auto qed end
+ERROR: Outer syntax error at: 
+prop	a \\<in> S
+('PredicateLogic.Trueprop (('SetTheory.in a) S))
+prop	a \\<Longrightarrow> b \\<Longrightarrow> c
+(('Pure.imp ('PredicateLogic.Trueprop a)) (('Pure.imp ('PredicateLogic.Trueprop b)) ('PredicateLogic.Trueprop c)))
+prop	(a \\<Longrightarrow> b) \\<Longrightarrow> c
+(('Pure.imp (('Pure.imp ('PredicateLogic.Trueprop a)) ('PredicateLogic.Trueprop b))) ('PredicateLogic.Trueprop c))
+prop	\\<And>x y. P(x, y) \\<Longrightarrow> Q
+('Pure.all (%x. ('Pure.all (%y. (('Pure.imp ('PredicateLogic.Trueprop ((P x) y))) ('PredicateLogic.Trueprop Q))))))
+prop	\\<And>x :: c. P(x)
+('Pure.all (%x::PredicateLogic.c. ('PredicateLogic.Trueprop (P x))))
+prop	\\<And>x :: c => c. x = y
+('Pure.all (%x::(PredicateLogic.c => PredicateLogic.c). ('PredicateLogic.Trueprop (('PredicateLogic.eq x) y))))
+prop	a = (\\<And>x. b)
+ERROR: Inner syntax error: proposition in term position
+prop	(a \\<Longrightarrow> b) = c
+ERROR: Inner syntax error: trailing input in (a \<Longrightarrow> b) = c
+prop	a \\<and> b \\<or> c \\<Rightarrow> d \\<Leftrightarrow> e => f & g | h
+('PredicateLogic.Trueprop (('PredicateLogic.imp (('PredicateLogic.disj (('PredicateLogic.conj a) b)) c)) (('PredicateLogic.iff d) (('PredicateLogic.imp e) (('PredicateLogic.disj (('PredicateLogic.conj f) g)) h)))))
+prop	~a = b
+('PredicateLogic.Trueprop ('PredicateLogic.not (('PredicateLogic.eq a) b)))
+prop	\\<not> ~ a
+('PredicateLogic.Trueprop ('PredicateLogic.not ('PredicateLogic.not a)))
+prop	a = b = c
+('PredicateLogic.Trueprop (('PredicateLogic.eq (('PredicateLogic.eq a) b)) c))
+prop	a \\<noteq> b \\<and> a \\<notin> S \\<and> S \\<subseteq> T
+('PredicateLogic.Trueprop (('PredicateLogic.conj (('PredicateLogic.not_equal a) b)) (('PredicateLogic.conj (('SetTheory.notin a) S)) (('SetTheory.subset S) T))))
+prop	S \\<union> T \\ U \\<inter> V @@ (a :> b) \\<times> X \\<times> Y
+('PredicateLogic.Trueprop (('SetTheory.setminus (('SetTheory.union S) T)) (('Functions.extend (('SetTheory.inter U) V)) (('Tuples.prod (('Functions.oneArg a) b)) (('Tuples.prod X) Y)))))
+prop	f[x][y] = g(a)(b, c)
+('PredicateLogic.Trueprop (('PredicateLogic.eq (('Functions.fapply (('Functions.fapply f) x)) y)) (((g a) b) c)))
+prop	f(a)[b](c)
+ERROR: Inner syntax error: trailing input in f(a)[b](c)
+prop	f[x](y)
+ERROR: Inner syntax error: trailing input in f[x](y)
+prop	x :: c
+('PredicateLogic.Trueprop (x :: PredicateLogic.c))
+prop	(x :: c) = y
+('PredicateLogic.Trueprop (('PredicateLogic.eq (x :: PredicateLogic.c)) y))
+prop	x = y :: c
+('PredicateLogic.Trueprop ((('PredicateLogic.eq x) y) :: PredicateLogic.c))
+prop	x = (y :: c => c)
+('PredicateLogic.Trueprop (('PredicateLogic.eq x) (y :: (PredicateLogic.c => PredicateLogic.c))))
+prop	{}
+('PredicateLogic.Trueprop 'SetTheory.emptyset)
+prop	{} = {a}
+('PredicateLogic.Trueprop (('PredicateLogic.eq 'SetTheory.emptyset) (('SetTheory.addElt a) 'SetTheory.emptyset)))
+prop	{a, b, c}
+('PredicateLogic.Trueprop (('SetTheory.addElt a) (('SetTheory.addElt b) (('SetTheory.addElt c) 'SetTheory.emptyset))))
+prop	{a, b, c}[x]
+('PredicateLogic.Trueprop (('Functions.fapply (('SetTheory.addElt a) (('SetTheory.addElt b) (('SetTheory.addElt c) 'SetTheory.emptyset)))) x))
+prop	{}[x]
+('PredicateLogic.Trueprop (('Functions.fapply 'SetTheory.emptyset) x))
+prop	<<>> = <<a>> & <<a, b>> = \\<langle>c, d\\<rangle>
+('PredicateLogic.Trueprop (('PredicateLogic.conj (('PredicateLogic.eq 'Tuples.emptySeq) (('Tuples.Append 'Tuples.emptySeq) a))) (('PredicateLogic.eq (('Tuples.Append (('Tuples.Append 'Tuples.emptySeq) a)) b)) (('Tuples.Append (('Tuples.Append 'Tuples.emptySeq) c)) d))))
+prop	\\<langle>\\<rangle>
+('PredicateLogic.Trueprop 'Tuples.emptySeq)
+prop	[x \\<in> S \\<mapsto> x]
+('PredicateLogic.Trueprop (('Functions.Fcn S) (%x. x)))
+prop	[x \\<in> S \\<mapsto> x][y]
+('PredicateLogic.Trueprop (('Functions.fapply (('Functions.Fcn S) (%x. x))) y))
+prop	[S \\<rightarrow> T]
+('PredicateLogic.Trueprop (('Functions.FuncSet S) T))
+prop	[f EXCEPT ![a] = b, ![c] = d]
+('PredicateLogic.Trueprop ((('Functions.except ((('Functions.except f) a) b)) c) d))
+prop	[f EXCEPT ![a] = b]
+('PredicateLogic.Trueprop ((('Functions.except f) a) b))
+prop	[a : b, c : d]
+('PredicateLogic.Trueprop (('Tuples.EnumFuncSet (('Tuples.Append (('Tuples.Append 'Tuples.emptySeq) a)) c)) (('Tuples.Append (('Tuples.Append 'Tuples.emptySeq) b)) d)))
+prop	[a : b, c : d][e]
+('PredicateLogic.Trueprop (('Functions.fapply (('Tuples.EnumFuncSet (('Tuples.Append (('Tuples.Append 'Tuples.emptySeq) a)) c)) (('Tuples.Append (('Tuples.Append 'Tuples.emptySeq) b)) d))) e))
+prop	[a]
+ERROR: Inner syntax error at: ]
+prop	[x \\<in> S : x]
+ERROR: Inner syntax error at: :
+prop	\\<forall>x, y : P(x, y)
+('PredicateLogic.Trueprop ('PredicateLogic.All (%x. ('PredicateLogic.All (%y. ((P x) y))))))
+prop	\\<exists>x \\<in> S : P(x)
+('PredicateLogic.Trueprop (('SetTheory.bEx S) (%x. (P x))))
+prop	\\<forall>x, y \\<in> S : x = y
+('PredicateLogic.Trueprop (('SetTheory.bAll S) (%x. (('SetTheory.bAll S) (%y. (('PredicateLogic.eq x) y))))))
+prop	\\<forall>x : \\<exists>y : x = y
+('PredicateLogic.Trueprop ('PredicateLogic.All (%x. ('PredicateLogic.Ex (%y. (('PredicateLogic.eq x) y))))))
+prop	a = (\\<forall>x : x)
+('PredicateLogic.Trueprop (('PredicateLogic.eq a) ('PredicateLogic.All (%x. x))))
+prop	a = \\<forall>x : x
+('PredicateLogic.Trueprop (('PredicateLogic.eq a) ('PredicateLogic.All (%x. x))))
+prop	%x y. f(x, y)
+('PredicateLogic.Trueprop (%x. (%y. ((f x) y))))
+prop	\\<lambda>x::c. x
+('PredicateLogic.Trueprop (%x::PredicateLogic.c. x))
+prop	(%x. x) = y
+('PredicateLogic.Trueprop (('PredicateLogic.eq (%x. x)) y))
+prop	a = %x. x
+ERROR: Inner syntax error at: x
+prop	f(%x. x)
+('PredicateLogic.Trueprop (f (%x. x)))
+prop	SUBSET S = UNION T & DOMAIN f = {}
+('PredicateLogic.Trueprop (('PredicateLogic.conj (('PredicateLogic.eq ('SetTheory.SUBSET S)) ('SetTheory.UNION T))) (('PredicateLogic.eq ('Functions.DOMAIN f)) 'SetTheory.emptyset)))
+prop	SUBSET SUBSET S
+ERROR: Inner syntax error at: SUBSET
+prop	a = SUBSET S
+('PredicateLogic.Trueprop (('PredicateLogic.eq a) ('SetTheory.SUBSET S)))
+prop	~ a = ~ b
+ERROR: Inner syntax error at: ~
+prop	a & ~ b
+('PredicateLogic.Trueprop (('PredicateLogic.conj a) ('PredicateLogic.not b)))
+prop	''abc'' = ''''
+('PredicateLogic.Trueprop (('PredicateLogic.eq (('Tuples.Append (('Tuples.Append (('Tuples.Append 'Tuples.emptySeq) (('Strings.char (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) 'Integers.zero))))))) (('Functions.fapply 'Integers.succ) 'Integers.zero)))) (('Strings.char (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) 'Integers.zero))))))) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) 'Integers.zero))))) (('Strings.char (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) 'Integers.zero))))))) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) 'Integers.zero)))))) 'Tuples.emptySeq))
+prop	''a b'' = x
+('PredicateLogic.Trueprop (('PredicateLogic.eq (('Tuples.Append (('Tuples.Append (('Tuples.Append 'Tuples.emptySeq) (('Strings.char (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) 'Integers.zero))))))) (('Functions.fapply 'Integers.succ) 'Integers.zero)))) (('Strings.char (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) 'Integers.zero))) 'Integers.zero))) (('Strings.char (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) 'Integers.zero))))))) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) 'Integers.zero))))) x))
+prop	''\\<in>''
+('PredicateLogic.Trueprop (('Tuples.Append (('Tuples.Append (('Tuples.Append (('Tuples.Append (('Tuples.Append 'Tuples.emptySeq) (('Strings.char (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) 'Integers.zero)))))) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) 'Integers.zero))))))))))))))) (('Strings.char (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) 'Integers.zero)))) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) 'Integers.zero))))))))))))))) (('Strings.char (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) 'Integers.zero))))))) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) 'Integers.zero)))))))))))) (('Strings.char (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) 'Integers.zero))))))) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) 'Integers.zero))))))))))))))))) (('Strings.char (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) 'Integers.zero)))) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) (('Functions.fapply 'Integers.succ) 'Integers.zero)))))))))))))))))
+prop	''é''
+ERROR: Non-ASCII symbol: é
+prop	''abc
+ERROR: Inner lexical error: unterminated string
+prop	0 = succ[0]
+('PredicateLogic.Trueprop (('PredicateLogic.eq 'Integers.zero) (('Functions.fapply succ) 'Integers.zero)))
+prop	PROP P
+ERROR: Inner syntax error at: PROP
+prop	a b
+ERROR: Inner syntax error: trailing input in a b
+prop	f()
+ERROR: Inner syntax error at: end of input
+prop	f(a,)
+ERROR: Inner syntax error at: )
+prop	(a
+ERROR: Inner syntax error at: end of input
+prop	a)
+ERROR: Inner syntax error: trailing input in a)
+prop	
+ERROR: Inner syntax error at: end of input
+prop	  
+ERROR: Inner syntax error at: end of input
+prop	a =
+ERROR: Inner syntax error at: end of input
+prop	= a
+ERROR: Inner syntax error at: =
+prop	a é b
+ERROR: Inner lexical error at: é b
+prop	a # bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+ERROR: Inner lexical error at: # bbbbbbbbbbbbbbbbbb
+prop	a = b (* c *)
+ERROR: Inner lexical error at: * c *)
+prop	x.y = a.b.c' & a._b & a.1
+ERROR: Inner lexical error at: _b & a.1
+prop	x'_y1 = z
+('PredicateLogic.Trueprop (('PredicateLogic.eq x'_y1) z))
+prop	\\<in>
+ERROR: Inner syntax error at: \<in>
+prop	\\<foo> a
+ERROR: Inner syntax error at: \<foo>
+prop	\\<1>
+ERROR: Inner lexical error at: <1>
+prop	\\<
+ERROR: Inner lexical error at: <
+prop	\\a
+ERROR: Inner syntax error at: \
+prop	EXCEPT
+ERROR: Inner syntax error at: EXCEPT
+prop	a !
+ERROR: Inner syntax error: trailing input in a !
+prop	\\<forall>x y : P
+ERROR: Inner syntax error at: y
+prop	\\<forall>x \\<in> S, y : P
+ERROR: Inner syntax error at: ,
+prop	\\<forall> : P
+ERROR: Inner syntax error at: P
+prop	%. x
+ERROR: Inner syntax error at: .
+prop	\\<And>. x
+ERROR: Inner syntax error at: .
+prop	\\<And>x. y \\<Longrightarrow> z
+('Pure.all (%x. (('Pure.imp ('PredicateLogic.Trueprop y)) ('PredicateLogic.Trueprop z))))
+prop	a \\<Longrightarrow> \\<And>x. y
+ERROR: Inner syntax error at: x
+prop	trailing input after this very long proposition ) more
+ERROR: Inner syntax error: trailing input in trailing input after this very long prop
+prop	x :: c :: c
+ERROR: Inner syntax error: trailing input in x :: c :: c
+prop	x :: d
+ERROR: Undefined type name: d
+prop	x :: (c => c
+ERROR: Inner syntax error at: end of input
+prop	a =﻿b
+('PredicateLogic.Trueprop (('PredicateLogic.eq a) b))
+prop	a= b
+ERROR: Inner lexical error at: = b
+prop	a =　b
+('PredicateLogic.Trueprop (('PredicateLogic.eq a) b))
+prop	\\<lambda>x. \\<And>y. z
+ERROR: Inner syntax error at: y
+prop	f[\\<And>y. z]
+ERROR: Inner syntax error: proposition in term position
+prop	a :: [c, c] => c
+('PredicateLogic.Trueprop (a :: (PredicateLogic.c => (PredicateLogic.c => PredicateLogic.c))))
+prop	a :: [c]
+ERROR: Inner syntax error at: end of input
+prop	a :: [c, prop] \\<Rightarrow> (c => prop)
+('PredicateLogic.Trueprop (a :: (PredicateLogic.c => (prop => (PredicateLogic.c => prop)))))
+type	c
+PredicateLogic.c
+type	prop
+prop
+type	[c,c] => c
+(PredicateLogic.c => (PredicateLogic.c => PredicateLogic.c))
+type	c => c => c
+(PredicateLogic.c => (PredicateLogic.c => PredicateLogic.c))
+type	(c => c) => c
+((PredicateLogic.c => PredicateLogic.c) => PredicateLogic.c)
+type	(c)
+PredicateLogic.c
+type	[c]
+ERROR: Inner syntax error at: end of input
+type	[c] => c
+(PredicateLogic.c => PredicateLogic.c)
+type	[]
+ERROR: Inner syntax error at: end of input
+type	d
+ERROR: Undefined type name: d
+type	c c
+ERROR: Inner syntax error: trailing input in c c
+type	
+ERROR: Inner syntax error at: end of input
+type	c \\<Rightarrow> prop
+(PredicateLogic.c => prop)
+type	[c, [c] => c] => c
+(PredicateLogic.c => ((PredicateLogic.c => PredicateLogic.c) => PredicateLogic.c))
+type	=> c
+ERROR: Inner syntax error at: c
+type	'a
+ERROR: Inner lexical error at: 'a
