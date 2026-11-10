@@ -967,6 +967,9 @@ is next.
     `scripts/lp-trace.ts`) against the Rust lp, `LarSolver`, `BoundPropagator`, `IntSolver`,
     `NlaCore` and `nra` included. nlsat's `inc` calls are checked by count per call. On the
     45 `tests/fixtures/smt` inputs and 27 nonlinear ones, all 72 traces are the same, with none
-    declined.
-  - **Next:** the trace over every SMT input of the decider corpus (running), then P3c's
-    theory-lra glue, which calls lp exactly as the trace does.
+    declined. On the decider corpus (`prover-inputs.json`, every one of its 10,376 smt and z3
+    inputs, 117M trace lines in total) all 10,376 traces are the same. The TypeScript's traced
+    answers all equal the record. Run with `bun scripts/run.ts lp-trace --jobs 4` in batches by
+    `--filter smt/0` … `smt/f`, `z3/`, replaying and deleting each batch: the traces take 5.8 GB.
+  - **Next:** P3c's theory-lra glue, which calls lp exactly as the trace does, and the
+    decider differential once `core` calls `lp`.
