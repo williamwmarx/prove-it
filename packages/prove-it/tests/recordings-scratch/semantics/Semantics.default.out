@@ -1,0 +1,29 @@
+TLC2 Version 2026.11.10.112638 (rev: ${git.shortRevision})
+Warning: Please run the Java VM, which executes TLC with a throughput optimized garbage collector, by passing the "-XX:+UseParallelGC" property.
+(Use the -nowarning option to disable this warning.)
+Running breadth-first search Model-Checking with fp 111 and seed 544970438095002882 with 1 worker on 4 cores with 3420MB heap and 64MB offheap memory [pid: 4799] (Linux 6.18.44-fc-v378 amd64, Ubuntu 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /tmp/claude-0/-home-user-prove-it/d23a8f1a-3c7f-5ee4-9283-0787f4c6a63d/scratchpad/sem-run-default/Semantics.tla
+Parsing file /tmp/tlc-1115976051219690304/Integers.tla (jar:file:/tmp/claude-0/-home-user-prove-it/d23a8f1a-3c7f-5ee4-9283-0787f4c6a63d/scratchpad/sany-run/tlaplus/tlatools/org.lamport.tlatools/dist/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Parsing file /tmp/tlc-1115976051219690304/Sequences.tla (jar:file:/tmp/claude-0/-home-user-prove-it/d23a8f1a-3c7f-5ee4-9283-0787f4c6a63d/scratchpad/sany-run/tlaplus/tlatools/org.lamport.tlatools/dist/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-1115976051219690304/FiniteSets.tla (jar:file:/tmp/claude-0/-home-user-prove-it/d23a8f1a-3c7f-5ee4-9283-0787f4c6a63d/scratchpad/sany-run/tlaplus/tlatools/org.lamport.tlatools/dist/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-1115976051219690304/TLC.tla (jar:file:/tmp/claude-0/-home-user-prove-it/d23a8f1a-3c7f-5ee4-9283-0787f4c6a63d/scratchpad/sany-run/tlaplus/tlatools/org.lamport.tlatools/dist/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-1115976051219690304/_TLCTrace.tla (jar:file:/tmp/claude-0/-home-user-prove-it/d23a8f1a-3c7f-5ee4-9283-0787f4c6a63d/scratchpad/sany-run/tlaplus/tlatools/org.lamport.tlatools/dist/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /tmp/tlc-1115976051219690304/Naturals.tla (jar:file:/tmp/claude-0/-home-user-prove-it/d23a8f1a-3c7f-5ee4-9283-0787f4c6a63d/scratchpad/sany-run/tlaplus/tlatools/org.lamport.tlatools/dist/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-1115976051219690304/TLCExt.tla (jar:file:/tmp/claude-0/-home-user-prove-it/d23a8f1a-3c7f-5ee4-9283-0787f4c6a63d/scratchpad/sany-run/tlaplus/tlatools/org.lamport.tlatools/dist/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module Semantics
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module Semantics
+Starting... (2026-11-10 21:31:11)
+Error: This was a Java StackOverflowError. It was probably the result
+of an incorrect recursive function definition that caused TLC to enter
+an infinite loop when trying to compute the function or its application
+to an element in its putative domain.
+Finished in 00s at (2026-11-10 21:31:11)
