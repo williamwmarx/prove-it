@@ -91,3 +91,22 @@ fn extracts_a_module_from_the_root_file() {
     );
     assert_eq!(extract_module(source, "C"), None);
 }
+
+#[test]
+fn reads_an_application_as_a_fairness_subscript_before_the_action() {
+    // TLC's tla2sany corpus, FairnessTest: SANY's FairnessExpr reads WF_B(A)(Act) with the
+    // subscript B(A), and WF_B(Act) with the subscript B.
+    let module = parse_module("---- MODULE M ----\nx == WF_f(1, 2)(3)\ny == WF_f(3)\n====")
+        .expect("a module");
+    let subscripts: Vec<bool> = module
+        .definitions
+        .iter()
+        .map(|definition| match &definition.body.kind {
+            ExpressionKind::Fairness { subscript, .. } => {
+                matches!(subscript.kind, ExpressionKind::Apply { .. })
+            }
+            _ => panic!("a fairness expression"),
+        })
+        .collect();
+    assert_eq!(subscripts, [true, false]);
+}
