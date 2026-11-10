@@ -199,11 +199,17 @@ impl<'p> Machine<'p> {
         }
     }
 
-    /// Notes a value a walk assigned to a variable, where the machine keeps their shapes.
+    /// Notes a value a walk assigned to a variable, where the machine keeps their shapes. A walk
+    /// through an instance's action, as ENABLED takes, can assign slots past the spec's variables,
+    /// which no step the search keeps holds.
     #[inline(always)]
     pub(crate) fn note_assigned(&mut self, variable: usize, value: Id) {
-        if let Some(joins) = &mut self.assigned_shapes {
-            self.store.join_shape(&mut joins[variable], value);
+        if let Some(join) = self
+            .assigned_shapes
+            .as_mut()
+            .and_then(|joins| joins.get_mut(variable))
+        {
+            self.store.join_shape(join, value);
         }
     }
 
