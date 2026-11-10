@@ -51,12 +51,13 @@ creates them, indexed by a `u32` handle (`enode::EnodeId`). Slots are never reus
 so a handle never aliases a newer object. A class hierarchy with an abstract method
 (`Justification.getAntecedents`) becomes one `enum` with a `match`.
 
-**The manager.** `AstManager<'l>` holds the `ResourceLimit<'l>` (lifetime of the decision's
-`Limits`). A TS class that keeps `private manager: AstManager` keeps no manager in Rust: its methods
-take `m: &mut AstManager<'_>` (or `&AstManager` when they only read) as their first argument after
+**The manager.** `AstManager` holds the `ResourceLimit`, which holds a clone of the decision's
+`Limits` (no lifetime: `Limits` is a shared `Rc`; nothing keeps either after `decide` returns). A TS
+class that keeps `private manager: AstManager` keeps no manager in Rust: its methods
+take `m: &mut AstManager` (or `&AstManager` when they only read) as their first argument after
 `self`. `Context` owns its manager as the field `m`.
 
-**The context.** `Context extends Internalizer`: one `struct Context<'l>` in `core/context.rs`,
+**The context.** `Context extends Internalizer`: one `struct Context` in `core/context.rs`,
 with the fields of both classes. `internalizer.rs` holds `impl Context` with the internalizer's
 methods. A class that keeps `private context: Context` (`ConflictResolution`, `DynAckManager`,
 `Mam`, `Compiler`, `Interpreter`, `QiQueue`, `DefaultQuantifierManager`, `ModelChecker`,
