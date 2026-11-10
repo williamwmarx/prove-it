@@ -1295,7 +1295,9 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                                 Site::InitialPredicate(position)
                             }
                             ErrorSite::Atom { atom, is_extra } => Site::Atom { atom, is_extra },
-                            ErrorSite::InitialAtom(atom) => Site::InitialAtom(atom),
+                            ErrorSite::InitialAtom { atom, replayed } => {
+                                Site::InitialAtom { atom, replayed }
+                            }
                         },
                         statistics: Statistics {
                             generated: counts.generated,
@@ -1474,7 +1476,7 @@ fn is_initial_site(site: ErrorSite) -> bool {
             | ErrorSite::InitialConstraint(_)
             | ErrorSite::InitialInvariant(_)
             | ErrorSite::InitialPredicate(_)
-            | ErrorSite::InitialAtom(_)
+            | ErrorSite::InitialAtom { .. }
     )
 }
 
@@ -1584,12 +1586,11 @@ fn print_violation(
             loop_label,
             ..
         } => {
-            let is_stuttering = loop_start + 1 == violation.states.len();
-            // TLC ends a lasso whose last state is the cycle's first as a stuttering one
-            // (`LiveWorker.printTrace`), which the binary doesn't follow.
-            if !is_stuttering && violation.states.last() == violation.states.get(loop_start) {
-                return Err("a lasso that ends in the first state of its cycle");
-            }
+            // TLC ends a lasso whose last state is the cycle's first as a stuttering one: it
+            // prints every state, then finds the last state's fingerprint the cycle state's
+            // (`LiveWorker.printTrace`).
+            let is_stuttering = loop_start + 1 == violation.states.len()
+                || violation.states.last() == violation.states.get(loop_start);
             // TLC warns of a stuttering counterexample where the solution constrains the cycle,
             // and prints what the spec prints as it finds the step back into the cycle.
             let Verdict::Lasso {
@@ -1698,12 +1699,13 @@ fn print_violation(
     printer.print(heading_code, Level::Error, heading);
     print_states(printer, &trace, &labels);
     // TLC rebuilds a violation's trace again for the counterexample the postconditions read,
-    // so what that prints comes before what they print.
+    // so what that prints comes before what they print. TLC checks them on a lasso once it has
+    // printed where the lasso closes (`LiveWorker.printTrace`).
     let postcondition_output = trace
         .postconditions
         .iter()
         .flat_map(|checked| &checked.printed);
-    if lasso.is_some() || is_counterexample {
+    if lasso.is_none() && is_counterexample {
         for line in postcondition_output.clone() {
             printer.line(line);
         }
@@ -1711,7 +1713,11 @@ fn print_violation(
     match lasso {
         None if is_counterexample => {}
         None => {
-            for line in trace.trace_output.iter().chain(postcondition_output) {
+            for line in trace
+                .trace_output
+                .iter()
+                .chain(postcondition_output.clone())
+            {
                 printer.line(line);
             }
         }
@@ -1763,6 +1769,11 @@ fn print_violation(
                     );
                 }
             }
+        }
+    }
+    if lasso.is_some() {
+        for line in postcondition_output {
+            printer.line(line);
         }
     }
     if let Some((accepted, headline, labels)) = accepted {

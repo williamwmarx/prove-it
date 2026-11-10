@@ -1,0 +1,4 @@
+$hyp "assoc" (A. ((x y z) (= (m (m x y) z) (m x (m y z)))))
+$hyp "left" (A. ((x) (= (m e x) x)))
+$hyp "inv" (A. ((x) (= (m (i x) x) e)))
+$goal (A. ((x) (= (m x e) x)))

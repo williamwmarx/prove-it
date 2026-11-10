@@ -52,10 +52,10 @@ const getLeaves = (
     term.kind === "var" ? env.find((bound) => bound.name === term.symbol) : undefined;
   const visitLeaf = (leaf: Expr) => {
     const atom = leaf.kind === "not" ? leaf.args[0] : leaf;
-    if (atom.kind !== "app") return false;
+    // Zenon's check_pattern matches a relation on two arguments only.
+    if (atom.kind !== "app" || atom.args.length !== 2) return false;
     const first = getBound(atom.args[0]);
     const isRelation =
-      atom.args.length === 2 &&
       (symbol === undefined || atom.symbol === symbol) &&
       first !== undefined &&
       getBound(atom.args[1]) !== undefined;

@@ -9,3 +9,4 @@ publish.workspace = true
 
 [dependencies]
 prove-decide = { path = "../decide" }
+prove-num = { path = "../num" }
