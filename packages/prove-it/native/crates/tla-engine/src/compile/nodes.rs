@@ -90,10 +90,15 @@ pub(crate) fn evaluate_set(
 }
 
 // The ids a level of nested bounds binds, and the set each draws from.
+// A function built over the sets of its bounds.
+type Construct = Arc<dyn Fn(&mut Machine<'_>, &[Id]) -> Outcome<Id> + Send + Sync>;
+
 struct Level {
     set: Compiled,
     slots: Vec<u32>,
     tuple: bool,
+    /// Whether it shares the set of the bound before it, as `a, b \in S` does.
+    is_shared: bool,
 }
 
 pub(crate) fn kind_name(kind: &NodeKind) -> &'static str {
@@ -569,7 +574,9 @@ impl Compiler<'_> {
         let mut inner = context.clone();
         let mut levels = Vec::new();
         let mut bound = Vec::new();
-        for item in bounds {
+        for (index, item) in bounds.iter().enumerate() {
+            let is_shared =
+                index > 0 && self.node(item.set).0 == self.node(bounds[index - 1].set).0;
             let set = self.compile(item.set, &inner)?;
             let binder = self.bind_bound(&item.pattern, &inner);
             if !binder.tuple && set.interval.is_some() {
@@ -581,33 +588,10 @@ impl Compiler<'_> {
                 set,
                 slots: binder.slots,
                 tuple: binder.tuple,
+                is_shared,
             });
         }
         Ok((levels, bound, inner))
-    }
-
-    // TLC evaluates the set of every bound before it binds any (`Tool.contexts`), so a later
-    // bound's set fails though an earlier one is empty: what evaluates the later sets first.
-    fn compile_later_bounds(levels: &[Level], reason: &'static str) -> Compiling<Eval> {
-        let mut sets = Vec::new();
-        for level in levels.iter().skip(1) {
-            if level.set.is_printing() {
-                return unsupported("Print in the set of a later bound");
-            }
-            match &level.set.interval {
-                Some((low, high)) => sets.extend([(low.clone(), false), (high.clone(), false)]),
-                None => sets.push((level.set.eval.clone(), true)),
-            }
-        }
-        Ok(eval(move |machine| {
-            for (set, is_set) in &sets {
-                let id = set(machine)?;
-                if *is_set {
-                    expect_set(machine, id, reason)?;
-                }
-            }
-            Ok(TRUE)
-        }))
     }
 
     fn compile_quantifier(
@@ -671,7 +655,6 @@ impl Compiler<'_> {
                 )
             });
         }
-        let later_bounds = Self::compile_later_bounds(&levels, "quantified over a non-set")?;
         let predicate = Predicate::of(&body);
         // ForallInterval and ExistsInterval: a name over a..b at each level counts through the
         // interval without building it.
@@ -682,31 +665,26 @@ impl Compiler<'_> {
             super::fused::quantify_intervals(
                 levels
                     .iter()
-                    .map(|level| (level.slots[0], level.set.interval.clone().unwrap()))
+                    .map(|level| {
+                        (
+                            level.slots[0],
+                            level.set.interval.clone().unwrap(),
+                            level.is_shared,
+                        )
+                    })
                     .collect(),
                 predicate,
                 is_forall,
             )
         } else {
-            let levels: Arc<Vec<(Eval, Vec<u32>, bool)>> = Arc::new(
-                levels
-                    .into_iter()
-                    .map(|level| (level.set.eval, level.slots, level.tuple))
-                    .collect(),
-            );
+            let levels = Arc::new(levels);
             let body = predicate.build();
-            eval(move |machine| quantify(machine, &levels, 0, &body, is_forall).map(bool_id))
+            eval(move |machine| quantify(machine, &levels, &body, is_forall).map(bool_id))
         };
         Ok(Compiled {
             is_costly: true,
             is_boolean: true,
-            ..leaf(
-                eval(move |machine| {
-                    later_bounds(machine)?;
-                    evaluate(machine)
-                }),
-                footprint,
-            )
+            ..leaf(evaluate, footprint)
         })
     }
 
@@ -855,13 +833,7 @@ impl Compiler<'_> {
             .merge(&body.footprint.without_slots(&bound));
         let are_elements_enumerated = body.is_enumerated;
         let are_elements_in_order = body.is_in_order;
-        let later_bounds = Self::compile_later_bounds(&levels, "mapped a non-set")?;
-        let levels: Arc<Vec<(Eval, Vec<u32>, bool)>> = Arc::new(
-            levels
-                .into_iter()
-                .map(|level| (level.set.eval, level.slots, level.tuple))
-                .collect(),
-        );
+        let levels = Arc::new(levels);
         let body = body.eval;
         Ok(Compiled {
             is_costly: true,
@@ -871,9 +843,8 @@ impl Compiler<'_> {
             are_elements_in_order,
             ..leaf(
                 eval(move |machine| {
-                    later_bounds(machine)?;
                     let at = machine.stack.len();
-                    let result = map_images(machine, &levels, 0, &body);
+                    let result = map_images(machine, &levels, &body);
                     let images = machine.stack.split_off(at);
                     result?;
                     machine.store.set_of_range(&images)
@@ -900,11 +871,14 @@ impl Compiler<'_> {
             .iter()
             .map(|level| (level.set.clone(), level.slots.clone(), level.tuple))
             .collect();
-        // A function of one bound, a tuple pattern included, takes each element of its set.
-        let evaluate = if let [Level { set, slots, tuple }] = &levels[..] {
-            let (set, slots, tuple) = (set.eval.clone(), slots.clone(), *tuple);
-            eval(move |machine| {
-                let set = evaluate_set(machine, &set, "a function over a non-set")?;
+        let levels = Arc::new(levels);
+        // The function over the bounds' sets, evaluated once each (`Tool.contexts`).
+        let construct: Construct = if let [level] = &levels[..] {
+            // A function of one bound, a tuple pattern included, takes each element of its
+            // set.
+            let (slots, tuple) = (level.slots.clone(), level.tuple);
+            Arc::new(move |machine, sets| {
+                let set = sets[0];
                 let size = machine.store.size_of(set);
                 let at = machine.stack.len();
                 for index in 0..size {
@@ -924,29 +898,15 @@ impl Compiler<'_> {
             })
         } else {
             // A function of several arguments takes tuples, in TLC's order of the product.
-            let levels: Arc<Vec<Level>> = Arc::new(levels);
-            eval(move |machine| {
-                let mut sets = Vec::with_capacity(levels.len());
-                for level in levels.iter() {
-                    sets.push(evaluate_set(
-                        machine,
-                        &level.set.eval,
-                        "a function over a non-set",
-                    )?);
-                }
+            let levels = Arc::clone(&levels);
+            Arc::new(move |machine, sets| {
                 let mut keys = Vec::new();
                 let mut values = Vec::new();
-                let mut current = vec![0; levels.len()];
-                construct_product(
-                    machine,
-                    &levels,
-                    &sets,
-                    0,
-                    &mut current,
-                    &body,
-                    &mut keys,
-                    &mut values,
-                )?;
+                for_each_binding(machine, &levels, sets, |machine, current| {
+                    keys.push(machine.store.tuple_of(current));
+                    values.push(body(machine)?);
+                    Ok(true)
+                })?;
                 machine.store.function_of(&keys, &values)
             })
         };
@@ -1003,17 +963,36 @@ impl Compiler<'_> {
                 primes: read.primes.clone(),
             });
             eval(move |machine| {
-                let mut lazy = Vec::with_capacity(domains.len());
-                for domain in &domains {
-                    lazy.push(domain(machine)?);
+                let mut lazy: Vec<Lazy> = Vec::with_capacity(domains.len());
+                for (domain, level) in domains.iter().zip(levels.iter()) {
+                    let set = match lazy.last() {
+                        Some(last) if level.is_shared => last.clone(),
+                        _ => domain(machine)?,
+                    };
+                    lazy.push(set);
                 }
                 if lazy.iter().any(is_lazy_domain) {
                     return lazy_function::build(machine, &definition, lazy);
                 }
-                evaluate(machine)
+                // A function TLC builds at once (`toFcnRcd`), over the sets just evaluated.
+                let mut sets = Vec::with_capacity(lazy.len());
+                for set in &lazy {
+                    sets.push(match set {
+                        Lazy::Set(id) => expect_set(machine, *id, "a function over a non-set")?,
+                        set => {
+                            let elements = set.enumerate(machine)?;
+                            machine.store.set_of(&elements)?
+                        }
+                    });
+                }
+                construct(machine, &sets)
             })
         } else {
-            evaluate
+            let levels = Arc::clone(&levels);
+            eval(move |machine| {
+                let sets = evaluate_bound_sets(machine, &levels, "a function over a non-set")?;
+                construct(machine, &sets)
+            })
         };
         Ok(Compiled {
             is_costly: true,
@@ -1274,45 +1253,96 @@ pub(crate) fn field_of(
     value
 }
 
+// `Tool.contexts`: the set of each bound once, in the order written, and the set `a, b \in S`
+// shares once for both, before any name is bound.
+fn evaluate_bound_sets(
+    machine: &mut Machine<'_>,
+    levels: &[Level],
+    reason: &'static str,
+) -> Outcome<Vec<Id>> {
+    let mut sets: Vec<Id> = Vec::with_capacity(levels.len());
+    for level in levels {
+        let set = match sets.last() {
+            Some(&last) if level.is_shared => last,
+            _ => evaluate_set(machine, &level.set.eval, reason)?,
+        };
+        sets.push(set);
+    }
+    Ok(sets)
+}
+
+// The bindings of several bounds in TLC's order (`ContextEnumerator`, `FcnParams.Enumerator`),
+// the first bound varying fastest, until `visit` says to stop: whether it visited them all.
+fn for_each_binding(
+    machine: &mut Machine<'_>,
+    levels: &[Level],
+    sets: &[Id],
+    mut visit: impl FnMut(&mut Machine<'_>, &[Id]) -> Outcome<bool>,
+) -> Outcome<bool> {
+    if sets.iter().any(|&set| machine.store.size_of(set) == 0) {
+        return Ok(true);
+    }
+    let mut positions = vec![0; sets.len()];
+    let mut current: Vec<Id> = sets
+        .iter()
+        .map(|&set| machine.store.element_at(set, 0))
+        .collect();
+    loop {
+        for (level, &element) in levels.iter().zip(&current) {
+            assign_bound(machine, &level.slots, level.tuple, element)?;
+        }
+        if !visit(machine, &current)? {
+            return Ok(false);
+        }
+        let mut level = 0;
+        loop {
+            let Some(&set) = sets.get(level) else {
+                return Ok(true);
+            };
+            positions[level] += 1;
+            if positions[level] < machine.store.size_of(set) {
+                current[level] = machine.store.element_at(set, positions[level]);
+                break;
+            }
+            positions[level] = 0;
+            current[level] = machine.store.element_at(set, 0);
+            level += 1;
+        }
+    }
+}
+
 fn quantify(
     machine: &mut Machine<'_>,
-    levels: &[(Eval, Vec<u32>, bool)],
-    level: usize,
+    levels: &[Level],
     body: &Test,
     is_forall: bool,
 ) -> Outcome<bool> {
-    let Some((set, slots, tuple)) = levels.get(level) else {
-        return body(machine);
-    };
-    let set = evaluate_set(machine, set, "quantified over a non-set")?;
-    for index in 0..machine.store.size_of(set) {
-        let element = machine.store.element_at(set, index);
-        assign_bound(machine, slots, *tuple, element)?;
-        if quantify(machine, levels, level + 1, body, is_forall)? != is_forall {
-            return Ok(!is_forall);
+    if let [level] = levels {
+        let set = evaluate_set(machine, &level.set.eval, "quantified over a non-set")?;
+        for index in 0..machine.store.size_of(set) {
+            let element = machine.store.element_at(set, index);
+            assign_bound(machine, &level.slots, level.tuple, element)?;
+            if body(machine)? != is_forall {
+                return Ok(!is_forall);
+            }
         }
+        return Ok(is_forall);
     }
-    Ok(is_forall)
+    let sets = evaluate_bound_sets(machine, levels, "quantified over a non-set")?;
+    let is_undecided = for_each_binding(machine, levels, &sets, |machine, _| {
+        Ok(body(machine)? == is_forall)
+    })?;
+    Ok(if is_undecided { is_forall } else { !is_forall })
 }
 
 // Pushes the images on the stack, above whatever evaluating them pushes and pops.
-fn map_images(
-    machine: &mut Machine<'_>,
-    levels: &[(Eval, Vec<u32>, bool)],
-    level: usize,
-    body: &Eval,
-) -> Outcome<()> {
-    let Some((set, slots, tuple)) = levels.get(level) else {
+fn map_images(machine: &mut Machine<'_>, levels: &[Level], body: &Eval) -> Outcome<()> {
+    let sets = evaluate_bound_sets(machine, levels, "mapped a non-set")?;
+    for_each_binding(machine, levels, &sets, |machine, _| {
         let image = body(machine)?;
         machine.stack.push(image);
-        return Ok(());
-    };
-    let set = evaluate_set(machine, set, "mapped a non-set")?;
-    for index in 0..machine.store.size_of(set) {
-        let element = machine.store.element_at(set, index);
-        assign_bound(machine, slots, *tuple, element)?;
-        map_images(machine, levels, level + 1, body)?;
-    }
+        Ok(true)
+    })?;
     Ok(())
 }
 
@@ -1329,42 +1359,6 @@ fn test_element(machine: &mut Machine<'_>, filter: &Filter, element: Id) -> Outc
         machine.locals[slot as usize] = value;
     }
     kept
-}
-
-#[allow(clippy::too_many_arguments)]
-fn construct_product(
-    machine: &mut Machine<'_>,
-    levels: &[Level],
-    sets: &[Id],
-    level: usize,
-    current: &mut Vec<Id>,
-    body: &Eval,
-    keys: &mut Vec<Id>,
-    values: &mut Vec<Id>,
-) -> Outcome<()> {
-    if level == levels.len() {
-        keys.push(machine.store.tuple_of(current));
-        values.push(body(machine)?);
-        return Ok(());
-    }
-    let set = sets[level];
-    for index in 0..machine.store.size_of(set) {
-        let element = machine.store.element_at(set, index);
-        current[level] = element;
-        let bound = &levels[level];
-        assign_bound(machine, &bound.slots, bound.tuple, element)?;
-        construct_product(
-            machine,
-            levels,
-            sets,
-            level + 1,
-            current,
-            body,
-            keys,
-            values,
-        )?;
-    }
-    Ok(())
 }
 
 fn find_position(machine: &mut Machine<'_>, function: Id, key: Id) -> Outcome<u32> {

@@ -783,6 +783,14 @@ TypeScript CLI on the Rust backend. Fixed, each with a test in `prove-it-cli/tes
 - a value that holds a function TLC keeps lazy compared with itself or looked for in a set: the
   store's equal ids say nothing of what TLC builds to compare. Not native (`HOLDS_LAZY`);
 - a later bound's set, which TLC evaluates though an earlier bound is empty (`Tool.contexts`).
+  The engine first did so by evaluating the later sets ahead of the first and then again for
+  each binding, so a set that reads a register (through `TLCCache`) another set writes saw it
+  out of order. A quantifier, a set map and a function construction of several bounds now
+  evaluate each set once, in the order written, `a, b \in S` sharing one evaluation of S, and
+  then bind the first bound fastest, as `ContextEnumerator` and `FcnParams.Enumerator` do; they
+  bound the last fastest, so a body FALSE at `<<2, 1>>` and failing at `<<1, 2>>` failed. A
+  function TLC builds at once is built over the sets its lazy form evaluated, not over sets
+  evaluated again.
 
 ### Open: the depth TLC's stack allows
 
@@ -832,6 +840,18 @@ and FiniteSets and has `VARIABLE x`, `Init == x = 0` unless shown.
   `B == x' = (x + 2) % 3 /\ PrintT(<<"b", x>>)`, `Spec == Init /\ [][A \/ B]_x /\ WF_x(A \/ B)`,
   `Prop == [](x # 1 => [](x # 7 /\ PrintT(<<"p", x>>)))`, `-deadlock`: one `<<"p", 1>>` comes a
   line late.
+- **A function TLC keeps lazy compared by identity.** With `EXTENDS Integers` and
+  `G == [i \in Nat |-> i]`, each of `Init == x = (G = G)`, `x = LET g == G IN g = g`,
+  `x = (G \in {G})` and `x = ([a |-> G, b |-> 1] = [a |-> G, b |-> 2])`, with `Next == x' = x`:
+  TLC fails building G to compare it ("Attempted to compute the number of elements in the
+  overridden value Nat."); the interpreter answers by identity and finds no error, and the Rust
+  backend under the CLI hands these to it. The native binary declines.
+- **How a lazy function's failure prints its body and domain.** With `EXTENDS Integers,
+  Sequences`, `F == [k \in {0, 1} |-> [i \in {n \in Seq({1}) : Len(n) < k} |-> 1]]` and
+  `Init == x = F[0][<<>>]`, TLC prints the body as `<expression 1>`, the interpreter as
+  `<expression line 4, col 65 to line 4, col 65 of module P14>`; with
+  `F == [k \in {0, 1} |-> [i \in Nat \ {k} |-> i]]` and `Init == x = F[0][0]`, TLC prints the
+  domain `Nat \ ({0})`, the interpreter `Nat \ {0}`. The native binary declines both.
 - **TLCEval in the interpreter** keeps the lazy set: `Next == x < 3 /\ x' = x + 1 /\ y' =
   RandomElement(TLCEval([{2, 1} -> 1..100]))` draws other values than TLC's.
 - **EXCEPT of a function TLC keeps lazy but the checker builds.** `LET f == [i \in 1..3 |-> 10
