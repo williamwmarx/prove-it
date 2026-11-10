@@ -5,6 +5,7 @@
 //! checks it. It also writes SANY's report as tla-front does (`sany`). The bindings marshal what
 //! `outcome`, `hooks` and `sany` build.
 
+pub mod check;
 pub mod hooks;
 pub mod outcome;
 pub mod sany;

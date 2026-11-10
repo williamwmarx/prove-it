@@ -48,6 +48,11 @@ pub trait Host {
     fn now(&self) -> SystemTime;
     fn zone(&self) -> &Zone;
     fn machine(&self) -> &Machine;
+    /// Whether the host holds everything the check has read so far. A host that answers what it
+    /// lacks once the check returns has the check stop before it searches.
+    fn is_complete(&self) -> bool {
+        true
+    }
 }
 
 /// The file system and the process the binary runs in.

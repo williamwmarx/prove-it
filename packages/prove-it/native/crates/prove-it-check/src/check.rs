@@ -604,6 +604,10 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
         Ok(Read::Failed(failure)) => return print_failed_front(printer, &failure, start),
         Err(reason) => return report_not_native(printer, &reason),
     };
+    // Everything the check reads, it has read by now: a host still missing some answers it first.
+    if !printer.host.is_complete() {
+        return NOT_NATIVE;
+    }
     let mut ir = match tla_ir::decode(&front.ir) {
         Ok(ir) => ir,
         Err(error) => {

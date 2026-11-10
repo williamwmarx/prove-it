@@ -71,7 +71,6 @@ impl Zone {
             .unwrap_or(Self::UTC)
     }
 
-    #[cfg(test)]
     pub fn from_rule(rule: Rule) -> Self {
         Self {
             transitions: Vec::new(),
