@@ -2092,6 +2092,21 @@ describe("evaluation errors match TLC", () => {
     );
   });
 
+  // TLC fingerprints a state only once the constraints hold of it (isInModel), so one they
+  // exclude never fails to fingerprint (TLC's own run of this model finds no error).
+  it("doesn't fingerprint a state the constraints exclude", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers\nVARIABLES x, y\nInit == \\/ (x = SUBSET (1..31) /\\ y = 0) \\/ (x = 0 /\\ y = 1)\nNext == UNCHANGED <<x, y>>\nC == y = 1\n====",
+      config: "INIT Init\nNEXT Next\nCONSTRAINT C",
+    });
+    expect([result.status, result.generatedStates, result.distinctStates]).toEqual([
+      "success",
+      3,
+      1,
+    ]);
+  });
+
   it("fails on zero to the power of zero in an invariant of a later state", async () => {
     const result = await check({
       source:

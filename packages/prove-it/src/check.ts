@@ -1400,8 +1400,9 @@ const searchStates = (
     current.candidate = state;
     current.candidateLevel = 1;
     const fingerprintState = getFingerprintState(state);
-    const hash = getStateHash(fingerprintState);
+    // TLC fingerprints a state only once its constraints hold of it (isInModel).
     const isInModel = search.satisfiesConstraints(state);
+    const hash = isInModel ? getStateHash(fingerprintState) : 0;
     if (isInModel) {
       search.trackStatePossible(state);
       fingerprintModelState(fingerprintState);
@@ -1456,31 +1457,30 @@ const searchStates = (
     current.candidateLevel = depths[index] + 1;
     if (isCanonicalizedFirst) canonicalizeState(successor.state);
     const fingerprintState = getFingerprintState(successor.state);
-    const hash = getStateHash(fingerprintState);
-    const foundIndex = findStateIndex(hash, fingerprintState);
     const isStateInModel = search.satisfiesConstraints(successor.state, state);
     if (isStateInModel) search.trackStatePossible(successor.state);
     const isInModel = isStateInModel && search.satisfiesActionConstraints(state, successor.state);
+    const hash = isInModel ? getStateHash(fingerprintState) : 0;
+    const foundIndex = isInModel ? findStateIndex(hash, fingerprintState) : -1;
     if (isInModel) {
       search.trackActionPossible(state, successor.state);
       fingerprintModelState(fingerprintState);
       successor.state.forEach(markFingerprinted);
     }
-    const existing = isInModel ? foundIndex : -1;
     if (source && isInModel) {
       stateWriter?.writeSuccessor(
         source,
         getGraphState(successor.state, depths[index] + 1),
-        existing !== -1,
+        foundIndex !== -1,
         action && { name: action.name, signature: getActionSignature(action) },
       );
     }
-    if (existing !== -1 && liveness) {
-      const stored = states[existing];
+    if (foundIndex !== -1 && liveness) {
+      const stored = states[foundIndex];
       const isStored = stored.every((value, position) => value === successor.state[position]);
-      liveSuccessors.push({ index: existing, state: isStored ? stored : successor.state });
+      liveSuccessors.push({ index: foundIndex, state: isStored ? stored : successor.state });
     }
-    const isNew = isInModel && existing === -1;
+    const isNew = isInModel && foundIndex === -1;
     // TLC adds a new state to the behavior graph's successors before it checks the invariants.
     if (isNew && liveness) liveSuccessors.push({ index: states.length, state: successor.state });
     unstoredState.fingerprint = isNew ? fingerprintState : undefined;
@@ -1488,7 +1488,7 @@ const searchStates = (
       countDistinctState(depths[index] + 1);
       expansion.newStates++;
     }
-    if (existing === -1) {
+    if (foundIndex === -1) {
       try {
         const violated = search.findViolatedInvariant(successor.state, state);
         const violation = violated && { name: violated.name, ...getTrace(index, successor) };
