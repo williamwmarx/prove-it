@@ -1,6 +1,6 @@
-//! TLA+'s parser, as `src/parser.ts` parses in its `tlc` and `sany` modes: the same AST, with the
-//! same locations and ranges, and the same errors. The `tlapm` mode, which reads proof obligations
-//! as tlapm does, is not ported, since the model checker never uses it.
+//! TLA+'s parser, as `src/parser.ts` parses in its `tlc`, `sany` and `tlapm` modes: the same AST,
+//! with the same locations and ranges, and the same errors. The `tlapm` mode reads a module as
+//! tlapm does for proof obligations, and fails with the reason and position tlapm prints.
 
 use std::rc::Rc;
 
@@ -10,6 +10,7 @@ use crate::errors::{SanyError, SyntaxError, SyntaxFailure, format_range};
 use crate::hash::FastSet;
 use crate::json::write_js_string;
 use crate::lexer::{Token, TokenKind, tokenize};
+use crate::sany_parse_error::get_sany_parse_error;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Precedence {
@@ -254,9 +255,10 @@ pub fn extract_module(source: &str, name: &str) -> Option<String> {
 enum Mode {
     Tlc,
     Sany,
+    Tlapm,
 }
 
-type Parsed<T> = Result<T, SyntaxError>;
+pub type Parsed<T> = Result<T, SyntaxError>;
 
 /// A token as `peek` gives it: past the column a junction list's bullet sets, a token reads as the
 /// end.
@@ -286,18 +288,51 @@ struct Parser {
     proof_levels: Vec<i64>,
     mode: Mode,
     version: TlcVersion,
+    /// The first token of the module unit being parsed, where tlapm looks for the `==` of the
+    /// definition a failure is in.
+    unit_start: usize,
     /// The errors of SANY's semantic analysis that the parser finds, when it collects them
     /// rather than failing at the first: a DEF clause entry that isn't a definition, which SANY
     /// leaves out, and a HIDE of what isn't a fact.
     sany_errors: Option<Vec<SanyError>>,
 }
 
-fn location_of(token: &Token) -> Location {
-    Location {
-        line: token.line,
-        column: token.column,
-        range: None,
-    }
+/// The punctuation tlapm names by its text alone when it fails at it.
+fn is_tlapm_punctuation(text: &str) -> bool {
+    matches!(
+        text,
+        "," | "."
+            | "_"
+            | "("
+            | ")"
+            | "["
+            | "]"
+            | "{"
+            | "}"
+            | "<<"
+            | ">>"
+            | "]_"
+            | ">>_"
+            | "=="
+            | "!"
+            | "@"
+            | ":"
+            | "::"
+            | ";"
+            | "->"
+            | "<-"
+            | "|->"
+            | "\\A"
+            | "\\AA"
+            | "\\E"
+            | "\\EE"
+            | "\\forall"
+            | "\\exists"
+            | "WF_"
+            | "SF_"
+            | "(*{"
+            | "}*)"
+    )
 }
 
 fn located(kind: ExpressionKind, location: Location) -> Expression {
@@ -328,24 +363,32 @@ impl Parser {
         }
     }
 
-    fn peek_location(&self) -> Location {
-        let token = self.raw(0);
+    fn is_tlapm(&self) -> bool {
+        self.mode == Mode::Tlapm
+    }
+
+    /// tlapm locates a string at its closing quote.
+    fn location_of(&self, token: &Token) -> Location {
         Location {
             line: token.line,
-            column: token.column,
+            column: if self.is_tlapm() && token.kind == TokenKind::String {
+                token.end_column
+            } else {
+                token.column
+            },
             range: None,
         }
     }
 
+    fn peek_location(&self) -> Location {
+        self.location_of(self.raw(0))
+    }
+
     fn get_range_between(&self, start: usize, end: usize) -> Range {
-        let first = &self.tokens[start];
         let last = &self.tokens[end];
         SourceRange {
             module: self.root_name.clone(),
-            start: Position {
-                line: first.line,
-                column: first.column,
-            },
+            start: self.location_of(&self.tokens[start]).position(),
             end: Position {
                 line: last.line,
                 column: last.end_column,
@@ -363,22 +406,119 @@ impl Parser {
     }
 
     fn error_at(&self, message: &str, line: u32, column: u32) -> SyntaxError {
-        let end = &self.tokens[self.tokens.len() - 1];
-        SyntaxError {
-            message: format!("{message} at line {line}, column {column}"),
-            failure: Some(SyntaxFailure {
-                reason: message.to_string(),
-                line,
-                column,
-                is_end: line == end.line && column == end.column,
-            }),
-            sany: None,
-        }
+        self.create_error(message, line, column, None)
     }
 
     fn error(&self, message: &str) -> SyntaxError {
         let token = self.raw(0);
         self.error_at(message, token.line, token.column)
+    }
+
+    /// An error at the token `peek` gives, which tlapm reports as an unexpected token.
+    fn unexpected_at(&self, message: &str, token: &Peeked) -> SyntaxError {
+        self.create_error(message, token.line, token.column, Some(token))
+    }
+
+    /// An error at the next token, which tlapm reports as an unexpected token.
+    fn unexpected(&self, message: &str) -> SyntaxError {
+        let token = self.raw(0);
+        let raw = Peeked {
+            kind: token.kind,
+            text: token.text.clone(),
+            line: token.line,
+            column: token.column,
+        };
+        self.unexpected_at(message, &raw)
+    }
+
+    fn create_error(
+        &self,
+        message: &str,
+        line: u32,
+        column: u32,
+        unexpected: Option<&Peeked>,
+    ) -> SyntaxError {
+        let end = &self.tokens[self.tokens.len() - 1];
+        let is_end = line == end.line && column == end.column;
+        let (reason, position) = match unexpected {
+            _ if self.is_tlapm() && is_end => (
+                "Unexpected EOF".to_string(),
+                self.get_definition_end(self.get_previous_end(end.line, end.column)),
+            ),
+            Some(token) if self.is_tlapm() => (
+                format!("Unexpected {}", self.get_tlapm_name(token)),
+                self.get_previous_end(token.line, token.column),
+            ),
+            _ => (message.to_string(), Position { line, column }),
+        };
+        SyntaxError {
+            message: format!("{message} at line {line}, column {column}"),
+            failure: Some(SyntaxFailure {
+                reason,
+                line: position.line,
+                column: position.column,
+                is_end,
+            }),
+            sany: None,
+        }
+    }
+
+    /// Where the `==` of the module unit being parsed ends, or else `fallback`.
+    fn get_definition_end(&self, fallback: Position) -> Position {
+        self.tokens[self.unit_start.min(self.index)..self.index]
+            .iter()
+            .find(|token| &*token.text == "==" && token.kind != TokenKind::String)
+            .map_or(fallback, |equals| Position {
+                line: equals.line,
+                column: equals.end_column + 1,
+            })
+    }
+
+    /// Just past the last token that starts before the position.
+    fn get_previous_end(&self, line: u32, column: u32) -> Position {
+        self.tokens
+            .iter()
+            .rev()
+            .find(|token| {
+                token.kind != TokenKind::End
+                    && (token.line < line || (token.line == line && token.column < column))
+            })
+            .map_or(Position { line, column }, |previous| Position {
+                line: previous.line,
+                column: previous.end_column + 1,
+            })
+    }
+
+    /// tlapm reads `TRUE`, `FALSE`, `BOOLEAN`, `STRING` and the other keywords only as keywords.
+    fn is_tlapm_keyword(&self, token: &Peeked) -> bool {
+        self.is_tlapm() && (token.kind == TokenKind::Keyword || is_builtin_constant(&token.text))
+    }
+
+    /// The token as tlapm names it.
+    fn get_tlapm_name(&self, token: &Peeked) -> String {
+        let text = &*token.text;
+        let is_rule = |rule: u8| text.len() >= 4 && text.bytes().all(|byte| byte == rule);
+        if is_rule(b'-') {
+            return "----".to_string();
+        }
+        if is_rule(b'=') {
+            return "====".to_string();
+        }
+        if is_tlapm_punctuation(text)
+            || matches!(token.kind, TokenKind::Number | TokenKind::Decimal)
+        {
+            return text.to_string();
+        }
+        if token.kind == TokenKind::String {
+            return Self::quoted(text);
+        }
+        if self.is_tlapm_keyword(token) {
+            return format!("keyword {text}");
+        }
+        if token.kind == TokenKind::Identifier {
+            return format!("identifier {text}");
+        }
+        format!("operator {text}")
     }
 
     fn describe(&self, token: &Peeked) -> String {
@@ -403,9 +543,10 @@ impl Parser {
     }
 
     /// `TLAplusParser.isFieldNameToken`: a keyword or an underscore names a field or a module too.
-    fn is_field_name(token: &Peeked) -> bool {
-        matches!(token.kind, TokenKind::Identifier | TokenKind::Keyword)
-            || (token.kind == TokenKind::Operator && &*token.text == "_")
+    fn is_field_name(&self, token: &Peeked) -> bool {
+        (matches!(token.kind, TokenKind::Identifier | TokenKind::Keyword)
+            || (token.kind == TokenKind::Operator && &*token.text == "_"))
+            && !self.is_tlapm_keyword(token)
     }
 
     fn is_offside(&self, token: &Token) -> bool {
@@ -453,7 +594,7 @@ impl Parser {
 
     fn expect(&mut self, text: &str) -> Parsed<Token> {
         if !self.is_at(text, 0) {
-            return Err(self.error(&format!(
+            return Err(self.unexpected(&format!(
                 "Expected {} but found {}",
                 Self::quoted(text),
                 self.describe(&self.peek(0))
@@ -465,10 +606,13 @@ impl Parser {
     fn expect_identifier(&mut self) -> Parsed<Name> {
         let token = self.peek(0);
         if token.kind != TokenKind::Identifier {
-            return Err(self.error(&format!(
+            return Err(self.unexpected(&format!(
                 "Expected an identifier but found {}",
                 self.describe(&token)
             )));
+        }
+        if self.is_tlapm_keyword(&token) {
+            return Err(self.unexpected(&format!("Unexpected keyword {}", token.text)));
         }
         self.index += 1;
         Ok(token.text)
@@ -480,12 +624,32 @@ impl Parser {
         Ok((name, self.get_range(start)))
     }
 
-    fn separated<T>(&mut self, mut item: impl FnMut(&mut Self) -> Parsed<T>) -> Parsed<Vec<T>> {
+    fn separated<T>(&mut self, item: impl FnMut(&mut Self) -> Parsed<T>) -> Parsed<Vec<T>> {
+        self.separated_by(",", item)
+    }
+
+    fn separated_by<T>(
+        &mut self,
+        separator: &str,
+        mut item: impl FnMut(&mut Self) -> Parsed<T>,
+    ) -> Parsed<Vec<T>> {
         let mut items = vec![item(self)?];
-        while self.accept(",") {
+        while self.accept(separator) {
             items.push(item(self)?);
         }
         Ok(items)
+    }
+
+    /// tlapm reads a bracketed expression apart from the junction list around it, whose alignment
+    /// SANY keeps applying.
+    fn with_bracket_layout<T>(&mut self, parse: impl FnOnce(&mut Self) -> Parsed<T>) -> Parsed<T> {
+        if !self.is_tlapm() {
+            return parse(self);
+        }
+        self.offside_columns.push(NO_OFFSIDE);
+        let result = parse(self);
+        self.offside_columns.pop();
+        result
     }
 
     fn names(&mut self) -> Parsed<(Vec<Name>, Vec<Range>)> {
@@ -510,7 +674,7 @@ impl Parser {
     /// SANY takes a keyword for the name of a module, as it does for a field.
     fn expect_module_name(&mut self) -> Parsed<Name> {
         let token = self.peek(0);
-        if token.kind == TokenKind::Identifier || !Self::is_field_name(&token) {
+        if token.kind == TokenKind::Identifier || !self.is_field_name(&token) {
             return self.expect_identifier();
         }
         self.is_keyword_module_name = true;
@@ -586,8 +750,13 @@ impl Parser {
     fn parse_subscript(&mut self) -> Parsed<Expression> {
         let token = self.peek(0);
         // SANY's FairnessExpr reads WF_B(A)(Act) with the subscript B(A).
-        if token.kind == TokenKind::Identifier && self.is_application_subscript_ahead() {
-            return self.parse_primary(None);
+        if token.kind == TokenKind::Identifier
+            && !self.is_tlapm()
+            && self.is_application_subscript_ahead()
+        {
+            let start = self.index;
+            let application = self.parse_primary(None)?;
+            return Ok(self.with_range(application, start));
         }
         if token.kind == TokenKind::Identifier {
             let start = self.index;
@@ -611,7 +780,7 @@ impl Parser {
         if self.is_at("<<", 0) || self.is_at("(", 0) {
             return self.parse_primary(None);
         }
-        Err(self.error(&format!(
+        Err(self.unexpected(&format!(
             "Expected a subscript but found {}",
             self.describe(&token)
         )))
@@ -679,6 +848,9 @@ impl Parser {
         let is_operator_alone = token.kind == TokenKind::Operator
             && (is_infix(&token.text) || is_prefix_operator_reference(&token.text))
             && self.is_standalone(token.line);
+        if self.is_tlapm_incomplete(&token) && self.is_standalone(token.line) {
+            return Err(self.error_at("incomplete expression", token.line, token.column));
+        }
         if is_operator_alone {
             self.index += 1;
             let reference = located(
@@ -686,7 +858,7 @@ impl Parser {
                     operator: token.text,
                     spelling: raw.spelling.clone(),
                 },
-                location_of(&raw),
+                self.location_of(&raw),
             );
             return Ok(self.with_range(reference, self.index - 1));
         }
@@ -695,7 +867,7 @@ impl Parser {
             && self.is_standalone(token.line);
         if is_prefix_alone {
             self.index += 1;
-            let location = location_of(&raw);
+            let location = self.location_of(&raw);
             if is_postfix(&token.text) {
                 let reference = located(
                     ExpressionKind::OperatorReference {
@@ -755,19 +927,46 @@ impl Parser {
                     body,
                     operator: None,
                 },
-                location_of(&raw),
+                self.location_of(&raw),
             );
             return Ok(self.with_range(lambda, start));
         }
         self.parse_expression(0)
     }
 
+    /// tlapm reads a prefix operator as the start of an expression, and `(+)`, `(-)`, `(/)` and
+    /// `(\\X)` as the operators `\\oplus`, `\\ominus`, `\\oslash` and `\\otimes`.
+    fn is_tlapm_incomplete(&self, token: &Peeked) -> bool {
+        let text = &*token.text;
+        if !self.is_tlapm() || token.kind == TokenKind::String {
+            return false;
+        }
+        if is_prefix_operator_reference(text)
+            || (is_operator_argument(text) && text != "'" && !is_postfix(text))
+        {
+            return true;
+        }
+        let raw = self.raw(0);
+        let is_visible = |token: &Token, expected: &str| {
+            !self.is_offside(token) && &*token.text == expected && token.line == raw.line
+        };
+        matches!(text, "+" | "-" | "/" | "\\X")
+            && self.index.checked_sub(1).is_some_and(|previous| {
+                let previous = &self.tokens[previous];
+                is_visible(previous, "(") && previous.end_column + 1 == raw.column
+            })
+            && is_visible(self.raw(1), ")")
+            && self.raw(1).column == raw.end_column + 1
+    }
+
     fn parse_arguments(&mut self) -> Parsed<(Vec<Expr>, Range)> {
-        let start = self.index;
-        self.expect("(")?;
-        let args = self.separated(|parser| parser.parse_argument().map(Rc::new))?;
-        self.expect(")")?;
-        Ok((args, self.get_range(start)))
+        self.with_bracket_layout(|parser| {
+            let start = parser.index;
+            parser.expect("(")?;
+            let args = parser.separated(|parser| parser.parse_argument().map(Rc::new))?;
+            parser.expect(")")?;
+            Ok((args, parser.get_range(start)))
+        })
     }
 
     fn parse_junction_list(&mut self) -> Parsed<Expression> {
@@ -786,7 +985,7 @@ impl Parser {
                 is_bulleted: true,
                 prefix_ends: None,
             },
-            location_of(&bullet),
+            self.location_of(&bullet),
         ))
     }
 
@@ -809,11 +1008,15 @@ impl Parser {
     }
 
     fn parse_bracket(&mut self, start: &Token) -> Parsed<Expression> {
-        let location = location_of(start);
+        self.with_bracket_layout(|parser| parser.parse_bracket_body(start))
+    }
+
+    fn parse_bracket_body(&mut self, start: &Token) -> Parsed<Expression> {
+        let location = self.location_of(start);
         // SANY takes a keyword for the first field of a record, as it does for a selected field.
         let is_identifier = self.peek_kind(0) == TokenKind::Identifier;
         let is_record =
-            self.is_at("|->", 1) && (is_identifier || Self::is_field_name(&self.peek(0)));
+            self.is_at("|->", 1) && (is_identifier || self.is_field_name(&self.peek(0)));
         if is_record || (is_identifier && self.is_at(":", 1)) {
             let mut fields = vec![self.parse_record_field(is_record, true)?];
             if self.accept(",") {
@@ -858,8 +1061,8 @@ impl Parser {
                 while parser.is_at(".", 0) || parser.is_at("[", 0) {
                     if parser.accept(".") {
                         let token = parser.peek(0);
-                        if !Self::is_field_name(&token) {
-                            return Err(parser.error(&format!(
+                        if !parser.is_field_name(&token) {
+                            return Err(parser.unexpected(&format!(
                                 "Expected a field name but found {}",
                                 parser.describe(&token)
                             )));
@@ -886,7 +1089,7 @@ impl Parser {
                 location,
             ));
         }
-        if !self.is_at("]_", 0) {
+        if !self.is_tlapm() && !self.is_at("]_", 0) {
             let mut args = vec![expression];
             while self.accept(",") {
                 args.push(Rc::new(self.parse_expression(0)?));
@@ -912,7 +1115,8 @@ impl Parser {
         let start = self.index;
         let prefix = self.parse_prefix()?;
         let element = Rc::new(self.with_range(prefix, start));
-        let location = location_of(&self.advance()?);
+        let token = self.advance()?;
+        let location = self.location_of(&token);
         let set = Rc::new(self.parse_expression(0)?);
         let membership = located(
             ExpressionKind::Apply {
@@ -930,7 +1134,11 @@ impl Parser {
     }
 
     fn parse_brace(&mut self, start: &Token) -> Parsed<Expression> {
-        let location = location_of(start);
+        self.with_bracket_layout(|parser| parser.parse_brace_body(start))
+    }
+
+    fn parse_brace_body(&mut self, start: &Token) -> Parsed<Expression> {
+        let location = self.location_of(start);
         if self.accept("}") {
             return Ok(located(
                 ExpressionKind::SetEnumeration(Vec::new()),
@@ -981,12 +1189,13 @@ impl Parser {
     }
 
     fn parse_tuple(&mut self, start: &Token) -> Parsed<Expression> {
-        let location = location_of(start);
-        let mut elements = if self.is_at(">>", 0) || self.is_at(">>_", 0) {
-            Vec::new()
-        } else {
-            self.separated(|parser| parser.parse_expression(0).map(Rc::new))?
-        };
+        let location = self.location_of(start);
+        let mut elements = self.with_bracket_layout(|parser| {
+            if parser.is_at(">>", 0) || parser.is_at(">>_", 0) {
+                return Ok(Vec::new());
+            }
+            parser.separated(|parser| parser.parse_expression(0).map(Rc::new))
+        })?;
         if self.accept(">>_") {
             if elements.len() != 1 {
                 return Err(self.error_at(
@@ -1010,7 +1219,7 @@ impl Parser {
     }
 
     fn parse_quantifier(&mut self, start: &Token) -> Parsed<Expression> {
-        let location = location_of(start);
+        let location = self.location_of(start);
         let is_temporal = &*start.text == "\\AA" || &*start.text == "\\EE";
         if !is_temporal && self.is_bound_ahead() {
             let bounds = self.parse_bounds()?;
@@ -1058,7 +1267,7 @@ impl Parser {
                 let other = Some(Rc::new(self.parse_expression(0)?));
                 return Ok(located(
                     ExpressionKind::Case { arms, other },
-                    location_of(start),
+                    self.location_of(start),
                 ));
             }
             let condition = Rc::new(self.parse_expression(0)?);
@@ -1071,7 +1280,7 @@ impl Parser {
         }
         Ok(located(
             ExpressionKind::Case { arms, other: None },
-            location_of(start),
+            self.location_of(start),
         ))
     }
 
@@ -1167,9 +1376,29 @@ impl Parser {
     fn parse_primary(&mut self, preceding: Option<Precedence>) -> Parsed<Expression> {
         let start = self.index;
         let token = self.advance()?;
-        let location = location_of(&token);
+        let location = self.location_of(&token);
+        if self.is_tlapm() && token.kind == TokenKind::Keyword && &*token.text == "LAMBDA" {
+            let params = self.separated(Self::expect_identifier)?;
+            self.expect(":")?;
+            let body = Rc::new(self.parse_expression(0)?);
+            return Ok(located(
+                ExpressionKind::Lambda {
+                    params,
+                    param_ranges: None,
+                    body,
+                    operator: None,
+                },
+                location,
+            ));
+        }
         match token.kind {
             TokenKind::Number => {
+                let is_based = token.text.starts_with("\\B")
+                    || token.text.starts_with("\\O")
+                    || token.text.starts_with("\\H");
+                if self.is_tlapm() && is_based {
+                    return Err(self.error_at("incomplete expression", token.line, token.column));
+                }
                 let value = get_numeral_value(&token.text);
                 return Ok(located(
                     ExpressionKind::Number {
@@ -1224,6 +1453,7 @@ impl Parser {
                 let body = self.parse_expression(0)?;
                 // TLAplusParser.labelDoesNotChangeParse.
                 if let (Some(preceding), Some(last)) = (preceding, self.last)
+                    && !self.is_tlapm()
                     && is_operator_expression(&body)
                     && preceding.high >= last.low
                 {
@@ -1344,22 +1574,23 @@ impl Parser {
         }
         // SANY reads an infix or postfix operator as a primary expression, with or without
         // arguments.
-        if token.kind == TokenKind::Operator && is_operator_name(&token.text) {
-            if self.is_at("(", 0) {
-                let (args, _) = self.parse_arguments()?;
-                return Ok(located(
-                    ExpressionKind::Apply {
-                        operator: token.text,
-                        spelling: token.spelling,
-                        args,
-                        argument_counts: None,
-                        arguments_range: None,
-                        selector_ranges: None,
-                        argument_ranges: None,
-                    },
-                    location,
-                ));
-            }
+        let is_operator_name = token.kind == TokenKind::Operator && is_operator_name(&token.text);
+        if is_operator_name && self.is_at("(", 0) {
+            let (args, _) = self.parse_arguments()?;
+            return Ok(located(
+                ExpressionKind::Apply {
+                    operator: token.text,
+                    spelling: token.spelling,
+                    args,
+                    argument_counts: None,
+                    arguments_range: None,
+                    selector_ranges: None,
+                    argument_ranges: None,
+                },
+                location,
+            ));
+        }
+        if is_operator_name && !self.is_tlapm() {
             return Ok(located(
                 ExpressionKind::Identifier {
                     name: token.text,
@@ -1371,7 +1602,7 @@ impl Parser {
         }
         match &*token.text {
             "(" => {
-                let expression = self.parse_expression(0)?;
+                let expression = self.with_bracket_layout(|parser| parser.parse_expression(0))?;
                 self.expect(")")?;
                 Ok(expression)
             }
@@ -1402,6 +1633,18 @@ impl Parser {
                 let mut recursive = Vec::new();
                 self.recursive_scopes.push(FastSet::default());
                 while !self.accept("IN") {
+                    if self.is_tlapm() && self.is_at("RECURSIVE", 0) {
+                        let raw = self.raw(0);
+                        let position = self.get_definition_end(Position {
+                            line: raw.line,
+                            column: raw.column,
+                        });
+                        return Err(self.error_at(
+                            "Unexpected keyword RECURSIVE",
+                            position.line,
+                            position.column,
+                        ));
+                    }
                     if self.accept("RECURSIVE") {
                         recursive.extend(self.declare_recursive()?.into_iter().map(Rc::new));
                         continue;
@@ -1439,9 +1682,12 @@ impl Parser {
             }
             "WF_" | "SF_" => {
                 let subscript = Rc::new(self.parse_subscript()?);
-                self.expect("(")?;
-                let action = Rc::new(self.parse_expression(0)?);
-                self.expect(")")?;
+                let action = Rc::new(self.with_bracket_layout(|parser| {
+                    parser.expect("(")?;
+                    let expression = parser.parse_expression(0)?;
+                    parser.expect(")")?;
+                    Ok(expression)
+                })?);
                 Ok(located(
                     ExpressionKind::Fairness {
                         is_strong: &*token.text == "SF_",
@@ -1453,9 +1699,16 @@ impl Parser {
                 ))
             }
             _ => {
-                let mut quoted = String::new();
-                write_js_string(&mut quoted, &token.text);
-                Err(self.error_at(&format!("Unexpected {quoted}"), token.line, token.column))
+                let unexpected = Peeked {
+                    kind: token.kind,
+                    text: token.text.clone(),
+                    line: token.line,
+                    column: token.column,
+                };
+                Err(self.unexpected_at(
+                    &format!("Unexpected {}", Self::quoted(&token.text)),
+                    &unexpected,
+                ))
             }
         }
     }
@@ -1472,7 +1725,10 @@ impl Parser {
         } else {
             get_infix(&next.text).map(|infix| infix.high)
         };
-        if next.kind == TokenKind::Operator && next_high.is_some_and(|next_high| next_high >= low) {
+        if !self.is_tlapm()
+            && next.kind == TokenKind::Operator
+            && next_high.is_some_and(|next_high| next_high >= low)
+        {
             return Err(self.error_at(
                 &format!("Precedence conflict between {operator} and {}", next.text),
                 next.line,
@@ -1534,6 +1790,11 @@ impl Parser {
                 }
                 "SUBSET" | "UNION" | "DOMAIN" => {
                     self.advance()?;
+                    // tlapm gives these operators the precedence 8 of the TLA+ book.
+                    if self.is_tlapm() {
+                        let operand = Rc::new(self.parse_expression(9)?);
+                        return Ok(Self::prefix_apply(text, operand, location));
+                    }
                     // SANY gives SUBSET and UNION precedence 8 and DOMAIN 9, and in TLC 1.7.4 gave
                     // all three 10-13.
                     let is_174 = self.version == TlcVersion::V1_7_4;
@@ -1569,7 +1830,7 @@ impl Parser {
                 break;
             }
             let raw = self.raw(0).clone();
-            let location = location_of(&raw);
+            let location = self.location_of(&raw);
             if &*token.text == "'" && minimum <= 15 {
                 self.advance()?;
                 self.last = Some(POSTFIX_PRECEDENCE);
@@ -1596,8 +1857,10 @@ impl Parser {
             }
             if &*token.text == "[" {
                 self.advance()?;
-                let args = self.separated(|parser| parser.parse_expression(0).map(Rc::new))?;
-                self.expect("]")?;
+                let args = self.with_bracket_layout(|parser| {
+                    parser.separated(|parser| parser.parse_expression(0).map(Rc::new))
+                })?;
+                self.with_bracket_layout(|parser| parser.expect("]"))?;
                 self.last = Some(FUNCTION_PRECEDENCE);
                 let application = ExpressionKind::FunctionApplication {
                     function: Rc::new(left),
@@ -1606,7 +1869,7 @@ impl Parser {
                 left = self.with_range(located(application, location), start);
                 continue;
             }
-            if &*token.text == "." && Self::is_field_name(&self.peek(1)) {
+            if &*token.text == "." && self.is_field_name(&self.peek(1)) {
                 self.advance()?;
                 let field = self.advance()?.text;
                 let access = ExpressionKind::FieldAccess {
@@ -1849,7 +2112,7 @@ impl Parser {
         }
         let name = self.expect_identifier()?;
         if self.accept("[") {
-            let bounds = self.parse_bounds()?;
+            let bounds = self.with_bracket_layout(Self::parse_bounds)?;
             self.expect("]")?;
             self.expect("==")?;
             let body = Rc::new(self.parse_expression(0)?);
@@ -2121,7 +2384,7 @@ impl Parser {
                     operator: token.text.clone(),
                     spelling: token.spelling.clone(),
                 },
-                location_of(&token),
+                self.location_of(&token),
             );
             return Ok(Fact::Expression(Rc::new(self.with_range(reference, start))));
         }
@@ -2129,7 +2392,7 @@ impl Parser {
             return Ok(Fact::Expression(Rc::new(self.parse_expression(0)?)));
         }
         let name = self.expect_identifier()?;
-        let mut location = location_of(&token);
+        let mut location = self.location_of(&token);
         location.range = Some(self.get_range(start));
         Ok(Fact::Module { name, location })
     }
@@ -2147,7 +2410,48 @@ impl Parser {
         Ok(result)
     }
 
+    /// tlapm's definable: names and operators joined by `!`.
+    fn parse_definable(&mut self) -> Parsed<Fact> {
+        let start = self.index;
+        let token = self.raw(0).clone();
+        let is_operator = self.peek_kind(0) == TokenKind::Operator;
+        let parts = self.separated_by("!", |parser| {
+            let part = parser.peek(0);
+            let is_name = part.kind == TokenKind::Identifier && !parser.is_tlapm_keyword(&part);
+            if !is_name && part.kind != TokenKind::Operator {
+                return Err(parser.unexpected_at(
+                    &format!(
+                        "Expected a definition name but found {}",
+                        parser.describe(&part)
+                    ),
+                    &part,
+                ));
+            }
+            parser.index += 1;
+            Ok(part.text)
+        })?;
+        let location = self.location_of(&token);
+        let kind = if parts.len() == 1 && is_operator {
+            ExpressionKind::OperatorReference {
+                operator: token.text,
+                spelling: None,
+            }
+        } else {
+            ExpressionKind::Identifier {
+                name: Rc::from(parts.join("!")),
+                spelling: None,
+                selector_ranges: None,
+            }
+        };
+        Ok(Fact::Expression(Rc::new(
+            self.with_range(located(kind, location), start),
+        )))
+    }
+
     fn parse_defs(&mut self) -> Parsed<Vec<Fact>> {
+        if self.is_tlapm() {
+            return self.separated(Self::parse_definable);
+        }
         // A DEF entry in parentheses keeps them in its range, as SANY's parser rejects them.
         let defs = self.separated(|parser| {
             let start = parser.index;
@@ -2234,7 +2538,7 @@ impl Parser {
                 None => {}
             }
         }
-        let mut location = location_of(&keyword);
+        let mut location = self.location_of(&keyword);
         location.range = Some(self.get_range(start));
         Ok(UseOrHide {
             is_hide,
@@ -2257,7 +2561,7 @@ impl Parser {
             None
         };
         if !is_new && level.is_none() {
-            return Err(self.error(&format!(
+            return Err(self.unexpected(&format!(
                 "Expected a declaration but found {}",
                 self.describe(&token)
             )));
@@ -2306,7 +2610,8 @@ impl Parser {
 
     fn parse_assume_prove(&mut self) -> Parsed<AssumeProve> {
         let start = self.index;
-        let mut location = location_of(&self.expect("ASSUME")?);
+        let keyword = self.expect("ASSUME")?;
+        let mut location = self.location_of(&keyword);
         let assumptions = self.separated(|parser| {
             if parser.is_at("ASSUME", 0) {
                 return Ok(Assumed::AssumeProve(
@@ -2444,10 +2749,10 @@ impl Parser {
         let is_qed = self.is_at("QED", 1);
         let step = self.peek(0);
         if step.kind != TokenKind::Step {
-            return Err(self.error(&format!(
-                "Expected a step number but found {}",
-                self.describe(&step)
-            )));
+            return Err(self.unexpected_at(
+                &format!("Expected a step number but found {}", self.describe(&step)),
+                &step,
+            ));
         }
         if !self.is_correct_level(&step.text) {
             let message = if is_qed {
@@ -2459,6 +2764,13 @@ impl Parser {
         }
         let is_named_unnumbered =
             Self::get_step_level(&step.text) < 0 && self.get_step_name(&step.text).is_some();
+        if is_named_unnumbered && self.is_tlapm() {
+            return Err(self.error_at(
+                "<*> and <+> cannot be used for a named step",
+                step.line,
+                step.column,
+            ));
+        }
         self.index += 1;
         // SANY's generator rejects it at the step, a semantic error.
         if is_named_unnumbered && self.mode == Mode::Tlc {
@@ -2472,7 +2784,7 @@ impl Parser {
             }
         }
         let name = self.get_step_name(&step.text);
-        let mut location = location_of(&self.tokens[start]);
+        let mut location = self.location_of(&self.tokens[start]);
         let statement_start = self.index;
         self.proof_scopes.push(FastSet::default());
         let body = if self.accept("QED") {
@@ -2615,7 +2927,7 @@ impl Parser {
             };
             Ok((statement, proof))
         })?;
-        let mut location = location_of(&keyword);
+        let mut location = self.location_of(&keyword);
         location.range = Some(self.get_range(start));
         let body = match &statement {
             Statement::Expression(expression) => Some(expression.clone()),
@@ -2652,7 +2964,7 @@ impl Parser {
         let keyword = self.advance()?;
         let name = self.parse_fact_name()?;
         let expression = Rc::new(self.parse_expression(0)?);
-        let mut location = location_of(&keyword);
+        let mut location = self.location_of(&keyword);
         location.range = Some(self.get_range(start));
         Ok(Assumption {
             name,
@@ -2681,7 +2993,8 @@ impl Parser {
     }
 
     fn parse_module_body(&mut self) -> Parsed<Module> {
-        let mut location = location_of(&self.expect("----")?);
+        let keyword = self.expect("----")?;
+        let mut location = self.location_of(&keyword);
         self.expect("MODULE")?;
         let name = self.expect_module_name()?;
         self.expect("----")?;
@@ -2717,6 +3030,7 @@ impl Parser {
         }
         loop {
             let token_index = self.index;
+            self.unit_start = token_index;
             let token = self.peek(0);
             if token.kind == TokenKind::ModuleEnd {
                 let raw = self.raw(0);
@@ -2747,7 +3061,8 @@ impl Parser {
             }
             match &*token.text {
                 "CONSTANT" | "CONSTANTS" => {
-                    let mut unit_location = location_of(&self.advance()?);
+                    let token = self.advance()?;
+                    let mut unit_location = self.location_of(&token);
                     let declarations: Vec<Rc<Declaration>> = self
                         .parse_declarations()?
                         .into_iter()
@@ -2763,7 +3078,8 @@ impl Parser {
                     continue;
                 }
                 "VARIABLE" | "VARIABLES" => {
-                    let mut unit_location = location_of(&self.advance()?);
+                    let token = self.advance()?;
+                    let mut unit_location = self.location_of(&token);
                     let declarations = self.separated(|parser| {
                         let start = parser.index;
                         let mut location = parser.peek_location();
@@ -2810,7 +3126,7 @@ impl Parser {
                 "USE" | "HIDE" => {
                     // SANY's module body takes a USE only when ONLY doesn't follow it.
                     if self.is_at("USE", 0) && self.is_at("ONLY", 1) {
-                        return Err(self.error(&format!(
+                        return Err(self.unexpected(&format!(
                             "Expected a module unit but found {}",
                             self.describe(&token)
                         )));
@@ -2889,11 +3205,11 @@ fn parse_collecting(
     };
     let end: Rc<str> = Rc::from("");
     // SANY's lexer reads @ as an identifier, which stands for the value an EXCEPT changes only
-    // alone.
+    // alone, and tlapm's as itself.
     let tokens = tokens
         .into_iter()
         .map(|mut token| {
-            if token.kind == TokenKind::Operator && &*token.text == "@" {
+            if mode != Mode::Tlapm && token.kind == TokenKind::Operator && &*token.text == "@" {
                 token.kind = TokenKind::Identifier;
             }
             token
@@ -2915,12 +3231,23 @@ fn parse_collecting(
         proof_levels: Vec::new(),
         mode,
         version,
+        unit_start: 0,
         sany_errors: is_collecting.then(Vec::new),
     };
     let module = parser.parse_module_body()?;
     // SANY's lexer marks where each definition begins before its parser runs, which can split a
     // module's name from a keyword that the parser would take for one. That check is SANY's own
     // parser, which a later milestone ports.
+    if parser.is_keyword_module_name && mode == Mode::Tlapm {
+        return match get_sany_parse_error(source, version) {
+            Some(message) => Err(SyntaxError {
+                message,
+                failure: None,
+                sany: None,
+            }),
+            None => Ok((module, Vec::new())),
+        };
+    }
     if parser.is_keyword_module_name {
         return Err(SyntaxError {
             message: "unsupported: a keyword names a module".to_string(),
@@ -2948,6 +3275,12 @@ pub fn parse_module_for_sany(
 /// Parses a module the caller has tokenized already, as SANY in a version of TLC does.
 pub fn parse_module_tokens(source: &str, tokens: &[Token], version: TlcVersion) -> Parsed<Module> {
     parse(source, Mode::Tlc, Some(tokens), version)
+}
+
+/// Parses a module as tlapm does for proof obligations, which accepts and rejects some modules that
+/// SANY does not, and fails with the reason and position tlapm prints.
+pub fn parse_tlapm_module(source: &str, tokens: Option<&[Token]>) -> Parsed<Module> {
+    parse(source, Mode::Tlapm, tokens, TlcVersion::Master)
 }
 
 pub fn parse_sany_module(

@@ -5,7 +5,7 @@
 use std::path::{Component, Path, PathBuf};
 
 use tla_front::report::ModuleOrigin;
-use tla_values::fingerprint::{INITIAL, extend_byte, extend_int};
+use tla_values::fingerprint::Polynomial;
 
 use crate::host::Files;
 
@@ -84,16 +84,20 @@ impl FileDescriber {
 /// files (`getTemporaryName`).
 fn temporary_name(contents: &str) -> String {
     let units: Vec<u16> = contents.encode_utf16().collect();
-    let mut fingerprint = extend_int(extend_byte(INITIAL, STRING_VALUE), units.len() as i32);
+    let polynomial = Polynomial::get(0);
+    let mut fingerprint = polynomial.extend_int(
+        polynomial.extend_byte(polynomial.value(), STRING_VALUE),
+        units.len() as i32,
+    );
     let whole = units.len() & !3;
     for chunk in units[..whole].chunks(4) {
         let word = chunk.iter().enumerate().fold(0u32, |word, (index, unit)| {
             word | (u32::from(*unit & 0xff) << (8 * index))
         });
-        fingerprint = extend_int(fingerprint, word as i32);
+        fingerprint = polynomial.extend_int(fingerprint, word as i32);
     }
     for unit in &units[whole..] {
-        fingerprint = extend_byte(fingerprint, (*unit & 0xff) as u8);
+        fingerprint = polynomial.extend_byte(fingerprint, (*unit & 0xff) as u8);
     }
     fingerprint.to_string()
 }

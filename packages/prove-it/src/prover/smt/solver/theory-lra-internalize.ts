@@ -21,6 +21,7 @@ import {
 } from "./ast";
 import { Enode } from "./enode";
 import { BoolVar, getVar, Literal } from "./literal";
+import { traceLp } from "./lp-trace";
 import { type ConstraintKind, KIND_GE, KIND_LE } from "./lp/constraints";
 import { NULL_LPVAR } from "./lp/lar-solver";
 import { NlaCore } from "./lp/nla-core";
@@ -217,7 +218,7 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
   // ensure_nla: the nonlinear solver, made on the first nonlinear term, in the current scopes.
   private ensureNla() {
     if (this.nla !== undefined) return this.nla;
-    const nla = new NlaCore(this.solver, this.manager.limit);
+    const nla = traceLp("nla", NlaCore, this.solver, this.manager.limit);
     for (let index = 0; index < this.scopes.length; index++) nla.push();
     nla.isRelevant = (lpVar) =>
       this.context.isRelevant(this.getExpr(this.solver.getExternal(lpVar)));
