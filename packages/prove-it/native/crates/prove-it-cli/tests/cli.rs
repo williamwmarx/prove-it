@@ -1445,6 +1445,23 @@ fn declines_a_postcondition_after_an_initial_states_violation() {
 }
 
 #[test]
+fn exits_by_the_code_of_an_evalexception_in_the_next_states() {
+    // TLC's replay of the expansion exits by the EvalException's code: a general error, 255, for
+    // a division by zero, after the trace and the call stack.
+    let spec = "---- MODULE Stop ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = (IF x = 1 THEN 1 % 0 ELSE x + 1)\n====\n";
+    let (output, directory) = run_lowered("eval-exit", spec, "INIT Init\nNEXT Next\n");
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(255), "{text}");
+    assert!(
+        text.contains(
+            "Error: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n"
+        ),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
 fn prints_what_the_expansion_printed_before_its_violation() {
     // TLC checks each successor as it finds it, so it prints what finding the violating one
     // printed before it reports the violation, as TLC 1.8 prints this spec's 1.
