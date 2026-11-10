@@ -34,6 +34,7 @@ fn verdict(answers: Option<&[u8]>) -> Verdict {
         &graph(),
         &[answers],
         false,
+        1,
     );
     if let Verdict::Declined(_) = liveness.verdict {
     } else {
@@ -97,6 +98,7 @@ fn passes_by_the_states_a_check_part_way_hasnt_expanded() {
         &graph,
         &[Some(&[1, 0])],
         false,
+        1,
     );
     assert_eq!(liveness.verdict, Verdict::Holds);
 }
@@ -194,6 +196,7 @@ fn names_the_first_atom_it_leaves_unanswered_as_it_adds_the_states() {
             &graph(),
             &[Some(answers)],
             false,
+            1,
         )
         .unanswered
     };
@@ -342,6 +345,7 @@ fn names_the_first_action_it_leaves_unanswered_step_by_step() {
                 Some(second),
             ],
             false,
+            1,
         )
         .unanswered
         .map(|unanswered| (unanswered.atom, unanswered.slot))
@@ -350,4 +354,40 @@ fn names_the_first_action_it_leaves_unanswered_step_by_step() {
     assert_eq!(unanswered(&[1, 1, 1, 1], &[0, 0, 0, 0]), None);
     assert_eq!(unanswered(&[2, 1, 1, 1], &[1, 1, 2, 1]), Some((4, 2)));
     assert_eq!(unanswered(&[1, 1, 2, 1], &[2, 1, 1, 1]), Some((2, 2)));
+}
+
+#[test]
+fn finds_on_several_threads_what_it_finds_on_one() {
+    // The negation of []<>P /\ []Q, P atom 0 and Q atom 1: a behavior graph for each of <>[]~P
+    // and <>~Q, built on a thread each, whatever the answers, unanswered ones included.
+    let always_q = [Term::Always, Term::State(1)];
+    let formula: Vec<Term> = [Term::Or(2)]
+        .into_iter()
+        .chain(NOT_INFINITELY_OFTEN)
+        .chain([Term::Not, Term::Always, Term::State(1)])
+        .collect();
+    let answers = [0u8, 1, 2];
+    for p in answers
+        .iter()
+        .flat_map(|&first| answers.map(|second| [first, second]))
+    {
+        for q in answers
+            .iter()
+            .flat_map(|&first| answers.map(|second| [first, second]))
+        {
+            let on = |threads: usize| {
+                check(
+                    &formula,
+                    &[&INFINITELY_OFTEN, &always_q],
+                    &graph(),
+                    &[Some(&p), Some(&q)],
+                    false,
+                    threads,
+                )
+            };
+            let one = on(1);
+            assert_eq!(one.branches, Some(2));
+            assert_eq!(on(2), one, "P {p:?}, Q {q:?}");
+        }
+    }
 }
