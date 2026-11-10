@@ -73,6 +73,8 @@ pub fn run(args: &[String], output: &mut Output<'_>) -> i32 {
         },
         "tla2sany.xml.XMLExporter" => match &launch.java.unmodelled_property {
             Some(property) => not_native(output, &format!("the system property {property}")),
+            // TLC 1.7.4's XMLExporter is retired, and only master's is ported.
+            None if launch.java.is_174 => not_native(output, "TLC 1.7.4"),
             None => run_xml_exporter(&launch.args, output)
                 .unwrap_or_else(|reason| not_native(output, &reason)),
         },
