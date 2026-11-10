@@ -28,6 +28,7 @@ use crate::trace::{
     PostconditionRun, Postconditions, PrintedTrace, check_postconditions, format_print,
     rebuild_accepted, rebuild_trace,
 };
+use crate::xml_exporter::run_xml_exporter;
 use tla_front::TlcVersion;
 use tla_front::config::{ModelConfig, parse_config};
 use tla_front::errors::FrontError;
@@ -68,7 +69,11 @@ pub fn run(args: &[String], output: &mut Output<'_>) -> i32 {
             Some(property) => not_native(output, &format!("the system property {property}")),
             None => check_specs(&launch.args, &launch.java, true, output),
         },
-        "tla2sany.xml.XMLExporter" => not_native(output, "tla2sany.xml.XMLExporter"),
+        "tla2sany.xml.XMLExporter" => match &launch.java.unmodelled_property {
+            Some(property) => not_native(output, &format!("the system property {property}")),
+            None => run_xml_exporter(&launch.args, output)
+                .unwrap_or_else(|reason| not_native(output, &reason)),
+        },
         other => {
             let _ = writeln!(
                 output.err,

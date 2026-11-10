@@ -6,6 +6,7 @@
 //! warnings) is `report.rs`'s: the graph is built only for a specification SANY accepts, and a
 //! throw of the TypeScript generator, or an error `report.rs` didn't report, is `NotYet`.
 
+pub mod export;
 pub mod nodes;
 pub mod selectors;
 
