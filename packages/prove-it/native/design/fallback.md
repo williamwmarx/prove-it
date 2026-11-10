@@ -252,7 +252,7 @@ run with and without `-noGenerateSpecTE`):
 |---|---:|---|
 | `java -cp …jar tlc2.TLC`: reading the version of a tla2tools.jar | 117 | the CLI (prove-it-check) |
 | SANY's report of the trace exploration spec | 64 test runs, 664 corpus runs | the front end |
-| TLC 1.7.4's output | 5 | waits on the owner |
+| TLC 1.7.4's output | 5 | retired: it declines until the TypeScript goes |
 | `-dump`, `-continue` | 7 | S2 |
 | the 518 of the library's `check` calls, by mechanism (above) | the rest | as staffed |
 
@@ -262,10 +262,9 @@ run with and without `-noGenerateSpecTE`):
 and the errors stay. `parseModule` and `Module` are the front end's to decide.
 
 `Value`, `formatValue` and the values in `TraceStep` and `Violation` are the interpreter's classes.
-The proposal: a trace step carries each variable as TLC prints it, from the native printer, and as
-plain decoded data with no classes. `formatValue` is dropped, or becomes a thin native printer if a
-caller needs one. This breaks callers that hold `Value`s, so it waits for the owner. The exports
-don't change until then.
+The owner decided to break them: a trace step carries each variable as TLC prints it, from the
+native printer, and as plain decoded data with no classes. `Value` and `formatValue` go. That is its
+own change, after this one.
 
 ### What changes for users
 
@@ -274,5 +273,5 @@ don't change until then.
   - or `dist` lacks the engine.
   A browser keeps the WebAssembly engine.
 - A WebAssembly stack overflow becomes an error unless S2 lifts it first.
-- `-dump`, `-continue`, periodic configs and TLC 1.7.4 are checked natively.
+- `-dump`, `-continue` and periodic configs are checked natively. TLC 1.7.4's output is retired.
 - The library prints what the binary prints. Today they differ only where the library hands over.
