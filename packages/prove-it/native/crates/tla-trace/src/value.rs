@@ -140,6 +140,14 @@ pub enum Lazy {
     Cap(Value, Value),
     Cup(Value, Value),
     Diff(Value, Value),
+    /// `TLC!Any`, the `UserValue` of `AnySet`: every value is in it, and TLC can't say whether
+    /// it is empty.
+    Any,
+    /// `UNION S` where some element of S isn't a set enumeration (`UnionValue`).
+    Union(Value),
+    /// `{x \in S : P}` of an S TLC can't enumerate, or an infinite one (`SetPredValue`): the
+    /// evaluator tests its members, and TLC fails to enumerate it as it fails S.
+    Filter(Value, Rc<crate::eval::Predicate>),
 }
 
 impl Lazy {
@@ -148,7 +156,7 @@ impl Lazy {
     pub fn is_overridden(&self) -> bool {
         matches!(
             self,
-            Lazy::Nat | Lazy::Int | Lazy::Real | Lazy::Strings | Lazy::Seq(_)
+            Lazy::Nat | Lazy::Int | Lazy::Real | Lazy::Strings | Lazy::Seq(_) | Lazy::Any
         )
     }
 }
@@ -177,6 +185,9 @@ pub enum Value {
     Interval(i32, i32),
     Function(Rc<Function>),
     Lazy(Rc<Lazy>),
+    /// `[x \in S |-> e]` over an S TLC can't enumerate or an infinite one, which TLC keeps lazy
+    /// (`FcnLambdaValue`): the evaluator applies it.
+    Lambda(Rc<crate::eval::Lambda>),
 }
 
 impl Value {
@@ -238,7 +249,7 @@ impl Value {
             Value::Int(_) => "integer",
             Value::Str(_) => "string",
             Value::Model(_) => "model value",
-            Value::Function(_) => "function",
+            Value::Function(_) | Value::Lambda(_) => "function",
             _ => "set",
         }
     }
@@ -485,7 +496,23 @@ pub fn compare(left: &Value, right: &Value) -> Evaluated<Ordering> {
             }
         }
         (Value::Function(left), Value::Function(right)) => compare_functions(left, right),
+        (Value::Lambda(lambda), _) | (Value::Function(_), Value::Lambda(lambda)) => {
+            lambda_as_function(lambda)
+        }
         (Value::Lazy(lazy), _) if lazy.is_overridden() => compare_overridden(left, lazy, right),
+        // `SubsetValue.compareTo`: by the sets.
+        (Value::Lazy(left_lazy), Value::Lazy(right_lazy))
+            if matches!(
+                (&**left_lazy, &**right_lazy),
+                (Lazy::Subset(_), Lazy::Subset(_))
+            ) =>
+        {
+            let (Lazy::Subset(base), Lazy::Subset(other_base)) = (&**left_lazy, &**right_lazy)
+            else {
+                unreachable!("two power sets")
+            };
+            compare(base, other_base)
+        }
         (_, Value::Lazy(lazy)) if lazy.is_overridden() && left.is_set() => {
             incomparable(left, right, false)
         }
@@ -512,7 +539,11 @@ fn compare_functions(left: &Rc<Function>, right: &Rc<Function>) -> Evaluated<Ord
     let size = left.domain.len();
     if size != right.domain.len() {
         if size > 0 && !right.domain.is_empty() && is_record(left) != is_record(right) {
-            return fail("record compared with a function");
+            return non_record(
+                &Value::Function(Rc::clone(left)),
+                &Value::Function(Rc::clone(right)),
+                false,
+            );
         }
         return Ok(size.cmp(&right.domain.len()));
     }
@@ -551,12 +582,14 @@ pub fn equals(left: &Value, right: &Value) -> Evaluated<bool> {
                 typed_model_failure(left, right, true)
             }
         }
-        (Value::Function(left), Value::Function(right)) => {
+        (Value::Function(left_function), Value::Function(right_function)) => {
+            let (left_value, right_value) = (left, right);
+            let (left, right) = (left_function, right_function);
             sort(left);
             sort(right);
             let size = left.domain.len();
             if size > 0 && !right.domain.is_empty() && is_record(left) != is_record(right) {
-                return fail("record compared with a function");
+                return non_record(left_value, right_value, true);
             }
             if size != right.domain.len() {
                 return Ok(false);
@@ -572,6 +605,9 @@ pub fn equals(left: &Value, right: &Value) -> Evaluated<bool> {
                 }
             }
             Ok(true)
+        }
+        (Value::Lambda(lambda), _) | (Value::Function(_), Value::Lambda(lambda)) => {
+            lambda_as_function(lambda)
         }
         // `UserValue.equals` is its `compareTo`.
         (Value::Lazy(lazy), _) if lazy.is_overridden() => {
@@ -614,7 +650,8 @@ pub fn equals(left: &Value, right: &Value) -> Evaluated<bool> {
 fn is_same_construction(left: &Lazy, right: &Lazy) -> bool {
     matches!(
         (left, right),
-        (Lazy::FunctionSet(..), Lazy::FunctionSet(..))
+        (Lazy::Subset(_), Lazy::Subset(_))
+            | (Lazy::FunctionSet(..), Lazy::FunctionSet(..))
             | (Lazy::RecordSet(..), Lazy::RecordSet(..))
             | (Lazy::Product(..), Lazy::Product(..))
     )
@@ -629,6 +666,10 @@ fn equal_constructions(
     right_lazy: &Lazy,
 ) -> Evaluated<bool> {
     use crate::eval::is_empty;
+    // `SubsetValue.equals`: by the sets.
+    if let (Lazy::Subset(base), Lazy::Subset(other_base)) = (left_lazy, right_lazy) {
+        return equals(base, other_base);
+    }
     if let (Lazy::FunctionSet(domain, range), Lazy::FunctionSet(other_domain, other_range)) =
         (left_lazy, right_lazy)
     {
@@ -675,6 +716,46 @@ fn equal_constructions(
             Ok(true)
         }
         _ => unreachable!("the same construction"),
+    }
+}
+
+// A record compared with a function that isn't one: `RecordValue`'s failure where the record is
+// the left operand, and otherwise the evaluator's limit.
+fn non_record<T>(left: &Value, right: &Value, is_equality: bool) -> Evaluated<T> {
+    let reason = "record compared with a function";
+    let Value::Function(function) = left else {
+        return fail(reason);
+    };
+    if function.class.get() != Class::Record {
+        return fail(reason);
+    }
+    let verb = if is_equality {
+        "check equality of"
+    } else {
+        "compare"
+    };
+    fail_runtime(
+        reason,
+        format!(
+            "Attempted to {verb} record:\n{}\nwith non-record\n{}",
+            format_pretty(left),
+            format_pretty(right)
+        ),
+    )
+}
+
+/// `FcnLambdaValue.toFcnRcd`, which a comparison or a membership in a set of functions builds:
+/// a domain TLC overrides fails as `UserValue.size` does, and any other the evaluator declines.
+pub fn lambda_as_function<T>(lambda: &crate::eval::Lambda) -> Evaluated<T> {
+    match lambda.domain() {
+        Value::Lazy(lazy) if lazy.is_overridden() => fail_runtime(
+            "built a function over a set TLC doesn't enumerate",
+            format!(
+                "Attempted to compute the number of elements in the overridden value {}.",
+                format_pretty(lambda.domain())
+            ),
+        ),
+        _ => fail("built a function over an infinite set"),
     }
 }
 
@@ -849,11 +930,12 @@ pub fn settle(value: &Value) {
             }
             Lazy::RecordSet(fields, _) => fields.iter().for_each(|(_, set)| settle(set)),
             Lazy::Product(factors) => factors.iter().for_each(settle),
+            Lazy::Union(sets) | Lazy::Filter(sets, _) => settle(sets),
             Lazy::Cap(left, right) | Lazy::Cup(left, right) | Lazy::Diff(left, right) => {
                 settle(left);
                 settle(right);
             }
-            Lazy::Nat | Lazy::Int | Lazy::Real | Lazy::Strings => {}
+            Lazy::Nat | Lazy::Int | Lazy::Real | Lazy::Strings | Lazy::Any => {}
         },
         _ => {}
     }

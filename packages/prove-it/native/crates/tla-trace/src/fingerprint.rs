@@ -95,7 +95,7 @@ fn value_fingerprint(fingerprints: &mut Fingerprints, value: &Value) -> Option<(
         Value::Int(int) => Some(of_int(*int)),
         Value::Str(text) => Some(of_string(&text.units)),
         Value::Model(text) => (text.rank >= 0).then(|| of_model(text.rank)),
-        Value::Unsorted(_) => None,
+        Value::Unsorted(_) | Value::Lambda(_) => None,
         Value::Function(function) => {
             let mut parts = Vec::with_capacity(function.domain.len() * 2);
             for (key, held) in function.domain.iter().zip(&function.range) {
