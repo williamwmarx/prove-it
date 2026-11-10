@@ -239,6 +239,20 @@ pub fn first_failing_changed(
     Ok(None)
 }
 
+/// The first of the predicates that fails of the state, evaluating each: where a parent may
+/// violate one, as under `-continue`, none holds by its parent's.
+pub fn first_failing(
+    machine: &mut Machine<'_>,
+    predicates: &[Predicate],
+) -> Result<Option<usize>, (usize, Bail)> {
+    for (position, predicate) in predicates.iter().enumerate() {
+        if !holds(machine, &predicate.eval).map_err(|bail| (position, bail))? {
+            return Ok(Some(position));
+        }
+    }
+    Ok(None)
+}
+
 /// A conjunct the engine checks: a name the configuration gives, as an identifier of it, or an
 /// expression of the model.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]

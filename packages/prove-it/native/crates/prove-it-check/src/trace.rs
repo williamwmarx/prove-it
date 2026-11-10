@@ -3,13 +3,15 @@
 //! (`formatState` in `values.ts`) writes them, a line per variable in TLC's order, as a conjunction
 //! when there are several. What the spec printed as TLC rebuilt the trace comes with it.
 
-use tla_engine::search::{AcceptedTrace, FinalRegisters, Violation, ViolationKind};
+use tla_engine::machine::Registers as EngineRegisters;
+use tla_engine::search::{AcceptedTrace, ContinuedTrace, FinalRegisters, Violation, ViolationKind};
+use tla_engine::symmetry::NamedGroup;
 use tla_ir::Ir;
 use tla_trace::{
     Alias, CounterExample, Ending, PostconditionInputs, Rebuilder, Registers, Stats, Unsupported,
     Value, Verdict, format_value,
 };
-use tla_values::Id;
+use tla_values::{Id, Store};
 
 use crate::stack::on_search_stack;
 use tla_trace::pretty_print;
@@ -50,6 +52,30 @@ pub struct PrintedState {
     pub output: Vec<String>,
 }
 
+/// What a trace is rebuilt from besides its states, as the search left it: a violation's, or one
+/// it went on past under -continue.
+struct Recorded<'v> {
+    store: &'v Store,
+    startup: &'v [Id],
+    startup_random: u64,
+    random: Option<u64>,
+    symmetry: Option<&'v NamedGroup>,
+    registers: &'v EngineRegisters,
+}
+
+impl<'v> From<&'v Violation> for Recorded<'v> {
+    fn from(violation: &'v Violation) -> Self {
+        Recorded {
+            store: &violation.store,
+            startup: &violation.startup,
+            startup_random: violation.startup_random,
+            random: violation.random,
+            symmetry: violation.symmetry.as_ref(),
+            registers: &violation.registers,
+        }
+    }
+}
+
 /// The violation's trace, or why `tla-trace` can't rebuild it. The evaluator recurses with the
 /// expressions it evaluates, so it runs on a thread with the search's stack.
 pub fn rebuild_trace(
@@ -60,7 +86,7 @@ pub fn rebuild_trace(
 ) -> Result<PrintedTrace, String> {
     rebuild(
         ir,
-        violation,
+        &violation.into(),
         &violation.kind,
         &violation.states,
         violation.labels.clone(),
@@ -78,7 +104,7 @@ pub fn rebuild_accepted(
 ) -> Result<PrintedTrace, String> {
     rebuild(
         ir,
-        violation,
+        &violation.into(),
         &ViolationKind::Accepted {
             violated: accepted.violated.clone(),
         },
@@ -89,9 +115,29 @@ pub fn rebuild_accepted(
     )
 }
 
+/// The trace of a violation the search went on past under -continue, which TLC labels as it
+/// rebuilds it.
+pub fn rebuild_continued(
+    ir: &Ir,
+    trace: &ContinuedTrace<'_>,
+    kind: &ViolationKind,
+    is_tool: bool,
+) -> Result<PrintedTrace, String> {
+    let recorded = Recorded {
+        store: trace.store,
+        startup: trace.startup,
+        startup_random: trace.startup_random,
+        random: trace.random,
+        symmetry: None,
+        registers: trace.registers,
+    };
+    let labels = vec![None; trace.states.len().saturating_sub(1)];
+    rebuild(ir, &recorded, kind, &trace.states, labels, None, is_tool)
+}
+
 fn rebuild(
     ir: &Ir,
-    violation: &Violation,
+    recorded: &Recorded<'_>,
     kind: &ViolationKind,
     states: &[Vec<Id>],
     mut labels: Vec<Option<u32>>,
@@ -103,7 +149,7 @@ fn rebuild(
         // Under SYMMETRY or a VIEW the lasso's states are the stored ones: TLC rebuilds
         // the states it prints, the step back into the cycle with them, to a state whose
         // key is the stored first state of the cycle's.
-        let is_reduced = violation.symmetry.is_some() || ir.model.view.is_some();
+        let is_reduced = recorded.symmetry.is_some() || ir.model.view.is_some();
         let reduced_cycle = match *kind {
             ViolationKind::Lasso { loop_start, .. } if is_reduced => Some(loop_start),
             _ => None,
@@ -117,6 +163,7 @@ fn rebuild(
         let ending = match *kind {
             ViolationKind::Deadlock { .. } => Ending::Kept,
             ViolationKind::Invariant(_)
+            | ViolationKind::ActionProperty(_)
             | ViolationKind::InitialInvariant(_)
             | ViolationKind::InitialPredicate(_) => Ending::Violation,
             ViolationKind::Lasso { .. } | ViolationKind::Accepted { .. } => Ending::Lasso,
@@ -130,23 +177,19 @@ fn rebuild(
         };
         // TLC prints each state through the ALIAS, when there is one.
         let rebuilt = Rebuilder::new(ir).and_then(|mut rebuilder| {
-            rebuilder.set_startup(
-                &violation.store,
-                &violation.startup,
-                violation.startup_random,
-            )?;
-            if let Some(random) = violation.random {
+            rebuilder.set_startup(recorded.store, recorded.startup, recorded.startup_random)?;
+            if let Some(random) = recorded.random {
                 rebuilder.set_violation_random(random);
             }
-            if let Some(group) = &violation.symmetry {
+            if let Some(group) = recorded.symmetry {
                 rebuilder.set_symmetry(group);
             }
             rebuilder.set_registers(Registers::from_store(
-                &violation.store,
-                &violation.registers.numbered,
-                &violation.registers.named,
+                recorded.store,
+                &recorded.registers.numbered,
+                &recorded.registers.named,
             )?);
-            let mut trace = rebuilder.rebuild(&violation.store, &states, &labels, ending)?;
+            let mut trace = rebuilder.rebuild(recorded.store, &states, &labels, ending)?;
             let loop_action = match closing {
                 Some(_) => trace.states.pop().and_then(|state| state.action),
                 None => None,
