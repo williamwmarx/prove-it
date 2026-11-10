@@ -529,7 +529,9 @@ archives of the binary do not yet; the first stage that links a ported back end 
 Each stage reports what its crate adds to the three artefacts, measured from release builds on
 the PR: `prove-it-engine.node` (linux-x64-gnu), `dist/prove-it-engine.wasm`, and the `prove-it`
 binary, before and after, in bytes. The table lives in the Handoff section and grows by a row
-per stage. SIZE-NOW
+per stage. Today, before any prover crate (*measured*, release builds on linux-x64-gnu at
+b815883): `prove-it-engine.node` 2,224,024 bytes, the `prove-it` binary 5,678,520 bytes; the
+WebAssembly module's size is taken in P0, where the `wasm32-unknown-unknown` target is installed.
 
 The Isabelle/TLA+ logic (509 KB of JSON in `tla/logic-data.ts`, parsed once per process today)
 is embedded in `prove-isabelle` with `include_bytes!` as a compact binary: `scripts/isabelle-
