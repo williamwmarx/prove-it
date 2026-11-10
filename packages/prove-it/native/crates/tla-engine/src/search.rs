@@ -4894,7 +4894,7 @@ mod tests {
         }
         let mut thread = Candidates {
             before: &before,
-            seen: FingerprintSet::new(true),
+            seen: FingerprintSet::new(true, None),
             ids: Vec::new(),
             keys: Vec::new(),
             fingerprints: Vec::new(),
@@ -4910,7 +4910,7 @@ mod tests {
         let own = verified_states();
         let mut thread = Candidates {
             before: &own,
-            seen: FingerprintSet::new(true),
+            seen: FingerprintSet::new(true, None),
             ids: Vec::new(),
             keys: Vec::new(),
             fingerprints: Vec::new(),
