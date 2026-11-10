@@ -305,6 +305,9 @@ pub struct Evaluator<'ir> {
     pub(crate) state_builtins: &'static [&'static str],
     texts: Vec<Option<Rc<Text>>>,
     ranks: HashMap<Box<[u16]>, i32>,
+    /// The texts ranked past the IR's, in order, while the startup ranks what it makes as TLC
+    /// interns it; none otherwise.
+    startup_ranked: Option<Vec<Box<[u16]>>>,
     constants: Vec<Option<Value>>,
     /// Zero-arity definitions that read nothing of the state, evaluated once, as TLC does.
     cache: HashMap<(NodeId, bool), Value>,
@@ -565,6 +568,7 @@ impl<'ir> Evaluator<'ir> {
             ir,
             texts: vec![None; ir.texts.len()],
             ranks,
+            startup_ranked: None,
             constants: vec![None; ir.values.list.len()],
             cache: HashMap::new(),
             current: vec![None; width],
@@ -599,6 +603,18 @@ impl<'ir> Evaluator<'ir> {
         let text = self.text_of(units);
         self.texts[id as usize] = Some(Rc::clone(&text));
         text
+    }
+
+    /// A text a string operator makes, which TLC interns: ranked as it is made while the startup
+    /// ranks texts (`rankString`, for the strings TLC makes as it starts).
+    fn made_text(&mut self, units: Box<[u16]>) -> Rc<Text> {
+        if let Some(ranked) = &mut self.startup_ranked
+            && !self.ranks.contains_key(&units)
+        {
+            self.ranks.insert(units.clone(), self.ranks.len() as i32);
+            ranked.push(units.clone());
+        }
+        self.text_of(units)
     }
 
     /// A text with TLC's rank of it, or -1 for one the IR doesn't rank.
@@ -1490,6 +1506,24 @@ impl<'ir> Evaluator<'ir> {
         self.compute_startup_drawing()?;
         self.random = None;
         Ok(())
+    }
+
+    /// The texts TLC interns as it computes the startup definitions, the substitutes and then
+    /// `definitions` (`processConstantDefns`), past those the IR ranks, in order: those Tail,
+    /// SubSeq, `\o` and ToString make, as `rankString` ranks them.
+    pub(crate) fn get_startup_texts(ir: &Ir, definitions: &[Index]) -> Vec<Box<[u16]>> {
+        let mut evaluator = Evaluator::new(ir);
+        evaluator.startup_ranked = Some(Vec::new());
+        evaluator.random = Some(JavaRandom::seeded(ir.model.random_seed));
+        let substitutes = ir.model.startup.substitutes.iter().map(|&(_, index)| index);
+        for index in substitutes.chain(definitions.iter().copied()) {
+            let node = ir.definitions[index as usize];
+            // TLC swallows what a constant definition throws, having interned what it made.
+            evaluator
+                .evaluate(evaluator.definition(node).body, &Context::default())
+                .ok();
+        }
+        evaluator.startup_ranked.unwrap_or_default()
     }
 
     /// The startup, with the generator left where its draws left it, for the assumptions.
@@ -3385,7 +3419,7 @@ impl<'ir> Evaluator<'ir> {
                     if text.units.is_empty() {
                         return fail("Tail of the empty string");
                     }
-                    return Ok(Value::Str(self.text_of(text.units[1..].into())));
+                    return Ok(Value::Str(self.made_text(text.units[1..].into())));
                 }
                 let elements = argument_sequence("Tail", &sequence)?;
                 if elements.is_empty() {
@@ -3412,7 +3446,7 @@ impl<'ir> Evaluator<'ir> {
                         .chain(right.units.iter())
                         .copied()
                         .collect();
-                    return Ok(Value::Str(self.text_of(units)));
+                    return Ok(Value::Str(self.made_text(units)));
                 }
                 let mut elements = sequence_of(&left)?.to_vec();
                 elements.extend(sequence_of(&right)?.iter().cloned());
@@ -3436,7 +3470,7 @@ impl<'ir> Evaluator<'ir> {
                     from as usize - 1..to as usize
                 };
                 match &sequence {
-                    Value::Str(text) => Value::Str(self.text_of(text.units[range].into())),
+                    Value::Str(text) => Value::Str(self.made_text(text.units[range].into())),
                     _ => Value::tuple(sequence_of(&sequence)?[range].to_vec()),
                 }
             }
@@ -3662,7 +3696,7 @@ impl<'ir> Evaluator<'ir> {
                 }
                 checked?;
                 let units: Box<[u16]> = format_value(&value).encode_utf16().collect();
-                Value::Str(self.text_of(units))
+                Value::Str(self.made_text(units))
             }
             // TLC's empty bag is the empty function (`Bags.EmptyBag`).
             "EmptyBag" => {
