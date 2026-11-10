@@ -233,16 +233,17 @@ export const expandTemporal = (
       // TLC names a property by the operator as written (`opNode.getName()`), as A!Safe for an
       // instance's.
       const writtenName = getWrittenName(expression) ?? definition.name;
-      if (isSpecification && getDefinitionLevel(definition, environment) === VARIABLE_LEVEL) {
-        return [{ expression: definition.body, scope: undefined, name: writtenName }];
-      }
-      return expand(
+      const expanded = expand(
         definition.body,
         undefined,
         writtenName,
         new Set([...expanding, definition]),
         definition,
       );
+      // The body is walked all the same, so one that names itself overflows.
+      return isSpecification && getDefinitionLevel(definition, environment) === VARIABLE_LEVEL
+        ? [{ expression: definition.body, scope: undefined, name: writtenName }]
+        : expanded;
     }
   }
   const context = getConstantContext(environment, scope);

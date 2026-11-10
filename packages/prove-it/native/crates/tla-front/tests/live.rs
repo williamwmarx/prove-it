@@ -17,6 +17,7 @@ Chosen == IF 1 > 0 THEN []<>(x = 0) ELSE <>(x = 1)
 Constant == 1 + 1 = 2
 Zero == x = 0
 Enumerated == (CHOOSE f \\in [STRING -> {0}] : TRUE) = 0 => []<>(x = 0)
+Redefined == x \\in {0, 1} /\\ Init
 ====
 ";
 
@@ -49,6 +50,15 @@ fn try_lower_front(
 fn lower(test: &str, config: &str) -> tla_ir::Model {
     let bytes = try_lower(test, config).expect("a model the front end lowers");
     tla_ir::decode(&bytes).expect("an IR that decodes").model
+}
+
+#[test]
+fn overflows_on_an_initial_predicate_the_configuration_redefines_by_itself() {
+    // The shape of TLC's CyclicRedefineVars: Init <- Redefined, whose body names Init. TLC
+    // overflows its stack as it reads the specification.
+    let error = try_lower("cyclic", "SPECIFICATION Spec\nCONSTANT Init <- Redefined\n")
+        .expect_err("TLC overflows its stack");
+    assert!(matches!(error, FrontError::StackOverflow), "{error:?}");
 }
 
 #[test]
