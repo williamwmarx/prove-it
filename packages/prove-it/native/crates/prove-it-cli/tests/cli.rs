@@ -1604,8 +1604,9 @@ fn reports_a_division_by_zero_after_what_the_expansion_printed() {
     let output = run(&directory, &["-workers", "1", "D"]);
     let text = stdout(&output);
     // As TLC prints it: the EvalException's message after the expansion's print, the trace, the
-    // replay's print and the call stack.
-    assert_eq!(output.status.code(), Some(75), "{text}");
+    // replay's print and the call stack, exiting by the EvalException's code (255, as TLC
+    // d8fb231 exits).
+    assert_eq!(output.status.code(), Some(255), "{text}");
     assert!(
         text.contains("\"step\"\nError: The second argument of \\div is 0.\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 1\n\n\"step\"\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 42 in D\n1. Line 5, column 12 to line 5, column 42 in D\n2. Line 5, column 12 to line 5, column 25 in D\n3. Line 5, column 30 to line 5, column 42 in D\n4. Line 5, column 35 to line 5, column 42 in D\n\n\n1 states generated, 1 distinct states found, 0 states left on queue.\n"),
         "{text}"
