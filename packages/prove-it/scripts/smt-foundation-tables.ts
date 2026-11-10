@@ -58,7 +58,9 @@ const edges = [0n, 1n, 2n, 3n, 10n, 2n ** 31n, 2n ** 32n, 2n ** 53n, 2n ** 63n, 
   .concat([2n ** 96n - 1n, 2n ** 128n, 10n ** 18n, 10n ** 19n, 10n ** 40n, 3n ** 70n])
   .flatMap((value) => [value, -value]);
 
-const operands = [...new Set([...edges, ...Array.from({ length: 200 }, () => getOperand(1 + (random() % 8)))])];
+const operands = [
+  ...new Set([...edges, ...Array.from({ length: 200 }, () => getOperand(1 + (random() % 8)))]),
+];
 
 const pairs = [
   ...edges.flatMap((left, index) =>
@@ -68,7 +70,10 @@ const pairs = [
   ...Array.from({ length: 600 }, () => {
     // A dividend made from the divisor, so that quotients have many limbs.
     const divisor = getOperand(1 + (random() % 4));
-    return [divisor * getOperand(1 + (random() % 4)) + getOperand(1 + (random() % 3)), divisor] as const;
+    return [
+      divisor * getOperand(1 + (random() % 4)) + getOperand(1 + (random() % 3)),
+      divisor,
+    ] as const;
   }),
 ];
 
@@ -107,7 +112,9 @@ const intLines = [
   ),
   ...operands
     .slice(0, 120)
-    .flatMap((value) => [0, 1, 2, 3, 7].map((exponent) => `pow ${value} ${exponent} ${value ** BigInt(exponent)}`)),
+    .flatMap((value) =>
+      [0, 1, 2, 3, 7].map((exponent) => `pow ${value} ${exponent} ${value ** BigInt(exponent)}`),
+    ),
 ];
 
 const getRational = () => {
@@ -187,7 +194,9 @@ const hashLines = [
     return `mix ${key} ${b} ${c} ${mkMix(key, b, c)}`;
   }),
   ...strings.flatMap((text) =>
-    [0, 17, 0xffffffff].map((init) => `string ${init} ${stringHash(text, init)} ${JSON.stringify(text)}`),
+    [0, 17, 0xffffffff].map(
+      (init) => `string ${init} ${stringHash(text, init)} ${JSON.stringify(text)}`,
+    ),
   ),
   ...Array.from({ length: 200 }, (_, index) => {
     const children = keys.slice(index % 50, (index % 50) + (index % 9));
@@ -241,10 +250,7 @@ const getTableLines = (getHash: (key: number) => number, label: string) => {
 
 const randomGen = new RandomGen(0);
 const seeded = new RandomGen(123456789);
-const randomLines = Array.from(
-  { length: 200 },
-  () => `${randomGen.next()} ${seeded.next()}`,
-);
+const randomLines = Array.from({ length: 200 }, () => `${randomGen.next()} ${seeded.next()}`);
 
 const write = (crate: string, name: string, lines: string[]) => {
   const directory = join(native, crate, "tests/tables");
@@ -256,6 +262,14 @@ write("num", "int.txt", intLines);
 write("num", "rational.txt", rationalLines);
 write("smt", "hash.txt", hashLines);
 const tables = [getTableLines(getIdentityHash, "identity"), getTableLines(hashU, "hashed")];
-write("smt", "hashtable.txt", tables.flatMap((table) => table.snapshots));
-write("smt", "hashtable-operations.txt", tables.flatMap((table) => table.operations));
+write(
+  "smt",
+  "hashtable.txt",
+  tables.flatMap((table) => table.snapshots),
+);
+write(
+  "smt",
+  "hashtable-operations.txt",
+  tables.flatMap((table) => table.operations),
+);
 write("smt", "random-gen.txt", randomLines);
