@@ -306,23 +306,55 @@ pub fn failing_sets(value: &Value, set: &Value) -> Option<Vec<Value>> {
     let Value::Lazy(lazy) = set else {
         return Some(Vec::new());
     };
+    // `UnionValue.member` asks each set of the union in turn, and fails in the one that fails.
+    if let Lazy::Union(sets) = &**lazy {
+        for inner in elements(sets).ok()?.iter() {
+            match is_member(value, inner) {
+                Ok(true) => return None,
+                Ok(false) => {}
+                Err(_) => {
+                    let mut sets = vec![inner.clone()];
+                    sets.extend(failing_sets(value, inner)?);
+                    return Some(sets);
+                }
+            }
+        }
+        return None;
+    }
     // Each element a nested set tests, in the order `is_member` tests them.
     let tested: Vec<(&Value, &Value)> = match (&**lazy, value) {
         (Lazy::FunctionSet(domain, range), Value::Function(function)) => {
-            equals(&Value::Set(Rc::new(function.domain.clone())), domain).ok()?;
+            // `SetOfFcnsValue.member` compares its domain with the function's, which fails in the
+            // domain's method, or for a function over an interval, a tuple's, in the interval's
+            // (`fcn.intv.equals`), which has no source.
+            if equals(&Value::Set(Rc::new(function.domain.clone())), domain).is_err() {
+                return Some(if function.interval.is_some() {
+                    Vec::new()
+                } else {
+                    vec![domain.clone()]
+                });
+            }
             function
                 .range
                 .iter()
                 .map(|element| (element, range))
                 .collect()
         }
-        (Lazy::RecordSet(fields, _), Value::Function(function)) => fields
-            .iter()
-            .map(|(name, set)| {
-                let position = find_key(function, &Value::Str(Rc::clone(name))).ok()??;
-                Some((&function.range[position], set))
-            })
-            .collect::<Option<_>>()?,
+        (Lazy::RecordSet(fields, _), Value::Function(function)) => {
+            let positions: Option<Vec<usize>> = fields
+                .iter()
+                .map(|(name, _)| find_key(function, &Value::Str(Rc::clone(name))).ok()?)
+                .collect();
+            // A function without the fields fails the set's own test: a value that isn't a record.
+            let Some(positions) = positions else {
+                return Some(Vec::new());
+            };
+            positions
+                .into_iter()
+                .zip(fields)
+                .map(|(position, (_, set))| (&function.range[position], set))
+                .collect()
+        }
         (Lazy::Product(factors), _) => match as_tuple(value) {
             Some(tuple) if tuple.len() == factors.len() => tuple.iter().zip(factors).collect(),
             _ => return None,
