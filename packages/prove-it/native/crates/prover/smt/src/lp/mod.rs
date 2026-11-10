@@ -9,4 +9,7 @@ pub mod hnf;
 pub mod lar_term;
 pub mod lp_settings;
 pub mod nla_backoff;
+pub mod nla_emonics;
+pub mod nla_var_eqs;
 pub mod numeric_pair;
+pub mod union_find;
