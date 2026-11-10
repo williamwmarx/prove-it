@@ -1,7 +1,9 @@
 //! The native `prove-it` binary (native/DESIGN.md 13): checks a TLA+ spec as the TypeScript CLI
 //! does and prints exactly what TLC prints.
 
-use prove_it_check::Output;
+mod pages;
+
+use prove_it_check::{Output, SystemHost};
 
 /// The stack of the run's thread: the front end recurses as deep as TLC's translation of a
 /// formula does before it reports TLC's stack overflow, which a main thread's stack, 1 MiB on
@@ -22,6 +24,7 @@ fn main() {
                 &mut Output {
                     out: &mut out,
                     err: &mut err,
+                    host: &SystemHost::new(pages::LARGE_REGION_ADVICE),
                 },
             )
         })

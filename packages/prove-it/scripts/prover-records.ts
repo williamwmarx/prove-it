@@ -9,9 +9,12 @@ import type { Statistics, Verdict } from "../src/prover/verdict";
 import { CONFORMANCE_DIRECTORY } from "./corpora";
 
 // The answer to an input with stepLimit steps and no time limit, or the error the backend threw.
+// An input that throws has no step limit: a backend may take steps before the error, as Z3 does
+// parsing up to the malformed term, so a limit could stop it before the error. It throws within
+// the time limit, so it throws without one.
 export interface InputRecord {
   prover: string;
-  stepLimit: number;
+  stepLimit?: number;
   verdict: Verdict;
   statistics: Statistics;
   error?: string;

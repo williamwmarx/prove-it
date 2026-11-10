@@ -1007,6 +1007,85 @@ fn run_spec(test: &str, spec: &str, config: &str) -> (Output, PathBuf) {
     (run(&directory, &["-noTE", "Stop"]), directory)
 }
 
+// A counter with a `_PERIODIC` expression, as TLC's ran at d8fb231 with `-workers 1`: TLC
+// evaluates the expression just before it prints its progress, about 3 s in, and not at all in a
+// run that ends first. A constant-level expression it evaluates once, at startup.
+fn periodic_spec(next: &str, periodic: &str) -> String {
+    format!(
+        "---- MODULE Stop ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == {next}\nPeriodic == {periodic}\n====\n"
+    )
+}
+
+const PERIODIC_CONFIG: &str = "INIT Init\nNEXT Next\n_PERIODIC Periodic\nCHECK_DEADLOCK FALSE\n";
+
+#[test]
+fn prints_a_constant_periodic_expression_at_startup_as_tlc() {
+    let spec = periodic_spec("x < 3 /\\ x' = x + 1", "PrintT(\"periodic\")");
+    let (output, directory) = run_spec("periodic-constant", &spec, PERIODIC_CONFIG);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(0), "{text}");
+    assert!(
+        text.contains(
+            "\n\"periodic\"\nComputing initial states...\nFinished computing initial states: 1 distinct state generated at "
+        ),
+        "{text}"
+    );
+    assert!(
+        text.contains("Model checking completed. No error has been found."),
+        "{text}"
+    );
+    assert!(
+        text.contains("4 states generated, 4 distinct states found, 0 states left on queue.\n"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn completes_where_tlc_ends_before_it_evaluates_the_periodic_expression() {
+    for (test, periodic) in [
+        (
+            "periodic-print",
+            "PrintT(<<\"periodic\", TLCGet(\"distinct\")>>)",
+        ),
+        ("periodic-false", "TLCGet(\"distinct\") < 0"),
+    ] {
+        let spec = periodic_spec("x < 3 /\\ x' = x + 1", periodic);
+        let (output, directory) = run_spec(test, &spec, PERIODIC_CONFIG);
+        let text = stdout(&output);
+        assert_eq!(output.status.code(), Some(0), "{test}: {text}");
+        assert!(!text.contains("\"periodic\""), "{test}: {text}");
+        assert!(
+            text.contains("Model checking completed. No error has been found."),
+            "{test}: {text}"
+        );
+        assert!(
+            text.contains("4 states generated, 4 distinct states found, 0 states left on queue.\n"),
+            "{test}: {text}"
+        );
+        std::fs::remove_dir_all(directory).expect("removed");
+    }
+}
+
+#[test]
+fn declines_where_tlc_would_evaluate_the_periodic_expression() {
+    // A search that runs until TLC's first progress, where TLC prints <<"periodic", n>>.
+    let spec = periodic_spec(
+        "x' = x + 1",
+        "PrintT(<<\"periodic\", TLCGet(\"distinct\")>>)",
+    );
+    let (output, directory) = run_spec("periodic-long", &spec, PERIODIC_CONFIG);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(1), "{text}");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "prove-it: not native yet: _PERIODIC, which TLC evaluates as it prints its progress\n"
+    );
+    assert!(!text.contains("\"periodic\""), "{text}");
+    assert!(!text.contains("Progress("), "{text}");
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
 #[test]
 fn reports_a_constant_the_configuration_leaves_unassigned() {
     let spec =
@@ -2670,6 +2749,100 @@ fn run_front(test: &str, spec: &str, config: &str, args: &[&str]) -> (Output, Pa
     (output, directory)
 }
 
+// tests/liveness-failures: x' \in S or x' \subseteq S beside x' = a \/ x' = b, where TLC fails
+// evaluating WF_x(Next) or WF_x(Alias), Alias == Next, as it adds a state to the behavior graphs.
+// Where the subscript's two values fail to compare (`LNAction.eval` compares them outside any
+// evaluation), TLC prints no nested expressions; where an element of x' fails S's own `member` in
+// `isSubsetEq` and S has a source, TLC throws a FingerprintException, whose message it doesn't
+// print, which the engine declines as it does other FingerprintExceptions. TLC's output for each
+// at d8fb231 is beside it.
+#[test]
+fn reports_failures_in_the_temporal_properties_as_tlc() {
+    let declined = [
+        "MFunctionsSubseteqEmptyWrap",
+        "MFunctionsSubseteqWrap",
+        "MProductSubseteqEmptyWrap",
+        "MRecordsSubseteqEmptyWrap",
+    ];
+    let directory =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/liveness-failures");
+    let mut names: Vec<String> = std::fs::read_dir(&directory)
+        .expect("the specs")
+        .filter_map(|entry| {
+            let path = entry.expect("an entry").path();
+            (path.extension()? == "tla").then(|| path.file_stem()?.to_str().map(String::from))?
+        })
+        .collect();
+    names.sort();
+    assert_eq!(names.len(), 9);
+    for name in names {
+        let spec = std::fs::read_to_string(directory.join(format!("{name}.tla"))).expect("a spec");
+        let constant = if name.contains("Empty") {
+            "{}"
+        } else {
+            "{1, 3}"
+        };
+        for (specification, suffix) in [("Weak", ""), ("AliasWeak", ".alias")] {
+            let tlc = std::fs::read_to_string(directory.join(format!("{name}{suffix}.txt")))
+                .expect("TLC's output");
+            for workers in ["1", "4"] {
+                let config = format!(
+                    "CONSTANT C = {constant}\nSPECIFICATION {specification}\nPROPERTY Live\n"
+                );
+                let test = format!("failures-{name}-{specification}-{workers}");
+                let args = [
+                    "-workers",
+                    workers,
+                    "-nowarning",
+                    "-seed",
+                    "4",
+                    "-fp",
+                    "0",
+                    "-lncheck",
+                    "final",
+                ];
+                let (output, run) = run_front(&test, &spec, &config, &args);
+                let text = stdout(&output);
+                let error = String::from_utf8_lossy(&output.stderr).into_owned();
+                if declined.contains(&name.as_str()) {
+                    assert!(
+                        error.contains("prove-it: not native yet: "),
+                        "{name} {specification} {workers}: {text}{error}"
+                    );
+                } else {
+                    assert_eq!(
+                        get_untimed(&text),
+                        tlc,
+                        "{name} {specification} {workers}: {error}"
+                    );
+                }
+                std::fs::remove_dir_all(run).expect("removed");
+            }
+        }
+    }
+}
+
+// What a run printed from `Starting...` to `Finished in`, but the lines that tell the time.
+fn get_untimed(text: &str) -> String {
+    let start = text.find("Starting... (").expect("the start");
+    let end = text.find("Finished in ").expect("the end");
+    text[start..end]
+        .lines()
+        .skip(1)
+        .filter(|line| {
+            ![
+                "Finished computing initial states",
+                "Progress(",
+                "Checking ",
+                "Finished checking temporal properties",
+            ]
+            .iter()
+            .any(|prefix| line.starts_with(prefix))
+        })
+        .map(|line| format!("{line}\n"))
+        .collect()
+}
+
 // What a run printed from `Starting...` to computing the initial states.
 fn get_startup(text: &str) -> &str {
     let start = text.find("Starting... (").expect("the start");
@@ -3596,6 +3769,78 @@ fn passes_the_elements_a_leading_field_test_rejects_where_tlc_does() {
         }
     }
     std::fs::remove_dir_all(directory).expect("removed");
+}
+
+// Fairness whose ENABLED the search's steps answer, or don't, against what TLC built at d8fb231
+// prints for each spec, on one thread and with every level shared between four.
+#[test]
+fn answers_enabled_from_the_steps_as_tlc_does() {
+    let specs = [
+        (
+            // ENABLED <<A>>_x holds at x = 2, where no step takes A: A is a conjunct of the action
+            // TLC splits, not the action, so ENABLED runs, and WF_x(A) rules out stuttering there.
+            "Guarded",
+            "---- MODULE Guarded ----\nEXTENDS Naturals\nVARIABLE x\nA == x' = x + 1\nNext == (x < 2 /\\ A) \\/ (x = 2 /\\ x' = 0)\nSpec == x = 0 /\\ [][Next]_x /\\ WF_x(A)\nLive == []<>(x = 0)\n====\n",
+            "SPECIFICATION Spec\nPROPERTY Live\n",
+            "Model checking completed. No error has been found.\n",
+            "4 states generated, 3 distinct states found, 0 states left on queue.\n",
+        ),
+        (
+            // TLC's ENABLED ignores the constraint that drops A's step from x = 2, so ENABLED runs.
+            "Constrained",
+            "---- MODULE Constrained ----\nEXTENDS Naturals\nVARIABLE x\nA == x' = x + 1\nB == x = 2 /\\ x' = 0\nNext == A \\/ B\nSpec == x = 0 /\\ [][Next]_x /\\ WF_x(A)\nLive == []<>(x = 0)\nSmall == x <= 2\n====\n",
+            "SPECIFICATION Spec\nCONSTRAINT Small\nPROPERTY Live\n",
+            "Model checking completed. No error has been found.\n",
+            "5 states generated, 3 distinct states found, 0 states left on queue.\n",
+        ),
+        (
+            // Inc(1) and Reset are TLC's actions, which label the steps that answer their ENABLED.
+            "Counters",
+            "---- MODULE Counters ----\nEXTENDS Naturals\nCONSTANT P\nVARIABLE x\nInc(p) == x[p] < 2 /\\ x' = [x EXCEPT ![p] = x[p] + 1]\nReset == (\\A p \\in P : x[p] = 2) /\\ x' = [p \\in P |-> 0]\nNext == (\\E p \\in P : Inc(p)) \\/ Reset\nSpec == x = [p \\in P |-> 0] /\\ [][Next]_x /\\ WF_x(Inc(1)) /\\ WF_x(Reset)\nDone == \\A p \\in P : <>(x[p] = 2)\n====\n",
+            "CONSTANT P = {1, 2}\nSPECIFICATION Spec\nPROPERTY Done\n",
+            concat!(
+                "Error: Temporal property Done was violated.\n\n",
+                "Error: The following behavior constitutes a counter-example:\n\n",
+                "State 1: <Initial predicate>\nx = <<0, 0>>\n\n",
+                "State 2: <Inc(2) line 5, col 11 to line 5, col 53 of module Counters>\nx = <<0, 1>>\n\n",
+                "State 3: <Inc(1) line 5, col 11 to line 5, col 53 of module Counters>\nx = <<1, 1>>\n\n",
+                "State 4: <Inc(1) line 5, col 11 to line 5, col 53 of module Counters>\nx = <<2, 1>>\n\n",
+                "State 5: Stuttering\n",
+            ),
+            "14 states generated, 9 distinct states found, 0 states left on queue.\n",
+        ),
+        (
+            // The labelled search counts and orders the states as the next-state relation's walk
+            // does, which the POSTCONDITION reads.
+            "Stats",
+            "---- MODULE Stats ----\nEXTENDS Naturals, TLC\nCONSTANT P\nVARIABLE x\nInc(p) == x[p] < 2 /\\ x' = [x EXCEPT ![p] = x[p] + 1]\nReset == (\\A p \\in P : x[p] = 2) /\\ x' = [p \\in P |-> 0]\nNext == (\\E p \\in P : Inc(p)) \\/ Reset\nSpec == x = [p \\in P |-> 0] /\\ [][Next]_x /\\ \\A p \\in P : WF_x(Inc(p))\nDone == \\A p \\in P : []<>(x[p] = 2)\nPost == PrintT(<<TLCGet(\"stats\"), TLCGet(\"distinct\"), TLCGet(\"queue\"), TLCGet(\"level\")>>)\n====\n",
+            "CONSTANT P = {1, 2}\nSPECIFICATION Spec\nPROPERTY Done\nPOSTCONDITION Post\n",
+            "<< [ distinct |-> 9,\n     queue |-> 0,\n     worker |-> 0,\n     duration |-> 0,\n     generated |-> 14,\n     diameter |-> 5,\n     initial |-> 1 ],\n   9,\n   0,\n   0 >>\nModel checking completed. No error has been found.\n",
+            "14 states generated, 9 distinct states found, 0 states left on queue.\n",
+        ),
+    ];
+    for (name, spec, config, printed, count) in specs {
+        let directory = std::env::temp_dir().join(format!(
+            "prove-it-cli-enabled-{name}-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&directory).expect("a directory");
+        std::fs::write(directory.join(format!("{name}.tla")), spec).expect("a spec");
+        std::fs::write(directory.join(format!("{name}.cfg")), config).expect("a configuration");
+        for threads in ["1", "4"] {
+            let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
+                .args(["-noTE", name])
+                .current_dir(&directory)
+                .env("PROVE_IT_WORKERS", threads)
+                .env("PROVE_IT_SHARED_LEVEL", "1")
+                .output()
+                .expect("the binary runs");
+            let text = stdout(&output);
+            assert!(text.contains(printed), "{name} on {threads}: {text}");
+            assert!(text.contains(count), "{name} on {threads}: {text}");
+        }
+        std::fs::remove_dir_all(directory).expect("removed");
+    }
 }
 
 #[test]

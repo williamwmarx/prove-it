@@ -631,6 +631,23 @@ MCabs spends a similar share in `find_in_block`, but on functions of a few model
 the store already scans by id: its cost is the misses of reading their values, which this doesn't
 change.
 
+### Liveness (`perf-liveness`)
+
+The track ends with StarkMutex at about 4.7 s on one worker, from 9.49 s at the baseline. The last
+step answers ENABLED of TLC's actions from the steps the search took (#203): 5.37 → 4.72 s on one
+worker and 3.83 → 2.87 s on four. Where the 4.7 s goes, at main d89e559 (instrumented, 3 runs):
+answering the atoms 1.53 s, the checker 2.20 s (adding states about 1.7 s of it), and the search
+and start-up about 0.95 s.
+
+Two further steps were bounded and not built, since neither clears 1.1× by a safe margin:
+
+| Idea | Bound on StarkMutex, one worker | Why it stops there |
+|---|---|---|
+| Label the steps in the walk of the next-state relation, not by walking TLC's 65 actions one by one | at most 0.5 s: 4.70 → 4.20 s, 1.12×; about 1.08–1.10× once the labels cost anything | The unlabelled search took 0.45 s before #203 and the labelled one takes about 0.95 s. Each label must be the action TLC's split gives the step, through `\E` over constant sets and operator bodies, for every (action, successor) pair. |
+| A flat form of the 60 action checks the checker evaluates as it adds states | 0.3–0.5 s of `add_states`' 1.7 s: 1.07–1.12× | Most of `add_states` is reading the answer tables and building the behavior graphs, which the flat form leaves. |
+
+Together they bound StarkMutex at about 1.25×.
+
 ## Measured and dropped
 
 Tried on the symmetry and evaluator tracks, measured with the suite on the 4-core container, and
@@ -669,6 +686,102 @@ set filter or action-level `\E` whose body starts with `m.f = e` on the bound na
   leading test.
 - FastPaxos: 6.3M visits.
 - MCMultiNode and cf1s_folklore: no site of this shape.
+
+### Fingerprints and the state table
+
+| Idea | Model | Result | Why it lost |
+|---|---|---|---|
+| Fingerprint a successor whose values change length by independent terms: the parent's prefix before the first changed value shifted by the successor's length from there, each value's F shifted by its tail up to the last changed value, and the parent's terms after it, with each value caching its last term (the same 64-bit value) | MCbtree, MCExactInitialSync | Cachegrind against main: MCbtree 12.17B → 11.90B instructions and 152M → 46M L1 data misses; MCExactInitialSync 163.7B → 169.7B instructions and 3.98B → 2.99B L1 data misses. Wall at 1 worker: MCbtree 1.77 → 1.52 s (11 runs), MCExactInitialSync 31.2 → 34.0 s (5 runs) | 88% of MCbtree's and 65% of MCExactInitialSync's successors change a value's length, and the old path re-extends from the first changed value. On MCExactInitialSync the changed span is nearly as long (6.8 of 9 values), so the terms' table lookups and cache writes cost what the shorter chain saves. 59% of its terms hit the cache. Not kept. |
+| Shift fingerprints by 4-bit tables (2 KB a length) instead of 8-bit ones (16 KB), the same values | MCbtree, MCExactInitialSync | Cachegrind on MCbtree: 12.41B → 13.37B instructions, 144M → 106M L1 data misses. Wall: MCbtree 1.61 → 1.53 s (11 runs), MCExactInitialSync 25.88 → 27.21 s (5 runs), both within noise | The tables' misses are served from L2 and the last level, not memory, so halving the misses buys less than the 16 loads a shift then takes cost. A carry-less multiply (speed.md) trades the same way: its dependent chain is about as long as an L2 hit. |
+
+**State storage, designed and not built.** A compact store would code each variable's ids by a
+dictionary per variable. It gains no time and saves memory only on models whose state store
+dominates their memory. Measured on main 9bf3b18, one worker:
+
+| Model | States, variables | Stored ids | Parents, fingerprints, seen-set | Peak RSS | Distinct ids per variable |
+|---|---|---:|---:|---:|---|
+| MCExactInitialSync | 9,610,407, 12 | 461 MB (48 B a state) | 38, 77, 268 MB | 901 MB | 27, 2935, 6993, 4, 12, 4, 5, 4, 11, 27, 1, 160 (61 bits a state) |
+| PaxosCommit | 1,321,761, 3 | 16 MB | 5, 11, 34 MB | 719 MB | 12, 55696, 888713 (40 bits) |
+
+- **Time:** what a compact store removes is about 4.5% of MCExactInitialSync's self time and 2%
+  of PaxosCommit's, at most 1.05× and 1.02× before encoding and decoding. That covers copies, the
+  states' pushes, `realloc` and page faults.
+- **Memory:** a 16-bit code per variable takes MCExactInitialSync's stored ids from 461 to
+  231 MB, about 25% of its peak. Packed codes (8 B a state) take them to 77 MB, about 43%.
+  PaxosCommit's memory is its value store, so it saves 2–3%.
+- **Design:** each variable keeps an id → code map to encode and a code → id array to decode.
+  The expanded state is decoded once per parent. Traces, liveness, state logs, checkpoints and the
+  threads' merge read states through `States::state`, which would decode.
+  - A variable whose dictionary outgrows its width needs the store re-packed, or a 16- or 32-bit
+    code chosen per variable as it grows (the −25% figure).
+  - Output is unaffected.
+
+### Memo tables and the memory layout (`perf-memo`)
+
+What the memo track built, measured and dropped, and why the store's memory layout stays as it is.
+
+**Built:**
+- #179 clusters a large table's entries by its first key.
+- #187 shares a table's room between a search's threads.
+- #193 passes the elements a loop's leading `x.f = c` rejects.
+- #201 turns off a full table that misses more than it hits, and unites a set with one element by a binary search.
+
+**Measured and dropped:**
+
+| Idea | Model | Result | Why it lost |
+|---|---|---|---|
+| Huge pages on every allocation of 4 MiB or more (a global allocator) | the suite at 232aa8d + #179 | PaxosCommit 1.07×, MCMultiNode 1.05×; MCbtree, Detlefs, GameOfLife, SpanTreeRandom 0.94–0.95×; geomean 1.00× | Faulting and zeroing 2 MB pages costs the short runs what the long ones gain. |
+| A memo per action, keyed by the variables the action reads | PaxosCommit, MCMultiNode | Not built. `msgs` is new in 848K of PaxosCommit's 1.2M expansions, so at most about 30% would hit. MCMultiNode's work keyed on `history` is already in tables that hit 92%. | The ceiling is about 15% of PaxosCommit, before replaying successors costs anything. |
+| Prefetch each large table's run when a state becomes current | MCMultiNode | 5% slower | Most tables aren't read for a given state. |
+| Take a table's home from the hash's high bits, so that growing writes in order | MCLamportMutex, MCMultiNode, PaxosCommit | No change over 5 interleaved runs of each | The rehash reads sequentially, and hardware prefetch hides that. |
+| A total memo budget per thread instead of a cap per table | PaxosCommit and MCMultiNode at 4 workers | At 2^22 entries: PaxosCommit 12.90 → 14.27 s (1421 → 855 MB); MCMultiNode 3.47 → 3.57 s (935 → 599 MB) | The tables that fill first take the room PaxosCommit's hot tables need. |
+| A cache from (set, element) to the id of their union | PaxosCommit | Not built. 13.0M single-element unions over 9.09M distinct pairs. | Only 30% recur, and the cache would itself miss memory. |
+| A size cap without eviction, at 2^12–2^20 entries; clustering in bands of 8 or 64 slots | MCMultiNode, PaxosCommit | Slower at every cap and band | The caching pays even at a miss to memory, and a band spreads a state's run. |
+
+**Where the misses are.** These are cachegrind runs, because this container exposes no hardware counters (`perf stat` reports them as not supported). Each is a full one-worker run at #201's head, simulating a 32 KB D1 and a last level of either 2 MB (standing in for L2) or 32 MB (standing in for memory). Misses are data-read misses, attributed by function and grouped:
+
+| Group | MCLamportMutex, 2 MB | MCMultiNode, 2 MB | PaxosCommit, 2 MB | MCLamportMutex, 32 MB | MCMultiNode, 32 MB | PaxosCommit, 32 MB |
+|---|---:|---:|---:|---:|---:|---:|
+| All data-read misses | 13.4M | 25.3M | 39.8M | 3.2M | 15.7M | 3.4M |
+| Memo rows (`memo_lookup`, `set`) | 31.7% | 26.1% | 23.2% | 28.2% | 28.4% | 23.6% |
+| Intern table probe (`intern_block`, `intern_patched`) | 12.2% | 6.7% | 12.6% | 8.8% | 4.4% | 7.5% |
+| State table (`States::find`) | 8.1% | 7.5% | 9.2% | 11.9% | 6.7% | 3.8% |
+| Fingerprints (`get_child`, `shift_by_table`) | 13.7% | 5.3% | 9.3% | 9.4% | 3.5% | 5.7% |
+| Store metadata and heap words (apply, fields, compare, `find_in_block`) | 7.2% | 1.2% | 4.4% | 2.2% | 1.2% | 3.3% |
+| Sequential: memo rehash | 7.4% | 31.6% | 17.4% | 9.7% | 37.8% | 32.1% |
+| Sequential: `memcpy`, state-table growth, allocation | 13.1% | 14.1% | 18.6% | 27.5% | 13.9% | 20.9% |
+
+Cachegrind has no prefetcher, so it overcounts the sequential groups. Taking the home slot from the hash's high bits, so that the rehash writes in order, confirmed this: wall time didn't move.
+
+**The bound.** Pricing a miss at about 40 cycles to L3 and about 200 to memory:
+- All random-access stalls are 15–20% of MCLamportMutex, and under 10% of PaxosCommit and MCMultiNode. So no store or memo layout is worth more than about 1.1–1.2× at one thread.
+- The candidates on their own come to less:
+
+| Candidate | Ceiling |
+|---|---|
+| Memo rows next to their key's value | 5–8% on MCLamportMutex and MCMultiNode, about 4% on PaxosCommit |
+| A tag array in front of the intern table | about 3% |
+| Store metadata split by kind, a state's values contiguous, or a composite's header beside its block | 1–2% (the membership session bounds the last at ≤1.05× on MCabs) |
+| Immediate integers | ≤4% on BufferedRandomAccessFile; the test on every metadata read cost 11–15% in compare-heavy code (the lead's experiment) |
+| A nursery for recent values | only 5–15% of metadata loads hit values interned in the last 2^16 (track 6) |
+| Huge pages on the intern table alone | no change (track 6) |
+
+**Threads.** Four independent one-worker runs of the same model at once each take 0–4% longer than one run alone on the 4-core container:
+
+| Model | One alone, s | Each of four at once, s |
+|---|---|---|
+| PaxosCommit | 21.2–21.9 | 22.1–22.4 |
+| MCMultiNode | 6.7–6.8 | 6.7–7.0 |
+| cf1s_folklore | 20.0–20.6 | 20.0–20.3 |
+| MCLamportMutex | 3.4–3.5 | 3.5–3.6 |
+
+So shared caches and memory bandwidth don't explain the threaded search's extra CPU either. The same experiment with 16 runs on the 16-core runner would bound it there.
+
+**L1.** `Fingerprints::shift_by_table` causes 27.5% of all D1 misses on PaxosCommit and 36.9% on MCLamportMutex. Each length has its own 16 KB table, and those tables cycle through a 32 KB L1. The fingerprint session measured both fixes:
+- 4-bit tables cut L1d misses by 27% but add 7.8% instructions, with no gain in wall time.
+- A carry-less multiply is bounded at about 20 cycles of dependent chain, against about 14 for the loads.
+
+Neither was built.
 
 ## Designs ready, not built
 

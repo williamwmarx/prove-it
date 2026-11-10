@@ -75,6 +75,8 @@ pub fn get_settings(words: &[i32], state_log: String) -> Result<Settings, String
         is_violation_reported: false,
         is_liveness_periodic: liveness_periodic != 0,
         test_live_check_at: usize::try_from(test_live_check_at).ok(),
+        // The addon's tables stay on the pages its host's allocator gives.
+        large_region_advice: None,
     })
 }
 

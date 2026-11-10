@@ -5,6 +5,9 @@
 use std::collections::HashSet;
 use std::io::{BufWriter, Write};
 
+use crate::host::Host;
+use crate::time::format_date;
+
 pub const COMMAND_LINE_ERROR: u32 = 1102;
 pub const STARTING: u32 = 2185;
 pub const FINISHED: u32 = 2186;
@@ -56,10 +59,11 @@ pub enum Level {
 }
 
 /// Where a check writes: what TLC prints, and Prove It's own notes, such as that a model isn't
-/// native yet, which the binary writes to stdout and stderr.
+/// native yet, which the binary writes to stdout and stderr; and the host it reads from.
 pub struct Output<'o> {
     pub out: &'o mut dyn Write,
     pub err: &'o mut dyn Write,
+    pub host: &'o dyn Host,
 }
 
 /// Writes TLC's messages. MP.printWarning prints a warning once, which -nowarning drops, and
@@ -70,6 +74,7 @@ pub struct Printer<'o> {
     warnings: HashSet<String>,
     out: BufWriter<&'o mut dyn Write>,
     err: &'o mut dyn Write,
+    pub host: &'o dyn Host,
 }
 
 impl<'o> Printer<'o> {
@@ -80,7 +85,13 @@ impl<'o> Printer<'o> {
             warnings: HashSet::new(),
             out: BufWriter::new(&mut *output.out),
             err: &mut *output.err,
+            host: output.host,
         }
+    }
+
+    /// The date and time now, as TLC prints them.
+    pub fn date(&self) -> String {
+        format_date(self.host.now(), self.host.zone())
     }
 
     pub fn print(&mut self, code: u32, level: Level, text: &str) {

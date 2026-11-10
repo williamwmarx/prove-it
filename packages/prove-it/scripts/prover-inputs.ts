@@ -7,11 +7,14 @@
 // each input anew, and prover-inputs.json is rewritten: first with tlapm's time limit, to find the
 // steps the backend takes within it on this machine, then again with those steps as its step limit
 // and no time limit. The second answer and its statistics are what is recorded, and what any port of
-// the backend must reproduce from the same step limit, on any machine. Run it under Node with a
-// larger heap than the default, as the solver's heap fills on a few modules:
+// the backend must reproduce from the same step limit, on any machine. A recording keeps each
+// module's answers in .prover-inputs/recording.jsonl as it finishes it, and a recording that
+// finds the file goes on from it, so a recording stopped part way loses only the modules it was
+// in. Run it under Node with a larger heap than the default, as the solver's heap fills on a few
+// modules:
 //   NODE_OPTIONS=--max-old-space-size=4500 bun scripts/run.ts prover-inputs [--record] [--jobs n]
 
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { TlaError, TlaProverError } from "../src/errors";
@@ -19,6 +22,7 @@ import { decide } from "../src/prover/deciders";
 import { proveObligations } from "../src/prover/prove";
 import type { Decision } from "../src/prover/verdict";
 import { CORPORA_DIRECTORY, getOption } from "./corpora";
+import { appendJournal, readJournal, repairJournal } from "./journal";
 import { runModuleWorkers } from "./module-workers";
 import {
   getModuleObligations,
@@ -64,12 +68,30 @@ const record = (prover: string, text: string, timeLimitMs: number): InputRecord 
     return getRecord();
   } catch (error) {
     if (!(error instanceof TlaProverError)) throw error;
-    return { prover, stepLimit: 0, verdict: "unknown", statistics: {}, error: error.message };
+    return { prover, verdict: "unknown", statistics: {}, error: error.message };
   }
 };
 
+const RECORDING_PATH = join(PROVER_INPUTS_DIRECTORY, "recording.jsonl");
+
+interface RecordedModule {
+  id: string;
+  inputs: Record<string, InputRecord>;
+}
+
+// The modules this recording has finished. The parent cuts what a stop left unfinished, before
+// any worker appends.
+const readRecording = () =>
+  new Map(
+    readJournal<RecordedModule>(RECORDING_PATH).map((recorded) => [recorded.id, recorded.inputs]),
+  );
+
+if (isRecording && !process.argv.includes("--worker")) repairJournal(RECORDING_PATH);
+
 // The inputs of a module's proofs, by digest.
 const writeModuleInputs = async (module: ModuleProofRecord) => {
+  const finished = isRecording ? readRecording().get(module.id) : undefined;
+  if (finished !== undefined) return finished;
   const inputs: Record<string, InputRecord> = {};
   const obligations = (() => {
     try {
@@ -92,13 +114,20 @@ const writeModuleInputs = async (module: ModuleProofRecord) => {
       return replay(inputs[digest]);
     },
   });
+  if (isRecording) {
+    mkdirSync(PROVER_INPUTS_DIRECTORY, { recursive: true });
+    appendJournal(RECORDING_PATH, { id: module.id, inputs });
+  }
   return inputs;
 };
 
 const modules = readProofRecords();
 const byModule = await runModuleWorkers(modules, getObligationCount, writeModuleInputs, 1);
 const inputs: Record<string, InputRecord> = Object.assign({}, ...byModule.values());
-if (isRecording) writeInputRecords({ ...records, ...inputs });
+if (isRecording && byModule.size === modules.length) {
+  writeInputRecords({ ...records, ...inputs });
+  rmSync(RECORDING_PATH);
+}
 const count = Object.keys(inputs).length;
 console.log(
   `${count} inputs from ${byModule.size} of ${modules.length} modules in ${PROVER_INPUTS_DIRECTORY}`,
