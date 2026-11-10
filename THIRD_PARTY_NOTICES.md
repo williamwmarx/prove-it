@@ -336,7 +336,7 @@ That's all there is to it!
 
 <https://github.com/Z3Prover/z3>
 
-The SMT solver in `src/prover/smt/`, including its linear arithmetic (`lp/`) and nonlinear (`nlsat/`) components, is ported from Z3.
+The SMT solver in `src/prover/smt/`, including its linear arithmetic (`lp/`) and nonlinear (`nlsat/`) components, is ported from Z3, and so is its Rust port in `native/crates/prover/smt/` (so far `src/util/` and the linear arithmetic, `src/lp/`).
 
 ```
 Z3
