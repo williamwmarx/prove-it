@@ -1,0 +1,17 @@
+Implied-temporal checking--satisfiability problem has 1 branches.
+Computing initial states...
+Computed 2 initial states...
+Error: Temporal property Live was violated.
+
+Error: The following behavior constitutes a counter-example:
+
+State 1: <Initial predicate>
+x = <<0>>
+
+State 2: <Next line 7, col 35 to line 7, col 56 of module IFunctions>
+x = <<2>>
+
+Back to state 1: <Next line 7, col 9 to line 7, col 30 of module IFunctions>
+
+11 states generated, 4 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 2.
