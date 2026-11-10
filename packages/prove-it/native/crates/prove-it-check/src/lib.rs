@@ -5,6 +5,7 @@
 mod args;
 mod check;
 mod coverage;
+mod dot;
 mod dump_trace;
 mod failure;
 mod files;

@@ -2,7 +2,7 @@
 //! it printed.
 #![allow(dead_code)]
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 pub fn run(directory: &PathBuf, args: &[&str]) -> Output {
@@ -52,4 +52,8 @@ pub fn run_named(
     std::fs::write(directory.join(format!("{name}.tla")), spec).expect("a spec");
     std::fs::write(directory.join(format!("{name}.cfg")), config).expect("a configuration");
     (run(&directory, args), directory)
+}
+
+pub fn read_dump(directory: &Path, name: &str) -> String {
+    std::fs::read_to_string(directory.join(name)).expect("a dump")
 }

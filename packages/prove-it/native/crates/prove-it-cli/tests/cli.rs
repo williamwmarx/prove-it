@@ -4668,15 +4668,9 @@ fn declines_a_dump_whose_contents_tlc_writes_otherwise() {
     let spec = "---- MODULE Stop ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1\nLive == <>(x = 2)\nInv == x > 0\n====\n";
     for (test, config, args, reason) in [
         (
-            "dump-dot",
-            "INIT Init\nNEXT Next\n",
-            &["-dump", "dot", "states"][..],
-            "-dump dot",
-        ),
-        (
             "dump-metadir",
             "INIT Init\nNEXT Next\n",
-            &["-dump", "${metadir}/states"],
+            &["-dump", "${metadir}/states"][..],
             "-dump into the meta directory",
         ),
         // TLC writes each state again as it adds its stuttering step to the behavior graph.

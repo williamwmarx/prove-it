@@ -508,13 +508,50 @@ search leaves it empty. Each run was compared with TLC's dump at d8fb231 over th
 
 With N workers TLC writes the states in the order its workers happen to add them, which differs
 from run to run. The binary's shared levels find what one thread finds, so its dump on any number
-of workers is TLC's dump on one worker.
+of workers is TLC's dump on one worker, as is its graph.
+
+`-dump dot[,options] <file>` writes the state graph to `<file>.dot`, as TLC's `DotStateWriter`
+does: its header as TLC opens the file, so a run that stops before the search leaves just that;
+each initial state, filled; then, for each state the search expanded, a step to each successor in
+the model, seen before or not, in the order TLC takes them, with the successor's label where the
+step found it; and as the search ends, a `rank = same` line of each level's states and the legend.
+A state's name is TLC's fingerprint of it, under `-fp 0` where `-fp` is absent (TLC picks a
+polynomial at random then). The engine records the steps (`Settings::is_step_dumped`) and hands
+them over with the states (`DumpedSteps`): it then expands each level on one thread and walks
+each of TLC's actions apart. TLC writes the step to a state as it adds it to its set, before it
+checks it, so a graph that stops holds the step to the state that stopped it. The rank lines and
+the legend follow TLC's `HashMap` and `HashSet` iteration order, which the binary simulates. The
+options are substrings of the format, in any case:
+
+- `colorize` colors each step by its action's name, in the order the actions are first taken, and
+  adds the legend where there are two or more;
+- `actionlabels` labels each step with its action's name and parameters
+  (`Action.getInvocationSignature`);
+- `strict` skips a step whose states' fingerprints have the xor of a step written before, the step
+  back included;
+- `snapshot` copies the graph to `<file>_snapshot.dot`, whose last copy is the graph;
+- `stuttering` changes nothing: TLC writes stuttering steps only with temporal properties, which
+  the binary declines.
+
+TLC adds a level to its ranks with `HashMap.computeIfAbsent`, which grows the table as it is next
+called and adds a key first in its bucket, so under `strict`, where levels can be missing, their
+order isn't always ascending. Each graph was compared with TLC's at d8fb231 over the corpus, with
+`dot,colorize,actionlabels`, then with `strict` too, and, where the binary declines by action,
+with `dot,strict`.
 
 Not native, where TLC writes what the binary doesn't model:
 
-- `-dump dot ...` (`DotStateWriter`), `-dump class,...` and a file under `${metadir}`;
+- `-dump class,...` and a file under `${metadir}`;
+- `-dump dot,constrained`: TLC writes a step to each successor a constraint excludes and to each
+  that an action's guard excludes (`addUnsatisfiedState`), with the predicate;
+- `-dump dot` with an ALIAS, which labels the states; with `colorize` or `actionlabels` where the
+  engine walks the next-state relation whole, not compiling each of TLC's actions (such as one
+  that sets a register), or where an action's definition is one the front end renamed, from a
+  module an INSTANCE in a LET copies, which TLC names after the instance; and a graph one of whose
+  rank sets TLC's `HashSet` turns into a tree, whose order the binary doesn't simulate;
 - temporal properties: TLC writes each state again as it adds its stuttering step to the behavior
-  graph (`Worker.doNextCheckLiveness`);
+  graph (`Worker.doNextCheckLiveness`), and with `-dump dot` writes the behavior graph to
+  `<file>_liveness.dot` (`DotLivenessStateWriter`);
 - SYMMETRY or a VIEW;
 - a search stopped computing its initial states: TLC returns without closing the dump (no
   `cleanup`), which then holds only what Java's buffers flushed;

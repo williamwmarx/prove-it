@@ -84,6 +84,7 @@ pub fn get_settings(words: &[i32], state_log: String) -> Result<Settings, String
         is_dumped: false,
         // The interpreter goes on past violations itself.
         is_continued: false,
+        is_step_dumped: false,
         // The addon's tables stay on the pages its host's allocator gives.
         large_region_advice: None,
         // The interpreter reads and writes the Json module's files.
