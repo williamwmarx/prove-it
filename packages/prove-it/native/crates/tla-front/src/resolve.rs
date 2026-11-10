@@ -83,6 +83,8 @@ struct Local {
     is_pending: Cell<bool>,
     is_non_fact: bool,
     position: Position,
+    /// The parameters of a function a LET defines, which SANY checks its applications against.
+    function_params: Option<usize>,
 }
 
 type Scope = Option<Rc<Local>>;
@@ -100,6 +102,7 @@ impl Local {
             is_pending: Cell::new(false),
             is_non_fact: false,
             position: MODULE_START,
+            function_params: None,
         }
     }
 
@@ -1603,6 +1606,7 @@ fn resolve_definitions(
         resolved = if resolve_definition(definition, &current, &inner, &recursive)? {
             Some(Rc::new(Local {
                 params: Some(get_param_arities(definition)),
+                function_params: get_function_params(definition),
                 ..local
             }))
         } else {
@@ -1883,6 +1887,57 @@ fn is_selection_reported(expression: &Expr, scope: &Scope, unit: &Unit) -> Resul
     Ok(true)
 }
 
+// The parameters of a function definition: a bound each, a tuple of names one.
+fn get_function_params(definition: &Definition) -> Option<usize> {
+    match &definition.kind {
+        DefinitionKind::Function { bounds } => Some(
+            bounds
+                .iter()
+                .map(|bound| bound.pattern.names().len().min(1))
+                .sum(),
+        ),
+        DefinitionKind::Operator { .. } => None,
+    }
+}
+
+/// SANY rejects a function a module or a LET defines applied to several arguments, other than as
+/// many as it has parameters; one argument may be a tuple of them.
+fn check_function_arity(
+    expression: &Expression,
+    function: &Expression,
+    count: usize,
+    scope: &Scope,
+    unit: &Unit,
+) {
+    if count < 2 {
+        return;
+    }
+    let ExpressionKind::Identifier { name, .. } = &function.kind else {
+        return;
+    };
+    let params = if function.is_locally_resolved() {
+        lookup_local(scope, name).and_then(|local| local.function_params)
+    } else {
+        let key = function.reference().unwrap_or_default();
+        unit.definitions
+            .get(&key)
+            .and_then(|definition| get_function_params(definition))
+    };
+    let Some(params) = params else {
+        return;
+    };
+    if count != params
+        && let Some(range) = &expression.location.range
+    {
+        unit.error(
+            format_range(range),
+            format!(
+                "Function '{name}' is defined with {params} parameters, but is applied to {count} arguments."
+            ),
+        );
+    }
+}
+
 fn resolve_all(expressions: &[Expr], scope: &Scope, unit: &Unit) -> Result<()> {
     for expression in expressions {
         resolve_expression(expression, scope, unit)?;
@@ -2076,7 +2131,9 @@ fn resolve_expression(expression: &Expr, scope: &Scope, unit: &Unit) -> Result<(
         }
         ExpressionKind::FunctionApplication { function, args } => {
             resolve_expression(function, scope, unit)?;
-            resolve_all(args, scope, unit)
+            resolve_all(args, scope, unit)?;
+            check_function_arity(expression, function, args.len(), scope, unit);
+            Ok(())
         }
         // tla-ts leaves the arguments of [e1, ..., en] unresolved, as SANY rejects it.
         ExpressionKind::Bracket(_) => Ok(()),
