@@ -19,11 +19,11 @@ use tla_values::{Id, Store};
 use crate::failure::nested;
 use crate::print::{format_pretty, format_printed, format_value};
 use crate::random::{random_element, random_subset};
-use crate::sets::{as_tuple, cardinality, difference, intersection, is_member, is_subset, union};
+use crate::sets::{as_tuple, cardinality, difference, intersection, is_member, union};
 use crate::value::{
     Class, EvalError, Evaluated, Function, Lazy, Text, TlcMessage, Value, compare, elements,
-    equals, fail, fail_coded, fail_runtime, fail_with, find_key, from_store, mark_unnormalized,
-    set_of, sorted_function, unnormalized, written_function,
+    equals, fail, fail_coded, fail_runtime, fail_with, find_key, from_store, is_enumerable,
+    mark_unnormalized, set_of, sorted_function, unnormalized, written_function,
 };
 
 /// The bindings an expression sees, innermost first.
@@ -70,6 +70,64 @@ enum Body {
     Node(NodeId),
     /// A builtin passed as an operator.
     Builtin(Index),
+}
+
+/// The predicate of a set filter TLC keeps lazy, with what it is evaluated in: the bound's
+/// pattern, the context and the states the filter was built in, and how TLC prints it where it
+/// can't enumerate it.
+pub struct Predicate {
+    pattern: Pattern,
+    body: NodeId,
+    context: Context,
+    current: Vec<Option<Value>>,
+    next: Vec<Option<Value>>,
+    level: i32,
+    /// `{x \in`, and ` : <expression …> }`, around the set's text.
+    text: (String, String),
+}
+
+impl Predicate {
+    pub fn text(&self) -> &(String, String) {
+        &self.text
+    }
+}
+
+impl std::fmt::Debug for Predicate {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "Predicate({})", self.body)
+    }
+}
+
+/// `[x \in S |-> e]` TLC keeps lazy (`FcnLambdaValue`) where the evaluator can't build it: its
+/// parameter, domain and body, what the body is evaluated in, the EXCEPTs taken of it, each a key
+/// and its value, and how TLC prints it.
+pub struct Lambda {
+    name: TextId,
+    domain: Value,
+    body: NodeId,
+    context: Context,
+    current: Vec<Option<Value>>,
+    next: Vec<Option<Value>>,
+    level: i32,
+    excepts: Vec<(Value, Value)>,
+    /// `[x \in`, and ` |-> <expression …>]`, around the domain's text.
+    text: (String, String),
+}
+
+impl Lambda {
+    pub fn text(&self) -> &(String, String) {
+        &self.text
+    }
+
+    pub fn domain(&self) -> &Value {
+        &self.domain
+    }
+}
+
+impl std::fmt::Debug for Lambda {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "Lambda({})", self.body)
+    }
 }
 
 /// Where an expression is evaluated: its bindings, whether it is under a prime, and the value `@`
@@ -383,6 +441,83 @@ fn as_java_failure<T>(signature: &str, result: Evaluated<T>) -> Evaluated<T> {
 fn is_text(text: &Text, word: &str) -> bool {
     text.units.iter().copied().eq(word.encode_utf16())
 }
+const TO_STRING: &str =
+    "public static tlc2.value.impl.Value tlc2.module.TLC.ToString(tlc2.value.impl.Value)";
+
+/// TLC's `enumBound`: the most elements a lazy set's text is expanded to.
+const ENUM_BOUND: i64 = 2000;
+
+// What `toString(sb, offset, false)` fails with, where it expands a lazy set: the sizes of its
+// parts, and its elements where there are fewer than `enumBound`, through the values it holds.
+// The evaluator declines a lazy set it doesn't follow there.
+fn check_unchecked(value: &Value) -> Evaluated<()> {
+    match value {
+        Value::Set(elements) | Value::Unsorted(elements) => {
+            elements.iter().try_for_each(check_unchecked)
+        }
+        Value::Function(function) => function
+            .domain
+            .iter()
+            .chain(&function.range)
+            .try_for_each(check_unchecked),
+        Value::Lazy(lazy) => {
+            let size = match &**lazy {
+                _ if lazy.is_overridden() => return Ok(()),
+                // `SetOfRcdsValue.toString` and `SetOfTuplesValue.toString`.
+                Lazy::RecordSet(fields, _) => parts_size(fields.iter().map(|(_, set)| set))?,
+                Lazy::Product(factors) => parts_size(factors.iter())?,
+                // `SetOfFcnsValue.toString`.
+                Lazy::FunctionSet(domain, range) => {
+                    if is_empty(domain)? {
+                        1
+                    } else {
+                        let domain = cardinality(domain)? as i64;
+                        let range = cardinality(range)? as i64;
+                        let mut size: i64 = 1;
+                        for _ in 0..domain {
+                            if size > i64::from(i32::MAX) {
+                                break;
+                            }
+                            size = size.saturating_mul(range);
+                        }
+                        size
+                    }
+                }
+                // Expanded whole, whatever their size.
+                Lazy::Cap(..)
+                | Lazy::Cup(..)
+                | Lazy::Diff(..)
+                | Lazy::Union(_)
+                | Lazy::Filter(..) => 0,
+                Lazy::Subset(_) => return fail("ToString of a power set"),
+                _ => return fail("ToString of a lazy set"),
+            };
+            if size < ENUM_BOUND {
+                elements(value)?.iter().try_for_each(check_unchecked)?;
+            }
+            Ok(())
+        }
+        _ => Ok(()),
+    }
+}
+
+// The product of the parts' sizes, past an int no further, and 0 from an empty part on.
+fn parts_size<'v>(parts: impl Iterator<Item = &'v Value>) -> Evaluated<i64> {
+    let mut size: i64 = 1;
+    for part in parts {
+        let part = cardinality(part)? as i64;
+        if part == 0 {
+            return Ok(0);
+        }
+        if size <= i64::from(i32::MAX) {
+            size = size.saturating_mul(part);
+        }
+    }
+    Ok(size)
+}
+
+/// `EC.TLC_MODULE_COMPUTING_CARDINALITY`.
+const COMPUTING_CARDINALITY: u32 = 2181;
 const IS_FINITE_SET: &str =
     "public static tlc2.value.IBoolValue tlc2.module.FiniteSets.IsFiniteSet(tlc2.value.impl.Value)";
 const CARDINALITY: &str = "public static tlc2.value.impl.IntValue tlc2.module.FiniteSets.Cardinality(tlc2.value.impl.Value)";
@@ -911,7 +1046,14 @@ impl<'ir> Evaluator<'ir> {
             NodeKind::Decimal(_) => fail("a real number"),
             NodeKind::String(text) => Ok(Value::Str(self.text(*text))),
             NodeKind::Identifier(name) => self.identifier(node, name, context),
-            NodeKind::Apply { name, args } => self.apply(name, args, context),
+            NodeKind::Apply { name, args } => match (name.resolution, &args[..]) {
+                (Resolution::Builtin(index), &[left, right])
+                    if self.name(self.ir.builtins[index as usize].name) == "\\subseteq" =>
+                {
+                    self.subset(node, left, right, context)
+                }
+                _ => self.apply(name, args, context),
+            },
             NodeKind::And(operands) => Ok(Value::Bool(self.junction(
                 node,
                 operands,
@@ -1020,28 +1162,58 @@ impl<'ir> Evaluator<'ir> {
                     .map(|&item| self.evaluate(item, context))
                     .collect::<Evaluated<Vec<_>>>()?;
                 // TLC builds a set enumeration as written and normalizes it only as it uses it,
-                // which the replay follows only as far as fingerprinting and printing the state.
-                match (set_of(values.clone()), &mut self.call_stack) {
-                    (Err(error), Some(stack))
+                // which the replay follows as far as fingerprinting and printing the state, and
+                // counting it.
+                match set_of(values.clone()) {
+                    Err(error)
                         if error
                             .message
                             .as_ref()
                             .is_some_and(|message| !message.is_eval_exception) =>
                     {
-                        stack.is_unsorted = true;
+                        if let Some(stack) = &mut self.call_stack {
+                            stack.is_unsorted = true;
+                        }
                         Ok(Value::Unsorted(Rc::new(values)))
                     }
                     // A replay keeps track of the set TLC holds unnormalized still, which it
                     // tests for membership element by element.
-                    (Ok(set), Some(_)) => {
+                    Ok(set) if self.call_stack.is_some() => {
                         mark_unnormalized(&set, values);
                         Ok(set)
                     }
-                    (set, _) => set,
+                    set => set,
                 }
             }
             NodeKind::SetFilter { bound, predicate } => {
                 let set = self.evaluate(bound.set, context)?;
+                // `Tool`'s OPCODE_sso: TLC filters a reducible set at once, and keeps any other
+                // filter lazy, which the evaluator follows where it can't enumerate the set.
+                if !matches!(set, Value::Set(_) | Value::Interval(..))
+                    && (!is_enumerable(&set) || !is_finite(&set)?)
+                {
+                    let names = match &bound.pattern {
+                        Pattern::Name(name) => self.name(*name).to_string(),
+                        Pattern::Tuple(names) => names
+                            .iter()
+                            .map(|&name| self.name(name))
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                    };
+                    let predicate = Predicate {
+                        pattern: bound.pattern.clone(),
+                        body: *predicate,
+                        context: context.clone(),
+                        current: self.current.clone(),
+                        next: self.next.clone(),
+                        level: self.level,
+                        text: (
+                            format!("{{{names} \\in "),
+                            format!(" : <expression {}> }}", self.describe_range(*predicate)),
+                        ),
+                    };
+                    return Ok(Value::Lazy(Rc::new(Lazy::Filter(set, Rc::new(predicate)))));
+                }
                 let mut kept = Vec::new();
                 for element in elements(&set)?.iter() {
                     let inner = self.bind_pattern(&bound.pattern, element, context)?;
@@ -1923,6 +2095,27 @@ impl<'ir> Evaluator<'ir> {
             && let Pattern::Name(name) = bound.pattern
         {
             let set = self.evaluate(bound.set, context)?;
+            // `Tool`'s OPCODE_fc keeps a function lazy unless its domain is reducible, which
+            // the evaluator follows where it can't build the function.
+            if !matches!(set, Value::Set(_) | Value::Interval(..))
+                && (!is_enumerable(&set) || !is_finite(&set)?)
+            {
+                let text = (
+                    format!("[{} \\in ", self.name(name)),
+                    format!(" |-> <expression {}>]", self.describe_range(body)),
+                );
+                return Ok(Value::Lambda(Rc::new(Lambda {
+                    name,
+                    domain: set,
+                    body,
+                    context: context.clone(),
+                    current: self.current.clone(),
+                    next: self.next.clone(),
+                    level: self.level,
+                    excepts: Vec::new(),
+                    text,
+                })));
+            }
             if let Value::Interval(low, high) = set {
                 let mut values = Vec::new();
                 for key in low..=high {
@@ -2048,7 +2241,32 @@ impl<'ir> Evaluator<'ir> {
             );
         }
         let argument = argument(self)?;
+        if let Value::Lambda(lambda) = &function {
+            return self.apply_lambda(lambda, &argument);
+        }
         self.apply_checked(&function, &argument)
+    }
+
+    // `FcnLambdaValue.apply`: the value of the last EXCEPT at the key, or else the body on a key
+    // in the domain, in the states the function was built in.
+    fn apply_lambda(&mut self, lambda: &Lambda, key: &Value) -> Evaluated<Value> {
+        for (except, value) in lambda.excepts.iter().rev() {
+            if equals(except, key)? {
+                return Ok(value.clone());
+            }
+        }
+        if !self.member(key, &lambda.domain)? {
+            return fail("applied a function outside its domain");
+        }
+        let context = lambda.context.bind_value(lambda.name, key.clone());
+        let current = std::mem::replace(&mut self.current, lambda.current.clone());
+        let next = std::mem::replace(&mut self.next, lambda.next.clone());
+        let level = std::mem::replace(&mut self.level, lambda.level);
+        let result = self.function_body(lambda.body, &context);
+        self.current = current;
+        self.next = next;
+        self.level = level;
+        result
     }
 
     /// For `f[e]` in an action where TLC keeps `f` lazy, a function constructor or a LET's
@@ -2200,6 +2418,28 @@ impl<'ir> Evaluator<'ir> {
                     .collect::<Evaluated<_>>()?,
             ),
         };
+        // `FcnLambdaValue.takeExcept`: the EXCEPT is kept, whatever the key, and `@` is the
+        // function's value at it.
+        if let Value::Lambda(lambda) = value {
+            if !rest.is_empty() {
+                return fail("an EXCEPT of a lazy function past its first key");
+            }
+            let at = self.apply_lambda(lambda, &key)?;
+            let next = self.except(&at, rest, update, context)?;
+            let mut excepts = lambda.excepts.clone();
+            excepts.push((key, next));
+            return Ok(Value::Lambda(Rc::new(Lambda {
+                name: lambda.name,
+                domain: lambda.domain.clone(),
+                body: lambda.body,
+                context: lambda.context.clone(),
+                current: lambda.current.clone(),
+                next: lambda.next.clone(),
+                level: lambda.level,
+                excepts,
+                text: lambda.text.clone(),
+            })));
+        }
         let Value::Function(function) = value else {
             return fail(format!(
                 "Attempted to apply EXCEPT construct to the value {}.",
@@ -2257,7 +2497,7 @@ impl<'ir> Evaluator<'ir> {
     // Nat isn't enumerated.
     fn is_member_of(&mut self, element: &Value, set: &Operand) -> Evaluated<bool> {
         let combined = self.combined_set(set)?;
-        let result = combined.has(element);
+        let result = combined.has(self, element);
         // TLC's \\cup, \\cap and \\ have a source, so a failure in testing their members is a
         // FingerprintException.
         if result.is_err()
@@ -2268,6 +2508,105 @@ impl<'ir> Evaluator<'ir> {
             stack.is_fingerprinted = true;
         }
         result
+    }
+
+    /// Membership as TLC's lazy sets test it, the predicate of a lazy filter evaluated
+    /// (`SetPredValue.member`), through the sets it is combined in.
+    pub(crate) fn member(&mut self, element: &Value, set: &Value) -> Evaluated<bool> {
+        let Value::Lazy(lazy) = set else {
+            return is_member(element, set);
+        };
+        match &**lazy {
+            Lazy::Filter(base, predicate) => {
+                if !self.member(element, base)? {
+                    return Ok(false);
+                }
+                self.filters(element, predicate)
+            }
+            Lazy::Cap(left, right) => {
+                Ok(self.member(element, left)? && self.member(element, right)?)
+            }
+            Lazy::Cup(left, right) => {
+                Ok(self.member(element, left)? || self.member(element, right)?)
+            }
+            Lazy::Diff(left, right) => {
+                Ok(self.member(element, left)? && !self.member(element, right)?)
+            }
+            Lazy::Union(sets) if is_enumerable(sets) => {
+                for inner in elements(sets)?.iter() {
+                    if self.member(element, inner)? {
+                        return Ok(true);
+                    }
+                }
+                Ok(false)
+            }
+            _ => is_member(element, set),
+        }
+    }
+
+    // `Tool`'s OPCODE_subseteq: an S TLC can't enumerate fails, and otherwise each element of it
+    // is tested for membership in T (`isSubsetEq`).
+    fn subset(
+        &mut self,
+        node: NodeId,
+        left: NodeId,
+        right: NodeId,
+        context: &Context,
+    ) -> Evaluated<Value> {
+        let left = self.evaluate(left, context)?;
+        let right = self.evaluate(right, context)?;
+        if matches!(&left, Value::Lazy(lazy) if lazy.is_overridden()) {
+            return fail_runtime(
+                "\\subseteq of a set TLC doesn't enumerate",
+                format!(
+                    "Attempted to evaluate an expression of form S \\subseteq T, but S was not enumerable.\n{}",
+                    self.describe_range(node)
+                ),
+            );
+        }
+        for element in elements(&left)?.iter() {
+            if !self.member(element, &right)? {
+                return Ok(Value::Bool(false));
+            }
+        }
+        Ok(Value::Bool(true))
+    }
+
+    // A lazy filter's predicate on an element of its set, in the states the filter was built in.
+    fn filters(&mut self, element: &Value, predicate: &Predicate) -> Evaluated<bool> {
+        let context = match &predicate.pattern {
+            Pattern::Name(_) => {
+                self.bind_pattern(&predicate.pattern, element, &predicate.context)?
+            }
+            // TLC fails on an element that isn't a tuple of as many.
+            Pattern::Tuple(names) => match as_tuple(element) {
+                Some(tuple) if tuple.len() == names.len() => {
+                    self.bind_pattern(&predicate.pattern, element, &predicate.context)?
+                }
+                _ => return fail("a lazy filter's element that isn't a tuple of its names"),
+            },
+        };
+        let current = std::mem::replace(&mut self.current, predicate.current.clone());
+        let next = std::mem::replace(&mut self.next, predicate.next.clone());
+        let level = std::mem::replace(&mut self.level, predicate.level);
+        let result = self.evaluate(predicate.body, &context);
+        self.current = current;
+        self.next = next;
+        self.level = level;
+        match result {
+            Ok(Value::Bool(holds)) => Ok(holds),
+            Ok(_) => fail("a lazy filter's predicate that isn't a boolean"),
+            // `SetPredValue.member` words an EvalException as its own failure.
+            Err(error)
+                if error
+                    .message
+                    .as_ref()
+                    .is_some_and(|message| message.is_eval_exception) =>
+            {
+                fail("a lazy filter's predicate that fails")
+            }
+            Err(error) => Err(error),
+        }
     }
 
     // A set as TLC builds it, both operands of each `\\cup`, `\\cap` or `\\` evaluated.
@@ -2397,6 +2736,7 @@ impl<'ir> Evaluator<'ir> {
             "FALSE" => Value::Bool(false),
             "BOOLEAN" => Value::Set(Rc::new(vec![Value::Bool(false), Value::Bool(true)])),
             "Nat" => Value::Lazy(Rc::new(Lazy::Nat)),
+            "Any" => Value::Lazy(Rc::new(Lazy::Any)),
             "Int" => Value::Lazy(Rc::new(Lazy::Int)),
             "Real" => Value::Lazy(Rc::new(Lazy::Real)),
             "STRING" => Value::Lazy(Rc::new(Lazy::Strings)),
@@ -2466,7 +2806,14 @@ impl<'ir> Evaluator<'ir> {
                 arity(2)?;
                 let left = self.operand(&operands[0])?;
                 let right = self.operand(&operands[1])?;
-                Value::Bool(is_subset(&left, &right)?)
+                let mut is_subset = true;
+                for element in elements(&left)?.iter() {
+                    if !self.member(element, &right)? {
+                        is_subset = false;
+                        break;
+                    }
+                }
+                Value::Bool(is_subset)
             }
             "\\cup" | "\\cap" | "\\" => {
                 arity(2)?;
@@ -2486,18 +2833,26 @@ impl<'ir> Evaluator<'ir> {
                 }
                 Value::Lazy(Rc::new(Lazy::Subset(base)))
             }
+            // `UnionValue.union`: the elements of set enumerations, and otherwise a lazy union.
             "UNION" => {
                 arity(1)?;
                 let sets = self.operand(&operands[0])?;
-                let mut all = Vec::new();
-                for set in elements(&sets)?.iter() {
-                    all.extend(elements(set)?.iter().cloned());
+                match &sets {
+                    Value::Set(sets) if sets.iter().all(|set| matches!(set, Value::Set(_))) => {
+                        let mut all = Vec::new();
+                        for set in sets.iter() {
+                            all.extend(elements(set)?.iter().cloned());
+                        }
+                        set_of(all)?
+                    }
+                    _ => Value::Lazy(Rc::new(Lazy::Union(sets))),
                 }
-                set_of(all)?
             }
             "DOMAIN" => {
                 arity(1)?;
                 match self.operand(&operands[0])? {
+                    // `FcnLambdaValue.getDomain`: its domain, whatever the EXCEPTs.
+                    Value::Lambda(lambda) => lambda.domain.clone(),
                     Value::Function(function) => match function.interval {
                         Some((low, high)) => Value::Interval(low, high),
                         None => Value::Set(Rc::new(function.domain.clone())),
@@ -2644,6 +2999,28 @@ impl<'ir> Evaluator<'ir> {
             "Cardinality" => {
                 arity(1)?;
                 let set = self.operand(&operands[0])?;
+                // `FiniteSets.Cardinality` counts an `Enumerable` value.
+                let is_enumerable = match &set {
+                    Value::Lazy(lazy) => !lazy.is_overridden(),
+                    Value::Bool(_) | Value::Int(_) | Value::Str(_) | Value::Model(_) => false,
+                    _ => true,
+                };
+                if !is_enumerable {
+                    return fail_coded(
+                        "Cardinality of a value TLC doesn't enumerate",
+                        COMPUTING_CARDINALITY,
+                        format!(
+                            "Attempted to compute cardinality of the value\n{}",
+                            format_pretty(&set)
+                        ),
+                    );
+                }
+                // TLC normalizes a set enumeration as it counts it.
+                if let Value::Unsorted(values) = &set
+                    && let Some(error) = crate::value::normalize_failure(values)
+                {
+                    return as_java_failure(CARDINALITY, Err(error));
+                }
                 let counted = cardinality(&set);
                 let counted = match &counted {
                     Err(EvalError {
@@ -2953,9 +3330,21 @@ impl<'ir> Evaluator<'ir> {
                     as_java_failure(TLC_EVAL, value)?
                 }
             }
+            // `TLC.ToString` prints with `toStringUnchecked`, where what the expansion of a lazy
+            // set fails with fails, reported, but an EvalException, as its Java method's.
             "ToString" => {
                 arity(1)?;
                 let value = self.operand(&operands[0])?;
+                let checked = check_unchecked(&value);
+                if let Err(EvalError {
+                    message: Some(message),
+                    ..
+                }) = &checked
+                    && !message.is_eval_exception
+                {
+                    return as_java_failure(TO_STRING, checked.map(|()| Value::Bool(true)));
+                }
+                checked?;
                 let units: Box<[u16]> = format_value(&value).encode_utf16().collect();
                 Value::Str(self.text_of(units))
             }
@@ -3233,13 +3622,19 @@ enum Combined {
 
 impl Combined {
     // Membership, testing the right operand only where the left one doesn't decide it.
-    fn has(&self, element: &Value) -> Evaluated<bool> {
+    fn has(&self, evaluator: &mut Evaluator<'_>, element: &Value) -> Evaluated<bool> {
         match self {
-            Combined::Set(set) => is_member(element, set),
+            Combined::Set(set) => evaluator.member(element, set),
             Combined::Operation(operation, left, right) => Ok(match operation {
-                SetOperation::Union => left.has(element)? || right.has(element)?,
-                SetOperation::Intersection => left.has(element)? && right.has(element)?,
-                SetOperation::Difference => left.has(element)? && !right.has(element)?,
+                SetOperation::Union => {
+                    left.has(evaluator, element)? || right.has(evaluator, element)?
+                }
+                SetOperation::Intersection => {
+                    left.has(evaluator, element)? && right.has(evaluator, element)?
+                }
+                SetOperation::Difference => {
+                    left.has(evaluator, element)? && !right.has(evaluator, element)?
+                }
             }),
         }
     }
@@ -3257,7 +3652,7 @@ enum Operand {
 fn is_finite(value: &Value) -> Evaluated<bool> {
     Ok(match value {
         Value::Lazy(lazy) => match &**lazy {
-            Lazy::Nat | Lazy::Int | Lazy::Real | Lazy::Strings => false,
+            Lazy::Nat | Lazy::Int | Lazy::Real | Lazy::Strings | Lazy::Any => false,
             Lazy::Seq(range) => is_finite(range)? && is_empty(range)?,
             Lazy::Subset(base) => is_finite(base)?,
             Lazy::FunctionSet(domain, range) => {
@@ -3280,6 +3675,31 @@ fn is_finite(value: &Value) -> Evaluated<bool> {
                 true
             }
             Lazy::Cup(left, right) => is_finite(left)? && is_finite(right)?,
+            // `SetPredValue.isFinite`: finite where S is.
+            Lazy::Filter(base, _) => {
+                if !is_finite(base)? {
+                    return fail_runtime(
+                        "whether a filter of an infinite set is finite",
+                        format!(
+                            "Attempted to check if expression of form {{x \\in S : p(x)}} is a finite set, but cannot check if S:\n{}\nis finite.",
+                            format_pretty(base)
+                        ),
+                    );
+                }
+                true
+            }
+            // `UnionValue.isFinite`: every element of an enumerable set of sets.
+            Lazy::Union(sets) => {
+                if !is_enumerable(sets) {
+                    return fail("whether the union of a set TLC doesn't enumerate is finite");
+                }
+                for set in elements(sets)?.iter() {
+                    if !is_finite(set)? {
+                        return Ok(false);
+                    }
+                }
+                true
+            }
             Lazy::Diff(left, right) => {
                 if is_finite(left)? {
                     return Ok(true);
@@ -3353,6 +3773,13 @@ pub(crate) fn is_empty(value: &Value) -> Evaluated<bool> {
             Lazy::Nat | Lazy::Int | Lazy::Real | Lazy::Strings | Lazy::Seq(_) | Lazy::Subset(_) => {
                 false
             }
+            // `UserObj.isEmpty`, which `AnySet` keeps.
+            Lazy::Any => {
+                return fail_runtime(
+                    "isEmpty of Any",
+                    "Shouldn't call isEmpty() on value ANY".into(),
+                );
+            }
             Lazy::FunctionSet(domain, range) => !is_empty(domain)? && is_empty(range)?,
             Lazy::RecordSet(fields, _) => {
                 for (_, set) in fields {
@@ -3370,8 +3797,51 @@ pub(crate) fn is_empty(value: &Value) -> Evaluated<bool> {
                 }
                 false
             }
-            // TLC enumerates them for a first element.
-            Lazy::Cap(..) | Lazy::Cup(..) | Lazy::Diff(..) => elements(value)?.is_empty(),
+            // TLC enumerates them for a first element, as their enumerators find it.
+            Lazy::Cap(left, right) => {
+                let (enumerated, tested) = if is_enumerable(left) {
+                    (left, right)
+                } else if is_enumerable(right) {
+                    (right, left)
+                } else {
+                    return elements(value).map(|elements| elements.is_empty());
+                };
+                for element in elements(enumerated)?.iter() {
+                    if is_member(element, tested)? {
+                        return Ok(false);
+                    }
+                }
+                true
+            }
+            Lazy::Cup(left, right) if is_enumerable(left) && is_enumerable(right) => {
+                is_empty(left)? && is_empty(right)?
+            }
+            Lazy::Diff(left, right) if is_enumerable(left) => {
+                for element in elements(left)?.iter() {
+                    if !is_member(element, right)? {
+                        return Ok(false);
+                    }
+                }
+                true
+            }
+            Lazy::Union(sets) if is_enumerable(sets) => {
+                for (index, inner) in elements(sets)?.iter().enumerate() {
+                    if !is_enumerable(inner) {
+                        // Past the first, TLC words the failure with the union's text.
+                        if index > 0 {
+                            return fail("a union with a later set TLC doesn't enumerate");
+                        }
+                        return elements(value).map(|elements| elements.is_empty());
+                    }
+                    if !is_empty(inner)? {
+                        return Ok(false);
+                    }
+                }
+                true
+            }
+            Lazy::Cup(..) | Lazy::Diff(..) | Lazy::Union(_) | Lazy::Filter(..) => {
+                elements(value)?.is_empty()
+            }
         },
         Value::Unsorted(elements) => elements.is_empty(),
         _ => {

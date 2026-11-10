@@ -89,6 +89,14 @@ fn write_value(value: &Value, is_strict: bool, is_normalized: bool, out: &mut St
             }
         }
         Value::Lazy(lazy) => write_lazy(lazy, is_strict, is_normalized, out),
+        // `FcnLambdaValue.toString`, which can't build the function: its parameter and domain,
+        // and where its body is written.
+        Value::Lambda(lambda) => {
+            let (before, after) = lambda.text();
+            out.push_str(before);
+            write_value(lambda.domain(), is_strict, false, out);
+            out.push_str(after);
+        }
         Value::Function(function) => write_function(function, is_strict, is_normalized, out),
     }
 }
@@ -96,10 +104,12 @@ fn write_value(value: &Value, is_strict: bool, is_normalized: bool, out: &mut St
 // The set TLC expands a lazy one into to print it, if any (`getExpandedLazySet`).
 fn expand(lazy: &Lazy) -> Option<Vec<Value>> {
     let size = match lazy {
-        Lazy::Nat | Lazy::Int | Lazy::Real | Lazy::Strings | Lazy::Seq(_) => return None,
+        Lazy::Nat | Lazy::Int | Lazy::Real | Lazy::Strings | Lazy::Seq(_) | Lazy::Any => {
+            return None;
+        }
         // TLC prints the set it enumerates, and the operation where it can't (`toString` with
         // `TLCGlobals.expand`, swallowing the failure).
-        Lazy::Cap(..) | Lazy::Cup(..) | Lazy::Diff(..) => {
+        Lazy::Cap(..) | Lazy::Cup(..) | Lazy::Diff(..) | Lazy::Union(_) | Lazy::Filter(..) => {
             return crate::sets::enumerate(lazy).ok();
         }
         Lazy::Subset(base) => {
@@ -147,6 +157,7 @@ fn write_lazy(lazy: &Lazy, is_strict: bool, is_normalized: bool, out: &mut Strin
     let format = |value: &Value, out: &mut String| write_value(value, is_strict, false, out);
     match lazy {
         Lazy::Nat => out.push_str("Nat"),
+        Lazy::Any => out.push_str("ANY"),
         Lazy::Int => out.push_str("Int"),
         Lazy::Real => out.push_str("Real"),
         Lazy::Strings => out.push_str("STRING"),
@@ -201,6 +212,17 @@ fn write_lazy(lazy: &Lazy, is_strict: bool, is_normalized: bool, out: &mut Strin
                 }
                 format(factor, out);
             }
+            out.push(')');
+        }
+        Lazy::Filter(base, predicate) => {
+            let (before, after) = predicate.text();
+            out.push_str(before);
+            format(base, out);
+            out.push_str(after);
+        }
+        Lazy::Union(sets) => {
+            out.push_str("UNION(");
+            format(sets, out);
             out.push(')');
         }
         Lazy::Cap(left, right) | Lazy::Cup(left, right) | Lazy::Diff(left, right) => {

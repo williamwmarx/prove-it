@@ -23,10 +23,14 @@ fn checked_size(size: usize, factor: usize) -> Evaluated<usize> {
 /// The elements of a lazy set in TLC's order.
 pub fn enumerate(lazy: &Lazy) -> Evaluated<Vec<Value>> {
     match lazy {
-        Lazy::Nat | Lazy::Int | Lazy::Real | Lazy::Strings | Lazy::Seq(_) => {
+        Lazy::Nat | Lazy::Int | Lazy::Real | Lazy::Strings | Lazy::Seq(_) | Lazy::Any => {
             fail("enumerated an infinite set")
         }
+        // `SubsetValue.toSetEnum` sizes the power set first, which an overridden base fails.
         Lazy::Subset(base) => {
+            if matches!(base, Value::Lazy(inner) if inner.is_overridden()) {
+                cardinality(base)?;
+            }
             let base = elements(base)?;
             if base.len() > 20 {
                 return fail("a power set too large to build");
@@ -131,6 +135,42 @@ pub fn enumerate(lazy: &Lazy) -> Evaluated<Vec<Value>> {
                 }
             }
             sorted(kept)
+        }
+        // `SetPredValue.Enumerator`: the set, which TLC must enumerate, filtered by the predicate,
+        // which only the evaluator tests: a lazy filter is of a set it fails to enumerate.
+        Lazy::Filter(base, _) => {
+            if !is_enumerable(base) {
+                return fail_runtime(
+                    "enumerated a filter of a set TLC doesn't enumerate",
+                    format!(
+                        "Attempted to enumerate {{ x \\in S : p(x) }} when S:\n{}\nis not enumerable",
+                        format_pretty(base)
+                    ),
+                );
+            }
+            elements(base)?;
+            fail("enumerated a lazy filter")
+        }
+        // `UnionValue.Enumerator`: each element of the set, the first of which TLC must enumerate.
+        Lazy::Union(sets) => {
+            if !is_enumerable(sets) {
+                return fail("enumerated the union of a set TLC doesn't enumerate");
+            }
+            let mut all = Vec::new();
+            for (index, inner) in elements(sets)?.iter().enumerate() {
+                if !is_enumerable(inner) {
+                    if index > 0 {
+                        return fail("enumerated a union with a later set TLC doesn't enumerate");
+                    }
+                    return fail_runtime(
+                        "enumerated a union with a set TLC doesn't enumerate",
+                        "Attempted to enumerate UNION(s), but some element of s is nonenumerable."
+                            .into(),
+                    );
+                }
+                all.extend(elements(inner)?.iter().cloned());
+            }
+            sorted(all)
         }
         // `SetCupValue.Enumerator`: both operands, which TLC must both enumerate.
         Lazy::Cup(left, right) => {
@@ -360,6 +400,8 @@ pub fn is_member(value: &Value, set: &Value) -> Evaluated<bool> {
                 _ => mistyped(value, "Int"),
             },
             Lazy::Real => fail("a membership in Real"),
+            // `AnySet.member`.
+            Lazy::Any => Ok(true),
             Lazy::Strings => match value {
                 Value::Str(_) => Ok(true),
                 _ => mistyped(value, "STRING"),
@@ -376,6 +418,9 @@ pub fn is_member(value: &Value, set: &Value) -> Evaluated<bool> {
                 Ok(true)
             }
             Lazy::FunctionSet(domain, range) => {
+                if let Value::Lambda(lambda) = value {
+                    return crate::value::lambda_as_function(lambda);
+                }
                 let Value::Function(function) = value else {
                     return fail_runtime(
                         "a mistyped membership in a set of functions",
@@ -463,6 +508,19 @@ pub fn is_member(value: &Value, set: &Value) -> Evaluated<bool> {
                     }
                 }
                 Ok(true)
+            }
+            Lazy::Filter(..) => fail("a lazy filter's membership outside the evaluator"),
+            // `UnionValue.member`: in an element of an enumerable set of sets.
+            Lazy::Union(sets) => {
+                if !is_enumerable(sets) {
+                    return fail("a membership in the union of a set TLC doesn't enumerate");
+                }
+                for inner in elements(sets)?.iter() {
+                    if is_member(value, inner)? {
+                        return Ok(true);
+                    }
+                }
+                Ok(false)
             }
             Lazy::Cap(left, right) => Ok(is_member(value, left)? && is_member(value, right)?),
             Lazy::Cup(left, right) => Ok(is_member(value, left)? || is_member(value, right)?),
@@ -599,15 +657,6 @@ fn filter(left: &Value, keep: impl Fn(&Value) -> Evaluated<bool>) -> Evaluated<V
     Ok(set)
 }
 
-pub fn is_subset(left: &Value, right: &Value) -> Evaluated<bool> {
-    for element in elements(left)?.iter() {
-        if !is_member(element, right)? {
-            return Ok(false);
-        }
-    }
-    Ok(true)
-}
-
 /// Whether a set of functions, records or tuples is empty by an empty argument, which TLC decides
 /// without enumerating the others (`isEmpty` of `SetOfFcnsValue`, `SetOfRcdsValue` and
 /// `SetOfTuplesValue`): `[S -> T]` where S isn't empty and T is, and a set of records or tuples one
@@ -628,11 +677,14 @@ pub(crate) fn is_empty_by_argument(set: &Value) -> bool {
             Lazy::Nat | Lazy::Int | Lazy::Real | Lazy::Strings | Lazy::Subset(_) | Lazy::Seq(_) => {
                 true
             }
+            Lazy::Any => false,
             Lazy::FunctionSet(..) | Lazy::RecordSet(..) | Lazy::Product(_) => {
                 !is_empty_by_argument(value)
             }
             // TLC can't tell without enumerating it.
-            Lazy::Cap(..) | Lazy::Cup(..) | Lazy::Diff(..) => false,
+            Lazy::Cap(..) | Lazy::Cup(..) | Lazy::Diff(..) | Lazy::Union(_) | Lazy::Filter(..) => {
+                false
+            }
         },
         _ => false,
     };
@@ -649,17 +701,90 @@ pub(crate) fn is_empty_by_argument(set: &Value) -> bool {
 
 /// The number of elements of a set TLC can count (`size` of its values).
 pub fn cardinality(set: &Value) -> Evaluated<usize> {
-    if is_empty_by_argument(set) {
-        return Ok(0);
-    }
     match set {
         Value::Interval(low, high) => crate::value::interval_size(*low, *high),
         Value::Lazy(lazy) => match &**lazy {
             Lazy::FunctionSet(domain, range) => function_set_size(set, domain, range),
+            // `UserValue.size`.
+            lazy if lazy.is_overridden() => fail_runtime(
+                "sized a set TLC doesn't enumerate",
+                format!(
+                    "Attempted to compute the number of elements in the overridden value {}.",
+                    format_pretty(set)
+                ),
+            ),
+            // `SubsetValue.size`: 2^|S|, past an int an overflow.
+            Lazy::Subset(base) => {
+                let size = cardinality(base)?;
+                if size >= 31 {
+                    return Err(crate::value::EvalError {
+                        reason: "a power set too large to count".into(),
+                        message: Some(crate::value::TlcMessage {
+                            text: format!(
+                                "Overflow when computing the number of elements in:\n{}",
+                                format_pretty(set)
+                            ),
+                            code: Some(OVERFLOW),
+                            is_eval_exception: false,
+                        }),
+                    });
+                }
+                Ok(1 << size)
+            }
+            // `SetOfRcdsValue.size` and `SetOfTuplesValue.size`: the product of the parts' sizes.
+            Lazy::RecordSet(fields, _) => {
+                parts_size(set, fields.iter().map(|(_, part)| part), true)
+            }
+            Lazy::Product(factors) => parts_size(set, factors.iter(), false),
             _ => Ok(elements(set)?.len()),
         },
         _ => Ok(elements(set)?.len()),
     }
+}
+
+/// `EC.TLC_MODULE_OVERFLOW`.
+const OVERFLOW: u32 = 2178;
+
+fn parts_size<'v>(
+    set: &Value,
+    parts: impl Iterator<Item = &'v Value>,
+    is_record: bool,
+) -> Evaluated<usize> {
+    if crate::eval::is_empty(set)? {
+        return Ok(0);
+    }
+    let mut size: i64 = 1;
+    for part in parts {
+        size = size.saturating_mul(cardinality(part)? as i64);
+        if size > i64::from(i32::MAX) {
+            let (text, code) = if is_record {
+                (
+                    format!(
+                        "Overflow when computing the number of elements in:\n{}",
+                        format_pretty(set)
+                    ),
+                    Some(OVERFLOW),
+                )
+            } else {
+                (
+                    format!(
+                        "Overflow when computing the number of elements in {}",
+                        format_pretty(set)
+                    ),
+                    None,
+                )
+            };
+            return Err(crate::value::EvalError {
+                reason: "a set too large to count".into(),
+                message: Some(crate::value::TlcMessage {
+                    text,
+                    code,
+                    is_eval_exception: false,
+                }),
+            });
+        }
+    }
+    Ok(size as usize)
 }
 
 // Whether a set is empty, as TLC's `isEmpty` finds without enumerating it: an enumeration or an
@@ -676,10 +801,10 @@ fn is_empty(set: &Value) -> bool {
 // range of one element whatever the domain, and otherwise the range's size to the power of the
 // domain's, which fails where it overflows an int.
 fn function_set_size(set: &Value, domain: &Value, range: &Value) -> Evaluated<usize> {
-    if is_empty(domain) {
+    if crate::eval::is_empty(domain)? {
         return Ok(1);
     }
-    if is_empty(range) {
+    if crate::eval::is_empty(range)? {
         return Ok(0);
     }
     let range = cardinality(range)?;
@@ -734,10 +859,30 @@ mod tests {
             "Attempted to enumerate S \\cup T when S:\n{-1}\nand T:\nNat\nare not both enumerable"
         );
         let difference = difference(&nat(), &set(&[0])).expect("a difference");
-        assert!(is_subset(&set(&[1, 2]), &difference).expect("a subset"));
+        assert!(is_member(&Value::Int(1), &difference).expect("a member"));
+        assert!(!is_member(&Value::Int(0), &difference).expect("a member"));
         assert_eq!(
             message(elements(&difference).map(|_| true)),
             "Attempted to enumerate S \\ T when S:\nNat\nis not enumerable."
+        );
+    }
+
+    #[test]
+    fn tests_a_lazy_union_and_any_as_tlc_does() {
+        let union = Value::Lazy(Rc::new(Lazy::Union(Value::Set(Rc::new(vec![
+            Value::Lazy(Rc::new(Lazy::Nat)),
+        ])))));
+        assert!(is_member(&Value::Int(1), &union).expect("a member"));
+        assert!(!is_member(&Value::Int(-1), &union).expect("a member"));
+        assert_eq!(
+            message(elements(&union).map(|_| true)),
+            "Attempted to enumerate UNION(s), but some element of s is nonenumerable."
+        );
+        let any = Value::Lazy(Rc::new(Lazy::Any));
+        assert!(is_member(&Value::Int(1), &any).expect("a member"));
+        assert_eq!(
+            message(crate::eval::is_empty(&any)),
+            "Shouldn't call isEmpty() on value ANY"
         );
     }
 

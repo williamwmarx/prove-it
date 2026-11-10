@@ -852,6 +852,11 @@ impl<'i> Writer<'i> {
                 )
             }
             Value::Unsorted(_) => return Err(Unsupported("a set TLC leaves unnormalized".into())),
+            Value::Lambda(_) => {
+                return Err(Unsupported(
+                    "a function over a set TLC doesn't enumerate".into(),
+                ));
+            }
             Value::Function(function) => {
                 let range = function
                     .range

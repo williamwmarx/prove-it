@@ -1462,17 +1462,18 @@ fn compares_tlcs_message_in_an_assert_error_assumption() {
     );
     std::fs::remove_dir_all(directory).expect("removed");
     // Under -tool, the message TLC raises with a code holds the code's markers, so the
-    // assumption is false, which stays not native while the replay may word a message apart.
+    // assumption is false.
     let (output, directory) = run_front(
         "assert-error-tool",
         spec,
         "INIT Init\nNEXT Next\n",
         &["-tool"],
     );
-    assert_eq!(output.status.code(), Some(1));
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(10), "{text}");
     assert!(
-        String::from_utf8_lossy(&output.stderr)
-            .contains("an AssertError assumption the replay finds false")
+        text.contains("\"before\"  TRUE\n@!@!@STARTMSG 2104:1 @!@!@\nAssumption line 5, col 8 to line 5, col 99 of module AE is false.\n"),
+        "{text}"
     );
     std::fs::remove_dir_all(directory).expect("removed");
 }
