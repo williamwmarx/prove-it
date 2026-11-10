@@ -169,6 +169,7 @@ impl MemoTable {
     }
 
     fn rehash(&mut self, capacity: usize) {
+        self.probes = 0;
         self.mask = capacity - 1;
         if self.width <= 2 {
             let old = std::mem::replace(&mut self.packed, vec![EMPTY_PACKED; capacity]);
@@ -204,7 +205,7 @@ impl MemoTable {
     // window at the end of one.
     #[inline(always)]
     fn review(&mut self) {
-        if self.is_clustered && self.probes > PROBE_BUDGET {
+        if self.probes > PROBE_BUDGET {
             self.is_clustered = false;
             self.can_cluster = false;
             self.rehash(self.capacity());
@@ -351,7 +352,9 @@ impl MemoTable {
                 slot = (slot + 1) & self.mask;
             }
         };
-        self.review();
+        if self.is_clustered {
+            self.review();
+        }
         if value != EMPTY {
             self.hits += 1;
         }
@@ -542,6 +545,22 @@ mod tests {
             }
             assert_eq!(table.get(&keys(2000)), EMPTY);
             assert_eq!(table.size(), 2000);
+        }
+    }
+
+    #[test]
+    fn a_table_clusters_only_once_it_is_large() {
+        let mut table = MemoTable::new(2);
+        for key in 0..1000u32 {
+            table.set(&[key, 1], key);
+        }
+        assert!(!table.is_clustered);
+        for key in 1000..3000u32 {
+            table.set(&[key, 1], key);
+        }
+        assert!(table.is_clustered);
+        for key in 0..3000u32 {
+            assert_eq!(table.get(&[key, 1]), key);
         }
     }
 
