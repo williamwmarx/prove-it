@@ -548,7 +548,7 @@ impl<'ir> Evaluator<'ir> {
                 let set = set?;
                 let argument = self.evaluate(args[0], context)?;
                 if !is_member(&argument, &set)? {
-                    return fail("applied a function outside its domain");
+                    return self.walked_outside(*function, bound, body, &base, &set, &argument);
                 }
                 let inner = self.bind_pattern(&bound.pattern, &argument, &base)?;
                 self.walk(body, &inner, is_init, then)

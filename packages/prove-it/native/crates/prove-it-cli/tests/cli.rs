@@ -4737,3 +4737,97 @@ fn words_failures_of_the_evaluator_as_tlc() {
     }
     std::fs::remove_dir_all(directory).expect("removed");
 }
+
+#[test]
+fn words_a_function_or_an_operators_table_applied_outside_its_domain_as_tlc() {
+    // An operator the configuration defines by a table, applied outside its rows or to the wrong
+    // number of arguments (`OpRcdValue.eval`), and a function the walk keeps lazy applied outside
+    // its domain (`Tool.getFcnContext`), which TLC prints built, or as written where it can't
+    // count its domain or its body fails, with that failure's frames left on the call stack.
+    // Each text is what TLC at d8fb231 prints, and with -tool.
+    // Its name, definitions, configuration, and what TLC prints, and with -tool.
+    type Case<'a> = (&'a str, &'a str, &'a str, &'a str, &'a str);
+    let cases: [Case; 7] = [
+        (
+            "an operator's table applied outside its rows",
+            "CONSTANT F(_)\nInit == x = 0\nNext == x' = F(x)",
+            "INIT Init\nNEXT Next\nCONSTANT F(0) = 1\n",
+            "Error: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: Attempted to apply operator:\n{ <0, 1>}\nto arguments (1), which is undefined.\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nState 2: <Next line 6, col 9 to line 6, col 17 of module M>\nx = 1\n\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 6, column 9 to line 6, column 17 in M\n1. Line 6, column 14 to line 6, column 17 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\nTLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: Attempted to apply operator:\n{ <0, 1>}\nto arguments (1), which is undefined.\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2121:1 @!@!@\nThe behavior up to this point is:\n@!@!@ENDMSG 2121 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n1: <Initial predicate>\nx = 0\n\n@!@!@ENDMSG 2217 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n2: <Next line 6, col 9 to line 6, col 17 of module M>\nx = 1\n\n@!@!@ENDMSG 2217 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 6, column 9 to line 6, column 17 in M\n1. Line 6, column 14 to line 6, column 17 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "a table of several arguments and rows",
+            "CONSTANT F(_, _)\nInit == x = 0\nNext == x' = F(x, x + 1)",
+            "INIT Init\nNEXT Next\nCONSTANT\nF(0, 1) = 1\nF(a, 3) = {1}\n",
+            "Error: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: Attempted to apply operator:\n{ <0, 1, 1>, <a, 3, {1}>}\nto arguments (1, 2), which is undefined.\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nState 2: <Next line 6, col 9 to line 6, col 24 of module M>\nx = 1\n\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 6, column 9 to line 6, column 24 in M\n1. Line 6, column 14 to line 6, column 24 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\nTLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: Attempted to apply operator:\n{ <0, 1, 1>, <a, 3, {1}>}\nto arguments (1, 2), which is undefined.\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2121:1 @!@!@\nThe behavior up to this point is:\n@!@!@ENDMSG 2121 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n1: <Initial predicate>\nx = 0\n\n@!@!@ENDMSG 2217 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n2: <Next line 6, col 9 to line 6, col 24 of module M>\nx = 1\n\n@!@!@ENDMSG 2217 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 6, column 9 to line 6, column 24 in M\n1. Line 6, column 14 to line 6, column 24 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "a table applied to the wrong number of arguments",
+            "CONSTANT F(_)\nInit == x = 0\nNext == x' = F(x)",
+            "INIT Init\nNEXT Next\nCONSTANT F(0, 0) = 1\n",
+            "Error: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: Attempted to apply the operator { <0, 0, 1>}\nwith wrong number of arguments.\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 6, column 9 to line 6, column 17 in M\n1. Line 6, column 14 to line 6, column 17 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\nTLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: Attempted to apply the operator { <0, 0, 1>}\nwith wrong number of arguments.\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2121:1 @!@!@\nThe behavior up to this point is:\n@!@!@ENDMSG 2121 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n1: <Initial predicate>\nx = 0\n\n@!@!@ENDMSG 2217 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 6, column 9 to line 6, column 17 in M\n1. Line 6, column 14 to line 6, column 17 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "a lazy function whose body fails as TLC prints it",
+            "Init == x = 0\nNext == [k \\in {1, 2} |-> x' = k][3]",
+            "INIT Init\nNEXT Next\n",
+            "Error: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: In applying the function\n[k \\in {1, 2} |-> <expression line 5, col 27 to line 5, col 32 of module M>],\nthe first argument is:\n3which is not in its domain.\nline 5, col 9 to line 5, col 33 of module M\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 36 in M\n1. Line 5, column 27 to line 5, column 32 in M\n2. Line 5, column 27 to line 5, column 28 in M\n3. Line 5, column 27 to line 5, column 27 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\nTLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: In applying the function\n[k \\in {1, 2} |-> <expression line 5, col 27 to line 5, col 32 of module M>],\nthe first argument is:\n3which is not in its domain.\nline 5, col 9 to line 5, col 33 of module M\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2121:1 @!@!@\nThe behavior up to this point is:\n@!@!@ENDMSG 2121 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n1: <Initial predicate>\nx = 0\n\n@!@!@ENDMSG 2217 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 36 in M\n1. Line 5, column 27 to line 5, column 32 in M\n2. Line 5, column 27 to line 5, column 28 in M\n3. Line 5, column 27 to line 5, column 27 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "a lazy function TLC builds to print it",
+            "Init == x = 0\nNext == [k \\in 1..2 |-> x = k][3]",
+            "INIT Init\nNEXT Next\n",
+            "Error: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: In applying the function\n<<FALSE, FALSE>>,\nthe first argument is:\n3which is not in its domain.\nline 5, col 9 to line 5, col 30 of module M\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 33 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\nTLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: In applying the function\n<<FALSE, FALSE>>,\nthe first argument is:\n3which is not in its domain.\nline 5, col 9 to line 5, col 30 of module M\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2121:1 @!@!@\nThe behavior up to this point is:\n@!@!@ENDMSG 2121 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n1: <Initial predicate>\nx = 0\n\n@!@!@ENDMSG 2217 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 33 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "a lazy function over Nat in an action",
+            "Init == x = 0\nNext == [k \\in Nat |-> x' = k][-1]",
+            "INIT Init\nNEXT Next\n",
+            "Error: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: In applying the function\n[k \\in Nat |-> <expression line 5, col 24 to line 5, col 29 of module M>],\nthe first argument is:\n-1which is not in its domain.\nline 5, col 9 to line 5, col 30 of module M\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 34 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\nTLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: In applying the function\n[k \\in Nat |-> <expression line 5, col 24 to line 5, col 29 of module M>],\nthe first argument is:\n-1which is not in its domain.\nline 5, col 9 to line 5, col 30 of module M\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2121:1 @!@!@\nThe behavior up to this point is:\n@!@!@ENDMSG 2121 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n1: <Initial predicate>\nx = 0\n\n@!@!@ENDMSG 2217 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 34 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "a lazy function over Nat in the initial predicate",
+            "Init == [k \\in Nat |-> x = k][-1]\nNext == x' = x",
+            "INIT Init\nNEXT Next\n",
+            "Error: In applying the function\n[k \\in Nat |-> <expression line 4, col 24 to line 4, col 28 of module M>],\nthe first argument is:\n-1which is not in its domain.\nline 4, col 9 to line 4, col 29 of module M\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 33 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\nIn applying the function\n[k \\in Nat |-> <expression line 4, col 24 to line 4, col 28 of module M>],\nthe first argument is:\n-1which is not in its domain.\nline 4, col 9 to line 4, col 29 of module M\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 33 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+    ];
+    let directory = std::env::temp_dir().join(format!(
+        "prove-it-cli-outside-domain-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    for (name, definitions, config, printed, tool) in cases {
+        std::fs::write(
+            directory.join("M.tla"),
+            format!("---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\n{definitions}\n====\n"),
+        )
+        .expect("a spec");
+        std::fs::write(directory.join("M.cfg"), config).expect("a configuration");
+        for threads in ["1", "4"] {
+            for (flags, expected) in [(&[][..], printed), (&["-tool"][..], tool)] {
+                let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
+                    .arg("-noGenerateSpecTE")
+                    .args(flags)
+                    .arg("M")
+                    .current_dir(&directory)
+                    .env("PROVE_IT_WORKERS", threads)
+                    .env("PROVE_IT_SHARED_LEVEL", "1")
+                    .output()
+                    .expect("the binary runs");
+                let text = stdout(&output);
+                assert!(
+                    text.contains(expected),
+                    "{name} on {threads} {flags:?}:\n{text}"
+                );
+            }
+        }
+    }
+    std::fs::remove_dir_all(directory).expect("removed");
+}

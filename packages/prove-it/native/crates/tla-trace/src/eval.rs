@@ -18,6 +18,7 @@ use tla_values::{Id, Store};
 
 use crate::Unsupported;
 use crate::failure::nested;
+use crate::pretty::pretty_print;
 use crate::print::{format_pretty, format_printed, format_value};
 use crate::random::{random_element, random_subset};
 use crate::sets::{as_tuple, cardinality, difference, intersection, is_member, union};
@@ -2975,6 +2976,95 @@ impl<'ir> Evaluator<'ir> {
         }
     }
 
+    /// `getFcnContext`'s failure where the walk applies a function it keeps lazy, written in
+    /// place, outside its domain. TLC prints the function as `FcnLambdaValue.toString` does: built
+    /// (`toFcnRcd`), or, where it can't count the domain or the body fails, which leaves that
+    /// failure's frames on the call stack, as its parameter, its domain and where its body is.
+    pub(crate) fn walked_outside(
+        &mut self,
+        function: NodeId,
+        bound: &Bound,
+        body: NodeId,
+        base: &Context,
+        set: &Value,
+        argument: &Value,
+    ) -> Evaluated<bool> {
+        let reason = "applied a function outside its domain";
+        let (
+            NodeKind::FunctionConstruction { .. },
+            Pattern::Name(name),
+            Some(location),
+            Some(body_text),
+        ) = (
+            self.kind(function),
+            &bound.pattern,
+            self.describe_node(function),
+            self.describe_node(body),
+        )
+        else {
+            return fail(reason);
+        };
+        let unbuilt = |evaluator: &Self| {
+            format!(
+                "[{} \\in {} |-> <expression {body_text}>]",
+                evaluator.name(*name),
+                format_value(set)
+            )
+        };
+        let text = match set {
+            // `FcnParams.size` fails on a set TLC can't count before it evaluates the body.
+            Value::Lazy(lazy) if matches!(**lazy, Lazy::Nat | Lazy::Int) => unbuilt(self),
+            Value::Set(_) | Value::Interval(..) => {
+                let Ok(keys) = elements(set) else {
+                    return fail(reason);
+                };
+                let effects = |evaluator: &Self| {
+                    (
+                        evaluator.printed.len(),
+                        evaluator.register_writes,
+                        evaluator.random.as_ref().map(|random| random.state()),
+                        evaluator.call_stack.as_ref().map(|stack| {
+                            (
+                                stack.is_fingerprinted,
+                                stack.fingerprinted_sources.clone(),
+                                stack.unfollowed,
+                                stack.fingerprint.clone(),
+                            )
+                        }),
+                    )
+                };
+                let before = effects(self);
+                let mut values = Vec::with_capacity(keys.len());
+                for key in keys.iter() {
+                    let inner = self.bind_pattern(&bound.pattern, key, base)?;
+                    match self.evaluate(body, &inner) {
+                        Ok(value) => values.push(value),
+                        // TLC skips the failure, with its frames left on the frozen call stack.
+                        Err(error) if error.message.is_some() => break,
+                        Err(error) => return Err(error),
+                    }
+                }
+                if before != effects(self) {
+                    return fail("a lazy function TLC prints with effects or a report of its own");
+                }
+                if values.len() == keys.len() {
+                    format_value(&sorted_function(keys.to_vec(), values, Class::Lambda)?)
+                } else {
+                    unbuilt(self)
+                }
+            }
+            _ => return fail(reason),
+        };
+        fail_runtime(
+            reason,
+            format!(
+                "In applying the function\n{},\nthe first argument is:\n{}which is not in its domain.\n{location}",
+                pretty_print(&text.encode_utf16().collect::<Vec<_>>()),
+                format_pretty(argument)
+            ),
+        )
+    }
+
     // The bounds, body and context of a function definition or LET function a name refers to.
     fn lazy_function(
         &mut self,
@@ -3457,6 +3547,26 @@ impl<'ir> Evaluator<'ir> {
         Ok((!is_failed).then(|| Rc::new(kept)))
     }
 
+    // An operator's table as `OpRcdValue.toString` prints it, pretty printed: `{ <0, 1>, <2, 3>}`,
+    // each row its arguments and then its value.
+    fn table_text(&mut self, table: &[(Option<Index>, Option<Index>)]) -> Evaluated<String> {
+        let mut rows = Vec::with_capacity(table.len());
+        for &(row, value) in table {
+            let (Some(row), Some(value)) = (row, value) else {
+                return fail("a value of an operator's table the IR can't hold");
+            };
+            let mut items: Vec<String> = as_tuple(&self.value(row)?)
+                .unwrap_or_default()
+                .iter()
+                .map(format_value)
+                .collect();
+            items.push(format_value(&self.value(value)?));
+            rows.push(format!("<{}>", items.join(", ")));
+        }
+        let text = format!("{{ {}}}", rows.join(", "));
+        Ok(pretty_print(&text.encode_utf16().collect::<Vec<_>>()))
+    }
+
     fn builtin(
         &mut self,
         index: Index,
@@ -3476,11 +3586,34 @@ impl<'ir> Evaluator<'ir> {
                 let (Some(row), Some(value)) = (row, value) else {
                     return fail("a value of an operator's table the IR can't hold");
                 };
-                if equals(&self.value(row)?, &arguments)? {
+                let row = self.value(row)?;
+                // `OpRcdValue.eval` tests the number of arguments at each row.
+                if as_tuple(&row).map(<[Value]>::len) != Some(operands.len()) {
+                    return fail_runtime(
+                        "an operator's table applied to the wrong number of arguments",
+                        format!(
+                            "Attempted to apply the operator {}\nwith wrong number of arguments.",
+                            self.table_text(&builtin.table)?
+                        ),
+                    );
+                }
+                if equals(&row, &arguments)? {
                     return self.value(value);
                 }
             }
-            return fail("an operator's table applied outside its rows");
+            return fail_runtime(
+                "an operator's table applied outside its rows",
+                format!(
+                    "Attempted to apply operator:\n{}\nto arguments ({}), which is undefined.",
+                    self.table_text(&builtin.table)?,
+                    as_tuple(&arguments)
+                        .unwrap_or_default()
+                        .iter()
+                        .map(format_value)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            );
         }
         let name = self.name(builtin.name);
         let arity = |count: usize| {
