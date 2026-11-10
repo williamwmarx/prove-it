@@ -405,13 +405,11 @@ port keeps each one's semantics, including where sharing is observable:
 
 - **SMT:** Z3's `ast_manager`: a hash-consed DAG with ids in creation order, hashed with Z3's
   Jenkins hash (`hash.ts`), stored in Z3's open-addressing tables (`hashtable.ts`), whose slot
-  order the model finder iterates. In Rust: one arena per check (`Vec<Node>`, `u32` handles), the
-  same hash on `u32` with wrapping arithmetic, the same table with the same probe and growth.
-  Reference counting (`inc_ref`/`dec_ref`, `withTemporaries`, `ref-vector.ts`, `expr-ref.ts`) is
-  ported literally, not dropped: like Z3, the TS gives a deleted expression's id, and a deleted
-  declaration's small id, to the next one it creates, and those ids order Z3's sorts and enter the
-  matcher's hashes, so which ids are free when is observable. `native/design/smt-core.md` holds the
-  SMT core's conventions.
+  order the model finder iterates. In Rust: one arena per check (`Vec<Node>`, `u32` ids), the same
+  hash on `u32` with wrapping arithmetic, the same table with the same probe and growth. Reference
+  counting (`ref-vector.ts`, `expr-ref.ts`) and id recycling are ported literally, `inc_ref`,
+  `dec_ref` and temporaries included, not dropped: recycled ids order Z3's sorts and the matcher
+  hashes small ids, so they steer the search (`native/design/smt-core.md` §2).
 - **Zenon:** hash-consed expressions whose equality is alpha-equivalence and whose hash ignores
   bound names, one store per run so that fresh names restart. In Rust: an arena per run with the
   same hash (`zenon/ocaml.ts`'s `Hashtbl.hash` port).
@@ -651,7 +649,7 @@ file unless two are trivially small, so a reader can put the two side by side. K
 header comment of each TS file (what it ports, from where, under which licence) and the
 explanatory comments; keep TS names in snake case, so `getTermKey` is `get_term_key`. Errors
 are `enum`s named after `src/errors.ts`'s classes (`SmtCanceledError` → `SmtError::Canceled`).
-The entry point is the shell's `pub fn decide(text: &str, limits: &mut Limits) -> Result<Decision,
+The entry point is the shell's `pub fn decide(text: &str, limits: &Limits) -> Result<Decision,
 DecideError>` (`prove-decide`), which `prove-it-prover` calls by prover name: `Ok` with the
 verdict and the statistics, `DecideError::Prover(message)` where the TypeScript throws a
 `TlaProverError` (Z3's parse errors), and `DecideError::Declined(reason)` for input the port does
@@ -677,9 +675,12 @@ another route. So:
   becomes a `Result` propagated with `?`; never a panic;
 - recursion that the TS relies on catching as a stack overflow gets a depth counter (3.6).
 
-**Steps.** A step is a check of the limits, and the Rust port counts it at exactly the points the
-TypeScript does, with `Limits::is_step_limit_reached` where the TypeScript calls
-`isStepLimitReached`: in `ResourceLimit.inc` for Z3, in `getLimitFailure` for Zenon (the search,
+**Steps.** `Limits` is a cheap-clone handle with no lifetime (an `Rc`, steps in a `Cell`), so a
+backend can keep clones in its closures and lazy sequences while a decision runs; every clone
+counts the same steps, and none may outlive `decide`. A step is a check of the limits, and the
+Rust port counts it at exactly the points the TypeScript does, with
+`Limits::is_step_limit_reached` where the TypeScript calls `isStepLimitReached`, and
+`is_step_limit_passed` where it compares without counting (Zenon's `getStopReason`): in `ResourceLimit.inc` for Z3, in `getLimitFailure` for Zenon (the search,
 the checker and the Isar printer), in `checkInterrupt` for Isabelle, in `isExpired` for PTL. The
 deadline and the cancel cell are checked where the TypeScript checks `Date.now()` and the signal.
 The step count is the first statistic compared, and the cheapest witness of the same search.

@@ -35,15 +35,17 @@ impl StopReason {
     }
 }
 
-pub struct ResourceLimit<'l> {
-    limits: &'l Limits<'l>,
+/// Holds a clone of the decision's `Limits`, which counts the same steps; nothing keeps it after
+/// `decide` returns.
+pub struct ResourceLimit {
+    limits: Limits,
     stop_reason: Cell<Option<StopReason>>,
 }
 
-impl<'l> ResourceLimit<'l> {
-    pub fn new(limits: &'l Limits<'l>) -> ResourceLimit<'l> {
+impl ResourceLimit {
+    pub fn new(limits: &Limits) -> ResourceLimit {
         ResourceLimit {
-            limits,
+            limits: limits.clone(),
             stop_reason: Cell::new(None),
         }
     }
@@ -96,5 +98,31 @@ impl<'l> ResourceLimit<'l> {
         if self.stop_reason.get().is_none() {
             self.stop_reason.set(Some(reason));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_step_limit_stops_the_work_and_says_why() {
+        let limits = Limits::new(f64::INFINITY, Some(2), None);
+        let limit = ResourceLimit::new(&limits);
+        assert!(limit.inc());
+        assert_eq!(limit.checkpoint(), Ok(()));
+        assert!(!limit.inc());
+        assert_eq!(limit.stop_reason(), Some(StopReason::Steps));
+        assert_eq!(limit.checkpoint(), Err(SmtError::Canceled));
+        assert_eq!(limit.count(), limits.steps());
+    }
+
+    #[test]
+    fn the_deadline_is_read_on_every_256th_step() {
+        let limits = Limits::new(-1.0, None, None);
+        let limit = ResourceLimit::new(&limits);
+        assert!((1..256).all(|_| limit.inc()));
+        assert!(!limit.inc());
+        assert_eq!(limit.stop_reason(), Some(StopReason::Time));
     }
 }
