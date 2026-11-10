@@ -409,8 +409,11 @@ pub enum ErrorSite {
     /// step's next state.
     Atom { atom: u32, is_extra: bool },
     /// Evaluating the atom at this position of the IR's `model.atoms` as TLC adds an initial
-    /// state, the violation's one state, to the behavior graphs, before it checks the state.
-    InitialAtom(u32),
+    /// state, the violation's first state, to the behavior graphs, before it checks the state.
+    /// TLC then replays the initial states with its call stack, adding those it hadn't found:
+    /// `replayed` is the atom that may fail as it adds the first of them that has one, the
+    /// violation's second state.
+    InitialAtom { atom: u32, replayed: Option<u32> },
 }
 
 // The stops that are the engine's own limits, not a failure TLC reports: what it doesn't
@@ -539,6 +542,8 @@ struct Found {
     fingerprint: Option<u64>,
     // The state of the generator where a successor's invariant stopped the search.
     random: Option<u64>,
+    // The initial state TLC's replay of the initial states fails at after an initial atom.
+    replayed: Option<Vec<Id>>,
     counts: StopCounts,
 }
 
@@ -1183,6 +1188,7 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
                     last: Some(machine.current().to_vec()),
                     fingerprint: None,
                     random: None,
+                    replayed: None,
                     counts: StopCounts::default(),
                 });
                 return Err(Bail("an invariant violated in an initial state"));
@@ -1197,6 +1203,7 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
                             last: Some(machine.current().to_vec()),
                             fingerprint: None,
                             random: None,
+                            replayed: None,
                             counts: StopCounts::default(),
                         });
                         return Err(Bail("a property violated in an initial state"));
@@ -1392,6 +1399,7 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
                         last: Some(self.successor.clone()),
                         fingerprint: None,
                         random: Some(machine.random.state()),
+                        replayed: None,
                         counts: StopCounts {
                             generated: self.generated,
                             distinct: count + u64::from(is_new),
@@ -1419,6 +1427,7 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
                             last: Some(self.successor.clone()),
                             fingerprint: fingerprint.filter(|_| is_new),
                             random: None,
+                            replayed: None,
                             counts: StopCounts {
                                 generated: self.generated,
                                 distinct: count + u64::from(is_new),
@@ -1561,6 +1570,7 @@ impl<T: Reached, E: Entries> Search<'_, T, E> {
                 last: None,
                 fingerprint: None,
                 random: None,
+                replayed: None,
                 counts: StopCounts {
                     generated: self.generated,
                     distinct: count,
@@ -1594,6 +1604,7 @@ impl<T: Reached, E: Entries> Search<'_, T, E> {
                 last: Some(machine.current().to_vec()),
                 fingerprint: None,
                 random: None,
+                replayed: None,
                 counts: StopCounts {
                     generated: self.generated,
                     distinct,
@@ -1617,6 +1628,7 @@ impl<T: Reached, E: Entries> Search<'_, T, E> {
                 last: None,
                 fingerprint: None,
                 random: None,
+                replayed: None,
                 counts: StopCounts {
                     generated: self.generated,
                     distinct: count,
@@ -2863,9 +2875,12 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             ));
         }
         // TLC adds each initial state to the behavior graphs as it finds it, and stops where an
-        // atom fails to evaluate. It then replays the initial states, checking each again and
-        // adding those after the one it failed at, which the engine follows where there is but
-        // the one.
+        // atom fails to evaluate. It then replays the initial states with its call stack, checking
+        // each again and adding those after the one it failed at, and stops again where an atom of
+        // one of them fails. The engine follows that where every initial state it generated is
+        // distinct, so a state's position is its count, and where it reported the progress TLC
+        // did up to the failing state. The invariants and implied inits the replay checks again
+        // held of every initial state, which the engine checked before.
         if settings.is_violation_reported
             && search.graph.is_some()
             && online.is_none()
@@ -2877,18 +2892,38 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             let count = search.states.count();
             let tables = graph_tables(&mut machine, &search, 0, count, None, None).map_err(Bail)?;
             if let Some(unanswered) = unanswered_at(model, &search, &tables, 0, count) {
-                search.violation = (initial_states == (1, 1)).then(|| Found {
+                let failing = unanswered.state as u64 + 1;
+                let is_followed = initial_states.0 == initial_states.1
+                    && std::iter::successors(Some(2u64), |count| count.checked_mul(2))
+                        .take_while(|&count| count < initial_states.0)
+                        .all(|count| count < failing);
+                let replayed = replayed_unanswered(
+                    model,
+                    &search,
+                    &tables,
+                    count,
+                    unanswered.state as usize + 1,
+                );
+                // TLC's replay stops at the state whose atom fails, and reports its counts then.
+                let replayed_count = replayed
+                    .as_ref()
+                    .map_or(initial_states.0, |replayed| replayed.state as u64 + 1);
+                search.violation = is_followed.then(|| Found {
                     kind: ViolationKind::Error {
-                        site: ErrorSite::InitialAtom(unanswered.atom),
+                        site: ErrorSite::InitialAtom {
+                            atom: unanswered.atom,
+                            replayed: replayed.as_ref().map(|replayed| replayed.atom),
+                        },
                     },
                     parent: None,
                     last: Some(search.states.state(unanswered.state).to_vec()),
                     fingerprint: None,
                     random: None,
+                    replayed: replayed.map(|replayed| search.states.state(replayed.state).to_vec()),
                     counts: StopCounts {
-                        generated: 1,
-                        distinct: 1,
-                        queued: 1,
+                        generated: replayed_count,
+                        distinct: replayed_count,
+                        queued: replayed_count,
                         depth: 1,
                         ..StopCounts::default()
                     },
@@ -2926,6 +2961,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 last: None,
                 fingerprint: None,
                 random: None,
+                replayed: None,
                 counts: StopCounts::default(),
             });
             return Err(Bail(NO_NEXT_STATE));
@@ -3639,6 +3675,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     last: None,
                     fingerprint: None,
                     random: None,
+                    replayed: None,
                     counts: StopCounts {
                         generated: search.generated,
                         distinct: count,
@@ -3673,7 +3710,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                                 || matches!(
                                     found.kind,
                                     ViolationKind::Error {
-                                        site: ErrorSite::InitialAtom(_)
+                                        site: ErrorSite::InitialAtom { .. }
                                     }
                                 )
                                 || answers_initial_atoms(&mut machine, &context, &search, found)
@@ -4223,6 +4260,7 @@ fn to_violation(
         .map(|&index| search.states.state(index).to_vec())
         .collect();
     states.extend(found.last.iter().cloned());
+    states.extend(found.replayed.iter().cloned());
     // The search finds the steps' actions where it keeps the states TLC prints and nothing it
     // evaluates for them prints. Elsewhere, or where it can't, the caller's rebuild of the trace
     // finds them, as TLC does.
@@ -4491,6 +4529,40 @@ fn unanswered_at(
     )
 }
 
+// The first atom the engine didn't answer that TLC's replay of the initial states evaluates: the
+// replay adds only the initial states its first pass didn't find, those from `found` on, so the
+// ones before are passed as states the graph doesn't start from.
+fn replayed_unanswered(
+    model: &Model,
+    search: &Search<'_, States>,
+    tables: &[Table],
+    count: usize,
+    found: usize,
+) -> Option<tla_live::Unanswered> {
+    let graph = search.graph.as_ref()?;
+    let answers: Vec<Option<&[u8]>> = tables
+        .iter()
+        .map(|table| table.unknown.is_none().then_some(&table.answers[..]))
+        .collect();
+    let parents: Vec<i32> = search.states.parents[..count]
+        .iter()
+        .enumerate()
+        .map(|(state, &parent)| if state < found { 0 } else { parent })
+        .collect();
+    tla_live::find_unanswered(
+        &to_terms(&model.live_formula),
+        &tla_live::Graph {
+            parents: &parents,
+            edge_offsets: &graph.edge_offsets[..=0],
+            edges: &graph.edges,
+            fingerprints: &search.states.fingerprints[..count],
+            reals: None,
+            diameters: None,
+        },
+        &answers,
+    )
+}
+
 // Where TLC evaluates an atom the engine didn't answer as it adds a state to the behavior graphs,
 // the failure the caller evaluates again, with the counts of TLC's search then: what it generated
 // and found up to that state, and the out-degrees of the states it expanded.
@@ -4558,6 +4630,7 @@ fn to_atom_failure(
         last: extra.map(|extra| search.states.state(extra as u32).to_vec()),
         fingerprint: None,
         random: None,
+        replayed: None,
         counts: StopCounts {
             generated: initial_states.0 + sum(&graph.successor_counts),
             distinct,
@@ -4632,19 +4705,23 @@ fn to_lasso(
     printed: Vec<Vec<Id>>,
     counts: &Counts,
 ) -> Option<Box<Violation>> {
-    // Under SYMMETRY or a VIEW the stored states aren't those TLC prints, and the caller's rebuild
-    // finds the steps' actions, the step back into the cycle's too, as TLC does.
+    // Under SYMMETRY or a VIEW the stored states aren't those TLC prints, and where the search
+    // couldn't label the steps, such as with actions that print, it didn't run them as TLC runs
+    // them to rebuild the trace. The caller's rebuild then finds the steps' actions, the step
+    // back into the cycle's too, as TLC does.
     let is_reduced = search.states.key_width.is_some() || search.canonicalizer.is_some();
-    let (labels, loop_label) = if is_reduced {
-        (vec![None; path.len().saturating_sub(1)], None)
-    } else {
-        let (&loop_label, steps) = actions.split_last()?;
-        let is_stuttering = loop_start + 1 == path.len();
-        let is_labelled = actions.len() == path.len() && (is_stuttering || loop_label.is_some());
-        if !is_labelled {
-            return None;
+    // A cycle that ends in its first state is printed as stuttering there, as TLC's
+    // `LiveWorker.printTrace` finds the last state's fingerprint the cycle state's.
+    let is_stuttering = loop_start + 1 == path.len() || path.last() == path.get(loop_start);
+    let (labels, loop_label) = match actions.split_last() {
+        Some((&loop_label, steps))
+            if !is_reduced
+                && actions.len() == path.len()
+                && (is_stuttering || loop_label.is_some()) =>
+        {
+            (steps.to_vec(), loop_label)
         }
-        (steps.to_vec(), loop_label)
+        _ => (vec![None; path.len().saturating_sub(1)], None),
     };
     let startup = startup_values(machine, context).ok()?;
     let symmetry = search

@@ -7,6 +7,7 @@ import { AssertedFormulas } from "./asserted-formulas";
 import { AstManager } from "./ast";
 import { Context } from "./context";
 import { L_FALSE, L_TRUE } from "./lbool";
+import { recordLpTrace } from "./lp-trace";
 import { applyUfniaTactic } from "./quant-tactics";
 import { ResourceLimit } from "./rlimit";
 import { parseSmtlib } from "./smtlib-parser";
@@ -78,7 +79,7 @@ export const decideSmt = (text: string, options: DecideOptions): Verdict => {
       return "unknown";
     }
   };
-  const verdict = getVerdict();
+  const verdict = recordLpTrace(text, getVerdict);
   statistics.steps = limit.count;
   if (limit.stopReason !== undefined) statistics.stop = limit.stopReason;
   return verdict;

@@ -108,7 +108,19 @@ fn rebuild(
             ViolationKind::Lasso { loop_start, .. } if is_reduced => Some(loop_start),
             _ => None,
         };
-        let closing = reduced_cycle.filter(|&loop_start| loop_start + 1 < states.len());
+        // A step back into the cycle the search didn't label, as under SYMMETRY or a VIEW, is
+        // found as TLC finds it, from the last state, unless the cycle ends in its first state,
+        // where TLC stutters.
+        let closing = match *kind {
+            ViolationKind::Lasso {
+                loop_start,
+                loop_label: None,
+                ..
+            } if loop_start + 1 < states.len() && states.last() != states.get(loop_start) => {
+                Some(loop_start)
+            }
+            _ => None,
+        };
         if let Some(loop_start) = closing {
             states.push(states[loop_start]);
             labels.push(None);
@@ -168,26 +180,29 @@ fn rebuild(
             } else {
                 rebuilder.alias(&trace, cycle_start, is_tool)?
             };
-            // CounterExample closes a lasso with its step back into the cycle, which a
-            // stuttering one doesn't take.
+            // CounterExample closes a lasso with its step back into the cycle. TLC's record of a
+            // stuttering lasso, one whose cycle ends in its first state, closes it by the action
+            // of its last step, as `getStepAction` gives it.
             let cycle = match *kind {
                 ViolationKind::Lasso {
                     loop_start,
                     loop_label,
                     ..
-                } => loop_label
-                    .or(loop_action)
-                    // TLC's record of a stuttering lasso closes it by the action of its
-                    // last step, as `getStepAction` gives it.
-                    .or_else(|| {
-                        (loop_start + 1 == trace.states.len())
-                            .then(|| trace.states.last().and_then(|state| state.action))
-                            .flatten()
-                    })
+                } => {
+                    // The rebuilt step back into the cycle closes a lasso that doesn't.
+                    let is_stuttering = closing.is_none()
+                        && (loop_start + 1 == trace.states.len()
+                            || states.last() == states.get(loop_start));
+                    if is_stuttering {
+                        trace.states.last().and_then(|state| state.action)
+                    } else {
+                        loop_label.or(loop_action)
+                    }
                     .map(|label| (loop_start, Some(label)))
                     // TLC holds no action for a lasso that stutters at its initial
                     // state, whose TLCStateInfo it rebuilt from the initial predicate.
-                    .or_else(|| (loop_start == 0 && trace.states.len() == 1).then_some((0, None))),
+                    .or_else(|| (loop_start == 0 && trace.states.len() == 1).then_some((0, None)))
+                }
                 _ => None,
             };
             let checked = postconditions
