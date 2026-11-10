@@ -2,7 +2,9 @@ import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { getNativeAddon } from "../../src/engine/native";
 import { TlaZenonError } from "../../src/errors";
+import { createSteps } from "../../src/prover/verdict";
 import { checkProof } from "../../src/prover/zenon/check/check";
 import { decideZenon, runZenon } from "../../src/prover/zenon/decide";
 import { createExpressions, type Expr, UNIVERSE } from "../../src/prover/zenon/expr";
@@ -211,6 +213,21 @@ describe("Zenon finds no proof of a false goal", () => {
 });
 
 describe("Zenon's input", () => {
+  // Zenon matches a relation on two arguments only, so a hypothesis about applications to no
+  // arguments states no property of a relation. The Rust port decides it the same way.
+  it("reads a negated conjunction of applications to no arguments", () => {
+    const text = readFixture("search/nullary-application.znn");
+    const statistics = {};
+    expect(decideZenon(text, { timeLimitMs: Infinity, statistics }).verdict).toBe("unsat");
+    const addon = getNativeAddon();
+    if (typeof addon === "string") throw new Error(addon);
+    expect(addon.decide("zenon", text, Infinity, undefined, undefined)).toEqual({
+      kind: "decided",
+      verdict: "unsat",
+      statistics,
+    });
+  });
+
   it.each([
     ["an unclosed parenthesis", "$goal (= a b"],
     ["an unknown phrase", "$sig a"],
@@ -231,7 +248,7 @@ describe("Zenon's input", () => {
 });
 
 describe("the proof checker", () => {
-  const UNLIMITED = { deadline: Infinity, signal: undefined };
+  const UNLIMITED = { deadline: Infinity, signal: undefined, steps: createSteps() };
   const exprs = createExpressions();
   const getContext = (hypotheses: Expr[]) => ({ hypotheses, definitions: [] });
   const first = exprs.evar("p");
@@ -257,12 +274,14 @@ describe("the proof checker", () => {
 
   // tlapm kills Zenon at its deadline, so a proof that the checker hasn't accepted by then doesn't
   // count.
-  it("stops at the deadline or once the signal aborts", () => {
+  it("stops at the deadline, past the step limit or once the signal aborts", () => {
     const context = getContext([first, exprs.enot(first)]);
-    const passed = { deadline: Date.now() - 1, signal: undefined };
-    const aborted = { deadline: Infinity, signal: AbortSignal.abort() };
+    const passed = { deadline: Date.now() - 1, signal: undefined, steps: createSteps() };
+    const aborted = { deadline: Infinity, signal: AbortSignal.abort(), steps: createSteps() };
+    const spent = { deadline: Infinity, signal: undefined, steps: createSteps(0) };
     expect(checkProof(getClosure(first), context, passed)).toBe(false);
     expect(checkProof(getClosure(first), context, aborted)).toBe(false);
+    expect(checkProof(getClosure(first), context, spent)).toBe(false);
   });
 
   it("rejects a closure without the negation", () => {

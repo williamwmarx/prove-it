@@ -41,3 +41,6 @@ packages/prove-it/native/**/target/
 packages/prove-it/native/**/*.node
 packages/prove-it/native/**/*.node.mjs
 packages/prove-it/native/npm/
+packages/prove-it/tests/conformance/.prover-inputs
+packages/prove-it/tests/conformance/.prover-differential.json
+packages/prove-it/tests/conformance/.lp-traces

@@ -18,9 +18,13 @@ use tla_values::{Id, Store};
 
 use crate::Unsupported;
 use crate::failure::nested;
+use crate::pretty::pretty_print;
 use crate::print::{format_pretty, format_printed, format_value};
 use crate::random::{random_element, random_subset};
-use crate::sets::{as_tuple, cardinality, difference, intersection, is_member, union};
+use crate::sets::{
+    as_tuple, cardinality, difference, intersection, is_member, is_member_filtered, is_reducible,
+    union,
+};
 use crate::value::{
     Class, EvalError, Evaluated, Function, Lazy, Search, Text, TlcMessage, Value, compare,
     elements, equals, fail, fail_coded, fail_runtime, fail_with, find_key, from_store,
@@ -268,6 +272,9 @@ pub struct CallStack {
     /// TLC's error as it prints an initial state it failed to fingerprint, where printing it fails
     /// too: TLC reports it as an exception it didn't expect.
     pub unprintable: Option<TlcMessage>,
+    /// An initial state the initial predicate leaves without a value for some variable, its
+    /// values as TLC prints them, `null` for those it lacks, in the IR's order of the variables.
+    pub incomplete: Option<Vec<String>>,
 }
 
 impl CallStack {
@@ -296,6 +303,43 @@ pub enum StackFrame {
     /// The first `count` operands of a junction.
     Prefix(NodeId, usize),
 }
+
+/// Where TLC needed a boolean, which words its failure where the value isn't one: each is an
+/// `Assert.fail` of `Tool` at d8fb231. The walk of the initial predicate, an action or ENABLED
+/// (`getInitStates`, `getNextStates`, `enabled`) words its own apart from `Tool#eval`'s.
+#[derive(Clone, Copy, Debug)]
+pub enum Demand {
+    /// A boolean TLC's wording isn't followed for: the failure declines.
+    Unworded,
+    /// An operand of a junction `eval` takes: of a bulleted list (`OPCODE_cl`, `OPCODE_dl`), or
+    /// of SANY's nesting of an infix chain (`OPCODE_land`, `OPCODE_lor`).
+    Junction {
+        junction: NodeId,
+        index: usize,
+        is_conjunction: bool,
+    },
+    /// The condition of this IF, which `eval` takes (`OPCODE_ite`).
+    If(NodeId),
+    /// The condition of a CASE arm, which `eval` takes (`OPCODE_case`).
+    CaseCondition,
+    /// What the walk evaluates as a guard: an expression it doesn't walk into, or a literal,
+    /// which it can't.
+    Guard { is_init: bool },
+    /// A conjunct the walk evaluates once every variable has a value (`allAssigned`).
+    Remaining { is_init: bool },
+    /// The condition of this IF, which the walk takes.
+    WalkedIf { node: NodeId, is_init: bool },
+    /// The condition of a CASE arm, which the walk takes: TLC names the arm's body.
+    WalkedCase { body: NodeId, is_init: bool },
+    /// A function's value at an argument, where the walk applies a function TLC holds built
+    /// (`OPCODE_fa`, `EC.TLC_EXPECTED_EXPRESSION_IN_COMPUTING2`).
+    Applied { is_init: bool },
+    /// An invariant, of this expression (`EC.TLC_EXPECTED_VALUE`).
+    Invariant,
+}
+
+/// The reason for a function's value the walk tests that isn't a boolean.
+const APPLIED_NON_BOOLEAN: &str = "a function's value the walk tests that isn't a boolean";
 
 /// The reason for a primed variable a state doesn't assign, before the variable's name.
 pub(crate) const PRIMED_UNASSIGNED: &str = "primed variable not assigned: ";
@@ -421,6 +465,18 @@ const ARGUMENT_ERROR_AN: u32 = 2266;
 /// `EC.TLC_MODULE_DIVISION_BY_ZERO`.
 const DIVISION_BY_ZERO: u32 = 2179;
 const ONE_ARGUMENT_ERROR: u32 = 2283;
+/// `EC.TLC_MODULE_APPLYING_TO_WRONG_VALUE`.
+const APPLYING_TO_WRONG_VALUE: u32 = 2176;
+/// `EC.TLC_MODULE_ARGUMENT_NOT_IN_DOMAIN` and `EC.TLC_MODULE_APPLY_EMPTY_SEQ`.
+const ARGUMENT_NOT_IN_DOMAIN: u32 = 2183;
+const APPLY_EMPTY_SEQ: u32 = 2184;
+/// `EC.TLC_ARGUMENT_MISMATCH`.
+const ARGUMENT_MISMATCH: u32 = 2170;
+const TUPLE_MISMATCH: &str = "a tuple pattern that doesn't match";
+/// `EC.TLC_EXPECTED_EXPRESSION_IN_COMPUTING`, its `2` and `EC.TLC_EXPECTED_VALUE`.
+const EXPECTED_EXPRESSION_IN_COMPUTING: u32 = 2247;
+const EXPECTED_EXPRESSION_IN_COMPUTING2: u32 = 2248;
+const EXPECTED_VALUE: u32 = 2215;
 
 // TLCGet of a register TLCSet hasn't set, named by its number or its name.
 fn undefined_register<T>(key: &Value) -> Evaluated<T> {
@@ -466,6 +522,21 @@ fn as_java_failure<T>(signature: &str, result: Evaluated<T>) -> Evaluated<T> {
         None => error,
     })
 }
+
+// `MethodValue.apply` reports what fails in the Java method, but an EvalException, as the
+// method's failure, such as what fails in an operator argument the method applies.
+fn as_java_runtime_failure<T>(signature: &str, result: Evaluated<T>) -> Evaluated<T> {
+    match &result {
+        Err(EvalError {
+            message: Some(message),
+            ..
+        }) if !message.is_eval_exception => as_java_failure(signature, result),
+        _ => result,
+    }
+}
+
+const SELECT_SEQ: &str = "public static tlc2.value.impl.Value tlc2.module.Sequences.SelectSeq(tlc2.value.impl.Value,tlc2.value.impl.Value)";
+const SORT_SEQ: &str = "public static tlc2.value.impl.Value tlc2.module.TLC.SortSeq(tlc2.value.impl.Value,tlc2.value.impl.Value)";
 
 fn is_text(text: &Text, word: &str) -> bool {
     text.units.iter().copied().eq(word.encode_utf16())
@@ -787,10 +858,237 @@ impl<'ir> Evaluator<'ir> {
     // --- evaluation ---
 
     pub fn boolean(&mut self, node: NodeId, context: &Context) -> Evaluated<bool> {
+        self.boolean_as(node, context, Demand::Unworded)
+    }
+
+    /// A boolean, failing as TLC does where it demands one and the value isn't.
+    pub fn boolean_as(
+        &mut self,
+        node: NodeId,
+        context: &Context,
+        demand: Demand,
+    ) -> Evaluated<bool> {
+        if let Demand::Guard { is_init } = demand
+            && self.is_literal(node)
+        {
+            return self.non_relation(node, is_init);
+        }
         match self.evaluate(node, context)? {
             Value::Bool(boolean) => Ok(boolean),
-            other => fail(format!("expected a boolean, not a {}", other.kind_name())),
+            other => self.non_boolean(node, &other, demand),
         }
+    }
+
+    fn is_literal(&self, node: NodeId) -> bool {
+        matches!(
+            self.kind(node),
+            NodeKind::Number(_)
+                | NodeKind::WideNumber(_)
+                | NodeKind::Decimal(_)
+                | NodeKind::String(_)
+        )
+    }
+
+    // What TLC computes in a walk: "initial states", "next states" or "ENABLED".
+    pub(crate) fn computing(&self, is_init: bool) -> &'static str {
+        if self.is_enabling {
+            "ENABLED"
+        } else if is_init {
+            "initial states"
+        } else {
+            "next states"
+        }
+    }
+
+    // The walk reaching a node that is no operator's application, such as a number, which it
+    // can't walk (the `default` of `getInitStates`, `getNextStates` and `enabled`).
+    fn non_relation<T>(&self, node: NodeId, is_init: bool) -> Evaluated<T> {
+        let Some(written) = self.describe_node(node) else {
+            return fail("a literal walked as an action, as TLC prints it");
+        };
+        let text = if self.is_enabling {
+            format!("Attempted to compute ENABLED on a non-boolean expression.\n{written}")
+        } else {
+            let relation = if is_init { "init" } else { "next" };
+            format!("The {relation} state relation is not a boolean expression.\n{written}")
+        };
+        fail_runtime("a literal walked as an action", text)
+    }
+
+    // TLC's failure where a value it demands to be a boolean isn't one.
+    pub(crate) fn non_boolean<T>(
+        &self,
+        node: NodeId,
+        value: &Value,
+        demand: Demand,
+    ) -> Evaluated<T> {
+        let reason = format!("expected a boolean, not a {}", value.kind_name());
+        let kind = kind_string(value);
+        let text = match (demand, kind) {
+            (
+                Demand::Junction {
+                    junction,
+                    index,
+                    is_conjunction,
+                },
+                Some(kind),
+            ) => {
+                let is_bulleted = self
+                    .ir
+                    .nodes
+                    .junctions
+                    .get(&self.resolved(junction))
+                    .is_none_or(|shape| shape.is_bulleted);
+                if is_bulleted {
+                    let Some(operand) = self.describe_node(node) else {
+                        return fail(reason);
+                    };
+                    let junction = if is_conjunction {
+                        "conjunction"
+                    } else {
+                        "disjunction"
+                    };
+                    format!(
+                        "A non-boolean expression ({kind}) was used as a formula in a {junction}.\n{operand}"
+                    )
+                } else {
+                    let Some(range) = self.describe_prefix(junction, index.max(1) + 1) else {
+                        return fail(reason);
+                    };
+                    let operator = if is_conjunction { "/\\" } else { "\\/" };
+                    let side = if index == 0 { "P" } else { "Q" };
+                    format!(
+                        "Attempted to evaluate an expression of form P {operator} Q when {side} was\n{kind}.\n{range}"
+                    )
+                }
+            }
+            (Demand::If(conditional), Some(kind)) => format!(
+                "A non-boolean expression ({kind}) was used as the condition of an IF.\n{}",
+                self.describe_range(conditional)
+            ),
+            (Demand::CaseCondition, Some(kind)) => {
+                let Some(condition) = self.describe_node(node) else {
+                    return fail(reason);
+                };
+                format!(
+                    "A non-boolean expression ({kind}) was used as a condition of a CASE. {condition}"
+                )
+            }
+            (
+                Demand::WalkedIf {
+                    node: conditional,
+                    is_init,
+                },
+                Some(kind),
+            ) => {
+                let range = self.describe_range(conditional);
+                match (self.is_enabling, is_init) {
+                    (true, _) => format!(
+                        "In computing ENABLED, a non-boolean expression({kind}) was used as the guard condition of an IF.\n{range}"
+                    ),
+                    // `getInitStates` ends the sentence with a new line, `getNextStates` without.
+                    (false, true) => format!(
+                        "In computing initial states, a non-boolean expression ({kind}) was used as the condition of an IF.\n{range}"
+                    ),
+                    (false, false) => format!(
+                        "In computing next states, a non-boolean expression ({kind}) was used as the condition of an IF.{range}"
+                    ),
+                }
+            }
+            (Demand::WalkedCase { body, is_init }, Some(kind)) => {
+                let Some(body) = self.describe_node(body) else {
+                    return fail(reason);
+                };
+                let computing = self.computing(is_init);
+                let space = if self.is_enabling { "" } else { " " };
+                format!(
+                    "In computing {computing}, a non-boolean expression{space}({kind}) was used as a guard condition of a CASE.\n{body}"
+                )
+            }
+            (Demand::Guard { is_init } | Demand::Remaining { is_init }, _) => {
+                let Some(written) = self.describe_node(node) else {
+                    return fail(reason);
+                };
+                return fail_with(
+                    reason,
+                    TlcMessage {
+                        text: format!(
+                            "In computing {}, TLC expected a boolean expression,\nbut instead found {}.\n{written}",
+                            self.computing(is_init),
+                            format_value(value)
+                        ),
+                        code: Some(EXPECTED_EXPRESSION_IN_COMPUTING),
+                        is_eval_exception: false,
+                    },
+                );
+            }
+            (Demand::Applied { is_init }, _) => {
+                return fail_with(
+                    APPLIED_NON_BOOLEAN,
+                    TlcMessage {
+                        text: format!(
+                            "In computing {}, TLC expected a boolean expression,\nbut didn't find one.\n{}",
+                            self.computing(is_init),
+                            self.describe_range(node)
+                        ),
+                        code: Some(EXPECTED_EXPRESSION_IN_COMPUTING2),
+                        is_eval_exception: false,
+                    },
+                );
+            }
+            (Demand::Invariant, _) => {
+                let Some(written) = self.describe_node(node) else {
+                    return fail(reason);
+                };
+                return fail_with(
+                    reason,
+                    TlcMessage {
+                        text: format!(
+                            "TLC expected a boolean value, but did not find one. {written}"
+                        ),
+                        code: Some(EXPECTED_VALUE),
+                        is_eval_exception: false,
+                    },
+                );
+            }
+            _ => return fail(reason),
+        };
+        fail_runtime(reason, text)
+    }
+
+    /// A node as SANY's `toString` gives it in TLC's messages: a numeral as written, any other
+    /// node by its place. `None` for a numeral written otherwise than in decimal, or a decimal.
+    pub fn describe_node(&self, node: NodeId) -> Option<String> {
+        let resolved = &self.ir.nodes.arena[self.resolved(node) as usize];
+        let written = match &resolved.kind {
+            NodeKind::Number(int) => int.to_string(),
+            NodeKind::WideNumber(text) => self.ir.texts[*text as usize].to_string(),
+            NodeKind::Decimal(_) => return None,
+            _ => return Some(self.describe_range(node)),
+        };
+        let range = resolved.range?;
+        let width = range.end_column - range.start_column + 1;
+        (range.start_line == range.end_line && usize::try_from(width).ok()? == written.len())
+            .then_some(written)
+    }
+
+    // The place of the first `count` operands of an infix junction, SANY's node of that prefix.
+    fn describe_prefix(&self, junction: NodeId, count: usize) -> Option<String> {
+        let resolved = self.resolved(junction);
+        let range = self.ir.nodes.arena[resolved as usize].range?;
+        let shape = self.ir.nodes.junctions.get(&resolved)?;
+        let &(end_line, end_column) = match count.checked_sub(2) {
+            Some(position) if position < shape.prefix_ends.len() => &shape.prefix_ends[position],
+            _ => &(range.end_line, range.end_column),
+        };
+        Some(format!(
+            "line {}, col {} to line {}, col {} of module {}",
+            range.start_line,
+            range.start_column,
+            end_line,
+            end_column,
+            self.ir.texts[range.module as usize]
+        ))
     }
 
     pub fn evaluate(&mut self, node: NodeId, context: &Context) -> Evaluated<Value> {
@@ -868,6 +1166,10 @@ impl<'ir> Evaluator<'ir> {
         let StackFrame::Node(node) = frame else {
             return;
         };
+        // The walk tests the value a function's method gave, outside the method.
+        if reason == APPLIED_NON_BOOLEAN {
+            return;
+        }
         // CHOOSE enumerates its set by the set's own method, which fails where TLC can't
         // enumerate the set.
         let chosen = match self.kind(node) {
@@ -1007,7 +1309,7 @@ impl<'ir> Evaluator<'ir> {
     }
 
     // `f[x]` with TLC's message where `x` isn't in the domain of `f`.
-    fn apply_checked(&self, function: &Value, key: &Value) -> Evaluated<Value> {
+    pub(crate) fn apply_checked(&self, function: &Value, key: &Value) -> Evaluated<Value> {
         let result = apply_value(function, key);
         match (&result, function) {
             (Err(error), Value::Function(inner))
@@ -1120,9 +1422,14 @@ impl<'ir> Evaluator<'ir> {
         is_conjunction: bool,
         context: &Context,
     ) -> Evaluated<bool> {
+        let demand = |index| Demand::Junction {
+            junction: node,
+            index,
+            is_conjunction,
+        };
         if self.call_stack.is_none() || self.is_walked_whole(node, count) {
-            for &operand in &operands[..count] {
-                if self.boolean(operand, context)? != is_conjunction {
+            for (index, &operand) in operands[..count].iter().enumerate() {
+                if self.boolean_as(operand, context, demand(index))? != is_conjunction {
                     return Ok(!is_conjunction);
                 }
             }
@@ -1135,7 +1442,7 @@ impl<'ir> Evaluator<'ir> {
         if prefix != is_conjunction {
             return Ok(prefix);
         }
-        self.boolean(operands[count - 1], context)
+        self.boolean_as(operands[count - 1], context, demand(count - 1))
     }
 
     fn evaluate_node(&mut self, node: NodeId, context: &Context) -> Evaluated<Value> {
@@ -1198,7 +1505,7 @@ impl<'ir> Evaluator<'ir> {
                 consequent,
                 alternative,
             } => {
-                if self.boolean(*condition, context)? {
+                if self.boolean_as(*condition, context, Demand::If(node))? {
                     self.evaluate(*consequent, context)
                 } else {
                     self.evaluate(*alternative, context)
@@ -1206,13 +1513,19 @@ impl<'ir> Evaluator<'ir> {
             }
             NodeKind::Case { arms, other } => {
                 for &(condition, body) in arms {
-                    if self.boolean(condition, context)? {
+                    if self.boolean_as(condition, context, Demand::CaseCondition)? {
                         return self.evaluate(body, context);
                     }
                 }
                 match other {
                     Some(other) => self.evaluate(*other, context),
-                    None => fail("no CASE arm holds"),
+                    None => fail_runtime(
+                        "no CASE arm holds",
+                        format!(
+                            "Attempted to evaluate a CASE with no conditions true.\n{}",
+                            self.describe_range(node)
+                        ),
+                    ),
                 }
             }
             NodeKind::Let {
@@ -1781,7 +2094,10 @@ impl<'ir> Evaluator<'ir> {
                     return Ok(None);
                 };
                 let definition = self.definition(self.ir.definitions[index as usize]);
-                let is_startup = self.ir.model.startup.definitions.contains(&index);
+                // TLC computes a definition of no parameters at startup where it is a constant
+                // (`processConstantDefns`), a literal too, which the walk then takes as a value.
+                let is_startup = self.ir.model.startup.definitions.contains(&index)
+                    || self.is_literal(definition.body);
                 Ok(match &definition.form {
                     DefinitionForm::Operator(params) if params.is_empty() && !is_startup => {
                         Some((definition.body, context.global()))
@@ -2054,6 +2370,15 @@ impl<'ir> Evaluator<'ir> {
         }
     }
 
+    // Whether an operator's body is a number or a string, whose value TLC takes for the operator
+    // where it is an argument (`lookup` finds the body's tool object).
+    fn is_literal_body(&self, operator: &Operator) -> bool {
+        matches!(operator.body, Body::Node(body) if matches!(
+            self.kind(body),
+            NodeKind::Number(_) | NodeKind::WideNumber(_) | NodeKind::Decimal(_) | NodeKind::String(_)
+        ))
+    }
+
     // Applies an operator argument, such as SelectSeq's test, to values.
     fn call_with_values(&mut self, operator: &Operator, values: &[Value]) -> Evaluated<Value> {
         if operator.params.len() != values.len() {
@@ -2109,7 +2434,7 @@ impl<'ir> Evaluator<'ir> {
             Pattern::Name(name) => Ok(context.bind_value(*name, value.clone())),
             Pattern::Tuple(names) => {
                 let Some(tuple) = as_tuple(value).filter(|tuple| tuple.len() == names.len()) else {
-                    return fail("a tuple pattern that doesn't match");
+                    return fail(TUPLE_MISMATCH);
                 };
                 let mut inner = context.clone();
                 for (&name, element) in names.iter().zip(tuple) {
@@ -2144,8 +2469,23 @@ impl<'ir> Evaluator<'ir> {
         loop {
             let mut inner = context.clone();
             for (level, bound) in bounds.iter().enumerate() {
+                // `ContextEnumerator` binds a tuple pattern to a tuple of its length alone, and
+                // fails with `EC.TLC_ARGUMENT_MISMATCH`, whose `%1` the message keeps.
                 inner =
-                    self.bind_pattern(&bound.pattern, &sets[level][positions[level]], &inner)?;
+                    match self.bind_pattern(&bound.pattern, &sets[level][positions[level]], &inner)
+                    {
+                        Err(error) if error.reason == TUPLE_MISMATCH => {
+                            return fail_with(
+                                TUPLE_MISMATCH,
+                                TlcMessage {
+                                    text: "Argument mismatch in operator application.%1".into(),
+                                    code: Some(ARGUMENT_MISMATCH),
+                                    is_eval_exception: false,
+                                },
+                            );
+                        }
+                        bound => bound?,
+                    };
             }
             if !visit(self, &inner)? {
                 return Ok(false);
@@ -2165,9 +2505,21 @@ impl<'ir> Evaluator<'ir> {
         }
     }
 
-    // TLC's failure quantifying over a set it implements in Java and can't enumerate
-    // (`Tool.contexts`), which it explains for all but STRING since 1.7.4.
+    // TLC's failure quantifying over a value it can't enumerate (`Tool.contexts`): one that isn't
+    // a set (`Value.getNonEnumerableErrorMsg`), or a set it implements in Java, which it explains
+    // for all but STRING since 1.7.4.
     fn check_enumerable(&self, set: &Value, node: NodeId) -> Evaluated<()> {
+        if is_non_set(set)
+            && let Some(bound) = self.describe_node(node)
+        {
+            return fail_runtime(
+                "quantified over a non-set",
+                format!(
+                    "TLC encountered a non-enumerable quantifier bound\n{}.\n{bound}",
+                    format_pretty(set)
+                ),
+            );
+        }
         let Value::Lazy(lazy) = set else {
             return Ok(());
         };
@@ -2627,6 +2979,95 @@ impl<'ir> Evaluator<'ir> {
         }
     }
 
+    /// `getFcnContext`'s failure where the walk applies a function it keeps lazy, written in
+    /// place, outside its domain. TLC prints the function as `FcnLambdaValue.toString` does: built
+    /// (`toFcnRcd`), or, where it can't count the domain or the body fails, which leaves that
+    /// failure's frames on the call stack, as its parameter, its domain and where its body is.
+    pub(crate) fn walked_outside(
+        &mut self,
+        function: NodeId,
+        bound: &Bound,
+        body: NodeId,
+        base: &Context,
+        set: &Value,
+        argument: &Value,
+    ) -> Evaluated<bool> {
+        let reason = "applied a function outside its domain";
+        let (
+            NodeKind::FunctionConstruction { .. },
+            Pattern::Name(name),
+            Some(location),
+            Some(body_text),
+        ) = (
+            self.kind(function),
+            &bound.pattern,
+            self.describe_node(function),
+            self.describe_node(body),
+        )
+        else {
+            return fail(reason);
+        };
+        let unbuilt = |evaluator: &Self| {
+            format!(
+                "[{} \\in {} |-> <expression {body_text}>]",
+                evaluator.name(*name),
+                format_value(set)
+            )
+        };
+        let text = match set {
+            // `FcnParams.size` fails on a set TLC can't count before it evaluates the body.
+            Value::Lazy(lazy) if matches!(**lazy, Lazy::Nat | Lazy::Int) => unbuilt(self),
+            Value::Set(_) | Value::Interval(..) => {
+                let Ok(keys) = elements(set) else {
+                    return fail(reason);
+                };
+                let effects = |evaluator: &Self| {
+                    (
+                        evaluator.printed.len(),
+                        evaluator.register_writes,
+                        evaluator.random.as_ref().map(|random| random.state()),
+                        evaluator.call_stack.as_ref().map(|stack| {
+                            (
+                                stack.is_fingerprinted,
+                                stack.fingerprinted_sources.clone(),
+                                stack.unfollowed,
+                                stack.fingerprint.clone(),
+                            )
+                        }),
+                    )
+                };
+                let before = effects(self);
+                let mut values = Vec::with_capacity(keys.len());
+                for key in keys.iter() {
+                    let inner = self.bind_pattern(&bound.pattern, key, base)?;
+                    match self.evaluate(body, &inner) {
+                        Ok(value) => values.push(value),
+                        // TLC skips the failure, with its frames left on the frozen call stack.
+                        Err(error) if error.message.is_some() => break,
+                        Err(error) => return Err(error),
+                    }
+                }
+                if before != effects(self) {
+                    return fail("a lazy function TLC prints with effects or a report of its own");
+                }
+                if values.len() == keys.len() {
+                    format_value(&sorted_function(keys.to_vec(), values, Class::Lambda)?)
+                } else {
+                    unbuilt(self)
+                }
+            }
+            _ => return fail(reason),
+        };
+        fail_runtime(
+            reason,
+            format!(
+                "In applying the function\n{},\nthe first argument is:\n{}which is not in its domain.\n{location}",
+                pretty_print(&text.encode_utf16().collect::<Vec<_>>()),
+                format_pretty(argument)
+            ),
+        )
+    }
+
     // The bounds, body and context of a function definition or LET function a name refers to.
     fn lazy_function(
         &mut self,
@@ -2687,6 +3128,18 @@ impl<'ir> Evaluator<'ir> {
         })
     }
 
+    fn except_key(&mut self, step: &PathStep, context: &Context) -> Evaluated<Value> {
+        Ok(match step {
+            PathStep::Field(name) => Value::Str(self.text(*name)),
+            PathStep::Index(args) if args.len() == 1 => self.evaluate(args[0], context)?,
+            PathStep::Index(args) => Value::tuple(
+                args.iter()
+                    .map(|&arg| self.evaluate(arg, context))
+                    .collect::<Evaluated<_>>()?,
+            ),
+        })
+    }
+
     fn except(
         &mut self,
         value: &Value,
@@ -2701,15 +3154,7 @@ impl<'ir> Evaluator<'ir> {
             };
             return self.evaluate(update, &inner);
         };
-        let key = match step {
-            PathStep::Field(name) => Value::Str(self.text(*name)),
-            PathStep::Index(args) if args.len() == 1 => self.evaluate(args[0], context)?,
-            PathStep::Index(args) => Value::tuple(
-                args.iter()
-                    .map(|&arg| self.evaluate(arg, context))
-                    .collect::<Evaluated<_>>()?,
-            ),
-        };
+        let key = self.except_key(step, context)?;
         // `FcnLambdaValue.takeExcept`: the EXCEPT is kept, whatever the key, and `@` is the
         // function's value at it.
         if let Value::Lambda(lambda) = value {
@@ -2732,11 +3177,22 @@ impl<'ir> Evaluator<'ir> {
                 text: lambda.text.clone(),
             })));
         }
+        // `Value.select` fails at a value that isn't a function, TLC having evaluated every key of
+        // the path.
         let Value::Function(function) = value else {
-            return fail(format!(
-                "Attempted to apply EXCEPT construct to the value {}.",
-                format_value(value)
-            ));
+            for step in rest {
+                self.except_key(step, context)?;
+            }
+            if let Value::Unsorted(_) = value {
+                return fail("EXCEPT on a non-function");
+            }
+            return fail_runtime(
+                "EXCEPT on a non-function",
+                format!(
+                    "Attempted to apply EXCEPT construct to the value {}.",
+                    format_pretty(value)
+                ),
+            );
         };
         // TLC leaves a function as it is where the key isn't in its domain.
         let Some(position) = find_key(function, &key)? else {
@@ -2794,7 +3250,7 @@ impl<'ir> Evaluator<'ir> {
         // TLC's \\cup, \\cap and \\ have a source, so a failure in testing their members is a
         // FingerprintException.
         if result.is_err()
-            && matches!(combined, Combined::Operation(..))
+            && matches!(combined, Combined::Union(..))
             && let Some(stack) = &mut self.call_stack
             && !stack.is_frozen
         {
@@ -2833,7 +3289,8 @@ impl<'ir> Evaluator<'ir> {
                 }
                 Ok(false)
             }
-            _ => is_member(element, set),
+            // A set whose parts are lazy filters tests them as the evaluator does.
+            _ => is_member_filtered(element, set, &mut filter_test(self)),
         }
     }
 
@@ -2925,33 +3382,24 @@ impl<'ir> Evaluator<'ir> {
         }
     }
 
-    // A set as TLC builds it, both operands of each `\\cup`, `\\cap` or `\\` evaluated.
+    // A set as TLC builds it, both operands of each `\\cup` evaluated, which the replay tests for
+    // membership without building the union. TLC builds a union of enumerable sets at once,
+    // testing their elements, so a failure replay builds each. It builds an intersection or a
+    // difference with a set enumeration or an interval at once too, testing each of its elements
+    // in the other operand, which may fail on one the membership doesn't test, so the replay
+    // builds those as TLC does.
     fn combined_set(&mut self, set: &Operand) -> Evaluated<Combined> {
         if let Operand::Node(node, context) = set
             && let NodeKind::Apply { name, args } = self.kind(*node)
             && let [left, right] = args[..]
             && !name.is_local
             && let Resolution::Builtin(index) = name.resolution
+            && self.call_stack.is_none()
+            && self.name(self.ir.builtins[index as usize].name) == "\\cup"
         {
-            // TLC builds a union, intersection or difference of enumerable sets at once, testing
-            // their elements, so a failure replay builds each rather than test the membership
-            // lazily.
-            let operation = match self.name(self.ir.builtins[index as usize].name) {
-                _ if self.call_stack.is_some() => None,
-                "\\cup" => Some(SetOperation::Union),
-                "\\cap" => Some(SetOperation::Intersection),
-                "\\" => Some(SetOperation::Difference),
-                _ => None,
-            };
-            if let Some(operation) = operation {
-                let left = self.combined_set(&Operand::Node(left, context.clone()))?;
-                let right = self.combined_set(&Operand::Node(right, context.clone()))?;
-                return Ok(Combined::Operation(
-                    operation,
-                    Box::new(left),
-                    Box::new(right),
-                ));
-            }
+            let left = self.combined_set(&Operand::Node(left, context.clone()))?;
+            let right = self.combined_set(&Operand::Node(right, context.clone()))?;
+            return Ok(Combined::Union(Box::new(left), Box::new(right)));
         }
         Ok(Combined::Set(self.operand(set)?))
     }
@@ -3094,6 +3542,26 @@ impl<'ir> Evaluator<'ir> {
         Ok((!is_failed).then(|| Rc::new(kept)))
     }
 
+    // An operator's table as `OpRcdValue.toString` prints it, pretty printed: `{ <0, 1>, <2, 3>}`,
+    // each row its arguments and then its value.
+    fn table_text(&mut self, table: &[(Option<Index>, Option<Index>)]) -> Evaluated<String> {
+        let mut rows = Vec::with_capacity(table.len());
+        for &(row, value) in table {
+            let (Some(row), Some(value)) = (row, value) else {
+                return fail("a value of an operator's table the IR can't hold");
+            };
+            let mut items: Vec<String> = as_tuple(&self.value(row)?)
+                .unwrap_or_default()
+                .iter()
+                .map(format_value)
+                .collect();
+            items.push(format_value(&self.value(value)?));
+            rows.push(format!("<{}>", items.join(", ")));
+        }
+        let text = format!("{{ {}}}", rows.join(", "));
+        Ok(pretty_print(&text.encode_utf16().collect::<Vec<_>>()))
+    }
+
     fn builtin(
         &mut self,
         index: Index,
@@ -3113,11 +3581,34 @@ impl<'ir> Evaluator<'ir> {
                 let (Some(row), Some(value)) = (row, value) else {
                     return fail("a value of an operator's table the IR can't hold");
                 };
-                if equals(&self.value(row)?, &arguments)? {
+                let row = self.value(row)?;
+                // `OpRcdValue.eval` tests the number of arguments at each row.
+                if as_tuple(&row).map(<[Value]>::len) != Some(operands.len()) {
+                    return fail_runtime(
+                        "an operator's table applied to the wrong number of arguments",
+                        format!(
+                            "Attempted to apply the operator {}\nwith wrong number of arguments.",
+                            self.table_text(&builtin.table)?
+                        ),
+                    );
+                }
+                if equals(&row, &arguments)? {
                     return self.value(value);
                 }
             }
-            return fail("an operator's table applied outside its rows");
+            return fail_runtime(
+                "an operator's table applied outside its rows",
+                format!(
+                    "Attempted to apply operator:\n{}\nto arguments ({}), which is undefined.",
+                    self.table_text(&builtin.table)?,
+                    as_tuple(&arguments)
+                        .unwrap_or_default()
+                        .iter()
+                        .map(format_value)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            );
         }
         let name = self.name(builtin.name);
         let arity = |count: usize| {
@@ -3205,8 +3696,8 @@ impl<'ir> Evaluator<'ir> {
                 let right = self.operand(&operands[1])?;
                 match name {
                     "\\cup" => union(&left, &right)?,
-                    "\\cap" => intersection(&left, &right)?,
-                    _ => difference(&left, &right)?,
+                    "\\cap" => intersection(&left, &right, &mut filter_test(self))?,
+                    _ => difference(&left, &right, &mut filter_test(self))?,
                 }
             }
             "SUBSET" => {
@@ -3485,7 +3976,7 @@ impl<'ir> Evaluator<'ir> {
                 let sequence = self.operand(&operands[0])?;
                 match argument_sequence("Head", &sequence)?.first() {
                     Some(head) => head.clone(),
-                    None => return fail("Head of the empty sequence"),
+                    None => return empty_sequence("Head"),
                 }
             }
             "Tail" => {
@@ -3494,13 +3985,13 @@ impl<'ir> Evaluator<'ir> {
                 // A string's tail is the string of the characters past its first.
                 if let Value::Str(text) = &sequence {
                     if text.units.is_empty() {
-                        return fail("Tail of the empty string");
+                        return empty_sequence("Tail");
                     }
                     return Ok(Value::Str(self.made_text(text.units[1..].into())));
                 }
                 let elements = argument_sequence("Tail", &sequence)?;
                 if elements.is_empty() {
-                    return fail("Tail of the empty sequence");
+                    return empty_sequence("Tail");
                 }
                 Value::tuple(elements[1..].to_vec())
             }
@@ -3529,20 +4020,52 @@ impl<'ir> Evaluator<'ir> {
                 elements.extend(sequence_of(&right)?.iter().cloned());
                 Value::tuple(elements)
             }
+            // `Sequences.SubSeq` tests the sequence, then each bound is an integer, then each is in
+            // the sequence's domain, from the first.
             "SubSeq" => {
                 arity(3)?;
                 let sequence = self.operand(&operands[0])?;
-                let from = self.operand_int(&operands[1])?;
-                let to = self.operand_int(&operands[2])?;
+                let from = self.operand(&operands[1])?;
+                let to = self.operand(&operands[2])?;
                 // A string slices as the sequence of its characters, and stays a string.
                 let length = match &sequence {
                     Value::Str(text) => text.units.len(),
-                    _ => sequence_of(&sequence)?.len(),
+                    _ => sequence_argument("SubSeq", "sequence", &sequence)?.len(),
+                } as i64;
+                let mut bounds = [0; 2];
+                for ((bound, value), position) in
+                    bounds.iter_mut().zip([&from, &to]).zip(["second", "third"])
+                {
+                    let Value::Int(int) = value else {
+                        return fail_coded(
+                            "SubSeq of a bound that isn't an integer",
+                            ARGUMENT_ERROR,
+                            format!(
+                                "The {position} argument of SubSeq should be a natural number, but instead it is:\n{}",
+                                format_pretty(value)
+                            ),
+                        );
+                    };
+                    *bound = i64::from(*int);
+                }
+                let [from, to] = bounds;
+                // `EC.TLC_MODULE_ARGUMENT_NOT_IN_DOMAIN`.
+                let outside = |position: &str, bound: i64| {
+                    fail_coded(
+                        "SubSeq outside the sequence's domain",
+                        ARGUMENT_NOT_IN_DOMAIN,
+                        format!(
+                            "The {position} argument of SubSeq must be in the domain of its first argument:\n{}\n, but instead it is\n{bound}",
+                            format_pretty(&sequence)
+                        ),
+                    )
                 };
                 let range = if from > to {
                     0..0
-                } else if from < 1 || to > length as i64 {
-                    return fail("SubSeq outside the sequence's domain");
+                } else if from < 1 || from > length {
+                    return outside("second", from);
+                } else if to > length {
+                    return outside("third", to);
                 } else {
                     from as usize - 1..to as usize
                 };
@@ -3556,14 +4079,62 @@ impl<'ir> Evaluator<'ir> {
                 let sequence = self.operand(&operands[0])?;
                 let test = self.operand_operator(&operands[1])?;
                 let mut kept = Vec::new();
-                for element in sequence_of(&sequence)? {
-                    match self.call_with_values(&test, std::slice::from_ref(element))? {
+                for element in sequence_argument("SelectSeq", "sequence", &sequence)? {
+                    let tested = self.call_with_values(&test, std::slice::from_ref(element));
+                    match as_java_runtime_failure(SELECT_SEQ, tested)? {
                         Value::Bool(true) => kept.push(element.clone()),
                         Value::Bool(false) => {}
-                        _ => return fail("a SelectSeq test that isn't a boolean"),
+                        _ => {
+                            // TLC holds a LAMBDA as an `OpLambdaValue`, which prints as its name.
+                            let is_lambda = matches!(&operands[1], Operand::Node(node, _)
+                                if matches!(self.kind(*node), NodeKind::Lambda { .. }));
+                            if !is_lambda || self.is_literal_body(&test) {
+                                return fail("a SelectSeq test that isn't a boolean");
+                            }
+                            return fail_coded(
+                                "a SelectSeq test that isn't a boolean",
+                                ARGUMENT_ERROR,
+                                "The second argument of SelectSeq should be a boolean-valued operator, but instead it is:\n<Operator LAMBDA>".into(),
+                            );
+                        }
                     }
                 }
                 Value::tuple(kept)
+            }
+            // `TLC.SortSeq`: an insertion sort, which moves each element before those it is less
+            // than, `Op(element, other)`, from the last sorted on.
+            "SortSeq" => {
+                arity(2)?;
+                let sequence = self.operand(&operands[0])?;
+                let less = self.operand_operator(&operands[1])?;
+                let elements = sequence_argument("SortSeq", "natural number", &sequence)?;
+                if self.is_literal_body(&less) {
+                    return fail("SortSeq of an operator TLC takes for its body's value");
+                }
+                let mut sorted: Vec<Value> = Vec::with_capacity(elements.len());
+                for element in elements {
+                    let mut position = sorted.len();
+                    while position > 0 {
+                        let pair = [element.clone(), sorted[position - 1].clone()];
+                        let compared = self.call_with_values(&less, &pair);
+                        match as_java_runtime_failure(SORT_SEQ, compared)? {
+                            Value::Bool(true) => position -= 1,
+                            Value::Bool(false) => break,
+                            other => {
+                                return fail_coded(
+                                    "a SortSeq comparison that isn't a boolean",
+                                    ARGUMENT_ERROR,
+                                    format!(
+                                        "The second argument of SortSeq should be a boolean function, but instead it is:\n{}",
+                                        format_pretty(&other)
+                                    ),
+                                );
+                            }
+                        }
+                    }
+                    sorted.insert(position, element.clone());
+                }
+                Value::tuple(sorted)
             }
             ":>" => {
                 arity(2)?;
@@ -3873,6 +4444,22 @@ impl<'ir> Evaluator<'ir> {
                 match self.operand(&operands[0])? {
                     Value::Str(name) if name.rank >= 0 => Value::Model(name),
                     Value::Str(_) => return fail("TLCModelValue of a name TLC ranks as it runs"),
+                    name @ (Value::Int(_)
+                    | Value::Bool(_)
+                    | Value::Model(_)
+                    | Value::Set(_)
+                    | Value::Interval(..)
+                    | Value::Function(_)
+                    | Value::Lazy(_)) => {
+                        return fail_coded(
+                            "TLCModelValue of a value that isn't a string",
+                            ONE_ARGUMENT_ERROR,
+                            format!(
+                                "The argument of ModelValue should be a string, but instead it is:\n{}",
+                                format_pretty(&name)
+                            ),
+                        );
+                    }
                     _ => return fail("TLCModelValue of a value that isn't a string"),
                 }
             }
@@ -4019,6 +4606,17 @@ impl<'ir> Evaluator<'ir> {
             "Permutations" => {
                 arity(1)?;
                 let set = self.operand(&operands[0])?;
+                // `TLC.Permutations` converts its argument with `toSetEnum`.
+                if is_non_set(&set) {
+                    return fail_coded(
+                        "Permutations of a value that isn't a set",
+                        APPLYING_TO_WRONG_VALUE,
+                        format!(
+                            "Applying Permutations to the following value,\nwhich is not a finite set:\n{}",
+                            format_pretty(&set)
+                        ),
+                    );
+                }
                 let elements = elements(&set)?;
                 if elements.len() > 8 {
                     return fail("Permutations of a set too large to build");
@@ -4063,39 +4661,51 @@ fn permute(
     }
 }
 
-/// An argument of a builtin: an expression as written, or a value an operator argument is
-/// applied to.
-enum SetOperation {
-    Union,
-    Intersection,
-    Difference,
+// A lazy filter's test of an element, through its base, as the evaluator makes it
+// (`SetPredValue.member`).
+fn filter_test<'a, 'ir>(
+    evaluator: &'a mut Evaluator<'ir>,
+) -> impl FnMut(&Value, &Value, &Predicate) -> Evaluated<bool> + 'a {
+    move |element, base, predicate| {
+        Ok(evaluator.member(element, base)? && evaluator.filters(element, base, predicate)?)
+    }
 }
 
 enum Combined {
     Set(Value),
-    Operation(SetOperation, Box<Combined>, Box<Combined>),
+    Union(Box<Combined>, Box<Combined>),
 }
 
 impl Combined {
-    // Membership, testing the right operand only where the left one doesn't decide it.
+    // Membership, testing the second operand only where the first one doesn't decide it. TLC
+    // combines a union through its set enumeration or interval operand (`Tool`'s OPCODE_cup), so
+    // that one is first.
     fn has(&self, evaluator: &mut Evaluator<'_>, element: &Value) -> Evaluated<bool> {
         match self {
             Combined::Set(set) => evaluator.member(element, set),
-            Combined::Operation(operation, left, right) => Ok(match operation {
-                SetOperation::Union => {
-                    left.has(evaluator, element)? || right.has(evaluator, element)?
-                }
-                SetOperation::Intersection => {
-                    left.has(evaluator, element)? && right.has(evaluator, element)?
-                }
-                SetOperation::Difference => {
-                    left.has(evaluator, element)? && !right.has(evaluator, element)?
-                }
-            }),
+            Combined::Union(left, right) => {
+                let (first, second) = if !left.is_reducible() && right.is_reducible() {
+                    (right, left)
+                } else {
+                    (left, right)
+                };
+                Ok(first.has(evaluator, element)? || second.has(evaluator, element)?)
+            }
+        }
+    }
+
+    // Whether TLC holds the set as a set enumeration or an interval (`Reducible`), as it holds
+    // the union of two.
+    fn is_reducible(&self) -> bool {
+        match self {
+            Combined::Set(set) => is_reducible(set),
+            Combined::Union(left, right) => left.is_reducible() && right.is_reducible(),
         }
     }
 }
 
+/// An argument of a builtin: an expression as written, or a value an operator argument is
+/// applied to.
 enum Operand {
     Node(NodeId, Context),
     Value(Value),
@@ -4309,6 +4919,16 @@ pub(crate) fn is_empty(value: &Value) -> Evaluated<bool> {
     })
 }
 
+// A value that isn't a set, which TLC prints as the evaluator does: not a `FcnLambdaValue`, which
+// TLC prints by building it again.
+fn is_non_set(value: &Value) -> bool {
+    match value {
+        Value::Bool(_) | Value::Int(_) | Value::Str(_) | Value::Model(_) => true,
+        Value::Function(function) => function.class.get() != Class::Lambda,
+        _ => false,
+    }
+}
+
 // TLC's `getKindString` of a value that isn't a function, whose class the evaluator knows: a
 // scalar or a lazy set, but not a set enumeration, which TLC may hold as another class.
 fn non_function_kind(value: &Value) -> Option<&'static str> {
@@ -4334,6 +4954,20 @@ fn non_function_kind(value: &Value) -> Option<&'static str> {
     }
 }
 
+// TLC's `getKindString` of a value whose class the evaluator knows: one `non_function_kind`
+// knows, or a function TLC holds as a `TupleValue`, a `RecordValue` or a `FcnRcdValue`.
+fn kind_string(value: &Value) -> Option<&'static str> {
+    match value {
+        Value::Function(function) => match function.class.get() {
+            Class::Tuple => Some("a tuple"),
+            Class::Record => Some("a record"),
+            Class::Plain => Some("a function  of the form (d1 :> e1 @@ ... @@ dN :> eN)"),
+            Class::Lambda => None,
+        },
+        _ => non_function_kind(value),
+    }
+}
+
 // The sequence the argument of Len, Head or Tail must be (`EC.TLC_MODULE_ONE_ARGUMENT_ERROR`).
 fn argument_sequence<'v>(name: &str, value: &'v Value) -> Evaluated<&'v [Value]> {
     match as_tuple(value) {
@@ -4347,6 +4981,33 @@ fn argument_sequence<'v>(name: &str, value: &'v Value) -> Evaluated<&'v [Value]>
             ),
         ),
     }
+}
+
+// A sequence argument of an operator TLC overrides (`EC.TLC_MODULE_ARGUMENT_ERROR`), which
+// SortSeq names a natural number. TLC fails otherwise to make a sequence of a function it keeps
+// lazy (`FcnLambdaValue.toTuple`).
+fn sequence_argument<'v>(name: &str, expected: &str, value: &'v Value) -> Evaluated<&'v [Value]> {
+    match (as_tuple(value), value) {
+        (Some(elements), _) => Ok(elements),
+        (None, Value::Lambda(_)) => fail(format!("{name} of a function TLC keeps lazy")),
+        (None, _) => fail_coded(
+            format!("{name} of a non-sequence"),
+            ARGUMENT_ERROR,
+            format!(
+                "The first argument of {name} should be a {expected}, but instead it is:\n{}",
+                format_pretty(value)
+            ),
+        ),
+    }
+}
+
+// `EC.TLC_MODULE_APPLY_EMPTY_SEQ`.
+fn empty_sequence<T>(name: &str) -> Evaluated<T> {
+    fail_coded(
+        format!("{name} of the empty sequence"),
+        APPLY_EMPTY_SEQ,
+        format!("Attempted to apply {name} to the empty sequence."),
+    )
 }
 
 fn sequence_of(value: &Value) -> Evaluated<&[Value]> {

@@ -2,7 +2,7 @@
 // which proves the obligation.
 
 import { TlaSyntaxError } from "../../errors";
-import type { DecideOptions, Verdict } from "../verdict";
+import { createSteps, type DecideOptions, isStepLimitReached, type Verdict } from "../verdict";
 import { getSatisfiability, type PtlFormula } from "./tableau";
 
 // LS4's input syntax, as tlapm writes it: every operator is parenthesized except the facts of a
@@ -59,10 +59,15 @@ const parseLs4 = (text: string): PtlFormula => {
   return formula;
 };
 
+// The statistics are the steps, each a check of the limits.
 export const decidePtl = (text: string, options: DecideOptions): Verdict => {
   const deadline = performance.now() + options.timeLimitMs;
-  return getSatisfiability(
+  const steps = options.steps ?? createSteps();
+  const verdict = getSatisfiability(
     parseLs4(text),
-    () => options.signal?.aborted === true || performance.now() > deadline,
+    () =>
+      isStepLimitReached(steps) || options.signal?.aborted === true || performance.now() > deadline,
   );
+  if (options.statistics !== undefined) options.statistics.steps = steps.count;
+  return verdict;
 };

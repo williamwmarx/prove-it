@@ -1,0 +1,12 @@
+[package]
+name = "prove-smt"
+description = "Prove It's port of Z3, as tlapm runs it on its SMT obligations"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license = "MIT"
+publish.workspace = true
+
+[dependencies]
+prove-decide = { path = "../decide" }
+prove-num = { path = "../num" }

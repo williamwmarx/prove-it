@@ -1,0 +1,8 @@
+[package]
+name = "prove-num"
+description = "Big integers and rationals with JavaScript bigint's semantics, for Prove It's prover"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license = "MIT"
+publish.workspace = true
