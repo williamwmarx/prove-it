@@ -656,6 +656,36 @@ fn prints_what_an_assumption_printed_before_it_failed_once() {
     std::fs::remove_dir_all(directory).expect("removed");
 }
 
+// SANY's corpus Semantics: `Tool.isValid` fails on an assumption that is no boolean, naming its
+// place, and `checkAssumptions` reports it (EC 2215 within 2105).
+#[test]
+fn reports_an_assumption_that_is_no_boolean() {
+    let spec = "---- MODULE NotBool ----\nVARIABLE x\nASSUME \"text\"\nInit == x = 0\nNext == x' = x\n====\n";
+    let place = "line 3, col 8 to line 3, col 13 of module NotBool";
+    for (test, args, expected) in [
+        (
+            "not-bool",
+            &[][..],
+            format!(
+                "Error: Evaluating assumption {place} failed.\nTLC expected a boolean value, but did not find one. {place}\nFinished in "
+            ),
+        ),
+        (
+            "not-bool-tool",
+            &["-tool"][..],
+            format!(
+                "@!@!@STARTMSG 2105:1 @!@!@\nEvaluating assumption {place} failed.\n@!@!@STARTMSG 2215:0 @!@!@\nTLC expected a boolean value, but did not find one. {place}\n@!@!@ENDMSG 2215 @!@!@\n@!@!@ENDMSG 2105 @!@!@\n"
+            ),
+        ),
+    ] {
+        let (output, directory) = run_front(test, spec, "INIT Init\nNEXT Next\n", args);
+        let text = stdout(&output);
+        assert_eq!(output.status.code(), Some(10), "{text}");
+        assert!(text.contains(&expected), "{text}");
+        std::fs::remove_dir_all(directory).expect("removed");
+    }
+}
+
 #[test]
 fn prints_once_what_an_assumption_printed_before_the_engine_left_it() {
     // The search prints the first print, then leaves the assumption to the trace evaluator, which
