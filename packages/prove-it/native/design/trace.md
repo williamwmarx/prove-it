@@ -504,10 +504,10 @@ Done:
 - EWD998Chan: TLCGet's key is read through the parameter an INSTANCE of TLC binds it to.
   TLCSet("exit", TRUE) in an invariant stops the search once the state being expanded is done,
   with the states left on the queue (`ModelChecker.stop` finishes the queue). TLC's main thread,
-  woken by it, prints a progress line with the counts as the invariant left them: the new state
-  counted as distinct, not yet queued. That line races the worker in TLC; the binary prints it as
-  TLC's recording does. Exit set elsewhere (Next, a constraint, the initial states) or with
-  temporal properties is not native.
+  woken by the stop, prints a progress line or not as the threads race: TLC at d8fb231 with one
+  worker printed it in 6 of 8 runs of EWD998Chan, with three different counts, and in none of 6
+  runs of a smaller spec. The binary prints none; the differential drops progress lines. Exit set
+  elsewhere (Next, a constraint, the initial states) or with temporal properties is not native.
 
 Open:
 - Sets TLC holds unnormalized: `\cup` and DOMAIN, above.

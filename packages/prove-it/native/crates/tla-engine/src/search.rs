@@ -822,8 +822,8 @@ struct Search<'r, T, E = Dense> {
     // With temporal properties, what the search printed computing the initial states and then
     // expanding each state, held until the liveness checker's atoms have printed between them.
     held: Option<Vec<Vec<Printed>>>,
-    // Whether the search reported TLC's progress as TLCSet("exit", TRUE) stopped it.
-    is_exit_reported: bool,
+    // Whether TLCSet("exit", TRUE) ran in an invariant, where the search follows it.
+    is_exit_followed: bool,
 }
 
 impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
@@ -864,7 +864,7 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
             pending_fingerprint: None,
             possible: Vec::new(),
             held: None,
-            is_exit_reported: false,
+            is_exit_followed: false,
         }
     }
 
@@ -1111,29 +1111,9 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
         result
     }
 
-    // TLCSet("exit", TRUE) wakes TLC's main thread, which prints its progress as the worker goes on
-    // (`AbstractChecker.runTLC`): the counts as the invariant that set it left them, the new state
-    // found and not yet queued. The search follows it where an invariant sets it.
-    fn report_exit(&mut self, machine: &mut Machine<'_>, is_new: bool) {
-        self.is_exit_reported = true;
-        self.flush(machine);
-        let count = self.states.count() as u64;
-        let depth = if is_new {
-            self.depth.max(self.level + 1)
-        } else {
-            self.depth
-        };
-        self.reporter.progress(
-            self.generated,
-            count + u64::from(is_new),
-            count - self.expanding as u64 - 1,
-            depth.max(1),
-        );
-    }
-
     // Where TLCSet("exit", TRUE) ran outside an invariant, TLC's progress then isn't followed.
     fn check_exit_followed(&self, machine: &Machine<'_>) -> Outcome<()> {
-        if machine.registers.is_exit && !self.is_exit_reported {
+        if machine.registers.is_exit && !self.is_exit_followed {
             return Err(Bail(EXIT_UNFOLLOWED));
         }
         Ok(())
@@ -1209,8 +1189,10 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
             let failing =
                 first_failing_changed(machine, &context.invariants, &self.successor, &self.current);
             self.swap_successor(machine, self.expansion_epoch, self.level_id);
-            if machine.registers.is_exit && !self.is_exit_reported {
-                self.report_exit(machine, is_new);
+            // TLC's main thread, woken by the stop, may print its progress as the worker goes
+            // on, or not, as the threads race: the binary prints none.
+            if machine.registers.is_exit {
+                self.is_exit_followed = true;
             }
             let failed = match failing {
                 Ok(None) => None,
@@ -2755,7 +2737,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             }
             search.expanding += 1;
             // TLC's worker finishes the state, then finds the queue finished (`stop`).
-            if search.is_exit_reported {
+            if search.is_exit_followed {
                 if search.graph.is_some() || online.is_some() {
                     return Err(Bail(
                         "unsupported: TLCSet(\"exit\", TRUE) with temporal properties",
