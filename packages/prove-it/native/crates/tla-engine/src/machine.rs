@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use tla_ir::NodeId;
-use tla_values::fingerprint::Fingerprints;
+use tla_values::fingerprint::{Fingerprints, Polynomial};
 use tla_values::store::{Outcome, ShapeJoin};
 use tla_values::{Bail, Id, Store};
 
@@ -84,6 +84,14 @@ pub struct Program {
     /// What TLC seeds the generator its startup and initial states draw from with, and what a
     /// state's fingerprint is xored with to seed the draws of its expansion.
     pub(crate) random_seed: u64,
+    /// The index in FP64.Polys of the polynomial TLC fingerprints with.
+    pub(crate) fingerprint_index: usize,
+}
+
+impl Program {
+    pub(crate) fn polynomial(&self) -> &'static Polynomial {
+        Polynomial::get(self.fingerprint_index)
+    }
 }
 
 /// The statistics of one memo table, as `getMemoStatistics` gives them.
@@ -198,7 +206,7 @@ impl<'p> Machine<'p> {
             startup_random: 0,
             registers: Registers::default(),
             tlc_caches: HashMap::new(),
-            fingerprints: Fingerprints::new(),
+            fingerprints: Fingerprints::new(program.polynomial()),
             lazy_functions: Vec::new(),
         }
     }
