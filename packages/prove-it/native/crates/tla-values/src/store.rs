@@ -12,6 +12,8 @@ use std::mem::take;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+mod shapes;
+
 /// The name of an interned value.
 pub type Id = u32;
 
@@ -63,6 +65,8 @@ pub(crate) const EMPTY_SLOT: Id = Id::MAX;
 const INSERTION_LENGTH: usize = 16;
 // Blocks this small are searched in order. A larger one is in TLC's order and searched by halving.
 const LINEAR_SIZE: usize = 16;
+// A set this small whose elements compare without failing is scanned for an id.
+const SCANNED_SIZE: usize = 256;
 
 // A function whose keys are all strings, which TLC compares only with another record.
 const IS_RECORD: u8 = 1;
@@ -180,6 +184,7 @@ pub struct Store {
     // The words an EXCEPT changes in a block: their indexes, ascending, and their new values.
     patch_indexes: Vec<u32>,
     patch_values: Vec<u32>,
+    shapes: shapes::Shapes,
 }
 
 impl Default for Store {
@@ -220,6 +225,7 @@ impl Store {
             pair_scratch: vec![0; 64],
             patch_indexes: vec![0; 16],
             patch_values: vec![0; 16],
+            shapes: shapes::Shapes::default(),
         }
     }
 
@@ -242,6 +248,7 @@ impl Store {
             (0, 0, 0)
         };
         self.meta.truncate(values);
+        self.shapes.forget_from(values as Id);
         self.meta.extend_from_slice(&base.meta[values..]);
         self.heap.truncate(words);
         self.heap.extend_from_slice(&base.heap[words..]);
@@ -316,6 +323,7 @@ impl Store {
         self.copied = None;
         self.order.ranks.clear();
         self.unordered_rank = i32::MAX;
+        self.shapes.forget();
         for text in order {
             self.order.rank(text);
         }
@@ -349,6 +357,7 @@ impl Store {
     /// TLC's, so their order is TLC's only when the interpreter makes them again.
     pub fn freeze_string_order(&mut self) {
         self.unordered_rank = self.order.ranks.len() as i32;
+        self.shapes.forget();
     }
 
     /// Whether a string has been ranked since `freeze_string_order`.
@@ -378,6 +387,8 @@ impl Store {
             let known = &mut self.texts[payload as usize];
             if known.rank < 0 {
                 known.rank = rank;
+                // The string may now be unordered, as may the values that hold it.
+                self.shapes.forget();
             }
         }
         rank
@@ -1178,6 +1189,15 @@ impl Store {
         if self.size_of(set) > 0 && (self.is_kept_lazy(element) || self.is_kept_lazy(set)) {
             return Err(LAZY_FUNCTION);
         }
+        // Where no comparison can fail, the set holds the element if it holds its id: a short set
+        // is scanned, and a run of integers or a long set searched.
+        if self.is_member_by_id(element, set) {
+            if self.size_of(set) as usize <= SCANNED_SIZE && self.meta(set).flags & IS_INT_RUN == 0
+            {
+                return Ok(self.set_elements(set).contains(&element));
+            }
+            return Ok(self.find_in_block(set, element)? != -1);
+        }
         if self.find_in_block(set, element)? != -1 {
             return Ok(true);
         }
@@ -1853,6 +1873,25 @@ impl Store {
             }
         }
         self.apply(function, key)
+    }
+
+    /// `r.field` of a function that has the key, found by the key's id without comparing, where
+    /// `hint` is the position it was last found at: None where `apply_field` would search with
+    /// comparisons or fail.
+    #[inline(always)]
+    pub fn field_by_id(&self, function: Id, key: Id, hint: &mut u32) -> Option<Id> {
+        let meta = self.meta(function);
+        if meta.kind != KIND_FUNCTION {
+            return None;
+        }
+        let (size, offset) = (meta.size, meta.payload as usize);
+        if *hint >= size || self.word(offset + *hint as usize) != key {
+            *hint = self
+                .words(offset, size as usize)
+                .iter()
+                .position(|&stored| stored == key)? as u32;
+        }
+        Some(self.word(offset + (size + *hint) as usize))
     }
 
     pub fn domain_of(&mut self, function: Id) -> Id {

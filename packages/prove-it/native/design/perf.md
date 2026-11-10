@@ -486,6 +486,27 @@ MCbtree) it needs more cores. These items are independent of each other and of t
   only.
 - Hashing ids with a cheaper hash in the state table: it is already a multiply-shift.
 
+## Results
+
+Each change, measured with the suite against the build before it: median wall seconds of 5
+interleaved runs on the 4-core cloud container, with the min–max range. Models not listed moved
+within their range.
+
+### Membership by id (plan item 3)
+
+The store gives each value a shape (`tla-values/src/store/shapes.rs`): a class of values any two
+of which TLC compares without failing, read from `compareTo` of each value class at d8fb231.
+Where the element's shape joins the shape of the set's elements, no comparison of TLC's search can
+fail, so the store answers by the element's id; elsewhere it compares as before. The value oracle
+(5 seeds of 200,000 operations) answers as the TypeScript store does on every operation and finds
+no failure of TLC's that the store misses.
+
+| Model | Before, s | After, s | Speedup |
+|---|---|---|---:|
+| TLCSailfish1 | 16.64 (16.33–17.02) | 5.13 (5.11–5.40) | 3.24× |
+| PaxosCommit | 35.45 (34.35–36.91) | 33.30 (32.76–33.53) | 1.06× |
+| MCabs | 18.34 (17.77–18.71) | 17.48 (16.92–17.64) | 1.05× |
+
 ## Measured and dropped
 
 Tried on the symmetry and evaluator tracks, measured with the suite on the 4-core container, and
