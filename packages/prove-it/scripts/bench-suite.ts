@@ -574,6 +574,14 @@ const models = MODELS.filter((model) => filter === undefined || model.id.include
     config: model.config.includes("/") ? join(PACKAGE_DIRECTORY, model.config) : model.config,
   }),
 );
+// A model whose corpus wasn't fetched would fail in every checker as a process that can't start.
+const unfetched = models.filter((model) => !existsSync(model.directory));
+if (unfetched.length > 0) {
+  console.error(
+    `Fetch the corpora of ${unfetched.map((model) => model.id).join(", ")} first with bun scripts/fetch-corpora.ts`,
+  );
+  process.exit(1);
+}
 
 const describeOutcome = (outcome: Outcome | undefined, isCountingGenerated = true) =>
   outcome === undefined

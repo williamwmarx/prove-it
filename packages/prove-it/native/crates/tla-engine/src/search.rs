@@ -77,6 +77,9 @@ pub struct Settings {
     pub test_live_check_at: Option<usize>,
 }
 
+// How many candidates ahead the merge reads the state table.
+const MERGE_PREFETCH: usize = 16;
+
 /// A level of fewer states runs on one thread, as `MINIMUM_SHARED_LEVEL` in `search.ts`, unless
 /// its states are costly enough that sharing it pays (`SHARED_WORK`).
 pub const MINIMUM_SHARED_LEVEL: usize = 2048;
@@ -1867,6 +1870,11 @@ impl Search<'_, States> {
                         break;
                     }
                     candidate += 1;
+                    // The probe for a candidate further on, so that its slot is in the cache by its
+                    // turn: the table is far larger than the cache, and the merge runs alone.
+                    if let Some(&ahead) = found.fingerprints.get(index + MERGE_PREFETCH) {
+                        self.states.set.touch(ahead);
+                    }
                     let fingerprint = found.fingerprints[index];
                     let ids = &found.ids[index * width..(index + 1) * width];
                     let keys = key_width

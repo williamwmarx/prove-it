@@ -72,6 +72,16 @@ impl Graph<'_> {
     fn expanded(&self) -> usize {
         self.edge_offsets.len().saturating_sub(1).min(self.count())
     }
+
+    /// Where a slot's answer is in an atom's table: the states, the steps by their edges, then
+    /// each state's stuttering step.
+    fn position(&self, slot: Slot) -> usize {
+        match slot {
+            Slot::State(state) => state as usize,
+            Slot::Step { edge, .. } => edge as usize,
+            Slot::Stutter(state) => self.edges.len() + state as usize,
+        }
+    }
 }
 
 /// Where the checker asks an atom: of a state, of the step at a position of the graph's edges, from
@@ -96,6 +106,12 @@ pub trait Answers {
     /// checker asks about no step from it.
     fn is_disabled(&self, _enabled: u32, _state: u32) -> bool {
         false
+    }
+
+    /// The answers as tables, one per atom, each by the position of a state or step as
+    /// `Tables` places them without TLC's diameter, where the checker may read them directly.
+    fn tables(&self) -> Option<&[Option<&[u8]>]> {
+        None
     }
 }
 
@@ -134,11 +150,7 @@ impl Answers for Tables<'_> {
     }
 
     fn position(&self, atom: u32, slot: Slot, diameter: u32) -> usize {
-        let position = match slot {
-            Slot::State(state) => state as usize,
-            Slot::Step { edge, .. } => edge as usize,
-            Slot::Stutter(state) => self.graph.edges.len() + state as usize,
-        };
+        let position = self.graph.position(slot);
         match &self.graph.diameters {
             Some(diameters) if diameters.atoms.get(atom as usize) == Some(&true) => {
                 let length = self.tables[atom as usize].map_or(0, <[u8]>::len);
@@ -153,6 +165,10 @@ impl Answers for Tables<'_> {
             self.tables.get(enabled as usize),
             Some(Some(table)) if table.get(state as usize) == Some(&0)
         )
+    }
+
+    fn tables(&self) -> Option<&[Option<&[u8]>]> {
+        self.graph.diameters.is_none().then_some(self.tables)
     }
 }
 
