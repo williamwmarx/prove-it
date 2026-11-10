@@ -36,8 +36,7 @@
 //   holds its index.
 // - Undo: TS's closures on `emons.trail` are `CoreUndo`s that `Emonics::pop` returns; `Nla::pop`
 //   applies them right after, in order (set_use_nra_model, the divisions' lists).
-// - Errors: a pass that TS lets throw returns `Result<_, SmtError>`. NraSolver declines with
-//   `SmtError::Unsupported` until nlsat is ported, and `check` propagates it.
+// - Errors: a pass that TS lets throw returns `Result<_, SmtError>`, and `check` propagates it.
 //
 // The changed-bounds callback. TS installs `lra.onChangedBounds`, which findFeasibleSolution calls
 // at its end with the columns whose bounds changed, and which adds to `monics_with_changed_bounds`
@@ -1089,7 +1088,7 @@ impl<'l> Nla<'_, 'l> {
             }
         }
         if self.has_no_effect(result) && NLA_PARAMS.nra && level >= 2 {
-            result = NraSolver::check(self, u64::MAX, u64::MAX)?;
+            result = NraSolver::check(self, None, None)?;
             self.stats().nra_calls += 1;
         }
         if result == LBool::Undef && !self.has_no_effect(result) {
@@ -1108,7 +1107,7 @@ impl<'l> Nla<'_, 'l> {
     // that took less than a tenth of the steps, makes the backoff run it again sooner.
     fn bounded_nlsat(&mut self) -> Result<LBool, SmtError> {
         let budget = 100000;
-        let result = NraSolver::check(self, 100, budget)?;
+        let result = NraSolver::check(self, Some(100), Some(budget))?;
         self.stats().nra_calls += 1;
         let is_success = result == LBool::False || self.nra.steps() < budget / 10;
         self.core.nlsat_backoff.update(is_success);
