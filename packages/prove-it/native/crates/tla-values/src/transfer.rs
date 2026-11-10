@@ -347,6 +347,22 @@ pub fn decode_states(
     Ok(ids)
 }
 
+// A function of the class the interpreter built it as: one over 1..n that isn't its tuple is
+// TLC's function, which the store marks.
+fn function_of(
+    store: &mut Store,
+    class: i32,
+    keys: &[Id],
+    values: &[Id],
+) -> Result<Id, DecodeError> {
+    let function = store.function_of(keys, values)?;
+    Ok(if class == TUPLE_CLASS {
+        function
+    } else {
+        store.mark_built_as_function(function)
+    })
+}
+
 struct Reader<'a> {
     words: &'a [i32],
     strings: &'a [Vec<u16>],
@@ -408,21 +424,23 @@ impl Reader<'_> {
                 Ok(store.set_of(&elements)?)
             }
             Some(&FUNCTION_TAG) => {
-                self.index += 2;
+                self.index += 1;
+                let class = self.next()?;
                 let length = self.next_length()?;
                 let keys = self.read_parts(ids, length)?;
                 let values = self.read_parts(ids, length)?;
-                Ok(store.function_of(&keys, &values)?)
+                function_of(store, class, &keys, &values)
             }
             Some(&INTERVAL_FUNCTION_TAG) => {
-                self.index += 2;
+                self.index += 1;
+                let class = self.next()?;
                 let low = i64::from(self.next()?);
                 let length = self.next_length()?;
                 let keys = (0..length as i64)
                     .map(|offset| store.int(low + offset))
                     .collect::<Result<Vec<Id>, Bail>>()?;
                 let values = self.read_parts(ids, length)?;
-                Ok(store.function_of(&keys, &values)?)
+                function_of(store, class, &keys, &values)
             }
             _ => self.read_value(store),
         }
@@ -447,21 +465,21 @@ impl Reader<'_> {
                 Ok(store.set_of(&elements)?)
             }
             FUNCTION_TAG => {
-                self.next()?;
+                let class = self.next()?;
                 let length = self.next_length()?;
                 let keys = self.read_values(store, length)?;
                 let values = self.read_values(store, length)?;
-                Ok(store.function_of(&keys, &values)?)
+                function_of(store, class, &keys, &values)
             }
             INTERVAL_FUNCTION_TAG => {
-                self.next()?;
+                let class = self.next()?;
                 let low = i64::from(self.next()?);
                 let length = self.next_length()?;
                 let keys = (0..length as i64)
                     .map(|offset| store.int(low + offset))
                     .collect::<Result<Vec<Id>, Bail>>()?;
                 let values = self.read_values(store, length)?;
-                Ok(store.function_of(&keys, &values)?)
+                function_of(store, class, &keys, &values)
             }
             _ => Err(DecodeError::Malformed("an unknown tag")),
         }

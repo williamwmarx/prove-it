@@ -5408,3 +5408,122 @@ fn stops_where_tlcs_sort_seq_fails() {
         }
     }
 }
+
+#[test]
+fn declines_a_tuple_pattern_over_a_tuple_tlc_built_as_a_function() {
+    // TLC binds a tuple of names in `\E`, `\A`, a set of all, a set filter and a function's
+    // construction only to a `TupleValue` (`ContextEnumerator`, `Tool.evalImpl`), which a function
+    // over 1..n it built otherwise isn't, while CHOOSE and Append take one as a tuple (`toTuple`).
+    // Where TLC at d8fb231 fails, with the first line it prints here, the engine declines.
+    let config = "INIT Init\nNEXT Next\n";
+    let mismatch = "Error: Argument mismatch in operator application.%1\n";
+    let cast = "Error: class tlc2.value.impl.FcnRcdValue cannot be cast to class tlc2.value.impl.TupleValue (tlc2.value.impl.FcnRcdValue and tlc2.value.impl.TupleValue are in unnamed module of loader 'app')\n";
+    let thrown = "Error: TLC threw an unexpected exception.\n";
+    let action = "INIT Init\nNEXT Next2\n";
+    let failing: [(&str, &str, &str); 14] = [
+        (
+            "Init == x = 0 /\\ \\E <<a, b>> \\in {[k \\in 1..2 |-> k]} : a = 1",
+            config,
+            mismatch,
+        ),
+        (
+            "Init == x = (\\A <<a, b>> \\in {[k \\in {1, 2} |-> k]} : a = 1)",
+            config,
+            mismatch,
+        ),
+        (
+            "Init == x = {a + b : <<a, b>> \\in {[k \\in 1..2 |-> k]}}",
+            config,
+            mismatch,
+        ),
+        (
+            "Init == x = {<<a, b>> \\in {[k \\in 1..2 |-> k]} : a = 1}",
+            config,
+            cast,
+        ),
+        (
+            "Init == x = [<<a, b>> \\in {[k \\in 1..2 |-> k]} |-> a]",
+            config,
+            cast,
+        ),
+        (
+            "Init == x = [k \\in 1..2 |-> k]\nNext2 == \\E <<a, b>> \\in {x} : x' = x",
+            action,
+            thrown,
+        ),
+        (
+            "Init == x = [k \\in 1..2 |-> k]\nInv == \\E <<a, b>> \\in {x} : a = 1",
+            "INIT Init\nNEXT Next\nINVARIANT Inv\n",
+            mismatch,
+        ),
+        (
+            "Init == x = (\\E <<a, b>> \\in {[[k \\in 1..2 |-> k] EXCEPT ![1] = 3]} : a = 3)",
+            config,
+            mismatch,
+        ),
+        (
+            "Init == x = (\\E <<a>> \\in {1 :> 7} : a = 7)",
+            config,
+            mismatch,
+        ),
+        (
+            "Init == x = (\\E <<a, b>> \\in {[k \\in 1..2 |-> k] @@ <<>>} : a = 1)",
+            config,
+            mismatch,
+        ),
+        (
+            "Init == x = (\\E <<a, b>> \\in [1..2 -> {7}] : a = 7)",
+            config,
+            mismatch,
+        ),
+        (
+            "Init == x = (\\E <<a, b>> \\in Permutations({1, 2}) : a = 1)",
+            config,
+            mismatch,
+        ),
+        (
+            "Init == x = (\\E <<a, b>> \\in {SetToBag({1, 2})} : a = 1)",
+            config,
+            mismatch,
+        ),
+        // A thread builds the function that another binds, where it is a tuple the store held
+        // already.
+        (
+            "VARIABLE y, z\nInit == x \\in 1..400 /\\ y = {} /\\ z = <<1, 2>>\nNext2 == \\/ y = {} /\\ y' = (IF x = 337 THEN {[k \\in 1..2 |-> k]} ELSE {<<x, x>>}) /\\ UNCHANGED <<x, z>>\n         \\/ y # {} /\\ (\\A <<a, b>> \\in y : a <= b) /\\ UNCHANGED <<x, y, z>>",
+            action,
+            thrown,
+        ),
+    ];
+    for (definitions, config, failure) in failing {
+        for (run, output) in check_on_threads("tuple-pattern", definitions, config) {
+            let text = stdout(&output);
+            assert!(
+                !text.contains("No error has been found"),
+                "{definitions} on {run}:\n{text}"
+            );
+            if run.ends_with("[]") && text.contains(failure) {
+                continue;
+            }
+            assert!(
+                String::from_utf8_lossy(&output.stderr).contains(
+                    "not native yet: the engine stopped: unsupported: a tuple pattern bound to a tuple TLC may hold as a function"
+                ),
+                "{definitions} on {run}:\n{text}"
+            );
+        }
+    }
+    for definitions in [
+        "Init == x = (\\E <<a, b>> \\in {<<1, 2>>} : a = 1)",
+        "Init == x = (\\E <<a, b>> \\in {[<<1, 2>> EXCEPT ![1] = 3]} : a = 3)",
+        "Init == x = CHOOSE <<a, b>> \\in {[k \\in 1..2 |-> k]} : a = 1",
+        "Init == x = (\\E <<a, b>> \\in {Append([k \\in 1..1 |-> k], 2)} : a = 1)",
+    ] {
+        for (run, output) in check_on_threads("tuple-pattern-bound", definitions, config) {
+            let text = stdout(&output);
+            assert!(
+                text.contains("Model checking completed. No error has been found.\n"),
+                "{definitions} on {run}:\n{text}"
+            );
+        }
+    }
+}

@@ -245,7 +245,8 @@ fn permute(
     functions: &mut Vec<Id>,
 ) {
     if from == order.len() {
-        functions.push(machine.store.function_of_sorted(keys, order));
+        let function = machine.store.function_of_sorted(keys, order);
+        functions.push(machine.store.mark_built_as_function(function));
         return;
     }
     for index in from..order.len() {
@@ -375,7 +376,8 @@ fn merge_bags(machine: &mut Machine<'_>, bags: &[(Vec<Id>, Vec<Id>)]) -> Outcome
             }
         }
     }
-    machine.store.function_of(&keys, &counts)
+    let bag = machine.store.function_of(&keys, &counts)?;
+    Ok(machine.store.mark_built_as_function(bag))
 }
 
 fn bag_sum(machine: &mut Machine<'_>, args: &[Id], _: &[Applier]) -> Outcome<Id> {
@@ -411,7 +413,8 @@ fn bag_difference(machine: &mut Machine<'_>, args: &[Id], _: &[Applier]) -> Outc
             kept_counts.push(machine.store.int(count)?);
         }
     }
-    machine.store.function_of(&kept_keys, &kept_counts)
+    let bag = machine.store.function_of(&kept_keys, &kept_counts)?;
+    Ok(machine.store.mark_built_as_function(bag))
 }
 
 fn bag_union(machine: &mut Machine<'_>, args: &[Id], _: &[Applier]) -> Outcome<Id> {
@@ -486,7 +489,8 @@ fn sub_bags(machine: &mut Machine<'_>, args: &[Id], _: &[Applier]) -> Outcome<Id
     let functions: Vec<Id> = entries
         .iter()
         .map(|(entry_keys, entry_counts)| {
-            machine.store.function_of_sorted(entry_keys, entry_counts)
+            let bag = machine.store.function_of_sorted(entry_keys, entry_counts);
+            machine.store.mark_built_as_function(bag)
         })
         .collect();
     machine.store.set_of(&functions)
@@ -502,5 +506,6 @@ fn set_to_bag(machine: &mut Machine<'_>, args: &[Id], _: &[Applier]) -> Outcome<
     let elements = machine.store.set_elements(set).to_vec();
     let one = machine.store.int(1)?;
     let counts = vec![one; elements.len()];
-    Ok(machine.store.function_of_sorted(&elements, &counts))
+    let bag = machine.store.function_of_sorted(&elements, &counts);
+    Ok(machine.store.mark_built_as_function(bag))
 }
