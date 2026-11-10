@@ -3292,7 +3292,7 @@ fn untimed(output: &Output) -> String {
 
 #[test]
 fn prints_on_four_threads_what_it_prints_on_one() {
-    let goldens: [(&str, &[u8], &str, &str); 4] = [
+    let goldens: [(&str, &[u8], &str, &str); 5] = [
         ("TCommit", COMMIT_IR, "", "a search that finds no error"),
         (
             "ACP_NB_WRONG_TLC",
@@ -3317,6 +3317,14 @@ fn prints_on_four_threads_what_it_prints_on_one() {
             ),
             "SPECIFICATION Spec\nCONSTANTS\n    Servers = {n1, n2, n3}\n    Values = {v}\n    Lag = 3\nINVARIANTS TypeOK BoundedLag\nPROPERTIES AllExtending InSync\nVIEW DropCommonPrefix\nCHECK_DEADLOCK TRUE\n",
             "a lasso under a VIEW",
+        ),
+        (
+            "MC",
+            include_bytes!(
+                "../../../../tests/conformance/ir/examples/specifications/ReadersWriters/MC.ir"
+            ),
+            "CONSTANT\n    NumActors <- n\nSPECIFICATION\n    Spec\nINVARIANT\n    TypeOK\n    Safety\nPROPERTY\n    Liveness\n",
+            "fairness, whose steps the graph labels for ENABLED",
         ),
     ];
     for (name, ir, config, what) in goldens {

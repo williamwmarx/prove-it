@@ -32,6 +32,17 @@ how.
   - It adds each candidate whose fingerprint isn't in the set yet, importing its values from the
     thread's overlay into the store (`Store::import`, parts first). That gives the numbering,
     parents, out-degrees and depth of TLC's one worker.
+  - Where the search records a graph for liveness, each thread records its states' steps too,
+    each to a state by the index `Candidates::index` gives it: a state found before the level by
+    its own, and one the thread found by the index it would have if the thread's states all
+    joined the store (the slots of those `Candidates::find` returns are marked `SEEN`). The merge
+    resolves each of a parent's candidates to the index it takes, its own or that of the state
+    with its key found first, and then appends the parent's steps in the order generated,
+    duplicates included, with their labels and, under a VIEW or symmetry, the states they reached,
+    imported. Its successor and new-state counts, its edge offset and the depth so far, TLC's
+    diameter, follow: the graph of TLC's one worker. The bounds the one-thread search checks
+    before it expands a state of a graph (`MAXIMUM_GRAPH_STATES`, 32-bit indices) stop the merge
+    at that state, which the one-thread path then expands and stops at.
   - A thread's caches forget only what they hold of its overlay's own values (`forget_from`), so
     memo tables, fingerprints and symmetry images stay warm from level to level.
 - **Stops (4.2).** A thread that stops at state `p` lowers an atomic `stop` to `p` and quits. The
@@ -58,7 +69,8 @@ how.
 - **Where it runs on one thread.** A level runs on one thread when:
   - it has fewer than `PROVE_IT_SHARED_LEVEL` states (default 2,048, `MINIMUM_SHARED_LEVEL` as
     in `search.ts`), or too few for two threads of half that each;
-  - the search records a graph for liveness;
+  - the search records a graph for liveness and `PROVE_IT_TEST_LIVE_CHECK_AT` asks for a check
+    of it at a state, which could be inside a level;
   - something prints or reads `TLCGet("distinct")`;
   - ToString makes strings, which it ranks as it evaluates them;
   - `PROVE_IT_LIVE_CHECK` is on.
@@ -88,7 +100,7 @@ how.
   - 2PCwithBTM, VoucherRedeem, SyncCons and MCEcho;
   - TLCGetLevel (deadlock) and test216;
   - view_symmetry (VIEW and SYMMETRY);
-  - ReadersWriters (liveness, one thread by design);
+  - ReadersWriters (liveness: the graph, its labels and its stops at PROVE_IT_STOP_AT);
   - and 2PCwithBTM stopped by `PROVE_IT_STOP_AT` at eight states, inside levels and at their ends.
 
   Commit's state logs at 1, 2 and 4 threads are byte-identical (282,251 states).
