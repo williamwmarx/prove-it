@@ -11,7 +11,7 @@ use tla_trace::{
 };
 use tla_values::Id;
 
-use crate::check::SEARCH_STACK_BYTES;
+use crate::stack::on_search_stack;
 use tla_trace::pretty_print;
 
 /// A trace's states as TLC prints them, each with what TLC printed before it, and what it prints
@@ -98,160 +98,148 @@ fn rebuild(
     postconditions: Option<&PostconditionRun>,
     is_tool: bool,
 ) -> Result<PrintedTrace, String> {
-    std::thread::scope(|scope| {
-        std::thread::Builder::new()
-            .stack_size(SEARCH_STACK_BYTES)
-            .spawn_scoped(scope, || {
-                let mut states: Vec<&[Id]> = states.iter().map(Vec::as_slice).collect();
-                // Under SYMMETRY or a VIEW the lasso's states are the stored ones: TLC rebuilds
-                // the states it prints, the step back into the cycle with them, to a state whose
-                // key is the stored first state of the cycle's.
-                let is_reduced = violation.symmetry.is_some() || ir.model.view.is_some();
-                let reduced_cycle = match *kind {
-                    ViolationKind::Lasso { loop_start, .. } if is_reduced => Some(loop_start),
-                    _ => None,
-                };
-                let closing = reduced_cycle.filter(|&loop_start| loop_start + 1 < states.len());
-                if let Some(loop_start) = closing {
-                    states.push(states[loop_start]);
-                    labels.push(None);
-                }
-                // TLC holds a violating state as it found it, and recovers a deadlocked one.
-                let ending = match *kind {
-                    ViolationKind::Deadlock { .. } => Ending::Kept,
-                    ViolationKind::Invariant(_)
-                    | ViolationKind::InitialInvariant(_)
-                    | ViolationKind::InitialPredicate(_) => Ending::Violation,
-                    ViolationKind::Lasso { .. } | ViolationKind::Accepted { .. } => Ending::Lasso,
-                    ViolationKind::NoNextState | ViolationKind::Error { .. } => {
-                        return Err("a stop with no trace".into());
-                    }
-                };
-                let cycle_start = match *kind {
-                    ViolationKind::Lasso { loop_start, .. } => Some(loop_start),
-                    _ => None,
-                };
-                // TLC prints each state through the ALIAS, when there is one.
-                let rebuilt = Rebuilder::new(ir).and_then(|mut rebuilder| {
-                    rebuilder.set_startup(
-                        &violation.store,
-                        &violation.startup,
-                        violation.startup_random,
-                    )?;
-                    if let Some(random) = violation.random {
-                        rebuilder.set_violation_random(random);
-                    }
-                    if let Some(group) = &violation.symmetry {
-                        rebuilder.set_symmetry(group);
-                    }
-                    rebuilder.set_registers(Registers::from_store(
-                        &violation.store,
-                        &violation.registers.numbered,
-                        &violation.registers.named,
-                    )?);
-                    let mut trace =
-                        rebuilder.rebuild(&violation.store, &states, &labels, ending)?;
-                    let loop_action = match closing {
-                        Some(_) => trace.states.pop().and_then(|state| state.action),
-                        None => None,
-                    };
-                    if closing.is_some() && loop_action.is_none() {
-                        return Err(Unsupported(
-                            "a step back into the cycle the rebuilt lasso lacks".into(),
-                        ));
-                    }
-                    let violated = match reduced_cycle {
-                        Some(loop_start) => {
-                            Some(name_violated(&mut rebuilder, ir, &trace, loop_start)?)
-                        }
-                        None => None,
-                    };
-                    // TLC prints a deadlocked initial state as it is (`TLCTrace.printTrace`).
-                    let is_alone =
-                        matches!(kind, ViolationKind::Deadlock { .. }) && trace.states.len() == 1;
-                    let aliases = if is_alone {
-                        None
-                    } else {
-                        rebuilder.alias(&trace, cycle_start, is_tool)?
-                    };
-                    // CounterExample closes a lasso with its step back into the cycle, which a
-                    // stuttering one doesn't take.
-                    let cycle = match *kind {
-                        ViolationKind::Lasso {
-                            loop_start,
-                            loop_label,
-                            ..
-                        } => loop_label
-                            .or(loop_action)
-                            // TLC's record of a stuttering lasso closes it by the action of its
-                            // last step, as `getStepAction` gives it.
-                            .or_else(|| {
-                                (loop_start + 1 == trace.states.len())
-                                    .then(|| trace.states.last().and_then(|state| state.action))
-                                    .flatten()
-                            })
-                            .map(|label| (loop_start, Some(label)))
-                            // TLC holds no action for a lasso that stutters at its initial
-                            // state, whose TLCStateInfo it rebuilt from the initial predicate.
-                            .or_else(|| {
-                                (loop_start == 0 && trace.states.len() == 1).then_some((0, None))
-                            }),
-                        _ => None,
-                    };
-                    let checked = postconditions
-                        .map(|run| {
-                            check(
-                                &mut rebuilder,
-                                ir,
-                                run,
-                                Some(CounterExample {
-                                    trace: &trace,
-                                    cycle,
-                                }),
-                            )
-                        })
-                        .transpose()?;
-                    Ok((trace, aliases, checked, loop_action, violated))
-                });
-                rebuilt
-                    .map(
-                        |(trace, aliases, postconditions, loop_action, violated)| PrintedTrace {
-                            postconditions,
-                            loop_action,
-                            violated,
-                            states: trace
-                                .states
-                                .iter()
-                                .enumerate()
-                                .map(|(position, state)| PrintedState {
-                                    text: match aliases.as_ref().map(|aliases| &aliases[position]) {
-                                        Some(Alias::Record(fields)) => format_fields(
-                                            fields
-                                                .iter()
-                                                .map(|(name, value)| (name.as_str(), Some(value))),
-                                        ),
-                                        _ => format_state(ir, &state.values),
-                                    },
-                                    action: state.action,
-                                    output: state
-                                        .printed
+    on_search_stack(|| {
+        let mut states: Vec<&[Id]> = states.iter().map(Vec::as_slice).collect();
+        // Under SYMMETRY or a VIEW the lasso's states are the stored ones: TLC rebuilds
+        // the states it prints, the step back into the cycle with them, to a state whose
+        // key is the stored first state of the cycle's.
+        let is_reduced = violation.symmetry.is_some() || ir.model.view.is_some();
+        let reduced_cycle = match *kind {
+            ViolationKind::Lasso { loop_start, .. } if is_reduced => Some(loop_start),
+            _ => None,
+        };
+        let closing = reduced_cycle.filter(|&loop_start| loop_start + 1 < states.len());
+        if let Some(loop_start) = closing {
+            states.push(states[loop_start]);
+            labels.push(None);
+        }
+        // TLC holds a violating state as it found it, and recovers a deadlocked one.
+        let ending = match *kind {
+            ViolationKind::Deadlock { .. } => Ending::Kept,
+            ViolationKind::Invariant(_)
+            | ViolationKind::InitialInvariant(_)
+            | ViolationKind::InitialPredicate(_) => Ending::Violation,
+            ViolationKind::Lasso { .. } | ViolationKind::Accepted { .. } => Ending::Lasso,
+            ViolationKind::NoNextState | ViolationKind::Error { .. } => {
+                return Err("a stop with no trace".into());
+            }
+        };
+        let cycle_start = match *kind {
+            ViolationKind::Lasso { loop_start, .. } => Some(loop_start),
+            _ => None,
+        };
+        // TLC prints each state through the ALIAS, when there is one.
+        let rebuilt = Rebuilder::new(ir).and_then(|mut rebuilder| {
+            rebuilder.set_startup(
+                &violation.store,
+                &violation.startup,
+                violation.startup_random,
+            )?;
+            if let Some(random) = violation.random {
+                rebuilder.set_violation_random(random);
+            }
+            if let Some(group) = &violation.symmetry {
+                rebuilder.set_symmetry(group);
+            }
+            rebuilder.set_registers(Registers::from_store(
+                &violation.store,
+                &violation.registers.numbered,
+                &violation.registers.named,
+            )?);
+            let mut trace = rebuilder.rebuild(&violation.store, &states, &labels, ending)?;
+            let loop_action = match closing {
+                Some(_) => trace.states.pop().and_then(|state| state.action),
+                None => None,
+            };
+            if closing.is_some() && loop_action.is_none() {
+                return Err(Unsupported(
+                    "a step back into the cycle the rebuilt lasso lacks".into(),
+                ));
+            }
+            let violated = match reduced_cycle {
+                Some(loop_start) => Some(name_violated(&mut rebuilder, ir, &trace, loop_start)?),
+                None => None,
+            };
+            // TLC prints a deadlocked initial state as it is (`TLCTrace.printTrace`).
+            let is_alone =
+                matches!(kind, ViolationKind::Deadlock { .. }) && trace.states.len() == 1;
+            let aliases = if is_alone {
+                None
+            } else {
+                rebuilder.alias(&trace, cycle_start, is_tool)?
+            };
+            // CounterExample closes a lasso with its step back into the cycle, which a
+            // stuttering one doesn't take.
+            let cycle = match *kind {
+                ViolationKind::Lasso {
+                    loop_start,
+                    loop_label,
+                    ..
+                } => loop_label
+                    .or(loop_action)
+                    // TLC's record of a stuttering lasso closes it by the action of its
+                    // last step, as `getStepAction` gives it.
+                    .or_else(|| {
+                        (loop_start + 1 == trace.states.len())
+                            .then(|| trace.states.last().and_then(|state| state.action))
+                            .flatten()
+                    })
+                    .map(|label| (loop_start, Some(label)))
+                    // TLC holds no action for a lasso that stutters at its initial
+                    // state, whose TLCStateInfo it rebuilt from the initial predicate.
+                    .or_else(|| (loop_start == 0 && trace.states.len() == 1).then_some((0, None))),
+                _ => None,
+            };
+            let checked = postconditions
+                .map(|run| {
+                    check(
+                        &mut rebuilder,
+                        ir,
+                        run,
+                        Some(CounterExample {
+                            trace: &trace,
+                            cycle,
+                        }),
+                    )
+                })
+                .transpose()?;
+            Ok((trace, aliases, checked, loop_action, violated))
+        });
+        rebuilt
+            .map(
+                |(trace, aliases, postconditions, loop_action, violated)| PrintedTrace {
+                    postconditions,
+                    loop_action,
+                    violated,
+                    states: trace
+                        .states
+                        .iter()
+                        .enumerate()
+                        .map(|(position, state)| PrintedState {
+                            text: match aliases.as_ref().map(|aliases| &aliases[position]) {
+                                Some(Alias::Record(fields)) => format_fields(
+                                    fields
                                         .iter()
-                                        .map(|print| format_print(print))
-                                        .collect(),
-                                })
-                                .collect(),
-                            trace_output: trace
-                                .trace_output
+                                        .map(|(name, value)| (name.as_str(), Some(value))),
+                                ),
+                                _ => format_state(ir, &state.values),
+                            },
+                            action: state.action,
+                            output: state
+                                .printed
                                 .iter()
                                 .map(|print| format_print(print))
                                 .collect(),
-                        },
-                    )
-                    .map_err(|Unsupported(reason)| reason)
-            })
-            .expect("a thread to rebuild the trace")
-            .join()
-            .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+                        })
+                        .collect(),
+                    trace_output: trace
+                        .trace_output
+                        .iter()
+                        .map(|print| format_print(print))
+                        .collect(),
+                },
+            )
+            .map_err(|Unsupported(reason)| reason)
     })
 }
 
@@ -317,26 +305,19 @@ pub fn check_postconditions(
     run: &PostconditionRun,
     registers: Option<&FinalRegisters>,
 ) -> Result<Postconditions, String> {
-    std::thread::scope(|scope| {
-        std::thread::Builder::new()
-            .stack_size(SEARCH_STACK_BYTES)
-            .spawn_scoped(scope, || {
-                Rebuilder::new(ir)
-                    .and_then(|mut rebuilder| {
-                        if let Some(stored) = registers {
-                            rebuilder.set_registers(Registers::from_store(
-                                &stored.store,
-                                &stored.registers.numbered,
-                                &stored.registers.named,
-                            )?);
-                        }
-                        check(&mut rebuilder, ir, run, None)
-                    })
-                    .map_err(|Unsupported(reason)| reason)
+    on_search_stack(|| {
+        Rebuilder::new(ir)
+            .and_then(|mut rebuilder| {
+                if let Some(stored) = registers {
+                    rebuilder.set_registers(Registers::from_store(
+                        &stored.store,
+                        &stored.registers.numbered,
+                        &stored.registers.named,
+                    )?);
+                }
+                check(&mut rebuilder, ir, run, None)
             })
-            .expect("a thread to check the postconditions")
-            .join()
-            .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+            .map_err(|Unsupported(reason)| reason)
     })
 }
 

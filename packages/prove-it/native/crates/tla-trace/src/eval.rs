@@ -890,16 +890,29 @@ impl<'ir> Evaluator<'ir> {
             }
             _ => None,
         };
-        let Some(stack) = &mut self.call_stack else {
+        let Some(stack) = &self.call_stack else {
             return;
         };
         let Some(received) = receiver.and_then(|receiver| stack.values.get(&receiver)) else {
             return;
         };
+        let element = element
+            .and_then(|element| stack.values.get(&element))
+            .cloned();
+        let received = received.clone();
+        self.mark_failing_member(&received, element.as_ref());
+    }
+
+    // Marks a failure in a method of a set with a source as TLC's FingerprintException, through
+    // the sets nested in it that test the element's parts, where an element was tested, or in the
+    // compareTo of a tested element with a source and of its parts.
+    fn mark_failing_member(&mut self, received: &Value, element: Option<&Value>) {
+        let Some(stack) = &mut self.call_stack else {
+            return;
+        };
         if stack.is_fingerprinted {
             return;
         }
-        let element = element.and_then(|element| stack.values.get(&element));
         // The search of a sorted set fails in the element's `compareTo`, and in those of its parts
         // it compares, which have sources where the evaluation gave them: the set's, which a
         // definition TLC computed as it started has none of, is outside them.
@@ -2877,7 +2890,18 @@ impl<'ir> Evaluator<'ir> {
             );
         }
         for element in elements(&left)?.iter() {
-            if !self.member(element, &right)? {
+            // `isSubsetEq` tests each element in T's own `member`, so a failure there is in a
+            // method of T, which TLC reports as a FingerprintException where T has a source.
+            let is_member = self.member(element, &right);
+            if is_member.is_err()
+                && self
+                    .call_stack
+                    .as_ref()
+                    .is_some_and(|stack| !stack.is_frozen)
+            {
+                self.mark_failing_member(&right, Some(element));
+            }
+            if !is_member? {
                 return Ok(Value::Bool(false));
             }
         }
