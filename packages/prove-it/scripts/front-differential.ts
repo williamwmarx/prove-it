@@ -57,7 +57,7 @@ import { validatePcalModule } from "../src/pcal/validate";
 import { getSany174LexicalError } from "../src/sany/lexer";
 import { getSanyParseError } from "../src/sany/parse-error";
 import { getSanyReport } from "../src/sany/report";
-import { exportSanyXml } from "../src/sany/xml";
+import { exportSanyXml, XML_EXPORT_EXIT_CODE } from "../src/sany/xml";
 import { createSearch, getProperties, getSpecification } from "../src/search";
 import { getNextSubstitution } from "../src/spec-description";
 import { withUnexpectedException } from "../src/tlc/messages";
@@ -449,32 +449,48 @@ const MODES: Record<string, (source: string, path: string, spec: string) => stri
     return JSON.stringify({ text: report.text, isFailed: report.isFailed });
   },
   // What SANY's XMLExporter prints for the module's file as the spec's root, with -o and each of
-  // -r, -u and -t: its error stream, and the XML as its length and FNV-1a hashes.
+  // -r, -u and -t, as exportXml prints it: the error stream, the XML as its length and FNV-1a
+  // hashes (or the XML itself with --xml), and the exit code.
   "sany-xml": (_source, path) => {
     const report = getSanyReport(path, createLoader(path), {
       fileName: basename(path),
       isXmlExport: true,
     });
     const specification = report.specification;
-    const isFailed = report.isFailed || specification === undefined;
-    const exports = Object.fromEntries(
-      XML_VARIANTS.map((flags) => {
-        if (isFailed) return [flags, null];
-        try {
-          const xml = exportSanyXml(specification, {
-            version: "master",
-            isRestricted: flags.includes("r"),
-            isUncommented: flags.includes("u"),
-            isTerse: flags.includes("t"),
-          });
-          return [flags, process.argv.includes("--xml") ? xml : hashXml(xml)];
-        } catch (error) {
-          if (!(error instanceof TlaUnsupportedError)) throw error;
-          return [flags, { error: error.message, exitCode: getErrorExitCode(error) }];
-        }
-      }),
+    const exportWith = (flags: string) => {
+      if (report.isFailed || specification === undefined) {
+        return {
+          stderr: `${report.text}ERROR: Failed to parse module.\n`,
+          stdout: "",
+          exitCode: XML_EXPORT_EXIT_CODE.specParsingFailure,
+        };
+      }
+      try {
+        const xml = exportSanyXml(specification, {
+          version: "master",
+          isRestricted: flags.includes("r"),
+          isUncommented: flags.includes("u"),
+          isTerse: flags.includes("t"),
+        });
+        return {
+          stderr: report.text,
+          stdout: process.argv.includes("--xml") ? xml : hashXml(xml),
+          exitCode: 0,
+        };
+      } catch (error) {
+        if (!(error instanceof TlaUnsupportedError)) throw error;
+        const exitCode = getErrorExitCode(error);
+        const message =
+          exitCode === XML_EXPORT_EXIT_CODE.uncaughtException
+            ? `Exception in thread "main" ${error.message}`
+            : `ERROR: ${error.message}`;
+        return { stderr: `${report.text}${message}\n`, stdout: "", exitCode };
+      }
+    };
+    return JSON.stringify(
+      Object.fromEntries(XML_VARIANTS.map((flags) => [flags, exportWith(flags)])),
+      sortKeys,
     );
-    return JSON.stringify({ text: report.text, isFailed, exports }, sortKeys);
   },
   model: writeResult((source, _path, spec) =>
     readEnvironment(readFileSync(spec, "utf8"), spec, parseConfig(source)),

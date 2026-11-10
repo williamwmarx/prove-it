@@ -6,12 +6,12 @@ use std::path::Path;
 use tla_front::TlcVersion;
 use tla_front::errors::FrontError;
 use tla_front::get_standard_module;
-use tla_front::sany::export::{EXIT_UNCAUGHT_EXCEPTION, ExportFlags, export_xml};
+use tla_front::sany::export::export_xml;
+use tla_front::sany::xml::{XML_EXPORT_ARGS_PARSING_FAILURE, XmlExportOptions};
 
 use crate::messages::Output;
 
 const SUCCESS: i32 = 0;
-const ARGS_PARSING_FAILURE: i32 = EXIT_UNCAUGHT_EXCEPTION;
 
 fn bold(text: &str) -> String {
     format!("\x1b[1m{text}\x1b[0m")
@@ -80,7 +80,7 @@ fn get_usage() -> String {
 
 fn print_usage_error(output: &mut Output<'_>, message: &str) -> i32 {
     let _ = write!(output.err, "ERROR: {message}\n{}", get_usage());
-    ARGS_PARSING_FAILURE
+    XML_EXPORT_ARGS_PARSING_FAILURE
 }
 
 /// The flags and -I directories XMLExporter reads before the last argument, which names the
@@ -178,13 +178,13 @@ pub fn run_xml_exporter(args: &[String], output: &mut Output<'_>) -> Result<i32,
     };
     let host = output.host;
     let load_module = |module: &str| host.load_module(&directories, module);
-    let flags = ExportFlags {
+    let options = XmlExportOptions {
         is_restricted: flags.iter().any(|flag| flag == "-r"),
         is_uncommented: flags.iter().any(|flag| flag == "-u"),
         is_terse: flags.iter().any(|flag| flag == "-t"),
     };
     let exported =
-        export_xml(&root, &source, name, &load_module, flags).map_err(|error| match error {
+        export_xml(&root, &source, name, &load_module, &options).map_err(|error| match error {
             FrontError::NotYet(reason) => reason,
             other => format!("{other:?}"),
         })?;
