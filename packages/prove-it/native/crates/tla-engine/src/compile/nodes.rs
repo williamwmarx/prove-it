@@ -11,7 +11,7 @@ use tla_values::{Bail, Id};
 
 use super::lazy::{self, Lazy, Reference};
 use super::lazy_function::{self, LambdaDefinition, is_lazy_domain};
-use super::predicate::{Predicate, Test};
+use super::predicate::{Predicate, Reject, Test};
 use super::{
     Binding, Compiled, Compiler, Compiling, Context, Filter, Shape, bind, bool_id,
     call_recursive_element, call_recursive_function, combine_references, constant, eval, leaf,
@@ -410,6 +410,19 @@ impl Compiler<'_> {
                         record.footprint,
                     ));
                 }
+                // FieldOfSlot: r.f of a bound name r.
+                if let Shape::Slot(slot) = record.shape {
+                    return Ok(Compiled {
+                        shape: Shape::Field { slot, key },
+                        ..leaf(
+                            eval(move |machine| {
+                                let value = machine.locals[slot as usize];
+                                field_of(machine, value, key, &hint)
+                            }),
+                            record.footprint,
+                        )
+                    });
+                }
                 let evaluate = record.eval.clone();
                 Ok(leaf(
                     eval(move |machine| {
@@ -677,9 +690,15 @@ impl Compiler<'_> {
                 is_forall,
             )
         } else {
+            let reject = match &levels[..] {
+                [level] if !level.tuple => Reject::of(&predicate, level.slots[0]),
+                _ => None,
+            };
             let levels = Arc::new(levels);
             let body = predicate.build();
-            eval(move |machine| quantify(machine, &levels, &body, is_forall).map(bool_id))
+            eval(move |machine| {
+                quantify(machine, &levels, &body, reject.as_ref(), is_forall).map(bool_id)
+            })
         };
         Ok(Compiled {
             is_costly: true,
@@ -729,15 +748,20 @@ impl Compiler<'_> {
     ) -> Compiling<Compiled> {
         let set = self.compile(bound.set, context)?;
         let binder = self.bind_bound(&bound.pattern, context);
-        let predicate = self.compile(predicate, &binder.context)?;
+        let compiled = self.compile(predicate, &binder.context)?;
         let footprint = set
             .footprint
-            .merge(&predicate.footprint.without_slots(&binder.slots));
+            .merge(&compiled.footprint.without_slots(&binder.slots));
+        let predicate = Predicate::of(&compiled);
+        let reject = (!binder.tuple)
+            .then(|| Reject::of(&predicate, binder.slots[0]))
+            .flatten();
         let filter = Arc::new(Filter {
             set: set.eval.clone(),
             slots: binder.slots,
             tuple: binder.tuple,
-            predicate: Predicate::of(&predicate).build(),
+            predicate: predicate.build(),
+            reject,
         });
         // TLC tests membership in a filter of a set it can't enumerate, such as Nat, by the set's
         // membership and the predicate (SetPredValue.member), and fails where it enumerates it.
@@ -798,6 +822,11 @@ impl Compiler<'_> {
                     let at = machine.stack.len();
                     for index in 0..size {
                         let element = machine.store.element_at(id, index);
+                        if let Some(reject) = &parts.reject
+                            && reject.rejects(machine, element)
+                        {
+                            continue;
+                        }
                         let kept = assign_bound(machine, &parts.slots, parts.tuple, element)
                             .and_then(|()| (parts.predicate)(machine));
                         match kept {
@@ -1336,12 +1365,21 @@ fn quantify(
     machine: &mut Machine<'_>,
     levels: &[Level],
     body: &Test,
+    reject: Option<&Reject>,
     is_forall: bool,
 ) -> Outcome<bool> {
     if let [level] = levels {
         let set = evaluate_set(machine, &level.set.eval, "quantified over a non-set")?;
         for index in 0..machine.store.size_of(set) {
             let element = machine.store.element_at(set, index);
+            if let Some(reject) = reject
+                && reject.rejects(machine, element)
+            {
+                if is_forall {
+                    return Ok(false);
+                }
+                continue;
+            }
             assign_bound(machine, &level.slots, level.tuple, element)?;
             if body(machine)? != is_forall {
                 return Ok(!is_forall);
