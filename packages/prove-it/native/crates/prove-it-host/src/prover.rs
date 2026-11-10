@@ -102,10 +102,10 @@ mod tests {
     }
 
     #[test]
-    fn a_backend_not_ported_yet_declines() {
+    fn a_prover_without_a_backend_declines() {
         let arguments = [
-            HostValue::text("zenon"),
-            HostValue::text("$goal p"),
+            HostValue::text("cvc4"),
+            HostValue::text(""),
             HostValue::Number(1000.0),
             HostValue::Undefined,
         ];
