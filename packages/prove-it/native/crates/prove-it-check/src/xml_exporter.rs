@@ -7,7 +7,9 @@ use tla_front::TlcVersion;
 use tla_front::errors::FrontError;
 use tla_front::get_standard_module;
 use tla_front::sany::export::export_xml;
-use tla_front::sany::xml::{XML_EXPORT_ARGS_PARSING_FAILURE, XmlExportOptions};
+use tla_front::sany::xml::{
+    XML_EXPORT_ARGS_PARSING_FAILURE, XML_EXPORT_SPEC_PARSING_FAILURE, XmlExportOptions,
+};
 
 use crate::messages::Output;
 
@@ -120,6 +122,30 @@ fn parse_args(args: &[String]) -> ParsedArgs {
     ParsedArgs::Parsed { flags, includes }
 }
 
+/// What XMLExporter prints for a root module that no file holds: SimpleFilenameToStream names
+/// the file and where it looked, then SANY's fatal error.
+fn print_missing_root(
+    output: &mut Output<'_>,
+    name: &str,
+    file_name: &str,
+    root: &str,
+    includes: &[String],
+) -> i32 {
+    let user_directory = std::env::current_dir()
+        .map(|directory| directory.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let directories: String = includes
+        .iter()
+        .map(|include| format!("{include}, "))
+        .collect();
+    let fatal = format!("Unknown location\n\nCannot find source file for module {root}");
+    let _ = write!(
+        output.err,
+        "File does not exist: {user_directory}/./{file_name} while looking in these directories: {user_directory}, {directories}classpath:/tla2sany/StandardModules, classpath:/\n\nFatal errors while parsing TLA+ spec in file {name}\n\n{fatal}\n*** Errors: 1\n\n{fatal}\n\n\n\nERROR: Failed to parse module.\n"
+    );
+    XML_EXPORT_SPEC_PARSING_FAILURE
+}
+
 /// Runs XMLExporter with the arguments after its class name.
 pub fn run_xml_exporter(args: &[String], output: &mut Output<'_>) -> Result<i32, String> {
     if args.is_empty() {
@@ -172,9 +198,14 @@ pub fn run_xml_exporter(args: &[String], output: &mut Output<'_>) -> Result<i32,
             .host
             .read_text(path)
             .ok_or_else(|| "a root module whose file can't be read".to_owned())?,
-        None => get_standard_module(&root, TlcVersion::Master)
-            .ok_or_else(|| "a root module without a file".to_owned())?
-            .to_owned(),
+        None => match get_standard_module(&root, TlcVersion::Master) {
+            Some(text) => text.to_owned(),
+            None => {
+                return Ok(print_missing_root(
+                    output, name, &file_name, &root, &includes,
+                ));
+            }
+        },
     };
     let host = output.host;
     let load_module = |module: &str| host.load_module(&directories, module);

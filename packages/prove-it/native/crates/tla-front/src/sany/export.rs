@@ -4,15 +4,12 @@
 use std::rc::Rc;
 
 use crate::parser::extract_module;
-use crate::{TlcVersion, get_standard_module};
 use crate::report::{ReportOptions, get_sany_text_of};
 use crate::sany::generator::{GenerationOptions, generate_sany_specification};
 use crate::sany::levels::{LevelCheck, check_module_levels};
-use crate::sany::xml::{XmlExportOptions, export_sany_xml};
+use crate::sany::xml::{XML_EXPORT_SPEC_PARSING_FAILURE, XmlExportOptions, export_sany_xml};
 use crate::sany::{Result, not_yet};
-
-/// XMLExporterExitCode's specParsingFailure.
-const SPEC_PARSING_FAILURE: i32 = 2;
+use crate::{TlcVersion, get_standard_module};
 
 /// What XMLExporter prints and its exit status.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -44,11 +41,15 @@ pub fn export_xml(
             is_xml_export: true,
         },
     )?;
+    // XMLExporter then prints the exception's Java stack trace, which isn't written.
+    if report.exception.is_some() {
+        return not_yet("the stack trace of SANY's generator exception");
+    }
     if report.is_failed {
         return Ok(ExportOutput {
             stdout: String::new(),
             stderr: format!("{}ERROR: Failed to parse module.\n", report.text),
-            exit_code: SPEC_PARSING_FAILURE,
+            exit_code: XML_EXPORT_SPEC_PARSING_FAILURE,
         });
     }
     // SANY.frontEndSemanticAnalysis: SANY level-checks each module while there are no errors.
@@ -93,16 +94,14 @@ pub fn export_xml(
             stderr: report.text,
             exit_code: 0,
         },
+        // XMLExporter prints an exception with Java's stack traces, of each node it was exporting,
+        // which aren't written.
+        Err(error) if error.is_exception => {
+            return not_yet("the stack traces of XMLExporter's exception");
+        }
         Err(error) => ExportOutput {
             stdout: String::new(),
-            stderr: if error.is_exception {
-                format!(
-                    "{}Exception in thread \"main\" {}\n",
-                    report.text, error.message
-                )
-            } else {
-                format!("{}ERROR: {}\n", report.text, error.message)
-            },
+            stderr: format!("{}ERROR: {}\n", report.text, error.message),
             exit_code: error.exit_code,
         },
     })
