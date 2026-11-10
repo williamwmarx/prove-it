@@ -59,7 +59,7 @@ jobs:
           set -euo pipefail
           PATH="$(scripts/ci/bootstrap.sh bun):$PATH"
           cd packages/prove-it
-          bun scripts/fetch-corpora.ts --only examples,tlc,ccf,summerset,tlapm,community
+          bun scripts/fetch-corpora.ts --only examples,tlc,ccf,summerset,mongodb,tlapm,community
       - name: Compare
         env:
           RUNS: ${{ inputs.runs || '7' }}
