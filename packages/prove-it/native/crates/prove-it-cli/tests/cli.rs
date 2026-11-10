@@ -2784,6 +2784,120 @@ fn evaluates_the_next_state_relation_where_a_walk_assigned_from_a_set_it_cant_co
     }
 }
 
+// A run's output without the positions TLC names where an evaluation failed, which differ between
+// WF_x(Next) and WF_x(Alias) by the line `Alias == Next`.
+fn without_positions(text: &str) -> String {
+    let mut lines = Vec::new();
+    let mut is_skipping = false;
+    for line in text.lines() {
+        if line.starts_with("Error: The error occurred when TLC was evaluating the nested") {
+            is_skipping = true;
+            continue;
+        }
+        if is_skipping && line.starts_with("Error: ") {
+            is_skipping = false;
+        }
+        if !is_skipping {
+            lines.push(line);
+        }
+    }
+    lines.join("\n")
+}
+
+// A run's output without the failure's message, which TLC leaves out of a failure in
+// x' \subseteq S where the engine, with or without the shortcut, prints it.
+fn without_message(text: &str) -> String {
+    let mut lines = Vec::new();
+    let mut is_skipping = false;
+    for line in text.lines() {
+        if line.starts_with("Error: The error occurred when TLC was evaluating the nested")
+            || line.starts_with("Error: TLC threw an unexpected exception.")
+        {
+            is_skipping = true;
+            continue;
+        }
+        if is_skipping && line.starts_with("Error: The behavior") {
+            is_skipping = false;
+        }
+        if !is_skipping {
+            lines.push(line);
+        }
+    }
+    lines.join("\n")
+}
+
+// tests/membership-grid: x' \in S beside x' = a \/ x' = b, under WF_x(Next), which the engine
+// answers from the steps the search took where the guard lets it, and WF_x(Alias) with
+// Alias == Next, which it evaluates. S is each of an enumeration, an interval, records, functions,
+// a product, SUBSET, a filter, a map, a union, a constant and a definition, with a part empty and
+// not, nested in x' \in S, x' \in S \cup {7}, x' \subseteq S, [{1} -> S], [a : S], S \X {1} and a
+// filter; a and b are 0 and 1, values of S's elements' kind, or integers in the nesting's shape.
+// TLC's output on each under WF_x(Next) at d8fb231 is beside it. The two formulations must print
+// the same but for the positions of a failure, and that must be TLC's output, or a decline.
+#[test]
+fn answers_fairness_of_next_as_tlc_whatever_set_a_walk_assigns_from() {
+    let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/membership-grid");
+    let mut names: Vec<String> = std::fs::read_dir(&directory)
+        .expect("the grid")
+        .filter_map(|entry| {
+            let path = entry.expect("an entry").path();
+            (path.extension()? == "tla").then(|| path.file_stem()?.to_str().map(String::from))?
+        })
+        .collect();
+    names.sort();
+    assert_eq!(names.len(), 396);
+    for name in names {
+        let spec = std::fs::read_to_string(directory.join(format!("{name}.tla"))).expect("a spec");
+        let tlc = std::fs::read_to_string(directory.join(format!("{name}.txt"))).expect("TLC's");
+        let constant = if name.contains("Empty") {
+            "{}"
+        } else {
+            "{1, 3}"
+        };
+        for workers in ["1", "4"] {
+            let mut outputs = Vec::new();
+            for specification in ["Weak", "AliasWeak"] {
+                let config = format!(
+                    "CONSTANT C = {constant}\nSPECIFICATION {specification}\nPROPERTY Live\n"
+                );
+                let test = format!("grid-{name}-{specification}-{workers}");
+                let args = [
+                    "-workers",
+                    workers,
+                    "-nowarning",
+                    "-seed",
+                    "4",
+                    "-fp",
+                    "0",
+                    "-lncheck",
+                    "final",
+                ];
+                let (output, run) = run_front(&test, &spec, &config, &args);
+                let is_declined =
+                    String::from_utf8_lossy(&output.stderr).contains("prove-it: not native yet: ");
+                outputs.push((!is_declined).then(|| get_untimed(&stdout(&output))));
+                std::fs::remove_dir_all(run).expect("removed");
+            }
+            let context = format!("{name} at {workers} workers: {outputs:?}");
+            match (&outputs[0], &outputs[1]) {
+                (None, None) => {}
+                (Some(next), Some(alias)) => {
+                    assert_eq!(
+                        without_positions(next),
+                        without_positions(alias),
+                        "{context}"
+                    );
+                    let is_tlcs = without_positions(next) == without_positions(&tlc)
+                        || !tlc.contains("Error: TLC threw")
+                            && without_message(next) == tlc.trim_end_matches('\n');
+                    assert!(is_tlcs, "{context}");
+                }
+                _ => panic!("one formulation declined: {context}"),
+            }
+        }
+    }
+}
+
 // What a run printed from `Starting...` to computing the initial states.
 fn get_startup(text: &str) -> &str {
     let start = text.find("Starting... (").expect("the start");

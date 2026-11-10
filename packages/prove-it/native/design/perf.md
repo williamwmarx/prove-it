@@ -692,16 +692,28 @@ walker-hook shape guard and the fallbacks below.
   level's merge imports the values that widened a thread's joins into the store and joins them
   there. Unmarked runs pay one branch on a `None` per assignment.
 - A membership `x' \in S` joins only the elements the walk enumerates, but TLC's predicate
-  evaluation tests `t[x]` against S itself. That is covered where S is a set of values, an
-  interval, a declared constant, or the functions, records or tuples of such sets
-  (`is_membership_covered`), which are empty where a part is: TLC then compares `t[x]` only with
-  values a walk assigned, or tests its kind against a non-empty set of that kind. Codex's
-  findings on #197 showed the rest. An empty S (`[a : {}]` still tests the kind, with no element
-  to join), a union, SUBSET or UNION (which may hold such an empty part, as `[a : {}] \cup {1}`
-  and `SUBSET [a : {}]` do), the base of `x' \subseteq S` (the walk enumerates SUBSET S, which
-  isn't empty where S is; a third finding), and a filter, an intersection or a difference (whose
-  dropped elements TLC still compares with) set `Machine::is_membership_unsafe`, which turns the
-  shortcut off.
+  evaluation tests `t[x]` against S itself, through S's `member`. Three Codex findings on #197 were
+  sets whose `member` fails where the walk joined nothing: an empty `[a : {}]`, which still checks
+  the kind; `[a : {}] \cup {1}` and `SUBSET [a : {}]`, which hold such a part; and
+  `x' \subseteq [a : {}]`. So the guard is a whitelist (`is_membership_covered`), each form from its
+  `member` at d8fb231, and every other set turns the shortcut off (`Machine::is_membership_unsafe`):
+  - an enumerated set: `SetEnumValue.member` is `ValueVec.search`, which compares `t[x]` with the
+    elements by `compareTo` (sorted) or `equals`. The walk assigned each element, so the join
+    covers each comparison; an empty one compares nothing;
+  - an integer interval: `IntervalValue.member` takes an integer, and fails otherwise only where
+    the interval isn't empty and `t[x]` isn't an untyped model value; the walk assigned an integer
+    from it, so a comparable join is integers and untyped model values;
+  - a definition with no arguments, which is the set its body is.
+
+  Records, functions, products, SUBSET, unions, UNION, filters, maps, constants, Nat and the rest
+  go back on only with a citation of their `member`, the argument for an empty part, and the grid
+  below. A walk that enumerates an empty set, or assigns by `x' \subseteq S`, also turns it off.
+  The grid, `prove-it-cli/tests/membership-grid`, has 396 specs: x' \in S beside two other
+  assignments, under WF_x(Next) (answered from the steps where the guard lets it) and
+  WF_x(Alias) with Alias == Next (evaluated). S is each of eleven forms, with a part empty and not,
+  in seven nestings, and the other assignments are integers, values of S's kind, or integers in
+  the nesting's shape. Both formulations must print the same and match TLC's output at d8fb231, at
+  1 and 4 workers. The PR's first head fails it on 102 runs, the head after the union fix on 6.
 - `LiveGraph::is_next_taken` holds where no walk took the shortcut (`is_enabled_exact`), no string
   was ranked since the order froze (which can take a string out of its class after its shape was
   joined), and every variable's join is comparable. TLC's `equals` fails only where `compareTo`

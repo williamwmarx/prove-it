@@ -2318,33 +2318,20 @@ impl<'a> Compiler<'a> {
     }
 
     // Whether TLC's membership of a value in a set, which it tests as it evaluates `x' \in S` as a
-    // predicate, compares the value only with values a walk that enumerates the set assigns, or
-    // tests its kind against a set the walk found elements of: a set of values, an interval, a
-    // declared constant, and the sets of functions, records and tuples built of such sets, which
-    // are empty where a part of them is (but for a function set's domain, whose elements TLC
-    // compares with the function's only by size first). Not a filter, an intersection or a
-    // difference, whose dropped elements TLC still compares the value with, nor a union, a
-    // SUBSET or a UNION, which may hold an empty part, such as `[a : {}] \cup {1}`, whose kind TLC
-    // still tests the value against.
+    // predicate, can't fail for a value whose shape joins those the walk assigned from the set:
+    // the forms below, each from its `member` at d8fb231 (perf.md, "Plan (i), as built"), and
+    // nothing else. An enumerated set (`SetEnumValue.member`, `ValueVec.search`) compares the
+    // value with its elements by `compareTo` or `equals`, each of which the walk assigned; an
+    // integer interval (`IntervalValue.member`) fails only on a value that isn't an integer or an
+    // untyped model value where it isn't empty, and the walk assigned an integer from it. A
+    // definition with no arguments is the set its body is.
     fn is_membership_covered(&self, set: NodeId, seen: &mut HashSet<NodeId>) -> bool {
         if !seen.insert(set) {
             return false;
         }
-        let is_covered = |compiler: &Self, nodes: &[NodeId], seen: &mut HashSet<NodeId>| {
-            nodes
-                .iter()
-                .all(|&node| compiler.is_membership_covered(node, seen))
-        };
         match self.node(set).1 {
             NodeKind::SetEnumeration(_) => true,
-            NodeKind::FunctionSet { domain, range } => is_covered(self, &[*domain, *range], seen),
-            NodeKind::RecordSet(fields) => {
-                let sets: Vec<NodeId> = fields.iter().map(|field| field.1).collect();
-                is_covered(self, &sets, seen)
-            }
-            NodeKind::Product(sets) => is_covered(self, sets, seen),
             NodeKind::Identifier(name) if !name.is_local => match name.resolution {
-                Resolution::Constant(_) => true,
                 Resolution::Definition(index) => {
                     let definition = self.definition(self.ir.definitions[index as usize]);
                     matches!(&definition.form, DefinitionForm::Operator(params) if params.is_empty())
