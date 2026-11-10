@@ -84,6 +84,8 @@ struct Local {
     is_pending: Cell<bool>,
     is_non_fact: bool,
     unselectable: Option<&'static str>,
+    /// Declared RECURSIVE by a LET that doesn't define it.
+    is_undefined_recursive: bool,
     position: Position,
     /// The parameters of a function a LET defines, which SANY checks its applications against.
     function_params: Option<usize>,
@@ -104,6 +106,7 @@ impl Local {
             is_pending: Cell::new(false),
             is_non_fact: false,
             unselectable: None,
+            is_undefined_recursive: false,
             position: MODULE_START,
             function_params: None,
         }
@@ -1610,6 +1613,7 @@ fn bind_undefined_recursive(
         }
         declared = Some(Rc::new(Local {
             is_pending: Cell::new(true),
+            is_undefined_recursive: true,
             ..Local::new(
                 declaration.name.clone(),
                 Binding {
@@ -1639,7 +1643,20 @@ fn resolve_definitions(
         .iter()
         .filter(|definition| definition.is_recursive)
     {
-        if lookup_local(&declared, &definition.name).is_some_and(|local| local.is_pending.get()) {
+        let pending =
+            lookup_local(&declared, &definition.name).filter(|local| local.is_pending.get());
+        // SANY adds a second declaration of an operator an enclosing LET declares RECURSIVE and
+        // leaves undefined, which the front end doesn't follow.
+        if pending
+            .as_ref()
+            .is_some_and(|local| local.is_undefined_recursive)
+        {
+            return Err(FrontError::NotYet(format!(
+                "a LET that declares RECURSIVE {}, which an enclosing LET declares and leaves undefined",
+                definition.name
+            )));
+        }
+        if pending.is_some() {
             continue;
         }
         let local = Rc::new(Local {

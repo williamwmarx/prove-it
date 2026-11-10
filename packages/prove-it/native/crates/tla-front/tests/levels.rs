@@ -317,3 +317,11 @@ fn rejects_a_function_applied_to_another_number_of_arguments() {
         )]
     );
 }
+
+#[test]
+fn leaves_a_recursive_declaration_an_enclosing_let_leaves_undefined_not_native() {
+    // SANY adds the inner declaration of F as a second one, which the front end doesn't follow.
+    assert!(is_not_yet(
+        "---- MODULE Main ----\nA == LET RECURSIVE F\n         G == LET RECURSIVE F\n                  F == 1\n              IN F\n     IN 0\n===="
+    ));
+}
