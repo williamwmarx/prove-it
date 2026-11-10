@@ -384,6 +384,10 @@ pub enum ErrorSite {
 // The stops that are the engine's own limits, not a failure TLC reports: what it doesn't
 // support, what it won't build, what its search and printing can't reproduce, and the violations
 // the search reports otherwise.
+const SUCCESSOR_CHECK_FAILED: &str =
+    "a constraint, a VIEW or an action property that fails on a successor";
+const INITIAL_VIEW_FAILED: &str = "a VIEW that fails on an initial state";
+
 fn is_engine_limit(reason: &str) -> bool {
     !TLC_FAILURES.contains(&reason)
 }
@@ -982,7 +986,15 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
             count_possible(machine, &context.possible, false, &mut self.possible)?;
         }
         let found = if is_in_model {
-            let fingerprint = self.compute_key(machine, context, false)?;
+            // TLC reports a VIEW that fails on an initial state as it fingerprints the state
+            // (DoInitFunctor.addElement), which no site here stands for.
+            let fingerprint = self.compute_key(machine, context, false).map_err(|bail| {
+                if is_engine_limit(bail.0) {
+                    bail
+                } else {
+                    Bail(INITIAL_VIEW_FAILED)
+                }
+            })?;
             let key = self
                 .states
                 .key_width()
@@ -1131,6 +1143,25 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
         if machine.next().contains(&UNASSIGNED) {
             return Err(Bail("a successor that isn't complete"));
         }
+        // TLC reports a constraint, a VIEW or an action property that fails to evaluate with the
+        // successor in its trace (Worker.addElement), which no site here stands for: the failure
+        // of an invariant is noted where it is found.
+        self.check_complete_successor(machine, context, known)
+            .map_err(|bail| {
+                if self.violation.is_none() && !is_engine_limit(bail.0) {
+                    Bail(SUCCESSOR_CHECK_FAILED)
+                } else {
+                    bail
+                }
+            })
+    }
+
+    fn check_complete_successor(
+        &mut self,
+        machine: &mut Machine<'_>,
+        context: &EngineContext,
+        known: Option<u64>,
+    ) -> Outcome<()> {
         self.check_exit_followed(machine)?;
         if let Some(checked) = &self.checked
             && checked.get(self.successors as usize).map(Vec::as_slice) != Some(machine.next())
@@ -1156,17 +1187,20 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
             }
             Ok(is_state_in_model)
         });
-        let fingerprint = match is_state_in_model {
-            Ok(true) => match known {
-                Some(fingerprint) => Ok(Some(fingerprint)),
-                None => self.compute_key(machine, context, true).map(Some),
-            },
-            Ok(false) => Ok(None),
-            Err(bail) => Err(bail),
-        };
         self.swap_successor(machine, self.expansion_epoch, self.level_id);
-        let (is_state_in_model, fingerprint) = (is_state_in_model?, fingerprint?);
-        let is_in_model = is_state_in_model && holds_all(machine, &context.action_constraints)?;
+        let is_in_model = is_state_in_model? && holds_all(machine, &context.action_constraints)?;
+        // TLC fingerprints a successor, which evaluates the VIEW, only where it is in the model
+        // (Worker.addElement).
+        let fingerprint = match known {
+            Some(fingerprint) => Some(fingerprint),
+            None if is_in_model => {
+                self.swap_successor(machine, successor_epoch, self.next_level_id);
+                let fingerprint = self.compute_key(machine, context, true);
+                self.swap_successor(machine, self.expansion_epoch, self.level_id);
+                Some(fingerprint?)
+            }
+            None => None,
+        };
         if is_in_model {
             count_possible(machine, &context.possible, true, &mut self.possible)?;
         }

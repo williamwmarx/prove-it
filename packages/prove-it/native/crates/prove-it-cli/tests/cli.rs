@@ -2151,3 +2151,34 @@ fn prints_an_assumption_value_as_tlc_built_it_without_a_recorded_front() {
     );
     std::fs::remove_dir_all(directory).expect("removed");
 }
+
+// Each output is what TLC at d8fb231 prints for the spec.
+#[test]
+fn checks_a_successor_in_tlc_s_order() {
+    // TLC fingerprints a successor, which evaluates the VIEW, only where the action constraints
+    // hold (Worker.addElement).
+    let view = "---- MODULE ViewAct ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 3 /\\ x' = x + 1\nV == IF x = 2 THEN Assert(FALSE, \"view\") ELSE x\nAC == x' # 2\n====\n";
+    let config = "INIT Init\nNEXT Next\nVIEW V\nACTION_CONSTRAINT AC\nCHECK_DEADLOCK FALSE\n";
+    let (output, directory) = run_front("view-order", view, config, &[]);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(0), "{text}");
+    assert!(
+        text.contains("\n3 states generated, 2 distinct states found, 0 states left on queue.\n"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+    // TLC reports a constraint that fails on a successor with the successor in the trace, which
+    // the binary doesn't, whatever the next-state relation does after it.
+    let constraint = "---- MODULE ConThenNext ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == \\/ x < 3 /\\ x' = x + 1\n        \\/ x < 3 /\\ x' = x + 10\n        \\/ x = 1 /\\ Assert(FALSE, \"next\") /\\ x' = 5\nCon == IF x = 2 THEN Assert(FALSE, \"con\") ELSE TRUE\n====\n";
+    let config = "INIT Init\nNEXT Next\nCONSTRAINT Con\nCHECK_DEADLOCK FALSE\n";
+    let (output, directory) = run_front("constraint-fails", constraint, config, &[]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains(
+            "not native yet: the engine stopped: a constraint, a VIEW or an action property that fails on a successor"
+        ),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
