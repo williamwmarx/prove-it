@@ -18,7 +18,7 @@ use tla_ir::{Ir, LiveTerm, Model, PredicateForm};
 use tla_live::{Event, Liveness, Term, Verdict};
 use tla_values::fingerprint::{Dense, Entries, Fingerprints, Overlaid, Parent, SharedFingerprints};
 use tla_values::random::JavaRandom;
-use tla_values::store::{KIND_SET, Outcome, TRUE};
+use tla_values::store::{KIND_SET, Outcome, ShapeJoin, TRUE};
 use tla_values::transfer::{EncodedStates, SharedEncoder, SharedStates, StateEncoder};
 use tla_values::{Bail, Id, NESTING_STACK_BYTES, Store};
 
@@ -2025,6 +2025,23 @@ impl Search<'_, States> {
             self.states.collisions += found.collisions;
             machine.is_past_walk |= found.is_past_walk;
         }
+        // The shapes each thread's walks assigned, joined into the store's from the values that
+        // widened them, which the thread's overlay forgets at the next level.
+        if let Some(joins) = &mut machine.assigned_shapes {
+            for worker in workers.iter_mut() {
+                let overlay = &worker.machine.store;
+                for (join, found) in joins
+                    .iter_mut()
+                    .zip(worker.machine.assigned_shapes.iter_mut().flatten())
+                {
+                    for &id in found.widening() {
+                        let id = machine.store.import(overlay, id, &mut worker.imported);
+                        machine.store.join_shape(join, id);
+                    }
+                    *found = ShapeJoin::default();
+                }
+            }
+        }
         self.expanding = stop;
         // The fingerprints each thread computed, of the store's values and of the values it made
         // that are now the store's, for every thread to read at the next level.
@@ -2817,6 +2834,10 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                                 machine: {
                                     let mut worker = Machine::new(&program, Store::new());
                                     worker.share_memo(thread_count);
+                                    worker.assigned_shapes =
+                                        machine.assigned_shapes.as_ref().map(|joins| {
+                                            joins.iter().map(|_| ShapeJoin::default()).collect()
+                                        });
                                     worker
                                 },
                                 fingerprints: Fingerprints::default(),

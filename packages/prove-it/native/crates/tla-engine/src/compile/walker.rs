@@ -324,6 +324,7 @@ impl<const IS_INIT: bool> Segment<IS_INIT> {
             Op::Assign(variable, source) => {
                 let value = read_source(machine, source, *variable)?;
                 target(machine, IS_INIT)[*variable as usize] = value;
+                machine.note_assigned(*variable as usize, value);
                 machine.assigned += 1;
                 Ok(true)
             }
@@ -427,6 +428,7 @@ fn either_step(variable: u32, source: Source, rest: Rest, is_init: bool) -> Step
         let current = target(machine, is_init)[index];
         if current == UNASSIGNED {
             target(machine, is_init)[index] = value;
+            machine.note_assigned(index, value);
             machine.assigned += 1;
             let result = run_rest(&rest, machine, on_complete);
             target(machine, is_init)[index] = UNASSIGNED;
@@ -2373,6 +2375,7 @@ impl<'a> Compiler<'a> {
             for position in 0..size {
                 let element = machine.store.element_at(id, position);
                 target(machine, is_init)[index] = element;
+                machine.note_assigned(index, element);
                 run_rest(&assigned, machine, on_complete)?;
             }
             target(machine, is_init)[index] = UNASSIGNED;

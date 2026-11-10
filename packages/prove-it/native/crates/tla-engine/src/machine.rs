@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use tla_ir::NodeId;
 use tla_values::fingerprint::Fingerprints;
-use tla_values::store::Outcome;
+use tla_values::store::{Outcome, ShapeJoin};
 use tla_values::{Bail, Id, Store};
 
 use crate::compile::Lambda;
@@ -111,6 +111,10 @@ pub struct Machine<'p> {
     /// Whether a step took TLC's shortcut past a conjunct it would otherwise walk
     /// (`shortcuts.isPastWalk`).
     pub is_past_walk: bool,
+    /// The join of the shapes of the values each walk assigned to each variable, kept only where
+    /// an action atom is answered from the steps (`live.rs`): no comparison of TLC's predicate
+    /// evaluation of the next-state relation fails where every variable's join is comparable.
+    pub assigned_shapes: Option<Vec<ShapeJoin>>,
     // The next states ENABLED runs its actions into, kept for the next test.
     pub(crate) spare_states: Vec<Vec<Id>>,
     /// What was printed since the search last handed it on (`tlc.output`).
@@ -174,6 +178,7 @@ impl<'p> Machine<'p> {
             depth: 0,
             assigned: 0,
             is_past_walk: false,
+            assigned_shapes: None,
             spare_states: Vec::new(),
             output: Vec::new(),
             random: JavaRandom::seeded(program.random_seed),
@@ -182,6 +187,14 @@ impl<'p> Machine<'p> {
             tlc_caches: HashMap::new(),
             fingerprints: Fingerprints::new(),
             lazy_functions: Vec::new(),
+        }
+    }
+
+    /// Notes a value a walk assigned to a variable, where the machine keeps their shapes.
+    #[inline(always)]
+    pub(crate) fn note_assigned(&mut self, variable: usize, value: Id) {
+        if let Some(joins) = &mut self.assigned_shapes {
+            self.store.join_shape(&mut joins[variable], value);
         }
     }
 
