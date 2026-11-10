@@ -564,6 +564,9 @@ no full `tlc-stdout`. Recording them is deferred.
   tests and the corpus use it; and `tla-live`'s declines, where a test or a model meets one. For
   WebAssembly's stack, see the measurement below.
 - **S3. Tests on TLC's recordings,** recorded once with a recorder script.
+- **Native progress events (a blocker for S4).** `check` hands a call with `onProgress` to the
+  TypeScript check, since the native check reports none of the points of the search at which TLC
+  prints a message. It must report them, in `CheckProgress`'s shape, before the interpreter goes.
 - **S4. Flip and delete.**
   - `check` loses the interpreter tier, `PROVE_IT_ENGINE=0` and `PROVE_IT_LIVE_CHECK`.
   - About 24,000 lines go: `evaluate`, `values`, `environment`, `successors`, `search`, the
@@ -646,9 +649,15 @@ classes. The owner decided to break them, and they broke after the CLI's flip:
   does (`onProgress`, `onPause`, `dump`, `systemProperties`, a `ModelConfig`, TLC 1.7.4), the
   TypeScript check runs and its result converts (`src/check-result.ts`).
 - `Value` and `formatValue` are no longer exported.
+- A set or function TLC keeps lazy is `{"@lazy": text}`, with TLC's `toString` of it, which the
+  trace printer writes exactly as it writes the states (`tests/fixtures/plain-lazy` pins it against
+  TLC's output). Where the text can't be TLC's, a value is `null`: a set TLC can't normalize
+  natively, and in the interpreter a lazy function or filter it has no source for.
+- `onPrint` gets what the spec printed once the native check ends, not as it prints. What the spec
+  prints as TLC rebuilds a trace isn't in the result.
 
-Of the 385 calls of the library's `check` in `bun run test` at the change, 198 ran natively. Of
-the 187 others, 114 stopped before the search, 44 were declined and 29 asked for the TypeScript
+Of the 387 calls of the library's `check` in `bun run test` at the change, 199 ran natively. Of
+the 188 others, 114 stopped before the search, 44 were declined and 30 asked for the TypeScript
 check. The tests of the interpreter's own results run `checkParsed`, the TypeScript check.
 
 ### What changes for users

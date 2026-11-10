@@ -28,7 +28,9 @@ violation.headline; // "Invariant Small is violated."
 violation.states.map((state) => state.variables.x.text); // ["0", "1", "2", "3"]
 ```
 
-Each violation or error TLC reports carries its message's code and text, and the behavior TLC prints with it. Each state gives every variable as TLC prints it (`text`) and as plain data (`value`): booleans, integers and strings as themselves, a sequence or tuple as an array, a record as an object, and, tagged, a set as `{ "@set": [...] }`, any other function as `{ "@function": [[key, value], ...] }`, a model value as `{ "@model": name }` and a set or function TLC keeps lazy, such as `Nat`, as `{ "@lazy": text }`.
+Each violation or error TLC reports carries its message's code and text, and the behavior TLC prints with it. Each state gives every variable as TLC prints it (`text`) and as plain data (`value`): booleans, integers and strings as themselves, a sequence or tuple as an array, a record as an object, and, tagged, a set as `{ "@set": [...] }`, any other function as `{ "@function": [[key, value], ...] }`, a model value as `{ "@model": name }` and a set or function TLC keeps lazy, such as `Nat`, as `{ "@lazy": text }`, where `text` is exactly TLC's text of it before its pretty printer breaks the lines. Where the data can't be exactly TLC's, `value` is `null`.
+
+`onPrint` receives what the spec prints once the native check ends, in order, rather than as the spec prints it. What the spec prints while TLC rebuilds a trace isn't in the result. Passing `onProgress` checks with the interpreter, which reports the search's progress as it goes.
 
 The command line takes TLC's options, and `prove-it tlapm` takes tlapm's:
 

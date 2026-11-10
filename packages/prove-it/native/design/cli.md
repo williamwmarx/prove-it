@@ -14,6 +14,14 @@ its progress: every 256 states on one thread, and after each share of a level on
 search declines within that, and the check reports the model as not native, with the same output
 and exit code.
 
+## The library's check
+
+The library's `check` runs this check through `checkSources` and reads the outcome it records as
+it prints ([fallback.md](fallback.md), "The public API afterwards"). The outcome comes back once
+the check ends, so `onPrint` gets what the spec printed then, in order, and not as the spec prints.
+What the spec prints as TLC rebuilds a trace, before or between its states or after it, is in the
+binary's output but not in the library's result.
+
 ## Print and PrintT (#66)
 
 - `Reporter::print` hands the CLI the printed values as ids of the search's store; the N-API relay
