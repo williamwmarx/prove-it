@@ -800,7 +800,7 @@ impl UpolynomialManager {
         }
         let mut result = coeffs[coeffs.len() - 1].clone();
         for (shift, index) in (1..).zip((0..coeffs.len() - 1).rev()) {
-            result = result + (&coeffs[index] << shift);
+            result += &coeffs[index] << shift;
         }
         result.is_zero()
     }
@@ -870,7 +870,7 @@ impl UpolynomialManager {
         coeffs
             .iter()
             .enumerate()
-            .map(|(index, coeff)| coeff << (degree - index) as u32)
+            .map(|(index, coeff)| coeff << (degree - index) as u64)
             .collect()
     }
 
@@ -899,7 +899,7 @@ impl UpolynomialManager {
         coeffs
             .iter()
             .enumerate()
-            .map(|(index, coeff)| coeff << (k * index as u32))
+            .map(|(index, coeff)| coeff << (u64::from(k) * index as u64))
             .collect()
     }
 
@@ -953,7 +953,7 @@ impl UpolynomialManager {
             result = if coeffs[index].is_zero() {
                 &result * &value.num
             } else {
-                (&coeffs[index] << shift) + &result * &value.num
+                (&coeffs[index] << u64::from(shift)) + &result * &value.num
             };
             shift += value.k;
         }

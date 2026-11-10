@@ -44,10 +44,10 @@ impl Mpbq {
         if k == 0 || num.is_zero() {
             return Mpbq { num, k: 0 };
         }
-        let shift = get_power_of_two_multiple(&num).min(u64::from(k)) as u32;
+        let shift = get_power_of_two_multiple(&num).min(u64::from(k));
         Mpbq {
             num: &num >> shift,
-            k: k - shift,
+            k: k - shift as u32,
         }
     }
 
@@ -59,7 +59,7 @@ impl Mpbq {
             return (Mpbq::of(value.num().clone(), 0), true);
         }
         let log2 = get_log2(value.den()) as u32;
-        if *value.den() == &Int::one() << log2 {
+        if *value.den() == &Int::one() << u64::from(log2) {
             return (Mpbq::of(value.num().clone(), log2), true);
         }
         (Mpbq::of(value.num().clone(), log2 + 1), false)
@@ -82,12 +82,16 @@ impl Mpbq {
     }
 
     pub fn to_rational(&self) -> Rational {
-        Rational::of(self.num.clone(), &Int::one() << self.k)
+        Rational::of(self.num.clone(), &Int::one() << u64::from(self.k))
     }
 
     fn align(&self, other: &Mpbq) -> (Int, Int, u32) {
         let k = self.k.max(other.k);
-        (&self.num << (k - self.k), &other.num << (k - other.k), k)
+        (
+            &self.num << u64::from(k - self.k),
+            &other.num << u64::from(k - other.k),
+            k,
+        )
     }
 
     pub fn add(&self, other: &Mpbq) -> Mpbq {
@@ -152,7 +156,7 @@ impl Mpbq {
                 k: self.k - k,
             }
         } else {
-            Mpbq::of(&self.num << (k - self.k), 0)
+            Mpbq::of(&self.num << u64::from(k - self.k), 0)
         }
     }
 
@@ -175,7 +179,7 @@ impl Mpbq {
     }
 
     pub fn compare_rational(&self, other: &Rational) -> i32 {
-        self.to_rational().compare(other)
+        self.to_rational().compare(other) as i32
     }
 
     /// lt_1div2k: this < 1/2^k.
@@ -186,14 +190,14 @@ impl Mpbq {
         if self.k <= k {
             return false;
         }
-        self.num < &Int::one() << (self.k - k)
+        self.num < &Int::one() << u64::from(self.k - k)
     }
 
     pub fn floor(&self) -> Int {
         if self.is_int() {
             self.num.clone()
         } else {
-            &self.num >> self.k
+            &self.num >> u64::from(self.k)
         }
     }
 
@@ -201,7 +205,7 @@ impl Mpbq {
         if self.is_int() {
             self.num.clone()
         } else {
-            (&self.num >> self.k) + Int::one()
+            (&self.num >> u64::from(self.k)) + Int::one()
         }
     }
 }

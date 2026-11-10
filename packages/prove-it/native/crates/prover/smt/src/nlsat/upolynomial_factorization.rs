@@ -105,8 +105,8 @@ fn get_square_root(value: &Int) -> Int {
         return value.clone();
     }
     let log2 = value.bit_length() - 1;
-    let mut lower = Int::one() << (log2 / 2) as u32;
-    let mut upper = Int::one() << (log2 + 1).div_ceil(2) as u32;
+    let mut lower = Int::one() << (log2 / 2);
+    let mut upper = Int::one() << (log2 + 1).div_ceil(2);
     if lower == upper {
         return lower;
     }
@@ -167,8 +167,8 @@ fn is_trivial_degree_set(set: &[bool]) -> bool {
 }
 
 // berlekamp_matrix: Q - I, where row i of Q holds x^(p*i) modulo f.
-struct BerlekampMatrix<'a> {
-    zp: &'a UpolynomialManager,
+struct BerlekampMatrix {
+    zp: UpolynomialManager,
     matrix: Vec<Int>,
     size: usize,
     null_row: usize,
@@ -176,14 +176,14 @@ struct BerlekampMatrix<'a> {
     row_pivot: Vec<Option<usize>>,
 }
 
-impl<'a> BerlekampMatrix<'a> {
-    fn new(zp: &'a UpolynomialManager, f: &[Int]) -> BerlekampMatrix<'a> {
+impl BerlekampMatrix {
+    fn new(zp: &UpolynomialManager, f: &[Int]) -> BerlekampMatrix {
         let size = f.len() - 1;
         let prime = zp_number(zp);
         let mut matrix = vec![Int::one()];
         matrix.extend((0..size).map(|_unused| Int::zero()));
         let mut this = BerlekampMatrix {
-            zp,
+            zp: zp.clone(),
             matrix,
             size,
             null_row: 1,
@@ -299,7 +299,7 @@ fn zp_number(zp: &UpolynomialManager) -> u64 {
 // zp_factor_square_free_berlekamp, deterministic: splits the monic square-free f in Z_p with
 // gcd(v - s, f) for the null space vectors v of Q - I. Returns false when f is irreducible.
 fn factor_square_free_in_zp(
-    zp: &UpolynomialManager,
+    zp: &mut UpolynomialManager,
     f: &[Int],
     fs: &mut UpolynomialFactors,
 ) -> Result<bool, SmtError> {
@@ -322,9 +322,9 @@ fn factor_square_free_in_zp(
             for _shift in 0..prime {
                 let current = fs.factors[factor_index].clone();
                 trimmed[0] = zp.normalize_numeral(&(&trimmed[0] - Int::one()));
-                let common = zp.gcd(&trimmed, &current)?;
+                let common = zp.gcd(&trimmed, &current);
                 if common.len() != 1 && common.len() != current.len() {
-                    fs.factors[factor_index] = zp.div(&current, &common)?;
+                    fs.factors[factor_index] = zp.div(&current, &common);
                     push_factor(zp, fs, &common, 1);
                 }
                 if fs.factors.len() - first_factor == null_rank {
@@ -357,21 +357,21 @@ fn hensel_lift_once(
     b: &Int,
     r: &Int,
     polynomials: &HenselPolynomials<'_>,
-) -> Result<LiftedFactors, SmtError> {
+) -> LiftedFactors {
     let zr = UpolynomialManager::new(Some(r.clone()));
     let f = zr.set(&z.div_const(
         &z.sub(polynomials.c, &z.mul(polynomials.a, polynomials.b)),
         b,
-    )?);
-    let division = zr.div_rem(&zr.mul(polynomials.v, &f), polynomials.a)?;
+    ));
+    let division = zr.div_rem(&zr.mul(polynomials.v, &f), polynomials.a);
     let t = zr.add(
         &zr.mul(polynomials.u, &f),
         &zr.mul(polynomials.b, &division.quotient),
     );
-    Ok(LiftedFactors {
+    LiftedFactors {
         a: z.add(polynomials.a, &z.mul_const(&division.remainder, b)),
         b: z.add(polynomials.b, &z.mul_const(&t, b)),
-    })
+    }
 }
 
 // hensel_lift_quadratic: lifts C = A*B from Z_p to Z_(p^e), squaring the modulus of zpe and
@@ -404,15 +404,15 @@ fn hensel_lift_quadratic(
                 b: &current_b,
                 c,
             },
-        )?;
+        );
         let g = zpe.set(&z.div_const(
             &z.sub(
                 &z.sub(&[Int::one()], &z.mul(&lifted.a, &u)),
                 &z.mul(&lifted.b, &v),
             ),
             &modulus,
-        )?);
-        let division = zpe.div_rem(&zpe.mul(&g, &v), &current_a)?;
+        ));
+        let division = zpe.div_rem(&zpe.mul(&g, &v), &current_a);
         let s = zpe.add(&zpe.mul(&g, &u), &zpe.mul(&division.quotient, &current_b));
         u = z.add(&u, &z.mul_const(&s, &modulus));
         v = z.add(&v, &z.mul_const(&division.remainder, &modulus));
@@ -455,12 +455,12 @@ fn hensel_lift_factors(
             )
         };
         zpe.set_zp(prime.clone());
-        let lifted = hensel_lift_quadratic(z, &parts, zpe, &a, &zp.div(&c, &a)?, e)?;
+        let lifted = hensel_lift_quadratic(z, &parts, zpe, &a, &zp.div(&c, &a), e)?;
         b = lifted.b;
         if index == 0 {
             parts = zpe.set(f);
         }
-        parts = zpe.div(&parts, &lifted.a)?;
+        parts = zpe.div(&parts, &lifted.a);
         zpe_fs.factors.push(lifted.a);
         zpe_fs.degrees.push(1);
     }
@@ -477,11 +477,11 @@ fn get_mignotte_bound(f: &[Int], prime: &Int) -> u32 {
     let mut square_norm = Int::zero();
     for coeff in f {
         if !coeff.is_zero() {
-            square_norm = square_norm + coeff * coeff;
+            square_norm += coeff * coeff;
         }
     }
     let leading = &f[f.len() - 1];
-    let bound = (Int::one() << ((f.len() - 1) / 2) as u32)
+    let bound = (Int::one() << ((f.len() - 1) / 2) as u64)
         * (get_square_root(&square_norm) + leading.abs());
     let mut e = 1;
     let mut power = prime.clone();
@@ -715,11 +715,12 @@ pub fn factor_square_free(
             continue;
         }
         let f_pp_zp = zp.set(&f_pp);
-        if !zp.is_square_free(&f_pp_zp)? {
+        if !zp.is_square_free(&f_pp_zp) {
             continue;
         }
         let mut current_fs = mk_factors();
-        if !factor_square_free_in_zp(&zp, &zp.mk_monic(&f_pp_zp)?, &mut current_fs)? {
+        let monic = zp.mk_monic(&f_pp_zp)?;
+        if !factor_square_free_in_zp(&mut zp, &monic, &mut current_fs)? {
             push_factor(z, fs, &f_pp, k);
             return Ok(true);
         }
@@ -786,7 +787,7 @@ pub fn factor_square_free(
             },
             &leading,
         );
-        let Some(quotient) = z.exact_div(&f_pp, &trial)? else {
+        let Some(quotient) = z.exact_div(&f_pp, &trial) else {
             is_removing = false;
             continue;
         };
@@ -804,35 +805,29 @@ pub fn factor_square_free(
         is_removing = true;
     }
     if f_pp.len() > 1 {
-        push_factor(z, fs, &z.div_const(&f_pp, &leading)?, k);
+        push_factor(z, fs, &z.div_const(&f_pp, &leading), k);
     }
     Ok(result)
 }
 
 // factor_2_sqf_pp: a square-free primitive quadratic splits when its discriminant is a square.
-fn factor_quadratic(
-    z: &UpolynomialManager,
-    p: &[Int],
-    fs: &mut UpolynomialFactors,
-    k: u32,
-) -> Result<(), SmtError> {
+fn factor_quadratic(z: &UpolynomialManager, p: &[Int], fs: &mut UpolynomialFactors, k: u32) {
     let Some(root) = get_exact_square_root(&(&p[1] * &p[1] - Int::from(4) * &p[2] * &p[0])) else {
         push_factor(z, fs, p, k);
-        return Ok(());
+        return;
     };
     push_factor(
         z,
         fs,
-        &z.normalize(&[&p[1] - &root, Int::from(2) * &p[2]])?,
+        &z.normalize(&[&p[1] - &root, Int::from(2) * &p[2]]),
         k,
     );
     push_factor(
         z,
         fs,
-        &z.normalize(&[&p[1] + &root, Int::from(2) * &p[2]])?,
+        &z.normalize(&[&p[1] + &root, Int::from(2) * &p[2]]),
         k,
     );
-    Ok(())
 }
 
 // factor_sqf_pp
@@ -848,7 +843,7 @@ fn factor_sqf_pp(
         return Ok(true);
     }
     if p.len() == 3 {
-        factor_quadratic(z, p, fs, k)?;
+        factor_quadratic(z, p, fs, k);
         return Ok(true);
     }
     factor_square_free(z, p, fs, k, params)
@@ -869,7 +864,7 @@ fn flip_factor_sign_if_lm_neg(p: &[Int], fs: &mut UpolynomialFactors, k: u32) ->
 /// Yun's square-free decomposition. The flag is false when a limit in params left a factor that
 /// may be reducible (TS `{ isComplete, factors }`).
 pub fn factor_upolynomial(
-    z: &UpolynomialManager,
+    z: &mut UpolynomialManager,
     p: &[Int],
     params: &FactorParams,
 ) -> Result<(bool, UpolynomialFactors), SmtError> {
@@ -880,7 +875,8 @@ pub fn factor_upolynomial(
     }
     fs.constant = z.get_content(p);
     let primitive = z.get_primitive(p);
-    let mut square = z.gcd(&primitive, &z.derivative(&primitive))?;
+    let derivative = z.derivative(&primitive);
+    let mut square = z.gcd(&primitive, &derivative);
     if square.len() <= 1 {
         let flipped = flip_factor_sign_if_lm_neg(&primitive, &mut fs, 1);
         let is_complete = factor_sqf_pp(z, &flipped, &mut fs, 1, params)?;
@@ -888,13 +884,13 @@ pub fn factor_upolynomial(
     }
     let mut is_complete = true;
     let mut product = z
-        .exact_div(&primitive, &square)?
+        .exact_div(&primitive, &square)
         .expect("the gcd divides the polynomial");
     let mut multiplicity = 1;
     while product.len() > 1 {
-        let next = z.gcd(&product, &square)?;
+        let next = z.gcd(&product, &square);
         let factor = z
-            .exact_div(&product, &next)?
+            .exact_div(&product, &next)
             .expect("the gcd divides the polynomial");
         if factor.len() > 1 {
             let flipped = flip_factor_sign_if_lm_neg(&factor, &mut fs, multiplicity);
@@ -905,7 +901,7 @@ pub fn factor_upolynomial(
             fs.constant = -&fs.constant;
         }
         square = z
-            .exact_div(&square, &next)?
+            .exact_div(&square, &next)
             .expect("the gcd divides the polynomial");
         product = next;
         multiplicity += 1;
@@ -935,7 +931,7 @@ mod tests {
     // module's limits.
     fn run_factor_command(input: &str) -> String {
         let words: Vec<&str> = input.split(' ').collect();
-        let um = UpolynomialManager::new(None);
+        let mut um = UpolynomialManager::new(None);
         let params = if words[0] == "afactor" {
             FactorParams {
                 max_prime: 31,
@@ -949,8 +945,9 @@ mod tests {
             .iter()
             .map(|word| word.parse::<Int>().expect("an integer"))
             .collect();
+        let coeffs = um.set(&coeffs);
         let (is_complete, factors) =
-            factor_upolynomial(&um, &um.set(&coeffs), &params).expect("factoring succeeds");
+            factor_upolynomial(&mut um, &coeffs, &params).expect("factoring succeeds");
         let shown: String = factors
             .factors
             .iter()
