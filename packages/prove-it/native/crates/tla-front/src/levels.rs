@@ -1540,7 +1540,20 @@ impl<'a> LevelAnalyzer<'a> {
             match assumption {
                 Assumed::NewSymbol(symbol) => {
                     if let Some(set) = &symbol.set {
-                        parts.push(self.analyze(set, &inner)?);
+                        let data = self.analyze(set, &inner)?;
+                        // `NewSymbNode.levelCheck`, at the NEW.
+                        if data.level == TEMPORAL_LEVEL {
+                            let Some(range) = &symbol.location.range else {
+                                return Err(FrontError::NotYet(
+                                    "a NEW symbol without a range".to_owned(),
+                                ));
+                            };
+                            return Err(FrontError::Syntax(SyntaxError::sany(vec![SanyError {
+                                location: format_range(range),
+                                message: "Level error:\nTemporal formula used as set.".to_owned(),
+                            }])));
+                        }
+                        parts.push(data);
                     }
                     inner = inner.bind(vec![(symbol.name.clone(), Entry::Formal(symbol.arity))]);
                 }

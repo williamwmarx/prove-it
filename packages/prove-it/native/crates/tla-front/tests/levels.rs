@@ -238,3 +238,52 @@ fn words_level_errors_of_operator_arguments_and_bounds_as_sany_does() {
         )]
     );
 }
+
+#[test]
+fn rejects_a_temporal_formula_a_new_symbol_ranges_over() {
+    // TLC's tla2sany error corpus, E4356_Test.
+    assert_eq!(
+        get_level_errors(
+            "---- MODULE E4356_Test ----\nVARIABLE v\nTHEOREM\n  ASSUME NEW x \\in []v\n  PROVE TRUE\n====",
+            &[]
+        ),
+        [(
+            "line 4, col 10 to line 4, col 22 of module E4356_Test".to_owned(),
+            "Level error:\nTemporal formula used as set.".to_owned()
+        )]
+    );
+}
+
+fn is_not_yet(source: &str) -> bool {
+    let config = parse_config("", TlcVersion::Master).expect("a configuration");
+    matches!(
+        create_environment(&EnvironmentOptions {
+            source,
+            load_module: &|_| None,
+            config: &config,
+            is_unconfigured: true,
+            version: TlcVersion::Master,
+            is_level_checked: true,
+            load_class: None,
+        }),
+        Err(FrontError::NotYet(_))
+    )
+}
+
+#[test]
+fn leaves_what_sanys_selectors_word_not_native() {
+    // TLC's tla2sany error corpus: E4203_Test, E4355_Test and E4351_Test, and a DEF entry that
+    // names nothing (E4200_Use_Test).
+    assert!(is_not_yet(
+        "---- MODULE E4203_Test ----\nimport == INSTANCE Naturals\nop == import\n===="
+    ));
+    assert!(is_not_yet(
+        "---- MODULE E4355_Test ----\nTHEOREM thm == ASSUME TRUE PROVE TRUE\nop == thm\n===="
+    ));
+    assert!(is_not_yet(
+        "---- MODULE E4351_Test ----\nop(x) == x\nTHEOREM TRUE\nPROOF\n<1>a TRUE\n<1>b HAVE TRUE\n<1>c op(<1>a)\n<1>d op(<1>b)\n<1> QED\n===="
+    ));
+    assert!(is_not_yet(
+        "---- MODULE E4200_Use_Test ----\nUSE DEF DoesNotExist\n===="
+    ));
+}

@@ -224,6 +224,8 @@ struct Unit<'a> {
     /// The @ of an assertion step that continues the infix assertion of the step before it, which
     /// stands for that step's right side.
     step_at: Option<usize>,
+    /// Resolving a fact, which may name any step.
+    is_fact: bool,
     /// The names bound since the innermost definition, label, or step, which a label must take.
     label_params: Rc<Vec<Name>>,
     labels: Rc<RefCell<FastSet<Name>>>,
@@ -1254,6 +1256,19 @@ fn get_symbol_arity(
         );
         return Ok(None);
     }
+    // SANY's selectors reject a step that asserts no expression, or a SUFFICES, named as an
+    // expression (`HAVE proof step selected instead of expression.`), which the front end doesn't
+    // word yet.
+    if !unit.is_fact
+        && is_step_name(name)
+        && local
+            .as_ref()
+            .is_some_and(|local| local.goal.as_ref().is_none_or(|goal| goal.is_suffices))
+    {
+        return Err(FrontError::NotYet(format!(
+            "the step {name} that asserts no expression named as an expression"
+        )));
+    }
     if check_reference(expression, scope, unit, false) || (is_step_name(name) && local.is_some()) {
         return Ok(Some(apply_arity(expression)));
     }
@@ -1294,6 +1309,21 @@ fn get_symbol_arity(
     } else {
         get_spelled_name_range(expression, name)
     });
+    // SANY's selectors word a theorem's, an assumption's or an instance's name used as an
+    // expression otherwise (`Operator name M is incomplete.`, `ASSUME/PROVE used where an
+    // expression is required.`), which the front end doesn't follow.
+    let is_named = unit.facts.borrow().contains(name)
+        || find_current(scope, name, unit, None).is_some_and(|local| {
+            matches!(
+                local.binding().kind,
+                SymbolKind::Instance | SymbolKind::Theorem
+            )
+        });
+    if is_named {
+        return Err(FrontError::NotYet(format!(
+            "the name {name} of a theorem, an assumption or an instance as an expression"
+        )));
+    }
     if !is_operator_symbol(name) || is_step_name(name) {
         unit.error(range, format!("Unknown operator: `{name}'."));
         return Ok(None);
@@ -2115,7 +2145,14 @@ fn check_facts(facts: &[Fact], scope: &Scope, unit: &Unit) -> Result<()> {
                 "Step number of non-fact used as a fact".to_owned(),
             );
         } else if !unit.facts.borrow().contains(&name) {
-            resolve_expression(fact, scope, unit)?;
+            resolve_expression(
+                fact,
+                scope,
+                &Unit {
+                    is_fact: true,
+                    ..unit.clone()
+                },
+            )?;
         }
     }
     Ok(())
@@ -2754,6 +2791,7 @@ pub fn resolve_substitutions(
             is_label_forbidden: false,
             is_in_except: false,
             step_at: None,
+            is_fact: false,
             label_params: Rc::default(),
             labels: Rc::default(),
             is_generated: false,
@@ -2906,6 +2944,7 @@ pub fn resolve_module(module: &Module, unit: &ModuleContext) -> Result<Vec<SanyE
         is_label_forbidden: false,
         is_in_except: false,
         step_at: None,
+        is_fact: false,
         label_params: Rc::default(),
         labels: Rc::default(),
         is_generated: false,
