@@ -309,11 +309,11 @@ describe("the engine's Print, PrintT and TLCGet", () => {
   });
 
   it("hands over printing Nat, Int or STRING, which the interpreter's encoding lacks", async () => {
-    // What TLC prints: Nat and Int by name.
+    // What TLC prints: Nat and Int by name. The engine hands over where it meets {Int}.
     const body = `EXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ PrintT(<<x, {Int}>>) /\\ x' = x + 1`;
     const { printed, lines } = await checkBoth(body, "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE");
     expect(printed).toEqual(["<<0, {Int}>>", "<<1, {Int}>>"]);
-    expect(lines).toEqual([expect.stringMatching(/handed over .*: unsupported: handing over/)]);
+    expect(lines).toEqual([expect.stringMatching(/^\[engine\] handed over /)]);
   });
 
   it("reports the initial states it computed after what the initial predicate printed", async () => {
