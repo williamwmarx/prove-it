@@ -541,6 +541,35 @@ fn prints_an_assumption_that_fails_to_evaluate() {
     }
 }
 
+#[test]
+fn prints_what_an_assumption_printed_before_it_failed_once() {
+    let spec = "---- MODULE Printed ----\nEXTENDS TLC, Integers\nVARIABLE x\nASSUME PrintT(1)\nASSUME PrintT(3) /\\ PrintT(2) /\\ 1 \\div 0 = 1\nInit == x = 0\nNext == x' = x\n====\n";
+    let expected = "\n1\n3\n2\nError: Evaluating assumption line 5, col 8 to line 5, col 45 of module Printed failed.\nThe second argument of \\div is 0.\nFinished in ";
+    // tla-front as the whole front end, where the search prints the assumptions as it evaluates
+    // them.
+    let (output, directory) = run_front("printed-native", spec, "INIT Init\nNEXT Next\n", &[]);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(10), "{text}");
+    assert!(text.contains(expected), "{text}");
+    std::fs::remove_dir_all(directory).expect("removed");
+    // A recorded front, which holds what TLC printed before the error.
+    let directory =
+        std::env::temp_dir().join(format!("prove-it-cli-printed-front-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    for (extension, contents) in [
+        ("tla", spec),
+        ("cfg", "INIT Init\nNEXT Next\n"),
+        ("front", "Starting... (2026-11-10 00:00:00)\n1\n3\n2\n"),
+    ] {
+        std::fs::write(directory.join(format!("Printed.{extension}")), contents).expect("a file");
+    }
+    let output = run(&directory, &["-noTE", "Printed"]);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(10), "{text}");
+    assert!(text.contains(&format!("00:00:00){expected}")), "{text}");
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
 const CDOT_IR: &[u8] = include_bytes!(
     "../../../../tests/conformance/ir/tlc/tlatools/org.lamport.tlatools/test-model/cdot/CdotWithContextA.ir"
 );
