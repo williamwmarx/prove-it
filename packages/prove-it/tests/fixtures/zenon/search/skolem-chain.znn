@@ -1,0 +1,3 @@
+$hyp "h" (A. ((x) (E. ((y) (R x y)))))
+$hyp "h2" (A. ((x y) (=> (R x y) (S y))))
+$goal (E. ((z) (S z)))

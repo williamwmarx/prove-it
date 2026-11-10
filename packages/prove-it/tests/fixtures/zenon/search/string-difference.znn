@@ -1,0 +1,4 @@
+$hyp "e1" (= "a" x)
+$hyp "e2" (= y "b")
+$hyp "e3" (= x z)
+$goal (-. (= z y))

@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { getNativeAddon } from "../../src/engine/native";
 import { TlaZenonError } from "../../src/errors";
 import { createSteps } from "../../src/prover/verdict";
 import { checkProof } from "../../src/prover/zenon/check/check";
@@ -212,6 +213,21 @@ describe("Zenon finds no proof of a false goal", () => {
 });
 
 describe("Zenon's input", () => {
+  // Zenon matches a relation on two arguments only, so a hypothesis about applications to no
+  // arguments states no property of a relation. The Rust port decides it the same way.
+  it("reads a negated conjunction of applications to no arguments", () => {
+    const text = readFixture("search/nullary-application.znn");
+    const statistics = {};
+    expect(decideZenon(text, { timeLimitMs: Infinity, statistics }).verdict).toBe("unsat");
+    const addon = getNativeAddon();
+    if (typeof addon === "string") throw new Error(addon);
+    expect(addon.decide("zenon", text, Infinity, undefined, undefined)).toEqual({
+      kind: "decided",
+      verdict: "unsat",
+      statistics,
+    });
+  });
+
   it.each([
     ["an unclosed parenthesis", "$goal (= a b"],
     ["an unknown phrase", "$sig a"],

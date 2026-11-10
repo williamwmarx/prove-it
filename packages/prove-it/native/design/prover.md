@@ -910,3 +910,9 @@ Kept current by whoever holds the next stage: what is built, what the differenti
 is next.
 
 - Phase 1: this document.
+- P2 Zenon: `prove-zenon` ports all of `zenon/` but `encode.ts`, one module per TS file, behind
+  `PROVE_IT_PROVER`. `tests/zenon.rs` ports `zenon.test.ts` on its fixtures (the checker's tests
+  are in `src/check.rs`); `scripts/zenon-fixtures.ts` records what the TypeScript decides on each
+  fixture under a step limit into `tests/fixtures/zenon/decisions.txt`, which the Rust matches in
+  verdict, steps, every statistic and the proof's digest. Malformed input is declined. Next: the
+  decider differential on the corpus's `.znn` inputs, then the flip commit.
