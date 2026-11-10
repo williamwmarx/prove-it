@@ -75,6 +75,9 @@ pub struct Settings {
     /// PROVE_IT_TEST_LIVE_CHECK_AT, for tests: the number of expanded states after which the
     /// search checks the temporal properties the first time, rather than after FIRST_PROGRESS.
     pub test_live_check_at: Option<usize>,
+    /// Whether the search hands every state it found to [`Reporter::dumped`] as it ends, for
+    /// `-dump`.
+    pub is_dumped: bool,
 }
 
 // How many candidates ahead the merge reads the state table.
@@ -104,6 +107,7 @@ impl Default for Settings {
             minimum_shared_level: MINIMUM_SHARED_LEVEL,
             is_liveness_periodic: false,
             test_live_check_at: None,
+            is_dumped: false,
         }
     }
 }
@@ -139,6 +143,11 @@ pub trait Reporter {
     fn check_assumption(&mut self, _position: u32) -> Result<Delegated, String> {
         Err(DELEGATED_ASSUMPTION.into())
     }
+    /// Every state the search found, in the order it found them, `width` ids of `store` each, as
+    /// TLC's `-dump` writes them (`StateWriter`): once, as the search ends, where
+    /// `Settings::is_dumped`. A search that ends without calling it, such as one stopped computing
+    /// its initial states, leaves the dump to its caller.
+    fn dumped(&mut self, _store: &Store, _states: &[Id], _width: usize) {}
 }
 
 /// Why the engine leaves an assumption to its caller.
@@ -3178,6 +3187,11 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     },
                 );
             }
+            if settings.is_dumped {
+                search
+                    .reporter
+                    .dumped(&machine.store, &search.states.ids[..count * width], width);
+            }
             let lasso_actions = match &liveness.verdict {
                 Verdict::Lasso {
                     path, loop_start, ..
@@ -3246,6 +3260,11 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                         graph: search.graph.as_ref(),
                     },
                 );
+            }
+            if settings.is_dumped {
+                search
+                    .reporter
+                    .dumped(&machine.store, &search.states.ids[..count * width], width);
             }
             // The temporal properties are checked here, and the interpreter takes the graph over
             // only to print a counterexample, to check them itself, or under PROVE_IT_LIVE_CHECK
@@ -3605,6 +3624,22 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                         graph: None,
                     },
                 );
+            }
+            if settings.is_dumped {
+                // TLC writes a state as it adds it to its set: the states the stopping expansion
+                // found too, and the state that stopped it where TLC counted that one as found.
+                let found = search.states.count();
+                let mut states = search.states.ids[..found * width].to_vec();
+                if let Some(Found {
+                    last: Some(last),
+                    counts,
+                    ..
+                }) = &search.violation
+                    && counts.distinct == found as u64 + 1
+                {
+                    states.extend_from_slice(last);
+                }
+                search.reporter.dumped(&machine.store, &states, width);
             }
             let checkpoint = if search.graph.is_none() {
                 let states = &search.states;
