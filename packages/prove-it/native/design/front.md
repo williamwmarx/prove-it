@@ -829,7 +829,12 @@ Gates, run by Verification's Front End job:
   XML's hash and the exit code (`--xml` compares the XML itself). 2,363 of 2,367 modules match and
   none differ; the 4 left are RECURSIVE declarations the front end declines.
 - `sany-corpus.ts --recorded` on `tests/conformance/sany-stdout/xml-*.json`, the real exporter at
-  d8fb231: SANY's corpus with each of the five flag sets, and the XML fixtures.
+  d8fb231: with each of the five flag sets, 150 of SANY's 153 corpus specs print what it printed
+  and 3 decline (AssumeProveTest and LetInTest, which the front end declines, and E4294_Module);
+  8 of the 9 XML fixtures (DefineStep declines), and both `-I` fixtures. None differ. The
+  TypeScript exporter printed what it printed on 142. Porting it found that the parser gave the
+  subscript `B(A)` of `WF_B(A)(Act)` no range (FairnessTest), which SANY locates over its
+  arguments.
 
 Known approximation: `levels.rs` copies a source's level sets where `levels.ts` shares them
 (`shareLevels`, for OpArg, Label, Assume and NewSymb nodes); the two differ only if the source's

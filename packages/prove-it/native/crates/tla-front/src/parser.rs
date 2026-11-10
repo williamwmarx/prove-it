@@ -587,7 +587,9 @@ impl Parser {
         let token = self.peek(0);
         // SANY's FairnessExpr reads WF_B(A)(Act) with the subscript B(A).
         if token.kind == TokenKind::Identifier && self.is_application_subscript_ahead() {
-            return self.parse_primary(None);
+            let start = self.index;
+            let application = self.parse_primary(None)?;
+            return Ok(self.with_range(application, start));
         }
         if token.kind == TokenKind::Identifier {
             let start = self.index;
