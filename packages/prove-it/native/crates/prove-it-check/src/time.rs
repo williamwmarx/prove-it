@@ -1,6 +1,5 @@
 //! TLC's dates and durations, as `src/tlc/messages.ts` formats them.
 
-use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::zone::Zone;
@@ -21,13 +20,8 @@ pub fn format_duration(milliseconds: u128) -> String {
     }
 }
 
-/// TLC's SimpleDateFormat("yyyy-MM-dd HH:mm:ss"), in the process's time zone.
-pub fn format_date(time: SystemTime) -> String {
-    static ZONE: OnceLock<Zone> = OnceLock::new();
-    format_date_in(time, ZONE.get_or_init(Zone::local))
-}
-
-fn format_date_in(time: SystemTime, zone: &Zone) -> String {
+/// TLC's SimpleDateFormat("yyyy-MM-dd HH:mm:ss"), in the zone.
+pub fn format_date(time: SystemTime, zone: &Zone) -> String {
     let utc = time
         .duration_since(UNIX_EPOCH)
         .map_or(0, |duration| duration.as_secs() as i64);
@@ -80,13 +74,13 @@ mod tests {
     #[test]
     fn formats_dates_in_utc() {
         let at = |seconds| UNIX_EPOCH + Duration::from_secs(seconds);
-        assert_eq!(format_date_in(at(0), &Zone::UTC), "1970-01-01 00:00:00");
+        assert_eq!(format_date(at(0), &Zone::UTC), "1970-01-01 00:00:00");
         assert_eq!(
-            format_date_in(at(1_794_191_943), &Zone::UTC),
+            format_date(at(1_794_191_943), &Zone::UTC),
             "2026-11-09 02:39:03"
         );
         assert_eq!(
-            format_date_in(at(951_782_400), &Zone::UTC),
+            format_date(at(951_782_400), &Zone::UTC),
             "2000-02-29 00:00:00"
         );
     }
@@ -96,11 +90,11 @@ mod tests {
         let zone = |rule| Zone::from_rule(parse_rule(rule).expect("a rule"));
         let at = UNIX_EPOCH + Duration::from_secs(1_794_191_943);
         assert_eq!(
-            format_date_in(at, &zone("EST5EDT,M3.2.0,M11.1.0")),
+            format_date(at, &zone("EST5EDT,M3.2.0,M11.1.0")),
             "2026-11-08 21:39:03"
         );
         assert_eq!(
-            format_date_in(at, &zone("<+0530>-5:30")),
+            format_date(at, &zone("<+0530>-5:30")),
             "2026-11-09 08:09:03"
         );
     }

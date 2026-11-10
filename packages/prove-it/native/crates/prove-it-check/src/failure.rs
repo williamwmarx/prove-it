@@ -2,7 +2,7 @@
 //! failure: `tla-trace` evaluates again where the search failed, as TLC replays it with its call
 //! stack, and rebuilds the trace to the state TLC was expanding.
 
-use std::time::Instant;
+use tla_engine::clock::Instant;
 
 use tla_engine::search::Violation;
 use tla_ir::{Ir, NodeId, NodeKind, SourceRange};
@@ -12,10 +12,9 @@ use tla_trace::{
 };
 use tla_values::{Id, Store};
 
-use crate::check::{
-    SEARCH_STACK_BYTES, Statistics, print_finished, print_postcondition_failure, print_statistics,
-};
+use crate::check::{Statistics, print_finished, print_postcondition_failure, print_statistics};
 use crate::messages::{self as code, Level, Printer};
+use crate::stack::on_search_stack;
 use crate::summary::out_degree_summary;
 
 // The status TLC exits with after a failure evaluating the spec, and after an exception it didn't
@@ -119,8 +118,9 @@ pub fn print_failure(
         return Err("a state TLC fails to fingerprint as it adds it to the behavior graphs".into());
     }
     // TLC prints the call stack of an error adding a state to the behavior graphs before the
-    // error (`Worker#doNextCheckLiveness`).
-    if is_atom {
+    // error (`Worker#doNextCheckLiveness`), where its rerun has one (`hasCallStack`): a failing
+    // comparison of a subscript's two values (`LNAction.eval`) is in no evaluation.
+    if is_atom && !failure.call_stack.is_empty() {
         print_call_stack(printer, ir, &failure.call_stack);
     }
     let message = if printer.is_tool {
@@ -360,7 +360,7 @@ pub fn print_assumption_failure(
     workers: usize,
     start: Instant,
 ) -> Result<i32, String> {
-    let failure = on_search_stack(|| {
+    let failure = evaluate_on_search_stack(|| {
         Rebuilder::new(ir).and_then(|mut rebuilder| {
             rebuilder.set_workers(workers);
             rebuilder.evaluate_assumption(position)
@@ -390,7 +390,7 @@ pub fn print_assumption_failure(
 
 // Evaluates the failure again and rebuilds the trace.
 fn evaluate(ir: &Ir, stop: &ErrorStop<'_>, is_tool: bool) -> Result<Report, String> {
-    on_search_stack(|| {
+    evaluate_on_search_stack(|| {
         let mut rebuilder = Rebuilder::new(ir)?;
         rebuilder.set_fingerprints(stop.fingerprints);
         if let Some(violation) = stop.replayed {
@@ -483,20 +483,11 @@ fn evaluate(ir: &Ir, stop: &ErrorStop<'_>, is_tool: bool) -> Result<Report, Stri
     })
 }
 
-// Runs the evaluator on a thread with the search's stack, since it recurses with the expressions it
-// evaluates.
-fn on_search_stack<T: Send>(
+// Runs the evaluator with the search's stack, since it recurses with the expressions it evaluates.
+fn evaluate_on_search_stack<T: Send>(
     evaluate: impl FnOnce() -> Result<T, Unsupported> + Send,
 ) -> Result<T, String> {
-    std::thread::scope(|scope| {
-        std::thread::Builder::new()
-            .stack_size(SEARCH_STACK_BYTES)
-            .spawn_scoped(scope, evaluate)
-            .expect("a thread to evaluate the failure")
-            .join()
-            .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
-            .map_err(|Unsupported(reason)| reason)
-    })
+    on_search_stack(evaluate).map_err(|Unsupported(reason)| reason)
 }
 
 // Each state of a rebuilt trace as TLC prints it, with its label and what the spec printed before
@@ -562,7 +553,7 @@ fn print_incomplete(
     if stop.replayed.is_some() {
         return Err("an incomplete successor with an ALIAS or a POSTCONDITION".into());
     }
-    let (states, incomplete) = on_search_stack(|| {
+    let (states, incomplete) = evaluate_on_search_stack(|| {
         let mut rebuilder = Rebuilder::new(ir)?;
         let trace = rebuilder.rebuild(stop.store, &stop.states, &stop.actions, Ending::Kept)?;
         if !trace.trace_output.is_empty()
