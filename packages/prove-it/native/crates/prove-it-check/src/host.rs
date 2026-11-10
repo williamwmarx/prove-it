@@ -64,6 +64,12 @@ pub trait Host {
     fn large_region_advice(&self) -> Option<Advice> {
         None
     }
+    /// Writes the text to the file at the path, after what it holds where `is_appended`, and in
+    /// place of it otherwise, such as `-dump`'s; whether it could. A host that writes no files
+    /// leaves the check to decline what writes one.
+    fn write_file(&self, _path: &Path, _text: &str, _is_appended: bool) -> bool {
+        false
+    }
 }
 
 /// The file system and the process the binary runs in, and the advice the binary gives the system
@@ -113,6 +119,17 @@ impl Host for SystemHost {
 
     fn read_text(&self, path: &Path) -> Option<String> {
         std::fs::read_to_string(path).ok()
+    }
+
+    fn write_file(&self, path: &Path, text: &str, is_appended: bool) -> bool {
+        std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .append(is_appended)
+            .truncate(!is_appended)
+            .open(path)
+            .and_then(|mut file| std::io::Write::write_all(&mut file, text.as_bytes()))
+            .is_ok()
     }
 
     fn load_module(&self, directories: &[&Path], name: &str) -> Option<String> {
